@@ -157,11 +157,26 @@ drain:
 	return nil
 }
 
-// isRateLimited recognises GitHub's rate-limit responses as surfaced by gh.
-func isRateLimited(err error) bool {
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "rate limit") || strings.Contains(msg, "abuse detection") || strings.Contains(msg, "secondary rate")
+// rateLimitPhrases are the substrings that mark a message as "come back
+// later": GitHub's rate-limit responses as surfaced by gh, and the API
+// errors a claude session reports when it is throttled or the service is
+// overloaded.
+var rateLimitPhrases = []string{"rate limit", "abuse detection", "secondary rate", "overloaded", "usage limit"}
+
+// rateLimitedText reports whether a message names a rate limit or an
+// overloaded service. Matching is case-insensitive.
+func rateLimitedText(msg string) bool {
+	msg = strings.ToLower(msg)
+	for _, p := range rateLimitPhrases {
+		if strings.Contains(msg, p) {
+			return true
+		}
+	}
+	return false
 }
+
+// isRateLimited recognises GitHub's rate-limit responses as surfaced by gh.
+func isRateLimited(err error) bool { return rateLimitedText(err.Error()) }
 
 func (s *Scheduler) describeQuery() string {
 	var parts []string
@@ -490,6 +505,19 @@ func (s *Scheduler) updateWorker(w *state.Worker, stage string, round int) {
 	s.mu.Lock()
 	w.Stage = stage
 	w.Round = round
+	w.Attempt = 1
+	s.mu.Unlock()
+	s.writeStatus()
+}
+
+// setWorkerAttempt records which attempt of the current stage is running so
+// `bees status` shows a retry.
+func (s *Scheduler) setWorkerAttempt(w *state.Worker, attempt int) {
+	if w == nil {
+		return
+	}
+	s.mu.Lock()
+	w.Attempt = attempt
 	s.mu.Unlock()
 	s.writeStatus()
 }

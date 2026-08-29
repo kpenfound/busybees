@@ -1,4 +1,9 @@
-# Task: implement issue #{{.Issue.Number}}{{if gt .Round 1}} (review round {{.Round}} of {{.MaxRounds}}){{end}}
+{{if gt .Retry 0}}**Your previous attempt was interrupted before it finished.** The branch may
+already contain partial work — inspect the working tree and the branch's
+commits before writing anything, and continue from there rather than starting
+over.
+
+{{end}}# Task: implement issue #{{.Issue.Number}}{{if gt .Round 1}} (review round {{.Round}} of {{.MaxRounds}}){{end}}
 
 ## Issue #{{.Issue.Number}}: {{.Issue.Title}}
 - author: {{.Issue.Author.Login}} · labels: {{labels .Issue.Labels}} · milestone: {{milestone .Issue}} · {{.Issue.URL}}

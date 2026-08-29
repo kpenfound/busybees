@@ -64,6 +64,15 @@ func fakeClaude() {
 	switch role {
 	case config.RoleDeveloper:
 		n := counter("dev")
+		// Infrastructure failures, on the first attempt only: hang until the
+		// role timeout kills the session, or report `failed` outright.
+		if n == 1 && os.Getenv("BEES_FAKE_DEV_HANG") == "1" {
+			time.Sleep(time.Minute)
+		}
+		if os.Getenv("BEES_FAKE_DEV_FAIL") == "1" {
+			outcome = session.Outcome{Status: OutcomeFailed, Note: "cannot build"}
+			break
+		}
 		if err := os.WriteFile(fmt.Sprintf("work-%d.txt", n), []byte("done"), 0o644); err != nil {
 			fail(err)
 		}
@@ -775,5 +784,88 @@ func TestFeatureIssuesBelongToProductManager(t *testing.T) {
 	}
 	if strings.Contains(string(prompt), "| 5 | - |") && strings.Contains(string(prompt), "## Open work items (3)") {
 		t.Error("feature issues must not be listed as work items")
+	}
+}
+
+// A session killed by its timeout is an infrastructure failure: the worker
+// runs it again instead of escalating.
+func TestInfrastructureFailureIsRetried(t *testing.T) {
+	t.Setenv("BEES_FAKE_DEV_HANG", "1")
+	h := newHarness(t, baseTOML+`
+retries = 1
+retry_delay = "0s"
+[roles.developer]
+timeout = "5s"
+[roles.product_manager]
+enabled = false
+[roles.qa]
+enabled = false
+[roles.project_manager]
+enabled = false
+`)
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}}}
+	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
+	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true} // reviewer disabled: PR auto-approved
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if err := h.sched.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := strings.Join(h.gh.history[1], ","); got != "bees:in-progress,bees:approved" {
+		t.Fatalf("history: %s", got)
+	}
+	if len(h.gh.comments[1]) != 0 {
+		t.Fatalf("no escalation expected: %v", h.gh.comments[1])
+	}
+	dev := h.sessions(config.RoleDeveloper)
+	if len(dev) != 2 {
+		t.Fatalf("developer sessions: %v", dev)
+	}
+	// The retry keeps its own transcript directory.
+	if !strings.Contains(filepath.Base(dev[1]), "-retry1-") {
+		t.Errorf("retry session directory not named as a retry: %s", dev[1])
+	}
+	first, _ := os.ReadFile(filepath.Join(dev[0], "prompt.md"))
+	if strings.Contains(string(first), "previous attempt was interrupted") {
+		t.Errorf("first attempt got the retry preamble:\n%s", first)
+	}
+	retry, _ := os.ReadFile(filepath.Join(dev[1], "prompt.md"))
+	if !strings.Contains(string(retry), "previous attempt was interrupted") {
+		t.Errorf("retry is missing the interrupted-work preamble:\n%s", retry)
+	}
+}
+
+// A session that ran and reported `failed` made a decision: it escalates at
+// once, however many retries are configured.
+func TestReportedFailureEscalatesWithoutRetry(t *testing.T) {
+	t.Setenv("BEES_FAKE_DEV_FAIL", "1")
+	h := newHarness(t, baseTOML+`
+retries = 2
+retry_delay = "0s"
+[roles.product_manager]
+enabled = false
+[roles.qa]
+enabled = false
+[roles.project_manager]
+enabled = false
+`)
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}}}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if err := h.sched.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := strings.Join(h.gh.history[1], ","); got != "bees:in-progress,bees:needs-human" {
+		t.Fatalf("history: %s", got)
+	}
+	if got := len(h.sessions(config.RoleDeveloper)); got != 1 {
+		t.Fatalf("developer sessions: got %d want 1", got)
+	}
+	if len(h.gh.comments[1]) != 1 || !strings.Contains(h.gh.comments[1][0], "ended with `failed`") {
+		t.Fatalf("comments: %v", h.gh.comments[1])
 	}
 }
