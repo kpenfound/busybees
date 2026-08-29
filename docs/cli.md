@@ -150,6 +150,10 @@ due (`in_work_hours` and `next_poll` in `--json`):
 work hours: yes (09:00-18:00 mon-fri, America/New_York)   next GitHub poll in 2m55s
 ```
 
+The yes/no is computed when you run the command, so it is right even when the
+scheduler is stopped; `in_work_hours` in `--json` is the scheduler's own record
+from its last pass.
+
 ## The mailbox
 
 Roles talk to each other only through the local mailbox in `<state_dir>/mail`. The

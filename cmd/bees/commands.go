@@ -310,10 +310,10 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 				fmt.Printf("scheduler: pid %d, last poll %s ago\n", st.PID, time.Since(st.LastPoll).Round(time.Second))
 			}
 			if cfg.Scheduler.WorkHoursEnabled() {
+				// Always the live answer: a stored one is stale as soon
+				// as the scheduler stops. status.json keeps its own record
+				// for --json.
 				in := cfg.Scheduler.InWorkHours(time.Now())
-				if st.InWorkHours != nil {
-					in = *st.InWorkHours
-				}
 				yes := "no"
 				if in {
 					yes = "yes"
