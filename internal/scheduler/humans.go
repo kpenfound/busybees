@@ -1,0 +1,199 @@
+package scheduler
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/github"
+	"github.com/kpenfound/busybees/internal/mail"
+)
+
+// HumanSender is the mailbox sender name used for feedback that came from
+// people on GitHub.
+const HumanSender = "human"
+
+// deliverHumanFeedback looks at every open factory PR for reviews and
+// comments written by people since the last check, mails them to the
+// developer for that PR, and — when the issue was parked in approved —
+// moves it back to ready so a developer worker picks it up.
+//
+// Bee comments are recognised by github.BeesMarker, because humans and bees
+// share one GitHub account.
+func (s *Scheduler) deliverHumanFeedback(ctx context.Context, snap *snapshot) error {
+	var errs []string
+	issueByNumber := map[int]github.Issue{}
+	for _, i := range snap.issues {
+		issueByNumber[i.Number] = i
+	}
+	for _, pr := range snap.prs {
+		issueNum := 0
+		for _, n := range pr.ClosingIssues() {
+			if _, ok := issueByNumber[n]; ok {
+				issueNum = n
+				break
+			}
+		}
+		if issueNum == 0 {
+			continue // not a PR the factory is driving
+		}
+		bk, err := s.store.Issue(issueNum)
+		if err != nil {
+			errs = append(errs, err.Error())
+			continue
+		}
+		since := bk.HumanSeenAt
+		if since.Before(pr.CreatedAt) {
+			since = pr.CreatedAt
+		}
+		if !pr.UpdatedAt.After(since) {
+			continue // nothing happened on the PR since we last looked
+		}
+		activity, err := s.gh.PRActivity(ctx, pr.Number, since)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("pr #%d activity: %v", pr.Number, err))
+			continue
+		}
+		// Whether or not humans wrote anything, remember we looked.
+		bk.HumanSeenAt = pr.UpdatedAt
+		if len(activity) == 0 {
+			_ = s.store.SaveIssue(bk)
+			continue
+		}
+		last := activity[len(activity)-1].CreatedAt
+		if last.After(bk.HumanSeenAt) {
+			bk.HumanSeenAt = last
+		}
+		authors := map[string]bool{}
+		for _, a := range activity {
+			authors[a.Author] = true
+		}
+		var names []string
+		for a := range authors {
+			names = append(names, a)
+		}
+		m := mail.Message{
+			From:    HumanSender,
+			To:      config.RoleDeveloper,
+			Subject: fmt.Sprintf("Feedback on PR #%d from %s", pr.Number, strings.Join(names, ", ")),
+			Body:    formatActivity(s.cfg.Project.Repo, pr.Number, activity),
+			Issue:   issueNum,
+			PR:      pr.Number,
+		}
+		if _, err := s.mail.Send(m); err != nil {
+			errs = append(errs, err.Error())
+			continue
+		}
+		if err := s.store.SaveIssue(bk); err != nil {
+			errs = append(errs, err.Error())
+		}
+		s.log.Info("human feedback delivered to developer", "pr", pr.Number, "issue", issueNum, "items", len(activity))
+
+		issue := issueByNumber[issueNum]
+		if s.stateOf(issue.Labels) == "approved" {
+			s.log.Info("approved PR received human feedback; issue back to ready", "issue", issueNum)
+			if err := s.setState(ctx, issueNum, s.labels.Ready); err != nil {
+				errs = append(errs, err.Error())
+				continue
+			}
+			if err := s.gh.EditLabels(ctx, pr.Number, nil, []string{s.labels.Approved}); err != nil {
+				errs = append(errs, err.Error())
+			}
+			issue.Labels = relabel(issue.Labels, s.labels.Approved, s.labels.Ready)
+			snap.byState["approved"] = removeIssue(snap.byState["approved"], issueNum)
+			snap.byState["ready"] = append(snap.byState["ready"], issue)
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("human feedback: %s", strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+func removeIssue(list []github.Issue, number int) []github.Issue {
+	out := list[:0:0]
+	for _, i := range list {
+		if i.Number != number {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+// formatActivity renders human PR activity as the body of a mail message,
+// including the ids the developer needs to reply on GitHub.
+func formatActivity(repo string, pr int, activity []github.Activity) string {
+	var sb strings.Builder
+	sb.WriteString("A person reviewed your pull request on GitHub. Address each point below and reply on GitHub so they see it (end replies with the `<!-- bees:developer -->` marker).\n")
+	for _, a := range activity {
+		sb.WriteString("\n---\n")
+		switch a.Kind {
+		case "review":
+			fmt.Fprintf(&sb, "**Review** by %s — state `%s` — %s\n", a.Author, a.State, a.CreatedAt.Format(time.RFC3339))
+			fmt.Fprintf(&sb, "Reply with: `gh pr comment %d -R %s --body '...'`\n\n", pr, repo)
+		case "review-comment":
+			loc := a.Path
+			if a.Line > 0 {
+				loc = fmt.Sprintf("%s:%d", a.Path, a.Line)
+			}
+			fmt.Fprintf(&sb, "**Inline comment** by %s on `%s` — %s\n", a.Author, loc, a.CreatedAt.Format(time.RFC3339))
+			fmt.Fprintf(&sb, "Reply with: `gh api repos/%s/pulls/%d/comments/%d/replies -f body='...'`\n\n", repo, pr, a.ID)
+		default:
+			fmt.Fprintf(&sb, "**Comment** by %s — %s\n", a.Author, a.CreatedAt.Format(time.RFC3339))
+			fmt.Fprintf(&sb, "Reply with: `gh pr comment %d -R %s --body '...'`\n\n", pr, repo)
+		}
+		sb.WriteString(strings.TrimSpace(a.Body))
+		sb.WriteString("\n")
+		if a.URL != "" {
+			fmt.Fprintf(&sb, "\n%s\n", a.URL)
+		}
+	}
+	return sb.String()
+}
+
+// adoptCreated is the label backstop: anything the account created since
+// a session started that carries a factory label (bees:bug, bees:feature,
+// a state label) but is missing the base label or the configured assignee
+// is fixed up so it stays visible to the factory.
+func (s *Scheduler) adoptCreated(ctx context.Context, since time.Time) {
+	items, err := s.gh.ListCreatedSince(ctx, since)
+	if err != nil {
+		s.log.Warn("label backstop: list created items", "err", err)
+		return
+	}
+	prefix := s.labels.Base + ":"
+	for _, it := range items {
+		factory := false
+		for _, l := range it.Labels {
+			if strings.HasPrefix(l.Name, prefix) {
+				factory = true
+				break
+			}
+		}
+		if !factory {
+			continue
+		}
+		if !github.HasLabel(it.Labels, s.labels.Base) {
+			s.log.Info("label backstop: adding base label", "number", it.Number, "pr", it.IsPR)
+			if err := s.gh.EditLabels(ctx, it.Number, []string{s.labels.Base}, nil); err != nil {
+				s.log.Warn("label backstop", "number", it.Number, "err", err)
+			}
+		}
+		if a := s.cfg.Filter.Assignee; a != "" {
+			assigned := false
+			for _, u := range it.Assignees {
+				if strings.EqualFold(u.Login, a) {
+					assigned = true
+				}
+			}
+			if !assigned {
+				s.log.Info("label backstop: assigning", "number", it.Number, "assignee", a)
+				if err := s.gh.Assign(ctx, it.Number, a); err != nil {
+					s.log.Warn("label backstop: assign", "number", it.Number, "err", err)
+				}
+			}
+		}
+	}
+}

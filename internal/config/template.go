@@ -1,0 +1,276 @@
+package config
+
+import (
+	"bytes"
+	"text/template"
+)
+
+// TemplateData fills the bees.toml template written by `bees init`.
+// Repo and DefaultBranch are shown as commented placeholders (they are
+// derived from the remote at run time) unless Explicit is set.
+type TemplateData struct {
+	Remote        string
+	Repo          string
+	DefaultBranch string
+	Label         string
+	Assignee      string
+	// Explicit writes repo and default_branch as active settings.
+	Explicit bool
+}
+
+// Template renders a fully commented starter bees.toml.
+func Template(d TemplateData) (string, error) {
+	if d.Label == "" {
+		d.Label = DefaultLabel
+	}
+	if d.Remote == "" {
+		d.Remote = DefaultRemote
+	}
+	if d.Repo == "" {
+		d.Repo = "owner/name"
+	}
+	if d.DefaultBranch == "" {
+		d.DefaultBranch = "main"
+	}
+	t, err := template.New("bees.toml").Parse(beesTOMLTemplate)
+	if err != nil {
+		return "", err
+	}
+	var buf bytes.Buffer
+	if err := t.Execute(&buf, d); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
+
+const beesTOMLTemplate = `# bees.toml — configuration for a busybees software factory.
+#
+# Every option is listed here. Lines starting with "#" are commented out and
+# show the default value; uncomment a line to change it. Run
+# ` + "`bees config show`" + ` to see the resolved settings for every role.
+
+#===============================================================================
+# Project
+#===============================================================================
+[project]
+# Git remote the factory fetches from and pushes to.
+#remote = "{{.Remote}}"
+# GitHub repository, as owner/name. Derived from the remote's URL when unset.
+{{if .Explicit}}repo = "{{.Repo}}"{{else}}#repo = "{{.Repo}}"{{end}}
+# Branch developers branch from and QA tests. Derived from the remote's HEAD
+# when unset.
+{{if .Explicit}}default_branch = "{{.DefaultBranch}}"{{else}}#default_branch = "{{.DefaultBranch}}"{{end}}
+# What the product is and how to build, test and run it belong in the
+# repository's own documentation (README, CONTRIBUTING, CLAUDE.md); the roles
+# read it and keep what they learn in their notes.
+# Directory for mail, notes, session logs and scheduler state, relative to
+# this file. ` + "`bees init`" + ` adds it to .gitignore.
+#state_dir = ".bees"
+# Prefix for developer branches (bees/issue-12).
+#branch_prefix = "bees/"
+
+#===============================================================================
+# Visibility filter — which issues and pull requests the factory can see.
+# Criteria are ANDed. Everything the factory creates is made to match.
+#===============================================================================
+[filter]
+# The factory's label; also the base name of the workflow labels
+# ({{.Label}}:triage, {{.Label}}:ready, {{.Label}}:in-progress, ...).
+label = "{{.Label}}"
+# Set to false to let assignee and/or milestone alone define visibility. The
+# label is still applied to everything the factory creates.
+#require_label = true
+# Only see items assigned to this GitHub login. "@me" means the gh user.
+# Useful when one person runs busybees for their share of a shared repo.
+{{if .Assignee}}assignee = "{{.Assignee}}"{{else}}#assignee = "@me"{{end}}
+# Only see items in this milestone.
+#milestone = ""
+
+#===============================================================================
+# Scheduler
+#===============================================================================
+[scheduler]
+# How often GitHub is polled for work. Each poll costs two API calls; keep it
+# infrequent. Sessions make their own gh calls on top of this.
+#poll_interval = "5m"
+# How long to pause polling after GitHub reports a rate limit.
+#rate_limit_backoff = "15m"
+# Concurrent developer workers. Each runs a sequential developer <-> reviewer
+# loop for one issue; reviewer concurrency follows developer concurrency.
+#max_developers = 1
+# Developer/reviewer iterations before an issue is escalated to a human.
+#max_review_rounds = 3
+# Issues handed to the project manager per session.
+#triage_batch_size = 5
+# Minimum time between product manager runs (mail triggers an earlier run).
+#product_manager_interval = "1h"
+# Minimum time between QA runs. QA only runs when something was merged.
+#qa_interval = "30m"
+# Keep temp worktrees after sessions finish (debugging).
+#keep_workspaces = false
+# Where temp worktrees are created (default: the system temp dir).
+#workspace_root = ""
+
+#===============================================================================
+# Global role settings — apply to every role, merged with [roles.<name>]:
+# prompts concatenate (global first), skills union, env and mcp servers union
+# (the role wins on a name conflict), scalars fall back to global then defaults.
+#===============================================================================
+[global]
+# Text appended to every role's base prompt.
+#prompt = """
+#"""
+# File whose contents are appended after prompt (relative to this file).
+#prompt_file = "docs/team-conventions.md"
+# Skills by git URL: <url>[@ref][#sub/dir], cloned and exposed to claude as
+# plugins. Skills in the repository's .claude/skills/ and in ~/.claude/skills/
+# are available automatically and need not be listed.
+#skills = [
+#  "https://github.com/anthropics/skills#skills/webapp-testing",
+#]
+# claude model, and the model used once it has hit its usage limit.
+#model = "opus"
+#fallback_model = "sonnet"
+# Effort level: low, medium, high or max.
+#effort = "high"
+# Agentic turns per session and wall-clock limit.
+#max_turns = 200
+#timeout = "45m"
+# Tool restrictions passed straight to claude.
+#allowed_tools = []
+#disallowed_tools = ["WebSearch"]
+# Shell for claude's Bash tool in sessions (exported as $SHELL).
+#shell = "/bin/bash"
+
+# Environment variables exported into every session (claude, its Bash tool,
+# MCP servers, git). $VARS are expanded from the bees environment. Roles can
+# add or override entries in [roles.<name>.env].
+#[global.env]
+#CI = "true"
+#NPM_TOKEN = "$NPM_TOKEN"
+
+# MCP servers available to every role, one table per server. stdio servers
+# use command/args/env; remote servers use url (+ type = "http" | "sse",
+# headers). $VARS in env and headers are expanded from the bees environment.
+#[global.mcp.github]
+#command = "npx"
+#args = ["-y", "@modelcontextprotocol/server-github"]
+#env = { GITHUB_PERSONAL_ACCESS_TOKEN = "$GITHUB_TOKEN" }
+#
+#[global.mcp.docs]
+#type = "http"
+#url = "https://mcp.example.com/docs"
+#headers = { Authorization = "Bearer $DOCS_TOKEN" }
+
+#===============================================================================
+# Per-role settings. Every key from [global] is valid here, plus enabled;
+# the developer also takes commit_flags and the reviewer the auto-merge keys.
+#===============================================================================
+
+# Owns the product vision and feature issues; breaks features into work items.
+[roles.product_manager]
+#prompt = """
+#"""
+#prompt_file = ""
+#skills = []
+#model = "opus"
+#fallback_model = "sonnet"
+#effort = "high"
+#max_turns = 200
+#timeout = "45m"
+#enabled = true
+#shell = "/bin/bash"
+#[roles.product_manager.env]
+#EXAMPLE = "value"
+#[roles.product_manager.mcp.example]
+#command = "example-mcp"
+
+# Triages issues into build-ready work and answers developer questions.
+[roles.project_manager]
+#prompt = """
+#"""
+#prompt_file = ""
+#skills = []
+#model = "opus"
+#fallback_model = "sonnet"
+#effort = "high"
+#max_turns = 200
+#timeout = "45m"
+#enabled = true
+#shell = "/bin/bash"
+#[roles.project_manager.env]
+#EXAMPLE = "value"
+#[roles.project_manager.mcp.example]
+#command = "example-mcp"
+
+# Implements one issue on a branch and opens a pull request.
+[roles.developer]
+#prompt = """
+#"""
+# Extra flags for every git commit the developer makes.
+#commit_flags = "--gpg-sign --signoff"
+#prompt_file = ""
+#skills = []
+#model = "opus"
+#fallback_model = "sonnet"
+#effort = "high"
+#max_turns = 200
+#timeout = "45m"
+#enabled = true
+#shell = "/bin/bash"
+#[roles.developer.env]
+#EXAMPLE = "value"
+#[roles.developer.mcp.example]
+#command = "example-mcp"
+
+# Reviews pull requests and, optionally, merges them once checks are green.
+[roles.reviewer]
+#prompt = """
+#"""
+#prompt_file = ""
+#skills = []
+#model = "opus"
+#fallback_model = "sonnet"
+#effort = "high"
+#max_turns = 200
+#timeout = "45m"
+# Disabling the reviewer treats pull requests as approved as soon as the
+# developer opens them.
+#enabled = true
+# Merge approved pull requests automatically once the required checks are
+# green. Off: humans merge. When checks fail the reviewer diagnoses the main
+# error and hands it to the developer to fix (up to max_check_fix_rounds).
+#auto_merge = false
+# squash, merge or rebase.
+#merge_method = "squash"
+# Wait after approval before polling checks; some take a moment to start.
+#checks_wait = "1m"
+# How often to poll the checks while waiting (one API call each).
+#checks_poll_interval = "2m"
+# Escalate to a human if checks are still pending after this long.
+#checks_timeout = "30m"
+#max_check_fix_rounds = 2
+#shell = "/bin/bash"
+#[roles.reviewer.env]
+#EXAMPLE = "value"
+#[roles.reviewer.mcp.example]
+#command = "example-mcp"
+
+# Tests the default branch after merges, files bugs, reports to the PM.
+[roles.qa]
+#prompt = """
+#"""
+#prompt_file = ""
+#skills = []
+#model = "opus"
+#fallback_model = "sonnet"
+#effort = "high"
+#max_turns = 200
+#timeout = "45m"
+#enabled = true
+#shell = "/bin/bash"
+#[roles.qa.env]
+#EXAMPLE = "value"
+#[roles.qa.mcp.example]
+#command = "example-mcp"
+`

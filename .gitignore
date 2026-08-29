@@ -1,0 +1,5 @@
+# busybees state (mail, notes, session transcripts)
+/.bees/
+# build output
+/bees
+/dist/

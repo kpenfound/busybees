@@ -1,0 +1,10 @@
+# Dagger workspace configuration
+# Install modules with: dagger install <module>
+# Example:
+#   dagger install github.com/dagger/dagger/modules/wolfi
+
+[modules.go]
+source = "github.com/dagger/go"
+
+[modules.go.settings]
+base = "golang:1.26-bookworm"

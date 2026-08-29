@@ -1,0 +1,6 @@
+[["version","2"]]
+["","git-latest",["https://github.com/dagger/go"],"refs/heads/main"]
+["","git-sha",["https://github.com/dagger/go","refs/heads/main"],"8d294186ba876b781ba4abd12d96735d0d0fb331"]
+["","oci-sha",["docker.io/library/golang:1.24-bookworm"],"sha256:1a6d4452c65dea36aac2e2d606b01b4a029ec90cc1ae53890540ce6173ea77ac"]
+["","oci-sha",["docker.io/library/golang:1.26-alpine"],"sha256:28d89ee9cc0ff9fec75c82ca201e6bf7fdf9a679d4b7b24dfa04f2bb766bb468"]
+["","oci-sha",["docker.io/library/golang:1.26-bookworm"],"sha256:e8c859f5632dcfde7b32d2012b4351728f6437930887c2f6a91ea242459e5514"]
