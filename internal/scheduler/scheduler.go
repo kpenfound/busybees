@@ -69,10 +69,15 @@ type Scheduler struct {
 	running  map[string]bool
 	backoff  map[string]time.Time
 	lastPoll time.Time
+	nextPoll time.Time
 	lastErr  string
 	queues   map[string]int
 	wg       sync.WaitGroup
 	slots    chan struct{}
+	// Issues and PRs from the last successful poll, reused by local passes.
+	lastIssues []github.Issue
+	lastPRs    []github.PR
+	polled     bool
 }
 
 // New builds a scheduler.
@@ -124,20 +129,20 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		s.log.Warn("worktree prune failed", "err", err)
 	}
 	s.log.Info("scheduler started", "repo", s.cfg.Project.Repo, "filter", s.describeQuery(),
-		"max_developers", s.cfg.Scheduler.MaxDevelopers, "poll", s.cfg.Scheduler.PollInterval.Duration)
+		"max_developers", s.cfg.Scheduler.MaxDevelopers, "poll", s.cfg.Scheduler.PollInterval.Duration,
+		"work_hours", s.cfg.Scheduler.WorkHours)
 	for {
-		wait := s.cfg.Scheduler.PollInterval.Duration
-		if err := s.pass(ctx); err != nil {
+		full, err := s.tick(ctx)
+		if err != nil {
 			if ctx.Err() != nil {
 				break
 			}
 			s.log.Error("poll failed", "err", err)
 			s.setLastErr(err.Error())
 			if isRateLimited(err) {
-				wait = s.cfg.Scheduler.RateLimitBackoff.Duration
-				s.log.Warn("GitHub rate limit hit; pausing polling", "for", wait)
+				s.log.Warn("GitHub rate limit hit; pausing polling", "for", s.cfg.Scheduler.RateLimitBackoff.Duration)
 			}
-		} else {
+		} else if full {
 			s.setLastErr("")
 		}
 		s.writeStatus()
@@ -147,7 +152,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			goto drain
-		case <-time.After(wait):
+		case <-time.After(s.cfg.Scheduler.PollInterval.Duration):
 		}
 	}
 drain:
@@ -197,8 +202,24 @@ func (s *Scheduler) poll(ctx context.Context) (*snapshot, error) {
 	if err != nil {
 		return nil, err
 	}
+	s.mu.Lock()
+	s.lastPoll = s.now()
+	s.lastIssues, s.lastPRs, s.polled = issues, prs, true
+	s.mu.Unlock()
+	snap := s.classify(issues, prs)
+	s.setQueues(snap)
+	return snap, nil
+}
+
+// classify buckets one poll's issues and PRs by workflow state. It does not
+// touch GitHub and never mutates its arguments, so the lists cached from the
+// last poll can be classified again on every local pass.
+func (s *Scheduler) classify(issues []github.Issue, prs []github.PR) *snapshot {
 	snap := &snapshot{issues: issues, prs: prs, byState: map[string][]github.Issue{}, prByBranch: map[string]github.PR{}, prByNumber: map[int]github.PR{}}
 	for _, i := range issues {
+		// Clip the label slice so an append by a caller (reconcile) cannot
+		// write into the cached issue's backing array.
+		i.Labels = i.Labels[:len(i.Labels):len(i.Labels)]
 		// Feedback and feature issues belong to the product manager and sit
 		// outside the workflow state machine.
 		if github.HasLabel(i.Labels, s.labels.Feedback) {
@@ -215,20 +236,24 @@ func (s *Scheduler) poll(ctx context.Context) (*snapshot, error) {
 		sort.Slice(snap.byState[st], func(a, b int) bool { return snap.byState[st][a].CreatedAt.Before(snap.byState[st][b].CreatedAt) })
 	}
 	for _, p := range prs {
+		p.Labels = p.Labels[:len(p.Labels):len(p.Labels)]
 		snap.prByBranch[p.HeadRefName] = p
 		snap.prByNumber[p.Number] = p
 	}
+	return snap
+}
+
+// setQueues records the queue sizes of a snapshot for `bees status`.
+func (s *Scheduler) setQueues(snap *snapshot) {
 	s.mu.Lock()
-	s.lastPoll = s.now()
+	defer s.mu.Unlock()
 	s.queues = map[string]int{}
 	for st, list := range snap.byState {
 		s.queues[st] = len(list)
 	}
 	s.queues["feedback"] = len(snap.feedback)
 	s.queues["features"] = len(snap.features)
-	s.queues["open_prs"] = len(prs)
-	s.mu.Unlock()
-	return snap, nil
+	s.queues["open_prs"] = len(snap.prs)
 }
 
 // stateOf returns the workflow state name ("triage", "ready", ...) of an
@@ -242,6 +267,31 @@ func (s *Scheduler) stateOf(labels []github.Label) string {
 	return ""
 }
 
+// tick runs one iteration of the loop: a full pass when a GitHub poll is due,
+// a local pass otherwise. It reports whether the pass was a full one and the
+// error of a failed poll.
+func (s *Scheduler) tick(ctx context.Context) (bool, error) {
+	now := s.now()
+	s.mu.Lock()
+	due := s.nextPoll.IsZero() || !now.Before(s.nextPoll)
+	s.mu.Unlock()
+	if !due {
+		s.localPass(ctx)
+		return false, nil
+	}
+	err := s.pass(ctx)
+	wait := s.cfg.Scheduler.PollIntervalAt(now)
+	if err != nil && isRateLimited(err) {
+		// A rate limit wins over the work-hours window.
+		wait = s.cfg.Scheduler.RateLimitBackoff.Duration
+	}
+	s.mu.Lock()
+	s.nextPoll = now.Add(wait)
+	s.mu.Unlock()
+	return true, err
+}
+
+// pass polls GitHub and runs the whole reconcile/dispatch cycle.
 func (s *Scheduler) pass(ctx context.Context) error {
 	snap, err := s.poll(ctx)
 	if err != nil {
@@ -254,8 +304,31 @@ func (s *Scheduler) pass(ctx context.Context) error {
 		s.log.Warn("reconcile", "err", err)
 	}
 	s.dispatchDevelopers(ctx, snap)
-	s.dispatchSingletons(ctx, snap)
+	s.dispatchSingletons(ctx, snap, false)
 	return nil
+}
+
+// localPass is a pass that makes no GitHub read calls of its own: it reuses
+// the issue and PR lists from the last poll, so everything driven by the
+// local mailbox (answered questions, review rounds) keeps moving at
+// poll_interval even when GitHub is only polled every
+// off_hours_poll_interval. It deliberately skips the human-feedback fetch and
+// the product manager / QA has-work checks, all of which query GitHub. Until
+// the first successful poll it does nothing.
+func (s *Scheduler) localPass(ctx context.Context) {
+	s.mu.Lock()
+	issues, prs, ok := s.lastIssues, s.lastPRs, s.polled
+	s.mu.Unlock()
+	if !ok {
+		return
+	}
+	snap := s.classify(issues, prs)
+	s.setQueues(snap)
+	if err := s.reconcile(ctx, snap); err != nil {
+		s.log.Warn("reconcile", "err", err)
+	}
+	s.dispatchDevelopers(ctx, snap)
+	s.dispatchSingletons(ctx, snap, true)
 }
 
 // reconcile applies label transitions that depend on local state:
@@ -362,8 +435,10 @@ func (s *Scheduler) dispatchDevelopers(ctx context.Context, snap *snapshot) {
 }
 
 // dispatchSingletons starts the product manager, project manager and QA
-// when they have work and are not already running.
-func (s *Scheduler) dispatchSingletons(ctx context.Context, snap *snapshot) {
+// when they have work and are not already running. With mailOnly (a local
+// pass) a role only starts when it has unread mail: the other has-work checks
+// query GitHub.
+func (s *Scheduler) dispatchSingletons(ctx context.Context, snap *snapshot, mailOnly bool) {
 	type job struct {
 		role string
 		want func() bool
@@ -373,6 +448,12 @@ func (s *Scheduler) dispatchSingletons(ctx context.Context, snap *snapshot) {
 		{config.RoleProjectManager, func() bool { return s.projectManagerHasWork(snap) }, s.runProjectManager},
 		{config.RoleProductManager, func() bool { return s.productManagerHasWork(ctx, snap) }, s.runProductManager},
 		{config.RoleQA, func() bool { return s.qaHasWork(ctx) }, s.runQA},
+	}
+	if mailOnly {
+		for i := range jobs {
+			role := jobs[i].role
+			jobs[i].want = func() bool { return s.hasUnreadMail(role, 0, 0) }
+		}
 	}
 	for _, j := range jobs {
 		if !s.roleEnabled(j.role) {
@@ -465,7 +546,11 @@ func (s *Scheduler) escalate(ctx context.Context, number int, reason string) err
 
 func (s *Scheduler) writeStatus() {
 	s.mu.Lock()
-	st := state.Status{LastPoll: s.lastPoll, Singletons: map[string]string{}, Queues: map[string]int{}, LastError: s.lastErr}
+	st := state.Status{LastPoll: s.lastPoll, NextPoll: s.nextPoll, Singletons: map[string]string{}, Queues: map[string]int{}, LastError: s.lastErr}
+	if s.cfg.Scheduler.WorkHoursEnabled() {
+		in := s.cfg.Scheduler.InWorkHours(s.now())
+		st.InWorkHours = &in
+	}
 	for _, w := range s.owned {
 		st.Workers = append(st.Workers, *w)
 	}
