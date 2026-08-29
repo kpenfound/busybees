@@ -119,7 +119,17 @@ the poll itself, the human-feedback fetch (step 2) and the product-manager and
 QA "has work" checks, all of which read GitHub; label *writes* made by
 `reconcile` and dispatch still happen, because what a local pass protects is
 the polling budget, not every API call. Until the first successful poll there
-is nothing cached and a local pass does nothing. The mailbox is not GitHub: the
+is nothing cached and a local pass does nothing.
+
+The one read a local pass does make is a confirmation. Its snapshot can be
+stale — an issue a worker has since finished, one a developer parked in
+`bees:blocked`, one a human closed or relabelled all still carry their old
+state label in the cache — so before spending a session on a candidate,
+`dispatchDevelopers` fetches that single issue (`gh issue view`) and drops it
+unless it is still open and in `bees:ready`, `bees:in-progress` or
+`bees:review`. The fresh copy replaces the cached one, so the next local pass
+does not ask again. That is one call immediately before a whole session, not
+per pass. The mailbox is not GitHub: the
 developer ↔ reviewer loop, the checks stage and mail-driven label transitions
 run at `poll_interval` however the window is configured.
 

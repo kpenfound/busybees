@@ -303,7 +303,7 @@ func (s *Scheduler) pass(ctx context.Context) error {
 	if err := s.reconcile(ctx, snap); err != nil {
 		s.log.Warn("reconcile", "err", err)
 	}
-	s.dispatchDevelopers(ctx, snap)
+	s.dispatchDevelopers(ctx, snap, false)
 	s.dispatchSingletons(ctx, snap, false)
 	return nil
 }
@@ -327,7 +327,7 @@ func (s *Scheduler) localPass(ctx context.Context) {
 	if err := s.reconcile(ctx, snap); err != nil {
 		s.log.Warn("reconcile", "err", err)
 	}
-	s.dispatchDevelopers(ctx, snap)
+	s.dispatchDevelopers(ctx, snap, true)
 	s.dispatchSingletons(ctx, snap, true)
 }
 
@@ -388,7 +388,13 @@ func relabel(labels []github.Label, from, to string) []github.Label {
 // dispatchDevelopers hands issues to free developer workers. Issues that
 // are already in progress or in review but not owned by a worker (for
 // example after a restart) are resumed first, then ready issues oldest first.
-func (s *Scheduler) dispatchDevelopers(ctx context.Context, snap *snapshot) {
+//
+// On a local pass (local) the snapshot comes from the last poll and can be
+// stale: an issue a worker has since finished, a developer parked in
+// bees:blocked or a human closed still carries its old state label. Before
+// spending a session on such an issue the live issue is fetched once and the
+// candidate dropped unless it is still open and in a dispatchable state.
+func (s *Scheduler) dispatchDevelopers(ctx context.Context, snap *snapshot, local bool) {
 	if !s.roleEnabled(config.RoleDeveloper) {
 		return
 	}
@@ -411,6 +417,14 @@ func (s *Scheduler) dispatchDevelopers(ctx context.Context, snap *snapshot) {
 		default:
 			return // pool is full
 		}
+		if local {
+			live, ok := s.liveCandidate(ctx, issue)
+			if !ok {
+				s.slots <- struct{}{}
+				continue
+			}
+			issue = live
+		}
 		w := &state.Worker{Name: fmt.Sprintf("dev-%d", issue.Number), Issue: issue.Number, Stage: "starting", Since: s.now()}
 		s.mu.Lock()
 		s.owned[issue.Number] = w
@@ -431,6 +445,40 @@ func (s *Scheduler) dispatchDevelopers(ctx context.Context, snap *snapshot) {
 				s.setBackoff(fmt.Sprintf("issue-%d", issue.Number), 5*s.cfg.Scheduler.PollInterval.Duration)
 			}
 		}(issue, w)
+	}
+}
+
+// liveCandidate re-reads an issue picked from a stale (cached) snapshot and
+// reports whether a developer worker should still be started for it. It also
+// refreshes the cached copy, so an issue that has moved on is not fetched
+// again by the next local pass.
+func (s *Scheduler) liveCandidate(ctx context.Context, issue github.Issue) (github.Issue, bool) {
+	live, err := s.gh.GetIssue(ctx, issue.Number)
+	if err != nil {
+		s.log.Warn("live issue check failed, skipping", "issue", issue.Number, "err", err)
+		return issue, false
+	}
+	s.cacheIssue(live)
+	if live.State != "" && !strings.EqualFold(live.State, "open") {
+		return live, false
+	}
+	switch s.stateOf(live.Labels) {
+	case "ready", "in-progress", "review":
+		return live, true
+	default:
+		return live, false
+	}
+}
+
+// cacheIssue replaces an issue in the lists kept from the last poll.
+func (s *Scheduler) cacheIssue(live github.Issue) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.lastIssues {
+		if s.lastIssues[i].Number == live.Number {
+			s.lastIssues[i] = live
+			return
+		}
 	}
 }
 

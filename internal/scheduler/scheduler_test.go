@@ -942,3 +942,73 @@ func TestLocalPassUnblocksIssueOffHours(t *testing.T) {
 		t.Fatalf("cached poll was mutated: %d blocked issues", n)
 	}
 }
+
+// workHoursDevTOML is workHoursTOML with the developer and reviewer enabled,
+// so a whole develop -> review -> approve cycle runs off hours.
+const workHoursDevTOML = baseTOML + `
+off_hours_poll_interval = "1h"
+work_hours = "09:00-18:00"
+work_days = ["mon", "tue", "wed", "thu", "fri"]
+timezone = "UTC"
+[roles.product_manager]
+enabled = false
+[roles.project_manager]
+enabled = false
+[roles.qa]
+enabled = false
+`
+
+func TestLocalPassDoesNotRedispatchFinishedIssues(t *testing.T) {
+	// Saturday: off hours, so the tick after the first one is local and its
+	// snapshot still carries the issue's pre-work labels.
+	h := newHarnessAt(t, workHoursDevTOML, time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC))
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}}, CreatedAt: time.Now()}
+	h.gh.prs[fakePR] = &github.PR{Number: fakePR, Title: "Build the thing", State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	if full, err := h.sched.tick(ctx); err != nil || !full {
+		t.Fatalf("first tick: full=%v err=%v", full, err)
+	}
+	h.sched.wg.Wait()
+	want := "bees:in-progress,bees:review,bees:in-progress,bees:review,bees:approved"
+	before := strings.Join(h.gh.history[1], ",")
+	if before != want {
+		t.Fatalf("first pass history: %s, want %s", before, want)
+	}
+
+	lists, views := h.gh.callCount("issue list")+h.gh.callCount("pr list"), h.gh.callCount("issue view")
+
+	h.clock.advance(h.cfg.Scheduler.PollInterval.Duration)
+	if full, err := h.sched.tick(ctx); err != nil || full {
+		t.Fatalf("second tick: full=%v err=%v", full, err)
+	}
+	h.sched.wg.Wait()
+	if got := strings.Join(h.gh.history[1], ","); got != before {
+		t.Fatalf("local pass restarted a finished issue: %s", got)
+	}
+	if n := len(h.sessions(config.RoleDeveloper)); n != 2 {
+		t.Fatalf("developer sessions: %d, want 2", n)
+	}
+	// The candidate cost one live issue view, not a poll.
+	if n := h.gh.callCount("issue list") + h.gh.callCount("pr list"); n != lists {
+		t.Fatalf("a local pass must not poll GitHub: %v", h.gh.calls)
+	}
+	if n := h.gh.callCount("issue view"); n != views+1 {
+		t.Fatalf("live checks: %d, want 1", n-views)
+	}
+	// The refreshed issue replaces the stale cached one, so the next local
+	// pass classifies it as approved and does not check it again.
+	views = h.gh.callCount("issue view")
+	h.clock.advance(h.cfg.Scheduler.PollInterval.Duration)
+	if full, err := h.sched.tick(ctx); err != nil || full {
+		t.Fatalf("third tick: full=%v err=%v", full, err)
+	}
+	h.sched.wg.Wait()
+	if h.gh.callCount("issue view") != views {
+		t.Fatalf("an issue the cache already knows is approved was checked again: %v", h.gh.calls)
+	}
+	if got := strings.Join(h.gh.history[1], ","); got != before {
+		t.Fatalf("local pass restarted a finished issue: %s", got)
+	}
+}
