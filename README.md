@@ -65,7 +65,8 @@ create or change them, but every issue they create inherits the milestone of the
 it grew out of.
 
 `bees status` shows queues, workers and unread mail at any time. `bees tick` runs a single
-pass, and `bees exec developer --issue 12` runs one session by hand.
+pass, `bees exec developer --issue 12` runs one session by hand, and `bees kill` cleans up
+leftover sessions and worktrees after a crash.
 
 ## How it works
 

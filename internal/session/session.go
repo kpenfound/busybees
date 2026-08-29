@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/procs"
 	"github.com/kpenfound/busybees/internal/skills"
 )
 
@@ -252,6 +253,11 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start claude: %w", err)
 	}
+	// Record the pid so `bees kill` can find the session after a crash.
+	if err := procs.WritePID(sessionDir, cmd.Process.Pid); err != nil {
+		r.Logger.Warn("write pid file", "session", req.Name, "err", err)
+	}
+	defer procs.RemovePID(sessionDir)
 
 	final, scanErr := r.consume(stdout, transcript)
 	waitErr := cmd.Wait()

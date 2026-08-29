@@ -18,10 +18,11 @@ GitHub repository. Read `docs/architecture.md` before changing the scheduler.
 
 ## Layout
 
-- `cmd/bees` — cobra CLI (`init`, `run`, `tick`, `exec`, `status`, `mail`, `issue`, `done`, `config`, `prompts`, `labels`, `version`).
+- `cmd/bees` — cobra CLI (`init`, `run`, `tick`, `exec`, `status`, `kill`, `mail`, `issue`, `done`, `config`, `prompts`, `labels`, `version`).
 - `internal/config` — `bees.toml` schema (commented-defaults template in `template.go`), global/role merging, labels, repo/branch derivation from the git remote (`resolve.go`).
 - `internal/scheduler` — the loop: poll → deliver human PR feedback (`humans.go`) → reconcile labels → dispatch developer workers (`developer.go`: develop → review → checks stages) → dispatch singletons (`singletons.go`).
 - `internal/issues` — `bees issue create/link`: visible, labelled, sub-issue of a feature, milestone inherited.
+- `internal/procs` — pid files + `ps` scan to find and kill orphaned sessions (`bees kill`).
 - `internal/testutil` — local bare git remote + clone for tests.
 - `internal/session` — runs one `claude -p` session; outcome file written by `bees done`.
 - `internal/prompts` — embedded role prompts (`system/*.md`, `task/*.md`) rendered with `text/template`.

@@ -140,6 +140,34 @@ Roles talk to each other only through the local mailbox in `<state_dir>/mail`. T
 scheduler delivers messages by including them in the prompt of the session working on
 the referenced issue or PR and marks them read afterwards.
 
+### `bees kill [--dry-run] [--scheduler] [--grace 5s]`
+
+Cleans up after a crash: finds Claude Code sessions started by bees, terminates them
+together with their process groups (MCP servers, shells), removes stale pid files,
+removes the temporary worktrees bees created under the workspace root, and resets the
+worker list in `status.json`.
+
+Sessions are found two ways: the `pid` file each running session keeps in its
+`<state_dir>/sessions/<id>/` directory, and a scan of the process table for `claude`
+processes carrying the `--name bees-…` argument every session is started with. Pid files
+are cross-checked against the process table, so a pid reused by an unrelated process
+after a reboot is discarded, never killed.
+
+It refuses to run while a `bees run` scheduler is alive (killing sessions under a running
+scheduler would corrupt its state); pass `--scheduler` to stop the scheduler too.
+
+| Flag | Meaning |
+|---|---|
+| `--dry-run` | Show what would be killed and removed. |
+| `--scheduler` | Also stop a running scheduler (found via the pid in `status.json`). |
+| `--grace 5s` | Time to wait after SIGTERM before SIGKILL. |
+
+```sh
+bees kill --dry-run
+bees kill
+bees kill --scheduler      # the scheduler itself is hung
+```
+
 ### `bees mail send` *(sessions)*
 
 | Flag | Description |

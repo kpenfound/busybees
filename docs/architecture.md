@@ -18,6 +18,7 @@ internal/session/    runs one headless `claude -p` session and collects its resu
 internal/prompts/    embedded base prompts (system/*.md, task/*.md) and their renderer
 internal/state/      state directory: notes, per-issue bookkeeping, singleton run times, status.json
 internal/scheduler/  the orchestrator: poll, human feedback, reconcile, developer worker pool, singleton roles
+internal/procs/      find and stop bees sessions after a crash (`bees kill`)
 internal/testutil/   test helpers (local bare git remote + clone)
 ```
 
@@ -370,3 +371,18 @@ DAGGER_X_RELEASE=v1.0.0-beta.11 dagger check go:test-all
 
 The `DAGGER_X_RELEASE` variable pins the Dagger release used for this
 repository; set it in your shell.
+
+## Crash recovery (`bees kill`)
+
+The runner writes the session's pid to `<session dir>/pid` right after starting
+`claude` and removes it when the session ends. If bees dies, those files (and the
+`--name bees-<session>` argument every session is started with) let `bees kill`
+find the orphans: `procs.Find` merges the pid files with a `ps` scan restricted to
+processes whose executable is `claude` (directly or via an interpreter), cross-checking
+pid files against the scan so a reused pid is discarded rather than killed.
+`procs.Kill` sends SIGTERM to the process group (sessions are started with
+`Setpgid`, so MCP servers and shells belong to it), waits `--grace`, then SIGKILL.
+The command then removes every worktree of the main clone that lives under the
+workspace root, prunes worktree metadata, deletes leftover workspace directories and
+resets `status.json`. It refuses to run while the scheduler recorded in `status.json`
+is alive unless `--scheduler` is given.
