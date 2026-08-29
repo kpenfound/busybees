@@ -413,10 +413,10 @@ func describeDays(days map[time.Weekday]bool) string {
 		for j+1 < len(weekdayNames) && days[weekdayNames[j+1].day] {
 			j++
 		}
-		switch {
-		case j == i:
+		switch j {
+		case i:
 			parts = append(parts, weekdayNames[i].name)
-		case j == i+1:
+		case i + 1:
 			parts = append(parts, weekdayNames[i].name, weekdayNames[j].name)
 		default:
 			parts = append(parts, weekdayNames[i].name+"-"+weekdayNames[j].name)
