@@ -164,3 +164,7 @@ afford to babysit, keep the reviewer's `auto_merge` off, and watch `bees status`
 
 Inspired by [swarms](https://github.com/kyegomez/swarms), scaled down to one job: a
 software factory driven by GitHub.
+
+## License
+
+[MIT](LICENSE)
