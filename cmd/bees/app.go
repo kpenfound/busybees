@@ -14,6 +14,7 @@ import (
 	"github.com/kpenfound/busybees/internal/session"
 	"github.com/kpenfound/busybees/internal/skills"
 	"github.com/kpenfound/busybees/internal/state"
+	"github.com/kpenfound/busybees/internal/versions"
 	"github.com/kpenfound/busybees/internal/workspace"
 )
 
@@ -66,6 +67,15 @@ func newApp(ctx context.Context, g *globalFlags) (*app, error) {
 	}
 	log := slog.Default()
 
+	if cfg.NeedsRewrite() {
+		from := cfg.MigratedFrom
+		backup, err := cfg.Rewrite()
+		if err != nil {
+			return nil, fmt.Errorf("migrate %s: %w", cfg.Path, err)
+		}
+		log.Info("migrated bees.toml", "from", from, "to", config.CurrentVersion, "backup", backup)
+	}
+
 	if _, err := workspace.Git(ctx, cfg.Dir(), "rev-parse", "--git-dir"); err != nil {
 		return nil, fmt.Errorf("%s must live inside a git clone of %s: %w", cfg.Path, cfg.Project.Repo, err)
 	}
@@ -89,6 +99,9 @@ func newApp(ctx context.Context, g *globalFlags) (*app, error) {
 	claudeBin := os.Getenv("BEES_CLAUDE_BIN")
 	if claudeBin == "" {
 		claudeBin = "claude"
+	}
+	if err := versions.CheckAll(ctx, claudeBin); err != nil {
+		return nil, err
 	}
 	cache := os.Getenv("BEES_CACHE_DIR")
 	if cache == "" {

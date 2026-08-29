@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -102,7 +103,31 @@ func (d *Duration) UnmarshalText(text []byte) error {
 func (d Duration) MarshalText() ([]byte, error) { return []byte(d.String()), nil }
 
 // Config is the parsed bees.toml.
+// CurrentVersion is the bees.toml format version this build writes and reads
+// natively. Bump it (and add a migration) when a change to the schema cannot
+// be read by older files as-is: renamed or removed keys, changed semantics.
+// Adding optional keys is not a breaking change.
+const CurrentVersion = 1
+
+// migration rewrites the text of a bees.toml from one format version to the
+// next. Migrations work on the text, not the decoded tree, so the user's
+// comments (and the commented-out defaults) survive the rewrite.
+type migration func(text string) (string, error)
+
+// migrations[n] converts a version-n file to version n+1. Files without a
+// version key are version 0. Load applies the steps in memory; Config.Rewrite
+// (run by bees run/tick/exec/status and `bees config migrate`) writes the
+// result back to disk.
+var migrations = map[int]migration{
+	0: addVersionKey,
+}
+
 type Config struct {
+	// Version is the format version of the file (see CurrentVersion). After
+	// Load it is always CurrentVersion; MigratedFrom tells whether the file on
+	// disk is older.
+	Version int `toml:"version"`
+
 	Project   Project                 `toml:"project"`
 	Filter    Filter                  `toml:"filter"`
 	Global    RoleSettings            `toml:"global"`
@@ -111,6 +136,11 @@ type Config struct {
 
 	// Path is the absolute path of the loaded bees.toml (not part of the file).
 	Path string `toml:"-"`
+	// MigratedFrom is the version of the file on disk when it is older than
+	// CurrentVersion (0 = no version key), or -1 when no migration was needed.
+	MigratedFrom int `toml:"-"`
+	// migrated is the file text after migrations, written by Rewrite.
+	migrated string
 }
 
 // Project holds settings that describe the software being built.
@@ -318,8 +348,24 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	var cfg Config
-	md, err := toml.DecodeFile(abs, &cfg)
+	data, err := os.ReadFile(abs)
+	if err != nil {
+		return nil, err
+	}
+	text := string(data)
+	version, err := fileVersion(text)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	cfg := Config{Path: abs, MigratedFrom: -1}
+	if version < CurrentVersion {
+		if text, err = migrate(text, version, CurrentVersion, migrations); err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+		cfg.MigratedFrom = version
+		cfg.migrated = text
+	}
+	md, err := toml.Decode(text, &cfg)
 	if err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
@@ -330,13 +376,105 @@ func Load(path string) (*Config, error) {
 		}
 		return nil, fmt.Errorf("%s: unknown keys: %s", path, strings.Join(keys, ", "))
 	}
-	cfg.Path = abs
 	cfg.applyDefaults()
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 	return &cfg, nil
 }
+
+// NeedsRewrite reports whether the file on disk is older than CurrentVersion.
+func (c *Config) NeedsRewrite() bool { return c.MigratedFrom >= 0 }
+
+// Rewrite writes the migrated text back to the file when NeedsRewrite. It
+// keeps a copy of the original next to it as bees.toml.v<old>.bak.
+func (c *Config) Rewrite() (backup string, err error) {
+	if !c.NeedsRewrite() {
+		return "", nil
+	}
+	backup = fmt.Sprintf("%s.v%d.bak", c.Path, c.MigratedFrom)
+	orig, err := os.ReadFile(c.Path)
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(backup, orig, 0o644); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(c.Path, []byte(c.migrated), 0o644); err != nil {
+		return "", err
+	}
+	c.MigratedFrom = -1
+	return backup, nil
+}
+
+// fileVersion reads the top-level version key of a bees.toml. A file
+// without one is version 0 (written before the key existed).
+func fileVersion(text string) (int, error) {
+	var raw map[string]any
+	if _, err := toml.Decode(text, &raw); err != nil {
+		return 0, fmt.Errorf("parse: %w", err)
+	}
+	v, ok := raw["version"]
+	if !ok {
+		return 0, nil
+	}
+	n, ok := v.(int64)
+	if !ok || n < 0 {
+		return 0, fmt.Errorf("version must be a non-negative integer (this bees writes %d), got %v", CurrentVersion, v)
+	}
+	if n > CurrentVersion {
+		return 0, fmt.Errorf("version %d is newer than this bees understands (%d): upgrade bees", n, CurrentVersion)
+	}
+	return int(n), nil
+}
+
+// migrate upgrades text from version from to version to by applying
+// steps[from], steps[from+1], ... in order.
+func migrate(text string, from, to int, steps map[int]migration) (string, error) {
+	for v := from; v < to; v++ {
+		step, ok := steps[v]
+		if !ok {
+			return "", fmt.Errorf("no migration from bees.toml version %d to %d", v, v+1)
+		}
+		out, err := step(text)
+		if err != nil {
+			return "", fmt.Errorf("migrate bees.toml version %d to %d: %w", v, v+1, err)
+		}
+		text = setVersion(out, v+1)
+	}
+	return text, nil
+}
+
+var versionLineRE = regexp.MustCompile(`(?m)^[ \t]*version[ \t]*=[ \t]*\d+[ \t]*(#.*)?$`)
+
+// setVersion replaces the version line, or inserts one (with a comment)
+// before the first non-comment line, i.e. ahead of every table.
+func setVersion(text string, v int) string {
+	line := fmt.Sprintf("version = %d", v)
+	if versionLineRE.MatchString(text) {
+		return versionLineRE.ReplaceAllString(text, line)
+	}
+	lines := strings.Split(text, "\n")
+	at := len(lines)
+	for i, l := range lines {
+		if t := strings.TrimSpace(l); t != "" && !strings.HasPrefix(t, "#") {
+			at = i
+			break
+		}
+	}
+	block := []string{"# Format version of this file (see docs/configuration.md).", line, ""}
+	if at > 0 && strings.TrimSpace(lines[at-1]) != "" {
+		block = append([]string{""}, block...)
+	}
+	out := append([]string{}, lines[:at]...)
+	out = append(out, block...)
+	out = append(out, lines[at:]...)
+	return strings.Join(out, "\n")
+}
+
+// addVersionKey is the 0 -> 1 migration: the format is unchanged, the file
+// only gains its version key (which migrate itself sets).
+func addVersionKey(text string) (string, error) { return text, nil }
 
 // Find looks for bees.toml in dir and its parents.
 func Find(dir string) (string, error) {

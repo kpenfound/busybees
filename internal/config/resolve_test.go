@@ -22,7 +22,7 @@ func TestResolveFromGit(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := filepath.Join(clone, "bees.toml")
-	if err := os.WriteFile(p, []byte("[project]\nrepo = \"\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte("version = 1\n[project]\nrepo = \"\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err := Load(p)

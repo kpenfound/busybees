@@ -46,3 +46,9 @@ GitHub repository. Read `docs/architecture.md` before changing the scheduler.
 - Keep prompts in `internal/prompts/*/` in sync with `docs/roles.md` and `docs/workflow.md`.
 - Every new bees.toml key needs: struct tag, default, validation, `template.go`,
   `docs/configuration.md`, and a test in `internal/config`.
+- bees.toml carries a `version` key (missing = 0). Adding optional keys is not a
+  breaking change. Renaming/removing keys or changing their meaning is: bump
+  `config.CurrentVersion`, add a `migrations[old]` step that rewrites the file
+  *text* (so comments survive; also fix the commented-out defaults), test it, and
+  update the `version` section of `docs/configuration.md`. Loading migrates in
+  memory; `Config.Rewrite` writes it back.

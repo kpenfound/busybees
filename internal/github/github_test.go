@@ -67,9 +67,7 @@ func TestListParsing(t *testing.T) {
 		if args[0] == "issue" {
 			return json.Marshal([]Issue{{Number: 1, Title: "one", Labels: []Label{{Name: "bees"}}}})
 		}
-		return json.Marshal([]PR{{Number: 2, HeadRefName: "bees/issue-1", ClosingIssuesReferences: []struct {
-			Number int `json:"number"`
-		}{{Number: 1}}}})
+		return json.Marshal([]PR{{Number: 2, HeadRefName: "bees/issue-1", Body: "Closes #1"}})
 	}
 	issues, err := c.ListOpenIssues(context.Background(), Query{Label: "bees"})
 	if err != nil || len(issues) != 1 || !HasLabel(issues[0].Labels, "bees") {
@@ -150,5 +148,24 @@ func TestRequiredChecks(t *testing.T) {
 	resp, rerr = nil, fmt.Errorf("gh pr checks: exit status 4: not logged in")
 	if _, err = c.RequiredChecks(ctx, 1); err == nil {
 		t.Fatal("real errors must propagate")
+	}
+}
+
+func TestClosingIssues(t *testing.T) {
+	cases := []struct {
+		body string
+		want []int
+	}{
+		{"Closes #1", []int{1}},
+		{"closes #1\n\nfixes #2, Resolved: #3, fix #2 again", []int{1, 2, 3}},
+		{"Fixed https://github.com/a/b/issues/4 and closes https://github.com/x/y/issues/5", []int{4}},
+		{"See #6 and closes#7 and closest #8", []int{7}},
+		{"", nil},
+	}
+	for _, tc := range cases {
+		got := PR{URL: "https://github.com/a/b/pull/9", Body: tc.body}.ClosingIssues()
+		if fmt.Sprint(got) != fmt.Sprint(tc.want) {
+			t.Errorf("%q: got %v want %v", tc.body, got, tc.want)
+		}
 	}
 }

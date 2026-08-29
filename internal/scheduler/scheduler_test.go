@@ -364,6 +364,7 @@ func (h *harness) sessions(role string) []string {
 }
 
 const baseTOML = `
+version = 1
 [project]
 repo = "acme/widgets"
 [scheduler]
@@ -496,9 +497,7 @@ func TestHumanFeedbackReopensApprovedPR(t *testing.T) {
 	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Done already", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:approved"}}, CreatedAt: created}
 	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:approved"}}, CreatedAt: created, UpdatedAt: time.Now(),
-		ClosingIssuesReferences: []struct {
-			Number int `json:"number"`
-		}{{Number: 1}}}
+		Body: "Closes #1"}
 	// The PR "exists" from the start for this test.
 	if err := os.WriteFile(h.gh.prMarker, nil, 0o644); err != nil {
 		t.Fatal(err)

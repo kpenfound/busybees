@@ -56,7 +56,15 @@ Prints the label names and what each one means.
 
 ### `bees config validate`
 
-Loads `bees.toml` and reports errors (unknown keys, bad repo, invalid MCP server, ...).
+Loads `bees.toml` and reports errors (missing or unsupported `version`, unknown keys,
+bad repo, invalid MCP server, ...).
+
+### `bees config migrate`
+
+Rewrites `bees.toml` to the current format version (see
+[`version`](configuration.md#version)), keeping the original as
+`bees.toml.v<old>.bak`. Prints "already version N" when nothing needs doing. `bees
+run`, `tick`, `exec` and `status` run the same migration automatically on startup.
 
 ### `bees config show [role]`
 

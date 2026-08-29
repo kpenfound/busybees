@@ -8,7 +8,7 @@ commented out showing their default value — uncomment a line to change it. Onl
 `project.default_branch` when you pass `--repo`) start out active; `bees config validate` checks it; `bees config show` prints
 the resolved settings for every role after merging.
 
-The file has five top-level tables:
+The file starts with a `version` key, followed by five top-level tables:
 
 | Table | Purpose |
 |---|---|
@@ -19,6 +19,30 @@ The file has five top-level tables:
 | `[roles.<name>]` | Per-role overrides for `product_manager`, `project_manager`, `developer`, `reviewer`, `qa` |
 
 Unknown keys are an error, so typos are caught at load time.
+
+## `version`
+
+```toml
+version = 1
+```
+
+The format version of `bees.toml` (not of bees itself); the first key in the file,
+written by `bees init`. A file without one is version 0, the format that predates the
+key.
+
+- A file **newer** than the running bees understands is refused ("upgrade bees").
+- An **older** file is migrated on load — step by step through the migration table in
+  `internal/config` — and `bees run`, `tick`, `exec` and `status` then write the
+  migrated file back, keeping the original as `bees.toml.v<old>.bak` and logging what
+  happened. `bees config migrate` does the same explicitly (handy for reviewing the
+  diff with git before starting the factory); `bees config validate` only reports that
+  a migration is pending. Migrations rewrite the file's text, so comments and the
+  commented-out defaults survive.
+
+Adding optional keys never bumps the version; renaming or removing keys, or changing
+what an existing key means, does — the release notes of a bees version that bumps it
+say what changed. The current version is `1`; the only migration so far (0 → 1) adds
+the key.
 
 ## `[project]`
 
@@ -375,6 +399,19 @@ enabled = false            # the team's real PM owns the roadmap
 prompt = "Only touch files under services/billing unless the issue says otherwise."
 ```
 
+## Requirements
+
+`bees run`, `tick`, `exec`, `status` and `init` check the tools they drive before doing
+anything and refuse to start when one is missing or too old:
+
+| Tool | Minimum | Why |
+|---|---|---|
+| [`gh`](https://cli.github.com/) | 2.50.0 | `gh pr checks --json` (2.50.0) and `gh api --slurp` (2.49.0). |
+| Claude Code (`claude`) | 2.1.76 | `claude --name` (2.1.76); `--append-system-prompt-file`, `--effort`, `--plugin-dir`, `--strict-mcp-config` and `--fallback-model` are older. |
+
+The minimums live in `internal/versions`. Set `BEES_SKIP_VERSION_CHECK=1` to run
+with an unsupported version anyway.
+
 ## Environment variables
 
 ### Honoured by the `bees` command
@@ -384,6 +421,7 @@ prompt = "Only touch files under services/billing unless the issue says otherwis
 | `BEES_CONFIG` | Path to `bees.toml` when `--config` is not given. Set automatically inside sessions. |
 | `BEES_CLAUDE_BIN` | Path of the `claude` executable to run. Default `claude` on `PATH`. |
 | `BEES_CACHE_DIR` | Cache directory for skill clones and generated plugins. Default `~/.cache/bees`. |
+| `BEES_SKIP_VERSION_CHECK` | When non-empty, skip the `gh` / `claude` version checks (see [Requirements](#requirements)). |
 | `BEES_STATE_DIR` | When set, `bees mail` uses this state directory directly instead of loading `bees.toml`. Set automatically inside sessions. |
 | `BEES_SESSION_DIR` | Where `bees done` writes `outcome.json`; `bees done` refuses to run without it. Set automatically inside sessions. |
 | `BEES_ROLE` | Default `--from` for `bees mail send`, and the role whose `bees done` statuses are validated. Set automatically inside sessions. |

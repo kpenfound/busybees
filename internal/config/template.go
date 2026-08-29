@@ -16,6 +16,8 @@ type TemplateData struct {
 	Assignee      string
 	// Explicit writes repo and default_branch as active settings.
 	Explicit bool
+	// Version is always CurrentVersion; set by Template.
+	Version int
 }
 
 // Template renders a fully commented starter bees.toml.
@@ -32,6 +34,7 @@ func Template(d TemplateData) (string, error) {
 	if d.DefaultBranch == "" {
 		d.DefaultBranch = "main"
 	}
+	d.Version = CurrentVersion
 	t, err := template.New("bees.toml").Parse(beesTOMLTemplate)
 	if err != nil {
 		return "", err
@@ -48,6 +51,11 @@ const beesTOMLTemplate = `# bees.toml — configuration for a busybees software 
 # Every option is listed here. Lines starting with "#" are commented out and
 # show the default value; uncomment a line to change it. Run
 # ` + "`bees config show`" + ` to see the resolved settings for every role.
+
+# Format version of this file. bees refuses files newer than it understands and
+# upgrades older ones in memory. Leave it alone; bees releases that change the
+# format say what to do.
+version = {{.Version}}
 
 #===============================================================================
 # Project

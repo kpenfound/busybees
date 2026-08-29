@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/BurntSushi/toml"
 )
 
 func writeConfig(t *testing.T, body string) string {
@@ -46,6 +48,7 @@ func TestTemplateLoads(t *testing.T) {
 
 func TestMerge(t *testing.T) {
 	p := writeConfig(t, `
+version = 1
 [project]
 repo = "acme/widgets"
 
@@ -127,7 +130,7 @@ FOO = "dev"
 }
 
 func TestDefaults(t *testing.T) {
-	cfg, err := Load(writeConfig(t, "[project]\nrepo = \"a/b\"\n"))
+	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,14 +152,14 @@ func TestDefaults(t *testing.T) {
 
 func TestValidation(t *testing.T) {
 	cases := map[string]string{
-		"bad repo":         "[project]\nrepo = \"nope\"\n",
-		"unknown role":     "[project]\nrepo = \"a/b\"\n[roles.intern]\nprompt = \"x\"\n",
-		"unknown key":      "[project]\nrepo = \"a/b\"\nrepository = \"x\"\n",
-		"mcp no command":   "[project]\nrepo = \"a/b\"\n[global.mcp.x]\nargs = [\"a\"]\n",
-		"bad effort":       "[project]\nrepo = \"a/b\"\n[global]\neffort = \"extreme\"\n",
-		"label with colon": "[project]\nrepo = \"a/b\"\n[filter]\nlabel = \"a:b\"\n",
-		"open filter":      "[project]\nrepo = \"a/b\"\n[filter]\nrequire_label = false\n",
-		"max devs zero":    "[project]\nrepo = \"a/b\"\n[scheduler]\nmax_developers = -1\n",
+		"bad repo":         "version = 1\n[project]\nrepo = \"nope\"\n",
+		"unknown role":     "version = 1\n[project]\nrepo = \"a/b\"\n[roles.intern]\nprompt = \"x\"\n",
+		"unknown key":      "version = 1\n[project]\nrepo = \"a/b\"\nrepository = \"x\"\n",
+		"mcp no command":   "version = 1\n[project]\nrepo = \"a/b\"\n[global.mcp.x]\nargs = [\"a\"]\n",
+		"bad effort":       "version = 1\n[project]\nrepo = \"a/b\"\n[global]\neffort = \"extreme\"\n",
+		"label with colon": "version = 1\n[project]\nrepo = \"a/b\"\n[filter]\nlabel = \"a:b\"\n",
+		"open filter":      "version = 1\n[project]\nrepo = \"a/b\"\n[filter]\nrequire_label = false\n",
+		"max devs zero":    "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nmax_developers = -1\n",
 	}
 	for name, body := range cases {
 		if _, err := Load(writeConfig(t, body)); err == nil {
@@ -166,7 +169,7 @@ func TestValidation(t *testing.T) {
 }
 
 func TestFilterLabelRequired(t *testing.T) {
-	cfg, err := Load(writeConfig(t, "[project]\nrepo = \"a/b\"\n[filter]\nrequire_label = false\nassignee = \"me\"\n"))
+	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[filter]\nrequire_label = false\nassignee = \"me\"\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +182,7 @@ func TestFilterLabelRequired(t *testing.T) {
 }
 
 func TestFind(t *testing.T) {
-	p := writeConfig(t, "[project]\nrepo = \"a/b\"\n")
+	p := writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n")
 	nested := filepath.Join(filepath.Dir(p), "a", "b")
 	if err := os.MkdirAll(nested, 0o755); err != nil {
 		t.Fatal(err)
@@ -191,7 +194,7 @@ func TestFind(t *testing.T) {
 }
 
 func TestMergePolicy(t *testing.T) {
-	cfg, err := Load(writeConfig(t, "[project]\nrepo = \"a/b\"\n"))
+	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +202,7 @@ func TestMergePolicy(t *testing.T) {
 	if p.AutoMerge || p.Method != "squash" || p.ChecksWait != time.Minute || p.ChecksPollInterval != 2*time.Minute || p.ChecksTimeout != 30*time.Minute || p.MaxCheckFixRounds != 2 {
 		t.Fatalf("defaults: %+v", p)
 	}
-	cfg, err = Load(writeConfig(t, "[project]\nrepo = \"a/b\"\n[roles.reviewer]\nauto_merge = true\nmerge_method = \"rebase\"\nchecks_wait = \"5s\"\nmax_check_fix_rounds = 1\n"))
+	cfg, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[roles.reviewer]\nauto_merge = true\nmerge_method = \"rebase\"\nchecks_wait = \"5s\"\nmax_check_fix_rounds = 1\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +210,7 @@ func TestMergePolicy(t *testing.T) {
 	if !p.AutoMerge || p.Method != "rebase" || p.ChecksWait != 5*time.Second || p.MaxCheckFixRounds != 1 {
 		t.Fatalf("custom: %+v", p)
 	}
-	cfg, err = Load(writeConfig(t, "[project]\nrepo = \"a/b\"\n[roles.developer]\ncommit_flags = \" --gpg-sign --signoff \"\n"))
+	cfg, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\ncommit_flags = \" --gpg-sign --signoff \"\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,5 +278,79 @@ func TestParseGitHubRepo(t *testing.T) {
 		if got != want || ok != (want != "") {
 			t.Errorf("%s: got %q %v want %q", url, got, ok, want)
 		}
+	}
+}
+
+func TestVersion(t *testing.T) {
+	bad := map[string]string{
+		"newer":    "version = 99\n[project]\nrepo = \"a/b\"\n",
+		"negative": "version = -1\n[project]\nrepo = \"a/b\"\n",
+		"string":   "version = \"1\"\n[project]\nrepo = \"a/b\"\n",
+	}
+	for name, body := range bad {
+		if _, err := Load(writeConfig(t, body)); err == nil {
+			t.Errorf("%s: expected an error", name)
+		} else if name == "newer" && !strings.Contains(err.Error(), "upgrade bees") {
+			t.Errorf("newer: %v", err)
+		}
+	}
+	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"))
+	if err != nil || cfg.Version != CurrentVersion || cfg.NeedsRewrite() {
+		t.Fatalf("current: %+v %v", cfg, err)
+	}
+	if b, err := cfg.Rewrite(); err != nil || b != "" {
+		t.Fatalf("rewrite of current file should be a no-op: %q %v", b, err)
+	}
+}
+
+func TestMigrateUnversionedFile(t *testing.T) {
+	orig := "# my factory\n\n[project]\n# keep this comment\nrepo = \"a/b\"\n#branch_prefix = \"bees/\"\n"
+	path := writeConfig(t, orig)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Version != CurrentVersion || cfg.MigratedFrom != 0 || !cfg.NeedsRewrite() || cfg.Project.Repo != "a/b" {
+		t.Fatalf("migrated in memory: %+v", cfg)
+	}
+	backup, err := cfg.Rewrite()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	text := string(data)
+	want := "# my factory\n\n# Format version of this file (see docs/configuration.md).\nversion = 1\n\n[project]\n# keep this comment\nrepo = \"a/b\"\n#branch_prefix = \"bees/\"\n"
+	if text != want {
+		t.Fatalf("rewritten file:\n%s\nwant:\n%s", text, want)
+	}
+	if b, _ := os.ReadFile(backup); string(b) != orig || filepath.Base(backup) != "bees.toml.v0.bak" {
+		t.Fatalf("backup %s: %q", backup, b)
+	}
+	again, err := Load(path)
+	if err != nil || again.NeedsRewrite() {
+		t.Fatalf("reload: %+v %v", again, err)
+	}
+	// version = 0 written explicitly is replaced, not duplicated.
+	if got := setVersion("version = 0 # old\n[project]\n", 1); got != "version = 1\n[project]\n" {
+		t.Fatalf("setVersion replace: %q", got)
+	}
+}
+
+func TestMigrateChain(t *testing.T) {
+	// A fake breaking change: project.repository was renamed to project.repo.
+	steps := map[int]migration{
+		0: addVersionKey,
+		1: func(text string) (string, error) { return strings.ReplaceAll(text, "repository =", "repo ="), nil },
+	}
+	text, err := migrate("[project]\nrepository = \"a/b\"\n#repository = \"x/y\"\n", 0, 2, steps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg Config
+	if _, err := toml.Decode(text, &cfg); err != nil || cfg.Version != 2 || cfg.Project.Repo != "a/b" || !strings.Contains(text, "#repo = \"x/y\"") {
+		t.Fatalf("chain: %+v %v\n%s", cfg, err, text)
+	}
+	if _, err := migrate("[project]\n", 0, 3, steps); err == nil || !strings.Contains(err.Error(), "version 2 to 3") {
+		t.Fatalf("missing step: %v", err)
 	}
 }

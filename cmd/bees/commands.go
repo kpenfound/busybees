@@ -17,6 +17,7 @@ import (
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/prompts"
 	"github.com/kpenfound/busybees/internal/state"
+	"github.com/kpenfound/busybees/internal/versions"
 	"github.com/kpenfound/busybees/internal/workspace"
 )
 
@@ -33,6 +34,9 @@ git clone of the project), creates the state directory and creates the
 workflow labels in the GitHub repository.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
+			if err := versions.CheckGH(ctx); err != nil {
+				return err
+			}
 			cwd, err := os.Getwd()
 			if err != nil {
 				return err
@@ -361,7 +365,36 @@ func newConfigCmd(g *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if cfg.NeedsRewrite() {
+				fmt.Printf("%s is valid (version %d; run `bees config migrate` to update it to version %d)\n", cfg.Path, cfg.MigratedFrom, config.CurrentVersion)
+				return nil
+			}
 			fmt.Println(cfg.Path, "is valid")
+			return nil
+		},
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "migrate",
+		Short: "Rewrite bees.toml to the current format version",
+		Long: `migrate loads bees.toml, applies the migrations that bring it to the format
+version this bees understands and writes the result back, keeping the original
+as bees.toml.v<old>.bak. Comments are preserved. bees run, tick, exec and
+status do the same automatically on startup.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := loadConfig(g)
+			if err != nil {
+				return err
+			}
+			if !cfg.NeedsRewrite() {
+				fmt.Printf("%s is already version %d\n", cfg.Path, config.CurrentVersion)
+				return nil
+			}
+			from := cfg.MigratedFrom
+			backup, err := cfg.Rewrite()
+			if err != nil {
+				return err
+			}
+			fmt.Printf("%s: migrated from version %d to %d (original kept as %s)\n", cfg.Path, from, config.CurrentVersion, backup)
 			return nil
 		},
 	})

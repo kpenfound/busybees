@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -134,11 +135,8 @@ type PR struct {
 	Milestone *struct {
 		Title string `json:"title"`
 	} `json:"milestone"`
-	CreatedAt               time.Time `json:"createdAt"`
-	UpdatedAt               time.Time `json:"updatedAt"`
-	ClosingIssuesReferences []struct {
-		Number int `json:"number"`
-	} `json:"closingIssuesReferences"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 // HasLabel reports whether the item carries label name.
@@ -160,11 +158,35 @@ func LabelNames(labels []Label) []string {
 	return out
 }
 
-// ClosingIssues returns the issue numbers a PR closes.
+// closingRef matches GitHub's closing keywords followed by an issue
+// reference: "Closes #12", "fixes: #12", "Resolved https://github.com/o/r/issues/12".
+var closingRef = regexp.MustCompile(`(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s*(?:#(\d+)|(https://github\.com/[^/\s]+/[^/\s]+)/issues/(\d+))`)
+
+// ClosingIssues returns the issue numbers a PR closes, in order of first
+// mention. They are derived from the closing keywords in the body (the same
+// rule GitHub applies when the PR merges) because older gh releases cannot
+// return closingIssuesReferences. Cross-repository references are ignored.
 func (p PR) ClosingIssues() []int {
-	out := make([]int, 0, len(p.ClosingIssuesReferences))
-	for _, r := range p.ClosingIssuesReferences {
-		out = append(out, r.Number)
+	var out []int
+	seen := map[int]bool{}
+	repoURL := ""
+	if i := strings.Index(p.URL, "/pull/"); i > 0 {
+		repoURL = p.URL[:i]
+	}
+	for _, m := range closingRef.FindAllStringSubmatch(p.Body, -1) {
+		num := m[1]
+		if num == "" {
+			if repoURL == "" || !strings.EqualFold(m[2], repoURL) {
+				continue
+			}
+			num = m[3]
+		}
+		n, err := strconv.Atoi(num)
+		if err != nil || n <= 0 || seen[n] {
+			continue
+		}
+		seen[n] = true
+		out = append(out, n)
 	}
 	return out
 }
@@ -214,7 +236,7 @@ func (q Query) Matches(labels []Label, assignees []Author, milestone string) boo
 }
 
 const issueFields = "number,title,body,state,url,labels,milestone,author,assignees,createdAt,updatedAt"
-const prFields = "number,title,body,state,url,labels,headRefName,baseRefName,isDraft,mergedAt,mergeCommit,author,assignees,milestone,createdAt,updatedAt,closingIssuesReferences"
+const prFields = "number,title,body,state,url,labels,headRefName,baseRefName,isDraft,mergedAt,mergeCommit,author,assignees,milestone,createdAt,updatedAt"
 
 // ListOpenIssues returns open issues matching q.
 func (c *Client) ListOpenIssues(ctx context.Context, q Query) ([]Issue, error) {
