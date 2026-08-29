@@ -309,6 +309,25 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 			} else {
 				fmt.Printf("scheduler: pid %d, last poll %s ago\n", st.PID, time.Since(st.LastPoll).Round(time.Second))
 			}
+			if cfg.Scheduler.WorkHoursEnabled() {
+				in := cfg.Scheduler.InWorkHours(time.Now())
+				if st.InWorkHours != nil {
+					in = *st.InWorkHours
+				}
+				yes := "no"
+				if in {
+					yes = "yes"
+				}
+				line := fmt.Sprintf("work hours: %s (%s)", yes, cfg.Scheduler.WorkHoursDescription())
+				switch d := time.Until(st.NextPoll).Round(time.Second); {
+				case st.NextPoll.IsZero():
+				case d > 0:
+					line += fmt.Sprintf("   next GitHub poll in %s", d)
+				default:
+					line += "   next GitHub poll due"
+				}
+				fmt.Println(line)
+			}
 			if st.LastError != "" {
 				fmt.Println("last error:", st.LastError)
 			}
