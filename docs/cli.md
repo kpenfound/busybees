@@ -142,6 +142,14 @@ owned by the product manager, and `open_prs`), running developer workers (issue,
 unread mail per role. Reads `status.json` from the state directory, so it works while
 `bees run` is active in another terminal.
 
+When [`scheduler.work_hours`](configuration.md#work-hours) is configured it also
+reports whether the factory is inside the window and when the next GitHub poll is
+due (`in_work_hours` and `next_poll` in `--json`):
+
+```
+work hours: yes (09:00-18:00 mon-fri, America/New_York)   next GitHub poll in 2m55s
+```
+
 ## The mailbox
 
 Roles talk to each other only through the local mailbox in `<state_dir>/mail`. The
