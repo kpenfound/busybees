@@ -376,10 +376,35 @@ skips review and goes straight to the checks stage.
 
 ## Escalation: `bees:needs-human`
 
-The factory hands an issue to a human when it cannot make progress:
+### Retries first
 
-- the developer session failed, timed out, or reported a PR that does not
-  exist;
+Not every dead session is a bad decision. Before escalating, the orchestrator
+classifies what went wrong:
+
+- **Infrastructure** — the session timed out, ran out of turns, hit an API
+  error or a rate limit, or `claude` exited without producing a result. These
+  are retried up to `scheduler.retries` times (default 1), after
+  `scheduler.retry_delay` (default 10 minutes), and with the role's
+  `fallback_model` as the primary model when `scheduler.retry_with_fallback`
+  is on. Each attempt gets its own directory under `<state_dir>/sessions/`
+  (the retry is suffixed `-retry1`), and a retried developer session is told
+  that its previous attempt was interrupted, so it continues from whatever is
+  already on the branch instead of starting over. `bees status` shows the
+  attempt number next to the round.
+- **Behavioural** — the session ran and reported with `bees done` (including
+  `bees done failed`), or ended cleanly without reporting at all. Running it
+  again would only repeat the same decision, so it escalates immediately.
+
+Set `scheduler.retries = 0` to escalate every failure at once. Retries apply
+to sessions only; git, `gh` and worktree failures are not retried.
+
+### When the factory gives up
+
+Once retries are exhausted (or the failure was behavioural), the factory hands
+the issue to a human:
+
+- the developer session failed, or timed out and its retries were exhausted,
+  or reported a PR that does not exist;
 - the developer said it asked a question but sent no mail (or the reviewer said
   it requested changes but sent no feedback);
 - the reviewer session failed;
