@@ -401,8 +401,8 @@ func (s Scheduler) WorkHoursDescription() string {
 	return fmt.Sprintf("%s %s, %s", s.WorkHours, describeDays(s.whDays), s.whLoc)
 }
 
-// describeDays prints a day set as compact ranges: "mon-fri", "sat-sun",
-// "mon,wed,fri".
+// describeDays prints a day set as compact ranges: "mon-fri", "mon,wed,fri".
+// A run of exactly two days is listed rather than hyphenated ("sat,sun").
 func describeDays(days map[time.Weekday]bool) string {
 	var parts []string
 	for i := 0; i < len(weekdayNames); i++ {
