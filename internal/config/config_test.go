@@ -160,11 +160,37 @@ func TestValidation(t *testing.T) {
 		"label with colon": "version = 1\n[project]\nrepo = \"a/b\"\n[filter]\nlabel = \"a:b\"\n",
 		"open filter":      "version = 1\n[project]\nrepo = \"a/b\"\n[filter]\nrequire_label = false\n",
 		"max devs zero":    "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nmax_developers = -1\n",
+		"negative retries": "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nretries = -1\n",
+		"too many retries": "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nretries = 6\n",
+		"negative delay":   "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nretry_delay = \"-1m\"\n",
 	}
 	for name, body := range cases {
 		if _, err := Load(writeConfig(t, body)); err == nil {
 			t.Errorf("%s: expected an error", name)
 		}
+	}
+}
+
+func TestRetryPolicy(t *testing.T) {
+	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := cfg.Retry()
+	if p.Retries != DefaultRetries || p.Delay != DefaultRetryDelay || !p.WithFallback {
+		t.Fatalf("retry defaults: %+v", p)
+	}
+	// An explicit zero disables retrying and is not overwritten by the default.
+	cfg, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nretries = 0\nretry_delay = \"0s\"\nretry_with_fallback = false\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := cfg.Retry(); p.Retries != 0 || p.Delay != 0 || p.WithFallback {
+		t.Fatalf("explicit zeroes: %+v", p)
+	}
+	// A zero Config (no Load) still reports the defaults.
+	if p := (&Config{}).Retry(); p.Retries != DefaultRetries || p.Delay != DefaultRetryDelay || !p.WithFallback {
+		t.Fatalf("zero config: %+v", p)
 	}
 }
 
