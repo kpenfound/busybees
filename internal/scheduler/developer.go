@@ -105,7 +105,7 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 			}
 			parent, _ := s.gh.ParentIssue(ctx, issue.Number)
 			name := fmt.Sprintf("developer-issue-%d-r%d", issue.Number, bookkeeping.Round)
-			if afterDevelop == "checks" {
+			if afterDevelop == "checks" || afterDevelop == "prereview" {
 				name += fmt.Sprintf("-checkfix%d", bookkeeping.CheckFixRounds)
 			}
 			log.Info("developer session", "round", bookkeeping.Round, "mail", len(inbox))

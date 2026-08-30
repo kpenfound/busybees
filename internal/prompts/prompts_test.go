@@ -97,9 +97,38 @@ func TestRoleSpecifics(t *testing.T) {
 	if !strings.Contains(checks, "**go / test** (CI) — fail") || !strings.Contains(checks, "actions/runs/42") {
 		t.Fatalf("reviewer checks task: %s", checks)
 	}
+	// The reviewer's pre-review checks section, one variant per status.
+	d = sample()
+	d.Checks = []github.Check{{Name: "go / test", Bucket: "pass", Link: "https://ci.example.com/1"}}
+	d.ChecksStatus, d.ChecksTimeout = "passed", "10m"
+	rev, _ = Task(config.RoleReviewer, d)
+	if !strings.Contains(rev, "## Required checks") || !strings.Contains(rev, "go / test — pass — https://ci.example.com/1") || !strings.Contains(rev, "CI is green") {
+		t.Fatalf("reviewer task with passing checks: %s", rev)
+	}
+	d.ChecksStatus = "pending"
+	d.Checks[0].Bucket = "pending"
+	rev, _ = Task(config.RoleReviewer, d)
+	if !strings.Contains(rev, "still pending after `10m`") || strings.Contains(rev, "CI is green") {
+		t.Fatalf("reviewer task with pending checks: %s", rev)
+	}
+	d.Checks, d.ChecksStatus = nil, "passed"
+	rev, _ = Task(config.RoleReviewer, d)
+	if !strings.Contains(rev, "reports no required checks") {
+		t.Fatalf("reviewer task without checks: %s", rev)
+	}
+	if rev, _ = Task(config.RoleReviewer, sample()); strings.Contains(rev, "Required checks") {
+		t.Fatalf("no checks status: the section should be absent: %s", rev)
+	}
+
+	// The developer runs the repository's lint and tests before pushing.
+	sys, _ := System(config.RoleDeveloper, sample(), "")
+	if !strings.Contains(sys, "run the repository's own lint and test") || !strings.Contains(sys, "Record the exact commands in your notes file") {
+		t.Fatalf("developer system prompt missing the self-check step:\n%s", sys)
+	}
+
 	d = sample()
 	d.CommitFlags = "--gpg-sign --signoff"
-	sys, _ := System(config.RoleDeveloper, d, "")
+	sys, _ = System(config.RoleDeveloper, d, "")
 	if !strings.Contains(sys, "When creating git commits, always use the following extra flags: `--gpg-sign --signoff`.") {
 		t.Fatalf("commit flags missing:\n%s", sys)
 	}

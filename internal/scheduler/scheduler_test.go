@@ -50,6 +50,12 @@ func fakeClaude() {
 			fail(err)
 		}
 	}
+	// Record the order sessions ran in, so tests can assert the sequence
+	// across roles (session directory names carry a one-second timestamp).
+	if f, err := os.OpenFile(filepath.Join(stateDir, "fake-order"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
+		_, _ = fmt.Fprintln(f, filepath.Base(sessionDir))
+		_ = f.Close()
+	}
 	counter := func(name string) int {
 		p := filepath.Join(stateDir, "fake-"+name)
 		n := 0
@@ -121,8 +127,9 @@ type fakeGH struct {
 	// activity is raw JSON served for api pulls/N/reviews, pulls/N/comments, issues/N/comments
 	activity map[string]string
 	// checks is a queue of responses for `pr checks`; the last one repeats.
-	checks    []checksResponse
-	mergeArgs [][]string
+	checks      []checksResponse
+	checksCalls int
+	mergeArgs   [][]string
 }
 
 type checksResponse struct {
@@ -271,6 +278,7 @@ func (f *fakeGH) exec(ctx context.Context, args ...string) ([]byte, error) {
 		f.mergeArgs = append(f.mergeArgs, args)
 		return nil, nil
 	case "pr checks":
+		f.checksCalls++
 		if len(f.checks) == 0 {
 			return nil, fmt.Errorf("no checks reported on the 'bees/issue-1' branch")
 		}
@@ -363,6 +371,42 @@ func (h *harness) sessions(role string) []string {
 	return out
 }
 
+// sessionOrder lists the session directories in the order the sessions ran.
+func (h *harness) sessionOrder() []string {
+	b, err := os.ReadFile(filepath.Join(h.store.Dir, "fake-order"))
+	if err != nil {
+		return nil
+	}
+	return strings.Fields(strings.TrimSpace(string(b)))
+}
+
+// wantOrder asserts the sessions ran in this order; each want is matched as a
+// substring of the session directory name.
+func (h *harness) wantOrder(want ...string) {
+	h.t.Helper()
+	got := h.sessionOrder()
+	if len(got) != len(want) {
+		h.t.Fatalf("session order: %v\nwant     %v", got, want)
+	}
+	for i := range want {
+		if !strings.Contains(got[i], want[i]) {
+			h.t.Fatalf("session %d is %q, want %q\nfull order: %v", i, got[i], want[i], got)
+		}
+	}
+}
+
+// seedReviewCounter makes the fake reviewer approve straight away (it
+// requests changes on its first review).
+func (h *harness) seedReviewCounter(n int) {
+	h.t.Helper()
+	if err := os.WriteFile(filepath.Join(h.store.Dir, "fake-review"), []byte(strconv.Itoa(n)), 0o644); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
+// baseTOML ends with [roles.reviewer] so tests can append reviewer keys
+// directly (TOML forbids declaring the same table twice). checks_wait is
+// 1ms because every first review now reads the required checks first.
 const baseTOML = `
 version = 1
 [project]
@@ -371,6 +415,9 @@ repo = "acme/widgets"
 poll_interval = "1s"
 max_developers = 2
 max_review_rounds = 3
+[roles.reviewer]
+checks_wait = "1ms"
+checks_poll_interval = "10ms"
 `
 
 func TestFullDeveloperReviewLoop(t *testing.T) {
@@ -572,19 +619,16 @@ func TestLabelBackstop(t *testing.T) {
 
 func TestAutoMergeAfterChecks(t *testing.T) {
 	h := newHarness(t, baseTOML+`
+auto_merge = true
+merge_method = "rebase"
+checks_timeout = "5s"
+max_check_fix_rounds = 2
 [roles.product_manager]
 enabled = false
 [roles.qa]
 enabled = false
 [roles.project_manager]
 enabled = false
-[roles.reviewer]
-auto_merge = true
-merge_method = "rebase"
-checks_wait = "1ms"
-checks_poll_interval = "10ms"
-checks_timeout = "5s"
-max_check_fix_rounds = 2
 `)
 	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Ship it", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}}, CreatedAt: time.Now()}
 	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
@@ -592,7 +636,9 @@ max_check_fix_rounds = 2
 	failing := `[{"name":"go / test","bucket":"fail","state":"FAILURE","link":"https://ci.example.com/run/1","description":"1 test failed","workflow":"CI"},{"name":"lint","bucket":"pass","state":"SUCCESS"}]`
 	passing := `[{"name":"go / test","bucket":"pass","state":"SUCCESS"},{"name":"lint","bucket":"pass","state":"SUCCESS"}]`
 	h.gh.checks = []checksResponse{
-		{pending, fmt.Errorf("exit status 8")}, // still running: gh exits 8
+		{passing, nil},                         // pre-review read, round 1
+		{passing, nil},                         // pre-review read, round 2
+		{pending, fmt.Errorf("exit status 8")}, // after approval, still running: gh exits 8
 		{failing, fmt.Errorf("exit status 1")}, // failed: gh exits 1
 		{pending, fmt.Errorf("exit status 8")}, // after the fix push
 		{passing, nil},
@@ -650,17 +696,15 @@ max_check_fix_rounds = 2
 
 func TestChecksTimeoutEscalates(t *testing.T) {
 	h := newHarness(t, baseTOML+`
+auto_merge = true
+checks_timeout = "1ms"
+pre_review_checks_timeout = "1ms"
 [roles.product_manager]
 enabled = false
 [roles.qa]
 enabled = false
 [roles.project_manager]
 enabled = false
-[roles.reviewer]
-auto_merge = true
-checks_wait = "1ms"
-checks_poll_interval = "10ms"
-checks_timeout = "1ms"
 `)
 	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Slow CI", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}}, CreatedAt: time.Now()}
 	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
@@ -678,6 +722,118 @@ checks_timeout = "1ms"
 	}
 	if len(h.gh.comments[1]) != 1 || !strings.Contains(h.gh.comments[1][0], "still pending") {
 		t.Fatalf("comments: %v", h.gh.comments[1])
+	}
+}
+
+func TestPreReviewChecksFailBeforeTheFirstReview(t *testing.T) {
+	h := newHarness(t, baseTOML+`
+[roles.product_manager]
+enabled = false
+[roles.qa]
+enabled = false
+[roles.project_manager]
+enabled = false
+`)
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Ship it", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}}, CreatedAt: time.Now()}
+	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
+	h.seedReviewCounter(1) // the reviewer approves the review it does get
+	pending := `[{"name":"go / test","bucket":"pending","state":"PENDING","link":"https://ci.example.com/run/1","workflow":"CI"}]`
+	failing := `[{"name":"go / test","bucket":"fail","state":"FAILURE","link":"https://ci.example.com/run/1","description":"1 test failed","workflow":"CI"}]`
+	passing := `[{"name":"go / test","bucket":"pass","state":"SUCCESS","link":"https://ci.example.com/run/2"}]`
+	h.gh.checks = []checksResponse{
+		{pending, fmt.Errorf("exit status 8")},
+		{failing, fmt.Errorf("exit status 1")},
+		{passing, nil},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if err := h.sched.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// The failing check reached the reviewer in checks mode before any review.
+	h.wantOrder("developer-issue-1-r1-", "reviewer-pr-101-checks1-", "developer-issue-1-r1-checkfix1-", "reviewer-pr-101-r1-")
+	want := "bees:in-progress,bees:review,bees:in-progress,bees:approved"
+	if got := strings.Join(h.gh.history[1], ","); got != want {
+		t.Fatalf("history: %s\nwant    %s", got, want)
+	}
+	if len(h.gh.comments[1]) != 0 {
+		t.Fatalf("unexpected escalation: %v", h.gh.comments[1])
+	}
+	order := h.sessionOrder()
+	diagnose, _ := os.ReadFile(filepath.Join(h.store.SessionsDir(), order[1], "prompt.md"))
+	if !strings.Contains(string(diagnose), "**go / test** (CI) — fail: 1 test failed") {
+		t.Fatalf("checks prompt missing the failing check:\n%s", diagnose)
+	}
+	review, _ := os.ReadFile(filepath.Join(h.store.SessionsDir(), order[3], "prompt.md"))
+	for _, want := range []string{"## Required checks", "go / test — pass", "https://ci.example.com/run/2", "CI is green"} {
+		if !strings.Contains(string(review), want) {
+			t.Errorf("reviewer prompt missing %q:\n%s", want, review)
+		}
+	}
+	if bk, _ := h.store.Issue(1); bk.CheckFixRounds != 1 {
+		t.Fatalf("bookkeeping: %+v", bk)
+	}
+}
+
+func TestPreReviewChecksPendingReviewsAnyway(t *testing.T) {
+	h := newHarness(t, baseTOML+`
+pre_review_checks_timeout = "1ms"
+[roles.product_manager]
+enabled = false
+[roles.qa]
+enabled = false
+[roles.project_manager]
+enabled = false
+`)
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Slow CI", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}}, CreatedAt: time.Now()}
+	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
+	h.seedReviewCounter(1)
+	h.gh.checks = []checksResponse{{`[{"name":"slow","bucket":"pending","state":"PENDING"}]`, fmt.Errorf("exit status 8")}}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if err := h.sched.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	h.wantOrder("developer-issue-1-r1-", "reviewer-pr-101-r1-")
+	if len(h.gh.comments[1]) != 0 {
+		t.Fatalf("pending checks must not escalate before the review: %v", h.gh.comments[1])
+	}
+	review, _ := os.ReadFile(filepath.Join(h.store.SessionsDir(), h.sessionOrder()[1], "prompt.md"))
+	for _, want := range []string{"## Required checks", "slow — pending", "still pending after `1ms`", "run the repository's test-suite yourself"} {
+		if !strings.Contains(string(review), want) {
+			t.Errorf("reviewer prompt missing %q:\n%s", want, review)
+		}
+	}
+}
+
+func TestPreReviewChecksDisabled(t *testing.T) {
+	h := newHarness(t, baseTOML+`
+pre_review_checks = false
+[roles.product_manager]
+enabled = false
+[roles.qa]
+enabled = false
+[roles.project_manager]
+enabled = false
+`)
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "No pre-review", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}}, CreatedAt: time.Now()}
+	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
+	h.gh.checks = []checksResponse{{`[{"name":"go / test","bucket":"fail","state":"FAILURE"}]`, fmt.Errorf("exit status 1")}}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if err := h.sched.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// Today's sequence: review round 1 requests changes, round 2 approves.
+	h.wantOrder("developer-issue-1-r1-", "reviewer-pr-101-r1-", "developer-issue-1-r2-", "reviewer-pr-101-r2-")
+	if h.gh.checksCalls != 0 {
+		t.Fatalf("required checks were read %d times with pre_review_checks = false", h.gh.checksCalls)
+	}
+	for _, dir := range h.sessionOrder() {
+		b, _ := os.ReadFile(filepath.Join(h.store.SessionsDir(), dir, "prompt.md"))
+		if strings.Contains(string(b), "## Required checks") {
+			t.Fatalf("%s has a checks section:\n%s", dir, b)
+		}
 	}
 }
 
