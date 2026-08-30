@@ -66,7 +66,7 @@ func (s *Scheduler) checkPRs(ctx context.Context, snap *snapshot) error {
 			From:    OrchestratorSender,
 			To:      config.RoleDeveloper,
 			Subject: fmt.Sprintf("PR #%d %s %s", pr.Number, reason, base),
-			Body:    updateBranchBody(pr, base, reason),
+			Body:    updateBranchBody(pr, s.cfg.Project.Remote, base, reason),
 			Issue:   issue.Number,
 			PR:      pr.Number,
 		}
@@ -92,9 +92,10 @@ func (s *Scheduler) checkPRs(ctx context.Context, snap *snapshot) error {
 }
 
 // updateBranchBody is the mail the developer receives when its pull
-// request has fallen behind the default branch. reason is "conflicts with"
-// or "is behind".
-func updateBranchBody(pr github.PR, base, reason string) string {
+// request has fallen behind the default branch. remote is
+// project.remote, the remote the worktree was cut from, and reason is
+// "conflicts with" or "is behind".
+func updateBranchBody(pr github.PR, remote, base, reason string) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Pull request #%d (branch `%s`) %s `%s`", pr.Number, pr.HeadRefName, reason, base)
 	if reason == "conflicts with" {
@@ -102,7 +103,7 @@ func updateBranchBody(pr github.PR, base, reason string) string {
 	} else {
 		sb.WriteString("; bring it up to date so it is tested against what will actually be merged.\n\n")
 	}
-	fmt.Fprintf(&sb, "Merge `%s` into your branch (`git fetch && git merge origin/%s`; rebase only if the repository asks for it)", base, base)
+	fmt.Fprintf(&sb, "Merge `%s` into your branch (`git fetch %s && git merge %s/%s`; rebase only if the repository asks for it)", base, remote, remote, base)
 	if reason == "conflicts with" {
 		sb.WriteString(", resolve the conflicts, ")
 	} else {
