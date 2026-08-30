@@ -132,18 +132,22 @@ func TestRoleSkillsClone(t *testing.T) {
 }
 
 func TestRoleSkillsThatDoesNotCloneIsAFailure(t *testing.T) {
-	missing := filepath.Join(t.TempDir(), "no-such-skill.git")
+	dir := t.TempDir()
+	first := filepath.Join(dir, "no-such-skill.git")
+	second := filepath.Join(dir, "also-missing.git")
 	good := skillRepo(t)
-	f := setupRoles(t, fmt.Sprintf("[roles.reviewer]\nskills = [%q, %q]\n", missing, good), nil)
+	f := setupRoles(t, fmt.Sprintf("[roles.reviewer]\nskills = [%q, %q, %q]\n", first, good, second), nil)
 	role, err := f.Config.Role(config.RoleReviewer)
 	if err != nil {
 		t.Fatal(err)
 	}
 	r := f.run(t, f.checkRoleSkills(role))
 	// The URL that failed and git's own complaint, so the line is actionable.
-	wantResult(t, r, Fail, missing, "reviewer")
+	// Both broken references are reported: the check prepares them one at a
+	// time, so the first failure does not hide the ones behind it.
+	wantResult(t, r, Fail, first, second, "reviewer")
 	if strings.Contains(r.Detail, good) {
-		t.Errorf("only the broken reference belongs in the detail: %q", r.Detail)
+		t.Errorf("only the broken references belong in the detail: %q", r.Detail)
 	}
 }
 

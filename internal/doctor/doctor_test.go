@@ -39,6 +39,33 @@ func TestStatusRoundTrip(t *testing.T) {
 	}
 }
 
+// TestCheckWithItsOwnTimeout: a check that declares a longer budget (the MCP
+// checks, which give every server MCPTimeout) must not be cut short by the
+// runner's default, and CheapChecks must leave the expensive ones out.
+func TestCheckWithItsOwnTimeout(t *testing.T) {
+	slow := Check{
+		Expensive: true,
+		Timeout:   2 * time.Second,
+		Run: func(ctx context.Context) Result {
+			select {
+			case <-time.After(150 * time.Millisecond):
+				return pass("slow", GroupRoles, "answered")
+			case <-ctx.Done():
+				return fail("slow", GroupRoles, "cut short", "give it longer")
+			}
+		},
+	}
+	cheap := Check{Run: func(context.Context) Result { return pass("quick", GroupConfig, "") }}
+	results := RunWith(context.Background(), []Check{slow, cheap}, 10*time.Millisecond)
+	if results[0].Status != Pass {
+		t.Errorf("a check that declares its own budget must get it: %+v", results[0])
+	}
+	got := CheapChecks([]Check{slow, cheap})
+	if len(got) != 1 || got[0].Run(context.Background()).Name != "quick" {
+		t.Errorf("CheapChecks returned %d checks, want only the cheap one", len(got))
+	}
+}
+
 func TestFailuresAndSummary(t *testing.T) {
 	results := []Result{
 		pass("a", GroupConfig, ""),
