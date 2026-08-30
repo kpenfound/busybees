@@ -124,6 +124,9 @@ and `bees labels sync` create them in GitHub.
 | `rate_limit_backoff` | duration | `"15m"` | How long to pause polling after a poll fails with a GitHub rate-limit error (a message containing "rate limit", "secondary rate" or "abuse detection"), instead of retrying after `poll_interval`. |
 | `max_developers` | int | `1` | Number of concurrent developer workers. Each worker owns one issue and runs a sequential developer → reviewer → developer loop, so reviewer concurrency follows developer concurrency. Must be ≥ 1. |
 | `max_review_rounds` | int | `3` | Developer/reviewer iterations before an issue is escalated with `bees:needs-human`. |
+| `retries` | int | `1` | Extra attempts a session gets when it failed for **infrastructure** reasons — it timed out, ran out of turns, hit an API error or rate limit, or `claude` crashed. A session that ran and reported (with `bees done`, including `failed`) is never retried. `0` disables retrying; must be between 0 and 5. See [Escalation](workflow.md#escalation-beesneeds-human). |
+| `retry_delay` | duration | `"10m"` | How long to wait before an attempt is repeated. `"0s"` retries immediately. |
+| `retry_with_fallback` | bool | `true` | Run the retry with the role's `fallback_model` as its primary model. Roles without a fallback model simply rerun. |
 | `triage_batch_size` | int | `5` | Maximum number of issues handed to the project manager in one session. |
 | `product_manager_interval` | duration | `"1h"` | Minimum time between product manager runs. Unread mail in the PM's inbox triggers an earlier run. |
 | `qa_interval` | duration | `"30m"` | Minimum time between QA runs. QA only runs when something was merged since its last run (the first run always happens). The merged-PR query itself runs at most once per `qa_interval` (tracked as `last_check` in `<state_dir>/qa.json`), not on every poll. |
@@ -354,6 +357,9 @@ headers = { Authorization = "Bearer $BROWSER_MCP_TOKEN" }
 | `scheduler.rate_limit_backoff` | `15m` |
 | `scheduler.max_developers` | `1` |
 | `scheduler.max_review_rounds` | `3` |
+| `scheduler.retries` | `1` |
+| `scheduler.retry_delay` | `10m` |
+| `scheduler.retry_with_fallback` | `true` |
 | `scheduler.triage_batch_size` | `5` |
 | `scheduler.product_manager_interval` | `1h` |
 | `scheduler.qa_interval` | `30m` |

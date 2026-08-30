@@ -81,6 +81,13 @@ const (
 	DefaultStateDir      = ".bees"
 	DefaultBranchPrefix  = "bees/"
 	DefaultPollInterval  = 5 * time.Minute
+	// DefaultRetries and friends govern retrying a session that failed for
+	// infrastructure reasons; see Config.Retry.
+	DefaultRetries           = 1
+	DefaultRetryDelay        = 10 * time.Minute
+	DefaultRetryWithFallback = true
+	// MaxRetries caps scheduler.retries.
+	MaxRetries = 5
 	// DefaultOffHoursPollInterval is the polling cadence outside
 	// scheduler.work_hours (only used when work_hours is set).
 	DefaultOffHoursPollInterval = time.Hour
@@ -299,6 +306,32 @@ func (c *Config) Merge() MergePolicy {
 	return p
 }
 
+// RetryPolicy is the resolved [scheduler] retry configuration.
+type RetryPolicy struct {
+	// Retries is the number of extra attempts a session gets after an
+	// infrastructure failure. 0 means a session runs exactly once.
+	Retries int
+	// Delay is how long to wait before an attempt is repeated.
+	Delay time.Duration
+	// WithFallback runs a retry with the role's fallback model as primary.
+	WithFallback bool
+}
+
+// Retry returns the resolved retry policy.
+func (c *Config) Retry() RetryPolicy {
+	p := RetryPolicy{Retries: DefaultRetries, Delay: DefaultRetryDelay, WithFallback: DefaultRetryWithFallback}
+	if n := c.Scheduler.Retries; n != nil {
+		p.Retries = *n
+	}
+	if d := c.Scheduler.RetryDelay; d != nil {
+		p.Delay = d.Duration
+	}
+	if b := c.Scheduler.RetryWithFallback; b != nil {
+		p.WithFallback = *b
+	}
+	return p
+}
+
 // Scheduler configures the orchestrator loop.
 type Scheduler struct {
 	// PollInterval is how often GitHub is polled for work. Each poll costs
@@ -323,6 +356,15 @@ type Scheduler struct {
 	// TriageBatchSize is the maximum number of issues handed to the project
 	// manager in one session.
 	TriageBatchSize int `toml:"triage_batch_size"`
+	// Retries is the number of extra attempts a session gets when it failed
+	// for infrastructure reasons (timeout, API error, exhausted turns).
+	// 0 disables retrying. Default 1.
+	Retries *int `toml:"retries"`
+	// RetryDelay is how long to wait before a retry. Default 10m.
+	RetryDelay *Duration `toml:"retry_delay"`
+	// RetryWithFallback runs a retry with the role's fallback_model as its
+	// primary model. Default true.
+	RetryWithFallback *bool `toml:"retry_with_fallback"`
 	// KeepWorkspaces leaves temp worktrees on disk after a session (debugging).
 	KeepWorkspaces bool `toml:"keep_workspaces"`
 	// WorkspaceRoot overrides the temp dir used for worktrees.
@@ -711,6 +753,16 @@ func (c *Config) applyDefaults() {
 	if c.Scheduler.TriageBatchSize == 0 {
 		c.Scheduler.TriageBatchSize = DefaultTriageBatch
 	}
+	if c.Scheduler.Retries == nil {
+		n := DefaultRetries
+		c.Scheduler.Retries = &n
+	}
+	if c.Scheduler.RetryDelay == nil {
+		c.Scheduler.RetryDelay = &Duration{DefaultRetryDelay}
+	}
+	if c.Scheduler.RetryWithFallback == nil {
+		b := DefaultRetryWithFallback
+		c.Scheduler.RetryWithFallback = &b
 	if c.Scheduler.WorkHours != "" {
 		if c.Scheduler.OffHoursPollInterval.Duration == 0 {
 			c.Scheduler.OffHoursPollInterval.Duration = DefaultOffHoursPollInterval
@@ -749,6 +801,12 @@ func (c *Config) Validate() error {
 	}
 	if c.Scheduler.MaxReviewRounds < 0 {
 		errs = append(errs, "scheduler.max_review_rounds must be >= 0")
+	}
+	if n := c.Scheduler.Retries; n != nil && (*n < 0 || *n > MaxRetries) {
+		errs = append(errs, fmt.Sprintf("scheduler.retries must be between 0 and %d", MaxRetries))
+	}
+	if d := c.Scheduler.RetryDelay; d != nil && d.Duration < 0 {
+		errs = append(errs, "scheduler.retry_delay must be >= 0")
 	}
 	errs = append(errs, c.Scheduler.parseWorkHours()...)
 	check := func(scope string, rs RoleSettings) {

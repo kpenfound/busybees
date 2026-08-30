@@ -108,6 +108,14 @@ label = "{{.Label}}"
 #max_developers = 1
 # Developer/reviewer iterations before an issue is escalated to a human.
 #max_review_rounds = 3
+# Extra attempts for a session that failed for infrastructure reasons (timeout,
+# API error, exhausted turns). A session that ran and reported is never retried.
+# 0 disables retrying.
+#retries = 1
+# How long to wait before retrying a session.
+#retry_delay = "10m"
+# Run the retry with the role's fallback_model as its primary model.
+#retry_with_fallback = true
 # Issues handed to the project manager per session.
 #triage_batch_size = 5
 # Minimum time between product manager runs (mail triggers an earlier run).

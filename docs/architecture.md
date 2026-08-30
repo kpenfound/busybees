@@ -258,6 +258,18 @@ saved to `stderr.log` when non-empty, and `result.json` summarises the run.
   [--pr N]`, which writes `<session>/outcome.json`. The runner reads it after
   claude exits; a missing file is reported as `HasOutcome = false` and the
   scheduler treats it as `failed`.
+- **Retries.** `runSession` is the single-attempt primitive; every worker calls
+  it through `runSessionWithRetry`. `classifyFailure` (in
+  `internal/scheduler/sessions.go`) splits failures into *infrastructure* — a
+  timeout, an API error, exhausted turns, a rate limit, `claude` exiting with
+  no result event — and *behavioural*: the session reported an outcome
+  (including `failed`), or exited cleanly without reporting. Only
+  infrastructure failures are retried, `scheduler.retries` times, waiting
+  `scheduler.retry_delay` between attempts and running with the role's
+  fallback model when `scheduler.retry_with_fallback` is set. Each attempt has
+  its own session directory (`<name>-retry<n>`), and a retried developer
+  session is told its previous attempt was interrupted so it continues from
+  the branch. See [Escalation](workflow.md#escalation-beesneeds-human).
 - **Environment.** The configured `env` entries first (`$VAR`-expanded) and
   `SHELL` when `shell` is set; then `BEES_ROLE`, `BEES_SESSION_DIR`,
   `BEES_STATE_DIR`, `BEES_CONFIG`, `BEES_REPO`, `BEES_LABEL`, `BEES_BIN`, plus

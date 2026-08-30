@@ -139,11 +139,14 @@ func (s *Store) SaveRole(role string, rs RoleState) error {
 
 // Worker describes a running developer worker.
 type Worker struct {
-	Name  string    `json:"name"`
-	Issue int       `json:"issue"`
-	Stage string    `json:"stage"`
-	Round int       `json:"round"`
-	Since time.Time `json:"since"`
+	Name  string `json:"name"`
+	Issue int    `json:"issue"`
+	Stage string `json:"stage"`
+	Round int    `json:"round"`
+	// Attempt is the 1-based attempt of the running session; > 1 means the
+	// previous attempt failed for infrastructure reasons and was retried.
+	Attempt int       `json:"attempt,omitempty"`
+	Since   time.Time `json:"since"`
 }
 
 // Status is the live scheduler status.
