@@ -527,9 +527,20 @@ with an unsupported version anyway.
 | `BEES_ROLE` | Default `--from` for `bees mail send`, and the role whose `bees done` statuses are validated. Set automatically inside sessions. |
 | `BEES_ISSUE`, `BEES_PR` | Defaults for the `--issue` / `--pr` flags of `bees mail send` and `bees done`. Set automatically inside sessions. |
 
+The variables marked *set automatically inside sessions* are the only ones that
+reach a session. The rest — `BEES_CLAUDE_BIN`, `BEES_CACHE_DIR`,
+`BEES_SKIP_VERSION_CHECK` and the `BEES_LOG_FORMAT` / `BEES_LOG_LEVEL` fallbacks
+of `--log-format` / `--log-level` — configure the `bees` process you start and
+are **not** inherited by the sessions it spawns (see [Exported into every
+session](#exported-into-every-session)), so a `bees` command a session runs
+itself sees their defaults. Every `BEES_*` variable a session sees is one bees
+set for it; to give sessions one of these knobs, put it in
+[`[global.env]`](#global-and-rolesname) instead.
+
 ### Exported into every session
 
-Sessions run with the `bees` process environment plus:
+Sessions run with the `bees` process environment, minus every `BEES_*` variable
+it inherited, plus:
 
 | Variable | Value |
 |---|---|

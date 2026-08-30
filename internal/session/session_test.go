@@ -109,12 +109,14 @@ env > "$BEES_SESSION_DIR/env.txt"
 echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
 `)
 	role := config.ResolvedRole{Name: "developer", Model: "opus", MaxTurns: 1, Timeout: time.Minute}
-	run := func(t *testing.T, reqEnv map[string]string) []string {
+	run := func(t *testing.T, roleEnv, reqEnv map[string]string) []string {
 		t.Helper()
 		t.Setenv(EnvPR, "54")
 		t.Setenv(EnvIssue, "99")
 		t.Setenv(EnvStateDir, "/inherited")
-		res, err := newRunner(t, bin).Run(context.Background(), Request{Name: "t", Role: role, WorkDir: t.TempDir(), Env: reqEnv})
+		r := role
+		r.Env = roleEnv
+		res, err := newRunner(t, bin).Run(context.Background(), Request{Name: "t", Role: r, WorkDir: t.TempDir(), Env: reqEnv})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -138,7 +140,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
 	}
 
 	t.Run("absent when the session has none", func(t *testing.T) {
-		lines := run(t, nil)
+		lines := run(t, nil, nil)
 		for _, name := range []string{EnvPR, EnvIssue, EnvBranch} {
 			if got := lookup(lines, name); got != nil {
 				t.Errorf("%s leaked from the parent process: %v", name, got)
@@ -151,12 +153,23 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
 	})
 
 	t.Run("the session's own value wins", func(t *testing.T) {
-		lines := run(t, map[string]string{EnvPR: "12"})
+		lines := run(t, nil, map[string]string{EnvPR: "12"})
 		if got := lookup(lines, EnvPR); len(got) != 1 || got[0] != EnvPR+"=12" {
 			t.Errorf("%s lines = %v, want exactly [%s=12]", EnvPR, got, EnvPR)
 		}
 		if got := lookup(lines, EnvIssue); got != nil {
 			t.Errorf("%s leaked from the parent process: %v", EnvIssue, got)
+		}
+	})
+
+	// The strip is namespace-wide, so it also drops operator knobs like
+	// BEES_CLAUDE_BIN that are not session state. Configured role env is the
+	// documented way to give them to sessions: it is applied after the strip.
+	t.Run("configured role env reaches the session", func(t *testing.T) {
+		t.Setenv("BEES_CACHE_DIR", "/inherited-cache")
+		lines := run(t, map[string]string{"BEES_CACHE_DIR": "/configured-cache"}, nil)
+		if got := lookup(lines, "BEES_CACHE_DIR"); len(got) != 1 || got[0] != "BEES_CACHE_DIR=/configured-cache" {
+			t.Errorf("BEES_CACHE_DIR lines = %v, want exactly [BEES_CACHE_DIR=/configured-cache]", got)
 		}
 	})
 }

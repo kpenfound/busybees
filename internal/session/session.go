@@ -349,8 +349,9 @@ func (r *Runner) env(req Request, sessionDir string) []string {
 	// nested `bees run`, `bees exec`, or a test binary) from picking up a stale
 	// issue, PR or branch number; the ones this session has none of are then
 	// absent rather than wrong.
-	env := make([]string, 0, len(os.Environ()))
-	for _, kv := range os.Environ() {
+	envs := os.Environ()
+	env := make([]string, 0, len(envs))
+	for _, kv := range envs {
 		if !strings.HasPrefix(kv, beesEnvPrefix) {
 			env = append(env, kv)
 		}
