@@ -275,3 +275,32 @@ func TestInitPrintKeepsAGuessedBranchCommented(t *testing.T) {
 		t.Fatalf("repo should stay a placeholder:\n%s", out)
 	}
 }
+
+// TestInitWithAQuotedDefaultBranch: git accepts a quote in a ref name, so a
+// detected branch can contain one. It must be escaped, not interpolated raw:
+// unescaped it closed the TOML string and turned the rest of the branch name
+// into settings of its own (#136).
+func TestInitWithAQuotedDefaultBranch(t *testing.T) {
+	const branch = `we"ird`
+	_, clone := testutil.SetupRepos(t)
+	// Point the clone's origin HEAD at a branch whose name contains a quote,
+	// so init detects it rather than being told about it.
+	if _, err := workspace.Git(context.Background(), clone, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/"+branch); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := workspace.DefaultBranch(context.Background(), clone, "origin"); err != nil || got != branch {
+		t.Fatalf("fixture does not detect the branch: %q %v", got, err)
+	}
+	deps, _ := testInitDeps()
+	o := initOptions{dir: clone, remote: "origin", repo: "acme/widgets", label: config.DefaultLabel}
+	if err := runInit(context.Background(), o, deps); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	cfg, err := config.Load(filepath.Join(clone, "bees.toml"))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Project.DefaultBranch != branch {
+		t.Fatalf("project.default_branch = %q, want %q", cfg.Project.DefaultBranch, branch)
+	}
+}
