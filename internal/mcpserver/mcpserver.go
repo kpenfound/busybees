@@ -66,7 +66,7 @@ func envInt(name string) int {
 // tests can drive it with a fake gh client).
 type Issues interface {
 	Create(ctx context.Context, opts issues.Options) (issues.Result, error)
-	Link(ctx context.Context, parent, child int) error
+	Link(ctx context.Context, parent, child int) (issues.LinkResult, error)
 }
 
 // Deps are the server's collaborators.

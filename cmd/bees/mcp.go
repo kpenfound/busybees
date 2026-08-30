@@ -189,9 +189,9 @@ func (b *backend) Create(ctx context.Context, opts issues.Options) (issues.Resul
 	return issues.Create(ctx, b.gh, b.filter, b.labels, opts)
 }
 
-func (b *backend) Link(ctx context.Context, parent, child int) error {
+func (b *backend) Link(ctx context.Context, parent, child int) (issues.LinkResult, error) {
 	if err := b.load(ctx); err != nil {
-		return err
+		return issues.LinkResult{}, err
 	}
 	return issues.Link(ctx, b.gh, b.labels, parent, child)
 }

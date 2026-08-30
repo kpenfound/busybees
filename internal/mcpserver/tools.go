@@ -125,9 +125,11 @@ func (s *server) addIssueTools(srv *mcp.Server) {
 	}, s.issueCreate)
 
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "issue_link",
-		Title:       "Attach an issue to a feature",
-		Description: "Attach an existing issue to a feature issue as a GitHub sub-issue, so the feature's progress shows on GitHub.",
+		Name:  "issue_link",
+		Title: "Attach an issue to a feature",
+		Description: "Attach an existing issue to a feature issue as a GitHub sub-issue, so the feature's " +
+			"progress shows on GitHub. It also puts the issue in the feature's milestone when the issue " +
+			"is in none; a milestone it already has is left alone.",
 		InputSchema: schemaFor[issueLinkInput](nil),
 	}, s.issueLink)
 }
@@ -159,8 +161,9 @@ func (s *server) issueLink(ctx context.Context, _ *mcp.CallToolRequest, in issue
 	if s.issues == nil {
 		return nil, nil, errors.New("issues are unavailable: bees.toml could not be loaded")
 	}
-	if err := s.issues.Link(ctx, in.Parent, in.Child); err != nil {
+	res, err := s.issues.Link(ctx, in.Parent, in.Child)
+	if err != nil {
 		return nil, nil, err
 	}
-	return text("#%d is now a sub-issue of #%d", in.Child, in.Parent), nil, nil
+	return text("%s", res), nil, nil
 }

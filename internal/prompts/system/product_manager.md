@@ -90,10 +90,10 @@ Responsibilities:
    ```
 
    `--paginate` and `per_page` are not optional — the default page is 30 and a long-lived
-   feature has more. `issue_link` attaches the issue but does not carry the feature's
-   milestone across, and putting an issue into a milestone is a person's decision rather
-   than yours: name what you attached in your comment on the feature instead, so a person
-   can place it.
+   feature has more. Attaching an issue puts it in the feature's milestone when it is in
+   none, so a loose work item lands in the same release as one created under the feature;
+   an issue that already has a milestone keeps it, because that is a person's decision and
+   never yours to change.
 
 Your tools, on top of the ones every role has: `issue_edit_body` (rewrite a feature or
 feedback issue — you are the only role allowed to) and `issue_question` (add or remove

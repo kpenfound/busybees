@@ -741,6 +741,12 @@ bees issue create --parent 12 --blocked-by 37 --title "Order the queue" --body-f
 Attaches existing issue `M` as a sub-issue of feature `N` (for example a bug filed by
 QA that turns out to belong to a feature in progress).
 
+Becoming a sub-issue carries the feature's milestone across, exactly as `--parent` does
+on `bees issue create`, so an issue attached after the fact lands in the same release as
+one created under the feature. It only ever *fills in* a milestone: an issue that already
+has one keeps it, and the command says which milestone it set, if any. Refuses a parent
+that is still a proposal.
+
 ## Reporting outcomes
 
 ### `bees done <status> [-m note] [--pr N] [--issue N]` *(sessions)*

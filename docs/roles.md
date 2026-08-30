@@ -166,9 +166,10 @@ looks further along than it is and it inherits no milestone. The prompt tells
 the product manager to compare the open work items in its task against each
 feature's sub-issues on GitHub
 (`gh api --paginate ".../sub_issues?per_page=100"` — the default page is 30)
-and to attach what is missing with `issue_link`. `issue_link` does not carry
-the feature's milestone across and a bee never puts an issue into a milestone,
-so the prompt has it name what it attached instead, for a person to place.
+and to attach what is missing with `issue_link`. Becoming a sub-issue carries
+the feature's milestone across, so an attached work item lands in the same
+release as one created under the feature — but only when it is in no milestone
+already, because a milestone a person set is never overwritten or cleared.
 
 **Proposals:** a feature issue the product manager creates itself is labelled
 `bees:proposal` as well as `bees:feature`. It writes, refines and asks

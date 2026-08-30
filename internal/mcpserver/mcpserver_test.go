@@ -269,9 +269,11 @@ func (f *fakeGH) client(t *testing.T) *github.Client {
 			return []byte(`{"id": 9036, "milestone": {"title":"v0.1.0"}}`), nil
 		case strings.HasPrefix(call, "api repos/acme/widgets/issues/90"):
 			return []byte(`{"id": 9090, "milestone": null}`), nil
+		case strings.HasPrefix(call, "api repos/acme/widgets/milestones"):
+			return []byte(`[{"number": 3, "title": "v0.1.0"}]`), nil
 		case strings.HasPrefix(call, "issue create"):
 			return []byte("https://github.com/acme/widgets/issues/90\n"), nil
-		case strings.HasPrefix(call, "api --method POST"):
+		case strings.HasPrefix(call, "api --method POST"), strings.HasPrefix(call, "api --method PATCH"):
 			return []byte(`{}`), nil
 		}
 		t.Fatalf("unexpected gh call: %s", call)
@@ -291,7 +293,7 @@ func (g *ghIssues) Create(ctx context.Context, opts issues.Options) (issues.Resu
 	return issues.Create(ctx, g.gh, g.filter, g.labels, opts)
 }
 
-func (g *ghIssues) Link(ctx context.Context, parent, child int) error {
+func (g *ghIssues) Link(ctx context.Context, parent, child int) (issues.LinkResult, error) {
 	return issues.Link(ctx, g.gh, g.labels, parent, child)
 }
 
@@ -314,7 +316,9 @@ func TestIssueCreateAndLink(t *testing.T) {
 	}
 
 	f.calls = nil
-	if got := h.call("issue_link", map[string]any{"parent": 36, "child": 90}); got != "#90 is now a sub-issue of #36" {
+	// #90 has no milestone of its own, so the link puts it in its new
+	// parent's and says so.
+	if got := h.call("issue_link", map[string]any{"parent": 36, "child": 90}); got != `#90 is now a sub-issue of #36 milestone "v0.1.0"` {
 		t.Fatalf("result: %q", got)
 	}
 	if !strings.Contains(strings.Join(f.calls, "\n"), "repos/acme/widgets/issues/36/sub_issues") {
