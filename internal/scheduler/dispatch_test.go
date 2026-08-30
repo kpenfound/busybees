@@ -13,6 +13,17 @@ import (
 	"github.com/kpenfound/busybees/internal/github"
 )
 
+// testPriority reads bees:priority the way Scheduler.hasPriority does,
+// without a scheduler.
+func testPriority(labels []github.Label) bool {
+	for _, l := range labels {
+		if l.Name == "bees:priority" {
+			return true
+		}
+	}
+	return false
+}
+
 // testSizeOf reads a size label the way Scheduler.sizeOf does, without a
 // scheduler.
 func testSizeOf(labels []github.Label) string {
@@ -52,7 +63,7 @@ func TestSortReady(t *testing.T) {
 	} {
 		t.Run(tc.order, func(t *testing.T) {
 			got := issues()
-			sortReady(got, tc.order, testSizeOf)
+			sortReady(got, tc.order, testSizeOf, testPriority)
 			var nums []int
 			for _, i := range got {
 				nums = append(nums, i.Number)
@@ -283,5 +294,175 @@ max_size = "m"
 		if got := strings.Join(h.gh.history[n], ","); got != "bees:triage" {
 			t.Fatalf("issue %d relabelled twice: %q", n, got)
 		}
+	}
+}
+
+// bees:priority is a separate axis from size: it moves an issue to the front
+// of the ready queue whatever scheduler.dispatch_order says, and the order
+// still decides between two priority issues.
+func TestSortReadyPutsPriorityFirst(t *testing.T) {
+	base := time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)
+	issue := func(n int, size string, priority bool) github.Issue {
+		i := github.Issue{Number: n, CreatedAt: base.Add(time.Duration(n) * time.Hour)}
+		if size != "" {
+			i.Labels = append(i.Labels, github.Label{Name: "bees:size/" + size})
+		}
+		if priority {
+			i.Labels = append(i.Labels, github.Label{Name: "bees:priority"})
+		}
+		return i
+	}
+	for _, tc := range []struct {
+		name   string
+		order  string
+		issues []github.Issue
+		want   []int
+	}{
+		{
+			// The default dispatch_order: without priority poll's age order
+			// stands, so a younger priority issue must still come first.
+			name:   "oldest",
+			order:  config.DispatchOldest,
+			issues: []github.Issue{issue(1, "m", false), issue(2, "m", true), issue(3, "m", false)},
+			want:   []int{2, 1, 3},
+		},
+		{
+			// Priority is not size: the biggest priority issue goes before
+			// the smallest ordinary one.
+			name:   "small-first",
+			order:  config.DispatchSmallFirst,
+			issues: []github.Issue{issue(1, "xs", false), issue(2, "l", true)},
+			want:   []int{2, 1},
+		},
+		{
+			// Between two priority issues dispatch_order decides as usual.
+			name:   "two priority issues keep dispatch_order",
+			order:  config.DispatchSmallFirst,
+			issues: []github.Issue{issue(1, "l", true), issue(2, "xs", true), issue(3, "xs", false)},
+			want:   []int{2, 1, 3},
+		},
+		{
+			// ... and under "oldest" that is age, as before.
+			name:   "two priority issues keep age",
+			order:  config.DispatchOldest,
+			issues: []github.Issue{issue(1, "l", true), issue(2, "xs", true), issue(3, "xs", false)},
+			want:   []int{1, 2, 3},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := append([]github.Issue(nil), tc.issues...)
+			sortReady(got, tc.order, testSizeOf, testPriority)
+			var nums []int
+			for _, i := range got {
+				nums = append(nums, i.Number)
+			}
+			if fmt.Sprint(nums) != fmt.Sprint(tc.want) {
+				t.Fatalf("order %q: got %v, want %v", tc.order, nums, tc.want)
+			}
+		})
+	}
+}
+
+// onePerPassTOML runs a single developer worker, so the issue dispatched is
+// the head of the queue and nothing else.
+const onePerPassTOML = `
+version = 1
+[project]
+repo = "acme/widgets"
+[scheduler]
+poll_interval = "1s"
+max_developers = 1
+max_review_rounds = 3
+dispatch_order = "oldest"
+` + rolesOffTOML
+
+// markPriority puts bees:priority on a seeded issue, the way a person does
+// from the GitHub UI.
+func markPriority(h *harness, n int) {
+	h.gh.mu.Lock()
+	defer h.gh.mu.Unlock()
+	h.gh.issues[n].Labels = append(h.gh.issues[n].Labels, github.Label{Name: "bees:priority"})
+}
+
+func TestPriorityIssueIsDispatchedBeforeOlderReadyWork(t *testing.T) {
+	h := newHarness(t, onePerPassTOML)
+	base := time.Now().Add(-24 * time.Hour)
+	seedReady(h, 1, "s", base)
+	seedReady(h, 2, "s", base.Add(time.Hour))
+	markPriority(h, 2)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if err := h.sched.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := dispatched(h); fmt.Sprint(got) != "[2]" {
+		t.Fatalf("dispatched %v, want the priority issue [2]", got)
+	}
+	// The label is a person's, not the factory's: nothing removes it.
+	if !github.HasLabel(h.gh.issues[2].Labels, "bees:priority") {
+		t.Fatalf("issue 2 lost bees:priority: %v", h.gh.issues[2].Labels)
+	}
+	st, err := h.store.LoadStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(st.Priority) != "[2]" {
+		t.Fatalf("status priority %v, want [2]", st.Priority)
+	}
+}
+
+// Resumption still wins: an in-progress issue nobody owns — a worker picking
+// its issue back up after a restart — goes before a priority one.
+func TestPriorityDoesNotJumpAResumedIssue(t *testing.T) {
+	h := newHarness(t, onePerPassTOML)
+	base := time.Now().Add(-24 * time.Hour)
+	seedReady(h, 1, "s", base)
+	markPriority(h, 1)
+	seedIssue(h, 2, "bees:in-progress", "s", base.Add(time.Hour))
+	h.gh.hidden[202] = true
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if err := h.sched.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, dir := range h.sessions(config.RoleDeveloper) {
+		got = append(got, filepath.Base(dir))
+	}
+	if len(got) != 1 || !strings.Contains(got[0], "issue-2-") {
+		t.Fatalf("developer sessions %v, want only the resumed issue 2", got)
+	}
+}
+
+// The state machine must not strip bees:priority: it is neither a state nor a
+// size label, so reconcile's edits leave it alone.
+func TestReconcileKeepsThePriorityLabel(t *testing.T) {
+	h := newHarness(t, noRolesTOML)
+	base := time.Now().Add(-24 * time.Hour)
+	// An unlabelled issue a person marked priority: reconcile gives it
+	// bees:triage, and the project manager would move it on from there.
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Urgent", Body: "main does not build", State: "OPEN",
+		Labels: []github.Label{{Name: "bees"}, {Name: "bees:priority"}}, CreatedAt: base}
+	// A ready priority issue without a size: reconcile sizes it.
+	seedReady(h, 2, "", base.Add(time.Hour))
+	markPriority(h, 2)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if err := h.sched.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []int{1, 2} {
+		if !github.HasLabel(h.gh.issues[n].Labels, "bees:priority") {
+			t.Fatalf("issue %d lost bees:priority: %v", n, h.gh.issues[n].Labels)
+		}
+	}
+	if !github.HasLabel(h.gh.issues[1].Labels, "bees:triage") {
+		t.Fatalf("issue 1 was not triaged: %v", h.gh.issues[1].Labels)
+	}
+	if !github.HasLabel(h.gh.issues[2].Labels, "bees:size/m") {
+		t.Fatalf("issue 2 was not sized: %v", h.gh.issues[2].Labels)
 	}
 }
