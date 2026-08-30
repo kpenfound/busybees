@@ -469,6 +469,16 @@ func TestCheckFilterTellsAnEmptyRepoFromAHiddenBacklog(t *testing.T) {
 		}
 	}
 
+	// A satisfied filter asks nothing else even when it has more than the
+	// label: the base-label count only runs when the first listing was empty.
+	// (The label-only assertion in TestCheckFilter cannot see this: there the
+	// filter *is* the base-label question, so it short-circuits either way.)
+	sat := setup(t, "\n[filter]\nassignee = \"kyle\"\n", map[string]ghReply{"issue list": {out: `[{"number":47}]`}})
+	wantResult(t, sat.run(t, sat.checkFilter), Pass, "1 open issue")
+	if len(sat.gh.calls) != 1 {
+		t.Errorf("a passing filter check made %d gh calls, want 1: %v", len(sat.gh.calls), sat.gh.calls)
+	}
+
 	// Nothing carries the base label either: an empty or not-yet-labelled
 	// repository, which gets the plain message.
 	f.gh.reply = baseLabelGH(0, 0)
