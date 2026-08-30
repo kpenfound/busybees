@@ -412,7 +412,7 @@ and label transitions the scheduler would apply.
 |---|---|
 | `pm`, `pjm`, `qa` | None. Polls GitHub, reconciles, then runs the role once. |
 | `developer` | `--issue N`. Runs the full developer ↔ reviewer loop for that issue. |
-| `reviewer` | `--issue N` or `--pr N` (the PR's closing issue is used). Moves the issue into review and runs the loop from the review stage. |
+| `reviewer` | `--issue N` or `--pr N` (the PR's closing issue is used). Moves the issue into review and runs the loop from the review stage, through the pre-review checks read. |
 
 ```sh
 bees exec pjm
