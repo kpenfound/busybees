@@ -362,8 +362,11 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 			}
 			counts, _ := a.mail.Counts()
 			today := todayTotal(store, time.Now())
+			rows := roleRows(store, st)
 			if asJSON {
-				return json.NewEncoder(os.Stdout).Encode(map[string]any{"status": st, "unread_mail": counts, "today": today})
+				return json.NewEncoder(os.Stdout).Encode(map[string]any{
+					"status": st, "unread_mail": counts, "today": today, "notes_bytes": notesBytes(rows),
+				})
 			}
 			fmt.Printf("repo: %s   state: %s\n", cfg.Project.Repo, cfg.StateDir())
 			if st.UpdatedAt.IsZero() {
@@ -411,15 +414,8 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 				}
 				fmt.Printf("  %-12s issue #%-5d %-3s %-10s %-20s since %s\n", w.Name, w.Issue, size, w.Stage, round, w.Since.Format(time.Kitchen))
 			}
-			fmt.Println("\nsingletons:")
-			for _, r := range []string{config.RoleProductManager, config.RoleProjectManager, config.RoleQA} {
-				rs, _ := store.Role(r)
-				last := "never"
-				if !rs.LastRun.IsZero() {
-					last = time.Since(rs.LastRun).Round(time.Minute).String() + " ago"
-				}
-				fmt.Printf("  %-16s %-8s last run %s\n", r, st.Singletons[r], last)
-			}
+			fmt.Println("\nroles:")
+			fmt.Print(rolesText(rows, time.Now()))
 			fmt.Println("\nunread mail:")
 			if len(counts) == 0 {
 				fmt.Println("  none")
@@ -479,6 +475,61 @@ func queuesText(st state.Status) string {
 			refs = append(refs, fmt.Sprintf("#%d", x))
 		}
 		fmt.Fprintf(&b, "  #%-3d blocked by %s\n", n, strings.Join(refs, ", "))
+	}
+	return b.String()
+}
+
+// roleRow is one line of the roles table `bees status` prints: what the role
+// is doing, when it last ran, and how big its notes file has grown.
+type roleRow struct {
+	Role    string
+	State   string    // "running"/"idle"; "-" for the pooled roles
+	LastRun time.Time // zero when the role has never run
+	Notes   int64     // size of notes/<role>.md in bytes
+}
+
+// roleRows collects a row for every role. Notes sizes are read from the files
+// as the command runs, not from status.json, so they are right even when the
+// scheduler is stopped.
+func roleRows(store *state.Store, st state.Status) []roleRow {
+	rows := make([]roleRow, 0, len(config.Roles))
+	for _, r := range config.Roles {
+		rs, _ := store.Role(r)
+		n, _ := store.NotesSize(r)
+		row := roleRow{Role: r, State: st.Singletons[r], LastRun: rs.LastRun, Notes: n}
+		switch r {
+		case config.RoleDeveloper, config.RoleReviewer:
+			// Pooled roles: the developer workers table above says what
+			// they are doing, and there is no single "running" answer.
+			row.State = "-"
+		default:
+			if row.State == "" {
+				row.State = "idle"
+			}
+		}
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+// notesBytes is the roles table's notes column as `--json` reports it.
+func notesBytes(rows []roleRow) map[string]int64 {
+	m := make(map[string]int64, len(rows))
+	for _, r := range rows {
+		m[r.Role] = r.Notes
+	}
+	return m
+}
+
+// rolesText renders the roles table.
+func rolesText(rows []roleRow, now time.Time) string {
+	var b strings.Builder
+	for _, r := range rows {
+		last := "never"
+		if !r.LastRun.IsZero() {
+			last = now.Sub(r.LastRun).Round(time.Minute).String() + " ago"
+		}
+		fmt.Fprintf(&b, "  %-16s %-8s last run %-12s notes %s\n", r.Role, r.State, last, notesSizeText(r.Notes))
 	}
 	return b.String()
 }
