@@ -612,7 +612,18 @@ the issue to a human:
 - with `roles.reviewer.auto_merge`: required checks still failed after
   `max_check_fix_rounds`, were still pending at `checks_timeout`, the reviewer
   could not diagnose them (or said it had mailed the developer but had not), or
-  GitHub refused the merge.
+  GitHub refused the merge;
+- the issue ran out of money: every session run for it has cost more than
+  [`scheduler.max_cost_per_issue`](configuration.md#cost-budgets), or two
+  sessions in a row cost more than `scheduler.max_cost_per_session`. The
+  comment names the spend, so the choice is between raising the budget and
+  finishing the work by hand. Both budgets are off by default.
+
+A budget the factory hits does not always escalate: `scheduler.max_cost_per_day`
+pauses dispatch instead. Nothing is labelled, no comment is written, and the
+workers already running finish their loop; the scheduler simply starts nothing
+new until the rolling 24-hour spend falls back under the budget. `bees status`
+reports the pause.
 
 The orchestrator sets `bees:needs-human` and posts a comment on the issue
 explaining why; the comment mentions everyone in
