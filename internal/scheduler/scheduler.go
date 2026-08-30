@@ -454,9 +454,10 @@ func (s *Scheduler) sizeOf(labels []github.Label) string {
 	return ""
 }
 
-// hasPriority reports whether a person marked the issue with bees:priority.
-// The label is not a state or size label: nothing in the factory adds or
-// removes it, and dispatch is the only thing that reads it.
+// hasPriority reports whether the issue carries bees:priority. The label is
+// not a state or size label: nothing in the factory removes it, only the
+// project manager may add it (to a work item that unblocks the factory
+// itself), and dispatch is the only thing that reads it.
 func (s *Scheduler) hasPriority(labels []github.Label) bool {
 	return github.HasLabel(labels, s.labels.Priority)
 }

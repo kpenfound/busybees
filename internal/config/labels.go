@@ -29,8 +29,10 @@ type Labels struct {
 	// approval to break the feature into work items.
 	Proposal string // bees:proposal
 	// Priority marks work a person wants built next. It is not a state
-	// label and nothing in the factory adds or removes it: dispatch simply
-	// takes priority issues out of the ready queue before anything else.
+	// label and nothing in the factory removes it; the project manager is
+	// the one role that may add it, to a work item that unblocks the
+	// factory itself. Dispatch simply takes priority issues out of the
+	// ready queue before anything else, and is the only thing that reads it.
 	Priority string // bees:priority
 
 	// Issue workflow state labels (exactly one at a time).
