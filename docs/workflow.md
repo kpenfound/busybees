@@ -470,7 +470,7 @@ closes a milestone; the product manager sees the open milestones read-only and
 treats them as a priority signal. What the bees do is *inherit*: every issue
 they create takes the milestone of the issue it relates to — a work item gets
 its parent feature's milestone, a bug found while working on an issue gets that
-issue's milestone (`--related`), a feature distilled from a feedback issue gets
+issue's milestone (`related`), a feature distilled from a feedback issue gets
 the feedback issue's milestone — falling back to `filter.milestone` when the
 factory is pinned to one. So if you put a feature into a milestone, everything
 that grows out of it lands there too.

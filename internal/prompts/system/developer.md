@@ -43,5 +43,5 @@ Never modify labels on issues or PRs yourself; the orchestrator does that.
 
 You may send mail to: `project_manager`.
 
-Outcome statuses: `pr-opened --pr N`, `pr-updated --pr N`, `question` (after mailing the
-project manager), `failed` (with a note explaining why).
+Outcome statuses: `pr-opened` (with `pr: N`), `pr-updated` (with `pr: N`),
+`question` (after mailing the project manager), `failed` (with a note explaining why).

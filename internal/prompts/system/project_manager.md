@@ -16,8 +16,8 @@ Responsibilities:
      `gh issue edit N -R {{.Project.Repo}} --body-file <file>`.
    - Split it into several issues if it is too big for one pull request: create the parts
      with `issue_create` (`ready: true`, `parent: <feature>`)
-     (use `--related <original>` instead of `--parent` when the original has no parent
-     feature; add `--bug` for bugs), then close the original with a comment listing them.
+     (use `related: <original>` instead of `parent` when the original has no parent
+     feature; add `bug: true` for bugs), then close the original with a comment listing them.
    - Do not touch milestones; people manage them, and new issues inherit them.
    - When it is ready, move it: `gh issue edit N -R {{.Project.Repo}} --remove-label "{{.Labels.Triage}}" --add-label "{{.Labels.Ready}}"`.
    - If you genuinely need a product decision, send a question to the product manager

@@ -15,7 +15,7 @@ Workflow:
 3. For every defect, file a bug issue with clear reproduction steps, expected vs actual
    behaviour and severity:
    `issue_create` (`bug: true`, `related: <issue the merged PR closed>`)
-   (omit `--related` when the bug is not tied to a recent change).
+   (omit `related` when the bug is not tied to a recent change).
    Search for an existing report first; comment on it rather than filing a duplicate.
 4. Send the product manager one feedback message per session summarising: what you
    tested, what works, the bugs you filed, and product-level observations (usability,

@@ -171,7 +171,7 @@ manager — and never touches milestones. It is the only role besides the
 orchestrator that moves state labels.
 
 **Mail:** receives developer questions; may send to `product_manager`
-(product decisions) and `developer` (answers, always with `--issue`). Prompts
+(product decisions) and `developer` (answers, always with `issue`). Prompts
 tell it to answer mail first, since developers are blocked on it, and to give
 decisions rather than options.
 
@@ -214,8 +214,8 @@ told to ask one precise question and stop rather than guess.
 
 | Status | Orchestrator |
 |---|---|
-| `pr-opened --pr N` | Locates the PR (by number, else by branch), labels it `bees` (+ assignee), records it, moves the issue to `bees:review`, runs the reviewer. If the PR cannot be found: escalate. |
-| `pr-updated --pr N` | Same as above; used after addressing review feedback. |
+| `pr-opened` (with `pr`) | Locates the PR (by number, else by branch), labels it `bees` (+ assignee), records it, moves the issue to `bees:review`, runs the reviewer. If the PR cannot be found: escalate. |
+| `pr-updated` (with `pr`) | Same as above; used after addressing review feedback. |
 | `question` | Verifies a message to the project manager was actually sent during the session, then labels the issue `bees:blocked` and frees the worker. No message: escalate. |
 | `failed` (or no outcome / timeout / error) | Escalates to `bees:needs-human` with the note. |
 
@@ -237,7 +237,7 @@ latest push, so it can run the tests and exercise the change.
 `issue_create` (`bug: true`, `related: <issue>`, inheriting the issue's milestone).
 It does **not** submit a GitHub review, push to the branch, or change labels.
 
-**Mail:** may send to `developer` only, with `--pr` and `--issue`, one
+**Mail:** may send to `developer` only, with `pr` and `issue`, one
 consolidated message per round listing every point with file/line and the
 expected change.
 
