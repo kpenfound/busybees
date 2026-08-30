@@ -71,7 +71,9 @@ their share of the work, set `assignee = "@me"` and optionally
 ## The label state machine
 
 Each visible issue carries exactly one **state label**. The orchestrator moves
-most of them; the project manager moves a few; humans can move any of them.
+most of them; the project manager moves a few, through the `issue_set_state`
+tool, which is the only move it is offered and which refuses an issue that is
+not in `bees:triage`; humans can move any of them.
 
 Feature issues (`bees:feature`) and feedback issues (`bees:feedback`) are
 **not** in this diagram: they never carry a state label. They are the product
@@ -114,9 +116,9 @@ stateDiagram-v2
 | Label | Meaning | Who sets it |
 |---|---|---|
 | `bees:triage` | Needs the project manager to make it buildable | Product manager (new work items), orchestrator (unlabelled issues), humans |
-| `bees:ready` | Detailed enough for a developer | Project manager, orchestrator (after an answer, human PR feedback on an approved issue, or an approved PR that conflicts with the default branch), humans |
+| `bees:ready` | Detailed enough for a developer | Project manager (`issue_set_state`, with a size), orchestrator (after an answer, human PR feedback on an approved issue, or an approved PR that conflicts with the default branch), humans |
 | `bees:in-progress` | A developer worker owns it and a branch exists | Orchestrator |
-| `bees:blocked` | Waiting on an answer to a question | Project manager (asking the PM), orchestrator (developer asking) |
+| `bees:blocked` | Waiting on an answer to a question | Project manager (`issue_set_state`, asking the PM), orchestrator (developer asking) |
 | `bees:review` | A pull request is open and in the review loop | Orchestrator |
 | `bees:approved` | Reviewer approved; waiting for a human to merge (or, with `roles.reviewer.auto_merge`, for the checks) | Orchestrator (also put on the PR) |
 | `bees:needs-human` | The factory gave up on it | Orchestrator |
@@ -129,7 +131,7 @@ fifth: it sits *next to* a state label rather than replacing one):
 |---|---|---|
 | `bees:feature` | A feature issue: owned by the product manager, which makes it detailed enough and breaks it into work items | Product manager, humans |
 | `bees:feedback` | The product manager's inbox: an idea, product feedback or a bug report from a person | Humans |
-| `bees:question` | The product manager is waiting for a person to answer on a feature or feedback issue | Product manager (removed by the orchestrator when the person replies) |
+| `bees:question` | The product manager is waiting for a person to answer on a feature or feedback issue | Product manager (`issue_question`; removed by the orchestrator when the person replies) |
 | `bees:proposal` | A feature issue a bee wrote rather than a person; it sits next to `bees:feature`, and a person removes the label to approve it | `bees issue create --feature` (removed by a person) |
 
 `bees:priority` says "build this next". It is not a state label: an issue keeps
@@ -172,8 +174,9 @@ can pick the model the developer session runs
 Who sets it:
 
 - The **project manager** sets the size when it moves a work item from
-  `bees:triage` to `bees:ready`, in the same edit. If the refined scope comes
-  out as `xl` it splits the issue instead of labelling it.
+  `bees:triage` to `bees:ready`: `issue_set_state` requires one and applies
+  both labels in a single edit. If the refined scope comes out as `xl` it
+  splits the issue instead of labelling it.
 - The **product manager** may pre-size a work item it creates
   (`bees issue create --label "bees:size/s"`). It is a hint; the project
   manager confirms or changes it during triage.
@@ -350,10 +353,10 @@ label.** That is all. On the next poll the orchestrator sees an issue with no
 state label, adds `bees:triage`, and the project manager picks it up: it reads
 the codebase and the parent feature issue if there is one (shown in its
 prompt), rewrites the body with scope, acceptance criteria and pointers to
-relevant code (keeping your intent), splits it if it is too big (with
-`issue_create` with `ready: true` and `parent: <feature>`, or `related: <original>` when
-there is no parent feature), and moves it to `bees:ready`. It never changes
-milestones. If the issue is invalid or a duplicate the project
+relevant code (keeping your intent, with `issue_edit_body`), splits it if it is
+too big (with `issue_create` with `ready: true` and `parent: <feature>`, or
+`related: <original>` when there is no parent feature), and moves it to
+`bees:ready` with a size. It never changes milestones. If the issue is invalid or a duplicate the project
 manager closes it with a comment. The project manager only ever edits work
 items; feature and feedback issues are the product manager's.
 

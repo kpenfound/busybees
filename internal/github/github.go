@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"regexp"
@@ -20,17 +21,34 @@ type Client struct {
 	Repo string // owner/name
 	// Exec overrides command execution (tests).
 	Exec func(ctx context.Context, args ...string) ([]byte, error)
+	// ExecStdin overrides command execution with input on gh's standard
+	// input (tests). It is a second hook because Exec has no room for the
+	// input; a fake that intercepts a call using it must replace both.
+	ExecStdin func(ctx context.Context, stdin string, args ...string) ([]byte, error)
 }
 
 // New returns a client for repo.
 func New(repo string) *Client {
 	c := &Client{Repo: repo}
 	c.Exec = c.run
+	c.ExecStdin = c.runStdin
 	return c
 }
 
 func (c *Client) run(ctx context.Context, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "gh", args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return stdout.Bytes(), fmt.Errorf("gh %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
+	}
+	return stdout.Bytes(), nil
+}
+
+func (c *Client) runStdin(ctx context.Context, stdin string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "gh", args...)
+	cmd.Stdin = strings.NewReader(stdin)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -480,6 +498,19 @@ func (c *Client) EditLabels(ctx context.Context, number int, add, remove []strin
 		return nil
 	}
 	_, err := c.Exec(ctx, args...)
+	return err
+}
+
+// EditBody replaces the body of an issue (gh edits pull requests through
+// the same command). The body travels on standard input rather than as an
+// argument: a rewritten issue body is arbitrary markdown of any length, and
+// an argument would be both size-limited and quoting-sensitive.
+func (c *Client) EditBody(ctx context.Context, number int, body string) error {
+	args := []string{"issue", "edit", strconv.Itoa(number), "-R", c.Repo, "--body-file", "-"}
+	if c.ExecStdin == nil {
+		return errors.New("github: no ExecStdin")
+	}
+	_, err := c.ExecStdin(ctx, body, args...)
 	return err
 }
 

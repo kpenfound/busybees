@@ -1,5 +1,7 @@
 package config
 
+import "slices"
+
 // Labels are the GitHub labels the factory uses as its workflow state
 // machine. Every label is derived from the configured visibility label so
 // several factories can coexist in one repository.
@@ -86,6 +88,17 @@ func (l Labels) StateLabels() []string {
 // most one of them, independently of its state label.
 func (l Labels) SizeLabels() []string {
 	return []string{l.SizeXS, l.SizeS, l.SizeM, l.SizeL, l.SizeXL}
+}
+
+// SizeLabel returns the label for a short size name ("s" -> "bees:size/s"),
+// or "" when size is not one of Sizes. It is the inverse of the trimming
+// callers do to turn a label back into a size.
+func (l Labels) SizeLabel(size string) string {
+	i := slices.Index(Sizes, size)
+	if i < 0 {
+		return ""
+	}
+	return l.SizeLabels()[i]
 }
 
 // LabelSpec describes a label for creation in GitHub.

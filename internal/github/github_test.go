@@ -233,6 +233,43 @@ func TestClosingIssues(t *testing.T) {
 	}
 }
 
+// TestEditBody pins where the body goes: on gh's standard input, never on
+// the command line, where an arbitrarily long markdown document with any
+// quoting in it does not belong.
+func TestEditBody(t *testing.T) {
+	var args []string
+	var stdin string
+	calls := 0
+	c := New("a/b")
+	c.Exec = func(ctx context.Context, a ...string) ([]byte, error) {
+		t.Fatalf("EditBody used Exec, which cannot carry the body: %v", a)
+		return nil, nil
+	}
+	c.ExecStdin = func(ctx context.Context, in string, a ...string) ([]byte, error) {
+		calls++
+		args, stdin = a, in
+		return nil, nil
+	}
+	body := "## Scope\n\nA body with \"quotes\", $shell and a trailing newline.\n"
+	if err := c.EditBody(context.Background(), 7, body); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("calls: %d", calls)
+	}
+	if got, want := strings.Join(args, " "), "issue edit 7 -R a/b --body-file -"; got != want {
+		t.Fatalf("args = %q, want %q", got, want)
+	}
+	if stdin != body {
+		t.Fatalf("stdin = %q, want %q", stdin, body)
+	}
+	for _, a := range args {
+		if strings.Contains(a, "Scope") {
+			t.Fatalf("the body reached the command line: %v", args)
+		}
+	}
+}
+
 func TestAssignUsesTheRESTEndpoint(t *testing.T) {
 	var calls [][]string
 	c := New("a/b")

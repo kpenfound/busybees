@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -94,16 +95,20 @@ func (h *harness) tools() []*mcp.Tool {
 	return res.Tools
 }
 
-func TestToolsPerRole(t *testing.T) {
-	want := "done, issue_create, issue_link, mail_list, mail_send"
+// TestSessionToolsAreOfferedToEveryRole: the tools that are not about
+// GitHub are the same for everybody. TestGitHubToolsPerRole covers the ones
+// that are not.
+func TestSessionToolsAreOfferedToEveryRole(t *testing.T) {
 	for _, role := range append(config.Roles, "") {
 		h := newHarness(t, role, Deps{})
 		var names []string
 		for _, tool := range h.tools() {
 			names = append(names, tool.Name)
 		}
-		if got := strings.Join(names, ", "); got != want {
-			t.Errorf("role %q: tools = %s, want %s", role, got, want)
+		for _, want := range []string{"done", "issue_create", "issue_link", "mail_list", "mail_send"} {
+			if !slices.Contains(names, want) {
+				t.Errorf("role %q: tools = %s, want %s", role, strings.Join(names, ", "), want)
+			}
 		}
 	}
 }

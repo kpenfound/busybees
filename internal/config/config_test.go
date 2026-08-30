@@ -1150,6 +1150,21 @@ func TestNotifyValidation(t *testing.T) {
 	}
 }
 
+func TestSizeLabelIsTheInverseOfTheSizeNames(t *testing.T) {
+	l := LabelsFor("bees")
+	for i, size := range Sizes {
+		if got, want := l.SizeLabel(size), l.SizeLabels()[i]; got != want {
+			t.Errorf("SizeLabel(%q) = %q, want %q", size, got, want)
+		}
+	}
+	if got := l.SizeLabel("huge"); got != "" {
+		t.Errorf(`SizeLabel("huge") = %q, want ""`, got)
+	}
+	if got := l.SizeLabel(""); got != "" {
+		t.Errorf(`SizeLabel("") = %q, want ""`, got)
+	}
+}
+
 func TestDescribeLocation(t *testing.T) {
 	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
 	ny, err := time.LoadLocation("America/New_York")

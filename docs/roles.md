@@ -50,18 +50,26 @@ a role posts on GitHub must end with the line `<!-- bees:<role> -->` (invisible
 when rendered). The orchestrator uses it to tell bee comments from human ones
 when it collects PR feedback for the developer.
 
-Roles interact with GitHub through the already-authenticated `gh` CLI, and
-with each other only through the local mailbox (the `mail_send` tool). Every
-issue or PR a role creates must match the filter: issues are created with the
-`issue_create` tool, which applies the filter label and assignee itself, and
-for `gh pr create` the prompts include the exact flags to pass (`--label "bees"`
+Roles interact with GitHub through MCP tools where there is one, and through
+the already-authenticated `gh` CLI for everything else; with each other, only
+through the local mailbox (the `mail_send` tool). Every issue or PR a role
+creates must match the filter: issues are created with the `issue_create`
+tool, which applies the filter label and assignee itself, and for
+`gh pr create` the prompts include the exact flags to pass (`--label "bees"`
 plus `--assignee` when configured).
 
-`mail_send`, `mail_list`, `issue_create`, `issue_link` and `done` are MCP tools
-served to every session by the built-in `bees` server, so a role calls them with
-arguments instead of composing a command line; the equivalent `bees` commands
-(`bees mail send`, `bees issue create`, `bees issue link`, `bees done`) still
-exist and behave identically. See [cli.md](cli.md#bees-mcp-serve-sessions).
+The built-in `bees` MCP server serves the tools. `mail_send`, `mail_list`,
+`issue_create`, `issue_link`, `done`, `issue_view`, `pr_view` and `comment` go
+to every session; `issue_edit_body` to the two managers, `issue_set_state` to
+the project manager and `issue_question` to the product manager. A role calls
+them with arguments instead of composing a command line, and **the tools
+enforce the rules the prompts used to only state**: nothing outside the filter
+can be read or written, `comment` appends the role's marker, `issue_edit_body`
+refuses a feature or feedback issue for anyone but the product manager, and
+`issue_set_state` only moves an issue that is in `bees:triage`. The equivalent
+`bees` commands (`bees mail send`, `bees issue create`, `bees issue link`,
+`bees done`) still exist and behave identically. See
+[cli.md](cli.md#bees-mcp-serve-sessions).
 
 ### Notes files
 
@@ -116,9 +124,10 @@ read the codebase and README to understand what exists.
 comes from feedback, so the milestone is inherited), describing user-visible
 outcomes rather than implementation; creates work items as sub-issues with
 `issue_create` (`parent: <feature>`); attaches existing issues with
-`issue_link`; comments on feature and feedback issues; adds
-`bees:question`; closes feature issues that are done or no longer make sense,
-with a comment. It **never creates, edits or closes milestones** — people
+`issue_link`; rewrites feature and feedback bodies with `issue_edit_body` (the
+only role that may); comments with `comment`; adds and clears
+`bees:question` with `issue_question`; closes feature issues that are done or
+no longer make sense, with a comment. It **never creates, edits or closes milestones** — people
 manage those; the product manager reads them as a priority signal and, if it
 thinks one is wrong, says so in a reply instead of acting. It is told to
 search before creating and to keep the backlog small.
@@ -128,12 +137,12 @@ to shipped, whether it wrote it or a person filed it. Feature issues never
 enter the workflow state machine. For each fresh one it:
 
 1. makes sure the issue is detailed enough to be broken down;
-2. if only a person can decide something, posts the question as a comment
-   (ending with the `<!-- bees:product_manager -->` marker), starting it with
+2. if only a person can decide something, posts the question with `comment`
+   (which appends the `<!-- bees:product_manager -->` marker), starting it with
    the mentions from [`scheduler.notify`](configuration.md#notifying-a-person)
    when it is set — the factory comments under your own account, so nothing
-   else tells the people who can answer — adds the `bees:question` label, and
-   stops working on that feature;
+   else tells the people who can answer — adds the `bees:question` label with
+   `issue_question` (`waiting: true`), and stops working on that feature;
 3. otherwise breaks it into work items — one issue per pull-request-sized
    piece, created with `issue_create` (`parent: <feature>`, `bug: true` for
    bugs), which makes each a native GitHub **sub-issue** of the feature with
@@ -170,10 +179,10 @@ product manager run regardless of `product_manager_interval`.
 **Feedback from people:** issues labelled `bees:feedback` are the product
 manager's inbox (feature ideas, product feedback, bug reports from humans);
 they never enter the workflow state machine. For each fresh one the product
-manager decides and acts (feature issues, bug work items, or a reasoned no), then must **reply on the feedback issue** with a comment saying
-what it did and linking created issues, ending with the marker. It closes the
-issue when fully actioned, or asks the person a question (comment +
-`bees:question`) and leaves it open. Freshness works exactly as for feature
+manager decides and acts (feature issues, bug work items, or a reasoned no), then must **reply on the feedback issue** with `comment`, saying
+what it did and linking created issues. It closes the
+issue when fully actioned, or asks the person a question (`comment` +
+`issue_question`) and leaves it open. Freshness works exactly as for feature
 issues.
 
 **Mail:** receives questions from the project manager and reports from QA;
@@ -201,19 +210,20 @@ is told to read the parent feature for context. The prompt also shows the open
 header line and as a **Blocked by** column of the other-issues table.
 
 **Does on GitHub:** rewrites triage work items (context, scope, acceptance
-criteria, pointers to code, testing expectations) with `gh issue edit`,
+criteria, pointers to code, testing expectations) with `issue_edit_body`,
 keeping the author's intent; splits oversized work items with
 `issue_create` (`ready: true`, `parent: <feature>`, or `related: <original>` when
 there is no parent feature), closing the original with a comment; moves
 refined work items `bees:triage` →
-`bees:ready` with exactly one **size label** (`bees:size/xs` … `bees:size/l`)
-added in the same edit, splitting anything that sizes up above
-`roles.developer.max_size` (default `l`) instead of labelling it — the
+`bees:ready` with `issue_set_state`, which requires exactly one **size**
+(`xs` … `l`) and applies both labels in one edit, splitting anything that sizes
+up above `roles.developer.max_size` (default `l`) instead of labelling it — the
 orchestrator sends such an issue straight back to `bees:triage`; moves a work
-item to `bees:blocked` when it has asked the product manager; closes invalid or duplicate work items with a comment. It
-never edits feature or feedback issues — those belong to the product
-manager — and never touches milestones. It is the only role besides the
-orchestrator that moves state labels. It may also add
+item to `bees:blocked` (the same tool) when it has asked the product manager;
+closes invalid or duplicate work items with a comment. It
+never edits feature or feedback issues — those belong to the product manager,
+and `issue_edit_body` refuses them — and never touches milestones. It is the
+only role besides the orchestrator that moves state labels. It may also add
 [`bees:priority`](workflow.md#priority-do-this-next) to a bug that blocks the
 factory itself — the default branch does not build, say — and to nothing else. It is told to declare dependencies with a
 `Blocked by #N` line and move the item to `bees:ready` anyway rather than
@@ -252,9 +262,9 @@ existing one; files out-of-scope bugs with
 `issue_create` (`bug: true`, `related: <issue>` — a `bees:bug` work item in triage,
 in the same milestone as the issue it was working on); replies
 on GitHub to every human review comment it addresses (`gh api
-repos/<repo>/pulls/<pr>/comments/<id>/replies` for inline comments, `gh pr
-comment` for reviews and conversation comments), ending each reply with
-`<!-- bees:developer -->`. When a human's request conflicts with the issue or
+repos/<repo>/pulls/<pr>/comments/<id>/replies` for inline comments, ending
+that reply with `<!-- bees:developer -->` itself; the `comment` tool, which
+appends the marker, for reviews and conversation comments). When a human's request conflicts with the issue or
 the reviewer, the human wins. It must not change labels, must not push to the
 default branch, and must not fix unrelated bugs.
 
