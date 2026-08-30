@@ -839,7 +839,11 @@ func TestQALooksForProductDefectsAndNeedNotFileAnything(t *testing.T) {
 // The closed-issues half: the task lists open bugs only (runQA filters
 // snap.issues by the bug label, internal/scheduler/singletons.go), so
 // "search for an existing report" pointed at half the record — #84 and #103
-// were both filed against reports that were already closed. The reproduce
+// were both filed against reports that were already closed. A closed issue is
+// context and not somewhere to file: ListOpenIssues asks gh for --state open
+// (internal/github/github.go), so no role's task ever carries one and nothing
+// reopens it, which is why a failure reproduced again becomes a new bug. The
+// reproduce
 // half: #103 was filed from a truncated reporter dump and closed as not
 // reproducible. The never-start half: session 20260829-192238 ran
 // `bees exec developer` with $BEES_CONFIG still pointing at the live
@@ -853,6 +857,7 @@ func TestQAReproducesBeforeFilingAndStartsNothingLive(t *testing.T) {
 	}
 	for _, want := range []string{
 		"search the existing issues, closed as well as open",
+		"nothing in the factory reads a closed issue",
 		"**reproduce it here**",
 		"that acts on the real world for you",
 	} {
@@ -862,6 +867,7 @@ func TestQAReproducesBeforeFilingAndStartsNothingLive(t *testing.T) {
 	}
 	for _, gone := range []string{
 		"Search for an existing report first",
+		"Comment on the report you find",
 		"exercise it as a user would",
 	} {
 		if strings.Contains(sys, gone) {

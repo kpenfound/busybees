@@ -32,8 +32,12 @@ Workflow:
    (omit `related` when the bug is not tied to a recent change).
    Before you open anything, bug or feedback:
    - **search the existing issues, closed as well as open.** The list in your task is the
-     open bugs only. Comment on the report you find (`comment`) rather than filing a
-     duplicate, even when your version has more detail.
+     open bugs only. Comment on an **open** report (`comment`) rather than filing a
+     duplicate, even when your version has more detail. A **closed** one is context, not
+     somewhere to file: nothing in the factory reads a closed issue, so if you have
+     reproduced the failure now, open a new bug that links to it and says what is
+     different — unless it was closed as working as intended, in which case put it in
+     your report instead.
    - **reproduce it here**, and quote the command you ran and the output you actually got.
      A failure you read in someone else's log, or in a truncated one, is a lead to chase,
      not a bug report to file.

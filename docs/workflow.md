@@ -732,7 +732,9 @@ its issue, explores around it, and then:
 - files a `bees:bug` issue in triage for every defect it **reproduced itself**
   (with reproduction steps, expected vs actual, severity, and the command it
   ran with the output it got), after searching the existing issues, closed as
-  well as open. A clean batch is a good result: QA files nothing and says so;
+  well as open — commenting on an open duplicate, and opening a new bug that
+  links to a closed one it has reproduced again; a clean batch is a good
+  result: QA files nothing and says so;
 - sends the product manager one report by mail — what was tested, what works,
   bugs filed, and product-level observations — even when it found nothing.
 

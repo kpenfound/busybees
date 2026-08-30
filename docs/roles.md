@@ -489,9 +489,10 @@ files nothing and says so. It files only defects it reproduced itself.
 when the bug is not tied to a recent change), with reproduction steps, expected
 vs actual behaviour, severity and the command it ran with the output it got.
 Before opening anything it searches the existing issues, **closed as well as
-open** (the list in its task is the open bugs only), and comments on the report
-it finds rather than duplicating it. A broken environment is one issue however
-many merged pull requests it spoils.
+open** (the list in its task is the open bugs only), and comments on an
+**open** report rather than duplicating it; a closed one is context, and a
+failure it has reproduced again becomes a new bug linking to it. A broken
+environment is one issue however many merged pull requests it spoils.
 
 **Stays in its lane:** what QA may file directly is a bug report, or a small
 work item within the existing design. Anything that asks for new scope — a new
