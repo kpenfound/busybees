@@ -158,6 +158,34 @@ Who sets it:
   labels are orthogonal to the state machine, so moving an issue between
   states never clears its size.
 
+### Size decides what gets built next
+
+When a developer worker is free, the orchestrator resumes anything already
+`bees:in-progress` or `bees:review` first — a worker picking its issue back up
+after a restart is never held back — and then takes from `bees:ready` in the
+order `scheduler.dispatch_order` asks for:
+
+| `dispatch_order` | Order |
+|---|---|
+| `small-first` (default) | Smallest size first, oldest first within a size. Quick wins do not queue behind a big item. |
+| `oldest` | Oldest first, whatever the size. |
+| `large-first` | Largest size first, oldest first within a size. |
+
+An issue without a size ranks as `m`, which is the label the orchestrator gives
+it anyway.
+
+Two limits sit on top of that order:
+
+- `scheduler.max_large_in_flight` (default `1`) caps how many `bees:size/l`
+  issues developers work on at once. A `bees:size/l` issue over the cap is
+  skipped — the free worker takes the next issue that fits instead of idling.
+  `0` removes the cap.
+- `roles.developer.max_size` (default `l`) is the largest size a developer
+  takes. A ready issue above it is **never dispatched**: the orchestrator moves
+  it back to `bees:triage` (no comment — the label is the signal) and the
+  project manager splits it on its next run. With the default that means every
+  `bees:size/xl` issue goes back to be split.
+
 ## Talking to the product manager
 
 Not everything you want to say is a buildable issue. The product manager is

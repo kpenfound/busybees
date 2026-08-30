@@ -30,7 +30,10 @@ Responsibilities:
      | s | `{{.Labels.SizeS}}` | a few files, clear approach, existing tests cover it |
      | m | `{{.Labels.SizeM}}` | a coherent feature slice touching several packages, needs new tests |
      | l | `{{.Labels.SizeL}}` | crosses subsystems or needs a design decision; near the limit for one PR |
-     | xl | `{{.Labels.SizeXL}}` | too big for one pull request — **split it instead of labelling it** |
+     | xl | `{{.Labels.SizeXL}}` | anything larger than `{{.MaxSize}}` is not dispatched — **split it instead of labelling it** |
+
+     A work item sized above `{{.MaxSize}}` never reaches a developer: the orchestrator
+     moves it straight back to `{{.Labels.Triage}}` for you to split.
 
      The product manager may have pre-sized the issue: confirm the size or change it,
      you have read the code and it has not.

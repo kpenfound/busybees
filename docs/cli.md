@@ -189,7 +189,7 @@ bees exec reviewer --pr 34
 
 Shows the last poll time and PID of the scheduler, queue sizes per workflow state
 (plus `feedback` and `features`, the open `bees:feedback` and `bees:feature` issues
-owned by the product manager, and `open_prs`), running developer workers (issue, stage, round, and the attempt number while a session is being retried), singleton state and last run, and
+owned by the product manager, and `open_prs`), running developer workers (issue, [size](workflow.md#sizing), stage, round, and the attempt number while a session is being retried), singleton state and last run, and
 unread mail per role. Reads `status.json` from the state directory, so it works while
 `bees run` is active in another terminal.
 
