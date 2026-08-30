@@ -253,20 +253,7 @@ func TestTemplateUncommented(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var lines []string
-	for _, line := range strings.Split(text, "\n") {
-		switch {
-		case strings.HasPrefix(line, "#=") || strings.HasPrefix(line, "# ") || line == "#":
-			continue // prose comment or separator
-		case strings.HasPrefix(line, "#prompt_file"):
-			continue // placeholder file does not exist
-		case strings.HasPrefix(line, "#"):
-			lines = append(lines, strings.TrimPrefix(line, "#"))
-		default:
-			lines = append(lines, line)
-		}
-	}
-	cfg, err := Load(writeConfig(t, strings.Join(lines, "\n")))
+	cfg, err := Load(writeConfig(t, uncommentTemplate(text)))
 	if err != nil {
 		t.Fatalf("uncommented template does not load: %v", err)
 	}
@@ -523,4 +510,23 @@ func TestDescribeDays(t *testing.T) {
 			t.Errorf("describeDays(%v) = %q, want %q", in, got, want)
 		}
 	}
+}
+
+// uncommentTemplate turns every commented-out option in the bees.toml template
+// into a live setting, dropping the prose comments.
+func uncommentTemplate(text string) string {
+	var lines []string
+	for _, line := range strings.Split(text, "\n") {
+		switch {
+		case strings.HasPrefix(line, "#=") || strings.HasPrefix(line, "# ") || line == "#":
+			continue // prose comment or separator
+		case strings.HasPrefix(line, "#prompt_file"):
+			continue // placeholder file does not exist
+		case strings.HasPrefix(line, "#"):
+			lines = append(lines, strings.TrimPrefix(line, "#"))
+		default:
+			lines = append(lines, line)
+		}
+	}
+	return strings.Join(lines, "\n")
 }

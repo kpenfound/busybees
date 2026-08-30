@@ -78,9 +78,40 @@ Prints the resolved configuration as JSON: project, filter, scheduler and — fo
 role, or the one given — the effective prompt, skills, MCP servers, model, fallback
 model, limits and `enabled` after merging `[global]` with `[roles.<name>]`.
 
+The JSON keys are the `bees.toml` key names, so you can match what is printed against
+what you wrote, and durations print as duration strings (`"45m0s"`). The role-specific
+keys appear on the role that owns them: the reviewer carries its merge policy
+(`auto_merge`, `merge_method`, `checks_wait`, `checks_poll_interval`, `checks_timeout`,
+`max_check_fix_rounds`) and the developer its `commit_flags`.
+
 ```sh
 bees config show
 bees config show developer
+```
+
+```json
+{
+  "path": "/src/widgets/bees.toml",
+  "version": 1,
+  "filter": { "label": "bees", "require_label": true, "assignee": "@me", "milestone": "" },
+  "scheduler": { "poll_interval": "5m0s", "max_developers": 1, "max_review_rounds": 3, "...": "" },
+  "roles": {
+    "reviewer": {
+      "name": "reviewer",
+      "model": "opus",
+      "fallback_model": "sonnet",
+      "max_turns": 200,
+      "timeout": "45m0s",
+      "enabled": true,
+      "auto_merge": false,
+      "merge_method": "squash",
+      "checks_wait": "1m0s",
+      "checks_poll_interval": "2m0s",
+      "checks_timeout": "30m0s",
+      "max_check_fix_rounds": 2
+    }
+  }
+}
 ```
 
 ### `bees prompts show <role> [--rendered]`

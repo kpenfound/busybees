@@ -438,13 +438,9 @@ status do the same automatically on startup.`,
 				}
 				roles = []string{r}
 			}
-			out := map[string]any{"project": cfg.Project, "filter": cfg.Filter, "scheduler": cfg.Scheduler, "roles": map[string]any{}}
-			for _, r := range roles {
-				rr, err := cfg.Role(r)
-				if err != nil {
-					return err
-				}
-				out["roles"].(map[string]any)[r] = rr
+			out, err := cfg.View(roles)
+			if err != nil {
+				return err
 			}
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
