@@ -205,9 +205,15 @@ table of all other visible issues; open PRs; its notes. Work items usually
 come from the product manager breaking a feature issue down; they are GitHub
 sub-issues, and each triage item's **parent feature** (number and title,
 looked up with one GraphQL call) is shown in the prompt. The project manager
-is told to read the parent feature for context. The prompt also shows the open
+is told to read the parent feature for context.
+
+The batch size is a per-pass reading limit, not the size of the queue.
+Anything in `bees:triage` beyond it gets a table of its own ("Also in
+`bees:triage`, bodies not shown"), saying it is triage work the session may
+take if it has room, and is left out of the other-issues table so the two
+never overlap. The prompt also shows the open
 [blockers](workflow.md#dependencies) each work item declares — on the triage
-header line and as a **Blocked by** column of the other-issues table.
+header line and as a **Blocked by** column of both tables.
 
 **Does on GitHub:** rewrites triage work items (context, scope, acceptance
 criteria, pointers to code, testing expectations) with `issue_edit_body`,
@@ -223,20 +229,42 @@ item to `bees:blocked` (the same tool) when it has asked the product manager;
 closes invalid or duplicate work items with a comment. It
 never edits feature or feedback issues — those belong to the product manager,
 and `issue_edit_body` refuses them — and never touches milestones. It is the
-only role besides the orchestrator that moves state labels. It may also add
-[`bees:priority`](workflow.md#priority-do-this-next) to a bug that blocks the
-factory itself — the default branch does not build, say — and to nothing else. It is told to declare dependencies with a
-`Blocked by #N` line and move the item to `bees:ready` anyway rather than
-parking it in triage: the scheduler holds it back until the blocker closes.
+only role besides the orchestrator that moves state labels. It is told to
+declare dependencies with a `Blocked by #N` line — written for it by
+`issue_create`'s `blocked_by` on an issue it creates in a split — and to move
+the item to `bees:ready` anyway rather than parking it in triage: the
+scheduler holds it back until the blocker closes.
+
+Three judgements the prompt makes for it, rather than leaving to the session:
+
+- A work item that is really a **direction** rather than a piece of work goes
+  to the product manager and is blocked, like any other product decision; the
+  project manager does not invent acceptance criteria for it.
+- When it **dedupes**, it closes the issue the work is *not* attached to, and
+  it re-checks that a bug still happens on the default branch before moving it
+  to `bees:ready` — a bug that waited through a merge wave is often already
+  fixed.
+- It may add [`bees:priority`](workflow.md#priority-do-this-next) — the one
+  exception to that label being a person's alone — to a work item that
+  unblocks the factory itself: the default branch does not build, every pull
+  request's checks are red for the same reason, or the orchestrator cannot
+  run. That is the only ordering it controls; it never moves `bees:ready`
+  issues back to `bees:triage` to make another one the oldest.
 
 **Mail:** receives developer questions; may send to `product_manager`
 (product decisions) and `developer` (answers, always with `issue`). Prompts
 tell it to answer mail first, since developers are blocked on it, and to give
-decisions rather than options.
+decisions rather than options. Mail from `human` is treated as a direction
+rather than a question: it is followed literally even where it contradicts the
+prompt, and work it holds back stays in `bees:triage` with the hold written
+into the body.
 
 **Outcomes:** `done`, `idle`, `failed`. The orchestrator marks its mail read
 and records the run. Answers it sent take effect on the next poll: an issue
-in `bees:blocked` with unread developer mail is relabelled `bees:ready`.
+in `bees:blocked` with unread developer mail is relabelled `bees:ready`. The
+same mechanism returns its own questions: an issue it blocked goes back to
+`bees:triage` once there is unread mail for the project manager about it, so
+the question it sends must carry the issue number.
 
 ## developer
 

@@ -239,11 +239,13 @@ Priority is a **separate axis from size**: a `bees:size/xs` issue does not jump
 a priority `bees:size/l` one under `small-first`. Between two priority issues
 `dispatch_order` decides as usual.
 
-Set it from the GitHub UI like any other label. Nothing in the factory adds or
-removes it — it is yours, it survives every state change, and it stays on the
-issue until you take it off. The project manager may add it to a bug that
-blocks the factory itself (the default branch does not build, say), and to
-nothing else.
+Set it from the GitHub UI like any other label. It is yours: it survives every
+state change, nothing in the factory removes it, and it stays on the issue
+until you take it off. One role may add it — the project manager, to a work
+item that unblocks the factory itself: the default branch does not build,
+every pull request's checks are red for the same reason, or the orchestrator
+cannot run. Its prompt rules out anything else, including reordering the queue
+by moving `bees:ready` issues back to `bees:triage`.
 
 Priority reorders the queue; it does not lift the limits. A priority
 `bees:size/l` issue still waits while `scheduler.max_large_in_flight` of them
@@ -357,7 +359,11 @@ relevant code (keeping your intent, with `issue_edit_body`), splits it if it is
 too big (with `issue_create` with `ready: true` and `parent: <feature>`, or
 `related: <original>` when there is no parent feature), and moves it to
 `bees:ready` with a size. It never changes milestones. If the issue is invalid or a duplicate the project
-manager closes it with a comment. The project manager only ever edits work
+manager closes it with a comment. If it is really a *direction* rather than a
+piece of work — an idea whose first deliverable is a decision about what to
+build — the project manager does not invent acceptance criteria for it: it
+goes to the product manager and waits in `bees:blocked` until they answer.
+The project manager only ever edits work
 items; feature and feedback issues are the product manager's.
 
 If the filter does not require the label (`require_label = false`) the
