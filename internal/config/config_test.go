@@ -881,3 +881,97 @@ func TestTemplateNeverWritesAGuessedBranch(t *testing.T) {
 		t.Fatal("ExplicitRepo did not write repo as an active setting")
 	}
 }
+
+// TestTemplateEscapesInterpolatedValues checks that no value bees init
+// interpolates can introduce, remove or alter a TOML key: an unescaped quote
+// used to close the string early and let the rest be parsed as TOML (#136).
+func TestTemplateEscapesInterpolatedValues(t *testing.T) {
+	const injection = "main\"\nremote = \"upstream"
+	const weird = "a\"b\\c\td\ne\rf\x01g\x7fh"
+	for _, tc := range []struct {
+		name string
+		data TemplateData
+		got  func(*Config) string
+		want string
+	}{
+		{
+			"injection through default_branch",
+			TemplateData{DefaultBranch: injection, ExplicitBranch: true},
+			func(c *Config) string { return c.Project.DefaultBranch }, injection,
+		},
+		{
+			"quote in repo",
+			TemplateData{Repo: "acme/wid\"gets", ExplicitRepo: true},
+			func(c *Config) string { return c.Project.Repo }, "acme/wid\"gets",
+		},
+		{
+			// remote is written commented out, so a newline breaks out of the
+			// comment onto a line of its own.
+			"injection through remote",
+			TemplateData{Remote: "origin\"\nrepo = \"evil/repo"},
+			func(c *Config) string { return c.Project.Remote }, DefaultRemote,
+		},
+		{
+			"quote in label",
+			TemplateData{Label: "be\"es"},
+			func(c *Config) string { return c.Filter.Label }, "be\"es",
+		},
+		{
+			"quote in assignee",
+			TemplateData{Assignee: "ky\"le"},
+			func(c *Config) string { return c.Filter.Assignee }, "ky\"le",
+		},
+		{
+			"control characters in default_branch",
+			TemplateData{DefaultBranch: weird, ExplicitBranch: true},
+			func(c *Config) string { return c.Project.DefaultBranch }, weird,
+		},
+		{
+			"control characters in assignee",
+			TemplateData{Assignee: weird},
+			func(c *Config) string { return c.Filter.Assignee }, weird,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			text, err := Template(tc.data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := Parse(text, filepath.Join(t.TempDir(), "bees.toml"))
+			if err != nil {
+				t.Fatalf("template does not parse: %v", err)
+			}
+			if got := tc.got(cfg); got != tc.want {
+				t.Errorf("value round-tripped as %q, want %q", got, tc.want)
+			}
+			// No key the caller never asked for was set.
+			if cfg.Project.Remote != DefaultRemote {
+				t.Errorf("project.remote = %q, want the default %q", cfg.Project.Remote, DefaultRemote)
+			}
+			if tc.data.Repo == "" && cfg.Project.Repo != "" {
+				t.Errorf("project.repo = %q, want empty", cfg.Project.Repo)
+			}
+			if tc.data.DefaultBranch == "" && cfg.Project.DefaultBranch != "" {
+				t.Errorf("project.default_branch = %q, want empty", cfg.Project.DefaultBranch)
+			}
+		})
+	}
+}
+
+// TestEscapeTOML pins the escaping rules themselves: the quote, the backslash,
+// the five TOML shorthands, and \uXXXX for any other control character.
+func TestEscapeTOML(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"", ""},
+		{"plain-branch", "plain-branch"},
+		{"a\"b", "a\\\"b"},
+		{"a\\b", "a\\\\b"},
+		{"\b\t\n\f\r", "\\b\\t\\n\\f\\r"},
+		{"\x00\x01\x1f\x7f", "\\u0000\\u0001\\u001F\\u007F"},
+		{"héllo ✓", "héllo ✓"},
+	} {
+		if got := escapeTOML(tc.in); got != tc.want {
+			t.Errorf("escapeTOML(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
