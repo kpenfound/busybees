@@ -110,7 +110,9 @@ func setupIn(t *testing.T, clone, extra string, replies map[string]ghReply) *fix
 	return &fixture{Deps: d, clone: clone, gh: gh}
 }
 
-func (f *fixture) run(t *testing.T, c Check) Result {
+// run drives one check function directly. Checks are wrapped in a Check value
+// by Deps.Checks; the tests hold the method, which is what a Check's Run is.
+func (f *fixture) run(t *testing.T, c func(context.Context) Result) Result {
 	t.Helper()
 	r := c(context.Background())
 	if r.Name == "" || r.Group == "" {
@@ -530,7 +532,7 @@ func TestCheckFilterTellsAnEmptyRepoFromAHiddenBacklog(t *testing.T) {
 
 	r := f.run(t, f.checkFilter)
 	wantResult(t, r, Warn, "34 open issues", "2 pull requests", "bees", "label=bees AND assignee=kyle")
-	for _, want := range []string{"ANDed", "add-assignee", "bees.toml"} {
+	for _, want := range []string{"ANDed", "bees doctor --fix", "bees.toml"} {
 		if !strings.Contains(r.Remediation, want) {
 			t.Errorf("remediation %q does not name %q", r.Remediation, want)
 		}
@@ -648,7 +650,7 @@ func TestChecksWithoutAResolvedRepo(t *testing.T) {
 	for _, c := range d.Checks() {
 		// Nothing here may reach the network; every check must be safe to
 		// run with an unresolved configuration.
-		r := c(context.Background())
+		r := c.Run(context.Background())
 		if r.Group == GroupGitHub {
 			t.Errorf("github checks must be skipped without a repository: %+v", r)
 		}

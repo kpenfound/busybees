@@ -90,9 +90,88 @@ type Result struct {
 	Remediation string `json:"remediation,omitempty"`
 }
 
-// Check inspects one thing and reports what it found. It must honour ctx,
-// which the runner cancels after Timeout.
-type Check func(ctx context.Context) Result
+// Check inspects one thing and reports what it found, and may know how to
+// repair what it finds.
+type Check struct {
+	// Run inspects. It must honour ctx, which the runner cancels after Timeout.
+	Run func(ctx context.Context) Result
+	// Fix repairs what Run found, or is nil when doctor cannot repair it.
+	// `bees doctor --fix` runs it only for a check that did not pass.
+	Fix Fix
+}
+
+// Fix repairs what a check found. It returns one line per thing it did (or
+// deliberately did not do, so a fix that declines can say why), and an error
+// for what it could not do.
+//
+// A fix never stops at the first failure: it attempts every item and joins
+// the per-item errors, so one unassignable issue does not strand the rest.
+type Fix func(ctx context.Context) (actions []string, err error)
+
+// FixOutcome is what one check's fix did.
+type FixOutcome struct {
+	// Check is the name of the check the fix belongs to.
+	Check string
+	// Actions is one line per thing the fix did or declined to do.
+	Actions []string
+	// Err is what the fix could not do; nil when everything worked.
+	Err error
+}
+
+// ApplyFixes runs the fixes of the checks that did not pass, in check order,
+// and reports what each one did. results must be the results Run returned for
+// the same checks, in the same order; a check that passed, or that carries no
+// fix, is left alone.
+//
+// A fix that fails does not stop the ones after it: `bees doctor --fix` is a
+// repair pass, and a repository where one item cannot be assigned still wants
+// the others repaired.
+func ApplyFixes(ctx context.Context, checks []Check, results []Result) []FixOutcome {
+	var out []FixOutcome
+	for i, c := range checks {
+		if c.Fix == nil || i >= len(results) || results[i].Status == Pass {
+			continue
+		}
+		actions, err := c.Fix(ctx)
+		out = append(out, FixOutcome{Check: results[i].Name, Actions: actions, Err: err})
+	}
+	return out
+}
+
+// FixText renders what the fixes did: one section per check, one line per
+// action, and the failures marked with "!".
+func FixText(outcomes []FixOutcome) string {
+	var b strings.Builder
+	for _, o := range outcomes {
+		fmt.Fprintf(&b, "fixing %s\n", o.Check)
+		for _, a := range o.Actions {
+			fmt.Fprintf(&b, "  %s\n", a)
+		}
+		for _, e := range flatten(o.Err) {
+			fmt.Fprintf(&b, "  ! %s\n", oneLine(e.Error()))
+		}
+	}
+	if len(outcomes) > 0 {
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// flatten splits an errors.Join back into its parts, so a fix that failed on
+// three items prints three lines instead of one paragraph.
+func flatten(err error) []error {
+	if err == nil {
+		return nil
+	}
+	if j, ok := err.(interface{ Unwrap() []error }); ok {
+		var out []error
+		for _, e := range j.Unwrap() {
+			out = append(out, flatten(e)...)
+		}
+		return out
+	}
+	return []error{err}
+}
 
 // Timeout is the budget the runner gives a single check.
 const Timeout = 10 * time.Second
@@ -140,7 +219,7 @@ func runOne(ctx context.Context, i int, c Check, timeout time.Duration) Result {
 					"this is a bug in bees; please report it with the output of `bees doctor --json`")
 			}
 		}()
-		done <- c(cctx)
+		done <- c.Run(cctx)
 	}()
 	select {
 	case r := <-done:

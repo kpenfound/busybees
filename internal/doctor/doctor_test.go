@@ -109,8 +109,8 @@ func TestTextGroupOrder(t *testing.T) {
 
 func TestRunReportsAPanicAsAFailure(t *testing.T) {
 	results := Run(context.Background(), []Check{
-		func(context.Context) Result { panic("boom") },
-		func(context.Context) Result { return pass("fine", GroupConfig, "") },
+		{Run: func(context.Context) Result { panic("boom") }},
+		{Run: func(context.Context) Result { return pass("fine", GroupConfig, "") }},
 	})
 	if len(results) != 2 {
 		t.Fatalf("got %d results", len(results))
@@ -130,16 +130,16 @@ func TestRunTimesOutAndCancels(t *testing.T) {
 	var cancelled bool
 	results := RunWith(context.Background(), []Check{
 		// Honours the cancelled context: its own result is used.
-		func(ctx context.Context) Result {
+		{Run: func(ctx context.Context) Result {
 			<-ctx.Done()
 			cancelled = true
 			return warn("slow but polite", GroupConfig, "gave up", "try again")
-		},
+		}},
 		// Ignores it: the runner reports the overrun itself.
-		func(context.Context) Result {
+		{Run: func(context.Context) Result {
 			time.Sleep(500 * time.Millisecond)
 			return pass("rude", GroupConfig, "")
-		},
+		}},
 	}, 20*time.Millisecond)
 
 	if !cancelled {
