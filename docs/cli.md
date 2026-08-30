@@ -69,6 +69,63 @@ go test ./internal/config -update
 A golden-file test (`TestExampleTOMLInSync`) fails when the two drift, so `dagger check`
 enforces the sync.
 
+### `bees doctor`
+
+Runs the preflight checks the factory otherwise only discovers mid-run, and prints
+what it found grouped by area:
+
+| Group | Checks |
+|---|---|
+| `toolchain` | `git` on `PATH`; `gh` on `PATH`, authenticated and holding the `repo` token scope; `claude` (or `$BEES_CLAUDE_BIN`) runnable and new enough. |
+| `config` | `bees.toml` loads and validates; `project.repo` and `project.default_branch` are set or derivable; the remote answers; the state directory is ignored by git; the notes directory is writable; every configured `prompt_file` exists. |
+| `github` | The repository is readable and writable (`viewerPermission`); every workflow label exists; the visibility filter matches at least one open issue. |
+| `workspace` | A worktree can be created under `workspace_root` and removed again. |
+
+A **failure** (`✗`) means the factory cannot run: a missing tool, a repository it
+cannot push to, missing workflow labels. A **warning** (`!`) means something that
+will probably bite you but does not stop a session: a state directory that is not
+git-ignored (notes and transcripts would be committed), a filter that matches no
+open issue (usually a misconfigured label or assignee), a Claude Code older than
+bees expects. Every warning and failure prints the command that fixes it on the
+next line; doctor never changes anything itself.
+
+doctor exits 1 when a check failed and 0 when only warnings are present, so it can
+gate a deploy. Checks that need something that is missing are left out rather than
+reported twice: without a `bees.toml` only the toolchain checks run, and the GitHub
+and workspace checks need a resolved repository.
+
+```
+$ bees doctor
+toolchain
+  ✓ git                         /usr/bin/git (git version 2.50.1)
+  ✓ gh authenticated            logged in as kyle, token scopes: gist, read:org, repo
+  ✓ claude runnable             claude 2.1.251 at /usr/local/bin/claude
+
+config
+  ✓ bees.toml valid             /home/kyle/src/proj/bees.toml (version 1)
+  ✓ project repo                kyle/proj, default branch main (remote "origin")
+  ✓ remote reachable            origin answers
+  ! state dir ignored           .bees is not ignored by git
+      → add "/.bees/" to .gitignore: notes, mail and session transcripts would be committed otherwise
+  ✓ notes dir writable          /home/kyle/src/proj/.bees/notes
+  ✓ prompt files exist          no prompt_file configured
+
+github
+  ✓ repo readable and writable  kyle/proj (ADMIN)
+  ✗ workflow labels             2 of 17 missing: bees:size/l, bees:size/xl
+      → run `bees labels sync`
+  ✓ filter matches issues       12 open issues matching label bees
+
+workspace
+  ✓ worktree                    created and removed one under /tmp/bees
+
+13 checks: 11 passed, 1 warnings, 1 failed
+```
+
+| Flag | Description |
+|---|---|
+| `--json` | Print the results as JSON (`name`, `group`, `status`, `detail`, `remediation`) instead of the table. |
+
 ### `bees labels sync`
 
 Creates or updates every workflow label in the repository (idempotent). Run it after
