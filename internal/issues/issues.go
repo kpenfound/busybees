@@ -131,35 +131,70 @@ func Create(ctx context.Context, gh *github.Client, filter config.Filter, labels
 	res := Result{Number: number, Milestone: n.Milestone, Parent: opts.Parent, Labels: n.Labels}
 	if opts.Parent > 0 {
 		// The parent was already checked above, so link without asking
-		// GitHub for its labels a second time.
-		if err := link(ctx, gh, opts.Parent, number); err != nil {
+		// GitHub for its labels a second time. The milestone was resolved
+		// at creation time, so there is nothing left to inherit.
+		if _, err := link(ctx, gh, opts.Parent, number, ""); err != nil {
 			return res, fmt.Errorf("issue #%d created but could not be attached to #%d: %w", number, opts.Parent, err)
 		}
 	}
 	return res, nil
 }
 
+// LinkResult describes a link.
+type LinkResult struct {
+	Parent int
+	Child  int
+	// Milestone the link put the child in, "" when it set none.
+	Milestone string
+}
+
+// String renders a link the way both `bees issue link` and the issue_link
+// tool report it.
+func (r LinkResult) String() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "#%d is now a sub-issue of #%d", r.Child, r.Parent)
+	if r.Milestone != "" {
+		fmt.Fprintf(&b, " milestone %q", r.Milestone)
+	}
+	return b.String()
+}
+
 // Link attaches child to parent as a sub-issue. It refuses a parent that is
 // still a proposal: attaching an existing issue to one is the same hole as
 // creating a sub-issue under it.
-func Link(ctx context.Context, gh *github.Client, labels config.Labels, parent, child int) error {
+func Link(ctx context.Context, gh *github.Client, labels config.Labels, parent, child int) (LinkResult, error) {
 	p, err := gh.GetIssueDetails(ctx, parent)
 	if err != nil {
-		return fmt.Errorf("issue #%d: %w", parent, err)
+		return LinkResult{}, fmt.Errorf("issue #%d: %w", parent, err)
 	}
 	if github.HasLabel(p.Labels, labels.Proposal) {
-		return proposalError(labels, parent)
+		return LinkResult{}, proposalError(labels, parent)
 	}
-	return link(ctx, gh, parent, child)
+	return link(ctx, gh, parent, child, p.MilestoneTitle())
 }
 
-// link attaches child to parent without checking the parent.
-func link(ctx context.Context, gh *github.Client, parent, child int) error {
+// link attaches child to parent without checking the parent. Becoming a
+// sub-issue carries the parent's milestone across, so that everything under a
+// feature lands in the release a person put the feature in — but only when the
+// child has none of its own: a milestone already on the child is a person's
+// decision, and a bee never overwrites or clears one.
+func link(ctx context.Context, gh *github.Client, parent, child int, milestone string) (LinkResult, error) {
 	d, err := gh.GetIssueDetails(ctx, child)
 	if err != nil {
-		return err
+		return LinkResult{}, err
 	}
-	return gh.AddSubIssue(ctx, parent, d.ID)
+	if err := gh.AddSubIssue(ctx, parent, d.ID); err != nil {
+		return LinkResult{}, err
+	}
+	res := LinkResult{Parent: parent, Child: child}
+	if milestone == "" || d.MilestoneTitle() != "" {
+		return res, nil
+	}
+	if err := gh.SetMilestone(ctx, child, milestone); err != nil {
+		return res, fmt.Errorf("issue #%d was attached to #%d but could not be put in its milestone %q: %w", child, parent, milestone, err)
+	}
+	res.Milestone = milestone
+	return res, nil
 }
 
 // proposalError is the refusal every path into a proposal's sub-issues

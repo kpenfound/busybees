@@ -244,10 +244,11 @@ managed by people; the factory only inherits them.`
 			if err != nil {
 				return err
 			}
-			if err := issues.Link(cmd.Context(), a.gh, a.cfg.Labels(), lParent, lChild); err != nil {
+			res, err := issues.Link(cmd.Context(), a.gh, a.cfg.Labels(), lParent, lChild)
+			if err != nil {
 				return err
 			}
-			fmt.Printf("#%d is now a sub-issue of #%d\n", lChild, lParent)
+			fmt.Println(res)
 			return nil
 		},
 	}

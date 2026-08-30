@@ -11,6 +11,12 @@ import (
 
 func fake(t *testing.T, parentMilestone string) (*github.Client, *[]string) {
 	t.Helper()
+	return fakeWith(t, parentMilestone, "")
+}
+
+// fakeWith is fake with a milestone on the child (#77) as well as the parent.
+func fakeWith(t *testing.T, parentMilestone, childMilestone string) (*github.Client, *[]string) {
+	t.Helper()
 	var calls []string
 	c := github.New("acme/widgets")
 	c.Exec = func(ctx context.Context, args ...string) ([]byte, error) {
@@ -27,7 +33,15 @@ func fake(t *testing.T, parentMilestone string) (*github.Client, *[]string) {
 			// A proposal: a feature issue a bee wrote, not approved yet.
 			return []byte(`{"id": 9013, "milestone": {"title":"v1"}, "labels": [{"name":"bees"},{"name":"bees:feature"},{"name":"bees:proposal"}]}`), nil
 		case strings.HasPrefix(call, "api repos/acme/widgets/issues/77"):
-			return []byte(`{"id": 9077, "milestone": null}`), nil
+			ms := "null"
+			if childMilestone != "" {
+				ms = `{"title":"` + childMilestone + `"}`
+			}
+			return []byte(`{"id": 9077, "milestone": ` + ms + `}`), nil
+		case strings.HasPrefix(call, "api repos/acme/widgets/milestones"):
+			return []byte(`[{"number": 3, "title": "v1"}, {"number": 4, "title": "v2"}]`), nil
+		case strings.HasPrefix(call, "api --method PATCH repos/acme/widgets/issues/77"):
+			return []byte(`{}`), nil
 		case strings.HasPrefix(call, "issue create"):
 			return []byte("https://github.com/acme/widgets/issues/77\n"), nil
 		case strings.HasPrefix(call, "api --method POST repos/acme/widgets/issues/12/sub_issues"):
@@ -148,7 +162,7 @@ func TestProposalGrowsNoSubIssues(t *testing.T) {
 
 	// Same hole, other door.
 	gh, calls = fake(t, "v1")
-	err = Link(context.Background(), gh, labels, 13, 77)
+	_, err = Link(context.Background(), gh, labels, 13, 77)
 	if err == nil {
 		t.Fatal("linking to a proposal must fail")
 	}
@@ -181,7 +195,96 @@ func TestProposalGrowsNoSubIssues(t *testing.T) {
 	if joined := strings.Join(*calls, "\n"); !strings.Contains(joined, "sub_issues") {
 		t.Errorf("an approved parent must still be linked:\n%s", joined)
 	}
-	if err := Link(context.Background(), gh, labels, 12, 77); err != nil {
+	if _, err := Link(context.Background(), gh, labels, 12, 77); err != nil {
 		t.Fatalf("linking to an approved feature: %v", err)
+	}
+}
+
+// Milestone inheritance is a property of becoming a sub-issue, not of the
+// create path: a person putting a feature into a milestone means the work
+// under it belongs in that release, however it got there. The other half of
+// the rule is that a milestone already on the child is a person's decision,
+// so a bee never overwrites or clears one.
+func TestLinkInheritsTheParentsMilestone(t *testing.T) {
+	labels := config.LabelsFor("bees")
+
+	// Parent in a milestone, child in none: the child ends up in it.
+	gh, calls := fakeWith(t, "v1", "")
+	res, err := Link(context.Background(), gh, labels, 12, 77)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Milestone != "v1" {
+		t.Errorf("result: %+v", res)
+	}
+	if got, want := res.String(), `#77 is now a sub-issue of #12 milestone "v1"`; got != want {
+		t.Errorf("String() = %q, want %q", got, want)
+	}
+	joined := strings.Join(*calls, "\n")
+	for _, want := range []string{
+		"api --method POST repos/acme/widgets/issues/12/sub_issues -F sub_issue_id=9077",
+		"api --method PATCH repos/acme/widgets/issues/77 -F milestone=3",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("missing call %q in:\n%s", want, joined)
+		}
+	}
+
+	// Child already in a different milestone: untouched, not even looked up.
+	gh, calls = fakeWith(t, "v1", "v2")
+	res, err = Link(context.Background(), gh, labels, 12, 77)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Milestone != "" {
+		t.Errorf("a milestone a person set must not be overwritten: %+v", res)
+	}
+	if got, want := res.String(), "#77 is now a sub-issue of #12"; got != want {
+		t.Errorf("String() = %q, want %q", got, want)
+	}
+	joined = strings.Join(*calls, "\n")
+	if !strings.Contains(joined, "sub_issues") {
+		t.Errorf("the link was not made:\n%s", joined)
+	}
+	if strings.Contains(joined, "--method PATCH") || strings.Contains(joined, "widgets/milestones") {
+		t.Errorf("the child's milestone was touched:\n%s", joined)
+	}
+
+	// Parent in no milestone: there is nothing to inherit, and the child
+	// keeps whatever it had.
+	gh, calls = fakeWith(t, "", "")
+	res, err = Link(context.Background(), gh, labels, 12, 77)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Milestone != "" {
+		t.Errorf("result: %+v", res)
+	}
+	joined = strings.Join(*calls, "\n")
+	if !strings.Contains(joined, "sub_issues") {
+		t.Errorf("the link was not made:\n%s", joined)
+	}
+	if strings.Contains(joined, "--method PATCH") || strings.Contains(joined, "widgets/milestones") {
+		t.Errorf("a milestone call was made with nothing to inherit:\n%s", joined)
+	}
+}
+
+// The link is made first, so a failure to set the milestone leaves a real
+// sub-issue behind: the error has to name both issues, or the caller cannot
+// tell what did happen.
+func TestLinkReportsAMilestoneFailure(t *testing.T) {
+	// "v9" matches no open milestone in the fake.
+	gh, calls := fakeWith(t, "v9", "")
+	_, err := Link(context.Background(), gh, config.LabelsFor("bees"), 12, 77)
+	if err == nil {
+		t.Fatal("a failed milestone call must not be swallowed")
+	}
+	for _, want := range []string{"#77", "#12", "v9"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name %q", err, want)
+		}
+	}
+	if joined := strings.Join(*calls, "\n"); !strings.Contains(joined, "sub_issues") {
+		t.Errorf("the link itself should have been made:\n%s", joined)
 	}
 }
