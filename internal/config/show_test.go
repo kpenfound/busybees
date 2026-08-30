@@ -58,12 +58,14 @@ func TestViewIncludesRoleSpecificKeys(t *testing.T) {
 
 	rev := roleOf(t, out, RoleReviewer)
 	want := map[string]any{
-		"auto_merge":           true,
-		"merge_method":         "rebase",
-		"checks_wait":          "5s",
-		"checks_poll_interval": "2m0s",
-		"checks_timeout":       "30m0s",
-		"max_check_fix_rounds": float64(DefaultMaxCheckFixRounds),
+		"auto_merge":                true,
+		"merge_method":              "rebase",
+		"checks_wait":               "5s",
+		"checks_poll_interval":      "2m0s",
+		"checks_timeout":            "30m0s",
+		"max_check_fix_rounds":      float64(DefaultMaxCheckFixRounds),
+		"pre_review_checks":         true,
+		"pre_review_checks_timeout": "10m0s",
 	}
 	for k, v := range want {
 		if got := rev[k]; got != v {
@@ -84,7 +86,8 @@ func TestViewIncludesRoleSpecificKeys(t *testing.T) {
 	// Nobody else carries them.
 	devOnly := map[string]bool{"commit_flags": true, "max_size": true, "model_by_size": true}
 	own := []string{"commit_flags", "max_size", "model_by_size", "auto_merge", "merge_method", "checks_wait",
-		"checks_poll_interval", "checks_timeout", "max_check_fix_rounds"}
+		"checks_poll_interval", "checks_timeout", "max_check_fix_rounds", "pre_review_checks",
+		"pre_review_checks_timeout"}
 	for _, r := range Roles {
 		for _, k := range own {
 			if r == RoleReviewer && !devOnly[k] {

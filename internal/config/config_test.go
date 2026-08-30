@@ -348,6 +348,9 @@ func TestMergePolicy(t *testing.T) {
 	if p.AutoMerge || p.Method != "squash" || p.ChecksWait != time.Minute || p.ChecksPollInterval != 2*time.Minute || p.ChecksTimeout != 30*time.Minute || p.MaxCheckFixRounds != 2 {
 		t.Fatalf("defaults: %+v", p)
 	}
+	if !p.PreReviewChecks || p.PreReviewChecksTimeout != 10*time.Minute {
+		t.Fatalf("pre-review defaults: %+v", p)
+	}
 	cfg, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[roles.reviewer]\nauto_merge = true\nmerge_method = \"rebase\"\nchecks_wait = \"5s\"\nmax_check_fix_rounds = 1\n"))
 	if err != nil {
 		t.Fatal(err)
@@ -355,6 +358,20 @@ func TestMergePolicy(t *testing.T) {
 	p = cfg.Merge()
 	if !p.AutoMerge || p.Method != "rebase" || p.ChecksWait != 5*time.Second || p.MaxCheckFixRounds != 1 {
 		t.Fatalf("custom: %+v", p)
+	}
+	cfg, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[roles.reviewer]\npre_review_checks = false\npre_review_checks_timeout = \"90s\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p = cfg.Merge(); p.PreReviewChecks || p.PreReviewChecksTimeout != 90*time.Second {
+		t.Fatalf("pre-review custom: %+v", p)
+	}
+	// Both pre-review keys belong to the reviewer only.
+	for _, scope := range []string{"[global]", "[roles.developer]"} {
+		_, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"+scope+"\npre_review_checks = true\npre_review_checks_timeout = \"5m\"\n"))
+		if err == nil || !strings.Contains(err.Error(), "pre_review_checks and pre_review_checks_timeout are only valid under roles.reviewer") {
+			t.Fatalf("%s: %v", scope, err)
+		}
 	}
 	cfg, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\ncommit_flags = \" --gpg-sign --signoff \"\n"))
 	if err != nil {

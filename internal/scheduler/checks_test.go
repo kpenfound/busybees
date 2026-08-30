@@ -13,7 +13,9 @@ import (
 )
 
 // checksTOML runs the developer/reviewer loop alone, with auto_merge on and
-// the checks timings squeezed so a whole wait takes milliseconds.
+// the checks timings squeezed so a whole wait takes milliseconds. The
+// pre-review read is off: these tests are about the post-approval gate, and
+// prereview_test.go covers the other one.
 const checksTOML = baseTOML + `
 [roles.product_manager]
 enabled = false
@@ -27,6 +29,7 @@ checks_wait = "1ms"
 checks_poll_interval = "10ms"
 checks_timeout = "5s"
 max_check_fix_rounds = 1
+pre_review_checks = false
 `
 
 const (
@@ -228,7 +231,8 @@ func TestTheWorkerStageNamesTheGate(t *testing.T) {
 			w := &state.Worker{Name: "dev-1", Issue: 1, Stage: "checks", Round: 1}
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			status, _, gate, err := h.sched.awaitChecks(ctx, fakePR, h.sched.cfg.Merge(), w, 1)
+			policy := h.sched.cfg.Merge()
+			status, _, gate, err := h.sched.awaitChecks(ctx, fakePR, policy, checksWatch{timeout: policy.ChecksTimeout, stage: "checks"}, w, 1)
 			if err != nil {
 				t.Fatal(err)
 			}

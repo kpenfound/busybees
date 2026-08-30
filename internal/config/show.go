@@ -61,6 +61,9 @@ type MergeView struct {
 	ChecksPollInterval Duration `json:"checks_poll_interval"`
 	ChecksTimeout      Duration `json:"checks_timeout"`
 	MaxCheckFixRounds  int      `json:"max_check_fix_rounds"`
+
+	PreReviewChecks        bool     `json:"pre_review_checks"`
+	PreReviewChecksTimeout Duration `json:"pre_review_checks_timeout"`
 }
 
 // View resolves the configuration for the named roles.
@@ -133,6 +136,9 @@ func (c *Config) View(roles []string) (View, error) {
 				ChecksPollInterval: Duration{m.ChecksPollInterval},
 				ChecksTimeout:      Duration{m.ChecksTimeout},
 				MaxCheckFixRounds:  m.MaxCheckFixRounds,
+
+				PreReviewChecks:        m.PreReviewChecks,
+				PreReviewChecksTimeout: Duration{m.PreReviewChecksTimeout},
 			}
 		}
 		v.Roles[rr.Name] = rv

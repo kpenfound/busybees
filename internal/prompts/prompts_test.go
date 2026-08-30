@@ -370,3 +370,48 @@ func TestProductManagerMentionsNotify(t *testing.T) {
 		t.Errorf("notify changes the prompt beyond the mention paragraph:\n%s", got)
 	}
 }
+
+// The reviewer's pre-review checks section: one line per check and a sentence
+// per status. It is absent when the pre-review read was skipped.
+func TestReviewerChecksSection(t *testing.T) {
+	d := sample()
+	d.Checks = []github.Check{{Name: "go / test", Bucket: "pass", Link: "https://ci.example.com/1"}}
+	d.ChecksStatus, d.ChecksTimeout = "passed", "10m"
+	rev, _ := Task(config.RoleReviewer, d)
+	if !strings.Contains(rev, "## Required checks") || !strings.Contains(rev, "go / test — pass — https://ci.example.com/1") {
+		t.Fatalf("passing checks are not listed: %s", rev)
+	}
+	if !strings.Contains(rev, "CI is green") {
+		t.Fatalf("reviewer is not told CI is green: %s", rev)
+	}
+
+	d.ChecksStatus, d.Checks[0].Bucket = "pending", "pending"
+	rev, _ = Task(config.RoleReviewer, d)
+	if !strings.Contains(rev, "still pending after `10m`") || strings.Contains(rev, "CI is green") {
+		t.Fatalf("pending checks: %s", rev)
+	}
+
+	d.Checks, d.ChecksStatus = nil, "passed"
+	rev, _ = Task(config.RoleReviewer, d)
+	if !strings.Contains(rev, "reports no required checks") {
+		t.Fatalf("a repository with no checks: %s", rev)
+	}
+
+	if rev, _ = Task(config.RoleReviewer, sample()); strings.Contains(rev, "Required checks") {
+		t.Fatalf("the section must be absent when the read was skipped: %s", rev)
+	}
+}
+
+// The developer runs the repository's own lint and tests before it pushes.
+func TestDeveloperRunsTheRepositoryChecksBeforePushing(t *testing.T) {
+	sys, err := System(config.RoleDeveloper, sample(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(sys, "run the repository's own lint and test") {
+		t.Fatalf("developer system prompt has no self-check step:\n%s", sys)
+	}
+	if !strings.Contains(sys, "Record the exact commands in your notes file") {
+		t.Fatalf("developer system prompt does not ask for the commands in the notes:\n%s", sys)
+	}
+}

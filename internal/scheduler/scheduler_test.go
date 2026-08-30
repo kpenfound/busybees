@@ -74,6 +74,13 @@ func fakeClaude() {
 			fail(err)
 		}
 	}
+	// Record the order sessions ran in, so tests can assert the sequence
+	// across roles (a session directory name carries a one-second timestamp,
+	// so sorting the directories is not chronological).
+	if f, err := os.OpenFile(filepath.Join(stateDir, "fake-order"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
+		_, _ = fmt.Fprintln(f, filepath.Base(sessionDir))
+		_ = f.Close()
+	}
 	counter := func(name string) int {
 		p := filepath.Join(stateDir, "fake-"+name)
 		n := 0
@@ -530,6 +537,18 @@ func newHarnessAt(t *testing.T, toml string, now time.Time) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The pre-review checks read runs before every first review, so without
+	// this every test would sit through the 1m default wait. Tests that care
+	// about the timings set their own and keep them.
+	if rs := cfg.Roles[config.RoleReviewer]; rs.ChecksWait.Duration == 0 || rs.ChecksPollInterval.Duration == 0 {
+		if rs.ChecksWait.Duration == 0 {
+			rs.ChecksWait = config.Duration{Duration: time.Millisecond}
+		}
+		if rs.ChecksPollInterval.Duration == 0 {
+			rs.ChecksPollInterval = config.Duration{Duration: 10 * time.Millisecond}
+		}
+		cfg.Roles[config.RoleReviewer] = rs
+	}
 	// default_branch is derived from the (local) origin remote's HEAD.
 	if err := cfg.Resolve(context.Background()); err != nil {
 		t.Fatal(err)
@@ -602,6 +621,45 @@ func (h *harness) sessions(role string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// sessionOrder lists the session directories in the order the sessions ran.
+func (h *harness) sessionOrder() []string {
+	b, err := os.ReadFile(filepath.Join(h.store.Dir, "fake-order"))
+	if err != nil {
+		return nil
+	}
+	return strings.Fields(strings.TrimSpace(string(b)))
+}
+
+// sessionNames is sessionOrder with the "<date>-<time>-" prefix and the random
+// MkdirTemp suffix stripped, so "reviewer-pr-101-r2" is the whole name and not
+// a prefix of "reviewer-pr-101-r2-checkfix1".
+func (h *harness) sessionNames() []string {
+	dirs := h.sessionOrder()
+	names := make([]string, len(dirs))
+	for i, d := range dirs {
+		parts := strings.Split(d, "-")
+		if len(parts) > 3 {
+			parts = parts[2 : len(parts)-1]
+		}
+		names[i] = strings.Join(parts, "-")
+	}
+	return names
+}
+
+// wantOrder asserts the sessions ran in this order, by exact session name.
+func (h *harness) wantOrder(want ...string) {
+	h.t.Helper()
+	got := h.sessionNames()
+	if len(got) != len(want) {
+		h.t.Fatalf("session order: %v\nwant     %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			h.t.Fatalf("session %d is %q, want %q\nfull order: %v", i, got[i], want[i], got)
+		}
+	}
 }
 
 // sessionFlag reads the value the runner passed for a flag in the newest
@@ -925,6 +983,8 @@ checks_wait = "1ms"
 checks_poll_interval = "10ms"
 checks_timeout = "5s"
 max_check_fix_rounds = 2
+# This test pins the post-approval gate; prereview_test.go owns the other one.
+pre_review_checks = false
 `)
 	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Ship it", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now()}
 	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
@@ -1001,6 +1061,7 @@ auto_merge = true
 checks_wait = "1ms"
 checks_poll_interval = "10ms"
 checks_timeout = "1ms"
+pre_review_checks = false
 `)
 	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Slow CI", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now()}
 	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
