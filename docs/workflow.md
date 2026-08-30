@@ -425,14 +425,18 @@ When a developer worker claims a `bees:ready` issue it:
 2. creates a temporary git worktree on the branch `bees/issue-N` (prefix
    configurable), based on the default branch, reusing the branch if it
    already exists;
-3. runs a developer session that implements the issue, pushes, and opens a
-   pull request whose body contains `Closes #N`;
+3. runs a developer session that implements the issue, merges the default
+   branch into it, pushes, and opens a pull request whose body contains
+   `Closes #N`;
 4. labels the PR `bees` (and assigns it, if an assignee is configured) and
    moves the issue to `bees:review`.
 
 The developer never touches labels itself and never pushes to the default
 branch. Bugs the developer notices outside the issue's scope are filed as new
-`bees:bug` issues in triage rather than fixed.
+`bees:bug` issues in triage rather than fixed. It is told to merge the default
+branch before every push, on every round, and to re-run the tests afterwards:
+the default branch moves while an issue is being worked, and a pull request
+that has fallen behind it costs a whole review round.
 
 ## Questions
 
@@ -440,8 +444,13 @@ Roles never talk to each other on GitHub. They use a local mailbox in the
 state directory (`bees mail`), which humans can read with `bees mail list`.
 The visible effect on GitHub is the `bees:blocked` label:
 
-- A **developer** that cannot implement an issue without guessing sends one
-  question to the project manager and stops. The orchestrator labels the issue
+- A **developer** asks only when no reading of the issue is safe. Where the
+  issue merely leaves a choice it makes the choice, implements it and writes it
+  into the pull request for the reviewer to rule on; a question costs more,
+  because the work restarts in a later session with none of the first one's
+  context. When it does ask, it sends one question to the project manager and
+  stops. The orchestrator checks the message was really sent during the session
+  — if it was not, the issue is escalated to a human — then labels the issue
   `bees:blocked` and frees the worker. When the project manager answers, the
   orchestrator sees unread mail for the developer about that issue and relabels
   it `bees:ready`; the next developer session starts with the answer in its
@@ -573,6 +582,10 @@ with the PR list; no extra API calls) for issues in `bees:review` or
 - **Behind** (`scheduler.pr_keep_updated`, default `false`): the same for a PR
   that would merge cleanly but was not tested against the default branch as it
   is now. Off by default because that is usually fine.
+
+Both are backstops: the developer is told to merge the default branch itself
+before every push, so a PR should not normally be conflicting or behind by the
+time the reviewer sees it.
 
 An issue in `bees:approved` goes back to `bees:ready` and `bees:approved` is
 removed from the PR, exactly like human feedback; because it already has a pull

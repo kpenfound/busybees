@@ -44,8 +44,9 @@ _No new mail._
 
 You are on branch `{{.Branch}}`, based on `{{.Project.DefaultBranch}}`.
 {{if .PR -}}
-A pull request already exists. Address the review feedback in your mail, push, update the
-PR description if needed, then `done` (`status: pr-updated`, `pr: {{.PR.Number}}`).
+A pull request already exists. Address the review feedback in your mail, merge the
+default branch, push, update the PR description if needed, then `done`
+(`status: pr-updated`, `pr: {{.PR.Number}}`).
 {{- else -}}
 Implement the issue, push, open the pull request (body must include
 `Closes #{{.Issue.Number}}`), then `done` (`status: pr-opened`, `pr: <number>`).
