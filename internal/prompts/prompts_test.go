@@ -575,6 +575,100 @@ func TestProductManagerMentionsNotify(t *testing.T) {
 	}
 }
 
+// Verification is CI's job, not the reviewer's: a person said so on #5, and the
+// archive shows every short round-1 approval spending most of its turns on
+// `go build/vet/test`, `dagger check` and throwaway worktrees. Both halves are
+// pinned separately, because a paraphrase of "run the tests" creeping back in
+// would leave the positive sentence untouched.
+func TestReviewerDoesNotRunTheTestSuite(t *testing.T) {
+	sys, err := System(config.RoleReviewer, sample(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Verifying that the change builds and passes is CI's job",
+		"do not spend the session re-running the repository's\n   test-suite",
+	} {
+		if !strings.Contains(sys, want) {
+			t.Errorf("reviewer system prompt missing %q:\n%s", want, sys)
+		}
+	}
+	for _, gone := range []string{
+		"Run the tests the way the repository documents",
+		"exercise the change where practical",
+	} {
+		if strings.Contains(sys, gone) {
+			t.Errorf("reviewer system prompt still tells it to run the tests (%q):\n%s", gone, sys)
+		}
+	}
+	// A repository that reports no checks is the case where the old prompt
+	// made the reviewer stand in for CI; now it says so in its note instead.
+	d := sample()
+	d.ChecksStatus = "passed"
+	task, err := Task(config.RoleReviewer, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(task, "nothing was verified for you") {
+		t.Errorf("reviewer task does not say nothing was verified:\n%s", task)
+	}
+	if strings.Contains(task, "run the tests yourself") || strings.Contains(task, "test-suite yourself") {
+		t.Errorf("reviewer task still tells it to run the tests:\n%s", task)
+	}
+}
+
+// #150 and #168 were both filed on pull requests that had already been
+// approved, and both are the same shape: a fix applied at one site while an
+// identical sibling site kept the defect. That is the class of defect the
+// review misses, so the "look for" list names it.
+func TestReviewerLooksForTheSameShapeElsewhere(t *testing.T) {
+	sys, err := System(config.RoleReviewer, sample(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"**the same shape elsewhere**",
+		"not for the line the PR happened to edit",
+		"is one to drop,\n   not to hedge",
+	} {
+		if !strings.Contains(sys, want) {
+			t.Errorf("reviewer system prompt missing %q:\n%s", want, sys)
+		}
+	}
+}
+
+// Checks mode runs before the first review as well as after an approval — the
+// prereview stage in scheduler.workIssue calls fixFailedChecks independently of
+// auto_merge — so the system prompt must not condition it on auto-merge and the
+// checks task must not tell a pre-review session that it approved anything.
+// The task also names the outcome for "they went green on their own", which the
+// reviewer's three statuses do not suggest on their own.
+func TestReviewerChecksModeAlsoHappensBeforeTheFirstReview(t *testing.T) {
+	sys, err := System(config.RoleReviewer, sample(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(sys, "before your\nfirst review when pre-review checks are on") {
+		t.Errorf("reviewer system prompt does not say checks mode precedes the first review:\n%s", sys)
+	}
+	if !strings.Contains(sys, "again after your approval when\nauto-merge is on") {
+		t.Errorf("reviewer system prompt does not say checks mode follows an approval under auto-merge:\n%s", sys)
+	}
+	if strings.Contains(sys, "when auto-merge is enabled and the required checks fail after your") {
+		t.Errorf("reviewer system prompt still conditions checks mode on auto-merge alone:\n%s", sys)
+	}
+	checks, err := TaskNamed(config.RoleReviewer, "reviewer_checks", sample())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(checks, "You approved this pull request") {
+		t.Errorf("checks task claims an approval that the pre-review session never made:\n%s", checks)
+	}
+	if !strings.Contains(checks, "already green when you look") || !strings.Contains(checks, "`status: approved`") {
+		t.Errorf("checks task does not say what to report when the checks are already green:\n%s", checks)
+	}
+}
+
 // The reviewer's pre-review checks section: one line per check and a sentence
 // per status. It is absent when the pre-review read was skipped.
 func TestReviewerChecksSection(t *testing.T) {

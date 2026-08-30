@@ -376,11 +376,24 @@ issue's **size** and a sentence on the scrutiny it warrants (see
 just before the review (unless `pre_review_checks = false`), its own
 feedback from previous rounds, the round number and limit, its notes. It runs
 in the same worktree as the developer for that issue, fast-forwarded to the
-latest push, so it can run the tests and exercise the change.
+latest push, so it reads the change in its context.
 
-**Does on GitHub:** reads (`gh pr diff`); files unrelated bugs with
-`issue_create` (`bug: true`, `related: <issue>`, inheriting the issue's milestone).
-It does **not** submit a GitHub review, push to the branch, or change labels.
+**Verifying is CI's job.** The prompt tells the reviewer to judge the change
+from the code and not to spend the session re-running the repository's
+test-suite to repeat what the checks already report; the checks section of its
+prompt says what CI found, and when nothing was reported it is told to say so in
+its outcome note. Its "look for" list is ordered — correctness, the same defect
+shape at sibling sites, tests that would fail without the change, then
+everything else — and it must be able to show a finding (the input, the wrong
+result) rather than hedge it.
+
+**Does on GitHub:** reads (`gh pr diff`, and `pr_view` for what people have
+already said on the pull request — which outranks the issue and its prompt);
+files unrelated bugs with `issue_create` (`bug: true`, `related: <issue>`,
+inheriting the issue's milestone). It does **not** submit a GitHub review,
+comment on the pull request, push to the branch, or change labels: nothing it
+writes reaches the person who merges except its outcome note, which is why the
+note has to stand on its own.
 
 **Mail:** may send to `developer` only, with `pr` and `issue`, one
 consolidated message per round listing every point with file/line and the
@@ -404,11 +417,12 @@ The worker reads the pull request's checks before the first review, bounded by
 fix round instead of a whole review round. Green → the reviewer's prompt lists
 them under `## Required checks` and says CI is green. Still pending at the
 timeout, or a repository that reports no checks → the review happens anyway and
-the reviewer is told to run the tests itself. A failing check → checks mode
-below, *before* any review; the fix rounds are the same counter, and the
-reviewer only sees the pull request once it is green. The read is made once per
-pull request: a later review round has no checks section, because the checks
-that were read describe a head the developer has since replaced.
+the reviewer is told nothing was verified for it, and to say so in its note. A
+failing check → checks mode below, *before* any review; the fix rounds are the
+same counter, and the reviewer only sees the pull request once it is green. The
+read is made once per pull request: a later review round has no checks section,
+because the checks that were read describe a head the developer has since
+replaced.
 
 ### Checks mode (a failing check)
 
@@ -426,15 +440,16 @@ its notes.
 
 **Does:** finds the cause without assuming a CI system — follows the details
 link, runs `gh pr checks`, reads the repository's docs and its own notes, uses
-`gh run view --log-failed` only when the link is a GitHub Actions run, and
-otherwise reproduces the failure locally on the branch. It records how to
+`gh run view --log-failed` only when the link is a GitHub Actions run, and — as
+a last resort, when no log is reachable — reproduces the failure locally on the
+branch, to name the error rather than to verify the change. It records how to
 read this project's CI in its notes. It then distils the main error, its
 cause and a reproducing command into one mail to the developer.
 
 | Status | Orchestrator |
 |---|---|
 | `changes-requested` | Verifies the mail was sent (none: escalate), then runs the developer, whose `pr-updated` leads straight back to the stage that found the failure (pre-review or post-approval checks) — no extra review round. |
-| `approved` | Means "I re-ran the check; wait again": the orchestrator waits `checks_wait` and polls once more. |
+| `approved` | Means "wait again": the reviewer re-ran the check, or found it already green. The orchestrator waits `checks_wait` and polls once more. |
 | `failed` (or no outcome / timeout / error) | Escalates to `bees:needs-human`. |
 
 Fix rounds are counted in `<state_dir>/issues/<n>.json` (`check_fix_rounds`)

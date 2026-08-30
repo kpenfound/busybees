@@ -282,9 +282,10 @@ stateDiagram-v2
   `awaitChecks` with a deadline of `pre_review_checks_timeout`, so the reviewer
   starts from a green pull request. Passed, or nothing reported, or still
   pending at the timeout → the review runs, with `Checks`/`ChecksStatus` in the
-  reviewer's prompt; the pending and the no-checks case tell it to run the
-  tests itself. A read that errors is advisory too: warn and review without a
-  checks section (unlike the checks stage, where the read is a merge gate),
+  reviewer's prompt; the pending and the no-checks case tell it nothing was
+  verified and to say so in its outcome note. A read that errors is advisory
+  too: warn and review without a checks section (unlike the checks stage, where
+  the read is a merge gate),
   recorded as the `pre-review-checks` degraded operation so a reviewer quietly
   losing its checks section is visible.
   Failed → `fixFailedChecks`, the same checks-mode reviewer and developer fix

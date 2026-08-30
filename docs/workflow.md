@@ -476,12 +476,14 @@ Each developer worker runs a strictly sequential loop for its issue:
 developer → reviewer → developer → reviewer → … → approved
 ```
 
-The reviewer checks out the PR branch, reads the diff and the issue, runs the
-tests, and either approves or sends one consolidated feedback message to the
-developer through the mailbox. It does not submit a GitHub review and does not
-push to the branch. On "changes requested" the orchestrator moves the issue
-back to `bees:in-progress`, runs the developer again with the feedback in its
-prompt, and the developer pushes and reports `pr-updated`.
+The reviewer checks out the PR branch, reads the diff and the issue, and either
+approves or sends one consolidated feedback message to the developer through the
+mailbox. Verifying that the change builds and passes is CI's job: the reviewer
+judges it from the code rather than re-running the repository's test-suite. It
+does not submit a GitHub review, comment on the pull request, or push to the
+branch. On "changes requested" the orchestrator moves the issue back to
+`bees:in-progress`, runs the developer again with the feedback in its prompt,
+and the developer pushes and reports `pr-updated`.
 
 `scheduler.max_review_rounds` (default 3) caps the number of reviewer passes.
 If the last round still requests changes the issue is escalated (below). The
@@ -512,8 +514,8 @@ reviewer session, the worker waits `checks_wait` and then polls every
   `check_fix_rounds` and `max_check_fix_rounds` with the post-approval stage and
   do **not** count against `max_review_rounds`; exhausting them escalates.
 - **Still pending** at `pre_review_checks_timeout`, or **no check reported at
-  all**: the review happens anyway and the reviewer is told to run the test-suite
-  itself.
+  all**: the review happens anyway, and the reviewer is told nothing was verified
+  for it and to say so in its outcome note.
 - **The read itself fails** (`gh` errors, a rate limit, an API outage): the
   pre-review read is advisory, so it is logged as a warning and the review
   happens anyway, without a checks section in the reviewer's prompt.

@@ -176,7 +176,7 @@ func TestPreReviewChecksPendingReviewsAnyway(t *testing.T) {
 		t.Fatalf("pending checks must not escalate before the review: %v", h.gh.comments[1])
 	}
 	review := promptOf(t, h, 1)
-	for _, want := range []string{"## Required checks", "slow — pending", "still pending after `1ms`", "run the repository's test-suite yourself"} {
+	for _, want := range []string{"## Required checks", "slow — pending", "still pending after `1ms`", "say in your note that CI had not reported"} {
 		if !strings.Contains(review, want) {
 			t.Errorf("reviewer prompt missing %q:\n%s", want, review)
 		}

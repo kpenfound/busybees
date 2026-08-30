@@ -128,7 +128,7 @@ func fakeClaude() {
 		if os.Getenv("BEES_REVIEW_MODE") == "checks" {
 			counter("checks")
 			prompt, _ := os.ReadFile(filepath.Join(sessionDir, "prompt.md"))
-			if _, err := box.Send(mail.Message{From: role, To: config.RoleDeveloper, Subject: "Required check failed: go / test", Body: "main error: TestX fails\n\n" + string(prompt), PR: pr, Issue: issue}); err != nil {
+			if _, err := box.Send(mail.Message{From: role, To: config.RoleDeveloper, Subject: "Check failed: go / test", Body: "main error: TestX fails\n\n" + string(prompt), PR: pr, Issue: issue}); err != nil {
 				fail(err)
 			}
 			outcome = session.Outcome{Status: OutcomeChangesRequested}
@@ -1030,7 +1030,7 @@ pre_review_checks = false
 			checksPrompt = string(b)
 		}
 	}
-	for _, want := range []string{"required checks failed on pull request #101", "**go / test** (CI) — fail: 1 test failed", "https://ci.example.com/run/1", "do not assume GitHub"} {
+	for _, want := range []string{"checks failed on pull request #101", "**go / test** (CI) — fail: 1 test failed", "https://ci.example.com/run/1", "do not assume GitHub"} {
 		if !strings.Contains(checksPrompt, want) {
 			t.Errorf("checks prompt missing %q", want)
 		}

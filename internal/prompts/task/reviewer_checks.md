@@ -1,7 +1,8 @@
-# Task: required checks failed on pull request #{{.PR.Number}} (fix round {{.Round}} of {{.MaxRounds}})
+# Task: checks failed on pull request #{{.PR.Number}} (fix round {{.Round}} of {{.MaxRounds}})
 
-You approved this pull request, but its required checks did not pass, so it cannot be
-merged yet. Find out why and hand the developer a precise fix request.
+A check on this pull request failed, so it cannot go forward — either before its first
+review, or after your approval with auto-merge on. Either way this session is not a
+review: find out why the check failed and hand the developer a precise fix request.
 
 ## Pull request #{{.PR.Number}}: {{.PR.Title}}
 {{.PR.URL}} — branch `{{.PR.HeadRefName}}` → `{{.PR.BaseRefName}}`
@@ -27,17 +28,21 @@ merged yet. Find out why and hand the developer a precise fix request.
    and your notes may explain where its CI runs and how to read it. If the link is a
    GitHub Actions run, `gh run view <run-id> -R {{.Project.Repo}} --log-failed` prints the
    failing steps; for other systems fetch the page or use the tooling the repository
-   documents. If logs are not reachable, reproduce the failure locally on this branch
-   with the repository's documented build/test commands — that is usually faster anyway.
-   Record what you learn about reading this project's CI in your notes.
+   documents. Only if the logs are not reachable at all, reproduce the failure locally
+   on this branch with the repository's documented build/test commands — a last resort,
+   and to name the error, not to verify the change. Record what you learn about reading
+   this project's CI in your notes.
 2. Distil the **main error message** and its cause. Ignore noise; the developer needs the
    one thing to fix, with file/line where possible, plus the command that reproduces it.
 3. Send it to the developer:
    `mail_send` (`to: developer`, `pr: {{.PR.Number}}`, `issue: {{.Issue.Number}}`,
-   `subject: "Required check failed: <name>"`) and report `done` with
+   `subject: "Check failed: <name>"`) and report `done` with
    `status: changes-requested`. The developer will push a fix and the checks
    will run again.
-4. If the failure is clearly unrelated to the change (infrastructure, flakiness) and the
+4. If the checks are already green when you look — they finished after the orchestrator
+   read them — there is nothing to fix: report `done` with `status: approved` and a note
+   saying so, and the orchestrator polls them again.
+5. If the failure is clearly unrelated to the change (infrastructure, flakiness) and the
    CI system lets you re-run it (for GitHub Actions: `gh run rerun <run-id> --failed -R {{.Project.Repo}}`),
    re-run it and report `done` with `status: approved` so the orchestrator waits for the checks
    again. Do this at most once. If you cannot re-run it yourself, tell the developer to
