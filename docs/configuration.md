@@ -223,6 +223,11 @@ the local mailbox — the developer ↔ reviewer loop, answered questions moving
 every hour of the day. `bees tick` and `bees exec` ignore the window and always
 do a full pass.
 
+`bees status` always prints a `work hours:` line, whether or not the window is
+configured, with the cadence in force and when the next poll is due — that is the
+quickest way to check the feature is on and doing what you meant. See
+[`bees status`](cli.md#bees-status---json).
+
 **The work day starts on time.** The poll before the window opens is scheduled
 for the moment it opens, not a whole `off_hours_poll_interval` later, so the
 first poll of the day is at `09:00` rather than up to an interval late.

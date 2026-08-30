@@ -371,17 +371,49 @@ counted as `unsized`:
   ready          4  (xs 1, s 2, m 1)
 ```
 
-When [`scheduler.work_hours`](configuration.md#work-hours) is configured it also
-reports whether the factory is inside the window and when the next GitHub poll is
-due (`in_work_hours` and `next_poll` in `--json`):
+A `work hours:` line always follows it. With
+[`scheduler.work_hours`](configuration.md#work-hours) configured it reports whether
+the factory is inside the window, the window itself, and when the next GitHub poll
+is due:
 
 ```
 work hours: yes (09:00-18:00 mon-fri, America/New_York)   next GitHub poll in 2m55s
 ```
 
-The yes/no is computed when you run the command, so it is right even when the
-scheduler is stopped; `in_work_hours` in `--json` is the scheduler's own record
-from its last pass.
+Without it, the line says so and names the cadence in force instead, because a
+missing line would be indistinguishable from a factory that polls around the clock:
+
+```
+work hours: not configured — GitHub polled every 5m0s   next GitHub poll in 2m55s
+```
+
+When `scheduler.timezone` is unset the window is read in the machine's local time,
+which is printed as the abbreviation and offset in force right now rather than the
+uninformative `Local`:
+
+```
+work hours: no (09:00-18:00 sat,sun, local time (PDT -07:00))
+```
+
+`--json` reports the same answer as a `work_hours` object, computed when the
+command runs:
+
+```json
+"work_hours": {
+  "configured": true,
+  "in_work_hours": false,
+  "window": "09:00-18:00 mon-fri, America/New_York",
+  "poll_interval": "1h0m0s",
+  "checked_at": "2026-08-29T20:48:00Z"
+}
+```
+
+`in_work_hours` is omitted when `configured` is `false`, and `poll_interval` is the
+cadence in force at `checked_at` (so `off_hours_poll_interval` outside the window).
+This is the **live** answer. `status.in_work_hours` and `status.next_poll` next to
+it are the **scheduler's own record** from its last pass, and go stale as soon as
+the scheduler stops; both are reported so the stale one is never the only one
+available.
 
 Ready issues held back by an open [dependency](workflow.md#dependencies) are counted
 on the `ready` row and listed below the queues:
