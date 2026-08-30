@@ -931,3 +931,42 @@ func TestReviewerReadsItsMail(t *testing.T) {
 		t.Errorf("reviewer system prompt still describes mail as send-only:\n%s", sys)
 	}
 }
+
+// QA can be steered by mail like every other role: `bees mail send --from
+// human --to qa` is a documented channel, and until #199 QA's sessions were
+// built with no inbox at all, so a message sat unread forever. Two halves: the
+// mail section in the task template (empty case included, so a filled-in
+// section is not the only shape that renders) and the direction sentence the
+// other roles already carry in the system prompt.
+func TestQAReadsItsMail(t *testing.T) {
+	task, err := Task(config.RoleQA, sample())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"## Mail for you (1)", "Review round 1", "please fix"} {
+		if !strings.Contains(task, want) {
+			t.Errorf("qa task missing %q:\n%s", want, task)
+		}
+	}
+	d := sample()
+	d.Inbox = nil
+	empty, err := Task(config.RoleQA, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(empty, "## Mail for you (0)") || !strings.Contains(empty, "_No new mail._") {
+		t.Errorf("qa task has no empty mail section:\n%s", empty)
+	}
+	sys, err := System(config.RoleQA, sample(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"**Read your mail.**",
+		"Mail from `human` is not a question but a direction",
+	} {
+		if !strings.Contains(sys, want) {
+			t.Errorf("qa system prompt missing %q:\n%s", want, sys)
+		}
+	}
+}
