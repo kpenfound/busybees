@@ -74,8 +74,42 @@ func (s *Scheduler) productManagerHasWork(ctx context.Context, snap *snapshot) b
 	if err != nil || rs.LastRun.IsZero() || s.now().Sub(rs.LastRun) >= s.cfg.Scheduler.ProductManagerInterval.Duration {
 		return true
 	}
+	if len(s.approvedSince(snap.features, rs.LastRun)) > 0 {
+		return true
+	}
 	fresh, err := s.freshIssues(ctx, append(append([]github.Issue{}, snap.feedback...), snap.features...), rs.LastRun)
-	return err == nil && len(fresh) > 0
+	if err != nil {
+		return false
+	}
+	// A proposal is never work: it waits for a person to approve it, and a
+	// bee-written one stays "fresh" forever (nobody has commented on it), so
+	// counting it here would wake the product manager on every single poll
+	// for a decision it cannot make. The interval-based wake still shows it.
+	for _, i := range fresh {
+		if !github.HasLabel(i.Labels, s.labels.Proposal) {
+			return true
+		}
+	}
+	return false
+}
+
+// approvedSince returns the features a person approved (removed
+// bees:proposal from) after t, as recorded by reconcile. Approval leaves no
+// comment, so this is the only signal that brings a proposal back to the
+// product manager.
+func (s *Scheduler) approvedSince(features []github.Issue, t time.Time) []int {
+	var out []int
+	for _, f := range features {
+		is, err := s.store.Issue(f.Number)
+		if err != nil {
+			s.log.Warn("read issue state", "issue", f.Number, "err", err)
+			continue
+		}
+		if !is.ProposalApprovedAt.IsZero() && is.ProposalApprovedAt.After(t) {
+			out = append(out, f.Number)
+		}
+	}
+	return out
 }
 
 // freshIssues returns the issues (feedback or feature) a human has created
@@ -119,9 +153,38 @@ func (s *Scheduler) runProductManager(ctx context.Context, snap *snapshot) error
 	if err != nil {
 		return err
 	}
-	freshFeatures, err := s.freshIssues(ctx, snap.features, time.Time{})
+	fresh, err := s.freshIssues(ctx, snap.features, time.Time{})
 	if err != nil {
 		return err
+	}
+	// Proposals are partitioned out of the fresh features rather than kept
+	// out of freshIssues: that call is also what clears bees:question when a
+	// person answers, and the product manager may well have asked its
+	// question on a proposal.
+	var freshFeatures, proposals []github.Issue
+	seen := map[int]bool{}
+	for _, f := range fresh {
+		if github.HasLabel(f.Labels, s.labels.Proposal) {
+			proposals = append(proposals, f)
+			continue
+		}
+		seen[f.Number] = true
+		freshFeatures = append(freshFeatures, f)
+	}
+	// A feature a person approved since the last run reaches the product
+	// manager on this run whatever AwaitingBee says: the approval is a label
+	// edit, so no comment ever makes the feature fresh again.
+	rs, _ := s.store.Role(config.RoleProductManager)
+	for _, n := range s.approvedSince(snap.features, rs.LastRun) {
+		if seen[n] {
+			continue
+		}
+		full, err := s.gh.GetIssue(ctx, n)
+		if err != nil {
+			return err
+		}
+		s.log.Info("approved proposal goes to the product manager", "issue", n)
+		freshFeatures = append(freshFeatures, full)
 	}
 	// Sub-issue progress of every feature, from GitHub.
 	progress := map[int]github.SubIssueSummary{}
@@ -141,7 +204,8 @@ func (s *Scheduler) runProductManager(ctx context.Context, snap *snapshot) error
 	}
 	return s.runSingleton(ctx, config.RoleProductManager, prompts.Data{
 		Issues: work, PRs: snap.prs, Milestones: milestones, Inbox: inbox,
-		Feedback: feedback, FreshFeatures: freshFeatures, Features: snap.features, Progress: progress,
+		Feedback: feedback, FreshFeatures: freshFeatures, Proposals: proposals,
+		Features: snap.features, Progress: progress,
 	})
 }
 
