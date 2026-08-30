@@ -251,9 +251,7 @@ asks questions on it, but nothing is broken down from it — `bees issue create
 --parent <proposal>` refuses — so the factory cannot grow its own roadmap.
 **Remove the `bees:proposal` label to approve it**, and it becomes an ordinary
 feature issue the product manager breaks down on its next run. A feature issue
-you filed never carries the label, and is broken down straight away. Once a
-proposal is written the product manager comments on it saying it waits for you,
-so it sits quietly until you decide rather than being re-read on every run.
+you filed never carries the label, and is broken down straight away.
 
 For each *fresh* feature issue (created, or commented on by a person,
 since the product manager's last marker comment on it) the product manager:

@@ -153,9 +153,7 @@ carries no proposal label: it is already approved and handled exactly as
 before. The product manager's prompt shows the proposal state of every feature
 issue (a `proposal:` field on each fresh feature and a `Proposal` column in the
 feature table), because bees and people share one GitHub account and the author
-is no signal. Once a proposal is written, the product manager comments on it
-saying it waits for a person to remove the label, which also settles it so it
-is not presented again unchanged.
+is no signal.
 
 A feature issue is *fresh* when a person created or commented on it after
 the product manager's last marker comment (`github.Issue.AwaitingBee`). When a

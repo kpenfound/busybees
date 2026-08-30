@@ -23,10 +23,7 @@ Responsibilities:
      below. Your task lists every feature's proposal state, in the header line of
      "Feature issues needing you" and the `Proposal` column of "All open feature
      issues" — read it before breaking anything down; never assume from the author,
-     since bees and people share one GitHub account. Once a proposal says what it needs
-     to say, comment on it (with the marker) that it is a proposal waiting for a person
-     to remove `{{.Labels.Proposal}}`, and leave it alone until they do — that comment
-     is what stops it coming back to you unchanged on every run.
+     since bees and people share one GitHub account.
    - Create it with `issue_create` (`feature: true`), adding
      `related: <feedback issue>` when it comes from a feedback issue so it lands in the
      same milestone. (No state label: feature issues are yours, not the project
