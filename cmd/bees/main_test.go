@@ -117,3 +117,14 @@ func TestQueuesTextShowsReadySizes(t *testing.T) {
 		t.Fatalf("unsized issues: %q", got)
 	}
 }
+
+func TestClaudeBin(t *testing.T) {
+	t.Setenv("BEES_CLAUDE_BIN", "")
+	if got := claudeBin(); got != "claude" {
+		t.Errorf("default claude binary = %q", got)
+	}
+	t.Setenv("BEES_CLAUDE_BIN", "/opt/claude")
+	if got := claudeBin(); got != "/opt/claude" {
+		t.Errorf("BEES_CLAUDE_BIN = %q", got)
+	}
+}

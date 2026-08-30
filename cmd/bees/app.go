@@ -31,6 +31,14 @@ type app struct {
 	logger *logging.Logger
 }
 
+// claudeBin is the claude executable sessions are run with.
+func claudeBin() string {
+	if bin := os.Getenv("BEES_CLAUDE_BIN"); bin != "" {
+		return bin
+	}
+	return "claude"
+}
+
 // configPath resolves the bees.toml to use.
 func configPath(g *globalFlags) (string, error) {
 	if g.config != "" {
@@ -98,11 +106,8 @@ func newApp(ctx context.Context, g *globalFlags) (*app, error) {
 	if err != nil {
 		return nil, err
 	}
-	claudeBin := os.Getenv("BEES_CLAUDE_BIN")
-	if claudeBin == "" {
-		claudeBin = "claude"
-	}
-	if err := versions.CheckAll(ctx, claudeBin); err != nil {
+	bin := claudeBin()
+	if err := versions.CheckAll(ctx, bin); err != nil {
 		return nil, err
 	}
 	skillMgr := skills.NewManager(cacheDir())
@@ -114,7 +119,7 @@ func newApp(ctx context.Context, g *globalFlags) (*app, error) {
 	ws.Remote = cfg.Project.Remote
 
 	runner := &session.Runner{
-		ClaudeBin:   claudeBin,
+		ClaudeBin:   bin,
 		BeesBin:     self,
 		SessionsDir: store.SessionsDir(),
 		StateDir:    store.Dir,
