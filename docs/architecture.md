@@ -424,10 +424,12 @@ Messages are addressed to a **role**, not a session. Delivery rules:
 **Visibility backstop.** After every session (`runSession` in `sessions.go`) the
 scheduler calls `adoptCreated`: `github.Client.ListCreatedSince` lists issues
 and PRs matching `author:@me created:>=<session start>` regardless of labels,
-and anything carrying a `<label>:*` label but missing part of the filter is
-repaired through the same `ensureVisible` helper the developer worker uses on
-a PR it opened — the base label, the configured `filter.assignee`, and, for
-pull requests only, the configured `filter.milestone`. Items with no factory
+and anything carrying `<label>` or a `<label>:*` label but missing part of the
+filter is repaired through the same `ensureVisible` helper the developer worker
+uses on a PR it opened — the base label, the configured `filter.assignee`, and,
+for pull requests only, the configured `filter.milestone`. Both halves of the
+gate are needed: a pull request a session just opened carries only `<label>`,
+and earns its first `<label>:*` label at approval. Items with no factory
 label at all are left alone, and one item that cannot be repaired is logged
 and skipped rather than stopping the others.
 

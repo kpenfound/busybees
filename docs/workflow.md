@@ -56,8 +56,10 @@ and so on. Everything the factory creates itself gets the label (and the
 assignee, if one is configured) so it stays visible. The role prompts require
 it, and the orchestrator backstops it: after every session it lists the
 issues and PRs the account created since the session started and adds the
-base label (and assignee) to anything carrying a `bees:*` label that lacks
-them — plus, on pull requests, the configured milestone. Issues never get a
+base label (and assignee) to anything carrying `bees` or a `bees:*` label
+that lacks them — plus, on pull requests, the configured milestone. Both
+halves matter: a pull request a session just opened carries only `bees`, and
+it earns its first `bees:*` label at approval. Issues never get a
 milestone from a bee; that is a person's decision, and an issue `bees issue
 create` makes inherits one from the issue it relates to.
 
