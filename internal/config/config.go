@@ -373,6 +373,35 @@ func parseSkillsRefresh(v string) (always bool, after time.Duration, err error) 
 // CommitFlags returns the developer's extra git commit flags.
 func (c *Config) CommitFlags() string { return strings.TrimSpace(c.Roles[RoleDeveloper].CommitFlags) }
 
+// validNotify reports whether n is a login ("kpenfound") or an org/team slug
+// ("myorg/bees-team"): at most one slash, and no empty half.
+func validNotify(n string) bool {
+	for i, part := range strings.Split(n, "/") {
+		if i > 1 || strings.TrimSpace(part) == "" {
+			return false
+		}
+	}
+	return true
+}
+
+// Mentions renders scheduler.notify as the GitHub mention string every caller
+// uses ("@kpenfound @myorg/bees-team"). It is empty when notify is unset.
+func (c *Config) Mentions() string {
+	var b strings.Builder
+	for _, n := range c.Scheduler.Notify {
+		n = strings.TrimSpace(n)
+		if n == "" {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteByte(' ')
+		}
+		b.WriteByte('@')
+		b.WriteString(n)
+	}
+	return b.String()
+}
+
 // MaxSize returns the largest work item size the developer takes.
 func (c *Config) MaxSize() string {
 	return firstNonEmpty(strings.TrimSpace(c.Roles[RoleDeveloper].MaxSize), DefaultMaxSize)
@@ -482,6 +511,12 @@ type Scheduler struct {
 	// PRKeepUpdated does the same when the pull request merely fell behind
 	// the default branch without conflicting. Default false.
 	PRKeepUpdated bool `toml:"pr_keep_updated" json:"pr_keep_updated"`
+	// Notify lists the GitHub logins and/or org/team slugs the factory turns
+	// to when it needs a person: they are mentioned in the needs-human
+	// escalation comment and in the product manager's questions, and asked to
+	// review a pull request the reviewer approved. Empty (the default)
+	// notifies nobody.
+	Notify []string `toml:"notify" json:"notify"`
 	// Retries is the number of extra attempts a session gets when it failed
 	// for infrastructure reasons (timeout, API error, exhausted turns).
 	// 0 disables retrying. Default 1.
@@ -975,6 +1010,14 @@ func (c *Config) Validate() error {
 	}
 	if n := c.Scheduler.MaxLargeInFlight; n != nil && *n < 0 {
 		errs = append(errs, "scheduler.max_large_in_flight must be >= 0")
+	}
+	for _, n := range c.Scheduler.Notify {
+		switch {
+		case strings.HasPrefix(n, "@"):
+			errs = append(errs, fmt.Sprintf("scheduler.notify entry %q must not start with @", n))
+		case !validNotify(n):
+			errs = append(errs, fmt.Sprintf("scheduler.notify entry %q must be a GitHub login or an org/team slug", n))
+		}
 	}
 	if c.Scheduler.NotesConsolidateEvery < 0 {
 		errs = append(errs, "scheduler.notes_consolidate_every must be >= 0 (0 means the default)")

@@ -31,8 +31,10 @@ Responsibilities:
    - Make sure it is detailed enough to be broken down. If something only a person can
      decide is missing, **ask them on the issue**: post the question as a comment (ending
      with `<!-- bees:product_manager -->`) and add the `{{.Labels.Question}}` label
-     (`gh issue edit N -R {{.Project.Repo}} --add-label "{{.Labels.Question}}"`). Stop
-     working on that feature; it comes back to you when they answer.
+     (`gh issue edit N -R {{.Project.Repo}} --add-label "{{.Labels.Question}}"`).
+     {{if .Notify}}Start the comment with `{{.Notify}}` so the people who can answer it
+     are notified — you and they share one GitHub account, so nothing else tells them.
+     {{end}}Stop working on that feature; it comes back to you when they answer.
    - Break it into work items: one issue per pull-request-sized piece, created with
      `issue_create` (`parent: <feature>`; add `bug: true`
      for bugs). They become GitHub sub-issues of the feature, so GitHub tracks the

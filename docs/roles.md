@@ -129,8 +129,11 @@ enter the workflow state machine. For each fresh one it:
 
 1. makes sure the issue is detailed enough to be broken down;
 2. if only a person can decide something, posts the question as a comment
-   (ending with the `<!-- bees:product_manager -->` marker), adds the
-   `bees:question` label, and stops working on that feature;
+   (ending with the `<!-- bees:product_manager -->` marker), starting it with
+   the mentions from [`scheduler.notify`](configuration.md#notifying-a-person)
+   when it is set — the factory comments under your own account, so nothing
+   else tells the people who can answer — adds the `bees:question` label, and
+   stops working on that feature;
 3. otherwise breaks it into work items — one issue per pull-request-sized
    piece, created with `issue_create` (`parent: <feature>`, `bug: true` for
    bugs), which makes each a native GitHub **sub-issue** of the feature with

@@ -318,6 +318,14 @@ func (s *Scheduler) approve(ctx context.Context, issue int, pr *github.PR) error
 	if err := s.gh.EditLabels(ctx, pr.Number, []string{s.labels.Approved}, nil); err != nil {
 		return err
 	}
+	// An approved pull request waits for a person to merge it. Requesting a
+	// review is best effort: GitHub refuses one from the PR's own author, and
+	// with a shared account the configured login often is the author.
+	if notify := s.cfg.Scheduler.Notify; len(notify) > 0 {
+		if err := s.gh.RequestReview(ctx, pr.Number, notify...); err != nil {
+			s.log.Warn("could not request a review on the approved pull request", "pr", pr.Number, "err", err)
+		}
+	}
 	return s.setState(ctx, issue, s.labels.Approved)
 }
 

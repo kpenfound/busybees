@@ -1031,3 +1031,45 @@ func TestEscapeTOML(t *testing.T) {
 		}
 	}
 }
+
+func TestNotify(t *testing.T) {
+	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Scheduler.Notify) != 0 || cfg.Mentions() != "" {
+		t.Fatalf("notify defaults to nobody, got %v / %q", cfg.Scheduler.Notify, cfg.Mentions())
+	}
+
+	cfg, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nnotify = [\"kpenfound\", \"myorg/bees-team\"]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := cfg.Mentions(), "@kpenfound @myorg/bees-team"; got != want {
+		t.Errorf("Mentions() = %q, want %q", got, want)
+	}
+}
+
+// A bad notify entry is rejected, and the error names the entry so the user
+// knows which one to fix.
+func TestNotifyValidation(t *testing.T) {
+	cases := map[string]string{
+		"@kpenfound": "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nnotify = [\"@kpenfound\"]\n",
+		"a/b/c":      "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nnotify = [\"a/b/c\"]\n",
+		"myorg/":     "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nnotify = [\"myorg/\"]\n",
+	}
+	for entry, body := range cases {
+		_, err := Load(writeConfig(t, body))
+		if err == nil {
+			t.Errorf("%s: expected an error", entry)
+			continue
+		}
+		if !strings.Contains(err.Error(), entry) {
+			t.Errorf("%s: error = %v, want it to name the entry", entry, err)
+		}
+	}
+	// An empty entry is rejected too; there is no name to print.
+	if _, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nnotify = [\"\"]\n")); err == nil {
+		t.Error("empty entry: expected an error")
+	}
+}

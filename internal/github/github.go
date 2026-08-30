@@ -354,6 +354,42 @@ func (c *Client) Assign(ctx context.Context, number int, logins ...string) error
 	return err
 }
 
+// RequestReview asks the given GitHub logins and org/team slugs (as
+// "myorg/bees-team") to review a pull request.
+//
+// It goes straight to the REST endpoint rather than through
+// `gh pr edit --add-reviewer`, which fails against GitHub with a "Projects
+// (classic) is being deprecated" GraphQL error. GitHub refuses to request a
+// review from the pull request's own author, so a login that authored it is
+// rejected with a 422; teams are always accepted.
+func (c *Client) RequestReview(ctx context.Context, number int, reviewers ...string) error {
+	var logins, teams []string
+	for _, r := range reviewers {
+		r = strings.TrimSpace(r)
+		switch {
+		case r == "":
+		case strings.Contains(r, "/"):
+			// The org is implied by the repository; the endpoint takes slugs.
+			_, team, _ := strings.Cut(r, "/")
+			teams = append(teams, team)
+		default:
+			logins = append(logins, r)
+		}
+	}
+	if len(logins) == 0 && len(teams) == 0 {
+		return nil
+	}
+	args := []string{"api", "-X", "POST", fmt.Sprintf("repos/%s/pulls/%d/requested_reviewers", c.Repo, number)}
+	for _, l := range logins {
+		args = append(args, "-f", "reviewers[]="+l)
+	}
+	for _, t := range teams {
+		args = append(args, "-f", "team_reviewers[]="+t)
+	}
+	_, err := c.Exec(ctx, args...)
+	return err
+}
+
 // CurrentUser returns the authenticated gh login.
 func CurrentUser(ctx context.Context) (string, error) {
 	cmd := exec.CommandContext(ctx, "gh", "api", "user", "--jq", ".login")
