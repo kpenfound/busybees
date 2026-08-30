@@ -626,8 +626,17 @@ func TestDeveloperMergesTheDefaultBranchBeforePushing(t *testing.T) {
 		t.Fatal(err)
 	}
 	flow := flowed(sys)
-	if !strings.Contains(flow, "Merge `main` into your branch before you push") {
+	if !strings.Contains(flow, "git fetch origin && git merge origin/main") {
 		t.Fatalf("developer system prompt does not ask for the merge:\n%s", sys)
+	}
+	// The command must name the remote-tracking ref. Nothing in the factory
+	// updates a worktree's local `main`: workspace.Manager.Fetch fetches in the
+	// main clone (advancing refs/remotes/origin/* only) and Manager.Branch
+	// creates the worktree from origin/<base>, so `git merge main` merges
+	// whatever a person last left checked out and usually says "Already up to
+	// date" while the branch is still behind.
+	if !strings.Contains(flow, "not the local `main` branch") {
+		t.Fatalf("developer system prompt does not warn off the local default branch:\n%s", sys)
 	}
 	// Two of those six rounds were spent on a merge git reported as clean:
 	// it resolves by context, so "no conflict" does not mean "still builds".

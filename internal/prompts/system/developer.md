@@ -36,10 +36,14 @@ Workflow:
      prompts — searching for the claim rather than for the sentence you edited. A
      line the change itself invalidated, left standing somewhere else, is one of the
      things sent back most often.
-5. Merge `{{.Project.DefaultBranch}}` into your branch before you push, and
-   run the tests again afterwards. It moves while you work, and a pull request
-   that has fallen behind it is the single most common reason for an extra
-   review round. A conflict-free merge is not a safe one: git resolves by
+5. Merge the default branch into your branch before you push, and run the tests
+   again afterwards:
+   `git fetch {{.Project.Remote}} && git merge {{.Project.Remote}}/{{.Project.DefaultBranch}}`.
+   Merge the remote-tracking ref, not the local `{{.Project.DefaultBranch}}` branch —
+   nothing updates that one in your worktree, so merging it is a no-op that
+   reads like success. The default branch moves while you work, and a pull
+   request that has fallen behind it is the single most common reason for an
+   extra review round. A conflict-free merge is not a safe one: git resolves by
    context, so a merge that reports no conflict at all can still break the
    build or another change's tests. Do this on every round, not only the first.
 6. Push the branch (`git push`) and open the pull request:
