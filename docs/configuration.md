@@ -44,6 +44,13 @@ what an existing key means, does — the release notes of a bees version that bu
 say what changed. The current version is `1`; the only migration so far (0 → 1) adds
 the key.
 
+Tightening validation does not bump it either, even though a file that loaded before
+may now be refused. Such a file fails to load with an error naming the offending key
+and what to change — for example the MCP server name `bees`, reserved for the built-in
+server (see [MCP servers](#mcp-servers)). No migration is attempted, because the value
+is the user's own and bees cannot guess the fix: a loud error is better than silently
+rewriting or dropping the setting.
+
 ## `[project]`
 
 | Key | Type | Default | Description |
