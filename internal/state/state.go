@@ -5,6 +5,7 @@
 //
 //	mail/<role>/*.json   local mailbox (see package mail)
 //	notes/<role>.md      per-role notes, the roles' only long-term memory
+//	notes/archive/       notes files replaced by `bees notes reset`
 //	sessions/<id>/       one directory per claude session (prompts, transcript, result)
 //	issues/<n>.json      per-issue bookkeeping (review round, PR number)
 //	qa.json              QA bookkeeping (last run)
@@ -48,15 +49,16 @@ const readmeText = `# busybees state directory
 This directory is managed by ` + "`bees`" + `. It holds:
 
 - mail/      the local mailbox roles use to talk to each other
-- notes/     each role's notes file (their only memory between sessions)
+- notes/     each role's notes file (their only memory between sessions),
+             with archive/ holding the ones ` + "`bees notes reset`" + ` replaced
 - sessions/  prompts, transcripts and results of every Claude Code session
 - issues/    per-issue bookkeeping (review rounds)
 - status.json live scheduler status (` + "`bees status`" + `)
 - ledger.jsonl one line per finished session: turns, cost and outcome (` + "`bees cost`" + `)
 - bees.log    every scheduler log record as JSON, rotated at 10 MiB
 
-You can safely delete sessions/ to reclaim space. Editing notes/ by hand is a
-good way to steer a role.
+You can safely delete sessions/ to reclaim space. Steering a role is a matter
+of editing its notes file: ` + "`bees notes edit <role>`" + `, or by hand.
 `
 
 // MailDir returns the mailbox directory.
