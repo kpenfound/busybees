@@ -87,8 +87,9 @@ type Data struct {
 	FailedChecks []github.Check
 	// Checks are the pull request's checks as read just before the review,
 	// ChecksStatus their summary ("passed", "pending"; empty when the
-	// pre-review read was skipped or failed) and ChecksTimeout how long a
-	// pending read waited before reviewing anyway.
+	// pre-review read was skipped, failed, or already happened for an earlier
+	// review round) and ChecksTimeout how long a pending read waited before
+	// reviewing anyway.
 	Checks        []github.Check
 	ChecksStatus  string
 	ChecksTimeout string

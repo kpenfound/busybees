@@ -255,6 +255,11 @@ func TestPreReviewChecksRecoverClearsTheDegradedEntry(t *testing.T) {
 	if f := degradedOp(t, st, "pre-review-checks"); f.Count == 0 {
 		t.Fatalf("degraded entry after the failed read: %+v", f)
 	}
+	// A failed read is still one read: the failure does not buy the next
+	// round another attempt.
+	if n := h.gh.callCount("pr checks"); n != 1 {
+		t.Fatalf("a failed read was made %d times for one pull request, want 1", n)
+	}
 
 	// A second issue, whose read works, clears the streak.
 	seedReady(h, 2, "s", time.Now())
