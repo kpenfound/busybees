@@ -374,10 +374,11 @@ merging: `auto_merge` and its companions live under `[roles.reviewer]` (see
 **Given:** the PR (title, body, branch, author), the linked issue, the
 issue's **size** and a sentence on the scrutiny it warrants (see
 [Sizing](workflow.md#sizing)), the status of the pull request's checks as read
-just before the review (unless `pre_review_checks = false`), its own
-feedback from previous rounds, the round number and limit, its notes. It runs
-in the same worktree as the developer for that issue, fast-forwarded to the
-latest push, so it reads the change in its context.
+just before the review (unless `pre_review_checks = false`), its own feedback
+from previous rounds, unread mail addressed to `reviewer` about the issue or
+the pull request (in practice from a human), the round number and limit, its
+notes. It runs in the same worktree as the developer for that issue,
+fast-forwarded to the latest push, so it reads the change in its context.
 
 **Verifying is CI's job.** The prompt tells the reviewer to judge the change
 from the code and not to spend the session re-running the repository's
@@ -398,7 +399,11 @@ note has to stand on its own.
 
 **Mail:** may send to `developer` only, with `pr` and `issue`, one
 consolidated message per round listing every point with file/line and the
-expected change.
+expected change. It also *receives* mail addressed to `reviewer` — in practice
+from a human (`bees mail send --from human --to reviewer`) — about the issue or
+the pull request: it is delivered to the next reviewer session, in review mode
+and in checks mode alike, and marked read afterwards. Mail from `human` is a
+direction it follows literally, even where its prompt says otherwise.
 
 **Outcomes and what the orchestrator does:**
 
