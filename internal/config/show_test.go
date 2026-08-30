@@ -49,6 +49,7 @@ merge_method = "rebase"
 checks_wait = "5s"
 [roles.developer]
 commit_flags = "-S"
+max_size = "m"
 `
 
 func TestViewIncludesRoleSpecificKeys(t *testing.T) {
@@ -68,19 +69,24 @@ func TestViewIncludesRoleSpecificKeys(t *testing.T) {
 			t.Errorf("reviewer %s: got %#v want %#v", k, got, v)
 		}
 	}
-	if got := roleOf(t, out, RoleDeveloper)["commit_flags"]; got != "-S" {
+	dev := roleOf(t, out, RoleDeveloper)
+	if got := dev["commit_flags"]; got != "-S" {
 		t.Errorf("developer commit_flags: got %#v want %q", got, "-S")
+	}
+	if got := dev["max_size"]; got != "m" {
+		t.Errorf("developer max_size: got %#v want %q", got, "m")
 	}
 
 	// Nobody else carries them.
-	own := []string{"commit_flags", "auto_merge", "merge_method", "checks_wait",
+	devOnly := map[string]bool{"commit_flags": true, "max_size": true}
+	own := []string{"commit_flags", "max_size", "auto_merge", "merge_method", "checks_wait",
 		"checks_poll_interval", "checks_timeout", "max_check_fix_rounds"}
 	for _, r := range Roles {
 		for _, k := range own {
-			if r == RoleReviewer && k != "commit_flags" {
+			if r == RoleReviewer && !devOnly[k] {
 				continue
 			}
-			if r == RoleDeveloper && k == "commit_flags" {
+			if r == RoleDeveloper && devOnly[k] {
 				continue
 			}
 			if _, ok := roleOf(t, out, r)[k]; ok {

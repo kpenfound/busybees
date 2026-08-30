@@ -40,8 +40,9 @@ type RoleView struct {
 	Shell           string               `json:"shell"`
 	Env             map[string]string    `json:"env"`
 
-	// CommitFlags is only set on the developer.
+	// CommitFlags and MaxSize are only set on the developer.
 	CommitFlags *string `json:"commit_flags,omitempty"`
+	MaxSize     *string `json:"max_size,omitempty"`
 	// MergeView is only set on the reviewer; its keys are inlined.
 	*MergeView
 }
@@ -110,6 +111,8 @@ func (c *Config) View(roles []string) (View, error) {
 		case RoleDeveloper:
 			flags := c.CommitFlags()
 			rv.CommitFlags = &flags
+			size := c.MaxSize()
+			rv.MaxSize = &size
 		case RoleReviewer:
 			m := c.Merge()
 			rv.MergeView = &MergeView{
