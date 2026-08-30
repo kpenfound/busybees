@@ -96,6 +96,23 @@ func TestViewIncludesRoleSpecificKeys(t *testing.T) {
 	}
 }
 
+// TestViewIncludesSkillsRefresh checks the global-only skills_refresh policy is
+// printed under every role, both when set and when it falls back to the default.
+func TestViewIncludesSkillsRefresh(t *testing.T) {
+	out := viewJSON(t, showTOML+"[global]\nskills_refresh = \"always\"\n")
+	for _, r := range Roles {
+		if got := roleOf(t, out, r)["skills_refresh"]; got != "always" {
+			t.Errorf("role %s skills_refresh: got %#v want %q", r, got, "always")
+		}
+	}
+	out = viewJSON(t, showTOML)
+	for _, r := range Roles {
+		if got := roleOf(t, out, r)["skills_refresh"]; got != DefaultSkillsRefresh {
+			t.Errorf("role %s skills_refresh: got %#v want %q", r, got, DefaultSkillsRefresh)
+		}
+	}
+}
+
 func TestViewUsesTOMLKeyNamesAndDurationStrings(t *testing.T) {
 	out := viewJSON(t, showTOML)
 
