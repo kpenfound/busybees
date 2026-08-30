@@ -226,6 +226,9 @@ func (s *Scheduler) record(spec sessionSpec, res *session.Result) {
 	if err := s.store.AppendLedger(e); err != nil {
 		s.log.Warn("could not record the session in the ledger", "session", spec.name, "error", err)
 	}
+	// The issue's running total is what scheduler.max_cost_per_issue is spent
+	// against; every session run for the issue counts, retries included.
+	s.recordIssueCost(e.Issue, e.CostUSD)
 }
 
 // summary is everything a session summary line needs.
@@ -448,6 +451,26 @@ func (s *Scheduler) runSessionWithRetry(ctx context.Context, spec sessionSpec) (
 		if err != nil {
 			return nil, err
 		}
+		if note, over := overSessionBudget(res, s.cfg.Scheduler.MaxCostPerSession); over {
+			streak := s.overBudgetStreak(budgetKey(spec), true)
+			s.log.Warn("session over its cost budget; treating it as failed",
+				"role", spec.role, "session", try.name, "cost_usd", res.CostUSD,
+				"max_cost_per_session", s.cfg.Scheduler.MaxCostPerSession, "consecutive", streak)
+			if streak >= overBudgetEscalateAfter || attempt > policy.Retries {
+				return failedResult(res, overBudgetNote(note, streak, spec.role)), nil
+			}
+			// One expensive session can be bad luck, so it is retried like
+			// an infrastructure failure — with the role's fallback model
+			// when scheduler.retry_with_fallback is on, which is usually the
+			// cheaper one.
+			if err := sleepCtx(ctx, policy.Delay); err != nil {
+				return failedResult(res, note), err
+			}
+			continue
+		}
+		if s.cfg.Scheduler.MaxCostPerSession > 0 {
+			s.overBudgetStreak(budgetKey(spec), false)
+		}
 		kind := classifyFailure(res)
 		if kind != failureInfra || attempt > policy.Retries {
 			return res, nil
@@ -459,6 +482,18 @@ func (s *Scheduler) runSessionWithRetry(ctx context.Context, spec sessionSpec) (
 			return res, err
 		}
 	}
+}
+
+// overBudgetNote is what an over-budget session reports as its failure. A
+// streak says more than a single session does: two in a row means the role's
+// max_turns or timeout are the wrong shape for this work, not that one
+// session went astray.
+func overBudgetNote(note string, streak int, role string) string {
+	if streak < overBudgetEscalateAfter {
+		return note
+	}
+	return fmt.Sprintf("%s, and %d sessions in a row have. Raise the budget, or lower roles.%s.max_turns / timeout so a session cannot cost this much.",
+		note, streak, role)
 }
 
 // sessionFailure renders the escalation text for a session that ended
