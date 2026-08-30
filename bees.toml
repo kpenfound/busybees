@@ -57,7 +57,7 @@ label = "bees"
 #rate_limit_backoff = "15m"
 # Concurrent developer workers. Each runs a sequential developer <-> reviewer
 # loop for one issue; reviewer concurrency follows developer concurrency.
-#max_developers = 1
+max_developers = 2
 # Developer/reviewer iterations before an issue is escalated to a human.
 #max_review_rounds = 3
 # Issues handed to the project manager per session.

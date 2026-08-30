@@ -5,15 +5,23 @@
 
 Four commands — `bees mail send`, `bees issue create`, `bees issue link` and
 `bees done` — are designed to be run **by Claude Code sessions** from inside the
-factory (people can use them too). Everything else is for humans.
+factory (people can use them too). Sessions normally reach the same operations as
+MCP tools rather than as commands: `bees mcp serve` serves them, and every session
+gets it automatically. Everything else is for humans.
 
 ## Global flags
 
 | Flag | Description |
 |---|---|
 | `-c, --config <path>` | Path to `bees.toml`. Default: `$BEES_CONFIG`, else search upwards from cwd. |
-| `-v, --verbose` | Debug logging. With `run`/`tick`/`exec`, also streams every claude event to stderr. |
+| `-v, --verbose` | Debug logging (same as `--log-level debug`). With `run`/`tick`/`exec`, also streams every claude event to stderr. |
+| `-q, --quiet` | Console shows only session summaries, warnings and errors. Cannot be combined with `-v` or `--log-level debug`. |
+| `--log-format <text\|json>` | Console log format. Default `text`; `$BEES_LOG_FORMAT`. |
+| `--log-level <debug\|info\|warn\|error>` | Console log level. Default `info`; `$BEES_LOG_LEVEL`. |
 | `-h, --help` | Help for any command. |
+
+A flag beats its environment variable, and an unknown value is an error naming
+the valid ones.
 
 ## Setting up
 
@@ -25,13 +33,20 @@ project), creates the state directory, adds it to the repository's `.gitignore`
 and prints a reminder to commit that, and creates the workflow labels in the GitHub
 repository. Refuses to overwrite an existing file. `bees.toml` is meant to be committed.
 
+init validates before it writes: the current directory must be a git clone, and the
+configuration it is about to write must parse and resolve to a repository and a default
+branch. A failed init leaves no `bees.toml` behind and the directory exactly as it was,
+so fixing what the error reports and running init again works. The one step that can
+fail after the local files exist is creating the labels; the error then says to run
+`bees labels sync`, not init again.
+
 | Flag | Description |
 |---|---|
 | `--remote name` | Git remote the factory pushes to (default `origin`). |
 | `--repo owner/name` | Write `project.repo` and `project.default_branch` as active settings. By default both are derived from the remote at run time and only appear as commented placeholders showing the detected values. |
 | `--label <name>` | Visibility label (default `bees`). |
 | `--assignee <login>` | Only see items assigned to this login; `@me` for yourself. |
-| `--print` | Print the template to stdout instead of writing it. |
+| `--print` | Print the template to stdout instead of writing it. Writes nothing, so it works outside a git clone. |
 | `--no-labels` | Skip creating GitHub labels. |
 
 The generated file lists every option; optional ones are commented out with their
@@ -42,8 +57,17 @@ editing lines. See [configuration.md](configuration.md).
 cd ~/src/my-project
 bees init
 bees init --assignee @me --label kyle-bees
-bees init --print > bees.example.toml
 ```
+
+`bees.example.toml` at the repository root is the same template with the placeholders
+left in. Regenerate it after changing `internal/config/template.go`:
+
+```sh
+go test ./internal/config -update
+```
+
+A golden-file test (`TestExampleTOMLInSync`) fails when the two drift, so `dagger check`
+enforces the sync.
 
 ### `bees labels sync`
 
@@ -140,7 +164,34 @@ finish.
 bees run
 bees run --roles dev,reviewer
 bees -v run --once
+bees --log-format json --quiet run
 ```
+
+Every finished session prints one summary line. In `text` format they are the
+message alone, so a run reads as a report:
+
+```
+✓ project manager issue #12 done: "refined and moved to ready" (34 turns, $0.61, 3m02s)
+✓ developer issue #12 → PR #31 opened (87 turns, $2.41, 11m37s)
+✗ reviewer PR #31 changes requested: "tests missing for the error path" (52 turns, $1.18, 6m14s)
+✓ developer issue #12 → PR #31 updated (41 turns, $0.98, 5m03s)
+✓ reviewer PR #31 approved: "lgtm" (23 turns, $0.47, 2m41s)
+⚠ issue #14 escalated to a human: Required checks on #33 still fail after 2 fix rounds: go / test
+```
+
+With `--log-format json` the same line is an ordinary record carrying its
+numbers as fields:
+
+```json
+{"time":"2026-08-29T10:14:02Z","level":"INFO","msg":"✓ developer issue #12 → PR #31 opened","summary":true,"role":"developer","issue":12,"pr":31,"outcome":"pr-opened","turns":87,"cost_usd":2.41,"duration":697000000000,"note":""}
+```
+
+`--quiet` keeps the summary lines, warnings and errors and drops the rest, so a
+service can run the factory and still see what it did.
+
+`run`, `tick` and `exec` also write every record — at debug level, whatever the
+console flags say — as JSON to `<state_dir>/bees.log`. It rotates in place at
+10 MiB into `bees.log.1` and `bees.log.2`; older generations are dropped.
 
 ### `bees tick [--roles a,b]`
 
@@ -168,9 +219,35 @@ bees exec reviewer --pr 34
 
 Shows the last poll time and PID of the scheduler, queue sizes per workflow state
 (plus `feedback` and `features`, the open `bees:feedback` and `bees:feature` issues
-owned by the product manager, and `open_prs`), running developer workers (issue, stage, round), singleton state and last run, and
+owned by the product manager, and `open_prs`), running developer workers (issue, [size](workflow.md#sizing), stage, round, and the attempt number while a session is being retried), singleton state and last run, and
 unread mail per role. Reads `status.json` from the state directory, so it works while
 `bees run` is active in another terminal.
+
+A `no_state` queue counts issues that are visible to the factory but carry no
+workflow state label yet — usually ones a person just filed from the GitHub UI. The
+scheduler gives them `bees:triage` on its next reconcile, so the row normally
+disappears again within the same pass. A workflow-state queue is omitted while it is
+empty (`feedback`, `features` and `open_prs` are always shown).
+
+The `ready` queue also carries a breakdown by [size](workflow.md#sizing)
+(`ready_sizes` in `--json`); issues the scheduler has not sized yet are
+counted as `unsized`:
+
+```
+  ready          4  (xs 1, s 2, m 1)
+```
+
+When [`scheduler.work_hours`](configuration.md#work-hours) is configured it also
+reports whether the factory is inside the window and when the next GitHub poll is
+due (`in_work_hours` and `next_poll` in `--json`):
+
+```
+work hours: yes (09:00-18:00 mon-fri, America/New_York)   next GitHub poll in 2m55s
+```
+
+The yes/no is computed when you run the command, so it is right even when the
+scheduler is stopped; `in_work_hours` in `--json` is the scheduler's own record
+from its last pass.
 
 ## The mailbox
 
@@ -185,11 +262,14 @@ together with their process groups (MCP servers, shells), removes stale pid file
 removes the temporary worktrees bees created under the workspace root, and resets the
 worker list in `status.json`.
 
-Sessions are found two ways: the `pid` file each running session keeps in its
-`<state_dir>/sessions/<id>/` directory, and a scan of the process table for `claude`
-processes carrying the `--name bees-…` argument every session is started with. Pid files
-are cross-checked against the process table, so a pid reused by an unrelated process
-after a reboot is discarded, never killed.
+Sessions are found two ways: from the `pid` file each running session keeps in its
+`<state_dir>/sessions/<id>/` directory, and from the process table, limited to sessions
+of this state directory — a `claude` process counts only when it carries the
+`--name bees-…` argument every session is started with *and* its command line
+references `<state_dir>/sessions/`. Another project's factory running on the same
+machine is never touched, whichever config you point `bees kill` at. Pid files are
+cross-checked against that scan, so a pid reused by an unrelated process after a reboot
+is discarded, never killed.
 
 It refuses to run while a `bees run` scheduler is alive (killing sessions under a running
 scheduler would corrupt its state); pass `--scheduler` to stop the scheduler too.
@@ -309,11 +389,64 @@ bees done approved -m "Clean implementation, tests cover the edge cases"
 bees done failed -m "Could not get the test-suite to run: missing DATABASE_URL"
 ```
 
+### `bees mcp serve` *(sessions)*
+
+Runs the built-in MCP server on stdio. You never start it yourself: `bees` writes it
+into every session's `mcp.json` as the server named `bees`, and claude starts it as
+`<bees binary> mcp serve` with the session's `BEES_*` variables. The name `bees` is
+reserved — a `[global.mcp.bees]` or `[roles.<role>.mcp.bees]` entry in `bees.toml`
+fails validation.
+
+The server is backed by the same code as the commands above, so a tool and its
+command do exactly the same thing. Claude Code exposes the tools as
+`mcp__bees__<name>`:
+
+| Tool | Arguments | Same as |
+|---|---|---|
+| `mail_send` | `to`, `subject`, `body`, optional `issue`, `pr`, `in_reply_to` | `bees mail send` |
+| `mail_list` | optional `unread`, `issue`, `pr` | `bees mail list --full` |
+| `issue_create` | `title`, `body`, optional `parent`, `related`, `milestone`, `bug`, `feature`, `ready`, `labels` | `bees issue create` |
+| `issue_link` | `parent`, `child` | `bees issue link` |
+| `done` | `status`, optional `note`, `pr`, `issue` | `bees done` |
+
+`issue` and `pr` default to `$BEES_ISSUE`/`$BEES_PR`, so a session rarely passes them.
+The schemas depend on `$BEES_ROLE`: `done`'s `status` enum is exactly the role's valid
+outcomes (a developer sees `pr-opened, pr-updated, question, failed`; a reviewer
+`approved, changes-requested, failed`), and an unknown or empty role gets the full tool
+set with no enum, so the server is usable by hand.
+
+### `bees mcp tools [role]`
+
+Prints the tools a role's session sees, with the enum of every constrained
+parameter — the part that differs between roles:
+
+```
+$ bees mcp tools developer
+mcp__bees__done           Report the session outcome
+    status: pr-opened | pr-updated | question | failed
+mcp__bees__issue_create   Create a factory issue
+mcp__bees__issue_link     Attach an issue to a feature
+mcp__bees__mail_list      Read the mailbox
+mcp__bees__mail_send      Send mail to another role
+    to: product_manager | project_manager | developer | reviewer | qa
+```
+
+Without a role argument it uses `$BEES_ROLE`, and without that it prints the
+unconstrained tool set.
+
 ## Misc
 
 ### `bees version`
 
-Prints the version.
+Prints `bees <version>`, resolved from the binary itself:
+
+| Build | Output |
+|---|---|
+| `go install github.com/kpenfound/busybees/cmd/bees@latest` (or `@v0.2.0`) | The module version Go recorded: a tag (`bees v0.2.0`) or, for an untagged module, the pseudo-version `@latest` resolves to (`bees v0.0.0-20260829201307-b24a0605c2a1`). |
+| `go build ./cmd/bees` in a clone | The version Go stamps from the checkout — on Go 1.24+ a pseudo-version, with `+dirty` appended when the working tree has uncommitted changes. |
+| A build whose module version is `(devel)` but that carries VCS stamps | `bees dev (b24a0605c2a1)` — the 12-character commit, with ` modified` appended when the working tree was dirty. |
+| Built with `-ldflags "-X main.version=v1.2.3"` | `bees v1.2.3`. The override wins over everything else. |
+| No build information at all | `bees dev`. |
 
 ### `bees completion <shell>`
 

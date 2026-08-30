@@ -32,4 +32,5 @@ _None._
 ## Instructions
 
 Set up, run the tests, exercise the application, verify the merged changes, file bugs,
-send the product manager your report, update your notes, then `bees done done -m "..."`.
+send the product manager your report, update your notes, then report `done` with
+`status: done` and a note.

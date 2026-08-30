@@ -39,7 +39,8 @@ func TestSetState(t *testing.T) {
 		return nil, nil
 	}
 	states := []string{"bees:triage", "bees:ready", "bees:in-progress"}
-	current := []Label{{Name: "bees"}, {Name: "bees:triage"}, {Name: "bees:ready"}}
+	// The size label is not in states, so it must survive the move.
+	current := []Label{{Name: "bees"}, {Name: "bees:triage"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}
 	if err := c.SetState(context.Background(), 7, current, "bees:in-progress", states); err != nil {
 		t.Fatal(err)
 	}

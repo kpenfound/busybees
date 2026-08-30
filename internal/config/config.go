@@ -22,9 +22,13 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
+	// scheduler.timezone must resolve on hosts without a system zoneinfo
+	// database (minimal containers), so embed one.
+	_ "time/tzdata"
 
 	"github.com/BurntSushi/toml"
 )
@@ -78,14 +82,44 @@ const (
 	DefaultStateDir      = ".bees"
 	DefaultBranchPrefix  = "bees/"
 	DefaultPollInterval  = 5 * time.Minute
-	DefaultRateLimitWait = 15 * time.Minute
-	DefaultMaxDevelopers = 1
-	DefaultReviewRounds  = 3
-	DefaultPMInterval    = time.Hour
-	DefaultQAInterval    = 30 * time.Minute
-	DefaultTriageBatch   = 5
-	DefaultSkillsRefresh = "24h"
+	// DefaultRetries and friends govern retrying a session that failed for
+	// infrastructure reasons; see Config.Retry.
+	DefaultRetries           = 1
+	DefaultRetryDelay        = 10 * time.Minute
+	DefaultRetryWithFallback = true
+	// MaxRetries caps scheduler.retries.
+	MaxRetries = 5
+	// DefaultOffHoursPollInterval is the polling cadence outside
+	// scheduler.work_hours (only used when work_hours is set).
+	DefaultOffHoursPollInterval = time.Hour
+	DefaultRateLimitWait        = 15 * time.Minute
+	DefaultMaxDevelopers        = 1
+	DefaultReviewRounds         = 3
+	DefaultPMInterval           = time.Hour
+	DefaultQAInterval           = 30 * time.Minute
+	DefaultTriageBatch          = 5
+	DefaultSkillsRefresh        = "24h"
+	// DefaultDispatchOrder and friends govern which ready issue a free
+	// developer worker takes next; see Scheduler.DispatchOrder.
+	DefaultDispatchOrder    = DispatchSmallFirst
+	DefaultMaxLargeInFlight = 1
+	// DefaultMaxSize is the largest size a developer takes by default.
+	DefaultMaxSize = "l"
 )
+
+// Dispatch orders accepted by scheduler.dispatch_order.
+const (
+	DispatchSmallFirst = "small-first"
+	DispatchOldest     = "oldest"
+	DispatchLargeFirst = "large-first"
+)
+
+// DispatchOrders lists the accepted scheduler.dispatch_order values.
+var DispatchOrders = []string{DispatchSmallFirst, DispatchOldest, DispatchLargeFirst}
+
+// Sizes lists the work item sizes, smallest first. They mirror the
+// bees:size/* labels (see Labels.SizeLabels).
+var Sizes = []string{"xs", "s", "m", "l", "xl"}
 
 // Duration is a time.Duration that unmarshals from TOML strings like "30m".
 type Duration struct{ time.Duration }
@@ -183,6 +217,10 @@ type Filter struct {
 // LabelRequired reports whether the label is part of the visibility gate.
 func (f Filter) LabelRequired() bool { return f.RequireLabel == nil || *f.RequireLabel }
 
+// BuiltinMCPServer is the name of the MCP server bees adds to every session
+// (`bees mcp serve`). The name is reserved: bees.toml may not define it.
+const BuiltinMCPServer = "bees"
+
 // MCPServer configures one MCP server. Either Command (stdio) or URL (http/sse)
 // must be set.
 type MCPServer struct {
@@ -240,6 +278,9 @@ type RoleSettings struct {
 	// CommitFlags are extra flags the developer passes to every `git commit`,
 	// for example "--gpg-sign --signoff". Appended to its system prompt.
 	CommitFlags string `toml:"commit_flags"`
+	// MaxSize is the largest work item size a developer takes ("xs".."xl").
+	// A ready issue sized above it is sent back to triage to be split.
+	MaxSize string `toml:"max_size"`
 
 	// The following keys are only valid under [roles.reviewer].
 
@@ -317,6 +358,19 @@ func parseSkillsRefresh(v string) (always bool, after time.Duration, err error) 
 // CommitFlags returns the developer's extra git commit flags.
 func (c *Config) CommitFlags() string { return strings.TrimSpace(c.Roles[RoleDeveloper].CommitFlags) }
 
+// MaxSize returns the largest work item size the developer takes.
+func (c *Config) MaxSize() string {
+	return firstNonEmpty(strings.TrimSpace(c.Roles[RoleDeveloper].MaxSize), DefaultMaxSize)
+}
+
+// LargeInFlight returns scheduler.max_large_in_flight (0 = no cap).
+func (s Scheduler) LargeInFlight() int {
+	if s.MaxLargeInFlight == nil {
+		return DefaultMaxLargeInFlight
+	}
+	return *s.MaxLargeInFlight
+}
+
 // Merge returns the resolved merge policy from [roles.reviewer].
 func (c *Config) Merge() MergePolicy {
 	rs := c.Roles[RoleReviewer]
@@ -329,6 +383,32 @@ func (c *Config) Merge() MergePolicy {
 	}
 	if rs.AutoMerge != nil {
 		p.AutoMerge = *rs.AutoMerge
+	}
+	return p
+}
+
+// RetryPolicy is the resolved [scheduler] retry configuration.
+type RetryPolicy struct {
+	// Retries is the number of extra attempts a session gets after an
+	// infrastructure failure. 0 means a session runs exactly once.
+	Retries int
+	// Delay is how long to wait before an attempt is repeated.
+	Delay time.Duration
+	// WithFallback runs a retry with the role's fallback model as primary.
+	WithFallback bool
+}
+
+// Retry returns the resolved retry policy.
+func (c *Config) Retry() RetryPolicy {
+	p := RetryPolicy{Retries: DefaultRetries, Delay: DefaultRetryDelay, WithFallback: DefaultRetryWithFallback}
+	if n := c.Scheduler.Retries; n != nil {
+		p.Retries = *n
+	}
+	if d := c.Scheduler.RetryDelay; d != nil {
+		p.Delay = d.Duration
+	}
+	if b := c.Scheduler.RetryWithFallback; b != nil {
+		p.WithFallback = *b
 	}
 	return p
 }
@@ -357,10 +437,201 @@ type Scheduler struct {
 	// TriageBatchSize is the maximum number of issues handed to the project
 	// manager in one session.
 	TriageBatchSize int `toml:"triage_batch_size"`
+	// DispatchOrder decides which ready issue a free developer worker takes
+	// next: small-first (default), oldest or large-first.
+	DispatchOrder string `toml:"dispatch_order"`
+	// MaxLargeInFlight caps how many bees:size/l issues developer workers may
+	// hold at once. 0 means no cap. Default 1.
+	MaxLargeInFlight *int `toml:"max_large_in_flight"`
+	// Retries is the number of extra attempts a session gets when it failed
+	// for infrastructure reasons (timeout, API error, exhausted turns).
+	// 0 disables retrying. Default 1.
+	Retries *int `toml:"retries"`
+	// RetryDelay is how long to wait before a retry. Default 10m.
+	RetryDelay *Duration `toml:"retry_delay"`
+	// RetryWithFallback runs a retry with the role's fallback_model as its
+	// primary model. Default true.
+	RetryWithFallback *bool `toml:"retry_with_fallback"`
 	// KeepWorkspaces leaves temp worktrees on disk after a session (debugging).
 	KeepWorkspaces bool `toml:"keep_workspaces"`
 	// WorkspaceRoot overrides the temp dir used for worktrees.
 	WorkspaceRoot string `toml:"workspace_root"`
+	// WorkHours is the daily window during which GitHub is polled every
+	// PollInterval, as "HH:MM-HH:MM" on a 24-hour clock ("09:00-18:00").
+	// Empty (the default) disables the feature: GitHub is polled every
+	// PollInterval around the clock and the three keys below are ignored.
+	// A window whose start is after its end wraps midnight and belongs to
+	// the day its start falls on ("22:00-06:00" with work_days = ["fri"]
+	// covers Friday 22:00 to Saturday 06:00).
+	WorkHours string `toml:"work_hours"`
+	// OffHoursPollInterval is how often GitHub is polled outside the work
+	// hours window. Must be >= PollInterval. Default 1h.
+	OffHoursPollInterval Duration `toml:"off_hours_poll_interval"`
+	// WorkDays are the days the window applies to, as lowercase three-letter
+	// names (mon, tue, wed, thu, fri, sat, sun). Default mon-fri.
+	WorkDays []string `toml:"work_days"`
+	// Timezone is the IANA name the window is interpreted in
+	// ("America/New_York"). Empty means the machine's local time.
+	Timezone string `toml:"timezone"`
+
+	// Parsed form of the four keys above, filled in by Validate.
+	whStart, whEnd int // minutes since midnight
+	whDays         map[time.Weekday]bool
+	whLoc          *time.Location
+	whEnabled      bool
+}
+
+// weekdayNames maps the accepted work_days values to weekdays, in the order
+// they are printed.
+var weekdayNames = []struct {
+	name string
+	day  time.Weekday
+}{
+	{"mon", time.Monday}, {"tue", time.Tuesday}, {"wed", time.Wednesday},
+	{"thu", time.Thursday}, {"fri", time.Friday}, {"sat", time.Saturday}, {"sun", time.Sunday},
+}
+
+// WorkHoursEnabled reports whether a work-hours window is configured.
+func (s Scheduler) WorkHoursEnabled() bool { return s.whEnabled }
+
+// InWorkHours reports whether t falls inside the configured window. It is
+// always true when no window is configured.
+func (s Scheduler) InWorkHours(t time.Time) bool {
+	if !s.whEnabled {
+		return true
+	}
+	t = t.In(s.whLoc)
+	mins := t.Hour()*60 + t.Minute()
+	if s.whStart < s.whEnd {
+		return s.whDays[t.Weekday()] && mins >= s.whStart && mins < s.whEnd
+	}
+	// Overnight window: it belongs to the day its start falls on, so the
+	// tail after midnight counts as the previous day.
+	if mins >= s.whStart {
+		return s.whDays[t.Weekday()]
+	}
+	return mins < s.whEnd && s.whDays[(t.Weekday()+6)%7]
+}
+
+// PollIntervalAt returns the GitHub polling interval that applies at t.
+func (s Scheduler) PollIntervalAt(t time.Time) time.Duration {
+	if !s.whEnabled || s.InWorkHours(t) {
+		return s.PollInterval.Duration
+	}
+	return s.OffHoursPollInterval.Duration
+}
+
+// WorkHoursDescription renders the window for `bees status`, for example
+// "09:00-18:00 mon-fri, America/New_York".
+func (s Scheduler) WorkHoursDescription() string {
+	if !s.whEnabled {
+		return ""
+	}
+	return fmt.Sprintf("%s %s, %s", s.WorkHours, describeDays(s.whDays), s.whLoc)
+}
+
+// describeDays prints a day set as compact ranges: "mon-fri", "mon,wed,fri".
+// A run of exactly two days is listed rather than hyphenated ("sat,sun").
+func describeDays(days map[time.Weekday]bool) string {
+	var parts []string
+	for i := 0; i < len(weekdayNames); i++ {
+		if !days[weekdayNames[i].day] {
+			continue
+		}
+		j := i
+		for j+1 < len(weekdayNames) && days[weekdayNames[j+1].day] {
+			j++
+		}
+		switch j {
+		case i:
+			parts = append(parts, weekdayNames[i].name)
+		case i + 1:
+			parts = append(parts, weekdayNames[i].name, weekdayNames[j].name)
+		default:
+			parts = append(parts, weekdayNames[i].name+"-"+weekdayNames[j].name)
+		}
+		i = j
+	}
+	return strings.Join(parts, ",")
+}
+
+// parseWorkHours validates the work-hours keys and fills in the parsed
+// fields. It returns one message per problem, each naming the key.
+func (s *Scheduler) parseWorkHours() []string {
+	s.whEnabled = false
+	if s.WorkHours == "" {
+		return nil
+	}
+	var errs []string
+	start, end, err := parseWindow(s.WorkHours)
+	if err != nil {
+		errs = append(errs, "scheduler."+err.Error())
+	} else {
+		s.whStart, s.whEnd = start, end
+	}
+	days := map[time.Weekday]bool{}
+	accepted := make([]string, 0, len(weekdayNames))
+	for _, w := range weekdayNames {
+		accepted = append(accepted, w.name)
+	}
+	for _, d := range s.WorkDays {
+		found := false
+		for _, w := range weekdayNames {
+			if strings.ToLower(strings.TrimSpace(d)) == w.name {
+				days[w.day] = true
+				found = true
+				break
+			}
+		}
+		if !found {
+			errs = append(errs, fmt.Sprintf("scheduler.work_days: unknown day %q (want one of %s)", d, strings.Join(accepted, " ")))
+		}
+	}
+	if len(days) == 0 && len(errs) == 0 {
+		errs = append(errs, fmt.Sprintf("scheduler.work_days must list at least one of %s", strings.Join(accepted, " ")))
+	}
+	loc := time.Local
+	if s.Timezone != "" {
+		if loc, err = time.LoadLocation(s.Timezone); err != nil {
+			errs = append(errs, fmt.Sprintf("scheduler.timezone: %v", err))
+		}
+	}
+	if s.OffHoursPollInterval.Duration < s.PollInterval.Duration {
+		errs = append(errs, fmt.Sprintf("scheduler.off_hours_poll_interval (%s) must be >= scheduler.poll_interval (%s)",
+			s.OffHoursPollInterval.Duration, s.PollInterval.Duration))
+	}
+	if len(errs) > 0 {
+		return errs
+	}
+	s.whDays, s.whLoc, s.whEnabled = days, loc, true
+	return nil
+}
+
+// parseWindow parses "HH:MM-HH:MM" into minutes since midnight.
+func parseWindow(window string) (start, end int, err error) {
+	bad := fmt.Errorf("work_hours: want \"HH:MM-HH:MM\" on a 24-hour clock (e.g. \"09:00-18:00\"), got %q", window)
+	a, b, ok := strings.Cut(window, "-")
+	if !ok {
+		return 0, 0, bad
+	}
+	if start, err = parseClock(a); err != nil {
+		return 0, 0, bad
+	}
+	if end, err = parseClock(b); err != nil {
+		return 0, 0, bad
+	}
+	if start == end {
+		return 0, 0, fmt.Errorf("work_hours %q: start and end must differ", window)
+	}
+	return start, end, nil
+}
+
+func parseClock(s string) (int, error) {
+	t, err := time.Parse("15:04", strings.TrimSpace(s))
+	if err != nil {
+		return 0, err
+	}
+	return t.Hour()*60 + t.Minute(), nil
 }
 
 // ResolvedRole is the effective configuration for one role after merging
@@ -392,7 +663,18 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	text := string(data)
+	return Parse(string(data), path)
+}
+
+// Parse validates the text of a bees.toml as if it had been read from path,
+// which is used for the Config's location and in error messages but is not
+// read and need not exist. `bees init` parses the template it rendered before
+// writing anything to disk.
+func Parse(text, path string) (*Config, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
 	version, err := fileVersion(text)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
@@ -572,6 +854,32 @@ func (c *Config) applyDefaults() {
 	if c.Global.SkillsRefresh == "" {
 		c.Global.SkillsRefresh = DefaultSkillsRefresh
 	}
+	if c.Scheduler.DispatchOrder == "" {
+		c.Scheduler.DispatchOrder = DefaultDispatchOrder
+	}
+	if c.Scheduler.MaxLargeInFlight == nil {
+		n := DefaultMaxLargeInFlight
+		c.Scheduler.MaxLargeInFlight = &n
+	}
+	if c.Scheduler.Retries == nil {
+		n := DefaultRetries
+		c.Scheduler.Retries = &n
+	}
+	if c.Scheduler.RetryDelay == nil {
+		c.Scheduler.RetryDelay = &Duration{DefaultRetryDelay}
+	}
+	if c.Scheduler.RetryWithFallback == nil {
+		b := DefaultRetryWithFallback
+		c.Scheduler.RetryWithFallback = &b
+	}
+	if c.Scheduler.WorkHours != "" {
+		if c.Scheduler.OffHoursPollInterval.Duration == 0 {
+			c.Scheduler.OffHoursPollInterval.Duration = DefaultOffHoursPollInterval
+		}
+		if c.Scheduler.WorkDays == nil {
+			c.Scheduler.WorkDays = []string{"mon", "tue", "wed", "thu", "fri"}
+		}
+	}
 	if c.Roles == nil {
 		c.Roles = map[string]RoleSettings{}
 	}
@@ -603,6 +911,21 @@ func (c *Config) Validate() error {
 	if c.Scheduler.MaxReviewRounds < 0 {
 		errs = append(errs, "scheduler.max_review_rounds must be >= 0")
 	}
+	if n := c.Scheduler.Retries; n != nil && (*n < 0 || *n > MaxRetries) {
+		errs = append(errs, fmt.Sprintf("scheduler.retries must be between 0 and %d", MaxRetries))
+	}
+	if d := c.Scheduler.RetryDelay; d != nil && d.Duration < 0 {
+		errs = append(errs, "scheduler.retry_delay must be >= 0")
+	}
+	switch c.Scheduler.DispatchOrder {
+	case "", DispatchSmallFirst, DispatchOldest, DispatchLargeFirst:
+	default:
+		errs = append(errs, fmt.Sprintf("scheduler.dispatch_order must be one of %s", strings.Join(DispatchOrders, ", ")))
+	}
+	if n := c.Scheduler.MaxLargeInFlight; n != nil && *n < 0 {
+		errs = append(errs, "scheduler.max_large_in_flight must be >= 0")
+	}
+	errs = append(errs, c.Scheduler.parseWorkHours()...)
 	check := func(scope string, rs RoleSettings) {
 		if scope != "roles."+RoleReviewer {
 			if rs.AutoMerge != nil || rs.MergeMethod != "" || rs.ChecksWait.Duration != 0 || rs.ChecksPollInterval.Duration != 0 || rs.ChecksTimeout.Duration != 0 || rs.MaxCheckFixRounds != 0 {
@@ -614,8 +937,11 @@ func (c *Config) Validate() error {
 		} else if _, _, err := parseSkillsRefresh(rs.SkillsRefresh); err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", scope, err))
 		}
-		if scope != "roles."+RoleDeveloper && rs.CommitFlags != "" {
-			errs = append(errs, fmt.Sprintf("%s: commit_flags is only valid under roles.developer", scope))
+		if scope != "roles."+RoleDeveloper && (rs.CommitFlags != "" || rs.MaxSize != "") {
+			errs = append(errs, fmt.Sprintf("%s: commit_flags and max_size are only valid under roles.developer", scope))
+		}
+		if rs.MaxSize != "" && !slices.Contains(Sizes, rs.MaxSize) {
+			errs = append(errs, fmt.Sprintf("%s.max_size must be one of %s", scope, strings.Join(Sizes, ", ")))
 		}
 		switch rs.MergeMethod {
 		case "", "squash", "merge", "rebase":
@@ -623,6 +949,9 @@ func (c *Config) Validate() error {
 			errs = append(errs, fmt.Sprintf("%s.merge_method must be squash, merge or rebase", scope))
 		}
 		for name, m := range rs.MCP {
+			if name == BuiltinMCPServer {
+				errs = append(errs, fmt.Sprintf("%s.mcp.%s: mcp server name %q is reserved for the built-in server", scope, name, BuiltinMCPServer))
+			}
 			if m.Command == "" && m.URL == "" {
 				errs = append(errs, fmt.Sprintf("%s.mcp.%s: either command or url is required", scope, name))
 			}

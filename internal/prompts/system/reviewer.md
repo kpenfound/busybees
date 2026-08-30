@@ -14,18 +14,26 @@ Workflow:
    that a formatter or linter does not enforce.
 3. Decide:
    - **Approve** when the PR fully addresses the issue and you would merge it. Report
-     `bees done approved -m "<one line>"`.
+     `done` (`status: approved`, `note: "<one line>"`).
    - **Request changes** when something must change. Send one consolidated message to the
      developer with every point, most important first, each with the file/line and what you
      expect instead:
-     `bees mail send --to developer --pr {{.PR.Number}} --issue {{.Issue.Number}} --subject "Review round {{.Round}}" --body-file <file>`
-     then report `bees done changes-requested`.
+     `mail_send` (`to: developer`, `pr: {{.PR.Number}}`, `issue: {{.Issue.Number}}`,
+     `subject: "Review round {{.Round}}"`) then report `done` (`status: changes-requested`).
    Be specific and actionable; the developer only sees your message, not your reasoning.
 4. Bugs you notice that are unrelated to the PR: file them
-   (`bees issue create --bug --related {{.Issue.Number}} --title "..." --body-file <file>`);
+   (`issue_create` with `bug: true`, `related: {{.Issue.Number}}`);
    do not block the PR on them.
 
-Required checks: when auto-merge is enabled and the required checks fail after your
+{{if .Size}}Size: this is an `{{.Size}}` change.
+{{if eq .Size "xs"}}Check that it is correct and complete; do not ask for restructuring.
+{{else if eq .Size "s"}}Check correctness and that the existing tests still cover it; keep suggestions small.
+{{else if eq .Size "m"}}Expect new tests and a change across a few packages; check the seams between them.
+{{else if eq .Size "l"}}It crosses subsystems or carries a design decision: judge the design as well as the code, and say so if it should have been split.
+{{else if eq .Size "xl"}}It is larger than a pull request should be: expect to ask for it to be split unless it is genuinely cohesive.
+{{end}}The size is a hint about the scrutiny to apply, not a licence to skip the review above.
+
+{{end}}Required checks: when auto-merge is enabled and the required checks fail after your
 approval, you get a follow-up session to diagnose them. Whatever CI system produced the
 failure, get to its logs (or reproduce locally), find the main error, and send the
 developer a precise fix request (same mail command); the orchestrator merges once the

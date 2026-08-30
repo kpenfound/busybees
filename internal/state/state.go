@@ -10,6 +10,7 @@
 //	qa.json              QA bookkeeping (last run)
 //	product_manager.json product manager bookkeeping (last run)
 //	status.json          live scheduler status
+//	bees.log             scheduler log (JSON, rotated: bees.log.1, bees.log.2)
 package state
 
 import (
@@ -50,6 +51,7 @@ This directory is managed by ` + "`bees`" + `. It holds:
 - sessions/  prompts, transcripts and results of every Claude Code session
 - issues/    per-issue bookkeeping (review rounds)
 - status.json live scheduler status (` + "`bees status`" + `)
+- bees.log    every scheduler log record as JSON, rotated at 10 MiB
 
 You can safely delete sessions/ to reclaim space. Editing notes/ by hand is a
 good way to steer a role.
@@ -139,22 +141,36 @@ func (s *Store) SaveRole(role string, rs RoleState) error {
 
 // Worker describes a running developer worker.
 type Worker struct {
-	Name  string    `json:"name"`
-	Issue int       `json:"issue"`
-	Stage string    `json:"stage"`
-	Round int       `json:"round"`
-	Since time.Time `json:"since"`
+	Name  string `json:"name"`
+	Issue int    `json:"issue"`
+	// Size is the issue's size label ("xs".."xl"), recorded when the worker
+	// starts. It is what scheduler.max_large_in_flight counts.
+	Size  string `json:"size,omitempty"`
+	Stage string `json:"stage"`
+	Round int    `json:"round"`
+	// Attempt is the 1-based attempt of the running session; > 1 means the
+	// previous attempt failed for infrastructure reasons and was retried.
+	Attempt int       `json:"attempt,omitempty"`
+	Since   time.Time `json:"since"`
 }
 
 // Status is the live scheduler status.
 type Status struct {
-	UpdatedAt  time.Time         `json:"updated_at"`
-	PID        int               `json:"pid"`
-	LastPoll   time.Time         `json:"last_poll"`
-	Workers    []Worker          `json:"workers"`
-	Singletons map[string]string `json:"singletons"` // role -> "idle"/"running"
-	Queues     map[string]int    `json:"queues"`
-	LastError  string            `json:"last_error,omitempty"`
+	UpdatedAt time.Time `json:"updated_at"`
+	PID       int       `json:"pid"`
+	LastPoll  time.Time `json:"last_poll"`
+	// NextPoll is when the scheduler next polls GitHub. Between polls it
+	// still runs local passes every scheduler.poll_interval.
+	NextPoll time.Time `json:"next_poll,omitempty"`
+	// InWorkHours is nil when scheduler.work_hours is not configured.
+	InWorkHours *bool             `json:"in_work_hours,omitempty"`
+	Workers     []Worker          `json:"workers"`
+	Singletons  map[string]string `json:"singletons"` // role -> "idle"/"running"
+	Queues      map[string]int    `json:"queues"`
+	// ReadySizes counts the ready queue by size ("xs", "s", "m", "l",
+	// "xl"); issues without a size label are counted under "".
+	ReadySizes map[string]int `json:"ready_sizes,omitempty"`
+	LastError  string         `json:"last_error,omitempty"`
 }
 
 // SaveStatus writes status.json.

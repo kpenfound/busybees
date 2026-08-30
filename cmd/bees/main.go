@@ -5,15 +5,22 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 
+	"github.com/kpenfound/busybees/internal/logging"
+	"github.com/kpenfound/busybees/internal/versions"
 	"github.com/spf13/cobra"
 )
 
+// version is the release version stamped in by
+// `-ldflags "-X main.version=..."`. Without it, versions.Bees falls back to
+// the module version or VCS revision Go records in the binary.
 var version = "dev"
 
 func main() {
@@ -26,8 +33,14 @@ func main() {
 }
 
 type globalFlags struct {
-	config  string
-	verbose bool
+	config    string
+	verbose   bool
+	quiet     bool
+	logFormat string
+	logLevel  string
+	// logger is built by PersistentPreRunE; commands that run sessions
+	// attach the state directory's log file to it.
+	logger *logging.Logger
 }
 
 func newRoot() *cobra.Command {
@@ -40,16 +53,20 @@ project manager, developers, reviewers and QA — that build a project together
 through GitHub issues and pull requests. Configure it with bees.toml.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		PersistentPreRun: func(cmd *cobra.Command, args []string) {
-			level := slog.LevelInfo
-			if g.verbose {
-				level = slog.LevelDebug
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			return g.setupLogging(cmd)
+		},
+		PersistentPostRun: func(cmd *cobra.Command, args []string) {
+			if g.logger != nil {
+				_ = g.logger.Close()
 			}
-			slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
 		},
 	}
 	root.PersistentFlags().StringVarP(&g.config, "config", "c", "", "path to bees.toml (default: search upwards from cwd, or $BEES_CONFIG)")
-	root.PersistentFlags().BoolVarP(&g.verbose, "verbose", "v", false, "debug logging")
+	root.PersistentFlags().BoolVarP(&g.verbose, "verbose", "v", false, "debug logging (same as --log-level debug), plus claude event streaming")
+	root.PersistentFlags().BoolVarP(&g.quiet, "quiet", "q", false, "console shows only session summaries, warnings and errors")
+	root.PersistentFlags().StringVar(&g.logFormat, "log-format", logging.FormatText, "console log format: text or json ($BEES_LOG_FORMAT)")
+	root.PersistentFlags().StringVar(&g.logLevel, "log-level", "info", "console log level: debug, info, warn or error ($BEES_LOG_LEVEL)")
 
 	root.AddCommand(
 		newInitCmd(g),
@@ -61,6 +78,7 @@ through GitHub issues and pull requests. Configure it with bees.toml.`,
 		newMailCmd(g),
 		newIssueCmd(g),
 		newDoneCmd(),
+		newMCPCmd(g),
 		newConfigCmd(g),
 		newSkillsCmd(g),
 		newPromptsCmd(g),
@@ -75,7 +93,43 @@ func newVersionCmd() *cobra.Command {
 		Use:   "version",
 		Short: "Print the bees version",
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Println("bees", version)
+			bi, _ := debug.ReadBuildInfo()
+			fmt.Println("bees", versions.Bees(version, bi))
 		},
 	}
+}
+
+// setupLogging turns the global flags into slog.Default(). A flag beats the
+// environment variable; -v is --log-level debug and cannot be quiet.
+func (g *globalFlags) setupLogging(cmd *cobra.Command) error {
+	format, err := logging.ParseFormat(flagOrEnv(cmd, "log-format", g.logFormat, "BEES_LOG_FORMAT"))
+	if err != nil {
+		return err
+	}
+	levelName := flagOrEnv(cmd, "log-level", g.logLevel, "BEES_LOG_LEVEL")
+	level, err := logging.ParseLevel(levelName)
+	if err != nil {
+		return err
+	}
+	if g.verbose {
+		level = slog.LevelDebug
+	}
+	if g.quiet && level <= slog.LevelDebug {
+		return errors.New("--quiet cannot be combined with --verbose or --log-level debug")
+	}
+	g.logger = logging.New(logging.Options{Format: format, Level: level, Quiet: g.quiet, Console: cmd.ErrOrStderr()})
+	slog.SetDefault(g.logger.Logger)
+	return nil
+}
+
+// flagOrEnv returns the flag value when it was set on the command line,
+// otherwise the environment variable, otherwise the flag's default.
+func flagOrEnv(cmd *cobra.Command, name, value, env string) string {
+	if cmd.Flags().Changed(name) {
+		return value
+	}
+	if v := os.Getenv(env); v != "" {
+		return v
+	}
+	return value
 }

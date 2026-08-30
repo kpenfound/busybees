@@ -18,7 +18,7 @@ GitHub repository. Read `docs/architecture.md` before changing the scheduler.
 
 ## Layout
 
-- `cmd/bees` — cobra CLI (`init`, `run`, `tick`, `exec`, `status`, `kill`, `mail`, `issue`, `done`, `config`, `prompts`, `labels`, `skills`, `version`).
+- `cmd/bees` — cobra CLI (`init`, `run`, `tick`, `exec`, `status`, `kill`, `mail`, `issue`, `done`, `mcp`, `config`, `prompts`, `labels`, `skills`, `version`).
 - `internal/config` — `bees.toml` schema (commented-defaults template in `template.go`), global/role merging, labels, repo/branch derivation from the git remote (`resolve.go`).
 - `internal/scheduler` — the loop: poll → deliver human PR feedback (`humans.go`) → reconcile labels → dispatch developer workers (`developer.go`: develop → review → checks stages) → dispatch singletons (`singletons.go`).
 - `internal/issues` — `bees issue create/link`: visible, labelled, sub-issue of a feature, milestone inherited.
@@ -26,6 +26,7 @@ GitHub repository. Read `docs/architecture.md` before changing the scheduler.
 - `internal/testutil` — local bare git remote + clone for tests.
 - `internal/session` — runs one `claude -p` session; outcome file written by `bees done`.
 - `internal/prompts` — embedded role prompts (`system/*.md`, `task/*.md`) rendered with `text/template`.
+- `internal/mcpserver` — the built-in MCP server (`bees mcp serve`) added to every session as `bees`: `mail_send`, `mail_list`, `issue_create`, `issue_link`, `done`, backed by the same code as the CLI. The name `bees` is reserved in bees.toml.
 - `internal/mail` — local JSON mailbox; the only channel between roles.
 - `internal/github` — thin `gh` wrapper. `internal/workspace` — git worktrees. `internal/skills` — skills by git URL → `--plugin-dir`.
 - `internal/state` — state dir layout (`mail/`, `notes/`, `sessions/`, `issues/`, `status.json`).

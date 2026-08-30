@@ -43,6 +43,14 @@ type Data struct {
 	Inbox          []mail.Message
 	PreviousRounds []mail.Message
 
+	// Size is the work item's size ("xs", "s", "m", "l", "xl"), empty when
+	// the issue carries no size label. Set for developer and reviewer
+	// sessions.
+	Size string
+	// MaxSize is roles.developer.max_size: the largest size a developer
+	// takes. Anything above it is sent back to triage to be split.
+	MaxSize string
+
 	Issue        *github.Issue
 	PR           *github.PR
 	Issues       []github.Issue
@@ -54,6 +62,9 @@ type Data struct {
 	Round     int
 	MaxRounds int
 	LastRun   string
+	// Retry is the number of times this session has already been attempted
+	// and failed for infrastructure reasons (0 on a first attempt).
+	Retry int
 
 	// FailedChecks is set for the reviewer's checks-mode task.
 	FailedChecks []github.Check

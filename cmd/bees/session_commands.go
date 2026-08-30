@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -208,14 +207,7 @@ managed by people; the factory only inherits them.`,
 			if err != nil {
 				return err
 			}
-			fmt.Printf("created #%d", res.Number)
-			if res.Parent > 0 {
-				fmt.Printf(" (sub-issue of #%d)", res.Parent)
-			}
-			if res.Milestone != "" {
-				fmt.Printf(" milestone %q", res.Milestone)
-			}
-			fmt.Println()
+			fmt.Println(res)
 			return nil
 		},
 	}
@@ -273,28 +265,18 @@ func newDoneCmd() *cobra.Command {
   qa               done, failed`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			dir := os.Getenv(session.EnvSessionDir)
-			if dir == "" {
-				return errors.New("bees done must run inside a session ($BEES_SESSION_DIR is not set)")
-			}
-			status := strings.ToLower(strings.TrimSpace(args[0]))
-			role := os.Getenv(session.EnvRole)
-			if err := validateOutcome(role, status); err != nil {
-				return err
-			}
 			if pr == 0 {
 				pr = envInt(session.EnvPR)
 			}
 			if issue == 0 {
 				issue = envInt(session.EnvIssue)
 			}
-			if (status == "pr-opened" || status == "pr-updated") && pr == 0 {
-				return fmt.Errorf("%s requires --pr <number>", status)
-			}
-			if err := session.WriteOutcome(dir, session.Outcome{Status: status, Note: note, PR: pr, Issue: issue}); err != nil {
+			o, err := session.Report(os.Getenv(session.EnvSessionDir), os.Getenv(session.EnvRole),
+				session.Outcome{Status: args[0], Note: note, PR: pr, Issue: issue})
+			if err != nil {
 				return err
 			}
-			fmt.Printf("outcome recorded: %s\n", status)
+			fmt.Printf("outcome recorded: %s\n", o.Status)
 			return nil
 		},
 	}
@@ -302,27 +284,6 @@ func newDoneCmd() *cobra.Command {
 	cmd.Flags().IntVar(&pr, "pr", 0, "pull request number (default: $BEES_PR)")
 	cmd.Flags().IntVar(&issue, "issue", 0, "issue number (default: $BEES_ISSUE)")
 	return cmd
-}
-
-var validOutcomes = map[string][]string{
-	config.RoleProductManager: {"done", "idle", "failed"},
-	config.RoleProjectManager: {"done", "idle", "failed"},
-	config.RoleDeveloper:      {"pr-opened", "pr-updated", "question", "failed"},
-	config.RoleReviewer:       {"approved", "changes-requested", "failed"},
-	config.RoleQA:             {"done", "failed"},
-}
-
-func validateOutcome(role, status string) error {
-	valid, ok := validOutcomes[role]
-	if !ok {
-		return nil // unknown role: accept anything
-	}
-	for _, v := range valid {
-		if v == status {
-			return nil
-		}
-	}
-	return fmt.Errorf("status %q is not valid for %s (want one of %s)", status, role, strings.Join(valid, ", "))
 }
 
 func envInt(name string) int {

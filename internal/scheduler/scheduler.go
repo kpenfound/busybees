@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -26,6 +27,7 @@ import (
 
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/github"
+	"github.com/kpenfound/busybees/internal/logging"
 	"github.com/kpenfound/busybees/internal/mail"
 	"github.com/kpenfound/busybees/internal/session"
 	"github.com/kpenfound/busybees/internal/state"
@@ -69,10 +71,18 @@ type Scheduler struct {
 	running  map[string]bool
 	backoff  map[string]time.Time
 	lastPoll time.Time
+	nextPoll time.Time
 	lastErr  string
 	queues   map[string]int
-	wg       sync.WaitGroup
-	slots    chan struct{}
+	// readySizes counts the ready queue by size label ("xs", "s", ...);
+	// issues with no size label are counted under "".
+	readySizes map[string]int
+	wg         sync.WaitGroup
+	slots      chan struct{}
+	// Issues and PRs from the last successful poll, reused by local passes.
+	lastIssues []github.Issue
+	lastPRs    []github.PR
+	polled     bool
 }
 
 // New builds a scheduler.
@@ -92,21 +102,22 @@ func New(d Deps) (*Scheduler, error) {
 		q.Label = f.Label
 	}
 	s := &Scheduler{
-		cfg:     d.Config,
-		labels:  d.Config.Labels(),
-		query:   q,
-		gh:      d.GitHub,
-		mail:    d.Mail,
-		runner:  d.Runner,
-		ws:      d.Workspaces,
-		store:   d.Store,
-		log:     d.Logger,
-		now:     d.Now,
-		owned:   map[int]*state.Worker{},
-		running: map[string]bool{},
-		backoff: map[string]time.Time{},
-		queues:  map[string]int{},
-		slots:   make(chan struct{}, d.Config.Scheduler.MaxDevelopers),
+		cfg:        d.Config,
+		labels:     d.Config.Labels(),
+		query:      q,
+		gh:         d.GitHub,
+		mail:       d.Mail,
+		runner:     d.Runner,
+		ws:         d.Workspaces,
+		store:      d.Store,
+		log:        d.Logger,
+		now:        d.Now,
+		owned:      map[int]*state.Worker{},
+		running:    map[string]bool{},
+		backoff:    map[string]time.Time{},
+		queues:     map[string]int{},
+		readySizes: map[string]int{},
+		slots:      make(chan struct{}, d.Config.Scheduler.MaxDevelopers),
 	}
 	for i := 0; i < d.Config.Scheduler.MaxDevelopers; i++ {
 		s.slots <- struct{}{}
@@ -124,20 +135,20 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		s.log.Warn("worktree prune failed", "err", err)
 	}
 	s.log.Info("scheduler started", "repo", s.cfg.Project.Repo, "filter", s.describeQuery(),
-		"max_developers", s.cfg.Scheduler.MaxDevelopers, "poll", s.cfg.Scheduler.PollInterval.Duration)
+		"max_developers", s.cfg.Scheduler.MaxDevelopers, "poll", s.cfg.Scheduler.PollInterval.Duration,
+		"work_hours", s.cfg.Scheduler.WorkHours)
 	for {
-		wait := s.cfg.Scheduler.PollInterval.Duration
-		if err := s.pass(ctx); err != nil {
+		full, err := s.tick(ctx)
+		if err != nil {
 			if ctx.Err() != nil {
 				break
 			}
 			s.log.Error("poll failed", "err", err)
 			s.setLastErr(err.Error())
 			if isRateLimited(err) {
-				wait = s.cfg.Scheduler.RateLimitBackoff.Duration
-				s.log.Warn("GitHub rate limit hit; pausing polling", "for", wait)
+				s.log.Warn("GitHub rate limit hit; pausing polling", "for", s.cfg.Scheduler.RateLimitBackoff.Duration)
 			}
-		} else {
+		} else if full {
 			s.setLastErr("")
 		}
 		s.writeStatus()
@@ -147,7 +158,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			goto drain
-		case <-time.After(wait):
+		case <-time.After(s.cfg.Scheduler.PollInterval.Duration):
 		}
 	}
 drain:
@@ -157,11 +168,26 @@ drain:
 	return nil
 }
 
-// isRateLimited recognises GitHub's rate-limit responses as surfaced by gh.
-func isRateLimited(err error) bool {
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "rate limit") || strings.Contains(msg, "abuse detection") || strings.Contains(msg, "secondary rate")
+// rateLimitPhrases are the substrings that mark a message as "come back
+// later": GitHub's rate-limit responses as surfaced by gh, and the API
+// errors a claude session reports when it is throttled or the service is
+// overloaded.
+var rateLimitPhrases = []string{"rate limit", "abuse detection", "secondary rate", "overloaded", "usage limit"}
+
+// rateLimitedText reports whether a message names a rate limit or an
+// overloaded service. Matching is case-insensitive.
+func rateLimitedText(msg string) bool {
+	msg = strings.ToLower(msg)
+	for _, p := range rateLimitPhrases {
+		if strings.Contains(msg, p) {
+			return true
+		}
+	}
+	return false
 }
+
+// isRateLimited recognises GitHub's rate-limit responses as surfaced by gh.
+func isRateLimited(err error) bool { return rateLimitedText(err.Error()) }
 
 func (s *Scheduler) describeQuery() string {
 	var parts []string
@@ -197,8 +223,24 @@ func (s *Scheduler) poll(ctx context.Context) (*snapshot, error) {
 	if err != nil {
 		return nil, err
 	}
+	s.mu.Lock()
+	s.lastPoll = s.now()
+	s.lastIssues, s.lastPRs, s.polled = issues, prs, true
+	s.mu.Unlock()
+	snap := s.classify(issues, prs)
+	s.setQueues(snap)
+	return snap, nil
+}
+
+// classify buckets one poll's issues and PRs by workflow state. It does not
+// touch GitHub and never mutates its arguments, so the lists cached from the
+// last poll can be classified again on every local pass.
+func (s *Scheduler) classify(issues []github.Issue, prs []github.PR) *snapshot {
 	snap := &snapshot{issues: issues, prs: prs, byState: map[string][]github.Issue{}, prByBranch: map[string]github.PR{}, prByNumber: map[int]github.PR{}}
 	for _, i := range issues {
+		// Clip the label slice so an append by a caller (reconcile) cannot
+		// write into the cached issue's backing array.
+		i.Labels = i.Labels[:len(i.Labels):len(i.Labels)]
 		// Feedback and feature issues belong to the product manager and sit
 		// outside the workflow state machine.
 		if github.HasLabel(i.Labels, s.labels.Feedback) {
@@ -215,20 +257,41 @@ func (s *Scheduler) poll(ctx context.Context) (*snapshot, error) {
 		sort.Slice(snap.byState[st], func(a, b int) bool { return snap.byState[st][a].CreatedAt.Before(snap.byState[st][b].CreatedAt) })
 	}
 	for _, p := range prs {
+		p.Labels = p.Labels[:len(p.Labels):len(p.Labels)]
 		snap.prByBranch[p.HeadRefName] = p
 		snap.prByNumber[p.Number] = p
 	}
+	return snap
+}
+
+// queueNoState is the name `bees status` gives the bucket of visible issues
+// that carry no workflow state label yet. Internally they are keyed by the
+// empty string; an anonymous row in the queues block reads like a rendering
+// glitch rather than "these are waiting for the next reconcile".
+const queueNoState = "no_state"
+
+// setQueues records the queue sizes of a snapshot for `bees status`. Empty
+// state buckets are left out, so a queue only shows up while it has issues.
+func (s *Scheduler) setQueues(snap *snapshot) {
 	s.mu.Lock()
-	s.lastPoll = s.now()
+	defer s.mu.Unlock()
 	s.queues = map[string]int{}
 	for st, list := range snap.byState {
+		if len(list) == 0 {
+			continue
+		}
+		if st == "" {
+			st = queueNoState
+		}
 		s.queues[st] = len(list)
 	}
 	s.queues["feedback"] = len(snap.feedback)
 	s.queues["features"] = len(snap.features)
-	s.queues["open_prs"] = len(prs)
-	s.mu.Unlock()
-	return snap, nil
+	s.queues["open_prs"] = len(snap.prs)
+	s.readySizes = map[string]int{}
+	for _, i := range snap.byState["ready"] {
+		s.readySizes[s.sizeOf(i.Labels)]++
+	}
 }
 
 // stateOf returns the workflow state name ("triage", "ready", ...) of an
@@ -242,6 +305,79 @@ func (s *Scheduler) stateOf(labels []github.Label) string {
 	return ""
 }
 
+// sizeOf returns the size of an issue ("xs", "s", "m", "l", "xl"), or ""
+// when it carries no size label. Sizes are orthogonal to the workflow
+// state: an issue has at most one of each.
+func (s *Scheduler) sizeOf(labels []github.Label) string {
+	for _, l := range s.labels.SizeLabels() {
+		if github.HasLabel(labels, l) {
+			return strings.TrimPrefix(l, s.labels.Base+":size/")
+		}
+	}
+	return ""
+}
+
+// defaultSize is the size reconcile gives a ready issue that carries none;
+// an unsized issue therefore ranks as "m" everywhere.
+const defaultSize = "m"
+
+// sizeLarge is the size the scheduler.max_large_in_flight cap counts.
+const sizeLarge = "l"
+
+// sizeRank orders the work item sizes, smallest first. An unknown or missing
+// size ranks as defaultSize, which is the label reconcile gives it anyway.
+func sizeRank(size string) int {
+	if i := slices.Index(config.Sizes, size); i >= 0 {
+		return i
+	}
+	return slices.Index(config.Sizes, defaultSize)
+}
+
+// sortReady orders the ready queue in place as scheduler.dispatch_order asks:
+// smallest or largest size first, ties broken by age (oldest first), which is
+// also the "oldest" order poll already produced. sizeOf reads an issue's size
+// label, so the helper is independent of a scheduler.
+func sortReady(issues []github.Issue, order string, sizeOf func([]github.Label) string) {
+	if order != config.DispatchSmallFirst && order != config.DispatchLargeFirst {
+		return // "oldest" (and any unset value): poll's order stands
+	}
+	sort.SliceStable(issues, func(a, b int) bool {
+		ra, rb := sizeRank(sizeOf(issues[a].Labels)), sizeRank(sizeOf(issues[b].Labels))
+		if ra != rb {
+			if order == config.DispatchLargeFirst {
+				return ra > rb
+			}
+			return ra < rb
+		}
+		return issues[a].CreatedAt.Before(issues[b].CreatedAt)
+	})
+}
+
+// tick runs one iteration of the loop: a full pass when a GitHub poll is due,
+// a local pass otherwise. It reports whether the pass was a full one and the
+// error of a failed poll.
+func (s *Scheduler) tick(ctx context.Context) (bool, error) {
+	now := s.now()
+	s.mu.Lock()
+	due := s.nextPoll.IsZero() || !now.Before(s.nextPoll)
+	s.mu.Unlock()
+	if !due {
+		s.localPass(ctx)
+		return false, nil
+	}
+	err := s.pass(ctx)
+	wait := s.cfg.Scheduler.PollIntervalAt(now)
+	if err != nil && isRateLimited(err) {
+		// A rate limit wins over the work-hours window.
+		wait = s.cfg.Scheduler.RateLimitBackoff.Duration
+	}
+	s.mu.Lock()
+	s.nextPoll = now.Add(wait)
+	s.mu.Unlock()
+	return true, err
+}
+
+// pass polls GitHub and runs the whole reconcile/dispatch cycle.
 func (s *Scheduler) pass(ctx context.Context) error {
 	snap, err := s.poll(ctx)
 	if err != nil {
@@ -253,20 +389,46 @@ func (s *Scheduler) pass(ctx context.Context) error {
 	if err := s.reconcile(ctx, snap); err != nil {
 		s.log.Warn("reconcile", "err", err)
 	}
-	s.dispatchDevelopers(ctx, snap)
-	s.dispatchSingletons(ctx, snap)
+	s.dispatchDevelopers(ctx, snap, false)
+	s.dispatchSingletons(ctx, snap, false)
 	return nil
+}
+
+// localPass is a pass that makes no GitHub read calls of its own: it reuses
+// the issue and PR lists from the last poll, so everything driven by the
+// local mailbox (answered questions, review rounds) keeps moving at
+// poll_interval even when GitHub is only polled every
+// off_hours_poll_interval. It deliberately skips the human-feedback fetch and
+// the product manager / QA has-work checks, all of which query GitHub. Until
+// the first successful poll it does nothing.
+func (s *Scheduler) localPass(ctx context.Context) {
+	s.mu.Lock()
+	issues, prs, ok := s.lastIssues, s.lastPRs, s.polled
+	s.mu.Unlock()
+	if !ok {
+		return
+	}
+	snap := s.classify(issues, prs)
+	s.setQueues(snap)
+	if err := s.reconcile(ctx, snap); err != nil {
+		s.log.Warn("reconcile", "err", err)
+	}
+	s.dispatchDevelopers(ctx, snap, true)
+	s.dispatchSingletons(ctx, snap, true)
 }
 
 // reconcile applies label transitions that depend on local state:
 //
 //   - visible issues without a state label enter triage (and receive the
 //     factory label if the filter does not already require it);
+//   - ready issues without a size get the default one, and ready issues
+//     sized above roles.developer.max_size go back to triage to be split;
 //   - blocked issues whose question has been answered move back to the
 //     stage that asked (developer -> ready, project manager -> triage).
 //     Mail from a human about the issue counts as an answer too.
 func (s *Scheduler) reconcile(ctx context.Context, snap *snapshot) error {
 	var errs []error
+	var unlabelled []github.Issue
 	for _, i := range snap.byState[""] {
 		add := []string{s.labels.Triage}
 		if !github.HasLabel(i.Labels, s.labels.Base) {
@@ -275,16 +437,65 @@ func (s *Scheduler) reconcile(ctx context.Context, snap *snapshot) error {
 		s.log.Info("new issue enters triage", "issue", i.Number, "title", i.Title)
 		if err := s.gh.EditLabels(ctx, i.Number, add, nil); err != nil {
 			errs = append(errs, err)
+			unlabelled = append(unlabelled, i)
 			continue
 		}
 		i.Labels = append(i.Labels, github.Label{Name: s.labels.Triage})
 		snap.byState["triage"] = append(snap.byState["triage"], i)
 	}
+	snap.byState[""] = unlabelled
+	// A work item in ready without a size — typically one a human
+	// fast-tracked past triage — gets the default size, so the developer
+	// and reviewer prompts and `bees status` always have one.
+	for idx, i := range snap.byState["ready"] {
+		if s.sizeOf(i.Labels) != "" {
+			continue
+		}
+		s.log.Info("ready issue without a size gets the default", "issue", i.Number, "size", "m")
+		if err := s.gh.EditLabels(ctx, i.Number, []string{s.labels.SizeM}, nil); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		sized := append(i.Labels, github.Label{Name: s.labels.SizeM})
+		snap.byState["ready"][idx].Labels = sized
+		// Keep the cached poll in step, or every local pass in between two
+		// polls asks GitHub to add the label again.
+		i.Labels = sized
+		s.cacheIssue(i)
+	}
+	// A ready issue bigger than roles.developer.max_size is not something a
+	// developer can land in one pull request, so it never gets dispatched: it
+	// goes back to triage and the project manager splits it on its next run.
+	// The label move is the whole signal; comments on GitHub are for people.
+	limit := sizeRank(s.cfg.MaxSize())
+	ready := snap.byState["ready"][:0:0]
+	for _, i := range snap.byState["ready"] {
+		size := s.sizeOf(i.Labels)
+		if sizeRank(size) <= limit {
+			ready = append(ready, i)
+			continue
+		}
+		s.log.Info("ready issue is too big for a developer, back to triage",
+			"issue", i.Number, "size", size, "max_size", s.cfg.MaxSize())
+		if err := s.gh.EditLabels(ctx, i.Number, []string{s.labels.Triage}, []string{s.labels.Ready}); err != nil {
+			errs = append(errs, err)
+			ready = append(ready, i)
+			continue
+		}
+		i.Labels = relabel(i.Labels, s.labels.Ready, s.labels.Triage)
+		snap.byState["triage"] = append(snap.byState["triage"], i)
+		// Keep the cached poll in step, or every local pass in between two
+		// polls asks GitHub to move the label again.
+		s.cacheIssue(i)
+	}
+	snap.byState["ready"] = ready
+	var stillBlocked []github.Issue
 	for _, i := range snap.byState["blocked"] {
 		if s.hasUnreadMail(config.RoleDeveloper, i.Number, 0) {
 			s.log.Info("question answered, issue back to ready", "issue", i.Number)
 			if err := s.setState(ctx, i.Number, s.labels.Ready); err != nil {
 				errs = append(errs, err)
+				stillBlocked = append(stillBlocked, i)
 				continue
 			}
 			i.Labels = relabel(i.Labels, s.labels.Blocked, s.labels.Ready)
@@ -293,12 +504,19 @@ func (s *Scheduler) reconcile(ctx context.Context, snap *snapshot) error {
 			s.log.Info("question answered, issue back to triage", "issue", i.Number)
 			if err := s.setState(ctx, i.Number, s.labels.Triage); err != nil {
 				errs = append(errs, err)
+				stillBlocked = append(stillBlocked, i)
 				continue
 			}
 			i.Labels = relabel(i.Labels, s.labels.Blocked, s.labels.Triage)
 			snap.byState["triage"] = append(snap.byState["triage"], i)
+		} else {
+			stillBlocked = append(stillBlocked, i)
 		}
 	}
+	snap.byState["blocked"] = stillBlocked
+	// The pass moved issues between buckets; recount so `bees status` shows
+	// what GitHub now shows instead of the poll's stale counts.
+	s.setQueues(snap)
 	return errors.Join(errs...)
 }
 
@@ -314,15 +532,28 @@ func relabel(labels []github.Label, from, to string) []github.Label {
 
 // dispatchDevelopers hands issues to free developer workers. Issues that
 // are already in progress or in review but not owned by a worker (for
-// example after a restart) are resumed first, then ready issues oldest first.
-func (s *Scheduler) dispatchDevelopers(ctx context.Context, snap *snapshot) {
+// example after a restart) are resumed first and are never reordered: a
+// worker picking its issue back up after a restart must not be starved.
+// The ready queue behind them is ordered by scheduler.dispatch_order, and a
+// bees:size/l issue waits while scheduler.max_large_in_flight of them are
+// already being worked on.
+//
+// On a local pass (local) the snapshot comes from the last poll and can be
+// stale: an issue a worker has since finished, a developer parked in
+// bees:blocked or a human closed still carries its old state label. Before
+// spending a session on such an issue the live issue is fetched once and the
+// candidate dropped unless it is still open and in a dispatchable state.
+func (s *Scheduler) dispatchDevelopers(ctx context.Context, snap *snapshot, local bool) {
 	if !s.roleEnabled(config.RoleDeveloper) {
 		return
 	}
 	var candidates []github.Issue
 	candidates = append(candidates, snap.byState["in-progress"]...)
 	candidates = append(candidates, snap.byState["review"]...)
-	candidates = append(candidates, snap.byState["ready"]...)
+	ready := append([]github.Issue(nil), snap.byState["ready"]...)
+	sortReady(ready, s.cfg.Scheduler.DispatchOrder, s.sizeOf)
+	candidates = append(candidates, ready...)
+	largeLimit := s.cfg.Scheduler.LargeInFlight()
 	for _, issue := range candidates {
 		s.mu.Lock()
 		_, taken := s.owned[issue.Number]
@@ -333,12 +564,29 @@ func (s *Scheduler) dispatchDevelopers(ctx context.Context, snap *snapshot) {
 		if until, ok := s.backoffUntil(fmt.Sprintf("issue-%d", issue.Number)); ok && s.now().Before(until) {
 			continue
 		}
+		size := s.sizeOf(issue.Labels)
+		// The cap only holds back fresh work: a resumed in-progress or
+		// review issue is already in flight. Checked before a slot is taken,
+		// so a held issue does not keep a free developer idle.
+		if largeLimit > 0 && size == sizeLarge && s.stateOf(issue.Labels) == "ready" && s.largeInFlight() >= largeLimit {
+			s.log.Info("large issue waits, cap reached", "issue", issue.Number, "max_large_in_flight", largeLimit)
+			continue
+		}
 		select {
 		case <-s.slots:
 		default:
 			return // pool is full
 		}
-		w := &state.Worker{Name: fmt.Sprintf("dev-%d", issue.Number), Issue: issue.Number, Stage: "starting", Since: s.now()}
+		if local {
+			live, ok := s.liveCandidate(ctx, issue)
+			if !ok {
+				s.slots <- struct{}{}
+				continue
+			}
+			issue = live
+			size = s.sizeOf(issue.Labels)
+		}
+		w := &state.Worker{Name: fmt.Sprintf("dev-%d", issue.Number), Issue: issue.Number, Size: size, Stage: "starting", Since: s.now()}
 		s.mu.Lock()
 		s.owned[issue.Number] = w
 		s.mu.Unlock()
@@ -361,9 +609,59 @@ func (s *Scheduler) dispatchDevelopers(ctx context.Context, snap *snapshot) {
 	}
 }
 
+// largeInFlight counts the bees:size/l issues developer workers own, which
+// is what scheduler.max_large_in_flight caps.
+func (s *Scheduler) largeInFlight() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, w := range s.owned {
+		if w.Size == sizeLarge {
+			n++
+		}
+	}
+	return n
+}
+
+// liveCandidate re-reads an issue picked from a stale (cached) snapshot and
+// reports whether a developer worker should still be started for it. It also
+// refreshes the cached copy, so an issue that has moved on is not fetched
+// again by the next local pass.
+func (s *Scheduler) liveCandidate(ctx context.Context, issue github.Issue) (github.Issue, bool) {
+	live, err := s.gh.GetIssue(ctx, issue.Number)
+	if err != nil {
+		s.log.Warn("live issue check failed, skipping", "issue", issue.Number, "err", err)
+		return issue, false
+	}
+	s.cacheIssue(live)
+	if live.State != "" && !strings.EqualFold(live.State, "open") {
+		return live, false
+	}
+	switch s.stateOf(live.Labels) {
+	case "ready", "in-progress", "review":
+		return live, true
+	default:
+		return live, false
+	}
+}
+
+// cacheIssue replaces an issue in the lists kept from the last poll.
+func (s *Scheduler) cacheIssue(live github.Issue) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.lastIssues {
+		if s.lastIssues[i].Number == live.Number {
+			s.lastIssues[i] = live
+			return
+		}
+	}
+}
+
 // dispatchSingletons starts the product manager, project manager and QA
-// when they have work and are not already running.
-func (s *Scheduler) dispatchSingletons(ctx context.Context, snap *snapshot) {
+// when they have work and are not already running. With mailOnly (a local
+// pass) a role only starts when it has unread mail: the other has-work checks
+// query GitHub.
+func (s *Scheduler) dispatchSingletons(ctx context.Context, snap *snapshot, mailOnly bool) {
 	type job struct {
 		role string
 		want func() bool
@@ -373,6 +671,12 @@ func (s *Scheduler) dispatchSingletons(ctx context.Context, snap *snapshot) {
 		{config.RoleProjectManager, func() bool { return s.projectManagerHasWork(snap) }, s.runProjectManager},
 		{config.RoleProductManager, func() bool { return s.productManagerHasWork(ctx, snap) }, s.runProductManager},
 		{config.RoleQA, func() bool { return s.qaHasWork(ctx) }, s.runQA},
+	}
+	if mailOnly {
+		for i := range jobs {
+			role := jobs[i].role
+			jobs[i].want = func() bool { return s.hasUnreadMail(role, 0, 0) }
+		}
 	}
 	for _, j := range jobs {
 		if !s.roleEnabled(j.role) {
@@ -454,7 +758,8 @@ func (s *Scheduler) setState(ctx context.Context, number int, to string) error {
 // escalate marks an issue needs-human and leaves a comment for people.
 // This is the only place the factory writes a GitHub comment.
 func (s *Scheduler) escalate(ctx context.Context, number int, reason string) error {
-	s.log.Warn("escalating to human", "issue", number, "reason", reason)
+	s.log.Warn(fmt.Sprintf("⚠ issue #%d escalated to a human: %s", number, reason),
+		logging.SummaryKey, true, "issue", number, "outcome", "escalated", "note", reason)
 	if err := s.setState(ctx, number, s.labels.NeedsHuman); err != nil {
 		return err
 	}
@@ -465,7 +770,11 @@ func (s *Scheduler) escalate(ctx context.Context, number int, reason string) err
 
 func (s *Scheduler) writeStatus() {
 	s.mu.Lock()
-	st := state.Status{LastPoll: s.lastPoll, Singletons: map[string]string{}, Queues: map[string]int{}, LastError: s.lastErr}
+	st := state.Status{LastPoll: s.lastPoll, NextPoll: s.nextPoll, Singletons: map[string]string{}, Queues: map[string]int{}, LastError: s.lastErr}
+	if s.cfg.Scheduler.WorkHoursEnabled() {
+		in := s.cfg.Scheduler.InWorkHours(s.now())
+		st.InWorkHours = &in
+	}
 	for _, w := range s.owned {
 		st.Workers = append(st.Workers, *w)
 	}
@@ -480,6 +789,10 @@ func (s *Scheduler) writeStatus() {
 	for k, v := range s.queues {
 		st.Queues[k] = v
 	}
+	st.ReadySizes = map[string]int{}
+	for k, v := range s.readySizes {
+		st.ReadySizes[k] = v
+	}
 	s.mu.Unlock()
 	if err := s.store.SaveStatus(st); err != nil {
 		s.log.Warn("write status", "err", err)
@@ -490,6 +803,19 @@ func (s *Scheduler) updateWorker(w *state.Worker, stage string, round int) {
 	s.mu.Lock()
 	w.Stage = stage
 	w.Round = round
+	w.Attempt = 1
+	s.mu.Unlock()
+	s.writeStatus()
+}
+
+// setWorkerAttempt records which attempt of the current stage is running so
+// `bees status` shows a retry.
+func (s *Scheduler) setWorkerAttempt(w *state.Worker, attempt int) {
+	if w == nil {
+		return
+	}
+	s.mu.Lock()
+	w.Attempt = attempt
 	s.mu.Unlock()
 	s.writeStatus()
 }
