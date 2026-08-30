@@ -184,3 +184,56 @@ func TestPRCheckHonoursTheSettings(t *testing.T) {
 		})
 	}
 }
+
+// The mail spells out both git commands with the configured remote. With
+// the default remote that is the familiar origin text; anything else must
+// not leak an `origin` the worktree does not have.
+func TestUpdateBranchBodyNamesTheRemote(t *testing.T) {
+	pr := github.PR{Number: 101, HeadRefName: "bees/issue-1", URL: "https://x/pull/101"}
+	for _, tc := range []struct {
+		name    string
+		remote  string
+		reason  string
+		want    string
+		notWant string
+	}{
+		{"default remote", config.DefaultRemote, "conflicts with", "`git fetch origin && git merge origin/main`", "upstream"},
+		{"configured remote", "upstream", "conflicts with", "`git fetch upstream && git merge upstream/main`", "origin/"},
+		{"configured remote, behind", "upstream", "is behind", "`git fetch upstream && git merge upstream/main`", "origin/"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := updateBranchBody(pr, tc.remote, "main", tc.reason)
+			if !strings.Contains(body, tc.want) {
+				t.Errorf("body missing %q:\n%s", tc.want, body)
+			}
+			if strings.Contains(body, tc.notWant) {
+				t.Errorf("body still contains %q:\n%s", tc.notWant, body)
+			}
+		})
+	}
+}
+
+// checkPRs hands updateBranchBody the configured remote rather than a
+// hardcoded one: the developer's worktree is cut from
+// `<project.remote>/<default_branch>`, so on a repository configured with
+// another remote `git merge origin/main` names a ref that does not exist.
+func TestConflictMailUsesTheConfiguredRemote(t *testing.T) {
+	// default_branch is spelled out because the harness clone has no
+	// `upstream` remote for Resolve to detect it from.
+	toml := strings.Replace(devOnlyTOML, "[project]\n", "[project]\nremote = \"upstream\"\ndefault_branch = \"main\"\n", 1)
+	h := newHarness(t, toml)
+	seedApprovedPR(t, h, github.MergeableConflicting, "DIRTY", "abc")
+
+	checkOnce(t, h)
+
+	msgs := developerMail(t, h)
+	if len(msgs) != 1 {
+		t.Fatalf("%d messages, want 1: %+v", len(msgs), msgs)
+	}
+	if !strings.Contains(msgs[0].Body, "git fetch upstream && git merge upstream/main") {
+		t.Errorf("mail body does not name project.remote:\n%s", msgs[0].Body)
+	}
+	if strings.Contains(msgs[0].Body, "origin/") {
+		t.Errorf("mail body still names origin:\n%s", msgs[0].Body)
+	}
+}
