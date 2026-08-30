@@ -140,6 +140,13 @@ func (d *Deps) checkGit(ctx context.Context) Result {
 	return pass(name, GroupToolchain, fmt.Sprintf("%s (%s)", path, oneLine(string(out))))
 }
 
+// ghHost is the only GitHub host bees talks to: config.ParseGitHubRepo accepts
+// github.com and nothing else. The check is scoped to it because `gh auth
+// status` reports every logged-in host, and merging an enterprise token's
+// scopes into the answer would report a pass for a github.com token that is
+// missing `repo` — the one failure this check exists to catch.
+const ghHost = "github.com"
+
 // scopesLine matches the "- Token scopes: 'repo', 'workflow'" line of
 // `gh auth status`; older releases print the names unquoted.
 var scopesLine = regexp.MustCompile(`(?m)^.*Token scopes:(.*)$`)
@@ -155,12 +162,14 @@ func (d *Deps) checkGH(ctx context.Context) Result {
 	}
 	// gh >= 2.50 (the version bees requires) prints auth status on stdout;
 	// a failure goes to stderr, which the client folds into the error.
-	out, err := d.gh(ctx, "auth", "status")
+	// --hostname makes gh exit non-zero when that host is not logged in, which
+	// the error branch below already turns into the right answer for bees.
+	out, err := d.gh(ctx, "auth", "status", "--hostname", ghHost)
 	if err != nil {
 		return fail(name, GroupToolchain, oneLine(err.Error()),
 			"run `gh auth login` (bees uses your existing gh authentication)")
 	}
-	text := string(out)
+	text := hostBlock(string(out), ghHost)
 	account := ""
 	if m := accountLine.FindStringSubmatch(text); m != nil {
 		account = m[1]
@@ -172,11 +181,47 @@ func (d *Deps) checkGH(ctx context.Context) Result {
 		return pass(name, GroupToolchain, describeAccount(account)+", token scopes not reported")
 	}
 	if !slices.Contains(scopes, "repo") {
-		return fail(name, GroupToolchain,
-			fmt.Sprintf("%s, token scopes: %s (no repo scope)", describeAccount(account), strings.Join(scopes, ", ")),
+		detail := describeAccount(account) + ", " + describeScopes(scopes)
+		if len(scopes) > 0 {
+			// "no token scopes" already says it; only a list needs the verdict.
+			detail += " (no repo scope)"
+		}
+		return fail(name, GroupToolchain, detail,
 			"run `gh auth refresh -s repo` — without it bees cannot label issues or push branches")
 	}
-	return pass(name, GroupToolchain, fmt.Sprintf("%s, token scopes: %s", describeAccount(account), strings.Join(scopes, ", ")))
+	return pass(name, GroupToolchain, describeAccount(account)+", "+describeScopes(scopes))
+}
+
+// hostBlock returns the part of `gh auth status` output that describes host.
+// gh prints one block per logged-in host: an unindented host name followed by
+// indented detail lines. Output with no host header at all is returned whole.
+func hostBlock(text, host string) string {
+	lines := strings.Split(text, "\n")
+	start := -1
+	for i, l := range lines {
+		if strings.TrimSpace(l) == "" || strings.HasPrefix(l, " ") || strings.HasPrefix(l, "\t") {
+			continue
+		}
+		if start >= 0 {
+			return strings.Join(lines[start:i], "\n")
+		}
+		if strings.TrimSpace(l) == host {
+			start = i
+		}
+	}
+	if start >= 0 {
+		return strings.Join(lines[start:], "\n")
+	}
+	return text
+}
+
+// describeScopes renders the scopes parseScopes reported. The empty (but not
+// nil) slice is `Token scopes: none`, which has no list to print.
+func describeScopes(scopes []string) string {
+	if len(scopes) == 0 {
+		return "no token scopes"
+	}
+	return "token scopes: " + strings.Join(scopes, ", ")
 }
 
 func describeAccount(account string) string {
