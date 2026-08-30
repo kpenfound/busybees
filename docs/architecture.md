@@ -128,11 +128,14 @@ A full pass is:
    The product manager's "has work" test also looks at `snapshot.feedback`
    and `snapshot.features`: `freshIssues` fetches comments (`gh issue view`)
    only for issues whose `updatedAt` is later than the product manager's last
-   run, and keeps those where `Issue.AwaitingBee()` is true — the latest
-   human activity (creation or a comment without the `<!-- bees:` marker) is
-   newer than the latest bee comment. A fresh issue that carries
-   `bees:question` has that label removed on the spot (a person answered).
-   Any fresh issue triggers a run outside `product_manager_interval`. A
+   run, and keeps those where `Issue.AwaitingBee()` is true — the human side
+   (creation or a comment without the `<!-- bees:` marker) had the last word.
+   `gh` reports comment times at second resolution, so a tie is broken by the
+   comments' order in the list rather than by comparing timestamps: a person
+   commenting in the same second as a bee is still awaiting a bee. A fresh
+   issue that carries `bees:question` has that label removed on the spot (a
+   person answered). Any fresh issue triggers a run outside
+   `product_manager_interval`. A
    [proposal](workflow.md#feature-issues) only does so once a person has
    commented on it (`Issue.AwaitingBeeComment()`, which is `AwaitingBee`
    without the creation seeded in): nobody has commented on one a bee wrote,
