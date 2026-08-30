@@ -618,8 +618,14 @@ func TestFullDeveloperReviewLoop(t *testing.T) {
 	}
 	byRole := map[string][]state.LedgerEntry{}
 	for _, e := range ledger {
-		if e.Turns != 2 || e.CostUSD != 0.01 || e.DurationMS <= 0 || e.Session == "" || e.Time.IsZero() {
+		if e.Turns != 2 || e.CostUSD != 0.01 || e.Session == "" || e.Time.IsZero() {
 			t.Errorf("ledger entry not filled in: %+v", e)
+		}
+		// DurationMS is whole milliseconds, so a session that spawned and exited
+		// in under 1ms records 0. That is a legitimate duration, not a missing
+		// field: never assert it is positive.
+		if e.DurationMS < 0 {
+			t.Errorf("ledger entry has a negative duration: %+v", e)
 		}
 		byRole[e.Role] = append(byRole[e.Role], e)
 	}
