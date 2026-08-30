@@ -164,7 +164,7 @@ orchestrator adds `bees:size/m` to any ready issue that has none. See
 | `keep_workspaces` | bool | `false` | Leave temporary worktrees on disk after a session (debugging). |
 | `workspace_root` | string | `""` | Directory temporary worktrees are created under. Empty means `$TMPDIR/bees`. |
 | `work_hours` | string | `""` | Daily window during which GitHub is polled every `poll_interval`, as `"HH:MM-HH:MM"` on a 24-hour clock. Empty (the default) disables the feature — GitHub is polled around the clock and the three keys below are ignored. See [Work hours](#work-hours). |
-| `off_hours_poll_interval` | duration | `"1h"` | How often GitHub is polled outside `work_hours`. Must be ≥ `poll_interval`. Only used when `work_hours` is set. |
+| `off_hours_poll_interval` | duration | `"1h"`, or `poll_interval` when that is longer | How often GitHub is polled outside `work_hours`. Must be ≥ `poll_interval`. Only used when `work_hours` is set. |
 | `work_days` | list of strings | `["mon","tue","wed","thu","fri"]` | Days the window applies to, as lowercase three-letter names (`mon tue wed thu fri sat sun`). At least one is required when `work_hours` is set. |
 | `timezone` | string | `""` | IANA name the window is read in (`"America/New_York"`). Empty means the machine's local time. |
 
@@ -223,6 +223,15 @@ the local mailbox — the developer ↔ reviewer loop, answered questions moving
 every hour of the day. `bees tick` and `bees exec` ignore the window and always
 do a full pass.
 
+**The work day starts on time.** The poll before the window opens is scheduled
+for the moment it opens, not a whole `off_hours_poll_interval` later, so the
+first poll of the day is at `09:00` rather than up to an interval late.
+
+**A rate limit never speeds polling up.** `rate_limit_backoff` is a floor on the
+wait, not a replacement for it: after a rate-limited poll the next one is due
+after whichever of the backoff and the interval in force is longer. Off hours
+with `off_hours_poll_interval = "8h"` that is 8h, not 15m.
+
 **Overnight windows.** When the start is later than the end, the window wraps
 midnight and belongs to the day its **start** falls on: `work_hours =
 "22:00-06:00"` with `work_days = ["fri"]` covers Friday 22:00 through Saturday
@@ -231,7 +240,9 @@ midnight and belongs to the day its **start** falls on: `work_hours =
 Invalid values are rejected when `bees.toml` is loaded: a window that is not
 `"HH:MM-HH:MM"` on a 24-hour clock, an unknown or empty `work_days`, a timezone
 `time.LoadLocation` does not know, or an `off_hours_poll_interval` shorter than
-`poll_interval`.
+`poll_interval`. `off_hours_poll_interval` is only defaulted when it is unset,
+and then never below `poll_interval`, so a file that sets only a long
+`poll_interval` cannot fail on a key it does not contain.
 
 `bees status` shows the window, whether the factory is inside it right now, and
 when the next GitHub poll is due.
@@ -464,7 +475,7 @@ headers = { Authorization = "Bearer $BROWSER_MCP_TOKEN" }
 | `scheduler.product_manager_interval` | `1h` |
 | `scheduler.qa_interval` | `30m` |
 | `scheduler.work_hours` | `""` (poll around the clock) |
-| `scheduler.off_hours_poll_interval` | `1h` |
+| `scheduler.off_hours_poll_interval` | `1h`, or `poll_interval` when that is longer |
 | `scheduler.work_days` | `["mon","tue","wed","thu","fri"]` |
 | `scheduler.timezone` | `""` (the machine's local time) |
 | `model` | `opus` |
