@@ -181,18 +181,18 @@ type Config struct {
 // Project holds settings that describe the software being built.
 type Project struct {
 	// Remote is the git remote the factory fetches from and pushes to. Default "origin".
-	Remote string `toml:"remote"`
+	Remote string `toml:"remote" json:"remote"`
 	// Repo is the GitHub repository in "owner/name" form. Derived from the
 	// remote's URL when empty (see Config.Resolve).
-	Repo string `toml:"repo"`
+	Repo string `toml:"repo" json:"repo"`
 	// DefaultBranch is the branch developers branch from and QA tests.
 	// Derived from the remote's HEAD when empty.
-	DefaultBranch string `toml:"default_branch"`
+	DefaultBranch string `toml:"default_branch" json:"default_branch"`
 	// StateDir is where mail, notes, logs and scheduler state live. Relative
 	// paths are resolved against the directory containing bees.toml.
-	StateDir string `toml:"state_dir"`
+	StateDir string `toml:"state_dir" json:"state_dir"`
 	// BranchPrefix is prepended to developer branches, e.g. "bees/issue-12".
-	BranchPrefix string `toml:"branch_prefix"`
+	BranchPrefix string `toml:"branch_prefix" json:"branch_prefix"`
 }
 
 // Filter selects which GitHub issues and pull requests the factory can see.
@@ -201,17 +201,17 @@ type Filter struct {
 	// Label is the factory's label. It is the base name of the workflow state
 	// labels ("bees:ready", ...) and, when RequireLabel is true, the
 	// visibility gate: only issues/PRs carrying it are visible. Default "bees".
-	Label string `toml:"label"`
+	Label string `toml:"label" json:"label"`
 	// RequireLabel can be set to false so that Assignee and/or Milestone
 	// alone define visibility. The factory still applies Label to everything
 	// it creates. Default true.
-	RequireLabel *bool `toml:"require_label"`
+	RequireLabel *bool `toml:"require_label" json:"require_label"`
 	// Assignee restricts visibility to issues/PRs assigned to this GitHub
 	// login ("@me" resolves to the authenticated gh user). Everything the
 	// factory creates is assigned to this user so it stays visible.
-	Assignee string `toml:"assignee"`
+	Assignee string `toml:"assignee" json:"assignee"`
 	// Milestone restricts visibility to issues/PRs in this milestone title.
-	Milestone string `toml:"milestone"`
+	Milestone string `toml:"milestone" json:"milestone"`
 }
 
 // LabelRequired reports whether the label is part of the visibility gate.
@@ -224,12 +224,12 @@ const BuiltinMCPServer = "bees"
 // MCPServer configures one MCP server. Either Command (stdio) or URL (http/sse)
 // must be set.
 type MCPServer struct {
-	Type    string            `toml:"type"` // stdio (default when command set), http, sse
-	Command string            `toml:"command"`
-	Args    []string          `toml:"args"`
-	Env     map[string]string `toml:"env"`
-	URL     string            `toml:"url"`
-	Headers map[string]string `toml:"headers"`
+	Type    string            `toml:"type" json:"type"` // stdio (default when command set), http, sse
+	Command string            `toml:"command" json:"command"`
+	Args    []string          `toml:"args" json:"args"`
+	Env     map[string]string `toml:"env" json:"env"`
+	URL     string            `toml:"url" json:"url"`
+	Headers map[string]string `toml:"headers" json:"headers"`
 }
 
 // RoleSettings are the settings that can be given globally or per role.
@@ -418,44 +418,44 @@ type Scheduler struct {
 	// PollInterval is how often GitHub is polled for work. Each poll costs
 	// two API calls (open issues, open PRs); everything else is gated on what
 	// those lists report. Default 5m.
-	PollInterval Duration `toml:"poll_interval"`
+	PollInterval Duration `toml:"poll_interval" json:"poll_interval"`
 	// RateLimitBackoff is how long to pause polling after GitHub reports a
 	// rate limit. Default 15m.
-	RateLimitBackoff Duration `toml:"rate_limit_backoff"`
+	RateLimitBackoff Duration `toml:"rate_limit_backoff" json:"rate_limit_backoff"`
 	// MaxDevelopers is the number of concurrent developer workers. Each worker
 	// runs a sequential developer <-> reviewer loop for one issue at a time.
-	MaxDevelopers int `toml:"max_developers"`
+	MaxDevelopers int `toml:"max_developers" json:"max_developers"`
 	// MaxReviewRounds caps developer/reviewer iterations before an issue is
 	// escalated with the needs-human label.
-	MaxReviewRounds int `toml:"max_review_rounds"`
+	MaxReviewRounds int `toml:"max_review_rounds" json:"max_review_rounds"`
 	// ProductManagerInterval is the minimum time between product manager runs
 	// (mail in the PM inbox triggers an earlier run).
-	ProductManagerInterval Duration `toml:"product_manager_interval"`
+	ProductManagerInterval Duration `toml:"product_manager_interval" json:"product_manager_interval"`
 	// QAInterval is the minimum time between QA runs. QA only runs when
 	// something has been merged since its last run.
-	QAInterval Duration `toml:"qa_interval"`
+	QAInterval Duration `toml:"qa_interval" json:"qa_interval"`
 	// TriageBatchSize is the maximum number of issues handed to the project
 	// manager in one session.
-	TriageBatchSize int `toml:"triage_batch_size"`
+	TriageBatchSize int `toml:"triage_batch_size" json:"triage_batch_size"`
 	// DispatchOrder decides which ready issue a free developer worker takes
 	// next: small-first (default), oldest or large-first.
-	DispatchOrder string `toml:"dispatch_order"`
+	DispatchOrder string `toml:"dispatch_order" json:"dispatch_order"`
 	// MaxLargeInFlight caps how many bees:size/l issues developer workers may
 	// hold at once. 0 means no cap. Default 1.
-	MaxLargeInFlight *int `toml:"max_large_in_flight"`
+	MaxLargeInFlight *int `toml:"max_large_in_flight" json:"max_large_in_flight"`
 	// Retries is the number of extra attempts a session gets when it failed
 	// for infrastructure reasons (timeout, API error, exhausted turns).
 	// 0 disables retrying. Default 1.
-	Retries *int `toml:"retries"`
+	Retries *int `toml:"retries" json:"retries"`
 	// RetryDelay is how long to wait before a retry. Default 10m.
-	RetryDelay *Duration `toml:"retry_delay"`
+	RetryDelay *Duration `toml:"retry_delay" json:"retry_delay"`
 	// RetryWithFallback runs a retry with the role's fallback_model as its
 	// primary model. Default true.
-	RetryWithFallback *bool `toml:"retry_with_fallback"`
+	RetryWithFallback *bool `toml:"retry_with_fallback" json:"retry_with_fallback"`
 	// KeepWorkspaces leaves temp worktrees on disk after a session (debugging).
-	KeepWorkspaces bool `toml:"keep_workspaces"`
+	KeepWorkspaces bool `toml:"keep_workspaces" json:"keep_workspaces"`
 	// WorkspaceRoot overrides the temp dir used for worktrees.
-	WorkspaceRoot string `toml:"workspace_root"`
+	WorkspaceRoot string `toml:"workspace_root" json:"workspace_root"`
 	// WorkHours is the daily window during which GitHub is polled every
 	// PollInterval, as "HH:MM-HH:MM" on a 24-hour clock ("09:00-18:00").
 	// Empty (the default) disables the feature: GitHub is polled every
@@ -463,16 +463,16 @@ type Scheduler struct {
 	// A window whose start is after its end wraps midnight and belongs to
 	// the day its start falls on ("22:00-06:00" with work_days = ["fri"]
 	// covers Friday 22:00 to Saturday 06:00).
-	WorkHours string `toml:"work_hours"`
+	WorkHours string `toml:"work_hours" json:"work_hours"`
 	// OffHoursPollInterval is how often GitHub is polled outside the work
 	// hours window. Must be >= PollInterval. Default 1h.
-	OffHoursPollInterval Duration `toml:"off_hours_poll_interval"`
+	OffHoursPollInterval Duration `toml:"off_hours_poll_interval" json:"off_hours_poll_interval"`
 	// WorkDays are the days the window applies to, as lowercase three-letter
 	// names (mon, tue, wed, thu, fri, sat, sun). Default mon-fri.
-	WorkDays []string `toml:"work_days"`
+	WorkDays []string `toml:"work_days" json:"work_days"`
 	// Timezone is the IANA name the window is interpreted in
 	// ("America/New_York"). Empty means the machine's local time.
-	Timezone string `toml:"timezone"`
+	Timezone string `toml:"timezone" json:"timezone"`
 
 	// Parsed form of the four keys above, filled in by Validate.
 	whStart, whEnd int // minutes since midnight
