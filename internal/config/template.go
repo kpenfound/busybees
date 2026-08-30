@@ -122,6 +122,16 @@ label = "{{.Label}}"
 #product_manager_interval = "1h"
 # Minimum time between QA runs. QA only runs when something was merged.
 #qa_interval = "30m"
+# Work hours: outside this window GitHub is polled every off_hours_poll_interval
+# instead of poll_interval (the mailbox keeps running at full speed). Leave it
+# empty to poll around the clock. A window that starts after it ends wraps
+# midnight and belongs to the day it starts on ("22:00-06:00" on "fri" runs
+# into Saturday morning).
+#work_hours = "09:00-18:00"
+#off_hours_poll_interval = "1h"
+#work_days = ["mon", "tue", "wed", "thu", "fri"]
+# IANA timezone the window is read in (default: the machine's local time).
+#timezone = "America/New_York"
 # Keep temp worktrees after sessions finish (debugging).
 #keep_workspaces = false
 # Where temp worktrees are created (default: the system temp dir).

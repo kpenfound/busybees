@@ -380,3 +380,147 @@ func TestMigrateChain(t *testing.T) {
 		t.Fatalf("missing step: %v", err)
 	}
 }
+
+func TestWorkHoursValidation(t *testing.T) {
+	base := "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\n"
+	cases := []struct {
+		name, body, want string
+	}{
+		{"am/pm", base + "work_hours = \"9am-5pm\"\n",
+			`scheduler.work_hours: want "HH:MM-HH:MM" on a 24-hour clock (e.g. "09:00-18:00"), got "9am-5pm"`},
+		{"not a range", base + "work_hours = \"09:00\"\n", `scheduler.work_hours: want "HH:MM-HH:MM"`},
+		{"24 hour clock", base + "work_hours = \"09:00-26:00\"\n", `scheduler.work_hours: want "HH:MM-HH:MM"`},
+		{"empty window", base + "work_hours = \"09:00-09:00\"\n", "start and end must differ"},
+		{"long day name", base + "work_hours = \"09:00-18:00\"\nwork_days = [\"monday\"]\n",
+			`scheduler.work_days: unknown day "monday" (want one of mon tue wed thu fri sat sun)`},
+		{"no days", base + "work_hours = \"09:00-18:00\"\nwork_days = []\n",
+			"scheduler.work_days must list at least one of mon tue wed thu fri sat sun"},
+		{"bad timezone", base + "work_hours = \"09:00-18:00\"\ntimezone = \"Mars/Olympus\"\n", "scheduler.timezone: "},
+		{"off hours too short", base + "poll_interval = \"5m\"\noff_hours_poll_interval = \"1m\"\nwork_hours = \"09:00-18:00\"\n",
+			"scheduler.off_hours_poll_interval (1m0s) must be >= scheduler.poll_interval (5m0s)"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := Load(writeConfig(t, c.body))
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			if !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("error %q does not mention %q", err, c.want)
+			}
+		})
+	}
+	// The keys are ignored (and never rejected) while work_hours is empty.
+	cfg, err := Load(writeConfig(t, base+"off_hours_poll_interval = \"1s\"\nwork_days = [\"monday\"]\ntimezone = \"Mars/Olympus\"\n"))
+	if err != nil {
+		t.Fatalf("work_hours unset should disable the checks: %v", err)
+	}
+	if cfg.Scheduler.WorkHoursEnabled() {
+		t.Fatal("feature should be disabled without work_hours")
+	}
+	if got := cfg.Scheduler.PollIntervalAt(time.Date(2026, 8, 30, 3, 0, 0, 0, time.UTC)); got != DefaultPollInterval {
+		t.Fatalf("disabled: poll interval %s", got)
+	}
+	// An overnight window is valid.
+	if _, err := Load(writeConfig(t, base+"work_hours = \"18:00-09:00\"\n")); err != nil {
+		t.Fatalf("overnight window rejected: %v", err)
+	}
+}
+
+func TestWorkHoursDefaults(t *testing.T) {
+	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nwork_hours = \"09:00-18:00\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := cfg.Scheduler
+	if !s.WorkHoursEnabled() || s.OffHoursPollInterval.Duration != DefaultOffHoursPollInterval {
+		t.Fatalf("defaults: %+v", s)
+	}
+	if strings.Join(s.WorkDays, ",") != "mon,tue,wed,thu,fri" {
+		t.Fatalf("work_days default: %v", s.WorkDays)
+	}
+	if got := s.WorkHoursDescription(); got != "09:00-18:00 mon-fri, Local" {
+		t.Fatalf("description: %q", got)
+	}
+}
+
+func TestInWorkHours(t *testing.T) {
+	load := func(t *testing.T, body string) Scheduler {
+		t.Helper()
+		cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\npoll_interval = \"5m\"\n"+body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cfg.Scheduler
+	}
+	utc := func(day, hour, min int) time.Time {
+		return time.Date(2026, 8, day, hour, min, 0, 0, time.UTC)
+	}
+	// 2026-08-31 is a Monday, 2026-09-05 a Saturday.
+	weekdays := load(t, "work_hours = \"09:00-18:00\"\ntimezone = \"UTC\"\n")
+	overnight := load(t, "work_hours = \"22:00-06:00\"\nwork_days = [\"fri\"]\ntimezone = \"UTC\"\n")
+	newYork := load(t, "work_hours = \"09:00-18:00\"\ntimezone = \"America/New_York\"\n")
+	for _, c := range []struct {
+		name string
+		s    Scheduler
+		t    time.Time
+		want bool
+	}{
+		{"inside", weekdays, utc(31, 12, 0), true},
+		{"window start is inclusive", weekdays, utc(31, 9, 0), true},
+		{"window end is exclusive", weekdays, utc(31, 18, 0), false},
+		{"before the window", weekdays, utc(31, 8, 59), false},
+		{"after the window", weekdays, utc(31, 23, 0), false},
+		{"weekend", weekdays, utc(29, 12, 0), false},
+		{"overnight, evening of the work day", overnight, utc(28, 23, 0), true},
+		{"overnight, morning after the work day", overnight, utc(29, 5, 0), true},
+		{"overnight, morning of the work day", overnight, utc(28, 5, 0), false},
+		{"overnight, evening of another day", overnight, utc(29, 23, 0), false},
+		{"overnight, after the window", overnight, utc(29, 6, 0), false},
+		{"new york: 13:00 UTC is 09:00 EDT", newYork, utc(31, 13, 0), true},
+		{"new york: 12:00 UTC is 08:00 EDT", newYork, utc(31, 12, 0), false},
+		{"new york: 22:00 UTC is 18:00 EDT", newYork, utc(31, 22, 0), false},
+		{"new york: a UTC Tuesday that is still Monday there", newYork, utc(30, 23, 0), false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.s.InWorkHours(c.t); got != c.want {
+				t.Fatalf("InWorkHours(%s) = %v, want %v", c.t, got, c.want)
+			}
+			want := 5 * time.Minute
+			if !c.want {
+				want = DefaultOffHoursPollInterval
+			}
+			if got := c.s.PollIntervalAt(c.t); got != want {
+				t.Fatalf("PollIntervalAt(%s) = %s, want %s", c.t, got, want)
+			}
+		})
+	}
+	if got := overnight.WorkHoursDescription(); got != "22:00-06:00 fri, UTC" {
+		t.Fatalf("description: %q", got)
+	}
+}
+
+func TestDescribeDays(t *testing.T) {
+	days := func(names ...string) map[time.Weekday]bool {
+		m := map[time.Weekday]bool{}
+		for _, n := range names {
+			for _, w := range weekdayNames {
+				if w.name == n {
+					m[w.day] = true
+				}
+			}
+		}
+		return m
+	}
+	for want, in := range map[string][]string{
+		"mon-fri":     {"mon", "tue", "wed", "thu", "fri"},
+		"sat,sun":     {"sat", "sun"},
+		"mon,wed,fri": {"mon", "wed", "fri"},
+		"mon-wed,sun": {"mon", "tue", "wed", "sun"},
+		"mon-sun":     {"mon", "tue", "wed", "thu", "fri", "sat", "sun"},
+	} {
+		if got := describeDays(days(in...)); got != want {
+			t.Errorf("describeDays(%v) = %q, want %q", in, got, want)
+		}
+	}
+}
