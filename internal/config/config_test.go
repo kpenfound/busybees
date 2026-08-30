@@ -149,7 +149,7 @@ func TestDefaults(t *testing.T) {
 		t.Fatalf("state dir: %s", cfg.StateDir())
 	}
 	l := cfg.Labels()
-	if l.Ready != "bees:ready" || l.Base != "bees" || len(l.All()) != 18 {
+	if l.Ready != "bees:ready" || l.Base != "bees" || len(l.All()) != 19 {
 		t.Fatalf("labels: %+v", l)
 	}
 }
@@ -215,30 +215,35 @@ func TestKindLabels(t *testing.T) {
 	if l.Proposal != "bees:proposal" {
 		t.Fatalf("proposal label: %q", l.Proposal)
 	}
-	// A proposal is a kind label: it sits next to bees:feature and carries
-	// neither a state nor a size, so labelling one must never clear it.
-	for _, name := range []string{"state", "size"} {
-		list := l.StateLabels()
-		if name == "size" {
-			list = l.SizeLabels()
-		}
-		if slices.Contains(list, l.Proposal) {
-			t.Errorf("%s is a %s label", l.Proposal, name)
-		}
+	if l.Priority != "bees:priority" {
+		t.Fatalf("priority label: %q", l.Priority)
 	}
-	// `bees init` and `bees labels sync` create it.
-	var found bool
-	for _, spec := range l.All() {
-		if spec.Name != l.Proposal {
-			continue
+	// A kind label sits next to the state machine: it carries neither a
+	// state nor a size, so labelling an issue must never clear it.
+	for _, kind := range []string{l.Proposal, l.Priority} {
+		for _, name := range []string{"state", "size"} {
+			list := l.StateLabels()
+			if name == "size" {
+				list = l.SizeLabels()
+			}
+			if slices.Contains(list, kind) {
+				t.Errorf("%s is a %s label", kind, name)
+			}
 		}
-		found = true
-		if spec.Color == "" || spec.Description == "" {
-			t.Errorf("%s: colour %q description %q", spec.Name, spec.Color, spec.Description)
+		// `bees init` and `bees labels sync` create it.
+		var found bool
+		for _, spec := range l.All() {
+			if spec.Name != kind {
+				continue
+			}
+			found = true
+			if spec.Color == "" || spec.Description == "" {
+				t.Errorf("%s: colour %q description %q", spec.Name, spec.Color, spec.Description)
+			}
 		}
-	}
-	if !found {
-		t.Errorf("%s missing from All()", l.Proposal)
+		if !found {
+			t.Errorf("%s missing from All()", kind)
+		}
 	}
 }
 
