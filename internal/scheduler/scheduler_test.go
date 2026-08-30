@@ -339,6 +339,7 @@ type harness struct {
 	sched *Scheduler
 	clone string
 	logs  *syncBuffer
+	clock *fakeClock // nil unless the harness was built with a fixed clock
 }
 
 // syncBuffer collects log output; workers log concurrently.
@@ -357,7 +358,6 @@ func (b *syncBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.buf.String()
-	clock *fakeClock // nil unless the harness was built with a fixed clock
 }
 
 func newHarness(t *testing.T, toml string) *harness {
