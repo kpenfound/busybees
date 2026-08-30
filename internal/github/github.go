@@ -68,18 +68,18 @@ type Author struct {
 
 // Issue is a GitHub issue.
 type Issue struct {
-	Number    int     `json:"number"`
-	Title     string  `json:"title"`
-	Body      string  `json:"body"`
-	State     string  `json:"state"`
-	URL       string  `json:"url"`
-	Labels    []Label `json:"labels"`
+	Number    int           `json:"number"`
+	Title     string        `json:"title"`
+	Body      string        `json:"body"`
+	State     string        `json:"state"`
+	URL       string        `json:"url"`
+	Labels    []Label       `json:"labels"`
 	Milestone *MilestoneRef `json:"milestone"`
-	Author    Author    `json:"author"`
-	Assignees []Author  `json:"assignees"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
-	Comments  []Comment `json:"comments,omitempty"`
+	Author    Author        `json:"author"`
+	Assignees []Author      `json:"assignees"`
+	CreatedAt time.Time     `json:"createdAt"`
+	UpdatedAt time.Time     `json:"updatedAt"`
+	Comments  []Comment     `json:"comments,omitempty"`
 }
 
 // MilestoneTitle returns the milestone title or "".
@@ -133,11 +133,11 @@ type PR struct {
 	MergeCommit *struct {
 		OID string `json:"oid"`
 	} `json:"mergeCommit"`
-	Author    Author   `json:"author"`
-	Assignees []Author `json:"assignees"`
+	Author    Author        `json:"author"`
+	Assignees []Author      `json:"assignees"`
 	Milestone *MilestoneRef `json:"milestone"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	CreatedAt time.Time     `json:"createdAt"`
+	UpdatedAt time.Time     `json:"updatedAt"`
 	// HeadSHA is the commit the PR's head branch points at (headRefOid).
 	HeadSHA string `json:"headRefOid"`
 	// Mergeable is GitHub's verdict on merging the PR into its base:
@@ -778,7 +778,7 @@ type SubIssueSummary struct {
 type IssueDetails struct {
 	ID        int64           `json:"id"` // database id, needed for sub-issue calls
 	SubIssues SubIssueSummary `json:"sub_issues_summary"`
-	Milestone *MilestoneRef `json:"milestone"`
+	Milestone *MilestoneRef   `json:"milestone"`
 }
 
 // MilestoneTitle returns the milestone title or "".
