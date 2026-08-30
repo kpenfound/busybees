@@ -475,17 +475,6 @@ DAGGER_X_RELEASE=v1.0.0-beta.11 dagger check go:test-all
 The `DAGGER_X_RELEASE` variable pins the Dagger release used for this
 repository; set it in your shell.
 
-GitHub Actions runs the same checks on every pull request and on every push to
-`main`, from `.github/workflows/check.yml`. It has two jobs: `go` builds, vets
-and tests with nothing but the toolchain (`go build ./...`, `go vet ./...`,
-`go test ./...`), and `dagger` installs the pinned CLI and runs `dagger check`,
-so lint and `generate` drift are gated too. A pull request is checked on the
-merge commit GitHub prepares for it, which is the artefact that actually lands,
-so a merge that silently drops lines fails even when both branches build.
-`go` and `dagger` are the required checks on `main`: a person turns that on in
-the repository's branch protection settings, and it is what the pre-review
-checks stage of the developer worker reads.
-
 ## Crash recovery (`bees kill`)
 
 The runner writes the session's pid to `<session dir>/pid` right after starting
