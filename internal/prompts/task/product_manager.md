@@ -104,4 +104,4 @@ _No new mail._
    adjust feature issues as needed; close feature issues whose sub-issues are all done.
    Keep the backlog healthy but small.
 5. Update your notes file.
-6. `bees done done -m "..."` or `bees done idle`.
+6. `done` with `status: done` and a note, or `status: idle`.

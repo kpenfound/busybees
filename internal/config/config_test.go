@@ -1,8 +1,11 @@
 package config
 
 import (
+	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -145,8 +148,37 @@ func TestDefaults(t *testing.T) {
 		t.Fatalf("state dir: %s", cfg.StateDir())
 	}
 	l := cfg.Labels()
-	if l.Ready != "bees:ready" || l.Base != "bees" || len(l.All()) != 12 {
+	if l.Ready != "bees:ready" || l.Base != "bees" || len(l.All()) != 17 {
 		t.Fatalf("labels: %+v", l)
+	}
+}
+
+func TestSizeLabels(t *testing.T) {
+	l := LabelsFor("bees")
+	want := []string{"bees:size/xs", "bees:size/s", "bees:size/m", "bees:size/l", "bees:size/xl"}
+	if got := l.SizeLabels(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("size labels: got %v want %v", got, want)
+	}
+	// Every size label is created by `bees init` / `bees labels sync`.
+	all := map[string]bool{}
+	for _, spec := range l.All() {
+		all[spec.Name] = true
+	}
+	for _, name := range want {
+		if !all[name] {
+			t.Errorf("%s missing from All()", name)
+		}
+	}
+	// Sizes are orthogonal to states: the two sets must not overlap, or
+	// setting a state would clear the size.
+	states := map[string]bool{}
+	for _, s := range l.StateLabels() {
+		states[s] = true
+	}
+	for _, s := range l.SizeLabels() {
+		if states[s] {
+			t.Errorf("%s is both a state and a size label", s)
+		}
 	}
 }
 
@@ -167,6 +199,22 @@ func TestValidation(t *testing.T) {
 	for name, body := range cases {
 		if _, err := Load(writeConfig(t, body)); err == nil {
 			t.Errorf("%s: expected an error", name)
+		}
+	}
+}
+
+// The built-in server's name is reserved: a bees.toml entry would silently
+// replace the tools every session depends on.
+func TestReservedMCPServerName(t *testing.T) {
+	for _, scope := range []string{"global", "roles.developer"} {
+		body := "version = 1\n[project]\nrepo = \"a/b\"\n[" + scope + ".mcp." + BuiltinMCPServer + "]\ncommand = \"mine\"\n"
+		_, err := Load(writeConfig(t, body))
+		if err == nil {
+			t.Fatalf("%s: expected an error", scope)
+		}
+		want := `mcp server name "bees" is reserved for the built-in server`
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: error = %v, want it to mention %s", scope, err, want)
 		}
 	}
 }
@@ -288,6 +336,55 @@ func TestTemplateUncommented(t *testing.T) {
 			t.Errorf("%s: commented defaults %+v differ from explicit %+v", r, a, b)
 		}
 	}
+}
+
+// exampleTOML is the reference config committed at the repository root and
+// linked from the README. It must stay byte-for-byte what the template
+// renders, so nobody starts from a config that is missing keys.
+const exampleTOML = "../../bees.example.toml"
+
+var update = flag.Bool("update", false, "rewrite bees.example.toml from the template")
+
+func TestExampleTOMLInSync(t *testing.T) {
+	want, err := Template(TemplateData{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *update {
+		if err := os.WriteFile(exampleTOML, []byte(want), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Log("rewrote " + exampleTOML)
+		return
+	}
+	got, err := os.ReadFile(exampleTOML)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != want {
+		t.Errorf("bees.example.toml is out of date with internal/config/template.go.\n"+
+			"Regenerate it with: go test ./internal/config -update\n%s",
+			firstDiff(string(got), want))
+	}
+}
+
+// firstDiff reports the first line where got and want differ, with a little
+// context, so the failure says what drifted instead of dumping 250 lines.
+func firstDiff(got, want string) string {
+	g, w := strings.Split(got, "\n"), strings.Split(want, "\n")
+	for i := 0; i < len(g) || i < len(w); i++ {
+		gl, wl := "<end of file>", "<end of file>"
+		if i < len(g) {
+			gl = g[i]
+		}
+		if i < len(w) {
+			wl = w[i]
+		}
+		if gl != wl {
+			return fmt.Sprintf("first difference at line %d:\n  file:     %q\n  template: %q", i+1, gl, wl)
+		}
+	}
+	return ""
 }
 
 func TestParseGitHubRepo(t *testing.T) {
@@ -522,5 +619,45 @@ func TestDescribeDays(t *testing.T) {
 		if got := describeDays(days(in...)); got != want {
 			t.Errorf("describeDays(%v) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestParseWithoutFile(t *testing.T) {
+	// The template init renders before it writes anything: empty repo and
+	// branch, no file on disk.
+	text, err := Template(TemplateData{Remote: DefaultRemote, Label: DefaultLabel})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "bees.toml")
+	cfg, err := Parse(text, path)
+	if err != nil {
+		t.Fatalf("rendered template does not parse: %v", err)
+	}
+	if cfg.Path != path {
+		t.Fatalf("Path = %q, want %q", cfg.Path, path)
+	}
+	if cfg.Project.Repo != "" || cfg.Project.DefaultBranch != "" {
+		t.Fatalf("repo/branch should be unset: %+v", cfg.Project)
+	}
+	if cfg.Scheduler.MaxDevelopers != 1 {
+		t.Fatalf("defaults not applied: %+v", cfg.Scheduler)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("Parse must not touch %s: %v", path, err)
+	}
+
+	// An unknown key fails the same way it does through Load.
+	bad := "version = 1\n[project]\nnope = true\n"
+	_, parseErr := Parse(bad, path)
+	_, loadErr := Load(writeConfig(t, bad))
+	if parseErr == nil || loadErr == nil {
+		t.Fatalf("unknown key accepted: parse=%v load=%v", parseErr, loadErr)
+	}
+	if !strings.Contains(parseErr.Error(), "unknown keys: project.nope") {
+		t.Fatalf("Parse error: %v", parseErr)
+	}
+	if !strings.Contains(loadErr.Error(), "unknown keys: project.nope") {
+		t.Fatalf("Load error: %v", loadErr)
 	}
 }

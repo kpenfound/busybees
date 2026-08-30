@@ -24,7 +24,7 @@ runs two sessions at once, and no singleton re-runs faster than
 stay well inside GitHub's API limits; see the API budget in
 [configuration.md](configuration.md#api-budget)).
 
-Roles report how a session ended with `bees done <status>`; the orchestrator
+Roles report how a session ended with the `done` tool; the orchestrator
 treats a session that ends without an outcome, times out, or exits with an
 error as `failed`.
 
@@ -51,11 +51,17 @@ when rendered). The orchestrator uses it to tell bee comments from human ones
 when it collects PR feedback for the developer.
 
 Roles interact with GitHub through the already-authenticated `gh` CLI, and
-with each other only through the local mailbox (`bees mail send`). Every issue
-or PR a role creates must match the filter: issues are created with
-`bees issue create`, which applies the filter label and assignee itself, and
+with each other only through the local mailbox (the `mail_send` tool). Every
+issue or PR a role creates must match the filter: issues are created with the
+`issue_create` tool, which applies the filter label and assignee itself, and
 for `gh pr create` the prompts include the exact flags to pass (`--label "bees"`
 plus `--assignee` when configured).
+
+`mail_send`, `mail_list`, `issue_create`, `issue_link` and `done` are MCP tools
+served to every session by the built-in `bees` server, so a role calls them with
+arguments instead of composing a command line; the equivalent `bees` commands
+(`bees mail send`, `bees issue create`, `bees issue link`, `bees done`) still
+exist and behave identically. See [cli.md](cli.md#bees-mcp-serve-sessions).
 
 ### Notes files
 
@@ -86,12 +92,12 @@ feedback issues are excluded from this table); open PRs; the **fresh
 notes. It works from a detached checkout of the default branch and is told to
 read the codebase and README to understand what exists.
 
-**Does on GitHub:** creates feature issues with `bees issue create --feature`
-(`bees` + `bees:feature`, no state label; `--related <feedback issue>` when it
+**Does on GitHub:** creates feature issues with `issue_create` (`feature: true`
+→ `bees` + `bees:feature`, no state label; `related: <feedback issue>` when it
 comes from feedback, so the milestone is inherited), describing user-visible
 outcomes rather than implementation; creates work items as sub-issues with
-`bees issue create --parent <feature>`; attaches existing issues with
-`bees issue link`; comments on feature and feedback issues; adds
+`issue_create` (`parent: <feature>`); attaches existing issues with
+`issue_link`; comments on feature and feedback issues; adds
 `bees:question`; closes feature issues that are done or no longer make sense,
 with a comment. It **never creates, edits or closes milestones** — people
 manage those; the product manager reads them as a priority signal and, if it
@@ -107,9 +113,11 @@ enter the workflow state machine. For each fresh one it:
    (ending with the `<!-- bees:product_manager -->` marker), adds the
    `bees:question` label, and stops working on that feature;
 3. otherwise breaks it into work items — one issue per pull-request-sized
-   piece, created with `bees issue create --parent <feature>` (`--bug` for
+   piece, created with `issue_create` (`parent: <feature>`, `bug: true` for
    bugs), which makes each a native GitHub **sub-issue** of the feature with
-   `bees` + `bees:triage` and the feature's milestone; ordered with
+   `bees` + `bees:triage` and the feature's milestone (it may pre-size one
+   with `--label "bees:size/s"`, a hint the project manager confirms during
+   triage — see [Sizing](workflow.md#sizing)); ordered with
    dependencies noted — then comments the list of work items on the feature
    issue (with the marker) so it is not re-presented until something changes;
 4. closes the feature issue when all its sub-issues are closed (the progress
@@ -155,17 +163,19 @@ is told to read the parent feature for context.
 **Does on GitHub:** rewrites triage work items (context, scope, acceptance
 criteria, pointers to code, testing expectations) with `gh issue edit`,
 keeping the author's intent; splits oversized work items with
-`bees issue create --ready --parent <feature>` (or `--related <original>` when
+`issue_create` (`ready: true`, `parent: <feature>`, or `related: <original>` when
 there is no parent feature), closing the original with a comment; moves
 refined work items `bees:triage` →
-`bees:ready`; moves a work item to `bees:blocked` when it has asked the
+`bees:ready` with exactly one **size label** (`bees:size/xs` … `bees:size/l`)
+added in the same edit, splitting anything that sizes up as `xl` instead of
+labelling it; moves a work item to `bees:blocked` when it has asked the
 product manager; closes invalid or duplicate work items with a comment. It
 never edits feature or feedback issues — those belong to the product
 manager — and never touches milestones. It is the only role besides the
 orchestrator that moves state labels.
 
 **Mail:** receives developer questions; may send to `product_manager`
-(product decisions) and `developer` (answers, always with `--issue`). Prompts
+(product decisions) and `developer` (answers, always with `issue`). Prompts
 tell it to answer mail first, since developers are blocked on it, and to give
 decisions rather than options.
 
@@ -192,7 +202,7 @@ plain `git push` just works.
 **Does on GitHub:** pushes the branch; opens the PR with `gh pr create` (body
 must contain `Closes #N`, a summary, and how it was tested) or updates the
 existing one; files out-of-scope bugs with
-`bees issue create --bug --related <issue>` (a `bees:bug` work item in triage,
+`issue_create` (`bug: true`, `related: <issue>` — a `bees:bug` work item in triage,
 in the same milestone as the issue it was working on); replies
 on GitHub to every human review comment it addresses (`gh api
 repos/<repo>/pulls/<pr>/comments/<id>/replies` for inline comments, `gh pr
@@ -208,8 +218,8 @@ told to ask one precise question and stop rather than guess.
 
 | Status | Orchestrator |
 |---|---|
-| `pr-opened --pr N` | Locates the PR (by number, else by branch), labels it `bees` (+ assignee), records it, moves the issue to `bees:review`, runs the reviewer. If the PR cannot be found: escalate. |
-| `pr-updated --pr N` | Same as above; used after addressing review feedback. |
+| `pr-opened` (with `pr`) | Locates the PR (by number, else by branch), labels it `bees` (+ assignee), records it, moves the issue to `bees:review`, runs the reviewer. If the PR cannot be found: escalate. |
+| `pr-updated` (with `pr`) | Same as above; used after addressing review feedback. |
 | `question` | Verifies a message to the project manager was actually sent during the session, then labels the issue `bees:blocked` and frees the worker. No message: escalate. |
 | `failed` (or no outcome / timeout / error) | Escalates to `bees:needs-human` with the note. |
 
@@ -222,16 +232,18 @@ Reviews one pull request and decides whether it is mergeable. It also owns
 merging: `auto_merge` and its companions live under `[roles.reviewer]` (see
 [configuration.md](configuration.md#rolesreviewer-only-auto-merge)).
 
-**Given:** the PR (title, body, branch, author), the linked issue, its own
+**Given:** the PR (title, body, branch, author), the linked issue, the
+issue's **size** and a sentence on the scrutiny it warrants (see
+[Sizing](workflow.md#sizing)), its own
 feedback from previous rounds, the round number and limit, its notes. It runs
 in the same worktree as the developer for that issue, fast-forwarded to the
 latest push, so it can run the tests and exercise the change.
 
 **Does on GitHub:** reads (`gh pr diff`); files unrelated bugs with
-`bees issue create --bug --related <issue>` (inheriting the issue's milestone).
+`issue_create` (`bug: true`, `related: <issue>`, inheriting the issue's milestone).
 It does **not** submit a GitHub review, push to the branch, or change labels.
 
-**Mail:** may send to `developer` only, with `--pr` and `--issue`, one
+**Mail:** may send to `developer` only, with `pr` and `issue`, one
 consolidated message per round listing every point with file/line and the
 expected change.
 
@@ -287,8 +299,8 @@ repository's documentation (and its notes) how to install, test and launch
 the application.
 
 **Does on GitHub:** files bug issues with
-`bees issue create --bug --related <issue the merged PR closed>` (`bees` +
-`bees:bug` + `bees:triage`, in that issue's milestone; `--related` is omitted
+`issue_create` (`bug: true`, `related: <issue the merged PR closed>` → `bees` +
+`bees:bug` + `bees:triage`, in that issue's milestone; `related` is omitted
 when the bug is not tied to a recent change), with reproduction steps,
 expected vs actual behaviour and severity, after searching for existing
 reports; comments on an existing report rather than duplicating it.

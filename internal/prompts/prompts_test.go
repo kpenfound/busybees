@@ -40,7 +40,7 @@ func TestRenderAllRoles(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s system: %v", role, err)
 		}
-		for _, want := range []string{"busybees", Title(role), "bees mail send", "bees done", "custom instructions here", "--label \"bees\" --assignee \"kyle\"", "/s/notes/x.md"} {
+		for _, want := range []string{"busybees", Title(role), "`mail_send`", "`done`", "`issue_create`", "custom instructions here", "--label \"bees\" --assignee \"kyle\"", "/s/notes/x.md"} {
 			if !strings.Contains(sys, want) {
 				t.Errorf("%s system prompt missing %q", role, want)
 			}
@@ -67,7 +67,7 @@ func TestRoleSpecifics(t *testing.T) {
 	if !strings.Contains(pjm, "parent feature: #12 Exports") {
 		t.Fatalf("project manager task missing parent: %s", pjm)
 	}
-	if !strings.Contains(dev, "please fix") || !strings.Contains(dev, "bees done pr-updated --pr 9") {
+	if !strings.Contains(dev, "please fix") || !strings.Contains(dev, "`status: pr-updated`, `pr: 9`") {
 		t.Fatalf("developer task: %s", dev)
 	}
 	d := sample()
@@ -109,5 +109,46 @@ func TestRoleSpecifics(t *testing.T) {
 	}
 	if strings.Contains(sys, "Additional instructions") {
 		t.Fatal("empty custom prompt should not add a section")
+	}
+}
+
+func TestReviewerPromptStatesTheSize(t *testing.T) {
+	d := sample()
+	d.Size = "xs"
+	sys, err := System(config.RoleReviewer, d, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(sys, "this is an `xs` change") || !strings.Contains(sys, "do not ask for restructuring") {
+		t.Fatalf("reviewer prompt missing the size:\n%s", sys)
+	}
+	if strings.Contains(sys, "crosses subsystems") {
+		t.Fatalf("reviewer prompt mixes in another size:\n%s", sys)
+	}
+	d.Size = "l"
+	sys, _ = System(config.RoleReviewer, d, "")
+	if !strings.Contains(sys, "this is an `l` change") || !strings.Contains(sys, "crosses subsystems") {
+		t.Fatalf("reviewer prompt for l:\n%s", sys)
+	}
+	// An unsized issue says nothing about size.
+	sys, _ = System(config.RoleReviewer, sample(), "")
+	if strings.Contains(sys, "Size: this is") {
+		t.Fatalf("unsized reviewer prompt should not mention a size:\n%s", sys)
+	}
+}
+
+func TestManagerPromptsDescribeSizes(t *testing.T) {
+	pjm, err := System(config.RoleProjectManager, sample(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"bees:size/xs", "bees:size/s", "bees:size/m", "bees:size/l", "bees:size/xl", "split it instead of labelling it"} {
+		if !strings.Contains(pjm, want) {
+			t.Errorf("project manager prompt missing %q", want)
+		}
+	}
+	pm, _ := System(config.RoleProductManager, sample(), "")
+	if !strings.Contains(pm, `--label "bees:size/s"`) {
+		t.Errorf("product manager prompt should show pre-sizing:\n%s", pm)
 	}
 }

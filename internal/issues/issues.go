@@ -53,6 +53,20 @@ type Result struct {
 	Labels    []string
 }
 
+// String renders a created issue the way both `bees issue create` and the
+// issue_create tool report it.
+func (r Result) String() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "created #%d", r.Number)
+	if r.Parent > 0 {
+		fmt.Fprintf(&b, " (sub-issue of #%d)", r.Parent)
+	}
+	if r.Milestone != "" {
+		fmt.Fprintf(&b, " milestone %q", r.Milestone)
+	}
+	return b.String()
+}
+
 // Create creates an issue according to opts.
 func Create(ctx context.Context, gh *github.Client, filter config.Filter, labels config.Labels, opts Options) (Result, error) {
 	if strings.TrimSpace(opts.Title) == "" {

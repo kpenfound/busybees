@@ -195,6 +195,10 @@ type Filter struct {
 // LabelRequired reports whether the label is part of the visibility gate.
 func (f Filter) LabelRequired() bool { return f.RequireLabel == nil || *f.RequireLabel }
 
+// BuiltinMCPServer is the name of the MCP server bees adds to every session
+// (`bees mcp serve`). The name is reserved: bees.toml may not define it.
+const BuiltinMCPServer = "bees"
+
 // MCPServer configures one MCP server. Either Command (stdio) or URL (http/sse)
 // must be set.
 type MCPServer struct {
@@ -576,7 +580,18 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	text := string(data)
+	return Parse(string(data), path)
+}
+
+// Parse validates the text of a bees.toml as if it had been read from path,
+// which is used for the Config's location and in error messages but is not
+// read and need not exist. `bees init` parses the template it rendered before
+// writing anything to disk.
+func Parse(text, path string) (*Config, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
 	version, err := fileVersion(text)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
@@ -825,6 +840,9 @@ func (c *Config) Validate() error {
 			errs = append(errs, fmt.Sprintf("%s.merge_method must be squash, merge or rebase", scope))
 		}
 		for name, m := range rs.MCP {
+			if name == BuiltinMCPServer {
+				errs = append(errs, fmt.Sprintf("%s.mcp.%s: mcp server name %q is reserved for the built-in server", scope, name, BuiltinMCPServer))
+			}
 			if m.Command == "" && m.URL == "" {
 				errs = append(errs, fmt.Sprintf("%s.mcp.%s: either command or url is required", scope, name))
 			}

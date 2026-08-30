@@ -7,7 +7,7 @@ and [cli.md](cli.md).
 ## Package layout
 
 ```
-cmd/bees/            CLI (cobra): init, run, tick, exec, status, mail, issue, done, config, prompts, labels
+cmd/bees/            CLI (cobra): init, run, tick, exec, status, mail, issue, done, mcp, config, prompts, labels
 internal/config/     bees.toml schema, defaults, validation, global/role merging, label names, init template
 internal/github/     thin wrapper around the gh CLI (issues, PRs, labels, milestones (read), sub-issues, required checks, merge, comment, PR activity)
 internal/issues/     creates issues the factory way: filter labels/assignee, kind + state labels, sub-issue of --parent, inherited milestone
@@ -16,6 +16,7 @@ internal/workspace/  temporary git worktrees created from the main clone
 internal/skills/     clones skill repos by git URL and exposes them as claude plugin dirs
 internal/session/    runs one headless `claude -p` session and collects its result and outcome
 internal/prompts/    embedded base prompts (system/*.md, task/*.md) and their renderer
+internal/mcpserver/  the built-in MCP server (`bees mcp serve`): mail, issue and outcome tools, filtered by role
 internal/state/      state directory: notes, per-issue bookkeeping, singleton run times, status.json
 internal/scheduler/  the orchestrator: poll, human feedback, reconcile, developer worker pool, singleton roles
 internal/procs/      find and stop bees sessions after a crash (`bees kill`)
@@ -69,6 +70,8 @@ A full pass is:
 3. **reconcile** – label transitions driven by local state:
    - an issue with no state label gets `bees:triage` (and the `bees` label if
      the filter did not require it);
+   - a `bees:ready` issue with no size label gets `bees:size/m`, the default
+     size (see [Sizing](workflow.md#sizing));
    - a `bees:blocked` issue with unread developer mail about it becomes
      `bees:ready`; with unread project-manager mail it becomes `bees:triage`.
 4. **dispatch developers** – candidates are unowned `in-progress` and `review`
@@ -101,10 +104,10 @@ A full pass is:
    does the same for its issue into `Data.Parent`.
 
    **Sub-issues and milestones.** Work items are native GitHub sub-issues of
-   their feature. Roles create issues through `bees issue create`
+   their feature. Roles create issues through the `issue_create` tool
    (`internal/issues`): it labels for the filter and kind/state, resolves the
    milestone as explicit → parent/related issue's milestone (`GetIssueDetails`)
-   → `filter.milestone`, creates with `gh issue create`, and for `--parent`
+   → `filter.milestone`, creates with `gh issue create`, and for a `parent`
    attaches the child with `POST repos/../issues/<parent>/sub_issues`
    (`AddSubIssue`, which needs the child's database id from
    `GetIssueDetails`). The factory never creates, edits or closes milestones;
@@ -245,7 +248,7 @@ claude -p \
   --max-turns <n> --name bees-<session name> \
   --add-dir <state_dir> \
   [--allowedTools ...] [--disallowedTools ...] \
-  [--mcp-config <session>/mcp.json --strict-mcp-config] \
+  --mcp-config <session>/mcp.json --strict-mcp-config \
   [--plugin-dir <skill plugin dir> ...]
 ```
 
@@ -254,10 +257,11 @@ The task prompt is written to stdin. Each line of stream-json is appended to
 text, `is_error`, subtype, turn count, cost and claude session id. stderr is
 saved to `stderr.log` when non-empty, and `result.json` summarises the run.
 
-- **Outcome.** The session ends by running `bees done <status> [-m note]
-  [--pr N]`, which writes `<session>/outcome.json`. The runner reads it after
-  claude exits; a missing file is reported as `HasOutcome = false` and the
-  scheduler treats it as `failed`.
+- **Outcome.** The session ends by calling the `done` tool (or running
+  `bees done <status>`), which writes `<session>/outcome.json` through
+  `session.Report` — the shared validation for both paths. The runner reads the
+  file after claude exits; a missing one is reported as `HasOutcome = false` and
+  the scheduler treats it as `failed`.
 - **Retries.** `runSession` is the single-attempt primitive; every worker calls
   it through `runSessionWithRetry`. `classifyFailure` (in
   `internal/scheduler/sessions.go`) splits failures into *infrastructure* — a
@@ -278,7 +282,8 @@ saved to `stderr.log` when non-empty, and `result.json` summarises the run.
   `GIT_CONFIG_COUNT` is already set, `GIT_CONFIG_*` entries for
   `push.autoSetupRemote=true` / `push.default=current`. The directory holding
   the `bees` binary is prepended to `PATH` so `bees mail`, `bees issue` and
-  `bees done` resolve inside the session.
+  `bees done` resolve inside the session. The `BEES_*` variables are also passed
+  explicitly to the built-in MCP server rather than left to inheritance.
 - **Prompts.** `prompts.System` renders `system/common.md` + `system/<role>.md`
   and appends the role's custom text from `bees.toml`; `prompts.Task` renders
   `task/<role>.md`. Both take a single `prompts.Data` struct (project, filter,
@@ -289,10 +294,18 @@ saved to `stderr.log` when non-empty, and `result.json` summarises the run.
   `~/.cache/bees/plugins/<name>/` whose `skills/` symlinks to the skill or
   skills collection. Each becomes a `--plugin-dir`, so the project worktree is
   never modified.
-- **MCP.** Servers from the resolved role are written to `mcp.json`
-  (`$VAR` in `env` and `headers` expanded from the bees process environment)
-  and passed with `--strict-mcp-config`, so sessions see exactly the servers
-  in `bees.toml` and nothing from the user's own settings.
+- **MCP.** `mcp.json` is written for every session and always passed with
+  `--strict-mcp-config`, so a session sees exactly two things: the servers from
+  the resolved role (`$VAR` in `env` and `headers` expanded from the bees process
+  environment) and the built-in `bees` server — `<bees binary> mcp serve` over
+  stdio, with the session's `BEES_*` variables in its `env`. It serves the
+  factory's own operations (`mail_send`, `mail_list`, `issue_create`,
+  `issue_link`, `done`) as tools backed by the same `internal/mail`,
+  `internal/issues` and `session.Report` code the CLI uses, so a session calls a
+  schema instead of composing a command line. The tool schemas depend on
+  `BEES_ROLE`: `done`'s `status` enum is the role's valid outcomes. The name
+  `bees` is reserved in `bees.toml`. See `internal/mcpserver` and
+  [cli.md](cli.md#bees-mcp-serve-sessions).
 - **Timeout.** The role's `timeout` bounds the command context; claude runs in
   its own process group and on expiry the whole group is `SIGKILL`ed so MCP
   servers die with it. The result is marked `TimedOut`.
@@ -431,6 +444,12 @@ The runner writes the session's pid to `<session dir>/pid` right after starting
 find the orphans: `procs.Find` merges the pid files with a `ps` scan restricted to
 processes whose executable is `claude` (directly or via an interpreter), cross-checking
 pid files against the scan so a reused pid is discarded rather than killed.
+Both sources are scoped to one factory: a scanned process counts only when its command
+line also references this state directory's `sessions/` (every session's argv carries
+`--append-system-prompt-file <sessions dir>/<session>/system-prompt.md`, matched as a
+path prefix and also in its `filepath.EvalSymlinks` form). Sessions of another project's
+factory are never reported, so `bees kill` run with one project's config cannot strand
+another project's issues.
 `procs.Kill` sends SIGTERM to the process group (sessions are started with
 `Setpgid`, so MCP servers and shells belong to it), waits `--grace`, then SIGKILL.
 The command then removes every worktree of the main clone that lives under the

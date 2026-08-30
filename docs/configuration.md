@@ -116,6 +116,19 @@ and `bees labels sync` create them in GitHub.
 | `bees:approved` | Reviewer approved; waiting for a human to merge |
 | `bees:needs-human` | The factory gave up; a person must step in |
 
+An issue also carries at most one **size label**, independently of its state.
+The project manager sets it when it moves a work item to `bees:ready`; the
+orchestrator adds `bees:size/m` to any ready issue that has none. See
+[Sizing](workflow.md#sizing).
+
+| Label | Meaning |
+|---|---|
+| `bees:size/xs` | One file, obvious change, no design |
+| `bees:size/s` | A few files, clear approach, existing tests cover it |
+| `bees:size/m` | A coherent feature slice touching several packages, needs new tests |
+| `bees:size/l` | Crosses subsystems or needs a design decision; near the limit for one PR |
+| `bees:size/xl` | Too big for one pull request — split it instead of labelling it |
+
 ## `[scheduler]`
 
 | Key | Type | Default | Description |
@@ -316,8 +329,14 @@ reused (they are not pulled automatically — delete the cache to refresh).
 ### MCP servers
 
 Servers are written to a per-session `--mcp-config` file and loaded with
-`--strict-mcp-config`, so sessions see exactly the servers configured here and none of
-the user's own.
+`--strict-mcp-config`, so a session sees exactly the servers configured here plus the
+built-in one, and none of the user's own.
+
+**`bees` is reserved.** Every session automatically gets a server called `bees`
+(`bees mcp serve`) carrying the factory's own tools — see
+[cli.md](cli.md#bees-mcp-serve-sessions). It needs no configuration and cannot be
+turned off; defining `[global.mcp.bees]` or `[roles.<role>.mcp.bees]` fails validation
+with *mcp server name "bees" is reserved for the built-in server*.
 
 | Key | Description |
 |---|---|

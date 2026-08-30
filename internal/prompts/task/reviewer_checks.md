@@ -33,12 +33,13 @@ merged yet. Find out why and hand the developer a precise fix request.
 2. Distil the **main error message** and its cause. Ignore noise; the developer needs the
    one thing to fix, with file/line where possible, plus the command that reproduces it.
 3. Send it to the developer:
-   `bees mail send --to developer --pr {{.PR.Number}} --issue {{.Issue.Number}} --subject "Required check failed: <name>" --body-file <file>`
-   and report `bees done changes-requested`. The developer will push a fix and the checks
+   `mail_send` (`to: developer`, `pr: {{.PR.Number}}`, `issue: {{.Issue.Number}}`,
+   `subject: "Required check failed: <name>"`) and report `done` with
+   `status: changes-requested`. The developer will push a fix and the checks
    will run again.
 4. If the failure is clearly unrelated to the change (infrastructure, flakiness) and the
    CI system lets you re-run it (for GitHub Actions: `gh run rerun <run-id> --failed -R {{.Project.Repo}}`),
-   re-run it and report `bees done approved` so the orchestrator waits for the checks
+   re-run it and report `done` with `status: approved` so the orchestrator waits for the checks
    again. Do this at most once. If you cannot re-run it yourself, tell the developer to
    re-trigger it (for example with an empty commit) via the same mail command.
 {{if ge .Round .MaxRounds}}

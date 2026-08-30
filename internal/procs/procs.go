@@ -4,6 +4,12 @@
 // Sessions are found two ways: the pid file the runner writes in each
 // session directory, and a scan of the process table for claude processes
 // carrying the `--name bees-…` argument every session is started with.
+//
+// Both sources are scoped to one factory: a process only counts when its
+// command line also references this state directory's sessions directory
+// (every session's argv carries `--append-system-prompt-file
+// <sessions dir>/<session>/system-prompt.md`). Another project's sessions
+// are therefore never reported, however many factories share a machine.
 package procs
 
 import (
@@ -94,18 +100,27 @@ func FromPIDFiles(sessionsDir string, known map[int]Proc) ([]Proc, error) {
 }
 
 // FromPS scans the process table for bees sessions: processes whose
-// executable is claude and whose arguments carry the session marker.
-func FromPS(ctx context.Context) ([]Proc, error) {
+// executable is claude, whose arguments carry the session marker and whose
+// command line references sessionsDir, the sessions directory of this
+// factory's state directory.
+func FromPS(ctx context.Context, sessionsDir string) ([]Proc, error) {
 	cmd := exec.CommandContext(ctx, "ps", "-axo", "pid=,pgid=,command=")
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 	if err := cmd.Run(); err != nil {
 		return nil, err
 	}
-	return parsePS(stdout.String(), os.Getpid()), nil
+	return parsePS(stdout.String(), os.Getpid(), sessionsDir), nil
 }
 
-func parsePS(text string, self int) []Proc {
+// parsePS keeps the claude processes of the factory whose sessions live in
+// scope. scope is matched as a path prefix (with a trailing separator), so
+// a sibling directory such as `<state>/sessions-old` is not a hit. Because
+// macOS reports /private/var for /var and a state directory may be reached
+// through a symlink, both the path as given and its resolved form are
+// accepted.
+func parsePS(text string, self int, scope string) []Proc {
+	prefixes := scopePrefixes(scope)
 	var out []Proc
 	for _, line := range strings.Split(text, "\n") {
 		fields := strings.Fields(line)
@@ -124,9 +139,39 @@ func parsePS(text string, self int) []Proc {
 		if !isClaude(fields[2:]) || !strings.Contains(command, " "+SessionMarker) {
 			continue
 		}
+		if !inScope(command, prefixes) {
+			continue
+		}
 		out = append(out, Proc{PID: pid, PGID: pgid, Command: command, Source: "ps"})
 	}
 	return out
+}
+
+// scopePrefixes returns the path prefixes that attribute a command line to
+// this factory: the sessions directory as given and, when it differs, its
+// symlink-resolved form, each with a trailing separator.
+func scopePrefixes(sessionsDir string) []string {
+	if sessionsDir == "" {
+		return nil // no scope, no attribution: match nothing rather than everything
+	}
+	sep := string(os.PathSeparator)
+	out := []string{strings.TrimSuffix(sessionsDir, sep) + sep}
+	if resolved, err := filepath.EvalSymlinks(sessionsDir); err == nil {
+		if p := strings.TrimSuffix(resolved, sep) + sep; p != out[0] {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// inScope reports whether command references one of the prefixes.
+func inScope(command string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if strings.Contains(command, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // isClaude reports whether argv starts the claude executable, directly or
@@ -143,11 +188,12 @@ func isClaude(argv []string) bool {
 	return false
 }
 
-// Find merges pid-file and ps results, de-duplicated by pid. Pid files are
-// cross-checked against the process table when it is available.
+// Find merges pid-file and ps results, de-duplicated by pid, for the factory
+// whose sessions live in sessionsDir. Pid files are cross-checked against
+// the process table when it is available.
 func Find(ctx context.Context, sessionsDir string) ([]Proc, error) {
 	byPID := map[int]Proc{}
-	fromPS, psErr := FromPS(ctx)
+	fromPS, psErr := FromPS(ctx, sessionsDir)
 	var known map[int]Proc
 	if psErr == nil {
 		known = map[int]Proc{}

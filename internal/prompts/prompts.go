@@ -43,6 +43,11 @@ type Data struct {
 	Inbox          []mail.Message
 	PreviousRounds []mail.Message
 
+	// Size is the work item's size ("xs", "s", "m", "l", "xl"), empty when
+	// the issue carries no size label. Set for developer and reviewer
+	// sessions.
+	Size string
+
 	Issue        *github.Issue
 	PR           *github.PR
 	Issues       []github.Issue
