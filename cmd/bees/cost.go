@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/state"
+	"github.com/kpenfound/busybees/internal/text"
 	"github.com/spf13/cobra"
 )
 
@@ -174,5 +175,6 @@ func startOfDay(t time.Time) time.Time {
 
 // todayText is the `bees status` line summarising the day so far.
 func todayText(total costGroup) string {
-	return fmt.Sprintf("today: %d sessions, %d turns, $%.2f", total.Sessions, total.Turns, total.CostUSD)
+	return fmt.Sprintf("today: %s, %s, $%.2f",
+		text.Count(total.Sessions, "session"), text.Count(total.Turns, "turn"), total.CostUSD)
 }

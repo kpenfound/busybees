@@ -13,6 +13,7 @@ import (
 	"github.com/kpenfound/busybees/internal/prompts"
 	"github.com/kpenfound/busybees/internal/session"
 	"github.com/kpenfound/busybees/internal/state"
+	"github.com/kpenfound/busybees/internal/text"
 )
 
 // sessionSpec describes one session to run for a role.
@@ -168,7 +169,7 @@ func consolidateReason(notesLen, every, maxBytes int) string {
 	if maxBytes > 0 && notesLen > maxBytes {
 		return fmt.Sprintf("file is %s", byteSize(notesLen))
 	}
-	return fmt.Sprintf("every %d sessions", every)
+	return "every " + text.Count(every, "session")
 }
 
 // byteSize renders a notes size the way a person would say it.

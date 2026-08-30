@@ -30,6 +30,7 @@ GitHub repository. Read `docs/architecture.md` before changing the scheduler.
 - `internal/mail` — local JSON mailbox; the only channel between roles.
 - `internal/github` — thin `gh` wrapper. `internal/workspace` — git worktrees. `internal/skills` — skills by git URL → `--plugin-dir`.
 - `internal/state` — state dir layout (`mail/`, `notes/`, `sessions/`, `issues/`, `status.json`).
+- `internal/text` — small English renderings shared by every package; `text.Count(n, noun)` is the one plural helper (regular plurals only).
 
 ## Conventions
 
