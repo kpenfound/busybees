@@ -83,8 +83,8 @@ touch. All configured criteria are ANDed.
 |---|---|---|---|
 | `label` | string | `"bees"` | The factory's label. It is always the base name of the workflow state labels (`bees:triage`, `bees:ready`, ...) and, when `require_label` is true, the visibility gate. Must not contain spaces or colons. |
 | `require_label` | bool | `true` | When true, only items carrying `label` are visible. Set to false to let `assignee` and/or `milestone` alone define visibility. The factory still applies `label` to everything it creates or manages. |
-| `assignee` | string | `""` | Only see items assigned to this GitHub login. `"@me"` resolves to the authenticated `gh` user at startup. Everything the factory creates is assigned to this user so it stays visible. |
-| `milestone` | string | `""` | Only see items in this milestone (by title). Also the fallback milestone for issues the factory creates when neither `--parent` nor `--related` supplies one (see `bees issue create`). Milestones themselves are managed by people, never by bees. |
+| `assignee` | string | `""` | Only see items assigned to this GitHub login. `"@me"` resolves to the authenticated `gh` user at startup. Everything the factory creates is assigned to this user so it stays visible, pull requests included. |
+| `milestone` | string | `""` | Only see items in this milestone (by title). Also the fallback milestone for issues the factory creates when neither `--parent` nor `--related` supplies one (see `bees issue create`), and the milestone put on the pull requests the factory opens so they stay visible. Milestones themselves are managed by people, never by bees. |
 
 Setting `require_label = false` without `assignee` or `milestone` is rejected, because it
 would make every open issue in the repository visible.
