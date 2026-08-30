@@ -606,16 +606,101 @@ func TestReviewerChecksSection(t *testing.T) {
 	}
 }
 
+// flowed collapses a rendered prompt's line wrapping, so an assertion about a
+// sentence does not also pin where that sentence happens to break.
+func flowed(s string) string { return strings.Join(strings.Fields(s), " ") }
+
 // The developer runs the repository's own lint and tests before it pushes.
 func TestDeveloperRunsTheRepositoryChecksBeforePushing(t *testing.T) {
 	sys, err := System(config.RoleDeveloper, sample(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(sys, "run the repository's own lint and test") {
+	flow := flowed(sys)
+	if !strings.Contains(flow, "the repository's own lint and test commands") {
 		t.Fatalf("developer system prompt has no self-check step:\n%s", sys)
 	}
-	if !strings.Contains(sys, "Record the exact commands in your notes file") {
+	if !strings.Contains(flow, "Record the exact commands in your notes file") {
 		t.Fatalf("developer system prompt does not ask for the commands in the notes:\n%s", sys)
+	}
+	// Lint is the cheapest of the three self-checks but not the one review
+	// rounds are actually spent on. Across the 22 reviewer messages in the
+	// session archive not one cites a lint or format failure, while three ask
+	// for a regression guard that does not guard (PRs 129, 65 r2, 189) and six
+	// for a claim the change itself made false and left standing elsewhere
+	// (PRs 77, 108, 163, 184, 187, 188). Both belong in the step.
+	for _, want := range []string{
+		"Undo your fix and confirm the test you added fails",
+		"searching for the claim rather than for the sentence you edited",
+	} {
+		if !strings.Contains(flow, want) {
+			t.Errorf("developer self-check step is missing %q:\n%s", want, sys)
+		}
+	}
+}
+
+// Falling behind the default branch is the most common reason for an extra
+// review round: 6 of the 22 reviewer messages in the session archive carry a
+// "merge main" blocker (PRs 65 r2, 65 r3, 94 r2, 99, 134, 149), and PR 65 r3
+// exists for no other reason. The rule used to live only in the developer's
+// notes file, where only 36 of 96 archived sessions acted on it.
+func TestDeveloperMergesTheDefaultBranchBeforePushing(t *testing.T) {
+	sys, err := System(config.RoleDeveloper, sample(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	flow := flowed(sys)
+	if !strings.Contains(flow, "git fetch origin && git merge origin/main") {
+		t.Fatalf("developer system prompt does not ask for the merge:\n%s", sys)
+	}
+	// The command must name the remote-tracking ref. Nothing in the factory
+	// updates a worktree's local `main`: workspace.Manager.Fetch fetches in the
+	// main clone (advancing refs/remotes/origin/* only) and Manager.Branch
+	// creates the worktree from origin/<base>, so `git merge main` merges
+	// whatever a person last left checked out and usually says "Already up to
+	// date" while the branch is still behind.
+	if !strings.Contains(flow, "not the local `main` branch") {
+		t.Fatalf("developer system prompt does not warn off the local default branch:\n%s", sys)
+	}
+	// Two of those six rounds were spent on a merge git reported as clean:
+	// it resolves by context, so "no conflict" does not mean "still builds".
+	if !strings.Contains(flow, "A conflict-free merge is not a safe one") {
+		t.Fatalf("developer system prompt does not warn that a clean merge can still break:\n%s", sys)
+	}
+}
+
+// 0 questions and 0 developer messages in 96 archived sessions, while the one
+// session that did hit a self-contradicting issue (issue 76, PR 146) chose,
+// wrote both judgement calls into the PR body, and was approved with "both
+// judgement calls are right, keep them". Choosing is the default; asking parks
+// the issue and restarts the work in a session with none of this one's context.
+func TestDeveloperChoosesBeforeItAsks(t *testing.T) {
+	sys, err := System(config.RoleDeveloper, sample(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	flow := flowed(sys)
+	for _, want := range []string{
+		"Where the issue leaves you a choice, **make it**",
+		"record the choice in the pull request under a heading",
+		"Ask only when no reading is safe",
+		"starts the work again with the answer",
+	} {
+		if !strings.Contains(flow, want) {
+			t.Errorf("developer prompt does not prefer choosing to asking: missing %q:\n%s", want, sys)
+		}
+	}
+	// workIssue verifies the message was sent during the session before it
+	// honours `question`; without one the issue is escalated to a human
+	// (internal/scheduler/developer.go, OutcomeQuestion).
+	if !strings.Contains(flow, "**in this session**") {
+		t.Errorf("developer prompt does not say the question must be sent in this session:\n%s", sys)
+	}
+	// `failed` reaches escalate() like any unknown status, so the note becomes
+	// the comment a person reads on bees:needs-human. Saying only that the
+	// status exists is what left it unused in 96 sessions.
+	if !strings.Contains(flow, "`failed` stops the factory on this issue") ||
+		!strings.Contains(flow, "labels it `bees:needs-human` and posts your note") {
+		t.Errorf("developer prompt does not say what `failed` does:\n%s", sys)
 	}
 }
