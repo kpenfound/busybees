@@ -886,3 +886,48 @@ func TestQAReproducesBeforeFilingAndStartsNothingLive(t *testing.T) {
 		}
 	}
 }
+
+// The reviewer can be steered by mail like every other role: `bees mail send
+// --from human --to reviewer` is a documented channel, and until #197 the
+// reviewer's sessions were built with no inbox at all, so a message sat unread
+// forever. Three assertions: the mail section in both reviewer task templates
+// (checks mode included — a check is diagnosed in a session of its own, and a
+// person steering it writes to the same address), and the direction sentence
+// the other roles already carry in the system prompt.
+func TestReviewerReadsItsMail(t *testing.T) {
+	for _, name := range []string{config.RoleReviewer, "reviewer_checks"} {
+		task, err := TaskNamed(config.RoleReviewer, name, sample())
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		for _, want := range []string{"## Mail for you (1)", "Review round 1", "please fix"} {
+			if !strings.Contains(task, want) {
+				t.Errorf("%s task missing %q:\n%s", name, want, task)
+			}
+		}
+		d := sample()
+		d.Inbox = nil
+		empty, err := TaskNamed(config.RoleReviewer, name, d)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if !strings.Contains(empty, "## Mail for you (0)") || !strings.Contains(empty, "_No new mail._") {
+			t.Errorf("%s task has no empty mail section:\n%s", name, empty)
+		}
+	}
+	sys, err := System(config.RoleReviewer, sample(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Mail from `human` is not a question but a direction",
+		"anything\naddressed to `reviewer`",
+	} {
+		if !strings.Contains(sys, want) {
+			t.Errorf("reviewer system prompt missing %q:\n%s", want, sys)
+		}
+	}
+	if strings.Contains(sys, "You may send mail to: `developer`.") {
+		t.Errorf("reviewer system prompt still describes mail as send-only:\n%s", sys)
+	}
+}

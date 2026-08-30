@@ -16,6 +16,15 @@ review: find out why the check failed and hand the developer a precise fix reque
   {{.Link}}{{end}}
 {{- end}}
 
+## Mail for you ({{len .Inbox}})
+{{if .Inbox}}
+{{- range .Inbox}}
+{{formatMail .}}
+{{- end}}
+{{else}}
+_No new mail._
+{{end}}
+
 ## Your notes
 
 {{if .Notes}}{{.Notes}}{{else}}_Empty._{{end}}
