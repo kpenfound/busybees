@@ -129,7 +129,9 @@ A full pass is:
    and `snapshot.features`: `freshIssues` fetches comments (`gh issue view`)
    only for issues whose `updatedAt` is later than the product manager's last
    run, and keeps those where `Issue.AwaitingBee()` is true — the human side
-   (creation or a comment without the `<!-- bees:` marker) had the last word.
+   (creation, or a comment whose last line is not a `<!-- bees:<role> -->`
+   marker) had the last word. A person quoting the bee they are answering is
+   still a person: the marker only counts where a bee puts it, at the end.
    `gh` reports comment times at second resolution, so a tie is broken by the
    comments' order in the list rather than by comparing timestamps: a person
    commenting in the same second as a bee is still awaiting a bee. A fresh
