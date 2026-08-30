@@ -20,7 +20,13 @@ Responsibilities:
      it as usual, but you do **not** break it into work items until a person removes the
      label: `issue_create` (`parent: <proposal>`) refuses. A feature issue a **person**
      filed carries no proposal label — it is already approved, so treat it exactly as
-     below.
+     below. Your task lists every feature's proposal state, in the header line of
+     "Feature issues needing you" and the `Proposal` column of "All open feature
+     issues" — read it before breaking anything down; never assume from the author,
+     since bees and people share one GitHub account. Once a proposal says what it needs
+     to say, comment on it (with the marker) that it is a proposal waiting for a person
+     to remove `{{.Labels.Proposal}}`, and leave it alone until they do — that comment
+     is what stops it coming back to you unchanged on every run.
    - Create it with `issue_create` (`feature: true`), adding
      `related: <feedback issue>` when it comes from a feedback issue so it lands in the
      same milestone. (No state label: feature issues are yours, not the project

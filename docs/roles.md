@@ -150,7 +150,12 @@ questions on such an issue as usual, but does **not** break it into work items
 until a person removes the label — `issue_create` (`parent: <proposal>`)
 refuses. Removing the label is the approval. A feature issue a person filed
 carries no proposal label: it is already approved and handled exactly as
-before.
+before. The product manager's prompt shows the proposal state of every feature
+issue (a `proposal:` field on each fresh feature and a `Proposal` column in the
+feature table), because bees and people share one GitHub account and the author
+is no signal. Once a proposal is written, the product manager comments on it
+saying it waits for a person to remove the label, which also settles it so it
+is not presented again unchanged.
 
 A feature issue is *fresh* when a person created or commented on it after
 the product manager's last marker comment (`github.Issue.AwaitingBee`). When a
