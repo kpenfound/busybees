@@ -726,19 +726,29 @@ something matching the filter has been merged since then (that merged-PR check
 itself happens at most once per `qa_interval`); its very first run
 happens immediately and looks back seven days. In a session QA works out from
 the repository's documentation (and its notes) how to install dependencies,
-run the test-suite and launch the app, verifies each merged PR against its
-issue, explores around it, and then:
+run the test-suite and exercise the product, verifies each merged PR against
+its issue, explores around it, and then:
 
-- files a `bees:bug` issue in triage for every defect (with reproduction steps,
-  expected vs actual, severity), after searching for duplicates;
-- sends the product manager one report by mail: what was tested, what works,
-  bugs filed, and product-level observations.
+- files a `bees:bug` issue in triage for every defect it **reproduced itself**
+  (with reproduction steps, expected vs actual, severity, and the command it
+  ran with the output it got), after searching the existing issues, closed as
+  well as open — commenting on an open duplicate, and opening a new bug that
+  links to a closed one it has reproduced again; a clean batch is a good
+  result: QA files nothing and says so;
+- sends the product manager one report by mail — what was tested, what works,
+  bugs filed, and product-level observations — even when it found nothing.
+
+QA looks for product defects, not for critique of how the code is written:
+that is the reviewer's job, on the pull request. It never starts anything that
+acts on the real world for it (a deploy, a job runner, a command that spends
+money or writes to the live project the product manages) and uses a sandbox or
+a dry-run flag instead.
 
 QA stays in its lane: what it files directly is a bug report, or a small work
 item within the existing design. Anything that asks for new scope goes to the
-product manager by mail, which turns it into a
-[proposal](#feature-issues) for you to approve; QA never opens feature issues
-itself.
+product manager by mail; the product manager decides whether to drop it or turn
+it into a [proposal](#feature-issues) for you to approve. QA never opens
+feature issues itself.
 
 ## Bugs
 

@@ -31,6 +31,6 @@ _None._
 {{template "consolidate" .}}
 ## Instructions
 
-Set up, run the tests, exercise the application, verify the merged changes, file bugs,
-send the product manager your report, update your notes, then report `done` with
-`status: done` and a note.
+Set up, run the tests, exercise the product, verify the merged changes, file a bug for
+every defect you reproduced (none, if the batch is clean), send the product manager your
+report, update your notes, then report `done` with `status: done` and a note.
