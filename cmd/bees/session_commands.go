@@ -45,14 +45,11 @@ func mailbox(g *globalFlags) (*mail.Box, string, error) {
 // ---- mail ------------------------------------------------------------------
 
 func newMailCmd(g *globalFlags) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "mail",
-		Short: "Send and read messages in the local mailbox",
-		Long: `The mailbox is how roles talk to each other. Sessions send mail with
+	cmd := groupCmd("mail", "Send and read messages in the local mailbox")
+	cmd.Long = `The mailbox is how roles talk to each other. Sessions send mail with
 "bees mail send"; the orchestrator delivers it by including it in the prompt of
 the session working on the referenced issue or PR. Humans can read and send
-mail too (use --from human).`,
-	}
+mail too (use --from human).`
 
 	var to, from, subject, body, bodyFile, replyTo string
 	var issue, pr int
@@ -179,15 +176,12 @@ mail too (use --from human).`,
 // ---- issue -----------------------------------------------------------------
 
 func newIssueCmd(g *globalFlags) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "issue",
-		Short: "Create factory issues (visible, labelled, attached to a parent, in the right milestone)",
-		Long: `issue create makes an issue the way the factory wants it: with the
+	cmd := groupCmd("issue", "Create factory issues (visible, labelled, attached to a parent, in the right milestone)")
+	cmd.Long = `issue create makes an issue the way the factory wants it: with the
 visibility label and assignee, the kind label (--bug, --feature) and the
 state label (triage, or --ready), attached as a GitHub sub-issue of --parent,
 and in the milestone of the --parent or --related issue. Milestones are
-managed by people; the factory only inherits them.`,
-	}
+managed by people; the factory only inherits them.`
 	var title, body, bodyFile, milestone string
 	var parent, related int
 	var blockedBy []int

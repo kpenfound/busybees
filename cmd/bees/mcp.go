@@ -23,16 +23,13 @@ import (
 )
 
 func newMCPCmd(g *globalFlags) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "mcp",
-		Short: "The built-in MCP server every session talks to",
-		Long: `Every session claude runs gets a stdio MCP server named "bees" that exposes
+	cmd := groupCmd("mcp", "The built-in MCP server every session talks to")
+	cmd.Long = `Every session claude runs gets a stdio MCP server named "bees" that exposes
 the factory's own operations — the mailbox, issue creation and the session
 outcome — as tools, so a session does not have to build a command line for
 them. bees writes the server into the session's mcp.json and claude starts it;
-you only run "bees mcp serve" yourself to debug it.`,
-		Hidden: true,
-	}
+you only run "bees mcp serve" yourself to debug it.`
+	cmd.Hidden = true
 	serve := &cobra.Command{
 		Use:   "serve",
 		Short: "Serve the bees tools on stdio (started by claude, not by hand)",

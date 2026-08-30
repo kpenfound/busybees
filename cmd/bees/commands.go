@@ -210,7 +210,7 @@ func syncLabels(ctx context.Context, cfg *config.Config) error {
 // ---- labels ----------------------------------------------------------------
 
 func newLabelsCmd(g *globalFlags) *cobra.Command {
-	cmd := &cobra.Command{Use: "labels", Short: "Manage the workflow labels in GitHub"}
+	cmd := groupCmd("labels", "Manage the workflow labels in GitHub")
 	cmd.AddCommand(&cobra.Command{
 		Use:   "sync",
 		Short: "Create or update the workflow labels in the repository",
@@ -504,7 +504,7 @@ func readySizesText(sizes map[string]int) string {
 // ---- config / prompts ------------------------------------------------------
 
 func newConfigCmd(g *globalFlags) *cobra.Command {
-	cmd := &cobra.Command{Use: "config", Short: "Inspect bees.toml"}
+	cmd := groupCmd("config", "Inspect bees.toml")
 	cmd.AddCommand(&cobra.Command{
 		Use:   "validate",
 		Short: "Check bees.toml for errors",
@@ -576,7 +576,7 @@ status do the same automatically on startup.`,
 }
 
 func newPromptsCmd(g *globalFlags) *cobra.Command {
-	cmd := &cobra.Command{Use: "prompts", Short: "Inspect role prompts"}
+	cmd := groupCmd("prompts", "Inspect role prompts")
 	var rendered bool
 	show := &cobra.Command{
 		Use:   "show <role>",

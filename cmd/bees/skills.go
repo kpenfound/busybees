@@ -116,14 +116,11 @@ func updateLine(ref, before, after string, err error) string {
 }
 
 func newSkillsCmd(g *globalFlags) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "skills",
-		Short: "Inspect and update the skill clones in the cache",
-		Long: `skills works on the git repositories listed in the skills setting of
+	cmd := groupCmd("skills", "Inspect and update the skill clones in the cache")
+	cmd.Long = `skills works on the git repositories listed in the skills setting of
 [global] and [roles.<name>]. They are cloned into the cache directory
 (BEES_CACHE_DIR) and refreshed according to global.skills_refresh when a
-session needs them. Neither subcommand runs a session or talks to GitHub.`,
-	}
+session needs them. Neither subcommand runs a session or talks to GitHub.`
 	cmd.AddCommand(newSkillsListCmd(g), newSkillsUpdateCmd(g))
 	return cmd
 }
