@@ -290,10 +290,11 @@ queue.
 
 A feature issue a **bee** wrote also carries `bees:proposal`: it is a
 *proposal* until you approve it. The product manager writes it, refines it and
-asks questions on it, but nothing is broken down from it — `bees issue create
---parent <proposal>` refuses — so the factory cannot grow its own roadmap.
-**Remove the `bees:proposal` label to approve it**, and it becomes an ordinary
-feature issue the product manager breaks down on its next run. A feature issue
+asks questions on it, but nothing is broken down from it — so the factory
+cannot grow its own roadmap. Nothing in the tooling enforces that yet: `bees
+issue create --parent <proposal>` succeeds, and the product manager is told not
+to call it. **Remove the `bees:proposal` label to approve it**, and it becomes
+an ordinary feature issue the product manager breaks down on its next run. A feature issue
 you filed never carries the label, and is broken down straight away.
 
 For each *fresh* feature issue (created, or commented on by a person,

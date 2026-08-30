@@ -150,9 +150,10 @@ enter the workflow state machine. For each fresh one it:
 **Proposals:** a feature issue the product manager creates itself is labelled
 `bees:proposal` as well as `bees:feature`. It writes, refines and asks
 questions on such an issue as usual, but does **not** break it into work items
-until a person removes the label — `issue_create` (`parent: <proposal>`)
-refuses. Removing the label is the approval. A feature issue a person filed
-carries no proposal label: it is already approved and handled exactly as
+until a person removes the label. Nothing in the tooling stops it —
+`issue_create` (`parent: <proposal>`) succeeds — so this is role discipline,
+not a backstop. Removing the label is the approval. A feature issue a person
+filed carries no proposal label: it is already approved and handled exactly as
 before. The product manager's prompt shows the proposal state of every feature
 issue (a `proposal:` field on each fresh feature and a `Proposal` column in the
 feature table), because bees and people share one GitHub account and the author
