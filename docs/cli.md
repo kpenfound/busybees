@@ -183,7 +183,9 @@ run`, `tick`, `exec` and `status` run the same migration automatically on startu
 
 Prints the resolved configuration as JSON: project, filter, scheduler and — for every
 role, or the one given — the effective prompt, skills, MCP servers, model, fallback
-model, limits and `enabled` after merging `[global]` with `[roles.<name>]`.
+model, limits and `enabled` after merging `[global]` with `[roles.<name>]`. The
+global-only `skills_refresh` is printed under every role, since it governs how each
+role's skills are refreshed.
 
 The JSON keys are the `bees.toml` key names, so you can match what is printed against
 what you wrote, and durations print as duration strings (`"45m0s"`). The role-specific
