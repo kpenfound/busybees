@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -312,15 +313,7 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 			if st.LastError != "" {
 				fmt.Println("last error:", st.LastError)
 			}
-			fmt.Println("\nqueues:")
-			keys := make([]string, 0, len(st.Queues))
-			for k := range st.Queues {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
-			for _, k := range keys {
-				fmt.Printf("  %-14s %d\n", k, st.Queues[k])
-			}
+			writeQueues(os.Stdout, st)
 			fmt.Println("\ndeveloper workers:")
 			if len(st.Workers) == 0 {
 				fmt.Println("  none")
@@ -351,6 +344,41 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print JSON")
 	return cmd
+}
+
+// writeQueues prints the queue sizes and, when dependencies are holding ready
+// issues back, why. The ready row carries the count as a suffix so the number
+// of issues a developer can actually pick up is never overstated.
+func writeQueues(w io.Writer, st state.Status) {
+	fmt.Fprintln(w, "\nqueues:")
+	keys := make([]string, 0, len(st.Queues))
+	for k := range st.Queues {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if k == "ready" && len(st.WaitingOnDeps) > 0 {
+			fmt.Fprintf(w, "  %-14s %d  (%d waiting on deps)\n", k, st.Queues[k], len(st.WaitingOnDeps))
+			continue
+		}
+		fmt.Fprintf(w, "  %-14s %d\n", k, st.Queues[k])
+	}
+	if len(st.WaitingOnDeps) == 0 {
+		return
+	}
+	held := make([]int, 0, len(st.WaitingOnDeps))
+	for n := range st.WaitingOnDeps {
+		held = append(held, n)
+	}
+	sort.Ints(held)
+	fmt.Fprintln(w, "\nwaiting on dependencies:")
+	for _, n := range held {
+		refs := make([]string, 0, len(st.WaitingOnDeps[n]))
+		for _, b := range st.WaitingOnDeps[n] {
+			refs = append(refs, fmt.Sprintf("#%d", b))
+		}
+		fmt.Fprintf(w, "  #%-3d blocked by %s\n", n, strings.Join(refs, ", "))
+	}
 }
 
 // ---- config / prompts ------------------------------------------------------

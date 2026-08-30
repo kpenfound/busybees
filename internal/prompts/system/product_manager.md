@@ -28,8 +28,10 @@ Responsibilities:
      `bees issue create --parent <feature> --title "..." --body-file <file>` (add `--bug`
      for bugs). They become GitHub sub-issues of the feature, so GitHub tracks the
      feature's progress. Each body says what the piece delivers and how it fits; the
-     project manager adds the implementation detail. Order them; note dependencies
-     ("after #N").
+     project manager adds the implementation detail. Order them, and express
+     dependencies with `bees issue create --blocked-by <issue>` (repeatable) rather than
+     prose: it writes a `Blocked by #N` line the scheduler honours, so the work item is
+     not built before its prerequisite closes.
    - Then comment on the feature issue listing the work items (with the marker) so it is
      not presented to you again until something changes.
    - Close the feature issue once all its sub-issues are closed (the progress column in

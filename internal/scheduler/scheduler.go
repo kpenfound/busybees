@@ -71,8 +71,12 @@ type Scheduler struct {
 	lastPoll time.Time
 	lastErr  string
 	queues   map[string]int
-	wg       sync.WaitGroup
-	slots    chan struct{}
+	waiting  map[int][]int
+	// warnedCycles remembers the issues we already warned about, so a
+	// dependency cycle is reported once per process rather than per poll.
+	warnedCycles map[int]bool
+	wg           sync.WaitGroup
+	slots        chan struct{}
 }
 
 // New builds a scheduler.
@@ -92,21 +96,23 @@ func New(d Deps) (*Scheduler, error) {
 		q.Label = f.Label
 	}
 	s := &Scheduler{
-		cfg:     d.Config,
-		labels:  d.Config.Labels(),
-		query:   q,
-		gh:      d.GitHub,
-		mail:    d.Mail,
-		runner:  d.Runner,
-		ws:      d.Workspaces,
-		store:   d.Store,
-		log:     d.Logger,
-		now:     d.Now,
-		owned:   map[int]*state.Worker{},
-		running: map[string]bool{},
-		backoff: map[string]time.Time{},
-		queues:  map[string]int{},
-		slots:   make(chan struct{}, d.Config.Scheduler.MaxDevelopers),
+		cfg:          d.Config,
+		labels:       d.Config.Labels(),
+		query:        q,
+		gh:           d.GitHub,
+		mail:         d.Mail,
+		runner:       d.Runner,
+		ws:           d.Workspaces,
+		store:        d.Store,
+		log:          d.Logger,
+		now:          d.Now,
+		owned:        map[int]*state.Worker{},
+		running:      map[string]bool{},
+		backoff:      map[string]time.Time{},
+		queues:       map[string]int{},
+		waiting:      map[int][]int{},
+		warnedCycles: map[int]bool{},
+		slots:        make(chan struct{}, d.Config.Scheduler.MaxDevelopers),
 	}
 	for i := 0; i < d.Config.Scheduler.MaxDevelopers; i++ {
 		s.slots <- struct{}{}
@@ -186,6 +192,12 @@ type snapshot struct {
 	features   []github.Issue // bees:feature issues, owned by the product manager
 	prByBranch map[string]github.PR
 	prByNumber map[int]github.PR
+	// open holds every issue number in the snapshot: an issue that is
+	// closed, or invisible to the filter, is not "open" for dependencies.
+	open map[int]bool
+	// waiting maps a ready issue to the blockers it declares that are still
+	// open. A non-empty entry holds the issue back from dispatch.
+	waiting map[int][]int
 }
 
 func (s *Scheduler) poll(ctx context.Context) (*snapshot, error) {
@@ -197,7 +209,14 @@ func (s *Scheduler) poll(ctx context.Context) (*snapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	snap := &snapshot{issues: issues, prs: prs, byState: map[string][]github.Issue{}, prByBranch: map[string]github.PR{}, prByNumber: map[int]github.PR{}}
+	snap := &snapshot{issues: issues, prs: prs, byState: map[string][]github.Issue{},
+		prByBranch: map[string]github.PR{}, prByNumber: map[int]github.PR{},
+		open: map[int]bool{}, waiting: map[int][]int{}}
+	byNumber := map[int]github.Issue{}
+	for _, i := range issues {
+		snap.open[i.Number] = true
+		byNumber[i.Number] = i
+	}
 	for _, i := range issues {
 		// Feedback and feature issues belong to the product manager and sit
 		// outside the workflow state machine.
@@ -214,12 +233,14 @@ func (s *Scheduler) poll(ctx context.Context) (*snapshot, error) {
 	for st := range snap.byState {
 		sort.Slice(snap.byState[st], func(a, b int) bool { return snap.byState[st][a].CreatedAt.Before(snap.byState[st][b].CreatedAt) })
 	}
+	s.fillWaiting(snap, byNumber)
 	for _, p := range prs {
 		snap.prByBranch[p.HeadRefName] = p
 		snap.prByNumber[p.Number] = p
 	}
 	s.mu.Lock()
 	s.lastPoll = s.now()
+	s.waiting = snap.waiting
 	s.queues = map[string]int{}
 	for st, list := range snap.byState {
 		s.queues[st] = len(list)
@@ -315,6 +336,9 @@ func relabel(labels []github.Label, from, to string) []github.Label {
 // dispatchDevelopers hands issues to free developer workers. Issues that
 // are already in progress or in review but not owned by a worker (for
 // example after a restart) are resumed first, then ready issues oldest first.
+// A ready issue whose declared blockers are still open is skipped without
+// consuming a pool slot; in-progress and review candidates are resumptions
+// and are never held back.
 func (s *Scheduler) dispatchDevelopers(ctx context.Context, snap *snapshot) {
 	if !s.roleEnabled(config.RoleDeveloper) {
 		return
@@ -322,7 +346,13 @@ func (s *Scheduler) dispatchDevelopers(ctx context.Context, snap *snapshot) {
 	var candidates []github.Issue
 	candidates = append(candidates, snap.byState["in-progress"]...)
 	candidates = append(candidates, snap.byState["review"]...)
-	candidates = append(candidates, snap.byState["ready"]...)
+	for _, i := range snap.byState["ready"] {
+		if blockers := snap.waiting[i.Number]; len(blockers) > 0 {
+			s.log.Info("issue waiting on dependencies", "issue", i.Number, "blocked_by", blockers)
+			continue
+		}
+		candidates = append(candidates, i)
+	}
 	for _, issue := range candidates {
 		s.mu.Lock()
 		_, taken := s.owned[issue.Number]
@@ -479,6 +509,12 @@ func (s *Scheduler) writeStatus() {
 	}
 	for k, v := range s.queues {
 		st.Queues[k] = v
+	}
+	if len(s.waiting) > 0 {
+		st.WaitingOnDeps = make(map[int][]int, len(s.waiting))
+		for k, v := range s.waiting {
+			st.WaitingOnDeps[k] = append([]int(nil), v...)
+		}
 	}
 	s.mu.Unlock()
 	if err := s.store.SaveStatus(st); err != nil {
