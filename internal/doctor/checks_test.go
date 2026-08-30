@@ -457,6 +457,27 @@ func TestCheckFilter(t *testing.T) {
 	wantResult(t, f.run(t, f.checkFilter), Fail, "exit status 1")
 }
 
+// A filter.assignee that is not a GitHub login makes `gh issue list --assignee X`
+// error instead of answering an empty list (it only answers empty when the query
+// also carries a label). That is a filter matching nothing, not a broken gh, and
+// checkFilter is a Warn and never a Fail - see #130.
+func TestCheckFilterUnknownAssignee(t *testing.T) {
+	const toml = "\n[filter]\nrequire_label = false\nassignee = \"kylpenfound\"\n"
+	graphQL := errors.New("gh issue list: exit status 1: GraphQL: Could not find an assignee " +
+		"with the login of 'kylpenfound'. (repository.issues)")
+
+	f := setup(t, toml, map[string]ghReply{"issue list": {err: graphQL}})
+	r := f.run(t, f.checkFilter)
+	wantResult(t, r, Warn, "filter.assignee", "kylpenfound", "bees.toml")
+	if strings.Contains(r.Detail+" "+r.Remediation, "check that gh can list issues") {
+		t.Errorf("unknown assignee reported as a broken gh: %+v", r)
+	}
+
+	// Any other gh failure is still a broken gh.
+	f.gh.replies = map[string]ghReply{"issue list": {err: errors.New("gh issue list: exit status 1")}}
+	wantResult(t, f.run(t, f.checkFilter), Fail, "exit status 1", "check that gh can list issues")
+}
+
 func TestCheckFilterPrintsTheWholeFilter(t *testing.T) {
 	f := setup(t, "\n[filter]\nassignee = \"kyle\"\nmilestone = \"v0.1.0\"\n",
 		map[string]ghReply{"issue list": {out: "[]"}, "pr list": {out: "[]"}})
