@@ -15,8 +15,8 @@ This page describes what that looks like from the human side.
 2. **The product manager owns feature issues.** It makes each `bees:feature`
    issue detailed enough, asks *you* on the issue when only a person can decide
    something (label `bees:question`), and breaks the feature into work items —
-   one issue per pull-request-sized piece, created with
-   `bees issue create --parent <feature>` so each is a native GitHub
+   one issue per pull-request-sized piece, created with the `issue_create`
+   tool (`parent: <feature>`) so each is a native GitHub
    **sub-issue** of the feature. GitHub shows the feature's progress; the
    product manager closes the feature once all its sub-issues are closed.
 3. **The project manager triages work items.** It refines each `bees:triage`
@@ -128,6 +128,66 @@ feature and feedback issues are handled.
 
 `bees init` (or `bees labels sync`) creates all of these in the repository.
 
+## Sizing
+
+Besides its state label, a work item carries at most one **size label**. Size
+is what the factory knows about how big a piece of work is: the reviewer is
+told the size and adjusts how much scrutiny it applies, and `bees status`
+breaks the ready queue down by size (`ready  4  (xs 1, s 2, m 1)`).
+
+| Size | Label | Rough meaning |
+|---|---|---|
+| xs | `bees:size/xs` | One file, obvious change, no design (typo, config, trivial bug) |
+| s | `bees:size/s` | A few files, clear approach, existing tests cover it |
+| m | `bees:size/m` | A coherent feature slice touching several packages, needs new tests |
+| l | `bees:size/l` | Crosses subsystems or needs a design decision; near the limit for one PR |
+| xl | `bees:size/xl` | Too big for one pull request — it should be split instead |
+
+Who sets it:
+
+- The **project manager** sets the size when it moves a work item from
+  `bees:triage` to `bees:ready`, in the same edit. If the refined scope comes
+  out as `xl` it splits the issue instead of labelling it.
+- The **product manager** may pre-size a work item it creates
+  (`bees issue create --label "bees:size/s"`). It is a hint; the project
+  manager confirms or changes it during triage.
+- The **orchestrator** adds `bees:size/m` to any issue that reaches
+  `bees:ready` without a size — typically one you fast-tracked past triage.
+  Label the issue yourself if `m` is not what you meant.
+- **You** can add or change a size label at any time; nothing removes it. Size
+  labels are orthogonal to the state machine, so moving an issue between
+  states never clears its size.
+
+### Size decides what gets built next
+
+When a developer worker is free, the orchestrator resumes anything already
+`bees:in-progress` or `bees:review` first — a worker picking its issue back up
+after a restart is never held back — and then takes from `bees:ready` in the
+order `scheduler.dispatch_order` asks for:
+
+| `dispatch_order` | Order |
+|---|---|
+| `small-first` (default) | Smallest size first, oldest first within a size. Quick wins do not queue behind a big item. |
+| `oldest` | Oldest first, whatever the size. |
+| `large-first` | Largest size first, oldest first within a size. |
+
+An issue without a size ranks as `m`, which is the label the orchestrator gives
+it anyway.
+
+Two limits sit on top of that order:
+
+- `scheduler.max_large_in_flight` (default `1`) caps how many `bees:size/l`
+  issues developers work on at once. A `bees:size/l` issue over the cap is
+  skipped — the free worker takes the next issue that fits instead of idling.
+  `0` removes the cap. Note that `small-first` and the cap together can keep a
+  `bees:size/l` issue waiting for as long as smaller ones keep arriving; switch
+  to `oldest` if that matters more than quick wins.
+- `roles.developer.max_size` (default `l`) is the largest size a developer
+  takes. A ready issue above it is **never dispatched**: the orchestrator moves
+  it back to `bees:triage` (no comment — the label is the signal) and the
+  project manager splits it on its next run. With the default that means every
+  `bees:size/xl` issue goes back to be split.
+
 ## Talking to the product manager
 
 Not everything you want to say is a buildable issue. The product manager is
@@ -170,14 +230,14 @@ since the product manager's last marker comment on it) the product manager:
 
 1. makes sure it is detailed enough to be broken down — or asks you (below);
 2. breaks it into **work items**: one issue per pull-request-sized piece,
-   created with `bees issue create --parent <feature> --title ... --body-file ...`
-   (`--bug` for bugs). Each becomes a native GitHub **sub-issue** of the
+   created with the `issue_create` tool (`parent: <feature>`, `bug: true` for
+   bugs). Each becomes a native GitHub **sub-issue** of the
    feature, labelled `bees` + `bees:triage` (+ `bees:bug`), and inherits the
    feature's milestone. GitHub tracks the feature's progress from its
    sub-issues, and the product manager's prompt shows it as a
    `completed/total` column. Work items are ordered with dependencies noted
    ("after #N"); the project manager adds implementation detail during triage.
-   An existing issue can be attached with `bees issue link --parent <feature> --child <item>`;
+   An existing issue can be attached with `issue_link` (`parent: <feature>`, `child: <item>`);
 3. comments the list of work items on the feature issue (with the marker), so
    it is not presented to the product manager again until something changes;
 4. later, closes the feature issue once all its sub-issues are closed, or
@@ -214,7 +274,7 @@ state label, adds `bees:triage`, and the project manager picks it up: it reads
 the codebase and the parent feature issue if there is one (shown in its
 prompt), rewrites the body with scope, acceptance criteria and pointers to
 relevant code (keeping your intent), splits it if it is too big (with
-`bees issue create --ready --parent <feature>`, or `--related <original>` when
+`issue_create` with `ready: true` and `parent: <feature>`, or `related: <original>` when
 there is no parent feature), and moves it to `bees:ready`. It never changes
 milestones. If the issue is invalid or a duplicate the project
 manager closes it with a comment. The project manager only ever edits work
@@ -246,8 +306,8 @@ Blocked by #37
 `blocked by` and `depends on` are both recognised, case-insensitively, with an
 optional colon and Markdown emphasis, and several numbers separated by commas,
 spaces or `and` (`Depends on: #3, #4 and #5`). The phrase without a number
-(`blocked by the missing tests`) declares nothing. `bees issue create
---blocked-by 37` writes the line for you.
+(`blocked by the missing tests`) declares nothing. The `issue_create` tool's
+`blocked_by` (or `bees issue create --blocked-by 37`) writes the line for you.
 
 The scheduler reads the line on every poll and will not hand the issue to a
 developer while any of its blockers is **open** — meaning *present in the last
@@ -266,7 +326,7 @@ would ever be built — and logs a warning once per issue.
 
 The project manager sees the open blockers of every work item in its prompt and
 is told to write the line rather than park a dependent item in triage. The
-product manager uses `--blocked-by` when it breaks a feature down.
+product manager uses `blocked_by` when it breaks a feature down.
 
 ## Development
 
@@ -410,10 +470,35 @@ skips review and goes straight to the checks stage.
 
 ## Escalation: `bees:needs-human`
 
-The factory hands an issue to a human when it cannot make progress:
+### Retries first
 
-- the developer session failed, timed out, or reported a PR that does not
-  exist;
+Not every dead session is a bad decision. Before escalating, the orchestrator
+classifies what went wrong:
+
+- **Infrastructure** — the session timed out, ran out of turns, hit an API
+  error or a rate limit, or `claude` exited without producing a result. These
+  are retried up to `scheduler.retries` times (default 1), after
+  `scheduler.retry_delay` (default 10 minutes), and with the role's
+  `fallback_model` as the primary model when `scheduler.retry_with_fallback`
+  is on. Each attempt gets its own directory under `<state_dir>/sessions/`
+  (the retry is suffixed `-retry1`), and a retried developer session is told
+  that its previous attempt was interrupted, so it continues from whatever is
+  already on the branch instead of starting over. `bees status` shows the
+  attempt number next to the round.
+- **Behavioural** — the session ran and reported an outcome with the `done`
+  tool (including `failed`), or ended cleanly without reporting at all. Running it
+  again would only repeat the same decision, so it escalates immediately.
+
+Set `scheduler.retries = 0` to escalate every failure at once. Retries apply
+to sessions only; git, `gh` and worktree failures are not retried.
+
+### When the factory gives up
+
+Once retries are exhausted (or the failure was behavioural), the factory hands
+the issue to a human:
+
+- the developer session failed, or timed out and its retries were exhausted,
+  or reported a PR that does not exist;
 - the developer said it asked a question but sent no mail (or the reviewer said
   it requested changes but sent no feedback);
 - the reviewer session failed;
@@ -468,7 +553,7 @@ The product manager owns the roadmap of feature issues. It runs at least every
 `scheduler.product_manager_interval` (default 1h), or sooner when it has
 unread mail (questions from the project manager, reports from QA) or when a
 feature or feedback issue is fresh. It writes feature issues
-(`bees issue create --feature`) that describe user-visible outcomes rather than
+(`issue_create` with `feature: true`) that describe user-visible outcomes rather than
 implementation, and breaks them into work items as described above. Because
 work items are GitHub sub-issues of their feature, progress is visible on the
 feature issue itself, in GitHub's project views, and in the product manager's
@@ -479,7 +564,7 @@ closes a milestone; the product manager sees the open milestones read-only and
 treats them as a priority signal. What the bees do is *inherit*: every issue
 they create takes the milestone of the issue it relates to — a work item gets
 its parent feature's milestone, a bug found while working on an issue gets that
-issue's milestone (`--related`), a feature distilled from a feedback issue gets
+issue's milestone (`related`), a feature distilled from a feedback issue gets
 the feedback issue's milestone — falling back to `filter.milestone` when the
 factory is pinned to one. So if you put a feature into a milestone, everything
 that grows out of it lands there too.
@@ -508,7 +593,7 @@ sequenceDiagram
     H->>GH: Answer in a comment
     O->>GH: human replied → remove bees:question
     O->>PM: Session (feature fresh again)
-    PM->>GH: bees issue create --parent F: sub-issues, bees:triage, inherit milestone
+    PM->>GH: issue_create parent=F: sub-issues, bees:triage, inherit milestone
     PM->>GH: Comment list of work items on the feature
     O->>PjM: Session with triage batch (parent feature shown)
     PjM->>GH: Edit body (scope, acceptance criteria)
@@ -522,18 +607,18 @@ sequenceDiagram
     O->>GH: claim → bees:in-progress
     O->>Dev: Session on branch bees/issue-N
     Dev->>GH: push, gh pr create (Closes #N)
-    Dev->>O: bees done pr-opened --pr M
+    Dev->>O: done: pr-opened
     O->>GH: label PR `bees`; issue → bees:review
     O->>Rev: Session on PR branch
     Rev-->>Dev: mail: review round 1 feedback
-    Rev->>O: bees done changes-requested
+    Rev->>O: done: changes-requested
     O->>GH: issue → bees:in-progress
     O->>Dev: Session with feedback (round 2)
     Dev->>GH: push
-    Dev->>O: bees done pr-updated --pr M
+    Dev->>O: done: pr-updated
     O->>GH: issue → bees:review
     O->>Rev: Session (round 2)
-    Rev->>O: bees done approved
+    Rev->>O: done: approved
     O->>GH: PR + issue → bees:approved
     H->>GH: Merge PR (work item closes)
     Note over O,GH: with roles.reviewer.auto_merge the orchestrator waits<br/>checks_wait, polls required checks and merges instead

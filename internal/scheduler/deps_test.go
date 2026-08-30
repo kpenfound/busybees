@@ -100,14 +100,14 @@ enabled = false
 // relabelled either: it just waits. When the blocker closes it goes out on
 // the next pass.
 func TestDependencyHoldsReadyIssue(t *testing.T) {
-	h := newHarness(t, devOnlyTOML)
+	h := newHarnessAt(t, devOnlyTOML, time.Now())
 	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true} // reviewer disabled: PR auto-approved
 	// #1 is older, so it is first in the ready queue: skipping it must not
 	// cost #2 its pool slot.
 	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Dependent", Body: "Blocked by #2\n\nDo the thing.", State: "OPEN",
-		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}}, CreatedAt: time.Now().Add(-time.Hour)}
+		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/m"}}, CreatedAt: time.Now().Add(-time.Hour)}
 	h.gh.issues[2] = &github.Issue{Number: 2, Title: "Prerequisite", State: "OPEN",
-		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}}, CreatedAt: time.Now()}
+		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/m"}}, CreatedAt: time.Now()}
 	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-2", BaseRefName: "main",
 		Labels: []github.Label{{Name: "bees"}}}
 
@@ -133,9 +133,10 @@ func TestDependencyHoldsReadyIssue(t *testing.T) {
 		t.Fatalf("status waiting_on_deps: %v", st.WaitingOnDeps)
 	}
 
-	// #2 closes: #1 is dispatched on the next pass, with no label change in
-	// between.
+	// #2 closes: #1 is dispatched on the next poll, with no label change in
+	// between. A local pass in the meantime still sees the cached, open #2.
 	h.gh.issues[2].State = "CLOSED"
+	h.clock.advance(h.cfg.Scheduler.PollInterval.Duration)
 	if err := h.sched.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +156,7 @@ func TestInvisibleBlockerDoesNotHold(t *testing.T) {
 	h := newHarness(t, devOnlyTOML)
 	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true}
 	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Dependent", Body: "Blocked by #404", State: "OPEN",
-		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}}, CreatedAt: time.Now()}
+		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/m"}}, CreatedAt: time.Now()}
 	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main",
 		Labels: []github.Label{{Name: "bees"}}}
 
@@ -183,7 +184,7 @@ func TestProjectManagerSeesBlockers(t *testing.T) {
 	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Needs triage", Body: "Blocked by #2\n\nvague", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:triage"}}, CreatedAt: time.Now()}
 	h.gh.issues[2] = &github.Issue{Number: 2, Title: "Prerequisite", State: "OPEN",
-		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}}, CreatedAt: time.Now()}
+		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/m"}}, CreatedAt: time.Now()}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()

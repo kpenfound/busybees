@@ -7,7 +7,7 @@ and [cli.md](cli.md).
 ## Package layout
 
 ```
-cmd/bees/            CLI (cobra): init, run, tick, exec, status, mail, issue, done, config, prompts, labels
+cmd/bees/            CLI (cobra): init, run, tick, exec, status, mail, issue, done, mcp, config, prompts, labels
 internal/config/     bees.toml schema, defaults, validation, global/role merging, label names, init template
 internal/github/     thin wrapper around the gh CLI (issues, PRs, labels, milestones (read), sub-issues, required checks, merge, comment, PR activity)
 internal/issues/     creates issues the factory way: filter labels/assignee, kind + state labels, sub-issue of --parent, inherited milestone
@@ -16,6 +16,7 @@ internal/workspace/  temporary git worktrees created from the main clone
 internal/skills/     clones skill repos by git URL and exposes them as claude plugin dirs
 internal/session/    runs one headless `claude -p` session and collects its result and outcome
 internal/prompts/    embedded base prompts (system/*.md, task/*.md) and their renderer
+internal/mcpserver/  the built-in MCP server (`bees mcp serve`): mail, issue and outcome tools, filtered by role
 internal/state/      state directory: notes, per-issue bookkeeping, singleton run times, status.json
 internal/scheduler/  the orchestrator: poll, human feedback, reconcile, developer worker pool, singleton roles
 internal/procs/      find and stop bees sessions after a crash (`bees kill`)
@@ -31,13 +32,21 @@ never need the real ones.
 ## The scheduler loop
 
 `scheduler.Run` initialises the state directory, prunes stale worktrees, then
-repeats a **pass** every `scheduler.poll_interval` (default 5m) until the
-context is cancelled. Ctrl-C stops polling and waits for running sessions to
-finish. If a pass fails with a rate-limit error (`isRateLimited`: the message
-contains "rate limit", "secondary rate" or "abuse detection") the next pass
-waits `scheduler.rate_limit_backoff` (default 15m) instead.
+ticks every `scheduler.poll_interval` (default 5m) until the context is
+cancelled. Ctrl-C stops polling and waits for running sessions to finish.
 
-A pass is:
+Each tick (`tick`) is either a **full pass** or a **local pass**. A full pass
+runs when the tick is at or past the next scheduled GitHub poll, and schedules
+the next one `Scheduler.PollIntervalAt(now)` later — `poll_interval`, or
+`off_hours_poll_interval` when `scheduler.work_hours` is configured and now
+falls outside the window (see [Work hours](configuration.md#work-hours)).
+Without `work_hours` that is always `poll_interval`, so every tick is a full
+pass. If the poll fails with a rate-limit error (`isRateLimited`: the message
+contains "rate limit", "secondary rate" or "abuse detection") the next poll is
+pushed out by `scheduler.rate_limit_backoff` (default 15m) instead, whatever
+the window says.
+
+A full pass is:
 
 1. **poll** – `gh issue list` and `gh pr list` with the filter's query (label,
    assignee, milestone). Issues are bucketed by state label (`triage`, `ready`,
@@ -61,13 +70,23 @@ A pass is:
 3. **reconcile** – label transitions driven by local state:
    - an issue with no state label gets `bees:triage` (and the `bees` label if
      the filter did not require it);
+   - a `bees:ready` issue with no size label gets `bees:size/m`, the default
+     size (see [Sizing](workflow.md#sizing));
+   - a `bees:ready` issue sized above `roles.developer.max_size` (default `l`,
+     so normally a `bees:size/xl` one) goes back to `bees:triage` without a
+     comment, for the project manager to split;
    - a `bees:blocked` issue with unread developer mail about it becomes
      `bees:ready`; with unread project-manager mail it becomes `bees:triage`.
 4. **dispatch developers** – candidates are unowned `in-progress` and `review`
-   issues (resume after a restart) followed by `ready` issues. For each, a
-   slot is taken from a buffered channel sized `max_developers`; when none is
-   free the pass stops dispatching. A goroutine runs `workIssue` and returns
-   the slot when done.
+   issues (resume after a restart, never reordered) followed by `ready`
+   issues sorted by `scheduler.dispatch_order` (`sortReady`: smallest size
+   first by default, ties by age). A `bees:size/l` candidate is skipped while
+   `scheduler.max_large_in_flight` of them are already owned — the check runs
+   *before* a slot is taken, so a held issue does not keep a worker idle. For
+   the rest, a slot is taken from a buffered channel sized `max_developers`;
+   when none is free the pass stops dispatching. A goroutine runs `workIssue`
+   and returns the slot when done; the worker records the issue's size, which
+   is what the cap counts and what `bees status` shows.
 5. **dispatch singletons** – project manager (has triage issues or unread
    mail), product manager (unread mail, first run, or interval elapsed), QA
    (first run, or interval elapsed and something merged since — checked at
@@ -93,14 +112,37 @@ A pass is:
    does the same for its issue into `Data.Parent`.
 
    **Sub-issues and milestones.** Work items are native GitHub sub-issues of
-   their feature. Roles create issues through `bees issue create`
+   their feature. Roles create issues through the `issue_create` tool
    (`internal/issues`): it labels for the filter and kind/state, resolves the
    milestone as explicit → parent/related issue's milestone (`GetIssueDetails`)
-   → `filter.milestone`, creates with `gh issue create`, and for `--parent`
+   → `filter.milestone`, creates with `gh issue create`, and for a `parent`
    attaches the child with `POST repos/../issues/<parent>/sub_issues`
    (`AddSubIssue`, which needs the child's database id from
    `GetIssueDetails`). The factory never creates, edits or closes milestones;
    people do, and the bees inherit.
+
+**Local passes.** A tick that is not due for a GitHub poll runs `localPass`
+instead: it re-runs `classify` over the issue and PR lists cached from the last
+successful poll (`classify` never mutates them, so the cache survives
+`reconcile` appending to `snapshot.byState`), then does steps 3 and 4 and
+dispatches only the singletons that have unread mail. It deliberately skips
+the poll itself, the human-feedback fetch (step 2) and the product-manager and
+QA "has work" checks, all of which read GitHub; label *writes* made by
+`reconcile` and dispatch still happen, because what a local pass protects is
+the polling budget, not every API call. Until the first successful poll there
+is nothing cached and a local pass does nothing.
+
+The one read a local pass does make is a confirmation. Its snapshot can be
+stale — an issue a worker has since finished, one a developer parked in
+`bees:blocked`, one a human closed or relabelled all still carry their old
+state label in the cache — so before spending a session on a candidate,
+`dispatchDevelopers` fetches that single issue (`gh issue view`) and drops it
+unless it is still open and in `bees:ready`, `bees:in-progress` or
+`bees:review`. The fresh copy replaces the cached one, so the next local pass
+does not ask again. That is one call immediately before a whole session, not
+per pass. The mailbox is not GitHub: the
+developer ↔ reviewer loop, the checks stage and mail-driven label transitions
+run at `poll_interval` however the window is configured.
 
 **Backoff.** A singleton is never dispatched again sooner than one poll
 interval after it finishes, and a failing singleton or developer issue waits
@@ -109,7 +151,8 @@ loop.
 
 **API budget.** Every poll costs exactly two `gh` calls (`issue list`,
 `pr list`); everything else is gated on what those lists report so an idle
-factory stays at two calls per poll. Human PR feedback is fetched (3 calls)
+factory stays at two calls per poll (and, with `scheduler.work_hours` set, at
+two calls per `off_hours_poll_interval` outside working hours). Human PR feedback is fetched (3 calls)
 only for PRs whose `updatedAt` moved past `human_seen_at`; product-manager
 feedback/feature comments (1 `issue view` each) only for issues whose
 `updatedAt` is newer than the PM's last run; QA's merged-PR query runs at most
@@ -213,7 +256,7 @@ claude -p \
   --max-turns <n> --name bees-<session name> \
   --add-dir <state_dir> \
   [--allowedTools ...] [--disallowedTools ...] \
-  [--mcp-config <session>/mcp.json --strict-mcp-config] \
+  --mcp-config <session>/mcp.json --strict-mcp-config \
   [--plugin-dir <skill plugin dir> ...]
 ```
 
@@ -222,10 +265,23 @@ The task prompt is written to stdin. Each line of stream-json is appended to
 text, `is_error`, subtype, turn count, cost and claude session id. stderr is
 saved to `stderr.log` when non-empty, and `result.json` summarises the run.
 
-- **Outcome.** The session ends by running `bees done <status> [-m note]
-  [--pr N]`, which writes `<session>/outcome.json`. The runner reads it after
-  claude exits; a missing file is reported as `HasOutcome = false` and the
-  scheduler treats it as `failed`.
+- **Outcome.** The session ends by calling the `done` tool (or running
+  `bees done <status>`), which writes `<session>/outcome.json` through
+  `session.Report` — the shared validation for both paths. The runner reads the
+  file after claude exits; a missing one is reported as `HasOutcome = false` and
+  the scheduler treats it as `failed`.
+- **Retries.** `runSession` is the single-attempt primitive; every worker calls
+  it through `runSessionWithRetry`. `classifyFailure` (in
+  `internal/scheduler/sessions.go`) splits failures into *infrastructure* — a
+  timeout, an API error, exhausted turns, a rate limit, `claude` exiting with
+  no result event — and *behavioural*: the session reported an outcome
+  (including `failed`), or exited cleanly without reporting. Only
+  infrastructure failures are retried, `scheduler.retries` times, waiting
+  `scheduler.retry_delay` between attempts and running with the role's
+  fallback model when `scheduler.retry_with_fallback` is set. Each attempt has
+  its own session directory (`<name>-retry<n>`), and a retried developer
+  session is told its previous attempt was interrupted so it continues from
+  the branch. See [Escalation](workflow.md#escalation-beesneeds-human).
 - **Environment.** The configured `env` entries first (`$VAR`-expanded) and
   `SHELL` when `shell` is set; then `BEES_ROLE`, `BEES_SESSION_DIR`,
   `BEES_STATE_DIR`, `BEES_CONFIG`, `BEES_REPO`, `BEES_LABEL`, `BEES_BIN`, plus
@@ -234,7 +290,8 @@ saved to `stderr.log` when non-empty, and `result.json` summarises the run.
   `GIT_CONFIG_COUNT` is already set, `GIT_CONFIG_*` entries for
   `push.autoSetupRemote=true` / `push.default=current`. The directory holding
   the `bees` binary is prepended to `PATH` so `bees mail`, `bees issue` and
-  `bees done` resolve inside the session.
+  `bees done` resolve inside the session. The `BEES_*` variables are also passed
+  explicitly to the built-in MCP server rather than left to inheritance.
 - **Prompts.** `prompts.System` renders `system/common.md` + `system/<role>.md`
   and appends the role's custom text from `bees.toml`; `prompts.Task` renders
   `task/<role>.md`. Both take a single `prompts.Data` struct (project, filter,
@@ -245,10 +302,18 @@ saved to `stderr.log` when non-empty, and `result.json` summarises the run.
   `~/.cache/bees/plugins/<name>/` whose `skills/` symlinks to the skill or
   skills collection. Each becomes a `--plugin-dir`, so the project worktree is
   never modified.
-- **MCP.** Servers from the resolved role are written to `mcp.json`
-  (`$VAR` in `env` and `headers` expanded from the bees process environment)
-  and passed with `--strict-mcp-config`, so sessions see exactly the servers
-  in `bees.toml` and nothing from the user's own settings.
+- **MCP.** `mcp.json` is written for every session and always passed with
+  `--strict-mcp-config`, so a session sees exactly two things: the servers from
+  the resolved role (`$VAR` in `env` and `headers` expanded from the bees process
+  environment) and the built-in `bees` server — `<bees binary> mcp serve` over
+  stdio, with the session's `BEES_*` variables in its `env`. It serves the
+  factory's own operations (`mail_send`, `mail_list`, `issue_create`,
+  `issue_link`, `done`) as tools backed by the same `internal/mail`,
+  `internal/issues` and `session.Report` code the CLI uses, so a session calls a
+  schema instead of composing a command line. The tool schemas depend on
+  `BEES_ROLE`: `done`'s `status` enum is the role's valid outcomes. The name
+  `bees` is reserved in `bees.toml`. See `internal/mcpserver` and
+  [cli.md](cli.md#bees-mcp-serve-sessions).
 - **Timeout.** The role's `timeout` bounds the command context; claude runs in
   its own process group and on expiry the whole group is `SIGKILL`ed so MCP
   servers die with it. The result is marked `TimedOut`.
@@ -318,7 +383,14 @@ oldest first, and `bees mail` works from any directory because sessions get
   product_manager.json           {last_run}
   qa.json                        {last_run, last_check}
   status.json                    live scheduler status for `bees status` (queues, workers, singletons, last_poll, last_error)
+  bees.log                       every record of the last scheduler runs as JSON, rotated
+                                 at 10 MiB into bees.log.1 and bees.log.2
 ```
+
+`bees.log` is written only by the commands that run sessions (`run`, `tick`,
+`exec`) and always contains every record at debug level, whatever the console
+flags say. `bees issue` and `bees mail` run inside sessions, concurrently with
+the scheduler, so they never open it.
 
 `bees init` makes sure the directory is ignored by git: if `git check-ignore`
 does not already ignore it (and it lives inside the clone), `/.bees/` is
@@ -380,6 +452,12 @@ The runner writes the session's pid to `<session dir>/pid` right after starting
 find the orphans: `procs.Find` merges the pid files with a `ps` scan restricted to
 processes whose executable is `claude` (directly or via an interpreter), cross-checking
 pid files against the scan so a reused pid is discarded rather than killed.
+Both sources are scoped to one factory: a scanned process counts only when its command
+line also references this state directory's `sessions/` (every session's argv carries
+`--append-system-prompt-file <sessions dir>/<session>/system-prompt.md`, matched as a
+path prefix and also in its `filepath.EvalSymlinks` form). Sessions of another project's
+factory are never reported, so `bees kill` run with one project's config cannot strand
+another project's issues.
 `procs.Kill` sends SIGTERM to the process group (sessions are started with
 `Setpgid`, so MCP servers and shells belong to it), waits `--grace`, then SIGKILL.
 The command then removes every worktree of the main clone that lives under the

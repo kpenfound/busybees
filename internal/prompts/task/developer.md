@@ -1,4 +1,9 @@
-# Task: implement issue #{{.Issue.Number}}{{if gt .Round 1}} (review round {{.Round}} of {{.MaxRounds}}){{end}}
+{{if gt .Retry 0}}**Your previous attempt was interrupted before it finished.** The branch may
+already contain partial work — inspect the working tree and the branch's
+commits before writing anything, and continue from there rather than starting
+over.
+
+{{end}}# Task: implement issue #{{.Issue.Number}}{{if gt .Round 1}} (review round {{.Round}} of {{.MaxRounds}}){{end}}
 
 ## Issue #{{.Issue.Number}}: {{.Issue.Title}}
 - author: {{.Issue.Author.Login}} · labels: {{labels .Issue.Labels}} · milestone: {{milestone .Issue}} · {{.Issue.URL}}
@@ -40,10 +45,11 @@ _No new mail._
 You are on branch `{{.Branch}}`, based on `{{.Project.DefaultBranch}}`.
 {{if .PR -}}
 A pull request already exists. Address the review feedback in your mail, push, update the
-PR description if needed, then `bees done pr-updated --pr {{.PR.Number}}`.
+PR description if needed, then `done` (`status: pr-updated`, `pr: {{.PR.Number}}`).
 {{- else -}}
 Implement the issue, push, open the pull request (body must include
-`Closes #{{.Issue.Number}}`), then `bees done pr-opened --pr <number>`.
+`Closes #{{.Issue.Number}}`), then `done` (`status: pr-opened`, `pr: <number>`).
 {{- end}}
-If you must ask the project manager something first, send the mail and `bees done question`.
+If you must ask the project manager something first, send the mail and report `done`
+with `status: question`.
 Update your notes file before you finish.
