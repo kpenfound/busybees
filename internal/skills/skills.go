@@ -22,10 +22,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Spec is a parsed skill reference.
@@ -79,27 +81,57 @@ func Parse(raw string) (Spec, error) {
 type Manager struct {
 	// CacheDir holds clones (CacheDir/repos) and generated plugins (CacheDir/plugins).
 	CacheDir string
-	// Refresh pulls already-cloned repositories before use.
-	Refresh bool
-	// Git overrides git execution (tests).
-	Git func(ctx context.Context, dir string, args ...string) error
+	// RefreshAfter pulls an existing clone that was last fetched at least
+	// this long ago. Zero never refreshes by age.
+	RefreshAfter time.Duration
+	// RefreshAlways pulls every existing clone before use.
+	RefreshAlways bool
+	// Git overrides git execution (tests). It returns the command's output.
+	Git func(ctx context.Context, dir string, args ...string) (string, error)
+	// Now overrides the clock (tests).
+	Now func() time.Time
+	// Logger receives refresh warnings. nil uses slog.Default().
+	Logger *slog.Logger
+}
+
+// Info describes one skill reference in the cache.
+type Info struct {
+	Spec      Spec
+	Dir       string
+	Cached    bool
+	Commit    string
+	FetchedAt time.Time
 }
 
 // NewManager returns a manager caching under dir.
 func NewManager(dir string) *Manager {
 	m := &Manager{CacheDir: dir}
-	m.Git = func(ctx context.Context, dir string, args ...string) error {
+	m.Git = func(ctx context.Context, dir string, args ...string) (string, error) {
 		cmd := exec.CommandContext(ctx, "git", args...)
 		if dir != "" {
 			cmd.Dir = dir
 		}
 		out, err := cmd.CombinedOutput()
 		if err != nil {
-			return fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+			return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 		}
-		return nil
+		return string(out), nil
 	}
 	return m
+}
+
+func (m *Manager) now() time.Time {
+	if m.Now != nil {
+		return m.Now()
+	}
+	return time.Now()
+}
+
+func (m *Manager) logger() *slog.Logger {
+	if m.Logger != nil {
+		return m.Logger
+	}
+	return slog.Default()
 }
 
 // DefaultCacheDir returns ~/.cache/bees.
@@ -143,30 +175,134 @@ func (m *Manager) prepareOne(ctx context.Context, spec Spec) (string, error) {
 	return m.pluginDirFor(spec, target)
 }
 
-func (m *Manager) clone(ctx context.Context, spec Spec) (string, error) {
+// repoDir is the cache directory a reference is cloned into.
+func (m *Manager) repoDir(spec Spec) string {
 	sum := sha256.Sum256([]byte(spec.URL + "@" + spec.Ref))
-	dir := filepath.Join(m.CacheDir, "repos", spec.Name+"-"+hex.EncodeToString(sum[:4]))
-	if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
-		if m.Refresh {
-			// Best effort: a failed refresh should not block the factory.
-			_ = m.Git(ctx, dir, "pull", "--ff-only", "--quiet")
+	return filepath.Join(m.CacheDir, "repos", spec.Name+"-"+hex.EncodeToString(sum[:4]))
+}
+
+// stamp is the sibling file whose mtime is when the clone was last fetched.
+func stamp(dir string) string { return dir + ".fetched" }
+
+// fetchedAt returns the mtime of the stamp file, or the zero time.
+func fetchedAt(dir string) time.Time {
+	st, err := os.Stat(stamp(dir))
+	if err != nil {
+		return time.Time{}
+	}
+	return st.ModTime()
+}
+
+// touch records now as the fetch time of dir.
+func (m *Manager) touch(dir string) {
+	now := m.now()
+	p := stamp(dir)
+	if err := os.WriteFile(p, nil, 0o644); err != nil {
+		return
+	}
+	_ = os.Chtimes(p, now, now)
+}
+
+// stale reports whether an existing clone should be pulled before use.
+func (m *Manager) stale(dir string) bool {
+	if m.RefreshAlways {
+		return true
+	}
+	if m.RefreshAfter <= 0 {
+		return false
+	}
+	last := fetchedAt(dir)
+	if last.IsZero() { // cloned before stamps existed, or the file was removed
+		return true
+	}
+	return m.now().Sub(last) >= m.RefreshAfter
+}
+
+func (m *Manager) clone(ctx context.Context, spec Spec) (string, error) {
+	dir := m.repoDir(spec)
+	if cloned(dir) {
+		if m.stale(dir) {
+			// Best effort: a failed refresh (a pinned tag is detached and
+			// cannot pull) must not block the factory.
+			if _, err := m.pull(ctx, dir); err != nil {
+				m.logger().Warn("skill refresh failed", "skill", spec.Raw, "url", spec.URL, "error", err)
+			}
 		}
 		return dir, nil
 	}
-	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+	if err := m.cloneFresh(ctx, spec, dir); err != nil {
 		return "", err
+	}
+	return dir, nil
+}
+
+func (m *Manager) cloneFresh(ctx context.Context, spec Spec, dir string) error {
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		return err
 	}
 	args := []string{"clone", "--depth", "1", "--quiet"}
 	if spec.Ref != "" {
 		args = append(args, "--branch", spec.Ref)
 	}
 	args = append(args, spec.URL, dir)
-	if err := m.Git(ctx, "", args...); err != nil {
+	if _, err := m.Git(ctx, "", args...); err != nil {
 		_ = os.RemoveAll(dir)
-		return "", err
+		return err
 	}
-	return dir, nil
+	m.touch(dir)
+	return nil
 }
+
+// pull fast-forwards an existing clone and records the fetch time.
+func (m *Manager) pull(ctx context.Context, dir string) (string, error) {
+	out, err := m.Git(ctx, dir, "pull", "--ff-only", "--quiet")
+	if err != nil {
+		return out, err
+	}
+	m.touch(dir)
+	return out, nil
+}
+
+// head returns the short commit of a clone ("" when it cannot be read).
+func (m *Manager) head(ctx context.Context, dir string) string {
+	out, err := m.Git(ctx, dir, "rev-parse", "--short", "HEAD")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
+}
+
+// Info reports what the cache holds for a reference, without touching it.
+func (m *Manager) Info(ctx context.Context, spec Spec) (Info, error) {
+	info := Info{Spec: spec, Dir: m.repoDir(spec)}
+	if !cloned(info.Dir) {
+		return info, nil
+	}
+	info.Cached = true
+	info.Commit = m.head(ctx, info.Dir)
+	info.FetchedAt = fetchedAt(info.Dir)
+	return info, nil
+}
+
+// Update clones a reference when it is missing and pulls it otherwise,
+// ignoring the refresh policy. It returns the short commits before and
+// after; before is empty for a fresh clone.
+func (m *Manager) Update(ctx context.Context, spec Spec) (before, after string, err error) {
+	dir := m.repoDir(spec)
+	if !cloned(dir) {
+		if err := m.cloneFresh(ctx, spec, dir); err != nil {
+			return "", "", err
+		}
+		return "", m.head(ctx, dir), nil
+	}
+	before = m.head(ctx, dir)
+	if _, err := m.pull(ctx, dir); err != nil {
+		return before, "", err
+	}
+	return before, m.head(ctx, dir), nil
+}
+
+func cloned(dir string) bool { return exists(filepath.Join(dir, ".git")) }
 
 // pluginDirFor returns a plugin directory exposing the skill(s) in target.
 func (m *Manager) pluginDirFor(spec Spec, target string) (string, error) {
