@@ -530,11 +530,17 @@ func (s *Scheduler) localPass(ctx context.Context) {
 //
 //   - visible issues without a state label enter triage (and receive the
 //     factory label if the filter does not already require it);
-//   - ready issues without a size get the default one, and ready issues
-//     sized above roles.developer.max_size go back to triage to be split;
 //   - blocked issues whose question has been answered move back to the
 //     stage that asked (developer -> ready, project manager -> triage).
-//     Mail from a human about the issue counts as an answer too.
+//     Mail from a human about the issue counts as an answer too;
+//   - ready issues without a size get the default one, and ready issues
+//     sized above roles.developer.max_size go back to triage to be split.
+//     The sizing runs last so that an issue unblocked by the loop above is
+//     sized in the same pass instead of the next one.
+//
+// Every label edit is also written back to the cached poll (cacheIssue), or
+// the local passes in between two polls would classify the issue from its
+// stale labels and repeat the edit on every one of them.
 func (s *Scheduler) reconcile(ctx context.Context, snap *snapshot) error {
 	var errs []error
 	var unlabelled []github.Issue
@@ -549,10 +555,42 @@ func (s *Scheduler) reconcile(ctx context.Context, snap *snapshot) error {
 			unlabelled = append(unlabelled, i)
 			continue
 		}
-		i.Labels = append(i.Labels, github.Label{Name: s.labels.Triage})
+		for _, l := range add {
+			i.Labels = append(i.Labels, github.Label{Name: l})
+		}
 		snap.byState["triage"] = append(snap.byState["triage"], i)
+		// Keep the cached poll in step, or every local pass in between two
+		// polls asks GitHub to add the label again.
+		s.cacheIssue(i)
 	}
 	snap.byState[""] = unlabelled
+	var stillBlocked []github.Issue
+	for _, i := range snap.byState["blocked"] {
+		if s.hasUnreadMail(config.RoleDeveloper, i.Number, 0) {
+			s.log.Info("question answered, issue back to ready", "issue", i.Number)
+			if err := s.setState(ctx, i.Number, s.labels.Ready); err != nil {
+				errs = append(errs, err)
+				stillBlocked = append(stillBlocked, i)
+				continue
+			}
+			i.Labels = relabel(i.Labels, s.labels.Blocked, s.labels.Ready)
+			snap.byState["ready"] = append(snap.byState["ready"], i)
+			s.cacheIssue(i)
+		} else if s.hasUnreadMail(config.RoleProjectManager, i.Number, 0) {
+			s.log.Info("question answered, issue back to triage", "issue", i.Number)
+			if err := s.setState(ctx, i.Number, s.labels.Triage); err != nil {
+				errs = append(errs, err)
+				stillBlocked = append(stillBlocked, i)
+				continue
+			}
+			i.Labels = relabel(i.Labels, s.labels.Blocked, s.labels.Triage)
+			snap.byState["triage"] = append(snap.byState["triage"], i)
+			s.cacheIssue(i)
+		} else {
+			stillBlocked = append(stillBlocked, i)
+		}
+	}
+	snap.byState["blocked"] = stillBlocked
 	// A work item in ready without a size — typically one a human
 	// fast-tracked past triage — gets the default size, so the developer
 	// and reviewer prompts and `bees status` always have one.
@@ -598,31 +636,6 @@ func (s *Scheduler) reconcile(ctx context.Context, snap *snapshot) error {
 		s.cacheIssue(i)
 	}
 	snap.byState["ready"] = ready
-	var stillBlocked []github.Issue
-	for _, i := range snap.byState["blocked"] {
-		if s.hasUnreadMail(config.RoleDeveloper, i.Number, 0) {
-			s.log.Info("question answered, issue back to ready", "issue", i.Number)
-			if err := s.setState(ctx, i.Number, s.labels.Ready); err != nil {
-				errs = append(errs, err)
-				stillBlocked = append(stillBlocked, i)
-				continue
-			}
-			i.Labels = relabel(i.Labels, s.labels.Blocked, s.labels.Ready)
-			snap.byState["ready"] = append(snap.byState["ready"], i)
-		} else if s.hasUnreadMail(config.RoleProjectManager, i.Number, 0) {
-			s.log.Info("question answered, issue back to triage", "issue", i.Number)
-			if err := s.setState(ctx, i.Number, s.labels.Triage); err != nil {
-				errs = append(errs, err)
-				stillBlocked = append(stillBlocked, i)
-				continue
-			}
-			i.Labels = relabel(i.Labels, s.labels.Blocked, s.labels.Triage)
-			snap.byState["triage"] = append(snap.byState["triage"], i)
-		} else {
-			stillBlocked = append(stillBlocked, i)
-		}
-	}
-	snap.byState["blocked"] = stillBlocked
 	// The pass moved issues between buckets; recount so `bees status` shows
 	// what GitHub now shows instead of the poll's stale counts.
 	s.setQueues(snap)

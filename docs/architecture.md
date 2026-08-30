@@ -81,16 +81,21 @@ A full pass is:
    SHA is recorded as `conflict_notified_sha` so the same head is never
    mailed about twice. An approved issue goes through `reopenApproved` as
    above. `UNKNOWN`/empty merge state is "not computed yet" and skipped.
-3. **reconcile** – label transitions driven by local state:
+3. **reconcile** – label transitions driven by local state, in this order:
    - an issue with no state label gets `bees:triage` (and the `bees` label if
      the filter did not require it);
+   - a `bees:blocked` issue with unread developer mail about it becomes
+     `bees:ready`; with unread project-manager mail it becomes `bees:triage`;
    - a `bees:ready` issue with no size label gets `bees:size/m`, the default
      size (see [Sizing](workflow.md#sizing));
    - a `bees:ready` issue sized above `roles.developer.max_size` (default `l`,
      so normally a `bees:size/xl` one) goes back to `bees:triage` without a
-     comment, for the project manager to split;
-   - a `bees:blocked` issue with unread developer mail about it becomes
-     `bees:ready`; with unread project-manager mail it becomes `bees:triage`.
+     comment, for the project manager to split.
+
+   The sizing runs after the unblocking so that an issue that becomes ready in
+   a pass is sized in the same pass. Every edit is also written back to the
+   cached poll (`cacheIssue`), which is what the local passes below classify
+   from: without it they would see the old labels and repeat the edit.
 4. **dispatch developers** – candidates are unowned `in-progress` and `review`
    issues (resume after a restart, never reordered), then `ready` issues that
    already have an open PR on their branch (`snapshot.prByBranch`; sent back
