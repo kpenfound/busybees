@@ -9,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/github"
+	"github.com/kpenfound/busybees/internal/mail"
 )
 
 // prereviewTOML runs the developer/reviewer loop alone with the pre-review
@@ -298,5 +300,88 @@ func TestShortDuration(t *testing.T) {
 		if got := shortDuration(tc.in); got != tc.want {
 			t.Errorf("shortDuration(%s) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+// mailSection returns the `## Mail for you` section of a rendered prompt. The
+// fake reviewer quotes its whole prompt in the mail it sends the developer, so
+// a later reviewer prompt echoes an earlier one under "previous rounds": only
+// the mail section itself answers whether a message was delivered again. It is
+// the last such heading in the prompt; anything quoted above it is not mail
+// addressed to this session.
+func mailSection(t *testing.T, prompt string) string {
+	t.Helper()
+	i := strings.LastIndex(prompt, "## Mail for you")
+	if i < 0 {
+		t.Fatalf("no mail section in prompt:\n%s", prompt)
+	}
+	section := prompt[i:]
+	if before, _, ok := strings.Cut(section, "\n## "); ok {
+		return before
+	}
+	return section
+}
+
+// TestReviewerReceivesHumanMail: mail addressed to the reviewer is delivered
+// to its next session and marked read, so a second review round does not see
+// it again. The message carries the issue number, not the PR's: a person
+// steering a review is as likely to quote one as the other.
+func TestReviewerReceivesHumanMail(t *testing.T) {
+	h := newHarness(t, prereviewTOML)
+	seedPreReviewIssue(t, h, "Two rounds")
+	h.gh.checks = []checksResponse{{`[{"name":"go / test","bucket":"pass","state":"SUCCESS"}]`, nil}}
+	if _, err := h.box.Send(mail.Message{From: HumanSender, To: config.RoleReviewer,
+		Subject: "Naming", Body: "leave the flag names alone", Issue: 1}); err != nil {
+		t.Fatal(err)
+	}
+	runPreReviewLoop(t, h)
+
+	h.wantOrder("developer-issue-1-r1", "reviewer-pr-101-r1", "developer-issue-1-r2", "reviewer-pr-101-r2")
+	first := mailSection(t, promptOf(t, h, 1))
+	for _, want := range []string{"## Mail for you (1)", "leave the flag names alone"} {
+		if !strings.Contains(first, want) {
+			t.Errorf("the first reviewer session is missing %q:\n%s", want, first)
+		}
+	}
+	second := mailSection(t, promptOf(t, h, 3))
+	if strings.Contains(second, "leave the flag names alone") {
+		t.Errorf("the message was delivered twice:\n%s", second)
+	}
+	if !strings.Contains(second, "_No new mail._") {
+		t.Errorf("the second reviewer session has no empty mail section:\n%s", second)
+	}
+	if unread, _ := h.box.List(mail.Filter{To: config.RoleReviewer, UnreadOnly: true}); len(unread) != 0 {
+		t.Errorf("reviewer mail left unread: %+v", unread)
+	}
+}
+
+// TestReviewerChecksSessionReceivesMail: the same delivery in checks mode,
+// where the reviewer diagnoses a failing check rather than reviewing. The
+// message is addressed to the pull request here.
+func TestReviewerChecksSessionReceivesMail(t *testing.T) {
+	h := newHarness(t, prereviewTOML)
+	seedPreReviewIssue(t, h, "Ship it")
+	failing := `[{"name":"go / test","bucket":"fail","state":"FAILURE","link":"https://ci.example.com/run/1","workflow":"CI"}]`
+	passing := `[{"name":"go / test","bucket":"pass","state":"SUCCESS","link":"https://ci.example.com/run/2"}]`
+	h.gh.checks = []checksResponse{{failing, fmt.Errorf("exit status 1")}, {passing, nil}}
+	if _, err := h.box.Send(mail.Message{From: HumanSender, To: config.RoleReviewer,
+		Subject: "That check", Body: "the CI runner is being replaced", PR: fakePR}); err != nil {
+		t.Fatal(err)
+	}
+	runPreReviewLoop(t, h)
+
+	h.wantOrder("developer-issue-1-r1", "reviewer-pr-101-checks1", "developer-issue-1-r1-checkfix1",
+		"reviewer-pr-101-r1", "developer-issue-1-r2", "reviewer-pr-101-r2")
+	diagnose := mailSection(t, promptOf(t, h, 1))
+	for _, want := range []string{"## Mail for you (1)", "the CI runner is being replaced"} {
+		if !strings.Contains(diagnose, want) {
+			t.Errorf("the checks-mode session is missing %q:\n%s", want, diagnose)
+		}
+	}
+	if review := mailSection(t, promptOf(t, h, 3)); strings.Contains(review, "the CI runner is being replaced") {
+		t.Errorf("the message was delivered twice:\n%s", review)
+	}
+	if unread, _ := h.box.List(mail.Filter{To: config.RoleReviewer, UnreadOnly: true}); len(unread) != 0 {
+		t.Errorf("reviewer mail left unread: %+v", unread)
 	}
 }

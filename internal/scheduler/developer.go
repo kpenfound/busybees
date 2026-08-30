@@ -206,17 +206,26 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 			if err := s.ws.Fetch(ctx); err == nil {
 				_, _ = gitPull(ctx, ws.RepoDir)
 			}
+			// Read the mailbox here rather than once for the worker: this
+			// stage runs again on every round, and each session must see the
+			// mail that arrived since the previous one.
+			inbox, err := s.inbox(config.RoleReviewer, issue.Number, pr.Number)
+			if err != nil {
+				return err
+			}
 			name := fmt.Sprintf("reviewer-pr-%d-r%d", pr.Number, bookkeeping.Round)
-			log.Info("reviewer session", "pr", pr.Number, "round", bookkeeping.Round)
+			log.Info("reviewer session", "pr", pr.Number, "round", bookkeeping.Round, "mail", len(inbox))
 			started := s.now()
 			res, err := s.runSessionWithRetry(ctx, sessionSpec{
 				role: config.RoleReviewer, name: name, workDir: ws.RepoDir, branch: branch, worker: w,
-				data: prompts.Data{Issue: &freshIssue, PR: &freshPR, PreviousRounds: previous, Round: bookkeeping.Round, MaxRounds: maxRounds,
+				data: prompts.Data{Issue: &freshIssue, PR: &freshPR, Inbox: inbox, PreviousRounds: previous, Round: bookkeeping.Round, MaxRounds: maxRounds,
 					Checks: roundChecks, ChecksStatus: roundStatus, ChecksTimeout: shortDuration(policy.PreReviewChecksTimeout)},
 			})
 			if err != nil {
 				return err
 			}
+			readErr := s.mail.MarkRead(inbox...)
+			s.opAs(log, slog.LevelWarn, "mail", readErr, "mark mail read", "err", readErr)
 			status, note := outcomeOf(res)
 			switch status {
 			case OutcomeApproved:
@@ -376,17 +385,26 @@ func (s *Scheduler) fixFailedChecks(ctx context.Context, f checksFix) (string, e
 	if err := s.ws.Fetch(ctx); err == nil {
 		_, _ = gitPull(ctx, f.repoDir)
 	}
+	// Read the mailbox here rather than once for the worker: this stage runs
+	// again on every fix round, and each session must see the mail that
+	// arrived since the previous one.
+	inbox, err := s.inbox(config.RoleReviewer, f.issue.Number, f.pr.Number)
+	if err != nil {
+		return "", err
+	}
 	name := fmt.Sprintf("reviewer-pr-%d-checks%d", f.pr.Number, f.bookkeeping.CheckFixRounds)
-	f.log.Info("checks failed; reviewer diagnosing", "pr", f.pr.Number, "stage", f.stage, "gate", string(f.gate), "round", f.bookkeeping.CheckFixRounds, "checks", checkNames(github.Failed(f.checks)))
+	f.log.Info("checks failed; reviewer diagnosing", "pr", f.pr.Number, "stage", f.stage, "gate", string(f.gate), "round", f.bookkeeping.CheckFixRounds, "checks", checkNames(github.Failed(f.checks)), "mail", len(inbox))
 	started := s.now()
 	res, err := s.runSessionWithRetry(ctx, sessionSpec{
 		role: config.RoleReviewer, name: name, task: "reviewer_checks", workDir: f.repoDir, branch: f.branch, worker: f.worker,
-		data: prompts.Data{Issue: &freshIssue, PR: &freshPR, FailedChecks: github.Failed(f.checks), Round: f.bookkeeping.CheckFixRounds, MaxRounds: f.policy.MaxCheckFixRounds},
+		data: prompts.Data{Issue: &freshIssue, PR: &freshPR, Inbox: inbox, FailedChecks: github.Failed(f.checks), Round: f.bookkeeping.CheckFixRounds, MaxRounds: f.policy.MaxCheckFixRounds},
 		env:  map[string]string{"BEES_REVIEW_MODE": "checks"},
 	})
 	if err != nil {
 		return "", err
 	}
+	readErr := s.mail.MarkRead(inbox...)
+	s.opAs(f.log, slog.LevelWarn, "mail", readErr, "mark mail read", "err", readErr)
 	outcome, note := outcomeOf(res)
 	switch outcome {
 	case OutcomeChangesRequested:
