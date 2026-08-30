@@ -81,12 +81,16 @@ func (s *Scheduler) productManagerHasWork(ctx context.Context, snap *snapshot) b
 	if err != nil {
 		return false
 	}
-	// A proposal is never work: it waits for a person to approve it, and a
-	// bee-written one stays "fresh" forever (nobody has commented on it), so
-	// counting it here would wake the product manager on every single poll
-	// for a decision it cannot make. The interval-based wake still shows it.
+	// A proposal only counts as work once a person has commented on it: it
+	// waits for a person to approve it, and AwaitingBee counts an issue's
+	// creation as human activity, so an untouched bee-written proposal stays
+	// "fresh" forever and would wake the product manager on every single poll
+	// for a decision it cannot make. A person's question, on the other hand,
+	// deserves an answer as promptly as on any other issue; freshIssues only
+	// looks at issues updated since the last run, so the proposal goes quiet
+	// again on the poll after that.
 	for _, i := range fresh {
-		if !github.HasLabel(i.Labels, s.labels.Proposal) {
+		if !github.HasLabel(i.Labels, s.labels.Proposal) || i.AwaitingBeeComment() {
 			return true
 		}
 	}
