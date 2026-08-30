@@ -15,9 +15,10 @@
 - {{.Name}} — {{.Bucket}}{{if .Link}} — {{.Link}}{{end}}
 {{- end}}
 
-{{if eq .ChecksStatus "passed"}}CI is green; concentrate on the change itself.{{else}}Checks were still pending after `{{.ChecksTimeout}}`; run the repository's test-suite yourself.{{end}}
+{{if eq .ChecksStatus "passed"}}CI is green; concentrate on the change itself.{{else}}Checks were still pending after `{{.ChecksTimeout}}`: judge the change on the code, and say in your note that CI had not reported when you reviewed.{{end}}
 {{else}}
-This repository reports no required checks; run the tests yourself.
+This repository reports no required checks: nothing was verified for you. Judge the
+change on the code, and say so in your note.
 {{end}}{{end}}
 {{if .PreviousRounds}}
 ## Your feedback from previous rounds
@@ -31,7 +32,7 @@ This repository reports no required checks; run the tests yourself.
 {{template "consolidate" .}}
 ## Instructions
 
-The PR branch is checked out in your working directory. Review the diff, run the tests,
+The PR branch is checked out in your working directory. Read the diff and the issue,
 then either report `done` with `status: approved` and a note, or send your feedback to
 the developer with `mail_send` (`to: developer`, `pr: {{.PR.Number}}`,
 `issue: {{.Issue.Number}}`) and report `done` with `status: changes-requested`.
