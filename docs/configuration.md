@@ -147,10 +147,10 @@ orchestrator adds `bees:size/m` to any ready issue that has none. See
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `poll_interval` | duration | `"5m"` | How often GitHub is polled for work. Each poll costs two API calls (`gh issue list`, `gh pr list`); everything else is gated on what those lists report (see [API budget](#api-budget)). Also the minimum gap between two runs of the same singleton role. Keep it infrequent. |
-| `rate_limit_backoff` | duration | `"15m"` | How long to pause polling after a poll fails with a GitHub rate-limit error (a message containing "rate limit", "secondary rate" or "abuse detection"), instead of retrying after `poll_interval`. |
+| `rate_limit_backoff` | duration | `"15m"` | How long to pause polling after a poll fails with a GitHub rate-limit error (a message containing "rate limit", "secondary rate" or "abuse detection"), instead of retrying after `poll_interval`. It is also how long the whole factory pauses when a session hits the account-wide claude session limit and no usable reset time came with it (see [The claude session limit](#the-claude-session-limit)). |
 | `max_developers` | int | `1` | Number of concurrent developer workers. Each worker owns one issue and runs a sequential developer → reviewer → developer loop, so reviewer concurrency follows developer concurrency. Must be ≥ 1. |
 | `max_review_rounds` | int | `3` | Developer/reviewer iterations before an issue is escalated with `bees:needs-human`. |
-| `retries` | int | `1` | Extra attempts a session gets when it failed for **infrastructure** reasons — it timed out, ran out of turns, hit an API error or rate limit, or `claude` crashed. A session that ran and reported (with `bees done`, including `failed`) is never retried. `0` disables retrying; must be between 0 and 5. See [Escalation](workflow.md#escalation-beesneeds-human). |
+| `retries` | int | `1` | Extra attempts a session gets when it failed for **infrastructure** reasons — it timed out, ran out of turns, hit an API error or rate limit, or `claude` crashed. A session that ran and reported (with `bees done`, including `failed`) is never retried, and neither is one that hit [the claude session limit](#the-claude-session-limit) — every attempt would hit the same wall. `0` disables retrying; must be between 0 and 5. See [Escalation](workflow.md#escalation-beesneeds-human). |
 | `retry_delay` | duration | `"10m"` | How long to wait before an attempt is repeated. `"0s"` retries immediately. |
 | `retry_with_fallback` | bool | `true` | Run the retry with the role's `fallback_model` as its primary model. Roles without a fallback model simply rerun. |
 | `triage_batch_size` | int | `5` | Maximum number of issues handed to the project manager in one session. |
@@ -318,6 +318,34 @@ session is never interrupted on cost:
 
 Budgets are about money, not about turns: `max_turns` already caps how long a
 single session may go on for.
+
+### The claude session limit
+
+The Anthropic account has limits of its own, and every role shares the
+account: when one session runs out of capacity, so has the whole factory.
+`claude` reports it in two ways and either is enough — a `rate_limit_event`
+in the session's stream whose status is neither `allowed` nor
+`allowed_warning`, or, from a session that failed without reporting an
+outcome, a result text naming a session or usage limit ("You've hit your
+session limit · resets 11:50pm (America/Detroit)"). The result text is only
+read this way when the session reported nothing: it is the session's own
+prose, and a bee whose work is the limit itself writes those words.
+
+A session that ends that way is **not** retried: every attempt would hit the
+same wall. Its issue is not escalated either — the limit says nothing about
+the work — so it keeps its state label and is picked up again afterwards.
+The scheduler pauses **all** dispatch, developers and singletons alike,
+until the limit resets. Sessions already running finish on their own, as
+with the daily cost budget; polling and label reconciliation carry on, so
+the pause costs nothing and `bees status` stays honest.
+
+How long it pauses comes from the reset time the event carried, with two
+sanity limits: one that is missing or already in the past falls back to
+`rate_limit_backoff` (default 15m), and one more than 8 hours ahead is
+clamped to 8 hours, so a wrong clock or a weekly window cannot park the
+factory for days. The pause is logged when it starts and again when it
+lifts, and `bees status` names the time it lifts. It is held in memory only:
+restarting `bees run` clears it and the first session re-learns the limit.
 
 ## `[logging]`
 

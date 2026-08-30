@@ -670,6 +670,12 @@ classifies what went wrong:
   tool (including `failed`), or ended cleanly without reporting at all. Running it
   again would only repeat the same decision, so it escalates immediately.
 
+One failure is neither: the **claude session limit**. It belongs to the
+account, not to the session, so the attempt is not repeated and the issue is
+not escalated — it keeps its state label and the whole factory stops
+dispatching until the limit resets. See
+[The claude session limit](configuration.md#the-claude-session-limit).
+
 Set `scheduler.retries = 0` to escalate every failure at once. Retries apply
 to sessions only; git, `gh` and worktree failures are not retried.
 

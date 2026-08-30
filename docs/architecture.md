@@ -96,14 +96,25 @@ A full pass is:
    a pass is sized in the same pass. Every edit is also written back to the
    cached poll (`cacheIssue`), which is what the local passes below classify
    from: without it they would see the old labels and repeat the edit.
-4. **cost budgets** (`budgets.go`) – with `scheduler.max_cost_per_day` set,
-   the ledger is summed over the last 24 hours before anything is dispatched.
-   At or over the budget steps 5 and 6 start nothing new (workers already
-   running finish their loop), and the pause is logged once per transition and
-   reported by `bees status`. The other two budgets are enforced elsewhere:
-   `max_cost_per_issue` between a developer worker's stages, and
-   `max_cost_per_session` after a session ends. See
-   [Cost budgets](configuration.md#cost-budgets).
+4. **pauses** (`budgets.go`, `limits.go`) – two things can stop steps 5 and 6
+   from starting anything new; workers already running finish their loop
+   either way, and each pause is logged once when it starts and once when it
+   lifts, and reported by `bees status`.
+   - **cost budget** – with `scheduler.max_cost_per_day` set, the ledger is
+     summed over the last 24 hours before anything is dispatched. The other
+     two budgets are enforced elsewhere: `max_cost_per_issue` between a
+     developer worker's stages, and `max_cost_per_session` after a session
+     ends. See [Cost budgets](configuration.md#cost-budgets).
+   - **claude session limit** – recorded from a finished session rather than
+     computed here (`recordSessionLimit`, called from `runSessionWithRetry`):
+     a session whose last `rate_limit_event` was blocking, or which failed
+     without reporting an outcome and whose result text names a session or
+     usage limit, pauses dispatch until the reset time the event carried
+     (`rate_limit_backoff` when there was none, capped at 8h). A session that
+     reported no outcome also returns at once, without spending a retry; one
+     that did its work and reported is still read normally. The limit is per
+     account, so it holds every role. See [The claude session
+     limit](configuration.md#the-claude-session-limit).
 5. **dispatch developers** – candidates are unowned `in-progress` and `review`
    issues (resume after a restart, never reordered), then `ready` issues that
    already have an open PR on their branch (`snapshot.prByBranch`; sent back
@@ -406,7 +417,10 @@ saved to `stderr.log` when non-empty, and `result.json` summarises the run.
   `internal/scheduler/sessions.go`) splits failures into *infrastructure* — a
   timeout, an API error, exhausted turns, a rate limit, `claude` exiting with
   no result event — and *behavioural*: the session reported an outcome
-  (including `failed`), or exited cleanly without reporting. Only
+  (including `failed`), or exited cleanly without reporting. The
+  account-wide claude session limit is neither and never reaches
+  `classifyFailure`: `recordSessionLimit` returns `errSessionLimited` from
+  `runSessionWithRetry` first (see step 4 above). Only
   infrastructure failures are retried, `scheduler.retries` times, waiting
   `scheduler.retry_delay` between attempts and running with the role's
   fallback model when `scheduler.retry_with_fallback` is set. Each attempt has

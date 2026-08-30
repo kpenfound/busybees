@@ -120,12 +120,18 @@ func shortDur(d time.Duration) string {
 // spend against it, and says so plainly while dispatch is paused. Both
 // numbers come from status.json — they are what the scheduler last computed,
 // not a fresh sum, so they go stale with the rest of the file when it stops.
+// The claude session limit is reported before the daily budget: it is the
+// harder stop, and it names the time it lifts because that is the only
+// thing a person can do anything about.
 func schedulerLine(st state.Status, now time.Time) string {
 	line := "scheduler: never run"
 	if !st.UpdatedAt.IsZero() {
 		line = fmt.Sprintf("scheduler: pid %d, last poll %s ago", st.PID, now.Sub(st.LastPoll).Round(time.Second))
 	}
 	switch {
+	case st.LimitPausedUntil.After(now):
+		line += fmt.Sprintf("   paused: claude session limit until %s (in %s)",
+			st.LimitPausedUntil.Local().Format("15:04"), shortDur(st.LimitPausedUntil.Sub(now)))
 	case st.BudgetPaused:
 		line += fmt.Sprintf("   paused: daily budget ($%.2f / $%.2f)", st.DaySpendUSD, st.DayBudgetUSD)
 	case st.DayBudgetUSD > 0:

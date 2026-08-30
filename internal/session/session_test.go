@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -262,5 +263,117 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
 		if builtin.Env[k] == "" {
 			t.Errorf("built-in server env is missing %s: %v", k, builtin.Env)
 		}
+	}
+}
+
+// TestRateLimitEventIsKept: a session's stream carries the account's
+// capacity reports, and the last one reaches the Result. The blocking one
+// is what pauses the factory, so the trap in the data is asserted too — an
+// "allowed" event whose overageStatus is "rejected" must not read as
+// blocked, because status is parsed as a field and never matched as a
+// substring of the line.
+func TestRateLimitEventIsKept(t *testing.T) {
+	resets := time.Now().Add(37 * time.Minute).Truncate(time.Second)
+	cases := []struct {
+		name    string
+		events  string
+		blocked bool
+	}{
+		{
+			name: "allowed",
+			events: `echo '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","overageStatus":"rejected","resetsAt":RESETS,"rateLimitType":"five_hour","utilization":0.1}}'
+`,
+		},
+		{
+			name: "allowed_warning",
+			events: `echo '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","resetsAt":RESETS,"rateLimitType":"five_hour","utilization":0.91}}'
+`,
+		},
+		{
+			name: "blocked",
+			events: `echo '{"type":"rate_limit_event","rate_limit_info":{"status":"blocked","resetsAt":RESETS,"rateLimitType":"five_hour","utilization":1}}'
+`,
+			blocked: true,
+		},
+		{
+			// The last event wins: a warning that turned into a block.
+			name: "warning then blocked",
+			events: `echo '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","resetsAt":RESETS,"rateLimitType":"five_hour"}}'
+echo '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":RESETS,"rateLimitType":"five_hour"}}'
+`,
+			blocked: true,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			events := strings.ReplaceAll(c.events, "RESETS", strconv.FormatInt(resets.Unix(), 10))
+			bin := fakeClaude(t, events+`
+echo '{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"abc","num_turns":1,"total_cost_usd":0.01}'
+`)
+			r := newRunner(t, bin)
+			res, err := r.Run(context.Background(), Request{Name: "t", Role: config.ResolvedRole{Name: "developer", Timeout: time.Minute}, WorkDir: t.TempDir()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res.RateLimit == nil {
+				t.Fatal("no rate limit event kept")
+			}
+			if res.RateLimit.Type != "five_hour" {
+				t.Errorf("rateLimitType = %q, want five_hour", res.RateLimit.Type)
+			}
+			if !res.RateLimit.ResetsAt.Equal(resets) {
+				t.Errorf("resetsAt = %s, want %s", res.RateLimit.ResetsAt, resets)
+			}
+			at, limited := res.SessionLimited()
+			if limited != c.blocked {
+				t.Errorf("SessionLimited = %v (status %q), want %v", limited, res.RateLimit.Status, c.blocked)
+			}
+			if c.blocked && !at.Equal(resets) {
+				t.Errorf("SessionLimited reset time = %s, want %s", at, resets)
+			}
+		})
+	}
+}
+
+// TestSessionLimitedFromResultText: the second trigger. A session whose
+// stream carried no rate-limit event at all still reads as limited when it
+// reported the sentence a person sees, and then has no reset time to give.
+func TestSessionLimitedFromResultText(t *testing.T) {
+	bin := fakeClaude(t, `
+echo '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"You'"'"'ve hit your session limit · resets 11:50pm (America/Detroit)","session_id":"abc","num_turns":0}'
+`)
+	r := newRunner(t, bin)
+	res, err := r.Run(context.Background(), Request{Name: "t", Role: config.ResolvedRole{Name: "developer", Timeout: time.Minute}, WorkDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.RateLimit != nil {
+		t.Fatalf("no event was emitted, got %+v", res.RateLimit)
+	}
+	at, limited := res.SessionLimited()
+	if !limited || !at.IsZero() {
+		t.Errorf("SessionLimited = %v at %s, want true with no reset time", limited, at)
+	}
+	// An ordinary failure is not the account limit.
+	other := &Result{IsError: true, ResultText: "the tests do not pass"}
+	if _, limited := other.SessionLimited(); limited {
+		t.Error("an unrelated failure read as the session limit")
+	}
+	// The result text is the session's own prose, so it is read as a
+	// capacity report only from a session that failed with nothing else to
+	// say. A bee whose work is the session limit writes those words while
+	// doing its job, and must not stop the factory by describing it.
+	for _, c := range []struct {
+		name string
+		res  Result
+	}{
+		{"reported an outcome", Result{IsError: true, HasOutcome: true, ResultText: "Opened a PR for the session limit issue"}},
+		{"finished cleanly", Result{ResultText: "Reviewed the session limit pull request"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, limited := c.res.SessionLimited(); limited {
+				t.Errorf("a session that %s paused the factory by writing about the limit", c.name)
+			}
+		})
 	}
 }

@@ -435,7 +435,11 @@ func infraReason(res *session.Result) string {
 
 // runSessionWithRetry runs a session and repeats it, up to
 // scheduler.retries times, while it keeps failing for infrastructure
-// reasons. The result of the last attempt is returned either way.
+// reasons. The result of the last attempt is returned either way, except
+// for one failure that is not the session's: a session that died on the
+// account-wide claude session limit without reporting an outcome returns at
+// once with errSessionLimited, spending no retry attempt, because every
+// attempt and every other role would hit the same wall (see limits.go).
 func (s *Scheduler) runSessionWithRetry(ctx context.Context, spec sessionSpec) (*session.Result, error) {
 	policy := s.cfg.Retry()
 	for attempt := 1; ; attempt++ {
@@ -450,6 +454,13 @@ func (s *Scheduler) runSessionWithRetry(ctx context.Context, spec sessionSpec) (
 		res, err := s.runSession(ctx, try)
 		if err != nil {
 			return nil, err
+		}
+		// A blocking event is an honest report about the account even from
+		// a session that finished, so the pause is recorded either way; but
+		// a session that reported an outcome did its work, and the caller
+		// must still read it.
+		if s.recordSessionLimit(res) && !res.HasOutcome {
+			return res, errSessionLimited
 		}
 		if note, over := overSessionBudget(res, s.cfg.Scheduler.MaxCostPerSession); over {
 			streak := s.overBudgetStreak(budgetKey(spec), true)
