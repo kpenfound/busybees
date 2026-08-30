@@ -54,6 +54,9 @@ type Data struct {
 	Round     int
 	MaxRounds int
 	LastRun   string
+	// Retry is the number of times this session has already been attempted
+	// and failed for infrastructure reasons (0 on a first attempt).
+	Retry int
 
 	// FailedChecks is set for the reviewer's checks-mode task.
 	FailedChecks []github.Check

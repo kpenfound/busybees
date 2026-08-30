@@ -70,6 +70,15 @@ func fakeClaude() {
 	switch role {
 	case config.RoleDeveloper:
 		n := counter("dev")
+		// Infrastructure failures, on the first attempt only: hang until the
+		// role timeout kills the session, or report `failed` outright.
+		if n == 1 && os.Getenv("BEES_FAKE_DEV_HANG") == "1" {
+			time.Sleep(time.Minute)
+		}
+		if os.Getenv("BEES_FAKE_DEV_FAIL") == "1" {
+			outcome = session.Outcome{Status: OutcomeFailed, Note: "cannot build"}
+			break
+		}
 		if err := os.WriteFile(fmt.Sprintf("work-%d.txt", n), []byte("done"), 0o644); err != nil {
 			fail(err)
 		}
@@ -127,9 +136,42 @@ type fakeGH struct {
 	// activity is raw JSON served for api pulls/N/reviews, pulls/N/comments, issues/N/comments
 	activity map[string]string
 	// checks is a queue of responses for `pr checks`; the last one repeats.
-	checks      []checksResponse
-	checksCalls int
-	mergeArgs   [][]string
+	checks    []checksResponse
+	mergeArgs [][]string
+	// calls logs every gh invocation, in order.
+	calls [][]string
+}
+
+// callCount counts logged gh calls whose first two arguments are cmd
+// ("issue list", "pr list", ...).
+func (f *fakeGH) callCount(cmd string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, c := range f.calls {
+		if len(c) >= 2 && c[0]+" "+c[1] == cmd {
+			n++
+		}
+	}
+	return n
+}
+
+// fakeClock is a settable clock for tests that drive the scheduler loop.
+type fakeClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func (c *fakeClock) now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
+
+func (c *fakeClock) advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.t = c.t.Add(d)
 }
 
 type checksResponse struct {
@@ -140,6 +182,7 @@ type checksResponse struct {
 func (f *fakeGH) exec(ctx context.Context, args ...string) ([]byte, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.calls = append(f.calls, append([]string(nil), args...))
 	flag := func(name string) string {
 		for i, a := range args {
 			if a == name && i+1 < len(args) {
@@ -278,7 +321,6 @@ func (f *fakeGH) exec(ctx context.Context, args ...string) ([]byte, error) {
 		f.mergeArgs = append(f.mergeArgs, args)
 		return nil, nil
 	case "pr checks":
-		f.checksCalls++
 		if len(f.checks) == 0 {
 			return nil, fmt.Errorf("no checks reported on the 'bees/issue-1' branch")
 		}
@@ -301,9 +343,17 @@ type harness struct {
 	box   *mail.Box
 	sched *Scheduler
 	clone string
+	clock *fakeClock // nil unless the harness was built with a fixed clock
 }
 
 func newHarness(t *testing.T, toml string) *harness {
+	t.Helper()
+	return newHarnessAt(t, toml, time.Time{})
+}
+
+// newHarnessAt builds a harness whose scheduler reads the clock from
+// harness.clock, starting at now. A zero now uses the real clock.
+func newHarnessAt(t *testing.T, toml string, now time.Time) *harness {
 	t.Helper()
 	_, clone := testutil.SetupRepos(t)
 	cfgPath := filepath.Join(clone, "bees.toml")
@@ -325,6 +375,16 @@ func newHarness(t *testing.T, toml string) *harness {
 	if cfg.Project.DefaultBranch != "main" {
 		t.Fatalf("default branch not derived: %q", cfg.Project.DefaultBranch)
 	}
+	// Every first review reads the PR's required checks; no test wants to
+	// wait the default minute for them. A test that sets its own values wins.
+	rs := cfg.Roles[config.RoleReviewer]
+	if rs.ChecksWait.Duration == 0 {
+		rs.ChecksWait = config.Duration{Duration: time.Millisecond}
+	}
+	if rs.ChecksPollInterval.Duration == 0 {
+		rs.ChecksPollInterval = config.Duration{Duration: 10 * time.Millisecond}
+	}
+	cfg.Roles[config.RoleReviewer] = rs
 	store := state.New(cfg.StateDir())
 	if err := store.Init(); err != nil {
 		t.Fatal(err)
@@ -351,12 +411,18 @@ func newHarness(t *testing.T, toml string) *harness {
 	}
 	ws := workspace.NewManager(clone, filepath.Join(t.TempDir(), "ws"))
 	box := mail.Open(store.MailDir())
-	sched, err := New(Deps{Config: cfg, GitHub: client, Mail: box, Runner: runner, Workspaces: ws, Store: store, Logger: runner.Logger})
+	deps := Deps{Config: cfg, GitHub: client, Mail: box, Runner: runner, Workspaces: ws, Store: store, Logger: runner.Logger}
+	var clock *fakeClock
+	if !now.IsZero() {
+		clock = &fakeClock{t: now}
+		deps.Now = clock.now
+	}
+	sched, err := New(deps)
 	if err != nil {
 		t.Fatal(err)
 	}
 	sched.Once = true
-	return &harness{t: t, cfg: cfg, gh: gh, store: store, box: box, sched: sched, clone: clone}
+	return &harness{t: t, cfg: cfg, gh: gh, store: store, box: box, sched: sched, clone: clone, clock: clock}
 }
 
 func (h *harness) sessions(role string) []string {
@@ -380,16 +446,31 @@ func (h *harness) sessionOrder() []string {
 	return strings.Fields(strings.TrimSpace(string(b)))
 }
 
-// wantOrder asserts the sessions ran in this order; each want is matched as a
-// substring of the session directory name.
+// sessionNames is sessionOrder with the "<date>-<time>-" prefix and the
+// random MkdirTemp suffix stripped, so "reviewer-pr-101-r2" is the whole name
+// and not a prefix of "reviewer-pr-101-r2-checkfix1".
+func (h *harness) sessionNames() []string {
+	dirs := h.sessionOrder()
+	names := make([]string, len(dirs))
+	for i, d := range dirs {
+		parts := strings.Split(d, "-")
+		if len(parts) > 3 {
+			parts = parts[2 : len(parts)-1]
+		}
+		names[i] = strings.Join(parts, "-")
+	}
+	return names
+}
+
+// wantOrder asserts the sessions ran in this order, by exact session name.
 func (h *harness) wantOrder(want ...string) {
 	h.t.Helper()
-	got := h.sessionOrder()
+	got := h.sessionNames()
 	if len(got) != len(want) {
 		h.t.Fatalf("session order: %v\nwant     %v", got, want)
 	}
 	for i := range want {
-		if !strings.Contains(got[i], want[i]) {
+		if got[i] != want[i] {
 			h.t.Fatalf("session %d is %q, want %q\nfull order: %v", i, got[i], want[i], got)
 		}
 	}
@@ -404,9 +485,6 @@ func (h *harness) seedReviewCounter(n int) {
 	}
 }
 
-// baseTOML ends with [roles.reviewer] so tests can append reviewer keys
-// directly (TOML forbids declaring the same table twice). checks_wait is
-// 1ms because every first review now reads the required checks first.
 const baseTOML = `
 version = 1
 [project]
@@ -415,9 +493,6 @@ repo = "acme/widgets"
 poll_interval = "1s"
 max_developers = 2
 max_review_rounds = 3
-[roles.reviewer]
-checks_wait = "1ms"
-checks_poll_interval = "10ms"
 `
 
 func TestFullDeveloperReviewLoop(t *testing.T) {
@@ -619,6 +694,7 @@ func TestLabelBackstop(t *testing.T) {
 
 func TestAutoMergeAfterChecks(t *testing.T) {
 	h := newHarness(t, baseTOML+`
+[roles.reviewer]
 auto_merge = true
 merge_method = "rebase"
 checks_timeout = "5s"
@@ -696,6 +772,7 @@ enabled = false
 
 func TestChecksTimeoutEscalates(t *testing.T) {
 	h := newHarness(t, baseTOML+`
+[roles.reviewer]
 auto_merge = true
 checks_timeout = "1ms"
 pre_review_checks_timeout = "1ms"
@@ -752,8 +829,8 @@ enabled = false
 	// The failing check reached the reviewer in checks mode before any review.
 	// Review round 2 is an ordinary feedback round: it must not be named as a
 	// check-fix round just because round 1 came back through the checks.
-	h.wantOrder("developer-issue-1-r1-", "reviewer-pr-101-checks1-", "developer-issue-1-r1-checkfix1-",
-		"reviewer-pr-101-r1-", "developer-issue-1-r2-", "reviewer-pr-101-r2-")
+	h.wantOrder("developer-issue-1-r1", "reviewer-pr-101-checks1", "developer-issue-1-r1-checkfix1",
+		"reviewer-pr-101-r1", "developer-issue-1-r2", "reviewer-pr-101-r2")
 	if last := h.gh.history[1][len(h.gh.history[1])-1]; last != "bees:approved" {
 		t.Fatalf("history: %v", h.gh.history[1])
 	}
@@ -778,6 +855,7 @@ enabled = false
 
 func TestPreReviewChecksPendingReviewsAnyway(t *testing.T) {
 	h := newHarness(t, baseTOML+`
+[roles.reviewer]
 pre_review_checks_timeout = "1ms"
 [roles.product_manager]
 enabled = false
@@ -795,7 +873,7 @@ enabled = false
 	if err := h.sched.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
-	h.wantOrder("developer-issue-1-r1-", "reviewer-pr-101-r1-")
+	h.wantOrder("developer-issue-1-r1", "reviewer-pr-101-r1")
 	if len(h.gh.comments[1]) != 0 {
 		t.Fatalf("pending checks must not escalate before the review: %v", h.gh.comments[1])
 	}
@@ -844,7 +922,7 @@ enabled = false
 	if err := h.sched.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
-	h.wantOrder("developer-issue-1-r1-", "reviewer-pr-101-r1-")
+	h.wantOrder("developer-issue-1-r1", "reviewer-pr-101-r1")
 	if len(h.gh.comments[1]) != 0 {
 		t.Fatalf("a failed checks read must not escalate: %v", h.gh.comments[1])
 	}
@@ -856,6 +934,7 @@ enabled = false
 
 func TestPreReviewChecksDisabled(t *testing.T) {
 	h := newHarness(t, baseTOML+`
+[roles.reviewer]
 pre_review_checks = false
 [roles.product_manager]
 enabled = false
@@ -873,9 +952,9 @@ enabled = false
 		t.Fatal(err)
 	}
 	// Today's sequence: review round 1 requests changes, round 2 approves.
-	h.wantOrder("developer-issue-1-r1-", "reviewer-pr-101-r1-", "developer-issue-1-r2-", "reviewer-pr-101-r2-")
-	if h.gh.checksCalls != 0 {
-		t.Fatalf("required checks were read %d times with pre_review_checks = false", h.gh.checksCalls)
+	h.wantOrder("developer-issue-1-r1", "reviewer-pr-101-r1", "developer-issue-1-r2", "reviewer-pr-101-r2")
+	if n := h.gh.callCount("pr checks"); n != 0 {
+		t.Fatalf("required checks were read %d times with pre_review_checks = false", n)
 	}
 	for _, dir := range h.sessionOrder() {
 		b, _ := os.ReadFile(filepath.Join(h.store.SessionsDir(), dir, "prompt.md"))
@@ -979,5 +1058,274 @@ func TestFeatureIssuesBelongToProductManager(t *testing.T) {
 	}
 	if strings.Contains(string(prompt), "| 5 | - |") && strings.Contains(string(prompt), "## Open work items (3)") {
 		t.Error("feature issues must not be listed as work items")
+	}
+}
+
+// A session killed by its timeout is an infrastructure failure: the worker
+// runs it again instead of escalating.
+func TestInfrastructureFailureIsRetried(t *testing.T) {
+	t.Setenv("BEES_FAKE_DEV_HANG", "1")
+	h := newHarness(t, baseTOML+`
+retries = 1
+retry_delay = "0s"
+[roles.developer]
+timeout = "5s"
+[roles.product_manager]
+enabled = false
+[roles.qa]
+enabled = false
+[roles.project_manager]
+enabled = false
+`)
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}}}
+	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
+	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true} // reviewer disabled: PR auto-approved
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if err := h.sched.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := strings.Join(h.gh.history[1], ","); got != "bees:in-progress,bees:approved" {
+		t.Fatalf("history: %s", got)
+	}
+	if len(h.gh.comments[1]) != 0 {
+		t.Fatalf("no escalation expected: %v", h.gh.comments[1])
+	}
+	dev := h.sessions(config.RoleDeveloper)
+	if len(dev) != 2 {
+		t.Fatalf("developer sessions: %v", dev)
+	}
+	// The retry keeps its own transcript directory.
+	if !strings.Contains(filepath.Base(dev[1]), "-retry1-") {
+		t.Errorf("retry session directory not named as a retry: %s", dev[1])
+	}
+	first, _ := os.ReadFile(filepath.Join(dev[0], "prompt.md"))
+	if strings.Contains(string(first), "previous attempt was interrupted") {
+		t.Errorf("first attempt got the retry preamble:\n%s", first)
+	}
+	retry, _ := os.ReadFile(filepath.Join(dev[1], "prompt.md"))
+	if !strings.Contains(string(retry), "previous attempt was interrupted") {
+		t.Errorf("retry is missing the interrupted-work preamble:\n%s", retry)
+	}
+}
+
+// A session that ran and reported `failed` made a decision: it escalates at
+// once, however many retries are configured.
+func TestReportedFailureEscalatesWithoutRetry(t *testing.T) {
+	t.Setenv("BEES_FAKE_DEV_FAIL", "1")
+	h := newHarness(t, baseTOML+`
+retries = 2
+retry_delay = "0s"
+[roles.product_manager]
+enabled = false
+[roles.qa]
+enabled = false
+[roles.project_manager]
+enabled = false
+`)
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}}}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if err := h.sched.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := strings.Join(h.gh.history[1], ","); got != "bees:in-progress,bees:needs-human" {
+		t.Fatalf("history: %s", got)
+	}
+	if got := len(h.sessions(config.RoleDeveloper)); got != 1 {
+		t.Fatalf("developer sessions: got %d want 1", got)
+	}
+	if len(h.gh.comments[1]) != 1 || !strings.Contains(h.gh.comments[1][0], "ended with `failed`") {
+		t.Fatalf("comments: %v", h.gh.comments[1])
+	}
+}
+
+// workHoursTOML is baseTOML with a mon-fri 09:00-18:00 window in UTC and
+// every role disabled, so only the polling loop itself is exercised.
+const workHoursTOML = baseTOML + `
+off_hours_poll_interval = "1h"
+work_hours = "09:00-18:00"
+work_days = ["mon", "tue", "wed", "thu", "fri"]
+timezone = "UTC"
+[roles.developer]
+enabled = false
+[roles.reviewer]
+enabled = false
+[roles.product_manager]
+enabled = false
+[roles.project_manager]
+enabled = false
+[roles.qa]
+enabled = false
+`
+
+func TestOffHoursPollingIsThrottled(t *testing.T) {
+	// 2026-08-29 12:00 UTC is a Saturday: outside the window.
+	h := newHarnessAt(t, workHoursTOML, time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC))
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Later", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}}}
+	ctx := context.Background()
+
+	full, err := h.sched.tick(ctx)
+	if err != nil || !full {
+		t.Fatalf("first tick: full=%v err=%v", full, err)
+	}
+	if h.gh.callCount("issue list") != 1 || h.gh.callCount("pr list") != 1 {
+		t.Fatalf("first tick should poll once: %v", h.gh.calls)
+	}
+	// The loop keeps ticking every poll_interval, but off hours the next
+	// GitHub poll is an hour out, so the second pass is local.
+	h.clock.advance(h.cfg.Scheduler.PollInterval.Duration)
+	full, err = h.sched.tick(ctx)
+	if err != nil || full {
+		t.Fatalf("second tick: full=%v err=%v", full, err)
+	}
+	if h.gh.callCount("issue list") != 1 || h.gh.callCount("pr list") != 1 {
+		t.Fatalf("a local pass must not poll GitHub: %v", h.gh.calls)
+	}
+
+	h.sched.writeStatus()
+	st, err := h.store.LoadStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.InWorkHours == nil || *st.InWorkHours {
+		t.Fatalf("status should report off hours: %+v", st.InWorkHours)
+	}
+	if want := time.Date(2026, 8, 29, 13, 0, 0, 0, time.UTC); !st.NextPoll.Equal(want) {
+		t.Fatalf("next poll %s, want %s", st.NextPoll, want)
+	}
+
+	// Once the off-hours interval has elapsed, polling resumes.
+	h.clock.advance(time.Hour)
+	if full, err := h.sched.tick(ctx); err != nil || !full {
+		t.Fatalf("tick after the off-hours interval: full=%v err=%v", full, err)
+	}
+	if h.gh.callCount("issue list") != 2 {
+		t.Fatalf("expected a second poll: %v", h.gh.calls)
+	}
+}
+
+func TestInWorkHoursPollsEveryTick(t *testing.T) {
+	// 2026-08-31 12:00 UTC is a Monday inside the window.
+	h := newHarnessAt(t, workHoursTOML, time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC))
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		if full, err := h.sched.tick(ctx); err != nil || !full {
+			t.Fatalf("tick %d: full=%v err=%v", i, full, err)
+		}
+		h.clock.advance(h.cfg.Scheduler.PollInterval.Duration)
+	}
+	if h.gh.callCount("issue list") != 3 || h.gh.callCount("pr list") != 3 {
+		t.Fatalf("every tick should poll in work hours: %v", h.gh.calls)
+	}
+	h.sched.writeStatus()
+	if st, _ := h.store.LoadStatus(); st.InWorkHours == nil || !*st.InWorkHours {
+		t.Fatalf("status should report work hours: %+v", st.InWorkHours)
+	}
+}
+
+func TestLocalPassUnblocksIssueOffHours(t *testing.T) {
+	h := newHarnessAt(t, workHoursTOML, time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC))
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Vague", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:blocked"}}}
+	ctx := context.Background()
+	if _, err := h.sched.tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.gh.history[1]) != 0 {
+		t.Fatalf("nothing has answered the question yet: %v", h.gh.history[1])
+	}
+	// The project manager answers by mail; the next local pass picks it up
+	// without polling GitHub.
+	if _, err := h.box.Send(mail.Message{From: config.RoleProjectManager, To: config.RoleDeveloper, Subject: "Re: Vague", Body: "do X", Issue: 1}); err != nil {
+		t.Fatal(err)
+	}
+	h.clock.advance(h.cfg.Scheduler.PollInterval.Duration)
+	if full, err := h.sched.tick(ctx); err != nil || full {
+		t.Fatalf("second tick: full=%v err=%v", full, err)
+	}
+	if got := strings.Join(h.gh.history[1], ","); got != "bees:ready" {
+		t.Fatalf("history: %v", h.gh.history[1])
+	}
+	if h.gh.callCount("issue list") != 1 || h.gh.callCount("pr list") != 1 {
+		t.Fatalf("the local pass polled GitHub: %v", h.gh.calls)
+	}
+	// The cached issue list is not mutated by the local pass: classifying it
+	// again still finds the issue where the (unchanged) labels put it.
+	if n := len(h.sched.classify(h.sched.lastIssues, h.sched.lastPRs).byState["blocked"]); n != 1 {
+		t.Fatalf("cached poll was mutated: %d blocked issues", n)
+	}
+}
+
+// workHoursDevTOML is workHoursTOML with the developer and reviewer enabled,
+// so a whole develop -> review -> approve cycle runs off hours.
+const workHoursDevTOML = baseTOML + `
+off_hours_poll_interval = "1h"
+work_hours = "09:00-18:00"
+work_days = ["mon", "tue", "wed", "thu", "fri"]
+timezone = "UTC"
+[roles.product_manager]
+enabled = false
+[roles.project_manager]
+enabled = false
+[roles.qa]
+enabled = false
+`
+
+func TestLocalPassDoesNotRedispatchFinishedIssues(t *testing.T) {
+	// Saturday: off hours, so the tick after the first one is local and its
+	// snapshot still carries the issue's pre-work labels.
+	h := newHarnessAt(t, workHoursDevTOML, time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC))
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}}, CreatedAt: time.Now()}
+	h.gh.prs[fakePR] = &github.PR{Number: fakePR, Title: "Build the thing", State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	if full, err := h.sched.tick(ctx); err != nil || !full {
+		t.Fatalf("first tick: full=%v err=%v", full, err)
+	}
+	h.sched.wg.Wait()
+	want := "bees:in-progress,bees:review,bees:in-progress,bees:review,bees:approved"
+	before := strings.Join(h.gh.history[1], ",")
+	if before != want {
+		t.Fatalf("first pass history: %s, want %s", before, want)
+	}
+
+	lists, views := h.gh.callCount("issue list")+h.gh.callCount("pr list"), h.gh.callCount("issue view")
+
+	h.clock.advance(h.cfg.Scheduler.PollInterval.Duration)
+	if full, err := h.sched.tick(ctx); err != nil || full {
+		t.Fatalf("second tick: full=%v err=%v", full, err)
+	}
+	h.sched.wg.Wait()
+	if got := strings.Join(h.gh.history[1], ","); got != before {
+		t.Fatalf("local pass restarted a finished issue: %s", got)
+	}
+	if n := len(h.sessions(config.RoleDeveloper)); n != 2 {
+		t.Fatalf("developer sessions: %d, want 2", n)
+	}
+	// The candidate cost one live issue view, not a poll.
+	if n := h.gh.callCount("issue list") + h.gh.callCount("pr list"); n != lists {
+		t.Fatalf("a local pass must not poll GitHub: %v", h.gh.calls)
+	}
+	if n := h.gh.callCount("issue view"); n != views+1 {
+		t.Fatalf("live checks: %d, want 1", n-views)
+	}
+	// The refreshed issue replaces the stale cached one, so the next local
+	// pass classifies it as approved and does not check it again.
+	views = h.gh.callCount("issue view")
+	h.clock.advance(h.cfg.Scheduler.PollInterval.Duration)
+	if full, err := h.sched.tick(ctx); err != nil || full {
+		t.Fatalf("third tick: full=%v err=%v", full, err)
+	}
+	h.sched.wg.Wait()
+	if h.gh.callCount("issue view") != views {
+		t.Fatalf("an issue the cache already knows is approved was checked again: %v", h.gh.calls)
+	}
+	if got := strings.Join(h.gh.history[1], ","); got != before {
+		t.Fatalf("local pass restarted a finished issue: %s", got)
 	}
 }

@@ -138,9 +138,21 @@ bees exec reviewer --pr 34
 
 Shows the last poll time and PID of the scheduler, queue sizes per workflow state
 (plus `feedback` and `features`, the open `bees:feedback` and `bees:feature` issues
-owned by the product manager, and `open_prs`), running developer workers (issue, stage, round), singleton state and last run, and
+owned by the product manager, and `open_prs`), running developer workers (issue, stage, round, and the attempt number while a session is being retried), singleton state and last run, and
 unread mail per role. Reads `status.json` from the state directory, so it works while
 `bees run` is active in another terminal.
+
+When [`scheduler.work_hours`](configuration.md#work-hours) is configured it also
+reports whether the factory is inside the window and when the next GitHub poll is
+due (`in_work_hours` and `next_poll` in `--json`):
+
+```
+work hours: yes (09:00-18:00 mon-fri, America/New_York)   next GitHub poll in 2m55s
+```
+
+The yes/no is computed when you run the command, so it is right even when the
+scheduler is stopped; `in_work_hours` in `--json` is the scheduler's own record
+from its last pass.
 
 ## The mailbox
 

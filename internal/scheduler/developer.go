@@ -113,8 +113,8 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 			}
 			log.Info("developer session", "round", bookkeeping.Round, "mail", len(inbox))
 			started := s.now()
-			res, err := s.runSession(ctx, sessionSpec{
-				role: config.RoleDeveloper, name: name, workDir: ws.RepoDir, branch: branch,
+			res, err := s.runSessionWithRetry(ctx, sessionSpec{
+				role: config.RoleDeveloper, name: name, workDir: ws.RepoDir, branch: branch, worker: w,
 				data: prompts.Data{Issue: &fresh, PR: pr, Inbox: inbox, Round: bookkeeping.Round, MaxRounds: maxRounds, Parent: parent},
 			})
 			if err != nil {
@@ -162,7 +162,7 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 				log.Info("developer asked the project manager; issue blocked")
 				return s.setState(ctx, issue.Number, s.labels.Blocked)
 			default:
-				return s.escalate(ctx, issue.Number, fmt.Sprintf("The developer session ended with `%s`: %s", status, note))
+				return s.escalate(ctx, issue.Number, s.sessionFailure(config.RoleDeveloper, res, status, note))
 			}
 
 		case "review":
@@ -186,8 +186,8 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 			name := fmt.Sprintf("reviewer-pr-%d-r%d", pr.Number, bookkeeping.Round)
 			log.Info("reviewer session", "pr", pr.Number, "round", bookkeeping.Round)
 			started := s.now()
-			res, err := s.runSession(ctx, sessionSpec{
-				role: config.RoleReviewer, name: name, workDir: ws.RepoDir, branch: branch,
+			res, err := s.runSessionWithRetry(ctx, sessionSpec{
+				role: config.RoleReviewer, name: name, workDir: ws.RepoDir, branch: branch, worker: w,
 				data: prompts.Data{Issue: &freshIssue, PR: &freshPR, PreviousRounds: previous, Round: bookkeeping.Round, MaxRounds: maxRounds,
 					Checks: reviewChecks, ChecksStatus: reviewStatus, ChecksTimeout: shortDuration(policy.PreReviewChecksTimeout)},
 			})
@@ -214,7 +214,7 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 				log.Info("changes requested; back to developer", "round", bookkeeping.Round)
 				stage = "develop"
 			default:
-				return s.escalate(ctx, issue.Number, fmt.Sprintf("The reviewer session ended with `%s`: %s", status, note))
+				return s.escalate(ctx, issue.Number, s.sessionFailure(config.RoleReviewer, res, status, note))
 			}
 
 		case "prereview":
@@ -245,7 +245,7 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 			// Failing checks go to the reviewer in checks mode, exactly like
 			// after approval; the reviewer only sees the PR once it is green.
 			next, err := s.fixFailedChecks(ctx, checksFix{
-				issue: issue, pr: pr, repoDir: ws.RepoDir, branch: branch,
+				issue: issue, pr: pr, repoDir: ws.RepoDir, branch: branch, worker: w,
 				bookkeeping: &bookkeeping, checks: checks, policy: policy, stage: "prereview", log: log,
 			})
 			if err != nil || next == "" {
@@ -275,7 +275,7 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 			}
 			// Checks failed: the reviewer diagnoses, the developer fixes.
 			next, err := s.fixFailedChecks(ctx, checksFix{
-				issue: issue, pr: pr, repoDir: ws.RepoDir, branch: branch,
+				issue: issue, pr: pr, repoDir: ws.RepoDir, branch: branch, worker: w,
 				bookkeeping: &bookkeeping, checks: checks, policy: policy, stage: "checks", log: log,
 			})
 			if err != nil || next == "" {
@@ -296,6 +296,7 @@ type checksFix struct {
 	pr          *github.PR
 	repoDir     string
 	branch      string
+	worker      *state.Worker
 	bookkeeping *state.IssueState
 	checks      []github.Check
 	policy      config.MergePolicy
@@ -329,8 +330,8 @@ func (s *Scheduler) fixFailedChecks(ctx context.Context, f checksFix) (string, e
 	name := fmt.Sprintf("reviewer-pr-%d-checks%d", f.pr.Number, f.bookkeeping.CheckFixRounds)
 	f.log.Info("required checks failed; reviewer diagnosing", "pr", f.pr.Number, "stage", f.stage, "round", f.bookkeeping.CheckFixRounds, "checks", checkNames(github.Failed(f.checks)))
 	started := s.now()
-	res, err := s.runSession(ctx, sessionSpec{
-		role: config.RoleReviewer, name: name, task: "reviewer_checks", workDir: f.repoDir, branch: f.branch,
+	res, err := s.runSessionWithRetry(ctx, sessionSpec{
+		role: config.RoleReviewer, name: name, task: "reviewer_checks", workDir: f.repoDir, branch: f.branch, worker: f.worker,
 		data: prompts.Data{Issue: &freshIssue, PR: &freshPR, FailedChecks: github.Failed(f.checks), Round: f.bookkeeping.CheckFixRounds, MaxRounds: f.policy.MaxCheckFixRounds},
 		env:  map[string]string{"BEES_REVIEW_MODE": "checks"},
 	})
