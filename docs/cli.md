@@ -94,9 +94,9 @@ bees expects. The filter check tells the two empty cases apart: when nothing mat
 the filter but open issues or pull requests carry the base label, it reports both
 counts and spells the filter out (`0 match your filter (label=bees AND
 assignee=kyle)`) - that is a filter criterion hiding work the factory already owns,
-not an empty repository, and the fix is to assign those items or to unset the
+not an empty repository, and the fix is `bees doctor --fix` (below) or unsetting the
 criterion in `bees.toml`. Every warning and failure prints the command that fixes it on the
-next line; doctor never changes anything itself.
+next line; doctor changes nothing unless `--fix` is given.
 
 doctor exits 1 when a check failed and 0 when only warnings are present, so it can
 gate a deploy. Checks that need something that is missing are left out rather than
@@ -134,6 +134,48 @@ workspace
 | Flag | Description |
 |---|---|
 | `--json` | Print the results as JSON (`name`, `group`, `status`, `detail`, `remediation`) instead of the table. |
+| `--fix` | Apply the repairs doctor knows how to make, then re-run the checks. |
+
+#### `bees doctor --fix`
+
+`--fix` runs the checks, applies the repairs doctor knows how to make for the ones
+that did not pass, prints one line per action and then **re-runs every check**, so the
+table is what the repository looks like afterwards and the exit code follows the
+repair: `--fix` exits non-zero only if a check still fails. Checks doctor cannot
+repair are untouched, and their remediation line still says what to do by hand.
+
+Exactly one repair exists today: **the filter check**. It lists the open issues *and*
+pull requests carrying the base label (`filter.label`) that do not match the rest of
+the filter, and adds `filter.assignee` and, when one is configured, `filter.milestone`
+to each. That is the repair for the failure this exists to catch - adding
+`assignee = "@me"` to a factory that has been running for weeks takes every issue
+nobody ever assigned out of the factory's view in one commit.
+
+```
+$ bees doctor --fix
+fixing filter matches issues
+  assigned issue #92 to kyle
+  assigned issue #119 to kyle
+  assigned pull request #148 to kyle
+  ! issue #131: assign to kyle: gh: HTTP 403 (forbidden)
+...
+  ✓ filter matches issues       12 open issues matching label bees + assignee kyle
+```
+
+What it will not do:
+
+- **It never touches an item that does not carry the base label.** That is the safety
+  rule that makes bees usable in a repository shared with people, and it is enforced
+  on selection *and* again per item before any write. Selection is on the label alone
+  - never on who wrote the issue: a feature issue a person filed with the `bees` label
+  and no assignee is adopted exactly like one the factory created.
+- **It never adds or removes a label**, and it never edits `bees.toml`. `--fix` moves
+  items into the filter; deciding what the filter should be is yours.
+- **With `filter.require_label = false` it does nothing at all** and says so in one
+  line. Without a base label there is no way to tell the factory's work from everyone
+  else's, and "assign every issue in the repository" is not a repair. If you run with
+  an assignee-only filter, bring items into it by hand.
+- One item it cannot repair is reported on its own line and does not stop the others.
 
 ### `bees labels sync`
 
