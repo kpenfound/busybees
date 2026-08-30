@@ -40,7 +40,7 @@ go install github.com/kpenfound/busybees/cmd/bees@latest
 cd ~/src/my-project
 bees init                # writes bees.toml, creates .bees/ and the GitHub labels
 $EDITOR bees.toml        # pick models, add skills, set filter/scheduler options
-bees doctor              # check the toolchain, the config, GitHub access and worktrees
+bees doctor              # check the toolchain, the config, GitHub access, worktrees and the roles
 
 # run the factory
 bees run

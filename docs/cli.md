@@ -44,6 +44,12 @@ init again works. The one step that can fail after the local files exist is crea
 labels; the error then says to run
 `bees labels sync`, not init again.
 
+Last, init runs the **full** [`bees doctor`](#bees-doctor) — the expensive per-role
+checks included, since this is where a wrong skill URL or an unreachable MCP server is
+worth waiting for — prints the table and points at `bees doctor`. A check that fails
+does **not** make init exit non-zero: `bees.toml` and the labels are written by then,
+and the table is the list of what is left to set up.
+
 | Flag | Description |
 |---|---|
 | `--remote name` | Git remote the factory pushes to (default `origin`). |
@@ -85,6 +91,7 @@ what it found grouped by area:
 | `config` | `bees.toml` loads and validates; `project.repo` and `project.default_branch` are set or derivable; the remote answers; the state directory is ignored by git; the notes directory is writable; every configured `prompt_file` exists. |
 | `github` | The repository is readable and writable (`viewerPermission`); every workflow label exists; the visibility filter matches at least one open issue. |
 | `workspace` | A worktree can be created under `workspace_root` and removed again. |
+| `roles` | Per role: every configured skill URL clones and produces a plugin directory; every configured MCP server starts and answers an `initialize` request within 15s; a configured `shell` can be executed. |
 
 A **failure** (`✗`) means the factory cannot run: a missing tool, a repository it
 cannot push to, missing workflow labels. A **warning** (`!`) means something that
@@ -103,6 +110,16 @@ doctor exits 1 when a check failed and 0 when only warnings are present, so it c
 gate a deploy. Checks that need something that is missing are left out rather than
 reported twice: without a `bees.toml` only the toolchain checks run, and the GitHub
 and workspace checks need a resolved repository.
+
+**Cheap and expensive checks.** The `roles` group is the expensive half: it clones
+skill repositories and starts MCP servers, which takes seconds to minutes on a cold
+cache. `bees doctor` and `bees init` run it; the `bees run` preflight does not (see
+[`bees run`](#bees-run)). Each role reports one line per thing it configures, named
+after the role (`developer skills`, `qa mcp`), so the table says which role is broken
+rather than that something is. A role that configures none of the three still gets a
+line, and a role with `enabled = false` is reported as disabled rather than dropped
+silently. The skills are cloned into the cache a session uses (`$BEES_CACHE_DIR`, else
+`~/.cache/bees`), so doctor warms it instead of duplicating the work.
 
 ```
 $ bees doctor
@@ -129,7 +146,16 @@ github
 workspace
   ✓ worktree                    created and removed one under /tmp/bees
 
-13 checks: 11 passed, 1 warnings, 1 failed
+roles
+  ✓ product_manager             enabled, no skills, MCP servers or shell configured
+  ✓ project_manager             enabled, no skills, MCP servers or shell configured
+  ✓ developer skills            1 skill ready: https://github.com/acme/skills#skills/tdd
+  ✗ developer mcp               sentry: fork/exec /opt/sentry-mcp: no such file or directory
+      → start the server by hand or fix [roles.developer.mcp] in /home/kyle/src/proj/bees.toml: a session that cannot reach it loses those tools
+  ✓ reviewer                    enabled, no skills, MCP servers or shell configured
+  ✓ qa                          disabled (roles.qa.enabled = false)
+
+19 checks: 16 passed, 1 warnings, 2 failed
 ```
 
 | Flag | Description |
@@ -300,6 +326,23 @@ issues to free developer workers and starts the product manager, project manager
 QA when they have work. Ctrl-C stops polling and waits for running sessions to
 finish.
 
+Before the first poll it runs the **cheap half of [`bees doctor`](#bees-doctor)** —
+every check except the `roles` group, which clones skills and starts MCP servers — and
+refuses to start when one of them fails: it prints the doctor table and exits non-zero,
+having started no session. Warnings do not stop it and are not printed, so a start that
+is going to work stays quiet. `--skip-doctor` bypasses the preflight. `bees tick` and
+`bees exec` never run it: they are debugging commands and must stay usable on a
+half-configured machine.
+
+```
+$ bees run
+github
+  ✗ workflow labels             2 of 19 missing: bees:size/l, bees:size/xl
+      → run `bees labels sync`
+...
+Error: preflight: 1 of 13 checks failed — fix them, run `bees doctor --fix`, or start anyway with `bees run --skip-doctor`
+```
+
 At start it lists the repository's labels once and creates any workflow label
 that is missing, so a repository set up by an older `bees init` gains the labels
 newer versions need without a `bees labels sync`. Labels that already exist are
@@ -310,6 +353,7 @@ only logs a warning; the run continues.
 |---|---|
 | `--once` | Do one pass and exit when the sessions it started finish. Same as `bees tick`. |
 | `--roles a,b` | Only run these roles (aliases accepted: `pm`, `pjm`, `dev`, `reviewer`, `qa`). |
+| `--skip-doctor` | Start without running the doctor preflight. |
 
 ```sh
 bees run

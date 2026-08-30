@@ -171,9 +171,9 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 	// Every session gets the built-in bees server next to whatever bees.toml
 	// configures, so mcp.json is always written.
 	mcpPath := filepath.Join(sessionDir, "mcp.json")
-	entries := mcpEntries(req.Role.MCP)
+	entries := MCPEntries(req.Role.MCP)
 	entries[config.BuiltinMCPServer] = r.builtinMCP(req, sessionDir)
-	if err := writeMCPFile(mcpPath, entries); err != nil {
+	if err := WriteMCPConfig(mcpPath, entries); err != nil {
 		return nil, err
 	}
 	args = append(args, "--mcp-config", mcpPath, "--strict-mcp-config")
@@ -325,7 +325,7 @@ type envVar struct{ name, value string }
 
 // builtinMCP describes the built-in bees MCP server: this very binary, run as
 // `bees mcp serve`, with the session's context passed explicitly.
-func (r *Runner) builtinMCP(req Request, sessionDir string) mcpEntry {
+func (r *Runner) builtinMCP(req Request, sessionDir string) MCPEntry {
 	bin := r.BeesBin
 	if bin == "" {
 		if self, err := os.Executable(); err == nil {
@@ -340,7 +340,7 @@ func (r *Runner) builtinMCP(req Request, sessionDir string) mcpEntry {
 			env[v.name] = v.value
 		}
 	}
-	return mcpEntry{Type: "stdio", Command: bin, Args: []string{"mcp", "serve"}, Env: env}
+	return MCPEntry{Type: "stdio", Command: bin, Args: []string{"mcp", "serve"}, Env: env}
 }
 
 func (r *Runner) env(req Request, sessionDir string) []string {
@@ -434,8 +434,8 @@ func (r *Runner) consume(stdout io.Reader, transcript io.Writer) (*streamResult,
 	return final, sc.Err()
 }
 
-// mcpEntry is one server in a claude --mcp-config file.
-type mcpEntry struct {
+// MCPEntry is one server in a claude --mcp-config file.
+type MCPEntry struct {
 	Type    string            `json:"type,omitempty"`
 	Command string            `json:"command,omitempty"`
 	Args    []string          `json:"args,omitempty"`
@@ -444,10 +444,11 @@ type mcpEntry struct {
 	Headers map[string]string `json:"headers,omitempty"`
 }
 
-// mcpEntries converts configured servers into file entries, expanding $VAR
-// references in their environment and headers.
-func mcpEntries(servers map[string]config.MCPServer) map[string]mcpEntry {
-	out := make(map[string]mcpEntry, len(servers)+1)
+// MCPEntries converts configured servers into file entries, expanding $VAR
+// references in their environment and headers. `bees doctor` builds a role's
+// entries with it so what it probes is what a session would actually start.
+func MCPEntries(servers map[string]config.MCPServer) map[string]MCPEntry {
+	out := make(map[string]MCPEntry, len(servers)+1)
 	for name, s := range servers {
 		typ := s.Type
 		if typ == "" && s.Command == "" && s.URL != "" {
@@ -461,14 +462,15 @@ func mcpEntries(servers map[string]config.MCPServer) map[string]mcpEntry {
 		for k, v := range s.Headers {
 			headers[k] = os.ExpandEnv(v)
 		}
-		out[name] = mcpEntry{Type: typ, Command: s.Command, Args: s.Args, Env: env, URL: s.URL, Headers: headers}
+		out[name] = MCPEntry{Type: typ, Command: s.Command, Args: s.Args, Env: env, URL: s.URL, Headers: headers}
 	}
 	return out
 }
 
-func writeMCPFile(path string, entries map[string]mcpEntry) error {
+// WriteMCPConfig writes the file claude is given as --mcp-config.
+func WriteMCPConfig(path string, entries map[string]MCPEntry) error {
 	out := struct {
-		MCPServers map[string]mcpEntry `json:"mcpServers"`
+		MCPServers map[string]MCPEntry `json:"mcpServers"`
 	}{MCPServers: entries}
 	data, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {

@@ -216,14 +216,14 @@ func TestOutcomeRoundTrip(t *testing.T) {
 }
 
 // readMCPConfig parses the mcp.json a session was given.
-func readMCPConfig(t *testing.T, sessionDir string) map[string]mcpEntry {
+func readMCPConfig(t *testing.T, sessionDir string) map[string]MCPEntry {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(sessionDir, "mcp.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var file struct {
-		MCPServers map[string]mcpEntry `json:"mcpServers"`
+		MCPServers map[string]MCPEntry `json:"mcpServers"`
 	}
 	if err := json.Unmarshal(b, &file); err != nil {
 		t.Fatalf("mcp.json: %v: %s", err, b)

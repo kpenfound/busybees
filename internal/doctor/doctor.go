@@ -70,13 +70,17 @@ const (
 	GroupConfig    = "config"
 	GroupGitHub    = "github"
 	GroupWorkspace = "workspace"
+	// GroupRoles holds the per-role checks: the skills, MCP servers and shell
+	// of every role in bees.toml. They are the expensive ones (a skill is
+	// cloned, an MCP server is started), so `bees run`'s preflight skips them.
+	GroupRoles = "roles"
 	// GroupInternal holds the results the runner itself produces when a check
 	// panics or overruns its timeout: a bug in bees rather than in the setup.
 	GroupInternal = "doctor"
 )
 
 // Groups is the order the groups are printed in.
-var Groups = []string{GroupToolchain, GroupConfig, GroupGitHub, GroupWorkspace}
+var Groups = []string{GroupToolchain, GroupConfig, GroupGitHub, GroupWorkspace, GroupRoles}
 
 // Result is what one check found.
 type Result struct {
@@ -98,6 +102,26 @@ type Check struct {
 	// Fix repairs what Run found, or is nil when doctor cannot repair it.
 	// `bees doctor --fix` runs it only for a check that did not pass.
 	Fix Fix
+	// Expensive marks a check that clones a repository or starts a process.
+	// `bees doctor` and `bees init` run those too; the `bees run` preflight
+	// does not, because it must not add a minute to every start.
+	Expensive bool
+	// Timeout raises the runner's per-check budget for a check that legitimately
+	// needs longer than Timeout (an MCP server has MCPTimeout to answer). Zero
+	// uses the runner's budget; a smaller value never shortens it.
+	Timeout time.Duration
+}
+
+// CheapChecks returns the checks that are not marked expensive, in order.
+// It is the subset `bees run` runs before it starts the scheduler.
+func CheapChecks(checks []Check) []Check {
+	out := make([]Check, 0, len(checks))
+	for _, c := range checks {
+		if !c.Expensive {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // Fix repairs what a check found. It returns one line per thing it did (or
@@ -209,6 +233,9 @@ func RunWith(ctx context.Context, checks []Check, timeout time.Duration) []Resul
 }
 
 func runOne(ctx context.Context, i int, c Check, timeout time.Duration) Result {
+	if c.Timeout > timeout {
+		timeout = c.Timeout
+	}
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	done := make(chan Result, 1)
