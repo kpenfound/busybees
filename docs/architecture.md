@@ -402,7 +402,8 @@ oldest first, and `bees mail` works from any directory because sessions get
 <state_dir>/                     default .bees/ next to bees.toml
   README.md
   mail/<role>/*.json             mailbox
-  notes/<role>.md                role memory
+  notes/<role>.md                role memory (`bees notes show|edit|reset|add`)
+  notes/archive/<role>-<ts>.md   notes replaced by `bees notes reset`
   sessions/<ts>-<name>-<rand>/   system-prompt.md, prompt.md, mcp.json, transcript.jsonl,
                                  stderr.log, outcome.json, result.json
   issues/<n>.json                {number, round, pr, branch, check_fix_rounds, human_seen_at,
