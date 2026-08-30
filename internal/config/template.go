@@ -201,7 +201,10 @@ label = "{{.Label}}"
 # empty to poll around the clock. A window that starts after it ends wraps
 # midnight and belongs to the day it starts on ("22:00-06:00" on "fri" runs
 # into Saturday morning).
+# The first poll of the work day happens the moment the window opens, whatever
+# off_hours_poll_interval is.
 #work_hours = "09:00-18:00"
+# Default: 1h, or poll_interval when that is longer.
 #off_hours_poll_interval = "1h"
 #work_days = ["mon", "tue", "wed", "thu", "fri"]
 # IANA timezone the window is read in (default: the machine's local time).

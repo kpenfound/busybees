@@ -552,6 +552,28 @@ func (s Scheduler) InWorkHours(t time.Time) bool {
 	return mins < s.whEnd && s.whDays[(t.Weekday()+6)%7]
 }
 
+// NextWorkHoursStart returns the earliest instant strictly after t at which
+// the work-hours window opens. It is the zero time when no window is
+// configured or when t is already inside one, and it skips days the window
+// does not apply to (Friday evening asks about Monday morning). As in
+// InWorkHours, an overnight window belongs to the day its start falls on.
+func (s Scheduler) NextWorkHoursStart(t time.Time) time.Time {
+	if !s.whEnabled || s.InWorkHours(t) {
+		return time.Time{}
+	}
+	t = t.In(s.whLoc)
+	y, m, d := t.Date()
+	// Today, then every day of the week that follows: the window opens on
+	// one of them unless no day is a work day, which Validate rejects.
+	for i := 0; i <= 7; i++ {
+		start := time.Date(y, m, d+i, s.whStart/60, s.whStart%60, 0, 0, s.whLoc)
+		if s.whDays[start.Weekday()] && start.After(t) {
+			return start
+		}
+	}
+	return time.Time{}
+}
+
 // PollIntervalAt returns the GitHub polling interval that applies at t.
 func (s Scheduler) PollIntervalAt(t time.Time) time.Duration {
 	if !s.whEnabled || s.InWorkHours(t) {
@@ -925,7 +947,10 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Scheduler.WorkHours != "" {
 		if c.Scheduler.OffHoursPollInterval.Duration == 0 {
-			c.Scheduler.OffHoursPollInterval.Duration = DefaultOffHoursPollInterval
+			// The default must never be shorter than poll_interval (already
+			// defaulted above), or a config that only sets a long
+			// poll_interval fails validation on a key it does not contain.
+			c.Scheduler.OffHoursPollInterval.Duration = max(DefaultOffHoursPollInterval, c.Scheduler.PollInterval.Duration)
 		}
 		if c.Scheduler.WorkDays == nil {
 			c.Scheduler.WorkDays = []string{"mon", "tue", "wed", "thu", "fri"}
