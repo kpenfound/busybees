@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -128,8 +129,8 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 				pr = found
 				bookkeeping.PR = pr.Number
 				_ = s.store.SaveIssue(bookkeeping)
-				labelErr := s.ensureVisible(ctx, pr.Number, pr.Labels)
-				s.opAs(log, slog.LevelWarn, "label", labelErr, "label PR", "err", labelErr)
+				labelErr := s.ensureVisible(ctx, pr)
+				s.opAs(log, slog.LevelWarn, "label", labelErr, "the pull request may be invisible to the factory", "pr", pr.Number, "err", labelErr)
 				if !s.roleEnabled(config.RoleReviewer) {
 					log.Info("reviewer disabled; treating PR as approved")
 					if err := s.approve(ctx, issue.Number, pr); err != nil || !policy.AutoMerge {
@@ -339,17 +340,32 @@ func (s *Scheduler) locatePR(ctx context.Context, number int, branch string) (*g
 	return s.gh.FindPRForBranch(ctx, branch)
 }
 
-// ensureVisible makes sure a PR created by a session matches the filter.
-func (s *Scheduler) ensureVisible(ctx context.Context, number int, labels []github.Label) error {
-	if !github.HasLabel(labels, s.labels.Base) {
-		if err := s.gh.EditLabels(ctx, number, []string{s.labels.Base}, nil); err != nil {
-			return err
+// ensureVisible makes sure a PR created by a session matches the filter, so
+// the factory keeps seeing it: a PR that misses the base label, the assignee
+// or the milestone the filter asks for is never polled again, the reviewer is
+// never dispatched, and the PR strands its branch and its issue.
+//
+// Everything already in place is left alone, so a PR the session labelled and
+// assigned itself costs no gh calls. Errors are collected rather than
+// returned at the first failure: the three fixes are independent.
+func (s *Scheduler) ensureVisible(ctx context.Context, pr *github.PR) error {
+	var errs []error
+	if !github.HasLabel(pr.Labels, s.labels.Base) {
+		if err := s.gh.EditLabels(ctx, pr.Number, []string{s.labels.Base}, nil); err != nil {
+			errs = append(errs, fmt.Errorf("add the %s label: %w", s.labels.Base, err))
 		}
 	}
-	if a := s.cfg.Filter.Assignee; a != "" {
-		return s.gh.Assign(ctx, number, a)
+	if a := s.cfg.Filter.Assignee; a != "" && !github.HasAssignee(pr.Assignees, a) {
+		if err := s.gh.Assign(ctx, pr.Number, a); err != nil {
+			errs = append(errs, fmt.Errorf("assign it to %s: %w", a, err))
+		}
 	}
-	return nil
+	if m := s.cfg.Filter.Milestone; m != "" && pr.MilestoneTitle() != m {
+		if err := s.gh.SetMilestone(ctx, pr.Number, m); err != nil {
+			errs = append(errs, fmt.Errorf("put it in milestone %s: %w", m, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func gitPull(ctx context.Context, dir string) (string, error) {

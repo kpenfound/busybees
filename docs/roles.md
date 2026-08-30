@@ -262,7 +262,7 @@ told to ask one precise question and stop rather than guess.
 
 | Status | Orchestrator |
 |---|---|
-| `pr-opened` (with `pr`) | Locates the PR (by number, else by branch), labels it `bees` (+ assignee), records it, moves the issue to `bees:review`, runs the reviewer. If the PR cannot be found: escalate. |
+| `pr-opened` (with `pr`) | Locates the PR (by number, else by branch), makes it match the filter (`bees` label, plus the assignee and milestone when configured), records it, moves the issue to `bees:review`, runs the reviewer. If the PR cannot be found: escalate. |
 | `pr-updated` (with `pr`) | Same as above; used after addressing review feedback. |
 | `question` | Verifies a message to the project manager was actually sent during the session, then labels the issue `bees:blocked` and frees the worker. No message: escalate. |
 | `failed` (or no outcome / timeout / error) | Escalates to `bees:needs-human` with the note. |

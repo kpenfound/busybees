@@ -16,7 +16,7 @@ import (
 // The label backstop assigns everything the factory creates. With a filter
 // assignee configured and an item that already carries the base label, the
 // assignment is the only GitHub mutation the backstop makes — so failing
-// `issue edit` fails exactly one named operation.
+// the `assignees` REST call fails exactly one named operation.
 const degradedTOML = baseTOML + `
 [filter]
 assignee = "kpenfound"
@@ -30,7 +30,7 @@ func brokenAssign(h *harness, err error) {
 		Labels:    []github.Label{{Name: "bees"}, {Name: "bees:bug"}, {Name: "bees:triage"}},
 		CreatedAt: time.Now(),
 	}
-	h.gh.errFor["issue edit"] = err
+	h.gh.errFor["assignees"] = err
 }
 
 // summaries returns the summary records written to a JSON log buffer.
@@ -144,7 +144,7 @@ func TestADegradedOperationEscalatesOncePerStreak(t *testing.T) {
 
 	// A success clears the streak: nothing degraded, and the next streak
 	// escalates again.
-	delete(h.gh.errFor, "issue edit")
+	delete(h.gh.errFor, "assignees")
 	h.sched.adoptCreated(ctx, since)
 	h.sched.writeStatus()
 	if st, err = h.store.LoadStatus(); err != nil {

@@ -191,18 +191,10 @@ func (s *Scheduler) adoptCreated(ctx context.Context, since time.Time) {
 			err := s.gh.EditLabels(ctx, it.Number, []string{s.labels.Base}, nil)
 			s.op("label", err, "label backstop", "number", it.Number, "err", err)
 		}
-		if a := s.cfg.Filter.Assignee; a != "" {
-			assigned := false
-			for _, u := range it.Assignees {
-				if strings.EqualFold(u.Login, a) {
-					assigned = true
-				}
-			}
-			if !assigned {
-				s.log.Info("label backstop: assigning", "number", it.Number, "assignee", a)
-				err := s.gh.Assign(ctx, it.Number, a)
-				s.op("assign", err, "label backstop: assign", "number", it.Number, "err", err)
-			}
+		if a := s.cfg.Filter.Assignee; a != "" && !github.HasAssignee(it.Assignees, a) {
+			s.log.Info("label backstop: assigning", "number", it.Number, "assignee", a)
+			err := s.gh.Assign(ctx, it.Number, a)
+			s.op("assign", err, "label backstop: assign", "number", it.Number, "err", err)
 		}
 	}
 }
