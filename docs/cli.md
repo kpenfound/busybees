@@ -429,12 +429,12 @@ a person to approve them, and `open_prs`), running developer workers (issue, [si
 role, and unread mail per role. Reads `status.json` from the state directory, so it
 works while `bees run` is active in another terminal.
 
-A worker's stage is `develop`, `review` or `checks`. Once the checks stage knows what
-it is waiting for, the stage names the gate — `checks (required)`, `checks (reported)`
+A worker's stage is `develop`, `pre-review checks`, `review` or `checks`. Once the
+checks stage knows what it is waiting for, the stage names the gate — `checks (required)`, `checks (reported)`
 or `checks (none)` — so a worker sitting in a 30-minute wait says whether it is
 waiting on the branch's required checks, on the checks the pull request happens to
 report, or on nothing at all. See
-[auto-merge](configuration.md#rolesreviewer-only-auto-merge).
+[auto-merge](configuration.md#rolesreviewer-only-checks-and-auto-merge).
 
 The `roles:` table covers all five roles with what each is doing (`running` or
 `idle`; `-` for the developer and reviewer, whose work is in the workers table

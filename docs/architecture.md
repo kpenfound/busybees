@@ -221,13 +221,19 @@ singleton starts or stops; `bees status` just reads it.
 
 `workIssue` owns one issue from claim to approval — or, with
 `roles.reviewer.auto_merge`, to merge — (or escalation) and runs a
-small state machine with two stages:
+small state machine with four stages:
 
 ```mermaid
 stateDiagram-v2
     [*] --> develop
-    [*] --> review: resumed with an open PR and label bees:review
-    develop --> review: pr-opened / pr-updated (PR found)
+    [*] --> prereview: resumed with an open PR and label bees:review
+    develop --> prereview: pr-opened / pr-updated (PR found)
+    develop --> review: same, with pre_review_checks = false
+    prereview --> review: checks pass / none reported / pending at the timeout / read failed
+    prereview --> develop: a check failed, reviewer (checks mode) mailed a fix request
+    prereview --> prereview: reviewer re-ran the check (approved)
+    prereview --> [*]: fix rounds exhausted / reviewer failed (escalate)
+    develop --> prereview: pr-updated while fixing them (afterDevelop = prereview)
     develop --> [*]: question (issue → blocked)
     develop --> [*]: failed / no PR (escalate)
     review --> [*]: approved, auto_merge off
@@ -256,20 +262,38 @@ stateDiagram-v2
   for it.
 - **Resume.** On start the worker looks for an open PR whose head is the
   branch. If one exists and the issue is labelled `bees:review` it starts in
-  the review stage; otherwise in develop. This is how work survives a restart
-  of `bees run`.
+  the prereview stage (review, with `pre_review_checks = false` or the reviewer
+  disabled); otherwise in develop. This is how work survives a restart of
+  `bees run`.
 - **Rounds.** `<state_dir>/issues/<n>.json` records the review round, PR
   number, branch, `check_fix_rounds`, `human_seen_at` and
   `conflict_notified_sha`. The round is
   incremented on every `changes-requested` and compared with
   `scheduler.max_review_rounds`; human feedback rounds do not count against
   the limit. `check_fix_rounds` is incremented each time the reviewer is asked
-  to diagnose failing checks and compared with
-  `roles.reviewer.max_check_fix_rounds`.
+  to diagnose failing checks — the prereview and checks stages share the
+  counter — and compared with `roles.reviewer.max_check_fix_rounds`. Check fix
+  rounds do not count against `max_review_rounds`.
+- **Prereview stage** (`pre_review_checks`, on by default, independent of
+  `auto_merge`). Between the developer and the first review the worker calls
+  `awaitChecks` with a deadline of `pre_review_checks_timeout`, so the reviewer
+  starts from a green pull request. Passed, or nothing reported, or still
+  pending at the timeout → the review runs, with `Checks`/`ChecksStatus` in the
+  reviewer's prompt; the pending and the no-checks case tell it to run the
+  tests itself. A read that errors is advisory too: warn and review without a
+  checks section (unlike the checks stage, where the read is a merge gate).
+  Failed → `fixFailedChecks`, the same checks-mode reviewer and developer fix
+  round the checks stage uses, and the developer's next `pr-updated` returns
+  here (`afterDevelop = "prereview"`); every path out into `review` resets
+  `afterDevelop` to `"review"`. `bees status` reports the stage as `pre-review
+  checks`; unlike the checks stage it does not append the gate, because its own
+  name is the useful one.
 - **Checks stage** (`auto_merge`). `approve` only labels the PR and issue
   `bees:approved`; merging happens in the `checks` stage. `awaitChecks` sleeps
   `checks_wait`, then polls every `checks_poll_interval` until `Summarize`
-  returns passed or failed, or `checks_timeout` elapses. Each poll calls
+  returns passed or failed, or the timeout it was given elapses
+  (`checks_timeout` here, `pre_review_checks_timeout` in the prereview stage).
+  Each poll calls
   `github.RequiredChecks` (`gh pr checks --required --json …`; gh's non-zero
   exits for pending/failing checks and its "no required checks" / "no checks
   reported" messages are handled, an empty list is `ChecksNone`, not
@@ -287,11 +311,12 @@ stateDiagram-v2
   `auto_merge` is on and the default branch requires no check. bees never
   reads or writes branch protection to change it — that is a person's
   setting. Passed → `MergePR` with `merge_method`
-  and `--delete-branch` (a refusal escalates). Failed → a reviewer session
-  with `task: "reviewer_checks"` and `BEES_REVIEW_MODE=checks`, given
-  `github.Failed(checks)`. Its `changes-requested` sets `afterDevelop =
-  "checks"` so the next developer `pr-updated` returns to the checks stage
-  instead of review; `approved` re-polls. If the reviewer role is disabled
+  and `--delete-branch` (a refusal escalates). Failed → `fixFailedChecks`, a
+  reviewer session with `task: "reviewer_checks"` and `BEES_REVIEW_MODE=checks`,
+  given `github.Failed(checks)` — the helper the prereview stage calls too. Its
+  `changes-requested` sets `afterDevelop = "checks"` so the next developer
+  `pr-updated` returns to the checks stage instead of review; `approved`
+  re-polls. If the reviewer role is disabled
   the developer's PR goes straight from develop to checks.
 - **Verification.** Outcomes that imply a side effect are checked: `pr-opened`
   must correspond to an open PR on the branch (looked up by the reported

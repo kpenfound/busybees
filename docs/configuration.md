@@ -378,10 +378,10 @@ accepts aliases such as `pm`, `pjm`, `dev`, but the TOML keys must be the full n
 | `env` | table | `{}` | Environment variables exported into every session: inherited by `claude`, its Bash tool, MCP servers and git. `$VAR` references are expanded from the bees process environment when the session starts. `[roles.<name>.env]` entries are merged over `[global.env]` (role wins per key). bees' own `BEES_*` variables always win. `BEES_*` variables are always set by bees for each session and are never inherited from the process that started it, so a session started from inside another one (a nested `bees run` or `bees exec`) never sees a stale issue, PR or branch. |
 | `enabled` | bool | `true` | **Roles only.** `false` takes the role out of the rotation. Disabling `reviewer` makes developer PRs count as approved as soon as they are opened (and, with `auto_merge`, go straight to the checks stage). |
 
-### `[roles.reviewer]` only: auto-merge
+### `[roles.reviewer]` only: checks and auto-merge
 
-The reviewer owns merging. These keys are accepted **only** under `[roles.reviewer]`;
-setting them on `[global]` or another role is a validation error.
+The reviewer owns the checks and merging. These keys are accepted **only** under
+`[roles.reviewer]`; setting them on `[global]` or another role is a validation error.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
@@ -391,6 +391,21 @@ setting them on `[global]` or another role is a validation error.
 | `checks_poll_interval` | duration | `"2m"` | How often the checks are polled while waiting (one API call each, two when the branch requires nothing). |
 | `checks_timeout` | duration | `"30m"` | How long to wait for the checks to finish before escalating with `bees:needs-human`. |
 | `max_check_fix_rounds` | int | `2` | Reviewer-diagnoses / developer-fixes iterations allowed when checks fail, before escalating. |
+| `pre_review_checks` | bool | `true` | Read the pull request's checks **before** the first review, so the reviewer starts from a green pull request (or is told it is not). Independent of `auto_merge`. |
+| `pre_review_checks_timeout` | duration | `"10m"` | How long that pre-review read waits for pending checks before reviewing anyway. |
+
+With `pre_review_checks` (on by default), a developer worker reads the pull
+request's checks between opening or updating it and the first review —
+`checks_wait`, then a poll every `checks_poll_interval`, under the same gate
+rules as after approval, but bounded by `pre_review_checks_timeout`. Green → the
+review starts and the reviewer's prompt lists the checks. A failure → the
+checks-mode reviewer and a developer fix round first, sharing `check_fix_rounds`
+and `max_check_fix_rounds` with the post-approval stage; the review happens only
+once the pull request is green. Still pending at the timeout, no check reported
+at all, or a read that fails outright → the review happens anyway and the
+reviewer is told to run the test-suite itself. `bees status` shows the worker in
+the `pre-review checks` stage while it waits. `pre_review_checks = false` goes
+straight from the developer to the reviewer.
 
 With `auto_merge = true`, after approval the worker waits `checks_wait`, then polls
 the pull request's checks every `checks_poll_interval`. All green → merge. Any check
@@ -462,7 +477,7 @@ For each role the effective settings are computed from `[global]` and
 | `model`, `fallback_model`, `effort`, `max_turns`, `timeout` | Role value if set, else global value, else the built-in default. |
 | `allowed_tools`, `disallowed_tools` | Global list followed by role list. |
 | `enabled` | Role only. |
-| `auto_merge`, `merge_method`, `checks_wait`, `checks_poll_interval`, `checks_timeout`, `max_check_fix_rounds` | `roles.reviewer` only; `bees config show` does not list them, they form the merge policy. |
+| `auto_merge`, `merge_method`, `checks_wait`, `checks_poll_interval`, `checks_timeout`, `max_check_fix_rounds`, `pre_review_checks`, `pre_review_checks_timeout` | `roles.reviewer` only; they form the checks and merge policy `bees config show reviewer` prints. |
 
 `bees config show <role>` prints the result.
 
@@ -594,6 +609,8 @@ headers = { Authorization = "Bearer $BROWSER_MCP_TOKEN" }
 | `roles.reviewer.checks_poll_interval` | `2m` |
 | `roles.reviewer.checks_timeout` | `30m` |
 | `roles.reviewer.max_check_fix_rounds` | `2` |
+| `roles.reviewer.pre_review_checks` | `true` |
+| `roles.reviewer.pre_review_checks_timeout` | `10m` |
 
 ## Examples
 
@@ -633,6 +650,7 @@ checks_wait = "1m"
 checks_poll_interval = "2m"
 checks_timeout = "20m"
 max_check_fix_rounds = 2
+pre_review_checks_timeout = "10m"
 
 [roles.qa]
 skills = ["https://github.com/anthropics/skills#skills/webapp-testing"]

@@ -268,6 +268,12 @@ appends the marker, for reviews and conversation comments). When a human's reque
 the reviewer, the human wins. It must not change labels, must not push to the
 default branch, and must not fix unrelated bugs.
 
+**Self-check:** before pushing, the developer runs the repository's own lint and
+test commands — the ones its README, CONTRIBUTING, CLAUDE.md, Makefile or CI
+configuration document — fixes what they report, and records the commands in its
+notes so later sessions do not have to find them again. A review round spent on
+something a linter would have caught is a wasted round.
+
 **Mail:** may send to `project_manager` only. If the issue is too vague it is
 told to ask one precise question and stop rather than guess.
 
@@ -275,7 +281,7 @@ told to ask one precise question and stop rather than guess.
 
 | Status | Orchestrator |
 |---|---|
-| `pr-opened` (with `pr`) | Locates the PR (by number, else by branch), makes it match the filter (`bees` label, plus the assignee and milestone when configured), records it, moves the issue to `bees:review`, runs the reviewer. If the PR cannot be found: escalate. |
+| `pr-opened` (with `pr`) | Locates the PR (by number, else by branch), makes it match the filter (`bees` label, plus the assignee and milestone when configured), records it, moves the issue to `bees:review`, reads the pull request's checks (`pre_review_checks`) and runs the reviewer. If the PR cannot be found: escalate. |
 | `pr-updated` (with `pr`) | Same as above; used after addressing review feedback. |
 | `question` | Verifies a message to the project manager was actually sent during the session, then labels the issue `bees:blocked` and frees the worker. No message: escalate. |
 | `failed` (or no outcome / timeout / error) | Escalates to `bees:needs-human` with the note. |
@@ -287,11 +293,12 @@ approved (and, with `roles.reviewer.auto_merge`, into the checks stage).
 
 Reviews one pull request and decides whether it is mergeable. It also owns
 merging: `auto_merge` and its companions live under `[roles.reviewer]` (see
-[configuration.md](configuration.md#rolesreviewer-only-auto-merge)).
+[configuration.md](configuration.md#rolesreviewer-only-checks-and-auto-merge)).
 
 **Given:** the PR (title, body, branch, author), the linked issue, the
 issue's **size** and a sentence on the scrutiny it warrants (see
-[Sizing](workflow.md#sizing)), its own
+[Sizing](workflow.md#sizing)), the status of the pull request's checks as read
+just before the review (unless `pre_review_checks = false`), its own
 feedback from previous rounds, the round number and limit, its notes. It runs
 in the same worktree as the developer for that issue, fast-forwarded to the
 latest push, so it can run the tests and exercise the change.
@@ -315,14 +322,26 @@ expected change.
 The reviewer is told when it is on the final round so it still requests
 changes honestly and lets the orchestrator escalate.
 
-### Checks mode (`auto_merge = true`)
+### Pre-review checks (`pre_review_checks`, on by default)
 
-After approval the orchestrator waits `checks_wait`, then polls the PR's
-checks — the required checks if the branch has any, otherwise every check the
-pull request reports; with no checks at all it merges and says so. If they all
-pass it merges with `merge_method` and deletes the branch. If any fails, the
-reviewer gets a second kind of session, rendered from `task/reviewer_checks.md`
-with `BEES_REVIEW_MODE=checks` in its environment.
+The worker reads the pull request's checks before the first review, bounded by
+`pre_review_checks_timeout` (default 10 minutes), so a CI failure costs a check
+fix round instead of a whole review round. Green → the reviewer's prompt lists
+them under `## Required checks` and says CI is green. Still pending at the
+timeout, or a repository that reports no checks → the review happens anyway and
+the reviewer is told to run the tests itself. A failing check → checks mode
+below, *before* any review; the fix rounds are the same counter, and the
+reviewer only sees the pull request once it is green.
+
+### Checks mode (a failing check)
+
+After approval, with `auto_merge = true`, the orchestrator waits `checks_wait`,
+then polls the PR's checks — the required checks if the branch has any,
+otherwise every check the pull request reports; with no checks at all it merges
+and says so. If they all pass it merges with `merge_method` and deletes the
+branch. If any fails — here or in the pre-review read above — the reviewer gets
+a second kind of session, rendered from `task/reviewer_checks.md` with
+`BEES_REVIEW_MODE=checks` in its environment.
 
 **Given:** the PR, the issue, the list of failing checks (name,
 workflow, bucket, description, details link), the fix round and its limit,
@@ -337,13 +356,15 @@ cause and a reproducing command into one mail to the developer.
 
 | Status | Orchestrator |
 |---|---|
-| `changes-requested` | Verifies the mail was sent (none: escalate), then runs the developer, whose `pr-updated` leads straight back to polling the checks — no second full review. |
+| `changes-requested` | Verifies the mail was sent (none: escalate), then runs the developer, whose `pr-updated` leads straight back to the stage that found the failure (pre-review or post-approval checks) — no extra review round. |
 | `approved` | Means "I re-ran the check; wait again": the orchestrator waits `checks_wait` and polls once more. |
 | `failed` (or no outcome / timeout / error) | Escalates to `bees:needs-human`. |
 
 Fix rounds are counted in `<state_dir>/issues/<n>.json` (`check_fix_rounds`)
-and capped by `max_check_fix_rounds`; checks still pending at
-`checks_timeout`, or a merge GitHub refuses, also escalate.
+and capped by `max_check_fix_rounds` — pre-review and post-approval rounds share
+that counter, and neither counts against `max_review_rounds`. Checks still
+pending at `checks_timeout` (after approval), or a merge GitHub refuses, also
+escalate.
 
 ## qa
 

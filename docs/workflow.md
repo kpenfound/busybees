@@ -478,6 +478,33 @@ from the pull request's own author, which with a shared account is usually the
 configured login. If the reviewer role is disabled (`[roles.reviewer] enabled =
 false`) a PR is treated as approved as soon as the developer opens it.
 
+### Before the review: the checks
+
+The developer runs the repository's own lint and test commands before it pushes,
+and the orchestrator reads the pull request's **checks before the first review**
+(`[roles.reviewer] pre_review_checks`, on by default — independent of
+`auto_merge`). Between the developer opening or updating the pull request and the
+reviewer starting, the worker waits `checks_wait` and then polls every
+`checks_poll_interval`, at most `pre_review_checks_timeout` (default 10 minutes):
+
+- **Green**: the review starts, and the reviewer's prompt lists the checks so it
+  knows CI is green and can concentrate on the change itself.
+- **A check failed**: the reviewer gets a checks-mode session first (exactly as
+  after approval, below), mails the developer the error, and the developer pushes
+  a fix; only then does the normal review happen. These rounds share
+  `check_fix_rounds` and `max_check_fix_rounds` with the post-approval stage and
+  do **not** count against `max_review_rounds`; exhausting them escalates.
+- **Still pending** at `pre_review_checks_timeout`, or **no check reported at
+  all**: the review happens anyway and the reviewer is told to run the test-suite
+  itself.
+- **The read itself fails** (`gh` errors, a rate limit, an API outage): the
+  pre-review read is advisory, so it is logged as a warning and the review
+  happens anyway, without a checks section in the reviewer's prompt.
+
+`bees status` shows the worker in the `pre-review checks` stage while it waits.
+Set `pre_review_checks = false` to go straight from the developer to the
+reviewer.
+
 ## Giving the developer feedback
 
 You do not need the mailbox to steer a developer: review the pull request on
@@ -551,8 +578,9 @@ merging it closes the issue through `Closes #N`.
 
 The reviewer can be given the job instead. Set `auto_merge = true` under
 `[roles.reviewer]` (with optional `merge_method`, `checks_wait`,
-`checks_timeout`, `max_check_fix_rounds` — see
-[configuration.md](configuration.md#rolesreviewer-only-auto-merge)). Once the
+`checks_timeout`, `max_check_fix_rounds` — the same keys the
+[pre-review read](#before-the-review-the-checks) uses, see
+[configuration.md](configuration.md#rolesreviewer-only-checks-and-auto-merge)). Once the
 reviewer approves, the developer worker enters a **checks** stage:
 
 1. It waits `checks_wait` (default 1 minute), because some checks take a
@@ -579,7 +607,8 @@ reviewer approves, the developer worker enters a **checks** stage:
    a GitHub Actions run, and local reproduction on the branch otherwise — then
    mails the developer the main error message, its cause and how to reproduce
    it. The developer pushes a fix (`pr-updated`) and the worker goes straight
-   back to polling the checks; there is no second full review. If the reviewer
+   back to polling the checks — the stage that found the failure, pre-review or
+   post-approval; there is no second full review. If the reviewer
    decides the failure is unrelated (infrastructure, flakiness) it may re-run
    the check where the CI system allows and report `approved`, which means
    "wait for the checks again".
