@@ -86,7 +86,12 @@ cannot push to, missing workflow labels. A **warning** (`!`) means something tha
 will probably bite you but does not stop a session: a state directory that is not
 git-ignored (notes and transcripts would be committed), a filter that matches no
 open issue (usually a misconfigured label or assignee), a Claude Code older than
-bees expects. Every warning and failure prints the command that fixes it on the
+bees expects. The filter check tells the two empty cases apart: when nothing matches
+the filter but open issues or pull requests carry the base label, it reports both
+counts and spells the filter out (`0 match your filter (label=bees AND
+assignee=kyle)`) - that is a filter criterion hiding work the factory already owns,
+not an empty repository, and the fix is to assign those items or to unset the
+criterion in `bees.toml`. Every warning and failure prints the command that fixes it on the
 next line; doctor never changes anything itself.
 
 doctor exits 1 when a check failed and 0 when only warnings are present, so it can

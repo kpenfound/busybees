@@ -28,7 +28,12 @@ default_branch = "main"
 type fakeGH struct {
 	t       *testing.T
 	replies map[string]ghReply
-	calls   [][]string
+	// reply, when set, answers first and can look at the whole argument list;
+	// returning false falls through to the replies table. It is how a check
+	// that lists twice with different --label/--assignee flags is faked, since
+	// those flags come last and a prefix cannot tell the two calls apart.
+	reply func(args []string) (ghReply, bool)
+	calls [][]string
 }
 
 type ghReply struct {
@@ -39,6 +44,11 @@ type ghReply struct {
 func (f *fakeGH) install(c *github.Client) {
 	c.Exec = func(ctx context.Context, args ...string) ([]byte, error) {
 		f.calls = append(f.calls, args)
+		if f.reply != nil {
+			if r, ok := f.reply(args); ok {
+				return []byte(r.out), r.err
+			}
+		}
 		joined := strings.Join(args, " ")
 		for prefix, r := range f.replies {
 			if strings.HasPrefix(joined, prefix) {
@@ -387,6 +397,11 @@ func TestCheckLabels(t *testing.T) {
 func TestCheckFilter(t *testing.T) {
 	f := setup(t, "", map[string]ghReply{"issue list": {out: `[{"number":47},{"number":48}]`}})
 	wantResult(t, f.run(t, f.checkFilter), Pass, "2 open issues", "label bees")
+	// A satisfied filter asks nothing else: the base-label count only runs
+	// when the first listing came back empty.
+	if len(f.gh.calls) != 1 {
+		t.Errorf("a passing filter check made %d gh calls, want 1: %v", len(f.gh.calls), f.gh.calls)
+	}
 
 	f.gh.replies = map[string]ghReply{"issue list": {out: "[]"}}
 	r := f.run(t, f.checkFilter)
@@ -397,7 +412,8 @@ func TestCheckFilter(t *testing.T) {
 }
 
 func TestCheckFilterPrintsTheWholeFilter(t *testing.T) {
-	f := setup(t, "\n[filter]\nassignee = \"kyle\"\nmilestone = \"v0.1.0\"\n", map[string]ghReply{"issue list": {out: "[]"}})
+	f := setup(t, "\n[filter]\nassignee = \"kyle\"\nmilestone = \"v0.1.0\"\n",
+		map[string]ghReply{"issue list": {out: "[]"}, "pr list": {out: "[]"}})
 	wantResult(t, f.run(t, f.checkFilter), Warn, "label bees + assignee kyle + milestone v0.1.0")
 
 	// require_label = false is only valid with another criterion.
@@ -408,6 +424,97 @@ func TestCheckFilterPrintsTheWholeFilter(t *testing.T) {
 	}
 	if got := describeQuery(github.Query{}); got != "the empty filter (every open issue)" {
 		t.Errorf("describeQuery(empty) = %q", got)
+	}
+}
+
+// issueList renders n issues (or PRs) as the JSON gh returns.
+func issueList(n int) string {
+	var items []string
+	for i := 1; i <= n; i++ {
+		items = append(items, fmt.Sprintf(`{"number":%d}`, i))
+	}
+	return "[" + strings.Join(items, ",") + "]"
+}
+
+// baseLabelGH answers the base-label listings ("gh issue list --label bees"
+// with no other criterion) with the given counts, and every filtered listing
+// with nothing.
+func baseLabelGH(issues, prs int) func([]string) (ghReply, bool) {
+	return func(args []string) (ghReply, bool) {
+		joined := strings.Join(args, " ")
+		if !strings.HasPrefix(joined, "issue list") && !strings.HasPrefix(joined, "pr list") {
+			return ghReply{}, false
+		}
+		if strings.Contains(joined, "--assignee") || strings.Contains(joined, "--milestone") {
+			return ghReply{out: "[]"}, true // nothing matches the filter
+		}
+		if strings.HasPrefix(joined, "pr list") {
+			return ghReply{out: issueList(prs)}, true
+		}
+		return ghReply{out: issueList(issues)}, true
+	}
+}
+
+// A filter that suddenly matches nothing while the repository is full of
+// labelled work is the failure mode of #110: say so, with both counts.
+func TestCheckFilterTellsAnEmptyRepoFromAHiddenBacklog(t *testing.T) {
+	f := setup(t, "\n[filter]\nassignee = \"kyle\"\n", nil)
+	f.gh.reply = baseLabelGH(34, 2)
+
+	r := f.run(t, f.checkFilter)
+	wantResult(t, r, Warn, "34 open issues", "2 pull requests", "bees", "label=bees AND assignee=kyle")
+	for _, want := range []string{"ANDed", "add-assignee", "bees.toml"} {
+		if !strings.Contains(r.Remediation, want) {
+			t.Errorf("remediation %q does not name %q", r.Remediation, want)
+		}
+	}
+
+	// A satisfied filter asks nothing else even when it has more than the
+	// label: the base-label count only runs when the first listing was empty.
+	// (The label-only assertion in TestCheckFilter cannot see this: there the
+	// filter *is* the base-label question, so it short-circuits either way.)
+	sat := setup(t, "\n[filter]\nassignee = \"kyle\"\n", map[string]ghReply{"issue list": {out: `[{"number":47}]`}})
+	wantResult(t, sat.run(t, sat.checkFilter), Pass, "1 open issue")
+	if len(sat.gh.calls) != 1 {
+		t.Errorf("a passing filter check made %d gh calls, want 1: %v", len(sat.gh.calls), sat.gh.calls)
+	}
+
+	// Nothing carries the base label either: an empty or not-yet-labelled
+	// repository, which gets the plain message.
+	f.gh.reply = baseLabelGH(0, 0)
+	wantResult(t, f.run(t, f.checkFilter), Warn, "no open issue matches", "label bees + assignee kyle", "filter.label")
+
+	// A failing second listing must not turn the check into a failure.
+	f.gh.reply = func(args []string) (ghReply, bool) {
+		if strings.Contains(strings.Join(args, " "), "--assignee") {
+			return ghReply{out: "[]"}, true
+		}
+		return ghReply{err: errors.New("gh issue list: exit status 1")}, true
+	}
+	wantResult(t, f.run(t, f.checkFilter), Warn, "no open issue matches")
+}
+
+// Without require_label there is no base label the factory's items are
+// guaranteed to carry, so there is nothing to count and nothing extra to ask.
+func TestCheckFilterWithoutRequireLabelKeepsOneLine(t *testing.T) {
+	f := setup(t, "\n[filter]\nrequire_label = false\nassignee = \"kyle\"\n", map[string]ghReply{"issue list": {out: "[]"}})
+	r := f.run(t, f.checkFilter)
+	wantResult(t, r, Warn, "no open issue matches", "assignee kyle")
+	if strings.Contains(r.Detail, "carry") {
+		t.Errorf("detail counts base-label items without a base label: %q", r.Detail)
+	}
+	if len(f.gh.calls) != 1 {
+		t.Errorf("made %d gh calls, want 1: %v", len(f.gh.calls), f.gh.calls)
+	}
+}
+
+// A label-only filter is its own base-label question: asking it twice would
+// be one wasted gh call per doctor run.
+func TestCheckFilterLabelOnlyListsOnce(t *testing.T) {
+	f := setup(t, "", map[string]ghReply{"issue list": {out: "[]"}})
+	wantResult(t, f.run(t, f.checkFilter), Warn, "no open issue matches", "label bees")
+	if len(f.gh.calls) != 1 {
+		t.Errorf("made %d gh calls, want 1: %v", len(f.gh.calls), f.gh.calls)
 	}
 }
 
