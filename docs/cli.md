@@ -48,8 +48,17 @@ editing lines. See [configuration.md](configuration.md).
 cd ~/src/my-project
 bees init
 bees init --assignee @me --label kyle-bees
-bees init --print > bees.example.toml
 ```
+
+`bees.example.toml` at the repository root is the same template with the placeholders
+left in. Regenerate it after changing `internal/config/template.go`:
+
+```sh
+go test ./internal/config -update
+```
+
+A golden-file test (`TestExampleTOMLInSync`) fails when the two drift, so `dagger check`
+enforces the sync.
 
 ### `bees labels sync`
 

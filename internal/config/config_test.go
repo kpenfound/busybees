@@ -1,6 +1,8 @@
 package config
 
 import (
+	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -318,6 +320,55 @@ func TestTemplateUncommented(t *testing.T) {
 			t.Errorf("%s: commented defaults %+v differ from explicit %+v", r, a, b)
 		}
 	}
+}
+
+// exampleTOML is the reference config committed at the repository root and
+// linked from the README. It must stay byte-for-byte what the template
+// renders, so nobody starts from a config that is missing keys.
+const exampleTOML = "../../bees.example.toml"
+
+var update = flag.Bool("update", false, "rewrite bees.example.toml from the template")
+
+func TestExampleTOMLInSync(t *testing.T) {
+	want, err := Template(TemplateData{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *update {
+		if err := os.WriteFile(exampleTOML, []byte(want), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Log("rewrote " + exampleTOML)
+		return
+	}
+	got, err := os.ReadFile(exampleTOML)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != want {
+		t.Errorf("bees.example.toml is out of date with internal/config/template.go.\n"+
+			"Regenerate it with: go test ./internal/config -update\n%s",
+			firstDiff(string(got), want))
+	}
+}
+
+// firstDiff reports the first line where got and want differ, with a little
+// context, so the failure says what drifted instead of dumping 250 lines.
+func firstDiff(got, want string) string {
+	g, w := strings.Split(got, "\n"), strings.Split(want, "\n")
+	for i := 0; i < len(g) || i < len(w); i++ {
+		gl, wl := "<end of file>", "<end of file>"
+		if i < len(g) {
+			gl = g[i]
+		}
+		if i < len(w) {
+			wl = w[i]
+		}
+		if gl != wl {
+			return fmt.Sprintf("first difference at line %d:\n  file:     %q\n  template: %q", i+1, gl, wl)
+		}
+	}
+	return ""
 }
 
 func TestParseGitHubRepo(t *testing.T) {
