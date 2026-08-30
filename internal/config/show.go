@@ -23,11 +23,13 @@ type FilterView struct {
 }
 
 // RoleView is a ResolvedRole under its bees.toml key names. The role-specific
-// keys are only present on the role that owns them.
+// keys are only present on the role that owns them; skills_refresh is global
+// only, so it reads the same under every role.
 type RoleView struct {
 	Name            string               `json:"name"`
 	Prompt          string               `json:"prompt"`
 	Skills          []string             `json:"skills"`
+	SkillsRefresh   string               `json:"skills_refresh"`
 	MCP             map[string]MCPServer `json:"mcp"`
 	Model           string               `json:"model"`
 	FallbackModel   string               `json:"fallback_model"`
@@ -79,6 +81,7 @@ func (c *Config) View(roles []string) (View, error) {
 			Name:            rr.Name,
 			Prompt:          rr.Prompt,
 			Skills:          rr.Skills,
+			SkillsRefresh:   c.SkillsRefreshPolicy(),
 			MCP:             rr.MCP,
 			Model:           rr.Model,
 			FallbackModel:   rr.FallbackModel,
