@@ -153,6 +153,14 @@ func TestCheckGH(t *testing.T) {
 		"  ✓ Logged in to github.com account kyle (keyring)\n" +
 		"  - Active account: true\n" +
 		"  - Token: gho_xxx\n"
+	// Two logged-in hosts, only the enterprise one carrying `repo`. gh prints
+	// one block per host whatever --hostname says on older releases.
+	const multiHostStatus = "github.com\n" +
+		"  ✓ Logged in to github.com account kyle (keyring)\n" +
+		"  - Token scopes: 'gist'\n" +
+		"ghe.corp.example\n" +
+		"  ✓ Logged in to ghe.corp.example account corp-kyle (keyring)\n" +
+		"  - Token scopes: 'repo'\n"
 
 	cases := []struct {
 		name   string
@@ -171,13 +179,18 @@ func TestCheckGH(t *testing.T) {
 			Fail, []string{"no repo scope", "gh auth refresh -s repo"}},
 		{"no scopes at all",
 			ghReply{out: status + "  - Token scopes: none\n"},
-			Fail, []string{"gh auth refresh -s repo"}},
+			Fail, []string{"no token scopes", "gh auth refresh -s repo"}},
 		{"scopes not reported",
 			ghReply{out: status},
 			Pass, []string{"scopes not reported"}},
 		{"not logged in",
 			ghReply{err: errors.New("gh auth status: exit status 1: You are not logged into any GitHub hosts")},
 			Fail, []string{"not logged into", "gh auth login"}},
+		// bees only ever talks to github.com, so an enterprise token carrying
+		// `repo` must not cover for a github.com token that lacks it.
+		{"another host has the repo scope",
+			ghReply{out: multiHostStatus},
+			Fail, []string{"no repo scope", "gh auth refresh -s repo"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -185,6 +198,39 @@ func TestCheckGH(t *testing.T) {
 			wantResult(t, f.run(t, f.checkGH), c.status, c.detail...)
 		})
 	}
+
+	t.Run("asks gh about github.com only", func(t *testing.T) {
+		f := setup(t, "", map[string]ghReply{"auth status": {out: status + "  - Token scopes: 'repo'\n"}})
+		wantResult(t, f.run(t, f.checkGH), Pass, "repo")
+		if len(f.gh.calls) != 1 {
+			t.Fatalf("gh calls: %v", f.gh.calls)
+		}
+		if got := strings.Join(f.gh.calls[0], " "); !strings.Contains(got, "--hostname github.com") {
+			t.Errorf("gh %s: want --hostname github.com, or an enterprise host's scopes leak into the answer", got)
+		}
+	})
+
+	t.Run("reports the github.com account", func(t *testing.T) {
+		// The enterprise block comes first: the account must be picked by host,
+		// not by whichever gh happened to print first.
+		const enterpriseFirst = "ghe.corp.example\n" +
+			"  ✓ Logged in to ghe.corp.example account corp-kyle (keyring)\n" +
+			"  - Token scopes: 'repo'\n" +
+			"github.com\n" +
+			"  ✓ Logged in to github.com account kyle (keyring)\n" +
+			"  - Token scopes: 'repo'\n"
+		f := setup(t, "", map[string]ghReply{"auth status": {out: enterpriseFirst}})
+		r := f.run(t, f.checkGH)
+		if !strings.Contains(r.Detail, "kyle") || strings.Contains(r.Detail, "corp-kyle") {
+			t.Errorf("detail %q: want the github.com account, not the enterprise one", r.Detail)
+		}
+	})
+
+	t.Run("no host header", func(t *testing.T) {
+		f := setup(t, "", map[string]ghReply{"auth status": {
+			out: "  ✓ Logged in to github.com account kyle (keyring)\n  - Token scopes: 'repo'\n"}})
+		wantResult(t, f.run(t, f.checkGH), Pass, "kyle", "repo")
+	})
 
 	t.Run("gh not installed", func(t *testing.T) {
 		f := setup(t, "", nil)
