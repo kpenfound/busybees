@@ -23,6 +23,9 @@ func fake(t *testing.T, parentMilestone string) (*github.Client, *[]string) {
 				ms = `{"title":"` + parentMilestone + `"}`
 			}
 			return []byte(`{"id": 9001, "milestone": ` + ms + `, "sub_issues_summary": {"total": 2, "completed": 1}}`), nil
+		case strings.HasPrefix(call, "api repos/acme/widgets/issues/13"):
+			// A proposal: a feature issue a bee wrote, not approved yet.
+			return []byte(`{"id": 9013, "milestone": {"title":"v1"}, "labels": [{"name":"bees"},{"name":"bees:feature"},{"name":"bees:proposal"}]}`), nil
 		case strings.HasPrefix(call, "api repos/acme/widgets/issues/77"):
 			return []byte(`{"id": 9077, "milestone": null}`), nil
 		case strings.HasPrefix(call, "issue create"):
@@ -108,5 +111,77 @@ func TestCreateBlockedBy(t *testing.T) {
 	}
 	if got := blockedByBody([]int{12, 15}, "b"); !strings.HasPrefix(got, "Blocked by #12, #15\n\n") {
 		t.Fatalf("body: %q", got)
+	}
+}
+
+// A proposal is a bee's own idea: only a person turns it into work, by
+// removing the label. Until then it must grow no sub-issues, through either
+// door, and the refusal must happen before anything is created.
+func TestProposalGrowsNoSubIssues(t *testing.T) {
+	labels := config.LabelsFor("bees")
+	filter := config.Filter{Label: "bees"}
+
+	gh, calls := fake(t, "v1")
+	_, err := Create(context.Background(), gh, filter, labels, Options{Title: "t", Kind: KindTask, Parent: 13})
+	if err == nil {
+		t.Fatal("--parent on a proposal must fail")
+	}
+	for _, want := range []string{"#13", "bees:proposal"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name %q", err, want)
+		}
+	}
+	if joined := strings.Join(*calls, "\n"); strings.Contains(joined, "issue create") {
+		t.Errorf("the issue was created before the refusal:\n%s", joined)
+	}
+
+	// Also with an explicit milestone, which used to be the only reason the
+	// parent was looked up at all.
+	gh, calls = fake(t, "v1")
+	if _, err := Create(context.Background(), gh, filter, labels,
+		Options{Title: "t", Kind: KindTask, Parent: 13, Milestone: "v2"}); err == nil {
+		t.Error("--parent on a proposal must fail whatever the milestone is")
+	}
+	if joined := strings.Join(*calls, "\n"); strings.Contains(joined, "issue create") {
+		t.Errorf("the issue was created before the refusal:\n%s", joined)
+	}
+
+	// Same hole, other door.
+	gh, calls = fake(t, "v1")
+	err = Link(context.Background(), gh, labels, 13, 77)
+	if err == nil {
+		t.Fatal("linking to a proposal must fail")
+	}
+	if !strings.Contains(err.Error(), "#13") {
+		t.Errorf("error %q does not name the proposal", err)
+	}
+	if joined := strings.Join(*calls, "\n"); strings.Contains(joined, "sub_issues") {
+		t.Errorf("the issue was attached before the refusal:\n%s", joined)
+	}
+
+	// --related creates no relationship, so it stays allowed: it only
+	// inherits the proposal's milestone.
+	gh, calls = fake(t, "v1")
+	res, err := Create(context.Background(), gh, filter, labels, Options{Title: "t", Kind: KindTask, Related: 13})
+	if err != nil {
+		t.Fatalf("--related on a proposal must be allowed: %v", err)
+	}
+	if res.Number != 77 || res.Milestone != "v1" {
+		t.Fatalf("result: %+v", res)
+	}
+	if joined := strings.Join(*calls, "\n"); strings.Contains(joined, "sub_issues") {
+		t.Errorf("--related must create no sub-issue:\n%s", joined)
+	}
+
+	// An ordinary parent is still linked.
+	gh, calls = fake(t, "v1")
+	if _, err := Create(context.Background(), gh, filter, labels, Options{Title: "t", Kind: KindTask, Parent: 12}); err != nil {
+		t.Fatal(err)
+	}
+	if joined := strings.Join(*calls, "\n"); !strings.Contains(joined, "sub_issues") {
+		t.Errorf("an approved parent must still be linked:\n%s", joined)
+	}
+	if err := Link(context.Background(), gh, labels, 12, 77); err != nil {
+		t.Fatalf("linking to an approved feature: %v", err)
 	}
 }

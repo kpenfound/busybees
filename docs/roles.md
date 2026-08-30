@@ -150,14 +150,16 @@ enter the workflow state machine. For each fresh one it:
 **Proposals:** a feature issue the product manager creates itself is labelled
 `bees:proposal` as well as `bees:feature`. It writes, refines and asks
 questions on such an issue as usual, but does **not** break it into work items
-until a person removes the label. Nothing in the tooling stops it —
-`issue_create` (`parent: <proposal>`) succeeds — so this is role discipline,
-not a backstop. Removing the label is the approval. A feature issue a person
-filed carries no proposal label: it is already approved and handled exactly as
-before. The product manager's prompt shows the proposal state of every feature
-issue (a `proposal:` field on each fresh feature and a `Proposal` column in the
-feature table), because bees and people share one GitHub account and the author
-is no signal.
+until a person removes the label — and it cannot: `issue_create`
+(`parent: <proposal>`) and `issue_link` refuse while the label is there.
+Removing the label is the approval, and the scheduler notices it (it is a label
+edit, so it leaves no comment) and hands the feature back to the product manager
+on its next run. A feature issue a person filed carries no proposal label: it is
+already approved and handled exactly as before. The product manager's prompt
+lists its proposals in a section of their own, never among the features it is
+told to break down, and marks them in the `Proposal` column of the feature
+table, because bees and people share one GitHub account and the author is no
+signal.
 
 A feature issue is *fresh* when a person created or commented on it after
 the product manager's last marker comment (`github.Issue.AwaitingBee`). When a

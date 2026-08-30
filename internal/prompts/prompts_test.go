@@ -253,7 +253,8 @@ func TestProductManagerTaskMarksProposals(t *testing.T) {
 
 	d := sample()
 	d.Features = []github.Issue{proposal, approved}
-	d.FreshFeatures = []github.Issue{proposal, approved}
+	d.FreshFeatures = []github.Issue{approved}
+	d.Proposals = []github.Issue{proposal}
 	d.Progress = nil
 
 	task, err := Task(config.RoleProductManager, d)
@@ -261,8 +262,8 @@ func TestProductManagerTaskMarksProposals(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The fresh-feature header line carries the state, since instruction 2 acts
-	// on that section.
+	// The header line of each section carries the state, since instruction 2
+	// acts on those sections.
 	for _, want := range []string{
 		"#40: Bee-written idea",
 		"proposal: yes",
@@ -272,6 +273,23 @@ func TestProductManagerTaskMarksProposals(t *testing.T) {
 		if !strings.Contains(task, want) {
 			t.Errorf("product manager task is missing %q:\n%s", want, task)
 		}
+	}
+
+	// The proposal is presented, but never under the section instruction 2
+	// tells the product manager to break down.
+	breakdown, proposals, ok := cut3(task,
+		"## Feature issues needing you", "## Proposals awaiting a person's approval", "## All open feature issues")
+	if !ok {
+		t.Fatalf("product manager task has no proposals section:\n%s", task)
+	}
+	if strings.Contains(breakdown, "#40") {
+		t.Errorf("a proposal is listed as a feature needing breakdown:\n%s", breakdown)
+	}
+	if !strings.Contains(proposals, "#40: Bee-written idea") || !strings.Contains(proposals, "why") {
+		t.Errorf("the proposal is not presented with its body:\n%s", proposals)
+	}
+	if strings.Contains(proposals, "#41") {
+		t.Errorf("an approved feature is listed as a proposal:\n%s", proposals)
 	}
 
 	// The feature table has a Proposal column, and the two rows differ in it.
@@ -293,11 +311,33 @@ func TestProductManagerTaskMarksProposals(t *testing.T) {
 	if got := rowOf("41"); strings.Contains(got, "| yes |") {
 		t.Errorf("approved feature row claims to be a proposal: %s", got)
 	}
+	// Every proposal is waiting on a person, whether it is fresh or not.
+	if got := rowOf("40"); !strings.Contains(got, "| proposal |") {
+		t.Errorf("proposal row does not say it waits on a person: %s", got)
+	}
+	if got := rowOf("41"); strings.Contains(got, "| proposal |") {
+		t.Errorf("approved feature row waits on a person: %s", got)
+	}
 
 	// And the instruction to break features down carries the exception.
-	if !strings.Contains(task, "unless it is a proposal") {
+	if !strings.Contains(task, "The proposals listed above are the exception") {
 		t.Errorf("break-it-down instruction has no proposal exception:\n%s", task)
 	}
+}
+
+// cut3 splits text at three headings and returns what stands under the first
+// two of them.
+func cut3(text, a, b, c string) (string, string, bool) {
+	_, rest, ok := strings.Cut(text, a)
+	if !ok {
+		return "", "", false
+	}
+	first, rest, ok := strings.Cut(rest, b)
+	if !ok {
+		return "", "", false
+	}
+	second, _, ok := strings.Cut(rest, c)
+	return first, second, ok
 }
 
 // With scheduler.notify set, the product manager is told to start a question

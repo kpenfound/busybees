@@ -423,7 +423,8 @@ bees exec reviewer --pr 34
 
 Shows the last poll time and PID of the scheduler, queue sizes per workflow state
 (plus `feedback` and `features`, the open `bees:feedback` and `bees:feature` issues
-owned by the product manager, and `open_prs`), running developer workers (issue, [size](workflow.md#sizing), stage, round, and the attempt number while a session is being retried), a row per
+owned by the product manager, `proposals`, the subset of `features` still waiting for
+a person to approve them, and `open_prs`), running developer workers (issue, [size](workflow.md#sizing), stage, round, and the attempt number while a session is being retried), a row per
 role, and unread mail per role. Reads `status.json` from the state directory, so it
 works while `bees run` is active in another terminal.
 
@@ -457,7 +458,7 @@ A `no_state` queue counts issues that are visible to the factory but carry no
 workflow state label yet — usually ones a person just filed from the GitHub UI. The
 scheduler gives them `bees:triage` on its next reconcile, so the row normally
 disappears again within the same pass. A workflow-state queue is omitted while it is
-empty (`feedback`, `features` and `open_prs` are always shown).
+empty (`feedback`, `features`, `proposals` and `open_prs` are always shown).
 
 Under the scheduler line it also reports what the factory has spent since midnight,
 summed from the [session ledger](#bees-cost) (`today` in `--json`):

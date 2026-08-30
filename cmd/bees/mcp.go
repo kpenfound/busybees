@@ -189,5 +189,5 @@ func (b *issueBackend) Link(ctx context.Context, parent, child int) error {
 	if err := b.load(ctx); err != nil {
 		return err
 	}
-	return issues.Link(ctx, b.gh, parent, child)
+	return issues.Link(ctx, b.gh, b.labels, parent, child)
 }

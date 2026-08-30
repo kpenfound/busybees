@@ -286,11 +286,15 @@ func (s *Scheduler) describeQuery() string {
 
 // snapshot is one poll of GitHub, classified by workflow state.
 type snapshot struct {
-	issues     []github.Issue
-	prs        []github.PR
-	byState    map[string][]github.Issue
-	feedback   []github.Issue // bees:feedback issues, for the product manager
-	features   []github.Issue // bees:feature issues, owned by the product manager
+	issues   []github.Issue
+	prs      []github.PR
+	byState  map[string][]github.Issue
+	feedback []github.Issue // bees:feedback issues, for the product manager
+	features []github.Issue // bees:feature issues, owned by the product manager
+	// proposals are the features a bee wrote and no person has approved
+	// yet (bees:proposal). They are a subset of features, not a bucket of
+	// their own: they still show in the product manager's feature table.
+	proposals  []github.Issue
 	prByBranch map[string]github.PR
 	prByNumber map[int]github.PR
 	byNumber   map[int]github.Issue
@@ -344,6 +348,9 @@ func (s *Scheduler) classify(issues []github.Issue, prs []github.PR) *snapshot {
 		}
 		if github.HasLabel(i.Labels, s.labels.Feature) {
 			snap.features = append(snap.features, i)
+			if github.HasLabel(i.Labels, s.labels.Proposal) {
+				snap.proposals = append(snap.proposals, i)
+			}
 			continue
 		}
 		snap.byState[s.stateOf(i.Labels)] = append(snap.byState[s.stateOf(i.Labels)], i)
@@ -403,6 +410,10 @@ func (s *Scheduler) setQueues(snap *snapshot) {
 	}
 	s.queues["feedback"] = len(snap.feedback)
 	s.queues["features"] = len(snap.features)
+	// Always recorded, even at zero: a proposal is a decision owed by a
+	// person, and a row that only appears once there is one is a row nobody
+	// learns to look for.
+	s.queues["proposals"] = len(snap.proposals)
 	s.queues["open_prs"] = len(snap.prs)
 	s.readySizes = map[string]int{}
 	s.priority = nil
@@ -459,6 +470,40 @@ func sizeRank(size string) int {
 		return i
 	}
 	return slices.Index(config.Sizes, defaultSize)
+}
+
+// observeProposals watches bees:proposal on the feature issues and records
+// the moment a person removes it. Approval is a label edit and leaves no
+// comment, so github.Issue.AwaitingBee never flips and the feature would
+// otherwise never come back to the product manager: this timestamp is the
+// only thing that brings it back (runProductManager, productManagerHasWork).
+//
+// It only ever observes the label. Adding or removing bees:proposal is a
+// person's decision, or `bees issue create --feature`'s; the scheduler never
+// touches it. A feature first seen without the label is an ordinary feature,
+// so a restart that lost the state dir approves nothing.
+func (s *Scheduler) observeProposals(snap *snapshot) []error {
+	var errs []error
+	for _, i := range snap.features {
+		proposal := github.HasLabel(i.Labels, s.labels.Proposal)
+		is, err := s.store.Issue(i.Number)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if is.Proposal == proposal {
+			continue
+		}
+		if is.Proposal {
+			s.log.Info("person approved a proposal", "issue", i.Number)
+			is.ProposalApprovedAt = s.now()
+		}
+		is.Proposal = proposal
+		if err := s.store.SaveIssue(is); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errs
 }
 
 // sortReady orders the ready queue in place: issues a person marked with
@@ -573,7 +618,8 @@ func (s *Scheduler) localPass(ctx context.Context) {
 //   - ready issues without a size get the default one, and ready issues
 //     sized above roles.developer.max_size go back to triage to be split.
 //     The sizing runs last so that an issue unblocked by the loop above is
-//     sized in the same pass instead of the next one.
+//     sized in the same pass instead of the next one;
+//   - a feature that has stopped being a proposal is remembered as approved.
 //
 // Every label edit is also written back to the cached poll (cacheIssue), or
 // the local passes in between two polls would classify the issue from its
@@ -673,6 +719,7 @@ func (s *Scheduler) reconcile(ctx context.Context, snap *snapshot) error {
 		s.cacheIssue(i)
 	}
 	snap.byState["ready"] = ready
+	errs = append(errs, s.observeProposals(snap)...)
 	// The pass moved issues between buckets; recount so `bees status` shows
 	// what GitHub now shows instead of the poll's stale counts.
 	s.setQueues(snap)

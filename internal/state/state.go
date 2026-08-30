@@ -132,9 +132,16 @@ type IssueState struct {
 	// AddIssueCost: SaveIssue carries them over from the file, so a caller
 	// holding an IssueState across several sessions cannot write back a
 	// stale total. scheduler.max_cost_per_issue is spent against them.
-	Cost      float64   `json:"cost,omitempty"`
-	Sessions  int       `json:"sessions,omitempty"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Cost     float64 `json:"cost,omitempty"`
+	Sessions int     `json:"sessions,omitempty"`
+	// Proposal is whether the issue carried bees:proposal at the last
+	// observation, and ProposalApprovedAt when the scheduler saw a person
+	// remove it. Approval is a label edit and leaves no comment, so it is
+	// remembered here: nothing else would tell the product manager that a
+	// feature it proposed may now be broken into work items.
+	Proposal           bool      `json:"proposal,omitempty"`
+	ProposalApprovedAt time.Time `json:"proposal_approved_at,omitempty"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 // Issue loads bookkeeping for an issue (zero value when none).
