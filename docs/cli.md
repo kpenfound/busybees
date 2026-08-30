@@ -651,7 +651,9 @@ bees notes add pm --body-file vision.md
 ```
 
 Pass `--body-file <path>` (or `--body-file -` to read stdin) instead of the
-argument for longer text. Like `bees mail`, `show`, `reset` and `add` find the
+argument for longer text. A note spanning several lines keeps its line breaks;
+every line after the first is indented by two spaces so the whole note stays
+inside one bullet. Like `bees mail`, `show`, `reset` and `add` find the
 state directory from `$BEES_STATE_DIR` before falling back to `bees.toml`, so a
 session can append to its own notes without a config file.
 

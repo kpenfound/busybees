@@ -108,7 +108,7 @@ func TestAppendNotes(t *testing.T) {
 	}
 }
 
-func TestAppendNotesKeepsEmbeddedNewlines(t *testing.T) {
+func TestAppendNotesIndentsContinuationLines(t *testing.T) {
 	s := New(t.TempDir())
 	if err := s.AppendNotes("qa", "one\n  two"); err != nil {
 		t.Fatal(err)
@@ -117,7 +117,21 @@ func TestAppendNotesKeepsEmbeddedNewlines(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasSuffix(got, "\n- one\n  two\n") {
-		t.Errorf("notes = %q, want the text appended verbatim after the bullet", got)
+	if !strings.HasSuffix(got, "\n- one\n    two\n") {
+		t.Errorf("notes = %q, want every line after the first indented by two spaces", got)
+	}
+}
+
+func TestAppendNotesLeavesBlankLinesEmpty(t *testing.T) {
+	s := New(t.TempDir())
+	if err := s.AppendNotes("qa", "one\n\nthree"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadNotes("qa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(got, "\n- one\n\n  three\n") {
+		t.Errorf("notes = %q, want the blank line kept empty and the next line indented", got)
 	}
 }
