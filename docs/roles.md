@@ -11,7 +11,7 @@ what it may do, and how to shape it.
 |---|---|---|
 | `product_manager` | singleton | unread mail, a fresh `bees:feedback` or `bees:feature` issue (a person created or commented on it since the PM last replied), or `product_manager_interval` elapsed (first run immediately) |
 | `project_manager` | singleton | issues in `bees:triage`, or unread mail |
-| `developer` | pool of `scheduler.max_developers` workers | a `bees:ready` issue is waiting (or an in-progress/review issue needs resuming) |
+| `developer` | pool of `scheduler.max_developers` workers | a `bees:ready` issue is waiting (or an in-progress/review issue needs resuming); a ready issue whose PR came back — human feedback, a conflict with the default branch — goes before new work |
 | `reviewer` | one per developer worker, in sequence | the worker's developer session opened or updated a PR; with `auto_merge`, also when a required check fails after approval |
 | `qa` | singleton | `qa_interval` elapsed and something was merged (first run immediately; the merged-PR check runs at most once per `qa_interval`) |
 
@@ -117,8 +117,10 @@ enter the workflow state machine. For each fresh one it:
    bugs), which makes each a native GitHub **sub-issue** of the feature with
    `bees` + `bees:triage` and the feature's milestone (it may pre-size one
    with `--label "bees:size/s"`, a hint the project manager confirms during
-   triage — see [Sizing](workflow.md#sizing)); ordered with
-   dependencies noted — then comments the list of work items on the feature
+   triage — see [Sizing](workflow.md#sizing)); ordered, with
+   dependencies expressed as `blocked_by: [<issue>]` (a `Blocked by #N` line the
+   scheduler honours, see [Dependencies](workflow.md#dependencies)) rather than
+   prose — then comments the list of work items on the feature
    issue (with the marker) so it is not re-presented until something changes;
 4. closes the feature issue when all its sub-issues are closed (the progress
    column in its prompt shows this), or when it no longer makes sense.
@@ -158,7 +160,9 @@ table of all other visible issues; open PRs; its notes. Work items usually
 come from the product manager breaking a feature issue down; they are GitHub
 sub-issues, and each triage item's **parent feature** (number and title,
 looked up with one GraphQL call) is shown in the prompt. The project manager
-is told to read the parent feature for context.
+is told to read the parent feature for context. The prompt also shows the open
+[blockers](workflow.md#dependencies) each work item declares — on the triage
+header line and as a **Blocked by** column of the other-issues table.
 
 **Does on GitHub:** rewrites triage work items (context, scope, acceptance
 criteria, pointers to code, testing expectations) with `gh issue edit`,
@@ -167,12 +171,15 @@ keeping the author's intent; splits oversized work items with
 there is no parent feature), closing the original with a comment; moves
 refined work items `bees:triage` →
 `bees:ready` with exactly one **size label** (`bees:size/xs` … `bees:size/l`)
-added in the same edit, splitting anything that sizes up as `xl` instead of
-labelling it; moves a work item to `bees:blocked` when it has asked the
-product manager; closes invalid or duplicate work items with a comment. It
+added in the same edit, splitting anything that sizes up above
+`roles.developer.max_size` (default `l`) instead of labelling it — the
+orchestrator sends such an issue straight back to `bees:triage`; moves a work
+item to `bees:blocked` when it has asked the product manager; closes invalid or duplicate work items with a comment. It
 never edits feature or feedback issues — those belong to the product
 manager — and never touches milestones. It is the only role besides the
-orchestrator that moves state labels.
+orchestrator that moves state labels. It is told to declare dependencies with a
+`Blocked by #N` line and move the item to `bees:ready` anyway rather than
+parking it in triage: the scheduler holds it back until the blocker closes.
 
 **Mail:** receives developer questions; may send to `product_manager`
 (product decisions) and `developer` (answers, always with `issue`). Prompts
@@ -190,10 +197,12 @@ Implements exactly one issue on a dedicated branch and opens a pull request.
 **Given:** the issue (body, labels, milestone, comments) and its parent
 feature (number and title) when it is a sub-issue, the existing PR if this is
 a later review round, unread mail addressed to the developer about
-this issue or PR (project manager answers, reviewer feedback, and feedback
+this issue or PR (project manager answers, reviewer feedback, feedback
 from people who reviewed the PR on GitHub, delivered as mail from `human`
-with comment ids and the exact `gh` reply commands), the round number and
-limit, its notes. It runs in a worktree on `bees/issue-N` (prefix
+with comment ids and the exact `gh` reply commands, and — from
+`orchestrator` — a request to bring the branch up to date when the PR
+[conflicts with the default branch](workflow.md#conflicts-with-the-default-branch)),
+the round number and limit, its notes. It runs in a worktree on `bees/issue-N` (prefix
 from `project.branch_prefix`), already based on the default branch. The session
 environment carries `push.autoSetupRemote=true` and `push.default=current`
 (via `GIT_CONFIG_*` variables, so the clone's own git config is untouched) and a

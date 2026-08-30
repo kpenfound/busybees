@@ -47,6 +47,9 @@ type Data struct {
 	// the issue carries no size label. Set for developer and reviewer
 	// sessions.
 	Size string
+	// MaxSize is roles.developer.max_size: the largest size a developer
+	// takes. Anything above it is sent back to triage to be split.
+	MaxSize string
 
 	Issue        *github.Issue
 	PR           *github.PR
@@ -77,6 +80,9 @@ type Data struct {
 	Parent *github.Parent
 	// Parents maps work item numbers to their parent feature (project manager).
 	Parents map[int]github.Parent
+	// Blockers maps an issue number to the prerequisites it declares that
+	// are still open (project manager).
+	Blockers map[int][]int
 }
 
 var titles = map[string]string{
@@ -179,6 +185,17 @@ func render(name string, d Data) (string, error) {
 				return "-"
 			}
 			return fmt.Sprintf("#%d %s", p.Number, p.Title)
+		},
+		"blockedBy": func(m map[int][]int, n int) string {
+			b := m[n]
+			if len(b) == 0 {
+				return "-"
+			}
+			refs := make([]string, 0, len(b))
+			for _, x := range b {
+				refs = append(refs, fmt.Sprintf("#%d", x))
+			}
+			return strings.Join(refs, ", ")
 		},
 		"stateLabel": func(ls []github.Label) string {
 			for _, s := range labels.StateLabels() {

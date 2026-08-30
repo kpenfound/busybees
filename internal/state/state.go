@@ -10,6 +10,7 @@
 //	qa.json              QA bookkeeping (last run)
 //	product_manager.json product manager bookkeeping (last run)
 //	status.json          live scheduler status
+//	ledger.jsonl         one JSON line per finished session (`bees cost`)
 //	bees.log             scheduler log (JSON, rotated: bees.log.1, bees.log.2)
 package state
 
@@ -51,6 +52,7 @@ This directory is managed by ` + "`bees`" + `. It holds:
 - sessions/  prompts, transcripts and results of every Claude Code session
 - issues/    per-issue bookkeeping (review rounds)
 - status.json live scheduler status (` + "`bees status`" + `)
+- ledger.jsonl one line per finished session: turns, cost and outcome (` + "`bees cost`" + `)
 - bees.log    every scheduler log record as JSON, rotated at 10 MiB
 
 You can safely delete sessions/ to reclaim space. Editing notes/ by hand is a
@@ -101,7 +103,11 @@ type IssueState struct {
 	// HumanSeenAt is the timestamp of the latest human PR activity already
 	// delivered to the developer.
 	HumanSeenAt time.Time `json:"human_seen_at,omitempty"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	// ConflictNotifiedSHA is the PR head commit the developer was last told
+	// to bring up to date with the default branch; the same head is never
+	// mailed about twice.
+	ConflictNotifiedSHA string    `json:"conflict_notified_sha,omitempty"`
+	UpdatedAt           time.Time `json:"updated_at"`
 }
 
 // Issue loads bookkeeping for an issue (zero value when none).
@@ -143,6 +149,9 @@ func (s *Store) SaveRole(role string, rs RoleState) error {
 type Worker struct {
 	Name  string `json:"name"`
 	Issue int    `json:"issue"`
+	// Size is the issue's size label ("xs".."xl"), recorded when the worker
+	// starts. It is what scheduler.max_large_in_flight counts.
+	Size  string `json:"size,omitempty"`
 	Stage string `json:"stage"`
 	Round int    `json:"round"`
 	// Attempt is the 1-based attempt of the running session; > 1 means the
@@ -167,7 +176,10 @@ type Status struct {
 	// ReadySizes counts the ready queue by size ("xs", "s", "m", "l",
 	// "xl"); issues without a size label are counted under "".
 	ReadySizes map[string]int `json:"ready_sizes,omitempty"`
-	LastError  string         `json:"last_error,omitempty"`
+	// WaitingOnDeps maps a ready issue to the blockers it declares that are
+	// still open, so `bees status` can explain why it is not being built.
+	WaitingOnDeps map[int][]int `json:"waiting_on_deps,omitempty"`
+	LastError     string        `json:"last_error,omitempty"`
 }
 
 // SaveStatus writes status.json.

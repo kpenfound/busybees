@@ -81,9 +81,12 @@ func fakeClaude() {
 		git("-c", "user.email=bee@example.com", "-c", "user.name=bee", "commit", "-q", "-m", fmt.Sprintf("work %d", n))
 		git("push", "-q")
 		if os.Getenv(session.EnvPR) == "" {
-			// "Open" the PR: the fake gh treats the marker as the PR existing.
-			if err := os.WriteFile(filepath.Join(stateDir, "fake-pr-created"), nil, 0o644); err != nil {
-				fail(err)
+			// "Open" the PR: the fake gh treats the markers as the PR existing
+			// (fakePR, and any hidden PR on this issue's branch).
+			for _, marker := range []string{"fake-pr-created", "fake-pr-created-issue-" + os.Getenv(session.EnvIssue)} {
+				if err := os.WriteFile(filepath.Join(stateDir, marker), nil, 0o644); err != nil {
+					fail(err)
+				}
 			}
 			outcome = session.Outcome{Status: OutcomePROpened, PR: fakePR}
 		} else {
@@ -125,6 +128,9 @@ type fakeGH struct {
 	issues   map[int]*github.Issue
 	prs      map[int]*github.PR
 	prMarker string
+	// hidden lists PRs that do not exist until a developer session opened
+	// one on their head branch (bees/issue-N), like fakePR.
+	hidden   map[int]bool
 	history  map[int][]string // label additions per number, in order
 	comments map[int][]string
 	merged   []int
@@ -202,6 +208,11 @@ func (f *fakeGH) exec(ctx context.Context, args ...string) ([]byte, error) {
 	prVisible := func(p *github.PR) bool {
 		if p.Number == fakePR {
 			_, err := os.Stat(f.prMarker)
+			return err == nil
+		}
+		if f.hidden[p.Number] {
+			issue := strings.TrimPrefix(p.HeadRefName, "bees/issue-")
+			_, err := os.Stat(f.prMarker + "-issue-" + issue)
 			return err == nil
 		}
 		return true
@@ -397,6 +408,7 @@ func newHarnessAt(t *testing.T, toml string, now time.Time) *harness {
 		issues:   map[int]*github.Issue{},
 		prs:      map[int]*github.PR{},
 		prMarker: filepath.Join(store.Dir, "fake-pr-created"),
+		hidden:   map[int]bool{},
 		history:  map[int][]string{},
 		comments: map[int][]string{},
 		activity: map[string]string{},
@@ -550,6 +562,41 @@ func TestFullDeveloperReviewLoop(t *testing.T) {
 			t.Errorf("%s last run not recorded", r)
 		}
 	}
+	// Every session is in the ledger, with what it cost and what it did.
+	ledger, err := h.store.ReadLedger(time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ledger) != 7 {
+		t.Fatalf("ledger has %d entries, want one per session (7):\n%+v", len(ledger), ledger)
+	}
+	byRole := map[string][]state.LedgerEntry{}
+	for _, e := range ledger {
+		if e.Turns != 2 || e.CostUSD != 0.01 || e.DurationMS <= 0 || e.Session == "" || e.Time.IsZero() {
+			t.Errorf("ledger entry not filled in: %+v", e)
+		}
+		byRole[e.Role] = append(byRole[e.Role], e)
+	}
+	for role, n := range map[string]int{config.RoleDeveloper: 2, config.RoleReviewer: 2, config.RoleProjectManager: 1, config.RoleProductManager: 1, config.RoleQA: 1} {
+		if got := len(byRole[role]); got != n {
+			t.Errorf("%s ledger entries: got %d want %d", role, got, n)
+		}
+	}
+	for i, want := range []string{OutcomePROpened, OutcomePRUpdated} {
+		got := byRole[config.RoleDeveloper][i]
+		if got.Outcome != want || got.Issue != 1 || got.PR != fakePR {
+			t.Errorf("developer ledger entry %d: %+v", i, got)
+		}
+	}
+	for i, want := range []string{OutcomeChangesRequested, OutcomeApproved} {
+		got := byRole[config.RoleReviewer][i]
+		if got.Outcome != want || got.PR != fakePR {
+			t.Errorf("reviewer ledger entry %d: %+v", i, got)
+		}
+	}
+	if e := byRole[config.RoleQA][0]; e.Issue != 0 || e.PR != 0 {
+		t.Errorf("qa ledger entry should have no issue or PR: %+v", e)
+	}
 }
 
 func TestQuestionBlocksAndAnswerUnblocks(t *testing.T) {
@@ -670,6 +717,16 @@ func TestLabelBackstop(t *testing.T) {
 	}
 	if len(h.gh.history[8]) != 0 {
 		t.Fatalf("unrelated issue touched: %v", h.gh.history[8])
+	}
+	// The project manager is told the size it must not exceed when it sizes
+	// a work item, so it splits anything bigger instead.
+	dirs := h.sessions(config.RoleProjectManager)
+	if len(dirs) == 0 {
+		t.Fatal("no project manager session")
+	}
+	prompt, _ := os.ReadFile(filepath.Join(dirs[0], "system-prompt.md"))
+	if !strings.Contains(string(prompt), "anything larger than `l` is not dispatched") {
+		t.Fatalf("project manager system prompt does not carry max_size:\n%s", prompt)
 	}
 }
 

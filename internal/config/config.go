@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -86,6 +87,11 @@ const (
 	DefaultRetries           = 1
 	DefaultRetryDelay        = 10 * time.Minute
 	DefaultRetryWithFallback = true
+	// DefaultPRFixConflicts and DefaultPRKeepUpdated govern what the
+	// scheduler does with an open pull request that conflicts with, or has
+	// fallen behind, the default branch; see Scheduler.FixConflicts.
+	DefaultPRFixConflicts = true
+	DefaultPRKeepUpdated  = false
 	// MaxRetries caps scheduler.retries.
 	MaxRetries = 5
 	// DefaultOffHoursPollInterval is the polling cadence outside
@@ -97,7 +103,28 @@ const (
 	DefaultPMInterval           = time.Hour
 	DefaultQAInterval           = 30 * time.Minute
 	DefaultTriageBatch          = 5
+	DefaultSkillsRefresh        = "24h"
+	// DefaultDispatchOrder and friends govern which ready issue a free
+	// developer worker takes next; see Scheduler.DispatchOrder.
+	DefaultDispatchOrder    = DispatchSmallFirst
+	DefaultMaxLargeInFlight = 1
+	// DefaultMaxSize is the largest size a developer takes by default.
+	DefaultMaxSize = "l"
 )
+
+// Dispatch orders accepted by scheduler.dispatch_order.
+const (
+	DispatchSmallFirst = "small-first"
+	DispatchOldest     = "oldest"
+	DispatchLargeFirst = "large-first"
+)
+
+// DispatchOrders lists the accepted scheduler.dispatch_order values.
+var DispatchOrders = []string{DispatchSmallFirst, DispatchOldest, DispatchLargeFirst}
+
+// Sizes lists the work item sizes, smallest first. They mirror the
+// bees:size/* labels (see Labels.SizeLabels).
+var Sizes = []string{"xs", "s", "m", "l", "xl"}
 
 // Duration is a time.Duration that unmarshals from TOML strings like "30m".
 type Duration struct{ time.Duration }
@@ -159,18 +186,18 @@ type Config struct {
 // Project holds settings that describe the software being built.
 type Project struct {
 	// Remote is the git remote the factory fetches from and pushes to. Default "origin".
-	Remote string `toml:"remote"`
+	Remote string `toml:"remote" json:"remote"`
 	// Repo is the GitHub repository in "owner/name" form. Derived from the
 	// remote's URL when empty (see Config.Resolve).
-	Repo string `toml:"repo"`
+	Repo string `toml:"repo" json:"repo"`
 	// DefaultBranch is the branch developers branch from and QA tests.
 	// Derived from the remote's HEAD when empty.
-	DefaultBranch string `toml:"default_branch"`
+	DefaultBranch string `toml:"default_branch" json:"default_branch"`
 	// StateDir is where mail, notes, logs and scheduler state live. Relative
 	// paths are resolved against the directory containing bees.toml.
-	StateDir string `toml:"state_dir"`
+	StateDir string `toml:"state_dir" json:"state_dir"`
 	// BranchPrefix is prepended to developer branches, e.g. "bees/issue-12".
-	BranchPrefix string `toml:"branch_prefix"`
+	BranchPrefix string `toml:"branch_prefix" json:"branch_prefix"`
 }
 
 // Filter selects which GitHub issues and pull requests the factory can see.
@@ -179,17 +206,17 @@ type Filter struct {
 	// Label is the factory's label. It is the base name of the workflow state
 	// labels ("bees:ready", ...) and, when RequireLabel is true, the
 	// visibility gate: only issues/PRs carrying it are visible. Default "bees".
-	Label string `toml:"label"`
+	Label string `toml:"label" json:"label"`
 	// RequireLabel can be set to false so that Assignee and/or Milestone
 	// alone define visibility. The factory still applies Label to everything
 	// it creates. Default true.
-	RequireLabel *bool `toml:"require_label"`
+	RequireLabel *bool `toml:"require_label" json:"require_label"`
 	// Assignee restricts visibility to issues/PRs assigned to this GitHub
 	// login ("@me" resolves to the authenticated gh user). Everything the
 	// factory creates is assigned to this user so it stays visible.
-	Assignee string `toml:"assignee"`
+	Assignee string `toml:"assignee" json:"assignee"`
 	// Milestone restricts visibility to issues/PRs in this milestone title.
-	Milestone string `toml:"milestone"`
+	Milestone string `toml:"milestone" json:"milestone"`
 }
 
 // LabelRequired reports whether the label is part of the visibility gate.
@@ -202,12 +229,12 @@ const BuiltinMCPServer = "bees"
 // MCPServer configures one MCP server. Either Command (stdio) or URL (http/sse)
 // must be set.
 type MCPServer struct {
-	Type    string            `toml:"type"` // stdio (default when command set), http, sse
-	Command string            `toml:"command"`
-	Args    []string          `toml:"args"`
-	Env     map[string]string `toml:"env"`
-	URL     string            `toml:"url"`
-	Headers map[string]string `toml:"headers"`
+	Type    string            `toml:"type" json:"type"` // stdio (default when command set), http, sse
+	Command string            `toml:"command" json:"command"`
+	Args    []string          `toml:"args" json:"args"`
+	Env     map[string]string `toml:"env" json:"env"`
+	URL     string            `toml:"url" json:"url"`
+	Headers map[string]string `toml:"headers" json:"headers"`
 }
 
 // RoleSettings are the settings that can be given globally or per role.
@@ -245,11 +272,20 @@ type RoleSettings struct {
 	// global ones with the same name.
 	Env map[string]string `toml:"env"`
 
+	// The following key is only valid under [global].
+
+	// SkillsRefresh is how stale a skill clone may get before it is pulled
+	// when a session needs it: "never", "always" or a duration ("24h").
+	SkillsRefresh string `toml:"skills_refresh"`
+
 	// The following key is only valid under [roles.developer].
 
 	// CommitFlags are extra flags the developer passes to every `git commit`,
 	// for example "--gpg-sign --signoff". Appended to its system prompt.
 	CommitFlags string `toml:"commit_flags"`
+	// MaxSize is the largest work item size a developer takes ("xs".."xl").
+	// A ready issue sized above it is sent back to triage to be split.
+	MaxSize string `toml:"max_size"`
 
 	// The following keys are only valid under [roles.reviewer].
 
@@ -291,8 +327,64 @@ const (
 	DefaultMaxCheckFixRounds = 2
 )
 
+// SkillsRefresh returns the skill refresh policy from [global]: always is
+// true for "always", after is 0 for "never" and the parsed duration
+// otherwise. Validate has already rejected anything else.
+func (c *Config) SkillsRefresh() (always bool, after time.Duration) {
+	always, after, _ = parseSkillsRefresh(c.Global.SkillsRefresh)
+	return always, after
+}
+
+// SkillsRefreshPolicy returns the policy as it is written in bees.toml.
+func (c *Config) SkillsRefreshPolicy() string {
+	if strings.TrimSpace(c.Global.SkillsRefresh) == "" {
+		return DefaultSkillsRefresh
+	}
+	return strings.TrimSpace(c.Global.SkillsRefresh)
+}
+
+func parseSkillsRefresh(v string) (always bool, after time.Duration, err error) {
+	switch s := strings.TrimSpace(v); s {
+	case "":
+		return parseSkillsRefresh(DefaultSkillsRefresh)
+	case "never":
+		return false, 0, nil
+	case "always":
+		return true, 0, nil
+	default:
+		d, err := time.ParseDuration(s)
+		if err != nil || d < 0 {
+			return false, 0, fmt.Errorf("skills_refresh %q must be \"never\", \"always\" or a duration >= 0 such as \"24h\"", s)
+		}
+		return false, d, nil
+	}
+}
+
 // CommitFlags returns the developer's extra git commit flags.
 func (c *Config) CommitFlags() string { return strings.TrimSpace(c.Roles[RoleDeveloper].CommitFlags) }
+
+// MaxSize returns the largest work item size the developer takes.
+func (c *Config) MaxSize() string {
+	return firstNonEmpty(strings.TrimSpace(c.Roles[RoleDeveloper].MaxSize), DefaultMaxSize)
+}
+
+// LargeInFlight returns scheduler.max_large_in_flight (0 = no cap).
+func (s Scheduler) LargeInFlight() int {
+	if s.MaxLargeInFlight == nil {
+		return DefaultMaxLargeInFlight
+	}
+	return *s.MaxLargeInFlight
+}
+
+// FixConflicts returns scheduler.pr_fix_conflicts: whether an open pull
+// request that conflicts with the default branch is handed back to the
+// developer.
+func (s Scheduler) FixConflicts() bool {
+	if s.PRFixConflicts == nil {
+		return DefaultPRFixConflicts
+	}
+	return *s.PRFixConflicts
+}
 
 // Merge returns the resolved merge policy from [roles.reviewer].
 func (c *Config) Merge() MergePolicy {
@@ -341,38 +433,51 @@ type Scheduler struct {
 	// PollInterval is how often GitHub is polled for work. Each poll costs
 	// two API calls (open issues, open PRs); everything else is gated on what
 	// those lists report. Default 5m.
-	PollInterval Duration `toml:"poll_interval"`
+	PollInterval Duration `toml:"poll_interval" json:"poll_interval"`
 	// RateLimitBackoff is how long to pause polling after GitHub reports a
 	// rate limit. Default 15m.
-	RateLimitBackoff Duration `toml:"rate_limit_backoff"`
+	RateLimitBackoff Duration `toml:"rate_limit_backoff" json:"rate_limit_backoff"`
 	// MaxDevelopers is the number of concurrent developer workers. Each worker
 	// runs a sequential developer <-> reviewer loop for one issue at a time.
-	MaxDevelopers int `toml:"max_developers"`
+	MaxDevelopers int `toml:"max_developers" json:"max_developers"`
 	// MaxReviewRounds caps developer/reviewer iterations before an issue is
 	// escalated with the needs-human label.
-	MaxReviewRounds int `toml:"max_review_rounds"`
+	MaxReviewRounds int `toml:"max_review_rounds" json:"max_review_rounds"`
 	// ProductManagerInterval is the minimum time between product manager runs
 	// (mail in the PM inbox triggers an earlier run).
-	ProductManagerInterval Duration `toml:"product_manager_interval"`
+	ProductManagerInterval Duration `toml:"product_manager_interval" json:"product_manager_interval"`
 	// QAInterval is the minimum time between QA runs. QA only runs when
 	// something has been merged since its last run.
-	QAInterval Duration `toml:"qa_interval"`
+	QAInterval Duration `toml:"qa_interval" json:"qa_interval"`
 	// TriageBatchSize is the maximum number of issues handed to the project
 	// manager in one session.
-	TriageBatchSize int `toml:"triage_batch_size"`
+	TriageBatchSize int `toml:"triage_batch_size" json:"triage_batch_size"`
+	// DispatchOrder decides which ready issue a free developer worker takes
+	// next: small-first (default), oldest or large-first.
+	DispatchOrder string `toml:"dispatch_order" json:"dispatch_order"`
+	// MaxLargeInFlight caps how many bees:size/l issues developer workers may
+	// hold at once. 0 means no cap. Default 1.
+	MaxLargeInFlight *int `toml:"max_large_in_flight" json:"max_large_in_flight"`
+	// PRFixConflicts hands an open pull request that conflicts with the
+	// default branch back to its developer: the developer is mailed, and an
+	// approved issue goes back to ready ahead of new work. Default true.
+	PRFixConflicts *bool `toml:"pr_fix_conflicts" json:"pr_fix_conflicts"`
+	// PRKeepUpdated does the same when the pull request merely fell behind
+	// the default branch without conflicting. Default false.
+	PRKeepUpdated bool `toml:"pr_keep_updated" json:"pr_keep_updated"`
 	// Retries is the number of extra attempts a session gets when it failed
 	// for infrastructure reasons (timeout, API error, exhausted turns).
 	// 0 disables retrying. Default 1.
-	Retries *int `toml:"retries"`
+	Retries *int `toml:"retries" json:"retries"`
 	// RetryDelay is how long to wait before a retry. Default 10m.
-	RetryDelay *Duration `toml:"retry_delay"`
+	RetryDelay *Duration `toml:"retry_delay" json:"retry_delay"`
 	// RetryWithFallback runs a retry with the role's fallback_model as its
 	// primary model. Default true.
-	RetryWithFallback *bool `toml:"retry_with_fallback"`
+	RetryWithFallback *bool `toml:"retry_with_fallback" json:"retry_with_fallback"`
 	// KeepWorkspaces leaves temp worktrees on disk after a session (debugging).
-	KeepWorkspaces bool `toml:"keep_workspaces"`
+	KeepWorkspaces bool `toml:"keep_workspaces" json:"keep_workspaces"`
 	// WorkspaceRoot overrides the temp dir used for worktrees.
-	WorkspaceRoot string `toml:"workspace_root"`
+	WorkspaceRoot string `toml:"workspace_root" json:"workspace_root"`
 	// WorkHours is the daily window during which GitHub is polled every
 	// PollInterval, as "HH:MM-HH:MM" on a 24-hour clock ("09:00-18:00").
 	// Empty (the default) disables the feature: GitHub is polled every
@@ -380,16 +485,16 @@ type Scheduler struct {
 	// A window whose start is after its end wraps midnight and belongs to
 	// the day its start falls on ("22:00-06:00" with work_days = ["fri"]
 	// covers Friday 22:00 to Saturday 06:00).
-	WorkHours string `toml:"work_hours"`
+	WorkHours string `toml:"work_hours" json:"work_hours"`
 	// OffHoursPollInterval is how often GitHub is polled outside the work
 	// hours window. Must be >= PollInterval. Default 1h.
-	OffHoursPollInterval Duration `toml:"off_hours_poll_interval"`
+	OffHoursPollInterval Duration `toml:"off_hours_poll_interval" json:"off_hours_poll_interval"`
 	// WorkDays are the days the window applies to, as lowercase three-letter
 	// names (mon, tue, wed, thu, fri, sat, sun). Default mon-fri.
-	WorkDays []string `toml:"work_days"`
+	WorkDays []string `toml:"work_days" json:"work_days"`
 	// Timezone is the IANA name the window is interpreted in
 	// ("America/New_York"). Empty means the machine's local time.
-	Timezone string `toml:"timezone"`
+	Timezone string `toml:"timezone" json:"timezone"`
 
 	// Parsed form of the four keys above, filled in by Validate.
 	whStart, whEnd int // minutes since midnight
@@ -768,6 +873,20 @@ func (c *Config) applyDefaults() {
 	if c.Scheduler.TriageBatchSize == 0 {
 		c.Scheduler.TriageBatchSize = DefaultTriageBatch
 	}
+	if c.Global.SkillsRefresh == "" {
+		c.Global.SkillsRefresh = DefaultSkillsRefresh
+	}
+	if c.Scheduler.DispatchOrder == "" {
+		c.Scheduler.DispatchOrder = DefaultDispatchOrder
+	}
+	if c.Scheduler.MaxLargeInFlight == nil {
+		n := DefaultMaxLargeInFlight
+		c.Scheduler.MaxLargeInFlight = &n
+	}
+	if c.Scheduler.PRFixConflicts == nil {
+		b := DefaultPRFixConflicts
+		c.Scheduler.PRFixConflicts = &b
+	}
 	if c.Scheduler.Retries == nil {
 		n := DefaultRetries
 		c.Scheduler.Retries = &n
@@ -824,6 +943,14 @@ func (c *Config) Validate() error {
 	if d := c.Scheduler.RetryDelay; d != nil && d.Duration < 0 {
 		errs = append(errs, "scheduler.retry_delay must be >= 0")
 	}
+	switch c.Scheduler.DispatchOrder {
+	case "", DispatchSmallFirst, DispatchOldest, DispatchLargeFirst:
+	default:
+		errs = append(errs, fmt.Sprintf("scheduler.dispatch_order must be one of %s", strings.Join(DispatchOrders, ", ")))
+	}
+	if n := c.Scheduler.MaxLargeInFlight; n != nil && *n < 0 {
+		errs = append(errs, "scheduler.max_large_in_flight must be >= 0")
+	}
 	errs = append(errs, c.Scheduler.parseWorkHours()...)
 	check := func(scope string, rs RoleSettings) {
 		if scope != "roles."+RoleReviewer {
@@ -831,8 +958,16 @@ func (c *Config) Validate() error {
 				errs = append(errs, fmt.Sprintf("%s: auto_merge, merge_method, checks_wait, checks_poll_interval, checks_timeout and max_check_fix_rounds are only valid under roles.reviewer", scope))
 			}
 		}
-		if scope != "roles."+RoleDeveloper && rs.CommitFlags != "" {
-			errs = append(errs, fmt.Sprintf("%s: commit_flags is only valid under roles.developer", scope))
+		if scope != "global" && rs.SkillsRefresh != "" {
+			errs = append(errs, fmt.Sprintf("%s: skills_refresh is only valid under global", scope))
+		} else if _, _, err := parseSkillsRefresh(rs.SkillsRefresh); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", scope, err))
+		}
+		if scope != "roles."+RoleDeveloper && (rs.CommitFlags != "" || rs.MaxSize != "") {
+			errs = append(errs, fmt.Sprintf("%s: commit_flags and max_size are only valid under roles.developer", scope))
+		}
+		if rs.MaxSize != "" && !slices.Contains(Sizes, rs.MaxSize) {
+			errs = append(errs, fmt.Sprintf("%s.max_size must be one of %s", scope, strings.Join(Sizes, ", ")))
 		}
 		switch rs.MergeMethod {
 		case "", "squash", "merge", "rebase":

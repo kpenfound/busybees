@@ -296,13 +296,13 @@ func TestIssueCreateAndLink(t *testing.T) {
 	h := newHarness(t, config.RoleDeveloper, Deps{Issues: backend})
 
 	got := h.call("issue_create", map[string]any{
-		"title": "Crash on empty input", "body": "steps", "bug": true, "related": 36,
+		"title": "Crash on empty input", "body": "steps", "bug": true, "related": 36, "blocked_by": []int{12, 15},
 	})
 	if got != `created #90 milestone "v0.1.0"` {
 		t.Fatalf("result: %q", got)
 	}
 	joined := strings.Join(f.calls, "\n")
-	for _, want := range []string{"--label bees:bug", "--label bees:triage", "--assignee kyle", "--milestone v0.1.0"} {
+	for _, want := range []string{"--label bees:bug", "--label bees:triage", "--assignee kyle", "--milestone v0.1.0", "--body Blocked by #12, #15\n\nsteps"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("missing %q in:\n%s", want, joined)
 		}

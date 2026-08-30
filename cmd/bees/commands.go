@@ -361,8 +361,9 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 				return err
 			}
 			counts, _ := a.mail.Counts()
+			today := todayTotal(store, time.Now())
 			if asJSON {
-				return json.NewEncoder(os.Stdout).Encode(map[string]any{"status": st, "unread_mail": counts})
+				return json.NewEncoder(os.Stdout).Encode(map[string]any{"status": st, "unread_mail": counts, "today": today})
 			}
 			fmt.Printf("repo: %s   state: %s\n", cfg.Project.Repo, cfg.StateDir())
 			if st.UpdatedAt.IsZero() {
@@ -370,6 +371,7 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 			} else {
 				fmt.Printf("scheduler: pid %d, last poll %s ago\n", st.PID, time.Since(st.LastPoll).Round(time.Second))
 			}
+			fmt.Println(todayText(today))
 			if cfg.Scheduler.WorkHoursEnabled() {
 				// Always the live answer: a stored one is stale as soon
 				// as the scheduler stops. status.json keeps its own record
@@ -403,7 +405,11 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 				if w.Attempt > 1 {
 					round += fmt.Sprintf(" attempt %d", w.Attempt)
 				}
-				fmt.Printf("  %-12s issue #%-5d %-10s %-20s since %s\n", w.Name, w.Issue, w.Stage, round, w.Since.Format(time.Kitchen))
+				size := w.Size
+				if size == "" {
+					size = "-"
+				}
+				fmt.Printf("  %-12s issue #%-5d %-3s %-10s %-20s since %s\n", w.Name, w.Issue, size, w.Stage, round, w.Since.Format(time.Kitchen))
 			}
 			fmt.Println("\nsingletons:")
 			for _, r := range []string{config.RoleProductManager, config.RoleProjectManager, config.RoleQA} {
@@ -431,7 +437,10 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 }
 
 // queuesText renders the queue counts of a status, with the ready queue
-// broken down by size ("ready  4  (xs 1, s 2, m 1)").
+// broken down by size ("ready  4  (xs 1, s 2, m 1)") and, when dependencies
+// are holding ready issues back, how many and why. The ready row carries the
+// held count as a suffix so the number of issues a developer can actually pick
+// up is never overstated.
 func queuesText(st state.Status) string {
 	keys := make([]string, 0, len(st.Queues))
 	for k := range st.Queues {
@@ -442,11 +451,34 @@ func queuesText(st state.Status) string {
 	for _, k := range keys {
 		fmt.Fprintf(&b, "  %-14s %d", k, st.Queues[k])
 		if k == "ready" {
+			var notes []string
 			if sizes := readySizesText(st.ReadySizes); sizes != "" {
-				fmt.Fprintf(&b, "  (%s)", sizes)
+				notes = append(notes, sizes)
+			}
+			if n := len(st.WaitingOnDeps); n > 0 {
+				notes = append(notes, fmt.Sprintf("%d waiting on deps", n))
+			}
+			if len(notes) > 0 {
+				fmt.Fprintf(&b, "  (%s)", strings.Join(notes, ", "))
 			}
 		}
 		b.WriteString("\n")
+	}
+	if len(st.WaitingOnDeps) == 0 {
+		return b.String()
+	}
+	held := make([]int, 0, len(st.WaitingOnDeps))
+	for n := range st.WaitingOnDeps {
+		held = append(held, n)
+	}
+	sort.Ints(held)
+	b.WriteString("\nwaiting on dependencies:\n")
+	for _, n := range held {
+		refs := make([]string, 0, len(st.WaitingOnDeps[n]))
+		for _, x := range st.WaitingOnDeps[n] {
+			refs = append(refs, fmt.Sprintf("#%d", x))
+		}
+		fmt.Fprintf(&b, "  #%-3d blocked by %s\n", n, strings.Join(refs, ", "))
 	}
 	return b.String()
 }
@@ -531,13 +563,9 @@ status do the same automatically on startup.`,
 				}
 				roles = []string{r}
 			}
-			out := map[string]any{"project": cfg.Project, "filter": cfg.Filter, "scheduler": cfg.Scheduler, "roles": map[string]any{}}
-			for _, r := range roles {
-				rr, err := cfg.Role(r)
-				if err != nil {
-					return err
-				}
-				out["roles"].(map[string]any)[r] = rr
+			out, err := cfg.View(roles)
+			if err != nil {
+				return err
 			}
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
@@ -571,19 +599,7 @@ func newPromptsCmd(g *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rr, err := cfg.Role(role)
-			if err != nil {
-				return err
-			}
-			store := state.New(cfg.StateDir())
-			d := prompts.Data{
-				Project: cfg.Project, Filter: cfg.Filter, Labels: cfg.Labels(), AutoMerge: cfg.Merge().AutoMerge, CommitFlags: cfg.CommitFlags(),
-				WorkDir: "<worktree>", Branch: "<branch>", StateDir: store.Dir, SessionDir: "<session dir>",
-				NotesFile: store.NotesPath(role),
-				Issue:     &github.Issue{Number: 1, Title: "<issue>"}, PR: &github.PR{Number: 2, Title: "<pr>"},
-				Round: 1, MaxRounds: cfg.Scheduler.MaxReviewRounds,
-			}
-			text, err := prompts.System(role, d, rr.Prompt)
+			text, err := renderedPrompt(cfg, role)
 			if err != nil {
 				return err
 			}
@@ -594,6 +610,29 @@ func newPromptsCmd(g *globalFlags) *cobra.Command {
 	show.Flags().BoolVar(&rendered, "rendered", false, "render the full system prompt with this project's settings")
 	cmd.AddCommand(show)
 	return cmd
+}
+
+// renderedPrompt renders a role's system prompt the way
+// `bees prompts show --rendered` does: this project's settings, with
+// placeholders for everything a real session fills in per issue.
+//
+// Every field the scheduler sets from the config in runSession belongs here
+// too, or the command prints an empty value for it.
+func renderedPrompt(cfg *config.Config, role string) (string, error) {
+	rr, err := cfg.Role(role)
+	if err != nil {
+		return "", err
+	}
+	store := state.New(cfg.StateDir())
+	d := prompts.Data{
+		Project: cfg.Project, Filter: cfg.Filter, Labels: cfg.Labels(), AutoMerge: cfg.Merge().AutoMerge,
+		CommitFlags: cfg.CommitFlags(), MaxSize: cfg.MaxSize(),
+		WorkDir: "<worktree>", Branch: "<branch>", StateDir: store.Dir, SessionDir: "<session dir>",
+		NotesFile: store.NotesPath(role),
+		Issue:     &github.Issue{Number: 1, Title: "<issue>"}, PR: &github.PR{Number: 2, Title: "<pr>"},
+		Round: 1, MaxRounds: cfg.Scheduler.MaxReviewRounds,
+	}
+	return prompts.System(role, d, rr.Prompt)
 }
 
 // readBody reads a message body from --body, --body-file or stdin.

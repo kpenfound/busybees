@@ -135,6 +135,36 @@ changing `filter.label`.
 
 Prints the label names and what each one means.
 
+### `bees skills list`
+
+Prints the skill repositories configured for the enabled roles: the cache directory and
+the refresh policy on the first line, then one line per reference with its commit (or
+`not cached`), how long ago it was fetched, the roles that use it and the reference
+itself. Reads the cache only — no session, no GitHub.
+
+```
+$ bees skills list
+/home/kyle/.cache/bees  (refresh: 24h)
+9f1c0aa     3h ago  developer,reviewer  https://github.com/acme/skills#skills/tdd
+not cached  -       qa                  https://github.com/acme/qa-skills
+```
+
+### `bees skills update`
+
+Clones what is missing and pulls everything else right now, whatever `skills_refresh`
+says. With no argument (or `--all`) it updates every configured reference; arguments
+must match a configured reference verbatim.
+
+```
+$ bees skills update
+updated https://github.com/acme/skills#skills/tdd 9f1c0aa → 2b7d431
+unchanged https://github.com/acme/qa-skills 4c19e02
+```
+
+A reference that fails prints `failed <ref>: <error>` and the command exits non-zero
+after trying the rest. Pinned references (`@v1.2.0`) are detached checkouts and cannot
+be pulled; that failure is expected.
+
 ### `bees config validate`
 
 Loads `bees.toml` and reports errors (missing or unsupported `version`, unknown keys,
@@ -153,9 +183,40 @@ Prints the resolved configuration as JSON: project, filter, scheduler and — fo
 role, or the one given — the effective prompt, skills, MCP servers, model, fallback
 model, limits and `enabled` after merging `[global]` with `[roles.<name>]`.
 
+The JSON keys are the `bees.toml` key names, so you can match what is printed against
+what you wrote, and durations print as duration strings (`"45m0s"`). The role-specific
+keys appear on the role that owns them: the reviewer carries its merge policy
+(`auto_merge`, `merge_method`, `checks_wait`, `checks_poll_interval`, `checks_timeout`,
+`max_check_fix_rounds`) and the developer its `commit_flags` and `max_size`.
+
 ```sh
 bees config show
 bees config show developer
+```
+
+```json
+{
+  "path": "/src/widgets/bees.toml",
+  "version": 1,
+  "filter": { "label": "bees", "require_label": true, "assignee": "@me", "milestone": "" },
+  "scheduler": { "poll_interval": "5m0s", "max_developers": 1, "max_review_rounds": 3, "...": "" },
+  "roles": {
+    "reviewer": {
+      "name": "reviewer",
+      "model": "opus",
+      "fallback_model": "sonnet",
+      "max_turns": 200,
+      "timeout": "45m0s",
+      "enabled": true,
+      "auto_merge": false,
+      "merge_method": "squash",
+      "checks_wait": "1m0s",
+      "checks_poll_interval": "2m0s",
+      "checks_timeout": "30m0s",
+      "max_check_fix_rounds": 2
+    }
+  }
+}
 ```
 
 ### `bees prompts show <role> [--rendered]`
@@ -246,7 +307,7 @@ bees exec reviewer --pr 34
 
 Shows the last poll time and PID of the scheduler, queue sizes per workflow state
 (plus `feedback` and `features`, the open `bees:feedback` and `bees:feature` issues
-owned by the product manager, and `open_prs`), running developer workers (issue, stage, round, and the attempt number while a session is being retried), singleton state and last run, and
+owned by the product manager, and `open_prs`), running developer workers (issue, [size](workflow.md#sizing), stage, round, and the attempt number while a session is being retried), singleton state and last run, and
 unread mail per role. Reads `status.json` from the state directory, so it works while
 `bees run` is active in another terminal.
 
@@ -255,6 +316,13 @@ workflow state label yet — usually ones a person just filed from the GitHub UI
 scheduler gives them `bees:triage` on its next reconcile, so the row normally
 disappears again within the same pass. A workflow-state queue is omitted while it is
 empty (`feedback`, `features` and `open_prs` are always shown).
+
+Under the scheduler line it also reports what the factory has spent since midnight,
+summed from the [session ledger](#bees-cost) (`today` in `--json`):
+
+```
+today: 23 sessions, 412 turns, $8.12
+```
 
 The `ready` queue also carries a breakdown by [size](workflow.md#sizing)
 (`ready_sizes` in `--json`); issues the scheduler has not sized yet are
@@ -275,6 +343,21 @@ work hours: yes (09:00-18:00 mon-fri, America/New_York)   next GitHub poll in 2m
 The yes/no is computed when you run the command, so it is right even when the
 scheduler is stopped; `in_work_hours` in `--json` is the scheduler's own record
 from its last pass.
+
+Ready issues held back by an open [dependency](workflow.md#dependencies) are counted
+on the `ready` row and listed below the queues:
+
+```
+queues:
+  ready          4  (xs 1, s 1, 2 waiting on deps)
+
+waiting on dependencies:
+  #40  blocked by #37
+  #46  blocked by #44
+```
+
+`--json` carries the same information as `waiting_on_deps` (issue number → open
+blockers).
 
 ## The mailbox
 
@@ -329,6 +412,12 @@ bees kill --scheduler      # the scheduler itself is hung
 Attach `--issue`/`--pr` whenever possible: that is how the scheduler routes the message
 to the right developer session, and how an answer unblocks a `bees:blocked` issue.
 
+`bees mail` talks to the state directory of `$BEES_STATE_DIR` when it is set (that is
+how a session reaches its own mailbox), but an explicit `--config` wins over it, so
+`bees -c other/bees.toml mail send ...` inside a session reaches the other project.
+The confirmation line names the state directory the message landed in:
+`sent <id> to <role> (<state dir>)`.
+
 ```sh
 bees mail send --to project_manager --issue 12 --subject "Which auth scheme?" --body "JWT or sessions?"
 bees mail send --to developer --pr 34 --issue 12 --subject "Review round 1" --body-file review.md
@@ -368,6 +457,7 @@ Creates an issue the way the factory wants it. Roles are told to use this instea
 | `--bug` | Bug work item (`bees:bug`). |
 | `--feature` | Feature issue for the product manager (`bees:feature`, no state label). |
 | `--ready` | Work item is already detailed: `bees:ready` instead of `bees:triage`. |
+| `--blocked-by N` | Repeatable. Prefixes the body with a `Blocked by #N` line, so the scheduler does not build the issue while `N` is open (see [Dependencies](workflow.md#dependencies)). No GitHub dependency relationship is created. |
 | `--label L` | Extra label (repeatable). |
 
 What it always does: adds the visibility label and, when `filter.assignee` is set, the
@@ -382,6 +472,7 @@ bees issue create --parent 12 --title "Export as CSV" --body-file body.md      #
 bees issue create --bug --related 34 --title "Crash on empty input" --body "…"  # bug in #34's milestone
 bees issue create --feature --related 40 --title "Search" --body-file body.md   # feature from feedback #40
 bees issue create --title "Fix typo in README" --ready                          # fast-tracked work item
+bees issue create --parent 12 --blocked-by 37 --title "Order the queue" --body-file body.md  # waits for #37
 ```
 
 ### `bees issue link --parent N --child M`
@@ -432,7 +523,7 @@ command do exactly the same thing. Claude Code exposes the tools as
 |---|---|---|
 | `mail_send` | `to`, `subject`, `body`, optional `issue`, `pr`, `in_reply_to` | `bees mail send` |
 | `mail_list` | optional `unread`, `issue`, `pr` | `bees mail list --full` |
-| `issue_create` | `title`, `body`, optional `parent`, `related`, `milestone`, `bug`, `feature`, `ready`, `labels` | `bees issue create` |
+| `issue_create` | `title`, `body`, optional `parent`, `related`, `milestone`, `bug`, `feature`, `ready`, `labels`, `blocked_by` | `bees issue create` |
 | `issue_link` | `parent`, `child` | `bees issue link` |
 | `done` | `status`, optional `note`, `pr`, `issue` | `bees done` |
 
@@ -462,6 +553,27 @@ Without a role argument it uses `$BEES_ROLE`, and without that it prints the
 unconstrained tool set.
 
 ## Misc
+
+### `bees cost [--since 24h] [--by role|issue|day] [--json]`
+
+Reports what finished sessions cost, summed from `<state_dir>/ledger.jsonl`: one JSON
+line per session, appended when it ends, with its role, issue, PR, turns, cost,
+duration and outcome. The numbers are what `claude` reported; nothing is reconciled
+against billing.
+
+```
+$ bees cost --since 72h --by role
+role             sessions    turns       cost
+developer              12      214      $6.10
+product_manager         1       11      $0.32
+reviewer                9       74      $1.70
+total                  22      299      $8.12
+```
+
+`--since` is a Go duration (default `24h`). `--by issue` groups by issue number and
+collects sessions that belong to no issue (the singleton roles) under `-`; `--by day`
+groups by local calendar day. `--json` prints the same groups plus the total. An empty
+ledger prints `no sessions recorded`.
 
 ### `bees version`
 

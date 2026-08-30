@@ -184,17 +184,22 @@ func TestSizeLabels(t *testing.T) {
 
 func TestValidation(t *testing.T) {
 	cases := map[string]string{
-		"bad repo":         "version = 1\n[project]\nrepo = \"nope\"\n",
-		"unknown role":     "version = 1\n[project]\nrepo = \"a/b\"\n[roles.intern]\nprompt = \"x\"\n",
-		"unknown key":      "version = 1\n[project]\nrepo = \"a/b\"\nrepository = \"x\"\n",
-		"mcp no command":   "version = 1\n[project]\nrepo = \"a/b\"\n[global.mcp.x]\nargs = [\"a\"]\n",
-		"bad effort":       "version = 1\n[project]\nrepo = \"a/b\"\n[global]\neffort = \"extreme\"\n",
-		"label with colon": "version = 1\n[project]\nrepo = \"a/b\"\n[filter]\nlabel = \"a:b\"\n",
-		"open filter":      "version = 1\n[project]\nrepo = \"a/b\"\n[filter]\nrequire_label = false\n",
-		"max devs zero":    "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nmax_developers = -1\n",
-		"negative retries": "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nretries = -1\n",
-		"too many retries": "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nretries = 6\n",
-		"negative delay":   "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nretry_delay = \"-1m\"\n",
+		"bad repo":             "version = 1\n[project]\nrepo = \"nope\"\n",
+		"unknown role":         "version = 1\n[project]\nrepo = \"a/b\"\n[roles.intern]\nprompt = \"x\"\n",
+		"unknown key":          "version = 1\n[project]\nrepo = \"a/b\"\nrepository = \"x\"\n",
+		"mcp no command":       "version = 1\n[project]\nrepo = \"a/b\"\n[global.mcp.x]\nargs = [\"a\"]\n",
+		"bad effort":           "version = 1\n[project]\nrepo = \"a/b\"\n[global]\neffort = \"extreme\"\n",
+		"label with colon":     "version = 1\n[project]\nrepo = \"a/b\"\n[filter]\nlabel = \"a:b\"\n",
+		"open filter":          "version = 1\n[project]\nrepo = \"a/b\"\n[filter]\nrequire_label = false\n",
+		"max devs zero":        "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nmax_developers = -1\n",
+		"negative retries":     "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nretries = -1\n",
+		"too many retries":     "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nretries = 6\n",
+		"negative delay":       "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nretry_delay = \"-1m\"\n",
+		"bad dispatch order":   "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\ndispatch_order = \"random\"\n",
+		"negative large cap":   "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nmax_large_in_flight = -1\n",
+		"bad max size":         "version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nmax_size = \"huge\"\n",
+		"max size on global":   "version = 1\n[project]\nrepo = \"a/b\"\n[global]\nmax_size = \"l\"\n",
+		"max size on reviewer": "version = 1\n[project]\nrepo = \"a/b\"\n[roles.reviewer]\nmax_size = \"l\"\n",
 	}
 	for name, body := range cases {
 		if _, err := Load(writeConfig(t, body)); err == nil {
@@ -293,6 +298,59 @@ func TestMergePolicy(t *testing.T) {
 	}
 }
 
+func TestDispatchSettings(t *testing.T) {
+	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Scheduler.DispatchOrder != DispatchSmallFirst || cfg.Scheduler.LargeInFlight() != 1 || cfg.MaxSize() != "l" {
+		t.Fatalf("defaults: order %q, large in flight %d, max size %q", cfg.Scheduler.DispatchOrder, cfg.Scheduler.LargeInFlight(), cfg.MaxSize())
+	}
+	cfg, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\ndispatch_order = \"large-first\"\nmax_large_in_flight = 0\n[roles.developer]\nmax_size = \"m\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 0 is a meaningful value (no cap), so it must survive applyDefaults.
+	if cfg.Scheduler.DispatchOrder != DispatchLargeFirst || cfg.Scheduler.LargeInFlight() != 0 || cfg.MaxSize() != "m" {
+		t.Fatalf("custom: order %q, large in flight %d, max size %q", cfg.Scheduler.DispatchOrder, cfg.Scheduler.LargeInFlight(), cfg.MaxSize())
+	}
+}
+
+func TestPRUpdateSettings(t *testing.T) {
+	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Scheduler.FixConflicts() || cfg.Scheduler.PRKeepUpdated {
+		t.Fatalf("defaults: fix conflicts %v, keep updated %v", cfg.Scheduler.FixConflicts(), cfg.Scheduler.PRKeepUpdated)
+	}
+	// false is a meaningful value for pr_fix_conflicts, so it must survive applyDefaults.
+	cfg, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\npr_fix_conflicts = false\npr_keep_updated = true\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Scheduler.FixConflicts() || !cfg.Scheduler.PRKeepUpdated {
+		t.Fatalf("custom: fix conflicts %v, keep updated %v", cfg.Scheduler.FixConflicts(), cfg.Scheduler.PRKeepUpdated)
+	}
+}
+
+// The error a bad value produces has to say what the valid ones are.
+func TestDispatchErrorsListTheValidValues(t *testing.T) {
+	for body, want := range map[string]string{
+		"version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\ndispatch_order = \"random\"\n": "small-first, oldest, large-first",
+		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nmax_size = \"huge\"\n":   "xs, s, m, l, xl",
+		"version = 1\n[project]\nrepo = \"a/b\"\n[global]\nmax_size = \"l\"\n":               "only valid under roles.developer",
+	} {
+		_, err := Load(writeConfig(t, body))
+		if err == nil {
+			t.Fatalf("%q: expected an error", body)
+		}
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+}
+
 // TestTemplateUncommented makes sure every commented-out option in the
 // template is valid TOML with a value the loader accepts: a user should be
 // able to uncomment any line and have it work.
@@ -301,20 +359,7 @@ func TestTemplateUncommented(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var lines []string
-	for _, line := range strings.Split(text, "\n") {
-		switch {
-		case strings.HasPrefix(line, "#=") || strings.HasPrefix(line, "# ") || line == "#":
-			continue // prose comment or separator
-		case strings.HasPrefix(line, "#prompt_file"):
-			continue // placeholder file does not exist
-		case strings.HasPrefix(line, "#"):
-			lines = append(lines, strings.TrimPrefix(line, "#"))
-		default:
-			lines = append(lines, line)
-		}
-	}
-	cfg, err := Load(writeConfig(t, strings.Join(lines, "\n")))
+	cfg, err := Load(writeConfig(t, uncommentTemplate(text)))
 	if err != nil {
 		t.Fatalf("uncommented template does not load: %v", err)
 	}
@@ -475,6 +520,58 @@ func TestMigrateChain(t *testing.T) {
 	}
 	if _, err := migrate("[project]\n", 0, 3, steps); err == nil || !strings.Contains(err.Error(), "version 2 to 3") {
 		t.Fatalf("missing step: %v", err)
+	}
+}
+
+func TestSkillsRefresh(t *testing.T) {
+	for _, c := range []struct {
+		value  string
+		always bool
+		after  time.Duration
+	}{
+		{"", false, 24 * time.Hour},
+		{"never", false, 0},
+		{"always", true, 0},
+		{"12h", false, 12 * time.Hour},
+		{"0s", false, 0},
+	} {
+		body := "version = 1\n[project]\nrepo = \"a/b\"\n[global]\n"
+		if c.value != "" {
+			body += "skills_refresh = \"" + c.value + "\"\n"
+		}
+		cfg, err := Load(writeConfig(t, body))
+		if err != nil {
+			t.Fatalf("%q: %v", c.value, err)
+		}
+		always, after := cfg.SkillsRefresh()
+		if always != c.always || after != c.after {
+			t.Errorf("%q: got always=%v after=%v", c.value, always, after)
+		}
+	}
+
+	for _, bad := range []string{"soon", "-1h", "24"} {
+		_, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[global]\nskills_refresh = \""+bad+"\"\n"))
+		if err == nil {
+			t.Fatalf("%q: expected an error", bad)
+		}
+		if !strings.Contains(err.Error(), `"never"`) || !strings.Contains(err.Error(), `"always"`) || !strings.Contains(err.Error(), "duration") {
+			t.Errorf("%q: unhelpful error: %v", bad, err)
+		}
+	}
+
+	_, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nskills_refresh = \"1h\"\n"))
+	if err == nil || !strings.Contains(err.Error(), "skills_refresh is only valid under global") {
+		t.Fatalf("roles.developer.skills_refresh: %v", err)
+	}
+}
+
+func TestSkillsRefreshPolicy(t *testing.T) {
+	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.SkillsRefreshPolicy(); got != DefaultSkillsRefresh {
+		t.Fatalf("policy %q", got)
 	}
 }
 
@@ -660,4 +757,23 @@ func TestParseWithoutFile(t *testing.T) {
 	if !strings.Contains(loadErr.Error(), "unknown keys: project.nope") {
 		t.Fatalf("Load error: %v", loadErr)
 	}
+}
+
+// uncommentTemplate turns every commented-out option in the bees.toml template
+// into a live setting, dropping the prose comments.
+func uncommentTemplate(text string) string {
+	var lines []string
+	for _, line := range strings.Split(text, "\n") {
+		switch {
+		case strings.HasPrefix(line, "#=") || strings.HasPrefix(line, "# ") || line == "#":
+			continue // prose comment or separator
+		case strings.HasPrefix(line, "#prompt_file"):
+			continue // placeholder file does not exist
+		case strings.HasPrefix(line, "#"):
+			lines = append(lines, strings.TrimPrefix(line, "#"))
+		default:
+			lines = append(lines, line)
+		}
+	}
+	return strings.Join(lines, "\n")
 }

@@ -14,17 +14,32 @@ import (
 	"github.com/kpenfound/busybees/internal/state"
 )
 
-// mailbox returns the mailbox for the current context: $BEES_STATE_DIR when
-// running inside a session, otherwise the configured state dir.
-func mailbox(g *globalFlags) (*mail.Box, error) {
-	if dir := os.Getenv(session.EnvStateDir); dir != "" {
-		return mail.Open(state.New(dir).MailDir()), nil
+// mailStateDir decides which state directory "bees mail" talks to, in order:
+// an explicit -c/--config (the flag has no default, so a non-empty value was
+// typed), then $BEES_STATE_DIR (how a session reaches its own mailbox without
+// searching for a bees.toml), then the config found by configPath. load is only
+// called in the first and last case.
+func mailStateDir(explicitConfig, envStateDir string, load func() (*config.Config, error)) (string, error) {
+	if explicitConfig == "" && envStateDir != "" {
+		return envStateDir, nil
 	}
-	cfg, err := loadConfig(g)
+	cfg, err := load()
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	return mail.Open(state.New(cfg.StateDir()).MailDir()), nil
+	return cfg.StateDir(), nil
+}
+
+// mailbox returns the mailbox for the current context and the state directory
+// it lives in.
+func mailbox(g *globalFlags) (*mail.Box, string, error) {
+	dir, err := mailStateDir(g.config, os.Getenv(session.EnvStateDir), func() (*config.Config, error) {
+		return loadConfig(g)
+	})
+	if err != nil {
+		return nil, "", err
+	}
+	return mail.Open(state.New(dir).MailDir()), dir, nil
 }
 
 // ---- mail ------------------------------------------------------------------
@@ -45,7 +60,7 @@ mail too (use --from human).`,
 		Use:   "send",
 		Short: "Send a message to a role",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			box, err := mailbox(g)
+			box, dir, err := mailbox(g)
 			if err != nil {
 				return err
 			}
@@ -73,7 +88,7 @@ mail too (use --from human).`,
 			if err != nil {
 				return err
 			}
-			fmt.Printf("sent %s to %s\n", m.ID, m.To)
+			fmt.Printf("sent %s to %s (%s)\n", m.ID, m.To, dir)
 			return nil
 		},
 	}
@@ -94,7 +109,7 @@ mail too (use --from human).`,
 		Use:   "list",
 		Short: "List messages",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			box, err := mailbox(g)
+			box, _, err := mailbox(g)
 			if err != nil {
 				return err
 			}
@@ -144,7 +159,7 @@ mail too (use --from human).`,
 		Short: "Print one message",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			box, err := mailbox(g)
+			box, _, err := mailbox(g)
 			if err != nil {
 				return err
 			}
@@ -175,6 +190,7 @@ managed by people; the factory only inherits them.`,
 	}
 	var title, body, bodyFile, milestone string
 	var parent, related int
+	var blockedBy []int
 	var bug, feature, ready bool
 	var extra []string
 	create := &cobra.Command{
@@ -182,7 +198,8 @@ managed by people; the factory only inherits them.`,
 		Short: "Create an issue",
 		Example: `  bees issue create --parent 12 --title "Export as CSV" --body-file body.md   # work item, child of feature #12
   bees issue create --bug --related $BEES_ISSUE --title "Crash on empty input" --body "..."
-  bees issue create --feature --related 40 --title "Search" --body-file body.md   # feature from feedback #40`,
+  bees issue create --feature --related 40 --title "Search" --body-file body.md   # feature from feedback #40
+  bees issue create --parent 12 --blocked-by 37 --title "Order the queue" --body-file body.md  # not built before #37 closes`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := newApp(cmd.Context(), g)
 			if err != nil {
@@ -202,7 +219,7 @@ managed by people; the factory only inherits them.`,
 				kind = issues.KindFeature
 			}
 			res, err := issues.Create(cmd.Context(), a.gh, a.cfg.Filter, a.cfg.Labels(), issues.Options{
-				Title: title, Body: text, Kind: kind, Parent: parent, Related: related, Milestone: milestone, ExtraLabels: extra, Ready: ready,
+				Title: title, Body: text, Kind: kind, Parent: parent, Related: related, Milestone: milestone, ExtraLabels: extra, Ready: ready, BlockedBy: blockedBy,
 			})
 			if err != nil {
 				return err
@@ -220,6 +237,7 @@ managed by people; the factory only inherits them.`,
 	create.Flags().BoolVar(&bug, "bug", false, "bug work item")
 	create.Flags().BoolVar(&feature, "feature", false, "feature issue (owned by the product manager, no state label)")
 	create.Flags().BoolVar(&ready, "ready", false, "work item is already detailed: skip triage")
+	create.Flags().IntSliceVar(&blockedBy, "blocked-by", nil, "issue this one must not be built before (repeatable); written as a \"Blocked by #N\" line the scheduler honours")
 	create.Flags().StringArrayVar(&extra, "label", nil, "extra label (repeatable)")
 	_ = create.MarkFlagRequired("title")
 

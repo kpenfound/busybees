@@ -18,7 +18,7 @@ internal/session/    runs one headless `claude -p` session and collects its resu
 internal/prompts/    embedded base prompts (system/*.md, task/*.md) and their renderer
 internal/mcpserver/  the built-in MCP server (`bees mcp serve`): mail, issue and outcome tools, filtered by role
 internal/state/      state directory: notes, per-issue bookkeeping, singleton run times, status.json
-internal/scheduler/  the orchestrator: poll, human feedback, reconcile, developer worker pool, singleton roles
+internal/scheduler/  the orchestrator: poll, human feedback, PR merge state, reconcile, developer worker pool, singleton roles
 internal/procs/      find and stop bees sessions after a crash (`bees kill`)
 internal/testutil/   test helpers (local bare git remote + clone)
 ```
@@ -65,20 +65,42 @@ A full pass is:
    dropped. The rest are mailed to the developer as one message from `human`
    (`issue == N`, `pr == M`) whose body carries each item's id and the `gh`
    command to reply to it; `human_seen_at` is advanced to the newest item.
-   If the issue was `approved`, it is relabelled `ready` and `bees:approved`
-   is removed from the PR, so a developer worker picks it up on step 3.
+   If the issue was `approved`, `reopenApproved` relabels it `ready` and
+   removes `bees:approved` from the PR, so a developer worker picks it up on
+   step 4 (an issue a worker still owns — the checks stage — is left alone).
+   **PR merge state** (`conflicts.go`, `checkPRs`) runs right after, over
+   the same PRs: `gh pr list` already returns `mergeable`, `mergeStateStatus`
+   and `headRefOid`, so this costs nothing. For an issue in `review` or
+   `approved`, a `CONFLICTING` PR (with `scheduler.pr_fix_conflicts`) or a
+   `BEHIND` one (with `scheduler.pr_keep_updated`) gets the developer one
+   message from `orchestrator` (`issue == N`, `pr == M`) asking it to merge
+   the default branch, resolve, test, push and report `pr-updated`; the head
+   SHA is recorded as `conflict_notified_sha` so the same head is never
+   mailed about twice. An approved issue goes through `reopenApproved` as
+   above. `UNKNOWN`/empty merge state is "not computed yet" and skipped.
 3. **reconcile** – label transitions driven by local state:
    - an issue with no state label gets `bees:triage` (and the `bees` label if
      the filter did not require it);
    - a `bees:ready` issue with no size label gets `bees:size/m`, the default
      size (see [Sizing](workflow.md#sizing));
+   - a `bees:ready` issue sized above `roles.developer.max_size` (default `l`,
+     so normally a `bees:size/xl` one) goes back to `bees:triage` without a
+     comment, for the project manager to split;
    - a `bees:blocked` issue with unread developer mail about it becomes
      `bees:ready`; with unread project-manager mail it becomes `bees:triage`.
 4. **dispatch developers** – candidates are unowned `in-progress` and `review`
-   issues (resume after a restart) followed by `ready` issues. For each, a
-   slot is taken from a buffered channel sized `max_developers`; when none is
-   free the pass stops dispatching. A goroutine runs `workIssue` and returns
-   the slot when done.
+   issues (resume after a restart, never reordered), then `ready` issues that
+   already have an open PR on their branch (`snapshot.prByBranch`; sent back
+   by human feedback or a conflict — finished before new work, oldest first),
+   followed by the remaining `ready` issues sorted by
+   `scheduler.dispatch_order` (`sortReady`: smallest size first by default,
+   ties by age). A `bees:size/l` candidate that is new work is skipped while
+   `scheduler.max_large_in_flight` of them are already owned — the check runs
+   *before* a slot is taken, so a held issue does not keep a worker idle. For
+   the rest, a slot is taken from a buffered channel sized `max_developers`;
+   when none is free the pass stops dispatching. A goroutine runs `workIssue`
+   and returns the slot when done; the worker records the issue's size, which
+   is what the cap counts and what `bees status` shows.
 5. **dispatch singletons** – project manager (has triage issues or unread
    mail), product manager (unread mail, first run, or interval elapsed), QA
    (first run, or interval elapsed and something merged since — checked at
@@ -202,7 +224,8 @@ stateDiagram-v2
   the review stage; otherwise in develop. This is how work survives a restart
   of `bees run`.
 - **Rounds.** `<state_dir>/issues/<n>.json` records the review round, PR
-  number, branch, `check_fix_rounds` and `human_seen_at`. The round is
+  number, branch, `check_fix_rounds`, `human_seen_at` and
+  `conflict_notified_sha`. The round is
   incremented on every `changes-requested` and compared with
   `scheduler.max_review_rounds`; human feedback rounds do not count against
   the limit. `check_fix_rounds` is incremented each time the reviewer is asked
@@ -349,7 +372,8 @@ Messages are addressed to a **role**, not a session. Delivery rules:
   claimed.
 - Human PR feedback enters the mailbox as messages from `human` (see the
   scheduler loop); people can also send mail by hand with
-  `bees mail send --from human`.
+  `bees mail send --from human`. The scheduler's own requests — bring a PR
+  up to date with the default branch — come from `orchestrator`.
 
 **Label backstop.** After every session (`runSession` in `sessions.go`) the
 scheduler calls `adoptCreated`: `github.Client.ListCreatedSince` lists issues
@@ -371,13 +395,22 @@ oldest first, and `bees mail` works from any directory because sessions get
   notes/<role>.md                role memory
   sessions/<ts>-<name>-<rand>/   system-prompt.md, prompt.md, mcp.json, transcript.jsonl,
                                  stderr.log, outcome.json, result.json
-  issues/<n>.json                {number, round, pr, branch, check_fix_rounds, human_seen_at, updated_at}
+  issues/<n>.json                {number, round, pr, branch, check_fix_rounds, human_seen_at,
+                                 conflict_notified_sha, updated_at}
   product_manager.json           {last_run}
   qa.json                        {last_run, last_check}
   status.json                    live scheduler status for `bees status` (queues, workers, singletons, last_poll, last_error)
+  ledger.jsonl                   append-only, one JSON line per finished session
+                                 {time, role, session, issue, pr, turns, cost_usd,
+                                 duration_ms, outcome, error_subtype, timed_out}
   bees.log                       every record of the last scheduler runs as JSON, rotated
                                  at 10 MiB into bees.log.1 and bees.log.2
 ```
+
+`ledger.jsonl` is the factory's accounting: `runSession` appends one line for every
+session that finishes, whatever it reported, and `bees cost` sums it. Lines are
+written with a single `O_APPEND` write so concurrent workers cannot interleave, and
+a line that does not parse is skipped on read rather than failing it.
 
 `bees.log` is written only by the commands that run sessions (`run`, `tick`,
 `exec`) and always contains every record at debug level, whatever the console
@@ -389,7 +422,9 @@ does not already ignore it (and it lives inside the clone), `/.bees/` is
 appended to the repository's `.gitignore` — commit that change. `bees.toml`
 itself is meant to be committed. Worktrees live under `$TMPDIR/bees/` (or
 `scheduler.workspace_root`) and are removed after each worker or singleton
-run; the skills cache lives under `~/.cache/bees/` (`BEES_CACHE_DIR`).
+run; the skills cache lives under `~/.cache/bees/` (`BEES_CACHE_DIR`), whose clones
+are refreshed on use according to `global.skills_refresh` and can be inspected with
+`bees skills`.
 
 ## Testing
 

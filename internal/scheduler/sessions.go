@@ -61,6 +61,7 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 	d.Labels = s.labels
 	d.AutoMerge = s.cfg.Merge().AutoMerge
 	d.CommitFlags = s.cfg.CommitFlags()
+	d.MaxSize = s.cfg.MaxSize()
 	d.WorkDir = spec.workDir
 	d.Branch = spec.branch
 	d.StateDir = s.store.Dir
@@ -116,8 +117,38 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 	}
 	// Whatever the session created must stay visible to the factory.
 	s.adoptCreated(ctx, started)
+	s.record(spec, res)
 	s.summarize(spec, res)
 	return res, nil
+}
+
+// record appends the finished session to the ledger. Accounting must never
+// cost the factory a session, so a failure only warns.
+func (s *Scheduler) record(spec sessionSpec, res *session.Result) {
+	status, _ := outcomeOf(res)
+	e := state.LedgerEntry{
+		Time:         s.now(),
+		Role:         spec.role,
+		Session:      spec.name,
+		Turns:        res.NumTurns,
+		CostUSD:      res.CostUSD,
+		DurationMS:   res.Duration.Milliseconds(),
+		Outcome:      status,
+		ErrorSubtype: res.ErrorSubtype,
+		TimedOut:     res.TimedOut,
+	}
+	if spec.data.Issue != nil {
+		e.Issue = spec.data.Issue.Number
+	}
+	if spec.data.PR != nil {
+		e.PR = spec.data.PR.Number
+	}
+	if res.Outcome.PR > 0 {
+		e.PR = res.Outcome.PR
+	}
+	if err := s.store.AppendLedger(e); err != nil {
+		s.log.Warn("could not record the session in the ledger", "session", spec.name, "error", err)
+	}
 }
 
 // summary is everything a session summary line needs.

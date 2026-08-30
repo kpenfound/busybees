@@ -141,6 +141,10 @@ orchestrator adds `bees:size/m` to any ready issue that has none. See
 | `retry_delay` | duration | `"10m"` | How long to wait before an attempt is repeated. `"0s"` retries immediately. |
 | `retry_with_fallback` | bool | `true` | Run the retry with the role's `fallback_model` as its primary model. Roles without a fallback model simply rerun. |
 | `triage_batch_size` | int | `5` | Maximum number of issues handed to the project manager in one session. |
+| `dispatch_order` | string | `"small-first"` | Which `bees:ready` issue a free developer takes next: `small-first` (smallest size first), `oldest` (whatever the size) or `large-first`. Ties are broken by age, oldest first; an issue without a size ranks as `m`. Issues already `bees:in-progress` or `bees:review`, and `bees:ready` issues that already have an open pull request, are resumed first and are never reordered. See [Sizing](workflow.md#size-decides-what-gets-built-next). |
+| `max_large_in_flight` | int | `1` | How many `bees:size/l` issues developer workers may hold at once. A larger issue over the cap is skipped and the free worker takes the next issue that fits. `0` means no cap; must be ≥ 0. |
+| `pr_fix_conflicts` | bool | `true` | Hand an open pull request that **conflicts** with the default branch back to its developer: the developer is mailed (from `orchestrator`) to merge the default branch, resolve, test and push, and an approved issue goes back to `bees:ready` ahead of new work. See [Conflicts with the default branch](workflow.md#conflicts-with-the-default-branch). |
+| `pr_keep_updated` | bool | `false` | Do the same when a pull request is merely **behind** the default branch (it would merge cleanly, but was not tested against what is on the default branch now). |
 | `product_manager_interval` | duration | `"1h"` | Minimum time between product manager runs. Unread mail in the PM's inbox triggers an earlier run. |
 | `qa_interval` | duration | `"30m"` | Minimum time between QA runs. QA only runs when something was merged since its last run (the first run always happens). The merged-PR query itself runs at most once per `qa_interval` (tracked as `last_check` in `<state_dir>/qa.json`), not on every poll. |
 | `keep_workspaces` | bool | `false` | Leave temporary worktrees on disk after a session (debugging). |
@@ -223,6 +227,7 @@ accepts aliases such as `pm`, `pjm`, `dev`, but the TOML keys must be the full n
 | `prompt` | string | `""` | Text appended to the role's built-in base prompt. |
 | `prompt_file` | string | `""` | Path (relative to `bees.toml`) whose contents are appended after `prompt`. Must exist. |
 | `skills` | string list | `[]` | Skills by git URL (see below). |
+| `skills_refresh` | string | `"24h"` | **Global only.** How stale a skill clone may get before it is pulled when a session needs it: `never`, `always` or a duration. See [Skills](#skills). |
 | `mcp.<name>` | table | — | MCP servers keyed by name (see below). |
 | `model` | string | `"opus"` | Claude model alias or full id passed as `claude --model`. |
 | `fallback_model` | string | `"sonnet"` | Passed as `claude --fallback-model`. Claude Code switches to it automatically when `model` has reached the account's usage limit. Omitted when equal to `model`. |
@@ -257,19 +262,21 @@ checks are polled again — up to `max_check_fix_rounds`. Still pending at
 `checks_timeout`, or a merge that GitHub refuses (for example branch protection that
 needs a human review) → `bees:needs-human`. See [workflow.md](workflow.md#merging).
 
-### `[roles.developer]` only: commit flags
+### `[roles.developer]` only: commit flags and max size
 
-The developer is the only role that creates git commits, so this key is accepted
-**only** under `[roles.developer]`; setting it on `[global]` or another role is a
+These two keys describe the developer specifically, so they are accepted **only**
+under `[roles.developer]`; setting either on `[global]` or another role is a
 validation error.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `commit_flags` | string | `""` | Extra flags for every `git commit` the developer makes, for example `"--gpg-sign --signoff"`. Appended verbatim to the developer's system prompt as "When creating git commits, always use the following extra flags: `--gpg-sign --signoff`." |
+| `max_size` | string | `"l"` | The largest work item a developer takes: `xs`, `s`, `m`, `l` or `xl`. A `bees:ready` issue sized above it is never dispatched — the orchestrator moves it back to `bees:triage` and the project manager splits it. The project manager is told the limit in its prompt. See [Sizing](workflow.md#size-decides-what-gets-built-next). |
 
 ```toml
 [roles.developer]
 commit_flags = "--gpg-sign --signoff"
+max_size = "m"          # anything bigger goes back to triage to be split
 ```
 
 Signing (`--gpg-sign` / `-S`) happens inside a headless Claude Code session on the
@@ -286,7 +293,7 @@ For each role the effective settings are computed from `[global]` and
 |---|---|
 | `prompt` / `prompt_file` | Concatenated in this order, separated by blank lines: global `prompt`, global `prompt_file`, role `prompt`, role `prompt_file`. The result is appended to the role's built-in base prompt under an "Additional instructions from bees.toml" heading. |
 | `skills` | Union, order preserved, global first, duplicates dropped. |
-| `commit_flags` | Developer only; not merged from `[global]`. |
+| `commit_flags`, `max_size` | Developer only; not merged from `[global]`. |
 | `env` | union; the role wins on a name conflict |
 | `mcp` | Union by name. A role server with the same name as a global one replaces it. |
 | `model`, `fallback_model`, `effort`, `max_turns`, `timeout` | Role value if set, else global value, else the built-in default. |
@@ -324,7 +331,17 @@ directory:
    exposing every skill in it.
 
 Anything else is an error. Generated wrappers are rebuilt on every session; clones are
-reused (they are not pulled automatically — delete the cache to refresh).
+reused.
+
+A clone is refreshed (`git pull --ff-only`) when a session needs it and it was last
+fetched more than `skills_refresh` ago — `24h` by default. `skills_refresh = "always"`
+pulls before every session, `"never"` never pulls. The fetch time is the mtime of a
+`<clone>.fetched` file next to the clone in the cache. A failed pull is logged as a
+warning and never stops a session: a reference pinned with `@tag` is a detached
+checkout and cannot be pulled, which is the point of pinning it.
+
+`bees skills list` shows what the cache holds and `bees skills update` refreshes it now,
+whatever the policy says (see [cli.md](cli.md#bees-skills-list)).
 
 ### MCP servers
 
@@ -380,6 +397,10 @@ headers = { Authorization = "Bearer $BROWSER_MCP_TOKEN" }
 | `scheduler.retry_delay` | `10m` |
 | `scheduler.retry_with_fallback` | `true` |
 | `scheduler.triage_batch_size` | `5` |
+| `scheduler.dispatch_order` | `small-first` |
+| `scheduler.max_large_in_flight` | `1` |
+| `scheduler.pr_fix_conflicts` | `true` |
+| `scheduler.pr_keep_updated` | `false` |
 | `scheduler.product_manager_interval` | `1h` |
 | `scheduler.qa_interval` | `30m` |
 | `scheduler.work_hours` | `""` (poll around the clock) |
@@ -393,6 +414,8 @@ headers = { Authorization = "Bearer $BROWSER_MCP_TOKEN" }
 | `roles.reviewer.auto_merge` | `false` |
 | `roles.reviewer.merge_method` | `squash` |
 | `roles.developer.commit_flags` | `""` (none) |
+| `roles.developer.max_size` | `l` |
+| `skills_refresh` | `24h` |
 | `roles.reviewer.checks_wait` | `1m` |
 | `roles.reviewer.checks_poll_interval` | `2m` |
 | `roles.reviewer.checks_timeout` | `30m` |
@@ -492,7 +515,7 @@ with an unsupported version anyway.
 | `BEES_CLAUDE_BIN` | Path of the `claude` executable to run. Default `claude` on `PATH`. |
 | `BEES_CACHE_DIR` | Cache directory for skill clones and generated plugins. Default `~/.cache/bees`. |
 | `BEES_SKIP_VERSION_CHECK` | When non-empty, skip the `gh` / `claude` version checks (see [Requirements](#requirements)). |
-| `BEES_STATE_DIR` | When set, `bees mail` uses this state directory directly instead of loading `bees.toml`. Set automatically inside sessions. |
+| `BEES_STATE_DIR` | When set, `bees mail` uses this state directory directly instead of loading `bees.toml`, unless `--config` is passed explicitly (then that config's state dir wins). Set automatically inside sessions. |
 | `BEES_SESSION_DIR` | Where `bees done` writes `outcome.json`; `bees done` refuses to run without it. Set automatically inside sessions. |
 | `BEES_ROLE` | Default `--from` for `bees mail send`, and the role whose `bees done` statuses are validated. Set automatically inside sessions. |
 | `BEES_ISSUE`, `BEES_PR` | Defaults for the `--issue` / `--pr` flags of `bees mail send` and `bees done`. Set automatically inside sessions. |

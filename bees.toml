@@ -52,7 +52,7 @@ label = "bees"
 [scheduler]
 # How often GitHub is polled for work. Each poll costs two API calls; keep it
 # infrequent. Sessions make their own gh calls on top of this.
-#poll_interval = "5m"
+poll_interval = "10m"
 # How long to pause polling after GitHub reports a rate limit.
 #rate_limit_backoff = "15m"
 # Concurrent developer workers. Each runs a sequential developer <-> reviewer
@@ -65,7 +65,7 @@ max_developers = 2
 # Minimum time between product manager runs (mail triggers an earlier run).
 #product_manager_interval = "1h"
 # Minimum time between QA runs. QA only runs when something was merged.
-#qa_interval = "30m"
+qa_interval = "4h"
 # Keep temp worktrees after sessions finish (debugging).
 #keep_workspaces = false
 # Where temp worktrees are created (default: the system temp dir).
@@ -153,7 +153,7 @@ max_developers = 2
 #skills = []
 #model = "opus"
 #fallback_model = "sonnet"
-#effort = "high"
+effort = "medium"
 #max_turns = 200
 #timeout = "45m"
 #enabled = true
@@ -200,7 +200,7 @@ max_developers = 2
 # Merge approved pull requests automatically once the required checks are
 # green. Off: humans merge. When checks fail the reviewer diagnoses the main
 # error and hands it to the developer to fix (up to max_check_fix_rounds).
-#auto_merge = false
+auto_merge = true
 # squash, merge or rebase.
 #merge_method = "squash"
 # Wait after approval before polling checks; some take a moment to start.
@@ -218,11 +218,12 @@ max_developers = 2
 
 # Tests the default branch after merges, files bugs, reports to the PM.
 [roles.qa]
-#prompt = """
+prompt = """
+It is not required that you open issues if there is nothing that meets the bar for a bug report. If the quality is good, no issues will be opened.
 #"""
 #prompt_file = ""
 #skills = []
-#model = "opus"
+model = "sonnet"
 #fallback_model = "sonnet"
 #effort = "high"
 #max_turns = 200
