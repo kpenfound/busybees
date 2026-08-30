@@ -6,7 +6,9 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -359,5 +361,139 @@ func prepare(t *testing.T, m *Manager) {
 	t.Helper()
 	if _, err := m.Prepare(context.Background(), []string{testRef}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestConcurrentPrepare guards the case the scheduler creates: several
+// sessions starting at once share one manager and one skill reference.
+func TestConcurrentPrepare(t *testing.T) {
+	up := filepath.Join(t.TempDir(), "up")
+	if err := os.MkdirAll(up, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sh := func(args ...string) {
+		t.Helper()
+		c := exec.Command(args[0], args[1:]...)
+		c.Dir = up
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("%v: %v: %s", args, err, out)
+		}
+	}
+	sh("git", "init", "-q", "-b", "main", ".")
+	mk(t, filepath.Join(up, "SKILL.md"), "---\nname: tdd\ndescription: d\n---\none\n")
+	sh("git", "add", "-A")
+	sh("git", "-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qm", "one")
+
+	// race runs n concurrent Prepare calls and returns the directory they
+	// must all agree on.
+	race := func(t *testing.T, m *Manager) string {
+		t.Helper()
+		const n = 8
+		var wg sync.WaitGroup
+		dirs := make([][]string, n)
+		errs := make([]error, n)
+		for i := range errs {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				dirs[i], errs[i] = m.Prepare(context.Background(), []string{up})
+			}(i)
+		}
+		wg.Wait()
+		want := ""
+		for i, err := range errs {
+			if err != nil {
+				t.Errorf("goroutine %d: %v", i, err)
+				continue
+			}
+			if len(dirs[i]) != 1 {
+				t.Errorf("goroutine %d returned %v", i, dirs[i])
+				continue
+			}
+			if want == "" {
+				want = dirs[i][0]
+			} else if dirs[i][0] != want {
+				t.Errorf("goroutine %d returned %s, want %s", i, dirs[i][0], want)
+			}
+		}
+		return want
+	}
+
+	// Cold cache: the clone and the wrapper are built while the others wait.
+	t.Run("cold cache", func(t *testing.T) {
+		dir := race(t, NewManager(t.TempDir()))
+		if dir == "" {
+			t.Fatal("no goroutine succeeded")
+		}
+		mustExist(t, filepath.Join(dir, "skills", filepath.Base(dir), "SKILL.md"))
+	})
+
+	// Warm cache: the reproduction from the report — every session finds the
+	// wrapper already built and must leave it alone.
+	t.Run("warm cache", func(t *testing.T) {
+		m := NewManager(t.TempDir())
+		first, err := m.Prepare(context.Background(), []string{up})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if dir := race(t, m); dir != first[0] {
+			t.Fatalf("plugin dir moved from %s to %s", first[0], dir)
+		}
+		mustExist(t, filepath.Join(first[0], "skills", filepath.Base(first[0]), "SKILL.md"))
+	})
+}
+
+// TestPrepareKeepsUnchangedWrapper: a running session holds --plugin-dir on
+// the wrapper, so an unchanged reference must not remove and rebuild it.
+func TestPrepareKeepsUnchangedWrapper(t *testing.T) {
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	m, _ := testManager(t, &now)
+	dirs, err := m.Prepare(context.Background(), []string{testRef})
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(dirs[0], "marker")
+	mk(t, marker, "in use")
+
+	again, err := m.Prepare(context.Background(), []string{testRef})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again[0] != dirs[0] {
+		t.Fatalf("plugin dir moved from %s to %s", dirs[0], again[0])
+	}
+	mustExist(t, marker)
+}
+
+// TestPrepareRebuildsChangedWrapper: two references share a name but resolve
+// to different sub-directories, so the second one must relink.
+func TestPrepareRebuildsChangedWrapper(t *testing.T) {
+	fixture := filepath.Join(t.TempDir(), "coll")
+	mk(t, filepath.Join(fixture, "x", "tdd", "SKILL.md"), "---\nname: tdd\n---\nx\n")
+	mk(t, filepath.Join(fixture, "y", "tdd", "SKILL.md"), "---\nname: tdd\n---\ny\n")
+	mk(t, filepath.Join(fixture, ".git", "HEAD"), "")
+
+	m := NewManager(t.TempDir())
+	m.Git = fakeGit(fixture)
+	ctx := context.Background()
+
+	first, err := m.Prepare(ctx, []string{"https://github.com/x/coll#x/tdd"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := m.Prepare(ctx, []string{"https://github.com/x/coll#y/tdd"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second[0] != first[0] {
+		t.Fatalf("expected the same wrapper directory, got %s and %s", first[0], second[0])
+	}
+	link := filepath.Join(second[0], "skills", "coll-tdd")
+	got, err := os.Readlink(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(filepath.Dir(got)) != "y" {
+		t.Fatalf("%s points at %s, want the y/tdd sub-directory", link, got)
 	}
 }

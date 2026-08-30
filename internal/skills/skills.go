@@ -27,6 +27,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -92,6 +93,11 @@ type Manager struct {
 	Now func() time.Time
 	// Logger receives refresh warnings. nil uses slog.Default().
 	Logger *slog.Logger
+
+	// mu serialises prepareOne. Sessions start concurrently and share one
+	// manager, so without it two sessions clone into and build the same
+	// wrapper directory at the same time.
+	mu sync.Mutex
 }
 
 // Info describes one skill reference in the cache.
@@ -161,6 +167,8 @@ func (m *Manager) Prepare(ctx context.Context, refs []string) ([]string, error) 
 }
 
 func (m *Manager) prepareOne(ctx context.Context, spec Spec) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	repoDir, err := m.clone(ctx, spec)
 	if err != nil {
 		return "", err
@@ -311,27 +319,40 @@ func (m *Manager) pluginDirFor(spec Spec, target string) (string, error) {
 	}
 	pluginDir := filepath.Join(m.CacheDir, "plugins", spec.Name)
 	skillsDir := filepath.Join(pluginDir, "skills")
-	// Rebuild the wrapper every time; it is cheap and avoids stale links.
+
+	// Where the wrapper's symlink lives and what it points at, per layout.
+	var link, dest string
+	switch {
+	case exists(filepath.Join(target, "SKILL.md")):
+		link, dest = filepath.Join(skillsDir, spec.Name), target
+	case isDir(filepath.Join(target, "skills")):
+		link, dest = skillsDir, filepath.Join(target, "skills")
+	default:
+		return "", fmt.Errorf("%s is not a plugin (.claude-plugin/plugin.json), a skill (SKILL.md) or a skills collection (skills/)", target)
+	}
+
+	// A wrapper that already points at this target is used as it is: sessions
+	// run for a long time with --plugin-dir pointing here, and removing the
+	// directory would pull it out from under them. Only a missing manifest or
+	// a link pointing elsewhere (the reference's sub-directory or ref changed)
+	// forces a rebuild.
+	if exists(filepath.Join(pluginDir, ".claude-plugin", "plugin.json")) {
+		if got, err := os.Readlink(link); err == nil && got == dest {
+			return pluginDir, nil
+		}
+	}
+
 	if err := os.RemoveAll(pluginDir); err != nil {
 		return "", err
 	}
 	if err := os.MkdirAll(filepath.Join(pluginDir, ".claude-plugin"), 0o755); err != nil {
 		return "", err
 	}
-	switch {
-	case exists(filepath.Join(target, "SKILL.md")):
-		if err := os.MkdirAll(skillsDir, 0o755); err != nil {
-			return "", err
-		}
-		if err := os.Symlink(target, filepath.Join(skillsDir, spec.Name)); err != nil {
-			return "", err
-		}
-	case isDir(filepath.Join(target, "skills")):
-		if err := os.Symlink(filepath.Join(target, "skills"), skillsDir); err != nil {
-			return "", err
-		}
-	default:
-		return "", fmt.Errorf("%s is not a plugin (.claude-plugin/plugin.json), a skill (SKILL.md) or a skills collection (skills/)", target)
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+		return "", err
+	}
+	if err := os.Symlink(dest, link); err != nil {
+		return "", err
 	}
 	manifest := map[string]string{
 		"name":        spec.Name,
