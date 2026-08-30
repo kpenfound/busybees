@@ -13,6 +13,7 @@ import (
 	"runtime/debug"
 	"syscall"
 
+	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/logging"
 	"github.com/kpenfound/busybees/internal/versions"
 	"github.com/spf13/cobra"
@@ -41,9 +42,31 @@ type globalFlags struct {
 	// logger is built by PersistentPreRunE; commands that run sessions
 	// attach the state directory's log file to it.
 	logger *logging.Logger
+	// console records what the flags and the environment resolved to, so
+	// loadConfig can apply bees.toml's [logging] table to what they left
+	// alone (see mergeLogging).
+	console consoleFlags
+}
+
+// consoleFlags is the console logging asked for on the command line or in the
+// environment, with whether each dimension was an explicit choice rather than
+// a flag default.
+type consoleFlags struct {
+	format         string
+	formatExplicit bool
+	level          slog.Level
+	levelExplicit  bool
+	quiet          bool
 }
 
 func newRoot() *cobra.Command {
+	_, root := newRootWithFlags()
+	return root
+}
+
+// newRootWithFlags builds the root command together with the global flags its
+// PersistentPreRunE resolves into, so tests can inspect them.
+func newRootWithFlags() (*globalFlags, *cobra.Command) {
 	g := &globalFlags{}
 	root := &cobra.Command{
 		Use:   "bees",
@@ -88,7 +111,7 @@ through GitHub issues and pull requests. Configure it with bees.toml.`,
 		newLabelsCmd(g),
 		newVersionCmd(),
 	)
-	return root
+	return g, root
 }
 
 func newVersionCmd() *cobra.Command {
@@ -120,9 +143,59 @@ func (g *globalFlags) setupLogging(cmd *cobra.Command) error {
 	if g.quiet && level <= slog.LevelDebug {
 		return errors.New("--quiet cannot be combined with --verbose or --log-level debug")
 	}
+	g.console = consoleFlags{
+		format:         format,
+		formatExplicit: explicitFlag(cmd, "log-format", "BEES_LOG_FORMAT"),
+		level:          level,
+		// -v is a level chosen for this invocation, like --log-level debug.
+		levelExplicit: explicitFlag(cmd, "log-level", "BEES_LOG_LEVEL") || g.verbose,
+		quiet:         g.quiet,
+	}
 	g.logger = logging.New(logging.Options{Format: format, Level: level, Quiet: g.quiet, Console: cmd.ErrOrStderr()})
 	slog.SetDefault(g.logger.Logger)
 	return nil
+}
+
+// applyLogging rebuilds the console handler with bees.toml's [logging] table
+// applied. loadConfig calls it once the file is read: the console logger has
+// to exist before any command runs, so the file can only be honoured
+// afterwards. Commands that never read bees.toml keep the flag settings.
+func (g *globalFlags) applyLogging(l config.Logging) {
+	if g.logger == nil {
+		return
+	}
+	g.logger.SetConsole(mergeLogging(g.console, l))
+}
+
+// mergeLogging resolves the console options: a flag beats the environment
+// variable, which beats bees.toml, which beats the built-in default. Values
+// config.Validate has already rejected are ignored, so an unreadable table
+// can never make logging worse than the flags asked for.
+func mergeLogging(f consoleFlags, l config.Logging) logging.Options {
+	o := logging.Options{Format: f.format, Level: f.level, Quiet: f.quiet}
+	if !f.formatExplicit {
+		if v, err := logging.ParseFormat(l.Format); err == nil && l.Format != "" {
+			o.Format = v
+		}
+	}
+	if !f.levelExplicit {
+		if v, err := logging.ParseLevel(l.Level); err == nil && l.Level != "" {
+			o.Level = v
+		}
+	}
+	// --quiet together with level = "debug" in bees.toml is not the
+	// contradiction --quiet --verbose is: the file states a default, the flag
+	// an intent for this invocation, so quiet wins.
+	if o.Quiet && o.Level < slog.LevelInfo {
+		o.Level = slog.LevelInfo
+	}
+	return o
+}
+
+// explicitFlag reports whether a logging dimension was chosen on the command
+// line or in the environment, rather than left at the flag's default.
+func explicitFlag(cmd *cobra.Command, name, env string) bool {
+	return cmd.Flags().Changed(name) || os.Getenv(env) != ""
 }
 
 // flagOrEnv returns the flag value when it was set on the command line,

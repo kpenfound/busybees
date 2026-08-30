@@ -11,13 +11,14 @@ never written as a setting: it stays a commented placeholder and init fails inst
 `bees config validate` checks the file; `bees config show` prints the resolved settings
 for every role after merging.
 
-The file starts with a `version` key, followed by five top-level tables:
+The file starts with a `version` key, followed by six top-level tables:
 
 | Table | Purpose |
 |---|---|
 | `[project]` | The git remote, repository, default branch and state directory |
 | `[filter]` | Which GitHub issues and pull requests the factory can see |
 | `[scheduler]` | Concurrency, polling and review-loop limits |
+| `[logging]` | Console log format and level |
 | `[global]` | Prompt, skills, MCP servers, model, shell and environment settings applied to every role |
 | `[roles.<name>]` | Per-role overrides for `product_manager`, `project_manager`, `developer`, `reviewer`, `qa` |
 
@@ -318,6 +319,41 @@ session is never interrupted on cost:
 Budgets are about money, not about turns: `max_turns` already caps how long a
 single session may go on for.
 
+## `[logging]`
+
+How `bees` logs to the console. It is a top-level table, not a role setting:
+logging is a property of the `bees` process, so it applies to every command.
+
+```toml
+[logging]
+format = "text"   # text | json
+level = "info"    # debug | info | warn | error
+```
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `format` | string | `text` | Console log format: `text` or `json`. |
+| `level` | string | `info` | Console log level: `debug`, `info`, `warn` or `error`. |
+
+The table exists for running `bees run` as a long-lived service, where the
+natural place to say "always log JSON at info" is the project, not a systemd
+unit. It is the lowest-priority source: **a flag beats an environment variable,
+which beats `bees.toml`, which beats the built-in default.** So
+`bees run --log-format text` still gives you a readable terminal in a project
+whose file says `json`, and `-v` still wins over `level = "info"`.
+
+Commands that never read `bees.toml` — `bees version`, `bees done`, and any
+command run against a file that fails to load — log with the flag, environment
+and default settings only.
+
+There is no `quiet` key: `--quiet` is a shorthand for one invocation, not a way
+to run the factory. `level = "warn"` is the service-shaped equivalent (it also
+drops the one-line session summaries, which `--quiet` keeps).
+
+The `bees.log` file in the state directory is not configurable here: it always
+gets every record at debug level, in JSON. See
+[`bees run`](cli.md#bees-run).
+
 ## `[global]` and `[roles.<name>]`
 
 `[global]` and each `[roles.<name>]` table accept the same keys. The role name must be
@@ -529,6 +565,8 @@ headers = { Authorization = "Bearer $BROWSER_MCP_TOKEN" }
 | `scheduler.off_hours_poll_interval` | `1h`, or `poll_interval` when that is longer |
 | `scheduler.work_days` | `["mon","tue","wed","thu","fri"]` |
 | `scheduler.timezone` | `""` (the machine's local time) |
+| `logging.format` | `text` |
+| `logging.level` | `info` |
 | `model` | `opus` |
 | `fallback_model` | `sonnet` |
 | `max_turns` | `200` |
@@ -642,6 +680,7 @@ with an unsupported version anyway.
 | `BEES_SESSION_DIR` | Where `bees done` writes `outcome.json`; `bees done` refuses to run without it. Set automatically inside sessions. |
 | `BEES_ROLE` | Default `--from` for `bees mail send`, and the role whose `bees done` statuses are validated. Set automatically inside sessions. |
 | `BEES_ISSUE`, `BEES_PR` | Defaults for the `--issue` / `--pr` flags of `bees mail send` and `bees done`. Set automatically inside sessions. |
+| `BEES_LOG_FORMAT`, `BEES_LOG_LEVEL` | Fallbacks for `--log-format` / `--log-level`. They sit between the flags and [`[logging]`](#logging): a flag beats them, and they beat `bees.toml`. |
 
 The variables marked *set automatically inside sessions* are the only ones that
 reach a session. The rest — `BEES_CLAUDE_BIN`, `BEES_CACHE_DIR`,

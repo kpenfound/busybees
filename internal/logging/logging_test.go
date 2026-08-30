@@ -135,6 +135,55 @@ func TestWithAttrsReachBothHandlers(t *testing.T) {
 	}
 }
 
+// SetConsole replaces the console handler for loggers already derived with
+// With(), and leaves the file handler alone.
+func TestSetConsoleReachesDerivedLoggers(t *testing.T) {
+	var buf bytes.Buffer
+	dir := t.TempDir()
+	lg := New(Options{Format: FormatText, Console: &buf})
+	worker := lg.With("k", "v")
+
+	path := filepath.Join(dir, "bees.log")
+	if err := lg.AttachFile(path); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = lg.Close() })
+
+	// Write once first, so the derived handler has cached its children: the
+	// replacement only reaches it if SetConsole invalidates them.
+	worker.Info("before")
+	buf.Reset()
+
+	lg.SetConsole(Options{Format: FormatJSON})
+	worker.Info("after")
+
+	recs := decode(t, buf.String())
+	if len(recs) != 1 {
+		t.Fatalf("console is not JSON: %q", buf.String())
+	}
+	if recs[0]["k"] != "v" || recs[0]["msg"] != "after" {
+		t.Errorf("console record: %v", recs[0])
+	}
+	if recs := decode(t, read(t, path)); len(recs) != 2 || recs[1]["k"] != "v" || recs[1]["msg"] != "after" {
+		t.Errorf("file lost the record: %q", read(t, path))
+	}
+}
+
+// SetConsole applies the new level, and writes to the writer the logger was
+// created with when it is given none.
+func TestSetConsoleKeepsTheWriterAndAppliesTheLevel(t *testing.T) {
+	var buf bytes.Buffer
+	lg := New(Options{Format: FormatText, Level: slog.LevelInfo, Console: &buf})
+	lg.SetConsole(Options{Format: FormatText, Level: slog.LevelWarn})
+
+	lg.Info("dropped")
+	lg.Warn("kept")
+	out := buf.String()
+	if strings.Contains(out, "dropped") || !strings.Contains(out, "kept") {
+		t.Fatalf("console: %q", out)
+	}
+}
+
 func TestWithGroup(t *testing.T) {
 	var buf bytes.Buffer
 	lg := New(Options{Format: FormatJSON, Console: &buf})

@@ -1,12 +1,13 @@
 // Package config loads and validates bees.toml, the single file that
 // configures an entire busybees staff.
 //
-// The file has four top-level tables:
+// The file has these top-level tables:
 //
 //	[project]   – repo, default branch, state directory, product description
 //	[filter]    – which GitHub issues/PRs the factory can see (label, assignee, milestone)
 //	[global]    – prompt/skills/mcp/model settings applied to every role
 //	[scheduler] – concurrency, polling and review-loop limits
+//	[logging]   – console log format and level
 //	[roles.*]   – per-role overrides (product_manager, project_manager,
 //	              developer, reviewer, qa)
 //
@@ -32,6 +33,7 @@ import (
 	_ "time/tzdata"
 
 	"github.com/BurntSushi/toml"
+	"github.com/kpenfound/busybees/internal/logging"
 )
 
 // Role names. These are the keys used under [roles.*] in bees.toml.
@@ -117,6 +119,11 @@ const (
 	// DefaultNotesMaxBytes is the notes size above which consolidation is
 	// asked for early, without waiting for the session count.
 	DefaultNotesMaxBytes = 32768
+	// DefaultLogFormat and DefaultLogLevel are the console logging defaults;
+	// they mirror the --log-format and --log-level flag defaults, so an
+	// absent [logging] table logs exactly as bees always did.
+	DefaultLogFormat = logging.FormatText
+	DefaultLogLevel  = "info"
 )
 
 // Dispatch orders accepted by scheduler.dispatch_order.
@@ -179,6 +186,7 @@ type Config struct {
 	Filter    Filter                  `toml:"filter"`
 	Global    RoleSettings            `toml:"global"`
 	Scheduler Scheduler               `toml:"scheduler"`
+	Logging   Logging                 `toml:"logging"`
 	Roles     map[string]RoleSettings `toml:"roles"`
 
 	// Path is the absolute path of the loaded bees.toml (not part of the file).
@@ -567,6 +575,17 @@ type Scheduler struct {
 	whDays         map[time.Weekday]bool
 	whLoc          *time.Location
 	whEnabled      bool
+}
+
+// Logging configures the console log. It is a top-level table because
+// logging is process-wide: it is not a role setting, so it does not belong in
+// [global]. The --log-format/--log-level flags and the BEES_LOG_* environment
+// variables override it (see cmd/bees).
+type Logging struct {
+	// Format is "text" or "json". Default "text".
+	Format string `toml:"format" json:"format"`
+	// Level is "debug", "info", "warn" or "error". Default "info".
+	Level string `toml:"level" json:"level"`
 }
 
 // weekdayNames maps the accepted work_days values to weekdays, in the order
@@ -1019,6 +1038,12 @@ func (c *Config) applyDefaults() {
 			c.Scheduler.WorkDays = []string{"mon", "tue", "wed", "thu", "fri"}
 		}
 	}
+	if c.Logging.Format == "" {
+		c.Logging.Format = DefaultLogFormat
+	}
+	if c.Logging.Level == "" {
+		c.Logging.Level = DefaultLogLevel
+	}
 	if c.Roles == nil {
 		c.Roles = map[string]RoleSettings{}
 	}
@@ -1091,6 +1116,14 @@ func (c *Config) Validate() error {
 		}
 	}
 	errs = append(errs, c.Scheduler.parseWorkHours()...)
+	// The flag parsers own the list of valid values, so bees.toml and the
+	// command line can never disagree about what "json" or "warn" mean.
+	if _, err := logging.ParseFormat(c.Logging.Format); err != nil {
+		errs = append(errs, "logging.format: "+err.Error())
+	}
+	if _, err := logging.ParseLevel(c.Logging.Level); err != nil {
+		errs = append(errs, "logging.level: "+err.Error())
+	}
 	check := func(scope string, rs RoleSettings) {
 		if scope != "roles."+RoleReviewer {
 			if rs.AutoMerge != nil || rs.MergeMethod != "" || rs.ChecksWait.Duration != 0 || rs.ChecksPollInterval.Duration != 0 || rs.ChecksTimeout.Duration != 0 || rs.MaxCheckFixRounds != 0 {
