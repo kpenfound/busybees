@@ -264,12 +264,25 @@ func (s *Scheduler) classify(issues []github.Issue, prs []github.PR) *snapshot {
 	return snap
 }
 
-// setQueues records the queue sizes of a snapshot for `bees status`.
+// queueNoState is the name `bees status` gives the bucket of visible issues
+// that carry no workflow state label yet. Internally they are keyed by the
+// empty string; an anonymous row in the queues block reads like a rendering
+// glitch rather than "these are waiting for the next reconcile".
+const queueNoState = "no_state"
+
+// setQueues records the queue sizes of a snapshot for `bees status`. Empty
+// state buckets are left out, so a queue only shows up while it has issues.
 func (s *Scheduler) setQueues(snap *snapshot) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.queues = map[string]int{}
 	for st, list := range snap.byState {
+		if len(list) == 0 {
+			continue
+		}
+		if st == "" {
+			st = queueNoState
+		}
 		s.queues[st] = len(list)
 	}
 	s.queues["feedback"] = len(snap.feedback)
@@ -415,6 +428,7 @@ func (s *Scheduler) localPass(ctx context.Context) {
 //     Mail from a human about the issue counts as an answer too.
 func (s *Scheduler) reconcile(ctx context.Context, snap *snapshot) error {
 	var errs []error
+	var unlabelled []github.Issue
 	for _, i := range snap.byState[""] {
 		add := []string{s.labels.Triage}
 		if !github.HasLabel(i.Labels, s.labels.Base) {
@@ -423,11 +437,13 @@ func (s *Scheduler) reconcile(ctx context.Context, snap *snapshot) error {
 		s.log.Info("new issue enters triage", "issue", i.Number, "title", i.Title)
 		if err := s.gh.EditLabels(ctx, i.Number, add, nil); err != nil {
 			errs = append(errs, err)
+			unlabelled = append(unlabelled, i)
 			continue
 		}
 		i.Labels = append(i.Labels, github.Label{Name: s.labels.Triage})
 		snap.byState["triage"] = append(snap.byState["triage"], i)
 	}
+	snap.byState[""] = unlabelled
 	// A work item in ready without a size — typically one a human
 	// fast-tracked past triage — gets the default size, so the developer
 	// and reviewer prompts and `bees status` always have one.
@@ -473,11 +489,13 @@ func (s *Scheduler) reconcile(ctx context.Context, snap *snapshot) error {
 		s.cacheIssue(i)
 	}
 	snap.byState["ready"] = ready
+	var stillBlocked []github.Issue
 	for _, i := range snap.byState["blocked"] {
 		if s.hasUnreadMail(config.RoleDeveloper, i.Number, 0) {
 			s.log.Info("question answered, issue back to ready", "issue", i.Number)
 			if err := s.setState(ctx, i.Number, s.labels.Ready); err != nil {
 				errs = append(errs, err)
+				stillBlocked = append(stillBlocked, i)
 				continue
 			}
 			i.Labels = relabel(i.Labels, s.labels.Blocked, s.labels.Ready)
@@ -486,12 +504,19 @@ func (s *Scheduler) reconcile(ctx context.Context, snap *snapshot) error {
 			s.log.Info("question answered, issue back to triage", "issue", i.Number)
 			if err := s.setState(ctx, i.Number, s.labels.Triage); err != nil {
 				errs = append(errs, err)
+				stillBlocked = append(stillBlocked, i)
 				continue
 			}
 			i.Labels = relabel(i.Labels, s.labels.Blocked, s.labels.Triage)
 			snap.byState["triage"] = append(snap.byState["triage"], i)
+		} else {
+			stillBlocked = append(stillBlocked, i)
 		}
 	}
+	snap.byState["blocked"] = stillBlocked
+	// The pass moved issues between buckets; recount so `bees status` shows
+	// what GitHub now shows instead of the poll's stale counts.
+	s.setQueues(snap)
 	return errors.Join(errs...)
 }
 
