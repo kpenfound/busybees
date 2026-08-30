@@ -15,7 +15,7 @@ _No open milestones._
 {{if .FreshFeatures}}
 {{- range .FreshFeatures}}
 ### #{{.Number}}: {{.Title}}
-- from: {{.Author.Login}} · {{.CreatedAt.Format "2006-01-02"}} · milestone: {{milestone .}} · {{.URL}}
+- from: {{.Author.Login}} · {{.CreatedAt.Format "2006-01-02"}} · milestone: {{milestone .}} · proposal: {{if hasLabel .Labels $.Labels.Proposal}}yes{{else}}no{{end}} · {{.URL}}
 
 {{.Body}}
 {{- range .Comments}}
@@ -31,10 +31,10 @@ _None: every feature issue is broken down or waiting on a person._
 
 ## All open feature issues ({{len .Features}})
 {{if .Features}}
-| # | Milestone | Progress | Waiting on person | Title |
-|---|---|---|---|---|
+| # | Milestone | Progress | Proposal | Waiting on person | Title |
+|---|---|---|---|---|---|
 {{- range .Features}}
-| {{.Number}} | {{milestone .}} | {{progress $.Progress .Number}} | {{if hasLabel .Labels $.Labels.Question}}yes{{else}}-{{end}} | {{.Title}} |
+| {{.Number}} | {{milestone .}} | {{progress $.Progress .Number}} | {{if hasLabel .Labels $.Labels.Proposal}}yes{{else}}-{{end}} | {{if hasLabel .Labels $.Labels.Question}}yes{{else}}-{{end}} | {{.Title}} |
 {{- end}}
 {{else}}
 _None._
@@ -98,7 +98,9 @@ _No new mail._
 1. Act on every feedback issue listed above and reply on it (with the marker).
 2. For every feature issue needing you: make it detailed enough, ask the person if you
    must (comment + `{{.Labels.Question}}`), otherwise break it into work items and comment
-   the list on the feature issue.
+   the list on the feature issue — **unless it is a proposal** (`proposal: yes` above),
+   which you refine but leave as it is until a person removes the
+   `{{.Labels.Proposal}}` label.
 3. Reply to every question in your mail.
 4. Review the backlog against the vision and the milestones people have set. Create or
    adjust feature issues as needed; close feature issues whose sub-issues are all done.

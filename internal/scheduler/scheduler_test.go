@@ -979,7 +979,7 @@ func TestFeatureIssuesBelongToProductManager(t *testing.T) {
 		t.Fatalf("product manager sessions: %d", len(pm))
 	}
 	prompt, _ := os.ReadFile(filepath.Join(pm[0], "prompt.md"))
-	for _, want := range []string{"#5: Exports", "#6: Search", "fuzzy", "| 7 | - | 1/3 done | - | Done planning |"} {
+	for _, want := range []string{"#5: Exports", "#6: Search", "fuzzy", "| 7 | - | 1/3 done | - | - | Done planning |"} {
 		if !strings.Contains(string(prompt), want) {
 			t.Errorf("prompt missing %q", want)
 		}

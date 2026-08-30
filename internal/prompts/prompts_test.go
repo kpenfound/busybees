@@ -163,7 +163,7 @@ func TestRoleSpecifics(t *testing.T) {
 		t.Fatalf("reviewer task: %s", rev)
 	}
 	pm, _ := Task(config.RoleProductManager, sample())
-	if !strings.Contains(pm, "| 1 | v1 | 0 | 0 | first release |") || !strings.Contains(pm, "| 5 | triage | bug |") || !strings.Contains(pm, "#9: Dark mode please") || !strings.Contains(pm, "also on mobile") || !strings.Contains(pm, "#13: Search") || !strings.Contains(pm, "| 12 | - | 2/4 done | yes | Exports |") {
+	if !strings.Contains(pm, "| 1 | v1 | 0 | 0 | first release |") || !strings.Contains(pm, "| 5 | triage | bug |") || !strings.Contains(pm, "#9: Dark mode please") || !strings.Contains(pm, "also on mobile") || !strings.Contains(pm, "#13: Search") || !strings.Contains(pm, "| 12 | - | 2/4 done | - | yes | Exports |") {
 		t.Fatalf("pm task: %s", pm)
 	}
 	qa, _ := Task(config.RoleQA, sample())
@@ -232,5 +232,70 @@ func TestManagerPromptsDescribeSizes(t *testing.T) {
 	pm, _ := System(config.RoleProductManager, sample(), "")
 	if !strings.Contains(pm, `--label "bees:size/s"`) {
 		t.Errorf("product manager prompt should show pre-sizing:\n%s", pm)
+	}
+}
+
+// A proposal and an approved feature must be distinguishable in the product
+// manager's task prompt: the label is the only discriminator (bees and people
+// share one GitHub account, so the author says nothing), and the prompt tells
+// the product manager to break approved features down.
+func TestProductManagerTaskMarksProposals(t *testing.T) {
+	feature := func(n int, title string, labels ...string) github.Issue {
+		i := github.Issue{Number: n, Title: title, Body: "why", Author: github.Author{Login: "kyle"}}
+		for _, l := range labels {
+			i.Labels = append(i.Labels, github.Label{Name: l})
+		}
+		return i
+	}
+	labels := config.LabelsFor("bees")
+	proposal := feature(40, "Bee-written idea", labels.Feature, labels.Proposal)
+	approved := feature(41, "Human-written feature", labels.Feature)
+
+	d := sample()
+	d.Features = []github.Issue{proposal, approved}
+	d.FreshFeatures = []github.Issue{proposal, approved}
+	d.Progress = nil
+
+	task, err := Task(config.RoleProductManager, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The fresh-feature header line carries the state, since instruction 2 acts
+	// on that section.
+	for _, want := range []string{
+		"#40: Bee-written idea",
+		"proposal: yes",
+		"#41: Human-written feature",
+		"proposal: no",
+	} {
+		if !strings.Contains(task, want) {
+			t.Errorf("product manager task is missing %q:\n%s", want, task)
+		}
+	}
+
+	// The feature table has a Proposal column, and the two rows differ in it.
+	rowOf := func(n string) string {
+		for _, line := range strings.Split(task, "\n") {
+			if strings.HasPrefix(line, "| "+n+" |") {
+				return line
+			}
+		}
+		t.Fatalf("no table row for feature #%s:\n%s", n, task)
+		return ""
+	}
+	if !strings.Contains(task, "| # | Milestone | Progress | Proposal | Waiting on person | Title |") {
+		t.Errorf("feature table has no Proposal column:\n%s", task)
+	}
+	if got := rowOf("40"); !strings.Contains(got, "| yes |") {
+		t.Errorf("proposal row is not marked as a proposal: %s", got)
+	}
+	if got := rowOf("41"); strings.Contains(got, "| yes |") {
+		t.Errorf("approved feature row claims to be a proposal: %s", got)
+	}
+
+	// And the instruction to break features down carries the exception.
+	if !strings.Contains(task, "unless it is a proposal") {
+		t.Errorf("break-it-down instruction has no proposal exception:\n%s", task)
 	}
 }
