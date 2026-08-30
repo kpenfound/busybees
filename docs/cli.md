@@ -128,8 +128,10 @@ workspace
 
 ### `bees labels sync`
 
-Creates or updates every workflow label in the repository (idempotent). Run it after
-changing `filter.label`.
+Creates or updates every workflow label in the repository (idempotent), forcing the
+factory's colour and description on the labels that already exist. Run it after
+changing `filter.label`. Labels that are merely *missing* need no sync: `bees run`
+creates them at start.
 
 ### `bees labels list`
 
@@ -244,6 +246,12 @@ reconciles labels (new issues enter triage, answered questions unblock), hands r
 issues to free developer workers and starts the product manager, project manager and
 QA when they have work. Ctrl-C stops polling and waits for running sessions to
 finish.
+
+At start it lists the repository's labels once and creates any workflow label
+that is missing, so a repository set up by an older `bees init` gains the labels
+newer versions need without a `bees labels sync`. Labels that already exist are
+left untouched, colour and description included. Failing to read or create them
+only logs a warning; the run continues.
 
 | Flag | Description |
 |---|---|

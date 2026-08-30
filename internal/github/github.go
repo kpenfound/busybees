@@ -397,6 +397,16 @@ func (c *Client) SetState(ctx context.Context, number int, current []Label, to s
 	return c.EditLabels(ctx, number, add, remove)
 }
 
+// ListLabels returns the labels that exist in the repository.
+func (c *Client) ListLabels(ctx context.Context) ([]Label, error) {
+	out, err := c.Exec(ctx, "label", "list", "-R", c.Repo, "--limit", "200", "--json", "name")
+	if err != nil {
+		return nil, err
+	}
+	var labels []Label
+	return labels, json.Unmarshal(out, &labels)
+}
+
 // EnsureLabel creates or updates a label.
 func (c *Client) EnsureLabel(ctx context.Context, name, color, description string) error {
 	_, err := c.Exec(ctx, "label", "create", name, "-R", c.Repo, "--color", color, "--description", description, "--force")

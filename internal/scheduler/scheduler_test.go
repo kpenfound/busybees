@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -157,6 +158,11 @@ type fakeGH struct {
 	mergeArgs [][]string
 	// calls logs every gh invocation, in order.
 	calls [][]string
+	// labels are the label names that exist in the repository.
+	labels []string
+	// errFor makes a command fail: it is keyed by the command name, either
+	// the first two arguments ("label list") or the first one ("label").
+	errFor map[string]error
 }
 
 // callCount counts logged gh calls whose first two arguments are cmd
@@ -200,6 +206,14 @@ func (f *fakeGH) exec(ctx context.Context, args ...string) ([]byte, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, append([]string(nil), args...))
+	if len(args) >= 2 {
+		if err, ok := f.errFor[args[0]+" "+args[1]]; ok {
+			return nil, err
+		}
+	}
+	if err, ok := f.errFor[args[0]]; ok {
+		return nil, err
+	}
 	flag := func(name string) string {
 		for i, a := range args {
 			if a == name && i+1 < len(args) {
@@ -351,6 +365,17 @@ func (f *fakeGH) exec(ctx context.Context, args ...string) ([]byte, error) {
 			f.checks = f.checks[1:]
 		}
 		return []byte(r.json), r.err
+	case "label list":
+		out := make([]github.Label, 0, len(f.labels))
+		for _, l := range f.labels {
+			out = append(out, github.Label{Name: l})
+		}
+		return json.Marshal(out)
+	case "label create":
+		if !slices.Contains(f.labels, args[2]) {
+			f.labels = append(f.labels, args[2])
+		}
+		return nil, nil
 	case "api repos/acme/widgets/milestones?state=open&per_page=100":
 		return []byte("[]"), nil
 	}
@@ -428,6 +453,11 @@ func newHarnessAt(t *testing.T, toml string, now time.Time) *harness {
 		history:  map[int][]string{},
 		comments: map[int][]string{},
 		activity: map[string]string{},
+		errFor:   map[string]error{},
+	}
+	// Like a repository `bees init` has just set up: every label exists.
+	for _, l := range cfg.Labels().All() {
+		gh.labels = append(gh.labels, l.Name)
 	}
 	client := github.New(cfg.Project.Repo)
 	client.Exec = gh.exec

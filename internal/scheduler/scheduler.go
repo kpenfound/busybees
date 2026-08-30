@@ -140,6 +140,9 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	if err := s.ws.Prune(ctx); err != nil {
 		s.log.Warn("worktree prune failed", "err", err)
 	}
+	if err := s.ensureLabels(ctx); err != nil {
+		s.log.Warn("could not ensure labels", "err", capErrors(err))
+	}
 	s.log.Info("scheduler started", "repo", s.cfg.Project.Repo, "filter", s.describeQuery(),
 		"max_developers", s.cfg.Scheduler.MaxDevelopers, "poll", s.cfg.Scheduler.PollInterval.Duration,
 		"work_hours", s.cfg.Scheduler.WorkHours)
@@ -172,6 +175,68 @@ drain:
 	s.wg.Wait()
 	s.writeStatus()
 	return nil
+}
+
+// ensureLabels creates the workflow labels the repository does not have
+// yet. A repository initialised by an older build is missing every label
+// the factory has learned about since (`bees init` and `bees labels sync`
+// create the set once), and a missing label makes every label edit that
+// uses it fail. It runs once per process, before the first pass.
+//
+// Labels that already exist are left exactly as they are: a person who
+// recoloured one keeps their choice. Only `bees labels sync` forces colour
+// and description.
+func (s *Scheduler) ensureLabels(ctx context.Context) error {
+	have, err := s.gh.ListLabels(ctx)
+	if err != nil {
+		return err
+	}
+	// GitHub matches label names case-insensitively.
+	exists := make(map[string]bool, len(have))
+	for _, l := range have {
+		exists[strings.ToLower(l.Name)] = true
+	}
+	var errs []error
+	for _, spec := range s.labels.All() {
+		if exists[strings.ToLower(spec.Name)] {
+			continue
+		}
+		if err := s.gh.EnsureLabel(ctx, spec.Name, spec.Color, spec.Description); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		s.log.Info("created missing label", "label", spec.Name)
+	}
+	return errors.Join(errs...)
+}
+
+// maxLoggedErrs is how many of a pass's errors are named in one warning.
+// One cause (a missing label, an expired token) fails the same call for
+// every issue in a queue, and a joined wall of twenty identical messages is
+// unreadable; the error returned to the caller still carries them all.
+const maxLoggedErrs = 3
+
+// capErrors renders err for a log message: an error joined from several
+// (errors.Join) is cut to the first maxLoggedErrs, followed by the number
+// of errors left out.
+func capErrors(err error) string {
+	if err == nil {
+		return ""
+	}
+	joined, ok := err.(interface{ Unwrap() []error })
+	if !ok {
+		return err.Error()
+	}
+	errs := joined.Unwrap()
+	if len(errs) <= maxLoggedErrs {
+		return err.Error()
+	}
+	msgs := make([]string, 0, maxLoggedErrs+1)
+	for _, e := range errs[:maxLoggedErrs] {
+		msgs = append(msgs, e.Error())
+	}
+	msgs = append(msgs, fmt.Sprintf("+%d more", len(errs)-maxLoggedErrs))
+	return strings.Join(msgs, "; ")
 }
 
 // rateLimitPhrases are the substrings that mark a message as "come back
@@ -431,7 +496,7 @@ func (s *Scheduler) pass(ctx context.Context) error {
 		s.log.Warn("check PRs", "err", err)
 	}
 	if err := s.reconcile(ctx, snap); err != nil {
-		s.log.Warn("reconcile", "err", err)
+		s.log.Warn("reconcile", "err", capErrors(err))
 	}
 	s.dispatchDevelopers(ctx, snap, false)
 	s.dispatchSingletons(ctx, snap, false)
@@ -455,7 +520,7 @@ func (s *Scheduler) localPass(ctx context.Context) {
 	snap := s.classify(issues, prs)
 	s.setQueues(snap)
 	if err := s.reconcile(ctx, snap); err != nil {
-		s.log.Warn("reconcile", "err", err)
+		s.log.Warn("reconcile", "err", capErrors(err))
 	}
 	s.dispatchDevelopers(ctx, snap, true)
 	s.dispatchSingletons(ctx, snap, true)
