@@ -194,9 +194,10 @@ issue comes back as fresh; a fresh feature or feedback issue triggers a
 product manager run regardless of `product_manager_interval`.
 
 **Feedback from people:** issues labelled `bees:feedback` are the product
-manager's inbox (feature ideas, product feedback, bug reports from humans);
-they never enter the workflow state machine. For each fresh one the product
-manager decides and acts (feature issues, bug work items, or a reasoned no), then must **reply on the feedback issue** with `comment`, saying
+manager's inbox (feature ideas, product feedback, bug reports from humans) —
+the usual channel, not the only one, since a person can also write to it by
+mail; they never enter the workflow state machine. For each fresh one the
+product manager decides and acts (feature issues, bug work items, or a reasoned no), then must **reply on the feedback issue** with `comment`, saying
 what it did and linking created issues. It closes the
 issue when fully actioned, or asks the person a question (`comment` +
 `issue_question`) and leaves it open. Freshness works exactly as for feature
@@ -206,7 +207,10 @@ issues.
 may send to `project_manager` only. It is told to be decisive because the
 project manager is blocked until it answers — and to reply only when the answer
 changes what the project manager does, because unread mail on its own is enough
-to start a project manager session.
+to start a project manager session. Mail from `human` is treated as a direction
+rather than a question: it is followed literally even where it contradicts the
+prompt, and what was done about it is said in the outcome. It needs no feedback
+issue to hang a reply on.
 
 **Outcomes:** `done` (with a summary), `idle`, `failed`. A run with no fresh
 feature, no fresh feedback, no mail and no unanswered comment on a proposal was

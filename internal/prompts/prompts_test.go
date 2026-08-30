@@ -206,6 +206,30 @@ func TestProjectManagerMayOnlyReorderTheQueueWithPriority(t *testing.T) {
 	}
 }
 
+// A person reaches the product manager through feedback issues *and* through
+// the mailbox, and the prompt used to name only the first — contradicting the
+// shared preamble, which says mail from `human` outranks these instructions.
+// Both halves are pinned: the direction sentence the other roles already carry,
+// and the absence of the absolute "humans talk to you through issues" claim
+// that made the mailbox look like no channel at all.
+func TestProductManagerTakesDirectionFromHumanMail(t *testing.T) {
+	sys, err := System(config.RoleProductManager, sample(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Mail from `human` is not a question but a direction",
+		"not the only channel",
+	} {
+		if !strings.Contains(sys, want) {
+			t.Errorf("product manager system prompt missing %q:\n%s", want, sys)
+		}
+	}
+	if strings.Contains(sys, "Humans talk to you through issues labelled") {
+		t.Errorf("product manager system prompt still states feedback issues as the only channel:\n%s", sys)
+	}
+}
+
 func TestRoleSpecifics(t *testing.T) {
 	dev, _ := Task(config.RoleDeveloper, sample())
 	if !strings.Contains(dev, "part of feature #12: Exports") {
