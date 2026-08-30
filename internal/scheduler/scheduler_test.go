@@ -916,6 +916,9 @@ enabled = false
 	}
 	if len(h.gh.comments[1]) != 1 || !strings.Contains(h.gh.comments[1][0], "ended with `failed`") {
 		t.Fatalf("comments: %v", h.gh.comments[1])
+	}
+}
+
 // workHoursTOML is baseTOML with a mon-fri 09:00-18:00 window in UTC and
 // every role disabled, so only the polling loop itself is exercised.
 const workHoursTOML = baseTOML + `
