@@ -143,6 +143,9 @@ func (s *Store) SaveRole(role string, rs RoleState) error {
 type Worker struct {
 	Name  string `json:"name"`
 	Issue int    `json:"issue"`
+	// Size is the issue's size label ("xs".."xl"), recorded when the worker
+	// starts. It is what scheduler.max_large_in_flight counts.
+	Size  string `json:"size,omitempty"`
 	Stage string `json:"stage"`
 	Round int    `json:"round"`
 	// Attempt is the 1-based attempt of the running session; > 1 means the

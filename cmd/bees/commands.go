@@ -403,7 +403,11 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 				if w.Attempt > 1 {
 					round += fmt.Sprintf(" attempt %d", w.Attempt)
 				}
-				fmt.Printf("  %-12s issue #%-5d %-10s %-20s since %s\n", w.Name, w.Issue, w.Stage, round, w.Since.Format(time.Kitchen))
+				size := w.Size
+				if size == "" {
+					size = "-"
+				}
+				fmt.Printf("  %-12s issue #%-5d %-3s %-10s %-20s since %s\n", w.Name, w.Issue, size, w.Stage, round, w.Since.Format(time.Kitchen))
 			}
 			fmt.Println("\nsingletons:")
 			for _, r := range []string{config.RoleProductManager, config.RoleProjectManager, config.RoleQA} {
