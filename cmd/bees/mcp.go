@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sync"
 
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
 
@@ -33,7 +36,11 @@ you only run "bees mcp serve" yourself to debug it.`,
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			srv := mcpserver.New(mcpserver.EnvFromOS(), mcpserver.Deps{Issues: &issueBackend{g: g}})
-			return srv.Run(cmd.Context(), &mcp.StdioTransport{})
+			err := srv.Run(cmd.Context(), &mcp.StdioTransport{})
+			if isCleanShutdown(err) {
+				return nil
+			}
+			return err
 		},
 	}
 	tools := &cobra.Command{
@@ -61,6 +68,23 @@ you only run "bees mcp serve" yourself to debug it.`,
 	}
 	cmd.AddCommand(serve, tools)
 	return cmd
+}
+
+// codeServerClosing is the jsonrpc2 error code the SDK answers with once the
+// connection is going away ("server is closing"). It is not exported, and the
+// read error it reports is formatted with %v rather than wrapped, so matching
+// on the code is the only way to recognise it.
+const codeServerClosing = -32004
+
+// isCleanShutdown reports whether an error from mcp.Server.Run is an ordinary
+// end of session rather than a failure. claude closes the server's stdin when
+// it is done with it and kills the process on shutdown; neither is worth a
+// nonzero exit status, which claude would record as the server having crashed.
+func isCleanShutdown(err error) bool {
+	return err == nil ||
+		errors.Is(err, io.EOF) ||
+		errors.Is(err, context.Canceled) ||
+		errors.Is(err, &jsonrpc.Error{Code: codeServerClosing})
 }
 
 // issueBackend creates issues through internal/issues, loading bees.toml on
