@@ -30,6 +30,7 @@ func sample() Data {
 		Parents:       map[int]github.Parent{5: {Number: 12, Title: "Exports"}},
 		FreshFeatures: []github.Issue{{Number: 13, Title: "Search", Body: "find things", Author: github.Author{Login: "kyle"}}},
 		Feedback:      []github.Issue{{Number: 9, Title: "Dark mode please", Body: "would be nice", Author: github.Author{Login: "kyle"}, Comments: []github.Comment{{Author: github.Author{Login: "kyle"}, Body: "also on mobile"}}}},
+		MaxSize:       "l",
 		Round:         1, MaxRounds: 3,
 	}
 }
@@ -55,6 +56,18 @@ func TestRenderAllRoles(t *testing.T) {
 		if strings.Contains(sys+task, "<no value>") {
 			t.Errorf("%s prompt contains <no value>", role)
 		}
+	}
+}
+
+func TestProjectManagerIsToldTheMaxSize(t *testing.T) {
+	d := sample()
+	d.MaxSize = "m"
+	sys, err := System(config.RoleProjectManager, d, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(sys, "anything larger than `m` is not dispatched") {
+		t.Fatalf("project manager system prompt does not carry max_size:\n%s", sys)
 	}
 }
 

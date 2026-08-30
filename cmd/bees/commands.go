@@ -405,7 +405,11 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 				if w.Attempt > 1 {
 					round += fmt.Sprintf(" attempt %d", w.Attempt)
 				}
-				fmt.Printf("  %-12s issue #%-5d %-10s %-20s since %s\n", w.Name, w.Issue, w.Stage, round, w.Since.Format(time.Kitchen))
+				size := w.Size
+				if size == "" {
+					size = "-"
+				}
+				fmt.Printf("  %-12s issue #%-5d %-3s %-10s %-20s since %s\n", w.Name, w.Issue, size, w.Stage, round, w.Since.Format(time.Kitchen))
 			}
 			fmt.Println("\nsingletons:")
 			for _, r := range []string{config.RoleProductManager, config.RoleProjectManager, config.RoleQA} {
@@ -573,19 +577,7 @@ func newPromptsCmd(g *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rr, err := cfg.Role(role)
-			if err != nil {
-				return err
-			}
-			store := state.New(cfg.StateDir())
-			d := prompts.Data{
-				Project: cfg.Project, Filter: cfg.Filter, Labels: cfg.Labels(), AutoMerge: cfg.Merge().AutoMerge, CommitFlags: cfg.CommitFlags(),
-				WorkDir: "<worktree>", Branch: "<branch>", StateDir: store.Dir, SessionDir: "<session dir>",
-				NotesFile: store.NotesPath(role),
-				Issue:     &github.Issue{Number: 1, Title: "<issue>"}, PR: &github.PR{Number: 2, Title: "<pr>"},
-				Round: 1, MaxRounds: cfg.Scheduler.MaxReviewRounds,
-			}
-			text, err := prompts.System(role, d, rr.Prompt)
+			text, err := renderedPrompt(cfg, role)
 			if err != nil {
 				return err
 			}
@@ -596,6 +588,29 @@ func newPromptsCmd(g *globalFlags) *cobra.Command {
 	show.Flags().BoolVar(&rendered, "rendered", false, "render the full system prompt with this project's settings")
 	cmd.AddCommand(show)
 	return cmd
+}
+
+// renderedPrompt renders a role's system prompt the way
+// `bees prompts show --rendered` does: this project's settings, with
+// placeholders for everything a real session fills in per issue.
+//
+// Every field the scheduler sets from the config in runSession belongs here
+// too, or the command prints an empty value for it.
+func renderedPrompt(cfg *config.Config, role string) (string, error) {
+	rr, err := cfg.Role(role)
+	if err != nil {
+		return "", err
+	}
+	store := state.New(cfg.StateDir())
+	d := prompts.Data{
+		Project: cfg.Project, Filter: cfg.Filter, Labels: cfg.Labels(), AutoMerge: cfg.Merge().AutoMerge,
+		CommitFlags: cfg.CommitFlags(), MaxSize: cfg.MaxSize(),
+		WorkDir: "<worktree>", Branch: "<branch>", StateDir: store.Dir, SessionDir: "<session dir>",
+		NotesFile: store.NotesPath(role),
+		Issue:     &github.Issue{Number: 1, Title: "<issue>"}, PR: &github.PR{Number: 2, Title: "<pr>"},
+		Round: 1, MaxRounds: cfg.Scheduler.MaxReviewRounds,
+	}
+	return prompts.System(role, d, rr.Prompt)
 }
 
 // readBody reads a message body from --body, --body-file or stdin.

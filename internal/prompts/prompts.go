@@ -47,6 +47,9 @@ type Data struct {
 	// the issue carries no size label. Set for developer and reviewer
 	// sessions.
 	Size string
+	// MaxSize is roles.developer.max_size: the largest size a developer
+	// takes. Anything above it is sent back to triage to be split.
+	MaxSize string
 
 	Issue        *github.Issue
 	PR           *github.PR

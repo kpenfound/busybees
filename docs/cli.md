@@ -189,9 +189,15 @@ bees exec reviewer --pr 34
 
 Shows the last poll time and PID of the scheduler, queue sizes per workflow state
 (plus `feedback` and `features`, the open `bees:feedback` and `bees:feature` issues
-owned by the product manager, and `open_prs`), running developer workers (issue, stage, round, and the attempt number while a session is being retried), singleton state and last run, and
+owned by the product manager, and `open_prs`), running developer workers (issue, [size](workflow.md#sizing), stage, round, and the attempt number while a session is being retried), singleton state and last run, and
 unread mail per role. Reads `status.json` from the state directory, so it works while
 `bees run` is active in another terminal.
+
+A `no_state` queue counts issues that are visible to the factory but carry no
+workflow state label yet — usually ones a person just filed from the GitHub UI. The
+scheduler gives them `bees:triage` on its next reconcile, so the row normally
+disappears again within the same pass. A workflow-state queue is omitted while it is
+empty (`feedback`, `features` and `open_prs` are always shown).
 
 Under the scheduler line it also reports what the factory has spent since midnight,
 summed from the [session ledger](#bees-cost) (`today` in `--json`):
@@ -430,7 +436,15 @@ ledger prints `no sessions recorded`.
 
 ### `bees version`
 
-Prints the version.
+Prints `bees <version>`, resolved from the binary itself:
+
+| Build | Output |
+|---|---|
+| `go install github.com/kpenfound/busybees/cmd/bees@latest` (or `@v0.2.0`) | The module version Go recorded: a tag (`bees v0.2.0`) or, for an untagged module, the pseudo-version `@latest` resolves to (`bees v0.0.0-20260829201307-b24a0605c2a1`). |
+| `go build ./cmd/bees` in a clone | The version Go stamps from the checkout — on Go 1.24+ a pseudo-version, with `+dirty` appended when the working tree has uncommitted changes. |
+| A build whose module version is `(devel)` but that carries VCS stamps | `bees dev (b24a0605c2a1)` — the 12-character commit, with ` modified` appended when the working tree was dirty. |
+| Built with `-ldflags "-X main.version=v1.2.3"` | `bees v1.2.3`. The override wins over everything else. |
+| No build information at all | `bees dev`. |
 
 ### `bees completion <shell>`
 
