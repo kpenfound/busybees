@@ -492,8 +492,8 @@ false`) a PR is treated as approved as soon as the developer opens it.
 The developer runs the repository's own lint and test commands before it pushes,
 and the orchestrator reads the pull request's **checks before the first review**
 (`[roles.reviewer] pre_review_checks`, on by default — independent of
-`auto_merge`). Between the developer opening or updating the pull request and the
-reviewer starting, the worker waits `checks_wait` and then polls every
+`auto_merge`). Between the developer opening the pull request and the first
+reviewer session, the worker waits `checks_wait` and then polls every
 `checks_poll_interval`, at most `pre_review_checks_timeout` (default 10 minutes):
 
 - **Green**: the review starts, and the reviewer's prompt lists the checks so it
@@ -509,6 +509,12 @@ reviewer starting, the worker waits `checks_wait` and then polls every
 - **The read itself fails** (`gh` errors, a rate limit, an API outage): the
   pre-review read is advisory, so it is logged as a warning and the review
   happens anyway, without a checks section in the reviewer's prompt.
+
+The read happens once per pull request. A later review round — the developer
+answering the reviewer's feedback — goes straight to the reviewer, with no
+second read, no second wait and no checks section: the checks that were read
+describe a head the developer has since replaced. A restarted `bees run` does
+read them again, because the process has no memory of the first read.
 
 `bees status` shows the worker in the `pre-review checks` stage while it waits.
 Set `pre_review_checks = false` to go straight from the developer to the

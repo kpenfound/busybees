@@ -395,7 +395,7 @@ The reviewer owns the checks and merging. These keys are accepted **only** under
 | `pre_review_checks_timeout` | duration | `"10m"` | How long that pre-review read waits for pending checks before reviewing anyway. |
 
 With `pre_review_checks` (on by default), a developer worker reads the pull
-request's checks between opening or updating it and the first review —
+request's checks between opening it and the first review, once —
 `checks_wait`, then a poll every `checks_poll_interval`, under the same gate
 rules as after approval, but bounded by `pre_review_checks_timeout`. Green → the
 review starts and the reviewer's prompt lists the checks. A failure → the
@@ -403,7 +403,9 @@ checks-mode reviewer and a developer fix round first, sharing `check_fix_rounds`
 and `max_check_fix_rounds` with the post-approval stage; the review happens only
 once the pull request is green. Still pending at the timeout, no check reported
 at all, or a read that fails outright → the review happens anyway and the
-reviewer is told to run the test-suite itself. `bees status` shows the worker in
+reviewer is told to run the test-suite itself. Later review rounds go straight
+to the reviewer: no second read, and no checks section describing a head the
+developer has replaced. `bees status` shows the worker in
 the `pre-review checks` stage while it waits. `pre_review_checks = false` goes
 straight from the developer to the reviewer.
 

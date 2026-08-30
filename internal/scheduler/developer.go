@@ -83,6 +83,11 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 	// (through the pre-review checks), or — when the developer is fixing
 	// failing checks — straight back to the stage that found them.
 	afterDevelop := "review"
+	// prereviewDone records that the pre-review checks have been read for this
+	// pull request. The read belongs to the first review, not to every round,
+	// and afterDevelop cannot answer that question: it is a stage name, and the
+	// changes-requested path leaves it on "review".
+	prereviewDone := false
 	// The pre-review read, handed to the reviewer in its prompt.
 	var reviewChecks []github.Check
 	var reviewStatus string
@@ -163,7 +168,10 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 				if err := s.setState(ctx, issue.Number, s.labels.Review); err != nil {
 					return err
 				}
-				stage = firstReviewStage(policy)
+				stage = "review"
+				if !prereviewDone {
+					stage = firstReviewStage(policy)
+				}
 			case OutcomeQuestion:
 				if !s.sentSince(config.RoleProjectManager, issue.Number, 0, started) {
 					return s.escalate(ctx, issue.Number, "The developer reported a question for the project manager but did not send one. Note: "+note)
@@ -188,6 +196,13 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 				return err
 			}
 			previous, _ := s.mail.List(mail.Filter{To: config.RoleDeveloper, From: config.RoleReviewer, PR: pr.Number})
+			// The checks section belongs to the review the read was made for.
+			// The read happens once, before the first review, so a later round
+			// must not be told "CI is green" about a head the developer has
+			// since replaced: it gets no checks section, and its prompt tells
+			// it to run the tests itself.
+			roundChecks, roundStatus := reviewChecks, reviewStatus
+			reviewChecks, reviewStatus = nil, ""
 			// Make sure the worktree has the developer's latest commits.
 			if err := s.ws.Fetch(ctx); err == nil {
 				_, _ = gitPull(ctx, ws.RepoDir)
@@ -198,7 +213,7 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 			res, err := s.runSessionWithRetry(ctx, sessionSpec{
 				role: config.RoleReviewer, name: name, workDir: ws.RepoDir, branch: branch, worker: w,
 				data: prompts.Data{Issue: &freshIssue, PR: &freshPR, PreviousRounds: previous, Round: bookkeeping.Round, MaxRounds: maxRounds,
-					Checks: reviewChecks, ChecksStatus: reviewStatus, ChecksTimeout: shortDuration(policy.PreReviewChecksTimeout)},
+					Checks: roundChecks, ChecksStatus: roundStatus, ChecksTimeout: shortDuration(policy.PreReviewChecksTimeout)},
 			})
 			if err != nil {
 				return err
@@ -241,6 +256,7 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 				// reviewer silently losing its checks section is visible.
 				s.opAs(log, slog.LevelWarn, "pre-review-checks", err, "could not read the checks; reviewing anyway", "pr", pr.Number, "err", err)
 				reviewChecks, reviewStatus = nil, ""
+				prereviewDone = true
 				afterDevelop, stage = "review", "review"
 				continue
 			}
@@ -255,6 +271,7 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 				if status == github.ChecksNone {
 					reviewChecks, reviewStatus = nil, string(github.ChecksPassed)
 				}
+				prereviewDone = true
 				afterDevelop, stage = "review", "review"
 				continue
 			}
