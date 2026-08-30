@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -143,12 +144,73 @@ func TestRequiredChecks(t *testing.T) {
 	}
 	resp, rerr = nil, fmt.Errorf("gh pr checks: exit status 1: no required checks reported on the 'x' branch")
 	checks, err = c.RequiredChecks(ctx, 1)
-	if err != nil || len(checks) != 0 || Summarize(checks) != ChecksPassed {
+	if err != nil || len(checks) != 0 || Summarize(checks) != ChecksNone {
 		t.Fatalf("none: %v %v", checks, err)
 	}
 	resp, rerr = nil, fmt.Errorf("gh pr checks: exit status 4: not logged in")
 	if _, err = c.RequiredChecks(ctx, 1); err == nil {
 		t.Fatal("real errors must propagate")
+	}
+}
+
+// TestChecks covers the unrequired call: same gh command without --required,
+// and the same tolerance for gh's non-zero exits and empty output.
+func TestChecks(t *testing.T) {
+	c := New("a/b")
+	var resp []byte
+	var rerr error
+	var got []string
+	c.Exec = func(ctx context.Context, args ...string) ([]byte, error) {
+		got = args
+		return resp, rerr
+	}
+	ctx := context.Background()
+	resp, rerr = []byte(`[{"name":"a","bucket":"pending"},{"name":"b","bucket":"pass"}]`), fmt.Errorf("gh: exit status 8")
+	checks, err := c.Checks(ctx, 7)
+	if err != nil || Summarize(checks) != ChecksPending {
+		t.Fatalf("pending: %v %v", checks, err)
+	}
+	if want := "pr checks 7 -R a/b --json name,state,bucket,link,description,workflow"; strings.Join(got, " ") != want {
+		t.Fatalf("args: %v", got)
+	}
+	if slices.Contains(got, "--required") {
+		t.Fatal("Checks must not ask for the required checks only")
+	}
+	resp, rerr = []byte(`[{"name":"a","bucket":"fail"}]`), fmt.Errorf("gh: exit status 1")
+	checks, err = c.Checks(ctx, 7)
+	if err != nil || Summarize(checks) != ChecksFailed || len(Failed(checks)) != 1 {
+		t.Fatalf("failed: %v %v", checks, err)
+	}
+	resp, rerr = nil, fmt.Errorf("gh pr checks: exit status 1: no checks reported on the 'x' branch")
+	checks, err = c.Checks(ctx, 7)
+	if err != nil || len(checks) != 0 || Summarize(checks) != ChecksNone {
+		t.Fatalf("none: %v %v", checks, err)
+	}
+	resp, rerr = []byte("[]"), nil
+	checks, err = c.Checks(ctx, 7)
+	if err != nil || len(checks) != 0 || Summarize(checks) != ChecksNone {
+		t.Fatalf("empty list: %v %v", checks, err)
+	}
+	resp, rerr = nil, fmt.Errorf("gh pr checks: exit status 4: not logged in")
+	if _, err = c.Checks(ctx, 7); err == nil {
+		t.Fatal("real errors must propagate")
+	}
+}
+
+// TestSummarizeNoChecks pins the distinction #117 turns on: nothing reported
+// is not everything green.
+func TestSummarizeNoChecks(t *testing.T) {
+	if got := Summarize(nil); got != ChecksNone {
+		t.Fatalf("Summarize(nil) = %q, want %q", got, ChecksNone)
+	}
+	if got := Summarize([]Check{}); got != ChecksNone {
+		t.Fatalf("Summarize([]) = %q, want %q", got, ChecksNone)
+	}
+	if got := Summarize([]Check{{Bucket: "pass"}}); got != ChecksPassed {
+		t.Fatalf("Summarize(one pass) = %q", got)
+	}
+	if got := Summarize([]Check{{Bucket: "skipping"}}); got != ChecksPassed {
+		t.Fatalf("Summarize(skipping) = %q", got)
 	}
 }
 
@@ -238,5 +300,84 @@ func TestSetMilestone(t *testing.T) {
 	}
 	if len(calls) != 0 {
 		t.Fatalf("empty milestone called gh: %v", calls)
+	}
+}
+
+// The visibility backstop needs the milestone of everything the account
+// created, so both listings must ask gh for it — a field missing from
+// --json is silently absent from the JSON, not an error.
+func TestListCreatedSinceReadsTheMilestone(t *testing.T) {
+	c := New("a/b")
+	since := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	var fields []string
+	c.Exec = func(ctx context.Context, args ...string) ([]byte, error) {
+		i := slices.Index(args, "--json")
+		if i < 0 || i+1 >= len(args) {
+			return nil, fmt.Errorf("no --json in %v", args)
+		}
+		fields = append(fields, args[i+1])
+		if args[0] == "issue" {
+			return json.Marshal([]Issue{{Number: 1, CreatedAt: since.Add(time.Minute),
+				Milestone: &MilestoneRef{Title: "v0.2.0"}}})
+		}
+		return json.Marshal([]PR{{Number: 2, CreatedAt: since.Add(time.Minute),
+			Milestone: &MilestoneRef{Title: "v0.1.0"}}})
+	}
+
+	created, err := c.ListCreatedSince(context.Background(), since)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range fields {
+		if !strings.Contains(f, "milestone") {
+			t.Errorf("--json %q does not ask for the milestone", f)
+		}
+	}
+	if len(created) != 2 {
+		t.Fatalf("created: %v", created)
+	}
+	if got := created[0].MilestoneTitle(); got != "v0.2.0" {
+		t.Errorf("issue milestone: %q", got)
+	}
+	if got := created[1].MilestoneTitle(); got != "v0.1.0" {
+		t.Errorf("pr milestone: %q", got)
+	}
+	// An item in no milestone reports "" rather than panicking.
+	if got := (Created{}).MilestoneTitle(); got != "" {
+		t.Errorf("no milestone: %q", got)
+	}
+}
+
+func TestAwaitingBeeComment(t *testing.T) {
+	created := time.Now().Add(-time.Hour)
+	human := func(at time.Time) Comment {
+		return Comment{Author: Author{Login: "kyle"}, Body: "what about X?", CreatedAt: at}
+	}
+	bee := func(at time.Time) Comment {
+		return Comment{Author: Author{Login: "kyle"}, Body: "answered " + BeesMarker, CreatedAt: at}
+	}
+
+	cases := []struct {
+		name     string
+		comments []Comment
+		want     bool
+	}{
+		{"no comments", nil, false},
+		{"a human comment", []Comment{human(created.Add(time.Minute))}, true},
+		{"a bee answered it", []Comment{human(created.Add(time.Minute)), bee(created.Add(2 * time.Minute))}, false},
+		{"a human came back", []Comment{human(created.Add(time.Minute)), bee(created.Add(2 * time.Minute)), human(created.Add(3 * time.Minute))}, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			i := Issue{Number: 6, CreatedAt: created, Comments: c.comments}
+			if got := i.AwaitingBeeComment(); got != c.want {
+				t.Errorf("AwaitingBeeComment() = %v, want %v", got, c.want)
+			}
+			// AwaitingBee counts the creation as human activity, so it
+			// answers true for every case but the answered one.
+			if want := c.name != "a bee answered it"; i.AwaitingBee() != want {
+				t.Errorf("AwaitingBee() = %v, want %v", i.AwaitingBee(), want)
+			}
+		})
 	}
 }

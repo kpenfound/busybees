@@ -64,6 +64,10 @@ func loadConfig(g *globalFlags) (*config.Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The console logger was built from the flags before any command ran, so
+	// [logging] can only be applied now. Every command that reads bees.toml
+	// comes through here.
+	g.applyLogging(cfg.Logging)
 	if err := cfg.Resolve(context.Background()); err != nil {
 		return nil, err
 	}
@@ -149,11 +153,7 @@ func (a *app) scheduler() (*scheduler.Scheduler, error) {
 	// Only the commands that run sessions write the log file: `bees issue`
 	// and `bees mail` run inside sessions, concurrently with the scheduler,
 	// and must not race its rotation.
-	if a.logger != nil {
-		if err := a.logger.AttachFile(filepath.Join(a.store.Dir, "bees.log")); err != nil {
-			return nil, err
-		}
-	}
+	attachLogFile(a.logger, a.log, filepath.Join(a.store.Dir, "bees.log"))
 	return scheduler.New(scheduler.Deps{
 		Config:     a.cfg,
 		GitHub:     a.gh,
@@ -163,4 +163,18 @@ func (a *app) scheduler() (*scheduler.Scheduler, error) {
 		Store:      a.store,
 		Logger:     a.log,
 	})
+}
+
+// attachLogFile adds the state directory's log file to l. A state directory
+// that is read-only or full must never stop the factory over a diagnostic
+// file, so a failure to open it is a warning and the run continues with
+// console logging only. Warn so it survives --quiet; scheduler() runs once per
+// invocation, so it is printed once.
+func attachLogFile(l *logging.Logger, log *slog.Logger, path string) {
+	if l == nil {
+		return
+	}
+	if err := l.AttachFile(path); err != nil {
+		log.Warn("cannot open the log file, logging to the console only", "path", path, "err", err)
+	}
 }

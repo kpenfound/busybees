@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -14,7 +13,7 @@ import (
 	"github.com/kpenfound/busybees/internal/state"
 )
 
-// The label backstop assigns everything the factory creates. With a filter
+// The visibility backstop assigns everything the factory creates. With a filter
 // assignee configured and an item that already carries the base label, the
 // assignment is the only GitHub mutation the backstop makes — so failing
 // the `assignees` REST call fails exactly one named operation.
@@ -34,8 +33,8 @@ func brokenAssign(h *harness, err error) {
 	h.gh.errFor["assignees"] = err
 }
 
-// summaries returns the summary records written to a JSON log buffer.
-func summaries(t *testing.T, buf *syncBuffer) []map[string]any {
+// records decodes the records written to a JSON log buffer.
+func records(t *testing.T, buf *syncBuffer) []map[string]any {
 	t.Helper()
 	var out []map[string]any
 	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
@@ -46,6 +45,16 @@ func summaries(t *testing.T, buf *syncBuffer) []map[string]any {
 		if err := json.Unmarshal([]byte(line), &rec); err != nil {
 			t.Fatalf("log line %q: %v", line, err)
 		}
+		out = append(out, rec)
+	}
+	return out
+}
+
+// summaries returns the summary records written to a JSON log buffer.
+func summaries(t *testing.T, buf *syncBuffer) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for _, rec := range records(t, buf) {
 		if rec[logging.SummaryKey] == true {
 			out = append(out, rec)
 		}
@@ -169,7 +178,7 @@ func TestADegradedErrorIsOneLinedAndCapped(t *testing.T) {
 	long := "gh: request failed\n" + strings.Repeat("verbose ", 100) + "\nend"
 
 	for i := 0; i < degradedEscalateAfter; i++ {
-		h.sched.op("assign", errors.New(long), "label backstop: assign", "number", 7)
+		h.sched.op("assign", errors.New(long), "visibility backstop", "number", 7)
 	}
 	h.sched.writeStatus()
 
@@ -198,7 +207,7 @@ func TestADegradedErrorIsOneLinedAndCapped(t *testing.T) {
 // failure, so a call site can use it on both paths of an operation.
 func TestOpWithoutAnErrorRecordsNothing(t *testing.T) {
 	h := newHarness(t, baseTOML)
-	if h.sched.op("assign", nil, "label backstop: assign", "number", 7) {
+	if h.sched.op("assign", nil, "visibility backstop", "number", 7) {
 		t.Error("op reported a failure for a nil error")
 	}
 	h.sched.mu.Lock()
@@ -211,10 +220,11 @@ func TestOpWithoutAnErrorRecordsNothing(t *testing.T) {
 	}
 }
 
-// TestDegradedEntriesAreSortedAndNamed pins two properties the issue asks for
-// but that a single-entry test cannot see: status.json lists the operations by
-// name so the file is stable between passes, and every migrated record carries
-// the operation's name as an attribute so a log reader can group by it.
+// TestDegradedEntriesAreSortedAndNamed pins two properties a single-entry
+// test cannot see: status.json lists the failing operations by name, so the
+// file is stable between passes, and the three mutations ensureVisible makes
+// record their streaks separately while the caller still logs one line for
+// the item.
 func TestDegradedEntriesAreSortedAndNamed(t *testing.T) {
 	h := newHarness(t, degradedTOML)
 	buf := jsonLog(h)
@@ -243,20 +253,48 @@ func TestDegradedEntriesAreSortedAndNamed(t *testing.T) {
 		t.Fatalf("degraded operations = %v, want [assign label] in that order", names)
 	}
 
-	// Both warnings name their operation, not just the summary line.
-	var ops []string
-	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
-		var rec map[string]any
-		if err := json.Unmarshal([]byte(line), &rec); err != nil {
-			continue
-		}
-		if op, ok := rec["op"].(string); ok {
-			ops = append(ops, op)
+	// The item is reported once, not once per failed mutation.
+	var warned int
+	for _, rec := range records(t, buf) {
+		if msg, _ := rec["msg"].(string); msg == "visibility backstop" {
+			warned++
+			if s, _ := rec["err"].(string); !strings.Contains(s, "label") || !strings.Contains(s, "assign") {
+				t.Errorf("the warning does not name both failures: %v", rec)
+			}
 		}
 	}
-	for _, want := range []string{"assign", "label"} {
-		if !slices.Contains(ops, want) {
-			t.Errorf("no record carries op=%q: %v", want, ops)
+	if warned != 1 {
+		t.Errorf("the item was reported %d times, want 1", warned)
+	}
+}
+
+// A migrated site that does log names its operation in the record, so a log
+// reader can group by it.
+func TestALoggedOperationCarriesItsName(t *testing.T) {
+	h := newHarness(t, degradedTOML)
+	buf := jsonLog(h)
+	h.gh.errFor["issue list"] = errors.New("gh: HTTP 500")
+
+	h.sched.adoptCreated(context.Background(), time.Now().Add(-time.Hour))
+	h.sched.writeStatus()
+
+	var found bool
+	for _, rec := range records(t, buf) {
+		if rec["op"] == "list-created" {
+			found = true
+			if rec["level"] != "WARN" {
+				t.Errorf("level = %v, want WARN", rec["level"])
+			}
 		}
+	}
+	if !found {
+		t.Errorf("no record carries op=\"list-created\": %s", buf.String())
+	}
+	st, err := h.store.LoadStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f := degradedOp(t, st, "list-created"); f.Count != 1 {
+		t.Errorf("list-created: %+v", f)
 	}
 }

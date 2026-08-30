@@ -91,6 +91,11 @@ type Data struct {
 	// person created or commented on since the product manager last replied.
 	Features      []github.Issue
 	FreshFeatures []github.Issue
+	// Proposals holds the fresh features that are still proposals: the
+	// product manager's own ideas, which it may refine but must not break
+	// into work items until a person removes bees:proposal. They are never
+	// in FreshFeatures.
+	Proposals []github.Issue
 	// Progress maps a feature issue number to its sub-issue summary.
 	Progress map[int]github.SubIssueSummary
 	// Parent is the feature a work item belongs to, when it is a sub-issue.

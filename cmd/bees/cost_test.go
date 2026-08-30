@@ -147,6 +147,10 @@ func TestTodayTotal(t *testing.T) {
 	if got := todayText(total); got != "today: 2 sessions, 23 turns, $0.50" {
 		t.Fatalf("today line: %q", got)
 	}
+	one := costGroup{Group: "today", Sessions: 1, Turns: 1, CostUSD: 0.05}
+	if got := todayText(one); got != "today: 1 session, 1 turn, $0.05" {
+		t.Fatalf("singular today line: %q", got)
+	}
 }
 
 func TestTodayTotalNoLedger(t *testing.T) {

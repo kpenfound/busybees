@@ -54,7 +54,11 @@ func TestFormatSummary(t *testing.T) {
 	}, {
 		name: "a multi-line note stays on one line",
 		sum:  summary{role: config.RoleQA, outcome: OutcomeDone, note: "line one\nline two", turns: 1, cost: 1, dur: time.Second},
-		want: `✓ QA engineer done: "line one line two" (1 turns, $1.00, 1s)`,
+		want: `✓ QA engineer done: "line one line two" (1 turn, $1.00, 1s)`,
+	}, {
+		name: "a one-turn session says turn, not turns",
+		sum:  summary{role: config.RoleQA, outcome: OutcomeIdle, turns: 1, cost: 0.02, dur: dur},
+		want: "✓ QA engineer idle (1 turn, $0.02, 11m37s)",
 	}, {
 		name: "long notes are truncated",
 		sum:  summary{role: config.RoleReviewer, pr: 7, outcome: OutcomeApproved, note: strings.Repeat("a", 100)},

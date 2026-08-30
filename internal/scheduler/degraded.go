@@ -41,7 +41,7 @@ type opFailure struct {
 //
 // It returns err != nil, so a call site can keep its own control flow:
 //
-//	if s.op("assign", err, "label backstop: assign", "number", n, "err", err) {
+//	if s.op("list-created", err, "visibility backstop: list created items", "err", err) {
 //		return
 //	}
 func (s *Scheduler) op(name string, err error, msg string, attrs ...any) bool {
@@ -53,14 +53,24 @@ func (s *Scheduler) op(name string, err error, msg string, attrs ...any) bool {
 // and the poll failure has always reported at error level. The escalation
 // record is emitted by the scheduler's own logger either way.
 func (s *Scheduler) opAs(log *slog.Logger, level slog.Level, name string, err error, msg string, attrs ...any) bool {
+	if err != nil {
+		log.Log(context.Background(), level, msg, append([]any{"op", name}, attrs...)...)
+	}
+	return s.track(name, err)
+}
+
+// track is op without the logging, for an operation whose caller reports the
+// failure itself. ensureVisible is why it exists: it makes up to three
+// independent GitHub mutations and joins them into one error its callers log
+// as a single line naming the item, so each mutation records its own streak
+// here without adding a line of its own.
+func (s *Scheduler) track(name string, err error) bool {
 	if err == nil {
 		s.mu.Lock()
 		delete(s.degraded, name)
 		s.mu.Unlock()
 		return false
 	}
-	log.Log(context.Background(), level, msg, append([]any{"op", name}, attrs...)...)
-
 	now := s.now()
 	s.mu.Lock()
 	e := s.degraded[name]

@@ -9,7 +9,7 @@ and [cli.md](cli.md).
 ```
 cmd/bees/            CLI (cobra): init, run, tick, exec, status, mail, issue, done, mcp, config, prompts, labels
 internal/config/     bees.toml schema, defaults, validation, global/role merging, label names, init template
-internal/github/     thin wrapper around the gh CLI (issues, PRs, labels, milestones (read), sub-issues, required checks, merge, comment, PR activity)
+internal/github/     thin wrapper around the gh CLI (issues, PRs, labels, milestones (read), sub-issues, checks (required and reported), merge, comment, PR activity)
 internal/issues/     creates issues the factory way: filter labels/assignee, kind + state labels, sub-issue of --parent, inherited milestone
 internal/mail/       the local mailbox: JSON messages under <state_dir>/mail/<role>/
 internal/workspace/  temporary git worktrees created from the main clone
@@ -70,7 +70,7 @@ A full pass is:
    command to reply to it; `human_seen_at` is advanced to the newest item.
    If the issue was `approved`, `reopenApproved` relabels it `ready` and
    removes `bees:approved` from the PR, so a developer worker picks it up on
-   step 4 (an issue a worker still owns — the checks stage — is left alone).
+   step 5 (an issue a worker still owns — the checks stage — is left alone).
    **PR merge state** (`conflicts.go`, `checkPRs`) runs right after, over
    the same PRs: `gh pr list` already returns `mergeable`, `mergeStateStatus`
    and `headRefOid`, so this costs nothing. For an issue in `review` or
@@ -96,7 +96,15 @@ A full pass is:
    a pass is sized in the same pass. Every edit is also written back to the
    cached poll (`cacheIssue`), which is what the local passes below classify
    from: without it they would see the old labels and repeat the edit.
-4. **dispatch developers** – candidates are unowned `in-progress` and `review`
+4. **cost budgets** (`budgets.go`) – with `scheduler.max_cost_per_day` set,
+   the ledger is summed over the last 24 hours before anything is dispatched.
+   At or over the budget steps 5 and 6 start nothing new (workers already
+   running finish their loop), and the pause is logged once per transition and
+   reported by `bees status`. The other two budgets are enforced elsewhere:
+   `max_cost_per_issue` between a developer worker's stages, and
+   `max_cost_per_session` after a session ends. See
+   [Cost budgets](configuration.md#cost-budgets).
+5. **dispatch developers** – candidates are unowned `in-progress` and `review`
    issues (resume after a restart, never reordered), then `ready` issues that
    already have an open PR on their branch (`snapshot.prByBranch`; sent back
    by human feedback or a conflict — finished before new work, oldest first),
@@ -110,7 +118,7 @@ A full pass is:
    when none is free the pass stops dispatching. A goroutine runs `workIssue`
    and returns the slot when done; the worker records the issue's size, which
    is what the cap counts and what `bees status` shows.
-5. **dispatch singletons** – project manager (has triage issues or unread
+6. **dispatch singletons** – project manager (has triage issues or unread
    mail), product manager (unread mail, first run, or interval elapsed), QA
    (first run, or interval elapsed and something merged since — checked at
    most once per `qa_interval`). Each runs in
@@ -124,9 +132,23 @@ A full pass is:
    human activity (creation or a comment without the `<!-- bees:` marker) is
    newer than the latest bee comment. A fresh issue that carries
    `bees:question` has that label removed on the spot (a person answered).
-   Any fresh issue triggers a run outside `product_manager_interval`.
+   Any fresh issue triggers a run outside `product_manager_interval`. A
+   [proposal](workflow.md#feature-issues) only does so once a person has
+   commented on it (`Issue.AwaitingBeeComment()`, which is `AwaitingBee`
+   without the creation seeded in): nobody has commented on one a bee wrote,
+   so it is fresh forever, and counting that would wake the product manager
+   on every poll for a decision only a person can make. A person's question
+   still gets an answer on the next poll, and the proposal goes quiet again
+   on the one after that. Approval leaves no comment either, so `reconcile`
+   also watches `bees:proposal` on every feature and records
+   `ProposalApprovedAt` when a person removes it — a label edit leaves no
+   comment, so nothing else would notice — and a feature approved since the
+   last run wakes the product manager and reaches it whatever `AwaitingBee`
+   says.
    `runProductManager` passes fresh feedback issues as `Data.Feedback`, fresh
-   feature issues as `Data.FreshFeatures`, every open feature issue as
+   feature issues as `Data.FreshFeatures` (proposals partitioned out into
+   `Data.Proposals`, which the task prompt presents in a section of its own),
+   every open feature issue as
    `Data.Features` with its sub-issue progress in `Data.Progress` (one REST
    `gh api repos/../issues/N` per open feature, reading `sub_issues_summary`),
    and only work items (neither feature nor feedback) as `Data.Issues`.
@@ -182,7 +204,7 @@ feedback/feature comments (1 `issue view` each) only for issues whose
 once per `qa_interval`, recorded as `last_check` in `<state_dir>/qa.json` so
 an elapsed interval with nothing merged does not re-query on every poll; the
 checks stage polls `gh pr checks` every `roles.reviewer.checks_poll_interval`
-(default 2m), not every poll; the label backstop makes two list calls after
+(default 2m), not every poll; the visibility backstop makes two list calls after
 each session; and worker stage transitions make a handful of `issue view` /
 `pr view` / `issue edit` calls. Sessions call `gh` on their own on top of
 this, which busybees does not meter.
@@ -213,7 +235,7 @@ stateDiagram-v2
     review --> develop: changes-requested, round < max
     review --> [*]: changes-requested, round == max (escalate)
     review --> [*]: failed (escalate)
-    checks --> [*]: required checks pass → gh pr merge
+    checks --> [*]: checks pass (or none are reported) → gh pr merge
     checks --> [*]: pending at checks_timeout / merge refused (escalate)
     checks --> develop: a check failed, reviewer (checks mode) mailed a fix request
     checks --> checks: reviewer re-ran the check (approved)
@@ -246,11 +268,25 @@ stateDiagram-v2
   `roles.reviewer.max_check_fix_rounds`.
 - **Checks stage** (`auto_merge`). `approve` only labels the PR and issue
   `bees:approved`; merging happens in the `checks` stage. `awaitChecks` sleeps
-  `checks_wait`, then calls `github.RequiredChecks` (`gh pr checks --required
-  --json …`; gh's non-zero exits for pending/failing checks and its "no
-  required checks" / "no checks reported" messages are handled, an empty list
-  counts as passed) every `checks_poll_interval` until `Summarize` returns
-  passed or failed, or `checks_timeout` elapses. Passed → `MergePR` with `merge_method`
+  `checks_wait`, then polls every `checks_poll_interval` until `Summarize`
+  returns passed or failed, or `checks_timeout` elapses. Each poll calls
+  `github.RequiredChecks` (`gh pr checks --required --json …`; gh's non-zero
+  exits for pending/failing checks and its "no required checks" / "no checks
+  reported" messages are handled, an empty list is `ChecksNone`, not
+  `ChecksPassed`). Which **gate** is in force is decided on the first
+  observation that reports anything and never changes afterwards: `required`
+  when the branch requires checks (then the second gh call is never made and
+  the behaviour is what it always was), otherwise `reported` — every check the
+  pull request reports, read with `github.Checks` (`gh pr checks` without
+  `--required`), because a repository with no branch protection would
+  otherwise merge with nothing green. Two consecutive empty observations mean
+  `none`: no CI at all, which merges but is logged as an ungated merge, never
+  as "checks passed". The gate is shown in the worker stage (`checks
+  (required)`, `checks (reported)`, `checks (none)`) so `bees status` says
+  what a long wait is waiting for, and `bees doctor` warns once when
+  `auto_merge` is on and the default branch requires no check. bees never
+  reads or writes branch protection to change it — that is a person's
+  setting. Passed → `MergePR` with `merge_method`
   and `--delete-branch` (a refusal escalates). Failed → a reviewer session
   with `task: "reviewer_checks"` and `BEES_REVIEW_MODE=checks`, given
   `github.Failed(checks)`. Its `changes-requested` sets `afterDevelop =
@@ -281,6 +317,10 @@ under a short, stable operation name (`poll`, `assign`, `label`, `reconcile`, �
 per-operation streak of consecutive failures; a nil error clears the streak.
 `writeStatus` copies the streaks into `Status.Degraded`, so a broken operation is
 visible in `status.json` and `bees status` instead of only in the log.
+`Scheduler.track` is the same bookkeeping without the logging, for a mutation whose
+caller reports the failure itself: `ensureVisible` makes three independent calls
+(label, assign, milestone) and joins them into the one warning naming the item, so
+each of the three records its own streak and none of them logs a line of its own.
 
 At `degradedEscalateAfter` (3) consecutive failures the streak emits one record at
 error level marked `logging.SummaryKey`, so it reaches the summary stream a person
@@ -411,12 +451,22 @@ Messages are addressed to a **role**, not a session. Delivery rules:
   `bees mail send --from human`. The scheduler's own requests — bring a PR
   up to date with the default branch — come from `orchestrator`.
 
-**Label backstop.** After every session (`runSession` in `sessions.go`) the
+**Visibility backstop.** After every session (`runSession` in `sessions.go`) the
 scheduler calls `adoptCreated`: `github.Client.ListCreatedSince` lists issues
 and PRs matching `author:@me created:>=<session start>` regardless of labels,
-and anything carrying a `<label>:*` label but missing the base label (or the
-configured `filter.assignee`) is labelled/assigned so it stays visible. Items
-with no factory label at all are left alone.
+and anything carrying `<label>` or a `<label>:*` label but missing part of the
+filter is repaired through the same `ensureVisible` helper the developer worker
+uses on a PR it opened — the base label, the configured `filter.assignee`, and,
+for pull requests only, the configured `filter.milestone`. Both halves of the
+gate are needed: a pull request a session just opened carries only `<label>`,
+and earns its first `<label>:*` label at approval. Items with no factory
+label at all are left alone, and one item that cannot be repaired is logged
+and skipped rather than stopping the others.
+
+A milestone is set on pull requests and never on issues: a milestone on an
+issue is a person's decision, and an issue the factory creates inherits one
+through `bees issue create`, while a milestone on a PR is pure filter
+bookkeeping.
 
 Writes are atomic (temp file + rename), IDs embed a timestamp so listing sorts
 oldest first, and `bees mail` works from any directory because sessions get
@@ -477,7 +527,7 @@ Nothing in the test-suite talks to GitHub or runs Claude Code.
 - **Fake gh.** `github.Client.Exec` is a function field; the scheduler tests
   replace it with an in-memory implementation that understands the `gh`
   invocations the wrapper makes — `issue list` (including `--state all
-  --search` for the label backstop), `issue view/edit/comment` (labels and
+  --search` for the visibility backstop), `issue view/edit/comment` (labels and
   `--add-assignee`), `pr list/view/merge/checks` (a queue of scripted check
   results; merge arguments are recorded), `api .../milestones`, `api
   repos/…/issues/N` (REST details: id, milestone, sub-issue summary), `api

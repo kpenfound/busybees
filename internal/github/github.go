@@ -118,6 +118,24 @@ func (i Issue) AwaitingBee() bool {
 	return lastHuman.After(lastBee)
 }
 
+// AwaitingBeeComment reports whether a bee owes a reply because a person
+// commented, not merely because the issue was created. Unlike AwaitingBee it
+// does not seed the human side with CreatedAt, so an issue nobody has
+// commented on is never awaiting a bee.
+func (i Issue) AwaitingBeeComment() bool {
+	var lastHuman, lastBee time.Time
+	for _, c := range i.Comments {
+		if c.IsBee() {
+			if c.CreatedAt.After(lastBee) {
+				lastBee = c.CreatedAt
+			}
+		} else if c.CreatedAt.After(lastHuman) {
+			lastHuman = c.CreatedAt
+		}
+	}
+	return lastHuman.After(lastBee)
+}
+
 // PR is a GitHub pull request.
 type PR struct {
 	Number      int        `json:"number"`
@@ -555,11 +573,19 @@ const (
 	ChecksPassed  ChecksStatus = "passed"
 	ChecksFailed  ChecksStatus = "failed"
 	ChecksPending ChecksStatus = "pending"
+	// ChecksNone means nothing was reported at all. It is deliberately not
+	// ChecksPassed: "nothing reported" and "everything green" are different
+	// answers, and a caller that merges on them must say which one it got.
+	ChecksNone ChecksStatus = "none"
 )
 
-// Summarize returns the overall status of the checks. No checks counts as
-// passed: there is nothing to wait for.
+// Summarize returns the overall status of the checks. An empty list is
+// ChecksNone, not ChecksPassed: there is nothing to wait for, but there is
+// also nothing that passed.
 func Summarize(checks []Check) ChecksStatus {
+	if len(checks) == 0 {
+		return ChecksNone
+	}
 	status := ChecksPassed
 	for _, c := range checks {
 		switch c.Bucket {
@@ -583,12 +609,31 @@ func Failed(checks []Check) []Check {
 	return out
 }
 
-// RequiredChecks returns the required checks of a PR. gh exits non-zero
-// when checks are pending (8) or failing (1) while still printing JSON, and
-// reports "no required checks" / "no checks reported" when there are none;
-// both cases are handled.
+// RequiredChecks returns the required checks of a PR: the checks the branch
+// protection rules make mandatory. An empty result means the branch requires
+// nothing, not that everything passed.
 func (c *Client) RequiredChecks(ctx context.Context, number int) ([]Check, error) {
-	out, err := c.Exec(ctx, "pr", "checks", strconv.Itoa(number), "-R", c.Repo, "--required", "--json", "name,state,bucket,link,description,workflow")
+	return c.checks(ctx, number, true)
+}
+
+// Checks returns every check a PR reports, required or not. It is the
+// fallback gate for a repository whose default branch has no branch
+// protection: gating on the checks that exist beats gating on nothing.
+func (c *Client) Checks(ctx context.Context, number int) ([]Check, error) {
+	return c.checks(ctx, number, false)
+}
+
+// checks runs `gh pr checks`, with --required when required is set. gh exits
+// non-zero when checks are pending (8) or failing (1) while still printing
+// JSON, and reports "no required checks" / "no checks reported" when there
+// are none; both cases are handled.
+func (c *Client) checks(ctx context.Context, number int, required bool) ([]Check, error) {
+	args := []string{"pr", "checks", strconv.Itoa(number), "-R", c.Repo}
+	if required {
+		args = append(args, "--required")
+	}
+	args = append(args, "--json", "name,state,bucket,link,description,workflow")
+	out, err := c.Exec(ctx, args...)
 	trimmed := strings.TrimSpace(string(out))
 	if trimmed == "" || trimmed == "[]" {
 		if err != nil && !strings.Contains(err.Error(), "no required checks") && !strings.Contains(err.Error(), "no checks reported") {
@@ -730,6 +775,15 @@ type Created struct {
 	IsPR      bool
 	Labels    []Label
 	Assignees []Author
+	Milestone *MilestoneRef
+}
+
+// MilestoneTitle returns the milestone title or "".
+func (c Created) MilestoneTitle() string {
+	if c.Milestone == nil {
+		return ""
+	}
+	return c.Milestone.Title
 }
 
 // ListCreatedSince returns issues and PRs authored by the gh user at or
@@ -738,7 +792,7 @@ type Created struct {
 func (c *Client) ListCreatedSince(ctx context.Context, t time.Time) ([]Created, error) {
 	search := fmt.Sprintf("author:@me created:>=%s", t.UTC().Add(-time.Minute).Format("2006-01-02T15:04:05Z"))
 	var out []Created
-	issuesOut, err := c.Exec(ctx, "issue", "list", "-R", c.Repo, "--state", "all", "--search", search, "--limit", "50", "--json", "number,labels,assignees,createdAt")
+	issuesOut, err := c.Exec(ctx, "issue", "list", "-R", c.Repo, "--state", "all", "--search", search, "--limit", "50", "--json", "number,labels,assignees,milestone,createdAt")
 	if err != nil {
 		return nil, err
 	}
@@ -748,10 +802,10 @@ func (c *Client) ListCreatedSince(ctx context.Context, t time.Time) ([]Created, 
 	}
 	for _, i := range issues {
 		if !i.CreatedAt.Before(t.Add(-time.Minute)) {
-			out = append(out, Created{Number: i.Number, Labels: i.Labels, Assignees: i.Assignees})
+			out = append(out, Created{Number: i.Number, Labels: i.Labels, Assignees: i.Assignees, Milestone: i.Milestone})
 		}
 	}
-	prsOut, err := c.Exec(ctx, "pr", "list", "-R", c.Repo, "--state", "all", "--search", search, "--limit", "50", "--json", "number,labels,assignees,createdAt")
+	prsOut, err := c.Exec(ctx, "pr", "list", "-R", c.Repo, "--state", "all", "--search", search, "--limit", "50", "--json", "number,labels,assignees,milestone,createdAt")
 	if err != nil {
 		return nil, err
 	}
@@ -761,7 +815,7 @@ func (c *Client) ListCreatedSince(ctx context.Context, t time.Time) ([]Created, 
 	}
 	for _, p := range prs {
 		if !p.CreatedAt.Before(t.Add(-time.Minute)) {
-			out = append(out, Created{Number: p.Number, IsPR: true, Labels: p.Labels, Assignees: p.Assignees})
+			out = append(out, Created{Number: p.Number, IsPR: true, Labels: p.Labels, Assignees: p.Assignees, Milestone: p.Milestone})
 		}
 	}
 	return out, nil
@@ -779,6 +833,7 @@ type IssueDetails struct {
 	ID        int64           `json:"id"` // database id, needed for sub-issue calls
 	SubIssues SubIssueSummary `json:"sub_issues_summary"`
 	Milestone *MilestoneRef   `json:"milestone"`
+	Labels    []Label         `json:"labels"`
 }
 
 // MilestoneTitle returns the milestone title or "".

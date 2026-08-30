@@ -11,13 +11,14 @@ never written as a setting: it stays a commented placeholder and init fails inst
 `bees config validate` checks the file; `bees config show` prints the resolved settings
 for every role after merging.
 
-The file starts with a `version` key, followed by five top-level tables:
+The file starts with a `version` key, followed by six top-level tables:
 
 | Table | Purpose |
 |---|---|
 | `[project]` | The git remote, repository, default branch and state directory |
 | `[filter]` | Which GitHub issues and pull requests the factory can see |
 | `[scheduler]` | Concurrency, polling and review-loop limits |
+| `[logging]` | Console log format and level |
 | `[global]` | Prompt, skills, MCP servers, model, shell and environment settings applied to every role |
 | `[roles.<name>]` | Per-role overrides for `product_manager`, `project_manager`, `developer`, `reviewer`, `qa` |
 
@@ -162,6 +163,9 @@ orchestrator adds `bees:size/m` to any ready issue that has none. See
 | `notify` | list of strings | `[]` | GitHub logins and/or `org/team` slugs the factory turns to when it needs a person. They are mentioned in the `bees:needs-human` escalation comment and in the product manager's `bees:question` comments, and asked to review a pull request the reviewer moved to `bees:approved`. Entries carry no leading `@` and hold at most one `/`. Empty (the default) mentions nobody and requests no reviewer. See [Notifying a person](#notifying-a-person). |
 | `product_manager_interval` | duration | `"1h"` | Minimum time between product manager runs. Unread mail in the PM's inbox triggers an earlier run. |
 | `qa_interval` | duration | `"30m"` | Minimum time between QA runs. QA only runs when something was merged since its last run (the first run always happens). The merged-PR query itself runs at most once per `qa_interval` (tracked as `last_check` in `<state_dir>/qa.json`), not on every poll. |
+| `max_cost_per_issue` | float | `0` | USD one work item may cost across every session run for it — developer, reviewer, retries, check fixes. Checked between a developer worker's stages, never mid session, so the session that passes it finishes and its work stays on the branch; the issue is then escalated with what it spent. `0` (the default) is unlimited; must be ≥ 0. See [Cost budgets](#cost-budgets). |
+| `max_cost_per_day` | float | `0` | USD the whole factory may spend over a rolling 24 hours. At or over it no new session is dispatched — no developer worker, no singleton — while the sessions already running finish normally. `0` (the default) is unlimited; must be ≥ 0. |
+| `max_cost_per_session` | float | `0` | USD a single session may cost. `claude -p` cannot be stopped on cost while it runs, so this is checked once it has finished: an over-budget session is treated as failed, and two in a row for the same work item escalate it. `0` (the default) is unlimited; must be ≥ 0. |
 | `keep_workspaces` | bool | `false` | Leave temporary worktrees on disk after a session (debugging). |
 | `workspace_root` | string | `""` | Directory temporary worktrees are created under. Empty means `$TMPDIR/bees`. |
 | `work_hours` | string | `""` | Daily window during which GitHub is polled every `poll_interval`, as `"HH:MM-HH:MM"` on a 24-hour clock. Empty (the default) disables the feature — GitHub is polled around the clock and the three keys below are ignored. See [Work hours](#work-hours). |
@@ -266,8 +270,8 @@ frugal:
 | Product-manager has-work check | 1 `issue view` per feedback/feature issue | only for issues whose `updatedAt` is newer than the PM's last run |
 | Product-manager run | 1 `issue view` per open feedback/feature issue, plus 1 REST call per open feature (sub-issue progress) | every PM run (not gated by `updatedAt`) |
 | QA merged-PR check | 1 call | at most once per `qa_interval` |
-| Required checks (auto-merge) | 1 call per poll of the checks stage | every `roles.reviewer.checks_poll_interval` while waiting |
-| Label backstop | 2 list calls | after every session |
+| Checks (auto-merge) | 1 call per poll of the checks stage, 2 when the branch requires no check | every `roles.reviewer.checks_poll_interval` while waiting |
+| Visibility backstop | 2 list calls | after every session |
 | Feature progress | 1 REST call per open feature issue (`sub_issues_summary`) | per product manager run |
 | Parent feature lookup | 1 GraphQL call per triage item, and 1 per developer session | per project manager run / developer session |
 | `bees issue create --parent` | 3 calls (parent details, create, attach as sub-issue); `--related` 2; plain 1 | whenever a role files an issue |
@@ -275,6 +279,80 @@ frugal:
 
 An idle factory therefore costs two calls per poll. If GitHub does rate-limit
 the process, polling pauses for `rate_limit_backoff` before trying again.
+
+What the factory spends on the Anthropic API is a separate budget, capped by
+the three `max_cost_*` keys below.
+
+### Cost budgets
+
+Nothing limits what a factory spends by default: all three budgets are `0`,
+which means unlimited. They are spent against the [session
+ledger](cli.md#bees-cost) — the same numbers `bees cost` reports — so a retried
+session counts like any other, and setting one is enough to make it bite:
+
+```toml
+[scheduler]
+max_cost_per_issue = 25.00   # every session run for one work item
+max_cost_per_day = 100.00    # whole factory, rolling 24 hours
+max_cost_per_session = 10.00 # a single session
+```
+
+Each is enforced at the only moment the factory can act on it. A running
+session is never interrupted on cost:
+
+- **Per issue** — checked between the stages of a developer worker. The
+  session that took the issue over its budget finishes and its work stays on
+  the branch; the worker then stops and the issue is escalated with what it
+  spent (*"Issue #12 has cost $26.40 across 7 sessions, over the
+  `max_cost_per_issue` budget of $25.00"*).
+- **Per day** — summed over the last 24 hours before anything is dispatched.
+  At or over the budget the scheduler keeps polling and reconciling labels but
+  starts no new session; workers already running finish their loop. The pause
+  is logged once, and `bees status` says so on its scheduler line.
+- **Per session** — checked after the session ended. An over-budget session is
+  treated as failed whatever it reported, which means it is retried once (with
+  the role's `fallback_model` when `retry_with_fallback` is on, usually the
+  cheaper one). Two over-budget sessions in a row for the same work item
+  escalate it: that is a signal that the role's `max_turns` or `timeout` are
+  the wrong shape for this work, not that one session went astray.
+
+Budgets are about money, not about turns: `max_turns` already caps how long a
+single session may go on for.
+
+## `[logging]`
+
+How `bees` logs to the console. It is a top-level table, not a role setting:
+logging is a property of the `bees` process, so it applies to every command.
+
+```toml
+[logging]
+format = "text"   # text | json
+level = "info"    # debug | info | warn | error
+```
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `format` | string | `text` | Console log format: `text` or `json`. |
+| `level` | string | `info` | Console log level: `debug`, `info`, `warn` or `error`. |
+
+The table exists for running `bees run` as a long-lived service, where the
+natural place to say "always log JSON at info" is the project, not a systemd
+unit. It is the lowest-priority source: **a flag beats an environment variable,
+which beats `bees.toml`, which beats the built-in default.** So
+`bees run --log-format text` still gives you a readable terminal in a project
+whose file says `json`, and `-v` still wins over `level = "info"`.
+
+Commands that never read `bees.toml` — `bees version`, `bees done`, and any
+command run against a file that fails to load — log with the flag, environment
+and default settings only.
+
+There is no `quiet` key: `--quiet` is a shorthand for one invocation, not a way
+to run the factory. `level = "warn"` is the service-shaped equivalent (it also
+drops the one-line session summaries, which `--quiet` keeps).
+
+The `bees.log` file in the state directory is not configurable here: it always
+gets every record at debug level, in JSON. See
+[`bees run`](cli.md#bees-run).
 
 ## `[global]` and `[roles.<name>]`
 
@@ -307,20 +385,33 @@ setting them on `[global]` or another role is a validation error.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `auto_merge` | bool | `false` | Merge a pull request the reviewer approved once its required checks are green. Off by default: humans merge. |
+| `auto_merge` | bool | `false` | Merge a pull request the reviewer approved once its checks are green — the required checks if the branch has any, otherwise every check the pull request reports; with no checks at all it merges and says so. Off by default: humans merge. |
 | `merge_method` | string | `"squash"` | `squash`, `merge` or `rebase` (`gh pr merge --<method> --delete-branch`). |
-| `checks_wait` | duration | `"1m"` | How long to wait after approval before polling required checks, because some take a moment to report they have started. |
-| `checks_poll_interval` | duration | `"2m"` | How often `gh pr checks --required` is polled while waiting for checks (one API call each). |
-| `checks_timeout` | duration | `"30m"` | How long to wait for required checks to finish before escalating with `bees:needs-human`. |
-| `max_check_fix_rounds` | int | `2` | Reviewer-diagnoses / developer-fixes iterations allowed when required checks fail, before escalating. |
+| `checks_wait` | duration | `"1m"` | How long to wait after approval before polling the checks, because some take a moment to report they have started. |
+| `checks_poll_interval` | duration | `"2m"` | How often the checks are polled while waiting (one API call each, two when the branch requires nothing). |
+| `checks_timeout` | duration | `"30m"` | How long to wait for the checks to finish before escalating with `bees:needs-human`. |
+| `max_check_fix_rounds` | int | `2` | Reviewer-diagnoses / developer-fixes iterations allowed when checks fail, before escalating. |
 
 With `auto_merge = true`, after approval the worker waits `checks_wait`, then polls
-`gh pr checks --required` every `checks_poll_interval`. All green (or no required
-checks at all) → merge. Any check fails → the reviewer gets a checks-mode session to
-find the main error and mail it to the developer, the developer pushes a fix, and the
-checks are polled again — up to `max_check_fix_rounds`. Still pending at
-`checks_timeout`, or a merge that GitHub refuses (for example branch protection that
-needs a human review) → `bees:needs-human`. See [workflow.md](workflow.md#merging).
+the pull request's checks every `checks_poll_interval`. All green → merge. Any check
+fails → the reviewer gets a checks-mode session to find the main error and mail it to
+the developer, the developer pushes a fix, and the checks are polled again — up to
+`max_check_fix_rounds`. Still pending at `checks_timeout`, or a merge that GitHub
+refuses (for example branch protection that needs a human review) →
+`bees:needs-human`. See [workflow.md](workflow.md#merging).
+
+**Which checks are the gate.** `gh pr checks --required` decides whenever the default
+branch requires anything: those checks, and only those. A repository with no branch
+protection requires nothing, and gating on nothing would merge with nothing green — so
+in that case every check the pull request reports (`gh pr checks`) is the gate instead,
+a failing one blocks the merge and a pending one is waited for. To take a check out of
+the gate, mark the ones that must block a merge as required in the branch protection
+rules of the default branch; bees never reads those rules to change them, and never
+enables or edits protection. With no check reported at all — a repository with no CI —
+it merges after two consecutive empty polls and logs that no check was reported, not
+that the checks passed. `bees doctor` says which of the three is in force, and
+`bees status` shows it in the worker stage (`checks (required)`, `checks (reported)`,
+`checks (none)`).
 
 ### `[roles.developer]` only: commit flags, max size and per-size models
 
@@ -480,10 +571,15 @@ headers = { Authorization = "Bearer $BROWSER_MCP_TOKEN" }
 | `scheduler.notify` | `[]` (nobody is mentioned) |
 | `scheduler.product_manager_interval` | `1h` |
 | `scheduler.qa_interval` | `30m` |
+| `scheduler.max_cost_per_issue` | `0` (unlimited) |
+| `scheduler.max_cost_per_day` | `0` (unlimited) |
+| `scheduler.max_cost_per_session` | `0` (unlimited) |
 | `scheduler.work_hours` | `""` (poll around the clock) |
 | `scheduler.off_hours_poll_interval` | `1h`, or `poll_interval` when that is longer |
 | `scheduler.work_days` | `["mon","tue","wed","thu","fri"]` |
 | `scheduler.timezone` | `""` (the machine's local time) |
+| `logging.format` | `text` |
+| `logging.level` | `info` |
 | `model` | `opus` |
 | `fallback_model` | `sonnet` |
 | `max_turns` | `200` |
@@ -597,6 +693,7 @@ with an unsupported version anyway.
 | `BEES_SESSION_DIR` | Where `bees done` writes `outcome.json`; `bees done` refuses to run without it. Set automatically inside sessions. |
 | `BEES_ROLE` | Default `--from` for `bees mail send`, and the role whose `bees done` statuses are validated. Set automatically inside sessions. |
 | `BEES_ISSUE`, `BEES_PR` | Defaults for the `--issue` / `--pr` flags of `bees mail send` and `bees done`. Set automatically inside sessions. |
+| `BEES_LOG_FORMAT`, `BEES_LOG_LEVEL` | Fallbacks for `--log-format` / `--log-level`. They sit between the flags and [`[logging]`](#logging): a flag beats them, and they beat `bees.toml`. |
 
 The variables marked *set automatically inside sessions* are the only ones that
 reach a session. The rest — `BEES_CLAUDE_BIN`, `BEES_CACHE_DIR`,
@@ -626,7 +723,7 @@ it inherited, plus:
 | `BEES_BRANCH` | Checked-out branch, when any. |
 | `BEES_NOTES_FILE` | The role's notes file. |
 | `BEES_BIN` | Path of the `bees` executable. Its directory is also prepended to `PATH` so sessions can run `bees mail` and `bees done`. |
-| `BEES_REVIEW_MODE` | `checks` for the reviewer's checks-mode sessions (diagnosing failed required checks); unset otherwise. |
+| `BEES_REVIEW_MODE` | `checks` for the reviewer's checks-mode sessions (diagnosing failed checks); unset otherwise. |
 | `SHELL` | The configured `shell`, when set. |
 | *configured `env`* | Every `[global.env]` / `[roles.<name>.env]` entry, `$VAR`-expanded from the bees environment. Set before the `BEES_*` variables, so those always win. |
 | `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_0`/`VALUE_0`, `GIT_CONFIG_KEY_1`/`VALUE_1` | `push.autoSetupRemote=true` and `push.default=current`, so a plain `git push` works on a fresh branch without touching the clone's git config. Only set when `GIT_CONFIG_COUNT` is not already in the bees environment. |

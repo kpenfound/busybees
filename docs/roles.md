@@ -150,13 +150,16 @@ enter the workflow state machine. For each fresh one it:
 **Proposals:** a feature issue the product manager creates itself is labelled
 `bees:proposal` as well as `bees:feature`. It writes, refines and asks
 questions on such an issue as usual, but does **not** break it into work items
-until a person removes the label — `issue_create` (`parent: <proposal>`)
-refuses. Removing the label is the approval. A feature issue a person filed
-carries no proposal label: it is already approved and handled exactly as
-before. The product manager's prompt shows the proposal state of every feature
-issue (a `proposal:` field on each fresh feature and a `Proposal` column in the
-feature table), because bees and people share one GitHub account and the author
-is no signal.
+until a person removes the label — and it cannot: `issue_create`
+(`parent: <proposal>`) and `issue_link` refuse while the label is there.
+Removing the label is the approval, and the scheduler notices it (it is a label
+edit, so it leaves no comment) and hands the feature back to the product manager
+on its next run. A feature issue a person filed carries no proposal label: it is
+already approved and handled exactly as before. The product manager's prompt
+lists its proposals in a section of their own, never among the features it is
+told to break down, and marks them in the `Proposal` column of the feature
+table, because bees and people share one GitHub account and the author is no
+signal.
 
 A feature issue is *fresh* when a person created or commented on it after
 the product manager's last marker comment (`github.Issue.AwaitingBee`). When a
@@ -305,12 +308,13 @@ changes honestly and lets the orchestrator escalate.
 ### Checks mode (`auto_merge = true`)
 
 After approval the orchestrator waits `checks_wait`, then polls the PR's
-required checks. If they all pass (or there are none) it merges with
-`merge_method` and deletes the branch. If any fails, the reviewer gets a
-second kind of session, rendered from `task/reviewer_checks.md` with
-`BEES_REVIEW_MODE=checks` in its environment.
+checks — the required checks if the branch has any, otherwise every check the
+pull request reports; with no checks at all it merges and says so. If they all
+pass it merges with `merge_method` and deletes the branch. If any fails, the
+reviewer gets a second kind of session, rendered from `task/reviewer_checks.md`
+with `BEES_REVIEW_MODE=checks` in its environment.
 
-**Given:** the PR, the issue, the list of failing required checks (name,
+**Given:** the PR, the issue, the list of failing checks (name,
 workflow, bucket, description, details link), the fix round and its limit,
 its notes.
 

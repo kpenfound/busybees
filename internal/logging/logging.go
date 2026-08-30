@@ -44,6 +44,9 @@ type Options struct {
 type Logger struct {
 	*slog.Logger
 	core *core
+	// console is the writer the console handler was built with, reused when
+	// SetConsole is called without one.
+	console io.Writer
 }
 
 // New builds a logger with a console handler only.
@@ -54,7 +57,20 @@ func New(o Options) *Logger {
 	}
 	c := &core{}
 	c.add(newConsole(w, o), nil)
-	return &Logger{Logger: slog.New(newMulti(c)), core: c}
+	return &Logger{Logger: slog.New(newMulti(c)), core: c, console: w}
+}
+
+// SetConsole replaces the console handler, so a command that has since loaded
+// bees.toml can apply its [logging] table to a logger built from the flags
+// alone. An empty o.Console reuses the writer the logger was created with.
+// Loggers already derived with With() pick the new handler up; the file
+// handler, if any, is untouched and still gets every record at debug.
+func (l *Logger) SetConsole(o Options) {
+	if o.Console == nil {
+		o.Console = l.console
+	}
+	l.console = o.Console
+	l.core.replaceConsole(newConsole(o.Console, o))
 }
 
 // AttachFile adds a rotating JSON file handler writing every record at debug

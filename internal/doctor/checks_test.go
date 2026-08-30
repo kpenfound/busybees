@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/testutil"
 	"github.com/kpenfound/busybees/internal/workspace"
@@ -110,7 +111,9 @@ func setupIn(t *testing.T, clone, extra string, replies map[string]ghReply) *fix
 	return &fixture{Deps: d, clone: clone, gh: gh}
 }
 
-func (f *fixture) run(t *testing.T, c Check) Result {
+// run drives one check function directly. Checks are wrapped in a Check value
+// by Deps.Checks; the tests hold the method, which is what a Check's Run is.
+func (f *fixture) run(t *testing.T, c func(context.Context) Result) Result {
 	t.Helper()
 	r := c(context.Background())
 	if r.Name == "" || r.Group == "" {
@@ -530,7 +533,7 @@ func TestCheckFilterTellsAnEmptyRepoFromAHiddenBacklog(t *testing.T) {
 
 	r := f.run(t, f.checkFilter)
 	wantResult(t, r, Warn, "34 open issues", "2 pull requests", "bees", "label=bees AND assignee=kyle")
-	for _, want := range []string{"ANDed", "add-assignee", "bees.toml"} {
+	for _, want := range []string{"ANDed", "bees doctor --fix", "bees.toml"} {
 		if !strings.Contains(r.Remediation, want) {
 			t.Errorf("remediation %q does not name %q", r.Remediation, want)
 		}
@@ -606,8 +609,10 @@ func TestCheckWorktree(t *testing.T) {
 func TestChecksCoverEveryGroup(t *testing.T) {
 	f := setup(t, "", nil)
 	checks := f.Checks()
-	if len(checks) != 13 {
-		t.Errorf("got %d checks, want 13", len(checks))
+	// 14 cheap ones plus one per role: with nothing role-specific configured
+	// each role still reports one row.
+	if want := 14 + len(config.Roles); len(checks) != want {
+		t.Errorf("got %d checks, want %d", len(checks), want)
 	}
 	f.gh.replies = map[string]ghReply{
 		"auth status": {out: "  - Token scopes: 'repo'"},
@@ -648,7 +653,7 @@ func TestChecksWithoutAResolvedRepo(t *testing.T) {
 	for _, c := range d.Checks() {
 		// Nothing here may reach the network; every check must be safe to
 		// run with an unresolved configuration.
-		r := c(context.Background())
+		r := c.Run(context.Background())
 		if r.Group == GroupGitHub {
 			t.Errorf("github checks must be skipped without a repository: %+v", r)
 		}
@@ -660,4 +665,59 @@ func setRemote(t *testing.T, clone, url string) {
 	if _, err := workspace.Git(context.Background(), clone, "remote", "set-url", "origin", url); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// ---- auto_merge gate -------------------------------------------------------
+
+const autoMergeTOML = "\n[roles.reviewer]\nauto_merge = true\n"
+
+const protectionPath = "api repos/owner/name/branches/main/protection"
+
+func TestCheckAutoMergeIsSilentWhenAutoMergeIsOff(t *testing.T) {
+	f := setup(t, "", nil)
+	wantResult(t, f.run(t, f.checkAutoMerge), Pass, "auto_merge is off")
+	if len(f.gh.calls) != 0 {
+		t.Errorf("no gh call is needed when auto_merge is off: %v", f.gh.calls)
+	}
+}
+
+func TestCheckAutoMergeWithRequiredChecks(t *testing.T) {
+	f := setup(t, autoMergeTOML, map[string]ghReply{
+		protectionPath: {out: `{"required_status_checks":{"strict":true,"contexts":["go"],"checks":[{"context":"go"},{"context":"dagger"}]}}`},
+	})
+	wantResult(t, f.run(t, f.checkAutoMerge), Pass, "go, dagger", "main")
+}
+
+func TestCheckAutoMergeWarnsWhenTheBranchIsNotProtected(t *testing.T) {
+	f := setup(t, autoMergeTOML, map[string]ghReply{
+		protectionPath: {err: errors.New("gh api ...: exit status 1: gh: Branch not protected (HTTP 404)")},
+	})
+	r := f.run(t, f.checkAutoMerge)
+	wantResult(t, r, Warn, "no check is required on `main`", "whatever checks a pull request reports",
+		"require your CI checks in the branch protection rules")
+	if strings.Contains(r.Detail, "404") {
+		t.Errorf("a 404 is the answer, not an error to report: %q", r.Detail)
+	}
+}
+
+func TestCheckAutoMergeWarnsWhenProtectionRequiresNothing(t *testing.T) {
+	f := setup(t, autoMergeTOML, map[string]ghReply{
+		protectionPath: {out: `{"required_pull_request_reviews":{"required_approving_review_count":1}}`},
+	})
+	wantResult(t, f.run(t, f.checkAutoMerge), Warn, "protected but requires no check", "no check is required on `main`")
+
+	f = setup(t, autoMergeTOML, map[string]ghReply{
+		protectionPath: {out: `{"required_status_checks":{"strict":true,"contexts":[],"checks":[]}}`},
+	})
+	wantResult(t, f.run(t, f.checkAutoMerge), Warn, "no check is required on `main`")
+}
+
+func TestCheckAutoMergeWarnsWithoutPermissionToRead(t *testing.T) {
+	f := setup(t, autoMergeTOML, map[string]ghReply{
+		protectionPath: {err: errors.New("gh api ...: exit status 1: gh: Must have admin rights to Repository. (HTTP 403)")},
+	})
+	// A token without admin rights cannot read protection: that is a warning
+	// with the error one-lined, never a failure (the `bees run` preflight
+	// refuses to start on a failure).
+	wantResult(t, f.run(t, f.checkAutoMerge), Warn, "could not be read", "Must have admin rights", "admin rights on the repository")
 }

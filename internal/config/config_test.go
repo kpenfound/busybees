@@ -1180,3 +1180,57 @@ func TestDescribeLocation(t *testing.T) {
 		t.Fatalf("local description %q is not the local time (...) form", winter)
 	}
 }
+
+func TestCostBudgets(t *testing.T) {
+	// Off by default: budgets are opt-in and change nothing until set.
+	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := cfg.Scheduler; s.MaxCostPerIssue != 0 || s.MaxCostPerDay != 0 || s.MaxCostPerSession != 0 {
+		t.Fatalf("defaults: %v, %v, %v", s.MaxCostPerIssue, s.MaxCostPerDay, s.MaxCostPerSession)
+	}
+	cfg, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\n"+
+		"max_cost_per_issue = 25.0\nmax_cost_per_day = 100.0\nmax_cost_per_session = 10.5\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := cfg.Scheduler; s.MaxCostPerIssue != 25 || s.MaxCostPerDay != 100 || s.MaxCostPerSession != 10.5 {
+		t.Fatalf("configured: %v, %v, %v", s.MaxCostPerIssue, s.MaxCostPerDay, s.MaxCostPerSession)
+	}
+	for _, key := range []string{"max_cost_per_issue", "max_cost_per_day", "max_cost_per_session"} {
+		_, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\n"+key+" = -1.0\n"))
+		if err == nil || !strings.Contains(err.Error(), "scheduler."+key+" must be >= 0") {
+			t.Errorf("%s = -1: %v", key, err)
+		}
+	}
+}
+
+// [logging] defaults to the flag defaults when absent, round-trips what the
+// file says, and rejects a value neither the flags nor the file accept.
+func TestLoggingSettings(t *testing.T) {
+	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Logging.Format != "text" || cfg.Logging.Level != "info" {
+		t.Fatalf("defaults: %+v", cfg.Logging)
+	}
+	cfg, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[logging]\nformat = \"json\"\nlevel = \"warn\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Logging.Format != "json" || cfg.Logging.Level != "warn" {
+		t.Fatalf("configured: %+v", cfg.Logging)
+	}
+
+	for _, c := range []struct{ body, want string }{
+		{"[logging]\nformat = \"yaml\"\n", `logging.format: invalid log format "yaml": valid values are text, json`},
+		{"[logging]\nlevel = \"trace\"\n", `logging.level: invalid log level "trace": valid values are debug, info, warn, error`},
+	} {
+		_, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"+c.body))
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%q: %v", c.body, err)
+		}
+	}
+}

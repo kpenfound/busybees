@@ -29,7 +29,8 @@ import (
 // FAKE_CLAUDE is set: the runner executes it, it inspects its role and
 // environment, performs a scripted action and prints a stream-json result.
 //
-// The flags that steer the fake (FAKE_CLAUDE, FAKE_DEV_HANG, FAKE_DEV_FAIL)
+// The flags that steer the fake (FAKE_CLAUDE, FAKE_DEV_HANG, FAKE_DEV_FAIL,
+// FAKE_REVIEW_ALWAYS_CHANGES, FAKE_COST)
 // reach it through the ordinary environment, so they must NOT start with
 // BEES_: the runner strips inherited BEES_* variables from every session.
 func TestMain(m *testing.M) {
@@ -126,6 +127,16 @@ func fakeClaude() {
 			outcome = session.Outcome{Status: OutcomeChangesRequested}
 			break
 		}
+		// FAKE_REVIEW_ALWAYS_CHANGES never approves, which is the only way
+		// to reach the "not approved after N review rounds" escalation.
+		if os.Getenv("FAKE_REVIEW_ALWAYS_CHANGES") == "1" {
+			round := counter("review")
+			if _, err := box.Send(mail.Message{From: role, To: config.RoleDeveloper, Subject: fmt.Sprintf("Review round %d", round), Body: "still not right", PR: pr, Issue: issue}); err != nil {
+				fail(err)
+			}
+			outcome = session.Outcome{Status: OutcomeChangesRequested}
+			break
+		}
 		if counter("review") == 1 {
 			if _, err := box.Send(mail.Message{From: role, To: config.RoleDeveloper, Subject: "Review round 1", Body: "please add tests", PR: pr, Issue: issue}); err != nil {
 				fail(err)
@@ -141,7 +152,17 @@ func fakeClaude() {
 	if err := session.WriteOutcome(sessionDir, outcome); err != nil {
 		fail(err)
 	}
-	fmt.Println(`{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"fake","num_turns":2,"total_cost_usd":0.01}`)
+	// FAKE_COST makes a session's cost controllable, which is what the cost
+	// budget tests spend against.
+	cost := 0.01
+	if v := os.Getenv("FAKE_COST"); v != "" {
+		c, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			fail(err)
+		}
+		cost = c
+	}
+	fmt.Printf(`{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"fake","num_turns":2,"total_cost_usd":%v}`+"\n", cost)
 }
 
 // fakeGH is an in-memory GitHub backing the gh wrapper.
@@ -158,8 +179,11 @@ type fakeGH struct {
 	merged   []int
 	// activity is raw JSON served for api pulls/N/reviews, pulls/N/comments, issues/N/comments
 	activity map[string]string
-	// checks is a queue of responses for `pr checks`; the last one repeats.
+	// checks is a queue of responses for `pr checks --required`; the last one
+	// repeats. checksAll is the same for the unrequired call, which the
+	// scheduler only makes when the required list came back empty.
 	checks    []checksResponse
+	checksAll []checksResponse
 	mergeArgs [][]string
 	// calls logs every gh invocation, in order.
 	calls [][]string
@@ -425,12 +449,16 @@ func (f *fakeGH) exec(ctx context.Context, args ...string) ([]byte, error) {
 		f.mergeArgs = append(f.mergeArgs, args)
 		return nil, nil
 	case "pr checks":
-		if len(f.checks) == 0 {
+		queue := &f.checks
+		if !slices.Contains(args, "--required") {
+			queue = &f.checksAll
+		}
+		if len(*queue) == 0 {
 			return nil, fmt.Errorf("no checks reported on the 'bees/issue-1' branch")
 		}
-		r := f.checks[0]
-		if len(f.checks) > 1 {
-			f.checks = f.checks[1:]
+		r := (*queue)[0]
+		if len(*queue) > 1 {
+			*queue = (*queue)[1:]
 		}
 		return []byte(r.json), r.err
 	case "label list":

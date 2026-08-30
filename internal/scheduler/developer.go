@@ -13,6 +13,7 @@ import (
 	"github.com/kpenfound/busybees/internal/mail"
 	"github.com/kpenfound/busybees/internal/prompts"
 	"github.com/kpenfound/busybees/internal/state"
+	"github.com/kpenfound/busybees/internal/text"
 )
 
 // Outcome statuses reported by sessions with `bees done`.
@@ -82,6 +83,13 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		// The per-issue budget is checked between stages, never while a
+		// session runs: the one that took the issue over its budget has
+		// finished and its work is on the branch for whoever picks it up.
+		if reason, over := s.overIssueBudget(issue.Number); over {
+			log.Warn("issue over its cost budget", "issue", issue.Number, "max_cost_per_issue", s.cfg.Scheduler.MaxCostPerIssue)
+			return s.escalate(ctx, issue.Number, reason)
+		}
 		switch stage {
 		case "develop":
 			s.updateWorker(w, "developer", bookkeeping.Round)
@@ -129,8 +137,9 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 				pr = found
 				bookkeeping.PR = pr.Number
 				_ = s.store.SaveIssue(bookkeeping)
-				labelErr := s.ensureVisible(ctx, pr)
-				s.opAs(log, slog.LevelWarn, "label", labelErr, "the pull request may be invisible to the factory", "pr", pr.Number, "err", labelErr)
+				if err := s.ensureVisible(ctx, pr.Number, true, pr.Labels, pr.Assignees, pr.MilestoneTitle()); err != nil {
+					log.Warn("the pull request may be invisible to the factory", "pr", pr.Number, "err", err)
+				}
 				if !s.roleEnabled(config.RoleReviewer) {
 					log.Info("reviewer disabled; treating PR as approved")
 					if err := s.approve(ctx, issue.Number, pr); err != nil || !policy.AutoMerge {
@@ -198,7 +207,7 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 					return s.escalate(ctx, issue.Number, "The reviewer requested changes but sent no feedback to the developer. Note: "+note)
 				}
 				if bookkeeping.Round >= maxRounds {
-					return s.escalate(ctx, issue.Number, fmt.Sprintf("Pull request #%d was not approved after %d review rounds. The reviewer's last feedback is in the busybees mailbox.", pr.Number, maxRounds))
+					return s.escalate(ctx, issue.Number, fmt.Sprintf("Pull request #%d was not approved after %s. The reviewer's last feedback is in the busybees mailbox.", pr.Number, text.Count(maxRounds, "review round")))
 				}
 				bookkeeping.Round++
 				_ = s.store.SaveIssue(bookkeeping)
@@ -209,25 +218,39 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 			}
 
 		case "checks":
-			s.updateWorker(w, "checks", bookkeeping.CheckFixRounds+1)
-			log.Info("waiting for required checks", "pr", pr.Number, "wait", policy.ChecksWait)
-			status, checks, err := s.awaitChecks(ctx, pr.Number, policy)
+			round := bookkeeping.CheckFixRounds + 1
+			s.updateWorker(w, "checks", round)
+			log.Info("waiting for checks", "pr", pr.Number, "wait", policy.ChecksWait)
+			status, checks, gate, err := s.awaitChecks(ctx, pr.Number, policy, w, round)
 			if err != nil {
 				return err
 			}
 			switch status {
-			case github.ChecksPassed:
-				log.Info("required checks passed; merging", "pr", pr.Number, "method", policy.Method)
+			case github.ChecksNone:
+				// A repository may legitimately have no CI at all. Merging is
+				// still automatic, but it is logged as what it is: nothing was
+				// verified.
+				log.Info("no checks reported; merging without a check gate", "pr", pr.Number, "method", policy.Method)
 				if err := s.gh.MergePR(ctx, pr.Number, policy.Method); err != nil {
-					return s.escalate(ctx, issue.Number, fmt.Sprintf("Required checks passed but merging #%d failed (branch protection may need a human): %v", pr.Number, err))
+					return s.escalate(ctx, issue.Number, fmt.Sprintf("No check was reported on #%d and merging it failed (branch protection may need a human): %v", pr.Number, err))
+				}
+				return nil
+			case github.ChecksPassed:
+				if gate == gateRequired {
+					log.Info("required checks passed; merging", "pr", pr.Number, "method", policy.Method)
+				} else {
+					log.Info(fmt.Sprintf("no required checks; %d reported checks passed; merging", len(checks)), "pr", pr.Number, "method", policy.Method)
+				}
+				if err := s.gh.MergePR(ctx, pr.Number, policy.Method); err != nil {
+					return s.escalate(ctx, issue.Number, fmt.Sprintf("Checks passed but merging #%d failed (branch protection may need a human): %v", pr.Number, err))
 				}
 				return nil
 			case github.ChecksPending:
-				return s.escalate(ctx, issue.Number, fmt.Sprintf("Required checks on #%d were still pending after %s.", pr.Number, policy.ChecksTimeout))
+				return s.escalate(ctx, issue.Number, fmt.Sprintf("Checks on #%d were still pending after %s.", pr.Number, policy.ChecksTimeout))
 			}
 			// Checks failed: the reviewer diagnoses, the developer fixes.
 			if bookkeeping.CheckFixRounds >= policy.MaxCheckFixRounds {
-				return s.escalate(ctx, issue.Number, fmt.Sprintf("Required checks on #%d still fail after %d fix rounds: %s", pr.Number, policy.MaxCheckFixRounds, checkNames(github.Failed(checks))))
+				return s.escalate(ctx, issue.Number, fmt.Sprintf("Checks on #%d still fail after %d fix rounds: %s", pr.Number, policy.MaxCheckFixRounds, checkNames(github.Failed(checks))))
 			}
 			bookkeeping.CheckFixRounds++
 			_ = s.store.SaveIssue(bookkeeping)
@@ -243,7 +266,7 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 				_, _ = gitPull(ctx, ws.RepoDir)
 			}
 			name := fmt.Sprintf("reviewer-pr-%d-checks%d", pr.Number, bookkeeping.CheckFixRounds)
-			log.Info("required checks failed; reviewer diagnosing", "pr", pr.Number, "round", bookkeeping.CheckFixRounds, "checks", checkNames(github.Failed(checks)))
+			log.Info("checks failed; reviewer diagnosing", "pr", pr.Number, "gate", string(gate), "round", bookkeeping.CheckFixRounds, "checks", checkNames(github.Failed(checks)))
 			started := s.now()
 			res, err := s.runSessionWithRetry(ctx, sessionSpec{
 				role: config.RoleReviewer, name: name, task: "reviewer_checks", workDir: ws.RepoDir, branch: branch, worker: w,
@@ -270,25 +293,103 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 	}
 }
 
-// awaitChecks waits policy.ChecksWait, then polls the PR's required checks
-// every ChecksPollInterval until they pass, fail, or ChecksTimeout elapses.
-func (s *Scheduler) awaitChecks(ctx context.Context, pr int, policy config.MergePolicy) (github.ChecksStatus, []github.Check, error) {
+// checksGate is the set of checks a wait is gated on. It is chosen on the
+// first observation that reports anything and never changes afterwards.
+type checksGate string
+
+const (
+	// gateUnknown is the state before the first observation.
+	gateUnknown checksGate = ""
+	// gateRequired: the branch protection rules require checks, and those are
+	// the gate. This is the only gate that existed before #117.
+	gateRequired checksGate = "required"
+	// gateReported: nothing is required, so every check the pull request
+	// reports is the gate. Gating on the checks that exist beats gating on
+	// nothing; the escape hatch is GitHub's, not a bees.toml key: mark the
+	// checks that must block a merge as required.
+	gateReported checksGate = "reported"
+	// gateNone: no check was reported at all, twice in a row.
+	gateNone checksGate = "none"
+)
+
+// awaitChecks waits policy.ChecksWait, then polls the PR's checks every
+// ChecksPollInterval until they pass, fail, or ChecksTimeout elapses, and
+// reports which gate it settled on.
+//
+// The required checks are asked for first and win outright: when the branch
+// requires anything, the second `gh pr checks` call is never made and the
+// behaviour is exactly what it was before #117. Only when nothing is required
+// does the wait fall back to every reported check — a repository with no
+// branch protection would otherwise merge with nothing green at all. Two
+// consecutive empty observations are needed before concluding there is no CI,
+// because a workflow can take longer than checks_wait to register.
+func (s *Scheduler) awaitChecks(ctx context.Context, pr int, policy config.MergePolicy, w *state.Worker, round int) (github.ChecksStatus, []github.Check, checksGate, error) {
 	if err := sleepCtx(ctx, policy.ChecksWait); err != nil {
-		return "", nil, err
+		return "", nil, gateUnknown, err
 	}
 	deadline := s.now().Add(policy.ChecksTimeout)
+	gate := gateUnknown
+	empty := 0
 	for {
 		checks, err := s.gh.RequiredChecks(ctx, pr)
 		if err != nil {
-			return "", nil, err
+			return "", nil, gate, err
+		}
+		if len(checks) > 0 {
+			gate = gateRequired
+		}
+		if gate != gateRequired {
+			// No required check: fall back to everything the PR reports.
+			checks, err = s.gh.Checks(ctx, pr)
+			if err != nil {
+				return "", nil, gate, err
+			}
+			if len(checks) > 0 {
+				gate = gateReported
+			}
 		}
 		status := github.Summarize(checks)
+		if status == github.ChecksNone && gate == gateUnknown {
+			empty++
+			if empty >= 2 {
+				s.setChecksGate(w, gateNone, round)
+				return github.ChecksNone, nil, gateNone, nil
+			}
+			// One empty observation proves nothing: poll once more before
+			// concluding the repository has no CI.
+			if err := sleepCtx(ctx, policy.ChecksPollInterval); err != nil {
+				return "", nil, gate, err
+			}
+			continue
+		}
+		if status == github.ChecksNone {
+			// The gate was chosen and the checks then vanished from the
+			// report. Keep polling the tier we settled on rather than
+			// merging: the gate never switches back.
+			status = github.ChecksPending
+		}
+		s.setChecksGate(w, gate, round)
 		if status != github.ChecksPending || !s.now().Before(deadline) {
-			return status, checks, nil
+			return status, checks, gate, nil
 		}
 		if err := sleepCtx(ctx, policy.ChecksPollInterval); err != nil {
-			return "", nil, err
+			return "", nil, gate, err
 		}
+	}
+}
+
+// setChecksGate names the gate in the worker stage, so a worker sitting in a
+// 30-minute wait shows in `bees status` what it is waiting for.
+func (s *Scheduler) setChecksGate(w *state.Worker, gate checksGate, round int) {
+	if w == nil || gate == gateUnknown {
+		return
+	}
+	stage := "checks (" + string(gate) + ")"
+	s.mu.Lock()
+	same := w.Stage == stage
+	s.mu.Unlock()
+	if !same {
+		s.updateWorker(w, stage, round)
 	}
 }
 
@@ -340,7 +441,7 @@ func (s *Scheduler) locatePR(ctx context.Context, number int, branch string) (*g
 	return s.gh.FindPRForBranch(ctx, branch)
 }
 
-// ensureVisible makes sure a PR created by a session matches the filter, so
+// ensureVisible makes sure an item the factory created matches the filter, so
 // the factory keeps seeing it: a PR that misses the base label, the assignee
 // or the milestone the filter asks for is never polled again, the reviewer is
 // never dispatched, and the PR strands its branch and its issue.
@@ -348,20 +449,31 @@ func (s *Scheduler) locatePR(ctx context.Context, number int, branch string) (*g
 // Everything already in place is left alone, so a PR the session labelled and
 // assigned itself costs no gh calls. Errors are collected rather than
 // returned at the first failure: the three fixes are independent.
-func (s *Scheduler) ensureVisible(ctx context.Context, pr *github.PR) error {
+//
+// The milestone is set on pull requests only. A milestone on an issue is a
+// person's decision, and an issue the factory creates inherits one through
+// `bees issue create`; a bee must not put an issue into a milestone a person
+// left it out of. A PR has no such inheritance path and its milestone is pure
+// filter bookkeeping.
+func (s *Scheduler) ensureVisible(ctx context.Context, number int, isPR bool, labels []github.Label, assignees []github.Author, milestone string) error {
+	// Each mutation records its own failure streak (see degraded.go) but logs
+	// nothing: the caller reports the joined error as one line naming the item.
 	var errs []error
-	if !github.HasLabel(pr.Labels, s.labels.Base) {
-		if err := s.gh.EditLabels(ctx, pr.Number, []string{s.labels.Base}, nil); err != nil {
+	if !github.HasLabel(labels, s.labels.Base) {
+		err := s.gh.EditLabels(ctx, number, []string{s.labels.Base}, nil)
+		if s.track("label", err) {
 			errs = append(errs, fmt.Errorf("add the %s label: %w", s.labels.Base, err))
 		}
 	}
-	if a := s.cfg.Filter.Assignee; a != "" && !github.HasAssignee(pr.Assignees, a) {
-		if err := s.gh.Assign(ctx, pr.Number, a); err != nil {
+	if a := s.cfg.Filter.Assignee; a != "" && !github.HasAssignee(assignees, a) {
+		err := s.gh.Assign(ctx, number, a)
+		if s.track("assign", err) {
 			errs = append(errs, fmt.Errorf("assign it to %s: %w", a, err))
 		}
 	}
-	if m := s.cfg.Filter.Milestone; m != "" && pr.MilestoneTitle() != m {
-		if err := s.gh.SetMilestone(ctx, pr.Number, m); err != nil {
+	if m := s.cfg.Filter.Milestone; isPR && m != "" && milestone != m {
+		err := s.gh.SetMilestone(ctx, number, m)
+		if s.track("milestone", err) {
 			errs = append(errs, fmt.Errorf("put it in milestone %s: %w", m, err))
 		}
 	}

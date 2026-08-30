@@ -39,6 +39,33 @@ func TestStatusRoundTrip(t *testing.T) {
 	}
 }
 
+// TestCheckWithItsOwnTimeout: a check that declares a longer budget (the MCP
+// checks, which give every server MCPTimeout) must not be cut short by the
+// runner's default, and CheapChecks must leave the expensive ones out.
+func TestCheckWithItsOwnTimeout(t *testing.T) {
+	slow := Check{
+		Expensive: true,
+		Timeout:   2 * time.Second,
+		Run: func(ctx context.Context) Result {
+			select {
+			case <-time.After(150 * time.Millisecond):
+				return pass("slow", GroupRoles, "answered")
+			case <-ctx.Done():
+				return fail("slow", GroupRoles, "cut short", "give it longer")
+			}
+		},
+	}
+	cheap := Check{Run: func(context.Context) Result { return pass("quick", GroupConfig, "") }}
+	results := RunWith(context.Background(), []Check{slow, cheap}, 10*time.Millisecond)
+	if results[0].Status != Pass {
+		t.Errorf("a check that declares its own budget must get it: %+v", results[0])
+	}
+	got := CheapChecks([]Check{slow, cheap})
+	if len(got) != 1 || got[0].Run(context.Background()).Name != "quick" {
+		t.Errorf("CheapChecks returned %d checks, want only the cheap one", len(got))
+	}
+}
+
 func TestFailuresAndSummary(t *testing.T) {
 	results := []Result{
 		pass("a", GroupConfig, ""),
@@ -52,9 +79,13 @@ func TestFailuresAndSummary(t *testing.T) {
 	if n := Failures(results[:2]); n != 0 {
 		t.Errorf("warnings must not count as failures, got %d", n)
 	}
-	want := "4 checks: 1 passed, 1 warnings, 2 failed"
+	want := "4 checks: 1 passed, 1 warning, 2 failed"
 	if got := Summary(results); got != want {
 		t.Errorf("Summary = %q, want %q", got, want)
+	}
+	twoWarnings := append(results[:2:2], warn("e", GroupConfig, "", "fix e"))
+	if got := Summary(twoWarnings); got != "3 checks: 1 passed, 2 warnings, 0 failed" {
+		t.Errorf("plural warnings = %q", got)
 	}
 	if got := Summary(results[:1]); got != "1 check: 1 passed, 0 warnings, 0 failed" {
 		t.Errorf("singular summary = %q", got)
@@ -77,7 +108,7 @@ func TestText(t *testing.T) {
 		"  ! filter matches issues  no open issue matches label bees",
 		"      → check filter.label",
 		"",
-		"3 checks: 1 passed, 1 warnings, 1 failed",
+		"3 checks: 1 passed, 1 warning, 1 failed",
 		"",
 	}, "\n")
 	if got != want {
@@ -109,8 +140,8 @@ func TestTextGroupOrder(t *testing.T) {
 
 func TestRunReportsAPanicAsAFailure(t *testing.T) {
 	results := Run(context.Background(), []Check{
-		func(context.Context) Result { panic("boom") },
-		func(context.Context) Result { return pass("fine", GroupConfig, "") },
+		{Run: func(context.Context) Result { panic("boom") }},
+		{Run: func(context.Context) Result { return pass("fine", GroupConfig, "") }},
 	})
 	if len(results) != 2 {
 		t.Fatalf("got %d results", len(results))
@@ -130,16 +161,16 @@ func TestRunTimesOutAndCancels(t *testing.T) {
 	var cancelled bool
 	results := RunWith(context.Background(), []Check{
 		// Honours the cancelled context: its own result is used.
-		func(ctx context.Context) Result {
+		{Run: func(ctx context.Context) Result {
 			<-ctx.Done()
 			cancelled = true
 			return warn("slow but polite", GroupConfig, "gave up", "try again")
-		},
+		}},
 		// Ignores it: the runner reports the overrun itself.
-		func(context.Context) Result {
+		{Run: func(context.Context) Result {
 			time.Sleep(500 * time.Millisecond)
 			return pass("rude", GroupConfig, "")
-		},
+		}},
 	}, 20*time.Millisecond)
 
 	if !cancelled {

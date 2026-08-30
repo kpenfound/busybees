@@ -172,3 +172,34 @@ func TestShortDur(t *testing.T) {
 		}
 	}
 }
+
+func TestSchedulerLine(t *testing.T) {
+	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	running := state.Status{UpdatedAt: now, PID: 42, LastPoll: now.Add(-90 * time.Second)}
+	for _, tc := range []struct {
+		name string
+		st   state.Status
+		want string
+	}{
+		{"never run", state.Status{}, "scheduler: never run"},
+		{"running, no budget", running, "scheduler: pid 42, last poll 1m30s ago"},
+		{
+			name: "running under a budget",
+			st:   state.Status{UpdatedAt: now, PID: 42, LastPoll: now, DaySpendUSD: 42.1, DayBudgetUSD: 100},
+			want: "scheduler: pid 42, last poll 0s ago   daily budget: $42.10 / $100.00",
+		},
+		{
+			name: "paused",
+			st:   state.Status{UpdatedAt: now, PID: 42, LastPoll: now, BudgetPaused: true, DaySpendUSD: 101.2, DayBudgetUSD: 100},
+			want: "scheduler: pid 42, last poll 0s ago   paused: daily budget ($101.20 / $100.00)",
+		},
+		{"never run but paused", state.Status{BudgetPaused: true, DaySpendUSD: 1, DayBudgetUSD: 0.5},
+			"scheduler: never run   paused: daily budget ($1.00 / $0.50)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := schedulerLine(tc.st, now); got != tc.want {
+				t.Errorf("got  %q\nwant %q", got, tc.want)
+			}
+		})
+	}
+}
