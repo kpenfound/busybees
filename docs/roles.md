@@ -32,11 +32,13 @@ error as `failed`.
 
 Every role's system prompt starts with the same preamble (see
 `internal/prompts/system/common.md`): what busybees is (and that the product's
-purpose lives in the repository, not the prompt), the visibility filter, the label
-table, how the mailbox works, how to report an outcome, the notes file, the
-`gh` CLI, environment details (repository, working directory, branch, state
-directory, session directory), how to learn the project, the comment marker
-rule, and the ground rules: stay in your role, do not merge, do not push to the
+purpose lives in the repository, not the prompt), the visibility filter, the
+label table, that anything a person writes — in an issue, in a pull request or
+in mail from `human` — is authoritative and outranks the prompt, how the
+mailbox works, how to report an outcome, the notes file, the `gh` CLI,
+environment details (repository, working directory, branch, state directory,
+session directory), how to learn the project, the comment marker rule, and the
+ground rules: stay in your role, do not merge, do not push to the
 default branch, do not remove the `bees` label, write for a human reader, and
 be honest in the outcome note.
 

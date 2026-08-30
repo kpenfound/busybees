@@ -377,11 +377,11 @@ tagged either way.
 `bees:ready` yourself and it skips triage. The next free developer worker takes
 the oldest `bees:ready` issue first.
 
-**Steering:** anything a human writes in an issue or PR is treated as
-authoritative by every role, so commenting on an issue is the way to change
-direction. Labels are also yours to move: relabel to `bees:triage` to send an
-issue back for refinement, or remove the `bees` label to take it out of the
-factory entirely.
+**Steering:** anything a human writes — in an issue, in a pull request, or in
+mail to a role — is treated as authoritative by every role and outranks their
+prompts, so commenting on an issue is the way to change direction. Labels are
+also yours to move: relabel to `bees:triage` to send an issue back for
+refinement, or remove the `bees` label to take it out of the factory entirely.
 
 ## Dependencies
 

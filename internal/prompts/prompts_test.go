@@ -160,6 +160,32 @@ func TestProjectManagerSeesTheRestOfTheTriageQueue(t *testing.T) {
 	}
 }
 
+// The shared preamble must not state a rule more absolutely than the factory
+// applies it, because the role prompt rendered right after it contradicts the
+// absolute (#180). Two sentences: bees:priority ("only a person adds or
+// removes it", while the project manager may add it to a work item that
+// unblocks the factory), and what a person says is authoritative (issues and
+// PRs only, while a person can also write to a role through the mailbox).
+func TestPreambleDoesNotOverstateWhatTheFactoryApplies(t *testing.T) {
+	for _, role := range config.Roles {
+		sys, err := System(role, sample(), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(sys, "Only a person adds or removes it") {
+			t.Errorf("%s preamble states bees:priority absolutely; the project manager may add it:\n%s", role, sys)
+		}
+		for _, want := range []string{
+			"Only a person adds it — with one exception, named in the project manager's",
+			"in mail from `human` as\nauthoritative",
+		} {
+			if !strings.Contains(sys, want) {
+				t.Errorf("%s preamble missing %q:\n%s", role, want, sys)
+			}
+		}
+	}
+}
+
 // bees:priority is a person's lever, with one exception the role prompt has to
 // name explicitly or it simply contradicts the shared preamble. The archive
 // shows the alternative the role reaches for when it wants something built
