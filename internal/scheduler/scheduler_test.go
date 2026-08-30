@@ -1,10 +1,10 @@
 package scheduler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -16,6 +16,7 @@ import (
 
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/github"
+	"github.com/kpenfound/busybees/internal/logging"
 	"github.com/kpenfound/busybees/internal/mail"
 	"github.com/kpenfound/busybees/internal/session"
 	"github.com/kpenfound/busybees/internal/state"
@@ -293,6 +294,25 @@ type harness struct {
 	box   *mail.Box
 	sched *Scheduler
 	clone string
+	logs  *syncBuffer
+}
+
+// syncBuffer collects log output; workers log concurrently.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 func newHarness(t *testing.T, toml string) *harness {
@@ -333,13 +353,22 @@ func newHarness(t *testing.T, toml string) *harness {
 	client.Exec = gh.exec
 
 	t.Setenv("BEES_FAKE_CLAUDE", "1")
+	// Log through the real logging package so tests see the summary lines a
+	// terminal would; dump it when the test fails.
+	logs := &syncBuffer{}
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Log("scheduler log:\n" + logs.String())
+		}
+	})
+	logger := logging.New(logging.Options{Format: logging.FormatText, Console: logs})
 	runner := &session.Runner{
 		ClaudeBin:   os.Args[0],
 		SessionsDir: store.SessionsDir(),
 		StateDir:    store.Dir,
 		Repo:        cfg.Project.Repo,
 		Label:       cfg.Filter.Label,
-		Logger:      slog.New(slog.NewTextHandler(os.Stderr, nil)),
+		Logger:      logger.Logger,
 	}
 	ws := workspace.NewManager(clone, filepath.Join(t.TempDir(), "ws"))
 	box := mail.Open(store.MailDir())
@@ -348,7 +377,7 @@ func newHarness(t *testing.T, toml string) *harness {
 		t.Fatal(err)
 	}
 	sched.Once = true
-	return &harness{t: t, cfg: cfg, gh: gh, store: store, box: box, sched: sched, clone: clone}
+	return &harness{t: t, cfg: cfg, gh: gh, store: store, box: box, sched: sched, clone: clone, logs: logs}
 }
 
 func (h *harness) sessions(role string) []string {
@@ -415,6 +444,22 @@ func TestFullDeveloperReviewLoop(t *testing.T) {
 	if !strings.Contains(string(prompt), "please add tests") || !strings.Contains(string(prompt), "review round 2 of 3") {
 		t.Fatalf("second developer prompt:\n%s", prompt)
 	}
+	// The console got one summary line per session, in the order they ended.
+	wantSummaries := []string{
+		"✓ developer issue #1 → PR #101 opened",
+		"✗ reviewer PR #101 changes requested",
+		"✓ developer issue #1 → PR #101 updated",
+		"✓ reviewer PR #101 approved",
+	}
+	rest := h.logs.String()
+	for _, line := range wantSummaries {
+		_, after, found := strings.Cut(rest, line)
+		if !found {
+			t.Fatalf("missing summary %q (or out of order) in:\n%s", line, h.logs.String())
+		}
+		rest = after
+	}
+
 	// The project manager saw issue 2 in its triage list.
 	pjm := h.sessions(config.RoleProjectManager)
 	prompt, _ = os.ReadFile(filepath.Join(pjm[0], "prompt.md"))
