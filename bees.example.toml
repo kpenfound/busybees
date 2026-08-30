@@ -106,6 +106,17 @@ label = "bees"
 #work_days = ["mon", "tue", "wed", "thu", "fri"]
 # IANA timezone the window is read in (default: the machine's local time).
 #timezone = "America/New_York"
+# Cost budgets in USD, spent against the session ledger ("bees cost").
+# 0 means unlimited, which is the default: budgets are opt-in.
+# Total across every session run for one work item. Checked between stages: the
+# session that passes it finishes, then the issue is escalated to a human.
+#max_cost_per_issue = 25.0
+# Whole factory, rolling 24 hours. At or over it no new session starts; the
+# sessions already running finish.
+#max_cost_per_day = 100.0
+# A single session. Checked after it ran (claude cannot be stopped on cost), and
+# an over-budget session is treated as failed.
+#max_cost_per_session = 10.0
 # Keep temp worktrees after sessions finish (debugging).
 #keep_workspaces = false
 # Where temp worktrees are created (default: the system temp dir).

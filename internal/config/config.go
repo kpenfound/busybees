@@ -526,6 +526,20 @@ type Scheduler struct {
 	// RetryWithFallback runs a retry with the role's fallback_model as its
 	// primary model. Default true.
 	RetryWithFallback *bool `toml:"retry_with_fallback" json:"retry_with_fallback"`
+	// MaxCostPerIssue caps what every session run for one work item may cost
+	// in total, in USD. The total is checked between stages, never mid
+	// session, so the session running when the budget is passed still
+	// finishes; the issue is then escalated. 0 (the default) is unlimited.
+	MaxCostPerIssue float64 `toml:"max_cost_per_issue" json:"max_cost_per_issue"`
+	// MaxCostPerDay caps what the whole factory may spend over a rolling 24
+	// hours, in USD. At or over it no new session is dispatched; the
+	// sessions already running finish. 0 (the default) is unlimited.
+	MaxCostPerDay float64 `toml:"max_cost_per_day" json:"max_cost_per_day"`
+	// MaxCostPerSession caps what a single session may cost, in USD. A
+	// session cannot be stopped on cost while it runs, so this is checked
+	// once it has finished: an over-budget session is treated as failed.
+	// 0 (the default) is unlimited.
+	MaxCostPerSession float64 `toml:"max_cost_per_session" json:"max_cost_per_session"`
 	// KeepWorkspaces leaves temp worktrees on disk after a session (debugging).
 	KeepWorkspaces bool `toml:"keep_workspaces" json:"keep_workspaces"`
 	// WorkspaceRoot overrides the temp dir used for worktrees.
@@ -1063,6 +1077,18 @@ func (c *Config) Validate() error {
 	}
 	if c.Scheduler.NotesMaxBytes < 0 {
 		errs = append(errs, "scheduler.notes_max_bytes must be >= 0 (0 means the default)")
+	}
+	for _, b := range []struct {
+		key string
+		v   float64
+	}{
+		{"max_cost_per_issue", c.Scheduler.MaxCostPerIssue},
+		{"max_cost_per_day", c.Scheduler.MaxCostPerDay},
+		{"max_cost_per_session", c.Scheduler.MaxCostPerSession},
+	} {
+		if b.v < 0 {
+			errs = append(errs, fmt.Sprintf("scheduler.%s must be >= 0 (0 means unlimited)", b.key))
+		}
 	}
 	errs = append(errs, c.Scheduler.parseWorkHours()...)
 	check := func(scope string, rs RoleSettings) {
