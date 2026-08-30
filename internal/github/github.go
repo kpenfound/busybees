@@ -555,11 +555,19 @@ const (
 	ChecksPassed  ChecksStatus = "passed"
 	ChecksFailed  ChecksStatus = "failed"
 	ChecksPending ChecksStatus = "pending"
+	// ChecksNone means nothing was reported at all. It is deliberately not
+	// ChecksPassed: "nothing reported" and "everything green" are different
+	// answers, and a caller that merges on them must say which one it got.
+	ChecksNone ChecksStatus = "none"
 )
 
-// Summarize returns the overall status of the checks. No checks counts as
-// passed: there is nothing to wait for.
+// Summarize returns the overall status of the checks. An empty list is
+// ChecksNone, not ChecksPassed: there is nothing to wait for, but there is
+// also nothing that passed.
 func Summarize(checks []Check) ChecksStatus {
+	if len(checks) == 0 {
+		return ChecksNone
+	}
 	status := ChecksPassed
 	for _, c := range checks {
 		switch c.Bucket {
@@ -583,12 +591,31 @@ func Failed(checks []Check) []Check {
 	return out
 }
 
-// RequiredChecks returns the required checks of a PR. gh exits non-zero
-// when checks are pending (8) or failing (1) while still printing JSON, and
-// reports "no required checks" / "no checks reported" when there are none;
-// both cases are handled.
+// RequiredChecks returns the required checks of a PR: the checks the branch
+// protection rules make mandatory. An empty result means the branch requires
+// nothing, not that everything passed.
 func (c *Client) RequiredChecks(ctx context.Context, number int) ([]Check, error) {
-	out, err := c.Exec(ctx, "pr", "checks", strconv.Itoa(number), "-R", c.Repo, "--required", "--json", "name,state,bucket,link,description,workflow")
+	return c.checks(ctx, number, true)
+}
+
+// Checks returns every check a PR reports, required or not. It is the
+// fallback gate for a repository whose default branch has no branch
+// protection: gating on the checks that exist beats gating on nothing.
+func (c *Client) Checks(ctx context.Context, number int) ([]Check, error) {
+	return c.checks(ctx, number, false)
+}
+
+// checks runs `gh pr checks`, with --required when required is set. gh exits
+// non-zero when checks are pending (8) or failing (1) while still printing
+// JSON, and reports "no required checks" / "no checks reported" when there
+// are none; both cases are handled.
+func (c *Client) checks(ctx context.Context, number int, required bool) ([]Check, error) {
+	args := []string{"pr", "checks", strconv.Itoa(number), "-R", c.Repo}
+	if required {
+		args = append(args, "--required")
+	}
+	args = append(args, "--json", "name,state,bucket,link,description,workflow")
+	out, err := c.Exec(ctx, args...)
 	trimmed := strings.TrimSpace(string(out))
 	if trimmed == "" || trimmed == "[]" {
 		if err != nil && !strings.Contains(err.Error(), "no required checks") && !strings.Contains(err.Error(), "no checks reported") {
