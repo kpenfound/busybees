@@ -63,7 +63,9 @@ func workHoursJSON(s config.Scheduler, now time.Time) workHoursView {
 }
 
 // degradedText renders the "degraded:" section of `bees status`: the factory
-// operations that are failing right now, one line each. It returns "" when
+// operations that are failing right now, one line each. The name column fits
+// the longest operation name the scheduler can emit ("feature-progress"), so
+// the section stays aligned whichever operation is the failing one. It returns "" when
 // nothing is failing, and the caller prints no section at all — a clean run
 // should not carry an empty heading.
 func degradedText(st state.Status) string {
@@ -73,7 +75,7 @@ func degradedText(st state.Status) string {
 	var b strings.Builder
 	b.WriteString("\ndegraded:\n")
 	for _, f := range st.Degraded {
-		fmt.Fprintf(&b, "  %-11s %s", f.Op, failureCount(f))
+		fmt.Fprintf(&b, "  %-16s %s", f.Op, failureCount(f))
 		if f.LastError != "" {
 			fmt.Fprintf(&b, "   last: %s", f.LastError)
 		}

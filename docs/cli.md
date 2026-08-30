@@ -440,8 +440,8 @@ after the `last error` line:
 
 ```
 degraded:
-  assign      12 consecutive failures over 3h10m   last: GraphQL: Projects (classic) is being deprecated
-  label       1 failure   last: gh: HTTP 403 (Resource not accessible by integration)
+  assign           12 consecutive failures over 3h10m   last: GraphQL: Projects (classic) is being deprecated
+  label            1 failure   last: gh: HTTP 403 (Resource not accessible by integration)
 ```
 
 The section is absent entirely when nothing is failing. A single success clears the

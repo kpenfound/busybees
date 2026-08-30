@@ -141,11 +141,14 @@ func TestDegradedTextListsEveryFailingOperation(t *testing.T) {
 	st := state.Status{Degraded: []state.OpFailure{
 		{Op: "assign", Count: 12, First: first, Last: first.Add(3*time.Hour + 10*time.Minute),
 			LastError: "GraphQL: Projects (classic) is being deprecated", Escalated: true},
+		{Op: "feature-progress", Count: 4, First: first, Last: first.Add(2 * time.Minute),
+			LastError: "gh: HTTP 502"},
 		{Op: "label", Count: 1, First: first, Last: first, LastError: "gh: not found"},
 	}}
 	want := "\ndegraded:\n" +
-		"  assign      12 consecutive failures over 3h10m   last: GraphQL: Projects (classic) is being deprecated\n" +
-		"  label       1 failure   last: gh: not found\n"
+		"  assign           12 consecutive failures over 3h10m   last: GraphQL: Projects (classic) is being deprecated\n" +
+		"  feature-progress 4 consecutive failures over 2m   last: gh: HTTP 502\n" +
+		"  label            1 failure   last: gh: not found\n"
 	if got := degradedText(st); got != want {
 		t.Errorf("degraded section:\ngot:\n%swant:\n%s", got, want)
 	}

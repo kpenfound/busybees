@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -207,5 +208,55 @@ func TestOpWithoutAnErrorRecordsNothing(t *testing.T) {
 	}
 	if got := h.logs.String(); got != "" {
 		t.Errorf("a success logged: %q", got)
+	}
+}
+
+// TestDegradedEntriesAreSortedAndNamed pins two properties the issue asks for
+// but that a single-entry test cannot see: status.json lists the operations by
+// name so the file is stable between passes, and every migrated record carries
+// the operation's name as an attribute so a log reader can group by it.
+func TestDegradedEntriesAreSortedAndNamed(t *testing.T) {
+	h := newHarness(t, degradedTOML)
+	buf := jsonLog(h)
+	// An item with neither the base label nor the assignee fails both of the
+	// backstop's mutations, so two operations are degraded at once.
+	h.gh.issues[7] = &github.Issue{
+		Number: 7, Title: "Filed by a session", State: "OPEN",
+		Labels:    []github.Label{{Name: "bees:bug"}, {Name: "bees:triage"}},
+		CreatedAt: time.Now(),
+	}
+	h.gh.errFor["issue edit"] = errors.New("gh: HTTP 403")
+	h.gh.errFor["assignees"] = errors.New("gh: HTTP 403")
+
+	h.sched.adoptCreated(context.Background(), time.Now().Add(-time.Hour))
+	h.sched.writeStatus()
+
+	st, err := h.store.LoadStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, f := range st.Degraded {
+		names = append(names, f.Op)
+	}
+	if len(names) != 2 || names[0] != "assign" || names[1] != "label" {
+		t.Fatalf("degraded operations = %v, want [assign label] in that order", names)
+	}
+
+	// Both warnings name their operation, not just the summary line.
+	var ops []string
+	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		var rec map[string]any
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			continue
+		}
+		if op, ok := rec["op"].(string); ok {
+			ops = append(ops, op)
+		}
+	}
+	for _, want := range []string{"assign", "label"} {
+		if !slices.Contains(ops, want) {
+			t.Errorf("no record carries op=%q: %v", want, ops)
+		}
 	}
 }
