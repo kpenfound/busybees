@@ -130,9 +130,8 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 			if err != nil {
 				return err
 			}
-			if err := s.mail.MarkRead(inbox...); err != nil {
-				log.Warn("mark mail read", "err", err)
-			}
+			readErr := s.mail.MarkRead(inbox...)
+			s.opAs(log, slog.LevelWarn, "mail", readErr, "mark mail read", "err", readErr)
 			status, note := outcomeOf(res)
 			switch status {
 			case OutcomePROpened, OutcomePRUpdated:
@@ -568,19 +567,24 @@ func (s *Scheduler) locatePR(ctx context.Context, number int, branch string) (*g
 // left it out of. A PR has no such inheritance path and its milestone is pure
 // filter bookkeeping.
 func (s *Scheduler) ensureVisible(ctx context.Context, number int, isPR bool, labels []github.Label, assignees []github.Author, milestone string) error {
+	// Each mutation records its own failure streak (see degraded.go) but logs
+	// nothing: the caller reports the joined error as one line naming the item.
 	var errs []error
 	if !github.HasLabel(labels, s.labels.Base) {
-		if err := s.gh.EditLabels(ctx, number, []string{s.labels.Base}, nil); err != nil {
+		err := s.gh.EditLabels(ctx, number, []string{s.labels.Base}, nil)
+		if s.track("label", err) {
 			errs = append(errs, fmt.Errorf("add the %s label: %w", s.labels.Base, err))
 		}
 	}
 	if a := s.cfg.Filter.Assignee; a != "" && !github.HasAssignee(assignees, a) {
-		if err := s.gh.Assign(ctx, number, a); err != nil {
+		err := s.gh.Assign(ctx, number, a)
+		if s.track("assign", err) {
 			errs = append(errs, fmt.Errorf("assign it to %s: %w", a, err))
 		}
 	}
 	if m := s.cfg.Filter.Milestone; isPR && m != "" && milestone != m {
-		if err := s.gh.SetMilestone(ctx, number, m); err != nil {
+		err := s.gh.SetMilestone(ctx, number, m)
+		if s.track("milestone", err) {
 			errs = append(errs, fmt.Errorf("put it in milestone %s: %w", m, err))
 		}
 	}
