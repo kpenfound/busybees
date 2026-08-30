@@ -326,7 +326,7 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 				fmt.Println("  none")
 			}
 			for _, w := range st.Workers {
-				fmt.Printf("  %-12s issue #%-5d %-10s round %d  since %s\n", w.Name, w.Issue, w.Stage, w.Round, w.Since.Format(time.Kitchen))
+				fmt.Printf("  %-12s issue #%-5d %-17s round %d  since %s\n", w.Name, w.Issue, w.Stage, w.Round, w.Since.Format(time.Kitchen))
 			}
 			fmt.Println("\nsingletons:")
 			for _, r := range []string{config.RoleProductManager, config.RoleProjectManager, config.RoleQA} {
