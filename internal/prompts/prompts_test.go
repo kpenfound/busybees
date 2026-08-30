@@ -20,7 +20,7 @@ func sample() Data {
 		Inbox:         []mail.Message{{ID: "m1", From: "reviewer", To: "developer", Subject: "Review round 1", Body: "please fix", PR: 9, CreatedAt: time.Now()}},
 		Issue:         &github.Issue{Number: 4, Title: "Add thing", Body: "details", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:feature"}}, Author: github.Author{Login: "kyle"}},
 		PR:            &github.PR{Number: 9, Title: "Add thing", HeadRefName: "bees/issue-4", BaseRefName: "main", Author: github.Author{Login: "bot"}},
-		Issues:        []github.Issue{{Number: 5, Title: "Other", Labels: []github.Label{{Name: "bees:triage"}, {Name: "bees:bug"}}}},
+		Issues:        []github.Issue{{Number: 6, Title: "Waiting", Labels: []github.Label{{Name: "bees:triage"}, {Name: "bees:bug"}}}, {Number: 7, Title: "Building", Labels: []github.Label{{Name: "bees:in-progress"}}}},
 		TriageIssues:  []github.Issue{{Number: 5, Title: "Other", Body: "b"}},
 		MergedPRs:     []github.PR{{Number: 8, Title: "Merged", Body: "x"}},
 		Milestones:    []github.Milestone{{Number: 1, Title: "v1", Description: "first\nrelease"}},
@@ -28,7 +28,7 @@ func sample() Data {
 		Progress:      map[int]github.SubIssueSummary{12: {Total: 4, Completed: 2}},
 		Parent:        &github.Parent{Number: 12, Title: "Exports"},
 		Parents:       map[int]github.Parent{5: {Number: 12, Title: "Exports"}},
-		Blockers:      map[int][]int{5: {37}},
+		Blockers:      map[int][]int{5: {37}, 6: {37}},
 		FreshFeatures: []github.Issue{{Number: 13, Title: "Search", Body: "find things", Author: github.Author{Login: "kyle"}}},
 		Feedback:      []github.Issue{{Number: 9, Title: "Dark mode please", Body: "would be nice", Author: github.Author{Login: "kyle"}, Comments: []github.Comment{{Author: github.Author{Login: "kyle"}, Body: "also on mobile"}}}},
 		MaxSize:       "l",
@@ -125,6 +125,60 @@ func TestProjectManagerIsToldTheMaxSize(t *testing.T) {
 	}
 }
 
+// The triage list a project manager session is handed is capped at
+// scheduler.triage_batch_size (runProjectManager, internal/scheduler/
+// singletons.go): everything past the cap arrives in Issues, where it used to
+// be indistinguishable from issues in other states. The overflow gets a
+// section of its own, and does not appear twice.
+func TestProjectManagerSeesTheRestOfTheTriageQueue(t *testing.T) {
+	pjm, err := Task(config.RoleProjectManager, sample())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"## Issues to triage (1 shown, more below)",
+		"## Also in `bees:triage`, bodies not shown",
+		"| 6 | bug | #37 | - | Waiting |",
+	} {
+		if !strings.Contains(pjm, want) {
+			t.Errorf("project manager task missing %q:\n%s", want, pjm)
+		}
+	}
+	if strings.Contains(pjm, "| 6 | triage |") {
+		t.Errorf("an overflow triage issue is also in the other-issues table:\n%s", pjm)
+	}
+	// Nothing beyond the batch: no section, and no promise of one.
+	d := sample()
+	d.Issues = []github.Issue{{Number: 7, Title: "Building", Labels: []github.Label{{Name: "bees:in-progress"}}}}
+	pjm, err = Task(config.RoleProjectManager, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(pjm, "more below") || strings.Contains(pjm, "Also in") {
+		t.Errorf("triage queue fits in one batch; there should be no overflow section:\n%s", pjm)
+	}
+}
+
+// bees:priority is a person's lever, with one exception the role prompt has to
+// name explicitly or it simply contradicts the shared preamble. The archive
+// shows the alternative the role reaches for when it wants something built
+// next and has no lever — parking ready issues back in triage — so the prompt
+// rules that out in the same breath.
+func TestProjectManagerMayOnlyReorderTheQueueWithPriority(t *testing.T) {
+	sys, err := System(config.RoleProjectManager, sample(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"You are the one exception to",
+		"Never move `bees:ready` issues back",
+	} {
+		if !strings.Contains(sys, want) {
+			t.Errorf("project manager system prompt missing %q:\n%s", want, sys)
+		}
+	}
+}
+
 func TestRoleSpecifics(t *testing.T) {
 	dev, _ := Task(config.RoleDeveloper, sample())
 	if !strings.Contains(dev, "part of feature #12: Exports") {
@@ -140,13 +194,13 @@ func TestRoleSpecifics(t *testing.T) {
 		t.Fatalf("project manager task missing blockers: %s", pjm)
 	}
 	if !strings.Contains(pjm, "| # | State | Kind | Blocked by | Milestone | Title |") ||
-		!strings.Contains(pjm, "| 5 | triage | bug | #37 | - | Other |") {
+		!strings.Contains(pjm, "| 7 | in-progress | - | - | - | Building |") {
 		t.Fatalf("project manager task missing blocked-by column: %s", pjm)
 	}
 	noDeps := sample()
 	noDeps.Blockers = nil
 	pjm, _ = Task(config.RoleProjectManager, noDeps)
-	if strings.Contains(pjm, "blocked by:") || !strings.Contains(pjm, "| 5 | triage | bug | - | - | Other |") {
+	if strings.Contains(pjm, "blocked by:") || !strings.Contains(pjm, "| 7 | in-progress | - | - | - | Building |") {
 		t.Fatalf("project manager task without blockers: %s", pjm)
 	}
 	if !strings.Contains(dev, "please fix") || !strings.Contains(dev, "`status: pr-updated`, `pr: 9`") {
@@ -163,7 +217,7 @@ func TestRoleSpecifics(t *testing.T) {
 		t.Fatalf("reviewer task: %s", rev)
 	}
 	pm, _ := Task(config.RoleProductManager, sample())
-	if !strings.Contains(pm, "| 1 | v1 | 0 | 0 | first release |") || !strings.Contains(pm, "| 5 | triage | bug |") || !strings.Contains(pm, "#9: Dark mode please") || !strings.Contains(pm, "also on mobile") || !strings.Contains(pm, "#13: Search") || !strings.Contains(pm, "| 12 | - | 2/4 done | - | yes | Exports |") {
+	if !strings.Contains(pm, "| 1 | v1 | 0 | 0 | first release |") || !strings.Contains(pm, "| 6 | triage | bug |") || !strings.Contains(pm, "#9: Dark mode please") || !strings.Contains(pm, "also on mobile") || !strings.Contains(pm, "#13: Search") || !strings.Contains(pm, "| 12 | - | 2/4 done | - | yes | Exports |") {
 		t.Fatalf("pm task: %s", pm)
 	}
 	qa, _ := Task(config.RoleQA, sample())
