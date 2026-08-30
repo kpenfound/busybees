@@ -12,6 +12,7 @@ import (
 	"github.com/kpenfound/busybees/internal/mail"
 	"github.com/kpenfound/busybees/internal/prompts"
 	"github.com/kpenfound/busybees/internal/state"
+	"github.com/kpenfound/busybees/internal/text"
 )
 
 // Outcome statuses reported by sessions with `bees done`.
@@ -206,7 +207,7 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 					return s.escalate(ctx, issue.Number, "The reviewer requested changes but sent no feedback to the developer. Note: "+note)
 				}
 				if bookkeeping.Round >= maxRounds {
-					return s.escalate(ctx, issue.Number, fmt.Sprintf("Pull request #%d was not approved after %d review rounds. The reviewer's last feedback is in the busybees mailbox.", pr.Number, maxRounds))
+					return s.escalate(ctx, issue.Number, fmt.Sprintf("Pull request #%d was not approved after %s. The reviewer's last feedback is in the busybees mailbox.", pr.Number, text.Count(maxRounds, "review round")))
 				}
 				bookkeeping.Round++
 				_ = s.store.SaveIssue(bookkeeping)
