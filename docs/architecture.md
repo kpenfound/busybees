@@ -31,8 +31,11 @@ never need the real ones.
 
 ## The scheduler loop
 
-`scheduler.Run` initialises the state directory, prunes stale worktrees, then
-ticks every `scheduler.poll_interval` (default 5m) until the context is
+`scheduler.Run` initialises the state directory, prunes stale worktrees,
+creates the workflow labels the repository is missing (`ensureLabels`: one
+`gh label list`, then `gh label create` for each name it does not find, matched
+case-insensitively — existing labels are left alone, and a failure only warns),
+then ticks every `scheduler.poll_interval` (default 5m) until the context is
 cancelled. Ctrl-C stops polling and waits for running sessions to finish.
 
 Each tick (`tick`) is either a **full pass** or a **local pass**. A full pass

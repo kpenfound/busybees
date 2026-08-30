@@ -128,6 +128,11 @@ See [Talking to the product manager](#talking-to-the-product-manager) for how
 feature and feedback issues are handled.
 
 `bees init` (or `bees labels sync`) creates all of these in the repository.
+`bees run` and `bees tick` also create, at start, any label the
+factory needs and the repository does not have — so a repository set up by an
+older version does not silently fail every label edit that uses a label added
+since. Existing labels keep their colour and description; only `bees labels
+sync` overwrites those.
 
 ## Sizing
 
