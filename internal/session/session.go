@@ -88,6 +88,62 @@ type Result struct {
 	TimedOut     bool          `json:"timed_out"`
 	Outcome      Outcome       `json:"outcome"`
 	HasOutcome   bool          `json:"has_outcome"`
+	// RateLimit is the last rate-limit event of the session's stream, or
+	// nil when it carried none.
+	RateLimit *RateLimit `json:"rate_limit,omitempty"`
+}
+
+// RateLimit is what claude last said about the account's capacity: the
+// rate_limit_info of the final "rate_limit_event" of a session's stream.
+type RateLimit struct {
+	// Status is rate_limit_info.status. Only "allowed" and
+	// "allowed_warning" are known to mean the session may keep going;
+	// anything else is treated as blocking, because the blocked value has
+	// never been observed here and must not be guessed at.
+	Status string `json:"status,omitempty"`
+	// Type is rate_limit_info.rateLimitType ("five_hour", "seven_day").
+	Type string `json:"type,omitempty"`
+	// ResetsAt is when the window rolls, from rate_limit_info.resetsAt.
+	// Zero when the event carried none.
+	ResetsAt time.Time `json:"resets_at,omitempty"`
+}
+
+// blocking reports whether the event says the session may not proceed. An
+// event with no status at all is a parse artifact rather than a signal and
+// never blocks; the result text is the second trigger that covers it.
+func (rl *RateLimit) blocking() bool {
+	return rl != nil && rl.Status != "" && rl.Status != "allowed" && rl.Status != "allowed_warning"
+}
+
+// sessionLimitPhrases mark the message a session reports when the account
+// itself is out of capacity ("You've hit your session limit · resets
+// 11:50pm (America/Detroit)"). They are deliberately narrower than the
+// scheduler's rate-limit phrases: a throttled or overloaded API is worth
+// retrying, an exhausted account is not.
+var sessionLimitPhrases = []string{"session limit", "usage limit"}
+
+// SessionLimited answers the only question the scheduler asks of a finished
+// session's capacity report: did it die on the account-wide claude limit,
+// and when does that limit reset? It says yes when the last rate-limit
+// event was blocking, or when the session's own result text names a session
+// or usage limit. The reset time is the one the last event carried and is
+// zero when there was none — the human-readable sentence is never scraped
+// for it.
+func (r *Result) SessionLimited() (time.Time, bool) {
+	var resets time.Time
+	if r.RateLimit != nil {
+		resets = r.RateLimit.ResetsAt
+	}
+	if r.RateLimit.blocking() {
+		return resets, true
+	}
+	msg := strings.ToLower(r.ResultText)
+	for _, p := range sessionLimitPhrases {
+		if strings.Contains(msg, p) {
+			return resets, true
+		}
+	}
+	return time.Time{}, false
 }
 
 // Runner executes sessions.
@@ -233,13 +289,14 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 	}
 	defer procs.RemovePID(sessionDir)
 
-	final, scanErr := r.consume(stdout, transcript)
+	final, limit, scanErr := r.consume(stdout, transcript)
 	waitErr := cmd.Wait()
 	res.Duration = time.Since(started)
 	if scanErr != nil {
 		r.Logger.Warn("session output error", "session", req.Name, "err", scanErr)
 	}
 
+	res.RateLimit = limit
 	if final != nil {
 		res.ClaudeID = final.SessionID
 		res.ResultText = final.Result
@@ -406,12 +463,26 @@ type streamResult struct {
 	DurationMS   int64   `json:"duration_ms"`
 }
 
+// rateLimitEvent is a "rate_limit_event" of claude's stream-json output:
+// what the account's capacity looks like right now. Only the three fields
+// the factory acts on are parsed — the nested unifiedWindows are not
+// needed, and reading status as a field is what keeps the "overageStatus"
+// of the same object from being mistaken for it.
+type rateLimitEvent struct {
+	Info struct {
+		Status   string `json:"status"`
+		Type     string `json:"rateLimitType"`
+		ResetsAt int64  `json:"resetsAt"`
+	} `json:"rate_limit_info"`
+}
+
 // consume copies stream-json lines to the transcript and returns the final
-// result event.
-func (r *Runner) consume(stdout io.Reader, transcript io.Writer) (*streamResult, error) {
+// result event and the last rate-limit event, either of which may be nil.
+func (r *Runner) consume(stdout io.Reader, transcript io.Writer) (*streamResult, *RateLimit, error) {
 	sc := bufio.NewScanner(stdout)
 	sc.Buffer(make([]byte, 0, 1024*1024), 64*1024*1024)
 	var final *streamResult
+	var limit *RateLimit
 	for sc.Scan() {
 		line := sc.Bytes()
 		_, _ = transcript.Write(line)
@@ -423,15 +494,28 @@ func (r *Runner) consume(stdout io.Reader, transcript io.Writer) (*streamResult,
 		var probe struct {
 			Type string `json:"type"`
 		}
-		if err := json.Unmarshal(line, &probe); err != nil || probe.Type != "result" {
+		if err := json.Unmarshal(line, &probe); err != nil {
 			continue
 		}
-		var sr streamResult
-		if err := json.Unmarshal(line, &sr); err == nil {
-			final = &sr
+		switch probe.Type {
+		case "result":
+			var sr streamResult
+			if err := json.Unmarshal(line, &sr); err == nil {
+				final = &sr
+			}
+		case "rate_limit_event":
+			var ev rateLimitEvent
+			if err := json.Unmarshal(line, &ev); err != nil {
+				continue
+			}
+			rl := &RateLimit{Status: ev.Info.Status, Type: ev.Info.Type}
+			if ev.Info.ResetsAt > 0 {
+				rl.ResetsAt = time.Unix(ev.Info.ResetsAt, 0)
+			}
+			limit = rl
 		}
 	}
-	return final, sc.Err()
+	return final, limit, sc.Err()
 }
 
 // MCPEntry is one server in a claude --mcp-config file.
