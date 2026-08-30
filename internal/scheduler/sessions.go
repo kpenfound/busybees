@@ -272,7 +272,7 @@ func (s *Scheduler) summarize(spec sessionSpec, res *session.Result) {
 
 // formatSummary renders a session summary:
 //
-//	<mark> <role title> <subject> <phrase>[: "<note>"] (<turns> turns, $<cost>, <duration>)
+//	<mark> <role title> <subject> <phrase>[: "<note>"] (<turns>, $<cost>, <duration>)
 func formatSummary(sum summary) string {
 	var b strings.Builder
 	b.WriteString(summaryMark(sum.outcome))
@@ -284,7 +284,7 @@ func formatSummary(sum summary) string {
 	if sum.note != "" {
 		b.WriteString(`: "` + oneLine(sum.note, noteLimit) + `"`)
 	}
-	fmt.Fprintf(&b, " (%d turns, $%.2f, %s)", sum.turns, sum.cost, sum.dur.Round(time.Second))
+	fmt.Fprintf(&b, " (%s, $%.2f, %s)", text.Count(sum.turns, "turn"), sum.cost, sum.dur.Round(time.Second))
 	return b.String()
 }
 
