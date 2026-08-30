@@ -201,7 +201,7 @@ func formatSummary(sum summary) string {
 	}
 	b.WriteString(" " + summaryPhrase(sum))
 	if sum.note != "" {
-		b.WriteString(`: "` + truncate(sum.note, noteLimit) + `"`)
+		b.WriteString(`: "` + oneLine(sum.note, noteLimit) + `"`)
 	}
 	fmt.Fprintf(&b, " (%d turns, $%.2f, %s)", sum.turns, sum.cost, sum.dur.Round(time.Second))
 	return b.String()
@@ -413,11 +413,26 @@ func outcomeOf(res *session.Result) (status, note string) {
 	return "failed", "session ended without reporting an outcome"
 }
 
+// truncate shortens s to at most n runes, appending "…" when it cut. It
+// counts runes, not bytes, so the result is always valid UTF-8.
 func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
+	count := 0
+	for i := range s {
+		count++
+		if count > n {
+			return s[:i] + "…"
+		}
 	}
-	return s[:n] + "…"
+	return s
+}
+
+// oneLine flattens every run of whitespace in s to a single space and then
+// truncates it to n runes. Use it wherever the text becomes part of a log
+// message that must stay on one line: in text format the console handler
+// prints a summary record as its bare message, so a newline in the note
+// would break the one-line-per-session contract.
+func oneLine(s string, n int) string {
+	return truncate(strings.Join(strings.Fields(s), " "), n)
 }
 
 func roleTitle(role string) string { return prompts.Title(role) }

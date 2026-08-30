@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/kpenfound/busybees/internal/config"
 )
@@ -51,6 +52,10 @@ func TestFormatSummary(t *testing.T) {
 		sum:  summary{role: config.RoleQA, outcome: OutcomeIdle, dur: 2*time.Second + 700*time.Millisecond},
 		want: "✓ QA engineer idle (0 turns, $0.00, 3s)",
 	}, {
+		name: "a multi-line note stays on one line",
+		sum:  summary{role: config.RoleQA, outcome: OutcomeDone, note: "line one\nline two", turns: 1, cost: 1, dur: time.Second},
+		want: `✓ QA engineer done: "line one line two" (1 turns, $1.00, 1s)`,
+	}, {
 		name: "long notes are truncated",
 		sum:  summary{role: config.RoleReviewer, pr: 7, outcome: OutcomeApproved, note: strings.Repeat("a", 100)},
 		want: `✓ reviewer PR #7 approved: "` + strings.Repeat("a", 80) + `…" (0 turns, $0.00, 0s)`,
@@ -62,5 +67,19 @@ func TestFormatSummary(t *testing.T) {
 				t.Errorf("\n got: %s\nwant: %s", got, tc.want)
 			}
 		})
+	}
+}
+
+// Cutting the note at a byte offset would slice the "é" in half.
+func TestFormatSummaryIsValidUTF8(t *testing.T) {
+	sum := summary{role: config.RoleReviewer, pr: 7, outcome: OutcomeApproved,
+		note: strings.Repeat("a", 79) + "é" + "tests"}
+	got := formatSummary(sum)
+	if !utf8.ValidString(got) {
+		t.Fatalf("not valid UTF-8: %q", got)
+	}
+	want := `✓ reviewer PR #7 approved: "` + strings.Repeat("a", 79) + "é" + `…" (0 turns, $0.00, 0s)`
+	if got != want {
+		t.Errorf("\n got: %s\nwant: %s", got, want)
 	}
 }
