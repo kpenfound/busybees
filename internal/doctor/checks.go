@@ -14,6 +14,7 @@ import (
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/skills"
+	"github.com/kpenfound/busybees/internal/text"
 	"github.com/kpenfound/busybees/internal/versions"
 	"github.com/kpenfound/busybees/internal/workspace"
 )
@@ -544,7 +545,7 @@ func (d *Deps) checkAutoMerge(ctx context.Context) Result {
 		return unrequiredGate(name, branch, "`"+branch+"` is protected but requires no check")
 	}
 	return pass(name, GroupGitHub, fmt.Sprintf("auto_merge gates on the %s required on `%s`: %s",
-		plural(len(required), "check"), branch, strings.Join(required, ", ")))
+		text.Count(len(required), "check"), branch, strings.Join(required, ", ")))
 }
 
 // unrequiredGate is the one warning checkAutoMerge has, for both ways of
@@ -584,7 +585,7 @@ func (d *Deps) checkFilter(ctx context.Context) Result {
 			"check that gh can list issues in "+d.Config.Project.Repo)
 	}
 	if len(issues) > 0 {
-		return pass(name, GroupGitHub, fmt.Sprintf("%s matching %s", plural(len(issues), "open issue"), describeQuery(q)))
+		return pass(name, GroupGitHub, fmt.Sprintf("%s matching %s", text.Count(len(issues), "open issue"), describeQuery(q)))
 	}
 	if stranded := d.strandedByFilter(ctx, q); stranded != "" {
 		return warn(name, GroupGitHub, stranded,
@@ -626,7 +627,7 @@ func (d *Deps) strandedByFilter(ctx context.Context, q github.Query) string {
 		return ""
 	}
 	return fmt.Sprintf("%s and %s carry `%s`, 0 match your filter (%s)",
-		plural(len(issues), "open issue"), plural(len(prs), "pull request"),
+		text.Count(len(issues), "open issue"), text.Count(len(prs), "pull request"),
 		d.Config.Filter.Label, describeANDed(q))
 }
 

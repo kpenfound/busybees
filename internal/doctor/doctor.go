@@ -14,6 +14,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/kpenfound/busybees/internal/text"
 )
 
 // Status is the outcome of one check. Only Fail changes the exit code;
@@ -320,15 +322,8 @@ func Summary(results []Result) string {
 			passed++
 		}
 	}
-	return fmt.Sprintf("%s: %d passed, %d warnings, %d failed",
-		plural(len(results), "check"), passed, warned, failed)
-}
-
-func plural(n int, word string) string {
-	if n == 1 {
-		return fmt.Sprintf("%d %s", n, word)
-	}
-	return fmt.Sprintf("%d %ss", n, word)
+	return fmt.Sprintf("%s: %d passed, %s, %d failed",
+		text.Count(len(results), "check"), passed, text.Count(warned, "warning"), failed)
 }
 
 // groupOrder returns the groups present in results: the known ones first, in

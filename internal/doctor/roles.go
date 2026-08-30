@@ -16,6 +16,7 @@ import (
 
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/session"
+	"github.com/kpenfound/busybees/internal/text"
 )
 
 // probeVersion is the client version doctor introduces itself with; a server
@@ -103,7 +104,7 @@ func (d *Deps) checkRoleSkills(role config.ResolvedRole) func(context.Context) R
 					role.Name, d.Config.Path))
 		}
 		return pass(name, GroupRoles, fmt.Sprintf("%s ready: %s",
-			plural(len(ready), "skill"), strings.Join(ready, ", ")))
+			text.Count(len(ready), "skill"), strings.Join(ready, ", ")))
 	}
 }
 
@@ -139,7 +140,7 @@ func (d *Deps) checkRoleMCP(role config.ResolvedRole) func(context.Context) Resu
 					role.Name, d.Config.Path))
 		}
 		return pass(name, GroupRoles, fmt.Sprintf("%s answered: %s",
-			plural(len(ok), "server"), strings.Join(ok, ", ")))
+			text.Count(len(ok), "server"), strings.Join(ok, ", ")))
 	}
 }
 
