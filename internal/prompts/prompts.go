@@ -15,8 +15,17 @@ import (
 	"github.com/kpenfound/busybees/internal/mail"
 )
 
-//go:embed system/*.md task/*.md
+//go:embed system/*.md task/*.md partials/*.md
 var files embed.FS
+
+// consolidateTemplate is the name task prompts use to pull in the
+// "consolidate your notes this session" paragraph:
+//
+//	{{template "consolidate" .}}
+//
+// It renders nothing unless Data.ConsolidateNotes is set, so the paragraph
+// costs a session nothing until the scheduler asks for it.
+const consolidateTemplate = "consolidate"
 
 // Data is everything a prompt template can reference. Fields that do not
 // apply to a role are left zero.
@@ -39,6 +48,11 @@ type Data struct {
 	SessionDir string
 	NotesFile  string
 	Notes      string
+	// ConsolidateNotes asks the session to rewrite its notes file into the
+	// standard sections on top of its normal work; ConsolidateReason says
+	// why it is being asked now ("every 10 sessions", "file is 40 KB").
+	ConsolidateNotes  bool
+	ConsolidateReason string
 
 	Inbox          []mail.Message
 	PreviousRounds []mail.Message
@@ -228,8 +242,15 @@ func render(name string, d Data) (string, error) {
 			return s
 		},
 	}
-	t, err := template.New(name).Funcs(funcs).Parse(string(src))
+	t := template.New(name).Funcs(funcs)
+	partial, err := files.ReadFile("partials/" + consolidateTemplate + ".md")
 	if err != nil {
+		return "", err
+	}
+	if _, err := t.New(consolidateTemplate).Parse(string(partial)); err != nil {
+		return "", fmt.Errorf("prompt %s: %w", consolidateTemplate, err)
+	}
+	if _, err := t.Parse(string(src)); err != nil {
 		return "", fmt.Errorf("prompt %s: %w", name, err)
 	}
 	var buf bytes.Buffer

@@ -110,6 +110,12 @@ const (
 	DefaultMaxLargeInFlight = 1
 	// DefaultMaxSize is the largest size a developer takes by default.
 	DefaultMaxSize = "l"
+	// DefaultNotesConsolidateEvery is how many sessions a role runs between
+	// two consolidation passes over its notes file.
+	DefaultNotesConsolidateEvery = 10
+	// DefaultNotesMaxBytes is the notes size above which consolidation is
+	// asked for early, without waiting for the session count.
+	DefaultNotesMaxBytes = 32768
 )
 
 // Dispatch orders accepted by scheduler.dispatch_order.
@@ -452,6 +458,13 @@ type Scheduler struct {
 	// TriageBatchSize is the maximum number of issues handed to the project
 	// manager in one session.
 	TriageBatchSize int `toml:"triage_batch_size" json:"triage_batch_size"`
+	// NotesConsolidateEvery is how many sessions a role runs between two
+	// passes in which it is also asked to consolidate its notes file.
+	// Default 10.
+	NotesConsolidateEvery int `toml:"notes_consolidate_every" json:"notes_consolidate_every"`
+	// NotesMaxBytes asks for consolidation early, whatever the session
+	// count, once a notes file grows past this size. Default 32768.
+	NotesMaxBytes int `toml:"notes_max_bytes" json:"notes_max_bytes"`
 	// DispatchOrder decides which ready issue a free developer worker takes
 	// next: small-first (default), oldest or large-first.
 	DispatchOrder string `toml:"dispatch_order" json:"dispatch_order"`
@@ -873,6 +886,12 @@ func (c *Config) applyDefaults() {
 	if c.Scheduler.TriageBatchSize == 0 {
 		c.Scheduler.TriageBatchSize = DefaultTriageBatch
 	}
+	if c.Scheduler.NotesConsolidateEvery == 0 {
+		c.Scheduler.NotesConsolidateEvery = DefaultNotesConsolidateEvery
+	}
+	if c.Scheduler.NotesMaxBytes == 0 {
+		c.Scheduler.NotesMaxBytes = DefaultNotesMaxBytes
+	}
 	if c.Global.SkillsRefresh == "" {
 		c.Global.SkillsRefresh = DefaultSkillsRefresh
 	}
@@ -950,6 +969,12 @@ func (c *Config) Validate() error {
 	}
 	if n := c.Scheduler.MaxLargeInFlight; n != nil && *n < 0 {
 		errs = append(errs, "scheduler.max_large_in_flight must be >= 0")
+	}
+	if c.Scheduler.NotesConsolidateEvery < 0 {
+		errs = append(errs, "scheduler.notes_consolidate_every must be >= 0 (0 means the default)")
+	}
+	if c.Scheduler.NotesMaxBytes < 0 {
+		errs = append(errs, "scheduler.notes_max_bytes must be >= 0 (0 means the default)")
 	}
 	errs = append(errs, c.Scheduler.parseWorkHours()...)
 	check := func(scope string, rs RoleSettings) {

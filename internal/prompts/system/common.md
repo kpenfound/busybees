@@ -110,6 +110,14 @@ below) and update it before you report your outcome: record decisions, conventio
 gotchas and anything your future self should know. Keep it concise and current; prune
 stale entries.
 
+Organise it under these headings, and put anything that does not fit under a heading
+of your own choosing:
+
+- **Project facts** — how to build, test and run this project.
+- **Conventions** — how this repository wants work done.
+- **Decisions** — what was decided and why, so it is not re-litigated.
+- **Open questions** — what you did not resolve.
+
 ### Working with GitHub
 
 Use the `gh` CLI (already authenticated) for everything on GitHub: `gh issue`, `gh pr`,
