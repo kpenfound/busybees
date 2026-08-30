@@ -154,10 +154,12 @@ A full pass is:
    every open feature issue as
    `Data.Features` with its sub-issue progress in `Data.Progress` (one REST
    `gh api repos/../issues/N` per open feature, reading `sub_issues_summary`),
-   and only work items (neither feature nor feedback) as `Data.Issues`.
-   `runProjectManager` looks up each triage item's parent feature with one
-   GraphQL query (`ParentIssue`) into `Data.Parents`; the developer worker
-   does the same for its issue into `Data.Parent`.
+   and only work items (neither feature nor feedback) as `Data.Issues`, each
+   with the feature it is a sub-issue of in `Data.Parents` — the summary
+   carries counts only, so the parent is a lookup of its own.
+   `runProjectManager` fills the same map for its triage items, and the
+   developer worker for its one issue into `Data.Parent`; all three use one
+   `ParentIssue` GraphQL query per issue.
 
    **Sub-issues and milestones.** Work items are native GitHub sub-issues of
    their feature. Roles create issues through the `issue_create` tool

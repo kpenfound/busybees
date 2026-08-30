@@ -1662,3 +1662,36 @@ func TestNoStateQueueIsNamedAndRecountedAfterReconcile(t *testing.T) {
 		t.Errorf("after reconcile: ready = %d, want 1 (%+v)", st.Queues["ready"], st.Queues)
 	}
 }
+
+// Attaching loose work items to their feature is once-a-pass product manager
+// work, so its task must say which items are already attached: runProductManager
+// looks each open work item's parent up and the prompt renders it.
+func TestProductManagerSeesEachWorkItemsParent(t *testing.T) {
+	h := newHarness(t, baseTOML+"\n[roles.qa]\nenabled = false\n[roles.developer]\nenabled = false\n[roles.project_manager]\nenabled = false\n")
+	now := time.Now()
+	// The fake answers the parent query for issue 1 with feature #5.
+	h.gh.issues[5] = &github.Issue{Number: 5, Title: "Exports", Body: "csv please", State: "OPEN", Author: github.Author{Login: "kyle"},
+		Labels: []github.Label{{Name: "bees"}, {Name: "bees:feature"}}, CreatedAt: now.Add(-time.Hour), UpdatedAt: now,
+		Comments: []github.Comment{{Author: github.Author{Login: "kyle"}, Body: "work items: #1 <!-- bees:product_manager -->", CreatedAt: now}}}
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Export to CSV", State: "OPEN", Author: github.Author{Login: "kyle"},
+		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: now.Add(-time.Hour), UpdatedAt: now}
+	// A bug QA filed: attached to nothing, which is what the column is for.
+	h.gh.issues[2] = &github.Issue{Number: 2, Title: "Header is wrong", State: "OPEN", Author: github.Author{Login: "kyle"},
+		Labels: []github.Label{{Name: "bees"}, {Name: "bees:triage"}, {Name: "bees:bug"}, {Name: "bees:size/s"}}, CreatedAt: now.Add(-time.Hour), UpdatedAt: now}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if err := h.sched.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	pm := h.sessions(config.RoleProductManager)
+	if len(pm) != 1 {
+		t.Fatalf("product manager sessions: %d", len(pm))
+	}
+	prompt, _ := os.ReadFile(filepath.Join(pm[0], "prompt.md"))
+	if !strings.Contains(string(prompt), "| 1 | ready | - | #5 Exports | - | Export to CSV |") {
+		t.Errorf("work item #1 should name its parent feature:\n%s", prompt)
+	}
+	if !strings.Contains(string(prompt), "| 2 | triage | bug | - | - | Header is wrong |") {
+		t.Errorf("loose work item #2 should show - for its parent:\n%s", prompt)
+	}
+}

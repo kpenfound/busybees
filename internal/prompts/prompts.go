@@ -108,7 +108,9 @@ type Data struct {
 	Progress map[int]github.SubIssueSummary
 	// Parent is the feature a work item belongs to, when it is a sub-issue.
 	Parent *github.Parent
-	// Parents maps work item numbers to their parent feature (project manager).
+	// Parents maps an issue number to its parent feature, for the issues that
+	// have one: the triage items (project manager) and the open work items
+	// (product manager).
 	Parents map[int]github.Parent
 	// Blockers maps an issue number to the prerequisites it declares that
 	// are still open (project manager).

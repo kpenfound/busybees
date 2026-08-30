@@ -64,10 +64,10 @@ _None._
 
 ## Open work items ({{len .Issues}})
 {{if .Issues}}
-| # | State | Kind | Milestone | Title |
-|---|---|---|---|---|
+| # | State | Kind | Parent | Milestone | Title |
+|---|---|---|---|---|---|
 {{- range .Issues}}
-| {{.Number}} | {{stateLabel .Labels}} | {{kindLabel .Labels}} | {{milestone .}} | {{.Title}} |
+| {{.Number}} | {{stateLabel .Labels}} | {{kindLabel .Labels}} | {{parentOf $.Parents .Number}} | {{milestone .}} | {{.Title}} |
 {{- end}}
 {{else}}
 _No open issues match the factory filter._
@@ -124,9 +124,9 @@ _No new mail._
    them and ask questions on them, but leave them as they are until a person removes the
    `{{.Labels.Proposal}}` label.
 3. Reply to every question in your mail.
-4. Check the feature tree: every open work item above should be a sub-issue of a
-   feature, and every feature whose sub-issues are all closed should be closed. Attach
-   what is loose with `issue_link`; close what is done.
+4. Check the feature tree: the `Parent` column above says which feature each open work
+   item is a sub-issue of, and every feature whose sub-issues are all closed should be
+   closed. Attach what is loose with `issue_link`; close what is done.
 5. Review the backlog against the vision and the milestones people have set, and create
    or adjust feature issues where the roadmap has a real gap. Keep the backlog healthy
    but small.

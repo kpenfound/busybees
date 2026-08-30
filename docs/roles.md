@@ -114,12 +114,12 @@ work items for the project manager. Milestones are not its job (see below).
 description); the **fresh feature issues** (full body and every comment); a
 table of *all* open feature issues (milestone, sub-issue **progress** as
 `completed/total` from GitHub's `sub_issues_summary`, whether it is waiting on
-a person, title);
-every open **work item** (state, kind, milestone, title — feature and
-feedback issues are excluded from this table); open PRs; the **fresh
-`bees:feedback` issues** (full body and every comment); unread mail; its
-notes. It works from a detached checkout of the default branch and is told to
-read the codebase and README to understand what exists.
+a person, title); every open **work item** (state, kind, the **parent** feature
+it is a sub-issue of or `-`, milestone, title — feature and feedback issues are
+excluded from this table); open PRs; the **fresh `bees:feedback` issues** (full
+body and every comment); unread mail; its notes. It works from a detached
+checkout of the default branch and is told to read the codebase and README to
+understand what exists.
 
 **Does on GitHub:** creates feature issues with `issue_create` (`feature: true`
 → `bees` + `bees:feature` + `bees:proposal`, no state label; `related: <feedback issue>` when it
@@ -164,14 +164,15 @@ enter the workflow state machine. For each fresh one it:
 Once a pass it also **attaches loose work items**. Only the issues the product
 manager creates itself get a `parent`: a bug a developer, reviewer or QA files,
 or a split the project manager makes during triage, has none, so its feature
-looks further along than it is and it inherits no milestone. The prompt tells
-the product manager to compare the open work items in its task against each
-feature's sub-issues on GitHub
-(`gh api --paginate ".../sub_issues?per_page=100"` — the default page is 30)
-and to attach what is missing with `issue_link`. Becoming a sub-issue carries
-the feature's milestone across, so an attached work item lands in the same
-release as one created under the feature — but only when it is in no milestone
-already, because a milestone a person set is never overwritten or cleared.
+looks further along than it is and it inherits no milestone. The scheduler
+looks each open work item's parent up on GitHub (one `ParentIssue` GraphQL
+query apiece) and renders it in the `Parent` column of the work-item table, so
+a loose item shows as `-`; the prompt tells the product manager to read that
+column and attach what belongs to a feature with `issue_link`. Becoming a
+sub-issue carries the feature's milestone across, so an attached work item
+lands in the same release as one created under the feature — but only when it
+is in no milestone already, because a milestone a person set is never
+overwritten or cleared.
 
 **Proposals:** a feature issue the product manager creates itself is labelled
 `bees:proposal` as well as `bees:feature`. It writes, refines and asks

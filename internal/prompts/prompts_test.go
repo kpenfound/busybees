@@ -28,7 +28,7 @@ func sample() Data {
 		Features:      []github.Issue{{Number: 12, Title: "Exports", Labels: []github.Label{{Name: "bees:feature"}, {Name: "bees:question"}}}},
 		Progress:      map[int]github.SubIssueSummary{12: {Total: 4, Completed: 2}},
 		Parent:        &github.Parent{Number: 12, Title: "Exports"},
-		Parents:       map[int]github.Parent{5: {Number: 12, Title: "Exports"}},
+		Parents:       map[int]github.Parent{5: {Number: 12, Title: "Exports"}, 6: {Number: 12, Title: "Exports"}},
 		Blockers:      map[int][]int{5: {37}, 6: {37}},
 		FreshFeatures: []github.Issue{{Number: 13, Title: "Search", Body: "find things", Author: github.Author{Login: "kyle"}}},
 		Feedback:      []github.Issue{{Number: 9, Title: "Dark mode please", Body: "would be nice", Author: github.Author{Login: "kyle"}, Comments: []github.Comment{{Author: github.Author{Login: "kyle"}, Body: "also on mobile"}}}},
@@ -270,6 +270,17 @@ func TestRoleSpecifics(t *testing.T) {
 	pm, _ := Task(config.RoleProductManager, sample())
 	if !strings.Contains(pm, "| 1 | v1 | 0 | 0 | first release |") || !strings.Contains(pm, "| 6 | triage | bug |") || !strings.Contains(pm, "#9: Dark mode please") || !strings.Contains(pm, "also on mobile") || !strings.Contains(pm, "#13: Search") || !strings.Contains(pm, "| 12 | - | 2/4 done | - | yes | Exports |") {
 		t.Fatalf("pm task: %s", pm)
+	}
+	// The parent feature of every open work item, so a loose one is visible
+	// without rebuilding the tree from GitHub: #6 is attached, #7 is not.
+	if !strings.Contains(pm, "| # | State | Kind | Parent | Milestone | Title |") {
+		t.Fatalf("product manager task missing the parent column: %s", pm)
+	}
+	if !strings.Contains(pm, "| 6 | triage | bug | #12 Exports | - | Waiting |") {
+		t.Fatalf("product manager task missing an attached work item's parent: %s", pm)
+	}
+	if !strings.Contains(pm, "| 7 | in-progress | - | - | - | Building |") {
+		t.Fatalf("product manager task should show - for a loose work item: %s", pm)
 	}
 	qa, _ := Task(config.RoleQA, sample())
 	if !strings.Contains(qa, "PR #8: Merged") || !strings.Contains(qa, "This is your first run") {
