@@ -433,6 +433,12 @@ The runner writes the session's pid to `<session dir>/pid` right after starting
 find the orphans: `procs.Find` merges the pid files with a `ps` scan restricted to
 processes whose executable is `claude` (directly or via an interpreter), cross-checking
 pid files against the scan so a reused pid is discarded rather than killed.
+Both sources are scoped to one factory: a scanned process counts only when its command
+line also references this state directory's `sessions/` (every session's argv carries
+`--append-system-prompt-file <sessions dir>/<session>/system-prompt.md`, matched as a
+path prefix and also in its `filepath.EvalSymlinks` form). Sessions of another project's
+factory are never reported, so `bees kill` run with one project's config cannot strand
+another project's issues.
 `procs.Kill` sends SIGTERM to the process group (sessions are started with
 `Setpgid`, so MCP servers and shells belong to it), waits `--grace`, then SIGKILL.
 The command then removes every worktree of the main clone that lives under the

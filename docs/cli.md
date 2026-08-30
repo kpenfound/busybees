@@ -224,11 +224,14 @@ together with their process groups (MCP servers, shells), removes stale pid file
 removes the temporary worktrees bees created under the workspace root, and resets the
 worker list in `status.json`.
 
-Sessions are found two ways: the `pid` file each running session keeps in its
-`<state_dir>/sessions/<id>/` directory, and a scan of the process table for `claude`
-processes carrying the `--name bees-…` argument every session is started with. Pid files
-are cross-checked against the process table, so a pid reused by an unrelated process
-after a reboot is discarded, never killed.
+Sessions are found two ways: from the `pid` file each running session keeps in its
+`<state_dir>/sessions/<id>/` directory, and from the process table, limited to sessions
+of this state directory — a `claude` process counts only when it carries the
+`--name bees-…` argument every session is started with *and* its command line
+references `<state_dir>/sessions/`. Another project's factory running on the same
+machine is never touched, whichever config you point `bees kill` at. Pid files are
+cross-checked against that scan, so a pid reused by an unrelated process after a reboot
+is discarded, never killed.
 
 It refuses to run while a `bees run` scheduler is alive (killing sessions under a running
 scheduler would corrupt its state); pass `--scheduler` to stop the scheduler too.
