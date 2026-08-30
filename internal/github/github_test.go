@@ -393,16 +393,28 @@ func TestAwaitingBeeComment(t *testing.T) {
 	bee := func(at time.Time) Comment {
 		return Comment{Author: Author{Login: "kyle"}, Body: "answered " + BeesMarker, CreatedAt: at}
 	}
+	// gh reports comment times at second resolution, so two comments written
+	// in the same second come back with the same timestamp and only their
+	// order in the list says who spoke last.
+	tie := created.Add(time.Minute)
 
 	cases := []struct {
-		name     string
+		name string
+		// comments is the issue's comment list, chronological as gh returns it.
 		comments []Comment
-		want     bool
+		// want is what AwaitingBeeComment answers, wantBee what AwaitingBee
+		// answers: it seeds the human side with the issue's creation, so an
+		// issue nobody answered is awaiting a bee even with no comments.
+		want, wantBee bool
 	}{
-		{"no comments", nil, false},
-		{"a human comment", []Comment{human(created.Add(time.Minute))}, true},
-		{"a bee answered it", []Comment{human(created.Add(time.Minute)), bee(created.Add(2 * time.Minute))}, false},
-		{"a human came back", []Comment{human(created.Add(time.Minute)), bee(created.Add(2 * time.Minute)), human(created.Add(3 * time.Minute))}, true},
+		{"no comments", nil, false, true},
+		{"a human comment", []Comment{human(created.Add(time.Minute))}, true, true},
+		{"a bee answered it", []Comment{human(created.Add(time.Minute)), bee(created.Add(2 * time.Minute))}, false, false},
+		{"a human came back", []Comment{human(created.Add(time.Minute)), bee(created.Add(2 * time.Minute)), human(created.Add(3 * time.Minute))}, true, true},
+		{"a human commented in the bee's second", []Comment{bee(tie), human(tie)}, true, true},
+		{"a bee answered within the second", []Comment{human(tie), bee(tie)}, false, false},
+		{"a human came back within the second", []Comment{human(created.Add(time.Minute)), bee(tie), human(tie)}, true, true},
+		{"a bee commented in the issue's second", []Comment{bee(created)}, false, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -410,10 +422,8 @@ func TestAwaitingBeeComment(t *testing.T) {
 			if got := i.AwaitingBeeComment(); got != c.want {
 				t.Errorf("AwaitingBeeComment() = %v, want %v", got, c.want)
 			}
-			// AwaitingBee counts the creation as human activity, so it
-			// answers true for every case but the answered one.
-			if want := c.name != "a bee answered it"; i.AwaitingBee() != want {
-				t.Errorf("AwaitingBee() = %v, want %v", i.AwaitingBee(), want)
+			if got := i.AwaitingBee(); got != c.wantBee {
+				t.Errorf("AwaitingBee() = %v, want %v", got, c.wantBee)
 			}
 		})
 	}

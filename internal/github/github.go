@@ -121,37 +121,33 @@ func (c Comment) IsBee() bool { return strings.Contains(c.Body, BeesMarker) }
 // AwaitingBee reports whether the latest human activity on an issue (its
 // creation or a human comment) is more recent than the latest bee comment,
 // i.e. a bee still owes a reply.
-func (i Issue) AwaitingBee() bool {
-	lastHuman := i.CreatedAt
-	var lastBee time.Time
-	for _, c := range i.Comments {
-		if c.IsBee() {
-			if c.CreatedAt.After(lastBee) {
-				lastBee = c.CreatedAt
-			}
-		} else if c.CreatedAt.After(lastHuman) {
-			lastHuman = c.CreatedAt
-		}
-	}
-	return lastHuman.After(lastBee)
-}
+func (i Issue) AwaitingBee() bool { return i.awaitingBee(i.CreatedAt) }
 
 // AwaitingBeeComment reports whether a bee owes a reply because a person
 // commented, not merely because the issue was created. Unlike AwaitingBee it
 // does not seed the human side with CreatedAt, so an issue nobody has
 // commented on is never awaiting a bee.
-func (i Issue) AwaitingBeeComment() bool {
-	var lastHuman, lastBee time.Time
+func (i Issue) AwaitingBeeComment() bool { return i.awaitingBee(time.Time{}) }
+
+// awaitingBee reports whether the human side had the last word on the issue,
+// starting from seedHuman: the issue's creation time counts as human activity
+// when it is non-zero, and the zero time means only comments count.
+//
+// The tie between a human and a bee comment is broken by their order in the
+// list, not by comparing their timestamps: gh reports comment times at second
+// resolution, so a person commenting in the same second as a bee would
+// otherwise lose the tie and their comment would never be answered. Comments
+// come back chronologically, so the last one in the list had the last word.
+func (i Issue) awaitingBee(seedHuman time.Time) bool {
+	human := !seedHuman.IsZero()
+	last := seedHuman
 	for _, c := range i.Comments {
-		if c.IsBee() {
-			if c.CreatedAt.After(lastBee) {
-				lastBee = c.CreatedAt
-			}
-		} else if c.CreatedAt.After(lastHuman) {
-			lastHuman = c.CreatedAt
+		if c.CreatedAt.Before(last) {
+			continue // out of order: a later comment keeps the last word
 		}
+		last, human = c.CreatedAt, !c.IsBee()
 	}
-	return lastHuman.After(lastBee)
+	return human
 }
 
 // PR is a GitHub pull request.
