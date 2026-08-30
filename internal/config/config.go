@@ -195,6 +195,10 @@ type Filter struct {
 // LabelRequired reports whether the label is part of the visibility gate.
 func (f Filter) LabelRequired() bool { return f.RequireLabel == nil || *f.RequireLabel }
 
+// BuiltinMCPServer is the name of the MCP server bees adds to every session
+// (`bees mcp serve`). The name is reserved: bees.toml may not define it.
+const BuiltinMCPServer = "bees"
+
 // MCPServer configures one MCP server. Either Command (stdio) or URL (http/sse)
 // must be set.
 type MCPServer struct {
@@ -825,6 +829,9 @@ func (c *Config) Validate() error {
 			errs = append(errs, fmt.Sprintf("%s.merge_method must be squash, merge or rebase", scope))
 		}
 		for name, m := range rs.MCP {
+			if name == BuiltinMCPServer {
+				errs = append(errs, fmt.Sprintf("%s.mcp.%s: mcp server name %q is reserved for the built-in server", scope, name, BuiltinMCPServer))
+			}
 			if m.Command == "" && m.URL == "" {
 				errs = append(errs, fmt.Sprintf("%s.mcp.%s: either command or url is required", scope, name))
 			}

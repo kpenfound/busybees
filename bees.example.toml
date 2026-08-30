@@ -125,6 +125,8 @@ label = "bees"
 # MCP servers available to every role, one table per server. stdio servers
 # use command/args/env; remote servers use url (+ type = "http" | "sse",
 # headers). $VARS in env and headers are expanded from the bees environment.
+# Every session also gets the built-in "bees" server (mail, issues, outcome);
+# the name "bees" is reserved and cannot be configured here.
 #[global.mcp.github]
 #command = "npx"
 #args = ["-y", "@modelcontextprotocol/server-github"]

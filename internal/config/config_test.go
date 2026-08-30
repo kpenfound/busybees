@@ -171,6 +171,22 @@ func TestValidation(t *testing.T) {
 	}
 }
 
+// The built-in server's name is reserved: a bees.toml entry would silently
+// replace the tools every session depends on.
+func TestReservedMCPServerName(t *testing.T) {
+	for _, scope := range []string{"global", "roles.developer"} {
+		body := "version = 1\n[project]\nrepo = \"a/b\"\n[" + scope + ".mcp." + BuiltinMCPServer + "]\ncommand = \"mine\"\n"
+		_, err := Load(writeConfig(t, body))
+		if err == nil {
+			t.Fatalf("%s: expected an error", scope)
+		}
+		want := `mcp server name "bees" is reserved for the built-in server`
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: error = %v, want it to mention %s", scope, err, want)
+		}
+	}
+}
+
 func TestRetryPolicy(t *testing.T) {
 	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"))
 	if err != nil {
