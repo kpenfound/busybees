@@ -25,6 +25,15 @@ _Nothing new was merged; do a general exploratory pass._
 _None._
 {{end}}
 
+## Mail for you ({{len .Inbox}})
+{{if .Inbox}}
+{{- range .Inbox}}
+{{formatMail .}}
+{{- end}}
+{{else}}
+_No new mail._
+{{end}}
+
 ## Your notes
 
 {{if .Notes}}{{.Notes}}{{else}}_Empty._{{end}}
