@@ -20,8 +20,10 @@ const HumanSender = "human"
 // developer for that PR, and — when the issue was parked in approved —
 // moves it back to ready so a developer worker picks it up.
 //
-// Bee comments are recognised by github.BeesMarker, because humans and bees
-// share one GitHub account.
+// Bee comments are recognised by github.BeeRole, because humans and bees
+// share one GitHub account: a comment is a bee's only when its last line is
+// the marker, so a person quoting the bee they answer still reaches the
+// developer.
 func (s *Scheduler) deliverHumanFeedback(ctx context.Context, snap *snapshot) error {
 	var errs []string
 	for _, pr := range snap.prs {

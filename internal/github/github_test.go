@@ -94,7 +94,7 @@ func TestPRActivity(t *testing.T) {
 		case strings.Contains(path, "/pulls/"):
 			return []byte(`[[{"id":3,"user":{"login":"h"},"body":"old","path":"a.go","line":2,"created_at":"` + ts(-10) + `"},
 				{"id":4,"user":{"login":"h"},"body":"rename","path":"a.go","line":9,"created_at":"` + ts(4) + `"}],
-				[{"id":5,"user":{"login":"h"},"body":"ack <!-- bees:developer -->","path":"a.go","line":9,"created_at":"` + ts(6) + `"}]]`), nil
+				[{"id":5,"user":{"login":"h"},"body":"ack\n\n<!-- bees:developer -->","path":"a.go","line":9,"created_at":"` + ts(6) + `"}]]`), nil
 		default:
 			return []byte(`[[{"id":6,"user":{"login":"h"},"body":"thanks","created_at":"` + ts(1) + `"}]]`), nil
 		}
@@ -391,7 +391,13 @@ func TestAwaitingBeeComment(t *testing.T) {
 		return Comment{Author: Author{Login: "kyle"}, Body: "what about X?", CreatedAt: at}
 	}
 	bee := func(at time.Time) Comment {
-		return Comment{Author: Author{Login: "kyle"}, Body: "answered " + BeesMarker, CreatedAt: at}
+		return Comment{Author: Author{Login: "kyle"}, Body: "answered that.\n\n<!-- bees:reviewer -->", CreatedAt: at}
+	}
+	// A person replying to a bee quotes the comment they are answering,
+	// marker and all: the marker is in the body but it is not the last
+	// line, so the comment is still a person's and still needs an answer.
+	quoting := func(at time.Time) Comment {
+		return Comment{Author: Author{Login: "kyle"}, Body: "Replying to the bot:\n> looks good to me\n> <!-- bees:reviewer -->\n\nActually please hold off on merging.", CreatedAt: at}
 	}
 	// gh reports comment times at second resolution, so two comments written
 	// in the same second come back with the same timestamp and only their
@@ -422,6 +428,8 @@ func TestAwaitingBeeComment(t *testing.T) {
 		// that does not get the last word off it.
 		{"comments out of order", []Comment{human(created.Add(2 * time.Minute)), bee(created.Add(time.Minute))}, true, true},
 		{"a bee comment older than the issue", []Comment{bee(created.Add(-time.Minute))}, false, true},
+		// A quoted marker is not authorship: the person had the last word.
+		{"a human quoted the bee they answer", []Comment{human(created.Add(time.Minute)), bee(created.Add(2 * time.Minute)), quoting(created.Add(3 * time.Minute))}, true, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -431,6 +439,40 @@ func TestAwaitingBeeComment(t *testing.T) {
 			}
 			if got := i.AwaitingBee(); got != c.wantBee {
 				t.Errorf("AwaitingBee() = %v, want %v", got, c.wantBee)
+			}
+		})
+	}
+}
+
+// TestBeeRole pins the positional rule: only a body whose last non-empty line
+// is a complete marker is a bee's, so quoting one is not authorship.
+func TestBeeRole(t *testing.T) {
+	cases := []struct {
+		name, body, role string
+	}{
+		{"plain text", "looks fine to me", ""},
+		{"a bee comment", "Done.\n\n<!-- bees:developer -->", "developer"},
+		{"nothing but a marker", "<!-- bees:qa -->", "qa"},
+		{"trailing newlines after the marker", "Done.\n\n<!-- bees:developer -->\n\n\n", "developer"},
+		{"a marker quoted mid-body", "> <!-- bees:reviewer -->\n\nplease hold off", ""},
+		{"a quoted marker on the last line", "answering you:\n\n> <!-- bees:reviewer -->", ""},
+		{"a bee quoting another role", "> <!-- bees:developer -->\n\nmine\n\n<!-- bees:qa -->", "qa"},
+		{"an unterminated marker", "hi\n\n<!-- bees:qa >", ""},
+		{"a marker with no role", "hi\n\n<!-- bees: -->", ""},
+		{"a marker with text after it on its line", "answered <!-- bees:reviewer -->", ""},
+		{"an empty body", "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			role, ok := BeeRole(c.body)
+			if ok != (c.role != "") || role != c.role {
+				t.Errorf("BeeRole(%q) = %q, %v, want %q", c.body, role, ok, c.role)
+			}
+			if got := (Comment{Body: c.body}).IsBee(); got != (c.role != "") {
+				t.Errorf("Comment.IsBee() = %v, want %v", got, c.role != "")
+			}
+			if got := (Activity{Body: c.body}).IsBee(); got != (c.role != "") {
+				t.Errorf("Activity.IsBee() = %v, want %v", got, c.role != "")
 			}
 		})
 	}

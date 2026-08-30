@@ -204,7 +204,7 @@ func TestABeeCommentOnAProposalDoesNotWakeTheProductManager(t *testing.T) {
 	seedFeature(h, 6, "Bee-written idea", now.Add(-time.Hour), "bees:proposal")
 	h.gh.issues[6].Comments = []github.Comment{
 		{Author: github.Author{Login: "kyle"}, Body: "what about X?", CreatedAt: now.Add(-2 * time.Minute)},
-		{Author: github.Author{Login: "kyle"}, Body: "X is out of scope <!-- bees:product_manager -->", CreatedAt: now.Add(-time.Minute)},
+		{Author: github.Author{Login: "kyle"}, Body: "X is out of scope\n\n<!-- bees:product_manager -->", CreatedAt: now.Add(-time.Minute)},
 	}
 	if err := h.store.SaveRole(config.RoleProductManager, state.RoleState{LastRun: now.Add(-time.Minute)}); err != nil {
 		t.Fatal(err)
@@ -231,7 +231,7 @@ func TestApprovingAProposalIsNoticed(t *testing.T) {
 	// A bee comment newer than every human one: the feature is not "fresh"
 	// by any comment-based measure, before or after the approval.
 	h.gh.issues[6].Comments = []github.Comment{{Author: github.Author{Login: "kyle"},
-		Body: "refined this <!-- bees:product_manager -->", CreatedAt: now.Add(-time.Hour)}}
+		Body: "refined this\n\n<!-- bees:product_manager -->", CreatedAt: now.Add(-time.Hour)}}
 	// The product manager ran a minute ago (product_manager_interval is an
 	// hour), so only the approval can bring the feature back to it.
 	if err := h.store.SaveRole(config.RoleProductManager, state.RoleState{LastRun: now.Add(-time.Minute)}); err != nil {

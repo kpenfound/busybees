@@ -115,8 +115,10 @@ type Comment struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
-// IsBee reports whether the comment was written by a bees role.
-func (c Comment) IsBee() bool { return strings.Contains(c.Body, BeesMarker) }
+// IsBee reports whether the comment was written by a bees role. The rule is
+// positional — see BeeRole — so a person quoting a bee's marker is still a
+// person.
+func (c Comment) IsBee() bool { _, ok := BeeRole(c.Body); return ok }
 
 // AwaitingBee reports whether the human side had the last word on an issue —
 // its creation or a human comment, with a tie against a bee comment broken by
@@ -690,6 +692,44 @@ func (c *Client) Comment(ctx context.Context, number int, body string) error {
 // made with the same GitHub account.
 const BeesMarker = "<!-- bees:"
 
+// BeeRole reports the role that wrote a comment body, and whether it was a
+// bee at all.
+//
+// The rule is positional, not a substring test: a body is a bee's iff its
+// last non-empty line is, after trimming surrounding whitespace, exactly a
+// complete marker "<!-- bees:<role> -->". Every path that posts a bee comment
+// puts the marker there — the comment tool appends it to the end of the body,
+// and every role prompt tells the role its comment must end with that line —
+// so a marker anywhere else in a body is a person quoting a bee they are
+// replying to, and quoting is not authorship. A bee comment whose marker is
+// not last is that path's bug, not a case to tolerate here.
+//
+// In doubt this reports no role: a bee comment misread as a person's costs
+// one extra session, while a person's comment misread as a bee's is silently
+// dropped and nobody ever answers it.
+func BeeRole(body string) (role string, ok bool) {
+	lines := strings.Split(body, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue // trailing blank lines are not the marker's line
+		}
+		role, ok = strings.CutPrefix(line, BeesMarker)
+		if !ok {
+			return "", false
+		}
+		role, ok = strings.CutSuffix(role, "-->")
+		if !ok {
+			return "", false // unterminated: not a marker
+		}
+		if role = strings.TrimSpace(role); role == "" {
+			return "", false
+		}
+		return role, true
+	}
+	return "", false
+}
+
 // Activity is one human-visible event on a pull request: a review, an
 // inline review comment or a conversation comment.
 type Activity struct {
@@ -704,8 +744,10 @@ type Activity struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// IsBee reports whether the activity was written by a bees role.
-func (a Activity) IsBee() bool { return strings.Contains(a.Body, BeesMarker) }
+// IsBee reports whether the activity was written by a bees role. The rule is
+// positional — see BeeRole — so a person quoting a bee's marker is still a
+// person, and their feedback still reaches the developer.
+func (a Activity) IsBee() bool { _, ok := BeeRole(a.Body); return ok }
 
 // PRActivity returns reviews and comments on a PR created after since,
 // oldest first, excluding those written by bees roles and empty approvals.
