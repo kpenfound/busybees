@@ -183,7 +183,7 @@ func TestViewTagsMirrorTOMLTags(t *testing.T) {
 // TestViewCoversTemplateKeys walks every key the bees.toml template can set and
 // checks `bees config show` prints it under that name.
 func TestViewCoversTemplateKeys(t *testing.T) {
-	text, err := Template(TemplateData{Repo: "acme/widgets", Assignee: "@me", Explicit: true})
+	text, err := Template(TemplateData{Repo: "acme/widgets", Assignee: "@me", ExplicitRepo: true, ExplicitBranch: true})
 	if err != nil {
 		t.Fatal(err)
 	}
