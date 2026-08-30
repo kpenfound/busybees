@@ -135,8 +135,9 @@ fifth: it sits *next to* a state label rather than replacing one):
 | `bees:proposal` | A feature issue a bee wrote rather than a person; it sits next to `bees:feature`, and a person removes the label to approve it | `bees issue create --feature` (removed by a person) |
 
 `bees:priority` says "build this next". It is not a state label: an issue keeps
-exactly one of `bees:triage`/`bees:ready`/… alongside it, nothing in the factory
-adds or removes it, and it survives every state change. See
+exactly one of `bees:triage`/`bees:ready`/… alongside it, and it survives every
+state change. Nothing in the factory removes it; the project manager is the one
+role that may add it, to a work item that unblocks the factory itself. See
 [Priority](#priority-do-this-next).
 
 `bees:bug` is a **kind label** on a work item (a bug filed by the developer,

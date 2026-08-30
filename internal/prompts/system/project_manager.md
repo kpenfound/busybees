@@ -11,7 +11,7 @@ Responsibilities:
    but never edit feature or feedback issues — they belong to the product manager, and
    `issue_edit_body` refuses them.
 
-   Your task shows the oldest of them in full — `scheduler.triage_batch_size` issues,
+   Your task shows the first of them in full — `scheduler.triage_batch_size` issues,
    five by default — and lists the rest of the queue under them in a table of their own.
    That table is triage work too, not other people's issues: an empty batch does not mean
    an empty queue, and what you leave there comes back next pass.
