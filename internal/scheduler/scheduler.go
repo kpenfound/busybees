@@ -74,6 +74,10 @@ type Scheduler struct {
 	nextPoll time.Time
 	lastErr  string
 	queues   map[string]int
+	waiting  map[int][]int
+	// warnedCycles remembers the issues we already warned about, so a
+	// dependency cycle is reported once per process rather than per poll.
+	warnedCycles map[int]bool
 	// readySizes counts the ready queue by size label ("xs", "s", ...);
 	// issues with no size label are counted under "".
 	readySizes map[string]int
@@ -102,22 +106,24 @@ func New(d Deps) (*Scheduler, error) {
 		q.Label = f.Label
 	}
 	s := &Scheduler{
-		cfg:        d.Config,
-		labels:     d.Config.Labels(),
-		query:      q,
-		gh:         d.GitHub,
-		mail:       d.Mail,
-		runner:     d.Runner,
-		ws:         d.Workspaces,
-		store:      d.Store,
-		log:        d.Logger,
-		now:        d.Now,
-		owned:      map[int]*state.Worker{},
-		running:    map[string]bool{},
-		backoff:    map[string]time.Time{},
-		queues:     map[string]int{},
-		readySizes: map[string]int{},
-		slots:      make(chan struct{}, d.Config.Scheduler.MaxDevelopers),
+		cfg:          d.Config,
+		labels:       d.Config.Labels(),
+		query:        q,
+		gh:           d.GitHub,
+		mail:         d.Mail,
+		runner:       d.Runner,
+		ws:           d.Workspaces,
+		store:        d.Store,
+		log:          d.Logger,
+		now:          d.Now,
+		owned:        map[int]*state.Worker{},
+		running:      map[string]bool{},
+		backoff:      map[string]time.Time{},
+		queues:       map[string]int{},
+		waiting:      map[int][]int{},
+		warnedCycles: map[int]bool{},
+		readySizes:   map[string]int{},
+		slots:        make(chan struct{}, d.Config.Scheduler.MaxDevelopers),
 	}
 	for i := 0; i < d.Config.Scheduler.MaxDevelopers; i++ {
 		s.slots <- struct{}{}
@@ -212,6 +218,12 @@ type snapshot struct {
 	features   []github.Issue // bees:feature issues, owned by the product manager
 	prByBranch map[string]github.PR
 	prByNumber map[int]github.PR
+	// open holds every issue number in the snapshot: an issue that is
+	// closed, or invisible to the filter, is not "open" for dependencies.
+	open map[int]bool
+	// waiting maps a ready issue to the blockers it declares that are still
+	// open. A non-empty entry holds the issue back from dispatch.
+	waiting map[int][]int
 }
 
 func (s *Scheduler) poll(ctx context.Context) (*snapshot, error) {
@@ -236,7 +248,14 @@ func (s *Scheduler) poll(ctx context.Context) (*snapshot, error) {
 // touch GitHub and never mutates its arguments, so the lists cached from the
 // last poll can be classified again on every local pass.
 func (s *Scheduler) classify(issues []github.Issue, prs []github.PR) *snapshot {
-	snap := &snapshot{issues: issues, prs: prs, byState: map[string][]github.Issue{}, prByBranch: map[string]github.PR{}, prByNumber: map[int]github.PR{}}
+	snap := &snapshot{issues: issues, prs: prs, byState: map[string][]github.Issue{},
+		prByBranch: map[string]github.PR{}, prByNumber: map[int]github.PR{},
+		open: map[int]bool{}, waiting: map[int][]int{}}
+	byNumber := map[int]github.Issue{}
+	for _, i := range issues {
+		snap.open[i.Number] = true
+		byNumber[i.Number] = i
+	}
 	for _, i := range issues {
 		// Clip the label slice so an append by a caller (reconcile) cannot
 		// write into the cached issue's backing array.
@@ -256,6 +275,7 @@ func (s *Scheduler) classify(issues []github.Issue, prs []github.PR) *snapshot {
 	for st := range snap.byState {
 		sort.Slice(snap.byState[st], func(a, b int) bool { return snap.byState[st][a].CreatedAt.Before(snap.byState[st][b].CreatedAt) })
 	}
+	s.fillWaiting(snap, byNumber)
 	for _, p := range prs {
 		p.Labels = p.Labels[:len(p.Labels):len(p.Labels)]
 		snap.prByBranch[p.HeadRefName] = p
@@ -275,6 +295,7 @@ const queueNoState = "no_state"
 func (s *Scheduler) setQueues(snap *snapshot) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.waiting = snap.waiting
 	s.queues = map[string]int{}
 	for st, list := range snap.byState {
 		if len(list) == 0 {
@@ -536,7 +557,9 @@ func relabel(labels []github.Label, from, to string) []github.Label {
 // worker picking its issue back up after a restart must not be starved.
 // The ready queue behind them is ordered by scheduler.dispatch_order, and a
 // bees:size/l issue waits while scheduler.max_large_in_flight of them are
-// already being worked on.
+// already being worked on. A ready issue whose declared blockers are still
+// open is skipped without consuming a pool slot; in-progress and review
+// candidates are resumptions and are never held back.
 //
 // On a local pass (local) the snapshot comes from the last poll and can be
 // stale: an issue a worker has since finished, a developer parked in
@@ -550,7 +573,14 @@ func (s *Scheduler) dispatchDevelopers(ctx context.Context, snap *snapshot, loca
 	var candidates []github.Issue
 	candidates = append(candidates, snap.byState["in-progress"]...)
 	candidates = append(candidates, snap.byState["review"]...)
-	ready := append([]github.Issue(nil), snap.byState["ready"]...)
+	var ready []github.Issue
+	for _, i := range snap.byState["ready"] {
+		if blockers := snap.waiting[i.Number]; len(blockers) > 0 {
+			s.log.Info("issue waiting on dependencies", "issue", i.Number, "blocked_by", blockers)
+			continue
+		}
+		ready = append(ready, i)
+	}
 	sortReady(ready, s.cfg.Scheduler.DispatchOrder, s.sizeOf)
 	candidates = append(candidates, ready...)
 	largeLimit := s.cfg.Scheduler.LargeInFlight()
@@ -788,6 +818,12 @@ func (s *Scheduler) writeStatus() {
 	}
 	for k, v := range s.queues {
 		st.Queues[k] = v
+	}
+	if len(s.waiting) > 0 {
+		st.WaitingOnDeps = make(map[int][]int, len(s.waiting))
+		for k, v := range s.waiting {
+			st.WaitingOnDeps[k] = append([]int(nil), v...)
+		}
 	}
 	st.ReadySizes = map[string]int{}
 	for k, v := range s.readySizes {

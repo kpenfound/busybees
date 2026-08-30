@@ -435,7 +435,10 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 }
 
 // queuesText renders the queue counts of a status, with the ready queue
-// broken down by size ("ready  4  (xs 1, s 2, m 1)").
+// broken down by size ("ready  4  (xs 1, s 2, m 1)") and, when dependencies
+// are holding ready issues back, how many and why. The ready row carries the
+// held count as a suffix so the number of issues a developer can actually pick
+// up is never overstated.
 func queuesText(st state.Status) string {
 	keys := make([]string, 0, len(st.Queues))
 	for k := range st.Queues {
@@ -446,11 +449,34 @@ func queuesText(st state.Status) string {
 	for _, k := range keys {
 		fmt.Fprintf(&b, "  %-14s %d", k, st.Queues[k])
 		if k == "ready" {
+			var notes []string
 			if sizes := readySizesText(st.ReadySizes); sizes != "" {
-				fmt.Fprintf(&b, "  (%s)", sizes)
+				notes = append(notes, sizes)
+			}
+			if n := len(st.WaitingOnDeps); n > 0 {
+				notes = append(notes, fmt.Sprintf("%d waiting on deps", n))
+			}
+			if len(notes) > 0 {
+				fmt.Fprintf(&b, "  (%s)", strings.Join(notes, ", "))
 			}
 		}
 		b.WriteString("\n")
+	}
+	if len(st.WaitingOnDeps) == 0 {
+		return b.String()
+	}
+	held := make([]int, 0, len(st.WaitingOnDeps))
+	for n := range st.WaitingOnDeps {
+		held = append(held, n)
+	}
+	sort.Ints(held)
+	b.WriteString("\nwaiting on dependencies:\n")
+	for _, n := range held {
+		refs := make([]string, 0, len(st.WaitingOnDeps[n]))
+		for _, x := range st.WaitingOnDeps[n] {
+			refs = append(refs, fmt.Sprintf("#%d", x))
+		}
+		fmt.Fprintf(&b, "  #%-3d blocked by %s\n", n, strings.Join(refs, ", "))
 	}
 	return b.String()
 }

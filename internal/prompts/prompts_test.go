@@ -28,6 +28,7 @@ func sample() Data {
 		Progress:      map[int]github.SubIssueSummary{12: {Total: 4, Completed: 2}},
 		Parent:        &github.Parent{Number: 12, Title: "Exports"},
 		Parents:       map[int]github.Parent{5: {Number: 12, Title: "Exports"}},
+		Blockers:      map[int][]int{5: {37}},
 		FreshFeatures: []github.Issue{{Number: 13, Title: "Search", Body: "find things", Author: github.Author{Login: "kyle"}}},
 		Feedback:      []github.Issue{{Number: 9, Title: "Dark mode please", Body: "would be nice", Author: github.Author{Login: "kyle"}, Comments: []github.Comment{{Author: github.Author{Login: "kyle"}, Body: "also on mobile"}}}},
 		MaxSize:       "l",
@@ -79,6 +80,21 @@ func TestRoleSpecifics(t *testing.T) {
 	pjm, _ := Task(config.RoleProjectManager, sample())
 	if !strings.Contains(pjm, "parent feature: #12 Exports") {
 		t.Fatalf("project manager task missing parent: %s", pjm)
+	}
+	// Declared, still-open dependencies: on the triage header line and as a
+	// column of the other-issues table.
+	if !strings.Contains(pjm, "blocked by: #37 (open)") {
+		t.Fatalf("project manager task missing blockers: %s", pjm)
+	}
+	if !strings.Contains(pjm, "| # | State | Kind | Blocked by | Milestone | Title |") ||
+		!strings.Contains(pjm, "| 5 | triage | bug | #37 | - | Other |") {
+		t.Fatalf("project manager task missing blocked-by column: %s", pjm)
+	}
+	noDeps := sample()
+	noDeps.Blockers = nil
+	pjm, _ = Task(config.RoleProjectManager, noDeps)
+	if strings.Contains(pjm, "blocked by:") || !strings.Contains(pjm, "| 5 | triage | bug | - | - | Other |") {
+		t.Fatalf("project manager task without blockers: %s", pjm)
 	}
 	if !strings.Contains(dev, "please fix") || !strings.Contains(dev, "`status: pr-updated`, `pr: 9`") {
 		t.Fatalf("developer task: %s", dev)

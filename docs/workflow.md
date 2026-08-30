@@ -294,6 +294,40 @@ direction. Labels are also yours to move: relabel to `bees:triage` to send an
 issue back for refinement, or remove the `bees` label to take it out of the
 factory entirely.
 
+## Dependencies
+
+A work item can declare what has to land first. Put a line anywhere in the
+body:
+
+```
+Blocked by #37
+```
+
+`blocked by` and `depends on` are both recognised, case-insensitively, with an
+optional colon and Markdown emphasis, and several numbers separated by commas,
+spaces or `and` (`Depends on: #3, #4 and #5`). The phrase without a number
+(`blocked by the missing tests`) declares nothing. The `issue_create` tool's
+`blocked_by` (or `bees issue create --blocked-by 37`) writes the line for you.
+
+The scheduler reads the line on every poll and will not hand the issue to a
+developer while any of its blockers is **open** — meaning *present in the last
+poll*: an issue that is closed, or that the factory's filter does not see,
+blocks nothing. Both work items and feature issues count.
+
+The label does not change: the issue stays `bees:ready`, `bees status` explains
+why it is not moving, and it becomes dispatchable on the first poll after its
+blocker closes. Holding an issue back never costs a developer pool slot, so the
+rest of the queue keeps moving; issues that are already `bees:in-progress` or
+`bees:review` are resumptions and are never held back.
+
+If the declarations form a cycle (`#1` blocked by `#2` blocked by `#1`), the
+scheduler ignores the dependencies of the issues in it — otherwise nothing
+would ever be built — and logs a warning once per issue.
+
+The project manager sees the open blockers of every work item in its prompt and
+is told to write the line rather than park a dependent item in triage. The
+product manager uses `blocked_by` when it breaks a feature down.
+
 ## Development
 
 When a developer worker claims a `bees:ready` issue it:

@@ -4,7 +4,7 @@
 {{if .TriageIssues}}
 {{- range .TriageIssues}}
 ### #{{.Number}}: {{.Title}}
-- author: {{.Author.Login}} · labels: {{labels .Labels}} · milestone: {{milestone .}} · parent feature: {{parentOf $.Parents .Number}} · {{.URL}}
+- author: {{.Author.Login}} · labels: {{labels .Labels}} · milestone: {{milestone .}} · parent feature: {{parentOf $.Parents .Number}}{{$b := blockedBy $.Blockers .Number}}{{if ne $b "-"}} · blocked by: {{$b}} (open){{end}} · {{.URL}}
 
 {{.Body}}
 {{end}}
@@ -23,10 +23,10 @@ _No new mail._
 
 ## Other open factory issues
 {{if .Issues}}
-| # | State | Kind | Milestone | Title |
-|---|---|---|---|---|
+| # | State | Kind | Blocked by | Milestone | Title |
+|---|---|---|---|---|---|
 {{- range .Issues}}
-| {{.Number}} | {{stateLabel .Labels}} | {{kindLabel .Labels}} | {{milestone .}} | {{.Title}} |
+| {{.Number}} | {{stateLabel .Labels}} | {{kindLabel .Labels}} | {{blockedBy $.Blockers .Number}} | {{milestone .}} | {{.Title}} |
 {{- end}}
 {{else}}
 _None._

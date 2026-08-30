@@ -46,11 +46,22 @@ func (s *Scheduler) runProjectManager(ctx context.Context, snap *snapshot) error
 			others = append(others, i)
 		}
 	}
+	// Open blockers of every visible work item, so the prompt can show what
+	// is waiting on what.
+	blockers := map[int][]int{}
+	for _, i := range snap.issues {
+		if github.HasLabel(i.Labels, s.labels.Feature) || github.HasLabel(i.Labels, s.labels.Feedback) {
+			continue
+		}
+		if w := waitingOn(i, snap.open); len(w) > 0 {
+			blockers[i.Number] = w
+		}
+	}
 	inbox, err := s.inbox(config.RoleProjectManager, 0, 0)
 	if err != nil {
 		return err
 	}
-	return s.runSingleton(ctx, config.RoleProjectManager, prompts.Data{TriageIssues: full, Issues: others, Inbox: inbox, PRs: snap.prs, Parents: parents})
+	return s.runSingleton(ctx, config.RoleProjectManager, prompts.Data{TriageIssues: full, Issues: others, Inbox: inbox, PRs: snap.prs, Parents: parents, Blockers: blockers})
 }
 
 // ---- product manager -------------------------------------------------------

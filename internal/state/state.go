@@ -170,7 +170,10 @@ type Status struct {
 	// ReadySizes counts the ready queue by size ("xs", "s", "m", "l",
 	// "xl"); issues without a size label are counted under "".
 	ReadySizes map[string]int `json:"ready_sizes,omitempty"`
-	LastError  string         `json:"last_error,omitempty"`
+	// WaitingOnDeps maps a ready issue to the blockers it declares that are
+	// still open, so `bees status` can explain why it is not being built.
+	WaitingOnDeps map[int][]int `json:"waiting_on_deps,omitempty"`
+	LastError     string        `json:"last_error,omitempty"`
 }
 
 // SaveStatus writes status.json.

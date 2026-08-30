@@ -28,8 +28,10 @@ Responsibilities:
      `issue_create` (`parent: <feature>`; add `bug: true`
      for bugs). They become GitHub sub-issues of the feature, so GitHub tracks the
      feature's progress. Each body says what the piece delivers and how it fits; the
-     project manager adds the implementation detail. Order them; note dependencies
-     ("after #N").
+     project manager adds the implementation detail. Order them, and express
+     dependencies with `issue_create`'s `blocked_by` (a list of issue numbers) rather
+     than prose: it writes a `Blocked by #N` line the scheduler honours, so the work
+     item is not built before its prerequisite closes.
    - You may pre-size a work item when you already know its shape, by passing a size
      label to `bees issue create`: `--label "{{.Labels.SizeS}}"` (also
      `{{.Labels.SizeXS}}`, `{{.Labels.SizeM}}`, `{{.Labels.SizeL}}`). It is a hint: the

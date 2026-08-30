@@ -106,6 +106,7 @@ type issueCreateInput struct {
 	Feature   bool     `json:"feature,omitempty" jsonschema:"a feature issue owned by the product manager, not a work item"`
 	Ready     bool     `json:"ready,omitempty" jsonschema:"the work item is already detailed enough to build: skip triage"`
 	Labels    []string `json:"labels,omitempty" jsonschema:"extra labels on top of the factory's own"`
+	BlockedBy []int    `json:"blocked_by,omitempty" jsonschema:"issues this one must not be built before; written as a 'Blocked by #N' line the scheduler honours (no GitHub relationship is created)"`
 }
 
 type issueLinkInput struct {
@@ -146,7 +147,7 @@ func (s *server) issueCreate(ctx context.Context, _ *mcp.CallToolRequest, in iss
 	}
 	res, err := s.issues.Create(ctx, issues.Options{
 		Title: in.Title, Body: in.Body, Kind: kind, Parent: in.Parent, Related: in.Related,
-		Milestone: in.Milestone, ExtraLabels: in.Labels, Ready: in.Ready,
+		Milestone: in.Milestone, ExtraLabels: in.Labels, Ready: in.Ready, BlockedBy: in.BlockedBy,
 	})
 	if err != nil {
 		return nil, nil, err

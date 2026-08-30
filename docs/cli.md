@@ -219,6 +219,21 @@ The yes/no is computed when you run the command, so it is right even when the
 scheduler is stopped; `in_work_hours` in `--json` is the scheduler's own record
 from its last pass.
 
+Ready issues held back by an open [dependency](workflow.md#dependencies) are counted
+on the `ready` row and listed below the queues:
+
+```
+queues:
+  ready          4  (xs 1, s 1, 2 waiting on deps)
+
+waiting on dependencies:
+  #40  blocked by #37
+  #46  blocked by #44
+```
+
+`--json` carries the same information as `waiting_on_deps` (issue number → open
+blockers).
+
 ## The mailbox
 
 Roles talk to each other only through the local mailbox in `<state_dir>/mail`. The
@@ -311,6 +326,7 @@ Creates an issue the way the factory wants it. Roles are told to use this instea
 | `--bug` | Bug work item (`bees:bug`). |
 | `--feature` | Feature issue for the product manager (`bees:feature`, no state label). |
 | `--ready` | Work item is already detailed: `bees:ready` instead of `bees:triage`. |
+| `--blocked-by N` | Repeatable. Prefixes the body with a `Blocked by #N` line, so the scheduler does not build the issue while `N` is open (see [Dependencies](workflow.md#dependencies)). No GitHub dependency relationship is created. |
 | `--label L` | Extra label (repeatable). |
 
 What it always does: adds the visibility label and, when `filter.assignee` is set, the
@@ -325,6 +341,7 @@ bees issue create --parent 12 --title "Export as CSV" --body-file body.md      #
 bees issue create --bug --related 34 --title "Crash on empty input" --body "…"  # bug in #34's milestone
 bees issue create --feature --related 40 --title "Search" --body-file body.md   # feature from feedback #40
 bees issue create --title "Fix typo in README" --ready                          # fast-tracked work item
+bees issue create --parent 12 --blocked-by 37 --title "Order the queue" --body-file body.md  # waits for #37
 ```
 
 ### `bees issue link --parent N --child M`
@@ -375,7 +392,7 @@ command do exactly the same thing. Claude Code exposes the tools as
 |---|---|---|
 | `mail_send` | `to`, `subject`, `body`, optional `issue`, `pr`, `in_reply_to` | `bees mail send` |
 | `mail_list` | optional `unread`, `issue`, `pr` | `bees mail list --full` |
-| `issue_create` | `title`, `body`, optional `parent`, `related`, `milestone`, `bug`, `feature`, `ready`, `labels` | `bees issue create` |
+| `issue_create` | `title`, `body`, optional `parent`, `related`, `milestone`, `bug`, `feature`, `ready`, `labels`, `blocked_by` | `bees issue create` |
 | `issue_link` | `parent`, `child` | `bees issue link` |
 | `done` | `status`, optional `note`, `pr`, `issue` | `bees done` |
 

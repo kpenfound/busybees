@@ -90,3 +90,23 @@ func TestCreateKinds(t *testing.T) {
 		t.Fatal("title required")
 	}
 }
+
+func TestCreateBlockedBy(t *testing.T) {
+	gh, calls := fake(t, "")
+	labels := config.LabelsFor("bees")
+	_, err := Create(context.Background(), gh, config.Filter{Label: "bees"}, labels,
+		Options{Title: "t", Body: "the real body", Kind: KindTask, BlockedBy: []int{12, 15}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(*calls, "\n")
+	if !strings.Contains(joined, "--body Blocked by #12, #15\n\nthe real body") {
+		t.Fatalf("body not prefixed:\n%s", joined)
+	}
+	if got := blockedByBody(nil, "the real body"); got != "the real body" {
+		t.Fatalf("no blockers must leave the body alone: %q", got)
+	}
+	if got := blockedByBody([]int{12, 15}, "b"); !strings.HasPrefix(got, "Blocked by #12, #15\n\n") {
+		t.Fatalf("body: %q", got)
+	}
+}

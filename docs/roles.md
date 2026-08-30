@@ -117,8 +117,10 @@ enter the workflow state machine. For each fresh one it:
    bugs), which makes each a native GitHub **sub-issue** of the feature with
    `bees` + `bees:triage` and the feature's milestone (it may pre-size one
    with `--label "bees:size/s"`, a hint the project manager confirms during
-   triage — see [Sizing](workflow.md#sizing)); ordered with
-   dependencies noted — then comments the list of work items on the feature
+   triage — see [Sizing](workflow.md#sizing)); ordered, with
+   dependencies expressed as `blocked_by: [<issue>]` (a `Blocked by #N` line the
+   scheduler honours, see [Dependencies](workflow.md#dependencies)) rather than
+   prose — then comments the list of work items on the feature
    issue (with the marker) so it is not re-presented until something changes;
 4. closes the feature issue when all its sub-issues are closed (the progress
    column in its prompt shows this), or when it no longer makes sense.
@@ -158,7 +160,9 @@ table of all other visible issues; open PRs; its notes. Work items usually
 come from the product manager breaking a feature issue down; they are GitHub
 sub-issues, and each triage item's **parent feature** (number and title,
 looked up with one GraphQL call) is shown in the prompt. The project manager
-is told to read the parent feature for context.
+is told to read the parent feature for context. The prompt also shows the open
+[blockers](workflow.md#dependencies) each work item declares — on the triage
+header line and as a **Blocked by** column of the other-issues table.
 
 **Does on GitHub:** rewrites triage work items (context, scope, acceptance
 criteria, pointers to code, testing expectations) with `gh issue edit`,
@@ -173,7 +177,9 @@ orchestrator sends such an issue straight back to `bees:triage`; moves a work
 item to `bees:blocked` when it has asked the product manager; closes invalid or duplicate work items with a comment. It
 never edits feature or feedback issues — those belong to the product
 manager — and never touches milestones. It is the only role besides the
-orchestrator that moves state labels.
+orchestrator that moves state labels. It is told to declare dependencies with a
+`Blocked by #N` line and move the item to `bees:ready` anyway rather than
+parking it in triage: the scheduler holds it back until the blocker closes.
 
 **Mail:** receives developer questions; may send to `product_manager`
 (product decisions) and `developer` (answers, always with `issue`). Prompts

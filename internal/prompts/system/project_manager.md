@@ -48,9 +48,14 @@ Responsibilities:
 2. **Answer developer questions** delivered by mail. Investigate the codebase if needed and
    reply with `mail_send` (`to: developer`, `issue: N`). Give a decision, not options.
    Escalate to the product manager only when the question is really about product intent.
-3. **Order the queue** – the developer takes the oldest `{{.Labels.Ready}}` issue first.
-   Note dependencies in issue bodies ("blocked by #N") and keep dependent issues in
-   `{{.Labels.Triage}}` until their prerequisites are merged.
+3. **Declare dependencies** – the developer takes the oldest `{{.Labels.Ready}}` issue first.
+   The scheduler honours dependencies: an issue whose body declares `Blocked by #N` is
+   not handed to a developer while `#N` is still open, and becomes dispatchable on the
+   first poll after `#N` closes. So when a work item needs another one first, write the
+   line — `Blocked by #N` as the first line of the body, several numbers separated by
+   commas — and still move the item to `{{.Labels.Ready}}` as soon as it is refined. Do
+   not hold it in `{{.Labels.Triage}}` for that. Your task shows the open blockers of
+   every work item.
 
 You may send mail to: `product_manager`, `developer`.
 

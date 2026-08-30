@@ -43,6 +43,11 @@ type Options struct {
 	ExtraLabels []string
 	// Ready puts a task or bug straight into ready instead of triage.
 	Ready bool
+	// BlockedBy are issues the new one must not be built before. They are
+	// written into the body as a "Blocked by #N" line, which the scheduler
+	// honours when it dispatches developers. No GitHub relationship is
+	// created.
+	BlockedBy []int
 }
 
 // Result describes a created issue.
@@ -75,7 +80,7 @@ func Create(ctx context.Context, gh *github.Client, filter config.Filter, labels
 	if opts.Parent > 0 && opts.Related > 0 {
 		return Result{}, errors.New("use either --parent or --related, not both")
 	}
-	n := github.NewIssue{Title: opts.Title, Body: opts.Body, Labels: []string{labels.Base}}
+	n := github.NewIssue{Title: opts.Title, Body: blockedByBody(opts.BlockedBy, opts.Body), Labels: []string{labels.Base}}
 	switch opts.Kind {
 	case KindFeature:
 		n.Labels = append(n.Labels, labels.Feature)
@@ -129,6 +134,19 @@ func Link(ctx context.Context, gh *github.Client, parent, child int) error {
 		return err
 	}
 	return gh.AddSubIssue(ctx, parent, d.ID)
+}
+
+// blockedByBody prefixes body with the "Blocked by #N" line the scheduler
+// parses (github.Blockers), followed by a blank line.
+func blockedByBody(blockedBy []int, body string) string {
+	if len(blockedBy) == 0 {
+		return body
+	}
+	refs := make([]string, 0, len(blockedBy))
+	for _, n := range blockedBy {
+		refs = append(refs, fmt.Sprintf("#%d", n))
+	}
+	return fmt.Sprintf("Blocked by %s\n\n%s", strings.Join(refs, ", "), body)
 }
 
 func state(labels config.Labels, ready bool) string {
