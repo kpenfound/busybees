@@ -629,7 +629,9 @@ func TestQuestionBlocksAndAnswerUnblocks(t *testing.T) {
 	if err := h.sched.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
-	want := "bees:ready,bees:in-progress,bees:approved"
+	// The size backstop runs after the unblock, so the issue is sized in the
+	// same pass that made it ready.
+	want := "bees:ready,bees:size/m,bees:in-progress,bees:approved"
 	if got := strings.Join(h.gh.history[1], ","); got != want {
 		t.Fatalf("history: %s want %s", got, want)
 	}
@@ -1123,7 +1125,7 @@ func TestInWorkHoursPollsEveryTick(t *testing.T) {
 
 func TestLocalPassUnblocksIssueOffHours(t *testing.T) {
 	h := newHarnessAt(t, workHoursTOML, time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC))
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Vague", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:blocked"}}}
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Vague", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:blocked"}, {Name: "bees:size/s"}}}
 	ctx := context.Background()
 	if _, err := h.sched.tick(ctx); err != nil {
 		t.Fatal(err)
@@ -1146,10 +1148,18 @@ func TestLocalPassUnblocksIssueOffHours(t *testing.T) {
 	if h.gh.callCount("issue list") != 1 || h.gh.callCount("pr list") != 1 {
 		t.Fatalf("the local pass polled GitHub: %v", h.gh.calls)
 	}
-	// The cached issue list is not mutated by the local pass: classifying it
-	// again still finds the issue where the (unchanged) labels put it.
-	if n := len(h.sched.classify(h.sched.lastIssues, h.sched.lastPRs).byState["blocked"]); n != 1 {
-		t.Fatalf("cached poll was mutated: %d blocked issues", n)
+	// The new state label reached the cached poll, so the local passes until
+	// the next one classify the issue as ready and do not move it again.
+	cached := h.sched.classify(h.sched.lastIssues, h.sched.lastPRs)
+	if len(cached.byState["blocked"]) != 0 || len(cached.byState["ready"]) != 1 {
+		t.Fatalf("cached poll still says blocked: %v", h.sched.lastIssues)
+	}
+	h.clock.advance(h.cfg.Scheduler.PollInterval.Duration)
+	if full, err := h.sched.tick(ctx); err != nil || full {
+		t.Fatalf("third tick: full=%v err=%v", full, err)
+	}
+	if got := strings.Join(h.gh.history[1], ","); got != "bees:ready" {
+		t.Fatalf("a local pass moved the label again: %v", h.gh.history[1])
 	}
 }
 
@@ -1223,6 +1233,33 @@ func TestLocalPassDoesNotRedispatchFinishedIssues(t *testing.T) {
 	}
 }
 
+// An issue a human filed without a state label is labelled bees:triage once:
+// the cached poll a local pass classifies from is updated with the new label,
+// so the passes in between two GitHub polls do not repeat the edit.
+func TestLocalPassDoesNotRepeatTheTriageLabel(t *testing.T) {
+	// Saturday: off hours, so only the first tick polls GitHub.
+	h := newHarnessAt(t, workHoursTOML, time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC))
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Filed from the GitHub UI", State: "OPEN", Labels: []github.Label{{Name: "bees"}}}
+	ctx := context.Background()
+
+	if full, err := h.sched.tick(ctx); err != nil || !full {
+		t.Fatalf("first tick: full=%v err=%v", full, err)
+	}
+	lists := h.gh.callCount("issue list")
+	for i := 0; i < 2; i++ {
+		h.clock.advance(h.cfg.Scheduler.PollInterval.Duration)
+		if full, err := h.sched.tick(ctx); err != nil || full {
+			t.Fatalf("local tick %d: full=%v err=%v", i, full, err)
+		}
+	}
+	if got := strings.Join(h.gh.history[1], ","); got != "bees:triage" {
+		t.Fatalf("label history: %q, want bees:triage once", got)
+	}
+	if n := h.gh.callCount("issue list"); n != lists {
+		t.Fatalf("a local pass polled GitHub: %v", h.gh.calls)
+	}
+}
+
 // noRolesTOML disables every role, so a pass does nothing but reconcile.
 const noRolesTOML = baseTOML + `
 [roles.developer]
@@ -1285,6 +1322,35 @@ func TestReadyIssueWithoutASizeGetsTheDefault(t *testing.T) {
 	}
 	if st.ReadySizes["m"] != 1 || st.ReadySizes["xs"] != 1 || st.ReadySizes[""] != 0 {
 		t.Fatalf("ready sizes after the second pass: %v", st.ReadySizes)
+	}
+}
+
+// An issue reconcile unblocks joins the ready queue after the blocked loop
+// has run, so the size backstop has to come last to size it in the same pass.
+func TestUnblockedIssueIsSizedInTheSamePass(t *testing.T) {
+	h := newHarness(t, noRolesTOML)
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Vague", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:blocked"}}}
+	// The answer the developer asked for is waiting in the mailbox.
+	if _, err := h.box.Send(mail.Message{From: config.RoleProjectManager, To: config.RoleDeveloper, Subject: "Re: Vague", Body: "do X", Issue: 1}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if err := h.sched.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(h.gh.history[1], ","); got != "bees:ready,bees:size/m" {
+		t.Fatalf("label history: %q, want bees:ready,bees:size/m", got)
+	}
+	// Both edits reached the cached poll, so the local passes until the next
+	// poll classify the issue as a sized ready one and add neither again.
+	cached := h.sched.classify(h.sched.lastIssues, h.sched.lastPRs).byState["ready"]
+	if len(cached) != 1 || !github.HasLabel(cached[0].Labels, "bees:ready") || !github.HasLabel(cached[0].Labels, "bees:size/m") {
+		t.Fatalf("cached issue: %v", h.sched.lastIssues)
+	}
+	h.sched.localPass(ctx)
+	if got := strings.Join(h.gh.history[1], ","); got != "bees:ready,bees:size/m" {
+		t.Fatalf("a local pass repeated the edits: %q", got)
 	}
 }
 
