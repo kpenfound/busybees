@@ -266,14 +266,31 @@ func TestPRViewRefusesAPROutsideTheFilter(t *testing.T) {
 // ---- comment ---------------------------------------------------------------
 
 func TestCommentAlwaysEndsWithTheRolesMarker(t *testing.T) {
+	const own = "<!-- bees:product_manager -->"
 	for _, tc := range []struct {
-		name string
-		body string
-		want string
+		name    string
+		body    string
+		want    string
+		wantOwn int // how often the caller's own marker may appear
 	}{
-		{"plain", "Filed #90.", "Filed #90.\n\n<!-- bees:product_manager -->"},
-		{"trailing newlines", "Filed #90.\n\n", "Filed #90.\n\n<!-- bees:product_manager -->"},
-		{"already marked", "Filed #90.\n\n<!-- bees:product_manager -->", "Filed #90.\n\n<!-- bees:product_manager -->"},
+		{"plain", "Filed #90.", "Filed #90.\n\n" + own, 1},
+		{"trailing newlines", "Filed #90.\n\n", "Filed #90.\n\n" + own, 1},
+		{"already marked", "Filed #90.\n\n" + own, "Filed #90.\n\n" + own, 1},
+		// Quoting another role's comment must not suppress our own marker:
+		// the comment would otherwise read as that role's.
+		{
+			"quotes another role",
+			"> Fixed in #91.\n>\n> <!-- bees:developer -->\n\nThanks.",
+			"> Fixed in #91.\n>\n> <!-- bees:developer -->\n\nThanks.\n\n" + own,
+			1,
+		},
+		// Our own marker quoted mid-body is context, not the signature.
+		{
+			"own marker quoted, then more text",
+			"> Filed #90.\n>\n> " + own + "\n\nStill waiting.",
+			"> Filed #90.\n>\n> " + own + "\n\nStill waiting.\n\n" + own,
+			2,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFakeGitHub().issue(36, "bees:feedback")
@@ -284,8 +301,12 @@ func TestCommentAlwaysEndsWithTheRolesMarker(t *testing.T) {
 			if len(f.comments) != 1 || f.comments[0].body != tc.want {
 				t.Fatalf("comment = %q, want %q", f.comments, tc.want)
 			}
-			if n := strings.Count(f.comments[0].body, github.BeesMarker); n != 1 {
-				t.Fatalf("marker appears %d times: %q", n, f.comments[0].body)
+			if n := strings.Count(f.comments[0].body, own); n != tc.wantOwn {
+				t.Fatalf("own marker appears %d times, want %d: %q", n, tc.wantOwn, f.comments[0].body)
+			}
+			// What every role reads back must name the role that posted it.
+			if got := author(f.comments[0].body); got != "bee: product_manager" {
+				t.Fatalf("author(%q) = %q", f.comments[0].body, got)
 			}
 		})
 	}
@@ -469,6 +490,8 @@ func TestAuthorReadsTheMarker(t *testing.T) {
 		"plain text":                        "human",
 		"hi\n\n<!-- bees:developer -->":     "bee: developer",
 		"hi\n\n<!-- bees:product_manager >": "human", // unterminated: not a marker
+		// A quoted marker is context; the author's own marker is the last one.
+		"> <!-- bees:developer -->\n\nmine\n\n<!-- bees:qa -->": "bee: qa",
 	} {
 		if got := author(body); got != want {
 			t.Errorf("author(%q) = %q, want %q", body, got, want)

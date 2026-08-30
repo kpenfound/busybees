@@ -70,9 +70,11 @@ func short(label string, l config.Labels) string { return strings.TrimPrefix(lab
 
 // author says who wrote a comment: the bees role whose marker it carries, or
 // a person. Bees and humans share one GitHub account, so the login is not a
-// signal and the marker is the only one there is.
+// signal and the marker is the only one there is. A comment may quote an
+// earlier one, marker included, so the *last* marker is the author's own —
+// withMarker appends it at the end — and any earlier one is quoted context.
 func author(body string) string {
-	i := strings.Index(body, github.BeesMarker)
+	i := strings.LastIndex(body, github.BeesMarker)
 	if i < 0 {
 		return "human"
 	}
