@@ -326,9 +326,28 @@ bees exec reviewer --pr 34
 
 Shows the last poll time and PID of the scheduler, queue sizes per workflow state
 (plus `feedback` and `features`, the open `bees:feedback` and `bees:feature` issues
-owned by the product manager, and `open_prs`), running developer workers (issue, [size](workflow.md#sizing), stage, round, and the attempt number while a session is being retried), singleton state and last run, and
-unread mail per role. Reads `status.json` from the state directory, so it works while
-`bees run` is active in another terminal.
+owned by the product manager, and `open_prs`), running developer workers (issue, [size](workflow.md#sizing), stage, round, and the attempt number while a session is being retried), a row per
+role, and unread mail per role. Reads `status.json` from the state directory, so it
+works while `bees run` is active in another terminal.
+
+The `roles:` table covers all five roles with what each is doing (`running` or
+`idle`; `-` for the developer and reviewer, whose work is in the workers table
+above), when it last ran, and how big its [notes file](roles.md#notes-files) has
+grown — a role whose notes are getting long is a candidate for
+`bees notes reset`:
+
+```
+roles:
+  product_manager  idle     last run 12m0s ago    notes 4.2 KB
+  project_manager  running  last run 1m0s ago     notes 2.1 KB
+  developer        -        last run never        notes 31.4 KB
+  reviewer         -        last run never        notes 6.0 KB
+  qa               idle     last run 2h0m0s ago   notes -
+```
+
+Notes sizes are read from the files when the command runs, not from
+`status.json`, so they are right even when the scheduler has never run; `--json`
+carries them as `notes_bytes` (role → bytes).
 
 A `no_state` queue counts issues that are visible to the factory but carry no
 workflow state label yet — usually ones a person just filed from the GitHub UI. The
@@ -458,6 +477,45 @@ Unread messages are marked with `*`.
 ### `bees mail read <id>`
 
 Prints one message.
+
+## Notes
+
+`<state_dir>/notes/<role>.md` is a role's only memory between sessions: its
+contents go into every task prompt and the role updates it before it finishes.
+These commands are how a person reads and steers it; see
+[Notes files](roles.md#notes-files). Roles accept the usual aliases (`pm`,
+`pjm`, `dev`, `review`, `qa`).
+
+### `bees notes show <role>`
+
+Prints the notes file (nothing when the role has never run).
+
+### `bees notes edit <role>`
+
+Opens the notes file in `$VISUAL`, else `$EDITOR`, else `vi`, creating it first
+if needed, and exits with the editor's status. It needs a terminal, so it
+refuses to run inside a session (`$BEES_SESSION_DIR` set) — sessions edit their
+file directly.
+
+### `bees notes reset <role>`
+
+Moves the notes file to `<state_dir>/notes/archive/<role>-<timestamp>.md`,
+prints that path and leaves a fresh file behind. Use it when a role has
+accumulated advice that no longer applies; nothing is lost, the archive stays.
+
+### `bees notes add <role> [text]`
+
+Appends one bullet to the notes file, creating it when needed:
+
+```
+bees notes add developer "Always run dagger check before committing"
+bees notes add pm --body-file vision.md
+```
+
+Pass `--body-file <path>` (or `--body-file -` to read stdin) instead of the
+argument for longer text. Like `bees mail`, `show`, `reset` and `add` find the
+state directory from `$BEES_STATE_DIR` before falling back to `bees.toml`, so a
+session can append to its own notes without a config file.
 
 ## Creating issues
 

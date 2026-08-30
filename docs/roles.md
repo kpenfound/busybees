@@ -82,11 +82,18 @@ merge duplicates, drop what is stale or contradicted, keep decisions, commands
 and gotchas — on top of its normal work. Nothing is truncated or rewritten
 behind the role's back, and the counters live in `<state_dir>/<role>.json`.
 
-**Editing a notes file by hand is the most direct way to steer a role.** Write
-the product vision into `notes/product_manager.md`, coding conventions into
+**Editing a notes file is the most direct way to steer a role.** Write the
+product vision into `notes/product_manager.md`, coding conventions into
 `notes/developer.md`, or "always run the e2e suite" into `notes/reviewer.md`,
 and the next session reads it. Developer workers share a single
 `notes/developer.md`.
+
+[`bees notes`](cli.md#notes) is the way to do that without hunting for the
+file: `bees notes show <role>` prints it, `bees notes edit <role>` opens it in
+your editor, `bees notes add <role> "..."` appends one bullet, and
+`bees notes reset <role>` archives it and starts a fresh one when a role has
+accumulated advice that no longer applies. `bees status` shows how big each
+file has grown.
 
 ## product_manager
 
