@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -51,9 +52,29 @@ func (s *Store) ArchiveNotes(role string, now time.Time) (string, error) {
 	return archived, s.EnsureNotes(role)
 }
 
+// notesIndent is the continuation indent of a "- " bullet: every line of a
+// note after the first is prefixed with it so the whole note stays inside the
+// bullet as markdown.
+const notesIndent = "  "
+
+// indentContinuation prefixes every line after the first with notesIndent,
+// leaving empty lines empty. A line that is already indented simply nests one
+// level deeper; nothing is joined or reflowed.
+func indentContinuation(text string) string {
+	lines := strings.Split(text, "\n")
+	for i, l := range lines[1:] {
+		if l == "" {
+			continue
+		}
+		lines[i+1] = notesIndent + l
+	}
+	return strings.Join(lines, "\n")
+}
+
 // AppendNotes appends "\n- <text>\n" to a role's notes, creating the file when
-// it does not exist yet. Text spanning several lines is appended verbatim
-// after the bullet.
+// it does not exist yet. Text spanning several lines keeps its line breaks;
+// every line after the first is indented by two spaces so the note reads as
+// one bullet.
 func (s *Store) AppendNotes(role, text string) error {
 	if err := s.EnsureNotes(role); err != nil {
 		return err
@@ -62,7 +83,7 @@ func (s *Store) AppendNotes(role, text string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(f, "\n- %s\n", text); err != nil {
+	if _, err := fmt.Fprintf(f, "\n- %s\n", indentContinuation(text)); err != nil {
 		_ = f.Close()
 		return err
 	}
