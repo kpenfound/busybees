@@ -204,10 +204,25 @@ func (s *Scheduler) runProductManager(ctx context.Context, snap *snapshot) error
 			work = append(work, i)
 		}
 	}
+	// The feature each work item is attached to, so the prompt can show what
+	// is still loose. GitHub's sub-issue summary carries counts only, not the
+	// child numbers, so the progress calls above cannot answer this: it is one
+	// GraphQL query per work item, as runProjectManager does for its triage
+	// items.
+	parents := map[int]github.Parent{}
+	for _, i := range work {
+		p, err := s.gh.ParentIssue(ctx, i.Number)
+		if s.op("work-item-parent", err, "work item parent", "issue", i.Number, "err", err) {
+			continue
+		}
+		if p != nil {
+			parents[i.Number] = *p
+		}
+	}
 	return s.runSingleton(ctx, config.RoleProductManager, prompts.Data{
 		Issues: work, PRs: snap.prs, Milestones: milestones, Inbox: inbox,
 		Feedback: feedback, FreshFeatures: freshFeatures, Proposals: proposals,
-		Features: snap.features, Progress: progress,
+		Features: snap.features, Progress: progress, Parents: parents,
 	})
 }
 
