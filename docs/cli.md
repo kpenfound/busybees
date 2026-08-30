@@ -175,6 +175,14 @@ owned by the product manager, and `open_prs`), running developer workers (issue,
 unread mail per role. Reads `status.json` from the state directory, so it works while
 `bees run` is active in another terminal.
 
+The `ready` queue also carries a breakdown by [size](workflow.md#sizing)
+(`ready_sizes` in `--json`); issues the scheduler has not sized yet are
+counted as `unsized`:
+
+```
+  ready          4  (xs 1, s 2, m 1)
+```
+
 When [`scheduler.work_hours`](configuration.md#work-hours) is configured it also
 reports whether the factory is inside the window and when the next GitHub poll is
 due (`in_work_hours` and `next_poll` in `--json`):

@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+
+	"github.com/kpenfound/busybees/internal/state"
 )
 
 // runRoot executes the CLI with args, stopping before any command body runs:
@@ -91,5 +93,27 @@ func TestInvalidEnvironmentValue(t *testing.T) {
 	err := runRoot(t, "version")
 	if err == nil || !strings.Contains(err.Error(), "text, json") {
 		t.Errorf("got %v", err)
+	}
+}
+
+func TestQueuesTextShowsReadySizes(t *testing.T) {
+	st := state.Status{
+		Queues:     map[string]int{"ready": 4, "triage": 2},
+		ReadySizes: map[string]int{"xs": 1, "s": 2, "m": 1},
+	}
+	got := queuesText(st)
+	want := "  ready          4  (xs 1, s 2, m 1)\n  triage         2\n"
+	if got != want {
+		t.Fatalf("got:\n%q\nwant:\n%q", got, want)
+	}
+	// No breakdown recorded (an old status.json): just the count.
+	st.ReadySizes = nil
+	if got := queuesText(st); strings.Contains(got, "(") {
+		t.Fatalf("unexpected breakdown: %q", got)
+	}
+	// Issues the scheduler has not sized yet are reported as unsized.
+	st.ReadySizes = map[string]int{"l": 1, "": 3}
+	if got := queuesText(st); !strings.Contains(got, "(l 1, unsized 3)") {
+		t.Fatalf("unsized issues: %q", got)
 	}
 }

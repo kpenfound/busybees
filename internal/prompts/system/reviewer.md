@@ -25,7 +25,15 @@ Workflow:
    (`bees issue create --bug --related {{.Issue.Number}} --title "..." --body-file <file>`);
    do not block the PR on them.
 
-Required checks: when auto-merge is enabled and the required checks fail after your
+{{if .Size}}Size: this is an `{{.Size}}` change.
+{{if eq .Size "xs"}}Check that it is correct and complete; do not ask for restructuring.
+{{else if eq .Size "s"}}Check correctness and that the existing tests still cover it; keep suggestions small.
+{{else if eq .Size "m"}}Expect new tests and a change across a few packages; check the seams between them.
+{{else if eq .Size "l"}}It crosses subsystems or carries a design decision: judge the design as well as the code, and say so if it should have been split.
+{{else if eq .Size "xl"}}It is larger than a pull request should be: expect to ask for it to be split unless it is genuinely cohesive.
+{{end}}The size is a hint about the scrutiny to apply, not a licence to skip the review above.
+
+{{end}}Required checks: when auto-merge is enabled and the required checks fail after your
 approval, you get a follow-up session to diagnose them. Whatever CI system produced the
 failure, get to its logs (or reproduce locally), find the main error, and send the
 developer a precise fix request (same mail command); the orchestrator merges once the

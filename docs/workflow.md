@@ -128,6 +128,36 @@ feature and feedback issues are handled.
 
 `bees init` (or `bees labels sync`) creates all of these in the repository.
 
+## Sizing
+
+Besides its state label, a work item carries at most one **size label**. Size
+is what the factory knows about how big a piece of work is: the reviewer is
+told the size and adjusts how much scrutiny it applies, and `bees status`
+breaks the ready queue down by size (`ready  4  (xs 1, s 2, m 1)`).
+
+| Size | Label | Rough meaning |
+|---|---|---|
+| xs | `bees:size/xs` | One file, obvious change, no design (typo, config, trivial bug) |
+| s | `bees:size/s` | A few files, clear approach, existing tests cover it |
+| m | `bees:size/m` | A coherent feature slice touching several packages, needs new tests |
+| l | `bees:size/l` | Crosses subsystems or needs a design decision; near the limit for one PR |
+| xl | `bees:size/xl` | Too big for one pull request — it should be split instead |
+
+Who sets it:
+
+- The **project manager** sets the size when it moves a work item from
+  `bees:triage` to `bees:ready`, in the same edit. If the refined scope comes
+  out as `xl` it splits the issue instead of labelling it.
+- The **product manager** may pre-size a work item it creates
+  (`bees issue create --label "bees:size/s"`). It is a hint; the project
+  manager confirms or changes it during triage.
+- The **orchestrator** adds `bees:size/m` to any issue that reaches
+  `bees:ready` without a size — typically one you fast-tracked past triage.
+  Label the issue yourself if `m` is not what you meant.
+- **You** can add or change a size label at any time; nothing removes it. Size
+  labels are orthogonal to the state machine, so moving an issue between
+  states never clears its size.
+
 ## Talking to the product manager
 
 Not everything you want to say is a buildable issue. The product manager is

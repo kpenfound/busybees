@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -145,8 +146,37 @@ func TestDefaults(t *testing.T) {
 		t.Fatalf("state dir: %s", cfg.StateDir())
 	}
 	l := cfg.Labels()
-	if l.Ready != "bees:ready" || l.Base != "bees" || len(l.All()) != 12 {
+	if l.Ready != "bees:ready" || l.Base != "bees" || len(l.All()) != 17 {
 		t.Fatalf("labels: %+v", l)
+	}
+}
+
+func TestSizeLabels(t *testing.T) {
+	l := LabelsFor("bees")
+	want := []string{"bees:size/xs", "bees:size/s", "bees:size/m", "bees:size/l", "bees:size/xl"}
+	if got := l.SizeLabels(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("size labels: got %v want %v", got, want)
+	}
+	// Every size label is created by `bees init` / `bees labels sync`.
+	all := map[string]bool{}
+	for _, spec := range l.All() {
+		all[spec.Name] = true
+	}
+	for _, name := range want {
+		if !all[name] {
+			t.Errorf("%s missing from All()", name)
+		}
+	}
+	// Sizes are orthogonal to states: the two sets must not overlap, or
+	// setting a state would clear the size.
+	states := map[string]bool{}
+	for _, s := range l.StateLabels() {
+		states[s] = true
+	}
+	for _, s := range l.SizeLabels() {
+		if states[s] {
+			t.Errorf("%s is both a state and a size label", s)
+		}
 	}
 }
 

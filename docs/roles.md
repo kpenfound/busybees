@@ -109,7 +109,9 @@ enter the workflow state machine. For each fresh one it:
 3. otherwise breaks it into work items — one issue per pull-request-sized
    piece, created with `bees issue create --parent <feature>` (`--bug` for
    bugs), which makes each a native GitHub **sub-issue** of the feature with
-   `bees` + `bees:triage` and the feature's milestone; ordered with
+   `bees` + `bees:triage` and the feature's milestone (it may pre-size one
+   with `--label "bees:size/s"`, a hint the project manager confirms during
+   triage — see [Sizing](workflow.md#sizing)); ordered with
    dependencies noted — then comments the list of work items on the feature
    issue (with the marker) so it is not re-presented until something changes;
 4. closes the feature issue when all its sub-issues are closed (the progress
@@ -158,7 +160,9 @@ keeping the author's intent; splits oversized work items with
 `bees issue create --ready --parent <feature>` (or `--related <original>` when
 there is no parent feature), closing the original with a comment; moves
 refined work items `bees:triage` →
-`bees:ready`; moves a work item to `bees:blocked` when it has asked the
+`bees:ready` with exactly one **size label** (`bees:size/xs` … `bees:size/l`)
+added in the same edit, splitting anything that sizes up as `xl` instead of
+labelling it; moves a work item to `bees:blocked` when it has asked the
 product manager; closes invalid or duplicate work items with a comment. It
 never edits feature or feedback issues — those belong to the product
 manager — and never touches milestones. It is the only role besides the
@@ -222,7 +226,9 @@ Reviews one pull request and decides whether it is mergeable. It also owns
 merging: `auto_merge` and its companions live under `[roles.reviewer]` (see
 [configuration.md](configuration.md#rolesreviewer-only-auto-merge)).
 
-**Given:** the PR (title, body, branch, author), the linked issue, its own
+**Given:** the PR (title, body, branch, author), the linked issue, the
+issue's **size** and a sentence on the scrutiny it warrants (see
+[Sizing](workflow.md#sizing)), its own
 feedback from previous rounds, the round number and limit, its notes. It runs
 in the same worktree as the developer for that issue, fast-forwarded to the
 latest push, so it can run the tests and exercise the change.

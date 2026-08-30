@@ -69,6 +69,8 @@ A full pass is:
 3. **reconcile** – label transitions driven by local state:
    - an issue with no state label gets `bees:triage` (and the `bees` label if
      the filter did not require it);
+   - a `bees:ready` issue with no size label gets `bees:size/m`, the default
+     size (see [Sizing](workflow.md#sizing));
    - a `bees:blocked` issue with unread developer mail about it becomes
      `bees:ready`; with unread project-manager mail it becomes `bees:triage`.
 4. **dispatch developers** – candidates are unowned `in-progress` and `review`

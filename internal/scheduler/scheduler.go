@@ -73,8 +73,11 @@ type Scheduler struct {
 	nextPoll time.Time
 	lastErr  string
 	queues   map[string]int
-	wg       sync.WaitGroup
-	slots    chan struct{}
+	// readySizes counts the ready queue by size label ("xs", "s", ...);
+	// issues with no size label are counted under "".
+	readySizes map[string]int
+	wg         sync.WaitGroup
+	slots      chan struct{}
 	// Issues and PRs from the last successful poll, reused by local passes.
 	lastIssues []github.Issue
 	lastPRs    []github.PR
@@ -98,21 +101,22 @@ func New(d Deps) (*Scheduler, error) {
 		q.Label = f.Label
 	}
 	s := &Scheduler{
-		cfg:     d.Config,
-		labels:  d.Config.Labels(),
-		query:   q,
-		gh:      d.GitHub,
-		mail:    d.Mail,
-		runner:  d.Runner,
-		ws:      d.Workspaces,
-		store:   d.Store,
-		log:     d.Logger,
-		now:     d.Now,
-		owned:   map[int]*state.Worker{},
-		running: map[string]bool{},
-		backoff: map[string]time.Time{},
-		queues:  map[string]int{},
-		slots:   make(chan struct{}, d.Config.Scheduler.MaxDevelopers),
+		cfg:        d.Config,
+		labels:     d.Config.Labels(),
+		query:      q,
+		gh:         d.GitHub,
+		mail:       d.Mail,
+		runner:     d.Runner,
+		ws:         d.Workspaces,
+		store:      d.Store,
+		log:        d.Logger,
+		now:        d.Now,
+		owned:      map[int]*state.Worker{},
+		running:    map[string]bool{},
+		backoff:    map[string]time.Time{},
+		queues:     map[string]int{},
+		readySizes: map[string]int{},
+		slots:      make(chan struct{}, d.Config.Scheduler.MaxDevelopers),
 	}
 	for i := 0; i < d.Config.Scheduler.MaxDevelopers; i++ {
 		s.slots <- struct{}{}
@@ -270,6 +274,10 @@ func (s *Scheduler) setQueues(snap *snapshot) {
 	s.queues["feedback"] = len(snap.feedback)
 	s.queues["features"] = len(snap.features)
 	s.queues["open_prs"] = len(snap.prs)
+	s.readySizes = map[string]int{}
+	for _, i := range snap.byState["ready"] {
+		s.readySizes[s.sizeOf(i.Labels)]++
+	}
 }
 
 // stateOf returns the workflow state name ("triage", "ready", ...) of an
@@ -278,6 +286,18 @@ func (s *Scheduler) stateOf(labels []github.Label) string {
 	for _, l := range s.labels.StateLabels() {
 		if github.HasLabel(labels, l) {
 			return strings.TrimPrefix(l, s.labels.Base+":")
+		}
+	}
+	return ""
+}
+
+// sizeOf returns the size of an issue ("xs", "s", "m", "l", "xl"), or ""
+// when it carries no size label. Sizes are orthogonal to the workflow
+// state: an issue has at most one of each.
+func (s *Scheduler) sizeOf(labels []github.Label) string {
+	for _, l := range s.labels.SizeLabels() {
+		if github.HasLabel(labels, l) {
+			return strings.TrimPrefix(l, s.labels.Base+":size/")
 		}
 	}
 	return ""
@@ -368,6 +388,25 @@ func (s *Scheduler) reconcile(ctx context.Context, snap *snapshot) error {
 		}
 		i.Labels = append(i.Labels, github.Label{Name: s.labels.Triage})
 		snap.byState["triage"] = append(snap.byState["triage"], i)
+	}
+	// A work item in ready without a size — typically one a human
+	// fast-tracked past triage — gets the default size, so the developer
+	// and reviewer prompts and `bees status` always have one.
+	for idx, i := range snap.byState["ready"] {
+		if s.sizeOf(i.Labels) != "" {
+			continue
+		}
+		s.log.Info("ready issue without a size gets the default", "issue", i.Number, "size", "m")
+		if err := s.gh.EditLabels(ctx, i.Number, []string{s.labels.SizeM}, nil); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		sized := append(i.Labels, github.Label{Name: s.labels.SizeM})
+		snap.byState["ready"][idx].Labels = sized
+		// Keep the cached poll in step, or every local pass in between two
+		// polls asks GitHub to add the label again.
+		i.Labels = sized
+		s.cacheIssue(i)
 	}
 	for _, i := range snap.byState["blocked"] {
 		if s.hasUnreadMail(config.RoleDeveloper, i.Number, 0) {
@@ -629,6 +668,10 @@ func (s *Scheduler) writeStatus() {
 	}
 	for k, v := range s.queues {
 		st.Queues[k] = v
+	}
+	st.ReadySizes = map[string]int{}
+	for k, v := range s.readySizes {
+		st.ReadySizes[k] = v
 	}
 	s.mu.Unlock()
 	if err := s.store.SaveStatus(st); err != nil {

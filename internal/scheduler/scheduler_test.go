@@ -339,6 +339,7 @@ type harness struct {
 	sched *Scheduler
 	clone string
 	logs  *syncBuffer
+	clock *fakeClock // nil unless the harness was built with a fixed clock
 }
 
 // syncBuffer collects log output; workers log concurrently.
@@ -357,7 +358,6 @@ func (b *syncBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.buf.String()
-	clock *fakeClock // nil unless the harness was built with a fixed clock
 }
 
 func newHarness(t *testing.T, toml string) *harness {
@@ -462,7 +462,7 @@ max_review_rounds = 3
 
 func TestFullDeveloperReviewLoop(t *testing.T) {
 	h := newHarness(t, baseTOML)
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}}, CreatedAt: time.Now()}
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now()}
 	h.gh.issues[2] = &github.Issue{Number: 2, Title: "Human filed this", Body: "hi", State: "OPEN", Labels: []github.Label{{Name: "bees"}}, CreatedAt: time.Now()}
 	h.gh.prs[fakePR] = &github.PR{Number: fakePR, Title: "Build the thing", State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
 
@@ -579,7 +579,7 @@ func TestQuestionBlocksAndAnswerUnblocks(t *testing.T) {
 
 func TestEscalationWhenNoPR(t *testing.T) {
 	h := newHarness(t, baseTOML+"\n[roles.product_manager]\nenabled = false\n[roles.qa]\nenabled = false\n[roles.project_manager]\nenabled = false\n")
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "x", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}}}
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "x", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}}
 	// No PR 101 registered: the developer claims pr-opened but nothing exists.
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
@@ -597,7 +597,7 @@ func TestEscalationWhenNoPR(t *testing.T) {
 func TestHumanFeedbackReopensApprovedPR(t *testing.T) {
 	h := newHarness(t, baseTOML+"\n[roles.product_manager]\nenabled = false\n[roles.qa]\nenabled = false\n[roles.project_manager]\nenabled = false\n")
 	created := time.Now().Add(-time.Hour)
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Done already", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:approved"}}, CreatedAt: created}
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Done already", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:approved"}, {Name: "bees:size/s"}}, CreatedAt: created}
 	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:approved"}}, CreatedAt: created, UpdatedAt: time.Now(),
 		Body: "Closes #1"}
@@ -689,7 +689,7 @@ checks_poll_interval = "10ms"
 checks_timeout = "5s"
 max_check_fix_rounds = 2
 `)
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Ship it", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}}, CreatedAt: time.Now()}
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Ship it", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now()}
 	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
 	pending := `[{"name":"go / test","bucket":"pending","state":"PENDING","link":"https://ci.example.com/run/1","workflow":"CI"}]`
 	failing := `[{"name":"go / test","bucket":"fail","state":"FAILURE","link":"https://ci.example.com/run/1","description":"1 test failed","workflow":"CI"},{"name":"lint","bucket":"pass","state":"SUCCESS"}]`
@@ -765,7 +765,7 @@ checks_wait = "1ms"
 checks_poll_interval = "10ms"
 checks_timeout = "1ms"
 `)
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Slow CI", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}}, CreatedAt: time.Now()}
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Slow CI", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now()}
 	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
 	h.gh.checks = []checksResponse{{`[{"name":"slow","bucket":"pending","state":"PENDING"}]`, fmt.Errorf("exit status 8")}}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -897,7 +897,7 @@ enabled = false
 [roles.project_manager]
 enabled = false
 `)
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}}}
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}}
 	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
 	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true} // reviewer disabled: PR auto-approved
 
@@ -945,7 +945,7 @@ enabled = false
 [roles.project_manager]
 enabled = false
 `)
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}}}
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
@@ -961,6 +961,9 @@ enabled = false
 	}
 	if len(h.gh.comments[1]) != 1 || !strings.Contains(h.gh.comments[1][0], "ended with `failed`") {
 		t.Fatalf("comments: %v", h.gh.comments[1])
+	}
+}
+
 // workHoursTOML is baseTOML with a mon-fri 09:00-18:00 window in UTC and
 // every role disabled, so only the polling loop itself is exercised.
 const workHoursTOML = baseTOML + `
@@ -983,7 +986,7 @@ enabled = false
 func TestOffHoursPollingIsThrottled(t *testing.T) {
 	// 2026-08-29 12:00 UTC is a Saturday: outside the window.
 	h := newHarnessAt(t, workHoursTOML, time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC))
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Later", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}}}
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Later", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}}
 	ctx := context.Background()
 
 	full, err := h.sched.tick(ctx)
@@ -1096,7 +1099,7 @@ func TestLocalPassDoesNotRedispatchFinishedIssues(t *testing.T) {
 	// Saturday: off hours, so the tick after the first one is local and its
 	// snapshot still carries the issue's pre-work labels.
 	h := newHarnessAt(t, workHoursDevTOML, time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC))
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}}, CreatedAt: time.Now()}
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now()}
 	h.gh.prs[fakePR] = &github.PR{Number: fakePR, Title: "Build the thing", State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -1144,5 +1147,98 @@ func TestLocalPassDoesNotRedispatchFinishedIssues(t *testing.T) {
 	}
 	if got := strings.Join(h.gh.history[1], ","); got != before {
 		t.Fatalf("local pass restarted a finished issue: %s", got)
+	}
+}
+
+// noRolesTOML disables every role, so a pass does nothing but reconcile.
+const noRolesTOML = baseTOML + `
+[roles.developer]
+enabled = false
+[roles.reviewer]
+enabled = false
+[roles.product_manager]
+enabled = false
+[roles.project_manager]
+enabled = false
+[roles.qa]
+enabled = false
+`
+
+func TestReadyIssueWithoutASizeGetsTheDefault(t *testing.T) {
+	h := newHarness(t, noRolesTOML)
+	// 1 was fast-tracked to ready by a human and has no size; 2 was sized
+	// by the project manager.
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Fast-tracked", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}}, CreatedAt: time.Now()}
+	h.gh.issues[2] = &github.Issue{Number: 2, Title: "Sized", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/xs"}}, CreatedAt: time.Now()}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	if err := h.sched.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(h.gh.history[1], ","); got != "bees:size/m" {
+		t.Fatalf("issue 1 label history: %q, want bees:size/m", got)
+	}
+	if got := h.gh.history[2]; len(got) != 0 {
+		t.Fatalf("issue 2 was already sized and must be left alone: %v", got)
+	}
+	if !github.HasLabel(h.gh.issues[1].Labels, "bees:ready") {
+		t.Fatalf("issue 1 lost its state label: %v", h.gh.issues[1].Labels)
+	}
+	if !strings.Contains(h.logs.String(), "ready issue without a size gets the default") {
+		t.Fatalf("no log line about the default size:\n%s", h.logs.String())
+	}
+	// The status of that first pass counts the unsized issue as unsized.
+	st, err := h.store.LoadStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.ReadySizes[""] != 1 || st.ReadySizes["xs"] != 1 {
+		t.Fatalf("ready sizes after the first pass: %v", st.ReadySizes)
+	}
+
+	// Second pass: the label is there, so nothing is added again and the
+	// breakdown reports it.
+	if err := h.sched.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(h.gh.history[1], ","); got != "bees:size/m" {
+		t.Fatalf("size added twice: %q", got)
+	}
+	st, err = h.store.LoadStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.ReadySizes["m"] != 1 || st.ReadySizes["xs"] != 1 || st.ReadySizes[""] != 0 {
+		t.Fatalf("ready sizes after the second pass: %v", st.ReadySizes)
+	}
+}
+
+func TestSizeSurvivesTheStateMachine(t *testing.T) {
+	h := newHarness(t, baseTOML+"\n[roles.product_manager]\nenabled = false\n[roles.qa]\nenabled = false\n[roles.project_manager]\nenabled = false\n")
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/xs"}}, CreatedAt: time.Now()}
+	h.gh.prs[fakePR] = &github.PR{Number: fakePR, Title: "Build the thing", State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if err := h.sched.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// ready -> in-progress -> review -> ... -> approved, and the size label
+	// is still there: state transitions only touch the state labels.
+	if got := strings.Join(h.gh.history[1], ","); got != "bees:in-progress,bees:review,bees:in-progress,bees:review,bees:approved" {
+		t.Fatalf("label history: %s", got)
+	}
+	if !github.HasLabel(h.gh.issues[1].Labels, "bees:size/xs") {
+		t.Fatalf("size label lost: %v", h.gh.issues[1].Labels)
+	}
+	// The reviewer was told the size.
+	dirs := h.sessions(config.RoleReviewer)
+	if len(dirs) == 0 {
+		t.Fatal("no reviewer session")
+	}
+	prompt, _ := os.ReadFile(filepath.Join(dirs[0], "system-prompt.md"))
+	if !strings.Contains(string(prompt), "this is an `xs` change") {
+		t.Fatalf("reviewer system prompt does not mention the size:\n%s", prompt)
 	}
 }
