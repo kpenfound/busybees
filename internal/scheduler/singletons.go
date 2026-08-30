@@ -259,7 +259,7 @@ func (s *Scheduler) RunRole(ctx context.Context, role string, issue, pr int) err
 			}
 			i.Labels = relabel(i.Labels, s.stateOf(i.Labels), s.labels.Review)
 		}
-		w := &state.Worker{Name: "exec-" + role, Issue: issue, Since: s.now()}
+		w := &state.Worker{Name: "exec-" + role, Issue: issue, Size: s.sizeOf(i.Labels), Since: s.now()}
 		s.mu.Lock()
 		s.owned[issue] = w
 		s.mu.Unlock()

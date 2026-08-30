@@ -179,7 +179,9 @@ Two limits sit on top of that order:
 - `scheduler.max_large_in_flight` (default `1`) caps how many `bees:size/l`
   issues developers work on at once. A `bees:size/l` issue over the cap is
   skipped — the free worker takes the next issue that fits instead of idling.
-  `0` removes the cap.
+  `0` removes the cap. Note that `small-first` and the cap together can keep a
+  `bees:size/l` issue waiting for as long as smaller ones keep arriving; switch
+  to `oldest` if that matters more than quick wins.
 - `roles.developer.max_size` (default `l`) is the largest size a developer
   takes. A ready issue above it is **never dispatched**: the orchestrator moves
   it back to `bees:triage` (no comment — the label is the signal) and the
