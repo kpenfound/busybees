@@ -244,7 +244,7 @@ accepts aliases such as `pm`, `pjm`, `dev`, but the TOML keys must be the full n
 | `allowed_tools` | string list | `[]` | Passed as `claude --allowedTools`. |
 | `disallowed_tools` | string list | `[]` | Passed as `claude --disallowedTools`. |
 | `shell` | string | the shell bees runs under | Exported into sessions as `$SHELL`. Claude Code has no setting to force its Bash tool's shell; it uses the system default, which it discovers from `$SHELL`, so this is the lever available — but not a hard guarantee. Must be an existing executable. |
-| `env` | table | `{}` | Environment variables exported into every session: inherited by `claude`, its Bash tool, MCP servers and git. `$VAR` references are expanded from the bees process environment when the session starts. `[roles.<name>.env]` entries are merged over `[global.env]` (role wins per key). bees' own `BEES_*` variables always win. |
+| `env` | table | `{}` | Environment variables exported into every session: inherited by `claude`, its Bash tool, MCP servers and git. `$VAR` references are expanded from the bees process environment when the session starts. `[roles.<name>.env]` entries are merged over `[global.env]` (role wins per key). bees' own `BEES_*` variables always win. `BEES_*` variables are always set by bees for each session and are never inherited from the process that started it, so a session started from inside another one (a nested `bees run` or `bees exec`) never sees a stale issue, PR or branch. |
 | `enabled` | bool | `true` | **Roles only.** `false` takes the role out of the rotation. Disabling `reviewer` makes developer PRs count as approved as soon as they are opened (and, with `auto_merge`, go straight to the checks stage). |
 
 ### `[roles.reviewer]` only: auto-merge
@@ -527,9 +527,20 @@ with an unsupported version anyway.
 | `BEES_ROLE` | Default `--from` for `bees mail send`, and the role whose `bees done` statuses are validated. Set automatically inside sessions. |
 | `BEES_ISSUE`, `BEES_PR` | Defaults for the `--issue` / `--pr` flags of `bees mail send` and `bees done`. Set automatically inside sessions. |
 
+The variables marked *set automatically inside sessions* are the only ones that
+reach a session. The rest — `BEES_CLAUDE_BIN`, `BEES_CACHE_DIR`,
+`BEES_SKIP_VERSION_CHECK` and the `BEES_LOG_FORMAT` / `BEES_LOG_LEVEL` fallbacks
+of `--log-format` / `--log-level` — configure the `bees` process you start and
+are **not** inherited by the sessions it spawns (see [Exported into every
+session](#exported-into-every-session)), so a `bees` command a session runs
+itself sees their defaults. Every `BEES_*` variable a session sees is one bees
+set for it; to give sessions one of these knobs, put it in
+[`[global.env]`](#global-and-rolesname) instead.
+
 ### Exported into every session
 
-Sessions run with the `bees` process environment plus:
+Sessions run with the `bees` process environment, minus every `BEES_*` variable
+it inherited, plus:
 
 | Variable | Value |
 |---|---|

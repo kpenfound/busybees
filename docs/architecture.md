@@ -441,7 +441,9 @@ Nothing in the test-suite talks to GitHub or runs Claude Code.
   `issues/N/comments` (human PR activity) — and records label history,
   comments and merges for assertions.
 - **Fake claude.** The scheduler test binary doubles as `claude`: `TestMain`
-  checks `BEES_FAKE_CLAUDE=1` and, when set, runs a scripted role
+  checks `FAKE_CLAUDE=1` (not `BEES_FAKE_CLAUDE`: the runner strips every
+  inherited `BEES_*`, so a flag in that namespace would never reach the fake)
+  and, when set, runs a scripted role
   (`developer` commits and pushes then reports `pr-opened`; `reviewer` mails
   feedback once then approves; singletons report `done`), writes
   `outcome.json` and prints a stream-json `result` line. `Runner.ClaudeBin` is

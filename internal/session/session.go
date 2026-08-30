@@ -47,6 +47,10 @@ const (
 	EnvBin        = "BEES_BIN"
 )
 
+// beesEnvPrefix marks the variables bees owns: they are set per session and
+// never inherited from the process that started the scheduler.
+const beesEnvPrefix = "BEES_"
+
 // Request describes one session to run.
 type Request struct {
 	// Name identifies the session in logs, e.g. "developer-issue-12-r1".
@@ -309,7 +313,7 @@ func (r *Runner) beesEnv(req Request, sessionDir string) []envVar {
 	// The per-request variables (issue, PR, branch, notes file) are set by
 	// the scheduler; only the BEES_* ones describe the session.
 	for _, k := range slices.Sorted(maps.Keys(req.Env)) {
-		if strings.HasPrefix(k, "BEES_") {
+		if strings.HasPrefix(k, beesEnvPrefix) {
 			vars = append(vars, envVar{k, req.Env[k]})
 		}
 	}
@@ -340,7 +344,18 @@ func (r *Runner) builtinMCP(req Request, sessionDir string) mcpEntry {
 }
 
 func (r *Runner) env(req Request, sessionDir string) []string {
-	env := os.Environ()
+	// Every BEES_* variable a session sees is one bees set for it. Dropping the
+	// inherited ones keeps a session started from inside another session (a
+	// nested `bees run`, `bees exec`, or a test binary) from picking up a stale
+	// issue, PR or branch number; the ones this session has none of are then
+	// absent rather than wrong.
+	envs := os.Environ()
+	env := make([]string, 0, len(envs))
+	for _, kv := range envs {
+		if !strings.HasPrefix(kv, beesEnvPrefix) {
+			env = append(env, kv)
+		}
+	}
 	set := func(k, v string) { env = append(env, k+"="+v) }
 	// Configured environment first, so bees' own variables below win.
 	for k, v := range req.Role.Env {

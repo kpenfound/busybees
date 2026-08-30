@@ -25,12 +25,28 @@ import (
 )
 
 // TestMain lets the test binary double as a fake `claude` when
-// BEES_FAKE_CLAUDE is set: the runner executes it, it inspects its role and
+// FAKE_CLAUDE is set: the runner executes it, it inspects its role and
 // environment, performs a scripted action and prints a stream-json result.
+//
+// The flags that steer the fake (FAKE_CLAUDE, FAKE_DEV_HANG, FAKE_DEV_FAIL)
+// reach it through the ordinary environment, so they must NOT start with
+// BEES_: the runner strips inherited BEES_* variables from every session.
 func TestMain(m *testing.M) {
-	if os.Getenv("BEES_FAKE_CLAUDE") == "1" {
+	if os.Getenv("FAKE_CLAUDE") == "1" {
 		fakeClaude()
 		os.Exit(0)
+	}
+	// The runner drops inherited BEES_* variables, but the tests run this
+	// binary directly too (and read the environment themselves), so clear the
+	// ones a bees session would have exported: `go test` run from inside a
+	// session must behave like one run from a plain shell.
+	for _, k := range []string{session.EnvRole, session.EnvSessionDir, session.EnvStateDir, session.EnvRepo,
+		session.EnvLabel, session.EnvIssue, session.EnvPR, session.EnvBranch, session.EnvNotesFile,
+		session.EnvConfig, session.EnvBin} {
+		if err := os.Unsetenv(k); err != nil {
+			fmt.Fprintln(os.Stderr, "unset:", err)
+			os.Exit(2)
+		}
 	}
 	os.Exit(m.Run())
 }
@@ -67,10 +83,10 @@ func fakeClaude() {
 		n := counter("dev")
 		// Infrastructure failures, on the first attempt only: hang until the
 		// role timeout kills the session, or report `failed` outright.
-		if n == 1 && os.Getenv("BEES_FAKE_DEV_HANG") == "1" {
+		if n == 1 && os.Getenv("FAKE_DEV_HANG") == "1" {
 			time.Sleep(time.Minute)
 		}
-		if os.Getenv("BEES_FAKE_DEV_FAIL") == "1" {
+		if os.Getenv("FAKE_DEV_FAIL") == "1" {
 			outcome = session.Outcome{Status: OutcomeFailed, Note: "cannot build"}
 			break
 		}
@@ -416,7 +432,7 @@ func newHarnessAt(t *testing.T, toml string, now time.Time) *harness {
 	client := github.New(cfg.Project.Repo)
 	client.Exec = gh.exec
 
-	t.Setenv("BEES_FAKE_CLAUDE", "1")
+	t.Setenv("FAKE_CLAUDE", "1")
 	// Log through the real logging package so tests see the summary lines a
 	// terminal would; dump it when the test fails.
 	logs := &syncBuffer{}
@@ -941,7 +957,7 @@ func TestFeatureIssuesBelongToProductManager(t *testing.T) {
 // A session killed by its timeout is an infrastructure failure: the worker
 // runs it again instead of escalating.
 func TestInfrastructureFailureIsRetried(t *testing.T) {
-	t.Setenv("BEES_FAKE_DEV_HANG", "1")
+	t.Setenv("FAKE_DEV_HANG", "1")
 	h := newHarness(t, baseTOML+`
 retries = 1
 retry_delay = "0s"
@@ -991,7 +1007,7 @@ enabled = false
 // A session that ran and reported `failed` made a decision: it escalates at
 // once, however many retries are configured.
 func TestReportedFailureEscalatesWithoutRetry(t *testing.T) {
-	t.Setenv("BEES_FAKE_DEV_FAIL", "1")
+	t.Setenv("FAKE_DEV_FAIL", "1")
 	h := newHarness(t, baseTOML+`
 retries = 2
 retry_delay = "0s"
