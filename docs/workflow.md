@@ -536,13 +536,14 @@ You do not need the mailbox to steer a developer: review the pull request on
 GitHub like you would review a colleague's. On every poll the orchestrator
 looks at each open factory PR whose `updatedAt` moved since it last checked
 and collects, via the GitHub API, the reviews, inline review comments and
-conversation comments written since then. It ignores comments containing the
-`<!-- bees:` marker (bees and humans share one `gh` account, so every comment
-a bee posts ends with `<!-- bees:<role> -->`) and empty approvals. Whatever is
-left is sent to the developer as one mail message from `human`, listing each
-item with its author, file and line, comment id, link and the exact `gh`
-command to reply to it. The timestamp of the last item delivered is recorded
-as `human_seen_at` in `<state_dir>/issues/<n>.json`.
+conversation comments written since then. It ignores comments whose last
+line is a `<!-- bees:<role> -->` marker (bees and humans share one `gh`
+account, so every comment a bee posts ends with that line; quoting one
+earlier in a reply does not make the reply a bee's) and empty approvals.
+Whatever is left is sent to the developer as one mail message from `human`,
+listing each item with its author, file and line, comment id, link and the
+exact `gh` command to reply to it. The timestamp of the last item delivered
+is recorded as `human_seen_at` in `<state_dir>/issues/<n>.json`.
 
 What happens next depends on the issue's state:
 

@@ -284,6 +284,14 @@ func TestCommentAlwaysEndsWithTheRolesMarker(t *testing.T) {
 			"> Fixed in #91.\n>\n> <!-- bees:developer -->\n\nThanks.\n\n" + own,
 			1,
 		},
+		// A quoted marker on the last line is context too: it is not the
+		// signature a reader recognises, so our own still has to go on.
+		{
+			"ends with our own marker quoted",
+			"> Filed #90.\n>\n> " + own,
+			"> Filed #90.\n>\n> " + own + "\n\n" + own,
+			2,
+		},
 		// Our own marker quoted mid-body is context, not the signature.
 		{
 			"own marker quoted, then more text",
@@ -490,8 +498,14 @@ func TestAuthorReadsTheMarker(t *testing.T) {
 		"plain text":                        "human",
 		"hi\n\n<!-- bees:developer -->":     "bee: developer",
 		"hi\n\n<!-- bees:product_manager >": "human", // unterminated: not a marker
+		"<!-- bees:qa -->":                  "bee: qa",
+		"hi\n\n<!-- bees:developer -->\n\n": "bee: developer",
 		// A quoted marker is context; the author's own marker is the last one.
 		"> <!-- bees:developer -->\n\nmine\n\n<!-- bees:qa -->": "bee: qa",
+		// A person quoting the bee they answer wrote the last line, so the
+		// comment is theirs even though it carries a marker.
+		"Replying to the bot:\n> looks good to me\n> <!-- bees:reviewer -->\n\nActually please hold off on merging.": "human",
+		"answering you:\n\n> <!-- bees:reviewer -->":                                                                 "human",
 	} {
 		if got := author(body); got != want {
 			t.Errorf("author(%q) = %q, want %q", body, got, want)

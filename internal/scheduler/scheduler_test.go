@@ -918,8 +918,9 @@ func TestHumanFeedbackReopensApprovedPR(t *testing.T) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	h.gh.activity["repos/acme/widgets/pulls/101/comments"] = fmt.Sprintf(`[
 		{"id": 555, "user": {"login": "kyle"}, "body": "please rename this", "path": "seed.txt", "line": 1, "html_url": "https://x/555", "created_at": %q},
-		{"id": 556, "user": {"login": "kyle"}, "body": "will do <!-- bees:developer -->", "path": "seed.txt", "line": 1, "html_url": "https://x/556", "created_at": %q}
-	]`, now, now)
+		{"id": 556, "user": {"login": "kyle"}, "body": "will do\n\n<!-- bees:developer -->", "path": "seed.txt", "line": 1, "html_url": "https://x/556", "created_at": %q},
+		{"id": 557, "user": {"login": "kyle"}, "body": "Replying to the bot:\n> <!-- bees:developer -->\n\nActually, hold off on merging.", "path": "seed.txt", "line": 1, "html_url": "https://x/557", "created_at": %q}
+	]`, now, now, now)
 	h.gh.activity["repos/acme/widgets/pulls/101/reviews"] = fmt.Sprintf(`[
 		{"id": 777, "user": {"login": "kyle"}, "body": "", "state": "APPROVED", "html_url": "https://x/777", "submitted_at": %q}
 	]`, now)
@@ -939,7 +940,7 @@ func TestHumanFeedbackReopensApprovedPR(t *testing.T) {
 		t.Fatal("no developer session ran")
 	}
 	prompt, _ := os.ReadFile(filepath.Join(dev[0], "prompt.md"))
-	for _, want := range []string{"Feedback on PR #101 from kyle", "please rename this", "pulls/101/comments/555/replies", "seed.txt:1"} {
+	for _, want := range []string{"Feedback on PR #101 from kyle", "please rename this", "pulls/101/comments/555/replies", "seed.txt:1", "Actually, hold off on merging."} {
 		if !strings.Contains(string(prompt), want) {
 			t.Errorf("developer prompt missing %q", want)
 		}
@@ -1113,7 +1114,7 @@ func TestFeedbackGoesToProductManager(t *testing.T) {
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:feedback"}}, CreatedAt: now.Add(-time.Hour), UpdatedAt: now}
 	h.gh.issues[4] = &github.Issue{Number: 4, Title: "Already answered", Body: "old idea", State: "OPEN", Author: github.Author{Login: "kyle"},
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:feedback"}}, CreatedAt: now.Add(-2 * time.Hour), UpdatedAt: now,
-		Comments: []github.Comment{{Author: github.Author{Login: "kyle"}, Body: "filed #10 for this <!-- bees:product_manager -->", CreatedAt: now.Add(-time.Hour)}}}
+		Comments: []github.Comment{{Author: github.Author{Login: "kyle"}, Body: "filed #10 for this\n\n<!-- bees:product_manager -->", CreatedAt: now.Add(-time.Hour)}}}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	if err := h.sched.Run(ctx); err != nil {
@@ -1143,7 +1144,7 @@ func TestFeedbackGoesToProductManager(t *testing.T) {
 		t.Fatal("product manager should be idle: no fresh feedback, interval not elapsed")
 	}
 	h.gh.issues[3].Comments = []github.Comment{
-		{Author: github.Author{Login: "kyle"}, Body: "created #11 <!-- bees:product_manager -->", CreatedAt: now.Add(time.Second)},
+		{Author: github.Author{Login: "kyle"}, Body: "created #11\n\n<!-- bees:product_manager -->", CreatedAt: now.Add(time.Second)},
 		{Author: github.Author{Login: "kyle"}, Body: "also on mobile please", CreatedAt: now.Add(2 * time.Second)},
 	}
 	h.gh.issues[3].UpdatedAt = now.Add(2 * time.Second)
@@ -1163,13 +1164,13 @@ func TestFeatureIssuesBelongToProductManager(t *testing.T) {
 	h.gh.issues[6] = &github.Issue{Number: 6, Title: "Search", Body: "find things", State: "OPEN", Author: github.Author{Login: "kyle"},
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:feature"}, {Name: "bees:question"}}, CreatedAt: now.Add(-3 * time.Hour), UpdatedAt: now,
 		Comments: []github.Comment{
-			{Author: github.Author{Login: "kyle"}, Body: "Fuzzy or exact? <!-- bees:product_manager -->", CreatedAt: now.Add(-2 * time.Hour)},
+			{Author: github.Author{Login: "kyle"}, Body: "Fuzzy or exact?\n\n<!-- bees:product_manager -->", CreatedAt: now.Add(-2 * time.Hour)},
 			{Author: github.Author{Login: "kyle"}, Body: "fuzzy", CreatedAt: now.Add(-time.Minute)},
 		}}
 	// A feature already broken down: the PM commented last.
 	h.gh.issues[7] = &github.Issue{Number: 7, Title: "Done planning", Body: "x", State: "OPEN", Author: github.Author{Login: "kyle"},
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:feature"}}, CreatedAt: now.Add(-3 * time.Hour), UpdatedAt: now,
-		Comments: []github.Comment{{Author: github.Author{Login: "kyle"}, Body: "work items: #8 #9 <!-- bees:product_manager -->", CreatedAt: now.Add(-time.Hour)}}}
+		Comments: []github.Comment{{Author: github.Author{Login: "kyle"}, Body: "work items: #8 #9\n\n<!-- bees:product_manager -->", CreatedAt: now.Add(-time.Hour)}}}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	if err := h.sched.Run(ctx); err != nil {
@@ -1696,7 +1697,7 @@ func TestProductManagerSeesEachWorkItemsParent(t *testing.T) {
 	// The fake answers the parent query for issue 1 with feature #5.
 	h.gh.issues[5] = &github.Issue{Number: 5, Title: "Exports", Body: "csv please", State: "OPEN", Author: github.Author{Login: "kyle"},
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:feature"}}, CreatedAt: now.Add(-time.Hour), UpdatedAt: now,
-		Comments: []github.Comment{{Author: github.Author{Login: "kyle"}, Body: "work items: #1 <!-- bees:product_manager -->", CreatedAt: now}}}
+		Comments: []github.Comment{{Author: github.Author{Login: "kyle"}, Body: "work items: #1\n\n<!-- bees:product_manager -->", CreatedAt: now}}}
 	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Export to CSV", State: "OPEN", Author: github.Author{Login: "kyle"},
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: now.Add(-time.Hour), UpdatedAt: now}
 	// A bug QA filed: attached to nothing, which is what the column is for.
