@@ -1188,12 +1188,13 @@ func TestReadyIssueWithoutASizeGetsTheDefault(t *testing.T) {
 	if !strings.Contains(h.logs.String(), "ready issue without a size gets the default") {
 		t.Fatalf("no log line about the default size:\n%s", h.logs.String())
 	}
-	// The status of that first pass counts the unsized issue as unsized.
+	// reconcile sized the issue and recounts before the status is written,
+	// so the first pass already reports it as "m" rather than unsized.
 	st, err := h.store.LoadStatus()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.ReadySizes[""] != 1 || st.ReadySizes["xs"] != 1 {
+	if st.ReadySizes["m"] != 1 || st.ReadySizes["xs"] != 1 || st.ReadySizes[""] != 0 {
 		t.Fatalf("ready sizes after the first pass: %v", st.ReadySizes)
 	}
 
@@ -1240,5 +1241,62 @@ func TestSizeSurvivesTheStateMachine(t *testing.T) {
 	prompt, _ := os.ReadFile(filepath.Join(dirs[0], "system-prompt.md"))
 	if !strings.Contains(string(prompt), "this is an `xs` change") {
 		t.Fatalf("reviewer system prompt does not mention the size:\n%s", prompt)
+	}
+}
+
+// An issue a human filed without a state label is counted under "no_state",
+// never under the empty string, and the count is refreshed after reconcile has
+// moved it into triage — not left stale until the next poll.
+func TestNoStateQueueIsNamedAndRecountedAfterReconcile(t *testing.T) {
+	h := newHarness(t, baseTOML)
+	h.sched.OnlyRoles = map[string]bool{}
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Filed from the GitHub UI", State: "OPEN", Labels: []github.Label{{Name: "bees"}}}
+	// A blocked issue whose question reconcile is about to answer: it must
+	// leave the blocked bucket, not be counted in both.
+	h.gh.issues[2] = &github.Issue{Number: 2, Title: "Vague", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:blocked"}}}
+	if _, err := h.box.Send(mail.Message{From: config.RoleProjectManager, To: config.RoleDeveloper, Subject: "Re: Vague", Body: "do X", Issue: 2}); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	snap, err := h.sched.poll(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.sched.writeStatus()
+	st, err := h.store.LoadStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := st.Queues[""]; ok {
+		t.Errorf("unnamed queue key in status: %+v", st.Queues)
+	}
+	if st.Queues["no_state"] != 1 {
+		t.Errorf("after poll: no_state = %d, want 1 (%+v)", st.Queues["no_state"], st.Queues)
+	}
+	if st.Queues["blocked"] != 1 {
+		t.Errorf("after poll: blocked = %d, want 1 (%+v)", st.Queues["blocked"], st.Queues)
+	}
+
+	if err := h.sched.reconcile(ctx, snap); err != nil {
+		t.Fatal(err)
+	}
+	h.sched.writeStatus()
+	if st, err = h.store.LoadStatus(); err != nil {
+		t.Fatal(err)
+	}
+	if st.Queues["no_state"] != 0 {
+		t.Errorf("after reconcile: no_state = %d, want 0 (%+v)", st.Queues["no_state"], st.Queues)
+	}
+	if st.Queues["triage"] != 1 {
+		t.Errorf("after reconcile: triage = %d, want 1 (%+v)", st.Queues["triage"], st.Queues)
+	}
+	// The unblocked issue moved to ready; counting it in both buckets would
+	// make `bees status` report more issues than exist.
+	if st.Queues["blocked"] != 0 {
+		t.Errorf("after reconcile: blocked = %d, want 0 (%+v)", st.Queues["blocked"], st.Queues)
+	}
+	if st.Queues["ready"] != 1 {
+		t.Errorf("after reconcile: ready = %d, want 1 (%+v)", st.Queues["ready"], st.Queues)
 	}
 }

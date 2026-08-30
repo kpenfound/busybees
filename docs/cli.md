@@ -193,6 +193,12 @@ owned by the product manager, and `open_prs`), running developer workers (issue,
 unread mail per role. Reads `status.json` from the state directory, so it works while
 `bees run` is active in another terminal.
 
+A `no_state` queue counts issues that are visible to the factory but carry no
+workflow state label yet — usually ones a person just filed from the GitHub UI. The
+scheduler gives them `bees:triage` on its next reconcile, so the row normally
+disappears again within the same pass. A workflow-state queue is omitted while it is
+empty (`feedback`, `features` and `open_prs` are always shown).
+
 The `ready` queue also carries a breakdown by [size](workflow.md#sizing)
 (`ready_sizes` in `--json`); issues the scheduler has not sized yet are
 counted as `unsized`:
