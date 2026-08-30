@@ -141,22 +141,30 @@ func (s *Store) SaveRole(role string, rs RoleState) error {
 
 // Worker describes a running developer worker.
 type Worker struct {
-	Name  string    `json:"name"`
-	Issue int       `json:"issue"`
-	Stage string    `json:"stage"`
-	Round int       `json:"round"`
-	Since time.Time `json:"since"`
+	Name  string `json:"name"`
+	Issue int    `json:"issue"`
+	Stage string `json:"stage"`
+	Round int    `json:"round"`
+	// Attempt is the 1-based attempt of the running session; > 1 means the
+	// previous attempt failed for infrastructure reasons and was retried.
+	Attempt int       `json:"attempt,omitempty"`
+	Since   time.Time `json:"since"`
 }
 
 // Status is the live scheduler status.
 type Status struct {
-	UpdatedAt  time.Time         `json:"updated_at"`
-	PID        int               `json:"pid"`
-	LastPoll   time.Time         `json:"last_poll"`
-	Workers    []Worker          `json:"workers"`
-	Singletons map[string]string `json:"singletons"` // role -> "idle"/"running"
-	Queues     map[string]int    `json:"queues"`
-	LastError  string            `json:"last_error,omitempty"`
+	UpdatedAt time.Time `json:"updated_at"`
+	PID       int       `json:"pid"`
+	LastPoll  time.Time `json:"last_poll"`
+	// NextPoll is when the scheduler next polls GitHub. Between polls it
+	// still runs local passes every scheduler.poll_interval.
+	NextPoll time.Time `json:"next_poll,omitempty"`
+	// InWorkHours is nil when scheduler.work_hours is not configured.
+	InWorkHours *bool             `json:"in_work_hours,omitempty"`
+	Workers     []Worker          `json:"workers"`
+	Singletons  map[string]string `json:"singletons"` // role -> "idle"/"running"
+	Queues      map[string]int    `json:"queues"`
+	LastError   string            `json:"last_error,omitempty"`
 }
 
 // SaveStatus writes status.json.

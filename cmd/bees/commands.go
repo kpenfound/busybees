@@ -309,6 +309,25 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 			} else {
 				fmt.Printf("scheduler: pid %d, last poll %s ago\n", st.PID, time.Since(st.LastPoll).Round(time.Second))
 			}
+			if cfg.Scheduler.WorkHoursEnabled() {
+				// Always the live answer: a stored one is stale as soon
+				// as the scheduler stops. status.json keeps its own record
+				// for --json.
+				in := cfg.Scheduler.InWorkHours(time.Now())
+				yes := "no"
+				if in {
+					yes = "yes"
+				}
+				line := fmt.Sprintf("work hours: %s (%s)", yes, cfg.Scheduler.WorkHoursDescription())
+				switch d := time.Until(st.NextPoll).Round(time.Second); {
+				case st.NextPoll.IsZero():
+				case d > 0:
+					line += fmt.Sprintf("   next GitHub poll in %s", d)
+				default:
+					line += "   next GitHub poll due"
+				}
+				fmt.Println(line)
+			}
 			if st.LastError != "" {
 				fmt.Println("last error:", st.LastError)
 			}
@@ -326,7 +345,11 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 				fmt.Println("  none")
 			}
 			for _, w := range st.Workers {
-				fmt.Printf("  %-12s issue #%-5d %-10s round %d  since %s\n", w.Name, w.Issue, w.Stage, w.Round, w.Since.Format(time.Kitchen))
+				round := fmt.Sprintf("round %d", w.Round)
+				if w.Attempt > 1 {
+					round += fmt.Sprintf(" attempt %d", w.Attempt)
+				}
+				fmt.Printf("  %-12s issue #%-5d %-10s %-20s since %s\n", w.Name, w.Issue, w.Stage, round, w.Since.Format(time.Kitchen))
 			}
 			fmt.Println("\nsingletons:")
 			for _, r := range []string{config.RoleProductManager, config.RoleProjectManager, config.RoleQA} {

@@ -31,13 +31,21 @@ never need the real ones.
 ## The scheduler loop
 
 `scheduler.Run` initialises the state directory, prunes stale worktrees, then
-repeats a **pass** every `scheduler.poll_interval` (default 5m) until the
-context is cancelled. Ctrl-C stops polling and waits for running sessions to
-finish. If a pass fails with a rate-limit error (`isRateLimited`: the message
-contains "rate limit", "secondary rate" or "abuse detection") the next pass
-waits `scheduler.rate_limit_backoff` (default 15m) instead.
+ticks every `scheduler.poll_interval` (default 5m) until the context is
+cancelled. Ctrl-C stops polling and waits for running sessions to finish.
 
-A pass is:
+Each tick (`tick`) is either a **full pass** or a **local pass**. A full pass
+runs when the tick is at or past the next scheduled GitHub poll, and schedules
+the next one `Scheduler.PollIntervalAt(now)` later — `poll_interval`, or
+`off_hours_poll_interval` when `scheduler.work_hours` is configured and now
+falls outside the window (see [Work hours](configuration.md#work-hours)).
+Without `work_hours` that is always `poll_interval`, so every tick is a full
+pass. If the poll fails with a rate-limit error (`isRateLimited`: the message
+contains "rate limit", "secondary rate" or "abuse detection") the next poll is
+pushed out by `scheduler.rate_limit_backoff` (default 15m) instead, whatever
+the window says.
+
+A full pass is:
 
 1. **poll** – `gh issue list` and `gh pr list` with the filter's query (label,
    assignee, milestone). Issues are bucketed by state label (`triage`, `ready`,
@@ -102,6 +110,29 @@ A pass is:
    `GetIssueDetails`). The factory never creates, edits or closes milestones;
    people do, and the bees inherit.
 
+**Local passes.** A tick that is not due for a GitHub poll runs `localPass`
+instead: it re-runs `classify` over the issue and PR lists cached from the last
+successful poll (`classify` never mutates them, so the cache survives
+`reconcile` appending to `snapshot.byState`), then does steps 3 and 4 and
+dispatches only the singletons that have unread mail. It deliberately skips
+the poll itself, the human-feedback fetch (step 2) and the product-manager and
+QA "has work" checks, all of which read GitHub; label *writes* made by
+`reconcile` and dispatch still happen, because what a local pass protects is
+the polling budget, not every API call. Until the first successful poll there
+is nothing cached and a local pass does nothing.
+
+The one read a local pass does make is a confirmation. Its snapshot can be
+stale — an issue a worker has since finished, one a developer parked in
+`bees:blocked`, one a human closed or relabelled all still carry their old
+state label in the cache — so before spending a session on a candidate,
+`dispatchDevelopers` fetches that single issue (`gh issue view`) and drops it
+unless it is still open and in `bees:ready`, `bees:in-progress` or
+`bees:review`. The fresh copy replaces the cached one, so the next local pass
+does not ask again. That is one call immediately before a whole session, not
+per pass. The mailbox is not GitHub: the
+developer ↔ reviewer loop, the checks stage and mail-driven label transitions
+run at `poll_interval` however the window is configured.
+
 **Backoff.** A singleton is never dispatched again sooner than one poll
 interval after it finishes, and a failing singleton or developer issue waits
 five poll intervals. This stops a broken session from burning tokens in a tight
@@ -109,7 +140,8 @@ loop.
 
 **API budget.** Every poll costs exactly two `gh` calls (`issue list`,
 `pr list`); everything else is gated on what those lists report so an idle
-factory stays at two calls per poll. Human PR feedback is fetched (3 calls)
+factory stays at two calls per poll (and, with `scheduler.work_hours` set, at
+two calls per `off_hours_poll_interval` outside working hours). Human PR feedback is fetched (3 calls)
 only for PRs whose `updatedAt` moved past `human_seen_at`; product-manager
 feedback/feature comments (1 `issue view` each) only for issues whose
 `updatedAt` is newer than the PM's last run; QA's merged-PR query runs at most
@@ -226,6 +258,18 @@ saved to `stderr.log` when non-empty, and `result.json` summarises the run.
   [--pr N]`, which writes `<session>/outcome.json`. The runner reads it after
   claude exits; a missing file is reported as `HasOutcome = false` and the
   scheduler treats it as `failed`.
+- **Retries.** `runSession` is the single-attempt primitive; every worker calls
+  it through `runSessionWithRetry`. `classifyFailure` (in
+  `internal/scheduler/sessions.go`) splits failures into *infrastructure* — a
+  timeout, an API error, exhausted turns, a rate limit, `claude` exiting with
+  no result event — and *behavioural*: the session reported an outcome
+  (including `failed`), or exited cleanly without reporting. Only
+  infrastructure failures are retried, `scheduler.retries` times, waiting
+  `scheduler.retry_delay` between attempts and running with the role's
+  fallback model when `scheduler.retry_with_fallback` is set. Each attempt has
+  its own session directory (`<name>-retry<n>`), and a retried developer
+  session is told its previous attempt was interrupted so it continues from
+  the branch. See [Escalation](workflow.md#escalation-beesneeds-human).
 - **Environment.** The configured `env` entries first (`$VAR`-expanded) and
   `SHELL` when `shell` is set; then `BEES_ROLE`, `BEES_SESSION_DIR`,
   `BEES_STATE_DIR`, `BEES_CONFIG`, `BEES_REPO`, `BEES_LABEL`, `BEES_BIN`, plus

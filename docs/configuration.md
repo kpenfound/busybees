@@ -124,13 +124,57 @@ and `bees labels sync` create them in GitHub.
 | `rate_limit_backoff` | duration | `"15m"` | How long to pause polling after a poll fails with a GitHub rate-limit error (a message containing "rate limit", "secondary rate" or "abuse detection"), instead of retrying after `poll_interval`. |
 | `max_developers` | int | `1` | Number of concurrent developer workers. Each worker owns one issue and runs a sequential developer → reviewer → developer loop, so reviewer concurrency follows developer concurrency. Must be ≥ 1. |
 | `max_review_rounds` | int | `3` | Developer/reviewer iterations before an issue is escalated with `bees:needs-human`. |
+| `retries` | int | `1` | Extra attempts a session gets when it failed for **infrastructure** reasons — it timed out, ran out of turns, hit an API error or rate limit, or `claude` crashed. A session that ran and reported (with `bees done`, including `failed`) is never retried. `0` disables retrying; must be between 0 and 5. See [Escalation](workflow.md#escalation-beesneeds-human). |
+| `retry_delay` | duration | `"10m"` | How long to wait before an attempt is repeated. `"0s"` retries immediately. |
+| `retry_with_fallback` | bool | `true` | Run the retry with the role's `fallback_model` as its primary model. Roles without a fallback model simply rerun. |
 | `triage_batch_size` | int | `5` | Maximum number of issues handed to the project manager in one session. |
 | `product_manager_interval` | duration | `"1h"` | Minimum time between product manager runs. Unread mail in the PM's inbox triggers an earlier run. |
 | `qa_interval` | duration | `"30m"` | Minimum time between QA runs. QA only runs when something was merged since its last run (the first run always happens). The merged-PR query itself runs at most once per `qa_interval` (tracked as `last_check` in `<state_dir>/qa.json`), not on every poll. |
 | `keep_workspaces` | bool | `false` | Leave temporary worktrees on disk after a session (debugging). |
 | `workspace_root` | string | `""` | Directory temporary worktrees are created under. Empty means `$TMPDIR/bees`. |
+| `work_hours` | string | `""` | Daily window during which GitHub is polled every `poll_interval`, as `"HH:MM-HH:MM"` on a 24-hour clock. Empty (the default) disables the feature — GitHub is polled around the clock and the three keys below are ignored. See [Work hours](#work-hours). |
+| `off_hours_poll_interval` | duration | `"1h"` | How often GitHub is polled outside `work_hours`. Must be ≥ `poll_interval`. Only used when `work_hours` is set. |
+| `work_days` | list of strings | `["mon","tue","wed","thu","fri"]` | Days the window applies to, as lowercase three-letter names (`mon tue wed thu fri sat sun`). At least one is required when `work_hours` is set. |
+| `timezone` | string | `""` | IANA name the window is read in (`"America/New_York"`). Empty means the machine's local time. |
 
 Durations use Go syntax: `"30s"`, `"5m"`, `"1h30m"`.
+
+### Work hours
+
+Most polling exists to notice *human* activity: new issues, feedback, PR
+reviews, merges, hand-backs from `bees:needs-human`. Outside working hours that
+activity is rare, so `work_hours` lets the factory poll GitHub less often then:
+
+```toml
+[scheduler]
+poll_interval = "5m"            # inside work hours
+off_hours_poll_interval = "1h"  # outside work hours
+work_hours = "09:00-18:00"
+work_days = ["mon", "tue", "wed", "thu", "fri"]
+timezone = "America/New_York"
+```
+
+Only the **GitHub polling cadence** changes. The scheduler keeps ticking every
+`poll_interval`; a tick that is not due for a poll runs a *local pass* that
+reuses the last poll's issue and PR lists (see
+[The scheduler loop](architecture.md#the-scheduler-loop)). Everything driven by
+the local mailbox — the developer ↔ reviewer loop, answered questions moving
+`bees:blocked` back to `bees:ready`, the checks stage — runs at full speed at
+every hour of the day. `bees tick` and `bees exec` ignore the window and always
+do a full pass.
+
+**Overnight windows.** When the start is later than the end, the window wraps
+midnight and belongs to the day its **start** falls on: `work_hours =
+"22:00-06:00"` with `work_days = ["fri"]` covers Friday 22:00 through Saturday
+06:00, and nothing else. A window whose start equals its end is rejected.
+
+Invalid values are rejected when `bees.toml` is loaded: a window that is not
+`"HH:MM-HH:MM"` on a 24-hour clock, an unknown or empty `work_days`, a timezone
+`time.LoadLocation` does not know, or an `off_hours_poll_interval` shorter than
+`poll_interval`.
+
+`bees status` shows the window, whether the factory is inside it right now, and
+when the next GitHub poll is due.
 
 ### API budget
 
@@ -140,7 +184,7 @@ frugal:
 
 | What | Cost | When |
 |---|---|---|
-| A poll | 2 calls (`gh issue list`, `gh pr list`) | every `poll_interval` |
+| A poll | 2 calls (`gh issue list`, `gh pr list`) | every `poll_interval`, or every `off_hours_poll_interval` outside `work_hours` |
 | Human PR feedback | 3 calls per PR (reviews, review comments, comments) | only for PRs whose `updatedAt` moved since the last look |
 | Product-manager has-work check | 1 `issue view` per feedback/feature issue | only for issues whose `updatedAt` is newer than the PM's last run |
 | Product-manager run | 1 `issue view` per open feedback/feature issue, plus 1 REST call per open feature (sub-issue progress) | every PM run (not gated by `updatedAt`) |
@@ -313,9 +357,16 @@ headers = { Authorization = "Bearer $BROWSER_MCP_TOKEN" }
 | `scheduler.rate_limit_backoff` | `15m` |
 | `scheduler.max_developers` | `1` |
 | `scheduler.max_review_rounds` | `3` |
+| `scheduler.retries` | `1` |
+| `scheduler.retry_delay` | `10m` |
+| `scheduler.retry_with_fallback` | `true` |
 | `scheduler.triage_batch_size` | `5` |
 | `scheduler.product_manager_interval` | `1h` |
 | `scheduler.qa_interval` | `30m` |
+| `scheduler.work_hours` | `""` (poll around the clock) |
+| `scheduler.off_hours_poll_interval` | `1h` |
+| `scheduler.work_days` | `["mon","tue","wed","thu","fri"]` |
+| `scheduler.timezone` | `""` (the machine's local time) |
 | `model` | `opus` |
 | `fallback_model` | `sonnet` |
 | `max_turns` | `200` |
