@@ -135,3 +135,19 @@ func flagOrEnv(cmd *cobra.Command, name, value, env string) string {
 	}
 	return value
 }
+
+// groupCmd returns a command that only exists to hold subcommands: a bare
+// invocation prints help, an unknown subcommand is an error.
+//
+// The RunE is what makes the second half work: cobra only runs the "unknown
+// command" check for the root command, and only validates Args on a runnable
+// command — a group with no Run/RunE returns help (and exit 0) before Args is
+// ever evaluated. Callers set Long and Hidden on the result.
+func groupCmd(use, short string) *cobra.Command {
+	return &cobra.Command{
+		Use:   use,
+		Short: short,
+		Args:  cobra.NoArgs,
+		RunE:  func(cmd *cobra.Command, args []string) error { return cmd.Help() },
+	}
+}

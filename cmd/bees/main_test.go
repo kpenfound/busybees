@@ -128,3 +128,42 @@ func TestClaudeBin(t *testing.T) {
 		t.Errorf("BEES_CLAUDE_BIN = %q", got)
 	}
 }
+
+// A typo in a subcommand must fail, exactly like a typo in a top-level
+// command: a group that only printed its help and exited 0 left a session
+// with no way to tell its command had not run (#83).
+func TestUnknownSubcommandIsAnError(t *testing.T) {
+	for _, group := range []string{"config", "prompts", "mail", "issue", "labels", "skills", "mcp"} {
+		err := runRoot(t, group, "bogus")
+		want := `unknown command "bogus" for "bees ` + group + `"`
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("bees %s bogus: got %v, want an error containing %q", group, err, want)
+		}
+		// The bare group still prints its help and succeeds.
+		if err := runRoot(t, group); err != nil {
+			t.Errorf("bees %s: got %v, want nil", group, err)
+		}
+	}
+}
+
+// The realistic shape from #83: a typo'd subcommand carrying the subcommand's
+// flags. Cobra parses flags before it validates Args, so the error names the
+// flag rather than the command — what matters is that it is an error at all.
+func TestUnknownSubcommandWithFlagsIsAnError(t *testing.T) {
+	for _, args := range [][]string{
+		{"issue", "craete", "--bug", "--title", "x"},
+		{"mail", "snd", "--to", "project_manager"},
+	} {
+		if err := runRoot(t, args...); err == nil {
+			t.Errorf("bees %v: got nil, want an error", args)
+		}
+	}
+}
+
+// An unknown top-level command was already rejected; keep it that way.
+func TestUnknownCommandIsAnError(t *testing.T) {
+	err := runRoot(t, "boguscmd")
+	if err == nil || !strings.Contains(err.Error(), `unknown command "boguscmd" for "bees"`) {
+		t.Errorf("got %v", err)
+	}
+}
