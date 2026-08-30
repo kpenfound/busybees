@@ -154,6 +154,12 @@ var scopesLine = regexp.MustCompile(`(?m)^.*Token scopes:(.*)$`)
 // accountLine matches "✓ Logged in to github.com account kyle (keyring)".
 var accountLine = regexp.MustCompile(`account ([^\s(]+)`)
 
+// unknownAssignee matches the GraphQL error `gh issue list --assignee X`
+// answers with when X is not a GitHub login ("Could not find an assignee with
+// the login of 'kylpenfound'."). The client folds stderr into the error, so it
+// is matched anywhere in the message.
+var unknownAssignee = regexp.MustCompile(`(?i)could not find an assignee with the login`)
+
 func (d *Deps) checkGH(ctx context.Context) Result {
 	const name = "gh authenticated"
 	if _, err := d.lookPath("gh"); err != nil {
@@ -477,6 +483,15 @@ func (d *Deps) checkFilter(ctx context.Context) Result {
 	q := Query(d.Config)
 	issues, err := d.GitHub.ListOpenIssues(ctx, q)
 	if err != nil {
+		// A filter.assignee that is not a real login makes gh error instead of
+		// answering an empty list (it does not when the query also carries a
+		// label). That is a filter that matches nothing, not a broken gh: the
+		// configured value is authoritative, so report it from bees.toml.
+		if unknownAssignee.MatchString(err.Error()) {
+			return warn(name, GroupGitHub,
+				fmt.Sprintf("filter.assignee %q is not a GitHub login, so the filter matches nothing", d.Config.Filter.Assignee),
+				"fix filter.assignee in bees.toml (it must be a GitHub login) or unset the criterion")
+		}
 		return fail(name, GroupGitHub, oneLine(err.Error()),
 			"check that gh can list issues in "+d.Config.Project.Repo)
 	}
