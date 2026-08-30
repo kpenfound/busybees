@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -35,7 +36,8 @@ you only run "bees mcp serve" yourself to debug it.`
 		Short: "Serve the bees tools on stdio (started by claude, not by hand)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			srv := mcpserver.New(mcpserver.EnvFromOS(), mcpserver.Deps{Issues: &issueBackend{g: g}})
+			b := &backend{g: g}
+			srv := mcpserver.New(mcpserver.EnvFromOS(), mcpserver.Deps{Issues: b, GitHub: b})
 			err := srv.Run(cmd.Context(), &mcp.StdioTransport{})
 			if isCleanShutdown(err) {
 				return nil
@@ -75,7 +77,7 @@ you only run "bees mcp serve" yourself to debug it.`
 func toolsText(tools []*mcp.Tool) string {
 	var b strings.Builder
 	for _, t := range tools {
-		fmt.Fprintf(&b, "mcp__%s__%-14s %s\n", config.BuiltinMCPServer, t.Name, t.Title)
+		fmt.Fprintf(&b, "mcp__%s__%-16s %s\n", config.BuiltinMCPServer, t.Name, t.Title)
 		for _, e := range enums(t.InputSchema) {
 			fmt.Fprintf(&b, "    %s: %s\n", e.prop, strings.Join(e.values, " | "))
 		}
@@ -131,10 +133,12 @@ func isCleanShutdown(err error) bool {
 		errors.Is(err, &jsonrpc.Error{Code: codeServerClosing})
 }
 
-// issueBackend creates issues through internal/issues, loading bees.toml on
-// first use. The MCP server must start even when the configuration cannot be
-// read, so the failure surfaces from the tool that needs it.
-type issueBackend struct {
+// backend is the production implementation of the server's Issues and
+// GitHub interfaces: internal/issues for creation, a gh client for
+// everything else, with bees.toml loaded on first use. The MCP server must
+// start even when the configuration cannot be read, so the failure surfaces
+// from the tool that needs it.
+type backend struct {
 	g  *globalFlags
 	mu sync.Mutex
 	gh *github.Client
@@ -143,7 +147,7 @@ type issueBackend struct {
 	labels config.Labels
 }
 
-func (b *issueBackend) load(ctx context.Context) error {
+func (b *backend) load(ctx context.Context) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.gh != nil {
@@ -178,16 +182,86 @@ func (b *issueBackend) load(ctx context.Context) error {
 	return nil
 }
 
-func (b *issueBackend) Create(ctx context.Context, opts issues.Options) (issues.Result, error) {
+func (b *backend) Create(ctx context.Context, opts issues.Options) (issues.Result, error) {
 	if err := b.load(ctx); err != nil {
 		return issues.Result{}, err
 	}
 	return issues.Create(ctx, b.gh, b.filter, b.labels, opts)
 }
 
-func (b *issueBackend) Link(ctx context.Context, parent, child int) error {
+func (b *backend) Link(ctx context.Context, parent, child int) error {
 	if err := b.load(ctx); err != nil {
 		return err
 	}
 	return issues.Link(ctx, b.gh, parent, child)
+}
+
+// Rules returns the factory's visibility filter and label set. The query is
+// built exactly as scheduler.New builds it, so "matches the filter" means
+// the same thing to a tool and to the orchestrator.
+func (b *backend) Rules(ctx context.Context) (github.Query, config.Labels, error) {
+	if err := b.load(ctx); err != nil {
+		return github.Query{}, config.Labels{}, err
+	}
+	q := github.Query{Assignee: b.filter.Assignee, Milestone: b.filter.Milestone}
+	if b.filter.LabelRequired() {
+		q.Label = b.filter.Label
+	}
+	return q, b.labels, nil
+}
+
+func (b *backend) Issue(ctx context.Context, number int) (github.Issue, error) {
+	if err := b.load(ctx); err != nil {
+		return github.Issue{}, err
+	}
+	return b.gh.GetIssue(ctx, number)
+}
+
+func (b *backend) Parent(ctx context.Context, number int) (*github.Parent, error) {
+	if err := b.load(ctx); err != nil {
+		return nil, err
+	}
+	return b.gh.ParentIssue(ctx, number)
+}
+
+func (b *backend) PR(ctx context.Context, number int) (github.PR, error) {
+	if err := b.load(ctx); err != nil {
+		return github.PR{}, err
+	}
+	return b.gh.GetPR(ctx, number)
+}
+
+func (b *backend) PRActivity(ctx context.Context, number int, since time.Time) ([]github.Activity, error) {
+	if err := b.load(ctx); err != nil {
+		return nil, err
+	}
+	return b.gh.PRActivity(ctx, number, since)
+}
+
+func (b *backend) Checks(ctx context.Context, number int) ([]github.Check, error) {
+	if err := b.load(ctx); err != nil {
+		return nil, err
+	}
+	return b.gh.RequiredChecks(ctx, number)
+}
+
+func (b *backend) Comment(ctx context.Context, number int, body string) error {
+	if err := b.load(ctx); err != nil {
+		return err
+	}
+	return b.gh.Comment(ctx, number, body)
+}
+
+func (b *backend) EditBody(ctx context.Context, number int, body string) error {
+	if err := b.load(ctx); err != nil {
+		return err
+	}
+	return b.gh.EditBody(ctx, number, body)
+}
+
+func (b *backend) EditLabels(ctx context.Context, number int, add, remove []string) error {
+	if err := b.load(ctx); err != nil {
+		return err
+	}
+	return b.gh.EditLabels(ctx, number, add, remove)
 }

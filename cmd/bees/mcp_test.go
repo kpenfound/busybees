@@ -18,13 +18,18 @@ import (
 // are the same for everybody, the enums are not.
 func TestToolsTextDiffersPerRole(t *testing.T) {
 	for _, tc := range []struct {
-		role string
-		want string
+		role  string
+		want  string
+		tools []string
 	}{
-		{config.RoleDeveloper, "    status: pr-opened | pr-updated | question | failed\n"},
-		{config.RoleReviewer, "    status: approved | changes-requested | failed\n"},
-		{config.RoleQA, "    status: done | failed\n"},
-		{config.RoleProductManager, "    status: done | idle | failed\n"},
+		{role: config.RoleDeveloper, want: "    status: pr-opened | pr-updated | question | failed\n",
+			tools: []string{"issue_view", "pr_view", "comment"}},
+		{role: config.RoleReviewer, want: "    status: approved | changes-requested | failed\n"},
+		{role: config.RoleQA, want: "    status: done | failed\n"},
+		{role: config.RoleProductManager, want: "    status: done | idle | failed\n",
+			tools: []string{"issue_edit_body", "issue_question"}},
+		{role: config.RoleProjectManager, want: "    status: done | idle | failed\n",
+			tools: []string{"issue_edit_body", "issue_set_state"}},
 	} {
 		t.Run(tc.role, func(t *testing.T) {
 			out := renderTools(t, tc.role)
@@ -35,7 +40,7 @@ func TestToolsTextDiffersPerRole(t *testing.T) {
 			if !strings.Contains(out, "    to: "+strings.Join(config.Roles, " | ")+"\n") {
 				t.Fatalf("tools for %s =\n%s\nwant the mail_send recipients", tc.role, out)
 			}
-			for _, name := range []string{"done", "issue_create", "issue_link", "mail_list", "mail_send"} {
+			for _, name := range append([]string{"done", "issue_create", "issue_link", "mail_list", "mail_send"}, tc.tools...) {
 				if !strings.Contains(out, "mcp__"+config.BuiltinMCPServer+"__"+name) {
 					t.Fatalf("tools for %s =\n%s\nwant %s", tc.role, out, name)
 				}
@@ -45,6 +50,17 @@ func TestToolsTextDiffersPerRole(t *testing.T) {
 }
 
 // Without a role the outcomes are unconstrained, so done has no enum to print.
+// The project manager's state moves are the enums that differ most: they
+// carry the short state and size names, not label names.
+func TestToolsTextShowsTheStateAndSizeEnums(t *testing.T) {
+	out := renderTools(t, config.RoleProjectManager)
+	for _, want := range []string{"    size: xs | s | m | l | xl\n", "    state: ready | blocked\n"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("tools for the project manager =\n%s\nwant a line %q", out, want)
+		}
+	}
+}
+
 func TestToolsTextWithoutARole(t *testing.T) {
 	out := renderTools(t, "")
 	if strings.Contains(out, "    status: ") {

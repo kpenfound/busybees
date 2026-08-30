@@ -4,7 +4,10 @@
 //
 // The server is the same code the CLI runs: mail_send/mail_list go through
 // internal/mail, issue_create/issue_link through internal/issues and done
-// through session.Report. It is started by claude as `bees mcp serve` and
+// through session.Report. The GitHub tools (issue_view, pr_view, comment,
+// issue_edit_body, issue_set_state, issue_question) go through a `gh` client
+// and enforce the factory's rules — the visibility filter, the comment
+// marker, who owns which issue — instead of restating them in a prompt. It is started by claude as `bees mcp serve` and
 // takes its context (role, state dir, session dir, issue, PR) from the BEES_*
 // environment, exactly like the session commands.
 //
@@ -73,6 +76,9 @@ type Deps struct {
 	// Issues creates and links issues. When nil the issue tools report that
 	// they are unavailable instead of failing at startup.
 	Issues Issues
+	// GitHub reads and writes issues and pull requests. When nil the GitHub
+	// tools report that they are unavailable, exactly like Issues.
+	GitHub GitHub
 }
 
 // server holds the state shared by the tool handlers.
@@ -80,13 +86,14 @@ type server struct {
 	env    Env
 	mail   *mail.Box
 	issues Issues
+	github GitHub
 }
 
 // New builds the MCP server for env. It never fails: a missing collaborator
 // turns into an error from the tool that needs it, not a server that will
 // not start, so a session always sees the tools it was told about.
 func New(env Env, deps Deps) *mcp.Server {
-	s := &server{env: env, mail: deps.Mail, issues: deps.Issues}
+	s := &server{env: env, mail: deps.Mail, issues: deps.Issues, github: deps.GitHub}
 	if s.mail == nil && env.StateDir != "" {
 		s.mail = mail.Open(state.New(env.StateDir).MailDir())
 	}
@@ -97,6 +104,7 @@ func New(env Env, deps Deps) *mcp.Server {
 	}, nil)
 	s.addMailTools(srv)
 	s.addIssueTools(srv)
+	s.addGitHubTools(srv)
 	s.addDoneTool(srv)
 	return srv
 }
