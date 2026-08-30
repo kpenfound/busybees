@@ -217,25 +217,39 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 			}
 
 		case "checks":
-			s.updateWorker(w, "checks", bookkeeping.CheckFixRounds+1)
-			log.Info("waiting for required checks", "pr", pr.Number, "wait", policy.ChecksWait)
-			status, checks, err := s.awaitChecks(ctx, pr.Number, policy)
+			round := bookkeeping.CheckFixRounds + 1
+			s.updateWorker(w, "checks", round)
+			log.Info("waiting for checks", "pr", pr.Number, "wait", policy.ChecksWait)
+			status, checks, gate, err := s.awaitChecks(ctx, pr.Number, policy, w, round)
 			if err != nil {
 				return err
 			}
 			switch status {
-			case github.ChecksPassed:
-				log.Info("required checks passed; merging", "pr", pr.Number, "method", policy.Method)
+			case github.ChecksNone:
+				// A repository may legitimately have no CI at all. Merging is
+				// still automatic, but it is logged as what it is: nothing was
+				// verified.
+				log.Info("no checks reported; merging without a check gate", "pr", pr.Number, "method", policy.Method)
 				if err := s.gh.MergePR(ctx, pr.Number, policy.Method); err != nil {
-					return s.escalate(ctx, issue.Number, fmt.Sprintf("Required checks passed but merging #%d failed (branch protection may need a human): %v", pr.Number, err))
+					return s.escalate(ctx, issue.Number, fmt.Sprintf("No check was reported on #%d and merging it failed (branch protection may need a human): %v", pr.Number, err))
+				}
+				return nil
+			case github.ChecksPassed:
+				if gate == gateRequired {
+					log.Info("required checks passed; merging", "pr", pr.Number, "method", policy.Method)
+				} else {
+					log.Info(fmt.Sprintf("no required checks; %d reported checks passed; merging", len(checks)), "pr", pr.Number, "method", policy.Method)
+				}
+				if err := s.gh.MergePR(ctx, pr.Number, policy.Method); err != nil {
+					return s.escalate(ctx, issue.Number, fmt.Sprintf("Checks passed but merging #%d failed (branch protection may need a human): %v", pr.Number, err))
 				}
 				return nil
 			case github.ChecksPending:
-				return s.escalate(ctx, issue.Number, fmt.Sprintf("Required checks on #%d were still pending after %s.", pr.Number, policy.ChecksTimeout))
+				return s.escalate(ctx, issue.Number, fmt.Sprintf("Checks on #%d were still pending after %s.", pr.Number, policy.ChecksTimeout))
 			}
 			// Checks failed: the reviewer diagnoses, the developer fixes.
 			if bookkeeping.CheckFixRounds >= policy.MaxCheckFixRounds {
-				return s.escalate(ctx, issue.Number, fmt.Sprintf("Required checks on #%d still fail after %d fix rounds: %s", pr.Number, policy.MaxCheckFixRounds, checkNames(github.Failed(checks))))
+				return s.escalate(ctx, issue.Number, fmt.Sprintf("Checks on #%d still fail after %d fix rounds: %s", pr.Number, policy.MaxCheckFixRounds, checkNames(github.Failed(checks))))
 			}
 			bookkeeping.CheckFixRounds++
 			_ = s.store.SaveIssue(bookkeeping)
@@ -251,7 +265,7 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 				_, _ = gitPull(ctx, ws.RepoDir)
 			}
 			name := fmt.Sprintf("reviewer-pr-%d-checks%d", pr.Number, bookkeeping.CheckFixRounds)
-			log.Info("required checks failed; reviewer diagnosing", "pr", pr.Number, "round", bookkeeping.CheckFixRounds, "checks", checkNames(github.Failed(checks)))
+			log.Info("checks failed; reviewer diagnosing", "pr", pr.Number, "gate", string(gate), "round", bookkeeping.CheckFixRounds, "checks", checkNames(github.Failed(checks)))
 			started := s.now()
 			res, err := s.runSessionWithRetry(ctx, sessionSpec{
 				role: config.RoleReviewer, name: name, task: "reviewer_checks", workDir: ws.RepoDir, branch: branch, worker: w,
@@ -278,25 +292,103 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 	}
 }
 
-// awaitChecks waits policy.ChecksWait, then polls the PR's required checks
-// every ChecksPollInterval until they pass, fail, or ChecksTimeout elapses.
-func (s *Scheduler) awaitChecks(ctx context.Context, pr int, policy config.MergePolicy) (github.ChecksStatus, []github.Check, error) {
+// checksGate is the set of checks a wait is gated on. It is chosen on the
+// first observation that reports anything and never changes afterwards.
+type checksGate string
+
+const (
+	// gateUnknown is the state before the first observation.
+	gateUnknown checksGate = ""
+	// gateRequired: the branch protection rules require checks, and those are
+	// the gate. This is the only gate that existed before #117.
+	gateRequired checksGate = "required"
+	// gateReported: nothing is required, so every check the pull request
+	// reports is the gate. Gating on the checks that exist beats gating on
+	// nothing; the escape hatch is GitHub's, not a bees.toml key: mark the
+	// checks that must block a merge as required.
+	gateReported checksGate = "reported"
+	// gateNone: no check was reported at all, twice in a row.
+	gateNone checksGate = "none"
+)
+
+// awaitChecks waits policy.ChecksWait, then polls the PR's checks every
+// ChecksPollInterval until they pass, fail, or ChecksTimeout elapses, and
+// reports which gate it settled on.
+//
+// The required checks are asked for first and win outright: when the branch
+// requires anything, the second `gh pr checks` call is never made and the
+// behaviour is exactly what it was before #117. Only when nothing is required
+// does the wait fall back to every reported check — a repository with no
+// branch protection would otherwise merge with nothing green at all. Two
+// consecutive empty observations are needed before concluding there is no CI,
+// because a workflow can take longer than checks_wait to register.
+func (s *Scheduler) awaitChecks(ctx context.Context, pr int, policy config.MergePolicy, w *state.Worker, round int) (github.ChecksStatus, []github.Check, checksGate, error) {
 	if err := sleepCtx(ctx, policy.ChecksWait); err != nil {
-		return "", nil, err
+		return "", nil, gateUnknown, err
 	}
 	deadline := s.now().Add(policy.ChecksTimeout)
+	gate := gateUnknown
+	empty := 0
 	for {
 		checks, err := s.gh.RequiredChecks(ctx, pr)
 		if err != nil {
-			return "", nil, err
+			return "", nil, gate, err
+		}
+		if len(checks) > 0 {
+			gate = gateRequired
+		}
+		if gate != gateRequired {
+			// No required check: fall back to everything the PR reports.
+			checks, err = s.gh.Checks(ctx, pr)
+			if err != nil {
+				return "", nil, gate, err
+			}
+			if len(checks) > 0 {
+				gate = gateReported
+			}
 		}
 		status := github.Summarize(checks)
+		if status == github.ChecksNone && gate == gateUnknown {
+			empty++
+			if empty >= 2 {
+				s.setChecksGate(w, gateNone, round)
+				return github.ChecksNone, nil, gateNone, nil
+			}
+			// One empty observation proves nothing: poll once more before
+			// concluding the repository has no CI.
+			if err := sleepCtx(ctx, policy.ChecksPollInterval); err != nil {
+				return "", nil, gate, err
+			}
+			continue
+		}
+		if status == github.ChecksNone {
+			// The gate was chosen and the checks then vanished from the
+			// report. Keep polling the tier we settled on rather than
+			// merging: the gate never switches back.
+			status = github.ChecksPending
+		}
+		s.setChecksGate(w, gate, round)
 		if status != github.ChecksPending || !s.now().Before(deadline) {
-			return status, checks, nil
+			return status, checks, gate, nil
 		}
 		if err := sleepCtx(ctx, policy.ChecksPollInterval); err != nil {
-			return "", nil, err
+			return "", nil, gate, err
 		}
+	}
+}
+
+// setChecksGate names the gate in the worker stage, so a worker sitting in a
+// 30-minute wait shows in `bees status` what it is waiting for.
+func (s *Scheduler) setChecksGate(w *state.Worker, gate checksGate, round int) {
+	if w == nil || gate == gateUnknown {
+		return
+	}
+	stage := "checks (" + string(gate) + ")"
+	s.mu.Lock()
+	same := w.Stage == stage
+	s.mu.Unlock()
+	if !same {
+		s.updateWorker(w, stage, round)
 	}
 }
 
