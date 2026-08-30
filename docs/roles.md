@@ -322,14 +322,30 @@ appends the marker, for reviews and conversation comments). When a human's reque
 the reviewer, the human wins. It must not change labels, must not push to the
 default branch, and must not fix unrelated bugs.
 
-**Self-check:** before pushing, the developer runs the repository's own lint and
-test commands — the ones its README, CONTRIBUTING, CLAUDE.md, Makefile or CI
-configuration document — fixes what they report, and records the commands in its
-notes so later sessions do not have to find them again. A review round spent on
-something a linter would have caught is a wasted round.
+**Self-check:** before pushing, the developer checks the change the way the
+reviewer will. It runs the repository's own lint and test commands — the ones
+its README, CONTRIBUTING, CLAUDE.md, Makefile or CI configuration document —
+fixes what they report, and records the commands in its notes so later sessions
+do not have to find them again. It also undoes its own fix to confirm the test
+it added fails without it, and greps for every claim the change makes false
+(docs, code comments, other prompts) by searching for the claim rather than for
+the sentence it edited.
 
-**Mail:** may send to `project_manager` only. If the issue is too vague it is
-told to ask one precise question and stop rather than guess.
+**Keeping up with the default branch:** the developer merges the default branch
+into its own before every push, on every round, and re-runs the tests after the
+merge — a merge git reports as conflict-free can still break the build, because
+it resolves by context. The `orchestrator` mail about a
+[conflicting or behind PR](workflow.md#conflicts-with-the-default-branch) is the
+backstop for when the branch falls behind anyway, not the first time the
+developer is asked.
+
+**Mail:** may send to `project_manager` only. Where the issue leaves a choice it
+is told to make it, implement that reading and write the choice into the pull
+request under a heading of its own, so the reviewer rules on it. It asks only
+when no reading is safe — the issue contradicts itself about something the
+repository cannot settle, or a wrong choice would throw the implementation away
+— because a question parks the issue and restarts the work in a later session
+with none of this one's context.
 
 **Outcomes and what the orchestrator does:**
 
@@ -338,7 +354,7 @@ told to ask one precise question and stop rather than guess.
 | `pr-opened` (with `pr`) | Locates the PR (by number, else by branch), makes it match the filter (`bees` label, plus the assignee and milestone when configured), records it, moves the issue to `bees:review`, reads the pull request's checks (`pre_review_checks`) and runs the reviewer. If the PR cannot be found: escalate. |
 | `pr-updated` (with `pr`) | Same as above; used after addressing review feedback. |
 | `question` | Verifies a message to the project manager was actually sent during the session, then labels the issue `bees:blocked` and frees the worker. No message: escalate. |
-| `failed` (or no outcome / timeout / error) | Escalates to `bees:needs-human` with the note. |
+| `failed` (or no outcome / timeout / error) | Escalates to `bees:needs-human` with the note, which is posted on the issue as the comment a person reads. The prompt tells the developer to use it only when neither a partial pull request nor a question can move the issue forward. |
 
 If the reviewer role is disabled, `pr-opened`/`pr-updated` go straight to
 approved (and, with `roles.reviewer.auto_merge`, into the checks stage).
