@@ -165,14 +165,19 @@ func formatActivity(repo string, pr int, activity []github.Activity) string {
 	return sb.String()
 }
 
-// adoptCreated is the label backstop: anything the account created since
+// adoptCreated is the visibility backstop: anything the account created since
 // a session started that carries a factory label (bees:bug, bees:feature,
-// a state label) but is missing the base label or the configured assignee
-// is fixed up so it stays visible to the factory.
+// a state label) but is missing part of the filter — the base label, the
+// configured assignee, or (pull requests only) the configured milestone — is
+// fixed up so it stays visible to the factory. It is what catches a PR that
+// never reached ensureVisible because the worker crashed after `gh pr create`,
+// or that a person opened by hand on the shared account.
+//
+// One failing item does not stop the others: each is logged and skipped.
 func (s *Scheduler) adoptCreated(ctx context.Context, since time.Time) {
 	items, err := s.gh.ListCreatedSince(ctx, since)
 	if err != nil {
-		s.log.Warn("label backstop: list created items", "err", err)
+		s.log.Warn("visibility backstop: list created items", "err", err)
 		return
 	}
 	prefix := s.labels.Base + ":"
@@ -187,17 +192,9 @@ func (s *Scheduler) adoptCreated(ctx context.Context, since time.Time) {
 		if !factory {
 			continue
 		}
-		if !github.HasLabel(it.Labels, s.labels.Base) {
-			s.log.Info("label backstop: adding base label", "number", it.Number, "pr", it.IsPR)
-			if err := s.gh.EditLabels(ctx, it.Number, []string{s.labels.Base}, nil); err != nil {
-				s.log.Warn("label backstop", "number", it.Number, "err", err)
-			}
-		}
-		if a := s.cfg.Filter.Assignee; a != "" && !github.HasAssignee(it.Assignees, a) {
-			s.log.Info("label backstop: assigning", "number", it.Number, "assignee", a)
-			if err := s.gh.Assign(ctx, it.Number, a); err != nil {
-				s.log.Warn("label backstop: assign", "number", it.Number, "err", err)
-			}
+		s.log.Info("visibility backstop: making the item visible", "number", it.Number, "pr", it.IsPR)
+		if err := s.ensureVisible(ctx, it.Number, it.IsPR, it.Labels, it.Assignees, it.MilestoneTitle()); err != nil {
+			s.log.Warn("visibility backstop", "number", it.Number, "err", err)
 		}
 	}
 }

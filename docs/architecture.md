@@ -182,7 +182,7 @@ feedback/feature comments (1 `issue view` each) only for issues whose
 once per `qa_interval`, recorded as `last_check` in `<state_dir>/qa.json` so
 an elapsed interval with nothing merged does not re-query on every poll; the
 checks stage polls `gh pr checks` every `roles.reviewer.checks_poll_interval`
-(default 2m), not every poll; the label backstop makes two list calls after
+(default 2m), not every poll; the visibility backstop makes two list calls after
 each session; and worker stage transitions make a handful of `issue view` /
 `pr view` / `issue edit` calls. Sessions call `gh` on their own on top of
 this, which busybees does not meter.
@@ -390,12 +390,20 @@ Messages are addressed to a **role**, not a session. Delivery rules:
   `bees mail send --from human`. The scheduler's own requests — bring a PR
   up to date with the default branch — come from `orchestrator`.
 
-**Label backstop.** After every session (`runSession` in `sessions.go`) the
+**Visibility backstop.** After every session (`runSession` in `sessions.go`) the
 scheduler calls `adoptCreated`: `github.Client.ListCreatedSince` lists issues
 and PRs matching `author:@me created:>=<session start>` regardless of labels,
-and anything carrying a `<label>:*` label but missing the base label (or the
-configured `filter.assignee`) is labelled/assigned so it stays visible. Items
-with no factory label at all are left alone.
+and anything carrying a `<label>:*` label but missing part of the filter is
+repaired through the same `ensureVisible` helper the developer worker uses on
+a PR it opened — the base label, the configured `filter.assignee`, and, for
+pull requests only, the configured `filter.milestone`. Items with no factory
+label at all are left alone, and one item that cannot be repaired is logged
+and skipped rather than stopping the others.
+
+A milestone is set on pull requests and never on issues: a milestone on an
+issue is a person's decision, and an issue the factory creates inherits one
+through `bees issue create`, while a milestone on a PR is pure filter
+bookkeeping.
 
 Writes are atomic (temp file + rename), IDs embed a timestamp so listing sorts
 oldest first, and `bees mail` works from any directory because sessions get
@@ -456,7 +464,7 @@ Nothing in the test-suite talks to GitHub or runs Claude Code.
 - **Fake gh.** `github.Client.Exec` is a function field; the scheduler tests
   replace it with an in-memory implementation that understands the `gh`
   invocations the wrapper makes — `issue list` (including `--state all
-  --search` for the label backstop), `issue view/edit/comment` (labels and
+  --search` for the visibility backstop), `issue view/edit/comment` (labels and
   `--add-assignee`), `pr list/view/merge/checks` (a queue of scripted check
   results; merge arguments are recorded), `api .../milestones`, `api
   repos/…/issues/N` (REST details: id, milestone, sub-issue summary), `api

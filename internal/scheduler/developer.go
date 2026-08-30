@@ -129,7 +129,7 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 				pr = found
 				bookkeeping.PR = pr.Number
 				_ = s.store.SaveIssue(bookkeeping)
-				if err := s.ensureVisible(ctx, pr); err != nil {
+				if err := s.ensureVisible(ctx, pr.Number, true, pr.Labels, pr.Assignees, pr.MilestoneTitle()); err != nil {
 					log.Warn("the pull request may be invisible to the factory", "pr", pr.Number, "err", err)
 				}
 				if !s.roleEnabled(config.RoleReviewer) {
@@ -341,7 +341,7 @@ func (s *Scheduler) locatePR(ctx context.Context, number int, branch string) (*g
 	return s.gh.FindPRForBranch(ctx, branch)
 }
 
-// ensureVisible makes sure a PR created by a session matches the filter, so
+// ensureVisible makes sure an item the factory created matches the filter, so
 // the factory keeps seeing it: a PR that misses the base label, the assignee
 // or the milestone the filter asks for is never polled again, the reviewer is
 // never dispatched, and the PR strands its branch and its issue.
@@ -349,20 +349,26 @@ func (s *Scheduler) locatePR(ctx context.Context, number int, branch string) (*g
 // Everything already in place is left alone, so a PR the session labelled and
 // assigned itself costs no gh calls. Errors are collected rather than
 // returned at the first failure: the three fixes are independent.
-func (s *Scheduler) ensureVisible(ctx context.Context, pr *github.PR) error {
+//
+// The milestone is set on pull requests only. A milestone on an issue is a
+// person's decision, and an issue the factory creates inherits one through
+// `bees issue create`; a bee must not put an issue into a milestone a person
+// left it out of. A PR has no such inheritance path and its milestone is pure
+// filter bookkeeping.
+func (s *Scheduler) ensureVisible(ctx context.Context, number int, isPR bool, labels []github.Label, assignees []github.Author, milestone string) error {
 	var errs []error
-	if !github.HasLabel(pr.Labels, s.labels.Base) {
-		if err := s.gh.EditLabels(ctx, pr.Number, []string{s.labels.Base}, nil); err != nil {
+	if !github.HasLabel(labels, s.labels.Base) {
+		if err := s.gh.EditLabels(ctx, number, []string{s.labels.Base}, nil); err != nil {
 			errs = append(errs, fmt.Errorf("add the %s label: %w", s.labels.Base, err))
 		}
 	}
-	if a := s.cfg.Filter.Assignee; a != "" && !github.HasAssignee(pr.Assignees, a) {
-		if err := s.gh.Assign(ctx, pr.Number, a); err != nil {
+	if a := s.cfg.Filter.Assignee; a != "" && !github.HasAssignee(assignees, a) {
+		if err := s.gh.Assign(ctx, number, a); err != nil {
 			errs = append(errs, fmt.Errorf("assign it to %s: %w", a, err))
 		}
 	}
-	if m := s.cfg.Filter.Milestone; m != "" && pr.MilestoneTitle() != m {
-		if err := s.gh.SetMilestone(ctx, pr.Number, m); err != nil {
+	if m := s.cfg.Filter.Milestone; isPR && m != "" && milestone != m {
+		if err := s.gh.SetMilestone(ctx, number, m); err != nil {
 			errs = append(errs, fmt.Errorf("put it in milestone %s: %w", m, err))
 		}
 	}

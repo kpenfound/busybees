@@ -136,3 +136,92 @@ func TestPRVisibilityFailureIsWarnedWithThePRNumber(t *testing.T) {
 		t.Fatalf("issue 1 history: %s", got)
 	}
 }
+
+// adoptTime returns the "since" the scheduler would pass to adoptCreated and
+// a matching creation time, so every fixture item is actually listed:
+// ListCreatedSince drops anything created before it.
+func adoptTime() (time.Time, time.Time) {
+	now := time.Now()
+	return now.Add(-time.Minute), now
+}
+
+// A pull request that never reached ensureVisible — the worker crashed after
+// `gh pr create`, or a person opened it by hand on the shared account — is
+// repaired by the backstop, milestone included. Without the milestone it
+// stays invisible under filter.milestone and strands its issue just the same.
+func TestAdoptedPRGetsTheWholeFilter(t *testing.T) {
+	h := newHarness(t, filteredTOML)
+	h.gh.milestones = []github.Milestone{{Number: 3, Title: "v0.1.0"}}
+	since, created := adoptTime()
+	h.gh.prs[201] = &github.PR{Number: 201, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main",
+		Labels: []github.Label{{Name: "bees:review"}}, CreatedAt: created}
+
+	h.sched.adoptCreated(context.Background(), since)
+
+	want := "bees,assignee:kyle,milestone:v0.1.0"
+	if got := strings.Join(visibilityFixes(h, 201), ","); got != want {
+		t.Fatalf("adopted PR fixes: got %q want %q (history %v)", got, want, h.gh.history[201])
+	}
+	if got := h.gh.prs[201].MilestoneTitle(); got != "v0.1.0" {
+		t.Fatalf("adopted PR milestone: %q", got)
+	}
+}
+
+// A pull request that already matches the whole filter costs no gh calls:
+// adoptCreated runs after every session, so a repair it repeats is a repair
+// it repeats forever.
+func TestAdoptedPRAlreadyVisibleIsLeftAlone(t *testing.T) {
+	h := newHarness(t, filteredTOML)
+	h.gh.milestones = []github.Milestone{{Number: 3, Title: "v0.1.0"}}
+	since, created := adoptTime()
+	h.gh.prs[201] = &github.PR{Number: 201, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main",
+		Labels: []github.Label{{Name: "bees"}, {Name: "bees:review"}}, Assignees: []github.Author{{Login: "kyle"}},
+		Milestone: &github.MilestoneRef{Title: "v0.1.0"}, CreatedAt: created}
+
+	h.sched.adoptCreated(context.Background(), since)
+
+	if got := visibilityFixes(h, 201); len(got) != 0 {
+		t.Fatalf("an already visible PR was edited: %v", got)
+	}
+	if n := h.gh.callCount("api repos/acme/widgets/milestones?state=open&per_page=100"); n != 0 {
+		t.Fatalf("milestones listed %d times for a PR already in the milestone", n)
+	}
+}
+
+// Without filter.milestone the backstop sets no milestone, and the label and
+// the assignee are applied exactly as they are today.
+func TestAdoptedPRWithoutAMilestoneFilter(t *testing.T) {
+	h := newHarness(t, devOnlyTOML+"\n[filter]\nassignee = \"kyle\"\n")
+	since, created := adoptTime()
+	h.gh.prs[201] = &github.PR{Number: 201, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main",
+		Labels: []github.Label{{Name: "bees:review"}}, CreatedAt: created}
+
+	h.sched.adoptCreated(context.Background(), since)
+
+	want := "bees,assignee:kyle"
+	if got := strings.Join(visibilityFixes(h, 201), ","); got != want {
+		t.Fatalf("adopted PR fixes: got %q want %q", got, want)
+	}
+}
+
+// Milestones are set on pull requests only. A milestone on an issue is a
+// person's decision — an issue the factory creates inherits one through
+// `bees issue create` — so the backstop must not put an issue into a
+// milestone a person left it out of.
+func TestAdoptedIssueDoesNotGetAMilestone(t *testing.T) {
+	h := newHarness(t, filteredTOML)
+	h.gh.milestones = []github.Milestone{{Number: 3, Title: "v0.1.0"}}
+	since, created := adoptTime()
+	h.gh.issues[7] = &github.Issue{Number: 7, Title: "Filed by a session", State: "OPEN",
+		Labels: []github.Label{{Name: "bees:triage"}}, CreatedAt: created}
+
+	h.sched.adoptCreated(context.Background(), since)
+
+	want := "bees,assignee:kyle"
+	if got := strings.Join(visibilityFixes(h, 7), ","); got != want {
+		t.Fatalf("adopted issue fixes: got %q want %q (history %v)", got, want, h.gh.history[7])
+	}
+	if h.gh.issues[7].Milestone != nil {
+		t.Fatalf("the backstop put an issue into milestone %q", h.gh.issues[7].MilestoneTitle())
+	}
+}
