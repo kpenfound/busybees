@@ -28,7 +28,7 @@ _None._
 ## Your notes
 
 {{if .Notes}}{{.Notes}}{{else}}_Empty._{{end}}
-
+{{template "consolidate" .}}
 ## Instructions
 
 Set up, run the tests, exercise the application, verify the merged changes, file bugs,

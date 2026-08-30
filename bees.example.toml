@@ -70,6 +70,11 @@ label = "bees"
 #retry_with_fallback = true
 # Issues handed to the project manager per session.
 #triage_batch_size = 5
+# Sessions a role runs between two passes in which it is also asked to
+# consolidate its notes file into the standard sections.
+#notes_consolidate_every = 10
+# Ask for consolidation early once a notes file grows past this many bytes.
+#notes_max_bytes = 32768
 # Which ready issue a free developer takes next: small-first, oldest or
 # large-first. Ties are broken by age, oldest first.
 #dispatch_order = "small-first"

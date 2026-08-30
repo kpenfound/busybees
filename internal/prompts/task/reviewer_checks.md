@@ -18,7 +18,7 @@ merged yet. Find out why and hand the developer a precise fix request.
 ## Your notes
 
 {{if .Notes}}{{.Notes}}{{else}}_Empty._{{end}}
-
+{{template "consolidate" .}}
 ## Instructions
 
 1. Find out what failed. Checks can come from any CI system; do not assume GitHub

@@ -92,7 +92,7 @@ _No new mail._
 ## Your notes
 
 {{if .Notes}}{{.Notes}}{{else}}_Empty. Start by writing down the product vision as you understand it from the repository._{{end}}
-
+{{template "consolidate" .}}
 ## Instructions
 
 1. Act on every feedback issue listed above and reply on it (with the marker).

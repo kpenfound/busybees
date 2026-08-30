@@ -60,6 +60,59 @@ func TestRenderAllRoles(t *testing.T) {
 	}
 }
 
+// The consolidation paragraph is asked for by the scheduler and must reach
+// every task prompt in one wording. Nothing else about the prompt changes.
+func TestConsolidateNotesParagraph(t *testing.T) {
+	// The exact text the partial renders, so that removing it from the
+	// prompt has to give back the prompt as it is rendered today.
+	const para = "\nAlso consolidate your notes this session (every 10 sessions): rewrite `/s/notes/x.md`\n" +
+		"into the sections above — merge duplicates, drop what is stale or contradicted, keep\n" +
+		"decisions, commands and gotchas. Do it before you report your outcome, in addition to\n" +
+		"your normal work.\n"
+
+	for _, name := range append(append([]string{}, config.Roles...), "reviewer_checks") {
+		off, err := TaskNamed(config.RoleDeveloper, name, sample())
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if strings.Contains(off, "Also consolidate") {
+			t.Errorf("%s asks for consolidation without being told to:\n%s", name, off)
+		}
+
+		d := sample()
+		d.ConsolidateNotes, d.ConsolidateReason = true, "every 10 sessions"
+		on, err := TaskNamed(config.RoleDeveloper, name, d)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if !strings.Contains(on, para) {
+			t.Fatalf("%s does not ask for consolidation:\n%s", name, on)
+		}
+		if got := strings.Replace(on, para, "", 1); got != off {
+			t.Errorf("%s changed beyond the paragraph:\n%s", name, got)
+		}
+		if i := strings.Index(on, para); i < strings.Index(on, "remember this") {
+			t.Errorf("%s asks before showing the notes:\n%s", name, on)
+		}
+	}
+}
+
+// The system prompt tells every role what shape its notes should have, so
+// there is something to consolidate into.
+func TestSystemPromptNamesTheNotesSections(t *testing.T) {
+	for _, role := range config.Roles {
+		sys, err := System(role, sample(), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, section := range []string{"Project facts", "Conventions", "Decisions", "Open questions"} {
+			if !strings.Contains(sys, section) {
+				t.Errorf("%s system prompt does not name the %q section", role, section)
+			}
+		}
+	}
+}
+
 func TestProjectManagerIsToldTheMaxSize(t *testing.T) {
 	d := sample()
 	d.MaxSize = "m"

@@ -8,8 +8,8 @@
 //	notes/archive/       notes files replaced by `bees notes reset`
 //	sessions/<id>/       one directory per claude session (prompts, transcript, result)
 //	issues/<n>.json      per-issue bookkeeping (review round, PR number)
-//	qa.json              QA bookkeeping (last run)
-//	product_manager.json product manager bookkeeping (last run)
+//	<role>.json          per-role bookkeeping (last run, session counters);
+//	                     every role has one, including developer and reviewer
 //	status.json          live scheduler status
 //	ledger.jsonl         one JSON line per finished session (`bees cost`)
 //	bees.log             scheduler log (JSON, rotated: bees.log.1, bees.log.2)
@@ -18,9 +18,11 @@ package state
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -81,7 +83,9 @@ func (s *Store) ReadNotes(role string) (string, error) {
 	return string(b), err
 }
 
-// EnsureNotes creates an empty notes file so sessions can edit it in place.
+// EnsureNotes creates the notes file so sessions can edit it in place. A
+// fresh file already carries the section headings roles are asked to
+// consolidate their notes into, so the structure exists from the first run.
 func (s *Store) EnsureNotes(role string) error {
 	p := s.NotesPath(role)
 	if _, err := os.Stat(p); err == nil {
@@ -90,7 +94,21 @@ func (s *Store) EnsureNotes(role string) error {
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(p, []byte("# "+role+" notes\n\n"), 0o644)
+	return os.WriteFile(p, []byte(NotesSkeleton(role)), 0o644)
+}
+
+// NotesSections are the headings every notes file is organised under.
+// Anything that does not fit goes under a heading of the role's choosing.
+var NotesSections = []string{"Project facts", "Conventions", "Decisions", "Open questions"}
+
+// NotesSkeleton returns the contents of a fresh notes file for a role.
+func NotesSkeleton(role string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "# %s notes\n", role)
+	for _, h := range NotesSections {
+		fmt.Fprintf(&b, "\n## %s\n", h)
+	}
+	return b.String()
 }
 
 // IssueState is per-issue bookkeeping.
@@ -128,21 +146,28 @@ func (s *Store) SaveIssue(is IssueState) error {
 	return s.writeJSON(filepath.Join(s.Dir, "issues", strconv.Itoa(is.Number)+".json"), is)
 }
 
-// RoleState is bookkeeping for singleton roles.
+// RoleState is per-role bookkeeping. Singleton roles use it to remember
+// when they last ran; every role uses the session counters to decide when it
+// is next asked to consolidate its notes.
 type RoleState struct {
 	LastRun time.Time `json:"last_run"`
 	// LastCheck is when the scheduler last looked for work for the role
 	// (used to rate-limit the QA merged-PR query).
 	LastCheck time.Time `json:"last_check,omitempty"`
+	// Sessions counts every session run for the role, of whatever kind.
+	Sessions int `json:"sessions,omitempty"`
+	// LastConsolidated is the value of Sessions when the role was last
+	// asked to consolidate its notes file.
+	LastConsolidated int `json:"last_consolidated,omitempty"`
 }
 
-// Role loads bookkeeping for a singleton role.
+// Role loads bookkeeping for a role.
 func (s *Store) Role(role string) (RoleState, error) {
 	var rs RoleState
 	return rs, s.readJSON(filepath.Join(s.Dir, role+".json"), &rs)
 }
 
-// SaveRole stores bookkeeping for a singleton role.
+// SaveRole stores bookkeeping for a role.
 func (s *Store) SaveRole(role string, rs RoleState) error {
 	return s.writeJSON(filepath.Join(s.Dir, role+".json"), rs)
 }

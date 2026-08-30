@@ -154,6 +154,33 @@ func TestDefaults(t *testing.T) {
 	}
 }
 
+// The notes-consolidation keys default when absent or zero, and are taken
+// as written otherwise.
+func TestNotesConsolidationDefaults(t *testing.T) {
+	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Scheduler.NotesConsolidateEvery != DefaultNotesConsolidateEvery || cfg.Scheduler.NotesMaxBytes != DefaultNotesMaxBytes {
+		t.Fatalf("defaults: %+v", cfg.Scheduler)
+	}
+	cfg, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nnotes_consolidate_every = 3\nnotes_max_bytes = 1024\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Scheduler.NotesConsolidateEvery != 3 || cfg.Scheduler.NotesMaxBytes != 1024 {
+		t.Fatalf("configured: %+v", cfg.Scheduler)
+	}
+	// 0 means the default, the file's convention for these keys.
+	cfg, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nnotes_consolidate_every = 0\nnotes_max_bytes = 0\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Scheduler.NotesConsolidateEvery != DefaultNotesConsolidateEvery || cfg.Scheduler.NotesMaxBytes != DefaultNotesMaxBytes {
+		t.Fatalf("zero means the default: %+v", cfg.Scheduler)
+	}
+}
+
 func TestSizeLabels(t *testing.T) {
 	l := LabelsFor("bees")
 	want := []string{"bees:size/xs", "bees:size/s", "bees:size/m", "bees:size/l", "bees:size/xl"}
@@ -230,6 +257,8 @@ func TestValidation(t *testing.T) {
 		"negative delay":       "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nretry_delay = \"-1m\"\n",
 		"bad dispatch order":   "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\ndispatch_order = \"random\"\n",
 		"negative large cap":   "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nmax_large_in_flight = -1\n",
+		"negative consolidate": "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nnotes_consolidate_every = -1\n",
+		"negative notes bytes": "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nnotes_max_bytes = -1\n",
 		"bad max size":         "version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nmax_size = \"huge\"\n",
 		"max size on global":   "version = 1\n[project]\nrepo = \"a/b\"\n[global]\nmax_size = \"l\"\n",
 		"max size on reviewer": "version = 1\n[project]\nrepo = \"a/b\"\n[roles.reviewer]\nmax_size = \"l\"\n",

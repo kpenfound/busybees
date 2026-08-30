@@ -227,7 +227,7 @@ func (s *Scheduler) runSingleton(ctx context.Context, role string, data prompts.
 	if err := s.mail.MarkRead(data.Inbox...); err != nil {
 		s.log.Warn("mark mail read", "role", role, "err", err)
 	}
-	if err := s.store.SaveRole(role, state.RoleState{LastRun: started}); err != nil {
+	if err := s.markRun(role, started); err != nil {
 		return err
 	}
 	status, note := outcomeOf(res)
@@ -236,6 +236,20 @@ func (s *Scheduler) runSingleton(ctx context.Context, role string, data prompts.
 		return errors.New(s.sessionFailure(role, res, status, note))
 	}
 	return nil
+}
+
+// markRun records that a singleton role ran. It is a read-modify-write:
+// the same file carries the role's session counters, which the session that
+// just finished has already updated.
+func (s *Scheduler) markRun(role string, started time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rs, err := s.store.Role(role)
+	if err != nil {
+		return err
+	}
+	rs.LastRun = started
+	return s.store.SaveRole(role, rs)
 }
 
 // RunRole runs a single session for a role outside the scheduler loop

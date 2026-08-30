@@ -408,8 +408,8 @@ oldest first, and `bees mail` works from any directory because sessions get
                                  stderr.log, outcome.json, result.json
   issues/<n>.json                {number, round, pr, branch, check_fix_rounds, human_seen_at,
                                  conflict_notified_sha, updated_at}
-  product_manager.json           {last_run}
-  qa.json                        {last_run, last_check}
+  <role>.json                    per-role bookkeeping, one file per role that has run:
+                                 {last_run, last_check, sessions, last_consolidated}
   status.json                    live scheduler status for `bees status` (queues, workers, singletons, last_poll, last_error)
   ledger.jsonl                   append-only, one JSON line per finished session
                                  {time, role, session, issue, pr, turns, cost_usd,
@@ -422,6 +422,13 @@ oldest first, and `bees mail` works from any directory because sessions get
 session that finishes, whatever it reported, and `bees cost` sums it. Lines are
 written with a single `O_APPEND` write so concurrent workers cannot interleave, and
 a line that does not parse is skipped on read rather than failing it.
+
+`<role>.json` carries what the scheduler remembers about a role between runs:
+when the singleton roles last ran (`last_run`) and last looked for work
+(`last_check`), how many sessions of any kind the role has run (`sessions`) and
+the count at which it was last asked to consolidate its notes
+(`last_consolidated`). Developer workers share `developer.json`, so every
+update to it is a read-modify-write under the scheduler's lock.
 
 `bees.log` is written only by the commands that run sessions (`run`, `tick`,
 `exec`) and always contains every record at debug level, whatever the console
