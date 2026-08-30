@@ -515,7 +515,7 @@ with an unsupported version anyway.
 | `BEES_CLAUDE_BIN` | Path of the `claude` executable to run. Default `claude` on `PATH`. |
 | `BEES_CACHE_DIR` | Cache directory for skill clones and generated plugins. Default `~/.cache/bees`. |
 | `BEES_SKIP_VERSION_CHECK` | When non-empty, skip the `gh` / `claude` version checks (see [Requirements](#requirements)). |
-| `BEES_STATE_DIR` | When set, `bees mail` uses this state directory directly instead of loading `bees.toml`. Set automatically inside sessions. |
+| `BEES_STATE_DIR` | When set, `bees mail` uses this state directory directly instead of loading `bees.toml`, unless `--config` is passed explicitly (then that config's state dir wins). Set automatically inside sessions. |
 | `BEES_SESSION_DIR` | Where `bees done` writes `outcome.json`; `bees done` refuses to run without it. Set automatically inside sessions. |
 | `BEES_ROLE` | Default `--from` for `bees mail send`, and the role whose `bees done` statuses are validated. Set automatically inside sessions. |
 | `BEES_ISSUE`, `BEES_PR` | Defaults for the `--issue` / `--pr` flags of `bees mail send` and `bees done`. Set automatically inside sessions. |
