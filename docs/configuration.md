@@ -116,6 +116,19 @@ and `bees labels sync` create them in GitHub.
 | `bees:approved` | Reviewer approved; waiting for a human to merge |
 | `bees:needs-human` | The factory gave up; a person must step in |
 
+An issue also carries at most one **size label**, independently of its state.
+The project manager sets it when it moves a work item to `bees:ready`; the
+orchestrator adds `bees:size/m` to any ready issue that has none. See
+[Sizing](workflow.md#sizing).
+
+| Label | Meaning |
+|---|---|
+| `bees:size/xs` | One file, obvious change, no design |
+| `bees:size/s` | A few files, clear approach, existing tests cover it |
+| `bees:size/m` | A coherent feature slice touching several packages, needs new tests |
+| `bees:size/l` | Crosses subsystems or needs a design decision; near the limit for one PR |
+| `bees:size/xl` | Too big for one pull request — split it instead of labelling it |
+
 ## `[scheduler]`
 
 | Key | Type | Default | Description |
