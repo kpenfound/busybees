@@ -25,6 +25,9 @@ import (
 	"sort"
 	"strings"
 	"time"
+	// scheduler.timezone must resolve on hosts without a system zoneinfo
+	// database (minimal containers), so embed one.
+	_ "time/tzdata"
 
 	"github.com/BurntSushi/toml"
 )
@@ -78,12 +81,15 @@ const (
 	DefaultStateDir      = ".bees"
 	DefaultBranchPrefix  = "bees/"
 	DefaultPollInterval  = 5 * time.Minute
-	DefaultRateLimitWait = 15 * time.Minute
-	DefaultMaxDevelopers = 1
-	DefaultReviewRounds  = 3
-	DefaultPMInterval    = time.Hour
-	DefaultQAInterval    = 30 * time.Minute
-	DefaultTriageBatch   = 5
+	// DefaultOffHoursPollInterval is the polling cadence outside
+	// scheduler.work_hours (only used when work_hours is set).
+	DefaultOffHoursPollInterval = time.Hour
+	DefaultRateLimitWait        = 15 * time.Minute
+	DefaultMaxDevelopers        = 1
+	DefaultReviewRounds         = 3
+	DefaultPMInterval           = time.Hour
+	DefaultQAInterval           = 30 * time.Minute
+	DefaultTriageBatch          = 5
 )
 
 // Duration is a time.Duration that unmarshals from TOML strings like "30m".
@@ -321,6 +327,182 @@ type Scheduler struct {
 	KeepWorkspaces bool `toml:"keep_workspaces"`
 	// WorkspaceRoot overrides the temp dir used for worktrees.
 	WorkspaceRoot string `toml:"workspace_root"`
+	// WorkHours is the daily window during which GitHub is polled every
+	// PollInterval, as "HH:MM-HH:MM" on a 24-hour clock ("09:00-18:00").
+	// Empty (the default) disables the feature: GitHub is polled every
+	// PollInterval around the clock and the three keys below are ignored.
+	// A window whose start is after its end wraps midnight and belongs to
+	// the day its start falls on ("22:00-06:00" with work_days = ["fri"]
+	// covers Friday 22:00 to Saturday 06:00).
+	WorkHours string `toml:"work_hours"`
+	// OffHoursPollInterval is how often GitHub is polled outside the work
+	// hours window. Must be >= PollInterval. Default 1h.
+	OffHoursPollInterval Duration `toml:"off_hours_poll_interval"`
+	// WorkDays are the days the window applies to, as lowercase three-letter
+	// names (mon, tue, wed, thu, fri, sat, sun). Default mon-fri.
+	WorkDays []string `toml:"work_days"`
+	// Timezone is the IANA name the window is interpreted in
+	// ("America/New_York"). Empty means the machine's local time.
+	Timezone string `toml:"timezone"`
+
+	// Parsed form of the four keys above, filled in by Validate.
+	whStart, whEnd int // minutes since midnight
+	whDays         map[time.Weekday]bool
+	whLoc          *time.Location
+	whEnabled      bool
+}
+
+// weekdayNames maps the accepted work_days values to weekdays, in the order
+// they are printed.
+var weekdayNames = []struct {
+	name string
+	day  time.Weekday
+}{
+	{"mon", time.Monday}, {"tue", time.Tuesday}, {"wed", time.Wednesday},
+	{"thu", time.Thursday}, {"fri", time.Friday}, {"sat", time.Saturday}, {"sun", time.Sunday},
+}
+
+// WorkHoursEnabled reports whether a work-hours window is configured.
+func (s Scheduler) WorkHoursEnabled() bool { return s.whEnabled }
+
+// InWorkHours reports whether t falls inside the configured window. It is
+// always true when no window is configured.
+func (s Scheduler) InWorkHours(t time.Time) bool {
+	if !s.whEnabled {
+		return true
+	}
+	t = t.In(s.whLoc)
+	mins := t.Hour()*60 + t.Minute()
+	if s.whStart < s.whEnd {
+		return s.whDays[t.Weekday()] && mins >= s.whStart && mins < s.whEnd
+	}
+	// Overnight window: it belongs to the day its start falls on, so the
+	// tail after midnight counts as the previous day.
+	if mins >= s.whStart {
+		return s.whDays[t.Weekday()]
+	}
+	return mins < s.whEnd && s.whDays[(t.Weekday()+6)%7]
+}
+
+// PollIntervalAt returns the GitHub polling interval that applies at t.
+func (s Scheduler) PollIntervalAt(t time.Time) time.Duration {
+	if !s.whEnabled || s.InWorkHours(t) {
+		return s.PollInterval.Duration
+	}
+	return s.OffHoursPollInterval.Duration
+}
+
+// WorkHoursDescription renders the window for `bees status`, for example
+// "09:00-18:00 mon-fri, America/New_York".
+func (s Scheduler) WorkHoursDescription() string {
+	if !s.whEnabled {
+		return ""
+	}
+	return fmt.Sprintf("%s %s, %s", s.WorkHours, describeDays(s.whDays), s.whLoc)
+}
+
+// describeDays prints a day set as compact ranges: "mon-fri", "mon,wed,fri".
+// A run of exactly two days is listed rather than hyphenated ("sat,sun").
+func describeDays(days map[time.Weekday]bool) string {
+	var parts []string
+	for i := 0; i < len(weekdayNames); i++ {
+		if !days[weekdayNames[i].day] {
+			continue
+		}
+		j := i
+		for j+1 < len(weekdayNames) && days[weekdayNames[j+1].day] {
+			j++
+		}
+		switch j {
+		case i:
+			parts = append(parts, weekdayNames[i].name)
+		case i + 1:
+			parts = append(parts, weekdayNames[i].name, weekdayNames[j].name)
+		default:
+			parts = append(parts, weekdayNames[i].name+"-"+weekdayNames[j].name)
+		}
+		i = j
+	}
+	return strings.Join(parts, ",")
+}
+
+// parseWorkHours validates the work-hours keys and fills in the parsed
+// fields. It returns one message per problem, each naming the key.
+func (s *Scheduler) parseWorkHours() []string {
+	s.whEnabled = false
+	if s.WorkHours == "" {
+		return nil
+	}
+	var errs []string
+	start, end, err := parseWindow(s.WorkHours)
+	if err != nil {
+		errs = append(errs, "scheduler."+err.Error())
+	} else {
+		s.whStart, s.whEnd = start, end
+	}
+	days := map[time.Weekday]bool{}
+	accepted := make([]string, 0, len(weekdayNames))
+	for _, w := range weekdayNames {
+		accepted = append(accepted, w.name)
+	}
+	for _, d := range s.WorkDays {
+		found := false
+		for _, w := range weekdayNames {
+			if strings.ToLower(strings.TrimSpace(d)) == w.name {
+				days[w.day] = true
+				found = true
+				break
+			}
+		}
+		if !found {
+			errs = append(errs, fmt.Sprintf("scheduler.work_days: unknown day %q (want one of %s)", d, strings.Join(accepted, " ")))
+		}
+	}
+	if len(days) == 0 && len(errs) == 0 {
+		errs = append(errs, fmt.Sprintf("scheduler.work_days must list at least one of %s", strings.Join(accepted, " ")))
+	}
+	loc := time.Local
+	if s.Timezone != "" {
+		if loc, err = time.LoadLocation(s.Timezone); err != nil {
+			errs = append(errs, fmt.Sprintf("scheduler.timezone: %v", err))
+		}
+	}
+	if s.OffHoursPollInterval.Duration < s.PollInterval.Duration {
+		errs = append(errs, fmt.Sprintf("scheduler.off_hours_poll_interval (%s) must be >= scheduler.poll_interval (%s)",
+			s.OffHoursPollInterval.Duration, s.PollInterval.Duration))
+	}
+	if len(errs) > 0 {
+		return errs
+	}
+	s.whDays, s.whLoc, s.whEnabled = days, loc, true
+	return nil
+}
+
+// parseWindow parses "HH:MM-HH:MM" into minutes since midnight.
+func parseWindow(window string) (start, end int, err error) {
+	bad := fmt.Errorf("work_hours: want \"HH:MM-HH:MM\" on a 24-hour clock (e.g. \"09:00-18:00\"), got %q", window)
+	a, b, ok := strings.Cut(window, "-")
+	if !ok {
+		return 0, 0, bad
+	}
+	if start, err = parseClock(a); err != nil {
+		return 0, 0, bad
+	}
+	if end, err = parseClock(b); err != nil {
+		return 0, 0, bad
+	}
+	if start == end {
+		return 0, 0, fmt.Errorf("work_hours %q: start and end must differ", window)
+	}
+	return start, end, nil
+}
+
+func parseClock(s string) (int, error) {
+	t, err := time.Parse("15:04", strings.TrimSpace(s))
+	if err != nil {
+		return 0, err
+	}
+	return t.Hour()*60 + t.Minute(), nil
 }
 
 // ResolvedRole is the effective configuration for one role after merging
@@ -529,6 +711,14 @@ func (c *Config) applyDefaults() {
 	if c.Scheduler.TriageBatchSize == 0 {
 		c.Scheduler.TriageBatchSize = DefaultTriageBatch
 	}
+	if c.Scheduler.WorkHours != "" {
+		if c.Scheduler.OffHoursPollInterval.Duration == 0 {
+			c.Scheduler.OffHoursPollInterval.Duration = DefaultOffHoursPollInterval
+		}
+		if c.Scheduler.WorkDays == nil {
+			c.Scheduler.WorkDays = []string{"mon", "tue", "wed", "thu", "fri"}
+		}
+	}
 	if c.Roles == nil {
 		c.Roles = map[string]RoleSettings{}
 	}
@@ -560,6 +750,7 @@ func (c *Config) Validate() error {
 	if c.Scheduler.MaxReviewRounds < 0 {
 		errs = append(errs, "scheduler.max_review_rounds must be >= 0")
 	}
+	errs = append(errs, c.Scheduler.parseWorkHours()...)
 	check := func(scope string, rs RoleSettings) {
 		if scope != "roles."+RoleReviewer {
 			if rs.AutoMerge != nil || rs.MergeMethod != "" || rs.ChecksWait.Duration != 0 || rs.ChecksPollInterval.Duration != 0 || rs.ChecksTimeout.Duration != 0 || rs.MaxCheckFixRounds != 0 {
