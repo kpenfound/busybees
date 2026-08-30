@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"testing"
 )
@@ -66,5 +67,38 @@ func TestSkip(t *testing.T) {
 	t.Setenv(EnvSkip, "1")
 	if err := CheckAll(context.Background(), filepath.Join(t.TempDir(), "missing")); err != nil {
 		t.Errorf("skip: %v", err)
+	}
+}
+
+func TestBees(t *testing.T) {
+	build := func(mainVersion string, settings ...debug.BuildSetting) *debug.BuildInfo {
+		return &debug.BuildInfo{Main: debug.Module{Version: mainVersion}, Settings: settings}
+	}
+	rev := func(v string) debug.BuildSetting { return debug.BuildSetting{Key: "vcs.revision", Value: v} }
+	mod := func(v string) debug.BuildSetting { return debug.BuildSetting{Key: "vcs.modified", Value: v} }
+
+	cases := []struct {
+		name     string
+		override string
+		bi       *debug.BuildInfo
+		want     string
+	}{
+		{"ldflags override wins", "v1.2.3", build("v0.2.0"), "v1.2.3"},
+		{"override left at the default is ignored", "dev", build("v0.2.0"), "v0.2.0"},
+		{"installed tag", "dev", build("v0.2.0"), "v0.2.0"},
+		{"installed pseudo-version", "dev", build("v0.0.0-20260829201307-b24a0605c2a1"), "v0.0.0-20260829201307-b24a0605c2a1"},
+		{"local build, clean tree", "dev", build("(devel)", rev("b24a0605c2a1e9f0d3c4"), mod("false")), "dev (b24a0605c2a1)"},
+		{"local build, dirty tree", "dev", build("(devel)", rev("b24a0605c2a1e9f0d3c4"), mod("true")), "dev (b24a0605c2a1 modified)"},
+		{"short revision is not truncated", "dev", build("(devel)", rev("b24a06"), mod("false")), "dev (b24a06)"},
+		{"empty main version with a revision", "", build("", rev("b24a0605c2a1e9f0d3c4")), "dev (b24a0605c2a1)"},
+		{"devel without vcs stamps", "dev", build("(devel)"), "dev"},
+		{"no build info", "dev", nil, "dev"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := Bees(c.override, c.bi); got != c.want {
+				t.Errorf("Bees(%q, %+v) = %q, want %q", c.override, c.bi, got, c.want)
+			}
+		})
 	}
 }

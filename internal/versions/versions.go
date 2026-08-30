@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"runtime/debug"
 	"strconv"
 	"strings"
 )
@@ -106,3 +107,47 @@ func CheckAll(ctx context.Context, claudeBin string) error {
 }
 
 func skipped() bool { return os.Getenv(EnvSkip) != "" }
+
+// DevVersion is the value cmd/bees compiles in when no `-ldflags -X
+// main.version=...` override was given.
+const DevVersion = "dev"
+
+// Bees resolves the version bees reports for itself, in this order:
+//
+//  1. override, when a release build set it through `-ldflags -X`;
+//  2. the module version Go recorded in the binary — a tag ("v0.2.0") or the
+//     pseudo-version `go install ...@latest` yields for an untagged module;
+//  3. for a local build, "dev (<revision> modified)" from the VCS stamps Go
+//     writes by default (`-buildvcs=auto`);
+//  4. plain "dev" when the binary carries no build information at all.
+func Bees(override string, bi *debug.BuildInfo) string {
+	if override != "" && override != DevVersion {
+		return override
+	}
+	if bi == nil {
+		return DevVersion
+	}
+	if v := bi.Main.Version; v != "" && v != "(devel)" {
+		return v
+	}
+	var rev string
+	var modified bool
+	for _, s := range bi.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			rev = s.Value
+		case "vcs.modified":
+			modified = s.Value == "true"
+		}
+	}
+	if rev == "" {
+		return DevVersion
+	}
+	if len(rev) > 12 {
+		rev = rev[:12]
+	}
+	if modified {
+		return fmt.Sprintf("%s (%s modified)", DevVersion, rev)
+	}
+	return fmt.Sprintf("%s (%s)", DevVersion, rev)
+}
