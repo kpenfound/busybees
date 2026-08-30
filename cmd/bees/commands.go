@@ -23,85 +23,146 @@ import (
 
 // ---- init ------------------------------------------------------------------
 
+// initOptions are the inputs of `bees init`, flags plus the directory it runs
+// in, so runInit can be exercised without cobra.
+type initOptions struct {
+	dir        string // directory to initialise; must be a git clone
+	configPath string // explicit --config path, empty for <dir>/bees.toml
+	repo       string
+	remote     string
+	label      string
+	assignee   string
+	print      bool
+	noLabels   bool
+}
+
+// initDeps are the parts of init that talk to `gh`, so tests can replace them.
+type initDeps struct {
+	checkGH     func(ctx context.Context) error
+	currentRepo func(ctx context.Context, dir string) (string, error)
+	repoBranch  func(ctx context.Context, repo string) (string, error)
+	syncLabels  func(ctx context.Context, cfg *config.Config) error
+}
+
+func defaultInitDeps() initDeps {
+	return initDeps{
+		checkGH:     versions.CheckGH,
+		currentRepo: github.CurrentRepo,
+		repoBranch:  func(ctx context.Context, repo string) (string, error) { return github.New(repo).DefaultBranch(ctx) },
+		syncLabels:  syncLabels,
+	}
+}
+
 func newInitCmd(g *globalFlags) *cobra.Command {
-	var repo, label, assignee, remote string
-	var print, noLabels bool
+	var o initOptions
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Create bees.toml, the state directory and the GitHub labels",
 		Long: `init writes a commented bees.toml in the current directory (which must be a
 git clone of the project), creates the state directory and creates the
-workflow labels in the GitHub repository.`,
+workflow labels in the GitHub repository.
+
+Everything is validated before anything is written: when init fails it leaves
+the directory exactly as it found it.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
-			if err := versions.CheckGH(ctx); err != nil {
-				return err
-			}
 			cwd, err := os.Getwd()
 			if err != nil {
 				return err
 			}
-			// Detect what can be detected so the placeholders are right; the
-			// values are only written as active settings when given explicitly.
-			explicit := repo != ""
-			if repo == "" {
-				if url, err := workspace.Git(ctx, cwd, "remote", "get-url", remote); err == nil {
-					repo, _ = config.ParseGitHubRepo(url)
-				}
-				if repo == "" {
-					if r, err := github.CurrentRepo(ctx, cwd); err == nil {
-						repo = r
-					}
-				}
-			}
-			branch, _ := workspace.DefaultBranch(ctx, cwd, remote)
-			if branch == "" && repo != "" {
-				branch, _ = github.New(repo).DefaultBranch(ctx)
-			}
-			text, err := config.Template(config.TemplateData{Remote: remote, Repo: repo, DefaultBranch: branch, Label: label, Assignee: assignee, Explicit: explicit})
-			if err != nil {
-				return err
-			}
-			if print {
-				fmt.Print(text)
-				return nil
-			}
-			path := filepath.Join(cwd, "bees.toml")
-			if g.config != "" {
-				path = g.config
-			}
-			if _, err := os.Stat(path); err == nil {
-				return fmt.Errorf("%s already exists", path)
-			}
-			if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
-				return err
-			}
-			fmt.Println("wrote", path)
-			cfg, err := config.Load(path)
-			if err != nil {
-				return err
-			}
-			if err := cfg.Resolve(ctx); err != nil {
-				return fmt.Errorf("%w (set project.repo / project.default_branch in %s)", err, path)
-			}
-			if err := state.New(cfg.StateDir()).Init(); err != nil {
-				return err
-			}
-			fmt.Println("created", cfg.StateDir())
-			ignoreStateDir(ctx, cfg)
-			if noLabels {
-				return nil
-			}
-			return syncLabels(cmd, cfg)
+			o.dir, o.configPath = cwd, g.config
+			return runInit(cmd.Context(), o, defaultInitDeps())
 		},
 	}
-	cmd.Flags().StringVar(&repo, "repo", "", "GitHub repository owner/name (default: derived from the remote at run time)")
-	cmd.Flags().StringVar(&remote, "remote", config.DefaultRemote, "git remote the factory pushes to")
-	cmd.Flags().StringVar(&label, "label", config.DefaultLabel, "visibility label")
-	cmd.Flags().StringVar(&assignee, "assignee", "", "only see issues assigned to this login (\"@me\" for yourself)")
-	cmd.Flags().BoolVar(&print, "print", false, "print the template instead of writing it")
-	cmd.Flags().BoolVar(&noLabels, "no-labels", false, "do not create GitHub labels")
+	cmd.Flags().StringVar(&o.repo, "repo", "", "GitHub repository owner/name (default: derived from the remote at run time)")
+	cmd.Flags().StringVar(&o.remote, "remote", config.DefaultRemote, "git remote the factory pushes to")
+	cmd.Flags().StringVar(&o.label, "label", config.DefaultLabel, "visibility label")
+	cmd.Flags().StringVar(&o.assignee, "assignee", "", "only see issues assigned to this login (\"@me\" for yourself)")
+	cmd.Flags().BoolVar(&o.print, "print", false, "print the template instead of writing it")
+	cmd.Flags().BoolVar(&o.noLabels, "no-labels", false, "do not create GitHub labels")
 	return cmd
+}
+
+// runInit validates first and writes second: nothing touches disk until the
+// rendered template has parsed and resolved, so a failed init leaves no
+// half-initialised directory behind (#41).
+func runInit(ctx context.Context, o initOptions, d initDeps) error {
+	if err := d.checkGH(ctx); err != nil {
+		return err
+	}
+	// render detects what it can so the placeholders in the template are
+	// right; the values are only written as active settings when --repo was
+	// given explicitly.
+	render := func() (string, error) {
+		repo := o.repo
+		if repo == "" {
+			if url, err := workspace.Git(ctx, o.dir, "remote", "get-url", o.remote); err == nil {
+				repo, _ = config.ParseGitHubRepo(url)
+			}
+			if repo == "" {
+				if r, err := d.currentRepo(ctx, o.dir); err == nil {
+					repo = r
+				}
+			}
+		}
+		branch, _ := workspace.DefaultBranch(ctx, o.dir, o.remote)
+		if branch == "" && repo != "" {
+			branch, _ = d.repoBranch(ctx, repo)
+		}
+		return config.Template(config.TemplateData{Remote: o.remote, Repo: repo, DefaultBranch: branch, Label: o.label, Assignee: o.assignee, Explicit: o.repo != ""})
+	}
+
+	// --print writes nothing, so it does not need a git clone: it is how the
+	// example config is generated.
+	if o.print {
+		text, err := render()
+		if err != nil {
+			return err
+		}
+		fmt.Print(text)
+		return nil
+	}
+	if _, err := workspace.Git(ctx, o.dir, "rev-parse", "--show-toplevel"); err != nil {
+		return fmt.Errorf("bees init must run inside a git clone of the project (%v)", err)
+	}
+	path := filepath.Join(o.dir, "bees.toml")
+	if o.configPath != "" {
+		path = o.configPath
+	}
+	if _, err := os.Stat(path); err == nil {
+		return fmt.Errorf("%s already exists", path)
+	}
+	text, err := render()
+	if err != nil {
+		return err
+	}
+	cfg, err := config.Parse(text, path)
+	if err != nil {
+		return err
+	}
+	if err := cfg.Resolve(ctx); err != nil {
+		return fmt.Errorf("%w (pass --repo owner/name, or set project.repo / project.default_branch after creating bees.toml with bees init --print)", err)
+	}
+
+	// Validated: from here on the writes happen.
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		return err
+	}
+	fmt.Println("wrote", path)
+	if err := state.New(cfg.StateDir()).Init(); err != nil {
+		return err
+	}
+	fmt.Println("created", cfg.StateDir())
+	ignoreStateDir(ctx, cfg)
+	if o.noLabels {
+		return nil
+	}
+	// The local setup is complete and correct at this point, so a label
+	// failure is not worth undoing; say how to finish rather than let the
+	// user reach for init again, which would now refuse.
+	if err := d.syncLabels(ctx, cfg); err != nil {
+		return fmt.Errorf("%w (run bees labels sync to retry creating the labels)", err)
+	}
+	return nil
 }
 
 // ignoreStateDir makes sure the state directory is ignored by git. It is
@@ -135,10 +196,10 @@ func ignoreStateDir(ctx context.Context, cfg *config.Config) {
 	fmt.Println("added", line, "to .gitignore — commit it")
 }
 
-func syncLabels(cmd *cobra.Command, cfg *config.Config) error {
+func syncLabels(ctx context.Context, cfg *config.Config) error {
 	gh := github.New(cfg.Project.Repo)
 	for _, l := range cfg.Labels().All() {
-		if err := gh.EnsureLabel(cmd.Context(), l.Name, l.Color, l.Description); err != nil {
+		if err := gh.EnsureLabel(ctx, l.Name, l.Color, l.Description); err != nil {
 			return err
 		}
 		fmt.Println("label", l.Name)
@@ -158,7 +219,7 @@ func newLabelsCmd(g *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return syncLabels(cmd, cfg)
+			return syncLabels(cmd.Context(), cfg)
 		},
 	})
 	cmd.AddCommand(&cobra.Command{

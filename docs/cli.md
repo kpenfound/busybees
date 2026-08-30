@@ -31,13 +31,20 @@ project), creates the state directory, adds it to the repository's `.gitignore`
 and prints a reminder to commit that, and creates the workflow labels in the GitHub
 repository. Refuses to overwrite an existing file. `bees.toml` is meant to be committed.
 
+init validates before it writes: the current directory must be a git clone, and the
+configuration it is about to write must parse and resolve to a repository and a default
+branch. A failed init leaves no `bees.toml` behind and the directory exactly as it was,
+so fixing what the error reports and running init again works. The one step that can
+fail after the local files exist is creating the labels; the error then says to run
+`bees labels sync`, not init again.
+
 | Flag | Description |
 |---|---|
 | `--remote name` | Git remote the factory pushes to (default `origin`). |
 | `--repo owner/name` | Write `project.repo` and `project.default_branch` as active settings. By default both are derived from the remote at run time and only appear as commented placeholders showing the detected values. |
 | `--label <name>` | Visibility label (default `bees`). |
 | `--assignee <login>` | Only see items assigned to this login; `@me` for yourself. |
-| `--print` | Print the template to stdout instead of writing it. |
+| `--print` | Print the template to stdout instead of writing it. Writes nothing, so it works outside a git clone. |
 | `--no-labels` | Skip creating GitHub labels. |
 
 The generated file lists every option; optional ones are commented out with their
