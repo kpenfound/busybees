@@ -316,7 +316,9 @@ since the product manager's last marker comment on it) the product manager:
    sub-issues, and the product manager's prompt shows it as a
    `completed/total` column. Work items are ordered with dependencies noted
    ("after #N"); the project manager adds implementation detail during triage.
-   An existing issue can be attached with `issue_link` (`parent: <feature>`, `child: <item>`).
+   An existing issue can be attached with `issue_link` (`parent: <feature>`, `child: <item>`),
+   which makes the sub-issue relationship but does *not* carry the feature's
+   milestone across.
    Both refuse a feature that is still a proposal;
 3. comments the list of work items on the feature issue (with the marker), so
    it is not presented to the product manager again until something changes;
@@ -743,8 +745,10 @@ they create takes the milestone of the issue it relates to — a work item gets
 its parent feature's milestone, a bug found while working on an issue gets that
 issue's milestone (`related`), a feature distilled from a feedback issue gets
 the feedback issue's milestone — falling back to `filter.milestone` when the
-factory is pinned to one. So if you put a feature into a milestone, everything
-that grows out of it lands there too.
+factory is pinned to one. The exception is `issue_link`: an issue attached to a
+feature after the fact keeps whatever milestone it already had. So if you put a
+feature into a milestone,
+everything that grows out of it lands there too.
 
 Humans can shape the roadmap by creating or editing milestones and moving
 issues between them, editing the product manager's notes file

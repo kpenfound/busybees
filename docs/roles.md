@@ -125,12 +125,15 @@ comes from feedback, so the milestone is inherited), describing user-visible
 outcomes rather than implementation; creates work items as sub-issues with
 `issue_create` (`parent: <feature>`); attaches existing issues with
 `issue_link`; rewrites feature and feedback bodies with `issue_edit_body` (the
-only role that may); comments with `comment`; adds and clears
-`bees:question` with `issue_question`; closes feature issues that are done or
-no longer make sense, with a comment. It **never creates, edits or closes milestones** — people
-manage those; the product manager reads them as a priority signal and, if it
-thinks one is wrong, says so in a reply instead of acting. It is told to
-search before creating and to keep the backlog small.
+only role that may); comments with `comment`; adds `bees:question` with
+`issue_question` (`waiting: true`) and uses `waiting: false` only to withdraw a
+question — the orchestrator is what clears the label once a person answers;
+closes feature and feedback issues with `gh issue close`, which is the one
+action here with no tool, so the marker goes on that comment by hand. It
+**never creates, edits or closes milestones** — people manage those; the
+product manager reads them as a priority signal and, if it thinks one is
+wrong, says so in a reply instead of acting. It is told to search before
+creating and to keep the backlog small.
 
 **Feature issues:** a `bees:feature` issue is the product manager's from idea
 to shipped, whether it wrote it or a person filed it. Feature issues never
@@ -147,7 +150,7 @@ enter the workflow state machine. For each fresh one it:
    piece, created with `issue_create` (`parent: <feature>`, `bug: true` for
    bugs), which makes each a native GitHub **sub-issue** of the feature with
    `bees` + `bees:triage` and the feature's milestone (it may pre-size one
-   with `--label "bees:size/s"`, a hint the project manager confirms during
+   with `labels: ["bees:size/s"]`, a hint the project manager confirms during
    triage — see [Sizing](workflow.md#sizing)); ordered, with
    dependencies expressed as `blocked_by: [<issue>]` (a `Blocked by #N` line the
    scheduler honours, see [Dependencies](workflow.md#dependencies)) rather than
@@ -155,6 +158,17 @@ enter the workflow state machine. For each fresh one it:
    issue (with the marker) so it is not re-presented until something changes;
 4. closes the feature issue when all its sub-issues are closed (the progress
    column in its prompt shows this), or when it no longer makes sense.
+
+Once a pass it also **attaches loose work items**. Only the issues the product
+manager creates itself get a `parent`: a bug a developer, reviewer or QA files,
+or a split the project manager makes during triage, has none, so its feature
+looks further along than it is and it inherits no milestone. The prompt tells
+the product manager to compare the open work items in its task against each
+feature's sub-issues on GitHub
+(`gh api --paginate ".../sub_issues?per_page=100"` — the default page is 30)
+and to attach what is missing with `issue_link`. `issue_link` does not carry
+the feature's milestone across and a bee never puts an issue into a milestone,
+so the prompt has it name what it attached instead, for a person to place.
 
 **Proposals:** a feature issue the product manager creates itself is labelled
 `bees:proposal` as well as `bees:feature`. It writes, refines and asks
@@ -187,9 +201,15 @@ issues.
 
 **Mail:** receives questions from the project manager and reports from QA;
 may send to `project_manager` only. It is told to be decisive because the
-project manager is blocked until it answers.
+project manager is blocked until it answers — and to reply only when the answer
+changes what the project manager does, because unread mail on its own is enough
+to start a project manager session.
 
-**Outcomes:** `done` (with a summary), `idle`, `failed`. The orchestrator
+**Outcomes:** `done` (with a summary), `idle`, `failed`. A run with no fresh
+feature, no fresh feedback and no mail was woken by `product_manager_interval`
+rather than by an event; the prompt tells the product manager to run the
+loose-work-item check and then report `idle` rather than look for work to
+invent. The orchestrator
 records the run time (which starts the `product_manager_interval` clock) and
 marks the delivered mail read. `failed` logs an error and backs the role off
 for five poll intervals.
