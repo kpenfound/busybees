@@ -226,7 +226,11 @@ stateDiagram-v2
   only locally. The same worktree serves both developer and reviewer sessions
   for that issue and is removed when the worker exits (unless
   `keep_workspaces`). Before each reviewer session the worktree is
-  fast-forwarded to the developer's latest push.
+  fast-forwarded to the developer's latest push. Each workspace is a unique
+  temp directory under `workspace_root` and the worktree inside it carries that
+  same unique name: `git worktree add` derives the id under `.git/worktrees/`
+  from the directory's leaf name, and concurrent adds sharing one would race
+  for it.
 - **Resume.** On start the worker looks for an open PR whose head is the
   branch. If one exists and the issue is labelled `bees:review` it starts in
   the review stage; otherwise in develop. This is how work survives a restart

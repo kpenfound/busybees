@@ -15,7 +15,10 @@ import (
 
 // Workspace is a temporary directory containing a git worktree.
 type Workspace struct {
-	// Root is the temp directory. RepoDir (Root/repo) is the worktree.
+	// Root is the temp directory. RepoDir is the worktree inside it, named
+	// after Root's unique basename: `git worktree add` derives the id under
+	// .git/worktrees/ from the leaf name, so a shared name (once "repo")
+	// makes concurrent adds race for the same id.
 	Root    string
 	RepoDir string
 	// Branch is the checked-out branch, or "" for a detached checkout.
@@ -145,7 +148,7 @@ func (m *Manager) prepare(name string) (*Workspace, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Workspace{Root: root, RepoDir: filepath.Join(root, "repo"), MainRepo: m.MainRepo}, nil
+	return &Workspace{Root: root, RepoDir: filepath.Join(root, filepath.Base(root)), MainRepo: m.MainRepo}, nil
 }
 
 func (m *Manager) refExists(ctx context.Context, ref string) bool {
