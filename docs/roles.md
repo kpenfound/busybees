@@ -210,7 +210,9 @@ orchestrator sends such an issue straight back to `bees:triage`; moves a work
 item to `bees:blocked` when it has asked the product manager; closes invalid or duplicate work items with a comment. It
 never edits feature or feedback issues — those belong to the product
 manager — and never touches milestones. It is the only role besides the
-orchestrator that moves state labels. It is told to declare dependencies with a
+orchestrator that moves state labels. It may also add
+[`bees:priority`](workflow.md#priority-do-this-next) to a bug that blocks the
+factory itself — the default branch does not build, say — and to nothing else. It is told to declare dependencies with a
 `Blocked by #N` line and move the item to `bees:ready` anyway rather than
 parking it in triage: the scheduler holds it back until the blocker closes.
 
