@@ -65,7 +65,7 @@ func TestCreateKinds(t *testing.T) {
 		want string
 	}{
 		{Options{Title: "t", Kind: KindBug, Related: 12}, "--label bees --label bees:bug --label bees:triage --milestone v1"},
-		{Options{Title: "t", Kind: KindFeature}, "--label bees --label bees:feature --milestone pinned"},
+		{Options{Title: "t", Kind: KindFeature}, "--label bees --label bees:feature --label bees:proposal --milestone pinned"},
 		{Options{Title: "t", Kind: KindTask, Ready: true, Milestone: "v2", Related: 12}, "--label bees --label bees:ready --milestone v2"},
 		{Options{Title: "t", Kind: KindTask, ExtraLabels: []string{"docs"}}, "--label bees --label bees:triage --label docs --milestone pinned"},
 	} {

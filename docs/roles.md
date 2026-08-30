@@ -93,7 +93,7 @@ notes. It works from a detached checkout of the default branch and is told to
 read the codebase and README to understand what exists.
 
 **Does on GitHub:** creates feature issues with `issue_create` (`feature: true`
-→ `bees` + `bees:feature`, no state label; `related: <feedback issue>` when it
+→ `bees` + `bees:feature` + `bees:proposal`, no state label; `related: <feedback issue>` when it
 comes from feedback, so the milestone is inherited), describing user-visible
 outcomes rather than implementation; creates work items as sub-issues with
 `issue_create` (`parent: <feature>`); attaches existing issues with

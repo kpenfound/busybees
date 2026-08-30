@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -148,7 +149,7 @@ func TestDefaults(t *testing.T) {
 		t.Fatalf("state dir: %s", cfg.StateDir())
 	}
 	l := cfg.Labels()
-	if l.Ready != "bees:ready" || l.Base != "bees" || len(l.All()) != 17 {
+	if l.Ready != "bees:ready" || l.Base != "bees" || len(l.All()) != 18 {
 		t.Fatalf("labels: %+v", l)
 	}
 }
@@ -179,6 +180,38 @@ func TestSizeLabels(t *testing.T) {
 		if states[s] {
 			t.Errorf("%s is both a state and a size label", s)
 		}
+	}
+}
+
+func TestKindLabels(t *testing.T) {
+	l := LabelsFor("bees")
+	if l.Proposal != "bees:proposal" {
+		t.Fatalf("proposal label: %q", l.Proposal)
+	}
+	// A proposal is a kind label: it sits next to bees:feature and carries
+	// neither a state nor a size, so labelling one must never clear it.
+	for _, name := range []string{"state", "size"} {
+		list := l.StateLabels()
+		if name == "size" {
+			list = l.SizeLabels()
+		}
+		if slices.Contains(list, l.Proposal) {
+			t.Errorf("%s is a %s label", l.Proposal, name)
+		}
+	}
+	// `bees init` and `bees labels sync` create it.
+	var found bool
+	for _, spec := range l.All() {
+		if spec.Name != l.Proposal {
+			continue
+		}
+		found = true
+		if spec.Color == "" || spec.Description == "" {
+			t.Errorf("%s: colour %q description %q", spec.Name, spec.Color, spec.Description)
+		}
+	}
+	if !found {
+		t.Errorf("%s missing from All()", l.Proposal)
 	}
 }
 

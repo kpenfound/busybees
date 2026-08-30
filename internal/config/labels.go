@@ -21,6 +21,11 @@ type Labels struct {
 	// Question marks a feature or feedback issue where the product manager
 	// is waiting for a person to answer. Removed when the person replies.
 	Question string // bees:question
+	// Proposal marks a feature issue a bee wrote rather than a person. It
+	// sits *next to* bees:feature rather than replacing it, and it is not a
+	// state label. Only a person removes it, and that removal is the
+	// approval to break the feature into work items.
+	Proposal string // bees:proposal
 
 	// Issue workflow state labels (exactly one at a time).
 	Triage     string // bees:triage      – needs project manager refinement
@@ -48,6 +53,7 @@ func LabelsFor(base string) Labels {
 		Bug:        base + ":bug",
 		Feedback:   base + ":feedback",
 		Question:   base + ":question",
+		Proposal:   base + ":proposal",
 		Triage:     base + ":triage",
 		Ready:      base + ":ready",
 		InProgress: base + ":in-progress",
@@ -90,6 +96,7 @@ func (l Labels) All() []LabelSpec {
 		{l.Bug, "D73A4A", "Bug work item"},
 		{l.Feedback, "C5DEF5", "Feature idea, product feedback or bug report for the product manager"},
 		{l.Question, "BFD4F2", "The product manager is waiting for a person to answer"},
+		{l.Proposal, "D4C5F9", "Feature issue a bee proposed; a person must approve it before breakdown"},
 		{l.Triage, "E4E669", "Needs refinement by the project manager"},
 		{l.Ready, "0E8A16", "Detailed enough for a developer to pick up"},
 		{l.InProgress, "5319E7", "A developer is working on it"},
