@@ -38,6 +38,9 @@ type Data struct {
 	AutoMerge bool
 	// CommitFlags are extra flags for the developer's git commits.
 	CommitFlags string
+	// Notify is the GitHub mention string for the people the factory turns
+	// to when it needs one ("@kpenfound @myorg/bees-team"), or empty.
+	Notify string
 	// CreateFlags are the gh flags that make a new issue/PR visible to the
 	// factory (label and, when configured, assignee).
 	CreateFlags string

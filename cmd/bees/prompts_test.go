@@ -15,6 +15,9 @@ func TestRenderedPromptCarriesConfiguredSettings(t *testing.T) {
 [project]
 repo = "owner/name"
 
+[scheduler]
+notify = ["kpenfound"]
+
 [roles.developer]
 max_size = "s"
 commit_flags = "--signoff"
@@ -40,5 +43,13 @@ commit_flags = "--signoff"
 	}
 	if !strings.Contains(dev, "--signoff") {
 		t.Errorf("developer prompt does not name the configured commit flags:\n%s", dev)
+	}
+
+	product, err := renderedPrompt(cfg, config.RoleProductManager)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(product, "@kpenfound") {
+		t.Errorf("product manager prompt does not carry scheduler.notify:\n%s", product)
 	}
 }

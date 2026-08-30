@@ -299,3 +299,34 @@ func TestProductManagerTaskMarksProposals(t *testing.T) {
 		t.Errorf("break-it-down instruction has no proposal exception:\n%s", task)
 	}
 }
+
+// With scheduler.notify set, the product manager is told to start a question
+// comment with the mentions — and with it unset the prompt is unchanged.
+func TestProductManagerMentionsNotify(t *testing.T) {
+	d := sample()
+	off, err := System(config.RoleProductManager, d, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(off, "@kpenfound") || strings.Contains(off, "Start the comment with") {
+		t.Fatalf("notify is unset but the prompt mentions somebody:\n%s", off)
+	}
+
+	d.Notify = "@kpenfound @myorg/bees-team"
+	on, err := System(config.RoleProductManager, d, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(on, "Start the comment with `@kpenfound @myorg/bees-team`") {
+		t.Fatalf("product manager system prompt does not carry the mentions:\n%s", on)
+	}
+	// The mention paragraph is the whole difference between the two renders.
+	i := strings.Index(on, "Start the comment with")
+	j := strings.Index(on, "Stop working on that feature")
+	if i < 0 || j <= i {
+		t.Fatalf("mention paragraph is not where it should be:\n%s", on)
+	}
+	if got := strings.Replace(on, on[i:j], "", 1); got != off {
+		t.Errorf("notify changes the prompt beyond the mention paragraph:\n%s", got)
+	}
+}
