@@ -798,3 +798,74 @@ func TestDeveloperChoosesBeforeItAsks(t *testing.T) {
 		t.Errorf("developer prompt does not say what `failed` does:\n%s", sys)
 	}
 }
+
+// QA tests the product, and a session that finds nothing is a success.
+//
+// Both rules come out of the session archive. QA's findings drifted into
+// code reading — the 2026-08-30 sessions filed "the product_manager prompt
+// falsely claims proposal-parent enforcement exists" and "the visibility
+// backstop's own doc-comment scenarios are unreachable" — which is the
+// reviewer's job on the pull request, not QA's on a merged tree. And "you
+// need not file anything" had to be added to this repository's bees.toml as
+// a custom instruction because the prompt did not carry it; it belongs in
+// the prompt. Each clause is asserted separately so it fails on its own.
+func TestQALooksForProductDefectsAndNeedNotFileAnything(t *testing.T) {
+	sys, err := System(config.RoleQA, sample(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"looking for **product defects**",
+		"not for critique of how the",
+		"**Filing an issue is not the goal; the report is.**",
+		"is a good result — say so and file nothing",
+	} {
+		if !strings.Contains(sys, want) {
+			t.Errorf("qa system prompt missing %q:\n%s", want, sys)
+		}
+	}
+	qa, err := Task(config.RoleQA, sample())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(qa, "every defect you reproduced (none, if the batch is clean)") {
+		t.Errorf("qa task still tells the session to file bugs unconditionally:\n%s", qa)
+	}
+}
+
+// Before filing, QA searches closed issues too and reproduces the failure
+// itself, and it never starts something that acts on the live project.
+//
+// The closed-issues half: the task lists open bugs only (runQA filters
+// snap.issues by the bug label, internal/scheduler/singletons.go), so
+// "search for an existing report" pointed at half the record — #84 and #103
+// were both filed against reports that were already closed. The reproduce
+// half: #103 was filed from a truncated reporter dump and closed as not
+// reproducible. The never-start half: session 20260829-192238 ran
+// `bees exec developer` with $BEES_CONFIG still pointing at the live
+// factory; only the missing --issue flag stopped it launching a real
+// session. Each half is a separate assertion, and the old wording each one
+// replaces is asserted absent so a revert cannot pass silently.
+func TestQAReproducesBeforeFilingAndStartsNothingLive(t *testing.T) {
+	sys, err := System(config.RoleQA, sample(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"search the existing issues, closed as well as open",
+		"**reproduce it here**",
+		"that acts on the real world for you",
+	} {
+		if !strings.Contains(sys, want) {
+			t.Errorf("qa system prompt missing %q:\n%s", want, sys)
+		}
+	}
+	for _, gone := range []string{
+		"Search for an existing report first",
+		"exercise it as a user would",
+	} {
+		if strings.Contains(sys, gone) {
+			t.Errorf("qa system prompt still carries the old wording %q:\n%s", gone, sys)
+		}
+	}
+}

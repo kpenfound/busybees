@@ -466,25 +466,42 @@ finds into bug reports and product feedback.
 **Given:** when it last ran, the PRs merged since then (title, body, closing
 issues), the open `bees:bug` issues (to avoid duplicates), its notes. It runs
 in a detached checkout of the default branch and works out from the
-repository's documentation (and its notes) how to install, test and launch
-the application.
+repository's documentation (and its notes) how to install, test and exercise
+the product.
+
+**Product defects, not code critique.** QA judges what the product does — what
+it does that it should not, or fails to do at all. How the code is written is
+the reviewer's job, on the pull request. What "exercise it" means follows from
+what the product is: a service is launched and driven, a command-line tool or a
+library is run the way its documentation tells a user to. The prompt tells QA
+never to start anything that acts on the real world for it — a deploy, a
+scheduler or job runner, a command that spends money or writes to the live
+project the product manages — and to use a sandbox, a throwaway configuration
+or a dry-run flag instead. When the merged list is long QA is told not to give
+every entry equal time, and to say in its report which ones it only skimmed.
+
+**Filing is not the goal; the report is.** A clean batch is a good result: QA
+files nothing and says so. It files only defects it reproduced itself.
 
 **Does on GitHub:** files bug issues with
 `issue_create` (`bug: true`, `related: <issue the merged PR closed>` → `bees` +
 `bees:bug` + `bees:triage`, in that issue's milestone; `related` is omitted
-when the bug is not tied to a recent change), with reproduction steps,
-expected vs actual behaviour and severity, after searching for existing
-reports; comments on an existing report rather than duplicating it.
+when the bug is not tied to a recent change), with reproduction steps, expected
+vs actual behaviour, severity and the command it ran with the output it got.
+Before opening anything it searches the existing issues, **closed as well as
+open** (the list in its task is the open bugs only), and comments on the report
+it finds rather than duplicating it. A broken environment is one issue however
+many merged pull requests it spoils.
 
 **Stays in its lane:** what QA may file directly is a bug report, or a small
 work item within the existing design. Anything that asks for new scope — a new
 capability, a different way of working — goes to the product manager by mail
-instead, which turns it into a proposal a person approves. QA never opens
-feature issues itself.
+instead; the product manager decides whether to drop it or turn it into a
+proposal a person approves. QA never opens feature issues itself.
 
-**Mail:** may send to `product_manager` only: one report per session (what
-was tested, what works, bugs filed, product-level observations), and nothing
-if there is nothing to say.
+**Mail:** may send to `product_manager` only: one report per session (what was
+tested, what works, bugs filed, product-level observations), sent even when
+nothing was found, and skipped only when QA could not test at all.
 
 **Outcomes:** `done` (with a summary), `failed` (could not test, with why).
 The orchestrator records the run time either way; `failed` backs QA off for
