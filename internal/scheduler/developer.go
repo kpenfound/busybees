@@ -199,8 +199,7 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 			// The checks section belongs to the review the read was made for.
 			// The read happens once, before the first review, so a later round
 			// must not be told "CI is green" about a head the developer has
-			// since replaced: it gets no checks section, and its prompt tells
-			// it to run the tests itself.
+			// since replaced: it gets no checks section at all.
 			roundChecks, roundStatus := reviewChecks, reviewStatus
 			reviewChecks, reviewStatus = nil, ""
 			// Make sure the worktree has the developer's latest commits.
@@ -266,7 +265,7 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 					log.Info("checks still pending; reviewing anyway", "pr", pr.Number, "timeout", policy.PreReviewChecksTimeout)
 				}
 				// "Nothing reported" is not a failure: the reviewer is told the
-				// repository has no checks and to run the tests itself.
+				// repository has no checks, so nothing was verified for it.
 				reviewChecks, reviewStatus = checks, string(status)
 				if status == github.ChecksNone {
 					reviewChecks, reviewStatus = nil, string(github.ChecksPassed)

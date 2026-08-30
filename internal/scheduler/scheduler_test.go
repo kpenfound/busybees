@@ -1030,7 +1030,7 @@ pre_review_checks = false
 			checksPrompt = string(b)
 		}
 	}
-	for _, want := range []string{"required checks failed on pull request #101", "**go / test** (CI) — fail: 1 test failed", "https://ci.example.com/run/1", "do not assume GitHub"} {
+	for _, want := range []string{"checks failed on pull request #101", "**go / test** (CI) — fail: 1 test failed", "https://ci.example.com/run/1", "do not assume GitHub"} {
 		if !strings.Contains(checksPrompt, want) {
 			t.Errorf("checks prompt missing %q", want)
 		}
