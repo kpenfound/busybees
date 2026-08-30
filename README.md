@@ -67,9 +67,11 @@ that: `bees` + `bees:bug` goes straight to triage. Milestones stay yours: bees n
 create or change them, but every issue they create inherits the milestone of the issue
 it grew out of.
 
-`bees status` shows queues, workers and unread mail at any time. `bees tick` runs a single
-pass, `bees exec developer --issue 12` runs one session by hand, and `bees kill` cleans up
-leftover sessions and worktrees after a crash.
+`bees status` shows queues, workers and unread mail at any time, and `bees cost`
+answers what the factory spent, by role, by issue or by day. `bees tick` runs a
+single pass, `bees exec developer --issue 12` runs one session by hand, `bees notes`
+reads and edits a role's notes file — its only memory between sessions — and
+`bees kill` cleans up leftover sessions and worktrees after a crash.
 
 ## How it works
 
