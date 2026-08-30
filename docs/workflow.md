@@ -43,6 +43,12 @@ block in `bees.toml`. All configured criteria must match:
 | Assignee | `filter.assignee` | unset | Item is assigned to this GitHub login (`@me` = the `gh` user) |
 | Milestone | `filter.milestone` | unset | Item belongs to this milestone |
 
+The criteria are ANDed, so adding one to a factory that is already running hides
+everything that does not already satisfy it - uncommenting `assignee` in an
+established repository makes every issue nobody ever assigned invisible in one
+commit. `bees doctor` reports that case with both counts ("34 open issues and 2
+pull requests carry `bees`, 0 match your filter").
+
 Everything outside the filter is invisible: the factory will never read, label
 or comment on it. The label is also the base name for the workflow labels
 below, so with `label = "hive"` the states become `hive:triage`, `hive:ready`

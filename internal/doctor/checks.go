@@ -417,6 +417,16 @@ func hasLabel(labels []github.Label, name string) bool {
 	return false
 }
 
+// checkFilter reports whether the visibility filter matches anything, and,
+// when it does not, which of the two very different reasons it is: an empty or
+// not-yet-labelled repository, or a filter that just stopped matching the work
+// the factory already owns (adding filter.assignee to an installed factory
+// hides every issue nobody ever assigned - see #110).
+//
+// It is a Warn and never a Fail, in both cases: the `bees run` preflight
+// refuses to start on a failure, and a filter that matches nothing on purpose
+// must still run. The difference between the two is carried entirely by the
+// detail and remediation lines - do not "upgrade" this to a Fail.
 func (d *Deps) checkFilter(ctx context.Context) Result {
 	const name = "filter matches issues"
 	q := Query(d.Config)
@@ -425,12 +435,53 @@ func (d *Deps) checkFilter(ctx context.Context) Result {
 		return fail(name, GroupGitHub, oneLine(err.Error()),
 			"check that gh can list issues in "+d.Config.Project.Repo)
 	}
-	if len(issues) == 0 {
-		return warn(name, GroupGitHub, fmt.Sprintf("no open issue matches %s", describeQuery(q)),
-			"check filter.label, filter.assignee and filter.milestone in bees.toml, or file the first issue "+
-				"(the factory only sees issues that match)")
+	if len(issues) > 0 {
+		return pass(name, GroupGitHub, fmt.Sprintf("%s matching %s", plural(len(issues), "open issue"), describeQuery(q)))
 	}
-	return pass(name, GroupGitHub, fmt.Sprintf("%s matching %s", plural(len(issues), "open issue"), describeQuery(q)))
+	if stranded := d.strandedByFilter(ctx, q); stranded != "" {
+		return warn(name, GroupGitHub, stranded,
+			fmt.Sprintf("filter criteria are ANDed, so every one of them must hold: either bring those items into the filter "+
+				"(`gh issue edit N --add-assignee ...`, `gh issue edit N --add-label %s`) or unset the criterion in bees.toml",
+				d.Config.Filter.Label))
+	}
+	return warn(name, GroupGitHub, fmt.Sprintf("no open issue matches %s", describeQuery(q)),
+		"check filter.label, filter.assignee and filter.milestone in bees.toml, or file the first issue "+
+			"(the factory only sees issues that match)")
+}
+
+// strandedByFilter asks the second question, once the filter has come back
+// empty: how much open work carries the base label alone? Pull requests count
+// too - a filter change that hides an open PR strands work mid-flight. It
+// returns the detail line for that case, or "" when there is nothing to tell
+// apart (no base label to count against, the extra listing failed, or the
+// repository really is empty).
+//
+// TODO(#112): `bees doctor --fix` will adopt these items into the filter; name
+// it in checkFilter's remediation once it exists.
+func (d *Deps) strandedByFilter(ctx context.Context, q github.Query) string {
+	// Without require_label there is no base label the factory's own items are
+	// guaranteed to carry, so there is nothing to compare against.
+	if !d.Config.Filter.LabelRequired() {
+		return ""
+	}
+	base := github.Query{Label: d.Config.Filter.Label}
+	if base == q {
+		return "" // the label is the whole filter: the first listing was this question
+	}
+	issues, err := d.GitHub.ListOpenIssues(ctx, base)
+	if err != nil {
+		return ""
+	}
+	prs, err := d.GitHub.ListOpenPRs(ctx, base)
+	if err != nil {
+		return ""
+	}
+	if len(issues)+len(prs) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s and %s carry `%s`, 0 match your filter (%s)",
+		plural(len(issues), "open issue"), plural(len(prs), "pull request"),
+		d.Config.Filter.Label, describeANDed(q))
 }
 
 // Query is the visibility filter as the scheduler applies it.
@@ -441,6 +492,26 @@ func Query(cfg *config.Config) github.Query {
 		q.Label = f.Label
 	}
 	return q
+}
+
+// describeANDed spells the filter out as the conjunction it is
+// ("label=bees AND assignee=kyle"), for the message that has to make the
+// ANDing itself the point.
+func describeANDed(q github.Query) string {
+	var parts []string
+	if q.Label != "" {
+		parts = append(parts, "label="+q.Label)
+	}
+	if q.Assignee != "" {
+		parts = append(parts, "assignee="+q.Assignee)
+	}
+	if q.Milestone != "" {
+		parts = append(parts, "milestone="+q.Milestone)
+	}
+	if len(parts) == 0 {
+		return "no criteria"
+	}
+	return strings.Join(parts, " AND ")
 }
 
 func describeQuery(q github.Query) string {
