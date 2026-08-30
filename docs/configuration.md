@@ -158,6 +158,7 @@ orchestrator adds `bees:size/m` to any ready issue that has none. See
 | `max_large_in_flight` | int | `1` | How many `bees:size/l` issues developer workers may hold at once. A larger issue over the cap is skipped and the free worker takes the next issue that fits. `0` means no cap; must be ≥ 0. |
 | `pr_fix_conflicts` | bool | `true` | Hand an open pull request that **conflicts** with the default branch back to its developer: the developer is mailed (from `orchestrator`) to merge the default branch, resolve, test and push, and an approved issue goes back to `bees:ready` ahead of new work. See [Conflicts with the default branch](workflow.md#conflicts-with-the-default-branch). |
 | `pr_keep_updated` | bool | `false` | Do the same when a pull request is merely **behind** the default branch (it would merge cleanly, but was not tested against what is on the default branch now). |
+| `notify` | list of strings | `[]` | GitHub logins and/or `org/team` slugs the factory turns to when it needs a person. They are mentioned in the `bees:needs-human` escalation comment and in the product manager's `bees:question` comments, and asked to review a pull request the reviewer moved to `bees:approved`. Entries carry no leading `@` and hold at most one `/`. Empty (the default) mentions nobody and requests no reviewer. See [Notifying a person](#notifying-a-person). |
 | `product_manager_interval` | duration | `"1h"` | Minimum time between product manager runs. Unread mail in the PM's inbox triggers an earlier run. |
 | `qa_interval` | duration | `"30m"` | Minimum time between QA runs. QA only runs when something was merged since its last run (the first run always happens). The merged-PR query itself runs at most once per `qa_interval` (tracked as `last_check` in `<state_dir>/qa.json`), not on every poll. |
 | `keep_workspaces` | bool | `false` | Leave temporary worktrees on disk after a session (debugging). |
@@ -168,6 +169,35 @@ orchestrator adds `bees:size/m` to any ready issue that has none. See
 | `timezone` | string | `""` | IANA name the window is read in (`"America/New_York"`). Empty means the machine's local time. |
 
 Durations use Go syntax: `"30s"`, `"5m"`, `"1h30m"`.
+
+### Notifying a person
+
+The factory and the people it works for share one GitHub account, so nothing
+the factory writes notifies anybody: the comment author *is* you, and GitHub
+sends no mail for your own comments. `scheduler.notify` says who to reach:
+
+```toml
+[scheduler]
+notify = ["kpenfound", "myorg/bees-team"]
+```
+
+Each entry is a GitHub login or an `org/team` slug, with no leading `@` and at
+most one `/`. Where they are used:
+
+- the `bees:needs-human` [escalation comment](workflow.md#escalation-beesneeds-human)
+  starts with `@kpenfound @myorg/bees-team`;
+- the product manager starts a `bees:question` comment with the same line;
+- a pull request the reviewer moved to `bees:approved` is waiting for a person
+  to merge it, so a review is requested from every entry.
+
+The review request is best effort — a failure is logged and the pull request
+still reaches `bees:approved`. **GitHub refuses to request a review from a pull
+request's own author**, and with a shared account the configured login usually
+*is* the author, so a login often gets the mention but not the review request.
+Teams are always accepted, so list one if you want the request as well.
+
+With `notify` unset (the default) nobody is mentioned and no reviewer is
+requested.
 
 ### Work hours
 
@@ -430,6 +460,7 @@ headers = { Authorization = "Bearer $BROWSER_MCP_TOKEN" }
 | `scheduler.max_large_in_flight` | `1` |
 | `scheduler.pr_fix_conflicts` | `true` |
 | `scheduler.pr_keep_updated` | `false` |
+| `scheduler.notify` | `[]` (nobody is mentioned) |
 | `scheduler.product_manager_interval` | `1h` |
 | `scheduler.qa_interval` | `30m` |
 | `scheduler.work_hours` | `""` (poll around the clock) |

@@ -422,7 +422,11 @@ If the last round still requests changes the issue is escalated (below). The
 reviewer is told when it is on the final round.
 
 When the reviewer approves, the orchestrator labels both the PR and the issue
-`bees:approved`. If the reviewer role is disabled (`[roles.reviewer] enabled =
+`bees:approved` and requests a review from everyone in
+[`scheduler.notify`](configuration.md#notifying-a-person), so the pull request
+shows up in their review queue. That request is best effort: GitHub refuses one
+from the pull request's own author, which with a shared account is usually the
+configured login. If the reviewer role is disabled (`[roles.reviewer] enabled =
 false`) a PR is treated as approved as soon as the developer opens it.
 
 ## Giving the developer feedback
@@ -571,7 +575,10 @@ the issue to a human:
   GitHub refused the merge.
 
 The orchestrator sets `bees:needs-human` and posts a comment on the issue
-explaining why. **This is the only comment the orchestrator itself writes.** Roles
+explaining why; the comment mentions everyone in
+[`scheduler.notify`](configuration.md#notifying-a-person), since the factory
+posts under your own account and a comment notifies nobody by itself.
+**This is the only comment the orchestrator itself writes.** Roles
 do comment on GitHub, but only to people — the developer replying to PR feedback,
 the product manager replying to feedback and feature issues or asking a
 `bees:question` — always tagged `<!-- bees:<role> -->`; everything *between roles*
