@@ -12,6 +12,7 @@ type View struct {
 	Project   Project             `json:"project"`
 	Filter    FilterView          `json:"filter"`
 	Scheduler Scheduler           `json:"scheduler"`
+	Logging   Logging             `json:"logging"`
 	Roles     map[string]RoleView `json:"roles"`
 }
 
@@ -70,6 +71,7 @@ func (c *Config) View(roles []string) (View, error) {
 		Project:   c.Project,
 		Filter:    FilterView{Label: c.Filter.Label, RequireLabel: c.Filter.LabelRequired(), Assignee: c.Filter.Assignee, Milestone: c.Filter.Milestone},
 		Scheduler: c.Scheduler,
+		Logging:   c.Logging,
 		Roles:     map[string]RoleView{},
 	}
 	if v.Scheduler.WorkDays == nil {

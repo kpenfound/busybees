@@ -168,13 +168,11 @@ func TestGitHubToolsWithoutABackend(t *testing.T) {
 // ---- reads -----------------------------------------------------------------
 
 func TestIssueViewRendersTheWholeIssue(t *testing.T) {
-	f := newFakeGitHub().issue(36, "bees:in-progress", "bees:size/s", "bees:bug")
+	f := newFakeGitHub().issue(36, "bees:in-progress", "bees:size/s", "bees:bug", "bees:priority")
 	i := f.issues[36]
 	i.Title = "Crash on empty input"
 	i.Body = "steps to reproduce"
-	i.Milestone = &struct {
-		Title string `json:"title"`
-	}{Title: "v0.1.0"}
+	i.Milestone = &github.MilestoneRef{Title: "v0.1.0"}
 	i.Comments = []github.Comment{
 		{Author: github.Author{Login: "kpenfound"}, Body: "Which format?", CreatedAt: time.Date(2026, 8, 30, 9, 0, 0, 0, time.UTC)},
 		{Author: github.Author{Login: "kpenfound"}, Body: "JSON.\n\n<!-- bees:project_manager -->", CreatedAt: time.Date(2026, 8, 30, 10, 30, 0, 0, time.UTC)},
@@ -186,7 +184,7 @@ func TestIssueViewRendersTheWholeIssue(t *testing.T) {
 	// No number: the issue this session is working on.
 	got := h.call("issue_view", nil)
 	want := `#36 Crash on empty input
-state: in-progress · size: s · kind: bug
+state: in-progress · size: s · kind: bug, priority
 milestone: v0.1.0
 parent: #72 Roles act through built-in tools
 

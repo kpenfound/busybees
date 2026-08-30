@@ -14,6 +14,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/kpenfound/busybees/internal/text"
 )
 
 // Status is the outcome of one check. Only Fail changes the exit code;
@@ -70,13 +72,17 @@ const (
 	GroupConfig    = "config"
 	GroupGitHub    = "github"
 	GroupWorkspace = "workspace"
+	// GroupRoles holds the per-role checks: the skills, MCP servers and shell
+	// of every role in bees.toml. They are the expensive ones (a skill is
+	// cloned, an MCP server is started), so `bees run`'s preflight skips them.
+	GroupRoles = "roles"
 	// GroupInternal holds the results the runner itself produces when a check
 	// panics or overruns its timeout: a bug in bees rather than in the setup.
 	GroupInternal = "doctor"
 )
 
 // Groups is the order the groups are printed in.
-var Groups = []string{GroupToolchain, GroupConfig, GroupGitHub, GroupWorkspace}
+var Groups = []string{GroupToolchain, GroupConfig, GroupGitHub, GroupWorkspace, GroupRoles}
 
 // Result is what one check found.
 type Result struct {
@@ -90,9 +96,108 @@ type Result struct {
 	Remediation string `json:"remediation,omitempty"`
 }
 
-// Check inspects one thing and reports what it found. It must honour ctx,
-// which the runner cancels after Timeout.
-type Check func(ctx context.Context) Result
+// Check inspects one thing and reports what it found, and may know how to
+// repair what it finds.
+type Check struct {
+	// Run inspects. It must honour ctx, which the runner cancels after Timeout.
+	Run func(ctx context.Context) Result
+	// Fix repairs what Run found, or is nil when doctor cannot repair it.
+	// `bees doctor --fix` runs it only for a check that did not pass.
+	Fix Fix
+	// Expensive marks a check that clones a repository or starts a process.
+	// `bees doctor` and `bees init` run those too; the `bees run` preflight
+	// does not, because it must not add a minute to every start.
+	Expensive bool
+	// Timeout raises the runner's per-check budget for a check that legitimately
+	// needs longer than Timeout (an MCP server has MCPTimeout to answer). Zero
+	// uses the runner's budget; a smaller value never shortens it.
+	Timeout time.Duration
+}
+
+// CheapChecks returns the checks that are not marked expensive, in order.
+// It is the subset `bees run` runs before it starts the scheduler.
+func CheapChecks(checks []Check) []Check {
+	out := make([]Check, 0, len(checks))
+	for _, c := range checks {
+		if !c.Expensive {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// Fix repairs what a check found. It returns one line per thing it did (or
+// deliberately did not do, so a fix that declines can say why), and an error
+// for what it could not do.
+//
+// A fix never stops at the first failure: it attempts every item and joins
+// the per-item errors, so one unassignable issue does not strand the rest.
+type Fix func(ctx context.Context) (actions []string, err error)
+
+// FixOutcome is what one check's fix did.
+type FixOutcome struct {
+	// Check is the name of the check the fix belongs to.
+	Check string
+	// Actions is one line per thing the fix did or declined to do.
+	Actions []string
+	// Err is what the fix could not do; nil when everything worked.
+	Err error
+}
+
+// ApplyFixes runs the fixes of the checks that did not pass, in check order,
+// and reports what each one did. results must be the results Run returned for
+// the same checks, in the same order; a check that passed, or that carries no
+// fix, is left alone.
+//
+// A fix that fails does not stop the ones after it: `bees doctor --fix` is a
+// repair pass, and a repository where one item cannot be assigned still wants
+// the others repaired.
+func ApplyFixes(ctx context.Context, checks []Check, results []Result) []FixOutcome {
+	var out []FixOutcome
+	for i, c := range checks {
+		if c.Fix == nil || i >= len(results) || results[i].Status == Pass {
+			continue
+		}
+		actions, err := c.Fix(ctx)
+		out = append(out, FixOutcome{Check: results[i].Name, Actions: actions, Err: err})
+	}
+	return out
+}
+
+// FixText renders what the fixes did: one section per check, one line per
+// action, and the failures marked with "!".
+func FixText(outcomes []FixOutcome) string {
+	var b strings.Builder
+	for _, o := range outcomes {
+		fmt.Fprintf(&b, "fixing %s\n", o.Check)
+		for _, a := range o.Actions {
+			fmt.Fprintf(&b, "  %s\n", a)
+		}
+		for _, e := range flatten(o.Err) {
+			fmt.Fprintf(&b, "  ! %s\n", oneLine(e.Error()))
+		}
+	}
+	if len(outcomes) > 0 {
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// flatten splits an errors.Join back into its parts, so a fix that failed on
+// three items prints three lines instead of one paragraph.
+func flatten(err error) []error {
+	if err == nil {
+		return nil
+	}
+	if j, ok := err.(interface{ Unwrap() []error }); ok {
+		var out []error
+		for _, e := range j.Unwrap() {
+			out = append(out, flatten(e)...)
+		}
+		return out
+	}
+	return []error{err}
+}
 
 // Timeout is the budget the runner gives a single check.
 const Timeout = 10 * time.Second
@@ -130,6 +235,9 @@ func RunWith(ctx context.Context, checks []Check, timeout time.Duration) []Resul
 }
 
 func runOne(ctx context.Context, i int, c Check, timeout time.Duration) Result {
+	if c.Timeout > timeout {
+		timeout = c.Timeout
+	}
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	done := make(chan Result, 1)
@@ -140,7 +248,7 @@ func runOne(ctx context.Context, i int, c Check, timeout time.Duration) Result {
 					"this is a bug in bees; please report it with the output of `bees doctor --json`")
 			}
 		}()
-		done <- c(cctx)
+		done <- c.Run(cctx)
 	}()
 	select {
 	case r := <-done:
@@ -214,15 +322,8 @@ func Summary(results []Result) string {
 			passed++
 		}
 	}
-	return fmt.Sprintf("%s: %d passed, %d warnings, %d failed",
-		plural(len(results), "check"), passed, warned, failed)
-}
-
-func plural(n int, word string) string {
-	if n == 1 {
-		return fmt.Sprintf("%d %s", n, word)
-	}
-	return fmt.Sprintf("%d %ss", n, word)
+	return fmt.Sprintf("%s: %d passed, %s, %d failed",
+		text.Count(len(results), "check"), passed, text.Count(warned, "warning"), failed)
 }
 
 // groupOrder returns the groups present in results: the known ones first, in

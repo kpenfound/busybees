@@ -63,6 +63,11 @@ type Label struct {
 	Name string `json:"name"`
 }
 
+// MilestoneRef is the milestone an issue or pull request is in.
+type MilestoneRef struct {
+	Title string `json:"title"`
+}
+
 // Milestone is a GitHub milestone.
 type Milestone struct {
 	Number       int    `json:"number"`
@@ -81,20 +86,18 @@ type Author struct {
 
 // Issue is a GitHub issue.
 type Issue struct {
-	Number    int     `json:"number"`
-	Title     string  `json:"title"`
-	Body      string  `json:"body"`
-	State     string  `json:"state"`
-	URL       string  `json:"url"`
-	Labels    []Label `json:"labels"`
-	Milestone *struct {
-		Title string `json:"title"`
-	} `json:"milestone"`
-	Author    Author    `json:"author"`
-	Assignees []Author  `json:"assignees"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
-	Comments  []Comment `json:"comments,omitempty"`
+	Number    int           `json:"number"`
+	Title     string        `json:"title"`
+	Body      string        `json:"body"`
+	State     string        `json:"state"`
+	URL       string        `json:"url"`
+	Labels    []Label       `json:"labels"`
+	Milestone *MilestoneRef `json:"milestone"`
+	Author    Author        `json:"author"`
+	Assignees []Author      `json:"assignees"`
+	CreatedAt time.Time     `json:"createdAt"`
+	UpdatedAt time.Time     `json:"updatedAt"`
+	Comments  []Comment     `json:"comments,omitempty"`
 }
 
 // MilestoneTitle returns the milestone title or "".
@@ -133,6 +136,24 @@ func (i Issue) AwaitingBee() bool {
 	return lastHuman.After(lastBee)
 }
 
+// AwaitingBeeComment reports whether a bee owes a reply because a person
+// commented, not merely because the issue was created. Unlike AwaitingBee it
+// does not seed the human side with CreatedAt, so an issue nobody has
+// commented on is never awaiting a bee.
+func (i Issue) AwaitingBeeComment() bool {
+	var lastHuman, lastBee time.Time
+	for _, c := range i.Comments {
+		if c.IsBee() {
+			if c.CreatedAt.After(lastBee) {
+				lastBee = c.CreatedAt
+			}
+		} else if c.CreatedAt.After(lastHuman) {
+			lastHuman = c.CreatedAt
+		}
+	}
+	return lastHuman.After(lastBee)
+}
+
 // PR is a GitHub pull request.
 type PR struct {
 	Number      int        `json:"number"`
@@ -148,13 +169,11 @@ type PR struct {
 	MergeCommit *struct {
 		OID string `json:"oid"`
 	} `json:"mergeCommit"`
-	Author    Author   `json:"author"`
-	Assignees []Author `json:"assignees"`
-	Milestone *struct {
-		Title string `json:"title"`
-	} `json:"milestone"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	Author    Author        `json:"author"`
+	Assignees []Author      `json:"assignees"`
+	Milestone *MilestoneRef `json:"milestone"`
+	CreatedAt time.Time     `json:"createdAt"`
+	UpdatedAt time.Time     `json:"updatedAt"`
 	// HeadSHA is the commit the PR's head branch points at (headRefOid).
 	HeadSHA string `json:"headRefOid"`
 	// Mergeable is GitHub's verdict on merging the PR into its base:
@@ -164,6 +183,14 @@ type PR struct {
 	// MergeStateStatus refines Mergeable: BEHIND (no conflict but the base
 	// moved on), DIRTY (conflicts), CLEAN, BLOCKED, UNSTABLE, UNKNOWN, ...
 	MergeStateStatus string `json:"mergeStateStatus"`
+}
+
+// MilestoneTitle returns the milestone title or "".
+func (p PR) MilestoneTitle() string {
+	if p.Milestone == nil {
+		return ""
+	}
+	return p.Milestone.Title
 }
 
 // Merge-state values gh reports for a pull request.
@@ -184,6 +211,17 @@ func (p PR) Behind() bool { return !p.Conflicting() && p.MergeStateStatus == Mer
 func HasLabel(labels []Label, name string) bool {
 	for _, l := range labels {
 		if l.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// HasAssignee reports whether login is one of the assignees. GitHub logins are
+// case-insensitive.
+func HasAssignee(assignees []Author, login string) bool {
+	for _, a := range assignees {
+		if strings.EqualFold(a.Login, login) {
 			return true
 		}
 	}
@@ -359,17 +397,45 @@ func (c *Client) FindPRForBranch(ctx context.Context, branch string) (*PR, error
 	return &prs[0], nil
 }
 
-// Assign adds assignees to an issue or PR.
+// Assign adds assignees to an issue or a pull request. Existing assignees are
+// kept: the endpoint is additive.
+//
+// It goes straight to the REST endpoint rather than through
+// `gh issue edit --add-assignee`, which fails against GitHub with a "Projects
+// (classic) is being deprecated" GraphQL error when the number is a pull
+// request. GitHub's issues API addresses pull requests by the same number, so
+// one call covers both.
 func (c *Client) Assign(ctx context.Context, number int, logins ...string) error {
 	if len(logins) == 0 {
 		return nil
 	}
-	args := []string{"issue", "edit", strconv.Itoa(number), "-R", c.Repo}
+	args := []string{"api", "--method", "POST", fmt.Sprintf("repos/%s/issues/%d/assignees", c.Repo, number)}
 	for _, l := range logins {
-		args = append(args, "--add-assignee", l)
+		args = append(args, "-f", "assignees[]="+l)
 	}
 	_, err := c.Exec(ctx, args...)
 	return err
+}
+
+// SetMilestone puts an issue or a pull request in the open milestone with the
+// given title. Like Assign it uses the REST endpoint, which addresses both by
+// the same number. An empty title is a no-op; a title that matches no open
+// milestone is an error.
+func (c *Client) SetMilestone(ctx context.Context, number int, title string) error {
+	if title == "" {
+		return nil
+	}
+	milestones, err := c.ListMilestones(ctx)
+	if err != nil {
+		return err
+	}
+	for _, m := range milestones {
+		if strings.EqualFold(m.Title, title) {
+			_, err := c.Exec(ctx, "api", "--method", "PATCH", fmt.Sprintf("repos/%s/issues/%d", c.Repo, number), "-F", fmt.Sprintf("milestone=%d", m.Number))
+			return err
+		}
+	}
+	return fmt.Errorf("no open milestone %q in %s", title, c.Repo)
 }
 
 // RequestReview asks the given GitHub logins and org/team slugs (as
@@ -538,11 +604,19 @@ const (
 	ChecksPassed  ChecksStatus = "passed"
 	ChecksFailed  ChecksStatus = "failed"
 	ChecksPending ChecksStatus = "pending"
+	// ChecksNone means nothing was reported at all. It is deliberately not
+	// ChecksPassed: "nothing reported" and "everything green" are different
+	// answers, and a caller that merges on them must say which one it got.
+	ChecksNone ChecksStatus = "none"
 )
 
-// Summarize returns the overall status of the checks. No checks counts as
-// passed: there is nothing to wait for.
+// Summarize returns the overall status of the checks. An empty list is
+// ChecksNone, not ChecksPassed: there is nothing to wait for, but there is
+// also nothing that passed.
 func Summarize(checks []Check) ChecksStatus {
+	if len(checks) == 0 {
+		return ChecksNone
+	}
 	status := ChecksPassed
 	for _, c := range checks {
 		switch c.Bucket {
@@ -566,12 +640,31 @@ func Failed(checks []Check) []Check {
 	return out
 }
 
-// RequiredChecks returns the required checks of a PR. gh exits non-zero
-// when checks are pending (8) or failing (1) while still printing JSON, and
-// reports "no required checks" / "no checks reported" when there are none;
-// both cases are handled.
+// RequiredChecks returns the required checks of a PR: the checks the branch
+// protection rules make mandatory. An empty result means the branch requires
+// nothing, not that everything passed.
 func (c *Client) RequiredChecks(ctx context.Context, number int) ([]Check, error) {
-	out, err := c.Exec(ctx, "pr", "checks", strconv.Itoa(number), "-R", c.Repo, "--required", "--json", "name,state,bucket,link,description,workflow")
+	return c.checks(ctx, number, true)
+}
+
+// Checks returns every check a PR reports, required or not. It is the
+// fallback gate for a repository whose default branch has no branch
+// protection: gating on the checks that exist beats gating on nothing.
+func (c *Client) Checks(ctx context.Context, number int) ([]Check, error) {
+	return c.checks(ctx, number, false)
+}
+
+// checks runs `gh pr checks`, with --required when required is set. gh exits
+// non-zero when checks are pending (8) or failing (1) while still printing
+// JSON, and reports "no required checks" / "no checks reported" when there
+// are none; both cases are handled.
+func (c *Client) checks(ctx context.Context, number int, required bool) ([]Check, error) {
+	args := []string{"pr", "checks", strconv.Itoa(number), "-R", c.Repo}
+	if required {
+		args = append(args, "--required")
+	}
+	args = append(args, "--json", "name,state,bucket,link,description,workflow")
+	out, err := c.Exec(ctx, args...)
 	trimmed := strings.TrimSpace(string(out))
 	if trimmed == "" || trimmed == "[]" {
 		if err != nil && !strings.Contains(err.Error(), "no required checks") && !strings.Contains(err.Error(), "no checks reported") {
@@ -713,6 +806,15 @@ type Created struct {
 	IsPR      bool
 	Labels    []Label
 	Assignees []Author
+	Milestone *MilestoneRef
+}
+
+// MilestoneTitle returns the milestone title or "".
+func (c Created) MilestoneTitle() string {
+	if c.Milestone == nil {
+		return ""
+	}
+	return c.Milestone.Title
 }
 
 // ListCreatedSince returns issues and PRs authored by the gh user at or
@@ -721,7 +823,7 @@ type Created struct {
 func (c *Client) ListCreatedSince(ctx context.Context, t time.Time) ([]Created, error) {
 	search := fmt.Sprintf("author:@me created:>=%s", t.UTC().Add(-time.Minute).Format("2006-01-02T15:04:05Z"))
 	var out []Created
-	issuesOut, err := c.Exec(ctx, "issue", "list", "-R", c.Repo, "--state", "all", "--search", search, "--limit", "50", "--json", "number,labels,assignees,createdAt")
+	issuesOut, err := c.Exec(ctx, "issue", "list", "-R", c.Repo, "--state", "all", "--search", search, "--limit", "50", "--json", "number,labels,assignees,milestone,createdAt")
 	if err != nil {
 		return nil, err
 	}
@@ -731,10 +833,10 @@ func (c *Client) ListCreatedSince(ctx context.Context, t time.Time) ([]Created, 
 	}
 	for _, i := range issues {
 		if !i.CreatedAt.Before(t.Add(-time.Minute)) {
-			out = append(out, Created{Number: i.Number, Labels: i.Labels, Assignees: i.Assignees})
+			out = append(out, Created{Number: i.Number, Labels: i.Labels, Assignees: i.Assignees, Milestone: i.Milestone})
 		}
 	}
-	prsOut, err := c.Exec(ctx, "pr", "list", "-R", c.Repo, "--state", "all", "--search", search, "--limit", "50", "--json", "number,labels,assignees,createdAt")
+	prsOut, err := c.Exec(ctx, "pr", "list", "-R", c.Repo, "--state", "all", "--search", search, "--limit", "50", "--json", "number,labels,assignees,milestone,createdAt")
 	if err != nil {
 		return nil, err
 	}
@@ -744,7 +846,7 @@ func (c *Client) ListCreatedSince(ctx context.Context, t time.Time) ([]Created, 
 	}
 	for _, p := range prs {
 		if !p.CreatedAt.Before(t.Add(-time.Minute)) {
-			out = append(out, Created{Number: p.Number, IsPR: true, Labels: p.Labels, Assignees: p.Assignees})
+			out = append(out, Created{Number: p.Number, IsPR: true, Labels: p.Labels, Assignees: p.Assignees, Milestone: p.Milestone})
 		}
 	}
 	return out, nil
@@ -761,9 +863,8 @@ type SubIssueSummary struct {
 type IssueDetails struct {
 	ID        int64           `json:"id"` // database id, needed for sub-issue calls
 	SubIssues SubIssueSummary `json:"sub_issues_summary"`
-	Milestone *struct {
-		Title string `json:"title"`
-	} `json:"milestone"`
+	Milestone *MilestoneRef   `json:"milestone"`
+	Labels    []Label         `json:"labels"`
 }
 
 // MilestoneTitle returns the milestone title or "".

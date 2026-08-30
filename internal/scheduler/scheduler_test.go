@@ -29,7 +29,8 @@ import (
 // FAKE_CLAUDE is set: the runner executes it, it inspects its role and
 // environment, performs a scripted action and prints a stream-json result.
 //
-// The flags that steer the fake (FAKE_CLAUDE, FAKE_DEV_HANG, FAKE_DEV_FAIL)
+// The flags that steer the fake (FAKE_CLAUDE, FAKE_DEV_HANG, FAKE_DEV_FAIL,
+// FAKE_REVIEW_ALWAYS_CHANGES, FAKE_COST)
 // reach it through the ordinary environment, so they must NOT start with
 // BEES_: the runner strips inherited BEES_* variables from every session.
 func TestMain(m *testing.M) {
@@ -126,6 +127,16 @@ func fakeClaude() {
 			outcome = session.Outcome{Status: OutcomeChangesRequested}
 			break
 		}
+		// FAKE_REVIEW_ALWAYS_CHANGES never approves, which is the only way
+		// to reach the "not approved after N review rounds" escalation.
+		if os.Getenv("FAKE_REVIEW_ALWAYS_CHANGES") == "1" {
+			round := counter("review")
+			if _, err := box.Send(mail.Message{From: role, To: config.RoleDeveloper, Subject: fmt.Sprintf("Review round %d", round), Body: "still not right", PR: pr, Issue: issue}); err != nil {
+				fail(err)
+			}
+			outcome = session.Outcome{Status: OutcomeChangesRequested}
+			break
+		}
 		if counter("review") == 1 {
 			if _, err := box.Send(mail.Message{From: role, To: config.RoleDeveloper, Subject: "Review round 1", Body: "please add tests", PR: pr, Issue: issue}); err != nil {
 				fail(err)
@@ -141,7 +152,17 @@ func fakeClaude() {
 	if err := session.WriteOutcome(sessionDir, outcome); err != nil {
 		fail(err)
 	}
-	fmt.Println(`{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"fake","num_turns":2,"total_cost_usd":0.01}`)
+	// FAKE_COST makes a session's cost controllable, which is what the cost
+	// budget tests spend against.
+	cost := 0.01
+	if v := os.Getenv("FAKE_COST"); v != "" {
+		c, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			fail(err)
+		}
+		cost = c
+	}
+	fmt.Printf(`{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"fake","num_turns":2,"total_cost_usd":%v}`+"\n", cost)
 }
 
 // fakeGH is an in-memory GitHub backing the gh wrapper.
@@ -158,13 +179,18 @@ type fakeGH struct {
 	merged   []int
 	// activity is raw JSON served for api pulls/N/reviews, pulls/N/comments, issues/N/comments
 	activity map[string]string
-	// checks is a queue of responses for `pr checks`; the last one repeats.
+	// checks is a queue of responses for `pr checks --required`; the last one
+	// repeats. checksAll is the same for the unrequired call, which the
+	// scheduler only makes when the required list came back empty.
 	checks    []checksResponse
+	checksAll []checksResponse
 	mergeArgs [][]string
 	// calls logs every gh invocation, in order.
 	calls [][]string
 	// labels are the label names that exist in the repository.
 	labels []string
+	// milestones are the open milestones of the repository.
+	milestones []github.Milestone
 	// errFor makes a command fail: it is keyed by the command name, either
 	// the first two arguments ("label list") or the first one ("label"), or
 	// by "requested_reviewers" for the review-request REST call.
@@ -253,7 +279,59 @@ func (f *fakeGH) exec(ctx context.Context, args ...string) ([]byte, error) {
 		}
 		return true
 	}
+	setAssignee := func(n int, login string) {
+		if i, ok := f.issues[n]; ok {
+			i.Assignees = append(i.Assignees, github.Author{Login: login})
+		} else if p, ok := f.prs[n]; ok {
+			p.Assignees = append(p.Assignees, github.Author{Login: login})
+		}
+		f.history[n] = append(f.history[n], "assignee:"+login)
+	}
 	if args[0] == "api" {
+		// Assignees and milestones go to the REST endpoints: `gh issue edit
+		// --add-assignee` fails against GitHub with a Projects (classic)
+		// GraphQL error when the number is a pull request.
+		if i := slices.IndexFunc(args, func(a string) bool { return strings.HasSuffix(a, "/assignees") }); i >= 0 {
+			var n int
+			if _, err := fmt.Sscanf(args[i], "repos/acme/widgets/issues/%d/assignees", &n); err != nil {
+				return nil, fmt.Errorf("fake gh: bad assignees path %q", args[i])
+			}
+			for _, v := range flags("-f") {
+				if login, ok := strings.CutPrefix(v, "assignees[]="); ok {
+					setAssignee(n, login)
+				}
+			}
+			return []byte("{}"), nil
+		}
+		if flag("--method") == "PATCH" {
+			var n int
+			if _, err := fmt.Sscanf(args[3], "repos/acme/widgets/issues/%d", &n); err != nil {
+				return nil, fmt.Errorf("fake gh: bad issue path %q", args[3])
+			}
+			for _, v := range flags("-F") {
+				number, ok := strings.CutPrefix(v, "milestone=")
+				if !ok {
+					continue
+				}
+				k, _ := strconv.Atoi(number)
+				title := ""
+				for _, m := range f.milestones {
+					if m.Number == k {
+						title = m.Title
+					}
+				}
+				if title == "" {
+					return nil, fmt.Errorf("fake gh: no milestone %s", number)
+				}
+				if i, ok := f.issues[n]; ok {
+					i.Milestone = &github.MilestoneRef{Title: title}
+				} else if p, ok := f.prs[n]; ok {
+					p.Milestone = &github.MilestoneRef{Title: title}
+				}
+				f.history[n] = append(f.history[n], "milestone:"+title)
+			}
+			return []byte("{}"), nil
+		}
 		// Review requests go to the REST endpoint: `gh pr edit --add-reviewer`
 		// fails against GitHub with a Projects (classic) GraphQL error.
 		if slices.ContainsFunc(args, func(a string) bool { return strings.HasSuffix(a, "/requested_reviewers") }) {
@@ -327,12 +405,8 @@ func (f *fakeGH) exec(ctx context.Context, args ...string) ([]byte, error) {
 			f.history[n] = append(f.history[n], l)
 		}
 		if a := flag("--add-assignee"); a != "" {
-			if i, ok := f.issues[n]; ok {
-				i.Assignees = append(i.Assignees, github.Author{Login: a})
-			} else if p, ok := f.prs[n]; ok {
-				p.Assignees = append(p.Assignees, github.Author{Login: a})
-			}
-			f.history[n] = append(f.history[n], "assignee:"+a)
+			// The factory must never build this: it fails against GitHub.
+			return nil, fmt.Errorf("fake gh: issue edit --add-assignee is deprecated by GitHub, use the REST endpoint")
 		}
 		return nil, nil
 	case "issue comment":
@@ -371,12 +445,16 @@ func (f *fakeGH) exec(ctx context.Context, args ...string) ([]byte, error) {
 		f.mergeArgs = append(f.mergeArgs, args)
 		return nil, nil
 	case "pr checks":
-		if len(f.checks) == 0 {
+		queue := &f.checks
+		if !slices.Contains(args, "--required") {
+			queue = &f.checksAll
+		}
+		if len(*queue) == 0 {
 			return nil, fmt.Errorf("no checks reported on the 'bees/issue-1' branch")
 		}
-		r := f.checks[0]
-		if len(f.checks) > 1 {
-			f.checks = f.checks[1:]
+		r := (*queue)[0]
+		if len(*queue) > 1 {
+			*queue = (*queue)[1:]
 		}
 		return []byte(r.json), r.err
 	case "label list":
@@ -391,7 +469,7 @@ func (f *fakeGH) exec(ctx context.Context, args ...string) ([]byte, error) {
 		}
 		return nil, nil
 	case "api repos/acme/widgets/milestones?state=open&per_page=100":
-		return []byte("[]"), nil
+		return json.Marshal(f.milestones)
 	}
 	return nil, fmt.Errorf("fake gh: unsupported %v", args)
 }
@@ -797,6 +875,11 @@ func TestLabelBackstop(t *testing.T) {
 	h.gh.issues[1] = &github.Issue{Number: 1, Title: "triage me", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:triage"}}, Assignees: []github.Author{{Login: "kyle"}}, CreatedAt: time.Now().Add(-time.Hour)}
 	h.gh.issues[7] = &github.Issue{Number: 7, Title: "bug from a bee", State: "OPEN", Labels: []github.Label{{Name: "bees:bug"}, {Name: "bees:triage"}}, CreatedAt: time.Now()}
 	h.gh.issues[8] = &github.Issue{Number: 8, Title: "unrelated", State: "OPEN", Labels: nil, CreatedAt: time.Now()}
+	// A pull request opened outside a developer worker, with a factory label
+	// but neither the base label nor the assignee: unassigned it would be
+	// invisible to a factory filtering on one.
+	h.gh.prs[9] = &github.PR{Number: 9, Title: "pr from a bee", State: "OPEN", HeadRefName: "bees/issue-7", BaseRefName: "main",
+		Labels: []github.Label{{Name: "bees:review"}}, CreatedAt: time.Now()}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	if err := h.sched.Run(ctx); err != nil {
@@ -807,6 +890,9 @@ func TestLabelBackstop(t *testing.T) {
 	}
 	if len(h.gh.history[8]) != 0 {
 		t.Fatalf("unrelated issue touched: %v", h.gh.history[8])
+	}
+	if got := strings.Join(h.gh.history[9], ","); got != "bees,assignee:kyle" {
+		t.Fatalf("PR 9 history: %s", got)
 	}
 	// The project manager is told the size it must not exceed when it sizes
 	// a work item, so it splits anything bigger instead.

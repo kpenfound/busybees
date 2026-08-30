@@ -28,6 +28,10 @@ type Labels struct {
 	// state label. Only a person removes it, and that removal is the
 	// approval to break the feature into work items.
 	Proposal string // bees:proposal
+	// Priority marks work a person wants built next. It is not a state
+	// label and nothing in the factory adds or removes it: dispatch simply
+	// takes priority issues out of the ready queue before anything else.
+	Priority string // bees:priority
 
 	// Issue workflow state labels (exactly one at a time).
 	Triage     string // bees:triage      – needs project manager refinement
@@ -56,6 +60,7 @@ func LabelsFor(base string) Labels {
 		Feedback:   base + ":feedback",
 		Question:   base + ":question",
 		Proposal:   base + ":proposal",
+		Priority:   base + ":priority",
 		Triage:     base + ":triage",
 		Ready:      base + ":ready",
 		InProgress: base + ":in-progress",
@@ -110,6 +115,7 @@ func (l Labels) All() []LabelSpec {
 		{l.Feedback, "C5DEF5", "Feature idea, product feedback or bug report for the product manager"},
 		{l.Question, "BFD4F2", "The product manager is waiting for a person to answer"},
 		{l.Proposal, "D4C5F9", "Feature issue a bee proposed; a person must approve it before breakdown"},
+		{l.Priority, "E99695", "A person wants this next: dispatched before the rest of the ready queue"},
 		{l.Triage, "E4E669", "Needs refinement by the project manager"},
 		{l.Ready, "0E8A16", "Detailed enough for a developer to pick up"},
 		{l.InProgress, "5319E7", "A developer is working on it"},

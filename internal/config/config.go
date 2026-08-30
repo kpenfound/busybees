@@ -1,12 +1,13 @@
 // Package config loads and validates bees.toml, the single file that
 // configures an entire busybees staff.
 //
-// The file has four top-level tables:
+// The file has these top-level tables:
 //
 //	[project]   – repo, default branch, state directory, product description
 //	[filter]    – which GitHub issues/PRs the factory can see (label, assignee, milestone)
 //	[global]    – prompt/skills/mcp/model settings applied to every role
 //	[scheduler] – concurrency, polling and review-loop limits
+//	[logging]   – console log format and level
 //	[roles.*]   – per-role overrides (product_manager, project_manager,
 //	              developer, reviewer, qa)
 //
@@ -32,6 +33,7 @@ import (
 	_ "time/tzdata"
 
 	"github.com/BurntSushi/toml"
+	"github.com/kpenfound/busybees/internal/logging"
 )
 
 // Role names. These are the keys used under [roles.*] in bees.toml.
@@ -117,6 +119,11 @@ const (
 	// DefaultNotesMaxBytes is the notes size above which consolidation is
 	// asked for early, without waiting for the session count.
 	DefaultNotesMaxBytes = 32768
+	// DefaultLogFormat and DefaultLogLevel are the console logging defaults;
+	// they mirror the --log-format and --log-level flag defaults, so an
+	// absent [logging] table logs exactly as bees always did.
+	DefaultLogFormat = logging.FormatText
+	DefaultLogLevel  = "info"
 )
 
 // Dispatch orders accepted by scheduler.dispatch_order.
@@ -179,6 +186,7 @@ type Config struct {
 	Filter    Filter                  `toml:"filter"`
 	Global    RoleSettings            `toml:"global"`
 	Scheduler Scheduler               `toml:"scheduler"`
+	Logging   Logging                 `toml:"logging"`
 	Roles     map[string]RoleSettings `toml:"roles"`
 
 	// Path is the absolute path of the loaded bees.toml (not part of the file).
@@ -526,6 +534,20 @@ type Scheduler struct {
 	// RetryWithFallback runs a retry with the role's fallback_model as its
 	// primary model. Default true.
 	RetryWithFallback *bool `toml:"retry_with_fallback" json:"retry_with_fallback"`
+	// MaxCostPerIssue caps what every session run for one work item may cost
+	// in total, in USD. The total is checked between stages, never mid
+	// session, so the session running when the budget is passed still
+	// finishes; the issue is then escalated. 0 (the default) is unlimited.
+	MaxCostPerIssue float64 `toml:"max_cost_per_issue" json:"max_cost_per_issue"`
+	// MaxCostPerDay caps what the whole factory may spend over a rolling 24
+	// hours, in USD. At or over it no new session is dispatched; the
+	// sessions already running finish. 0 (the default) is unlimited.
+	MaxCostPerDay float64 `toml:"max_cost_per_day" json:"max_cost_per_day"`
+	// MaxCostPerSession caps what a single session may cost, in USD. A
+	// session cannot be stopped on cost while it runs, so this is checked
+	// once it has finished: an over-budget session is treated as failed.
+	// 0 (the default) is unlimited.
+	MaxCostPerSession float64 `toml:"max_cost_per_session" json:"max_cost_per_session"`
 	// KeepWorkspaces leaves temp worktrees on disk after a session (debugging).
 	KeepWorkspaces bool `toml:"keep_workspaces" json:"keep_workspaces"`
 	// WorkspaceRoot overrides the temp dir used for worktrees.
@@ -553,6 +575,17 @@ type Scheduler struct {
 	whDays         map[time.Weekday]bool
 	whLoc          *time.Location
 	whEnabled      bool
+}
+
+// Logging configures the console log. It is a top-level table because
+// logging is process-wide: it is not a role setting, so it does not belong in
+// [global]. The --log-format/--log-level flags and the BEES_LOG_* environment
+// variables override it (see cmd/bees).
+type Logging struct {
+	// Format is "text" or "json". Default "text".
+	Format string `toml:"format" json:"format"`
+	// Level is "debug", "info", "warn" or "error". Default "info".
+	Level string `toml:"level" json:"level"`
 }
 
 // weekdayNames maps the accepted work_days values to weekdays, in the order
@@ -618,12 +651,26 @@ func (s Scheduler) PollIntervalAt(t time.Time) time.Duration {
 }
 
 // WorkHoursDescription renders the window for `bees status`, for example
-// "09:00-18:00 mon-fri, America/New_York".
-func (s Scheduler) WorkHoursDescription() string {
+// "09:00-18:00 mon-fri, America/New_York". now is only used to name the
+// timezone when none is configured; see describeLocation.
+func (s Scheduler) WorkHoursDescription(now time.Time) string {
 	if !s.whEnabled {
 		return ""
 	}
-	return fmt.Sprintf("%s %s, %s", s.WorkHours, describeDays(s.whDays), s.whLoc)
+	return fmt.Sprintf("%s %s, %s", s.WorkHours, describeDays(s.whDays), describeLocation(s.whLoc, now))
+}
+
+// describeLocation names the zone a window is read in. A configured timezone
+// is printed as its IANA name. The machine's local time has no useful name --
+// (*time.Location).String() of time.Local is the literal "Local", and a
+// machine that took its zone from /etc/localtime can carry that name for
+// real -- so it is printed as the abbreviation and offset in force at now,
+// "local time (PDT -07:00)". The instant matters because of DST.
+func describeLocation(loc *time.Location, now time.Time) string {
+	if loc != time.Local {
+		return loc.String()
+	}
+	return "local time (" + now.In(loc).Format("MST -07:00") + ")"
 }
 
 // describeDays prints a day set as compact ranges: "mon-fri", "mon,wed,fri".
@@ -991,6 +1038,12 @@ func (c *Config) applyDefaults() {
 			c.Scheduler.WorkDays = []string{"mon", "tue", "wed", "thu", "fri"}
 		}
 	}
+	if c.Logging.Format == "" {
+		c.Logging.Format = DefaultLogFormat
+	}
+	if c.Logging.Level == "" {
+		c.Logging.Level = DefaultLogLevel
+	}
 	if c.Roles == nil {
 		c.Roles = map[string]RoleSettings{}
 	}
@@ -1050,7 +1103,27 @@ func (c *Config) Validate() error {
 	if c.Scheduler.NotesMaxBytes < 0 {
 		errs = append(errs, "scheduler.notes_max_bytes must be >= 0 (0 means the default)")
 	}
+	for _, b := range []struct {
+		key string
+		v   float64
+	}{
+		{"max_cost_per_issue", c.Scheduler.MaxCostPerIssue},
+		{"max_cost_per_day", c.Scheduler.MaxCostPerDay},
+		{"max_cost_per_session", c.Scheduler.MaxCostPerSession},
+	} {
+		if b.v < 0 {
+			errs = append(errs, fmt.Sprintf("scheduler.%s must be >= 0 (0 means unlimited)", b.key))
+		}
+	}
 	errs = append(errs, c.Scheduler.parseWorkHours()...)
+	// The flag parsers own the list of valid values, so bees.toml and the
+	// command line can never disagree about what "json" or "warn" mean.
+	if _, err := logging.ParseFormat(c.Logging.Format); err != nil {
+		errs = append(errs, "logging.format: "+err.Error())
+	}
+	if _, err := logging.ParseLevel(c.Logging.Level); err != nil {
+		errs = append(errs, "logging.level: "+err.Error())
+	}
 	check := func(scope string, rs RoleSettings) {
 		if scope != "roles."+RoleReviewer {
 			if rs.AutoMerge != nil || rs.MergeMethod != "" || rs.ChecksWait.Duration != 0 || rs.ChecksPollInterval.Duration != 0 || rs.ChecksTimeout.Duration != 0 || rs.MaxCheckFixRounds != 0 {

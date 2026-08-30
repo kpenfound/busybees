@@ -165,47 +165,54 @@ func formatActivity(repo string, pr int, activity []github.Activity) string {
 	return sb.String()
 }
 
-// adoptCreated is the label backstop: anything the account created since
-// a session started that carries a factory label (bees:bug, bees:feature,
-// a state label) but is missing the base label or the configured assignee
-// is fixed up so it stays visible to the factory.
+// adoptCreated is the visibility backstop: anything the account created since
+// a session started that carries a factory label — the base label (bees) or
+// any bees:-prefixed one (bees:bug, bees:feature, a state label) — but is
+// missing part of the filter — the base label, the configured assignee, or
+// (pull requests only) the configured milestone — is fixed up so it stays
+// visible to the factory. It is what catches a PR that never reached
+// ensureVisible because the worker crashed after `gh pr create`, or that a
+// person opened by hand on the shared account. A freshly created PR carries
+// only the base label (that is all `gh pr create` is told to pass), and it
+// earns its first bees:-prefixed label at approval, so the base label has to
+// count or the backstop misses the whole pre-approval life of every PR.
+//
+// The gate stays: the account is shared with people, whose unrelated issues
+// and pull requests must not be assigned and milestoned by the factory.
+// Repairing pre-existing items into a changed filter is `bees doctor --fix`.
+//
+// One failing item does not stop the others: each is logged and skipped.
 func (s *Scheduler) adoptCreated(ctx context.Context, since time.Time) {
 	items, err := s.gh.ListCreatedSince(ctx, since)
 	if err != nil {
-		s.log.Warn("label backstop: list created items", "err", err)
+		s.log.Warn("visibility backstop: list created items", "err", err)
 		return
 	}
-	prefix := s.labels.Base + ":"
 	for _, it := range items {
-		factory := false
-		for _, l := range it.Labels {
-			if strings.HasPrefix(l.Name, prefix) {
-				factory = true
-				break
-			}
-		}
-		if !factory {
+		if !s.isFactoryItem(it.Labels) {
 			continue
 		}
-		if !github.HasLabel(it.Labels, s.labels.Base) {
-			s.log.Info("label backstop: adding base label", "number", it.Number, "pr", it.IsPR)
-			if err := s.gh.EditLabels(ctx, it.Number, []string{s.labels.Base}, nil); err != nil {
-				s.log.Warn("label backstop", "number", it.Number, "err", err)
-			}
-		}
-		if a := s.cfg.Filter.Assignee; a != "" {
-			assigned := false
-			for _, u := range it.Assignees {
-				if strings.EqualFold(u.Login, a) {
-					assigned = true
-				}
-			}
-			if !assigned {
-				s.log.Info("label backstop: assigning", "number", it.Number, "assignee", a)
-				if err := s.gh.Assign(ctx, it.Number, a); err != nil {
-					s.log.Warn("label backstop: assign", "number", it.Number, "err", err)
-				}
-			}
+		s.log.Info("visibility backstop: making the item visible", "number", it.Number, "pr", it.IsPR)
+		if err := s.ensureVisible(ctx, it.Number, it.IsPR, it.Labels, it.Assignees, it.MilestoneTitle()); err != nil {
+			s.log.Warn("visibility backstop", "number", it.Number, "err", err)
 		}
 	}
+}
+
+// isFactoryItem reports whether labels mark an item as one of the factory's:
+// it carries the base label, or any label in the factory's namespace (a kind
+// or a state label). Both halves are needed — a PR `gh pr create` just opened
+// has only the base label, and a PR the reviewer already touched may carry a
+// state label a person removed the base label from.
+func (s *Scheduler) isFactoryItem(labels []github.Label) bool {
+	if github.HasLabel(labels, s.labels.Base) {
+		return true
+	}
+	prefix := s.labels.Base + ":"
+	for _, l := range labels {
+		if strings.HasPrefix(l.Name, prefix) {
+			return true
+		}
+	}
+	return false
 }

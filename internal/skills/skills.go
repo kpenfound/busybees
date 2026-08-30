@@ -140,6 +140,17 @@ func (m *Manager) logger() *slog.Logger {
 	return slog.Default()
 }
 
+// CacheDir is where clones and generated plugins live: $BEES_CACHE_DIR when
+// it is set, DefaultCacheDir otherwise. It is the one place the environment
+// variable is read, so a session, `bees skills` and `bees doctor` all warm the
+// same cache.
+func CacheDir() string {
+	if d := os.Getenv("BEES_CACHE_DIR"); d != "" {
+		return d
+	}
+	return DefaultCacheDir()
+}
+
 // DefaultCacheDir returns ~/.cache/bees.
 func DefaultCacheDir() string {
 	if dir, err := os.UserCacheDir(); err == nil {

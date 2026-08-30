@@ -17,12 +17,13 @@ Everything else is for humans.
 | `-c, --config <path>` | Path to `bees.toml`. Default: `$BEES_CONFIG`, else search upwards from cwd. |
 | `-v, --verbose` | Debug logging (same as `--log-level debug`). With `run`/`tick`/`exec`, also streams every claude event to stderr. |
 | `-q, --quiet` | Console shows only session summaries, warnings and errors. Cannot be combined with `-v` or `--log-level debug`. |
-| `--log-format <text\|json>` | Console log format. Default `text`; `$BEES_LOG_FORMAT`. |
-| `--log-level <debug\|info\|warn\|error>` | Console log level. Default `info`; `$BEES_LOG_LEVEL`. |
+| `--log-format <text\|json>` | Console log format. Default `text`; `$BEES_LOG_FORMAT`, then [`logging.format`](configuration.md#logging). |
+| `--log-level <debug\|info\|warn\|error>` | Console log level. Default `info`; `$BEES_LOG_LEVEL`, then [`logging.level`](configuration.md#logging). |
 | `-h, --help` | Help for any command. |
 
-A flag beats its environment variable, and an unknown value is an error naming
-the valid ones.
+A flag beats its environment variable, which beats the [`[logging]`
+table](configuration.md#logging) in `bees.toml`, which beats the default. An
+unknown value is an error naming the valid ones.
 
 ## Setting up
 
@@ -43,6 +44,12 @@ behind and the directory exactly as it was, so fixing what the error reports and
 init again works. The one step that can fail after the local files exist is creating the
 labels; the error then says to run
 `bees labels sync`, not init again.
+
+Last, init runs the **full** [`bees doctor`](#bees-doctor) — the expensive per-role
+checks included, since this is where a wrong skill URL or an unreachable MCP server is
+worth waiting for — prints the table and points at `bees doctor`. A check that fails
+does **not** make init exit non-zero: `bees.toml` and the labels are written by then,
+and the table is the list of what is left to set up.
 
 | Flag | Description |
 |---|---|
@@ -83,8 +90,9 @@ what it found grouped by area:
 |---|---|
 | `toolchain` | `git` on `PATH`; `gh` on `PATH`, authenticated and holding the `repo` token scope; `claude` (or `$BEES_CLAUDE_BIN`) runnable and new enough. |
 | `config` | `bees.toml` loads and validates; `project.repo` and `project.default_branch` are set or derivable; the remote answers; the state directory is ignored by git; the notes directory is writable; every configured `prompt_file` exists. |
-| `github` | The repository is readable and writable (`viewerPermission`); every workflow label exists; the visibility filter matches at least one open issue. |
+| `github` | The repository is readable and writable (`viewerPermission`); every workflow label exists; the visibility filter matches at least one open issue; with `auto_merge` on, what a merge is actually gated on. |
 | `workspace` | A worktree can be created under `workspace_root` and removed again. |
+| `roles` | Per role: every configured skill URL clones and produces a plugin directory; every configured MCP server starts and answers an `initialize` request within 15s; a configured `shell` can be executed. |
 
 A **failure** (`✗`) means the factory cannot run: a missing tool, a repository it
 cannot push to, missing workflow labels. A **warning** (`!`) means something that
@@ -95,14 +103,29 @@ bees expects. The filter check tells the two empty cases apart: when nothing mat
 the filter but open issues or pull requests carry the base label, it reports both
 counts and spells the filter out (`0 match your filter (label=bees AND
 assignee=kyle)`) - that is a filter criterion hiding work the factory already owns,
-not an empty repository, and the fix is to assign those items or to unset the
-criterion in `bees.toml`. Every warning and failure prints the command that fixes it on the
-next line; doctor never changes anything itself.
+not an empty repository, and the fix is `bees doctor --fix` (below) or unsetting the
+criterion in `bees.toml`. The auto-merge check is a warning of the same kind: with
+`roles.reviewer.auto_merge` on and no check required on the default branch, bees gates
+a merge on whatever checks the pull request reports, which is worth knowing once —
+requiring your CI checks in the branch protection rules is the fix, and leaving it as
+it is a legitimate choice. bees never enables or edits branch protection itself, and
+the check is silent when `auto_merge` is off. Every warning and failure prints the
+command that fixes it on the next line; doctor changes nothing unless `--fix` is given.
 
 doctor exits 1 when a check failed and 0 when only warnings are present, so it can
 gate a deploy. Checks that need something that is missing are left out rather than
 reported twice: without a `bees.toml` only the toolchain checks run, and the GitHub
 and workspace checks need a resolved repository.
+
+**Cheap and expensive checks.** The `roles` group is the expensive half: it clones
+skill repositories and starts MCP servers, which takes seconds to minutes on a cold
+cache. `bees doctor` and `bees init` run it; the `bees run` preflight does not (see
+[`bees run`](#bees-run)). Each role reports one line per thing it configures, named
+after the role (`developer skills`, `qa mcp`), so the table says which role is broken
+rather than that something is. A role that configures none of the three still gets a
+line, and a role with `enabled = false` is reported as disabled rather than dropped
+silently. The skills are cloned into the cache a session uses (`$BEES_CACHE_DIR`, else
+`~/.cache/bees`), so doctor warms it instead of duplicating the work.
 
 ```
 $ bees doctor
@@ -125,16 +148,68 @@ github
   ✗ workflow labels             2 of 17 missing: bees:size/l, bees:size/xl
       → run `bees labels sync`
   ✓ filter matches issues       12 open issues matching label bees
+  ✓ auto_merge check gate       auto_merge is off: people merge pull requests themselves
 
 workspace
   ✓ worktree                    created and removed one under /tmp/bees
 
-13 checks: 11 passed, 1 warnings, 1 failed
+roles
+  ✓ product_manager             enabled, no skills, MCP servers or shell configured
+  ✓ project_manager             enabled, no skills, MCP servers or shell configured
+  ✓ developer skills            1 skill ready: https://github.com/acme/skills#skills/tdd
+  ✗ developer mcp               sentry: fork/exec /opt/sentry-mcp: no such file or directory
+      → start the server by hand or fix [roles.developer.mcp] in /home/kyle/src/proj/bees.toml: a session that cannot reach it loses those tools
+  ✓ reviewer                    enabled, no skills, MCP servers or shell configured
+  ✓ qa                          disabled (roles.qa.enabled = false)
+
+20 checks: 17 passed, 1 warning, 2 failed
 ```
 
 | Flag | Description |
 |---|---|
 | `--json` | Print the results as JSON (`name`, `group`, `status`, `detail`, `remediation`) instead of the table. |
+| `--fix` | Apply the repairs doctor knows how to make, then re-run the checks. |
+
+#### `bees doctor --fix`
+
+`--fix` runs the checks, applies the repairs doctor knows how to make for the ones
+that did not pass, prints one line per action and then **re-runs every check**, so the
+table is what the repository looks like afterwards and the exit code follows the
+repair: `--fix` exits non-zero only if a check still fails. Checks doctor cannot
+repair are untouched, and their remediation line still says what to do by hand.
+
+Exactly one repair exists today: **the filter check**. It lists the open issues *and*
+pull requests carrying the base label (`filter.label`) that do not match the rest of
+the filter, and adds `filter.assignee` and, when one is configured, `filter.milestone`
+to each. That is the repair for the failure this exists to catch - adding
+`assignee = "@me"` to a factory that has been running for weeks takes every issue
+nobody ever assigned out of the factory's view in one commit.
+
+```
+$ bees doctor --fix
+fixing filter matches issues
+  assigned issue #92 to kyle
+  assigned issue #119 to kyle
+  assigned pull request #148 to kyle
+  ! issue #131: assign to kyle: gh: HTTP 403 (forbidden)
+...
+  ✓ filter matches issues       12 open issues matching label bees + assignee kyle
+```
+
+What it will not do:
+
+- **It never touches an item that does not carry the base label.** That is the safety
+  rule that makes bees usable in a repository shared with people, and it is enforced
+  on selection *and* again per item before any write. Selection is on the label alone
+  - never on who wrote the issue: a feature issue a person filed with the `bees` label
+  and no assignee is adopted exactly like one the factory created.
+- **It never adds or removes a label**, and it never edits `bees.toml`. `--fix` moves
+  items into the filter; deciding what the filter should be is yours.
+- **With `filter.require_label = false` it does nothing at all** and says so in one
+  line. Without a base label there is no way to tell the factory's work from everyone
+  else's, and "assign every issue in the repository" is not a repair. If you run with
+  an assignee-only filter, bring items into it by hand.
+- One item it cannot repair is reported on its own line and does not stop the others.
 
 ### `bees labels sync`
 
@@ -258,6 +333,23 @@ issues to free developer workers and starts the product manager, project manager
 QA when they have work. Ctrl-C stops polling and waits for running sessions to
 finish.
 
+Before the first poll it runs the **cheap half of [`bees doctor`](#bees-doctor)** —
+every check except the `roles` group, which clones skills and starts MCP servers — and
+refuses to start when one of them fails: it prints the doctor table and exits non-zero,
+having started no session. Warnings do not stop it and are not printed, so a start that
+is going to work stays quiet. `--skip-doctor` bypasses the preflight. `bees tick` and
+`bees exec` never run it: they are debugging commands and must stay usable on a
+half-configured machine.
+
+```
+$ bees run
+github
+  ✗ workflow labels             2 of 19 missing: bees:size/l, bees:size/xl
+      → run `bees labels sync`
+...
+Error: preflight: 1 of 14 checks failed — fix them, run `bees doctor --fix`, or start anyway with `bees run --skip-doctor`
+```
+
 At start it lists the repository's labels once and creates any workflow label
 that is missing, so a repository set up by an older `bees init` gains the labels
 newer versions need without a `bees labels sync`. Labels that already exist are
@@ -268,6 +360,7 @@ only logs a warning; the run continues.
 |---|---|
 | `--once` | Do one pass and exit when the sessions it started finish. Same as `bees tick`. |
 | `--roles a,b` | Only run these roles (aliases accepted: `pm`, `pjm`, `dev`, `reviewer`, `qa`). |
+| `--skip-doctor` | Start without running the doctor preflight. |
 
 ```sh
 bees run
@@ -285,7 +378,7 @@ message alone, so a run reads as a report:
 ✗ reviewer PR #31 changes requested: "tests missing for the error path" (52 turns, $1.18, 6m14s)
 ✓ developer issue #12 → PR #31 updated (41 turns, $0.98, 5m03s)
 ✓ reviewer PR #31 approved: "lgtm" (23 turns, $0.47, 2m41s)
-⚠ issue #14 escalated to a human: Required checks on #33 still fail after 2 fix rounds: go / test
+⚠ issue #14 escalated to a human: Checks on #33 still fail after 2 fix rounds: go / test
 ```
 
 With `--log-format json` the same line is an ordinary record carrying its
@@ -300,7 +393,10 @@ service can run the factory and still see what it did.
 
 `run`, `tick` and `exec` also write every record — at debug level, whatever the
 console flags say — as JSON to `<state_dir>/bees.log`. It rotates in place at
-10 MiB into `bees.log.1` and `bees.log.2`; older generations are dropped.
+10 MiB into `bees.log.1` and `bees.log.2`; older generations are dropped. The
+log file is a diagnostic, never a reason not to start: if it cannot be opened
+(a read-only or full state directory) the run continues with console logging
+only, after one warning naming the path and the reason.
 
 ### `bees tick [--roles a,b]`
 
@@ -328,9 +424,17 @@ bees exec reviewer --pr 34
 
 Shows the last poll time and PID of the scheduler, queue sizes per workflow state
 (plus `feedback` and `features`, the open `bees:feedback` and `bees:feature` issues
-owned by the product manager, and `open_prs`), running developer workers (issue, [size](workflow.md#sizing), stage, round, and the attempt number while a session is being retried), a row per
+owned by the product manager, `proposals`, the subset of `features` still waiting for
+a person to approve them, and `open_prs`), running developer workers (issue, [size](workflow.md#sizing), stage, round, and the attempt number while a session is being retried), a row per
 role, and unread mail per role. Reads `status.json` from the state directory, so it
 works while `bees run` is active in another terminal.
+
+A worker's stage is `develop`, `review` or `checks`. Once the checks stage knows what
+it is waiting for, the stage names the gate — `checks (required)`, `checks (reported)`
+or `checks (none)` — so a worker sitting in a 30-minute wait says whether it is
+waiting on the branch's required checks, on the checks the pull request happens to
+report, or on nothing at all. See
+[auto-merge](configuration.md#rolesreviewer-only-auto-merge).
 
 The `roles:` table covers all five roles with what each is doing (`running` or
 `idle`; `-` for the developer and reviewer, whose work is in the workers table
@@ -355,7 +459,7 @@ A `no_state` queue counts issues that are visible to the factory but carry no
 workflow state label yet — usually ones a person just filed from the GitHub UI. The
 scheduler gives them `bees:triage` on its next reconcile, so the row normally
 disappears again within the same pass. A workflow-state queue is omitted while it is
-empty (`feedback`, `features` and `open_prs` are always shown).
+empty (`feedback`, `features`, `proposals` and `open_prs` are always shown).
 
 Under the scheduler line it also reports what the factory has spent since midnight,
 summed from the [session ledger](#bees-cost) (`today` in `--json`):
@@ -363,6 +467,21 @@ summed from the [session ledger](#bees-cost) (`today` in `--json`):
 ```
 today: 23 sessions, 412 turns, $8.12
 ```
+
+With [`scheduler.max_cost_per_day`](configuration.md#cost-budgets) configured, the
+scheduler line itself carries the rolling 24-hour spend against that budget — a
+different window from `today:` above — and says plainly when the budget has paused
+dispatch:
+
+```
+scheduler: pid 4711, last poll 12s ago   daily budget: $42.10 / $100.00
+scheduler: pid 4711, last poll 12s ago   paused: daily budget ($101.20 / $100.00)
+```
+
+While it is paused the scheduler keeps polling and reconciling labels but starts no
+new session; the workers already running finish their loop. Both numbers come from
+`status.json` (`budget_paused`, `day_spend_usd` and `day_budget_usd` in `--json`), so
+they are what the scheduler last computed rather than a fresh sum.
 
 The `ready` queue also carries a breakdown by [size](workflow.md#sizing)
 (`ready_sizes` in `--json`); issues the scheduler has not sized yet are
@@ -372,17 +491,49 @@ counted as `unsized`:
   ready          4  (xs 1, s 2, m 1)
 ```
 
-When [`scheduler.work_hours`](configuration.md#work-hours) is configured it also
-reports whether the factory is inside the window and when the next GitHub poll is
-due (`in_work_hours` and `next_poll` in `--json`):
+A `work hours:` line always follows it. With
+[`scheduler.work_hours`](configuration.md#work-hours) configured it reports whether
+the factory is inside the window, the window itself, and when the next GitHub poll
+is due:
 
 ```
 work hours: yes (09:00-18:00 mon-fri, America/New_York)   next GitHub poll in 2m55s
 ```
 
-The yes/no is computed when you run the command, so it is right even when the
-scheduler is stopped; `in_work_hours` in `--json` is the scheduler's own record
-from its last pass.
+Without it, the line says so and names the cadence in force instead, because a
+missing line would be indistinguishable from a factory that polls around the clock:
+
+```
+work hours: not configured — GitHub polled every 5m0s   next GitHub poll in 2m55s
+```
+
+When `scheduler.timezone` is unset the window is read in the machine's local time,
+which is printed as the abbreviation and offset in force right now rather than the
+uninformative `Local`:
+
+```
+work hours: no (09:00-18:00 sat,sun, local time (PDT -07:00))
+```
+
+`--json` reports the same answer as a `work_hours` object, computed when the
+command runs:
+
+```json
+"work_hours": {
+  "configured": true,
+  "in_work_hours": false,
+  "window": "09:00-18:00 mon-fri, America/New_York",
+  "poll_interval": "1h0m0s",
+  "checked_at": "2026-08-29T20:48:00Z"
+}
+```
+
+`in_work_hours` is omitted when `configured` is `false`, and `poll_interval` is the
+cadence in force at `checked_at` (so `off_hours_poll_interval` outside the window).
+This is the **live** answer. `status.in_work_hours` and `status.next_poll` next to
+it are the **scheduler's own record** from its last pass, and go stale as soon as
+the scheduler stops; both are reported so the stale one is never the only one
+available.
 
 Ready issues held back by an open [dependency](workflow.md#dependencies) are counted
 on the `ready` row and listed below the queues:
@@ -515,7 +666,9 @@ bees notes add pm --body-file vision.md
 ```
 
 Pass `--body-file <path>` (or `--body-file -` to read stdin) instead of the
-argument for longer text. Like `bees mail`, `show`, `reset` and `add` find the
+argument for longer text. A note spanning several lines keeps its line breaks;
+every line after the first is indented by two spaces so the whole note stays
+inside one bullet. Like `bees mail`, `show`, `reset` and `add` find the
 state directory from `$BEES_STATE_DIR` before falling back to `bees.toml`, so a
 session can append to its own notes without a config file.
 

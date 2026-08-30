@@ -24,7 +24,7 @@ This page describes what that looks like from the human side.
    mail if it needs a product decision, and moves it to `bees:ready`.
 4. **Developers and reviewers ship work items.** A developer worker implements
    the issue on a branch and opens a PR; the reviewer reviews; when approved a
-   human merges (or the reviewer's `auto_merge` does, once required checks are
+   human merges (or the reviewer's `auto_merge` does, once its checks are
    green).
 5. **QA tests the default branch** after merges, files bugs (`bees:bug` +
    `bees:triage`) and reports to the product manager, which feeds the next round.
@@ -56,8 +56,12 @@ and so on. Everything the factory creates itself gets the label (and the
 assignee, if one is configured) so it stays visible. The role prompts require
 it, and the orchestrator backstops it: after every session it lists the
 issues and PRs the account created since the session started and adds the
-base label (and assignee) to anything carrying a `bees:*` label that lacks
-them.
+base label (and assignee) to anything carrying `bees` or a `bees:*` label
+that lacks them — plus, on pull requests, the configured milestone. Both
+halves matter: a pull request a session just opened carries only `bees`, and
+it earns its first `bees:*` label at approval. Issues never get a
+milestone from a bee; that is a person's decision, and an issue `bees issue
+create` makes inherits one from the issue it relates to.
 
 The typical solo setup is "label only": put `bees` on an issue and the factory
 picks it up. In a shared repository where one person wants busybees to handle
@@ -92,8 +96,8 @@ stateDiagram-v2
     approved --> ready: human reviews / comments on the PR (orchestrator)
     approved --> ready: the PR conflicts with the default branch (orchestrator)
     approved --> [*]: human merges the PR (issue closes via "Closes #N")
-    approved --> [*]: reviewer auto_merge, required checks green (orchestrator merges)
-    approved --> in_progress: auto_merge, a required check failed (developer fixes)
+    approved --> [*]: reviewer auto_merge, checks green (orchestrator merges)
+    approved --> in_progress: auto_merge, a check failed (developer fixes)
     approved --> needs_human: auto_merge, checks timed out / merge refused (orchestrator)
     in_progress --> needs_human: developer session failed / no PR (orchestrator)
     review --> needs_human: round limit reached / reviewer failed (orchestrator)
@@ -116,11 +120,12 @@ stateDiagram-v2
 | `bees:in-progress` | A developer worker owns it and a branch exists | Orchestrator |
 | `bees:blocked` | Waiting on an answer to a question | Project manager (`issue_set_state`, asking the PM), orchestrator (developer asking) |
 | `bees:review` | A pull request is open and in the review loop | Orchestrator |
-| `bees:approved` | Reviewer approved; waiting for a human to merge (or, with `roles.reviewer.auto_merge`, for required checks) | Orchestrator (also put on the PR) |
+| `bees:approved` | Reviewer approved; waiting for a human to merge (or, with `roles.reviewer.auto_merge`, for the checks) | Orchestrator (also put on the PR) |
 | `bees:needs-human` | The factory gave up on it | Orchestrator |
 
 Four more labels sit **outside** the state machine; issues carrying them
-never get a state label and are never triaged:
+never get a state label and are never triaged (`bees:priority` below is a
+fifth: it sits *next to* a state label rather than replacing one):
 
 | Label | Meaning | Who sets it |
 |---|---|---|
@@ -128,6 +133,11 @@ never get a state label and are never triaged:
 | `bees:feedback` | The product manager's inbox: an idea, product feedback or a bug report from a person | Humans |
 | `bees:question` | The product manager is waiting for a person to answer on a feature or feedback issue | Product manager (`issue_question`; removed by the orchestrator when the person replies) |
 | `bees:proposal` | A feature issue a bee wrote rather than a person; it sits next to `bees:feature`, and a person removes the label to approve it | `bees issue create --feature` (removed by a person) |
+
+`bees:priority` says "build this next". It is not a state label: an issue keeps
+exactly one of `bees:triage`/`bees:ready`/… alongside it, nothing in the factory
+adds or removes it, and it survives every state change. See
+[Priority](#priority-do-this-next).
 
 `bees:bug` is a **kind label** on a work item (a bug filed by the developer,
 reviewer, QA or a human) and travels through the state machine like any other
@@ -185,7 +195,8 @@ open pull request needs attention: anything already `bees:in-progress` or
 is never held back), then any `bees:ready` issue that already has an open pull
 request — one sent back for [your feedback](#giving-the-developer-feedback) or
 because it [conflicts with the default branch](#conflicts-with-the-default-branch)
-— oldest first. Only then does it take new work from `bees:ready`, in the
+— oldest first. Only then does it take new work from `bees:ready`:
+[`bees:priority`](#priority-do-this-next) issues first, then in the
 order `scheduler.dispatch_order` asks for:
 
 | `dispatch_order` | Order |
@@ -211,6 +222,37 @@ Two limits sit on top of that order:
   it back to `bees:triage` (no comment — the label is the signal) and the
   project manager splits it on its next run. With the default that means every
   `bees:size/xl` issue goes back to be split.
+
+### Priority: "do this next"
+
+Add `bees:priority` to a `bees:ready` issue and the next free developer takes
+it before the rest of the queue, whatever `scheduler.dispatch_order` says and
+however old the other issues are. That makes the whole dispatch order:
+
+1. issues being resumed (`bees:in-progress`, `bees:review`, and `bees:ready`
+   issues with an open pull request) — never reordered;
+2. `bees:priority` issues;
+3. `scheduler.dispatch_order` (size, or age under `oldest`);
+4. age.
+
+Priority is a **separate axis from size**: a `bees:size/xs` issue does not jump
+a priority `bees:size/l` one under `small-first`. Between two priority issues
+`dispatch_order` decides as usual.
+
+Set it from the GitHub UI like any other label. Nothing in the factory adds or
+removes it — it is yours, it survives every state change, and it stays on the
+issue until you take it off. The project manager may add it to a bug that
+blocks the factory itself (the default branch does not build, say), and to
+nothing else.
+
+Priority reorders the queue; it does not lift the limits. A priority
+`bees:size/l` issue still waits while `scheduler.max_large_in_flight` of them
+are in flight, and a priority issue above `roles.developer.max_size` still goes
+back to `bees:triage` to be split.
+
+`bees status` counts the queued issues carrying the label on its `ready` row
+(`ready  4  (xs 1, s 2, m 1, 1 priority)`) and lists their numbers under
+`priority` in `--json`, so you can see the lever took effect.
 
 ## Talking to the product manager
 
@@ -253,11 +295,14 @@ queue.
 
 A feature issue a **bee** wrote also carries `bees:proposal`: it is a
 *proposal* until you approve it. The product manager writes it, refines it and
-asks questions on it, but nothing is broken down from it — `bees issue create
---parent <proposal>` refuses — so the factory cannot grow its own roadmap.
-**Remove the `bees:proposal` label to approve it**, and it becomes an ordinary
-feature issue the product manager breaks down on its next run. A feature issue
-you filed never carries the label, and is broken down straight away.
+asks questions on it, but nothing is broken down from it — so the factory
+cannot grow its own roadmap. The scheduler never presents a proposal for
+breakdown, and `bees issue create --parent <proposal>` and `bees issue link`
+refuse outright, so a proposal grows no sub-issues whoever asks. **Remove the
+`bees:proposal` label to approve it**: the scheduler notices the label is gone
+and brings the feature back to the product manager, which breaks it down on its
+next run. A feature issue you filed never carries the label, and is broken down
+straight away.
 
 For each *fresh* feature issue (created, or commented on by a person,
 since the product manager's last marker comment on it) the product manager:
@@ -271,7 +316,8 @@ since the product manager's last marker comment on it) the product manager:
    sub-issues, and the product manager's prompt shows it as a
    `completed/total` column. Work items are ordered with dependencies noted
    ("after #N"); the project manager adds implementation detail during triage.
-   An existing issue can be attached with `issue_link` (`parent: <feature>`, `child: <item>`);
+   An existing issue can be attached with `issue_link` (`parent: <feature>`, `child: <item>`).
+   Both refuse a feature that is still a proposal;
 3. comments the list of work items on the feature issue (with the marker), so
    it is not presented to the product manager again until something changes;
 4. later, closes the feature issue once all its sub-issues are closed, or
@@ -509,14 +555,23 @@ The reviewer can be given the job instead. Set `auto_merge = true` under
 [configuration.md](configuration.md#rolesreviewer-only-auto-merge)). Once the
 reviewer approves, the developer worker enters a **checks** stage:
 
-1. It waits `checks_wait` (default 1 minute), because some required checks
-   take a moment to report that they have started.
-2. It polls the PR's **required** checks (`gh pr checks --required`) every
-   `roles.reviewer.checks_poll_interval` (default 2 minutes) until they are no
-   longer pending.
-3. All green — or no required checks configured — the orchestrator merges with
+1. It waits `checks_wait` (default 1 minute), because some checks take a
+   moment to report that they have started.
+2. It polls the PR's checks every `roles.reviewer.checks_poll_interval`
+   (default 2 minutes) until they are no longer pending. The **required**
+   checks (`gh pr checks --required`) are the gate whenever the branch has
+   any. When it has none — a repository with no branch protection — every
+   check the pull request reports (`gh pr checks`) is the gate instead:
+   gating on the checks that exist beats gating on nothing. To take a check
+   out of the gate, mark the ones that must block a merge as required in the
+   branch protection rules of the default branch; bees never touches those
+   rules itself.
+3. All green, the orchestrator merges with
    `gh pr merge --<merge_method> --delete-branch`. The issue closes through
-   `Closes #N` and QA sees the change on its next run.
+   `Closes #N` and QA sees the change on its next run. When nothing is
+   reported at all — no CI in the repository — it merges too, after two
+   consecutive empty polls, and logs that no check was reported rather than
+   that the checks passed.
 4. A check failed: the reviewer gets a follow-up session in *checks mode*. It
    works out what failed without assuming any particular CI system — the
    check's details link and description, `gh pr checks`, the repository's own
@@ -572,10 +627,21 @@ the issue to a human:
 - the reviewer session failed;
 - `max_review_rounds` passed without approval;
 - a worktree could not be created;
-- with `roles.reviewer.auto_merge`: required checks still failed after
+- with `roles.reviewer.auto_merge`: checks still failed after
   `max_check_fix_rounds`, were still pending at `checks_timeout`, the reviewer
   could not diagnose them (or said it had mailed the developer but had not), or
-  GitHub refused the merge.
+  GitHub refused the merge;
+- the issue ran out of money: every session run for it has cost more than
+  [`scheduler.max_cost_per_issue`](configuration.md#cost-budgets), or two
+  sessions in a row cost more than `scheduler.max_cost_per_session`. The
+  comment names the spend, so the choice is between raising the budget and
+  finishing the work by hand. Both budgets are off by default.
+
+A budget the factory hits does not always escalate: `scheduler.max_cost_per_day`
+pauses dispatch instead. Nothing is labelled, no comment is written, and the
+workers already running finish their loop; the scheduler simply starts nothing
+new until the rolling 24-hour spend falls back under the budget. `bees status`
+reports the pause.
 
 The orchestrator sets `bees:needs-human` and posts a comment on the issue
 explaining why; the comment mentions everyone in
@@ -629,7 +695,9 @@ passing.
 The product manager owns the roadmap of feature issues. It runs at least every
 `scheduler.product_manager_interval` (default 1h), or sooner when it has
 unread mail (questions from the project manager, reports from QA) or when a
-feature or feedback issue is fresh. It writes feature issues
+feature or feedback issue is fresh (a proposal counts only once a person has
+commented on it: until then nobody but a person can move it). It writes
+feature issues
 (`issue_create` with `feature: true`) that describe user-visible outcomes rather than
 implementation, and breaks them into work items as described above — except that
 a feature issue it wrote itself starts as a
@@ -701,7 +769,7 @@ sequenceDiagram
     Rev->>O: done: approved
     O->>GH: PR + issue → bees:approved
     H->>GH: Merge PR (work item closes)
-    Note over O,GH: with roles.reviewer.auto_merge the orchestrator waits<br/>checks_wait, polls required checks and merges instead
+    Note over O,GH: with roles.reviewer.auto_merge the orchestrator waits<br/>checks_wait, polls the PR checks and merges instead
     O->>QA: Session on default branch (merged PRs since last run)
     QA->>GH: file bees:bug issues
     QA-->>PM: mail: QA report

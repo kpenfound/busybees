@@ -126,8 +126,22 @@ type IssueState struct {
 	// ConflictNotifiedSHA is the PR head commit the developer was last told
 	// to bring up to date with the default branch; the same head is never
 	// mailed about twice.
-	ConflictNotifiedSHA string    `json:"conflict_notified_sha,omitempty"`
-	UpdatedAt           time.Time `json:"updated_at"`
+	ConflictNotifiedSHA string `json:"conflict_notified_sha,omitempty"`
+	// Cost is what every session run for this issue has cost so far, in USD,
+	// and Sessions how many sessions that was. Both are owned by
+	// AddIssueCost: SaveIssue carries them over from the file, so a caller
+	// holding an IssueState across several sessions cannot write back a
+	// stale total. scheduler.max_cost_per_issue is spent against them.
+	Cost     float64 `json:"cost,omitempty"`
+	Sessions int     `json:"sessions,omitempty"`
+	// Proposal is whether the issue carried bees:proposal at the last
+	// observation, and ProposalApprovedAt when the scheduler saw a person
+	// remove it. Approval is a label edit and leaves no comment, so it is
+	// remembered here: nothing else would tell the product manager that a
+	// feature it proposed may now be broken into work items.
+	Proposal           bool      `json:"proposal,omitempty"`
+	ProposalApprovedAt time.Time `json:"proposal_approved_at,omitempty"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 // Issue loads bookkeeping for an issue (zero value when none).
@@ -140,10 +154,41 @@ func (s *Store) Issue(n int) (IssueState, error) {
 	return is, err
 }
 
-// SaveIssue stores bookkeeping for an issue.
+// SaveIssue stores bookkeeping for an issue. The running cost totals are not
+// taken from is: they are owned by AddIssueCost and carried over from the
+// file, because a developer worker holds one IssueState for the whole life of
+// an issue and would otherwise write back the total as it was when it started.
 func (s *Store) SaveIssue(is IssueState) error {
+	if cur, err := s.Issue(is.Number); err == nil {
+		is.Cost, is.Sessions = cur.Cost, cur.Sessions
+	}
 	is.UpdatedAt = time.Now().UTC()
 	return s.writeJSON(filepath.Join(s.Dir, "issues", strconv.Itoa(is.Number)+".json"), is)
+}
+
+// AddIssueCost adds one finished session to an issue's running total and
+// returns the totals after it. It is the only writer of the cost fields.
+func (s *Store) AddIssueCost(number int, cost float64) (IssueState, error) {
+	is, err := s.Issue(number)
+	if err != nil {
+		return is, err
+	}
+	is.Cost += cost
+	is.Sessions++
+	is.UpdatedAt = time.Now().UTC()
+	return is, s.writeJSON(filepath.Join(s.Dir, "issues", strconv.Itoa(is.Number)+".json"), is)
+}
+
+// SetIssueCost replaces an issue's running totals, which is how a total is
+// seeded from the ledger for an issue whose bookkeeping predates budgets.
+func (s *Store) SetIssueCost(number int, cost float64, sessions int) (IssueState, error) {
+	is, err := s.Issue(number)
+	if err != nil {
+		return is, err
+	}
+	is.Cost, is.Sessions = cost, sessions
+	is.UpdatedAt = time.Now().UTC()
+	return is, s.writeJSON(filepath.Join(s.Dir, "issues", strconv.Itoa(is.Number)+".json"), is)
 }
 
 // RoleState is per-role bookkeeping. Singleton roles use it to remember
@@ -203,6 +248,16 @@ type Status struct {
 	// ReadySizes counts the ready queue by size ("xs", "s", "m", "l",
 	// "xl"); issues without a size label are counted under "".
 	ReadySizes map[string]int `json:"ready_sizes,omitempty"`
+	// Priority lists the ready issues carrying bees:priority, smallest
+	// number first: the queue a person told the factory to build next.
+	Priority []int `json:"priority,omitempty"`
+	// BudgetPaused is true while the rolling 24h spend has reached
+	// scheduler.max_cost_per_day and no new session is being dispatched.
+	BudgetPaused bool `json:"budget_paused,omitempty"`
+	// DaySpendUSD is that rolling 24h spend, and DayBudgetUSD the budget it
+	// is measured against (0 when no daily budget is configured).
+	DaySpendUSD  float64 `json:"day_spend_usd,omitempty"`
+	DayBudgetUSD float64 `json:"day_budget_usd,omitempty"`
 	// WaitingOnDeps maps a ready issue to the blockers it declares that are
 	// still open, so `bees status` can explain why it is not being built.
 	WaitingOnDeps map[int][]int `json:"waiting_on_deps,omitempty"`

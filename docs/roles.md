@@ -159,13 +159,16 @@ enter the workflow state machine. For each fresh one it:
 **Proposals:** a feature issue the product manager creates itself is labelled
 `bees:proposal` as well as `bees:feature`. It writes, refines and asks
 questions on such an issue as usual, but does **not** break it into work items
-until a person removes the label — `issue_create` (`parent: <proposal>`)
-refuses. Removing the label is the approval. A feature issue a person filed
-carries no proposal label: it is already approved and handled exactly as
-before. The product manager's prompt shows the proposal state of every feature
-issue (a `proposal:` field on each fresh feature and a `Proposal` column in the
-feature table), because bees and people share one GitHub account and the author
-is no signal.
+until a person removes the label — and it cannot: `issue_create`
+(`parent: <proposal>`) and `issue_link` refuse while the label is there.
+Removing the label is the approval, and the scheduler notices it (it is a label
+edit, so it leaves no comment) and hands the feature back to the product manager
+on its next run. A feature issue a person filed carries no proposal label: it is
+already approved and handled exactly as before. The product manager's prompt
+lists its proposals in a section of their own, never among the features it is
+told to break down, and marks them in the `Proposal` column of the feature
+table, because bees and people share one GitHub account and the author is no
+signal.
 
 A feature issue is *fresh* when a person created or commented on it after
 the product manager's last marker comment (`github.Issue.AwaitingBee`). When a
@@ -219,8 +222,10 @@ orchestrator sends such an issue straight back to `bees:triage`; moves a work
 item to `bees:blocked` (the same tool) when it has asked the product manager;
 closes invalid or duplicate work items with a comment. It
 never edits feature or feedback issues — those belong to the product manager,
-and `issue_edit_body` refuses them — and never touches milestones. It is the only role besides the
-orchestrator that moves state labels. It is told to declare dependencies with a
+and `issue_edit_body` refuses them — and never touches milestones. It is the
+only role besides the orchestrator that moves state labels. It may also add
+[`bees:priority`](workflow.md#priority-do-this-next) to a bug that blocks the
+factory itself — the default branch does not build, say — and to nothing else. It is told to declare dependencies with a
 `Blocked by #N` line and move the item to `bees:ready` anyway rather than
 parking it in triage: the scheduler holds it back until the blocker closes.
 
@@ -270,7 +275,7 @@ told to ask one precise question and stop rather than guess.
 
 | Status | Orchestrator |
 |---|---|
-| `pr-opened` (with `pr`) | Locates the PR (by number, else by branch), labels it `bees` (+ assignee), records it, moves the issue to `bees:review`, runs the reviewer. If the PR cannot be found: escalate. |
+| `pr-opened` (with `pr`) | Locates the PR (by number, else by branch), makes it match the filter (`bees` label, plus the assignee and milestone when configured), records it, moves the issue to `bees:review`, runs the reviewer. If the PR cannot be found: escalate. |
 | `pr-updated` (with `pr`) | Same as above; used after addressing review feedback. |
 | `question` | Verifies a message to the project manager was actually sent during the session, then labels the issue `bees:blocked` and frees the worker. No message: escalate. |
 | `failed` (or no outcome / timeout / error) | Escalates to `bees:needs-human` with the note. |
@@ -313,12 +318,13 @@ changes honestly and lets the orchestrator escalate.
 ### Checks mode (`auto_merge = true`)
 
 After approval the orchestrator waits `checks_wait`, then polls the PR's
-required checks. If they all pass (or there are none) it merges with
-`merge_method` and deletes the branch. If any fails, the reviewer gets a
-second kind of session, rendered from `task/reviewer_checks.md` with
-`BEES_REVIEW_MODE=checks` in its environment.
+checks — the required checks if the branch has any, otherwise every check the
+pull request reports; with no checks at all it merges and says so. If they all
+pass it merges with `merge_method` and deletes the branch. If any fails, the
+reviewer gets a second kind of session, rendered from `task/reviewer_checks.md`
+with `BEES_REVIEW_MODE=checks` in its environment.
 
-**Given:** the PR, the issue, the list of failing required checks (name,
+**Given:** the PR, the issue, the list of failing checks (name,
 workflow, bucket, description, details link), the fix round and its limit,
 its notes.
 

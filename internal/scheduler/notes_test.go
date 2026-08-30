@@ -40,6 +40,9 @@ func TestConsolidateReason(t *testing.T) {
 	if got := consolidateReason(200, 10, 32768); got != "every 10 sessions" {
 		t.Errorf("count reason: %q", got)
 	}
+	if got := consolidateReason(200, 1, 32768); got != "every 1 session" {
+		t.Errorf("singular count reason: %q", got)
+	}
 	if got := consolidateReason(40960, 10, 32768); got != "file is 40 KB" {
 		t.Errorf("size reason: %q", got)
 	}

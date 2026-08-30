@@ -37,6 +37,9 @@ func TestMissingLabelsAreCreatedAtStart(t *testing.T) {
 	h := newHarness(t, noRolesTOML)
 	dropLabel(h, "bees:size/m")
 	dropLabel(h, "bees:review")
+	// bees:priority is a person's lever; a repository initialised before it
+	// existed gets it on the next start like any other label.
+	dropLabel(h, "bees:priority")
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
@@ -45,7 +48,7 @@ func TestMissingLabelsAreCreatedAtStart(t *testing.T) {
 	}
 	got := createdLabels(h)
 	slices.Sort(got)
-	if want := []string{"bees:review", "bees:size/m"}; !slices.Equal(got, want) {
+	if want := []string{"bees:priority", "bees:review", "bees:size/m"}; !slices.Equal(got, want) {
 		t.Fatalf("labels created: %v, want %v", got, want)
 	}
 	if !strings.Contains(h.logs.String(), "created missing label") {

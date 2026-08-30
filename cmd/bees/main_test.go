@@ -2,10 +2,13 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"log/slog"
 	"strings"
 	"testing"
 
+	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/logging"
 	"github.com/kpenfound/busybees/internal/state"
 )
 
@@ -118,6 +121,37 @@ func TestQueuesTextShowsReadySizes(t *testing.T) {
 	}
 }
 
+// A person setting bees:priority must be able to see the lever worked, so
+// the ready row says how many queued issues carry it and --json lists them.
+func TestQueuesTextShowsPriorityIssues(t *testing.T) {
+	st := state.Status{
+		Queues:     map[string]int{"ready": 4},
+		ReadySizes: map[string]int{"xs": 1, "s": 2, "m": 1},
+		Priority:   []int{7, 12},
+	}
+	if got, want := queuesText(st), "  ready          4  (xs 1, s 2, m 1, 2 priority)\n"; got != want {
+		t.Fatalf("got:\n%q\nwant:\n%q", got, want)
+	}
+	// Nothing carries the label: no marker at all.
+	st.Priority = nil
+	if got := queuesText(st); strings.Contains(got, "priority") {
+		t.Fatalf("unexpected priority marker: %q", got)
+	}
+	// The numbers travel in --json, as waiting_on_deps does.
+	st.Priority = []int{7}
+	b, err := json.Marshal(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"priority":[7]`) {
+		t.Fatalf("status JSON: %s", b)
+	}
+	st.Priority = nil
+	if b, err := json.Marshal(st); err != nil || strings.Contains(string(b), "priority") {
+		t.Fatalf("status JSON without priority issues: %s (%v)", b, err)
+	}
+}
+
 func TestClaudeBin(t *testing.T) {
 	t.Setenv("BEES_CLAUDE_BIN", "")
 	if got := claudeBin(); got != "claude" {
@@ -166,4 +200,116 @@ func TestUnknownCommandIsAnError(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `unknown command "boguscmd" for "bees"`) {
 		t.Errorf("got %v", err)
 	}
+}
+
+// logging resolution: a flag beats the environment variable, which beats
+// bees.toml, which beats the built-in default.
+func TestMergeLogging(t *testing.T) {
+	toml := config.Logging{Format: "json", Level: "warn"}
+	for _, c := range []struct {
+		name       string
+		flags      consoleFlags
+		toml       config.Logging
+		wantFormat string
+		wantLevel  slog.Level
+		wantQuiet  bool
+	}{
+		{
+			name:       "bees.toml only",
+			flags:      consoleFlags{format: logging.FormatText, level: slog.LevelInfo},
+			toml:       toml,
+			wantFormat: logging.FormatJSON,
+			wantLevel:  slog.LevelWarn,
+		},
+		{
+			name:       "an absent table keeps the flag defaults",
+			flags:      consoleFlags{format: logging.FormatText, level: slog.LevelInfo},
+			toml:       config.Logging{},
+			wantFormat: logging.FormatText,
+			wantLevel:  slog.LevelInfo,
+		},
+		{
+			// The environment reaches mergeLogging as an explicit value.
+			name:       "the environment beats bees.toml",
+			flags:      consoleFlags{format: logging.FormatText, formatExplicit: true, level: slog.LevelError, levelExplicit: true},
+			toml:       toml,
+			wantFormat: logging.FormatText,
+			wantLevel:  slog.LevelError,
+		},
+		{
+			name:       "the flag beats the environment",
+			flags:      consoleFlags{format: logging.FormatJSON, formatExplicit: true, level: slog.LevelDebug, levelExplicit: true},
+			toml:       config.Logging{Format: "text", Level: "warn"},
+			wantFormat: logging.FormatJSON,
+			wantLevel:  slog.LevelDebug,
+		},
+		{
+			name:       "-v beats level = info",
+			flags:      consoleFlags{format: logging.FormatText, level: slog.LevelDebug, levelExplicit: true},
+			toml:       config.Logging{Level: "info"},
+			wantFormat: logging.FormatText,
+			wantLevel:  slog.LevelDebug,
+		},
+		{
+			// --quiet is a per-invocation intent, level = "debug" a file
+			// default: not the contradiction --quiet --verbose is.
+			name:       "--quiet with level = debug in bees.toml",
+			flags:      consoleFlags{format: logging.FormatText, level: slog.LevelInfo, quiet: true},
+			toml:       config.Logging{Level: "debug"},
+			wantFormat: logging.FormatText,
+			wantLevel:  slog.LevelInfo,
+			wantQuiet:  true,
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := mergeLogging(c.flags, c.toml)
+			if got.Format != c.wantFormat || got.Level != c.wantLevel || got.Quiet != c.wantQuiet {
+				t.Errorf("got %+v, want format=%s level=%s quiet=%v", got, c.wantFormat, c.wantLevel, c.wantQuiet)
+			}
+		})
+	}
+}
+
+// setupLogging records which dimensions were an explicit choice, which is what
+// decides whether bees.toml may fill them in.
+func TestConsoleFlagsRecordExplicitness(t *testing.T) {
+	t.Run("defaults are not explicit", func(t *testing.T) {
+		g := runRootFlags(t, "version")
+		if g.console.formatExplicit || g.console.levelExplicit {
+			t.Errorf("console: %+v", g.console)
+		}
+	})
+	t.Run("flags are explicit", func(t *testing.T) {
+		g := runRootFlags(t, "version", "--log-format", "text", "--log-level", "info")
+		if !g.console.formatExplicit || !g.console.levelExplicit {
+			t.Errorf("console: %+v", g.console)
+		}
+	})
+	t.Run("environment variables are explicit", func(t *testing.T) {
+		t.Setenv("BEES_LOG_FORMAT", "json")
+		t.Setenv("BEES_LOG_LEVEL", "warn")
+		g := runRootFlags(t, "version")
+		if !g.console.formatExplicit || !g.console.levelExplicit {
+			t.Errorf("console: %+v", g.console)
+		}
+	})
+	t.Run("-v is an explicit level", func(t *testing.T) {
+		g := runRootFlags(t, "version", "-v")
+		if g.console.levelExplicit != true || g.console.level != slog.LevelDebug {
+			t.Errorf("console: %+v", g.console)
+		}
+	})
+}
+
+// runRootFlags executes the CLI and returns the global flags it resolved.
+func runRootFlags(t *testing.T, args ...string) *globalFlags {
+	t.Helper()
+	g, root := newRootWithFlags()
+	root.SetArgs(args)
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	return g
 }

@@ -54,7 +54,7 @@ func issueMeta(i github.Issue, l config.Labels) string {
 		}
 	}
 	var kinds []string
-	for _, name := range []string{l.Feature, l.Feedback, l.Bug, l.Proposal, l.Question} {
+	for _, name := range []string{l.Feature, l.Feedback, l.Bug, l.Proposal, l.Priority, l.Question} {
 		if github.HasLabel(i.Labels, name) {
 			kinds = append(kinds, short(name, l))
 		}

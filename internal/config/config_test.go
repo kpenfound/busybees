@@ -149,7 +149,7 @@ func TestDefaults(t *testing.T) {
 		t.Fatalf("state dir: %s", cfg.StateDir())
 	}
 	l := cfg.Labels()
-	if l.Ready != "bees:ready" || l.Base != "bees" || len(l.All()) != 18 {
+	if l.Ready != "bees:ready" || l.Base != "bees" || len(l.All()) != 19 {
 		t.Fatalf("labels: %+v", l)
 	}
 }
@@ -215,30 +215,35 @@ func TestKindLabels(t *testing.T) {
 	if l.Proposal != "bees:proposal" {
 		t.Fatalf("proposal label: %q", l.Proposal)
 	}
-	// A proposal is a kind label: it sits next to bees:feature and carries
-	// neither a state nor a size, so labelling one must never clear it.
-	for _, name := range []string{"state", "size"} {
-		list := l.StateLabels()
-		if name == "size" {
-			list = l.SizeLabels()
-		}
-		if slices.Contains(list, l.Proposal) {
-			t.Errorf("%s is a %s label", l.Proposal, name)
-		}
+	if l.Priority != "bees:priority" {
+		t.Fatalf("priority label: %q", l.Priority)
 	}
-	// `bees init` and `bees labels sync` create it.
-	var found bool
-	for _, spec := range l.All() {
-		if spec.Name != l.Proposal {
-			continue
+	// A kind label sits next to the state machine: it carries neither a
+	// state nor a size, so labelling an issue must never clear it.
+	for _, kind := range []string{l.Proposal, l.Priority} {
+		for _, name := range []string{"state", "size"} {
+			list := l.StateLabels()
+			if name == "size" {
+				list = l.SizeLabels()
+			}
+			if slices.Contains(list, kind) {
+				t.Errorf("%s is a %s label", kind, name)
+			}
 		}
-		found = true
-		if spec.Color == "" || spec.Description == "" {
-			t.Errorf("%s: colour %q description %q", spec.Name, spec.Color, spec.Description)
+		// `bees init` and `bees labels sync` create it.
+		var found bool
+		for _, spec := range l.All() {
+			if spec.Name != kind {
+				continue
+			}
+			found = true
+			if spec.Color == "" || spec.Description == "" {
+				t.Errorf("%s: colour %q description %q", spec.Name, spec.Color, spec.Description)
+			}
 		}
-	}
-	if !found {
-		t.Errorf("%s missing from All()", l.Proposal)
+		if !found {
+			t.Errorf("%s missing from All()", kind)
+		}
 	}
 }
 
@@ -753,8 +758,12 @@ func TestWorkHoursDefaults(t *testing.T) {
 	if strings.Join(s.WorkDays, ",") != "mon,tue,wed,thu,fri" {
 		t.Fatalf("work_days default: %v", s.WorkDays)
 	}
-	if got := s.WorkHoursDescription(); got != "09:00-18:00 mon-fri, Local" {
-		t.Fatalf("description: %q", got)
+	// With no timezone configured the window is read in the machine's local
+	// time, which is named by its offset rather than the useless "Local".
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	want := "09:00-18:00 mon-fri, local time (" + now.In(time.Local).Format("MST -07:00") + ")"
+	if got := s.WorkHoursDescription(now); got != want {
+		t.Fatalf("description: %q, want %q", got, want)
 	}
 	// The injected default is never shorter than poll_interval: a file that
 	// only sets a long poll_interval must load, not fail validation on a key
@@ -830,7 +839,7 @@ func TestInWorkHours(t *testing.T) {
 			}
 		})
 	}
-	if got := overnight.WorkHoursDescription(); got != "22:00-06:00 fri, UTC" {
+	if got := overnight.WorkHoursDescription(utc(31, 12, 0)); got != "22:00-06:00 fri, UTC" {
 		t.Fatalf("description: %q", got)
 	}
 }
@@ -1153,5 +1162,90 @@ func TestSizeLabelIsTheInverseOfTheSizeNames(t *testing.T) {
 	}
 	if got := l.SizeLabel(""); got != "" {
 		t.Errorf(`SizeLabel("") = %q, want ""`, got)
+	}
+}
+
+func TestDescribeLocation(t *testing.T) {
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	ny, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name string
+		loc  *time.Location
+		want string
+	}{
+		{"IANA name", ny, "America/New_York"},
+		{"UTC", time.UTC, "UTC"},
+		// time.Local has no name worth printing: describe the offset in
+		// force at now instead.
+		{"local", time.Local, "local time (" + now.In(time.Local).Format("MST -07:00") + ")"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := describeLocation(c.loc, now); got != c.want {
+				t.Fatalf("describeLocation = %q, want %q", got, c.want)
+			}
+		})
+	}
+	// The abbreviation and offset follow the instant, not the machine: the
+	// same location in January and in July can differ.
+	winter := describeLocation(time.Local, time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC))
+	if !strings.HasPrefix(winter, "local time (") || !strings.HasSuffix(winter, ")") {
+		t.Fatalf("local description %q is not the local time (...) form", winter)
+	}
+}
+
+func TestCostBudgets(t *testing.T) {
+	// Off by default: budgets are opt-in and change nothing until set.
+	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := cfg.Scheduler; s.MaxCostPerIssue != 0 || s.MaxCostPerDay != 0 || s.MaxCostPerSession != 0 {
+		t.Fatalf("defaults: %v, %v, %v", s.MaxCostPerIssue, s.MaxCostPerDay, s.MaxCostPerSession)
+	}
+	cfg, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\n"+
+		"max_cost_per_issue = 25.0\nmax_cost_per_day = 100.0\nmax_cost_per_session = 10.5\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := cfg.Scheduler; s.MaxCostPerIssue != 25 || s.MaxCostPerDay != 100 || s.MaxCostPerSession != 10.5 {
+		t.Fatalf("configured: %v, %v, %v", s.MaxCostPerIssue, s.MaxCostPerDay, s.MaxCostPerSession)
+	}
+	for _, key := range []string{"max_cost_per_issue", "max_cost_per_day", "max_cost_per_session"} {
+		_, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\n"+key+" = -1.0\n"))
+		if err == nil || !strings.Contains(err.Error(), "scheduler."+key+" must be >= 0") {
+			t.Errorf("%s = -1: %v", key, err)
+		}
+	}
+}
+
+// [logging] defaults to the flag defaults when absent, round-trips what the
+// file says, and rejects a value neither the flags nor the file accept.
+func TestLoggingSettings(t *testing.T) {
+	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Logging.Format != "text" || cfg.Logging.Level != "info" {
+		t.Fatalf("defaults: %+v", cfg.Logging)
+	}
+	cfg, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[logging]\nformat = \"json\"\nlevel = \"warn\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Logging.Format != "json" || cfg.Logging.Level != "warn" {
+		t.Fatalf("configured: %+v", cfg.Logging)
+	}
+
+	for _, c := range []struct{ body, want string }{
+		{"[logging]\nformat = \"yaml\"\n", `logging.format: invalid log format "yaml": valid values are text, json`},
+		{"[logging]\nlevel = \"trace\"\n", `logging.level: invalid log level "trace": valid values are debug, info, warn, error`},
+	} {
+		_, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"+c.body))
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%q: %v", c.body, err)
+		}
 	}
 }

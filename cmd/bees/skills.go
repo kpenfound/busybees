@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 	"time"
@@ -14,12 +13,7 @@ import (
 )
 
 // cacheDir is where skill clones and generated plugins live.
-func cacheDir() string {
-	if d := os.Getenv("BEES_CACHE_DIR"); d != "" {
-		return d
-	}
-	return skills.DefaultCacheDir()
-}
+func cacheDir() string { return skills.CacheDir() }
 
 // skillRef is one configured skill reference and the roles that use it.
 type skillRef struct {

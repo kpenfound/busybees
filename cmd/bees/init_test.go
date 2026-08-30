@@ -20,7 +20,14 @@ var errNoGH = errors.New("gh is not available in tests")
 // testInitDeps stands in for everything init does through `gh`; tests must
 // never run the real thing.
 func testInitDeps() (initDeps, *int) {
-	labelCalls := 0
+	deps, labels, _ := testInitDepsWithDoctor("")
+	return deps, labels
+}
+
+// testInitDepsWithDoctor is testInitDeps with a doctor whose table is fixed,
+// so a test can assert init prints it without running the real checks.
+func testInitDepsWithDoctor(table string) (initDeps, *int, *int) {
+	labelCalls, doctorCalls := 0, 0
 	return initDeps{
 		checkGH:     func(context.Context) error { return nil },
 		currentRepo: func(context.Context, string) (string, error) { return "", errNoGH },
@@ -29,7 +36,11 @@ func testInitDeps() (initDeps, *int) {
 			labelCalls++
 			return nil
 		},
-	}, &labelCalls
+		doctor: func(context.Context, *config.Config) string {
+			doctorCalls++
+			return table
+		},
+	}, &labelCalls, &doctorCalls
 }
 
 // assertClean checks that a failed init left nothing behind.
@@ -302,5 +313,51 @@ func TestInitWithAQuotedDefaultBranch(t *testing.T) {
 	}
 	if cfg.Project.DefaultBranch != branch {
 		t.Fatalf("project.default_branch = %q, want %q", cfg.Project.DefaultBranch, branch)
+	}
+}
+
+// TestInitPrintsTheDoctorTable: a failing check is not an init failure. The
+// point of the table is telling the user what is left to set up, and init has
+// already written bees.toml and the labels by then.
+func TestInitPrintsTheDoctorTable(t *testing.T) {
+	_, clone := testutil.SetupRepos(t)
+	const table = "github\n  ✗ workflow labels  1 of 19 missing: bees:ready\n\n1 check: 0 passed, 0 warnings, 1 failed\n"
+	deps, labels, doctorCalls := testInitDepsWithDoctor(table)
+	o := initOptions{dir: clone, remote: "origin", repo: "acme/widgets", label: config.DefaultLabel}
+	var err error
+	out := captureStdout(t, func() { err = runInit(context.Background(), o, deps) })
+	if err != nil {
+		t.Fatalf("a failing check must not fail init: %v", err)
+	}
+	if *doctorCalls != 1 {
+		t.Errorf("doctor ran %d times, want 1", *doctorCalls)
+	}
+	if *labels != 1 {
+		t.Errorf("labels synced %d times, want 1", *labels)
+	}
+	if !strings.Contains(out, table) {
+		t.Errorf("the doctor table was not printed:\n%s", out)
+	}
+	if !strings.Contains(out, "bees doctor") {
+		t.Errorf("init should end with a pointer to `bees doctor`:\n%s", out)
+	}
+}
+
+// TestInitRunsTheDoctorWithoutLabels covers --no-labels, which used to return
+// before anything after the label sync.
+func TestInitRunsTheDoctorWithoutLabels(t *testing.T) {
+	_, clone := testutil.SetupRepos(t)
+	deps, labels, doctorCalls := testInitDepsWithDoctor("toolchain\n")
+	o := initOptions{dir: clone, remote: "origin", repo: "acme/widgets", label: config.DefaultLabel, noLabels: true}
+	var err error
+	captureStdout(t, func() { err = runInit(context.Background(), o, deps) })
+	if err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if *labels != 0 {
+		t.Errorf("--no-labels synced labels %d times", *labels)
+	}
+	if *doctorCalls != 1 {
+		t.Errorf("doctor ran %d times, want 1", *doctorCalls)
 	}
 }

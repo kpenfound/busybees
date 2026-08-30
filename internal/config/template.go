@@ -213,10 +213,32 @@ label = "{{.Label}}"
 #work_days = ["mon", "tue", "wed", "thu", "fri"]
 # IANA timezone the window is read in (default: the machine's local time).
 #timezone = "America/New_York"
+# Cost budgets in USD, spent against the session ledger ("bees cost").
+# 0 means unlimited, which is the default: budgets are opt-in.
+# Total across every session run for one work item. Checked between stages: the
+# session that passes it finishes, then the issue is escalated to a human.
+#max_cost_per_issue = 25.0
+# Whole factory, rolling 24 hours. At or over it no new session starts; the
+# sessions already running finish.
+#max_cost_per_day = 100.0
+# A single session. Checked after it ran (claude cannot be stopped on cost), and
+# an over-budget session is treated as failed.
+#max_cost_per_session = 10.0
 # Keep temp worktrees after sessions finish (debugging).
 #keep_workspaces = false
 # Where temp worktrees are created (default: the system temp dir).
 #workspace_root = ""
+
+#===============================================================================
+# Console logging. The --log-format / --log-level flags and the
+# BEES_LOG_FORMAT / BEES_LOG_LEVEL environment variables override these.
+#===============================================================================
+[logging]
+# Console log format: text or json. JSON is for running bees as a service.
+#format = "text"
+# Console log level: debug, info, warn or error. --quiet is a per-invocation
+# shorthand and has no key here; "warn" is the closest equivalent.
+#level = "info"
 
 #===============================================================================
 # Global role settings — apply to every role, merged with [roles.<name>]:
@@ -356,9 +378,11 @@ label = "{{.Label}}"
 # Disabling the reviewer treats pull requests as approved as soon as the
 # developer opens them.
 #enabled = true
-# Merge approved pull requests automatically once the required checks are
-# green. Off: humans merge. When checks fail the reviewer diagnoses the main
-# error and hands it to the developer to fix (up to max_check_fix_rounds).
+# Merge approved pull requests automatically once its checks are green: the
+# required checks if the branch has any, otherwise every check the pull
+# request reports; with no checks at all it merges and says so. Off: humans
+# merge. When checks fail the reviewer diagnoses the main error and hands it
+# to the developer to fix (up to max_check_fix_rounds).
 #auto_merge = false
 # squash, merge or rebase.
 #merge_method = "squash"

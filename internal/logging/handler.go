@@ -31,6 +31,24 @@ func (c *core) add(h slog.Handler, closer io.Closer) {
 	c.gen++
 }
 
+// replaceConsole swaps the console destination, which is always the first
+// handler: New adds it and only AttachFile ever appends. Bumping gen makes
+// every multiHandler already derived with WithAttrs/WithGroup rebuild its
+// children against the new handler.
+func (c *core) replaceConsole(h slog.Handler) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// Clone so handlers already holding the old slice never see it change.
+	hs := slices.Clone(c.handlers)
+	if len(hs) == 0 {
+		hs = append(hs, h)
+	} else {
+		hs[0] = h
+	}
+	c.handlers = hs
+	c.gen++
+}
+
 func (c *core) hasFile(path string) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

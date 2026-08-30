@@ -13,6 +13,8 @@ import (
 
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/github"
+	"github.com/kpenfound/busybees/internal/skills"
+	"github.com/kpenfound/busybees/internal/text"
 	"github.com/kpenfound/busybees/internal/versions"
 	"github.com/kpenfound/busybees/internal/workspace"
 )
@@ -40,6 +42,9 @@ type Deps struct {
 	GitHub *github.Client
 	// Workspaces creates the throwaway worktree of the workspace check.
 	Workspaces *workspace.Manager
+	// Skills clones the skills of the per-role checks. It uses the cache a
+	// session uses, so doctor warms it rather than duplicating it.
+	Skills *skills.Manager
 	// ClaudeBin is the claude executable. Default "claude".
 	ClaudeBin string
 
@@ -69,6 +74,9 @@ func New(ctx context.Context, configPath, claudeBin string) *Deps {
 	ws := workspace.NewManager(cfg.Dir(), cfg.Scheduler.WorkspaceRoot)
 	ws.Remote = cfg.Project.Remote
 	d.Workspaces = ws
+	sk := skills.NewManager(skills.CacheDir())
+	sk.RefreshAlways, sk.RefreshAfter = cfg.SkillsRefresh()
+	d.Skills = sk
 	return d
 }
 
@@ -77,19 +85,22 @@ func New(ctx context.Context, configPath, claudeBin string) *Deps {
 // bees.toml did not load, and the GitHub and workspace checks are left out
 // when the repository could not be resolved: the config checks say why.
 func (d *Deps) Checks() []Check {
-	checks := []Check{d.checkGit, d.checkGH, d.checkClaude, d.checkConfigLoads}
+	checks := []Check{{Run: d.checkGit}, {Run: d.checkGH}, {Run: d.checkClaude}, {Run: d.checkConfigLoads}}
 	if d.Config == nil {
 		return checks
 	}
-	checks = append(checks, d.checkProject, d.checkRemote, d.checkStateDirIgnored,
-		d.checkNotesWritable, d.checkPromptFiles)
+	checks = append(checks, Check{Run: d.checkProject}, Check{Run: d.checkRemote},
+		Check{Run: d.checkStateDirIgnored}, Check{Run: d.checkNotesWritable}, Check{Run: d.checkPromptFiles})
 	if d.Config.Project.Repo != "" {
-		checks = append(checks, d.checkRepoAccess, d.checkLabels, d.checkFilter)
+		checks = append(checks, Check{Run: d.checkRepoAccess}, Check{Run: d.checkLabels},
+			Check{Run: d.checkFilter, Fix: d.fixFilter}, Check{Run: d.checkAutoMerge})
 	}
 	if d.Workspaces != nil && d.Config.Project.DefaultBranch != "" {
-		checks = append(checks, d.checkWorktree)
+		checks = append(checks, Check{Run: d.checkWorktree})
 	}
-	return checks
+	// Last, because they are the slow ones: cloning skills and starting MCP
+	// servers. CheapChecks drops them for the `bees run` preflight.
+	return append(checks, d.roleChecks()...)
 }
 
 func (d *Deps) lookPath(file string) (string, error) {
@@ -468,6 +479,84 @@ func hasLabel(labels []github.Label, name string) bool {
 	return false
 }
 
+// notProtected matches gh's answer for a branch with no protection rules at
+// all. It is a 404, but it is the answer to the question, not an error.
+var notProtected = regexp.MustCompile(`(?i)branch not protected|HTTP 404`)
+
+// checkAutoMerge reports what auto_merge will actually gate a merge on.
+//
+// With no branch protection `gh pr checks --required` reports nothing, so
+// before #117 an auto-merging factory merged with nothing green at all. It
+// now falls back to every check a pull request reports, which is a sound
+// default but is not the same promise as "the checks you marked required".
+// This check says which of the two is in force, once, in plain words.
+//
+// It is a Warn and never a Fail: #48 wires doctor into the `bees run`
+// preflight, which refuses to start on a failure, and an unprotected default
+// branch must not stop the factory. bees never enables or edits branch
+// protection - that is a person's setting.
+func (d *Deps) checkAutoMerge(ctx context.Context) Result {
+	const name = "auto_merge check gate"
+	cfg := d.Config
+	if !cfg.Merge().AutoMerge {
+		return pass(name, GroupGitHub, "auto_merge is off: people merge pull requests themselves")
+	}
+	branch := cfg.Project.DefaultBranch
+	if branch == "" {
+		return warn(name, GroupGitHub, "auto_merge is on and project.default_branch is not known, so its protection rules cannot be read",
+			"set project.default_branch in bees.toml")
+	}
+	out, err := d.gh(ctx, "api", fmt.Sprintf("repos/%s/branches/%s/protection", cfg.Project.Repo, branch))
+	if err != nil {
+		if notProtected.MatchString(err.Error()) {
+			return unrequiredGate(name, branch, "`"+branch+"` is not protected")
+		}
+		// A token without admin rights on the repository cannot read the
+		// protection rules. That is not a broken setup, and the fallback gate
+		// works either way.
+		return warn(name, GroupGitHub,
+			fmt.Sprintf("auto_merge is on and the branch protection of `%s` could not be read: %s", branch, oneLine(err.Error())),
+			"reading branch protection needs admin rights on the repository; without it bees cannot tell you "+
+				"which checks are required, and will gate a merge on whatever checks a pull request reports")
+	}
+	var prot struct {
+		RequiredStatusChecks *struct {
+			Contexts []string `json:"contexts"`
+			Checks   []struct {
+				Context string `json:"context"`
+			} `json:"checks"`
+		} `json:"required_status_checks"`
+	}
+	if err := json.Unmarshal(out, &prot); err != nil {
+		return warn(name, GroupGitHub,
+			fmt.Sprintf("auto_merge is on and the branch protection of `%s` could not be read: %s", branch, oneLine(err.Error())),
+			"upgrade the GitHub CLI: bees needs gh "+versions.MinGH+" or newer")
+	}
+	var required []string
+	if rsc := prot.RequiredStatusChecks; rsc != nil {
+		required = append(required, rsc.Contexts...)
+		for _, c := range rsc.Checks {
+			if c.Context != "" && !slices.Contains(required, c.Context) {
+				required = append(required, c.Context)
+			}
+		}
+	}
+	if len(required) == 0 {
+		return unrequiredGate(name, branch, "`"+branch+"` is protected but requires no check")
+	}
+	return pass(name, GroupGitHub, fmt.Sprintf("auto_merge gates on the %s required on `%s`: %s",
+		text.Count(len(required), "check"), branch, strings.Join(required, ", ")))
+}
+
+// unrequiredGate is the one warning checkAutoMerge has, for both ways of
+// having no required check: bees will merge on the checks it can see.
+func unrequiredGate(name, branch, why string) Result {
+	return warn(name, GroupGitHub,
+		fmt.Sprintf("auto_merge is on and no check is required on `%s` (%s); bees will gate on whatever checks a pull request reports", branch, why),
+		"require your CI checks in the branch protection rules for `"+branch+"`, or leave it as it is and bees "+
+			"will honour the checks it can see")
+}
+
 // checkFilter reports whether the visibility filter matches anything, and,
 // when it does not, which of the two very different reasons it is: an empty or
 // not-yet-labelled repository, or a filter that just stopped matching the work
@@ -496,13 +585,12 @@ func (d *Deps) checkFilter(ctx context.Context) Result {
 			"check that gh can list issues in "+d.Config.Project.Repo)
 	}
 	if len(issues) > 0 {
-		return pass(name, GroupGitHub, fmt.Sprintf("%s matching %s", plural(len(issues), "open issue"), describeQuery(q)))
+		return pass(name, GroupGitHub, fmt.Sprintf("%s matching %s", text.Count(len(issues), "open issue"), describeQuery(q)))
 	}
 	if stranded := d.strandedByFilter(ctx, q); stranded != "" {
 		return warn(name, GroupGitHub, stranded,
-			fmt.Sprintf("filter criteria are ANDed, so every one of them must hold: either bring those items into the filter "+
-				"(`gh issue edit N --add-assignee ...`, `gh issue edit N --add-label %s`) or unset the criterion in bees.toml",
-				d.Config.Filter.Label))
+			"filter criteria are ANDed, so every one of them must hold: run `bees doctor --fix` to bring the items "+
+				"carrying `"+d.Config.Filter.Label+"` into the filter, or unset the criterion in bees.toml")
 	}
 	return warn(name, GroupGitHub, fmt.Sprintf("no open issue matches %s", describeQuery(q)),
 		"check filter.label, filter.assignee and filter.milestone in bees.toml, or file the first issue "+
@@ -516,8 +604,7 @@ func (d *Deps) checkFilter(ctx context.Context) Result {
 // apart (no base label to count against, the extra listing failed, or the
 // repository really is empty).
 //
-// TODO(#112): `bees doctor --fix` will adopt these items into the filter; name
-// it in checkFilter's remediation once it exists.
+// `bees doctor --fix` repairs exactly this case; see fixFilter.
 func (d *Deps) strandedByFilter(ctx context.Context, q github.Query) string {
 	// Without require_label there is no base label the factory's own items are
 	// guaranteed to carry, so there is nothing to compare against.
@@ -540,7 +627,7 @@ func (d *Deps) strandedByFilter(ctx context.Context, q github.Query) string {
 		return ""
 	}
 	return fmt.Sprintf("%s and %s carry `%s`, 0 match your filter (%s)",
-		plural(len(issues), "open issue"), plural(len(prs), "pull request"),
+		text.Count(len(issues), "open issue"), text.Count(len(prs), "pull request"),
 		d.Config.Filter.Label, describeANDed(q))
 }
 
