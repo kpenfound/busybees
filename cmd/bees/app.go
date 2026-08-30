@@ -9,6 +9,7 @@ import (
 
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/github"
+	"github.com/kpenfound/busybees/internal/logging"
 	"github.com/kpenfound/busybees/internal/mail"
 	"github.com/kpenfound/busybees/internal/scheduler"
 	"github.com/kpenfound/busybees/internal/session"
@@ -27,6 +28,7 @@ type app struct {
 	runner *session.Runner
 	ws     *workspace.Manager
 	log    *slog.Logger
+	logger *logging.Logger
 }
 
 // configPath resolves the bees.toml to use.
@@ -134,10 +136,19 @@ func newApp(ctx context.Context, g *globalFlags) (*app, error) {
 		runner: runner,
 		ws:     ws,
 		log:    log,
+		logger: g.logger,
 	}, nil
 }
 
 func (a *app) scheduler() (*scheduler.Scheduler, error) {
+	// Only the commands that run sessions write the log file: `bees issue`
+	// and `bees mail` run inside sessions, concurrently with the scheduler,
+	// and must not race its rotation.
+	if a.logger != nil {
+		if err := a.logger.AttachFile(filepath.Join(a.store.Dir, "bees.log")); err != nil {
+			return nil, err
+		}
+	}
 	return scheduler.New(scheduler.Deps{
 		Config:     a.cfg,
 		GitHub:     a.gh,
