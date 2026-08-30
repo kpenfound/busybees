@@ -192,6 +192,10 @@ label = "{{.Label}}"
 #pr_fix_conflicts = true
 # Do the same when a pull request merely fell behind the default branch.
 #pr_keep_updated = false
+# GitHub logins and/or org/team slugs the factory turns to when it needs a
+# person: mentioned in the needs-human comment and in the product manager's
+# questions, and asked to review an approved pull request. No leading @.
+#notify = ["your-github-login", "your-org/your-team"]
 # Minimum time between product manager runs (mail triggers an earlier run).
 #product_manager_interval = "1h"
 # Minimum time between QA runs. QA only runs when something was merged.
