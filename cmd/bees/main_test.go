@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"log/slog"
 	"strings"
 	"testing"
@@ -115,6 +116,37 @@ func TestQueuesTextShowsReadySizes(t *testing.T) {
 	st.ReadySizes = map[string]int{"l": 1, "": 3}
 	if got := queuesText(st); !strings.Contains(got, "(l 1, unsized 3)") {
 		t.Fatalf("unsized issues: %q", got)
+	}
+}
+
+// A person setting bees:priority must be able to see the lever worked, so
+// the ready row says how many queued issues carry it and --json lists them.
+func TestQueuesTextShowsPriorityIssues(t *testing.T) {
+	st := state.Status{
+		Queues:     map[string]int{"ready": 4},
+		ReadySizes: map[string]int{"xs": 1, "s": 2, "m": 1},
+		Priority:   []int{7, 12},
+	}
+	if got, want := queuesText(st), "  ready          4  (xs 1, s 2, m 1, 2 priority)\n"; got != want {
+		t.Fatalf("got:\n%q\nwant:\n%q", got, want)
+	}
+	// Nothing carries the label: no marker at all.
+	st.Priority = nil
+	if got := queuesText(st); strings.Contains(got, "priority") {
+		t.Fatalf("unexpected priority marker: %q", got)
+	}
+	// The numbers travel in --json, as waiting_on_deps does.
+	st.Priority = []int{7}
+	b, err := json.Marshal(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"priority":[7]`) {
+		t.Fatalf("status JSON: %s", b)
+	}
+	st.Priority = nil
+	if b, err := json.Marshal(st); err != nil || strings.Contains(string(b), "priority") {
+		t.Fatalf("status JSON without priority issues: %s (%v)", b, err)
 	}
 }
 
