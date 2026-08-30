@@ -354,11 +354,22 @@ set with no enum, so the server is usable by hand.
 
 ### `bees mcp tools [role]`
 
-Prints the tools a role's session sees, for checking the above:
+Prints the tools a role's session sees, with the enum of every constrained
+parameter — the part that differs between roles:
 
-```sh
-bees mcp tools developer
 ```
+$ bees mcp tools developer
+mcp__bees__done           Report the session outcome
+    status: pr-opened | pr-updated | question | failed
+mcp__bees__issue_create   Create a factory issue
+mcp__bees__issue_link     Attach an issue to a feature
+mcp__bees__mail_list      Read the mailbox
+mcp__bees__mail_send      Send mail to another role
+    to: product_manager | project_manager | developer | reviewer | qa
+```
+
+Without a role argument it uses `$BEES_ROLE`, and without that it prints the
+unconstrained tool set.
 
 ## Misc
 

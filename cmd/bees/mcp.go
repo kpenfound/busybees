@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"slices"
+	"strings"
 	"sync"
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
@@ -60,14 +63,58 @@ you only run "bees mcp serve" yourself to debug it.`,
 			if err != nil {
 				return err
 			}
-			for _, t := range list {
-				fmt.Printf("mcp__%s__%-14s %s\n", config.BuiltinMCPServer, t.Name, t.Title)
-			}
+			fmt.Print(toolsText(list))
 			return nil
 		},
 	}
 	cmd.AddCommand(serve, tools)
 	return cmd
+}
+
+// toolsText renders a session's tool list: one line per tool, followed by the
+// enum of every constrained parameter. The enums are what differ between
+// roles — done's status is the role's valid outcomes — so leaving them out
+// would make the output the same for everybody.
+func toolsText(tools []*mcp.Tool) string {
+	var b strings.Builder
+	for _, t := range tools {
+		fmt.Fprintf(&b, "mcp__%s__%-14s %s\n", config.BuiltinMCPServer, t.Name, t.Title)
+		for _, e := range enums(t.InputSchema) {
+			fmt.Fprintf(&b, "    %s: %s\n", e.prop, strings.Join(e.values, " | "))
+		}
+	}
+	return b.String()
+}
+
+type propEnum struct {
+	prop   string
+	values []string
+}
+
+// enums reads the constrained properties out of a tool's advertised input
+// schema, in property-name order. The schema arrives as decoded JSON, so it
+// is re-marshalled rather than type-asserted.
+func enums(schema any) []propEnum {
+	b, err := json.Marshal(schema)
+	if err != nil {
+		return nil
+	}
+	var s struct {
+		Properties map[string]struct {
+			Enum []string `json:"enum"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(b, &s); err != nil {
+		return nil
+	}
+	var out []propEnum
+	for prop, p := range s.Properties {
+		if len(p.Enum) > 0 {
+			out = append(out, propEnum{prop: prop, values: p.Enum})
+		}
+	}
+	slices.SortFunc(out, func(a, b propEnum) int { return strings.Compare(a.prop, b.prop) })
+	return out
 }
 
 // codeServerClosing is the jsonrpc2 error code the SDK answers with once the
