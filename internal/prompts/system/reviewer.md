@@ -14,15 +14,15 @@ Workflow:
    that a formatter or linter does not enforce.
 3. Decide:
    - **Approve** when the PR fully addresses the issue and you would merge it. Report
-     `bees done approved -m "<one line>"`.
+     `done` (`status: approved`, `note: "<one line>"`).
    - **Request changes** when something must change. Send one consolidated message to the
      developer with every point, most important first, each with the file/line and what you
      expect instead:
-     `bees mail send --to developer --pr {{.PR.Number}} --issue {{.Issue.Number}} --subject "Review round {{.Round}}" --body-file <file>`
-     then report `bees done changes-requested`.
+     `mail_send` (`to: developer`, `pr: {{.PR.Number}}`, `issue: {{.Issue.Number}}`,
+     `subject: "Review round {{.Round}}"`) then report `done` (`status: changes-requested`).
    Be specific and actionable; the developer only sees your message, not your reasoning.
 4. Bugs you notice that are unrelated to the PR: file them
-   (`bees issue create --bug --related {{.Issue.Number}} --title "..." --body-file <file>`);
+   (`issue_create` with `bug: true`, `related: {{.Issue.Number}}`);
    do not block the PR on them.
 
 {{if .Size}}Size: this is an `{{.Size}}` change.

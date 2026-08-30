@@ -22,9 +22,9 @@
 ## Instructions
 
 The PR branch is checked out in your working directory. Review the diff, run the tests,
-then either `bees done approved -m "..."` or send your feedback to the developer with
-`bees mail send --to developer --pr {{.PR.Number}} --issue {{.Issue.Number}} ...` and
-`bees done changes-requested`.
+then either report `done` with `status: approved` and a note, or send your feedback to
+the developer with `mail_send` (`to: developer`, `pr: {{.PR.Number}}`,
+`issue: {{.Issue.Number}}`) and report `done` with `status: changes-requested`.
 {{if ge .Round .MaxRounds}}
 This is the final review round. If the PR is still not mergeable, request changes anyway;
 the orchestrator will escalate it to a human.

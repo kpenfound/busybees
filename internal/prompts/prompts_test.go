@@ -40,7 +40,7 @@ func TestRenderAllRoles(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s system: %v", role, err)
 		}
-		for _, want := range []string{"busybees", Title(role), "bees mail send", "bees done", "custom instructions here", "--label \"bees\" --assignee \"kyle\"", "/s/notes/x.md"} {
+		for _, want := range []string{"busybees", Title(role), "`mail_send`", "`done`", "`issue_create`", "custom instructions here", "--label \"bees\" --assignee \"kyle\"", "/s/notes/x.md"} {
 			if !strings.Contains(sys, want) {
 				t.Errorf("%s system prompt missing %q", role, want)
 			}
@@ -67,7 +67,7 @@ func TestRoleSpecifics(t *testing.T) {
 	if !strings.Contains(pjm, "parent feature: #12 Exports") {
 		t.Fatalf("project manager task missing parent: %s", pjm)
 	}
-	if !strings.Contains(dev, "please fix") || !strings.Contains(dev, "bees done pr-updated --pr 9") {
+	if !strings.Contains(dev, "please fix") || !strings.Contains(dev, "`status: pr-updated`, `pr: 9`") {
 		t.Fatalf("developer task: %s", dev)
 	}
 	d := sample()

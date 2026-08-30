@@ -5,7 +5,9 @@
 
 Four commands — `bees mail send`, `bees issue create`, `bees issue link` and
 `bees done` — are designed to be run **by Claude Code sessions** from inside the
-factory (people can use them too). Everything else is for humans.
+factory (people can use them too). Sessions normally reach the same operations as
+MCP tools rather than as commands: `bees mcp serve` serves them, and every session
+gets it automatically. Everything else is for humans.
 
 ## Global flags
 
@@ -350,6 +352,51 @@ bees done changes-requested
 bees done approved -m "Clean implementation, tests cover the edge cases"
 bees done failed -m "Could not get the test-suite to run: missing DATABASE_URL"
 ```
+
+### `bees mcp serve` *(sessions)*
+
+Runs the built-in MCP server on stdio. You never start it yourself: `bees` writes it
+into every session's `mcp.json` as the server named `bees`, and claude starts it as
+`<bees binary> mcp serve` with the session's `BEES_*` variables. The name `bees` is
+reserved — a `[global.mcp.bees]` or `[roles.<role>.mcp.bees]` entry in `bees.toml`
+fails validation.
+
+The server is backed by the same code as the commands above, so a tool and its
+command do exactly the same thing. Claude Code exposes the tools as
+`mcp__bees__<name>`:
+
+| Tool | Arguments | Same as |
+|---|---|---|
+| `mail_send` | `to`, `subject`, `body`, optional `issue`, `pr`, `in_reply_to` | `bees mail send` |
+| `mail_list` | optional `unread`, `issue`, `pr` | `bees mail list --full` |
+| `issue_create` | `title`, `body`, optional `parent`, `related`, `milestone`, `bug`, `feature`, `ready`, `labels` | `bees issue create` |
+| `issue_link` | `parent`, `child` | `bees issue link` |
+| `done` | `status`, optional `note`, `pr`, `issue` | `bees done` |
+
+`issue` and `pr` default to `$BEES_ISSUE`/`$BEES_PR`, so a session rarely passes them.
+The schemas depend on `$BEES_ROLE`: `done`'s `status` enum is exactly the role's valid
+outcomes (a developer sees `pr-opened, pr-updated, question, failed`; a reviewer
+`approved, changes-requested, failed`), and an unknown or empty role gets the full tool
+set with no enum, so the server is usable by hand.
+
+### `bees mcp tools [role]`
+
+Prints the tools a role's session sees, with the enum of every constrained
+parameter — the part that differs between roles:
+
+```
+$ bees mcp tools developer
+mcp__bees__done           Report the session outcome
+    status: pr-opened | pr-updated | question | failed
+mcp__bees__issue_create   Create a factory issue
+mcp__bees__issue_link     Attach an issue to a feature
+mcp__bees__mail_list      Read the mailbox
+mcp__bees__mail_send      Send mail to another role
+    to: product_manager | project_manager | developer | reviewer | qa
+```
+
+Without a role argument it uses `$BEES_ROLE`, and without that it prints the
+unconstrained tool set.
 
 ## Misc
 

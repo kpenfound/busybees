@@ -45,10 +45,11 @@ _No new mail._
 You are on branch `{{.Branch}}`, based on `{{.Project.DefaultBranch}}`.
 {{if .PR -}}
 A pull request already exists. Address the review feedback in your mail, push, update the
-PR description if needed, then `bees done pr-updated --pr {{.PR.Number}}`.
+PR description if needed, then `done` (`status: pr-updated`, `pr: {{.PR.Number}}`).
 {{- else -}}
 Implement the issue, push, open the pull request (body must include
-`Closes #{{.Issue.Number}}`), then `bees done pr-opened --pr <number>`.
+`Closes #{{.Issue.Number}}`), then `done` (`status: pr-opened`, `pr: <number>`).
 {{- end}}
-If you must ask the project manager something first, send the mail and `bees done question`.
+If you must ask the project manager something first, send the mail and report `done`
+with `status: question`.
 Update your notes file before you finish.
