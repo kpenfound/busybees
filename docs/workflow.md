@@ -57,7 +57,9 @@ assignee, if one is configured) so it stays visible. The role prompts require
 it, and the orchestrator backstops it: after every session it lists the
 issues and PRs the account created since the session started and adds the
 base label (and assignee) to anything carrying a `bees:*` label that lacks
-them.
+them — plus, on pull requests, the configured milestone. Issues never get a
+milestone from a bee; that is a person's decision, and an issue `bees issue
+create` makes inherits one from the issue it relates to.
 
 The typical solo setup is "label only": put `bees` on an issue and the factory
 picks it up. In a shared repository where one person wants busybees to handle

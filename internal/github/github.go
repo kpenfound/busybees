@@ -730,6 +730,15 @@ type Created struct {
 	IsPR      bool
 	Labels    []Label
 	Assignees []Author
+	Milestone *MilestoneRef
+}
+
+// MilestoneTitle returns the milestone title or "".
+func (c Created) MilestoneTitle() string {
+	if c.Milestone == nil {
+		return ""
+	}
+	return c.Milestone.Title
 }
 
 // ListCreatedSince returns issues and PRs authored by the gh user at or
@@ -738,7 +747,7 @@ type Created struct {
 func (c *Client) ListCreatedSince(ctx context.Context, t time.Time) ([]Created, error) {
 	search := fmt.Sprintf("author:@me created:>=%s", t.UTC().Add(-time.Minute).Format("2006-01-02T15:04:05Z"))
 	var out []Created
-	issuesOut, err := c.Exec(ctx, "issue", "list", "-R", c.Repo, "--state", "all", "--search", search, "--limit", "50", "--json", "number,labels,assignees,createdAt")
+	issuesOut, err := c.Exec(ctx, "issue", "list", "-R", c.Repo, "--state", "all", "--search", search, "--limit", "50", "--json", "number,labels,assignees,milestone,createdAt")
 	if err != nil {
 		return nil, err
 	}
@@ -748,10 +757,10 @@ func (c *Client) ListCreatedSince(ctx context.Context, t time.Time) ([]Created, 
 	}
 	for _, i := range issues {
 		if !i.CreatedAt.Before(t.Add(-time.Minute)) {
-			out = append(out, Created{Number: i.Number, Labels: i.Labels, Assignees: i.Assignees})
+			out = append(out, Created{Number: i.Number, Labels: i.Labels, Assignees: i.Assignees, Milestone: i.Milestone})
 		}
 	}
-	prsOut, err := c.Exec(ctx, "pr", "list", "-R", c.Repo, "--state", "all", "--search", search, "--limit", "50", "--json", "number,labels,assignees,createdAt")
+	prsOut, err := c.Exec(ctx, "pr", "list", "-R", c.Repo, "--state", "all", "--search", search, "--limit", "50", "--json", "number,labels,assignees,milestone,createdAt")
 	if err != nil {
 		return nil, err
 	}
@@ -761,7 +770,7 @@ func (c *Client) ListCreatedSince(ctx context.Context, t time.Time) ([]Created, 
 	}
 	for _, p := range prs {
 		if !p.CreatedAt.Before(t.Add(-time.Minute)) {
-			out = append(out, Created{Number: p.Number, IsPR: true, Labels: p.Labels, Assignees: p.Assignees})
+			out = append(out, Created{Number: p.Number, IsPR: true, Labels: p.Labels, Assignees: p.Assignees, Milestone: p.Milestone})
 		}
 	}
 	return out, nil

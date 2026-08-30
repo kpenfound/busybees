@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -238,5 +239,50 @@ func TestSetMilestone(t *testing.T) {
 	}
 	if len(calls) != 0 {
 		t.Fatalf("empty milestone called gh: %v", calls)
+	}
+}
+
+// The visibility backstop needs the milestone of everything the account
+// created, so both listings must ask gh for it — a field missing from
+// --json is silently absent from the JSON, not an error.
+func TestListCreatedSinceReadsTheMilestone(t *testing.T) {
+	c := New("a/b")
+	since := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	var fields []string
+	c.Exec = func(ctx context.Context, args ...string) ([]byte, error) {
+		i := slices.Index(args, "--json")
+		if i < 0 || i+1 >= len(args) {
+			return nil, fmt.Errorf("no --json in %v", args)
+		}
+		fields = append(fields, args[i+1])
+		if args[0] == "issue" {
+			return json.Marshal([]Issue{{Number: 1, CreatedAt: since.Add(time.Minute),
+				Milestone: &MilestoneRef{Title: "v0.2.0"}}})
+		}
+		return json.Marshal([]PR{{Number: 2, CreatedAt: since.Add(time.Minute),
+			Milestone: &MilestoneRef{Title: "v0.1.0"}}})
+	}
+
+	created, err := c.ListCreatedSince(context.Background(), since)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range fields {
+		if !strings.Contains(f, "milestone") {
+			t.Errorf("--json %q does not ask for the milestone", f)
+		}
+	}
+	if len(created) != 2 {
+		t.Fatalf("created: %v", created)
+	}
+	if got := created[0].MilestoneTitle(); got != "v0.2.0" {
+		t.Errorf("issue milestone: %q", got)
+	}
+	if got := created[1].MilestoneTitle(); got != "v0.1.0" {
+		t.Errorf("pr milestone: %q", got)
+	}
+	// An item in no milestone reports "" rather than panicking.
+	if got := (Created{}).MilestoneTitle(); got != "" {
+		t.Errorf("no milestone: %q", got)
 	}
 }

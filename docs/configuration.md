@@ -267,7 +267,7 @@ frugal:
 | Product-manager run | 1 `issue view` per open feedback/feature issue, plus 1 REST call per open feature (sub-issue progress) | every PM run (not gated by `updatedAt`) |
 | QA merged-PR check | 1 call | at most once per `qa_interval` |
 | Required checks (auto-merge) | 1 call per poll of the checks stage | every `roles.reviewer.checks_poll_interval` while waiting |
-| Label backstop | 2 list calls | after every session |
+| Visibility backstop | 2 list calls | after every session |
 | Feature progress | 1 REST call per open feature issue (`sub_issues_summary`) | per product manager run |
 | Parent feature lookup | 1 GraphQL call per triage item, and 1 per developer session | per project manager run / developer session |
 | `bees issue create --parent` | 3 calls (parent details, create, attach as sub-issue); `--related` 2; plain 1 | whenever a role files an issue |
