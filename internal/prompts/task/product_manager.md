@@ -117,15 +117,19 @@ _No new mail._
 {{template "consolidate" .}}
 ## Instructions
 
-1. Act on every feedback issue listed above and reply on it (with the marker).
+1. Act on every feedback issue listed above and reply on it with `comment`.
 2. For every feature issue needing you: make it detailed enough, ask the person if you
    must (comment + `{{.Labels.Question}}`), otherwise break it into work items and comment
    the list on the feature issue. The proposals listed above are the exception: refine
    them and ask questions on them, but leave them as they are until a person removes the
    `{{.Labels.Proposal}}` label.
 3. Reply to every question in your mail.
-4. Review the backlog against the vision and the milestones people have set. Create or
-   adjust feature issues as needed; close feature issues whose sub-issues are all done.
-   Keep the backlog healthy but small.
-5. Update your notes file.
-6. `done` with `status: done` and a note, or `status: idle`.
+4. Check the feature tree: every open work item above should be a sub-issue of a
+   feature, and every feature whose sub-issues are all closed should be closed. Attach
+   what is loose with `issue_link`; close what is done.
+5. Review the backlog against the vision and the milestones people have set, and create
+   or adjust feature issues where the roadmap has a real gap. Keep the backlog healthy
+   but small.
+6. Update your notes file.
+7. `done` with `status: done` and a note, or `status: idle` when steps 1-5 found nothing
+   to do (`failed`, with a note, if you could not run the pass at all).
