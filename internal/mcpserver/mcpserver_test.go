@@ -215,7 +215,9 @@ func TestDoneWritesTheOutcome(t *testing.T) {
 
 func TestDoneRejectsAStatusTheRoleMayNotReport(t *testing.T) {
 	h := newHarness(t, config.RoleReviewer, Deps{})
-	// The enum keeps the model honest, but the handler validates too.
+	// The advertised enum is what rejects this: the SDK validates the input
+	// against the schema before the handler runs. The handler's own check is
+	// covered directly by session.ValidateOutcome's tests.
 	res := h.callRaw("done", map[string]any{"status": "pr-opened"})
 	if !res.IsError {
 		t.Fatal("want an error result")

@@ -36,6 +36,9 @@ func Connect(ctx context.Context, env Env, deps Deps) (*mcp.ClientSession, *mcp.
 	}
 	c, err := mcp.NewClient(&mcp.Implementation{Name: "bees-cli", Version: Version}, nil).Connect(ctx, clientT, nil)
 	if err != nil {
+		// Close before waiting: nothing will ever close the server session
+		// from the other end.
+		_ = srv.Close()
 		_ = srv.Wait()
 		return nil, nil, err
 	}
