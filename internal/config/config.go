@@ -19,6 +19,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -292,6 +293,9 @@ type RoleSettings struct {
 	// MaxSize is the largest work item size a developer takes ("xs".."xl").
 	// A ready issue sized above it is sent back to triage to be split.
 	MaxSize string `toml:"max_size"`
+	// ModelBySize picks the model per work item size, keyed by "xs".."xl".
+	// A size with no entry uses Model.
+	ModelBySize map[string]string `toml:"model_by_size"`
 
 	// The following keys are only valid under [roles.reviewer].
 
@@ -672,11 +676,13 @@ func parseClock(s string) (int, error) {
 // ResolvedRole is the effective configuration for one role after merging
 // [global] and [roles.<name>].
 type ResolvedRole struct {
-	Name            string
-	Prompt          string // global prompt + role prompt (+ prompt files)
-	Skills          []string
-	MCP             map[string]MCPServer
-	Model           string
+	Name   string
+	Prompt string // global prompt + role prompt (+ prompt files)
+	Skills []string
+	MCP    map[string]MCPServer
+	Model  string
+	// ModelBySize overrides Model per work item size; developer only.
+	ModelBySize     map[string]string
 	FallbackModel   string
 	Effort          string
 	MaxTurns        int
@@ -988,11 +994,19 @@ func (c *Config) Validate() error {
 		} else if _, _, err := parseSkillsRefresh(rs.SkillsRefresh); err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", scope, err))
 		}
-		if scope != "roles."+RoleDeveloper && (rs.CommitFlags != "" || rs.MaxSize != "") {
-			errs = append(errs, fmt.Sprintf("%s: commit_flags and max_size are only valid under roles.developer", scope))
+		if scope != "roles."+RoleDeveloper && (rs.CommitFlags != "" || rs.MaxSize != "" || len(rs.ModelBySize) > 0) {
+			errs = append(errs, fmt.Sprintf("%s: commit_flags, max_size and model_by_size are only valid under roles.developer", scope))
 		}
 		if rs.MaxSize != "" && !slices.Contains(Sizes, rs.MaxSize) {
 			errs = append(errs, fmt.Sprintf("%s.max_size must be one of %s", scope, strings.Join(Sizes, ", ")))
+		}
+		for _, size := range slices.Sorted(maps.Keys(rs.ModelBySize)) {
+			switch {
+			case !slices.Contains(Sizes, size):
+				errs = append(errs, fmt.Sprintf("%s.model_by_size: unknown size %q (want one of %s)", scope, size, strings.Join(Sizes, ", ")))
+			case strings.TrimSpace(rs.ModelBySize[size]) == "":
+				errs = append(errs, fmt.Sprintf("%s.model_by_size.%s must name a model", scope, size))
+			}
 		}
 		switch rs.MergeMethod {
 		case "", "squash", "merge", "rebase":
@@ -1073,6 +1087,7 @@ func (c *Config) Role(name string) (ResolvedRole, error) {
 	r := ResolvedRole{
 		Name:          canonical,
 		Model:         firstNonEmpty(rs.Model, g.Model, DefaultModel),
+		ModelBySize:   sizeModels(rs.ModelBySize),
 		FallbackModel: firstNonEmpty(rs.FallbackModel, g.FallbackModel, DefaultFallbackModel),
 		Effort:        firstNonEmpty(rs.Effort, g.Effort),
 		MaxTurns:      firstPositive(rs.MaxTurns, g.MaxTurns, DefaultMaxTurns),
@@ -1143,6 +1158,29 @@ func (r ResolvedRole) MCPNames() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// ModelFor returns the model to run a work item of the given size with: the
+// model_by_size override when there is one, else the role's Model. An empty or
+// unknown size falls back to Model.
+func (r ResolvedRole) ModelFor(size string) string {
+	return firstNonEmpty(r.ModelBySize[size], r.Model)
+}
+
+// sizeModels copies a model_by_size table, trimming the model names and
+// dropping empty entries. It returns nil for an empty table.
+func sizeModels(m map[string]string) map[string]string {
+	var out map[string]string
+	for size, model := range m {
+		if model = strings.TrimSpace(model); model == "" {
+			continue
+		}
+		if out == nil {
+			out = make(map[string]string, len(m))
+		}
+		out[size] = model
+	}
+	return out
 }
 
 func firstNonEmpty(vals ...string) string {

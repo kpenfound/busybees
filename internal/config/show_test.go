@@ -50,6 +50,7 @@ checks_wait = "5s"
 [roles.developer]
 commit_flags = "-S"
 max_size = "m"
+model_by_size = { xs = "haiku" }
 `
 
 func TestViewIncludesRoleSpecificKeys(t *testing.T) {
@@ -76,10 +77,13 @@ func TestViewIncludesRoleSpecificKeys(t *testing.T) {
 	if got := dev["max_size"]; got != "m" {
 		t.Errorf("developer max_size: got %#v want %q", got, "m")
 	}
+	if got := dev["model_by_size"]; !reflect.DeepEqual(got, map[string]any{"xs": "haiku"}) {
+		t.Errorf("developer model_by_size: got %#v want %v", got, map[string]any{"xs": "haiku"})
+	}
 
 	// Nobody else carries them.
-	devOnly := map[string]bool{"commit_flags": true, "max_size": true}
-	own := []string{"commit_flags", "max_size", "auto_merge", "merge_method", "checks_wait",
+	devOnly := map[string]bool{"commit_flags": true, "max_size": true, "model_by_size": true}
+	own := []string{"commit_flags", "max_size", "model_by_size", "auto_merge", "merge_method", "checks_wait",
 		"checks_poll_interval", "checks_timeout", "max_check_fix_rounds"}
 	for _, r := range Roles {
 		for _, k := range own {
