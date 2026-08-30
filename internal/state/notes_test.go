@@ -60,7 +60,7 @@ func TestArchiveNotes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fresh != "# qa notes\n\n" {
+	if fresh != NotesSkeleton("qa") {
 		t.Errorf("notes after reset = %q, want a fresh file", fresh)
 	}
 }
@@ -89,7 +89,7 @@ func TestAppendNotes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "# developer notes\n\n" + "\n- always run dagger check\n"
+	want := NotesSkeleton("developer") + "\n- always run dagger check\n"
 	if got != want {
 		t.Fatalf("notes = %q, want %q", got, want)
 	}

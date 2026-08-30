@@ -133,7 +133,7 @@ func TestClaudeBin(t *testing.T) {
 // command: a group that only printed its help and exited 0 left a session
 // with no way to tell its command had not run (#83).
 func TestUnknownSubcommandIsAnError(t *testing.T) {
-	for _, group := range []string{"config", "prompts", "mail", "issue", "labels", "skills", "mcp"} {
+	for _, group := range []string{"config", "prompts", "mail", "issue", "labels", "skills", "mcp", "notes"} {
 		err := runRoot(t, group, "bogus")
 		want := `unknown command "bogus" for "bees ` + group + `"`
 		if err == nil || !strings.Contains(err.Error(), want) {
