@@ -149,6 +149,11 @@ func TestSetConsoleReachesDerivedLoggers(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = lg.Close() })
 
+	// Write once first, so the derived handler has cached its children: the
+	// replacement only reaches it if SetConsole invalidates them.
+	worker.Info("before")
+	buf.Reset()
+
 	lg.SetConsole(Options{Format: FormatJSON})
 	worker.Info("after")
 
@@ -159,7 +164,7 @@ func TestSetConsoleReachesDerivedLoggers(t *testing.T) {
 	if recs[0]["k"] != "v" || recs[0]["msg"] != "after" {
 		t.Errorf("console record: %v", recs[0])
 	}
-	if recs := decode(t, read(t, path)); len(recs) != 1 || recs[0]["k"] != "v" {
+	if recs := decode(t, read(t, path)); len(recs) != 2 || recs[1]["k"] != "v" || recs[1]["msg"] != "after" {
 		t.Errorf("file lost the record: %q", read(t, path))
 	}
 }

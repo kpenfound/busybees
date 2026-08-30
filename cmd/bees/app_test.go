@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,5 +40,37 @@ func TestAttachLogFileWarnsAndCarriesOn(t *testing.T) {
 	}
 	if !strings.Contains(lines[1], "polled github") {
 		t.Errorf("console stopped working: %q", lines[1])
+	}
+}
+
+// loadConfig applies bees.toml's [logging] table to the console logger the
+// flags built, for every command that reads the file.
+func TestLoadConfigAppliesTheLoggingTable(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bees.toml")
+	body := "version = 1\n[project]\nrepo = \"a/b\"\ndefault_branch = \"main\"\n" +
+		"[logging]\nformat = \"json\"\nlevel = \"warn\"\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	g := &globalFlags{config: path}
+	g.logger = logging.New(logging.Options{Format: logging.FormatText, Level: slog.LevelInfo, Console: &buf})
+	t.Cleanup(func() { _ = g.logger.Close() })
+	g.console = consoleFlags{format: logging.FormatText, level: slog.LevelInfo}
+
+	// Resolve needs a git clone, so loadConfig fails here — but [logging] has
+	// been applied by then, which is the point.
+	_, _ = loadConfig(g)
+
+	g.logger.Info("dropped by the file level")
+	g.logger.Warn("kept")
+	out := strings.TrimSpace(buf.String())
+	if strings.Contains(out, "dropped") {
+		t.Errorf("logging.level ignored: %q", out)
+	}
+	if !strings.HasPrefix(out, "{") {
+		t.Errorf("logging.format ignored: %q", out)
 	}
 }

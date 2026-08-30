@@ -16,12 +16,13 @@ gets it automatically. Everything else is for humans.
 | `-c, --config <path>` | Path to `bees.toml`. Default: `$BEES_CONFIG`, else search upwards from cwd. |
 | `-v, --verbose` | Debug logging (same as `--log-level debug`). With `run`/`tick`/`exec`, also streams every claude event to stderr. |
 | `-q, --quiet` | Console shows only session summaries, warnings and errors. Cannot be combined with `-v` or `--log-level debug`. |
-| `--log-format <text\|json>` | Console log format. Default `text`; `$BEES_LOG_FORMAT`. |
-| `--log-level <debug\|info\|warn\|error>` | Console log level. Default `info`; `$BEES_LOG_LEVEL`. |
+| `--log-format <text\|json>` | Console log format. Default `text`; `$BEES_LOG_FORMAT`, then [`logging.format`](configuration.md#logging). |
+| `--log-level <debug\|info\|warn\|error>` | Console log level. Default `info`; `$BEES_LOG_LEVEL`, then [`logging.level`](configuration.md#logging). |
 | `-h, --help` | Help for any command. |
 
-A flag beats its environment variable, and an unknown value is an error naming
-the valid ones.
+A flag beats its environment variable, which beats the [`[logging]`
+table](configuration.md#logging) in `bees.toml`, which beats the default. An
+unknown value is an error naming the valid ones.
 
 ## Setting up
 
@@ -341,7 +342,10 @@ service can run the factory and still see what it did.
 
 `run`, `tick` and `exec` also write every record — at debug level, whatever the
 console flags say — as JSON to `<state_dir>/bees.log`. It rotates in place at
-10 MiB into `bees.log.1` and `bees.log.2`; older generations are dropped.
+10 MiB into `bees.log.1` and `bees.log.2`; older generations are dropped. The
+log file is a diagnostic, never a reason not to start: if it cannot be opened
+(a read-only or full state directory) the run continues with console logging
+only, after one warning naming the path and the reason.
 
 ### `bees tick [--roles a,b]`
 
