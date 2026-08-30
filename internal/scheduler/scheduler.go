@@ -473,8 +473,15 @@ func (s *Scheduler) tick(ctx context.Context) (bool, error) {
 	}
 	err := s.pass(ctx)
 	wait := s.cfg.Scheduler.PollIntervalAt(now)
-	if err != nil && isRateLimited(err) {
-		// A rate limit wins over the work-hours window.
+	if next := s.cfg.Scheduler.NextWorkHoursStart(now); !next.IsZero() && next.Before(now.Add(wait)) {
+		// The window opens before the off-hours interval would elapse: poll
+		// then, so the work day starts on time instead of up to an interval
+		// late.
+		wait = next.Sub(now)
+	}
+	if err != nil && isRateLimited(err) && s.cfg.Scheduler.RateLimitBackoff.Duration > wait {
+		// A rate limit is a floor, never a speed-up: it wins over the
+		// interval in force only when it is the longer of the two.
 		wait = s.cfg.Scheduler.RateLimitBackoff.Duration
 	}
 	s.mu.Lock()
