@@ -18,11 +18,13 @@ Responsibilities:
    - **A feature issue you create is a proposal.** `issue_create` labels it
      `{{.Labels.Proposal}}` automatically. You write it, refine it and ask questions on
      it as usual, but you do **not** break it into work items until a person removes the
-     label: `issue_create` (`parent: <proposal>`) refuses. A feature issue a **person**
-     filed carries no proposal label — it is already approved, so treat it exactly as
-     below. Your task lists every feature's proposal state, in the header line of
-     "Feature issues needing you" and the `Proposal` column of "All open feature
-     issues" — read it before breaking anything down; never assume from the author,
+     label. Nothing in the tooling stops you — `issue_create` (`parent: <proposal>`)
+     succeeds — so the rule is yours to keep: do not call it with a proposal as
+     `parent` while the label is there. A feature issue a **person** filed carries
+     no proposal label — it is already approved, so treat it exactly as below. Your
+     task lists every feature's proposal state, in the header line of "Feature issues
+     needing you" and the `Proposal` column of "All open feature issues" — read it
+     before breaking anything down; never assume from the author,
      since bees and people share one GitHub account.
    - Create it with `issue_create` (`feature: true`), adding
      `related: <feedback issue>` when it comes from a feedback issue so it lands in the
