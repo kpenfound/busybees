@@ -354,3 +354,55 @@ func TestMigrateChain(t *testing.T) {
 		t.Fatalf("missing step: %v", err)
 	}
 }
+
+func TestSkillsRefresh(t *testing.T) {
+	for _, c := range []struct {
+		value  string
+		always bool
+		after  time.Duration
+	}{
+		{"", false, 24 * time.Hour},
+		{"never", false, 0},
+		{"always", true, 0},
+		{"12h", false, 12 * time.Hour},
+		{"0s", false, 0},
+	} {
+		body := "version = 1\n[project]\nrepo = \"a/b\"\n[global]\n"
+		if c.value != "" {
+			body += "skills_refresh = \"" + c.value + "\"\n"
+		}
+		cfg, err := Load(writeConfig(t, body))
+		if err != nil {
+			t.Fatalf("%q: %v", c.value, err)
+		}
+		always, after := cfg.SkillsRefresh()
+		if always != c.always || after != c.after {
+			t.Errorf("%q: got always=%v after=%v", c.value, always, after)
+		}
+	}
+
+	for _, bad := range []string{"soon", "-1h", "24"} {
+		_, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[global]\nskills_refresh = \""+bad+"\"\n"))
+		if err == nil {
+			t.Fatalf("%q: expected an error", bad)
+		}
+		if !strings.Contains(err.Error(), `"never"`) || !strings.Contains(err.Error(), `"always"`) || !strings.Contains(err.Error(), "duration") {
+			t.Errorf("%q: unhelpful error: %v", bad, err)
+		}
+	}
+
+	_, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nskills_refresh = \"1h\"\n"))
+	if err == nil || !strings.Contains(err.Error(), "skills_refresh is only valid under global") {
+		t.Fatalf("roles.developer.skills_refresh: %v", err)
+	}
+}
+
+func TestSkillsRefreshPolicy(t *testing.T) {
+	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.SkillsRefreshPolicy(); got != DefaultSkillsRefresh {
+		t.Fatalf("policy %q", got)
+	}
+}

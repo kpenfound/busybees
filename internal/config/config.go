@@ -84,6 +84,7 @@ const (
 	DefaultPMInterval    = time.Hour
 	DefaultQAInterval    = 30 * time.Minute
 	DefaultTriageBatch   = 5
+	DefaultSkillsRefresh = "24h"
 )
 
 // Duration is a time.Duration that unmarshals from TOML strings like "30m".
@@ -228,6 +229,12 @@ type RoleSettings struct {
 	// global ones with the same name.
 	Env map[string]string `toml:"env"`
 
+	// The following key is only valid under [global].
+
+	// SkillsRefresh is how stale a skill clone may get before it is pulled
+	// when a session needs it: "never", "always" or a duration ("24h").
+	SkillsRefresh string `toml:"skills_refresh"`
+
 	// The following key is only valid under [roles.developer].
 
 	// CommitFlags are extra flags the developer passes to every `git commit`,
@@ -273,6 +280,39 @@ const (
 	DefaultChecksTimeout     = 30 * time.Minute
 	DefaultMaxCheckFixRounds = 2
 )
+
+// SkillsRefresh returns the skill refresh policy from [global]: always is
+// true for "always", after is 0 for "never" and the parsed duration
+// otherwise. Validate has already rejected anything else.
+func (c *Config) SkillsRefresh() (always bool, after time.Duration) {
+	always, after, _ = parseSkillsRefresh(c.Global.SkillsRefresh)
+	return always, after
+}
+
+// SkillsRefreshPolicy returns the policy as it is written in bees.toml.
+func (c *Config) SkillsRefreshPolicy() string {
+	if strings.TrimSpace(c.Global.SkillsRefresh) == "" {
+		return DefaultSkillsRefresh
+	}
+	return strings.TrimSpace(c.Global.SkillsRefresh)
+}
+
+func parseSkillsRefresh(v string) (always bool, after time.Duration, err error) {
+	switch s := strings.TrimSpace(v); s {
+	case "":
+		return parseSkillsRefresh(DefaultSkillsRefresh)
+	case "never":
+		return false, 0, nil
+	case "always":
+		return true, 0, nil
+	default:
+		d, err := time.ParseDuration(s)
+		if err != nil || d < 0 {
+			return false, 0, fmt.Errorf("skills_refresh %q must be \"never\", \"always\" or a duration >= 0 such as \"24h\"", s)
+		}
+		return false, d, nil
+	}
+}
 
 // CommitFlags returns the developer's extra git commit flags.
 func (c *Config) CommitFlags() string { return strings.TrimSpace(c.Roles[RoleDeveloper].CommitFlags) }
@@ -529,6 +569,9 @@ func (c *Config) applyDefaults() {
 	if c.Scheduler.TriageBatchSize == 0 {
 		c.Scheduler.TriageBatchSize = DefaultTriageBatch
 	}
+	if c.Global.SkillsRefresh == "" {
+		c.Global.SkillsRefresh = DefaultSkillsRefresh
+	}
 	if c.Roles == nil {
 		c.Roles = map[string]RoleSettings{}
 	}
@@ -565,6 +608,11 @@ func (c *Config) Validate() error {
 			if rs.AutoMerge != nil || rs.MergeMethod != "" || rs.ChecksWait.Duration != 0 || rs.ChecksPollInterval.Duration != 0 || rs.ChecksTimeout.Duration != 0 || rs.MaxCheckFixRounds != 0 {
 				errs = append(errs, fmt.Sprintf("%s: auto_merge, merge_method, checks_wait, checks_poll_interval, checks_timeout and max_check_fix_rounds are only valid under roles.reviewer", scope))
 			}
+		}
+		if scope != "global" && rs.SkillsRefresh != "" {
+			errs = append(errs, fmt.Sprintf("%s: skills_refresh is only valid under global", scope))
+		} else if _, _, err := parseSkillsRefresh(rs.SkillsRefresh); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", scope, err))
 		}
 		if scope != "roles."+RoleDeveloper && rs.CommitFlags != "" {
 			errs = append(errs, fmt.Sprintf("%s: commit_flags is only valid under roles.developer", scope))
