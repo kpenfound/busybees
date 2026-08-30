@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -331,4 +333,39 @@ func TestSkillsManagerUsesTheSharedCache(t *testing.T) {
 	if f.Skills.CacheDir != skills.CacheDir() || f.Skills.CacheDir != dir {
 		t.Errorf("skills cache %q, want the shared one %q", f.Skills.CacheDir, dir)
 	}
+}
+
+// TestRoleHTTPMCPServer covers the http transport and the configured headers:
+// the server answers only when the header the configuration carries is there,
+// so a probe that dropped them would fail.
+func TestRoleHTTPMCPServer(t *testing.T) {
+	const token = "s3cret"
+	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
+		return mcp.NewServer(&mcp.Implementation{Name: "fake", Version: "1"}, nil)
+	}, nil)
+	var sawHeader bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Token") != token {
+			http.Error(w, "no token", http.StatusUnauthorized)
+			return
+		}
+		sawHeader = true
+		handler.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+
+	f := setupRoles(t, fmt.Sprintf("[roles.developer.mcp.remote]\ntype = \"http\"\nurl = %q\nheaders = { X-Token = %q }\n",
+		srv.URL, token), nil)
+	role, err := f.Config.Role(config.RoleDeveloper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantResult(t, f.run(t, f.checkRoleMCP(role)), Pass, "remote")
+	if !sawHeader {
+		t.Error("the probe must send the configured headers")
+	}
+
+	// And an endpoint nobody is listening on is a failure naming the server.
+	srv.Close()
+	wantResult(t, f.run(t, f.checkRoleMCP(role)), Fail, "remote")
 }

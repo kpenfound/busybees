@@ -146,10 +146,10 @@ workspace
   ✓ worktree                    created and removed one under /tmp/bees
 
 roles
-  ✓ product manager             enabled, no skills, MCP servers or shell configured
-  ✓ project manager             enabled, no skills, MCP servers or shell configured
+  ✓ product_manager             enabled, no skills, MCP servers or shell configured
+  ✓ project_manager             enabled, no skills, MCP servers or shell configured
   ✓ developer skills            1 skill ready: https://github.com/acme/skills#skills/tdd
-  ✗ developer mcp               sentry: exec: "sentry-mcp": executable file not found in $PATH
+  ✗ developer mcp               sentry: fork/exec /opt/sentry-mcp: no such file or directory
       → start the server by hand or fix [roles.developer.mcp] in /home/kyle/src/proj/bees.toml: a session that cannot reach it loses those tools
   ✓ reviewer                    enabled, no skills, MCP servers or shell configured
   ✓ qa                          disabled (roles.qa.enabled = false)
