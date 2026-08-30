@@ -1720,3 +1720,57 @@ func TestProductManagerSeesEachWorkItemsParent(t *testing.T) {
 		t.Errorf("loose work item #2 should show - for its parent:\n%s", prompt)
 	}
 }
+
+// TestQAReceivesHumanMail: `bees mail send --from human --to qa` is a
+// documented channel, and until #199 runQA built its session with no Inbox at
+// all, so a message sat unread forever. The message reaches the next QA
+// session — QA runs on its interval, so "next" is whenever that is — and is
+// marked read there, which is what keeps the following session's mail section
+// empty.
+func TestQAReceivesHumanMail(t *testing.T) {
+	h := newHarnessAt(t, baseTOML+"\n[roles.developer]\nenabled = false\n[roles.project_manager]\nenabled = false\n[roles.product_manager]\nenabled = false\n", time.Now())
+	merged := h.clock.now().Add(-time.Minute)
+	h.gh.prs[300] = &github.PR{Number: 300, Title: "Merged", State: "MERGED", HeadRefName: "bees/issue-9",
+		Labels: []github.Label{{Name: "bees"}}, MergedAt: &merged}
+	if _, err := h.box.Send(mail.Message{From: HumanSender, To: config.RoleQA,
+		Subject: "Focus", Body: "test the mail commands by hand this time"}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if err := h.sched.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	qa := h.sessions(config.RoleQA)
+	if len(qa) != 1 {
+		t.Fatalf("qa sessions: %d", len(qa))
+	}
+	first, _ := os.ReadFile(filepath.Join(qa[0], "prompt.md"))
+	for _, want := range []string{"## Mail for you (1)", "test the mail commands by hand this time"} {
+		if !strings.Contains(string(first), want) {
+			t.Errorf("the qa session is missing %q:\n%s", want, first)
+		}
+	}
+	if unread, _ := h.box.List(mail.Filter{To: config.RoleQA, UnreadOnly: true}); len(unread) != 0 {
+		t.Errorf("qa mail left unread: %+v", unread)
+	}
+	// The next run, once the interval has passed and something else merged,
+	// is not told the same thing again.
+	next := h.clock.now().Add(time.Hour)
+	h.gh.prs[300].MergedAt = &next
+	h.clock.advance(2 * time.Hour)
+	forcePoll(h)
+	if err := h.sched.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if qa = h.sessions(config.RoleQA); len(qa) != 2 {
+		t.Fatalf("qa sessions after the second pass: %d", len(qa))
+	}
+	second, _ := os.ReadFile(filepath.Join(qa[1], "prompt.md"))
+	if strings.Contains(string(second), "test the mail commands by hand this time") {
+		t.Errorf("the message was delivered twice:\n%s", second)
+	}
+	if !strings.Contains(string(second), "## Mail for you (0)") || !strings.Contains(string(second), "_No new mail._") {
+		t.Errorf("the second qa session has no empty mail section:\n%s", second)
+	}
+}
