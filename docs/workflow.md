@@ -117,7 +117,7 @@ stateDiagram-v2
 | `bees:approved` | Reviewer approved; waiting for a human to merge (or, with `roles.reviewer.auto_merge`, for required checks) | Orchestrator (also put on the PR) |
 | `bees:needs-human` | The factory gave up on it | Orchestrator |
 
-Three more labels sit **outside** the state machine; issues carrying them
+Four more labels sit **outside** the state machine; issues carrying them
 never get a state label and are never triaged:
 
 | Label | Meaning | Who sets it |
@@ -125,6 +125,7 @@ never get a state label and are never triaged:
 | `bees:feature` | A feature issue: owned by the product manager, which makes it detailed enough and breaks it into work items | Product manager, humans |
 | `bees:feedback` | The product manager's inbox: an idea, product feedback or a bug report from a person | Humans |
 | `bees:question` | The product manager is waiting for a person to answer on a feature or feedback issue | Product manager (removed by the orchestrator when the person replies) |
+| `bees:proposal` | A feature issue a bee wrote rather than a person; it sits next to `bees:feature`, and a person removes the label to approve it | `bees issue create --feature` (removed by a person) |
 
 `bees:bug` is a **kind label** on a work item (a bug filed by the developer,
 reviewer, QA or a human) and travels through the state machine like any other

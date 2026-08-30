@@ -83,7 +83,8 @@ func Create(ctx context.Context, gh *github.Client, filter config.Filter, labels
 	n := github.NewIssue{Title: opts.Title, Body: blockedByBody(opts.BlockedBy, opts.Body), Labels: []string{labels.Base}}
 	switch opts.Kind {
 	case KindFeature:
-		n.Labels = append(n.Labels, labels.Feature)
+		// A bee proposes; a person approves by removing bees:proposal.
+		n.Labels = append(n.Labels, labels.Feature, labels.Proposal)
 	case KindBug:
 		n.Labels = append(n.Labels, labels.Bug, state(labels, opts.Ready))
 	case KindTask, "":

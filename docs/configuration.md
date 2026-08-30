@@ -115,6 +115,7 @@ and `bees labels sync` create them in GitHub.
 | `bees:bug` | Bug work item (filed by the developer, reviewer, QA or a human) |
 | `bees:feedback` | Feature idea, product feedback or bug report for the product manager (outside the state machine) |
 | `bees:question` | The product manager is waiting for a person to answer on a feature or feedback issue; removed by the orchestrator when they reply |
+| `bees:proposal` | A feature issue a bee wrote; it sits next to `bees:feature`, and a person removes the label to approve it |
 | `bees:triage` | Needs refinement by the project manager |
 | `bees:ready` | Detailed enough for a developer to pick up |
 | `bees:in-progress` | A developer worker owns it |
