@@ -8,6 +8,7 @@ import (
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/mail"
+	"github.com/kpenfound/busybees/internal/session"
 )
 
 func sample() Data {
@@ -230,8 +231,107 @@ func TestManagerPromptsDescribeSizes(t *testing.T) {
 		}
 	}
 	pm, _ := System(config.RoleProductManager, sample(), "")
-	if !strings.Contains(pm, `--label "bees:size/s"`) {
-		t.Errorf("product manager prompt should show pre-sizing:\n%s", pm)
+	// Pre-sizing goes through issue_create's `labels` list, not a CLI flag:
+	// the tool has no --label (internal/mcpserver/tools.go, issueCreateInput).
+	if !strings.Contains(pm, `labels: ["bees:size/s"]`) {
+		t.Errorf("product manager prompt should show pre-sizing through the tool:\n%s", pm)
+	}
+	if strings.Contains(pm, `--label "bees:size/`) {
+		t.Errorf("product manager prompt still passes a size as a CLI flag:\n%s", pm)
+	}
+}
+
+// The product manager may report every status the done tool offers it, and no
+// other. The prompt is where a session learns them, so the two must not drift:
+// internal/session owns the enum.
+func TestProductManagerPromptListsEveryOutcome(t *testing.T) {
+	pm, err := System(config.RoleProductManager, sample(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, statuses, ok := strings.Cut(pm, "Outcome statuses:")
+	if !ok {
+		t.Fatalf("product manager prompt has no outcome statuses line:\n%s", pm)
+	}
+	for _, want := range session.ValidOutcomes(config.RoleProductManager) {
+		if !strings.Contains(statuses, "`"+want+"`") {
+			t.Errorf("product manager prompt does not offer the %q outcome:\n%s", want, statuses)
+		}
+	}
+	for _, other := range []string{"pr-opened", "pr-updated", "question", "approved", "changes-requested"} {
+		if strings.Contains(statuses, "`"+other+"`") {
+			t.Errorf("product manager prompt offers %q, which is another role's outcome:\n%s", other, statuses)
+		}
+	}
+}
+
+// bees:question is cleared by the orchestrator when a person answers
+// (scheduler.freshIssues), so a feature can reach the product manager with the
+// label already gone. The prompt must say so, or a session reads the missing
+// label as "I never asked".
+func TestProductManagerDoesNotClearItsOwnQuestionLabel(t *testing.T) {
+	pm, err := System(config.RoleProductManager, sample(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"never take `bees:question` off yourself",
+		"the orchestrator removes it",
+		"`waiting: false` only to withdraw",
+	} {
+		if !strings.Contains(pm, want) {
+			t.Errorf("product manager prompt missing %q:\n%s", want, pm)
+		}
+	}
+}
+
+// Work items filed by other roles have no parent feature, so attaching them is
+// recurring work the prompt must name — with the tool that does it.
+func TestProductManagerAttachesLooseWorkItems(t *testing.T) {
+	pm, err := System(config.RoleProductManager, sample(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(pm, "Keep the feature tree honest") || !strings.Contains(pm, "`issue_link`") {
+		t.Errorf("product manager prompt does not tell it to attach loose work items:\n%s", pm)
+	}
+	task, err := Task(config.RoleProductManager, sample())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(task, "Check the feature tree") {
+		t.Errorf("product manager task does not run the feature-tree check:\n%s", task)
+	}
+}
+
+// productManagerHasWork has four wake conditions, and the fourth is a person's
+// comment on a proposal (internal/scheduler/singletons.go:69-98). Proposals are
+// partitioned into their own task section, so that wake leaves the fresh-feature,
+// feedback and mail sections empty: an idle rule that names only those three
+// tells the session to answer a waiting person with `idle`.
+func TestProductManagerIdleRuleCoversProposals(t *testing.T) {
+	pm, err := System(config.RoleProductManager, sample(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	idle := pm[strings.Index(pm, "Working a pass:"):]
+	if i := strings.Index(idle, "\n\nPacing:"); i > 0 {
+		idle = idle[:i]
+	}
+	for _, want := range []string{
+		"read the proposals section before you conclude anything",
+		"leaves that section on its own",
+		"report `idle` and mean it",
+	} {
+		if !strings.Contains(idle, want) {
+			t.Errorf("product manager idle rule missing %q:\n%s", want, idle)
+		}
+	}
+	// The rule must not be a blanket "proposals section non-empty" veto:
+	// github.Issue.AwaitingBee seeds the human side with CreatedAt, so a
+	// proposal the product manager has never answered sits there forever.
+	if !strings.Contains(idle, "that you have not answered") {
+		t.Errorf("product manager idle rule vetoes on the whole proposals section:\n%s", idle)
 	}
 }
 
