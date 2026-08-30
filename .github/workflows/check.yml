@@ -1,0 +1,45 @@
+name: check
+
+# Pull requests run against the merge commit GitHub creates for the PR
+# (`refs/pull/N/merge`, which is what actions/checkout picks by default): a merge
+# that drops lines fails here even when both branches build on their own.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The fast, dependency-free gate: no Dagger engine, so it stays useful even
+  # when the Dagger job cannot run.
+  go:
+    name: go
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test ./...
+
+  # The project's real check, so lint and `go generate` drift are gated too.
+  dagger:
+    name: dagger
+    runs-on: ubuntu-latest
+    env:
+      DAGGER_X_RELEASE: v1.0.0-beta.11
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the Dagger CLI
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL https://dl.dagger.io/dagger/install.sh |
+            DAGGER_VERSION=0.21.9 BIN_DIR="$HOME/.local/bin" sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - run: dagger version
+      - run: dagger check

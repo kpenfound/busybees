@@ -153,6 +153,9 @@ export DAGGER_X_RELEASE=v1.0.0-beta.11
 dagger check            # go:lint-all, go:test-all, go:generate-all
 ```
 
+The same checks run on every pull request and on every push to `main` through
+`.github/workflows/check.yml` (jobs `go` and `dagger`).
+
 `go build ./... && go test ./...` also works locally. Tests never call the real
 `claude` or `gh`: GitHub is faked in-process and the test binary stands in for
 `claude`, but git is real (tests push to a local bare remote).
