@@ -1,21 +1,18 @@
 package main
 
 import (
-	"bytes"
 	"strings"
 	"testing"
 
 	"github.com/kpenfound/busybees/internal/state"
 )
 
-func TestWriteQueuesDependencies(t *testing.T) {
+func TestQueuesTextDependencies(t *testing.T) {
 	st := state.Status{
 		Queues:        map[string]int{"ready": 4, "triage": 1},
 		WaitingOnDeps: map[int][]int{46: {44}, 40: {37, 38}},
 	}
-	var buf bytes.Buffer
-	writeQueues(&buf, st)
-	got := buf.String()
+	got := queuesText(st)
 	for _, want := range []string{
 		"  ready          4  (2 waiting on deps)\n",
 		"waiting on dependencies:\n",
@@ -32,9 +29,7 @@ func TestWriteQueuesDependencies(t *testing.T) {
 		t.Errorf("held issues out of order:\n%s", got)
 	}
 
-	buf.Reset()
-	writeQueues(&buf, state.Status{Queues: map[string]int{"ready": 4}})
-	got = buf.String()
+	got = queuesText(state.Status{Queues: map[string]int{"ready": 4}})
 	if !strings.Contains(got, "  ready          4\n") || strings.Contains(got, "waiting on") {
 		t.Errorf("no dependencies: %q", got)
 	}

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -313,7 +312,7 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 			if st.LastError != "" {
 				fmt.Println("last error:", st.LastError)
 			}
-			writeQueues(os.Stdout, st)
+			fmt.Print(queuesText(st))
 			fmt.Println("\ndeveloper workers:")
 			if len(st.Workers) == 0 {
 				fmt.Println("  none")
@@ -346,11 +345,12 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 	return cmd
 }
 
-// writeQueues prints the queue sizes and, when dependencies are holding ready
+// queuesText renders the queue sizes and, when dependencies are holding ready
 // issues back, why. The ready row carries the count as a suffix so the number
 // of issues a developer can actually pick up is never overstated.
-func writeQueues(w io.Writer, st state.Status) {
-	fmt.Fprintln(w, "\nqueues:")
+func queuesText(st state.Status) string {
+	var b strings.Builder
+	b.WriteString("\nqueues:\n")
 	keys := make([]string, 0, len(st.Queues))
 	for k := range st.Queues {
 		keys = append(keys, k)
@@ -358,27 +358,28 @@ func writeQueues(w io.Writer, st state.Status) {
 	sort.Strings(keys)
 	for _, k := range keys {
 		if k == "ready" && len(st.WaitingOnDeps) > 0 {
-			fmt.Fprintf(w, "  %-14s %d  (%d waiting on deps)\n", k, st.Queues[k], len(st.WaitingOnDeps))
+			fmt.Fprintf(&b, "  %-14s %d  (%d waiting on deps)\n", k, st.Queues[k], len(st.WaitingOnDeps))
 			continue
 		}
-		fmt.Fprintf(w, "  %-14s %d\n", k, st.Queues[k])
+		fmt.Fprintf(&b, "  %-14s %d\n", k, st.Queues[k])
 	}
 	if len(st.WaitingOnDeps) == 0 {
-		return
+		return b.String()
 	}
 	held := make([]int, 0, len(st.WaitingOnDeps))
 	for n := range st.WaitingOnDeps {
 		held = append(held, n)
 	}
 	sort.Ints(held)
-	fmt.Fprintln(w, "\nwaiting on dependencies:")
+	b.WriteString("\nwaiting on dependencies:\n")
 	for _, n := range held {
 		refs := make([]string, 0, len(st.WaitingOnDeps[n]))
-		for _, b := range st.WaitingOnDeps[n] {
-			refs = append(refs, fmt.Sprintf("#%d", b))
+		for _, x := range st.WaitingOnDeps[n] {
+			refs = append(refs, fmt.Sprintf("#%d", x))
 		}
-		fmt.Fprintf(w, "  #%-3d blocked by %s\n", n, strings.Join(refs, ", "))
+		fmt.Fprintf(&b, "  #%-3d blocked by %s\n", n, strings.Join(refs, ", "))
 	}
+	return b.String()
 }
 
 // ---- config / prompts ------------------------------------------------------
