@@ -91,6 +91,11 @@ type Scheduler struct {
 	// scheduler.max_cost_per_day, and daySpend is that spend.
 	dayPaused bool
 	daySpend  float64
+	// limitPausedUntil is when dispatch resumes after a session hit the
+	// account-wide claude session limit; zero when none is in force. It is
+	// in memory only, like dayPaused: after a restart the first session
+	// re-learns the limit and re-pauses.
+	limitPausedUntil time.Time
 	// overBudget counts consecutive over-budget sessions per work item.
 	overBudget map[string]int
 	wg         sync.WaitGroup
@@ -258,7 +263,7 @@ func capErrors(err error) string {
 // later": GitHub's rate-limit responses as surfaced by gh, and the API
 // errors a claude session reports when it is throttled or the service is
 // overloaded.
-var rateLimitPhrases = []string{"rate limit", "abuse detection", "secondary rate", "overloaded", "usage limit"}
+var rateLimitPhrases = []string{"rate limit", "abuse detection", "secondary rate", "overloaded", "usage limit", "session limit"}
 
 // rateLimitedText reports whether a message names a rate limit or an
 // overloaded service. Matching is case-insensitive.
@@ -757,7 +762,7 @@ func relabel(labels []github.Label, from, to string) []github.Label {
 // spending a session on such an issue the live issue is fetched once and the
 // candidate dropped unless it is still open and in a dispatchable state.
 func (s *Scheduler) dispatchDevelopers(ctx context.Context, snap *snapshot, local bool) {
-	if !s.roleEnabled(config.RoleDeveloper) || s.dayBudgetReached() {
+	if !s.roleEnabled(config.RoleDeveloper) || s.limitPaused() || s.dayBudgetReached() {
 		return
 	}
 	var candidates []github.Issue
@@ -906,7 +911,7 @@ func (s *Scheduler) dispatchSingletons(ctx context.Context, snap *snapshot, mail
 			jobs[i].want = func() bool { return s.hasUnreadMail(role, 0, 0) }
 		}
 	}
-	if s.dayBudgetReached() {
+	if s.limitPaused() || s.dayBudgetReached() {
 		return
 	}
 	for _, j := range jobs {
@@ -1042,6 +1047,7 @@ func (s *Scheduler) writeStatus() {
 	st.Priority = append([]int(nil), s.priority...)
 	st.Degraded = s.degradedLocked()
 	s.budgetStatus(&st)
+	s.limitStatus(&st)
 	s.mu.Unlock()
 	err := s.store.SaveStatus(st)
 	s.op("write-status", err, "write status", "err", err)

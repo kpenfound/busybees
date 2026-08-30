@@ -258,6 +258,11 @@ type Status struct {
 	// is measured against (0 when no daily budget is configured).
 	DaySpendUSD  float64 `json:"day_spend_usd,omitempty"`
 	DayBudgetUSD float64 `json:"day_budget_usd,omitempty"`
+	// LimitPausedUntil is when dispatch resumes after a session hit the
+	// account-wide claude session limit. Zero when no such pause is in
+	// force; a time in the past is one nothing has looked at since it
+	// lifted.
+	LimitPausedUntil time.Time `json:"limit_paused_until,omitempty"`
 	// WaitingOnDeps maps a ready issue to the blockers it declares that are
 	// still open, so `bees status` can explain why it is not being built.
 	WaitingOnDeps map[int][]int `json:"waiting_on_deps,omitempty"`

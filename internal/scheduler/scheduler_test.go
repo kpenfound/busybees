@@ -81,6 +81,20 @@ func fakeClaude() {
 		_, _ = fmt.Fprintln(f, filepath.Base(sessionDir))
 		_ = f.Close()
 	}
+	// FAKE_LIMIT makes a session die on the account-wide claude session
+	// limit, whatever its role: it emits a blocking rate_limit_event and
+	// reports no outcome, the way a session that could not start does. The
+	// value is the resetsAt unix timestamp, or "none" for an event that
+	// carried none.
+	if v := os.Getenv("FAKE_LIMIT"); v != "" {
+		resets := ""
+		if v != "none" {
+			resets = `,"resetsAt":` + v
+		}
+		fmt.Printf(`{"type":"rate_limit_event","rate_limit_info":{"status":"blocked","rateLimitType":"five_hour","overageStatus":"allowed"%s}}`+"\n", resets)
+		fmt.Println(`{"type":"result","subtype":"success","is_error":false,"result":"You've hit your session limit","session_id":"fake","num_turns":1,"total_cost_usd":0.01}`)
+		return
+	}
 	counter := func(name string) int {
 		p := filepath.Join(stateDir, "fake-"+name)
 		n := 0
