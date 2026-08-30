@@ -763,6 +763,7 @@ func (c *Config) applyDefaults() {
 	if c.Scheduler.RetryWithFallback == nil {
 		b := DefaultRetryWithFallback
 		c.Scheduler.RetryWithFallback = &b
+	}
 	if c.Scheduler.WorkHours != "" {
 		if c.Scheduler.OffHoursPollInterval.Duration == 0 {
 			c.Scheduler.OffHoursPollInterval.Duration = DefaultOffHoursPollInterval
