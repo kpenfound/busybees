@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"strings"
 	"text/template"
 )
 
@@ -43,6 +44,15 @@ func Template(d TemplateData) (string, error) {
 		d.DefaultBranch = "main"
 	}
 	d.Version = CurrentVersion
+	// Every value below is interpolated inside a double-quoted TOML string,
+	// and not all of them are under the operator's control: git accepts a
+	// quote in a branch name, and init writes a detected branch. Escape them
+	// here, once, so no interpolation site can be forgotten (#136).
+	d.Remote = escapeTOML(d.Remote)
+	d.Repo = escapeTOML(d.Repo)
+	d.DefaultBranch = escapeTOML(d.DefaultBranch)
+	d.Label = escapeTOML(d.Label)
+	d.Assignee = escapeTOML(d.Assignee)
 	t, err := template.New("bees.toml").Parse(beesTOMLTemplate)
 	if err != nil {
 		return "", err
@@ -52,6 +62,47 @@ func Template(d TemplateData) (string, error) {
 		return "", err
 	}
 	return buf.String(), nil
+}
+
+const hexDigits = "0123456789ABCDEF"
+
+// escapeTOML escapes s for use as the contents of a TOML basic string. An
+// unescaped quote would close the string early and let the rest of the value
+// be parsed as TOML, silently adding or altering keys the caller never asked
+// for. Escaping is lossless, so it also covers values bees detected rather
+// than was given.
+func escapeTOML(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch r {
+		case '\\':
+			b.WriteString(`\\`)
+		case '"':
+			b.WriteString(`\"`)
+		case '\b':
+			b.WriteString(`\b`)
+		case '\t':
+			b.WriteString(`\t`)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\f':
+			b.WriteString(`\f`)
+		case '\r':
+			b.WriteString(`\r`)
+		default:
+			// Any other control character has no shorthand; TOML spells it
+			// \uXXXX. Everything here is below 0x100, so two digits suffice.
+			if r < 0x20 || r == 0x7f {
+				b.WriteString(`\u00`)
+				b.WriteByte(hexDigits[r>>4])
+				b.WriteByte(hexDigits[r&0xf])
+			} else {
+				b.WriteRune(r)
+			}
+		}
+	}
+	return b.String()
 }
 
 const beesTOMLTemplate = `# bees.toml — configuration for a busybees software factory.
