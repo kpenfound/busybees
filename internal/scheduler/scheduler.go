@@ -385,11 +385,13 @@ func (s *Scheduler) reconcile(ctx context.Context, snap *snapshot) error {
 		snap.byState["triage"] = append(snap.byState["triage"], i)
 	}
 	snap.byState[""] = unlabelled
+	var stillBlocked []github.Issue
 	for _, i := range snap.byState["blocked"] {
 		if s.hasUnreadMail(config.RoleDeveloper, i.Number, 0) {
 			s.log.Info("question answered, issue back to ready", "issue", i.Number)
 			if err := s.setState(ctx, i.Number, s.labels.Ready); err != nil {
 				errs = append(errs, err)
+				stillBlocked = append(stillBlocked, i)
 				continue
 			}
 			i.Labels = relabel(i.Labels, s.labels.Blocked, s.labels.Ready)
@@ -398,12 +400,16 @@ func (s *Scheduler) reconcile(ctx context.Context, snap *snapshot) error {
 			s.log.Info("question answered, issue back to triage", "issue", i.Number)
 			if err := s.setState(ctx, i.Number, s.labels.Triage); err != nil {
 				errs = append(errs, err)
+				stillBlocked = append(stillBlocked, i)
 				continue
 			}
 			i.Labels = relabel(i.Labels, s.labels.Blocked, s.labels.Triage)
 			snap.byState["triage"] = append(snap.byState["triage"], i)
+		} else {
+			stillBlocked = append(stillBlocked, i)
 		}
 	}
+	snap.byState["blocked"] = stillBlocked
 	// The pass moved issues between buckets; recount so `bees status` shows
 	// what GitHub now shows instead of the poll's stale counts.
 	s.setQueues(snap)

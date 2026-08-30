@@ -178,7 +178,8 @@ unread mail per role. Reads `status.json` from the state directory, so it works 
 A `no_state` queue counts issues that are visible to the factory but carry no
 workflow state label yet — usually ones a person just filed from the GitHub UI. The
 scheduler gives them `bees:triage` on its next reconcile, so the row normally
-disappears again within the same pass. Queues with nothing in them are omitted.
+disappears again within the same pass. A workflow-state queue is omitted while it is
+empty (`feedback`, `features` and `open_prs` are always shown).
 
 When [`scheduler.work_hours`](configuration.md#work-hours) is configured it also
 reports whether the factory is inside the window and when the next GitHub poll is

@@ -1157,6 +1157,12 @@ func TestNoStateQueueIsNamedAndRecountedAfterReconcile(t *testing.T) {
 	h := newHarness(t, baseTOML)
 	h.sched.OnlyRoles = map[string]bool{}
 	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Filed from the GitHub UI", State: "OPEN", Labels: []github.Label{{Name: "bees"}}}
+	// A blocked issue whose question reconcile is about to answer: it must
+	// leave the blocked bucket, not be counted in both.
+	h.gh.issues[2] = &github.Issue{Number: 2, Title: "Vague", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:blocked"}}}
+	if _, err := h.box.Send(mail.Message{From: config.RoleProjectManager, To: config.RoleDeveloper, Subject: "Re: Vague", Body: "do X", Issue: 2}); err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
 
 	snap, err := h.sched.poll(ctx)
@@ -1174,6 +1180,9 @@ func TestNoStateQueueIsNamedAndRecountedAfterReconcile(t *testing.T) {
 	if st.Queues["no_state"] != 1 {
 		t.Errorf("after poll: no_state = %d, want 1 (%+v)", st.Queues["no_state"], st.Queues)
 	}
+	if st.Queues["blocked"] != 1 {
+		t.Errorf("after poll: blocked = %d, want 1 (%+v)", st.Queues["blocked"], st.Queues)
+	}
 
 	if err := h.sched.reconcile(ctx, snap); err != nil {
 		t.Fatal(err)
@@ -1187,5 +1196,13 @@ func TestNoStateQueueIsNamedAndRecountedAfterReconcile(t *testing.T) {
 	}
 	if st.Queues["triage"] != 1 {
 		t.Errorf("after reconcile: triage = %d, want 1 (%+v)", st.Queues["triage"], st.Queues)
+	}
+	// The unblocked issue moved to ready; counting it in both buckets would
+	// make `bees status` report more issues than exist.
+	if st.Queues["blocked"] != 0 {
+		t.Errorf("after reconcile: blocked = %d, want 0 (%+v)", st.Queues["blocked"], st.Queues)
+	}
+	if st.Queues["ready"] != 1 {
+		t.Errorf("after reconcile: ready = %d, want 1 (%+v)", st.Queues["ready"], st.Queues)
 	}
 }
