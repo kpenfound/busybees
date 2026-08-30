@@ -576,7 +576,18 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	text := string(data)
+	return Parse(string(data), path)
+}
+
+// Parse validates the text of a bees.toml as if it had been read from path,
+// which is used for the Config's location and in error messages but is not
+// read and need not exist. `bees init` parses the template it rendered before
+// writing anything to disk.
+func Parse(text, path string) (*Config, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
 	version, err := fileVersion(text)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)

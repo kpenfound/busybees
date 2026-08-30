@@ -524,3 +524,43 @@ func TestDescribeDays(t *testing.T) {
 		}
 	}
 }
+
+func TestParseWithoutFile(t *testing.T) {
+	// The template init renders before it writes anything: empty repo and
+	// branch, no file on disk.
+	text, err := Template(TemplateData{Remote: DefaultRemote, Label: DefaultLabel})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "bees.toml")
+	cfg, err := Parse(text, path)
+	if err != nil {
+		t.Fatalf("rendered template does not parse: %v", err)
+	}
+	if cfg.Path != path {
+		t.Fatalf("Path = %q, want %q", cfg.Path, path)
+	}
+	if cfg.Project.Repo != "" || cfg.Project.DefaultBranch != "" {
+		t.Fatalf("repo/branch should be unset: %+v", cfg.Project)
+	}
+	if cfg.Scheduler.MaxDevelopers != 1 {
+		t.Fatalf("defaults not applied: %+v", cfg.Scheduler)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("Parse must not touch %s: %v", path, err)
+	}
+
+	// An unknown key fails the same way it does through Load.
+	bad := "version = 1\n[project]\nnope = true\n"
+	_, parseErr := Parse(bad, path)
+	_, loadErr := Load(writeConfig(t, bad))
+	if parseErr == nil || loadErr == nil {
+		t.Fatalf("unknown key accepted: parse=%v load=%v", parseErr, loadErr)
+	}
+	if !strings.Contains(parseErr.Error(), "unknown keys: project.nope") {
+		t.Fatalf("Parse error: %v", parseErr)
+	}
+	if !strings.Contains(loadErr.Error(), "unknown keys: project.nope") {
+		t.Fatalf("Load error: %v", loadErr)
+	}
+}
