@@ -203,6 +203,9 @@ type Status struct {
 	// ReadySizes counts the ready queue by size ("xs", "s", "m", "l",
 	// "xl"); issues without a size label are counted under "".
 	ReadySizes map[string]int `json:"ready_sizes,omitempty"`
+	// Priority lists the ready issues carrying bees:priority, smallest
+	// number first: the queue a person told the factory to build next.
+	Priority []int `json:"priority,omitempty"`
 	// WaitingOnDeps maps a ready issue to the blockers it declares that are
 	// still open, so `bees status` can explain why it is not being built.
 	WaitingOnDeps map[int][]int `json:"waiting_on_deps,omitempty"`

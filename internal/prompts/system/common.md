@@ -66,6 +66,10 @@ progress shows on GitHub). Work items are the issues that carry a state label; a
 item also carries `{{.Labels.Bug}}`. `{{.Labels.Question}}` marks a feature or
 feedback issue where the product manager is waiting for a person to answer.
 
+`{{.Labels.Priority}}` is a person's lever, not a state: an issue carrying it keeps its
+state label and is handed to a developer before the rest of the `{{.Labels.Ready}}`
+queue. Only a person adds or removes it.
+
 The orchestrator moves most labels for you. Only change labels where your role
 instructions say so.
 

@@ -81,8 +81,11 @@ type Scheduler struct {
 	// readySizes counts the ready queue by size label ("xs", "s", ...);
 	// issues with no size label are counted under "".
 	readySizes map[string]int
-	wg         sync.WaitGroup
-	slots      chan struct{}
+	// priority lists the ready issues carrying bees:priority, so
+	// `bees status` can show that the lever took effect.
+	priority []int
+	wg       sync.WaitGroup
+	slots    chan struct{}
 	// Issues and PRs from the last successful poll, reused by local passes.
 	lastIssues []github.Issue
 	lastPRs    []github.PR
@@ -395,9 +398,14 @@ func (s *Scheduler) setQueues(snap *snapshot) {
 	s.queues["features"] = len(snap.features)
 	s.queues["open_prs"] = len(snap.prs)
 	s.readySizes = map[string]int{}
+	s.priority = nil
 	for _, i := range snap.byState["ready"] {
 		s.readySizes[s.sizeOf(i.Labels)]++
+		if s.hasPriority(i.Labels) {
+			s.priority = append(s.priority, i.Number)
+		}
 	}
+	sort.Ints(s.priority)
 }
 
 // stateOf returns the workflow state name ("triage", "ready", ...) of an
@@ -423,6 +431,13 @@ func (s *Scheduler) sizeOf(labels []github.Label) string {
 	return ""
 }
 
+// hasPriority reports whether a person marked the issue with bees:priority.
+// The label is not a state or size label: nothing in the factory adds or
+// removes it, and dispatch is the only thing that reads it.
+func (s *Scheduler) hasPriority(labels []github.Label) bool {
+	return github.HasLabel(labels, s.labels.Priority)
+}
+
 // defaultSize is the size reconcile gives a ready issue that carries none;
 // an unsized issue therefore ranks as "m" everywhere.
 const defaultSize = "m"
@@ -439,21 +454,27 @@ func sizeRank(size string) int {
 	return slices.Index(config.Sizes, defaultSize)
 }
 
-// sortReady orders the ready queue in place as scheduler.dispatch_order asks:
-// smallest or largest size first, ties broken by age (oldest first), which is
-// also the "oldest" order poll already produced. sizeOf reads an issue's size
-// label, so the helper is independent of a scheduler.
-func sortReady(issues []github.Issue, order string, sizeOf func([]github.Label) string) {
-	if order != config.DispatchSmallFirst && order != config.DispatchLargeFirst {
-		return // "oldest" (and any unset value): poll's order stands
-	}
+// sortReady orders the ready queue in place: issues a person marked with
+// bees:priority first, then whatever scheduler.dispatch_order asks for
+// (smallest or largest size first; "oldest" leaves the sizes alone), ties
+// broken by age (oldest first), which is the order poll produced. Priority is
+// a separate axis from size, so a small issue never jumps a priority one.
+// sizeOf and hasPriority read an issue's labels, so the helper is independent
+// of a scheduler.
+func sortReady(issues []github.Issue, order string, sizeOf func([]github.Label) string, hasPriority func([]github.Label) bool) {
+	bySize := order == config.DispatchSmallFirst || order == config.DispatchLargeFirst
 	sort.SliceStable(issues, func(a, b int) bool {
-		ra, rb := sizeRank(sizeOf(issues[a].Labels)), sizeRank(sizeOf(issues[b].Labels))
-		if ra != rb {
-			if order == config.DispatchLargeFirst {
-				return ra > rb
+		if pa, pb := hasPriority(issues[a].Labels), hasPriority(issues[b].Labels); pa != pb {
+			return pa
+		}
+		if bySize {
+			ra, rb := sizeRank(sizeOf(issues[a].Labels)), sizeRank(sizeOf(issues[b].Labels))
+			if ra != rb {
+				if order == config.DispatchLargeFirst {
+					return ra > rb
+				}
+				return ra < rb
 			}
-			return ra < rb
 		}
 		return issues[a].CreatedAt.Before(issues[b].CreatedAt)
 	})
@@ -699,7 +720,7 @@ func (s *Scheduler) dispatchDevelopers(ctx context.Context, snap *snapshot, loca
 		}
 		ready = append(ready, i)
 	}
-	sortReady(ready, s.cfg.Scheduler.DispatchOrder, s.sizeOf)
+	sortReady(ready, s.cfg.Scheduler.DispatchOrder, s.sizeOf, s.hasPriority)
 	candidates = append(candidates, ready...)
 	largeLimit := s.cfg.Scheduler.LargeInFlight()
 	for _, issue := range candidates {
@@ -957,6 +978,7 @@ func (s *Scheduler) writeStatus() {
 	for k, v := range s.readySizes {
 		st.ReadySizes[k] = v
 	}
+	st.Priority = append([]int(nil), s.priority...)
 	s.mu.Unlock()
 	if err := s.store.SaveStatus(st); err != nil {
 		s.log.Warn("write status", "err", err)
