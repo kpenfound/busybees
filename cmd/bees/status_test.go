@@ -184,13 +184,18 @@ func TestShortDur(t *testing.T) {
 func TestSchedulerLine(t *testing.T) {
 	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
 	running := state.Status{UpdatedAt: now, PID: 42, LastPoll: now.Add(-90 * time.Second)}
+	// The session-limit pause prints a wall-clock time, so its rows carry
+	// their own clock in the local zone the line is rendered in.
+	local := time.Date(2026, 3, 1, 12, 0, 0, 0, time.Local)
 	for _, tc := range []struct {
 		name string
 		st   state.Status
+		// now overrides the shared clock; zero uses it.
+		now  time.Time
 		want string
 	}{
-		{"never run", state.Status{}, "scheduler: never run"},
-		{"running, no budget", running, "scheduler: pid 42, last poll 1m30s ago"},
+		{name: "never run", st: state.Status{}, want: "scheduler: never run"},
+		{name: "running, no budget", st: running, want: "scheduler: pid 42, last poll 1m30s ago"},
 		{
 			name: "running under a budget",
 			st:   state.Status{UpdatedAt: now, PID: 42, LastPoll: now, DaySpendUSD: 42.1, DayBudgetUSD: 100},
@@ -201,11 +206,38 @@ func TestSchedulerLine(t *testing.T) {
 			st:   state.Status{UpdatedAt: now, PID: 42, LastPoll: now, BudgetPaused: true, DaySpendUSD: 101.2, DayBudgetUSD: 100},
 			want: "scheduler: pid 42, last poll 0s ago   paused: daily budget ($101.20 / $100.00)",
 		},
-		{"never run but paused", state.Status{BudgetPaused: true, DaySpendUSD: 1, DayBudgetUSD: 0.5},
-			"scheduler: never run   paused: daily budget ($1.00 / $0.50)"},
+		{name: "never run but paused", st: state.Status{BudgetPaused: true, DaySpendUSD: 1, DayBudgetUSD: 0.5},
+			want: "scheduler: never run   paused: daily budget ($1.00 / $0.50)"},
+		{
+			name: "paused on the claude session limit",
+			st:   state.Status{UpdatedAt: local, PID: 42, LastPoll: local, LimitPausedUntil: local.Add(37 * time.Minute)},
+			now:  local,
+			want: "scheduler: pid 42, last poll 0s ago   paused: claude session limit until 12:37 (in 37m)",
+		},
+		{
+			// The harder stop wins while it is in force...
+			name: "paused on both",
+			st: state.Status{UpdatedAt: local, PID: 42, LastPoll: local, LimitPausedUntil: local.Add(2 * time.Hour),
+				BudgetPaused: true, DaySpendUSD: 101.2, DayBudgetUSD: 100},
+			now:  local,
+			want: "scheduler: pid 42, last poll 0s ago   paused: claude session limit until 14:00 (in 2h)",
+		},
+		{
+			// ...and a reset time that has passed is no pause at all, even
+			// when the scheduler has not looked at it since.
+			name: "the session limit has reset",
+			st: state.Status{UpdatedAt: local, PID: 42, LastPoll: local, LimitPausedUntil: local.Add(-time.Minute),
+				BudgetPaused: true, DaySpendUSD: 101.2, DayBudgetUSD: 100},
+			now:  local,
+			want: "scheduler: pid 42, last poll 0s ago   paused: daily budget ($101.20 / $100.00)",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := schedulerLine(tc.st, now); got != tc.want {
+			at := now
+			if !tc.now.IsZero() {
+				at = tc.now
+			}
+			if got := schedulerLine(tc.st, at); got != tc.want {
 				t.Errorf("got  %q\nwant %q", got, tc.want)
 			}
 		})

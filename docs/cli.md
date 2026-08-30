@@ -483,6 +483,14 @@ new session; the workers already running finish their loop. Both numbers come fr
 `status.json` (`budget_paused`, `day_spend_usd` and `day_budget_usd` in `--json`), so
 they are what the scheduler last computed rather than a fresh sum.
 
+The [claude session limit](configuration.md#the-claude-session-limit) pauses the
+factory the same way, and is reported before the budget because it is the harder
+stop — it names the time it lifts (`limit_paused_until` in `--json`):
+
+```
+scheduler: pid 4711, last poll 12s ago   paused: claude session limit until 23:50 (in 37m)
+```
+
 The `ready` queue also carries a breakdown by [size](workflow.md#sizing)
 (`ready_sizes` in `--json`); issues the scheduler has not sized yet are
 counted as `unsized`:
