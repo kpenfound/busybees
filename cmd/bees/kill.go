@@ -143,20 +143,41 @@ func cleanWorktrees(ctx context.Context, cfg *config.Config, dryRun bool) ([]str
 		if _, err := workspace.Git(ctx, cfg.Dir(), "worktree", "remove", "--force", path); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 		}
-		_ = os.RemoveAll(filepath.Dir(path)) // the temp dir holding repo/
+		_ = os.RemoveAll(filepath.Dir(path)) // the temp dir holding the worktree
 	}
 	if !dryRun {
 		_, _ = workspace.Git(ctx, cfg.Dir(), "worktree", "prune")
 		if entries, err := os.ReadDir(root); err == nil {
 			for _, e := range entries {
 				p := filepath.Join(root, e.Name())
-				if _, err := os.Stat(filepath.Join(p, "repo")); os.IsNotExist(err) {
+				if isLeftoverWorkspace(p) {
 					_ = os.RemoveAll(p) // leftover empty workspace dir
 				}
 			}
 		}
 	}
 	return removed, nil
+}
+
+// isLeftoverWorkspace reports whether the directory p, a child of the
+// workspace root, still holds a worktree. The worktree's leaf name is the
+// workspace's own (see workspace.Manager.prepare), not a fixed "repo", so the
+// test cannot assume a name: p is leftover when none of its entries is a
+// directory containing a .git entry.
+func isLeftoverWorkspace(p string) bool {
+	entries, err := os.ReadDir(p)
+	if err != nil {
+		return false // not a directory we can read: leave it alone
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(p, e.Name(), ".git")); err == nil {
+			return false
+		}
+	}
+	return true
 }
 
 func truncateStr(s string, n int) string {
