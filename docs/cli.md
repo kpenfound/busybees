@@ -200,7 +200,8 @@ The JSON keys are the `bees.toml` key names, so you can match what is printed ag
 what you wrote, and durations print as duration strings (`"45m0s"`). The role-specific
 keys appear on the role that owns them: the reviewer carries its merge policy
 (`auto_merge`, `merge_method`, `checks_wait`, `checks_poll_interval`, `checks_timeout`,
-`max_check_fix_rounds`) and the developer its `commit_flags` and `max_size`.
+`max_check_fix_rounds`) and the developer its `commit_flags`, `max_size` and
+`model_by_size`.
 
 ```sh
 bees config show
