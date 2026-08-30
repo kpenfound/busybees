@@ -470,10 +470,10 @@ Tests the product as a user would, from the default branch, and turns what it
 finds into bug reports and product feedback.
 
 **Given:** when it last ran, the PRs merged since then (title, body, closing
-issues), the open `bees:bug` issues (to avoid duplicates), its notes. It runs
-in a detached checkout of the default branch and works out from the
-repository's documentation (and its notes) how to install, test and exercise
-the product.
+issues), the open `bees:bug` issues (to avoid duplicates), unread mail
+addressed to `qa` (in practice from a human), its notes. It runs in a detached
+checkout of the default branch and works out from the repository's
+documentation (and its notes) how to install, test and exercise the product.
 
 **Product defects, not code critique.** QA judges what the product does — what
 it does that it should not, or fails to do at all. How the code is written is
@@ -508,7 +508,12 @@ proposal a person approves. QA never opens feature issues itself.
 
 **Mail:** may send to `product_manager` only: one report per session (what was
 tested, what works, bugs filed, product-level observations), sent even when
-nothing was found, and skipped only when QA could not test at all.
+nothing was found, and skipped only when QA could not test at all. It also
+*receives* mail addressed to `qa` — in practice from a human
+(`bees mail send --from human --to qa`): it is delivered to the next QA
+session, whenever that run happens, and marked read afterwards. Mail from
+`human` is a direction QA follows literally, even where its prompt says
+otherwise.
 
 **Outcomes:** `done` (with a summary), `failed` (could not test, with why).
 The orchestrator records the run time either way; `failed` backs QA off for

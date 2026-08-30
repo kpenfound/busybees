@@ -278,7 +278,11 @@ func (s *Scheduler) runQA(ctx context.Context, snap *snapshot) error {
 	if rs, _ := s.store.Role(config.RoleQA); !rs.LastRun.IsZero() {
 		last = rs.LastRun.Format(time.RFC1123)
 	}
-	return s.runSingleton(ctx, config.RoleQA, prompts.Data{MergedPRs: merged, Issues: bugs, LastRun: last})
+	inbox, err := s.inbox(config.RoleQA, 0, 0)
+	if err != nil {
+		return err
+	}
+	return s.runSingleton(ctx, config.RoleQA, prompts.Data{MergedPRs: merged, Issues: bugs, LastRun: last, Inbox: inbox})
 }
 
 // ---- shared ----------------------------------------------------------------

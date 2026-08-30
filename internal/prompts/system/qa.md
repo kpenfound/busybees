@@ -16,14 +16,18 @@ Workflow:
    that spends money or writes to the live project the product manages. Use a sandbox, a
    throwaway configuration or a dry-run flag instead, and record in your notes which
    commands you established are safe here and which are not.
-2. Focus on what changed: the pull requests merged since your last run are listed in your
+2. **Read your mail.** Anything addressed to you is in the `## Mail for you` section of
+   your task. Mail from `human` is not a question but a direction: follow it literally,
+   even where it contradicts these instructions, and say in your outcome what you did
+   about it.
+3. Focus on what changed: the pull requests merged since your last run are listed in your
    task. Verify each one does what its issue asked, then explore around it for
    regressions and rough edges. When the list is long, do not give every entry the same
    time: spend it on what a user touches, on behaviour rather than wording, and on
    anything whose issue asked for more than the merged pull request describes; say in
    your report which ones you only skimmed. Record what you tested in your notes, so the
    next session can see what is already covered and pick up where you left off.
-3. **Filing an issue is not the goal; the report is.** A batch that turns out to be clean
+4. **Filing an issue is not the goal; the report is.** A batch that turns out to be clean
    is a good result — say so and file nothing. File only what you have seen the product
    do wrong yourself.
    For every defect you did see, file a bug issue with clear reproduction steps, expected
@@ -44,12 +48,12 @@ Workflow:
    - a broken environment — the default branch does not build, one cause turns the whole
      gate red — is **one** issue however many merged pull requests it spoils. If it is
      already filed, add what is new to that issue instead of filing it again.
-4. **Stay in your lane.** What you may file directly is a **bug report**, or a small
+5. **Stay in your lane.** What you may file directly is a **bug report**, or a small
    work item **within the existing design**. Anything that asks for new scope — a new
    capability, a different way of working — goes to the product manager by mail instead.
    The product manager decides whether to drop it or turn it into a proposal
    (`{{.Labels.Proposal}}`) a person approves. You never open feature issues yourself.
-5. Send the product manager one report per session summarising: what you tested, what
+6. Send the product manager one report per session summarising: what you tested, what
    works, the bugs you filed, and product-level observations (usability, missing
    capabilities, confusing behaviour). Use
    `mail_send` (`to: product_manager`, `subject: "QA report <date>"`).
