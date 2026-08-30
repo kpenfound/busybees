@@ -144,12 +144,73 @@ func TestRequiredChecks(t *testing.T) {
 	}
 	resp, rerr = nil, fmt.Errorf("gh pr checks: exit status 1: no required checks reported on the 'x' branch")
 	checks, err = c.RequiredChecks(ctx, 1)
-	if err != nil || len(checks) != 0 || Summarize(checks) != ChecksPassed {
+	if err != nil || len(checks) != 0 || Summarize(checks) != ChecksNone {
 		t.Fatalf("none: %v %v", checks, err)
 	}
 	resp, rerr = nil, fmt.Errorf("gh pr checks: exit status 4: not logged in")
 	if _, err = c.RequiredChecks(ctx, 1); err == nil {
 		t.Fatal("real errors must propagate")
+	}
+}
+
+// TestChecks covers the unrequired call: same gh command without --required,
+// and the same tolerance for gh's non-zero exits and empty output.
+func TestChecks(t *testing.T) {
+	c := New("a/b")
+	var resp []byte
+	var rerr error
+	var got []string
+	c.Exec = func(ctx context.Context, args ...string) ([]byte, error) {
+		got = args
+		return resp, rerr
+	}
+	ctx := context.Background()
+	resp, rerr = []byte(`[{"name":"a","bucket":"pending"},{"name":"b","bucket":"pass"}]`), fmt.Errorf("gh: exit status 8")
+	checks, err := c.Checks(ctx, 7)
+	if err != nil || Summarize(checks) != ChecksPending {
+		t.Fatalf("pending: %v %v", checks, err)
+	}
+	if want := "pr checks 7 -R a/b --json name,state,bucket,link,description,workflow"; strings.Join(got, " ") != want {
+		t.Fatalf("args: %v", got)
+	}
+	if slices.Contains(got, "--required") {
+		t.Fatal("Checks must not ask for the required checks only")
+	}
+	resp, rerr = []byte(`[{"name":"a","bucket":"fail"}]`), fmt.Errorf("gh: exit status 1")
+	checks, err = c.Checks(ctx, 7)
+	if err != nil || Summarize(checks) != ChecksFailed || len(Failed(checks)) != 1 {
+		t.Fatalf("failed: %v %v", checks, err)
+	}
+	resp, rerr = nil, fmt.Errorf("gh pr checks: exit status 1: no checks reported on the 'x' branch")
+	checks, err = c.Checks(ctx, 7)
+	if err != nil || len(checks) != 0 || Summarize(checks) != ChecksNone {
+		t.Fatalf("none: %v %v", checks, err)
+	}
+	resp, rerr = []byte("[]"), nil
+	checks, err = c.Checks(ctx, 7)
+	if err != nil || len(checks) != 0 || Summarize(checks) != ChecksNone {
+		t.Fatalf("empty list: %v %v", checks, err)
+	}
+	resp, rerr = nil, fmt.Errorf("gh pr checks: exit status 4: not logged in")
+	if _, err = c.Checks(ctx, 7); err == nil {
+		t.Fatal("real errors must propagate")
+	}
+}
+
+// TestSummarizeNoChecks pins the distinction #117 turns on: nothing reported
+// is not everything green.
+func TestSummarizeNoChecks(t *testing.T) {
+	if got := Summarize(nil); got != ChecksNone {
+		t.Fatalf("Summarize(nil) = %q, want %q", got, ChecksNone)
+	}
+	if got := Summarize([]Check{}); got != ChecksNone {
+		t.Fatalf("Summarize([]) = %q, want %q", got, ChecksNone)
+	}
+	if got := Summarize([]Check{{Bucket: "pass"}}); got != ChecksPassed {
+		t.Fatalf("Summarize(one pass) = %q", got)
+	}
+	if got := Summarize([]Check{{Bucket: "skipping"}}); got != ChecksPassed {
+		t.Fatalf("Summarize(skipping) = %q", got)
 	}
 }
 

@@ -453,7 +453,7 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 				if size == "" {
 					size = "-"
 				}
-				fmt.Printf("  %-12s issue #%-5d %-3s %-10s %-20s since %s\n", w.Name, w.Issue, size, w.Stage, round, w.Since.Format(time.Kitchen))
+				fmt.Printf("  %-12s issue #%-5d %-3s %-17s %-20s since %s\n", w.Name, w.Issue, size, w.Stage, round, w.Since.Format(time.Kitchen))
 			}
 			fmt.Println("\nroles:")
 			fmt.Print(rolesText(rows, now))

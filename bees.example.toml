@@ -271,9 +271,11 @@ label = "bees"
 # Disabling the reviewer treats pull requests as approved as soon as the
 # developer opens them.
 #enabled = true
-# Merge approved pull requests automatically once the required checks are
-# green. Off: humans merge. When checks fail the reviewer diagnoses the main
-# error and hands it to the developer to fix (up to max_check_fix_rounds).
+# Merge approved pull requests automatically once its checks are green: the
+# required checks if the branch has any, otherwise every check the pull
+# request reports; with no checks at all it merges and says so. Off: humans
+# merge. When checks fail the reviewer diagnoses the main error and hands it
+# to the developer to fix (up to max_check_fix_rounds).
 #auto_merge = false
 # squash, merge or rebase.
 #merge_method = "squash"

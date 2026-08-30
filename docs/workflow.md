@@ -24,7 +24,7 @@ This page describes what that looks like from the human side.
    mail if it needs a product decision, and moves it to `bees:ready`.
 4. **Developers and reviewers ship work items.** A developer worker implements
    the issue on a branch and opens a PR; the reviewer reviews; when approved a
-   human merges (or the reviewer's `auto_merge` does, once required checks are
+   human merges (or the reviewer's `auto_merge` does, once its checks are
    green).
 5. **QA tests the default branch** after merges, files bugs (`bees:bug` +
    `bees:triage`) and reports to the product manager, which feeds the next round.
@@ -92,8 +92,8 @@ stateDiagram-v2
     approved --> ready: human reviews / comments on the PR (orchestrator)
     approved --> ready: the PR conflicts with the default branch (orchestrator)
     approved --> [*]: human merges the PR (issue closes via "Closes #N")
-    approved --> [*]: reviewer auto_merge, required checks green (orchestrator merges)
-    approved --> in_progress: auto_merge, a required check failed (developer fixes)
+    approved --> [*]: reviewer auto_merge, checks green (orchestrator merges)
+    approved --> in_progress: auto_merge, a check failed (developer fixes)
     approved --> needs_human: auto_merge, checks timed out / merge refused (orchestrator)
     in_progress --> needs_human: developer session failed / no PR (orchestrator)
     review --> needs_human: round limit reached / reviewer failed (orchestrator)
@@ -116,7 +116,7 @@ stateDiagram-v2
 | `bees:in-progress` | A developer worker owns it and a branch exists | Orchestrator |
 | `bees:blocked` | Waiting on an answer to a question | Project manager (asking the PM), orchestrator (developer asking) |
 | `bees:review` | A pull request is open and in the review loop | Orchestrator |
-| `bees:approved` | Reviewer approved; waiting for a human to merge (or, with `roles.reviewer.auto_merge`, for required checks) | Orchestrator (also put on the PR) |
+| `bees:approved` | Reviewer approved; waiting for a human to merge (or, with `roles.reviewer.auto_merge`, for the checks) | Orchestrator (also put on the PR) |
 | `bees:needs-human` | The factory gave up on it | Orchestrator |
 
 Four more labels sit **outside** the state machine; issues carrying them
@@ -547,14 +547,23 @@ The reviewer can be given the job instead. Set `auto_merge = true` under
 [configuration.md](configuration.md#rolesreviewer-only-auto-merge)). Once the
 reviewer approves, the developer worker enters a **checks** stage:
 
-1. It waits `checks_wait` (default 1 minute), because some required checks
-   take a moment to report that they have started.
-2. It polls the PR's **required** checks (`gh pr checks --required`) every
-   `roles.reviewer.checks_poll_interval` (default 2 minutes) until they are no
-   longer pending.
-3. All green — or no required checks configured — the orchestrator merges with
+1. It waits `checks_wait` (default 1 minute), because some checks take a
+   moment to report that they have started.
+2. It polls the PR's checks every `roles.reviewer.checks_poll_interval`
+   (default 2 minutes) until they are no longer pending. The **required**
+   checks (`gh pr checks --required`) are the gate whenever the branch has
+   any. When it has none — a repository with no branch protection — every
+   check the pull request reports (`gh pr checks`) is the gate instead:
+   gating on the checks that exist beats gating on nothing. To take a check
+   out of the gate, mark the ones that must block a merge as required in the
+   branch protection rules of the default branch; bees never touches those
+   rules itself.
+3. All green, the orchestrator merges with
    `gh pr merge --<merge_method> --delete-branch`. The issue closes through
-   `Closes #N` and QA sees the change on its next run.
+   `Closes #N` and QA sees the change on its next run. When nothing is
+   reported at all — no CI in the repository — it merges too, after two
+   consecutive empty polls, and logs that no check was reported rather than
+   that the checks passed.
 4. A check failed: the reviewer gets a follow-up session in *checks mode*. It
    works out what failed without assuming any particular CI system — the
    check's details link and description, `gh pr checks`, the repository's own
@@ -610,7 +619,7 @@ the issue to a human:
 - the reviewer session failed;
 - `max_review_rounds` passed without approval;
 - a worktree could not be created;
-- with `roles.reviewer.auto_merge`: required checks still failed after
+- with `roles.reviewer.auto_merge`: checks still failed after
   `max_check_fix_rounds`, were still pending at `checks_timeout`, the reviewer
   could not diagnose them (or said it had mailed the developer but had not), or
   GitHub refused the merge;
@@ -750,7 +759,7 @@ sequenceDiagram
     Rev->>O: done: approved
     O->>GH: PR + issue → bees:approved
     H->>GH: Merge PR (work item closes)
-    Note over O,GH: with roles.reviewer.auto_merge the orchestrator waits<br/>checks_wait, polls required checks and merges instead
+    Note over O,GH: with roles.reviewer.auto_merge the orchestrator waits<br/>checks_wait, polls the PR checks and merges instead
     O->>QA: Session on default branch (merged PRs since last run)
     QA->>GH: file bees:bug issues
     QA-->>PM: mail: QA report

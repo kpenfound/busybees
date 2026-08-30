@@ -169,8 +169,11 @@ type fakeGH struct {
 	merged   []int
 	// activity is raw JSON served for api pulls/N/reviews, pulls/N/comments, issues/N/comments
 	activity map[string]string
-	// checks is a queue of responses for `pr checks`; the last one repeats.
+	// checks is a queue of responses for `pr checks --required`; the last one
+	// repeats. checksAll is the same for the unrequired call, which the
+	// scheduler only makes when the required list came back empty.
 	checks    []checksResponse
+	checksAll []checksResponse
 	mergeArgs [][]string
 	// calls logs every gh invocation, in order.
 	calls [][]string
@@ -432,12 +435,16 @@ func (f *fakeGH) exec(ctx context.Context, args ...string) ([]byte, error) {
 		f.mergeArgs = append(f.mergeArgs, args)
 		return nil, nil
 	case "pr checks":
-		if len(f.checks) == 0 {
+		queue := &f.checks
+		if !slices.Contains(args, "--required") {
+			queue = &f.checksAll
+		}
+		if len(*queue) == 0 {
 			return nil, fmt.Errorf("no checks reported on the 'bees/issue-1' branch")
 		}
-		r := f.checks[0]
-		if len(f.checks) > 1 {
-			f.checks = f.checks[1:]
+		r := (*queue)[0]
+		if len(*queue) > 1 {
+			*queue = (*queue)[1:]
 		}
 		return []byte(r.json), r.err
 	case "label list":

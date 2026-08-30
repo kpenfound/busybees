@@ -89,7 +89,7 @@ what it found grouped by area:
 |---|---|
 | `toolchain` | `git` on `PATH`; `gh` on `PATH`, authenticated and holding the `repo` token scope; `claude` (or `$BEES_CLAUDE_BIN`) runnable and new enough. |
 | `config` | `bees.toml` loads and validates; `project.repo` and `project.default_branch` are set or derivable; the remote answers; the state directory is ignored by git; the notes directory is writable; every configured `prompt_file` exists. |
-| `github` | The repository is readable and writable (`viewerPermission`); every workflow label exists; the visibility filter matches at least one open issue. |
+| `github` | The repository is readable and writable (`viewerPermission`); every workflow label exists; the visibility filter matches at least one open issue; with `auto_merge` on, what a merge is actually gated on. |
 | `workspace` | A worktree can be created under `workspace_root` and removed again. |
 | `roles` | Per role: every configured skill URL clones and produces a plugin directory; every configured MCP server starts and answers an `initialize` request within 15s; a configured `shell` can be executed. |
 
@@ -103,8 +103,13 @@ the filter but open issues or pull requests carry the base label, it reports bot
 counts and spells the filter out (`0 match your filter (label=bees AND
 assignee=kyle)`) - that is a filter criterion hiding work the factory already owns,
 not an empty repository, and the fix is `bees doctor --fix` (below) or unsetting the
-criterion in `bees.toml`. Every warning and failure prints the command that fixes it on the
-next line; doctor changes nothing unless `--fix` is given.
+criterion in `bees.toml`. The auto-merge check is a warning of the same kind: with
+`roles.reviewer.auto_merge` on and no check required on the default branch, bees gates
+a merge on whatever checks the pull request reports, which is worth knowing once —
+requiring your CI checks in the branch protection rules is the fix, and leaving it as
+it is a legitimate choice. bees never enables or edits branch protection itself, and
+the check is silent when `auto_merge` is off. Every warning and failure prints the
+command that fixes it on the next line; doctor changes nothing unless `--fix` is given.
 
 doctor exits 1 when a check failed and 0 when only warnings are present, so it can
 gate a deploy. Checks that need something that is missing are left out rather than
@@ -142,6 +147,7 @@ github
   ✗ workflow labels             2 of 17 missing: bees:size/l, bees:size/xl
       → run `bees labels sync`
   ✓ filter matches issues       12 open issues matching label bees
+  ✓ auto_merge check gate       auto_merge is off: people merge pull requests themselves
 
 workspace
   ✓ worktree                    created and removed one under /tmp/bees
@@ -155,7 +161,7 @@ roles
   ✓ reviewer                    enabled, no skills, MCP servers or shell configured
   ✓ qa                          disabled (roles.qa.enabled = false)
 
-19 checks: 16 passed, 1 warnings, 2 failed
+20 checks: 17 passed, 1 warnings, 2 failed
 ```
 
 | Flag | Description |
@@ -340,7 +346,7 @@ github
   ✗ workflow labels             2 of 19 missing: bees:size/l, bees:size/xl
       → run `bees labels sync`
 ...
-Error: preflight: 1 of 13 checks failed — fix them, run `bees doctor --fix`, or start anyway with `bees run --skip-doctor`
+Error: preflight: 1 of 14 checks failed — fix them, run `bees doctor --fix`, or start anyway with `bees run --skip-doctor`
 ```
 
 At start it lists the repository's labels once and creates any workflow label
@@ -371,7 +377,7 @@ message alone, so a run reads as a report:
 ✗ reviewer PR #31 changes requested: "tests missing for the error path" (52 turns, $1.18, 6m14s)
 ✓ developer issue #12 → PR #31 updated (41 turns, $0.98, 5m03s)
 ✓ reviewer PR #31 approved: "lgtm" (23 turns, $0.47, 2m41s)
-⚠ issue #14 escalated to a human: Required checks on #33 still fail after 2 fix rounds: go / test
+⚠ issue #14 escalated to a human: Checks on #33 still fail after 2 fix rounds: go / test
 ```
 
 With `--log-format json` the same line is an ordinary record carrying its
@@ -420,6 +426,13 @@ Shows the last poll time and PID of the scheduler, queue sizes per workflow stat
 owned by the product manager, and `open_prs`), running developer workers (issue, [size](workflow.md#sizing), stage, round, and the attempt number while a session is being retried), a row per
 role, and unread mail per role. Reads `status.json` from the state directory, so it
 works while `bees run` is active in another terminal.
+
+A worker's stage is `develop`, `review` or `checks`. Once the checks stage knows what
+it is waiting for, the stage names the gate — `checks (required)`, `checks (reported)`
+or `checks (none)` — so a worker sitting in a 30-minute wait says whether it is
+waiting on the branch's required checks, on the checks the pull request happens to
+report, or on nothing at all. See
+[auto-merge](configuration.md#rolesreviewer-only-auto-merge).
 
 The `roles:` table covers all five roles with what each is doing (`running` or
 `idle`; `-` for the developer and reviewer, whose work is in the workers table
