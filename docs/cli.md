@@ -550,6 +550,35 @@ waiting on dependencies:
 `--json` carries the same information as `waiting_on_deps` (issue number → open
 blockers).
 
+### Degraded operations
+
+A factory operation that keeps failing — assigning what a session created, editing a
+label, the poll itself — used to leave nothing behind but a warning in the log, so a
+half-broken run looked exactly like a healthy one. Every such operation now reports
+its outcome under a short, stable name, and the ones failing right now are listed
+after the `last error` line:
+
+```
+degraded:
+  assign           12 consecutive failures over 3h10m   last: GraphQL: Projects (classic) is being deprecated
+  label            1 failure   last: gh: HTTP 403 (Resource not accessible by integration)
+```
+
+The section is absent entirely when nothing is failing. A single success clears the
+operation's streak and removes its line. `--json` carries the same entries as
+`status.degraded` (`op`, `count`, `first`, `last`, `last_error`, `escalated`).
+
+Three consecutive failures of one operation also print one line into the run's
+output — once per streak, not once per pass:
+
+```
+⚠ assign has failed 3 times in a row: GraphQL: Projects (classic) is being deprecated
+```
+
+Nothing else happens: the scheduler does not retry, back off or stop, and no issue is
+commented on — there is no issue to comment on for a factory-wide operation, and no
+role can fix a broken credential or a missing label. This is visibility only.
+
 ## The mailbox
 
 Roles talk to each other only through the local mailbox in `<state_dir>/mail`. The

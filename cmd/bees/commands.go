@@ -438,6 +438,7 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 			if st.LastError != "" {
 				fmt.Println("last error:", st.LastError)
 			}
+			fmt.Print(degradedText(st))
 			fmt.Println("\nqueues:")
 			fmt.Print(queuesText(st))
 			fmt.Println("\ndeveloper workers:")

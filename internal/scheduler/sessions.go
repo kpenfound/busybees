@@ -224,9 +224,8 @@ func (s *Scheduler) record(spec sessionSpec, res *session.Result) {
 	if res.Outcome.PR > 0 {
 		e.PR = res.Outcome.PR
 	}
-	if err := s.store.AppendLedger(e); err != nil {
-		s.log.Warn("could not record the session in the ledger", "session", spec.name, "error", err)
-	}
+	err := s.store.AppendLedger(e)
+	s.op("ledger", err, "could not record the session in the ledger", "session", spec.name, "error", err)
 	// The issue's running total is what scheduler.max_cost_per_issue is spent
 	// against; every session run for the issue counts, retries included.
 	s.recordIssueCost(e.Issue, e.CostUSD)

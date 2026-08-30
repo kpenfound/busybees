@@ -193,7 +193,8 @@ type fakeGH struct {
 	milestones []github.Milestone
 	// errFor makes a command fail: it is keyed by the command name, either
 	// the first two arguments ("label list") or the first one ("label"), or
-	// by "requested_reviewers" for the review-request REST call.
+	// by "requested_reviewers" and "assignees" for the review-request and
+	// assignee REST calls.
 	errFor map[string]error
 }
 
@@ -292,6 +293,9 @@ func (f *fakeGH) exec(ctx context.Context, args ...string) ([]byte, error) {
 		// --add-assignee` fails against GitHub with a Projects (classic)
 		// GraphQL error when the number is a pull request.
 		if i := slices.IndexFunc(args, func(a string) bool { return strings.HasSuffix(a, "/assignees") }); i >= 0 {
+			if err, ok := f.errFor["assignees"]; ok {
+				return nil, err
+			}
 			var n int
 			if _, err := fmt.Sscanf(args[i], "repos/acme/widgets/issues/%d/assignees", &n); err != nil {
 				return nil, fmt.Errorf("fake gh: bad assignees path %q", args[i])

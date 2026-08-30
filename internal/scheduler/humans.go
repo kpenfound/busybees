@@ -184,8 +184,7 @@ func formatActivity(repo string, pr int, activity []github.Activity) string {
 // One failing item does not stop the others: each is logged and skipped.
 func (s *Scheduler) adoptCreated(ctx context.Context, since time.Time) {
 	items, err := s.gh.ListCreatedSince(ctx, since)
-	if err != nil {
-		s.log.Warn("visibility backstop: list created items", "err", err)
+	if s.op("list-created", err, "visibility backstop: list created items", "err", err) {
 		return
 	}
 	for _, it := range items {
