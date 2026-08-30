@@ -894,8 +894,9 @@ func TestHumanFeedbackReopensApprovedPR(t *testing.T) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	h.gh.activity["repos/acme/widgets/pulls/101/comments"] = fmt.Sprintf(`[
 		{"id": 555, "user": {"login": "kyle"}, "body": "please rename this", "path": "seed.txt", "line": 1, "html_url": "https://x/555", "created_at": %q},
-		{"id": 556, "user": {"login": "kyle"}, "body": "will do\n\n<!-- bees:developer -->", "path": "seed.txt", "line": 1, "html_url": "https://x/556", "created_at": %q}
-	]`, now, now)
+		{"id": 556, "user": {"login": "kyle"}, "body": "will do\n\n<!-- bees:developer -->", "path": "seed.txt", "line": 1, "html_url": "https://x/556", "created_at": %q},
+		{"id": 557, "user": {"login": "kyle"}, "body": "Replying to the bot:\n> <!-- bees:developer -->\n\nActually, hold off on merging.", "path": "seed.txt", "line": 1, "html_url": "https://x/557", "created_at": %q}
+	]`, now, now, now)
 	h.gh.activity["repos/acme/widgets/pulls/101/reviews"] = fmt.Sprintf(`[
 		{"id": 777, "user": {"login": "kyle"}, "body": "", "state": "APPROVED", "html_url": "https://x/777", "submitted_at": %q}
 	]`, now)
@@ -915,7 +916,7 @@ func TestHumanFeedbackReopensApprovedPR(t *testing.T) {
 		t.Fatal("no developer session ran")
 	}
 	prompt, _ := os.ReadFile(filepath.Join(dev[0], "prompt.md"))
-	for _, want := range []string{"Feedback on PR #101 from kyle", "please rename this", "pulls/101/comments/555/replies", "seed.txt:1"} {
+	for _, want := range []string{"Feedback on PR #101 from kyle", "please rename this", "pulls/101/comments/555/replies", "seed.txt:1", "Actually, hold off on merging."} {
 		if !strings.Contains(string(prompt), want) {
 			t.Errorf("developer prompt missing %q", want)
 		}

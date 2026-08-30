@@ -63,11 +63,13 @@ A full pass is:
    visible, if `pr.updatedAt` is later than the issue's `human_seen_at` (or
    the PR's creation time), fetch its reviews, inline review comments and
    conversation comments with `gh api --paginate` (`github.Client.PRActivity`).
-   Items containing `github.BeesMarker` (`<!-- bees:`) — comments written by
-   bees, which share the human's `gh` account — and empty approvals are
-   dropped. The rest are mailed to the developer as one message from `human`
-   (`issue == N`, `pr == M`) whose body carries each item's id and the `gh`
-   command to reply to it; `human_seen_at` is advanced to the newest item.
+   Items whose last line is a `<!-- bees:<role> -->` marker — comments
+   written by bees, which share the human's `gh` account — and empty
+   approvals are dropped. Only the last line counts (`github.BeeRole`), so a
+   person quoting the bee they answer still reaches the developer. The rest
+   are mailed to the developer as one message from `human` (`issue == N`,
+   `pr == M`) whose body carries each item's id and the `gh` command to reply
+   to it; `human_seen_at` is advanced to the newest item.
    If the issue was `approved`, `reopenApproved` relabels it `ready` and
    removes `bees:approved` from the PR, so a developer worker picks it up on
    step 5 (an issue a worker still owns — the checks stage — is left alone).
