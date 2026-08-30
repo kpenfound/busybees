@@ -97,9 +97,9 @@ type Check func(ctx context.Context) Result
 // Timeout is the budget the runner gives a single check.
 const Timeout = 10 * time.Second
 
-// grace is how much longer the runner waits for a check that has not
-// returned after its context was cancelled.
-const grace = 2 * time.Second
+// graceFactor sets how much longer the runner waits for a check that has not
+// returned after its context was cancelled: Timeout/graceFactor.
+const graceFactor = 5
 
 func pass(name, group, detail string) Result {
 	return Result{Name: name, Group: group, Status: Pass, Detail: detail}
@@ -117,15 +117,20 @@ func fail(name, group, detail, remediation string) Result {
 // panics or ignores its cancelled context is reported as a failure instead of
 // taking doctor down with it.
 func Run(ctx context.Context, checks []Check) []Result {
+	return RunWith(ctx, checks, Timeout)
+}
+
+// RunWith is Run with a different per-check budget (tests).
+func RunWith(ctx context.Context, checks []Check, timeout time.Duration) []Result {
 	out := make([]Result, 0, len(checks))
 	for i, c := range checks {
-		out = append(out, runOne(ctx, i, c))
+		out = append(out, runOne(ctx, i, c, timeout))
 	}
 	return out
 }
 
-func runOne(ctx context.Context, i int, c Check) Result {
-	cctx, cancel := context.WithTimeout(ctx, Timeout)
+func runOne(ctx context.Context, i int, c Check, timeout time.Duration) Result {
+	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	done := make(chan Result, 1)
 	go func() {
@@ -146,8 +151,8 @@ func runOne(ctx context.Context, i int, c Check) Result {
 	select {
 	case r := <-done:
 		return r
-	case <-time.After(grace):
-		return fail(fmt.Sprintf("check %d", i+1), GroupInternal, fmt.Sprintf("did not finish within %s", Timeout),
+	case <-time.After(timeout / graceFactor):
+		return fail(fmt.Sprintf("check %d", i+1), GroupInternal, fmt.Sprintf("did not finish within %s", timeout),
 			"re-run `bees doctor`; if it keeps hanging, report it as a bug")
 	}
 }

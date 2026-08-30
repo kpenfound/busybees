@@ -239,12 +239,12 @@ func (d *Deps) checkClaude(ctx context.Context) Result {
 func (d *Deps) checkConfigLoads(context.Context) Result {
 	const name = "bees.toml valid"
 	if d.ConfigErr != nil {
-		detail := oneLine(d.ConfigErr.Error())
-		if d.ConfigPath != "" {
-			detail = d.ConfigPath + ": " + detail
+		if d.ConfigPath == "" {
+			return fail(name, GroupConfig, oneLine(d.ConfigErr.Error()),
+				"run `bees init` in the project's git clone, or point --config at an existing bees.toml")
 		}
-		return fail(name, GroupConfig, detail,
-			"run `bees config validate` for the full error, or `bees init` to create a bees.toml")
+		return fail(name, GroupConfig, d.ConfigPath+": "+oneLine(d.ConfigErr.Error()),
+			"run `bees config validate` for the full error, then fix bees.toml")
 	}
 	return pass(name, GroupConfig, fmt.Sprintf("%s (version %d)", d.Config.Path, d.Config.Version))
 }
@@ -286,7 +286,10 @@ func (d *Deps) checkStateDirIgnored(ctx context.Context) Result {
 	if err != nil || strings.HasPrefix(rel, "..") {
 		return pass(name, GroupConfig, cfg.StateDir()+" is outside the clone")
 	}
-	if _, err := d.git(ctx, cfg.Dir(), "check-ignore", "-q", rel); err != nil {
+	// Ask about a path inside the state dir: a "/.bees/" rule only matches
+	// the bare directory once it exists on disk, and doctor should give the
+	// same answer before and after the first session.
+	if _, err := d.git(ctx, cfg.Dir(), "check-ignore", "-q", filepath.Join(rel, "notes")); err != nil {
 		line := "/" + filepath.ToSlash(rel) + "/"
 		return warn(name, GroupConfig, fmt.Sprintf("%s is not ignored by git", rel),
 			fmt.Sprintf("add %q to .gitignore: notes, mail and session transcripts would be committed otherwise", line))
