@@ -35,15 +35,19 @@ repository. Refuses to overwrite an existing file. `bees.toml` is meant to be co
 
 init validates before it writes: the current directory must be a git clone, and the
 configuration it is about to write must parse and resolve to a repository and a default
-branch. A failed init leaves no `bees.toml` behind and the directory exactly as it was,
-so fixing what the error reports and running init again works. The one step that can
-fail after the local files exist is creating the labels; the error then says to run
+branch. Values are only written as active settings when you stated them or init really
+detected them; a value it could only guess stays a commented placeholder, so init fails
+rather than write a default branch nobody confirmed. A failed init leaves no `bees.toml`
+behind and the directory exactly as it was, so fixing what the error reports and running
+init again works. The one step that can fail after the local files exist is creating the
+labels; the error then says to run
 `bees labels sync`, not init again.
 
 | Flag | Description |
 |---|---|
 | `--remote name` | Git remote the factory pushes to (default `origin`). |
-| `--repo owner/name` | Write `project.repo` and `project.default_branch` as active settings. By default both are derived from the remote at run time and only appear as commented placeholders showing the detected values. |
+| `--repo owner/name` | Write `project.repo` as an active setting, and `project.default_branch` too when it could be detected from the remote. By default both are derived from the remote at run time and only appear as commented placeholders showing the detected values. |
+| `--default-branch <name>` | Write `project.default_branch` as an active setting, as given: no detection, no check against the remote. Use it when the branch cannot be detected (a remote that cannot be reached), which is otherwise what makes init fail. |
 | `--label <name>` | Visibility label (default `bees`). |
 | `--assignee <login>` | Only see items assigned to this login; `@me` for yourself. |
 | `--print` | Print the template to stdout instead of writing it. Writes nothing, so it works outside a git clone. |

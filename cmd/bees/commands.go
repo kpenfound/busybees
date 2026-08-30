@@ -26,14 +26,15 @@ import (
 // initOptions are the inputs of `bees init`, flags plus the directory it runs
 // in, so runInit can be exercised without cobra.
 type initOptions struct {
-	dir        string // directory to initialise; must be a git clone
-	configPath string // explicit --config path, empty for <dir>/bees.toml
-	repo       string
-	remote     string
-	label      string
-	assignee   string
-	print      bool
-	noLabels   bool
+	dir           string // directory to initialise; must be a git clone
+	configPath    string // explicit --config path, empty for <dir>/bees.toml
+	repo          string
+	defaultBranch string
+	remote        string
+	label         string
+	assignee      string
+	print         bool
+	noLabels      bool
 }
 
 // initDeps are the parts of init that talk to `gh`, so tests can replace them.
@@ -74,6 +75,7 @@ the directory exactly as it found it.`,
 		},
 	}
 	cmd.Flags().StringVar(&o.repo, "repo", "", "GitHub repository owner/name (default: derived from the remote at run time)")
+	cmd.Flags().StringVar(&o.defaultBranch, "default-branch", "", "branch developers branch from (default: detected from the remote at run time)")
 	cmd.Flags().StringVar(&o.remote, "remote", config.DefaultRemote, "git remote the factory pushes to")
 	cmd.Flags().StringVar(&o.label, "label", config.DefaultLabel, "visibility label")
 	cmd.Flags().StringVar(&o.assignee, "assignee", "", "only see issues assigned to this login (\"@me\" for yourself)")
@@ -90,8 +92,9 @@ func runInit(ctx context.Context, o initOptions, d initDeps) error {
 		return err
 	}
 	// render detects what it can so the placeholders in the template are
-	// right; the values are only written as active settings when --repo was
-	// given explicitly.
+	// right. A value only becomes an active setting when the user stated it or
+	// it was actually detected: an undetectable default branch stays a
+	// commented placeholder rather than a guess bees would then push to (#89).
 	render := func() (string, error) {
 		repo := o.repo
 		if repo == "" {
@@ -104,11 +107,22 @@ func runInit(ctx context.Context, o initOptions, d initDeps) error {
 				}
 			}
 		}
-		branch, _ := workspace.DefaultBranch(ctx, o.dir, o.remote)
-		if branch == "" && repo != "" {
-			branch, _ = d.repoBranch(ctx, repo)
+		branch := o.defaultBranch
+		if branch == "" {
+			branch, _ = workspace.DefaultBranch(ctx, o.dir, o.remote)
+			if branch == "" && repo != "" {
+				branch, _ = d.repoBranch(ctx, repo)
+			}
 		}
-		return config.Template(config.TemplateData{Remote: o.remote, Repo: repo, DefaultBranch: branch, Label: o.label, Assignee: o.assignee, Explicit: o.repo != ""})
+		return config.Template(config.TemplateData{
+			Remote:         o.remote,
+			Repo:           repo,
+			DefaultBranch:  branch,
+			Label:          o.label,
+			Assignee:       o.assignee,
+			ExplicitRepo:   o.repo != "",
+			ExplicitBranch: o.defaultBranch != "" || (o.repo != "" && branch != ""),
+		})
 	}
 
 	// --print writes nothing, so it does not need a git clone: it is how the
@@ -140,7 +154,7 @@ func runInit(ctx context.Context, o initOptions, d initDeps) error {
 		return err
 	}
 	if err := cfg.Resolve(ctx); err != nil {
-		return fmt.Errorf("%w (pass --repo owner/name, or set project.repo / project.default_branch after creating bees.toml with bees init --print)", err)
+		return fmt.Errorf("%w (pass --repo owner/name and --default-branch <name>, or set project.repo / project.default_branch after creating bees.toml with bees init --print)", err)
 	}
 
 	// Validated: from here on the writes happen.

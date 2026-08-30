@@ -25,7 +25,7 @@ func writeConfig(t *testing.T, body string) string {
 }
 
 func TestTemplateLoads(t *testing.T) {
-	text, err := Template(TemplateData{Repo: "acme/widgets", Assignee: "@me", Explicit: true})
+	text, err := Template(TemplateData{Repo: "acme/widgets", Assignee: "@me", ExplicitRepo: true, ExplicitBranch: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +36,7 @@ func TestTemplateLoads(t *testing.T) {
 	if cfg.Project.Repo != "acme/widgets" || cfg.Project.Remote != "origin" || cfg.Filter.Label != "bees" || cfg.Filter.Assignee != "@me" {
 		t.Fatalf("unexpected config: %+v %+v", cfg.Project, cfg.Filter)
 	}
-	// Without Explicit, repo and default_branch are commented placeholders.
+	// Without the Explicit flags, repo and default_branch are commented placeholders.
 	text, _ = Template(TemplateData{Repo: "acme/widgets", DefaultBranch: "trunk"})
 	cfg, err = Load(writeConfig(t, text))
 	if err != nil {
@@ -417,7 +417,7 @@ func TestDispatchErrorsListTheValidValues(t *testing.T) {
 // template is valid TOML with a value the loader accepts: a user should be
 // able to uncomment any line and have it work.
 func TestTemplateUncommented(t *testing.T) {
-	text, err := Template(TemplateData{Repo: "acme/widgets", Explicit: true})
+	text, err := Template(TemplateData{Repo: "acme/widgets", ExplicitRepo: true, ExplicitBranch: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -838,4 +838,46 @@ func uncommentTemplate(text string) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// TestTemplateNeverWritesAGuessedBranch checks that default_branch is only
+// written as an active setting when there is a real value for it: with no
+// detected branch the template must keep the "main" placeholder commented,
+// whatever the caller passes (#89).
+func TestTemplateNeverWritesAGuessedBranch(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		data TemplateData
+		want string
+	}{
+		{"explicit branch without a value", TemplateData{ExplicitBranch: true}, "#default_branch = \"main\""},
+		{"explicit branch with a value", TemplateData{ExplicitBranch: true, DefaultBranch: "trunk"}, "default_branch = \"trunk\""},
+		{"explicit repo alone", TemplateData{Repo: "acme/widgets", DefaultBranch: "trunk", ExplicitRepo: true}, "#default_branch = \"trunk\""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			text, err := Template(tc.data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(text, "\n"+tc.want+"\n") {
+				t.Fatalf("template does not contain %q", tc.want)
+			}
+			cfg, err := Load(writeConfig(t, text))
+			if err != nil {
+				t.Fatal(err)
+			}
+			active := strings.HasPrefix(tc.want, "default_branch")
+			if got := cfg.Project.DefaultBranch != ""; got != active {
+				t.Fatalf("default_branch = %q, active = %v", cfg.Project.DefaultBranch, active)
+			}
+		})
+	}
+	// ExplicitRepo alone still writes repo.
+	text, err := Template(TemplateData{Repo: "acme/widgets", ExplicitRepo: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, "\nrepo = \"acme/widgets\"\n") {
+		t.Fatal("ExplicitRepo did not write repo as an active setting")
+	}
 }

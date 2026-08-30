@@ -4,9 +4,12 @@ Everything a busybees factory does is driven by one file, `bees.toml`, which liv
 the root of a git clone of the project being built. `bees init` writes a starter file in
 the style of a classic Unix config: every option is listed, and the optional ones are
 commented out showing their default value — uncomment a line to change it. Only
-`filter.label` (plus `filter.assignee` when you pass `--assignee`, and `project.repo` /
-`project.default_branch` when you pass `--repo`) start out active; `bees config validate` checks it; `bees config show` prints
-the resolved settings for every role after merging.
+`filter.label` (plus `filter.assignee` when you pass `--assignee`, `project.repo` when you
+pass `--repo`, and `project.default_branch` when you pass `--default-branch` or init
+detected the branch from the remote) start out active. A value init could only guess is
+never written as a setting: it stays a commented placeholder and init fails instead.
+`bees config validate` checks the file; `bees config show` prints the resolved settings
+for every role after merging.
 
 The file starts with a `version` key, followed by five top-level tables:
 

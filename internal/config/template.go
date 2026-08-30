@@ -7,15 +7,20 @@ import (
 
 // TemplateData fills the bees.toml template written by `bees init`.
 // Repo and DefaultBranch are shown as commented placeholders (they are
-// derived from the remote at run time) unless Explicit is set.
+// derived from the remote at run time) unless the matching Explicit flag is
+// set. A value that was only guessed must stay a placeholder: writing a guess
+// as an active setting would make bees push to a branch nobody detected (#89).
 type TemplateData struct {
 	Remote        string
 	Repo          string
 	DefaultBranch string
 	Label         string
 	Assignee      string
-	// Explicit writes repo and default_branch as active settings.
-	Explicit bool
+	// ExplicitRepo writes repo as an active setting.
+	ExplicitRepo bool
+	// ExplicitBranch writes default_branch as an active setting. It is ignored
+	// when DefaultBranch is empty: a substituted placeholder is never active.
+	ExplicitBranch bool
 	// Version is always CurrentVersion; set by Template.
 	Version int
 }
@@ -32,6 +37,9 @@ func Template(d TemplateData) (string, error) {
 		d.Repo = "owner/name"
 	}
 	if d.DefaultBranch == "" {
+		// Nothing was detected or given: the placeholder below is a guess, so
+		// it can only ever be written commented out.
+		d.ExplicitBranch = false
 		d.DefaultBranch = "main"
 	}
 	d.Version = CurrentVersion
@@ -64,10 +72,10 @@ version = {{.Version}}
 # Git remote the factory fetches from and pushes to.
 #remote = "{{.Remote}}"
 # GitHub repository, as owner/name. Derived from the remote's URL when unset.
-{{if .Explicit}}repo = "{{.Repo}}"{{else}}#repo = "{{.Repo}}"{{end}}
+{{if .ExplicitRepo}}repo = "{{.Repo}}"{{else}}#repo = "{{.Repo}}"{{end}}
 # Branch developers branch from and QA tests. Derived from the remote's HEAD
 # when unset.
-{{if .Explicit}}default_branch = "{{.DefaultBranch}}"{{else}}#default_branch = "{{.DefaultBranch}}"{{end}}
+{{if .ExplicitBranch}}default_branch = "{{.DefaultBranch}}"{{else}}#default_branch = "{{.DefaultBranch}}"{{end}}
 # What the product is and how to build, test and run it belong in the
 # repository's own documentation (README, CONTRIBUTING, CLAUDE.md); the roles
 # read it and keep what they learn in their notes.
