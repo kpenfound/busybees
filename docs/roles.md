@@ -11,7 +11,7 @@ what it may do, and how to shape it.
 |---|---|---|
 | `product_manager` | singleton | unread mail, a fresh `bees:feedback` or `bees:feature` issue (a person created or commented on it since the PM last replied), or `product_manager_interval` elapsed (first run immediately) |
 | `project_manager` | singleton | issues in `bees:triage`, or unread mail |
-| `developer` | pool of `scheduler.max_developers` workers | a `bees:ready` issue is waiting (or an in-progress/review issue needs resuming) |
+| `developer` | pool of `scheduler.max_developers` workers | a `bees:ready` issue is waiting (or an in-progress/review issue needs resuming); a ready issue whose PR came back — human feedback, a conflict with the default branch — goes before new work |
 | `reviewer` | one per developer worker, in sequence | the worker's developer session opened or updated a PR; with `auto_merge`, also when a required check fails after approval |
 | `qa` | singleton | `qa_interval` elapsed and something was merged (first run immediately; the merged-PR check runs at most once per `qa_interval`) |
 
@@ -197,10 +197,12 @@ Implements exactly one issue on a dedicated branch and opens a pull request.
 **Given:** the issue (body, labels, milestone, comments) and its parent
 feature (number and title) when it is a sub-issue, the existing PR if this is
 a later review round, unread mail addressed to the developer about
-this issue or PR (project manager answers, reviewer feedback, and feedback
+this issue or PR (project manager answers, reviewer feedback, feedback
 from people who reviewed the PR on GitHub, delivered as mail from `human`
-with comment ids and the exact `gh` reply commands), the round number and
-limit, its notes. It runs in a worktree on `bees/issue-N` (prefix
+with comment ids and the exact `gh` reply commands, and — from
+`orchestrator` — a request to bring the branch up to date when the PR
+[conflicts with the default branch](workflow.md#conflicts-with-the-default-branch)),
+the round number and limit, its notes. It runs in a worktree on `bees/issue-N` (prefix
 from `project.branch_prefix`), already based on the default branch. The session
 environment carries `push.autoSetupRemote=true` and `push.default=current`
 (via `GIT_CONFIG_*` variables, so the clone's own git config is untouched) and a

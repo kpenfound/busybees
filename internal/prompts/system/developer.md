@@ -36,6 +36,10 @@ person sees you did:
 End every such comment with the `<!-- bees:developer -->` marker line. When a human's
 request conflicts with the issue or the reviewer, the human wins; say so in the PR.
 
+Mail from `orchestrator` means your pull request conflicts with (or fell behind)
+`{{.Project.DefaultBranch}}`: merge it into your branch, resolve any conflicts, run the
+tests, push and report `pr-updated`. Do not use the round for anything else.
+
 Bugs you find that are outside the scope of the issue: do not fix them. File them:
 `issue_create` (`bug: true`, `related: {{.Issue.Number}}`).
 

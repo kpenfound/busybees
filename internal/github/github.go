@@ -137,7 +137,30 @@ type PR struct {
 	} `json:"milestone"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
+	// HeadSHA is the commit the PR's head branch points at (headRefOid).
+	HeadSHA string `json:"headRefOid"`
+	// Mergeable is GitHub's verdict on merging the PR into its base:
+	// MERGEABLE, CONFLICTING or UNKNOWN. GitHub computes it asynchronously,
+	// so UNKNOWN (or empty) means "not computed yet", not "fine".
+	Mergeable string `json:"mergeable"`
+	// MergeStateStatus refines Mergeable: BEHIND (no conflict but the base
+	// moved on), DIRTY (conflicts), CLEAN, BLOCKED, UNSTABLE, UNKNOWN, ...
+	MergeStateStatus string `json:"mergeStateStatus"`
 }
+
+// Merge-state values gh reports for a pull request.
+const (
+	MergeableConflicting = "CONFLICTING"
+	MergeStateBehind     = "BEHIND"
+)
+
+// Conflicting reports whether GitHub says the PR cannot be merged into
+// its base because of conflicts.
+func (p PR) Conflicting() bool { return p.Mergeable == MergeableConflicting }
+
+// Behind reports whether the PR merges cleanly but its base has moved on
+// since the branch was last updated.
+func (p PR) Behind() bool { return !p.Conflicting() && p.MergeStateStatus == MergeStateBehind }
 
 // HasLabel reports whether the item carries label name.
 func HasLabel(labels []Label, name string) bool {
@@ -236,7 +259,7 @@ func (q Query) Matches(labels []Label, assignees []Author, milestone string) boo
 }
 
 const issueFields = "number,title,body,state,url,labels,milestone,author,assignees,createdAt,updatedAt"
-const prFields = "number,title,body,state,url,labels,headRefName,baseRefName,isDraft,mergedAt,mergeCommit,author,assignees,milestone,createdAt,updatedAt"
+const prFields = "number,title,body,state,url,labels,headRefName,baseRefName,isDraft,mergedAt,mergeCommit,author,assignees,milestone,createdAt,updatedAt,headRefOid,mergeable,mergeStateStatus"
 
 // ListOpenIssues returns open issues matching q.
 func (c *Client) ListOpenIssues(ctx context.Context, q Query) ([]Issue, error) {

@@ -81,9 +81,12 @@ func fakeClaude() {
 		git("-c", "user.email=bee@example.com", "-c", "user.name=bee", "commit", "-q", "-m", fmt.Sprintf("work %d", n))
 		git("push", "-q")
 		if os.Getenv(session.EnvPR) == "" {
-			// "Open" the PR: the fake gh treats the marker as the PR existing.
-			if err := os.WriteFile(filepath.Join(stateDir, "fake-pr-created"), nil, 0o644); err != nil {
-				fail(err)
+			// "Open" the PR: the fake gh treats the markers as the PR existing
+			// (fakePR, and any hidden PR on this issue's branch).
+			for _, marker := range []string{"fake-pr-created", "fake-pr-created-issue-" + os.Getenv(session.EnvIssue)} {
+				if err := os.WriteFile(filepath.Join(stateDir, marker), nil, 0o644); err != nil {
+					fail(err)
+				}
 			}
 			outcome = session.Outcome{Status: OutcomePROpened, PR: fakePR}
 		} else {
@@ -125,6 +128,9 @@ type fakeGH struct {
 	issues   map[int]*github.Issue
 	prs      map[int]*github.PR
 	prMarker string
+	// hidden lists PRs that do not exist until a developer session opened
+	// one on their head branch (bees/issue-N), like fakePR.
+	hidden   map[int]bool
 	history  map[int][]string // label additions per number, in order
 	comments map[int][]string
 	merged   []int
@@ -202,6 +208,11 @@ func (f *fakeGH) exec(ctx context.Context, args ...string) ([]byte, error) {
 	prVisible := func(p *github.PR) bool {
 		if p.Number == fakePR {
 			_, err := os.Stat(f.prMarker)
+			return err == nil
+		}
+		if f.hidden[p.Number] {
+			issue := strings.TrimPrefix(p.HeadRefName, "bees/issue-")
+			_, err := os.Stat(f.prMarker + "-issue-" + issue)
 			return err == nil
 		}
 		return true
@@ -397,6 +408,7 @@ func newHarnessAt(t *testing.T, toml string, now time.Time) *harness {
 		issues:   map[int]*github.Issue{},
 		prs:      map[int]*github.PR{},
 		prMarker: filepath.Join(store.Dir, "fake-pr-created"),
+		hidden:   map[int]bool{},
 		history:  map[int][]string{},
 		comments: map[int][]string{},
 		activity: map[string]string{},

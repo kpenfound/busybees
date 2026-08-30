@@ -75,6 +75,11 @@ label = "bees"
 #dispatch_order = "small-first"
 # How many size/l issues developers may work on at once. 0 means no cap.
 #max_large_in_flight = 1
+# Hand an open pull request that conflicts with the default branch back to its
+# developer (mail, and an approved issue returns to ready ahead of new work).
+#pr_fix_conflicts = true
+# Do the same when a pull request merely fell behind the default branch.
+#pr_keep_updated = false
 # Minimum time between product manager runs (mail triggers an earlier run).
 #product_manager_interval = "1h"
 # Minimum time between QA runs. QA only runs when something was merged.
