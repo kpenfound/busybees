@@ -347,3 +347,37 @@ func TestListCreatedSinceReadsTheMilestone(t *testing.T) {
 		t.Errorf("no milestone: %q", got)
 	}
 }
+
+func TestAwaitingBeeComment(t *testing.T) {
+	created := time.Now().Add(-time.Hour)
+	human := func(at time.Time) Comment {
+		return Comment{Author: Author{Login: "kyle"}, Body: "what about X?", CreatedAt: at}
+	}
+	bee := func(at time.Time) Comment {
+		return Comment{Author: Author{Login: "kyle"}, Body: "answered " + BeesMarker, CreatedAt: at}
+	}
+
+	cases := []struct {
+		name     string
+		comments []Comment
+		want     bool
+	}{
+		{"no comments", nil, false},
+		{"a human comment", []Comment{human(created.Add(time.Minute))}, true},
+		{"a bee answered it", []Comment{human(created.Add(time.Minute)), bee(created.Add(2 * time.Minute))}, false},
+		{"a human came back", []Comment{human(created.Add(time.Minute)), bee(created.Add(2 * time.Minute)), human(created.Add(3 * time.Minute))}, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			i := Issue{Number: 6, CreatedAt: created, Comments: c.comments}
+			if got := i.AwaitingBeeComment(); got != c.want {
+				t.Errorf("AwaitingBeeComment() = %v, want %v", got, c.want)
+			}
+			// AwaitingBee counts the creation as human activity, so it
+			// answers true for every case but the answered one.
+			if want := c.name != "a bee answered it"; i.AwaitingBee() != want {
+				t.Errorf("AwaitingBee() = %v, want %v", i.AwaitingBee(), want)
+			}
+		})
+	}
+}

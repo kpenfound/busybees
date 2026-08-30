@@ -118,6 +118,24 @@ func (i Issue) AwaitingBee() bool {
 	return lastHuman.After(lastBee)
 }
 
+// AwaitingBeeComment reports whether a bee owes a reply because a person
+// commented, not merely because the issue was created. Unlike AwaitingBee it
+// does not seed the human side with CreatedAt, so an issue nobody has
+// commented on is never awaiting a bee.
+func (i Issue) AwaitingBeeComment() bool {
+	var lastHuman, lastBee time.Time
+	for _, c := range i.Comments {
+		if c.IsBee() {
+			if c.CreatedAt.After(lastBee) {
+				lastBee = c.CreatedAt
+			}
+		} else if c.CreatedAt.After(lastHuman) {
+			lastHuman = c.CreatedAt
+		}
+	}
+	return lastHuman.After(lastBee)
+}
+
 // PR is a GitHub pull request.
 type PR struct {
 	Number      int        `json:"number"`
