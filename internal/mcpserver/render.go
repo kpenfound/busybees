@@ -70,20 +70,16 @@ func short(label string, l config.Labels) string { return strings.TrimPrefix(lab
 
 // author says who wrote a comment: the bees role whose marker it carries, or
 // a person. Bees and humans share one GitHub account, so the login is not a
-// signal and the marker is the only one there is. A comment may quote an
-// earlier one, marker included, so the *last* marker is the author's own —
-// withMarker appends it at the end — and any earlier one is quoted context.
+// signal and the marker is the only one there is. github.BeeRole reads it,
+// so what the renderer shows a bee and what the scheduler acts on can never
+// disagree: a marker quoted mid-body is context, and only a body whose last
+// line is a marker — where withMarker puts it — is a bee's.
 func author(body string) string {
-	i := strings.LastIndex(body, github.BeesMarker)
-	if i < 0 {
-		return "human"
-	}
-	rest := body[i+len(github.BeesMarker):]
-	role, _, ok := strings.Cut(rest, "-->")
+	role, ok := github.BeeRole(body)
 	if !ok {
 		return "human"
 	}
-	return "bee: " + strings.TrimSpace(role)
+	return "bee: " + role
 }
 
 // prText renders a pull request: what it is, whether its required checks are

@@ -206,17 +206,17 @@ func (s *server) comment(ctx context.Context, _ *mcp.CallToolRequest, in comment
 
 // withMarker appends the role's comment marker, so a bee comment is always
 // distinguishable from a person's — humans and bees share one GitHub
-// account. Only a body that already ends with *this role's* marker is left
-// alone: a body quoting another role's comment carries that role's marker,
-// and suppressing the append there would hand the comment to the wrong
-// author (author() in render.go reads the last marker).
+// account. Only a body github.BeeRole already reads as *this role's* is left
+// alone, which is the same rule the readers apply: a body quoting another
+// role's comment carries that role's marker, and a body whose last line is a
+// quoted marker (`> <!-- bees:... -->`) carries nobody's, so suppressing the
+// append in either case would hand the comment to the wrong author.
 func withMarker(body, role string) string {
-	marker := roleMarker(role)
 	trimmed := strings.TrimRight(body, "\n")
-	if strings.HasSuffix(trimmed, marker) {
+	if got, ok := github.BeeRole(trimmed); ok && got == role {
 		return trimmed
 	}
-	return trimmed + "\n\n" + marker
+	return trimmed + "\n\n" + roleMarker(role)
 }
 
 // roleMarker is the marker a role's comments carry.
