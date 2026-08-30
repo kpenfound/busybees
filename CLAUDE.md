@@ -52,4 +52,6 @@ GitHub repository. Read `docs/architecture.md` before changing the scheduler.
   `config.CurrentVersion`, add a `migrations[old]` step that rewrites the file
   *text* (so comments survive; also fix the commented-out defaults), test it, and
   update the `version` section of `docs/configuration.md`. Loading migrates in
-  memory; `Config.Rewrite` writes it back.
+  memory; `Config.Rewrite` writes it back. Tightening validation (a newly reserved
+  name or rejected value) is not a migration either: fail to load with an actionable
+  error naming the key and what to change.
