@@ -161,7 +161,7 @@ roles
   ✓ reviewer                    enabled, no skills, MCP servers or shell configured
   ✓ qa                          disabled (roles.qa.enabled = false)
 
-20 checks: 17 passed, 1 warnings, 2 failed
+20 checks: 17 passed, 1 warning, 2 failed
 ```
 
 | Flag | Description |

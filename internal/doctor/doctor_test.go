@@ -79,9 +79,13 @@ func TestFailuresAndSummary(t *testing.T) {
 	if n := Failures(results[:2]); n != 0 {
 		t.Errorf("warnings must not count as failures, got %d", n)
 	}
-	want := "4 checks: 1 passed, 1 warnings, 2 failed"
+	want := "4 checks: 1 passed, 1 warning, 2 failed"
 	if got := Summary(results); got != want {
 		t.Errorf("Summary = %q, want %q", got, want)
+	}
+	twoWarnings := append(results[:2:2], warn("e", GroupConfig, "", "fix e"))
+	if got := Summary(twoWarnings); got != "3 checks: 1 passed, 2 warnings, 0 failed" {
+		t.Errorf("plural warnings = %q", got)
 	}
 	if got := Summary(results[:1]); got != "1 check: 1 passed, 0 warnings, 0 failed" {
 		t.Errorf("singular summary = %q", got)
@@ -104,7 +108,7 @@ func TestText(t *testing.T) {
 		"  ! filter matches issues  no open issue matches label bees",
 		"      → check filter.label",
 		"",
-		"3 checks: 1 passed, 1 warnings, 1 failed",
+		"3 checks: 1 passed, 1 warning, 1 failed",
 		"",
 	}, "\n")
 	if got != want {
