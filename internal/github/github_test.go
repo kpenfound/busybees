@@ -170,3 +170,73 @@ func TestClosingIssues(t *testing.T) {
 		}
 	}
 }
+
+func TestAssignUsesTheRESTEndpoint(t *testing.T) {
+	var calls [][]string
+	c := New("a/b")
+	c.Exec = func(ctx context.Context, args ...string) ([]byte, error) {
+		calls = append(calls, args)
+		return nil, nil
+	}
+	if err := c.Assign(context.Background(), 7, "kyle", "ada"); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("calls: %v", calls)
+	}
+	got := strings.Join(calls[0], " ")
+	// `gh issue edit --add-assignee` fails against GitHub for a PR number
+	// with a Projects (classic) GraphQL error, so it must not be used.
+	want := "api --method POST repos/a/b/issues/7/assignees -f assignees[]=kyle -f assignees[]=ada"
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+	// No logins: no call.
+	calls = nil
+	if err := c.Assign(context.Background(), 7); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("empty assign called gh: %v", calls)
+	}
+}
+
+func TestSetMilestone(t *testing.T) {
+	var calls [][]string
+	c := New("a/b")
+	c.Exec = func(ctx context.Context, args ...string) ([]byte, error) {
+		calls = append(calls, args)
+		if strings.Contains(args[len(args)-1], "/milestones?") {
+			return []byte(`[{"number":3,"title":"v0.1.0"},{"number":4,"title":"v0.2.0"}]`), nil
+		}
+		return nil, nil
+	}
+	if err := c.SetMilestone(context.Background(), 7, "v0.2.0"); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("calls: %v", calls)
+	}
+	got := strings.Join(calls[1], " ")
+	want := "api --method PATCH repos/a/b/issues/7 -F milestone=4"
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+	// An unknown title is an error naming it, and edits nothing.
+	calls = nil
+	err := c.SetMilestone(context.Background(), 7, "v9")
+	if err == nil || !strings.Contains(err.Error(), `"v9"`) {
+		t.Fatalf("err: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("unknown milestone edited the PR: %v", calls)
+	}
+	// An empty title is a no-op.
+	calls = nil
+	if err := c.SetMilestone(context.Background(), 7, ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("empty milestone called gh: %v", calls)
+	}
+}
