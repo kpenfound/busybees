@@ -145,8 +145,11 @@ sync` overwrites those.
 
 Besides its state label, a work item carries at most one **size label**. Size
 is what the factory knows about how big a piece of work is: the reviewer is
-told the size and adjusts how much scrutiny it applies, and `bees status`
-breaks the ready queue down by size (`ready  4  (xs 1, s 2, m 1)`).
+told the size and adjusts how much scrutiny it applies, `bees status`
+breaks the ready queue down by size (`ready  4  (xs 1, s 2, m 1)`), and the size
+can pick the model the developer session runs
+(`roles.developer.model_by_size`, see
+[configuration.md](configuration.md#rolesdeveloper-only-commit-flags-max-size-and-per-size-models)).
 
 | Size | Label | Rough meaning |
 |---|---|---|

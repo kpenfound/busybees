@@ -408,6 +408,10 @@ prompt_file = "docs/qa-checklist.md"
   role or `[global]` is a validation error. GPG or SSH signing runs inside a
   headless session on the machine running `bees`, so the signing key and agent
   must work there without prompting.
+- **model_by_size** (developer only) picks the model per work item size, e.g.
+  `model_by_size = { xs = "sonnet", s = "sonnet" }`. A size with no entry, and
+  an issue with no size label, uses `model`. Setting the key on another role or
+  `[global]` is a validation error.
 
 See [configuration.md](configuration.md) for every key.
 

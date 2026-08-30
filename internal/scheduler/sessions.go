@@ -39,8 +39,13 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 	if err != nil {
 		return nil, err
 	}
+	// A copy: the configured role keeps its own model. The developer can run
+	// a different model per work item size; a retry with the fallback model
+	// overrides whatever the size picked.
+	if spec.role == config.RoleDeveloper && spec.data.Issue != nil {
+		role.Model = role.ModelFor(s.sizeOf(spec.data.Issue.Labels))
+	}
 	if spec.useFallback && role.FallbackModel != "" {
-		// A copy: the configured role keeps its own model.
 		role.Model = role.FallbackModel
 	}
 	if err := s.store.EnsureNotes(spec.role); err != nil {

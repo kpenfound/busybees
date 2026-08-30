@@ -162,8 +162,8 @@ label = "bees"
 
 #===============================================================================
 # Per-role settings. Every key from [global] is valid here, plus enabled;
-# the developer also takes commit_flags and max_size, and the reviewer the
-# auto-merge keys.
+# the developer also takes commit_flags, max_size and model_by_size, and the
+# reviewer the auto-merge keys.
 #===============================================================================
 
 # Owns the product vision and feature issues; breaks features into work items.
@@ -211,6 +211,9 @@ label = "bees"
 # Largest size a developer takes: xs, s, m, l or xl. Anything bigger is sent
 # back to triage for the project manager to split.
 #max_size = "l"
+# Run a cheaper (or stronger) model for some work item sizes. Keys are the
+# sizes xs, s, m, l and xl; a size with no entry uses model above.
+#model_by_size = { xs = "sonnet", s = "sonnet" }
 #prompt_file = ""
 #skills = []
 #model = "opus"

@@ -1,5 +1,7 @@
 package config
 
+import "maps"
+
 // View is the resolved configuration as printed by `bees config show`. Its
 // JSON field names are the bees.toml key names, so what the command prints can
 // be matched against what the user wrote, and durations render as duration
@@ -42,9 +44,10 @@ type RoleView struct {
 	Shell           string               `json:"shell"`
 	Env             map[string]string    `json:"env"`
 
-	// CommitFlags and MaxSize are only set on the developer.
-	CommitFlags *string `json:"commit_flags,omitempty"`
-	MaxSize     *string `json:"max_size,omitempty"`
+	// CommitFlags, MaxSize and ModelBySize are only set on the developer.
+	CommitFlags *string            `json:"commit_flags,omitempty"`
+	MaxSize     *string            `json:"max_size,omitempty"`
+	ModelBySize *map[string]string `json:"model_by_size,omitempty"`
 	// MergeView is only set on the reviewer; its keys are inlined.
 	*MergeView
 }
@@ -116,6 +119,9 @@ func (c *Config) View(roles []string) (View, error) {
 			rv.CommitFlags = &flags
 			size := c.MaxSize()
 			rv.MaxSize = &size
+			bySize := map[string]string{}
+			maps.Copy(bySize, rr.ModelBySize)
+			rv.ModelBySize = &bySize
 		case RoleReviewer:
 			m := c.Merge()
 			rv.MergeView = &MergeView{

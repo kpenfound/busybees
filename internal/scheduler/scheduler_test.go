@@ -63,6 +63,11 @@ func fakeClaude() {
 		fmt.Fprintln(os.Stderr, "fake claude:", err)
 		os.Exit(2)
 	}
+	// Record the command line so tests can assert on the flags the runner
+	// built, the way internal/session's fake does.
+	if err := os.WriteFile(filepath.Join(sessionDir, "args.txt"), []byte(strings.Join(os.Args, "\n")), 0o644); err != nil {
+		fail(err)
+	}
 	git := func(args ...string) {
 		if _, err := workspace.Git(context.Background(), ".", args...); err != nil {
 			fail(err)
@@ -506,6 +511,28 @@ func (h *harness) sessions(role string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// sessionFlag reads the value the runner passed for a flag in the newest
+// session of a role, from the args.txt the fake claude wrote.
+func (h *harness) sessionFlag(t *testing.T, role, flag string) string {
+	t.Helper()
+	dirs := h.sessions(role)
+	if len(dirs) == 0 {
+		t.Fatalf("no %s session ran", role)
+	}
+	b, err := os.ReadFile(filepath.Join(dirs[len(dirs)-1], "args.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Split(string(b), "\n")
+	for i, a := range args {
+		if a == flag && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+	t.Fatalf("%s session has no %s in %v", role, flag, args)
+	return ""
 }
 
 const baseTOML = `

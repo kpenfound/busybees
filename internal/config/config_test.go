@@ -413,6 +413,62 @@ func TestDispatchErrorsListTheValidValues(t *testing.T) {
 	}
 }
 
+// TestModelBySize covers the developer's per-size model override: the resolved
+// role answers with the override for a size that has one and with its own model
+// for everything else.
+func TestModelBySize(t *testing.T) {
+	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nmodel = \"opus\"\nmodel_by_size = { xs = \"haiku\", s = \" sonnet \" }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev, err := cfg.Role(RoleDeveloper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for size, want := range map[string]string{"xs": "haiku", "s": "sonnet", "m": "opus", "xl": "opus", "": "opus", "nonsense": "opus"} {
+		if got := dev.ModelFor(size); got != want {
+			t.Errorf("ModelFor(%q): got %q want %q", size, got, want)
+		}
+	}
+	// Nobody else carries the table, so every size answers with the model.
+	rev, err := cfg.Role(RoleReviewer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rev.ModelFor("xs"); got != rev.Model {
+		t.Errorf("reviewer ModelFor(\"xs\"): got %q want %q", got, rev.Model)
+	}
+	// Unset: every size is the role's model.
+	cfg, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dev, err = cfg.Role(RoleDeveloper); err != nil {
+		t.Fatal(err)
+	}
+	if dev.ModelBySize != nil || dev.ModelFor("xs") != dev.Model {
+		t.Errorf("unset model_by_size: %v, ModelFor(\"xs\") = %q", dev.ModelBySize, dev.ModelFor("xs"))
+	}
+}
+
+// A bad model_by_size has to say which key or role is wrong.
+func TestModelBySizeErrorsNameTheBadKey(t *testing.T) {
+	for body, want := range map[string]string{
+		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nmodel_by_size = { xxl = \"opus\" }\n": "model_by_size: unknown size \"xxl\" (want one of xs, s, m, l, xl)",
+		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nmodel_by_size = { xs = \"  \" }\n":    "roles.developer.model_by_size.xs must name a model",
+		"version = 1\n[project]\nrepo = \"a/b\"\n[global]\nmodel_by_size = { xs = \"haiku\" }\n":          "global: commit_flags, max_size and model_by_size are only valid under roles.developer",
+		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.reviewer]\nmodel_by_size = { xs = \"haiku\" }\n":  "roles.reviewer: commit_flags, max_size and model_by_size are only valid under roles.developer",
+	} {
+		_, err := Load(writeConfig(t, body))
+		if err == nil {
+			t.Fatalf("%q: expected an error", body)
+		}
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+}
+
 // TestTemplateUncommented makes sure every commented-out option in the
 // template is valid TOML with a value the loader accepts: a user should be
 // able to uncomment any line and have it work.

@@ -275,22 +275,34 @@ checks are polled again — up to `max_check_fix_rounds`. Still pending at
 `checks_timeout`, or a merge that GitHub refuses (for example branch protection that
 needs a human review) → `bees:needs-human`. See [workflow.md](workflow.md#merging).
 
-### `[roles.developer]` only: commit flags and max size
+### `[roles.developer]` only: commit flags, max size and per-size models
 
-These two keys describe the developer specifically, so they are accepted **only**
-under `[roles.developer]`; setting either on `[global]` or another role is a
+These three keys describe the developer specifically, so they are accepted **only**
+under `[roles.developer]`; setting one on `[global]` or another role is a
 validation error.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `commit_flags` | string | `""` | Extra flags for every `git commit` the developer makes, for example `"--gpg-sign --signoff"`. Appended verbatim to the developer's system prompt as "When creating git commits, always use the following extra flags: `--gpg-sign --signoff`." |
 | `max_size` | string | `"l"` | The largest work item a developer takes: `xs`, `s`, `m`, `l` or `xl`. A `bees:ready` issue sized above it is never dispatched — the orchestrator moves it back to `bees:triage` and the project manager splits it. The project manager is told the limit in its prompt. See [Sizing](workflow.md#size-decides-what-gets-built-next). |
+| `model_by_size` | table | `{}` | The model to run a developer session with, per work item size. Keys are the sizes `xs`, `s`, `m`, `l`, `xl`; an unknown key or an empty value is a validation error. A size with no entry — and an issue with no size label — uses `model`. |
 
 ```toml
 [roles.developer]
 commit_flags = "--gpg-sign --signoff"
 max_size = "m"          # anything bigger goes back to triage to be split
+
+[roles.developer.model_by_size]
+xs = "sonnet"           # a typo fix does not need the strongest model
+s = "sonnet"
 ```
+
+`model_by_size` is read once per session, from the size label the issue carries when
+the developer picks it up: `bees:size/xs` above runs that session as `--model sonnet`,
+everything else as the developer's `model`. `fallback_model` is unchanged, and a retry
+that runs with it (`scheduler.retry_with_fallback`) still overrides the size's choice.
+Only the developer has the key; the reviewer, which is told the size too, always runs
+its own `model`.
 
 Signing (`--gpg-sign` / `-S`) happens inside a headless Claude Code session on the
 machine running `bees`, so a working signing key and agent (gpg-agent, or an SSH
@@ -306,7 +318,7 @@ For each role the effective settings are computed from `[global]` and
 |---|---|
 | `prompt` / `prompt_file` | Concatenated in this order, separated by blank lines: global `prompt`, global `prompt_file`, role `prompt`, role `prompt_file`. The result is appended to the role's built-in base prompt under an "Additional instructions from bees.toml" heading. |
 | `skills` | Union, order preserved, global first, duplicates dropped. |
-| `commit_flags`, `max_size` | Developer only; not merged from `[global]`. |
+| `commit_flags`, `max_size`, `model_by_size` | Developer only; not merged from `[global]`. |
 | `env` | union; the role wins on a name conflict |
 | `mcp` | Union by name. A role server with the same name as a global one replaces it. |
 | `model`, `fallback_model`, `effort`, `max_turns`, `timeout` | Role value if set, else global value, else the built-in default. |
@@ -432,6 +444,7 @@ headers = { Authorization = "Bearer $BROWSER_MCP_TOKEN" }
 | `roles.reviewer.merge_method` | `squash` |
 | `roles.developer.commit_flags` | `""` (none) |
 | `roles.developer.max_size` | `l` |
+| `roles.developer.model_by_size` | `{}` (every size uses `model`) |
 | `skills_refresh` | `24h` |
 | `roles.reviewer.checks_wait` | `1m` |
 | `roles.reviewer.checks_poll_interval` | `2m` |
