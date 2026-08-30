@@ -175,6 +175,11 @@ owned by the product manager, and `open_prs`), running developer workers (issue,
 unread mail per role. Reads `status.json` from the state directory, so it works while
 `bees run` is active in another terminal.
 
+A `no_state` queue counts issues that are visible to the factory but carry no
+workflow state label yet — usually ones a person just filed from the GitHub UI. The
+scheduler gives them `bees:triage` on its next reconcile, so the row normally
+disappears again within the same pass. Queues with nothing in them are omitted.
+
 When [`scheduler.work_hours`](configuration.md#work-hours) is configured it also
 reports whether the factory is inside the window and when the next GitHub poll is
 due (`in_work_hours` and `next_poll` in `--json`):

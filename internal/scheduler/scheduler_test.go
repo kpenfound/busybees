@@ -1149,3 +1149,43 @@ func TestLocalPassDoesNotRedispatchFinishedIssues(t *testing.T) {
 		t.Fatalf("local pass restarted a finished issue: %s", got)
 	}
 }
+
+// An issue a human filed without a state label is counted under "no_state",
+// never under the empty string, and the count is refreshed after reconcile has
+// moved it into triage — not left stale until the next poll.
+func TestNoStateQueueIsNamedAndRecountedAfterReconcile(t *testing.T) {
+	h := newHarness(t, baseTOML)
+	h.sched.OnlyRoles = map[string]bool{}
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Filed from the GitHub UI", State: "OPEN", Labels: []github.Label{{Name: "bees"}}}
+	ctx := context.Background()
+
+	snap, err := h.sched.poll(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.sched.writeStatus()
+	st, err := h.store.LoadStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := st.Queues[""]; ok {
+		t.Errorf("unnamed queue key in status: %+v", st.Queues)
+	}
+	if st.Queues["no_state"] != 1 {
+		t.Errorf("after poll: no_state = %d, want 1 (%+v)", st.Queues["no_state"], st.Queues)
+	}
+
+	if err := h.sched.reconcile(ctx, snap); err != nil {
+		t.Fatal(err)
+	}
+	h.sched.writeStatus()
+	if st, err = h.store.LoadStatus(); err != nil {
+		t.Fatal(err)
+	}
+	if st.Queues["no_state"] != 0 {
+		t.Errorf("after reconcile: no_state = %d, want 0 (%+v)", st.Queues["no_state"], st.Queues)
+	}
+	if st.Queues["triage"] != 1 {
+		t.Errorf("after reconcile: triage = %d, want 1 (%+v)", st.Queues["triage"], st.Queues)
+	}
+}
