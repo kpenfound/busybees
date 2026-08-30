@@ -35,7 +35,7 @@ _None._
 ## Your notes
 
 {{if .Notes}}{{.Notes}}{{else}}_Empty._{{end}}
-
+{{template "consolidate" .}}
 ## Instructions
 
 1. Answer every question in your mail first (developers are blocked on you).

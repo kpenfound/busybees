@@ -39,7 +39,7 @@ _No new mail._
 ## Your notes
 
 {{if .Notes}}{{.Notes}}{{else}}_Empty._{{end}}
-
+{{template "consolidate" .}}
 ## Instructions
 
 You are on branch `{{.Branch}}`, based on `{{.Project.DefaultBranch}}`.

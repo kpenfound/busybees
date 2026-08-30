@@ -18,7 +18,7 @@
 ## Your notes
 
 {{if .Notes}}{{.Notes}}{{else}}_Empty._{{end}}
-
+{{template "consolidate" .}}
 ## Instructions
 
 The PR branch is checked out in your working directory. Review the diff, run the tests,
