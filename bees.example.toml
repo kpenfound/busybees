@@ -4,6 +4,11 @@
 # show the default value; uncomment a line to change it. Run
 # `bees config show` to see the resolved settings for every role.
 
+# Format version of this file. bees refuses files newer than it understands and
+# upgrades older ones in memory. Leave it alone; bees releases that change the
+# format say what to do.
+version = 1
+
 #===============================================================================
 # Project
 #===============================================================================
