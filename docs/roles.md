@@ -144,6 +144,14 @@ enter the workflow state machine. For each fresh one it:
 4. closes the feature issue when all its sub-issues are closed (the progress
    column in its prompt shows this), or when it no longer makes sense.
 
+**Proposals:** a feature issue the product manager creates itself is labelled
+`bees:proposal` as well as `bees:feature`. It writes, refines and asks
+questions on such an issue as usual, but does **not** break it into work items
+until a person removes the label — `issue_create` (`parent: <proposal>`)
+refuses. Removing the label is the approval. A feature issue a person filed
+carries no proposal label: it is already approved and handled exactly as
+before.
+
 A feature issue is *fresh* when a person created or commented on it after
 the product manager's last marker comment (`github.Issue.AwaitingBee`). When a
 person answers a `bees:question`, the orchestrator removes the label and the
@@ -332,6 +340,12 @@ the application.
 when the bug is not tied to a recent change), with reproduction steps,
 expected vs actual behaviour and severity, after searching for existing
 reports; comments on an existing report rather than duplicating it.
+
+**Stays in its lane:** what QA may file directly is a bug report, or a small
+work item within the existing design. Anything that asks for new scope — a new
+capability, a different way of working — goes to the product manager by mail
+instead, which turns it into a proposal a person approves. QA never opens
+feature issues itself.
 
 **Mail:** may send to `product_manager` only: one report per session (what
 was tested, what works, bugs filed, product-level observations), and nothing

@@ -243,7 +243,17 @@ the problem, who it is for, what "done" looks like, constraints. The product
 manager writes most of them (from feedback, QA reports and its own roadmap),
 but you can file one directly and it is treated the same way. Feature issues
 never enter the state machine; `bees status` counts them in its `features`
-queue. For each *fresh* feature issue (created, or commented on by a person,
+queue.
+
+A feature issue a **bee** wrote also carries `bees:proposal`: it is a
+*proposal* until you approve it. The product manager writes it, refines it and
+asks questions on it, but nothing is broken down from it — `bees issue create
+--parent <proposal>` refuses — so the factory cannot grow its own roadmap.
+**Remove the `bees:proposal` label to approve it**, and it becomes an ordinary
+feature issue the product manager breaks down on its next run. A feature issue
+you filed never carries the label, and is broken down straight away.
+
+For each *fresh* feature issue (created, or commented on by a person,
 since the product manager's last marker comment on it) the product manager:
 
 1. makes sure it is detailed enough to be broken down — or asks you (below);
@@ -587,6 +597,12 @@ issue, explores around it, and then:
 - sends the product manager one report by mail: what was tested, what works,
   bugs filed, and product-level observations.
 
+QA stays in its lane: what it files directly is a bug report, or a small work
+item within the existing design. Anything that asks for new scope goes to the
+product manager by mail, which turns it into a
+[proposal](#feature-issues) for you to approve; QA never opens feature issues
+itself.
+
 ## Bugs
 
 Any of developer, reviewer and QA can file bugs. They always go in as
@@ -602,7 +618,10 @@ The product manager owns the roadmap of feature issues. It runs at least every
 unread mail (questions from the project manager, reports from QA) or when a
 feature or feedback issue is fresh. It writes feature issues
 (`issue_create` with `feature: true`) that describe user-visible outcomes rather than
-implementation, and breaks them into work items as described above. Because
+implementation, and breaks them into work items as described above — except that
+a feature issue it wrote itself starts as a
+[proposal](#feature-issues) (`bees:proposal`) and is only broken down once a
+person removes that label. Because
 work items are GitHub sub-issues of their feature, progress is visible on the
 feature issue itself, in GitHub's project views, and in the product manager's
 prompt.

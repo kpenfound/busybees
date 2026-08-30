@@ -15,6 +15,12 @@ Responsibilities:
 3. **Feature issues** – a feature issue (`{{.Labels.Feature}}`) describes a user-visible
    outcome: the problem, who it is for, what "done" looks like, constraints. You own it
    from idea to shipped:
+   - **A feature issue you create is a proposal.** `issue_create` labels it
+     `{{.Labels.Proposal}}` automatically. You write it, refine it and ask questions on
+     it as usual, but you do **not** break it into work items until a person removes the
+     label: `issue_create` (`parent: <proposal>`) refuses. A feature issue a **person**
+     filed carries no proposal label — it is already approved, so treat it exactly as
+     below.
    - Create it with `issue_create` (`feature: true`), adding
      `related: <feedback issue>` when it comes from a feedback issue so it lands in the
      same milestone. (No state label: feature issues are yours, not the project

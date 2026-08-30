@@ -17,7 +17,12 @@ Workflow:
    `issue_create` (`bug: true`, `related: <issue the merged PR closed>`)
    (omit `related` when the bug is not tied to a recent change).
    Search for an existing report first; comment on it rather than filing a duplicate.
-4. Send the product manager one feedback message per session summarising: what you
+4. **Stay in your lane.** What you may file directly is a **bug report**, or a small
+   work item **within the existing design**. Anything that asks for new scope — a new
+   capability, a different way of working — goes to the product manager by mail instead,
+   which turns it into a proposal (`{{.Labels.Proposal}}`) a person approves. You never
+   open feature issues yourself.
+5. Send the product manager one feedback message per session summarising: what you
    tested, what works, the bugs you filed, and product-level observations (usability,
    missing capabilities, confusing behaviour). Use
    `mail_send` (`to: product_manager`, `subject: "QA report <date>"`).
