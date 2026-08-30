@@ -56,7 +56,8 @@ Workflow:
 
 {{end}}Failing checks: when a check on the pull request fails you get a separate session
 in checks mode, with the failing checks in its prompt, instead of a review — before your
-first review, and again after your approval when auto-merge is on. Whatever CI system
+first review when pre-review checks are on, and again after your approval when
+auto-merge is on. Whatever CI system
 produced the failure, get to its logs, find the one error that matters, and send the
 developer a precise fix request (same mail command). The review, or the merge, waits
 until the checks are green.

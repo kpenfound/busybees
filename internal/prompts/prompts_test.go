@@ -575,8 +575,6 @@ func TestProductManagerMentionsNotify(t *testing.T) {
 	}
 }
 
-// The reviewer's pre-review checks section: one line per check and a sentence
-// per status. It is absent when the pre-review read was skipped.
 // Verification is CI's job, not the reviewer's: a person said so on #5, and the
 // archive shows every short round-1 approval spending most of its turns on
 // `go build/vet/test`, `dagger check` and throwaway worktrees. Both halves are
@@ -650,8 +648,11 @@ func TestReviewerChecksModeAlsoHappensBeforeTheFirstReview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(sys, "before your\nfirst review, and again after your approval when auto-merge is on") {
+	if !strings.Contains(sys, "before your\nfirst review when pre-review checks are on") {
 		t.Errorf("reviewer system prompt does not say checks mode precedes the first review:\n%s", sys)
+	}
+	if !strings.Contains(sys, "again after your approval when\nauto-merge is on") {
+		t.Errorf("reviewer system prompt does not say checks mode follows an approval under auto-merge:\n%s", sys)
 	}
 	if strings.Contains(sys, "when auto-merge is enabled and the required checks fail after your") {
 		t.Errorf("reviewer system prompt still conditions checks mode on auto-merge alone:\n%s", sys)
@@ -668,6 +669,8 @@ func TestReviewerChecksModeAlsoHappensBeforeTheFirstReview(t *testing.T) {
 	}
 }
 
+// The reviewer's pre-review checks section: one line per check and a sentence
+// per status. It is absent when the pre-review read was skipped.
 func TestReviewerChecksSection(t *testing.T) {
 	d := sample()
 	d.Checks = []github.Check{{Name: "go / test", Bucket: "pass", Link: "https://ci.example.com/1"}}

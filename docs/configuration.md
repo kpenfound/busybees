@@ -403,11 +403,11 @@ checks-mode reviewer and a developer fix round first, sharing `check_fix_rounds`
 and `max_check_fix_rounds` with the post-approval stage; the review happens only
 once the pull request is green. Still pending at the timeout, no check reported
 at all, or a read that fails outright → the review happens anyway and the
-reviewer is told to run the test-suite itself. Later review rounds go straight
-to the reviewer: no second read, and no checks section describing a head the
-developer has replaced. `bees status` shows the worker in
-the `pre-review checks` stage while it waits. `pre_review_checks = false` goes
-straight from the developer to the reviewer.
+reviewer is told nothing was verified for it, and to say so in its outcome
+note. Later review rounds go straight to the reviewer: no second read, and no
+checks section describing a head the developer has replaced. `bees status`
+shows the worker in the `pre-review checks` stage while it waits.
+`pre_review_checks = false` goes straight from the developer to the reviewer.
 
 With `auto_merge = true`, after approval the worker waits `checks_wait`, then polls
 the pull request's checks every `checks_poll_interval`. All green → merge. Any check
