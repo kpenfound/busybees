@@ -300,6 +300,32 @@ When the reviewer approves, the orchestrator labels both the PR and the issue
 `bees:approved`. If the reviewer role is disabled (`[roles.reviewer] enabled =
 false`) a PR is treated as approved as soon as the developer opens it.
 
+### Before the review: the required checks
+
+The developer runs the repository's own lint and test commands before it
+pushes, and the orchestrator reads the pull request's **required checks before
+the first review** (`[roles.reviewer] pre_review_checks`, on by default —
+independent of `auto_merge`). Between the developer opening or updating the PR
+and the reviewer starting, the worker waits `checks_wait` and polls
+`gh pr checks --required` every `checks_poll_interval`, at most
+`pre_review_checks_timeout` (default 10 minutes):
+
+- **Green**, or no required checks configured: the review starts, and the
+  reviewer's prompt lists the checks so it knows CI is green and can
+  concentrate on the change itself.
+- **A check failed**: the reviewer gets a checks-mode session first (exactly as
+  after approval, below), mails the developer the error, and the developer
+  pushes a fix; only then does the normal review happen. These rounds share
+  `check_fix_rounds` and `max_check_fix_rounds` with the post-approval stage
+  and do **not** count against `max_review_rounds`; exhausting them escalates.
+- **Still pending** at `pre_review_checks_timeout`: the review happens anyway
+  and the reviewer is told the checks were pending and that it should run the
+  test-suite itself.
+
+`bees status` shows the worker in the `pre-review checks` stage while it waits.
+Set `pre_review_checks = false` to go straight from the developer to the
+reviewer.
+
 ## Giving the developer feedback
 
 You do not need the mailbox to steer a developer: review the pull request on
@@ -344,7 +370,7 @@ merging it closes the issue through `Closes #N`.
 The reviewer can be given the job instead. Set `auto_merge = true` under
 `[roles.reviewer]` (with optional `merge_method`, `checks_wait`,
 `checks_timeout`, `max_check_fix_rounds` — see
-[configuration.md](configuration.md#rolesreviewer-only-auto-merge)). Once the
+[configuration.md](configuration.md#rolesreviewer-only-checks-and-auto-merge)). Once the
 reviewer approves, the developer worker enters a **checks** stage:
 
 1. It waits `checks_wait` (default 1 minute), because some required checks
