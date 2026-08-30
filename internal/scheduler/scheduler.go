@@ -911,6 +911,11 @@ func (s *Scheduler) escalate(ctx context.Context, number int, reason string) err
 	}
 	body := fmt.Sprintf("🐝 **busybees needs a human.**\n\n%s\n\nRemove the `%s` label and add `%s` (or `%s`) to hand it back to the factory.",
 		reason, s.labels.NeedsHuman, s.labels.Ready, s.labels.Triage)
+	// The factory and the people it works for share one GitHub account, so a
+	// comment notifies nobody by itself: mention scheduler.notify.
+	if m := s.cfg.Mentions(); m != "" {
+		body = m + "\n\n" + body
+	}
 	return s.gh.Comment(ctx, number, body)
 }
 

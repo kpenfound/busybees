@@ -166,7 +166,8 @@ type fakeGH struct {
 	// labels are the label names that exist in the repository.
 	labels []string
 	// errFor makes a command fail: it is keyed by the command name, either
-	// the first two arguments ("label list") or the first one ("label").
+	// the first two arguments ("label list") or the first one ("label"), or
+	// by "requested_reviewers" for the review-request REST call.
 	errFor map[string]error
 }
 
@@ -253,6 +254,14 @@ func (f *fakeGH) exec(ctx context.Context, args ...string) ([]byte, error) {
 		return true
 	}
 	if args[0] == "api" {
+		// Review requests go to the REST endpoint: `gh pr edit --add-reviewer`
+		// fails against GitHub with a Projects (classic) GraphQL error.
+		if slices.ContainsFunc(args, func(a string) bool { return strings.HasSuffix(a, "/requested_reviewers") }) {
+			if err, ok := f.errFor["requested_reviewers"]; ok {
+				return nil, err
+			}
+			return []byte("{}"), nil
+		}
 		if args[1] == "graphql" {
 			// parent lookup: issue 1 has parent 5 when it exists
 			if strings.Contains(strings.Join(args, " "), "number=1") {
