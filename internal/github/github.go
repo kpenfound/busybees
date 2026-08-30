@@ -45,6 +45,11 @@ type Label struct {
 	Name string `json:"name"`
 }
 
+// MilestoneRef is the milestone an issue or pull request is in.
+type MilestoneRef struct {
+	Title string `json:"title"`
+}
+
 // Milestone is a GitHub milestone.
 type Milestone struct {
 	Number       int    `json:"number"`
@@ -69,9 +74,7 @@ type Issue struct {
 	State     string  `json:"state"`
 	URL       string  `json:"url"`
 	Labels    []Label `json:"labels"`
-	Milestone *struct {
-		Title string `json:"title"`
-	} `json:"milestone"`
+	Milestone *MilestoneRef `json:"milestone"`
 	Author    Author    `json:"author"`
 	Assignees []Author  `json:"assignees"`
 	CreatedAt time.Time `json:"createdAt"`
@@ -132,9 +135,7 @@ type PR struct {
 	} `json:"mergeCommit"`
 	Author    Author   `json:"author"`
 	Assignees []Author `json:"assignees"`
-	Milestone *struct {
-		Title string `json:"title"`
-	} `json:"milestone"`
+	Milestone *MilestoneRef `json:"milestone"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 	// HeadSHA is the commit the PR's head branch points at (headRefOid).
@@ -146,6 +147,14 @@ type PR struct {
 	// MergeStateStatus refines Mergeable: BEHIND (no conflict but the base
 	// moved on), DIRTY (conflicts), CLEAN, BLOCKED, UNSTABLE, UNKNOWN, ...
 	MergeStateStatus string `json:"mergeStateStatus"`
+}
+
+// MilestoneTitle returns the milestone title or "".
+func (p PR) MilestoneTitle() string {
+	if p.Milestone == nil {
+		return ""
+	}
+	return p.Milestone.Title
 }
 
 // Merge-state values gh reports for a pull request.
@@ -166,6 +175,17 @@ func (p PR) Behind() bool { return !p.Conflicting() && p.MergeStateStatus == Mer
 func HasLabel(labels []Label, name string) bool {
 	for _, l := range labels {
 		if l.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// HasAssignee reports whether login is one of the assignees. GitHub logins are
+// case-insensitive.
+func HasAssignee(assignees []Author, login string) bool {
+	for _, a := range assignees {
+		if strings.EqualFold(a.Login, login) {
 			return true
 		}
 	}
@@ -341,17 +361,45 @@ func (c *Client) FindPRForBranch(ctx context.Context, branch string) (*PR, error
 	return &prs[0], nil
 }
 
-// Assign adds assignees to an issue or PR.
+// Assign adds assignees to an issue or a pull request. Existing assignees are
+// kept: the endpoint is additive.
+//
+// It goes straight to the REST endpoint rather than through
+// `gh issue edit --add-assignee`, which fails against GitHub with a "Projects
+// (classic) is being deprecated" GraphQL error when the number is a pull
+// request. GitHub's issues API addresses pull requests by the same number, so
+// one call covers both.
 func (c *Client) Assign(ctx context.Context, number int, logins ...string) error {
 	if len(logins) == 0 {
 		return nil
 	}
-	args := []string{"issue", "edit", strconv.Itoa(number), "-R", c.Repo}
+	args := []string{"api", "--method", "POST", fmt.Sprintf("repos/%s/issues/%d/assignees", c.Repo, number)}
 	for _, l := range logins {
-		args = append(args, "--add-assignee", l)
+		args = append(args, "-f", "assignees[]="+l)
 	}
 	_, err := c.Exec(ctx, args...)
 	return err
+}
+
+// SetMilestone puts an issue or a pull request in the open milestone with the
+// given title. Like Assign it uses the REST endpoint, which addresses both by
+// the same number. An empty title is a no-op; a title that matches no open
+// milestone is an error.
+func (c *Client) SetMilestone(ctx context.Context, number int, title string) error {
+	if title == "" {
+		return nil
+	}
+	milestones, err := c.ListMilestones(ctx)
+	if err != nil {
+		return err
+	}
+	for _, m := range milestones {
+		if strings.EqualFold(m.Title, title) {
+			_, err := c.Exec(ctx, "api", "--method", "PATCH", fmt.Sprintf("repos/%s/issues/%d", c.Repo, number), "-F", fmt.Sprintf("milestone=%d", m.Number))
+			return err
+		}
+	}
+	return fmt.Errorf("no open milestone %q in %s", title, c.Repo)
 }
 
 // RequestReview asks the given GitHub logins and org/team slugs (as
@@ -730,9 +778,7 @@ type SubIssueSummary struct {
 type IssueDetails struct {
 	ID        int64           `json:"id"` // database id, needed for sub-issue calls
 	SubIssues SubIssueSummary `json:"sub_issues_summary"`
-	Milestone *struct {
-		Title string `json:"title"`
-	} `json:"milestone"`
+	Milestone *MilestoneRef `json:"milestone"`
 }
 
 // MilestoneTitle returns the milestone title or "".
