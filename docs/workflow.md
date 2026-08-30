@@ -291,11 +291,13 @@ queue.
 A feature issue a **bee** wrote also carries `bees:proposal`: it is a
 *proposal* until you approve it. The product manager writes it, refines it and
 asks questions on it, but nothing is broken down from it — so the factory
-cannot grow its own roadmap. Nothing in the tooling enforces that yet: `bees
-issue create --parent <proposal>` succeeds, and the product manager is told not
-to call it. **Remove the `bees:proposal` label to approve it**, and it becomes
-an ordinary feature issue the product manager breaks down on its next run. A feature issue
-you filed never carries the label, and is broken down straight away.
+cannot grow its own roadmap. The scheduler never presents a proposal for
+breakdown, and `bees issue create --parent <proposal>` and `bees issue link`
+refuse outright, so a proposal grows no sub-issues whoever asks. **Remove the
+`bees:proposal` label to approve it**: the scheduler notices the label is gone
+and brings the feature back to the product manager, which breaks it down on its
+next run. A feature issue you filed never carries the label, and is broken down
+straight away.
 
 For each *fresh* feature issue (created, or commented on by a person,
 since the product manager's last marker comment on it) the product manager:
@@ -309,7 +311,8 @@ since the product manager's last marker comment on it) the product manager:
    sub-issues, and the product manager's prompt shows it as a
    `completed/total` column. Work items are ordered with dependencies noted
    ("after #N"); the project manager adds implementation detail during triage.
-   An existing issue can be attached with `issue_link` (`parent: <feature>`, `child: <item>`);
+   An existing issue can be attached with `issue_link` (`parent: <feature>`, `child: <item>`).
+   Both refuse a feature that is still a proposal;
 3. comments the list of work items on the feature issue (with the marker), so
    it is not presented to the product manager again until something changes;
 4. later, closes the feature issue once all its sub-issues are closed, or
@@ -687,7 +690,8 @@ passing.
 The product manager owns the roadmap of feature issues. It runs at least every
 `scheduler.product_manager_interval` (default 1h), or sooner when it has
 unread mail (questions from the project manager, reports from QA) or when a
-feature or feedback issue is fresh. It writes feature issues
+feature or feedback issue is fresh (a proposal never counts: only a person
+can move it). It writes feature issues
 (`issue_create` with `feature: true`) that describe user-visible outcomes rather than
 implementation, and breaks them into work items as described above — except that
 a feature issue it wrote itself starts as a
