@@ -337,8 +337,10 @@ directory:
 3. **Skills collection** — has a `skills/` directory. Wrapped in a generated plugin
    exposing every skill in it.
 
-Anything else is an error. Generated wrappers are rebuilt on every session; clones are
-reused.
+Anything else is an error. Clones and generated wrappers are reused: a wrapper is only
+rebuilt when it is missing or points somewhere else (the reference gained, lost or
+changed its `#sub/dir`). Sessions run with `--plugin-dir` pointing at the wrapper, so
+rebuilding one that a concurrent session is using would break it.
 
 A clone is refreshed (`git pull --ff-only`) when a session needs it and it was last
 fetched more than `skills_refresh` ago — `24h` by default. `skills_refresh = "always"`

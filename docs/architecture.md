@@ -316,7 +316,9 @@ saved to `stderr.log` when non-empty, and `result.json` summarises the run.
   if it has `.claude-plugin/plugin.json`, otherwise a generated wrapper under
   `~/.cache/bees/plugins/<name>/` whose `skills/` symlinks to the skill or
   skills collection. Each becomes a `--plugin-dir`, so the project worktree is
-  never modified.
+  never modified. Sessions start concurrently and share one manager, so
+  `Prepare` serialises its work behind a mutex and leaves a wrapper that
+  already points at the right target alone.
 - **MCP.** `mcp.json` is written for every session and always passed with
   `--strict-mcp-config`, so a session sees exactly two things: the servers from
   the resolved role (`$VAR` in `env` and `headers` expanded from the bees process
