@@ -339,6 +339,7 @@ type harness struct {
 	sched *Scheduler
 	clone string
 	logs  *syncBuffer
+	clock *fakeClock // nil unless the harness was built with a fixed clock
 }
 
 // syncBuffer collects log output; workers log concurrently.
@@ -357,7 +358,6 @@ func (b *syncBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.buf.String()
-	clock *fakeClock // nil unless the harness was built with a fixed clock
 }
 
 func newHarness(t *testing.T, toml string) *harness {
@@ -961,6 +961,9 @@ enabled = false
 	}
 	if len(h.gh.comments[1]) != 1 || !strings.Contains(h.gh.comments[1][0], "ended with `failed`") {
 		t.Fatalf("comments: %v", h.gh.comments[1])
+	}
+}
+
 // workHoursTOML is baseTOML with a mon-fri 09:00-18:00 window in UTC and
 // every role disabled, so only the polling loop itself is exercised.
 const workHoursTOML = baseTOML + `
