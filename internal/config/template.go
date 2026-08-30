@@ -258,6 +258,12 @@ label = "{{.Label}}"
 # Escalate to a human if checks are still pending after this long.
 #checks_timeout = "30m"
 #max_check_fix_rounds = 2
+# Read the pull request's required checks before the first review, so the
+# reviewer starts from a green PR. A failing check goes to the reviewer in
+# checks mode first, exactly like after approval.
+#pre_review_checks = true
+# Review anyway when the checks are still pending after this long.
+#pre_review_checks_timeout = "10m"
 #shell = "/bin/bash"
 #[roles.reviewer.env]
 #EXAMPLE = "value"

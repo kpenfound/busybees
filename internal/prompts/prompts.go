@@ -57,6 +57,13 @@ type Data struct {
 
 	// FailedChecks is set for the reviewer's checks-mode task.
 	FailedChecks []github.Check
+	// Checks are the pull request's required checks as read just before the
+	// review, ChecksStatus their summary ("passed", "pending"; empty when the
+	// pre-review read was skipped) and ChecksTimeout how long a pending read
+	// waited before giving up.
+	Checks        []github.Check
+	ChecksStatus  string
+	ChecksTimeout string
 	// Feedback holds bees:feedback issues awaiting the product manager.
 	Feedback []github.Issue
 	// Features holds every open feature issue; FreshFeatures the ones a

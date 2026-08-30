@@ -253,9 +253,17 @@ type RoleSettings struct {
 	// MaxCheckFixRounds caps reviewer-diagnoses/developer-fixes iterations
 	// when required checks fail. Default 2.
 	MaxCheckFixRounds int `toml:"max_check_fix_rounds"`
+	// PreReviewChecks reads the pull request's required checks before the
+	// first review, so the reviewer starts from a green PR (or knows it is
+	// not) instead of discovering CI failures after approval. Default true.
+	PreReviewChecks *bool `toml:"pre_review_checks"`
+	// PreReviewChecksTimeout bounds that pre-review wait: still pending
+	// after this and the review happens anyway. Default 10m.
+	PreReviewChecksTimeout Duration `toml:"pre_review_checks_timeout"`
 }
 
-// MergePolicy is the reviewer's auto-merge configuration.
+// MergePolicy is the reviewer's checks configuration: it covers both the
+// pre-review checks read and the post-approval auto-merge.
 type MergePolicy struct {
 	AutoMerge          bool
 	Method             string
@@ -263,6 +271,10 @@ type MergePolicy struct {
 	ChecksPollInterval time.Duration
 	ChecksTimeout      time.Duration
 	MaxCheckFixRounds  int
+	// PreReviewChecks and PreReviewChecksTimeout govern the prereview stage,
+	// which runs whether or not AutoMerge is set.
+	PreReviewChecks        bool
+	PreReviewChecksTimeout time.Duration
 }
 
 // Defaults for the merge policy.
@@ -272,6 +284,7 @@ const (
 	DefaultChecksPoll        = 2 * time.Minute
 	DefaultChecksTimeout     = 30 * time.Minute
 	DefaultMaxCheckFixRounds = 2
+	DefaultPreReviewTimeout  = 10 * time.Minute
 )
 
 // CommitFlags returns the developer's extra git commit flags.
@@ -286,9 +299,15 @@ func (c *Config) Merge() MergePolicy {
 		ChecksPollInterval: firstPositiveDur(rs.ChecksPollInterval.Duration, DefaultChecksPoll),
 		ChecksTimeout:      firstPositiveDur(rs.ChecksTimeout.Duration, DefaultChecksTimeout),
 		MaxCheckFixRounds:  firstPositive(rs.MaxCheckFixRounds, DefaultMaxCheckFixRounds),
+
+		PreReviewChecks:        true,
+		PreReviewChecksTimeout: firstPositiveDur(rs.PreReviewChecksTimeout.Duration, DefaultPreReviewTimeout),
 	}
 	if rs.AutoMerge != nil {
 		p.AutoMerge = *rs.AutoMerge
+	}
+	if rs.PreReviewChecks != nil {
+		p.PreReviewChecks = *rs.PreReviewChecks
 	}
 	return p
 }
@@ -562,8 +581,8 @@ func (c *Config) Validate() error {
 	}
 	check := func(scope string, rs RoleSettings) {
 		if scope != "roles."+RoleReviewer {
-			if rs.AutoMerge != nil || rs.MergeMethod != "" || rs.ChecksWait.Duration != 0 || rs.ChecksPollInterval.Duration != 0 || rs.ChecksTimeout.Duration != 0 || rs.MaxCheckFixRounds != 0 {
-				errs = append(errs, fmt.Sprintf("%s: auto_merge, merge_method, checks_wait, checks_poll_interval, checks_timeout and max_check_fix_rounds are only valid under roles.reviewer", scope))
+			if rs.AutoMerge != nil || rs.MergeMethod != "" || rs.ChecksWait.Duration != 0 || rs.ChecksPollInterval.Duration != 0 || rs.ChecksTimeout.Duration != 0 || rs.MaxCheckFixRounds != 0 || rs.PreReviewChecks != nil || rs.PreReviewChecksTimeout.Duration != 0 {
+				errs = append(errs, fmt.Sprintf("%s: auto_merge, merge_method, checks_wait, checks_poll_interval, checks_timeout, max_check_fix_rounds, pre_review_checks and pre_review_checks_timeout are only valid under roles.reviewer", scope))
 			}
 		}
 		if scope != "roles."+RoleDeveloper && rs.CommitFlags != "" {

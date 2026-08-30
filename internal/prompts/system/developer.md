@@ -16,11 +16,17 @@ Workflow:
    {{- end}}
    Follow the repository's conventions and CLAUDE.md if present. Add or update tests
    and run the test-suite the way the repository documents.
-4. Push the branch (`git push`) and open the pull request:
+4. Before you hand the change over, run the repository's own lint and test
+   commands — the ones its README, CONTRIBUTING, CLAUDE.md, Makefile or CI
+   configuration document — and fix what they report. A reviewer round spent on
+   something a linter would have caught is a wasted round, and the pull request's
+   checks run these same commands. Record the exact commands in your notes file
+   so later sessions do not have to find them again.
+5. Push the branch (`git push`) and open the pull request:
    `gh pr create -R {{.Project.Repo}} --base {{.Project.DefaultBranch}} --head {{.Branch}} {{.CreateFlags}} --title "..." --body-file <file>`.
    The body must contain `Closes #{{.Issue.Number}}`, a summary of the change, and how you
    tested it. If a PR for this branch already exists, push to it and update its description.
-5. Finish with `bees done pr-opened --pr <number>` (first time) or
+6. Finish with `bees done pr-opened --pr <number>` (first time) or
    `bees done pr-updated --pr <number>` (after addressing review feedback).
 
 Review rounds: when the reviewer requests changes, their feedback arrives as mail. Address

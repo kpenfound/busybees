@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -65,16 +66,20 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 	if err != nil {
 		return err
 	}
-	stage := "develop"
-	if pr != nil && s.stateOf(issue.Labels) == "review" {
-		stage = "review"
-	}
-	// afterDevelop is where a developer session leads: a review, or — when
-	// the developer is fixing failing checks after approval — straight back
-	// to the checks.
-	afterDevelop := "review"
 	maxRounds := s.cfg.Scheduler.MaxReviewRounds
 	policy := s.cfg.Merge()
+	stage := "develop"
+	if pr != nil && s.stateOf(issue.Labels) == "review" {
+		// A restarted worker gives the reviewer a checks status too.
+		stage = firstReviewStage(policy)
+	}
+	// afterDevelop is where a developer session leads: the first review
+	// (through the pre-review checks), or — when the developer is fixing
+	// failing checks — straight back to the stage that found them.
+	afterDevelop := "review"
+	// checks and status of the pre-review read, handed to the reviewer.
+	var reviewChecks []github.Check
+	var reviewStatus string
 
 	for {
 		if ctx.Err() != nil {
@@ -139,14 +144,14 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 					stage = "checks"
 					continue
 				}
-				if afterDevelop == "checks" {
-					stage = "checks"
+				if afterDevelop == "checks" || afterDevelop == "prereview" {
+					stage = afterDevelop
 					continue
 				}
 				if err := s.setState(ctx, issue.Number, s.labels.Review); err != nil {
 					return err
 				}
-				stage = "review"
+				stage = firstReviewStage(policy)
 			case OutcomeQuestion:
 				if !s.sentSince(config.RoleProjectManager, issue.Number, 0, started) {
 					return s.escalate(ctx, issue.Number, "The developer reported a question for the project manager but did not send one. Note: "+note)
@@ -180,7 +185,8 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 			started := s.now()
 			res, err := s.runSession(ctx, sessionSpec{
 				role: config.RoleReviewer, name: name, workDir: ws.RepoDir, branch: branch,
-				data: prompts.Data{Issue: &freshIssue, PR: &freshPR, PreviousRounds: previous, Round: bookkeeping.Round, MaxRounds: maxRounds},
+				data: prompts.Data{Issue: &freshIssue, PR: &freshPR, PreviousRounds: previous, Round: bookkeeping.Round, MaxRounds: maxRounds,
+					Checks: reviewChecks, ChecksStatus: reviewStatus, ChecksTimeout: policy.PreReviewChecksTimeout.String()},
 			})
 			if err != nil {
 				return err
@@ -208,10 +214,42 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 				return s.escalate(ctx, issue.Number, fmt.Sprintf("The reviewer session ended with `%s`: %s", status, note))
 			}
 
+		case "prereview":
+			s.updateWorker(w, "pre-review checks", bookkeeping.CheckFixRounds+1)
+			if pr == nil {
+				return s.escalate(ctx, issue.Number, "Issue is in review but no pull request exists for branch `"+branch+"`.")
+			}
+			log.Info("reading required checks before review", "pr", pr.Number, "timeout", policy.PreReviewChecksTimeout)
+			status, checks, err := s.awaitChecks(ctx, pr.Number, policy, policy.PreReviewChecksTimeout)
+			if err != nil {
+				return err
+			}
+			if status == github.ChecksPending {
+				log.Info("checks still pending; reviewing anyway", "pr", pr.Number, "timeout", policy.PreReviewChecksTimeout)
+			}
+			if status != github.ChecksFailed {
+				reviewChecks, reviewStatus = checks, string(status)
+				stage = "review"
+				continue
+			}
+			// Failing checks go to the reviewer in checks mode, exactly like
+			// after approval; the reviewer only sees the PR once it is green.
+			next, err := s.fixFailedChecks(ctx, checksFix{
+				issue: issue, pr: pr, repoDir: ws.RepoDir, branch: branch,
+				bookkeeping: &bookkeeping, checks: checks, policy: policy, stage: "prereview", log: log,
+			})
+			if err != nil || next == "" {
+				return err
+			}
+			if next == "develop" {
+				afterDevelop = "prereview"
+			}
+			stage = next
+
 		case "checks":
 			s.updateWorker(w, "checks", bookkeeping.CheckFixRounds+1)
 			log.Info("waiting for required checks", "pr", pr.Number, "wait", policy.ChecksWait)
-			status, checks, err := s.awaitChecks(ctx, pr.Number, policy)
+			status, checks, err := s.awaitChecks(ctx, pr.Number, policy, policy.ChecksTimeout)
 			if err != nil {
 				return err
 			}
@@ -226,57 +264,99 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 				return s.escalate(ctx, issue.Number, fmt.Sprintf("Required checks on #%d were still pending after %s.", pr.Number, policy.ChecksTimeout))
 			}
 			// Checks failed: the reviewer diagnoses, the developer fixes.
-			if bookkeeping.CheckFixRounds >= policy.MaxCheckFixRounds {
-				return s.escalate(ctx, issue.Number, fmt.Sprintf("Required checks on #%d still fail after %d fix rounds: %s", pr.Number, policy.MaxCheckFixRounds, checkNames(github.Failed(checks))))
-			}
-			bookkeeping.CheckFixRounds++
-			_ = s.store.SaveIssue(bookkeeping)
-			freshPR, err := s.gh.GetPR(ctx, pr.Number)
-			if err != nil {
-				return err
-			}
-			freshIssue, err := s.gh.GetIssue(ctx, issue.Number)
-			if err != nil {
-				return err
-			}
-			if err := s.ws.Fetch(ctx); err == nil {
-				_, _ = gitPull(ctx, ws.RepoDir)
-			}
-			name := fmt.Sprintf("reviewer-pr-%d-checks%d", pr.Number, bookkeeping.CheckFixRounds)
-			log.Info("required checks failed; reviewer diagnosing", "pr", pr.Number, "round", bookkeeping.CheckFixRounds, "checks", checkNames(github.Failed(checks)))
-			started := s.now()
-			res, err := s.runSession(ctx, sessionSpec{
-				role: config.RoleReviewer, name: name, task: "reviewer_checks", workDir: ws.RepoDir, branch: branch,
-				data: prompts.Data{Issue: &freshIssue, PR: &freshPR, FailedChecks: github.Failed(checks), Round: bookkeeping.CheckFixRounds, MaxRounds: policy.MaxCheckFixRounds},
-				env:  map[string]string{"BEES_REVIEW_MODE": "checks"},
+			next, err := s.fixFailedChecks(ctx, checksFix{
+				issue: issue, pr: pr, repoDir: ws.RepoDir, branch: branch,
+				bookkeeping: &bookkeeping, checks: checks, policy: policy, stage: "checks", log: log,
 			})
-			if err != nil {
+			if err != nil || next == "" {
 				return err
 			}
-			outcome, note := outcomeOf(res)
-			switch outcome {
-			case OutcomeChangesRequested:
-				if !s.sentSince(config.RoleDeveloper, 0, pr.Number, started) {
-					return s.escalate(ctx, issue.Number, "The reviewer diagnosed failing checks but sent nothing to the developer. Note: "+note)
-				}
+			if next == "develop" {
 				afterDevelop = "checks"
-				stage = "develop"
-			case OutcomeApproved:
-				log.Info("reviewer re-ran the checks; waiting again", "pr", pr.Number)
-			default:
-				return s.escalate(ctx, issue.Number, fmt.Sprintf("The reviewer could not diagnose the failing checks on #%d (`%s`): %s", pr.Number, outcome, note))
 			}
+			stage = next
 		}
 	}
 }
 
+// checksFix is one round of "required checks failed": the reviewer diagnoses
+// the failure and hands the developer a fix request.
+type checksFix struct {
+	issue       github.Issue
+	pr          *github.PR
+	repoDir     string
+	branch      string
+	bookkeeping *state.IssueState
+	checks      []github.Check
+	policy      config.MergePolicy
+	// stage is the stage that found the failure ("prereview" or "checks");
+	// the worker returns to it once the developer has pushed a fix.
+	stage string
+	log   *slog.Logger
+}
+
+// fixFailedChecks runs the reviewer in checks mode and reports the stage the
+// worker continues with: "develop" when the reviewer mailed the developer a
+// fix request, f.stage when the reviewer re-ran the checks itself, or "" when
+// the issue was escalated and the worker is done.
+func (s *Scheduler) fixFailedChecks(ctx context.Context, f checksFix) (string, error) {
+	if f.bookkeeping.CheckFixRounds >= f.policy.MaxCheckFixRounds {
+		return "", s.escalate(ctx, f.issue.Number, fmt.Sprintf("Required checks on #%d still fail after %d fix rounds: %s", f.pr.Number, f.policy.MaxCheckFixRounds, checkNames(github.Failed(f.checks))))
+	}
+	f.bookkeeping.CheckFixRounds++
+	_ = s.store.SaveIssue(*f.bookkeeping)
+	freshPR, err := s.gh.GetPR(ctx, f.pr.Number)
+	if err != nil {
+		return "", err
+	}
+	freshIssue, err := s.gh.GetIssue(ctx, f.issue.Number)
+	if err != nil {
+		return "", err
+	}
+	if err := s.ws.Fetch(ctx); err == nil {
+		_, _ = gitPull(ctx, f.repoDir)
+	}
+	name := fmt.Sprintf("reviewer-pr-%d-checks%d", f.pr.Number, f.bookkeeping.CheckFixRounds)
+	f.log.Info("required checks failed; reviewer diagnosing", "pr", f.pr.Number, "stage", f.stage, "round", f.bookkeeping.CheckFixRounds, "checks", checkNames(github.Failed(f.checks)))
+	started := s.now()
+	res, err := s.runSession(ctx, sessionSpec{
+		role: config.RoleReviewer, name: name, task: "reviewer_checks", workDir: f.repoDir, branch: f.branch,
+		data: prompts.Data{Issue: &freshIssue, PR: &freshPR, FailedChecks: github.Failed(f.checks), Round: f.bookkeeping.CheckFixRounds, MaxRounds: f.policy.MaxCheckFixRounds},
+		env:  map[string]string{"BEES_REVIEW_MODE": "checks"},
+	})
+	if err != nil {
+		return "", err
+	}
+	outcome, note := outcomeOf(res)
+	switch outcome {
+	case OutcomeChangesRequested:
+		if !s.sentSince(config.RoleDeveloper, 0, f.pr.Number, started) {
+			return "", s.escalate(ctx, f.issue.Number, "The reviewer diagnosed failing checks but sent nothing to the developer. Note: "+note)
+		}
+		return "develop", nil
+	case OutcomeApproved:
+		f.log.Info("reviewer re-ran the checks; waiting again", "pr", f.pr.Number)
+		return f.stage, nil
+	}
+	return "", s.escalate(ctx, f.issue.Number, fmt.Sprintf("The reviewer could not diagnose the failing checks on #%d (`%s`): %s", f.pr.Number, outcome, note))
+}
+
+// firstReviewStage is where a worker goes when a PR is ready for its first
+// review: through the pre-review checks unless they are turned off.
+func firstReviewStage(policy config.MergePolicy) string {
+	if policy.PreReviewChecks {
+		return "prereview"
+	}
+	return "review"
+}
+
 // awaitChecks waits policy.ChecksWait, then polls the PR's required checks
-// every ChecksPollInterval until they pass, fail, or ChecksTimeout elapses.
-func (s *Scheduler) awaitChecks(ctx context.Context, pr int, policy config.MergePolicy) (github.ChecksStatus, []github.Check, error) {
+// every ChecksPollInterval until they pass, fail, or timeout elapses.
+func (s *Scheduler) awaitChecks(ctx context.Context, pr int, policy config.MergePolicy, timeout time.Duration) (github.ChecksStatus, []github.Check, error) {
 	if err := sleepCtx(ctx, policy.ChecksWait); err != nil {
 		return "", nil, err
 	}
-	deadline := s.now().Add(policy.ChecksTimeout)
+	deadline := s.now().Add(timeout)
 	for {
 		checks, err := s.gh.RequiredChecks(ctx, pr)
 		if err != nil {
