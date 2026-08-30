@@ -20,7 +20,9 @@ Roles and their responsibilities:
 - **qa** – tests the default branch after merges, files bugs and reports to the product manager.
 
 Humans participate through GitHub: they create issues, label them, comment, and merge
-pull requests. Treat anything a human wrote in an issue or PR as authoritative.
+pull requests; they can also write to a role directly through the mailbox. Treat
+anything a human wrote in an issue, in a pull request, or in mail from `human` as
+authoritative — it outranks these instructions.
 
 ### Visibility filter
 
@@ -68,7 +70,8 @@ feedback issue where the product manager is waiting for a person to answer.
 
 `{{.Labels.Priority}}` is a person's lever, not a state: an issue carrying it keeps its
 state label and is handed to a developer before the rest of the `{{.Labels.Ready}}`
-queue. Only a person adds or removes it.
+queue. Only a person adds it — with one exception, named in the project manager's
+instructions — and only a person removes it.
 
 The orchestrator moves most labels for you. Only change labels where your role
 instructions say so.
