@@ -343,3 +343,28 @@ func TestIssueSpendSeedsFromTheLedger(t *testing.T) {
 		t.Errorf("an issue with no history: $%v", cost)
 	}
 }
+
+// TestOverIssueBudgetPluralisesTheSessionCount: the escalation names one
+// session as "1 session", not "1 sessions" — a single session can blow the
+// per-issue budget on its own.
+func TestOverIssueBudgetPluralisesTheSessionCount(t *testing.T) {
+	h := newHarness(t, baseTOML+"max_cost_per_issue = 0.5\n")
+	for _, tc := range []struct {
+		sessions int
+		want     string
+	}{
+		{1, "across 1 session,"},
+		{2, "across 2 sessions,"},
+	} {
+		if _, err := h.store.SetIssueCost(1, 1, tc.sessions); err != nil {
+			t.Fatal(err)
+		}
+		note, over := h.sched.overIssueBudget(1)
+		if !over {
+			t.Fatalf("%d sessions costing $1 against a $0.50 budget is not over it", tc.sessions)
+		}
+		if !strings.Contains(note, tc.want) {
+			t.Errorf("%d sessions: note %q does not contain %q", tc.sessions, note, tc.want)
+		}
+	}
+}
