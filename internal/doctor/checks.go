@@ -13,6 +13,7 @@ import (
 
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/github"
+	"github.com/kpenfound/busybees/internal/skills"
 	"github.com/kpenfound/busybees/internal/versions"
 	"github.com/kpenfound/busybees/internal/workspace"
 )
@@ -40,6 +41,9 @@ type Deps struct {
 	GitHub *github.Client
 	// Workspaces creates the throwaway worktree of the workspace check.
 	Workspaces *workspace.Manager
+	// Skills clones the skills of the per-role checks. It uses the cache a
+	// session uses, so doctor warms it rather than duplicating it.
+	Skills *skills.Manager
 	// ClaudeBin is the claude executable. Default "claude".
 	ClaudeBin string
 
@@ -69,6 +73,9 @@ func New(ctx context.Context, configPath, claudeBin string) *Deps {
 	ws := workspace.NewManager(cfg.Dir(), cfg.Scheduler.WorkspaceRoot)
 	ws.Remote = cfg.Project.Remote
 	d.Workspaces = ws
+	sk := skills.NewManager(skills.CacheDir())
+	sk.RefreshAlways, sk.RefreshAfter = cfg.SkillsRefresh()
+	d.Skills = sk
 	return d
 }
 
@@ -90,7 +97,9 @@ func (d *Deps) Checks() []Check {
 	if d.Workspaces != nil && d.Config.Project.DefaultBranch != "" {
 		checks = append(checks, Check{Run: d.checkWorktree})
 	}
-	return checks
+	// Last, because they are the slow ones: cloning skills and starting MCP
+	// servers. CheapChecks drops them for the `bees run` preflight.
+	return append(checks, d.roleChecks()...)
 }
 
 func (d *Deps) lookPath(file string) (string, error) {

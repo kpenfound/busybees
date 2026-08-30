@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/testutil"
 	"github.com/kpenfound/busybees/internal/workspace"
@@ -608,8 +609,10 @@ func TestCheckWorktree(t *testing.T) {
 func TestChecksCoverEveryGroup(t *testing.T) {
 	f := setup(t, "", nil)
 	checks := f.Checks()
-	if len(checks) != 13 {
-		t.Errorf("got %d checks, want 13", len(checks))
+	// 13 cheap ones plus one per role: with nothing role-specific configured
+	// each role still reports one row.
+	if want := 13 + len(config.Roles); len(checks) != want {
+		t.Errorf("got %d checks, want %d", len(checks), want)
 	}
 	f.gh.replies = map[string]ghReply{
 		"auth status": {out: "  - Token scopes: 'repo'"},
