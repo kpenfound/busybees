@@ -159,6 +159,9 @@ label = "{{.Label}}"
 #skills = [
 #  "https://github.com/anthropics/skills#skills/webapp-testing",
 #]
+# How stale a skill clone may get before it is pulled: never, always or a
+# duration. Global only; see "bees skills".
+#skills_refresh = "24h"
 # claude model, and the model used once it has hit its usage limit.
 #model = "opus"
 #fallback_model = "sonnet"

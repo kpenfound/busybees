@@ -105,10 +105,10 @@ func newApp(ctx context.Context, g *globalFlags) (*app, error) {
 	if err := versions.CheckAll(ctx, claudeBin); err != nil {
 		return nil, err
 	}
-	cache := os.Getenv("BEES_CACHE_DIR")
-	if cache == "" {
-		cache = skills.DefaultCacheDir()
-	}
+	skillMgr := skills.NewManager(cacheDir())
+	skillMgr.RefreshAlways, skillMgr.RefreshAfter = cfg.SkillsRefresh()
+	skillMgr.Logger = log
+
 	ws := workspace.NewManager(cfg.Dir(), cfg.Scheduler.WorkspaceRoot)
 	ws.Keep = cfg.Scheduler.KeepWorkspaces
 	ws.Remote = cfg.Project.Remote
@@ -121,7 +121,7 @@ func newApp(ctx context.Context, g *globalFlags) (*app, error) {
 		ConfigPath:  cfg.Path,
 		Repo:        cfg.Project.Repo,
 		Label:       cfg.Filter.Label,
-		Skills:      skills.NewManager(cache),
+		Skills:      skillMgr,
 		AddDirs:     []string{store.Dir},
 		Logger:      log,
 	}

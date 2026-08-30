@@ -78,6 +78,36 @@ changing `filter.label`.
 
 Prints the label names and what each one means.
 
+### `bees skills list`
+
+Prints the skill repositories configured for the enabled roles: the cache directory and
+the refresh policy on the first line, then one line per reference with its commit (or
+`not cached`), how long ago it was fetched, the roles that use it and the reference
+itself. Reads the cache only — no session, no GitHub.
+
+```
+$ bees skills list
+/home/kyle/.cache/bees  (refresh: 24h)
+9f1c0aa     3h ago  developer,reviewer  https://github.com/acme/skills#skills/tdd
+not cached  -       qa                  https://github.com/acme/qa-skills
+```
+
+### `bees skills update`
+
+Clones what is missing and pulls everything else right now, whatever `skills_refresh`
+says. With no argument (or `--all`) it updates every configured reference; arguments
+must match a configured reference verbatim.
+
+```
+$ bees skills update
+updated https://github.com/acme/skills#skills/tdd 9f1c0aa → 2b7d431
+unchanged https://github.com/acme/qa-skills 4c19e02
+```
+
+A reference that fails prints `failed <ref>: <error>` and the command exits non-zero
+after trying the rest. Pinned references (`@v1.2.0`) are detached checkouts and cannot
+be pulled; that failure is expected.
+
 ### `bees config validate`
 
 Loads `bees.toml` and reports errors (missing or unsupported `version`, unknown keys,

@@ -397,7 +397,9 @@ does not already ignore it (and it lives inside the clone), `/.bees/` is
 appended to the repository's `.gitignore` — commit that change. `bees.toml`
 itself is meant to be committed. Worktrees live under `$TMPDIR/bees/` (or
 `scheduler.workspace_root`) and are removed after each worker or singleton
-run; the skills cache lives under `~/.cache/bees/` (`BEES_CACHE_DIR`).
+run; the skills cache lives under `~/.cache/bees/` (`BEES_CACHE_DIR`), whose clones
+are refreshed on use according to `global.skills_refresh` and can be inspected with
+`bees skills`.
 
 ## Testing
 
