@@ -306,12 +306,13 @@ changes honestly and lets the orchestrator escalate.
 ### Checks mode (`auto_merge = true`)
 
 After approval the orchestrator waits `checks_wait`, then polls the PR's
-required checks. If they all pass (or there are none) it merges with
-`merge_method` and deletes the branch. If any fails, the reviewer gets a
-second kind of session, rendered from `task/reviewer_checks.md` with
-`BEES_REVIEW_MODE=checks` in its environment.
+checks — the required checks if the branch has any, otherwise every check the
+pull request reports; with no checks at all it merges and says so. If they all
+pass it merges with `merge_method` and deletes the branch. If any fails, the
+reviewer gets a second kind of session, rendered from `task/reviewer_checks.md`
+with `BEES_REVIEW_MODE=checks` in its environment.
 
-**Given:** the PR, the issue, the list of failing required checks (name,
+**Given:** the PR, the issue, the list of failing checks (name,
 workflow, bucket, description, details link), the fix round and its limit,
 its notes.
 

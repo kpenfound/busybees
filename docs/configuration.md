@@ -270,7 +270,7 @@ frugal:
 | Product-manager has-work check | 1 `issue view` per feedback/feature issue | only for issues whose `updatedAt` is newer than the PM's last run |
 | Product-manager run | 1 `issue view` per open feedback/feature issue, plus 1 REST call per open feature (sub-issue progress) | every PM run (not gated by `updatedAt`) |
 | QA merged-PR check | 1 call | at most once per `qa_interval` |
-| Required checks (auto-merge) | 1 call per poll of the checks stage | every `roles.reviewer.checks_poll_interval` while waiting |
+| Checks (auto-merge) | 1 call per poll of the checks stage, 2 when the branch requires no check | every `roles.reviewer.checks_poll_interval` while waiting |
 | Visibility backstop | 2 list calls | after every session |
 | Feature progress | 1 REST call per open feature issue (`sub_issues_summary`) | per product manager run |
 | Parent feature lookup | 1 GraphQL call per triage item, and 1 per developer session | per project manager run / developer session |
@@ -385,20 +385,33 @@ setting them on `[global]` or another role is a validation error.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `auto_merge` | bool | `false` | Merge a pull request the reviewer approved once its required checks are green. Off by default: humans merge. |
+| `auto_merge` | bool | `false` | Merge a pull request the reviewer approved once its checks are green — the required checks if the branch has any, otherwise every check the pull request reports; with no checks at all it merges and says so. Off by default: humans merge. |
 | `merge_method` | string | `"squash"` | `squash`, `merge` or `rebase` (`gh pr merge --<method> --delete-branch`). |
-| `checks_wait` | duration | `"1m"` | How long to wait after approval before polling required checks, because some take a moment to report they have started. |
-| `checks_poll_interval` | duration | `"2m"` | How often `gh pr checks --required` is polled while waiting for checks (one API call each). |
-| `checks_timeout` | duration | `"30m"` | How long to wait for required checks to finish before escalating with `bees:needs-human`. |
-| `max_check_fix_rounds` | int | `2` | Reviewer-diagnoses / developer-fixes iterations allowed when required checks fail, before escalating. |
+| `checks_wait` | duration | `"1m"` | How long to wait after approval before polling the checks, because some take a moment to report they have started. |
+| `checks_poll_interval` | duration | `"2m"` | How often the checks are polled while waiting (one API call each, two when the branch requires nothing). |
+| `checks_timeout` | duration | `"30m"` | How long to wait for the checks to finish before escalating with `bees:needs-human`. |
+| `max_check_fix_rounds` | int | `2` | Reviewer-diagnoses / developer-fixes iterations allowed when checks fail, before escalating. |
 
 With `auto_merge = true`, after approval the worker waits `checks_wait`, then polls
-`gh pr checks --required` every `checks_poll_interval`. All green (or no required
-checks at all) → merge. Any check fails → the reviewer gets a checks-mode session to
-find the main error and mail it to the developer, the developer pushes a fix, and the
-checks are polled again — up to `max_check_fix_rounds`. Still pending at
-`checks_timeout`, or a merge that GitHub refuses (for example branch protection that
-needs a human review) → `bees:needs-human`. See [workflow.md](workflow.md#merging).
+the pull request's checks every `checks_poll_interval`. All green → merge. Any check
+fails → the reviewer gets a checks-mode session to find the main error and mail it to
+the developer, the developer pushes a fix, and the checks are polled again — up to
+`max_check_fix_rounds`. Still pending at `checks_timeout`, or a merge that GitHub
+refuses (for example branch protection that needs a human review) →
+`bees:needs-human`. See [workflow.md](workflow.md#merging).
+
+**Which checks are the gate.** `gh pr checks --required` decides whenever the default
+branch requires anything: those checks, and only those. A repository with no branch
+protection requires nothing, and gating on nothing would merge with nothing green — so
+in that case every check the pull request reports (`gh pr checks`) is the gate instead,
+a failing one blocks the merge and a pending one is waited for. To take a check out of
+the gate, mark the ones that must block a merge as required in the branch protection
+rules of the default branch; bees never reads those rules to change them, and never
+enables or edits protection. With no check reported at all — a repository with no CI —
+it merges after two consecutive empty polls and logs that no check was reported, not
+that the checks passed. `bees doctor` says which of the three is in force, and
+`bees status` shows it in the worker stage (`checks (required)`, `checks (reported)`,
+`checks (none)`).
 
 ### `[roles.developer]` only: commit flags, max size and per-size models
 
@@ -710,7 +723,7 @@ it inherited, plus:
 | `BEES_BRANCH` | Checked-out branch, when any. |
 | `BEES_NOTES_FILE` | The role's notes file. |
 | `BEES_BIN` | Path of the `bees` executable. Its directory is also prepended to `PATH` so sessions can run `bees mail` and `bees done`. |
-| `BEES_REVIEW_MODE` | `checks` for the reviewer's checks-mode sessions (diagnosing failed required checks); unset otherwise. |
+| `BEES_REVIEW_MODE` | `checks` for the reviewer's checks-mode sessions (diagnosing failed checks); unset otherwise. |
 | `SHELL` | The configured `shell`, when set. |
 | *configured `env`* | Every `[global.env]` / `[roles.<name>.env]` entry, `$VAR`-expanded from the bees environment. Set before the `BEES_*` variables, so those always win. |
 | `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_0`/`VALUE_0`, `GIT_CONFIG_KEY_1`/`VALUE_1` | `push.autoSetupRemote=true` and `push.default=current`, so a plain `git push` works on a fresh branch without touching the clone's git config. Only set when `GIT_CONFIG_COUNT` is not already in the bees environment. |

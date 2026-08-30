@@ -9,7 +9,7 @@ and [cli.md](cli.md).
 ```
 cmd/bees/            CLI (cobra): init, run, tick, exec, status, mail, issue, done, mcp, config, prompts, labels
 internal/config/     bees.toml schema, defaults, validation, global/role merging, label names, init template
-internal/github/     thin wrapper around the gh CLI (issues, PRs, labels, milestones (read), sub-issues, required checks, merge, comment, PR activity)
+internal/github/     thin wrapper around the gh CLI (issues, PRs, labels, milestones (read), sub-issues, checks (required and reported), merge, comment, PR activity)
 internal/issues/     creates issues the factory way: filter labels/assignee, kind + state labels, sub-issue of --parent, inherited milestone
 internal/mail/       the local mailbox: JSON messages under <state_dir>/mail/<role>/
 internal/workspace/  temporary git worktrees created from the main clone
@@ -221,7 +221,7 @@ stateDiagram-v2
     review --> develop: changes-requested, round < max
     review --> [*]: changes-requested, round == max (escalate)
     review --> [*]: failed (escalate)
-    checks --> [*]: required checks pass → gh pr merge
+    checks --> [*]: checks pass (or none are reported) → gh pr merge
     checks --> [*]: pending at checks_timeout / merge refused (escalate)
     checks --> develop: a check failed, reviewer (checks mode) mailed a fix request
     checks --> checks: reviewer re-ran the check (approved)
@@ -254,11 +254,25 @@ stateDiagram-v2
   `roles.reviewer.max_check_fix_rounds`.
 - **Checks stage** (`auto_merge`). `approve` only labels the PR and issue
   `bees:approved`; merging happens in the `checks` stage. `awaitChecks` sleeps
-  `checks_wait`, then calls `github.RequiredChecks` (`gh pr checks --required
-  --json …`; gh's non-zero exits for pending/failing checks and its "no
-  required checks" / "no checks reported" messages are handled, an empty list
-  counts as passed) every `checks_poll_interval` until `Summarize` returns
-  passed or failed, or `checks_timeout` elapses. Passed → `MergePR` with `merge_method`
+  `checks_wait`, then polls every `checks_poll_interval` until `Summarize`
+  returns passed or failed, or `checks_timeout` elapses. Each poll calls
+  `github.RequiredChecks` (`gh pr checks --required --json …`; gh's non-zero
+  exits for pending/failing checks and its "no required checks" / "no checks
+  reported" messages are handled, an empty list is `ChecksNone`, not
+  `ChecksPassed`). Which **gate** is in force is decided on the first
+  observation that reports anything and never changes afterwards: `required`
+  when the branch requires checks (then the second gh call is never made and
+  the behaviour is what it always was), otherwise `reported` — every check the
+  pull request reports, read with `github.Checks` (`gh pr checks` without
+  `--required`), because a repository with no branch protection would
+  otherwise merge with nothing green. Two consecutive empty observations mean
+  `none`: no CI at all, which merges but is logged as an ungated merge, never
+  as "checks passed". The gate is shown in the worker stage (`checks
+  (required)`, `checks (reported)`, `checks (none)`) so `bees status` says
+  what a long wait is waiting for, and `bees doctor` warns once when
+  `auto_merge` is on and the default branch requires no check. bees never
+  reads or writes branch protection to change it — that is a person's
+  setting. Passed → `MergePR` with `merge_method`
   and `--delete-branch` (a refusal escalates). Failed → a reviewer session
   with `task: "reviewer_checks"` and `BEES_REVIEW_MODE=checks`, given
   `github.Failed(checks)`. Its `changes-requested` sets `afterDevelop =
