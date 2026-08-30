@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/doctor"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/prompts"
 	"github.com/kpenfound/busybees/internal/state"
@@ -43,6 +44,10 @@ type initDeps struct {
 	currentRepo func(ctx context.Context, dir string) (string, error)
 	repoBranch  func(ctx context.Context, repo string) (string, error)
 	syncLabels  func(ctx context.Context, cfg *config.Config) error
+	// doctor renders the full doctor table for the configuration init wrote,
+	// role checks included. It never fails init: the point is to show what is
+	// left to set up.
+	doctor func(ctx context.Context, cfg *config.Config) string
 }
 
 func defaultInitDeps() initDeps {
@@ -51,7 +56,16 @@ func defaultInitDeps() initDeps {
 		currentRepo: github.CurrentRepo,
 		repoBranch:  func(ctx context.Context, repo string) (string, error) { return github.New(repo).DefaultBranch(ctx) },
 		syncLabels:  syncLabels,
+		doctor:      doctorReport,
 	}
+}
+
+// doctorReport runs every check, the expensive per-role ones included, and
+// renders the table. `bees init` is the one place the wait is worth it: it is
+// where a person finds out that a skill URL or an MCP server is wrong.
+func doctorReport(ctx context.Context, cfg *config.Config) string {
+	d := doctor.New(ctx, cfg.Path, claudeBin())
+	return doctor.Text(doctor.Run(ctx, d.Checks()))
 }
 
 func newInitCmd(g *globalFlags) *cobra.Command {
@@ -167,15 +181,19 @@ func runInit(ctx context.Context, o initOptions, d initDeps) error {
 	}
 	fmt.Println("created", cfg.StateDir())
 	ignoreStateDir(ctx, cfg)
-	if o.noLabels {
-		return nil
+	if !o.noLabels {
+		// The local setup is complete and correct at this point, so a label
+		// failure is not worth undoing; say how to finish rather than let the
+		// user reach for init again, which would now refuse.
+		if err := d.syncLabels(ctx, cfg); err != nil {
+			return fmt.Errorf("%w (run bees labels sync to retry creating the labels)", err)
+		}
 	}
-	// The local setup is complete and correct at this point, so a label
-	// failure is not worth undoing; say how to finish rather than let the
-	// user reach for init again, which would now refuse.
-	if err := d.syncLabels(ctx, cfg); err != nil {
-		return fmt.Errorf("%w (run bees labels sync to retry creating the labels)", err)
-	}
+	// A check that fails is not an init failure: bees.toml and the labels are
+	// written, and the table is the list of what is left to set up.
+	fmt.Println()
+	fmt.Print(d.doctor(ctx, cfg))
+	fmt.Println("run `bees doctor` to check again, or `bees doctor --fix` to repair what it can")
 	return nil
 }
 
@@ -273,17 +291,30 @@ func parseRoles(list string) (map[string]bool, error) {
 func newRunCmd(g *globalFlags) *cobra.Command {
 	var once bool
 	var roles string
+	var skipDoctor bool
 	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "Run the factory until interrupted",
 		Long: `run polls GitHub, keeps the workflow labels consistent and dispatches
 Claude Code sessions: a pool of developer workers plus the product manager,
 project manager and QA singletons. Ctrl-C stops polling and waits for running
-sessions to finish.`,
+sessions to finish.
+
+Before the first poll it runs the cheap half of ` + "`bees doctor`" + ` (everything
+except the per-role checks, which clone skills and start MCP servers) and
+refuses to start when one of them fails, so the factory does not discover a
+missing label or an expired token one session at a time. --skip-doctor starts
+anyway; ` + "`bees tick`" + ` and ` + "`bees exec`" + ` never run the preflight.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := newApp(cmd.Context(), g)
 			if err != nil {
 				return err
+			}
+			if !skipDoctor {
+				d := doctor.New(cmd.Context(), a.cfg.Path, claudeBin())
+				if err := preflight(cmd.Context(), d.Checks()); err != nil {
+					return err
+				}
 			}
 			s, err := a.scheduler()
 			if err != nil {
@@ -298,7 +329,23 @@ sessions to finish.`,
 	}
 	cmd.Flags().BoolVar(&once, "once", false, "do a single pass and exit when its sessions finish")
 	cmd.Flags().StringVar(&roles, "roles", "", "comma-separated roles to run (default: all enabled)")
+	cmd.Flags().BoolVar(&skipDoctor, "skip-doctor", false, "start without running the doctor preflight")
 	return cmd
+}
+
+// preflight runs the cheap doctor checks before the scheduler starts and
+// refuses to start when one of them failed. Warnings are not printed: a
+// factory that is going to work must not print a table on every start.
+func preflight(ctx context.Context, checks []doctor.Check) error {
+	cheap := doctor.CheapChecks(checks)
+	results := doctor.Run(ctx, cheap)
+	n := doctor.Failures(results)
+	if n == 0 {
+		return nil
+	}
+	fmt.Print(doctor.Text(results))
+	return fmt.Errorf("preflight: %d of %d checks failed — fix them, run `bees doctor --fix`, or start anyway with `bees run --skip-doctor`",
+		n, len(results))
 }
 
 func newTickCmd(g *globalFlags) *cobra.Command {
