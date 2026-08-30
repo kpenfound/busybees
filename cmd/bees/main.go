@@ -10,12 +10,17 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 
 	"github.com/kpenfound/busybees/internal/logging"
+	"github.com/kpenfound/busybees/internal/versions"
 	"github.com/spf13/cobra"
 )
 
+// version is the release version stamped in by
+// `-ldflags "-X main.version=..."`. Without it, versions.Bees falls back to
+// the module version or VCS revision Go records in the binary.
 var version = "dev"
 
 func main() {
@@ -73,6 +78,7 @@ through GitHub issues and pull requests. Configure it with bees.toml.`,
 		newMailCmd(g),
 		newIssueCmd(g),
 		newDoneCmd(),
+		newMCPCmd(g),
 		newConfigCmd(g),
 		newPromptsCmd(g),
 		newLabelsCmd(g),
@@ -86,7 +92,8 @@ func newVersionCmd() *cobra.Command {
 		Use:   "version",
 		Short: "Print the bees version",
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Println("bees", version)
+			bi, _ := debug.ReadBuildInfo()
+			fmt.Println("bees", versions.Bees(version, bi))
 		},
 	}
 }

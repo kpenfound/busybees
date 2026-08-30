@@ -42,7 +42,7 @@ printf '{"status":"pr-opened","pr":12,"note":"hi"}' > "$BEES_SESSION_DIR/outcome
 	role := config.ResolvedRole{Name: "developer", Model: "opus", FallbackModel: "sonnet", MaxTurns: 10, Timeout: time.Minute,
 		MCP:   map[string]config.MCPServer{"x": {Command: "srv", Env: map[string]string{"K": "$HOME"}}},
 		Shell: "/bin/sh", Env: map[string]string{"FACTORY_TOKEN": "abc", "CACHE": "$HOME/cache"}}
-	res, err := r.Run(context.Background(), Request{Name: "t1", Role: role, WorkDir: t.TempDir(), SystemPrompt: "SYS", Prompt: "TASK", Env: map[string]string{"EXTRA": "1"}})
+	res, err := r.Run(context.Background(), Request{Name: "t1", Role: role, WorkDir: t.TempDir(), SystemPrompt: "SYS", Prompt: "TASK", Env: map[string]string{"EXTRA": "1", EnvIssue: "12"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,15 +72,25 @@ printf '{"status":"pr-opened","pr":12,"note":"hi"}' > "$BEES_SESSION_DIR/outcome
 	if string(sys) != "SYS" {
 		t.Fatalf("system prompt: %q", sys)
 	}
-	var mcp struct {
-		MCPServers map[string]struct {
-			Command string            `json:"command"`
-			Env     map[string]string `json:"env"`
-		} `json:"mcpServers"`
+	servers := readMCPConfig(t, res.SessionDir)
+	if servers["x"].Command != "srv" || servers["x"].Env["K"] != os.Getenv("HOME") {
+		t.Fatalf("configured server: %+v", servers["x"])
 	}
-	b, _ := os.ReadFile(filepath.Join(res.SessionDir, "mcp.json"))
-	if err := json.Unmarshal(b, &mcp); err != nil || mcp.MCPServers["x"].Command != "srv" || mcp.MCPServers["x"].Env["K"] != os.Getenv("HOME") {
-		t.Fatalf("mcp config: %s %v", b, err)
+	// The built-in server sits next to the configured one.
+	builtin := servers[config.BuiltinMCPServer]
+	if builtin.Command != "/usr/local/bin/bees" || strings.Join(builtin.Args, " ") != "mcp serve" {
+		t.Fatalf("built-in server: %+v", builtin)
+	}
+	for k, want := range map[string]string{
+		"BEES_ROLE": "developer", "BEES_STATE_DIR": "/state", "BEES_SESSION_DIR": res.SessionDir,
+		"BEES_REPO": "a/b", "BEES_LABEL": "bees", "BEES_ISSUE": "12", "BEES_BIN": "/usr/local/bin/bees",
+	} {
+		if builtin.Env[k] != want {
+			t.Errorf("built-in server env %s = %q, want %q", k, builtin.Env[k], want)
+		}
+	}
+	if _, ok := builtin.Env["EXTRA"]; ok {
+		t.Errorf("built-in server env leaked a non-BEES variable: %v", builtin.Env)
 	}
 	if _, err := os.Stat(filepath.Join(res.SessionDir, "transcript.jsonl")); err != nil {
 		t.Fatal("transcript missing")
@@ -128,5 +138,55 @@ func TestOutcomeRoundTrip(t *testing.T) {
 	o, ok, err := ReadOutcome(dir)
 	if err != nil || !ok || o.Status != "approved" {
 		t.Fatalf("%+v %v %v", o, ok, err)
+	}
+}
+
+// readMCPConfig parses the mcp.json a session was given.
+func readMCPConfig(t *testing.T, sessionDir string) map[string]mcpEntry {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(sessionDir, "mcp.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var file struct {
+		MCPServers map[string]mcpEntry `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(b, &file); err != nil {
+		t.Fatalf("mcp.json: %v: %s", err, b)
+	}
+	return file.MCPServers
+}
+
+// TestRunAlwaysWritesMCPConfig covers a role with no configured servers: it
+// still gets the built-in one, so --mcp-config is unconditional.
+func TestRunAlwaysWritesMCPConfig(t *testing.T) {
+	bin := fakeClaude(t, `
+printf '%s' "$@" > "$BEES_SESSION_DIR/args.txt"
+echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
+`)
+	r := newRunner(t, bin)
+	role := config.ResolvedRole{Name: "reviewer", Model: "opus", MaxTurns: 10, Timeout: time.Minute}
+	res, err := r.Run(context.Background(), Request{Name: "t5", Role: role, WorkDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	args, _ := os.ReadFile(filepath.Join(res.SessionDir, "args.txt"))
+	for _, want := range []string{"--mcp-config", "--strict-mcp-config"} {
+		if !strings.Contains(string(args), want) {
+			t.Errorf("args missing %s: %s", want, args)
+		}
+	}
+	servers := readMCPConfig(t, res.SessionDir)
+	if len(servers) != 1 {
+		t.Fatalf("servers: %+v", servers)
+	}
+	builtin := servers[config.BuiltinMCPServer]
+	if builtin.Command != "/usr/local/bin/bees" || strings.Join(builtin.Args, " ") != "mcp serve" {
+		t.Fatalf("built-in server: %+v", builtin)
+	}
+	for _, k := range []string{EnvStateDir, EnvSessionDir, EnvRole} {
+		if builtin.Env[k] == "" {
+			t.Errorf("built-in server env is missing %s: %v", k, builtin.Env)
+		}
 	}
 }

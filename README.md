@@ -27,7 +27,7 @@ other roles through a local mailbox, and is configured by one file: `bees.toml`.
 
 ## Quick start
 
-Prerequisites: Go 1.24+, [`gh`](https://cli.github.com/) 2.50.0 or newer
+Prerequisites: Go 1.25+, [`gh`](https://cli.github.com/) 2.50.0 or newer
 (authenticated), `git`, and Claude Code (`claude`) 2.1.76 or newer, logged in.
 `bees` checks the `gh` and `claude` versions on startup; see
 [Requirements](docs/configuration.md#requirements).

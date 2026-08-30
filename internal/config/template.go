@@ -118,6 +118,11 @@ label = "{{.Label}}"
 #retry_with_fallback = true
 # Issues handed to the project manager per session.
 #triage_batch_size = 5
+# Which ready issue a free developer takes next: small-first, oldest or
+# large-first. Ties are broken by age, oldest first.
+#dispatch_order = "small-first"
+# How many size/l issues developers may work on at once. 0 means no cap.
+#max_large_in_flight = 1
 # Minimum time between product manager runs (mail triggers an earlier run).
 #product_manager_interval = "1h"
 # Minimum time between QA runs. QA only runs when something was merged.
@@ -178,6 +183,8 @@ label = "{{.Label}}"
 # MCP servers available to every role, one table per server. stdio servers
 # use command/args/env; remote servers use url (+ type = "http" | "sse",
 # headers). $VARS in env and headers are expanded from the bees environment.
+# Every session also gets the built-in "bees" server (mail, issues, outcome);
+# the name "bees" is reserved and cannot be configured here.
 #[global.mcp.github]
 #command = "npx"
 #args = ["-y", "@modelcontextprotocol/server-github"]
@@ -190,7 +197,8 @@ label = "{{.Label}}"
 
 #===============================================================================
 # Per-role settings. Every key from [global] is valid here, plus enabled;
-# the developer also takes commit_flags and the reviewer the auto-merge keys.
+# the developer also takes commit_flags and max_size, and the reviewer the
+# auto-merge keys.
 #===============================================================================
 
 # Owns the product vision and feature issues; breaks features into work items.
@@ -235,6 +243,9 @@ label = "{{.Label}}"
 #"""
 # Extra flags for every git commit the developer makes.
 #commit_flags = "--gpg-sign --signoff"
+# Largest size a developer takes: xs, s, m, l or xl. Anything bigger is sent
+# back to triage for the project manager to split.
+#max_size = "l"
 #prompt_file = ""
 #skills = []
 #model = "opus"

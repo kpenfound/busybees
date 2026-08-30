@@ -42,4 +42,4 @@ _None._
 2. Triage each issue listed above: refine and move to `{{.Labels.Ready}}`, split, ask the
    product manager (and move to `{{.Labels.Blocked}}`), or close.
 3. Update your notes file.
-4. `bees done done -m "..."` or `bees done idle`.
+4. `done` with `status: done` and a note, or `status: idle`.

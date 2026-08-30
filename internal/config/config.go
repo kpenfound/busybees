@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -97,7 +98,27 @@ const (
 	DefaultPMInterval           = time.Hour
 	DefaultQAInterval           = 30 * time.Minute
 	DefaultTriageBatch          = 5
+	// DefaultDispatchOrder and friends govern which ready issue a free
+	// developer worker takes next; see Scheduler.DispatchOrder.
+	DefaultDispatchOrder    = DispatchSmallFirst
+	DefaultMaxLargeInFlight = 1
+	// DefaultMaxSize is the largest size a developer takes by default.
+	DefaultMaxSize = "l"
 )
+
+// Dispatch orders accepted by scheduler.dispatch_order.
+const (
+	DispatchSmallFirst = "small-first"
+	DispatchOldest     = "oldest"
+	DispatchLargeFirst = "large-first"
+)
+
+// DispatchOrders lists the accepted scheduler.dispatch_order values.
+var DispatchOrders = []string{DispatchSmallFirst, DispatchOldest, DispatchLargeFirst}
+
+// Sizes lists the work item sizes, smallest first. They mirror the
+// bees:size/* labels (see Labels.SizeLabels).
+var Sizes = []string{"xs", "s", "m", "l", "xl"}
 
 // Duration is a time.Duration that unmarshals from TOML strings like "30m".
 type Duration struct{ time.Duration }
@@ -195,6 +216,10 @@ type Filter struct {
 // LabelRequired reports whether the label is part of the visibility gate.
 func (f Filter) LabelRequired() bool { return f.RequireLabel == nil || *f.RequireLabel }
 
+// BuiltinMCPServer is the name of the MCP server bees adds to every session
+// (`bees mcp serve`). The name is reserved: bees.toml may not define it.
+const BuiltinMCPServer = "bees"
+
 // MCPServer configures one MCP server. Either Command (stdio) or URL (http/sse)
 // must be set.
 type MCPServer struct {
@@ -246,6 +271,9 @@ type RoleSettings struct {
 	// CommitFlags are extra flags the developer passes to every `git commit`,
 	// for example "--gpg-sign --signoff". Appended to its system prompt.
 	CommitFlags string `toml:"commit_flags"`
+	// MaxSize is the largest work item size a developer takes ("xs".."xl").
+	// A ready issue sized above it is sent back to triage to be split.
+	MaxSize string `toml:"max_size"`
 
 	// The following keys are only valid under [roles.reviewer].
 
@@ -289,6 +317,19 @@ const (
 
 // CommitFlags returns the developer's extra git commit flags.
 func (c *Config) CommitFlags() string { return strings.TrimSpace(c.Roles[RoleDeveloper].CommitFlags) }
+
+// MaxSize returns the largest work item size the developer takes.
+func (c *Config) MaxSize() string {
+	return firstNonEmpty(strings.TrimSpace(c.Roles[RoleDeveloper].MaxSize), DefaultMaxSize)
+}
+
+// LargeInFlight returns scheduler.max_large_in_flight (0 = no cap).
+func (s Scheduler) LargeInFlight() int {
+	if s.MaxLargeInFlight == nil {
+		return DefaultMaxLargeInFlight
+	}
+	return *s.MaxLargeInFlight
+}
 
 // Merge returns the resolved merge policy from [roles.reviewer].
 func (c *Config) Merge() MergePolicy {
@@ -356,6 +397,12 @@ type Scheduler struct {
 	// TriageBatchSize is the maximum number of issues handed to the project
 	// manager in one session.
 	TriageBatchSize int `toml:"triage_batch_size" json:"triage_batch_size"`
+	// DispatchOrder decides which ready issue a free developer worker takes
+	// next: small-first (default), oldest or large-first.
+	DispatchOrder string `toml:"dispatch_order" json:"dispatch_order"`
+	// MaxLargeInFlight caps how many bees:size/l issues developer workers may
+	// hold at once. 0 means no cap. Default 1.
+	MaxLargeInFlight *int `toml:"max_large_in_flight" json:"max_large_in_flight"`
 	// Retries is the number of extra attempts a session gets when it failed
 	// for infrastructure reasons (timeout, API error, exhausted turns).
 	// 0 disables retrying. Default 1.
@@ -576,7 +623,18 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	text := string(data)
+	return Parse(string(data), path)
+}
+
+// Parse validates the text of a bees.toml as if it had been read from path,
+// which is used for the Config's location and in error messages but is not
+// read and need not exist. `bees init` parses the template it rendered before
+// writing anything to disk.
+func Parse(text, path string) (*Config, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
 	version, err := fileVersion(text)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
@@ -753,6 +811,13 @@ func (c *Config) applyDefaults() {
 	if c.Scheduler.TriageBatchSize == 0 {
 		c.Scheduler.TriageBatchSize = DefaultTriageBatch
 	}
+	if c.Scheduler.DispatchOrder == "" {
+		c.Scheduler.DispatchOrder = DefaultDispatchOrder
+	}
+	if c.Scheduler.MaxLargeInFlight == nil {
+		n := DefaultMaxLargeInFlight
+		c.Scheduler.MaxLargeInFlight = &n
+	}
 	if c.Scheduler.Retries == nil {
 		n := DefaultRetries
 		c.Scheduler.Retries = &n
@@ -809,6 +874,14 @@ func (c *Config) Validate() error {
 	if d := c.Scheduler.RetryDelay; d != nil && d.Duration < 0 {
 		errs = append(errs, "scheduler.retry_delay must be >= 0")
 	}
+	switch c.Scheduler.DispatchOrder {
+	case "", DispatchSmallFirst, DispatchOldest, DispatchLargeFirst:
+	default:
+		errs = append(errs, fmt.Sprintf("scheduler.dispatch_order must be one of %s", strings.Join(DispatchOrders, ", ")))
+	}
+	if n := c.Scheduler.MaxLargeInFlight; n != nil && *n < 0 {
+		errs = append(errs, "scheduler.max_large_in_flight must be >= 0")
+	}
 	errs = append(errs, c.Scheduler.parseWorkHours()...)
 	check := func(scope string, rs RoleSettings) {
 		if scope != "roles."+RoleReviewer {
@@ -816,8 +889,11 @@ func (c *Config) Validate() error {
 				errs = append(errs, fmt.Sprintf("%s: auto_merge, merge_method, checks_wait, checks_poll_interval, checks_timeout and max_check_fix_rounds are only valid under roles.reviewer", scope))
 			}
 		}
-		if scope != "roles."+RoleDeveloper && rs.CommitFlags != "" {
-			errs = append(errs, fmt.Sprintf("%s: commit_flags is only valid under roles.developer", scope))
+		if scope != "roles."+RoleDeveloper && (rs.CommitFlags != "" || rs.MaxSize != "") {
+			errs = append(errs, fmt.Sprintf("%s: commit_flags and max_size are only valid under roles.developer", scope))
+		}
+		if rs.MaxSize != "" && !slices.Contains(Sizes, rs.MaxSize) {
+			errs = append(errs, fmt.Sprintf("%s.max_size must be one of %s", scope, strings.Join(Sizes, ", ")))
 		}
 		switch rs.MergeMethod {
 		case "", "squash", "merge", "rebase":
@@ -825,6 +901,9 @@ func (c *Config) Validate() error {
 			errs = append(errs, fmt.Sprintf("%s.merge_method must be squash, merge or rebase", scope))
 		}
 		for name, m := range rs.MCP {
+			if name == BuiltinMCPServer {
+				errs = append(errs, fmt.Sprintf("%s.mcp.%s: mcp server name %q is reserved for the built-in server", scope, name, BuiltinMCPServer))
+			}
 			if m.Command == "" && m.URL == "" {
 				errs = append(errs, fmt.Sprintf("%s.mcp.%s: either command or url is required", scope, name))
 			}

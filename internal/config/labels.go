@@ -30,6 +30,14 @@ type Labels struct {
 	Review     string // bees:review      – PR open, reviewer loop running
 	Approved   string // bees:approved    – reviewer approved, waiting for merge
 	NeedsHuman string // bees:needs-human – the factory gave up; a person must step in
+
+	// Size labels (at most one at a time, orthogonal to the state labels).
+	// The project manager sets one when it moves a work item to Ready.
+	SizeXS string // bees:size/xs – one file, obvious change, no design
+	SizeS  string // bees:size/s  – a few files, clear approach, existing tests cover it
+	SizeM  string // bees:size/m  – a feature slice across packages, needs new tests
+	SizeL  string // bees:size/l  – crosses subsystems or needs a design decision
+	SizeXL string // bees:size/xl – too big for one pull request; split it instead
 }
 
 // LabelsFor derives the label set from the base visibility label.
@@ -47,6 +55,11 @@ func LabelsFor(base string) Labels {
 		Review:     base + ":review",
 		Approved:   base + ":approved",
 		NeedsHuman: base + ":needs-human",
+		SizeXS:     base + ":size/xs",
+		SizeS:      base + ":size/s",
+		SizeM:      base + ":size/m",
+		SizeL:      base + ":size/l",
+		SizeXL:     base + ":size/xl",
 	}
 }
 
@@ -56,6 +69,12 @@ func (c *Config) Labels() Labels { return LabelsFor(c.Filter.Label) }
 // StateLabels lists the mutually exclusive workflow state labels.
 func (l Labels) StateLabels() []string {
 	return []string{l.Triage, l.Ready, l.InProgress, l.Blocked, l.Review, l.Approved, l.NeedsHuman}
+}
+
+// SizeLabels lists the size labels, smallest first. An issue carries at
+// most one of them, independently of its state label.
+func (l Labels) SizeLabels() []string {
+	return []string{l.SizeXS, l.SizeS, l.SizeM, l.SizeL, l.SizeXL}
 }
 
 // LabelSpec describes a label for creation in GitHub.
@@ -78,5 +97,10 @@ func (l Labels) All() []LabelSpec {
 		{l.Review, "FBCA04", "Pull request open and under review"},
 		{l.Approved, "0E8A16", "Reviewer approved; waiting for merge"},
 		{l.NeedsHuman, "000000", "The factory needs a human to step in"},
+		{l.SizeXS, "EDEDED", "Size: one file, obvious change, no design"},
+		{l.SizeS, "D4D4D4", "Size: a few files, clear approach, existing tests cover it"},
+		{l.SizeM, "BABABA", "Size: a feature slice across several packages, needs new tests"},
+		{l.SizeL, "A0A0A0", "Size: crosses subsystems or needs a design decision"},
+		{l.SizeXL, "868686", "Size: too big for one pull request; split it instead"},
 	}
 }
