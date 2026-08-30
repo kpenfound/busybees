@@ -71,7 +71,10 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 	stage := "develop"
 	if pr != nil && s.stateOf(issue.Labels) == "review" {
 		// A restarted worker gives the reviewer a checks status too.
-		stage = firstReviewStage(policy)
+		stage = "review"
+		if s.roleEnabled(config.RoleReviewer) {
+			stage = firstReviewStage(policy)
+		}
 	}
 	// afterDevelop is where a developer session leads: the first review
 	// (through the pre-review checks), or — when the developer is fixing
