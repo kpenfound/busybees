@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
@@ -59,4 +60,50 @@ func workHoursJSON(s config.Scheduler, now time.Time) workHoursView {
 		v.InWorkHours, v.Window = &in, s.WorkHoursDescription(now)
 	}
 	return v
+}
+
+// degradedText renders the "degraded:" section of `bees status`: the factory
+// operations that are failing right now, one line each. It returns "" when
+// nothing is failing, and the caller prints no section at all — a clean run
+// should not carry an empty heading.
+func degradedText(st state.Status) string {
+	if len(st.Degraded) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\ndegraded:\n")
+	for _, f := range st.Degraded {
+		fmt.Fprintf(&b, "  %-11s %s", f.Op, failureCount(f))
+		if f.LastError != "" {
+			fmt.Fprintf(&b, "   last: %s", f.LastError)
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// failureCount describes the streak: how many times in a row, and over how
+// long. A single failure has no span worth printing.
+func failureCount(f state.OpFailure) string {
+	if f.Count < 2 {
+		return "1 failure"
+	}
+	return fmt.Sprintf("%d consecutive failures over %s", f.Count, shortDur(f.Last.Sub(f.First)))
+}
+
+// shortDur renders a duration the way bees.toml writes one ("3h10m", "45s"):
+// time.Duration.String() keeps a trailing "0m0s" that says nothing.
+func shortDur(d time.Duration) string {
+	if d < time.Minute {
+		return d.Round(time.Second).String()
+	}
+	h, m := int(d/time.Hour), int(d/time.Minute)%60
+	switch {
+	case h == 0:
+		return fmt.Sprintf("%dm", m)
+	case m == 0:
+		return fmt.Sprintf("%dh", h)
+	default:
+		return fmt.Sprintf("%dh%dm", h, m)
+	}
 }

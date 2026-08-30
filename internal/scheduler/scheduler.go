@@ -73,6 +73,9 @@ type Scheduler struct {
 	lastPoll time.Time
 	nextPoll time.Time
 	lastErr  string
+	// degraded holds the current failure streak of every named operation
+	// that is failing right now; a success deletes its entry (degraded.go).
+	degraded map[string]*opFailure
 	queues   map[string]int
 	waiting  map[int][]int
 	// warnedCycles remembers the issues we already warned about, so a
@@ -122,6 +125,7 @@ func New(d Deps) (*Scheduler, error) {
 		owned:        map[int]*state.Worker{},
 		running:      map[string]bool{},
 		backoff:      map[string]time.Time{},
+		degraded:     map[string]*opFailure{},
 		queues:       map[string]int{},
 		waiting:      map[int][]int{},
 		warnedCycles: map[int]bool{},
@@ -155,12 +159,13 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			if ctx.Err() != nil {
 				break
 			}
-			s.log.Error("poll failed", "err", err)
+			s.opAs(s.log, slog.LevelError, "poll", err, "poll failed", "err", err)
 			s.setLastErr(err.Error())
 			if isRateLimited(err) {
 				s.log.Warn("GitHub rate limit hit; pausing polling", "for", s.cfg.Scheduler.RateLimitBackoff.Duration)
 			}
 		} else if full {
+			s.op("poll", nil, "")
 			s.setLastErr("")
 		}
 		s.writeStatus()
@@ -517,15 +522,12 @@ func (s *Scheduler) pass(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := s.deliverHumanFeedback(ctx, snap); err != nil {
-		s.log.Warn("human feedback", "err", err)
-	}
-	if err := s.checkPRs(ctx, snap); err != nil {
-		s.log.Warn("check PRs", "err", err)
-	}
-	if err := s.reconcile(ctx, snap); err != nil {
-		s.log.Warn("reconcile", "err", capErrors(err))
-	}
+	err = s.deliverHumanFeedback(ctx, snap)
+	s.op("human-feedback", err, "human feedback", "err", err)
+	err = s.checkPRs(ctx, snap)
+	s.op("check-prs", err, "check PRs", "err", err)
+	err = s.reconcile(ctx, snap)
+	s.op("reconcile", err, "reconcile", "err", capErrors(err))
 	s.dispatchDevelopers(ctx, snap, false)
 	s.dispatchSingletons(ctx, snap, false)
 	return nil
@@ -547,9 +549,8 @@ func (s *Scheduler) localPass(ctx context.Context) {
 	}
 	snap := s.classify(issues, prs)
 	s.setQueues(snap)
-	if err := s.reconcile(ctx, snap); err != nil {
-		s.log.Warn("reconcile", "err", capErrors(err))
-	}
+	err := s.reconcile(ctx, snap)
+	s.op("reconcile", err, "reconcile", "err", capErrors(err))
 	s.dispatchDevelopers(ctx, snap, true)
 	s.dispatchSingletons(ctx, snap, true)
 }
@@ -799,8 +800,7 @@ func (s *Scheduler) largeInFlight() int {
 // again by the next local pass.
 func (s *Scheduler) liveCandidate(ctx context.Context, issue github.Issue) (github.Issue, bool) {
 	live, err := s.gh.GetIssue(ctx, issue.Number)
-	if err != nil {
-		s.log.Warn("live issue check failed, skipping", "issue", issue.Number, "err", err)
+	if s.op("issue-get", err, "live issue check failed, skipping", "issue", issue.Number, "err", err) {
 		return issue, false
 	}
 	s.cacheIssue(live)
@@ -979,10 +979,10 @@ func (s *Scheduler) writeStatus() {
 		st.ReadySizes[k] = v
 	}
 	st.Priority = append([]int(nil), s.priority...)
+	st.Degraded = s.degradedLocked()
 	s.mu.Unlock()
-	if err := s.store.SaveStatus(st); err != nil {
-		s.log.Warn("write status", "err", err)
-	}
+	err := s.store.SaveStatus(st)
+	s.op("write-status", err, "write status", "err", err)
 }
 
 func (s *Scheduler) updateWorker(w *state.Worker, stage string, round int) {

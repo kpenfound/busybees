@@ -126,3 +126,46 @@ func TestWorkHoursJSON(t *testing.T) {
 		})
 	}
 }
+
+func TestDegradedTextIsAbsentWhenNothingIsFailing(t *testing.T) {
+	if got := degradedText(state.Status{}); got != "" {
+		t.Errorf("clean status printed %q", got)
+	}
+	if got := degradedText(state.Status{Degraded: []state.OpFailure{}}); got != "" {
+		t.Errorf("empty slice printed %q", got)
+	}
+}
+
+func TestDegradedTextListsEveryFailingOperation(t *testing.T) {
+	first := time.Date(2026, 8, 30, 9, 0, 0, 0, time.UTC)
+	st := state.Status{Degraded: []state.OpFailure{
+		{Op: "assign", Count: 12, First: first, Last: first.Add(3*time.Hour + 10*time.Minute),
+			LastError: "GraphQL: Projects (classic) is being deprecated", Escalated: true},
+		{Op: "label", Count: 1, First: first, Last: first, LastError: "gh: not found"},
+	}}
+	want := "\ndegraded:\n" +
+		"  assign      12 consecutive failures over 3h10m   last: GraphQL: Projects (classic) is being deprecated\n" +
+		"  label       1 failure   last: gh: not found\n"
+	if got := degradedText(st); got != want {
+		t.Errorf("degraded section:\ngot:\n%swant:\n%s", got, want)
+	}
+}
+
+func TestShortDur(t *testing.T) {
+	for _, c := range []struct {
+		d    time.Duration
+		want string
+	}{
+		{0, "0s"},
+		{45 * time.Second, "45s"},
+		{90 * time.Second, "1m"},
+		{10 * time.Minute, "10m"},
+		{time.Hour, "1h"},
+		{3*time.Hour + 10*time.Minute, "3h10m"},
+		{50 * time.Hour, "50h"},
+	} {
+		if got := shortDur(c.d); got != c.want {
+			t.Errorf("shortDur(%s) = %q, want %q", c.d, got, c.want)
+		}
+	}
+}

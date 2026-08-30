@@ -271,6 +271,27 @@ Singleton roles share `runSingleton`: detached worktree on the default branch,
 one session, mark delivered mail read, record `LastRun` in
 `<state_dir>/<role>.json`.
 
+## Degraded operations
+
+Most things the scheduler does are best-effort: a failed label edit, assignment
+or mail update warns and the pass carries on. A warning nobody reads is silence,
+though, so each of those sites reports through `Scheduler.op` (`degraded.go`)
+under a short, stable operation name (`poll`, `assign`, `label`, `reconcile`, …).
+`op` logs the same record the site logged before plus `op=<name>`, and keeps a
+per-operation streak of consecutive failures; a nil error clears the streak.
+`writeStatus` copies the streaks into `Status.Degraded`, so a broken operation is
+visible in `status.json` and `bees status` instead of only in the log.
+
+At `degradedEscalateAfter` (3) consecutive failures the streak emits one record at
+error level marked `logging.SummaryKey`, so it reaches the summary stream a person
+watching the run sees; the entry's `escalated` flag keeps it to one line per
+streak. Nothing else changes: no retry, no backoff, no GitHub comment and no mail
+— there is no issue to comment on for a factory-wide operation, and no role can
+fix a broken credential or a missing label. Purely informational warnings
+(a declared dependency cycle, worktree/workspace housekeeping, the rate-limit
+backoff, a session retry) are deliberately *not* operations: they are already
+visible elsewhere or are facts rather than failures.
+
 ## Running a session
 
 `session.Runner.Run` executes, inside the worktree:

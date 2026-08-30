@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -112,9 +113,8 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 			if err != nil {
 				return err
 			}
-			if err := s.mail.MarkRead(inbox...); err != nil {
-				log.Warn("mark mail read", "err", err)
-			}
+			readErr := s.mail.MarkRead(inbox...)
+			s.opAs(log, slog.LevelWarn, "mail", readErr, "mark mail read", "err", readErr)
 			status, note := outcomeOf(res)
 			switch status {
 			case OutcomePROpened, OutcomePRUpdated:
@@ -128,9 +128,8 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 				pr = found
 				bookkeeping.PR = pr.Number
 				_ = s.store.SaveIssue(bookkeeping)
-				if err := s.ensureVisible(ctx, pr.Number, pr.Labels); err != nil {
-					log.Warn("label PR", "err", err)
-				}
+				labelErr := s.ensureVisible(ctx, pr.Number, pr.Labels)
+				s.opAs(log, slog.LevelWarn, "label", labelErr, "label PR", "err", labelErr)
 				if !s.roleEnabled(config.RoleReviewer) {
 					log.Info("reviewer disabled; treating PR as approved")
 					if err := s.approve(ctx, issue.Number, pr); err != nil || !policy.AutoMerge {

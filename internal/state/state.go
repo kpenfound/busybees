@@ -210,6 +210,27 @@ type Status struct {
 	// still open, so `bees status` can explain why it is not being built.
 	WaitingOnDeps map[int][]int `json:"waiting_on_deps,omitempty"`
 	LastError     string        `json:"last_error,omitempty"`
+	// Degraded lists the factory operations that are failing right now, one
+	// entry per operation, sorted by name. Absent when the last pass was
+	// clean.
+	Degraded []OpFailure `json:"degraded,omitempty"`
+}
+
+// OpFailure is the current failure streak of one named factory operation
+// (an assignment, a label edit, the poll itself): how many times in a row it
+// has failed, since when, and what it last said.
+type OpFailure struct {
+	Op    string `json:"op"`
+	Count int    `json:"count"`
+	// First and Last are the ends of the streak: the failure that started
+	// it and the most recent one.
+	First time.Time `json:"first"`
+	Last  time.Time `json:"last"`
+	// LastError is the most recent error, on one line and capped.
+	LastError string `json:"last_error,omitempty"`
+	// Escalated records that this streak already produced its one summary
+	// line, so it is not repeated on every pass.
+	Escalated bool `json:"escalated,omitempty"`
 }
 
 // SaveStatus writes status.json.

@@ -171,8 +171,7 @@ func formatActivity(repo string, pr int, activity []github.Activity) string {
 // is fixed up so it stays visible to the factory.
 func (s *Scheduler) adoptCreated(ctx context.Context, since time.Time) {
 	items, err := s.gh.ListCreatedSince(ctx, since)
-	if err != nil {
-		s.log.Warn("label backstop: list created items", "err", err)
+	if s.op("list-created", err, "label backstop: list created items", "err", err) {
 		return
 	}
 	prefix := s.labels.Base + ":"
@@ -189,9 +188,8 @@ func (s *Scheduler) adoptCreated(ctx context.Context, since time.Time) {
 		}
 		if !github.HasLabel(it.Labels, s.labels.Base) {
 			s.log.Info("label backstop: adding base label", "number", it.Number, "pr", it.IsPR)
-			if err := s.gh.EditLabels(ctx, it.Number, []string{s.labels.Base}, nil); err != nil {
-				s.log.Warn("label backstop", "number", it.Number, "err", err)
-			}
+			err := s.gh.EditLabels(ctx, it.Number, []string{s.labels.Base}, nil)
+			s.op("label", err, "label backstop", "number", it.Number, "err", err)
 		}
 		if a := s.cfg.Filter.Assignee; a != "" {
 			assigned := false
@@ -202,9 +200,8 @@ func (s *Scheduler) adoptCreated(ctx context.Context, since time.Time) {
 			}
 			if !assigned {
 				s.log.Info("label backstop: assigning", "number", it.Number, "assignee", a)
-				if err := s.gh.Assign(ctx, it.Number, a); err != nil {
-					s.log.Warn("label backstop: assign", "number", it.Number, "err", err)
-				}
+				err := s.gh.Assign(ctx, it.Number, a)
+				s.op("assign", err, "label backstop: assign", "number", it.Number, "err", err)
 			}
 		}
 	}

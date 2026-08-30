@@ -97,9 +97,8 @@ func (s *Scheduler) freshIssues(ctx context.Context, issues []github.Issue, last
 		}
 		if github.HasLabel(full.Labels, s.labels.Question) {
 			s.log.Info("person answered the product manager", "issue", full.Number)
-			if err := s.gh.EditLabels(ctx, full.Number, nil, []string{s.labels.Question}); err != nil {
-				s.log.Warn("remove question label", "issue", full.Number, "err", err)
-			}
+			err := s.gh.EditLabels(ctx, full.Number, nil, []string{s.labels.Question})
+			s.op("label", err, "remove question label", "issue", full.Number, "err", err)
 		}
 		fresh = append(fresh, full)
 	}
@@ -126,10 +125,9 @@ func (s *Scheduler) runProductManager(ctx context.Context, snap *snapshot) error
 	// Sub-issue progress of every feature, from GitHub.
 	progress := map[int]github.SubIssueSummary{}
 	for _, f := range snap.features {
-		if d, err := s.gh.GetIssueDetails(ctx, f.Number); err == nil {
+		d, err := s.gh.GetIssueDetails(ctx, f.Number)
+		if !s.op("feature-progress", err, "feature progress", "issue", f.Number, "err", err) {
 			progress[f.Number] = d.SubIssues
-		} else {
-			s.log.Warn("feature progress", "issue", f.Number, "err", err)
 		}
 	}
 	// Work items only: feature and feedback issues are listed separately.
@@ -175,8 +173,7 @@ func (s *Scheduler) qaHasWork(ctx context.Context) bool {
 	rs.LastCheck = s.now()
 	_ = s.store.SaveRole(config.RoleQA, rs)
 	merged, err := s.gh.ListMergedPRsSince(ctx, s.query, rs.LastRun)
-	if err != nil {
-		s.log.Warn("list merged PRs", "err", err)
+	if s.op("list-prs", err, "list merged PRs", "err", err) {
 		return false
 	}
 	return len(merged) > 0
@@ -224,9 +221,8 @@ func (s *Scheduler) runSingleton(ctx context.Context, role string, data prompts.
 	if err != nil {
 		return err
 	}
-	if err := s.mail.MarkRead(data.Inbox...); err != nil {
-		s.log.Warn("mark mail read", "role", role, "err", err)
-	}
+	err = s.mail.MarkRead(data.Inbox...)
+	s.op("mail", err, "mark mail read", "role", role, "err", err)
 	if err := s.markRun(role, started); err != nil {
 		return err
 	}
@@ -299,9 +295,8 @@ func (s *Scheduler) RunRole(ctx context.Context, role string, issue, pr int) err
 		if err != nil {
 			return err
 		}
-		if err := s.reconcile(ctx, snap); err != nil {
-			s.log.Warn("reconcile", "err", err)
-		}
+		err = s.reconcile(ctx, snap)
+		s.op("reconcile", err, "reconcile", "err", capErrors(err))
 		switch role {
 		case config.RoleProjectManager:
 			return s.runProjectManager(ctx, snap)
