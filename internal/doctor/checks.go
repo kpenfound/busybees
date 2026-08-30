@@ -77,17 +77,18 @@ func New(ctx context.Context, configPath, claudeBin string) *Deps {
 // bees.toml did not load, and the GitHub and workspace checks are left out
 // when the repository could not be resolved: the config checks say why.
 func (d *Deps) Checks() []Check {
-	checks := []Check{d.checkGit, d.checkGH, d.checkClaude, d.checkConfigLoads}
+	checks := []Check{{Run: d.checkGit}, {Run: d.checkGH}, {Run: d.checkClaude}, {Run: d.checkConfigLoads}}
 	if d.Config == nil {
 		return checks
 	}
-	checks = append(checks, d.checkProject, d.checkRemote, d.checkStateDirIgnored,
-		d.checkNotesWritable, d.checkPromptFiles)
+	checks = append(checks, Check{Run: d.checkProject}, Check{Run: d.checkRemote},
+		Check{Run: d.checkStateDirIgnored}, Check{Run: d.checkNotesWritable}, Check{Run: d.checkPromptFiles})
 	if d.Config.Project.Repo != "" {
-		checks = append(checks, d.checkRepoAccess, d.checkLabels, d.checkFilter)
+		checks = append(checks, Check{Run: d.checkRepoAccess}, Check{Run: d.checkLabels},
+			Check{Run: d.checkFilter, Fix: d.fixFilter})
 	}
 	if d.Workspaces != nil && d.Config.Project.DefaultBranch != "" {
-		checks = append(checks, d.checkWorktree)
+		checks = append(checks, Check{Run: d.checkWorktree})
 	}
 	return checks
 }
@@ -500,9 +501,8 @@ func (d *Deps) checkFilter(ctx context.Context) Result {
 	}
 	if stranded := d.strandedByFilter(ctx, q); stranded != "" {
 		return warn(name, GroupGitHub, stranded,
-			fmt.Sprintf("filter criteria are ANDed, so every one of them must hold: either bring those items into the filter "+
-				"(`gh issue edit N --add-assignee ...`, `gh issue edit N --add-label %s`) or unset the criterion in bees.toml",
-				d.Config.Filter.Label))
+			"filter criteria are ANDed, so every one of them must hold: run `bees doctor --fix` to bring the items "+
+				"carrying `"+d.Config.Filter.Label+"` into the filter, or unset the criterion in bees.toml")
 	}
 	return warn(name, GroupGitHub, fmt.Sprintf("no open issue matches %s", describeQuery(q)),
 		"check filter.label, filter.assignee and filter.milestone in bees.toml, or file the first issue "+
@@ -516,8 +516,7 @@ func (d *Deps) checkFilter(ctx context.Context) Result {
 // apart (no base label to count against, the extra listing failed, or the
 // repository really is empty).
 //
-// TODO(#112): `bees doctor --fix` will adopt these items into the filter; name
-// it in checkFilter's remediation once it exists.
+// `bees doctor --fix` repairs exactly this case; see fixFilter.
 func (d *Deps) strandedByFilter(ctx context.Context, q github.Query) string {
 	// Without require_label there is no base label the factory's own items are
 	// guaranteed to carry, so there is nothing to compare against.
