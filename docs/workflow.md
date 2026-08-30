@@ -82,6 +82,7 @@ stateDiagram-v2
     review --> in_progress: reviewer requests changes (orchestrator)
     review --> approved: reviewer approves (orchestrator)
     approved --> ready: human reviews / comments on the PR (orchestrator)
+    approved --> ready: the PR conflicts with the default branch (orchestrator)
     approved --> [*]: human merges the PR (issue closes via "Closes #N")
     approved --> [*]: reviewer auto_merge, required checks green (orchestrator merges)
     approved --> in_progress: auto_merge, a required check failed (developer fixes)
@@ -103,7 +104,7 @@ stateDiagram-v2
 | Label | Meaning | Who sets it |
 |---|---|---|
 | `bees:triage` | Needs the project manager to make it buildable | Product manager (new work items), orchestrator (unlabelled issues), humans |
-| `bees:ready` | Detailed enough for a developer | Project manager, orchestrator (after an answer, or human PR feedback on an approved issue), humans |
+| `bees:ready` | Detailed enough for a developer | Project manager, orchestrator (after an answer, human PR feedback on an approved issue, or an approved PR that conflicts with the default branch), humans |
 | `bees:in-progress` | A developer worker owns it and a branch exists | Orchestrator |
 | `bees:blocked` | Waiting on an answer to a question | Project manager (asking the PM), orchestrator (developer asking) |
 | `bees:review` | A pull request is open and in the review loop | Orchestrator |
@@ -160,9 +161,13 @@ Who sets it:
 
 ### Size decides what gets built next
 
-When a developer worker is free, the orchestrator resumes anything already
-`bees:in-progress` or `bees:review` first — a worker picking its issue back up
-after a restart is never held back — and then takes from `bees:ready` in the
+When a developer worker is free, the orchestrator first checks whether an
+open pull request needs attention: anything already `bees:in-progress` or
+`bees:review` is resumed (a worker picking its issue back up after a restart
+is never held back), then any `bees:ready` issue that already has an open pull
+request — one sent back for [your feedback](#giving-the-developer-feedback) or
+because it [conflicts with the default branch](#conflicts-with-the-default-branch)
+— oldest first. Only then does it take new work from `bees:ready`, in the
 order `scheduler.dispatch_order` asks for:
 
 | `dispatch_order` | Order |
@@ -179,7 +184,8 @@ Two limits sit on top of that order:
 - `scheduler.max_large_in_flight` (default `1`) caps how many `bees:size/l`
   issues developers work on at once. A `bees:size/l` issue over the cap is
   skipped — the free worker takes the next issue that fits instead of idling.
-  `0` removes the cap. Note that `small-first` and the cap together can keep a
+  `0` removes the cap. The cap only holds back new work: a resumed issue, with
+  or without a pull request, is already in flight. Note that `small-first` and the cap together can keep a
   `bees:size/l` issue waiting for as long as smaller ones keep arriving; switch
   to `oldest` if that matters more than quick wins.
 - `roles.developer.max_size` (default `l`) is the largest size a developer
@@ -429,6 +435,36 @@ bees mail send --from human --to developer --issue 12 --body "Keep the CLI flag 
 Roles treat what humans write as authoritative; when your request conflicts
 with the issue or the reviewer's feedback, the developer follows you and says
 so in the PR.
+
+### Conflicts with the default branch
+
+Every merge can leave the remaining open PRs conflicting with the default
+branch, and a conflicting PR is one a person cannot merge. On every poll the
+orchestrator therefore also reads each open factory PR's merge state (it comes
+with the PR list; no extra API calls) for issues in `bees:review` or
+`bees:approved`:
+
+- **Conflicting** (`scheduler.pr_fix_conflicts`, default `true`): the
+  developer is mailed, from `orchestrator`, `PR #N conflicts with main` — merge
+  the default branch into the branch, resolve the conflicts, run the tests,
+  push and report `pr-updated`.
+- **Behind** (`scheduler.pr_keep_updated`, default `false`): the same for a PR
+  that would merge cleanly but was not tested against the default branch as it
+  is now. Off by default because that is usually fine.
+
+An issue in `bees:approved` goes back to `bees:ready` and `bees:approved` is
+removed from the PR, exactly like human feedback; because it already has a pull
+request, a developer worker takes it ahead of any new work item. An issue in
+`bees:review` keeps its worker — the mail reaches the developer on its next
+round, or on the next poll once the reviewer approves. The developer's push
+then goes through review again, so nothing is merged untested. An issue in
+`bees:in-progress` is skipped: the developer is on it already.
+
+The developer is told once per head commit (recorded as
+`conflict_notified_sha` in `<state_dir>/issues/<n>.json`): the same
+conflicting head is never nagged about twice, but a push that still conflicts
+is reported again. GitHub computes mergeability lazily; a PR whose state is
+still unknown is left alone until the next poll.
 
 ## Merging
 

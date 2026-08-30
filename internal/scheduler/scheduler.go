@@ -218,6 +218,7 @@ type snapshot struct {
 	features   []github.Issue // bees:feature issues, owned by the product manager
 	prByBranch map[string]github.PR
 	prByNumber map[int]github.PR
+	byNumber   map[int]github.Issue
 	// open holds every issue number in the snapshot: an issue that is
 	// closed, or invisible to the filter, is not "open" for dependencies.
 	open map[int]bool
@@ -250,8 +251,8 @@ func (s *Scheduler) poll(ctx context.Context) (*snapshot, error) {
 func (s *Scheduler) classify(issues []github.Issue, prs []github.PR) *snapshot {
 	snap := &snapshot{issues: issues, prs: prs, byState: map[string][]github.Issue{},
 		prByBranch: map[string]github.PR{}, prByNumber: map[int]github.PR{},
-		open: map[int]bool{}, waiting: map[int][]int{}}
-	byNumber := map[int]github.Issue{}
+		byNumber: map[int]github.Issue{}, open: map[int]bool{}, waiting: map[int][]int{}}
+	byNumber := snap.byNumber
 	for _, i := range issues {
 		snap.open[i.Number] = true
 		byNumber[i.Number] = i
@@ -282,6 +283,25 @@ func (s *Scheduler) classify(issues []github.Issue, prs []github.PR) *snapshot {
 		snap.prByNumber[p.Number] = p
 	}
 	return snap
+}
+
+// issueForPR returns the visible issue a factory PR closes, or false when
+// the PR closes no issue the factory can see (it is not driving that PR).
+func (snap *snapshot) issueForPR(pr github.PR) (github.Issue, bool) {
+	for _, n := range pr.ClosingIssues() {
+		if i, ok := snap.byNumber[n]; ok {
+			return i, true
+		}
+	}
+	return github.Issue{}, false
+}
+
+// hasOpenPR reports whether the snapshot holds an open pull request on the
+// issue's branch: the issue was worked on before and is being resumed, not
+// started.
+func (s *Scheduler) hasOpenPR(snap *snapshot, issue github.Issue) bool {
+	_, ok := snap.prByBranch[s.BranchFor(issue.Number)]
+	return ok
 }
 
 // queueNoState is the name `bees status` gives the bucket of visible issues
@@ -406,6 +426,9 @@ func (s *Scheduler) pass(ctx context.Context) error {
 	}
 	if err := s.deliverHumanFeedback(ctx, snap); err != nil {
 		s.log.Warn("human feedback", "err", err)
+	}
+	if err := s.checkPRs(ctx, snap); err != nil {
+		s.log.Warn("check PRs", "err", err)
 	}
 	if err := s.reconcile(ctx, snap); err != nil {
 		s.log.Warn("reconcile", "err", err)
@@ -555,11 +578,13 @@ func relabel(labels []github.Label, from, to string) []github.Label {
 // are already in progress or in review but not owned by a worker (for
 // example after a restart) are resumed first and are never reordered: a
 // worker picking its issue back up after a restart must not be starved.
-// The ready queue behind them is ordered by scheduler.dispatch_order, and a
-// bees:size/l issue waits while scheduler.max_large_in_flight of them are
-// already being worked on. A ready issue whose declared blockers are still
-// open is skipped without consuming a pool slot; in-progress and review
-// candidates are resumptions and are never held back.
+// Ready issues that already have an open pull request come next, oldest
+// first — a PR that needs attention (human feedback, a conflict with the
+// default branch) is finished before new work is started. The rest of the
+// ready queue is ordered by scheduler.dispatch_order, and a bees:size/l
+// issue waits while scheduler.max_large_in_flight of them are already being
+// worked on. A ready issue whose declared blockers are still open is skipped
+// without consuming a pool slot; resumptions are never held back.
 //
 // On a local pass (local) the snapshot comes from the last poll and can be
 // stale: an issue a worker has since finished, a developer parked in
@@ -574,9 +599,17 @@ func (s *Scheduler) dispatchDevelopers(ctx context.Context, snap *snapshot, loca
 	candidates = append(candidates, snap.byState["in-progress"]...)
 	candidates = append(candidates, snap.byState["review"]...)
 	var ready []github.Issue
+	// resumed marks the ready issues that are a pull request coming back
+	// for more work rather than something new.
+	resumed := map[int]bool{}
 	for _, i := range snap.byState["ready"] {
 		if blockers := snap.waiting[i.Number]; len(blockers) > 0 {
 			s.log.Info("issue waiting on dependencies", "issue", i.Number, "blocked_by", blockers)
+			continue
+		}
+		if s.hasOpenPR(snap, i) {
+			resumed[i.Number] = true
+			candidates = append(candidates, i)
 			continue
 		}
 		ready = append(ready, i)
@@ -596,9 +629,10 @@ func (s *Scheduler) dispatchDevelopers(ctx context.Context, snap *snapshot, loca
 		}
 		size := s.sizeOf(issue.Labels)
 		// The cap only holds back fresh work: a resumed in-progress or
-		// review issue is already in flight. Checked before a slot is taken,
-		// so a held issue does not keep a free developer idle.
-		if largeLimit > 0 && size == sizeLarge && s.stateOf(issue.Labels) == "ready" && s.largeInFlight() >= largeLimit {
+		// review issue, or a ready one with an open PR, is already in
+		// flight. Checked before a slot is taken, so a held issue does not
+		// keep a free developer idle.
+		if largeLimit > 0 && size == sizeLarge && s.stateOf(issue.Labels) == "ready" && !resumed[issue.Number] && s.largeInFlight() >= largeLimit {
 			s.log.Info("large issue waits, cap reached", "issue", issue.Number, "max_large_in_flight", largeLimit)
 			continue
 		}

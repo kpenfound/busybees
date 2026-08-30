@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -87,14 +88,22 @@ enabled = false
 `
 
 // seedReady adds a sized ready issue and the pull request the fake developer
-// "opens" for it.
+// "opens" for it; the PR stays hidden until a developer session ran for the
+// issue, so the issue counts as new work rather than a resumption.
 func seedReady(h *harness, n int, size string, created time.Time) {
-	labels := []github.Label{{Name: "bees"}, {Name: "bees:ready"}}
+	seedIssue(h, n, "bees:ready", size, created)
+	h.gh.hidden[200+n] = true
+}
+
+// seedIssue adds an issue in the given state and the pull request on its
+// branch, visible from the start.
+func seedIssue(h *harness, n int, state, size string, created time.Time) {
+	labels := []github.Label{{Name: "bees"}, {Name: state}}
 	if size != "" {
 		labels = append(labels, github.Label{Name: "bees:size/" + size})
 	}
 	h.gh.issues[n] = &github.Issue{Number: n, Title: fmt.Sprintf("Issue %d", n), Body: "please", State: "OPEN", Labels: labels, CreatedAt: created}
-	h.gh.prs[200+n] = &github.PR{Number: 200 + n, Title: fmt.Sprintf("Issue %d", n), State: "OPEN",
+	h.gh.prs[200+n] = &github.PR{Number: 200 + n, Title: fmt.Sprintf("Issue %d", n), State: "OPEN", Body: fmt.Sprintf("Closes #%d", n),
 		HeadRefName: fmt.Sprintf("bees/issue-%d", n), BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
 }
 
@@ -172,6 +181,40 @@ func TestMaxLargeInFlightHoldsBackTheSecondLargeIssue(t *testing.T) {
 	}
 	if !strings.Contains(h.logs.String(), "large issue waits, cap reached") {
 		t.Fatalf("no log line about the cap:\n%s", h.logs.String())
+	}
+}
+
+// A ready issue that already has a pull request — one that came back from
+// approved for human feedback or a conflict — is a resumption: it goes ahead
+// of new work whatever its size, and the large cap does not hold it back.
+func TestReadyIssueWithAPullRequestIsDispatchedFirst(t *testing.T) {
+	h := newHarness(t, baseTOML+"dispatch_order = \"small-first\"\nmax_large_in_flight = 1\n"+rolesOffTOML)
+	base := time.Now().Add(-24 * time.Hour)
+	// Both slots would go to the small fresh issues under small-first alone.
+	seedReady(h, 1, "xs", base)
+	seedReady(h, 2, "s", base.Add(time.Hour))
+	// An in-progress large issue is resumed first and fills the large cap ...
+	seedIssue(h, 3, "bees:in-progress", "l", base.Add(2*time.Hour))
+	h.gh.hidden[203] = true
+	// ... and a ready large issue with an open PR still goes before the fresh ones.
+	seedIssue(h, 4, "bees:ready", "l", base.Add(3*time.Hour))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if err := h.sched.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// dispatched() would miss 3, which was in-progress already: look at
+	// which developer sessions ran instead.
+	var got []string
+	for _, dir := range h.sessions(config.RoleDeveloper) {
+		got = append(got, filepath.Base(dir))
+	}
+	if len(got) != 2 || !strings.Contains(got[0], "issue-3-") || !strings.Contains(got[1], "issue-4-") {
+		t.Fatalf("developer sessions %v, want the resumptions 3 and 4 before any new work", got)
+	}
+	if strings.Contains(h.logs.String(), "large issue waits, cap reached") {
+		t.Fatalf("the cap must not hold back an issue with an open PR:\n%s", h.logs.String())
 	}
 }
 

@@ -87,6 +87,11 @@ const (
 	DefaultRetries           = 1
 	DefaultRetryDelay        = 10 * time.Minute
 	DefaultRetryWithFallback = true
+	// DefaultPRFixConflicts and DefaultPRKeepUpdated govern what the
+	// scheduler does with an open pull request that conflicts with, or has
+	// fallen behind, the default branch; see Scheduler.FixConflicts.
+	DefaultPRFixConflicts = true
+	DefaultPRKeepUpdated  = false
 	// MaxRetries caps scheduler.retries.
 	MaxRetries = 5
 	// DefaultOffHoursPollInterval is the polling cadence outside
@@ -371,6 +376,16 @@ func (s Scheduler) LargeInFlight() int {
 	return *s.MaxLargeInFlight
 }
 
+// FixConflicts returns scheduler.pr_fix_conflicts: whether an open pull
+// request that conflicts with the default branch is handed back to the
+// developer.
+func (s Scheduler) FixConflicts() bool {
+	if s.PRFixConflicts == nil {
+		return DefaultPRFixConflicts
+	}
+	return *s.PRFixConflicts
+}
+
 // Merge returns the resolved merge policy from [roles.reviewer].
 func (c *Config) Merge() MergePolicy {
 	rs := c.Roles[RoleReviewer]
@@ -443,6 +458,13 @@ type Scheduler struct {
 	// MaxLargeInFlight caps how many bees:size/l issues developer workers may
 	// hold at once. 0 means no cap. Default 1.
 	MaxLargeInFlight *int `toml:"max_large_in_flight" json:"max_large_in_flight"`
+	// PRFixConflicts hands an open pull request that conflicts with the
+	// default branch back to its developer: the developer is mailed, and an
+	// approved issue goes back to ready ahead of new work. Default true.
+	PRFixConflicts *bool `toml:"pr_fix_conflicts" json:"pr_fix_conflicts"`
+	// PRKeepUpdated does the same when the pull request merely fell behind
+	// the default branch without conflicting. Default false.
+	PRKeepUpdated bool `toml:"pr_keep_updated" json:"pr_keep_updated"`
 	// Retries is the number of extra attempts a session gets when it failed
 	// for infrastructure reasons (timeout, API error, exhausted turns).
 	// 0 disables retrying. Default 1.
@@ -860,6 +882,10 @@ func (c *Config) applyDefaults() {
 	if c.Scheduler.MaxLargeInFlight == nil {
 		n := DefaultMaxLargeInFlight
 		c.Scheduler.MaxLargeInFlight = &n
+	}
+	if c.Scheduler.PRFixConflicts == nil {
+		b := DefaultPRFixConflicts
+		c.Scheduler.PRFixConflicts = &b
 	}
 	if c.Scheduler.Retries == nil {
 		n := DefaultRetries

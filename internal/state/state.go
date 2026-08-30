@@ -103,7 +103,11 @@ type IssueState struct {
 	// HumanSeenAt is the timestamp of the latest human PR activity already
 	// delivered to the developer.
 	HumanSeenAt time.Time `json:"human_seen_at,omitempty"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	// ConflictNotifiedSHA is the PR head commit the developer was last told
+	// to bring up to date with the default branch; the same head is never
+	// mailed about twice.
+	ConflictNotifiedSHA string    `json:"conflict_notified_sha,omitempty"`
+	UpdatedAt           time.Time `json:"updated_at"`
 }
 
 // Issue loads bookkeeping for an issue (zero value when none).

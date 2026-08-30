@@ -24,21 +24,12 @@ const HumanSender = "human"
 // share one GitHub account.
 func (s *Scheduler) deliverHumanFeedback(ctx context.Context, snap *snapshot) error {
 	var errs []string
-	issueByNumber := map[int]github.Issue{}
-	for _, i := range snap.issues {
-		issueByNumber[i.Number] = i
-	}
 	for _, pr := range snap.prs {
-		issueNum := 0
-		for _, n := range pr.ClosingIssues() {
-			if _, ok := issueByNumber[n]; ok {
-				issueNum = n
-				break
-			}
-		}
-		if issueNum == 0 {
+		issue, ok := snap.issueForPR(pr)
+		if !ok {
 			continue // not a PR the factory is driving
 		}
+		issueNum := issue.Number
 		bk, err := s.store.Issue(issueNum)
 		if err != nil {
 			errs = append(errs, err.Error())
@@ -91,24 +82,45 @@ func (s *Scheduler) deliverHumanFeedback(ctx context.Context, snap *snapshot) er
 		}
 		s.log.Info("human feedback delivered to developer", "pr", pr.Number, "issue", issueNum, "items", len(activity))
 
-		issue := issueByNumber[issueNum]
 		if s.stateOf(issue.Labels) == "approved" {
 			s.log.Info("approved PR received human feedback; issue back to ready", "issue", issueNum)
-			if err := s.setState(ctx, issueNum, s.labels.Ready); err != nil {
-				errs = append(errs, err.Error())
-				continue
-			}
-			if err := s.gh.EditLabels(ctx, pr.Number, nil, []string{s.labels.Approved}); err != nil {
+			if err := s.reopenApproved(ctx, snap, issue, pr); err != nil {
 				errs = append(errs, err.Error())
 			}
-			issue.Labels = relabel(issue.Labels, s.labels.Approved, s.labels.Ready)
-			snap.byState["approved"] = removeIssue(snap.byState["approved"], issueNum)
-			snap.byState["ready"] = append(snap.byState["ready"], issue)
 		}
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("human feedback: %s", strings.Join(errs, "; "))
 	}
+	return nil
+}
+
+// reopenApproved sends an approved issue back to ready — its pull request
+// needs more developer work (human feedback, a conflict with the default
+// branch) — and drops bees:approved from the PR, then moves the issue
+// between the snapshot's buckets so the rest of the pass sees it as ready.
+// An issue a worker still owns (the auto-merge checks stage) is left alone:
+// the worker's own transitions would only clobber the label.
+func (s *Scheduler) reopenApproved(ctx context.Context, snap *snapshot, issue github.Issue, pr github.PR) error {
+	s.mu.Lock()
+	_, owned := s.owned[issue.Number]
+	s.mu.Unlock()
+	if owned {
+		s.log.Info("approved issue is owned by a worker; leaving its labels to it", "issue", issue.Number)
+		return nil
+	}
+	if err := s.setState(ctx, issue.Number, s.labels.Ready); err != nil {
+		return err
+	}
+	if err := s.gh.EditLabels(ctx, pr.Number, nil, []string{s.labels.Approved}); err != nil {
+		return err
+	}
+	issue.Labels = relabel(issue.Labels, s.labels.Approved, s.labels.Ready)
+	snap.byState["approved"] = removeIssue(snap.byState["approved"], issue.Number)
+	snap.byState["ready"] = append(snap.byState["ready"], issue)
+	snap.byNumber[issue.Number] = issue
+	// Keep the cached poll in step so a local pass can dispatch it too.
+	s.cacheIssue(issue)
 	return nil
 }
 

@@ -316,6 +316,24 @@ func TestDispatchSettings(t *testing.T) {
 	}
 }
 
+func TestPRUpdateSettings(t *testing.T) {
+	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Scheduler.FixConflicts() || cfg.Scheduler.PRKeepUpdated {
+		t.Fatalf("defaults: fix conflicts %v, keep updated %v", cfg.Scheduler.FixConflicts(), cfg.Scheduler.PRKeepUpdated)
+	}
+	// false is a meaningful value for pr_fix_conflicts, so it must survive applyDefaults.
+	cfg, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\npr_fix_conflicts = false\npr_keep_updated = true\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Scheduler.FixConflicts() || !cfg.Scheduler.PRKeepUpdated {
+		t.Fatalf("custom: fix conflicts %v, keep updated %v", cfg.Scheduler.FixConflicts(), cfg.Scheduler.PRKeepUpdated)
+	}
+}
+
 // The error a bad value produces has to say what the valid ones are.
 func TestDispatchErrorsListTheValidValues(t *testing.T) {
 	for body, want := range map[string]string{
