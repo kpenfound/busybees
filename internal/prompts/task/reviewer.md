@@ -9,6 +9,16 @@
 {{.Issue.URL}}
 
 {{.Issue.Body}}
+{{if .ChecksStatus}}
+## Required checks
+{{if .Checks}}{{range .Checks}}
+- {{.Name}} — {{.Bucket}}{{if .Link}} — {{.Link}}{{end}}
+{{- end}}
+
+{{if eq .ChecksStatus "passed"}}CI is green; concentrate on the change itself.{{else}}Checks were still pending after `{{.ChecksTimeout}}`; run the repository's test-suite yourself.{{end}}
+{{else}}
+This repository reports no required checks; run the tests yourself.
+{{end}}{{end}}
 {{if .PreviousRounds}}
 ## Your feedback from previous rounds
 {{- range .PreviousRounds}}
