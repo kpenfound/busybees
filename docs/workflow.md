@@ -118,7 +118,8 @@ stateDiagram-v2
 | `bees:needs-human` | The factory gave up on it | Orchestrator |
 
 Four more labels sit **outside** the state machine; issues carrying them
-never get a state label and are never triaged:
+never get a state label and are never triaged (`bees:priority` below is a
+fifth: it sits *next to* a state label rather than replacing one):
 
 | Label | Meaning | Who sets it |
 |---|---|---|
@@ -126,6 +127,11 @@ never get a state label and are never triaged:
 | `bees:feedback` | The product manager's inbox: an idea, product feedback or a bug report from a person | Humans |
 | `bees:question` | The product manager is waiting for a person to answer on a feature or feedback issue | Product manager (removed by the orchestrator when the person replies) |
 | `bees:proposal` | A feature issue a bee wrote rather than a person; it sits next to `bees:feature`, and a person removes the label to approve it | `bees issue create --feature` (removed by a person) |
+
+`bees:priority` says "build this next". It is not a state label: an issue keeps
+exactly one of `bees:triage`/`bees:ready`/… alongside it, nothing in the factory
+adds or removes it, and it survives every state change. See
+[Priority](#priority-do-this-next).
 
 `bees:bug` is a **kind label** on a work item (a bug filed by the developer,
 reviewer, QA or a human) and travels through the state machine like any other
@@ -182,7 +188,8 @@ open pull request needs attention: anything already `bees:in-progress` or
 is never held back), then any `bees:ready` issue that already has an open pull
 request — one sent back for [your feedback](#giving-the-developer-feedback) or
 because it [conflicts with the default branch](#conflicts-with-the-default-branch)
-— oldest first. Only then does it take new work from `bees:ready`, in the
+— oldest first. Only then does it take new work from `bees:ready`:
+[`bees:priority`](#priority-do-this-next) issues first, then in the
 order `scheduler.dispatch_order` asks for:
 
 | `dispatch_order` | Order |
@@ -208,6 +215,37 @@ Two limits sit on top of that order:
   it back to `bees:triage` (no comment — the label is the signal) and the
   project manager splits it on its next run. With the default that means every
   `bees:size/xl` issue goes back to be split.
+
+### Priority: "do this next"
+
+Add `bees:priority` to a `bees:ready` issue and the next free developer takes
+it before the rest of the queue, whatever `scheduler.dispatch_order` says and
+however old the other issues are. That makes the whole dispatch order:
+
+1. issues being resumed (`bees:in-progress`, `bees:review`, and `bees:ready`
+   issues with an open pull request) — never reordered;
+2. `bees:priority` issues;
+3. `scheduler.dispatch_order` (size, or age under `oldest`);
+4. age.
+
+Priority is a **separate axis from size**: a `bees:size/xs` issue does not jump
+a priority `bees:size/l` one under `small-first`. Between two priority issues
+`dispatch_order` decides as usual.
+
+Set it from the GitHub UI like any other label. Nothing in the factory adds or
+removes it — it is yours, it survives every state change, and it stays on the
+issue until you take it off. The project manager may add it to a bug that
+blocks the factory itself (the default branch does not build, say), and to
+nothing else.
+
+Priority reorders the queue; it does not lift the limits. A priority
+`bees:size/l` issue still waits while `scheduler.max_large_in_flight` of them
+are in flight, and a priority issue above `roles.developer.max_size` still goes
+back to `bees:triage` to be split.
+
+`bees status` counts the queued issues carrying the label on its `ready` row
+(`ready  4  (xs 1, s 2, m 1, 1 priority)`) and lists their numbers under
+`priority` in `--json`, so you can see the lever took effect.
 
 ## Talking to the product manager
 

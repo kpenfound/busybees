@@ -100,9 +100,10 @@ A full pass is:
    issues (resume after a restart, never reordered), then `ready` issues that
    already have an open PR on their branch (`snapshot.prByBranch`; sent back
    by human feedback or a conflict — finished before new work, oldest first),
-   followed by the remaining `ready` issues sorted by
-   `scheduler.dispatch_order` (`sortReady`: smallest size first by default,
-   ties by age). A `bees:size/l` candidate that is new work is skipped while
+   followed by the remaining `ready` issues sorted by `sortReady`: issues a
+   person marked `bees:priority` first, then `scheduler.dispatch_order`
+   (smallest size first by default), ties by age. Priority is a separate axis
+   from size and reorders the queue only — it lifts no cap. A `bees:size/l` candidate that is new work is skipped while
    `scheduler.max_large_in_flight` of them are already owned — the check runs
    *before* a slot is taken, so a held issue does not keep a worker idle. For
    the rest, a slot is taken from a buffered channel sized `max_developers`;

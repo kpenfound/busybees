@@ -431,10 +431,11 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 }
 
 // queuesText renders the queue counts of a status, with the ready queue
-// broken down by size ("ready  4  (xs 1, s 2, m 1)") and, when dependencies
-// are holding ready issues back, how many and why. The ready row carries the
-// held count as a suffix so the number of issues a developer can actually pick
-// up is never overstated.
+// broken down by size ("ready  4  (xs 1, s 2, m 1, 1 priority)") and, when
+// dependencies are holding ready issues back, how many and why. The ready row
+// carries the held count as a suffix so the number of issues a developer can
+// actually pick up is never overstated, and the priority count so a person can
+// see that bees:priority took effect.
 func queuesText(st state.Status) string {
 	keys := make([]string, 0, len(st.Queues))
 	for k := range st.Queues {
@@ -448,6 +449,9 @@ func queuesText(st state.Status) string {
 			var notes []string
 			if sizes := readySizesText(st.ReadySizes); sizes != "" {
 				notes = append(notes, sizes)
+			}
+			if n := len(st.Priority); n > 0 {
+				notes = append(notes, fmt.Sprintf("%d priority", n))
 			}
 			if n := len(st.WaitingOnDeps); n > 0 {
 				notes = append(notes, fmt.Sprintf("%d waiting on deps", n))
