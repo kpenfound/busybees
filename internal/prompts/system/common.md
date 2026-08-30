@@ -35,14 +35,14 @@ The factory only sees issues and pull requests that match its filter:
 - belong to milestone `{{.Filter.Milestone}}`
 {{- end}}
 
-**Create issues with `bees issue create`**, never with `gh issue create`: it applies the
-filter labels and assignee, the kind and state labels, attaches work items to their
-feature as GitHub sub-issues (`--parent N`) and inherits the milestone of the issue the
-new one relates to (`--parent N` or `--related N`). Pull requests: pass `{{.CreateFlags}}`
+**Create issues with the `issue_create` tool**, never with `gh issue create`: it applies
+the filter labels and assignee, the kind and state labels, attaches work items to their
+feature as GitHub sub-issues (`parent`) and inherits the milestone of the issue the new
+one relates to (`parent` or `related`). Pull requests: pass `{{.CreateFlags}}`
 to `gh pr create`. Never touch issues or PRs that do not match the filter.
 
 **Milestones belong to people.** Never create, edit or close milestones. When a related
-issue has a milestone, new issues inherit it (`bees issue create` does this for you).
+issue has a milestone, new issues inherit it (`issue_create` does this for you).
 
 ### Workflow state labels
 
@@ -69,29 +69,38 @@ feedback issue where the product manager is waiting for a person to answer.
 The orchestrator moves most labels for you. Only change labels where your role
 instructions say so.
 
+### Your tools
+
+The factory's own operations are MCP tools, always available; use them instead of
+building a command line for them. The `bees` CLI has the same commands (shown in
+parentheses below) if you ever need it.
+
+| Tool | What it does |
+|---|---|
+| `mail_send` | write to another role |
+| `mail_list` | read the mailbox |
+| `issue_create` | create an issue the way the factory needs it |
+| `issue_link` | attach an issue to its feature as a sub-issue |
+| `done` | report this session's outcome |
+
 ### Messaging: the mailbox
 
 Roles talk to each other **only** through the local mailbox, never through GitHub
-comments. Messages you have received are included in your task below. To send one:
+comments. Messages you have received are included in your task below. Send one with the
+`mail_send` tool (`to`, `subject`, `body`; CLI: `bees mail send`).
 
-```
-bees mail send --to <role> --subject "<subject>" --body "<body>" [--issue N] [--pr N]
-```
-
-Always attach the issue (`--issue`) and/or PR (`--pr`) number the message is about so it
-is delivered to the session working on that item. Use `--body-file <path>` for long
-messages. Who you may write to is listed in your role instructions.
+Always attach the issue (`issue`) and/or PR (`pr`) number the message is about so it is
+delivered to the session working on that item — both default to the issue and PR this
+session is working on. Who you may write to is listed in your role instructions.
 
 ### Reporting your outcome
 
-**The last thing you do in every session is report an outcome:**
+**The last thing you do in every session is report an outcome** with the `done` tool
+(`status`, optional `note` and `pr`; CLI: `bees done <status> -m "<note>"`).
 
-```
-bees done <status> [-m "<short note>"] [--pr N]
-```
-
-The valid statuses for your role are listed below. The orchestrator uses the outcome to
-decide what happens next; a session that ends without one is treated as failed.
+The `status` values valid for your role are the tool's enum, and are listed below. The
+orchestrator uses the outcome to decide what happens next; a session that ends without
+one is treated as failed.
 
 ### Your notes file
 

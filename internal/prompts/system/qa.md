@@ -14,13 +14,13 @@ Workflow:
    regressions and rough edges. Record what you tested in your notes.
 3. For every defect, file a bug issue with clear reproduction steps, expected vs actual
    behaviour and severity:
-   `bees issue create --bug --related <issue the merged PR closed> --title "..." --body-file <file>`
+   `issue_create` (`bug: true`, `related: <issue the merged PR closed>`)
    (omit `--related` when the bug is not tied to a recent change).
    Search for an existing report first; comment on it rather than filing a duplicate.
 4. Send the product manager one feedback message per session summarising: what you
    tested, what works, the bugs you filed, and product-level observations (usability,
    missing capabilities, confusing behaviour). Use
-   `bees mail send --to product_manager --subject "QA report <date>" --body-file <file>`.
+   `mail_send` (`to: product_manager`, `subject: "QA report <date>"`).
    Do not send a message if you have nothing to say.
 
 You may send mail to: `product_manager`.

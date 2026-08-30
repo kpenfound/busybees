@@ -316,8 +316,14 @@ reused (they are not pulled automatically — delete the cache to refresh).
 ### MCP servers
 
 Servers are written to a per-session `--mcp-config` file and loaded with
-`--strict-mcp-config`, so sessions see exactly the servers configured here and none of
-the user's own.
+`--strict-mcp-config`, so a session sees exactly the servers configured here plus the
+built-in one, and none of the user's own.
+
+**`bees` is reserved.** Every session automatically gets a server called `bees`
+(`bees mcp serve`) carrying the factory's own tools — see
+[cli.md](cli.md#bees-mcp-serve-sessions). It needs no configuration and cannot be
+turned off; defining `[global.mcp.bees]` or `[roles.<role>.mcp.bees]` fails validation
+with *mcp server name "bees" is reserved for the built-in server*.
 
 | Key | Description |
 |---|---|
