@@ -162,6 +162,9 @@ orchestrator adds `bees:size/m` to any ready issue that has none. See
 | `notify` | list of strings | `[]` | GitHub logins and/or `org/team` slugs the factory turns to when it needs a person. They are mentioned in the `bees:needs-human` escalation comment and in the product manager's `bees:question` comments, and asked to review a pull request the reviewer moved to `bees:approved`. Entries carry no leading `@` and hold at most one `/`. Empty (the default) mentions nobody and requests no reviewer. See [Notifying a person](#notifying-a-person). |
 | `product_manager_interval` | duration | `"1h"` | Minimum time between product manager runs. Unread mail in the PM's inbox triggers an earlier run. |
 | `qa_interval` | duration | `"30m"` | Minimum time between QA runs. QA only runs when something was merged since its last run (the first run always happens). The merged-PR query itself runs at most once per `qa_interval` (tracked as `last_check` in `<state_dir>/qa.json`), not on every poll. |
+| `max_cost_per_issue` | float | `0` | USD one work item may cost across every session run for it — developer, reviewer, retries, check fixes. Checked between a developer worker's stages, never mid session, so the session that passes it finishes and its work stays on the branch; the issue is then escalated with what it spent. `0` (the default) is unlimited; must be ≥ 0. See [Cost budgets](#cost-budgets). |
+| `max_cost_per_day` | float | `0` | USD the whole factory may spend over a rolling 24 hours. At or over it no new session is dispatched — no developer worker, no singleton — while the sessions already running finish normally. `0` (the default) is unlimited; must be ≥ 0. |
+| `max_cost_per_session` | float | `0` | USD a single session may cost. `claude -p` cannot be stopped on cost while it runs, so this is checked once it has finished: an over-budget session is treated as failed, and two in a row for the same work item escalate it. `0` (the default) is unlimited; must be ≥ 0. |
 | `keep_workspaces` | bool | `false` | Leave temporary worktrees on disk after a session (debugging). |
 | `workspace_root` | string | `""` | Directory temporary worktrees are created under. Empty means `$TMPDIR/bees`. |
 | `work_hours` | string | `""` | Daily window during which GitHub is polled every `poll_interval`, as `"HH:MM-HH:MM"` on a 24-hour clock. Empty (the default) disables the feature — GitHub is polled around the clock and the three keys below are ignored. See [Work hours](#work-hours). |
@@ -275,6 +278,45 @@ frugal:
 
 An idle factory therefore costs two calls per poll. If GitHub does rate-limit
 the process, polling pauses for `rate_limit_backoff` before trying again.
+
+What the factory spends on the Anthropic API is a separate budget, capped by
+the three `max_cost_*` keys below.
+
+### Cost budgets
+
+Nothing limits what a factory spends by default: all three budgets are `0`,
+which means unlimited. They are spent against the [session
+ledger](cli.md#bees-cost) — the same numbers `bees cost` reports — so a retried
+session counts like any other, and setting one is enough to make it bite:
+
+```toml
+[scheduler]
+max_cost_per_issue = 25.00   # every session run for one work item
+max_cost_per_day = 100.00    # whole factory, rolling 24 hours
+max_cost_per_session = 10.00 # a single session
+```
+
+Each is enforced at the only moment the factory can act on it. A running
+session is never interrupted on cost:
+
+- **Per issue** — checked between the stages of a developer worker. The
+  session that took the issue over its budget finishes and its work stays on
+  the branch; the worker then stops and the issue is escalated with what it
+  spent (*"Issue #12 has cost $26.40 across 7 sessions, over the
+  `max_cost_per_issue` budget of $25.00"*).
+- **Per day** — summed over the last 24 hours before anything is dispatched.
+  At or over the budget the scheduler keeps polling and reconciling labels but
+  starts no new session; workers already running finish their loop. The pause
+  is logged once, and `bees status` says so on its scheduler line.
+- **Per session** — checked after the session ended. An over-budget session is
+  treated as failed whatever it reported, which means it is retried once (with
+  the role's `fallback_model` when `retry_with_fallback` is on, usually the
+  cheaper one). Two over-budget sessions in a row for the same work item
+  escalate it: that is a signal that the role's `max_turns` or `timeout` are
+  the wrong shape for this work, not that one session went astray.
+
+Budgets are about money, not about turns: `max_turns` already caps how long a
+single session may go on for.
 
 ## `[global]` and `[roles.<name>]`
 
@@ -480,6 +522,9 @@ headers = { Authorization = "Bearer $BROWSER_MCP_TOKEN" }
 | `scheduler.notify` | `[]` (nobody is mentioned) |
 | `scheduler.product_manager_interval` | `1h` |
 | `scheduler.qa_interval` | `30m` |
+| `scheduler.max_cost_per_issue` | `0` (unlimited) |
+| `scheduler.max_cost_per_day` | `0` (unlimited) |
+| `scheduler.max_cost_per_session` | `0` (unlimited) |
 | `scheduler.work_hours` | `""` (poll around the clock) |
 | `scheduler.off_hours_poll_interval` | `1h`, or `poll_interval` when that is longer |
 | `scheduler.work_days` | `["mon","tue","wed","thu","fri"]` |

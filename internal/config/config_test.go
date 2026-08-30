@@ -1180,3 +1180,28 @@ func TestDescribeLocation(t *testing.T) {
 		t.Fatalf("local description %q is not the local time (...) form", winter)
 	}
 }
+
+func TestCostBudgets(t *testing.T) {
+	// Off by default: budgets are opt-in and change nothing until set.
+	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := cfg.Scheduler; s.MaxCostPerIssue != 0 || s.MaxCostPerDay != 0 || s.MaxCostPerSession != 0 {
+		t.Fatalf("defaults: %v, %v, %v", s.MaxCostPerIssue, s.MaxCostPerDay, s.MaxCostPerSession)
+	}
+	cfg, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\n"+
+		"max_cost_per_issue = 25.0\nmax_cost_per_day = 100.0\nmax_cost_per_session = 10.5\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := cfg.Scheduler; s.MaxCostPerIssue != 25 || s.MaxCostPerDay != 100 || s.MaxCostPerSession != 10.5 {
+		t.Fatalf("configured: %v, %v, %v", s.MaxCostPerIssue, s.MaxCostPerDay, s.MaxCostPerSession)
+	}
+	for _, key := range []string{"max_cost_per_issue", "max_cost_per_day", "max_cost_per_session"} {
+		_, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\n"+key+" = -1.0\n"))
+		if err == nil || !strings.Contains(err.Error(), "scheduler."+key+" must be >= 0") {
+			t.Errorf("%s = -1: %v", key, err)
+		}
+	}
+}

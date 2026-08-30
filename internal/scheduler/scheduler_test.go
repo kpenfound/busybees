@@ -29,7 +29,8 @@ import (
 // FAKE_CLAUDE is set: the runner executes it, it inspects its role and
 // environment, performs a scripted action and prints a stream-json result.
 //
-// The flags that steer the fake (FAKE_CLAUDE, FAKE_DEV_HANG, FAKE_DEV_FAIL)
+// The flags that steer the fake (FAKE_CLAUDE, FAKE_DEV_HANG, FAKE_DEV_FAIL,
+// FAKE_COST)
 // reach it through the ordinary environment, so they must NOT start with
 // BEES_: the runner strips inherited BEES_* variables from every session.
 func TestMain(m *testing.M) {
@@ -141,7 +142,17 @@ func fakeClaude() {
 	if err := session.WriteOutcome(sessionDir, outcome); err != nil {
 		fail(err)
 	}
-	fmt.Println(`{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"fake","num_turns":2,"total_cost_usd":0.01}`)
+	// FAKE_COST makes a session's cost controllable, which is what the cost
+	// budget tests spend against.
+	cost := 0.01
+	if v := os.Getenv("FAKE_COST"); v != "" {
+		c, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			fail(err)
+		}
+		cost = c
+	}
+	fmt.Printf(`{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"fake","num_turns":2,"total_cost_usd":%v}`+"\n", cost)
 }
 
 // fakeGH is an in-memory GitHub backing the gh wrapper.

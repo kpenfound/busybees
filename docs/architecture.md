@@ -70,7 +70,7 @@ A full pass is:
    command to reply to it; `human_seen_at` is advanced to the newest item.
    If the issue was `approved`, `reopenApproved` relabels it `ready` and
    removes `bees:approved` from the PR, so a developer worker picks it up on
-   step 4 (an issue a worker still owns — the checks stage — is left alone).
+   step 5 (an issue a worker still owns — the checks stage — is left alone).
    **PR merge state** (`conflicts.go`, `checkPRs`) runs right after, over
    the same PRs: `gh pr list` already returns `mergeable`, `mergeStateStatus`
    and `headRefOid`, so this costs nothing. For an issue in `review` or
@@ -96,7 +96,15 @@ A full pass is:
    a pass is sized in the same pass. Every edit is also written back to the
    cached poll (`cacheIssue`), which is what the local passes below classify
    from: without it they would see the old labels and repeat the edit.
-4. **dispatch developers** – candidates are unowned `in-progress` and `review`
+4. **cost budgets** (`budgets.go`) – with `scheduler.max_cost_per_day` set,
+   the ledger is summed over the last 24 hours before anything is dispatched.
+   At or over the budget steps 5 and 6 start nothing new (workers already
+   running finish their loop), and the pause is logged once per transition and
+   reported by `bees status`. The other two budgets are enforced elsewhere:
+   `max_cost_per_issue` between a developer worker's stages, and
+   `max_cost_per_session` after a session ends. See
+   [Cost budgets](configuration.md#cost-budgets).
+5. **dispatch developers** – candidates are unowned `in-progress` and `review`
    issues (resume after a restart, never reordered), then `ready` issues that
    already have an open PR on their branch (`snapshot.prByBranch`; sent back
    by human feedback or a conflict — finished before new work, oldest first),
@@ -110,7 +118,7 @@ A full pass is:
    when none is free the pass stops dispatching. A goroutine runs `workIssue`
    and returns the slot when done; the worker records the issue's size, which
    is what the cap counts and what `bees status` shows.
-5. **dispatch singletons** – project manager (has triage issues or unread
+6. **dispatch singletons** – project manager (has triage issues or unread
    mail), product manager (unread mail, first run, or interval elapsed), QA
    (first run, or interval elapsed and something merged since — checked at
    most once per `qa_interval`). Each runs in

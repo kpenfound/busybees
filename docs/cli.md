@@ -405,6 +405,21 @@ summed from the [session ledger](#bees-cost) (`today` in `--json`):
 today: 23 sessions, 412 turns, $8.12
 ```
 
+With [`scheduler.max_cost_per_day`](configuration.md#cost-budgets) configured, the
+scheduler line itself carries the rolling 24-hour spend against that budget — a
+different window from `today:` above — and says plainly when the budget has paused
+dispatch:
+
+```
+scheduler: pid 4711, last poll 12s ago   daily budget: $42.10 / $100.00
+scheduler: pid 4711, last poll 12s ago   paused: daily budget ($101.20 / $100.00)
+```
+
+While it is paused the scheduler keeps polling and reconciling labels but starts no
+new session; the workers already running finish their loop. Both numbers come from
+`status.json` (`budget_paused`, `day_spend_usd` and `day_budget_usd` in `--json`), so
+they are what the scheduler last computed rather than a fresh sum.
+
 The `ready` queue also carries a breakdown by [size](workflow.md#sizing)
 (`ready_sizes` in `--json`); issues the scheduler has not sized yet are
 counted as `unsized`:

@@ -81,6 +81,13 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		// The per-issue budget is checked between stages, never while a
+		// session runs: the one that took the issue over its budget has
+		// finished and its work is on the branch for whoever picks it up.
+		if reason, over := s.overIssueBudget(issue.Number); over {
+			log.Warn("issue over its cost budget", "issue", issue.Number, "max_cost_per_issue", s.cfg.Scheduler.MaxCostPerIssue)
+			return s.escalate(ctx, issue.Number, reason)
+		}
 		switch stage {
 		case "develop":
 			s.updateWorker(w, "developer", bookkeeping.Round)

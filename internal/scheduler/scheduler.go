@@ -84,8 +84,14 @@ type Scheduler struct {
 	// priority lists the ready issues carrying bees:priority, so
 	// `bees status` can show that the lever took effect.
 	priority []int
-	wg       sync.WaitGroup
-	slots    chan struct{}
+	// dayPaused is true while the rolling 24h spend has reached
+	// scheduler.max_cost_per_day, and daySpend is that spend.
+	dayPaused bool
+	daySpend  float64
+	// overBudget counts consecutive over-budget sessions per work item.
+	overBudget map[string]int
+	wg         sync.WaitGroup
+	slots      chan struct{}
 	// Issues and PRs from the last successful poll, reused by local passes.
 	lastIssues []github.Issue
 	lastPRs    []github.PR
@@ -126,6 +132,7 @@ func New(d Deps) (*Scheduler, error) {
 		waiting:      map[int][]int{},
 		warnedCycles: map[int]bool{},
 		readySizes:   map[string]int{},
+		overBudget:   map[string]int{},
 		slots:        make(chan struct{}, d.Config.Scheduler.MaxDevelopers),
 	}
 	for i := 0; i < d.Config.Scheduler.MaxDevelopers; i++ {
@@ -526,6 +533,7 @@ func (s *Scheduler) pass(ctx context.Context) error {
 	if err := s.reconcile(ctx, snap); err != nil {
 		s.log.Warn("reconcile", "err", capErrors(err))
 	}
+	s.checkDayBudget()
 	s.dispatchDevelopers(ctx, snap, false)
 	s.dispatchSingletons(ctx, snap, false)
 	return nil
@@ -550,6 +558,7 @@ func (s *Scheduler) localPass(ctx context.Context) {
 	if err := s.reconcile(ctx, snap); err != nil {
 		s.log.Warn("reconcile", "err", capErrors(err))
 	}
+	s.checkDayBudget()
 	s.dispatchDevelopers(ctx, snap, true)
 	s.dispatchSingletons(ctx, snap, true)
 }
@@ -698,7 +707,7 @@ func relabel(labels []github.Label, from, to string) []github.Label {
 // spending a session on such an issue the live issue is fetched once and the
 // candidate dropped unless it is still open and in a dispatchable state.
 func (s *Scheduler) dispatchDevelopers(ctx context.Context, snap *snapshot, local bool) {
-	if !s.roleEnabled(config.RoleDeveloper) {
+	if !s.roleEnabled(config.RoleDeveloper) || s.dayBudgetReached() {
 		return
 	}
 	var candidates []github.Issue
@@ -848,6 +857,9 @@ func (s *Scheduler) dispatchSingletons(ctx context.Context, snap *snapshot, mail
 			jobs[i].want = func() bool { return s.hasUnreadMail(role, 0, 0) }
 		}
 	}
+	if s.dayBudgetReached() {
+		return
+	}
 	for _, j := range jobs {
 		if !s.roleEnabled(j.role) {
 			continue
@@ -979,6 +991,7 @@ func (s *Scheduler) writeStatus() {
 		st.ReadySizes[k] = v
 	}
 	st.Priority = append([]int(nil), s.priority...)
+	s.budgetStatus(&st)
 	s.mu.Unlock()
 	if err := s.store.SaveStatus(st); err != nil {
 		s.log.Warn("write status", "err", err)
