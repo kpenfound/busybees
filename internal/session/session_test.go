@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -98,6 +99,66 @@ printf '{"status":"pr-opened","pr":12,"note":"hi"}' > "$BEES_SESSION_DIR/outcome
 	if _, err := os.Stat(filepath.Join(res.SessionDir, "result.json")); err != nil {
 		t.Fatal("result.json missing")
 	}
+}
+
+// A session started from inside another session must not inherit its BEES_*
+// variables: only the ones the runner sets for it are visible.
+func TestEnvDropsInheritedBeesVariables(t *testing.T) {
+	bin := fakeClaude(t, `
+env > "$BEES_SESSION_DIR/env.txt"
+echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
+`)
+	role := config.ResolvedRole{Name: "developer", Model: "opus", MaxTurns: 1, Timeout: time.Minute}
+	run := func(t *testing.T, reqEnv map[string]string) []string {
+		t.Helper()
+		t.Setenv(EnvPR, "54")
+		t.Setenv(EnvIssue, "99")
+		t.Setenv(EnvStateDir, "/inherited")
+		res, err := newRunner(t, bin).Run(context.Background(), Request{Name: "t", Role: role, WorkDir: t.TempDir(), Env: reqEnv})
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := os.ReadFile(filepath.Join(res.SessionDir, "env.txt"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.Split(strings.TrimRight(string(b), "\n"), "\n")
+	}
+	has := func(lines []string, want string) bool { return slices.Contains(lines, want) }
+	// lookup returns every line setting name, so a failure names the offender
+	// instead of dumping the whole environment.
+	lookup := func(lines []string, name string) []string {
+		var got []string
+		for _, l := range lines {
+			if strings.HasPrefix(l, name+"=") {
+				got = append(got, l)
+			}
+		}
+		return got
+	}
+
+	t.Run("absent when the session has none", func(t *testing.T) {
+		lines := run(t, nil)
+		for _, name := range []string{EnvPR, EnvIssue, EnvBranch} {
+			if got := lookup(lines, name); got != nil {
+				t.Errorf("%s leaked from the parent process: %v", name, got)
+			}
+		}
+		// The runner's own variables are still there, with its values.
+		if !has(lines, EnvStateDir+"=/state") || !has(lines, EnvRole+"=developer") {
+			t.Errorf("runner variables missing: %v", lines)
+		}
+	})
+
+	t.Run("the session's own value wins", func(t *testing.T) {
+		lines := run(t, map[string]string{EnvPR: "12"})
+		if got := lookup(lines, EnvPR); len(got) != 1 || got[0] != EnvPR+"=12" {
+			t.Errorf("%s lines = %v, want exactly [%s=12]", EnvPR, got, EnvPR)
+		}
+		if got := lookup(lines, EnvIssue); got != nil {
+			t.Errorf("%s leaked from the parent process: %v", EnvIssue, got)
+		}
+	})
 }
 
 func TestRunErrorAndNoOutcome(t *testing.T) {
