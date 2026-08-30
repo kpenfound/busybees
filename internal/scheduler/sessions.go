@@ -68,6 +68,7 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 	d.SessionDir = sessionDir
 	d.NotesFile = s.store.NotesPath(spec.role)
 	d.Notes = notes
+	d.ConsolidateNotes, d.ConsolidateReason = s.consolidateNotes(spec.role, len(notes))
 	if d.Issue != nil && (spec.role == config.RoleDeveloper || spec.role == config.RoleReviewer) {
 		d.Size = s.sizeOf(d.Issue.Labels)
 	}
@@ -117,9 +118,79 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 	}
 	// Whatever the session created must stay visible to the factory.
 	s.adoptCreated(ctx, started)
+	s.countSession(spec.role, d.ConsolidateNotes)
 	s.record(spec, res)
 	s.summarize(spec, res)
 	return res, nil
+}
+
+// consolidateNotes decides whether the session about to run is also asked
+// to consolidate its notes file, and why. Developer workers run
+// concurrently and share one role state file, so the read is locked.
+func (s *Scheduler) consolidateNotes(role string, notesLen int) (bool, string) {
+	every, maxBytes := s.cfg.Scheduler.NotesConsolidateEvery, s.cfg.Scheduler.NotesMaxBytes
+	s.mu.Lock()
+	rs, err := s.store.Role(role)
+	s.mu.Unlock()
+	if err != nil {
+		// Notes bookkeeping must never cost the factory a session.
+		s.log.Warn("could not read role bookkeeping", "role", role, "err", err)
+		return false, ""
+	}
+	if !needsConsolidation(rs, notesLen, every, maxBytes) {
+		return false, ""
+	}
+	return true, consolidateReason(notesLen, every, maxBytes)
+}
+
+// needsConsolidation reports whether the session starting now (the
+// notesLen-byte notes file is the one it will be shown) should also
+// consolidate its notes: either enough sessions have run since the last
+// pass, or the file has grown past maxBytes.
+func needsConsolidation(rs state.RoleState, notesLen, every, maxBytes int) bool {
+	if maxBytes > 0 && notesLen > maxBytes {
+		return true
+	}
+	if every <= 0 {
+		return false
+	}
+	return rs.Sessions+1-rs.LastConsolidated >= every
+}
+
+// consolidateReason names the trigger, for the prompt.
+func consolidateReason(notesLen, every, maxBytes int) string {
+	if maxBytes > 0 && notesLen > maxBytes {
+		return fmt.Sprintf("file is %s", byteSize(notesLen))
+	}
+	return fmt.Sprintf("every %d sessions", every)
+}
+
+// byteSize renders a notes size the way a person would say it.
+func byteSize(n int) string {
+	if n < 1024 {
+		return fmt.Sprintf("%d bytes", n)
+	}
+	return fmt.Sprintf("%d KB", n/1024)
+}
+
+// countSession records that one more session ran for the role, and that it
+// was asked to consolidate its notes. The state is re-read under the lock so
+// concurrent developer workers do not lose each other's counts.
+func (s *Scheduler) countSession(role string, consolidated bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rs, err := s.store.Role(role)
+	if err != nil {
+		s.log.Warn("could not read role bookkeeping", "role", role, "err", err)
+		return
+	}
+	rs.Sessions++
+	if consolidated {
+		rs.LastConsolidated = rs.Sessions
+	}
+	if err := s.store.SaveRole(role, rs); err != nil {
+		s.log.Warn("could not record the session for the role", "role", role, "err", err)
+	}
 }
 
 // record appends the finished session to the ledger. Accounting must never
