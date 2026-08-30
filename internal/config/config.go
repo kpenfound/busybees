@@ -618,12 +618,26 @@ func (s Scheduler) PollIntervalAt(t time.Time) time.Duration {
 }
 
 // WorkHoursDescription renders the window for `bees status`, for example
-// "09:00-18:00 mon-fri, America/New_York".
-func (s Scheduler) WorkHoursDescription() string {
+// "09:00-18:00 mon-fri, America/New_York". now is only used to name the
+// timezone when none is configured; see describeLocation.
+func (s Scheduler) WorkHoursDescription(now time.Time) string {
 	if !s.whEnabled {
 		return ""
 	}
-	return fmt.Sprintf("%s %s, %s", s.WorkHours, describeDays(s.whDays), s.whLoc)
+	return fmt.Sprintf("%s %s, %s", s.WorkHours, describeDays(s.whDays), describeLocation(s.whLoc, now))
+}
+
+// describeLocation names the zone a window is read in. A configured timezone
+// is printed as its IANA name. The machine's local time has no useful name --
+// (*time.Location).String() of time.Local is the literal "Local", and a
+// machine that took its zone from /etc/localtime can carry that name for
+// real -- so it is printed as the abbreviation and offset in force at now,
+// "local time (PDT -07:00)". The instant matters because of DST.
+func describeLocation(loc *time.Location, now time.Time) string {
+	if loc != time.Local {
+		return loc.String()
+	}
+	return "local time (" + now.In(loc).Format("MST -07:00") + ")"
 }
 
 // describeDays prints a day set as compact ranges: "mon-fri", "mon,wed,fri".

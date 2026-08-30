@@ -753,8 +753,12 @@ func TestWorkHoursDefaults(t *testing.T) {
 	if strings.Join(s.WorkDays, ",") != "mon,tue,wed,thu,fri" {
 		t.Fatalf("work_days default: %v", s.WorkDays)
 	}
-	if got := s.WorkHoursDescription(); got != "09:00-18:00 mon-fri, Local" {
-		t.Fatalf("description: %q", got)
+	// With no timezone configured the window is read in the machine's local
+	// time, which is named by its offset rather than the useless "Local".
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	want := "09:00-18:00 mon-fri, local time (" + now.In(time.Local).Format("MST -07:00") + ")"
+	if got := s.WorkHoursDescription(now); got != want {
+		t.Fatalf("description: %q, want %q", got, want)
 	}
 	// The injected default is never shorter than poll_interval: a file that
 	// only sets a long poll_interval must load, not fail validation on a key
@@ -830,7 +834,7 @@ func TestInWorkHours(t *testing.T) {
 			}
 		})
 	}
-	if got := overnight.WorkHoursDescription(); got != "22:00-06:00 fri, UTC" {
+	if got := overnight.WorkHoursDescription(utc(31, 12, 0)); got != "22:00-06:00 fri, UTC" {
 		t.Fatalf("description: %q", got)
 	}
 }
@@ -1138,5 +1142,36 @@ func TestNotifyValidation(t *testing.T) {
 	// An empty entry is rejected too; there is no name to print.
 	if _, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nnotify = [\"\"]\n")); err == nil {
 		t.Error("empty entry: expected an error")
+	}
+}
+
+func TestDescribeLocation(t *testing.T) {
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	ny, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name string
+		loc  *time.Location
+		want string
+	}{
+		{"IANA name", ny, "America/New_York"},
+		{"UTC", time.UTC, "UTC"},
+		// time.Local has no name worth printing: describe the offset in
+		// force at now instead.
+		{"local", time.Local, "local time (" + now.In(time.Local).Format("MST -07:00") + ")"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := describeLocation(c.loc, now); got != c.want {
+				t.Fatalf("describeLocation = %q, want %q", got, c.want)
+			}
+		})
+	}
+	// The abbreviation and offset follow the instant, not the machine: the
+	// same location in January and in July can differ.
+	winter := describeLocation(time.Local, time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC))
+	if !strings.HasPrefix(winter, "local time (") || !strings.HasSuffix(winter, ")") {
+		t.Fatalf("local description %q is not the local time (...) form", winter)
 	}
 }
