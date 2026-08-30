@@ -132,10 +132,15 @@ A full pass is:
    human activity (creation or a comment without the `<!-- bees:` marker) is
    newer than the latest bee comment. A fresh issue that carries
    `bees:question` has that label removed on the spot (a person answered).
-   Any fresh issue triggers a run outside `product_manager_interval`, except a
-   [proposal](workflow.md#feature-issues): nobody has commented on one a bee
-   wrote, so it is fresh forever and only a person can decide anything about
-   it. `reconcile` instead watches `bees:proposal` on every feature and records
+   Any fresh issue triggers a run outside `product_manager_interval`. A
+   [proposal](workflow.md#feature-issues) only does so once a person has
+   commented on it (`Issue.AwaitingBeeComment()`, which is `AwaitingBee`
+   without the creation seeded in): nobody has commented on one a bee wrote,
+   so it is fresh forever, and counting that would wake the product manager
+   on every poll for a decision only a person can make. A person's question
+   still gets an answer on the next poll, and the proposal goes quiet again
+   on the one after that. Approval leaves no comment either, so `reconcile`
+   also watches `bees:proposal` on every feature and records
    `ProposalApprovedAt` when a person removes it — a label edit leaves no
    comment, so nothing else would notice — and a feature approved since the
    last run wakes the product manager and reaches it whatever `AwaitingBee`

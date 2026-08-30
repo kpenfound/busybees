@@ -155,6 +155,72 @@ func TestAProposalDoesNotWakeTheProductManager(t *testing.T) {
 	}
 }
 
+// A person's comment on a proposal is a question waiting for an answer, so it
+// wakes the product manager as promptly as a comment on any other issue —
+// and only once, until somebody touches the proposal again.
+func TestACommentOnAProposalWakesTheProductManager(t *testing.T) {
+	h := newHarness(t, pmOnlyTOML)
+	now := time.Now()
+	seedFeature(h, 6, "Bee-written idea", now.Add(-time.Hour), "bees:proposal")
+	// The comment, and the update it caused, sit a minute in the past: the
+	// freshness pre-filter compares them strictly against the last run, so
+	// both runs below need real margin rather than a lucky ordering.
+	h.gh.issues[6].UpdatedAt = now.Add(-time.Minute)
+	h.gh.issues[6].Comments = []github.Comment{{Author: github.Author{Login: "kyle"},
+		Body: "what about X?", CreatedAt: now.Add(-time.Minute)}}
+	if err := h.store.SaveRole(config.RoleProductManager, state.RoleState{LastRun: now.Add(-2 * time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	snap, err := h.sched.poll(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !h.sched.productManagerHasWork(ctx, snap) {
+		t.Error("a person's comment on a proposal did not wake the product manager")
+	}
+
+	// Once the product manager has run, the same untouched proposal is quiet
+	// again: freshIssues only looks at issues updated since the last run.
+	if err := h.store.SaveRole(config.RoleProductManager, state.RoleState{LastRun: now}); err != nil {
+		t.Fatal(err)
+	}
+	snap, err = h.sched.poll(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.sched.productManagerHasWork(ctx, snap) {
+		t.Error("an already-read comment woke the product manager a second time")
+	}
+}
+
+// A proposal whose most recent comment is a bee's is not waiting on anyone:
+// the bee has had its say and only a person can move it on.
+func TestABeeCommentOnAProposalDoesNotWakeTheProductManager(t *testing.T) {
+	h := newHarness(t, pmOnlyTOML)
+	now := time.Now()
+	seedFeature(h, 6, "Bee-written idea", now.Add(-time.Hour), "bees:proposal")
+	h.gh.issues[6].Comments = []github.Comment{
+		{Author: github.Author{Login: "kyle"}, Body: "what about X?", CreatedAt: now.Add(-2 * time.Minute)},
+		{Author: github.Author{Login: "kyle"}, Body: "X is out of scope <!-- bees:product_manager -->", CreatedAt: now.Add(-time.Minute)},
+	}
+	if err := h.store.SaveRole(config.RoleProductManager, state.RoleState{LastRun: now.Add(-time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	snap, err := h.sched.poll(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.sched.productManagerHasWork(ctx, snap) {
+		t.Error("a proposal the product manager has already answered woke it again")
+	}
+}
+
 // A person approves by removing a label, which leaves no comment: nothing in
 // AwaitingBee can notice it, so the scheduler remembers the transition and
 // the feature reaches the product manager on its next run.

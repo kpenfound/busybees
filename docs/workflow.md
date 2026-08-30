@@ -692,8 +692,9 @@ passing.
 The product manager owns the roadmap of feature issues. It runs at least every
 `scheduler.product_manager_interval` (default 1h), or sooner when it has
 unread mail (questions from the project manager, reports from QA) or when a
-feature or feedback issue is fresh (a proposal never counts: only a person
-can move it). It writes feature issues
+feature or feedback issue is fresh (a proposal counts only once a person has
+commented on it: until then nobody but a person can move it). It writes
+feature issues
 (`issue_create` with `feature: true`) that describe user-visible outcomes rather than
 implementation, and breaks them into work items as described above — except that
 a feature issue it wrote itself starts as a
