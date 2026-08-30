@@ -89,8 +89,17 @@ func (s *Scheduler) overIssueBudget(issue int) (string, bool) {
 	if cost <= budget {
 		return "", false
 	}
-	return fmt.Sprintf("Issue #%d has cost $%.2f across %d sessions, over the `max_cost_per_issue` budget of $%.2f. Raise the budget or take it from here.",
-		issue, cost, sessions, budget), true
+	return fmt.Sprintf("Issue #%d has cost $%.2f across %s, over the `max_cost_per_issue` budget of $%.2f. Raise the budget or take it from here.",
+		issue, cost, countOf(sessions, "session"), budget), true
+}
+
+// countOf renders a count with its noun, singular for one: "1 session",
+// "2 sessions". Only the regular plural is needed here.
+func countOf(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 // checkDayBudget sums the ledger over the last 24 hours and decides whether
