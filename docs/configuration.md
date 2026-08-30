@@ -325,8 +325,11 @@ The Anthropic account has limits of its own, and every role shares the
 account: when one session runs out of capacity, so has the whole factory.
 `claude` reports it in two ways and either is enough — a `rate_limit_event`
 in the session's stream whose status is neither `allowed` nor
-`allowed_warning`, or a result text naming a session or usage limit
-("You've hit your session limit · resets 11:50pm (America/Detroit)").
+`allowed_warning`, or, from a session that failed without reporting an
+outcome, a result text naming a session or usage limit ("You've hit your
+session limit · resets 11:50pm (America/Detroit)"). The result text is only
+read this way when the session reported nothing: it is the session's own
+prose, and a bee whose work is the limit itself writes those words.
 
 A session that ends that way is **not** retried: every attempt would hit the
 same wall. Its issue is not escalated either — the limit says nothing about

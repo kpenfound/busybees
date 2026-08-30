@@ -38,7 +38,7 @@ func TestPauseUntil(t *testing.T) {
 	}
 	// A pause until exactly now is one the dispatch gate never sees: the
 	// predicate asks whether the clock is still before it.
-	if !now.Before(pauseUntil(now, now, backoff)) == false {
+	if now.Before(pauseUntil(now, now, backoff)) {
 		t.Error("a reset at now must not pause dispatch")
 	}
 }
@@ -163,5 +163,55 @@ func TestRateLimitedTextNamesTheSessionLimit(t *testing.T) {
 		if got := rateLimitedText(c.msg); got != c.want {
 			t.Errorf("rateLimitedText(%q) = %v, want %v", c.msg, got, c.want)
 		}
+	}
+}
+
+// TestResultTextIsNotACapacityReport: a session's own prose is not a report
+// about the account. A bee whose work is the session limit itself says the
+// words in its result text, and that must neither pause the factory nor
+// throw the session's outcome away.
+func TestResultTextIsNotACapacityReport(t *testing.T) {
+	now := time.Date(2026, 8, 30, 23, 13, 0, 0, time.UTC)
+	t.Setenv("FAKE_RESULT_TEXT", "Opened a PR that pauses the factory on the claude session limit")
+	h := newHarnessAt(t, devOnlyTOML, now)
+	seedReady(h, 1, "s", now)
+
+	runPass(t, h)
+
+	st, err := h.store.LoadStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st.LimitPausedUntil.IsZero() {
+		t.Errorf("a successful session's prose paused the factory until %s", st.LimitPausedUntil)
+	}
+	if got := strings.Join(h.gh.history[1], ","); !strings.Contains(got, "bees:review") {
+		t.Errorf("issue 1 label history %v: the developer's outcome was thrown away", h.gh.history[1])
+	}
+}
+
+// TestSessionLimitFromAFinishedSessionKeepsItsOutcome: a blocking event is
+// an honest report about the account even when it arrives from a session
+// that finished its work, so the pause is recorded — but that session did
+// its job and the factory must still read what it reported.
+func TestSessionLimitFromAFinishedSessionKeepsItsOutcome(t *testing.T) {
+	now := time.Date(2026, 8, 30, 23, 13, 0, 0, time.UTC)
+	resets := now.Add(37 * time.Minute)
+	t.Setenv("FAKE_LIMIT", strconv.FormatInt(resets.Unix(), 10))
+	t.Setenv("FAKE_LIMIT_WITH_OUTCOME", "1")
+	h := newHarnessAt(t, devOnlyTOML, now)
+	seedReady(h, 1, "s", now)
+
+	runPass(t, h)
+
+	st, err := h.store.LoadStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st.LimitPausedUntil.Equal(resets) {
+		t.Errorf("status limit_paused_until = %s, want %s: the account's report was dropped", st.LimitPausedUntil, resets)
+	}
+	if got := strings.Join(h.gh.history[1], ","); !strings.Contains(got, "bees:review") {
+		t.Errorf("issue 1 label history %v: the developer opened a PR and its outcome was thrown away", h.gh.history[1])
 	}
 }

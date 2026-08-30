@@ -125,10 +125,10 @@ var sessionLimitPhrases = []string{"session limit", "usage limit"}
 // SessionLimited answers the only question the scheduler asks of a finished
 // session's capacity report: did it die on the account-wide claude limit,
 // and when does that limit reset? It says yes when the last rate-limit
-// event was blocking, or when the session's own result text names a session
-// or usage limit. The reset time is the one the last event carried and is
-// zero when there was none — the human-readable sentence is never scraped
-// for it.
+// event was blocking, or when a session that failed without reporting an
+// outcome has a result text naming a session or usage limit. The reset time
+// is the one the last event carried and is zero when there was none — the
+// human-readable sentence is never scraped for it.
 func (r *Result) SessionLimited() (time.Time, bool) {
 	var resets time.Time
 	if r.RateLimit != nil {
@@ -136,6 +136,13 @@ func (r *Result) SessionLimited() (time.Time, bool) {
 	}
 	if r.RateLimit.blocking() {
 		return resets, true
+	}
+	// The result text is the session's own prose. It names the limit only
+	// when the session had nothing else to report, so a session that ran
+	// and reported an outcome is never read this way: a bee whose work is
+	// the session limit must not pause the factory by writing about it.
+	if r.HasOutcome || !r.IsError {
+		return time.Time{}, false
 	}
 	msg := strings.ToLower(r.ResultText)
 	for _, p := range sessionLimitPhrases {

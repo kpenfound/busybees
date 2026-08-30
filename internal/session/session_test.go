@@ -355,8 +355,25 @@ echo '{"type":"result","subtype":"error_during_execution","is_error":true,"resul
 		t.Errorf("SessionLimited = %v at %s, want true with no reset time", limited, at)
 	}
 	// An ordinary failure is not the account limit.
-	other := &Result{ResultText: "the tests do not pass"}
+	other := &Result{IsError: true, ResultText: "the tests do not pass"}
 	if _, limited := other.SessionLimited(); limited {
 		t.Error("an unrelated failure read as the session limit")
+	}
+	// The result text is the session's own prose, so it is read as a
+	// capacity report only from a session that failed with nothing else to
+	// say. A bee whose work is the session limit writes those words while
+	// doing its job, and must not stop the factory by describing it.
+	for _, c := range []struct {
+		name string
+		res  Result
+	}{
+		{"reported an outcome", Result{IsError: true, HasOutcome: true, ResultText: "Opened a PR for the session limit issue"}},
+		{"finished cleanly", Result{ResultText: "Reviewed the session limit pull request"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, limited := c.res.SessionLimited(); limited {
+				t.Errorf("a session that %s paused the factory by writing about the limit", c.name)
+			}
+		})
 	}
 }

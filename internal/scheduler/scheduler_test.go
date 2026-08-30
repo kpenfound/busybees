@@ -81,19 +81,23 @@ func fakeClaude() {
 		_, _ = fmt.Fprintln(f, filepath.Base(sessionDir))
 		_ = f.Close()
 	}
-	// FAKE_LIMIT makes a session die on the account-wide claude session
-	// limit, whatever its role: it emits a blocking rate_limit_event and
-	// reports no outcome, the way a session that could not start does. The
-	// value is the resetsAt unix timestamp, or "none" for an event that
-	// carried none.
+	// FAKE_LIMIT makes a session hit the account-wide claude session limit,
+	// whatever its role: it emits a blocking rate_limit_event. The value is
+	// the resetsAt unix timestamp, or "none" for an event that carried
+	// none. The session then dies without reporting an outcome, the way one
+	// that could not start does — unless FAKE_LIMIT_WITH_OUTCOME is set, in
+	// which case the role does its work and reports it, which is a session
+	// that finished just as the account ran out of capacity.
 	if v := os.Getenv("FAKE_LIMIT"); v != "" {
 		resets := ""
 		if v != "none" {
 			resets = `,"resetsAt":` + v
 		}
 		fmt.Printf(`{"type":"rate_limit_event","rate_limit_info":{"status":"blocked","rateLimitType":"five_hour","overageStatus":"allowed"%s}}`+"\n", resets)
-		fmt.Println(`{"type":"result","subtype":"success","is_error":false,"result":"You've hit your session limit","session_id":"fake","num_turns":1,"total_cost_usd":0.01}`)
-		return
+		if os.Getenv("FAKE_LIMIT_WITH_OUTCOME") == "" {
+			fmt.Println(`{"type":"result","subtype":"success","is_error":false,"result":"You've hit your session limit","session_id":"fake","num_turns":1,"total_cost_usd":0.01}`)
+			return
+		}
 	}
 	counter := func(name string) int {
 		p := filepath.Join(stateDir, "fake-"+name)
@@ -183,7 +187,13 @@ func fakeClaude() {
 		}
 		cost = c
 	}
-	fmt.Printf(`{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"fake","num_turns":2,"total_cost_usd":%v}`+"\n", cost)
+	// FAKE_RESULT_TEXT is what the session says it did. A bee whose work is
+	// the account's own limit writes the words "session limit" here.
+	text := "ok"
+	if v := os.Getenv("FAKE_RESULT_TEXT"); v != "" {
+		text = v
+	}
+	fmt.Printf(`{"type":"result","subtype":"success","is_error":false,"result":%q,"session_id":"fake","num_turns":2,"total_cost_usd":%v}`+"\n", text, cost)
 }
 
 // fakeGH is an in-memory GitHub backing the gh wrapper.

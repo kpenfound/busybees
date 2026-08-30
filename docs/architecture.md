@@ -107,11 +107,13 @@ A full pass is:
      ends. See [Cost budgets](configuration.md#cost-budgets).
    - **claude session limit** – recorded from a finished session rather than
      computed here (`recordSessionLimit`, called from `runSessionWithRetry`):
-     a session whose last `rate_limit_event` was blocking, or whose result
-     text names a session or usage limit, returns at once without spending a
-     retry, and dispatch pauses until the reset time the event carried
-     (`rate_limit_backoff` when there was none, capped at 8h). The limit is
-     per account, so it holds every role. See [The claude session
+     a session whose last `rate_limit_event` was blocking, or which failed
+     without reporting an outcome and whose result text names a session or
+     usage limit, pauses dispatch until the reset time the event carried
+     (`rate_limit_backoff` when there was none, capped at 8h). A session that
+     reported no outcome also returns at once, without spending a retry; one
+     that did its work and reported is still read normally. The limit is per
+     account, so it holds every role. See [The claude session
      limit](configuration.md#the-claude-session-limit).
 5. **dispatch developers** – candidates are unowned `in-progress` and `review`
    issues (resume after a restart, never reordered), then `ready` issues that
