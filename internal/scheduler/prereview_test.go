@@ -135,6 +135,16 @@ func TestPreReviewChecksErrorReviewsAnyway(t *testing.T) {
 	if !strings.Contains(h.logs.String(), "could not read the checks; reviewing anyway") {
 		t.Fatalf("the failed read is not logged:\n%s", h.logs.String())
 	}
+	// A read that keeps failing costs every reviewer its checks section
+	// silently, so it is a degraded operation like any other.
+	h.sched.writeStatus()
+	st, err := h.store.LoadStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f := degradedOp(t, st, "pre-review-checks"); f.Count == 0 {
+		t.Fatalf("degraded entry: %+v", f)
+	}
 }
 
 // TestPreReviewChecksDisabled: pre_review_checks = false is exactly the
@@ -153,6 +163,37 @@ func TestPreReviewChecksDisabled(t *testing.T) {
 	for i := range h.sessionOrder() {
 		if p := promptOf(t, h, i); strings.Contains(p, "## Required checks") {
 			t.Fatalf("session %d has a checks section:\n%s", i, p)
+		}
+	}
+}
+
+// TestPreReviewChecksRecoverClearsTheDegradedEntry: the streak is per
+// operation and lives across issues, so a read that works again must clear it.
+func TestPreReviewChecksRecoverClearsTheDegradedEntry(t *testing.T) {
+	h := newHarness(t, prereviewTOML)
+	seedPreReviewIssue(t, h, "Flaky gh")
+	h.gh.checks = []checksResponse{
+		{"", fmt.Errorf("HTTP 503: Service Unavailable")},
+		{`[{"name":"go / test","bucket":"pass","state":"SUCCESS"}]`, nil},
+	}
+	runPreReviewLoop(t, h)
+
+	// Round 1 read failed, round 2 read passed.
+	h.wantOrder("developer-issue-1-r1", "reviewer-pr-101-r1", "developer-issue-1-r2", "reviewer-pr-101-r2")
+	if review := promptOf(t, h, 1); strings.Contains(review, "## Required checks") {
+		t.Fatalf("the failed read must not produce a checks section:\n%s", review)
+	}
+	if review := promptOf(t, h, 3); !strings.Contains(review, "CI is green") {
+		t.Fatalf("the recovered read is missing from the second review:\n%s", review)
+	}
+	h.sched.writeStatus()
+	st, err := h.store.LoadStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range st.Degraded {
+		if f.Op == "pre-review-checks" {
+			t.Fatalf("a read that worked again left a degraded entry: %+v", f)
 		}
 	}
 }

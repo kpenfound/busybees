@@ -281,7 +281,9 @@ stateDiagram-v2
   pending at the timeout → the review runs, with `Checks`/`ChecksStatus` in the
   reviewer's prompt; the pending and the no-checks case tell it to run the
   tests itself. A read that errors is advisory too: warn and review without a
-  checks section (unlike the checks stage, where the read is a merge gate).
+  checks section (unlike the checks stage, where the read is a merge gate),
+  recorded as the `pre-review-checks` degraded operation so a reviewer quietly
+  losing its checks section is visible.
   Failed → `fixFailedChecks`, the same checks-mode reviewer and developer fix
   round the checks stage uses, and the developer's next `pr-updated` returns
   here (`afterDevelop = "prereview"`); every path out into `review` resets

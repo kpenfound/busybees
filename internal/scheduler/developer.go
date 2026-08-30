@@ -236,12 +236,15 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 			if err != nil {
 				// The pre-review read is advisory: a broken `gh pr checks`
 				// must not cost the pull request its review. The post-approval
-				// stage, where the read is a merge gate, still fails hard.
-				log.Warn("could not read the checks; reviewing anyway", "pr", pr.Number, "err", err)
+				// stage, where the read is a merge gate, still fails hard. A
+				// read that keeps failing is a degraded operation, so a
+				// reviewer silently losing its checks section is visible.
+				s.opAs(log, slog.LevelWarn, "pre-review-checks", err, "could not read the checks; reviewing anyway", "pr", pr.Number, "err", err)
 				reviewChecks, reviewStatus = nil, ""
 				afterDevelop, stage = "review", "review"
 				continue
 			}
+			s.track("pre-review-checks", nil)
 			if status != github.ChecksFailed {
 				if status == github.ChecksPending {
 					log.Info("checks still pending; reviewing anyway", "pr", pr.Number, "timeout", policy.PreReviewChecksTimeout)
