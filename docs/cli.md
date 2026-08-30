@@ -6,8 +6,9 @@
 Four commands — `bees mail send`, `bees issue create`, `bees issue link` and
 `bees done` — are designed to be run **by Claude Code sessions** from inside the
 factory (people can use them too). Sessions normally reach the same operations as
-MCP tools rather than as commands: `bees mcp serve` serves them, and every session
-gets it automatically. Everything else is for humans.
+MCP tools rather than as commands, along with the GitHub operations every role
+performs: `bees mcp serve` serves them, and every session gets it automatically.
+Everything else is for humans.
 
 ## Global flags
 
@@ -605,9 +606,26 @@ command do exactly the same thing. Claude Code exposes the tools as
 | `issue_link` | `parent`, `child` | `bees issue link` |
 | `done` | `status`, optional `note`, `pr`, `issue` | `bees done` |
 
-`issue` and `pr` default to `$BEES_ISSUE`/`$BEES_PR`, so a session rarely passes them.
-The schemas depend on `$BEES_ROLE`: `done`'s `status` enum is exactly the role's valid
-outcomes (a developer sees `pr-opened, pr-updated, question, failed`; a reviewer
+The rest are GitHub operations. They are the same `gh` calls a role would build by
+hand, with the factory's rules applied — so a prompt no longer has to restate them:
+
+| Tool | Arguments | Offered to | Does |
+|---|---|---|---|
+| `issue_view` | optional `number` | every role | Prints an issue: state/kind/size labels, milestone, parent feature, body, then every comment oldest first, marked as a bee's or a person's. |
+| `pr_view` | optional `number` | every role | Prints a pull request: title, head → base, draft flag, body, required-check summary with the failed check names, then every review and comment a person left. |
+| `comment` | `number`, `body` | every role | Comments on an issue or pull request, appending the role's `<!-- bees:<role> -->` marker (never twice). |
+| `issue_edit_body` | `number`, `body` | product_manager, project_manager | Replaces an issue body. Refuses a `bees:feature` or `bees:feedback` issue for anyone but the product manager. |
+| `issue_set_state` | `number`, `state` (`ready`\|`blocked`), `size` (`xs`…`xl`, required for `ready`) | project_manager | Moves a work item out of `bees:triage` in one label edit, replacing any existing size. Refuses an issue that is in any other state, naming it. |
+| `issue_question` | `number`, `waiting` | product_manager | Adds or removes `bees:question`. Refuses anything that is not a feature or feedback issue. |
+
+Every one of them refuses an issue or pull request that does not match the
+[filter](workflow.md#what-the-factory-can-see), and every write is a refusal or a
+single `gh` call — there is no partial state to clean up.
+
+`issue` and `pr` default to `$BEES_ISSUE`/`$BEES_PR`, so a session rarely passes them
+(`issue_view` and `pr_view` default their `number` the same way). The schemas depend on
+`$BEES_ROLE`: `done`'s `status` enum is exactly the role's valid outcomes (a developer
+sees `pr-opened, pr-updated, question, failed`; a reviewer
 `approved, changes-requested, failed`), and an unknown or empty role gets the full tool
 set with no enum, so the server is usable by hand.
 
@@ -618,14 +636,21 @@ parameter — the part that differs between roles:
 
 ```
 $ bees mcp tools developer
-mcp__bees__done           Report the session outcome
+mcp__bees__comment          Comment on an issue or pull request
+mcp__bees__done             Report the session outcome
     status: pr-opened | pr-updated | question | failed
-mcp__bees__issue_create   Create a factory issue
-mcp__bees__issue_link     Attach an issue to a feature
-mcp__bees__mail_list      Read the mailbox
-mcp__bees__mail_send      Send mail to another role
+mcp__bees__issue_create     Create a factory issue
+mcp__bees__issue_link       Attach an issue to a feature
+mcp__bees__issue_view       Read an issue
+mcp__bees__mail_list        Read the mailbox
+mcp__bees__mail_send        Send mail to another role
     to: product_manager | project_manager | developer | reviewer | qa
+mcp__bees__pr_view          Read a pull request
 ```
+
+The tool *set* differs too: the project manager also sees `issue_edit_body` and
+`issue_set_state` (`state: ready | blocked`, `size: xs | s | m | l | xl`), and the
+product manager `issue_edit_body` and `issue_question`.
 
 Without a role argument it uses `$BEES_ROLE`, and without that it prints the
 unconstrained tool set.

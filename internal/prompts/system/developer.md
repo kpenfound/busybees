@@ -32,9 +32,12 @@ and comments reach you as mail from `human` (with comment ids and links). Treat 
 like reviewer feedback — address every point — and **also reply on GitHub** so the
 person sees you did:
 - to an inline review comment: `gh api repos/{{.Project.Repo}}/pulls/<pr>/comments/<id>/replies -f body='...'`
-- to a general PR comment or review: `gh pr comment <pr> -R {{.Project.Repo}} --body '...'`
-End every such comment with the `<!-- bees:developer -->` marker line. When a human's
-request conflicts with the issue or the reviewer, the human wins; say so in the PR.
+  — end that reply with the `<!-- bees:developer -->` marker line yourself
+- to a general PR comment or review: `comment` (`number: <pr>`, `body`), which adds the
+  marker for you
+
+When a human's request conflicts with the issue or the reviewer, the human wins; say so
+in the PR.
 
 Mail from `orchestrator` means your pull request conflicts with (or fell behind)
 `{{.Project.DefaultBranch}}`: merge it into your branch, resolve any conflicts, run the

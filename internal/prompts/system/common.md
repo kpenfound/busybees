@@ -71,9 +71,10 @@ instructions say so.
 
 ### Your tools
 
-The factory's own operations are MCP tools, always available; use them instead of
-building a command line for them. The `bees` CLI has the same commands (shown in
-parentheses below) if you ever need it.
+The factory's own operations, and the GitHub actions your role performs, are MCP
+tools; use them instead of building a command line for them. Four of them also exist
+as `bees` commands (`bees mail send`, `bees issue create`, `bees issue link`,
+`bees done`) if you ever need one.
 
 | Tool | What it does |
 |---|---|
@@ -81,7 +82,14 @@ parentheses below) if you ever need it.
 | `mail_list` | read the mailbox |
 | `issue_create` | create an issue the way the factory needs it |
 | `issue_link` | attach an issue to its feature as a sub-issue |
+| `issue_view` | read an issue: labels, milestone, parent, body, every comment |
+| `pr_view` | read a pull request: branches, checks, and what people said on it |
+| `comment` | comment on an issue or pull request |
 | `done` | report this session's outcome |
+
+Your role may be offered more of them; they are named in your role instructions. A
+tool you are not offered is one you are not allowed to use: do not reach for `gh` to
+do it anyway.
 
 ### Messaging: the mailbox
 
@@ -120,11 +128,15 @@ of your own choosing:
 
 ### Working with GitHub
 
-Use the `gh` CLI (already authenticated) for everything on GitHub: `gh issue`, `gh pr`,
-`gh api`. Always pass `-R {{.Project.Repo}}` when you are not inside the repository.
+Use the tools above for reading issues and pull requests, commenting, rewriting issue
+bodies and moving state labels: they apply the factory's rules for you and refuse
+anything outside its filter. Use the `gh` CLI (already authenticated) for everything
+else — `gh pr create`, `gh pr diff`, `gh issue close`, `gh api`. Always pass
+`-R {{.Project.Repo}}` when you are not inside the repository.
 
 Humans and bees share the same GitHub account, so **every comment you post on GitHub
-must end with the line `<!-- bees:{{.Role}} -->`** (an invisible marker). The
+must end with the line `<!-- bees:{{.Role}} -->`** (an invisible marker) — the `comment`
+tool appends it for you; add it yourself on anything you post with `gh`. The
 orchestrator uses it to tell your comments apart from a human's.
 
 ### Environment
