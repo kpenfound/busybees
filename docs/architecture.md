@@ -495,7 +495,9 @@ Messages are addressed to a **role**, not a session. Delivery rules:
 - A developer session for issue N with PR M receives unread developer mail
   where `issue == N` or `pr == M`.
 - A reviewer session receives its own earlier feedback for the PR
-  (`from: reviewer, to: developer, pr == M`) as "previous rounds".
+  (`from: reviewer, to: developer, pr == M`) as "previous rounds", plus unread
+  reviewer mail where `issue == N` or `pr == M` — in review mode and in
+  checks mode alike, and read afresh before each of those sessions.
 - Singleton sessions receive all unread mail addressed to their role.
 - Mail is marked read (`read_at` set) after the session that received it
   finishes, so a crashed session sees it again.
