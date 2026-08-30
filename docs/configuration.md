@@ -120,7 +120,7 @@ and `bees labels sync` create them in GitHub.
 | `bees:feedback` | Feature idea, product feedback or bug report for the product manager (outside the state machine) |
 | `bees:question` | The product manager is waiting for a person to answer on a feature or feedback issue; removed by the orchestrator when they reply |
 | `bees:proposal` | A feature issue a bee wrote; it sits next to `bees:feature`, and a person removes the label to approve it |
-| `bees:priority` | A person wants this next: dispatched before the rest of the `bees:ready` queue. Not a state label; only people set it |
+| `bees:priority` | A person wants this next: dispatched before the rest of the `bees:ready` queue. Not a state label; people set it, and the project manager may add it to a work item that unblocks the factory itself |
 | `bees:triage` | Needs refinement by the project manager |
 | `bees:ready` | Detailed enough for a developer to pick up |
 | `bees:in-progress` | A developer worker owns it |
