@@ -550,6 +550,41 @@ func TestFullDeveloperReviewLoop(t *testing.T) {
 			t.Errorf("%s last run not recorded", r)
 		}
 	}
+	// Every session is in the ledger, with what it cost and what it did.
+	ledger, err := h.store.ReadLedger(time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ledger) != 7 {
+		t.Fatalf("ledger has %d entries, want one per session (7):\n%+v", len(ledger), ledger)
+	}
+	byRole := map[string][]state.LedgerEntry{}
+	for _, e := range ledger {
+		if e.Turns != 2 || e.CostUSD != 0.01 || e.DurationMS <= 0 || e.Session == "" || e.Time.IsZero() {
+			t.Errorf("ledger entry not filled in: %+v", e)
+		}
+		byRole[e.Role] = append(byRole[e.Role], e)
+	}
+	for role, n := range map[string]int{config.RoleDeveloper: 2, config.RoleReviewer: 2, config.RoleProjectManager: 1, config.RoleProductManager: 1, config.RoleQA: 1} {
+		if got := len(byRole[role]); got != n {
+			t.Errorf("%s ledger entries: got %d want %d", role, got, n)
+		}
+	}
+	for i, want := range []string{OutcomePROpened, OutcomePRUpdated} {
+		got := byRole[config.RoleDeveloper][i]
+		if got.Outcome != want || got.Issue != 1 || got.PR != fakePR {
+			t.Errorf("developer ledger entry %d: %+v", i, got)
+		}
+	}
+	for i, want := range []string{OutcomeChangesRequested, OutcomeApproved} {
+		got := byRole[config.RoleReviewer][i]
+		if got.Outcome != want || got.PR != fakePR {
+			t.Errorf("reviewer ledger entry %d: %+v", i, got)
+		}
+	}
+	if e := byRole[config.RoleQA][0]; e.Issue != 0 || e.PR != 0 {
+		t.Errorf("qa ledger entry should have no issue or PR: %+v", e)
+	}
 }
 
 func TestQuestionBlocksAndAnswerUnblocks(t *testing.T) {

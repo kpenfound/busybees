@@ -10,6 +10,7 @@
 //	qa.json              QA bookkeeping (last run)
 //	product_manager.json product manager bookkeeping (last run)
 //	status.json          live scheduler status
+//	ledger.jsonl         one JSON line per finished session (`bees cost`)
 //	bees.log             scheduler log (JSON, rotated: bees.log.1, bees.log.2)
 package state
 
@@ -51,6 +52,7 @@ This directory is managed by ` + "`bees`" + `. It holds:
 - sessions/  prompts, transcripts and results of every Claude Code session
 - issues/    per-issue bookkeeping (review rounds)
 - status.json live scheduler status (` + "`bees status`" + `)
+- ledger.jsonl one line per finished session: turns, cost and outcome (` + "`bees cost`" + `)
 - bees.log    every scheduler log record as JSON, rotated at 10 MiB
 
 You can safely delete sessions/ to reclaim space. Editing notes/ by hand is a

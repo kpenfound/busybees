@@ -260,6 +260,13 @@ scheduler gives them `bees:triage` on its next reconcile, so the row normally
 disappears again within the same pass. A workflow-state queue is omitted while it is
 empty (`feedback`, `features` and `open_prs` are always shown).
 
+Under the scheduler line it also reports what the factory has spent since midnight,
+summed from the [session ledger](#bees-cost) (`today` in `--json`):
+
+```
+today: 23 sessions, 412 turns, $8.12
+```
+
 The `ready` queue also carries a breakdown by [size](workflow.md#sizing)
 (`ready_sizes` in `--json`); issues the scheduler has not sized yet are
 counted as `unsized`:
@@ -483,6 +490,27 @@ Without a role argument it uses `$BEES_ROLE`, and without that it prints the
 unconstrained tool set.
 
 ## Misc
+
+### `bees cost [--since 24h] [--by role|issue|day] [--json]`
+
+Reports what finished sessions cost, summed from `<state_dir>/ledger.jsonl`: one JSON
+line per session, appended when it ends, with its role, issue, PR, turns, cost,
+duration and outcome. The numbers are what `claude` reported; nothing is reconciled
+against billing.
+
+```
+$ bees cost --since 72h --by role
+role             sessions    turns       cost
+developer              12      214      $6.10
+product_manager         1       11      $0.32
+reviewer                9       74      $1.70
+total                  22      299      $8.12
+```
+
+`--since` is a Go duration (default `24h`). `--by issue` groups by issue number and
+collects sessions that belong to no issue (the singleton roles) under `-`; `--by day`
+groups by local calendar day. `--json` prints the same groups plus the total. An empty
+ledger prints `no sessions recorded`.
 
 ### `bees version`
 

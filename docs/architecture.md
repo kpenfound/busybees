@@ -383,9 +383,17 @@ oldest first, and `bees mail` works from any directory because sessions get
   product_manager.json           {last_run}
   qa.json                        {last_run, last_check}
   status.json                    live scheduler status for `bees status` (queues, workers, singletons, last_poll, last_error)
+  ledger.jsonl                   append-only, one JSON line per finished session
+                                 {time, role, session, issue, pr, turns, cost_usd,
+                                 duration_ms, outcome, error_subtype, timed_out}
   bees.log                       every record of the last scheduler runs as JSON, rotated
                                  at 10 MiB into bees.log.1 and bees.log.2
 ```
+
+`ledger.jsonl` is the factory's accounting: `runSession` appends one line for every
+session that finishes, whatever it reported, and `bees cost` sums it. Lines are
+written with a single `O_APPEND` write so concurrent workers cannot interleave, and
+a line that does not parse is skipped on read rather than failing it.
 
 `bees.log` is written only by the commands that run sessions (`run`, `tick`,
 `exec`) and always contains every record at debug level, whatever the console
