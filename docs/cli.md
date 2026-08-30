@@ -795,7 +795,7 @@ hand, with the factory's rules applied — so a prompt no longer has to restate 
 |---|---|---|---|
 | `issue_view` | optional `number` | every role | Prints an issue: state/kind/size labels, milestone, parent feature, body, then every comment oldest first, marked as a bee's or a person's. |
 | `pr_view` | optional `number` | every role | Prints a pull request: title, head → base, draft flag, body, required-check summary with the failed check names, then every review and comment a person left. |
-| `comment` | `number`, `body` | every role | Comments on an issue or pull request, appending the role's `<!-- bees:<role> -->` marker (never twice). |
+| `comment` | `number`, `body` | every role | Comments on an issue or pull request, appending the role's `<!-- bees:<role> -->` marker unless the body already ends with it. A marker quoted earlier in the body does not suppress it, so the last marker is always the poster's. |
 | `issue_edit_body` | `number`, `body` | product_manager, project_manager | Replaces an issue body. Refuses a `bees:feature` or `bees:feedback` issue for anyone but the product manager. |
 | `issue_set_state` | `number`, `state` (`ready`\|`blocked`), `size` (`xs`…`xl`, required for `ready`) | project_manager | Moves a work item out of `bees:triage` in one label edit, replacing any existing size. Refuses an issue that is in any other state, naming it. |
 | `issue_question` | `number`, `waiting` | product_manager | Adds or removes `bees:question`. Refuses anything that is not a feature or feedback issue. |
