@@ -304,6 +304,37 @@ func TestProductManagerAttachesLooseWorkItems(t *testing.T) {
 	}
 }
 
+// productManagerHasWork has four wake conditions, and the fourth is a person's
+// comment on a proposal (internal/scheduler/singletons.go:69-98). Proposals are
+// partitioned into their own task section, so that wake leaves the fresh-feature,
+// feedback and mail sections empty: an idle rule that names only those three
+// tells the session to answer a waiting person with `idle`.
+func TestProductManagerIdleRuleCoversProposals(t *testing.T) {
+	pm, err := System(config.RoleProductManager, sample(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	idle := pm[strings.Index(pm, "Working a pass:"):]
+	if i := strings.Index(idle, "\n\nPacing:"); i > 0 {
+		idle = idle[:i]
+	}
+	for _, want := range []string{
+		"read the proposals section before you conclude anything",
+		"leaves that section on its own",
+		"report `idle` and mean it",
+	} {
+		if !strings.Contains(idle, want) {
+			t.Errorf("product manager idle rule missing %q:\n%s", want, idle)
+		}
+	}
+	// The rule must not be a blanket "proposals section non-empty" veto:
+	// github.Issue.AwaitingBee seeds the human side with CreatedAt, so a
+	// proposal the product manager has never answered sits there forever.
+	if !strings.Contains(idle, "that you have not answered") {
+		t.Errorf("product manager idle rule vetoes on the whole proposals section:\n%s", idle)
+	}
+}
+
 // A proposal and an approved feature must be distinguishable in the product
 // manager's task prompt: the label is the only discriminator (bees and people
 // share one GitHub account, so the author says nothing), and the prompt tells

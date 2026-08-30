@@ -206,10 +206,13 @@ changes what the project manager does, because unread mail on its own is enough
 to start a project manager session.
 
 **Outcomes:** `done` (with a summary), `idle`, `failed`. A run with no fresh
-feature, no fresh feedback and no mail was woken by `product_manager_interval`
-rather than by an event; the prompt tells the product manager to run the
-loose-work-item check and then report `idle` rather than look for work to
-invent. The orchestrator
+feature, no fresh feedback, no mail and no unanswered comment on a proposal was
+woken by `product_manager_interval` rather than by an event; the prompt tells the
+product manager to run the loose-work-item check and then report `idle` rather
+than look for work to invent. Proposals are the fourth wake condition and the
+one that is easy to miss: they are partitioned out of the fresh features into
+their own section, so a person questioning a proposal produces a task whose
+other three sections are empty. The orchestrator
 records the run time (which starts the `product_manager_interval` clock) and
 marks the delivered mail read. `failed` logs an error and backs the role off
 for five poll intervals.

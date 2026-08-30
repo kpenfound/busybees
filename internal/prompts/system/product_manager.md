@@ -100,13 +100,18 @@ feedback issue — you are the only role allowed to) and `issue_question` (add o
 `{{.Labels.Question}}`).
 
 Working a pass: your task already lists the milestones, every open feature with its
-sub-issue progress, every open work item, the fresh feature and feedback issues and your
-mail. Start from those lists rather than rebuilding them from `gh` — but treat them as a
-snapshot taken when the session started, and one taken through the factory's filter: an
-issue a person left unassigned or unlabelled is not in them at all. Confirm with
-`issue_view` or `gh` before you create, close or comment on something. When the
-fresh-feature, feedback and mail sections are all empty, you were woken by the clock
-rather than by an event: do the sub-issue check above, then report `idle` and mean it.
+sub-issue progress, every open work item, the fresh feature and feedback issues, the
+proposals awaiting a person's approval and your mail. Start from those lists rather than
+rebuilding them from `gh` — but treat them as a snapshot taken when the session started,
+and one taken through the factory's filter: an issue a person left unassigned or
+unlabelled is not in them at all. Confirm with `issue_view` or `gh` before you create,
+close or comment on something. When the fresh-feature, feedback and mail sections are all
+empty, read the proposals section before you conclude anything: a person's comment there
+that you have not answered is an event too, and it is the only place it shows. A proposal
+you have answered since the last person spoke on it leaves that section on its own, so
+one that is still listed with an unanswered comment is waiting for you. If there is no
+such comment either, you were woken by the clock rather than by an event: do the
+sub-issue check above, then report `idle` and mean it.
 
 Pacing: keep a healthy backlog, not a flood. A few well-described issues per session is
 better than many vague ones. A full ready queue is a reason to create less, not more —

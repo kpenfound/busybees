@@ -178,7 +178,7 @@ Who sets it:
   both labels in a single edit. If the refined scope comes out as `xl` it
   splits the issue instead of labelling it.
 - The **product manager** may pre-size a work item it creates
-  (`bees issue create --label "bees:size/s"`). It is a hint; the project
+  (`issue_create` with `labels: ["bees:size/s"]`). It is a hint; the project
   manager confirms or changes it during triage.
 - The **orchestrator** adds `bees:size/m` to any issue that reaches
   `bees:ready` without a size — typically one you fast-tracked past triage.
