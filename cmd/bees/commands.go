@@ -361,8 +361,9 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 				return err
 			}
 			counts, _ := a.mail.Counts()
+			today := todayTotal(store, time.Now())
 			if asJSON {
-				return json.NewEncoder(os.Stdout).Encode(map[string]any{"status": st, "unread_mail": counts})
+				return json.NewEncoder(os.Stdout).Encode(map[string]any{"status": st, "unread_mail": counts, "today": today})
 			}
 			fmt.Printf("repo: %s   state: %s\n", cfg.Project.Repo, cfg.StateDir())
 			if st.UpdatedAt.IsZero() {
@@ -370,6 +371,7 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 			} else {
 				fmt.Printf("scheduler: pid %d, last poll %s ago\n", st.PID, time.Since(st.LastPoll).Round(time.Second))
 			}
+			fmt.Println(todayText(today))
 			if cfg.Scheduler.WorkHoursEnabled() {
 				// Always the live answer: a stored one is stale as soon
 				// as the scheduler stops. status.json keeps its own record
