@@ -95,9 +95,14 @@ func failureCount(f state.OpFailure) string {
 
 // shortDur renders a duration the way bees.toml writes one ("3h10m", "45s"):
 // time.Duration.String() keeps a trailing "0m0s" that says nothing.
+//
+// The rounding to whole seconds happens first, so the rounded value picks the
+// branch: 59.6s rounds up to a whole minute and must print "1m", not the
+// "1m0s" that Duration.String() would give it.
 func shortDur(d time.Duration) string {
+	d = d.Round(time.Second)
 	if d < time.Minute {
-		return d.Round(time.Second).String()
+		return d.String()
 	}
 	h, m := int(d/time.Hour), int(d/time.Minute)%60
 	switch {
