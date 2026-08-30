@@ -1205,3 +1205,32 @@ func TestCostBudgets(t *testing.T) {
 		}
 	}
 }
+
+// [logging] defaults to the flag defaults when absent, round-trips what the
+// file says, and rejects a value neither the flags nor the file accept.
+func TestLoggingSettings(t *testing.T) {
+	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Logging.Format != "text" || cfg.Logging.Level != "info" {
+		t.Fatalf("defaults: %+v", cfg.Logging)
+	}
+	cfg, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[logging]\nformat = \"json\"\nlevel = \"warn\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Logging.Format != "json" || cfg.Logging.Level != "warn" {
+		t.Fatalf("configured: %+v", cfg.Logging)
+	}
+
+	for _, c := range []struct{ body, want string }{
+		{"[logging]\nformat = \"yaml\"\n", `logging.format: invalid log format "yaml": valid values are text, json`},
+		{"[logging]\nlevel = \"trace\"\n", `logging.level: invalid log level "trace": valid values are debug, info, warn, error`},
+	} {
+		_, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"+c.body))
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%q: %v", c.body, err)
+		}
+	}
+}

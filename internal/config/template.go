@@ -230,6 +230,17 @@ label = "{{.Label}}"
 #workspace_root = ""
 
 #===============================================================================
+# Console logging. The --log-format / --log-level flags and the
+# BEES_LOG_FORMAT / BEES_LOG_LEVEL environment variables override these.
+#===============================================================================
+[logging]
+# Console log format: text or json. JSON is for running bees as a service.
+#format = "text"
+# Console log level: debug, info, warn or error. --quiet is a per-invocation
+# shorthand and has no key here; "warn" is the closest equivalent.
+#level = "info"
+
+#===============================================================================
 # Global role settings — apply to every role, merged with [roles.<name>]:
 # prompts concatenate (global first), skills union, env and mcp servers union
 # (the role wins on a name conflict), scalars fall back to global then defaults.
