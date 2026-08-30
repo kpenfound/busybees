@@ -819,10 +819,14 @@ func (s *Scheduler) setState(ctx context.Context, number int, to string) error {
 	return s.gh.SetState(ctx, number, issue.Labels, to, s.labels.StateLabels())
 }
 
+// escalationNoteLimit is how much of the reason the escalation summary line
+// shows; the record's note attribute and the GitHub comment keep it in full.
+const escalationNoteLimit = 200
+
 // escalate marks an issue needs-human and leaves a comment for people.
 // This is the only place the factory writes a GitHub comment.
 func (s *Scheduler) escalate(ctx context.Context, number int, reason string) error {
-	s.log.Warn(fmt.Sprintf("⚠ issue #%d escalated to a human: %s", number, reason),
+	s.log.Warn(fmt.Sprintf("⚠ issue #%d escalated to a human: %s", number, oneLine(reason, escalationNoteLimit)),
 		logging.SummaryKey, true, "issue", number, "outcome", "escalated", "note", reason)
 	if err := s.setState(ctx, number, s.labels.NeedsHuman); err != nil {
 		return err

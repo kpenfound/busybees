@@ -231,7 +231,7 @@ func (s *Scheduler) runSingleton(ctx context.Context, role string, data prompts.
 		return err
 	}
 	status, note := outcomeOf(res)
-	s.log.Info("singleton finished", "role", role, "outcome", status, "note", truncate(note, 200))
+	s.log.Info("singleton finished", "role", role, "outcome", status, "note", oneLine(note, 200))
 	if status == OutcomeFailed {
 		return errors.New(s.sessionFailure(role, res, status, note))
 	}
