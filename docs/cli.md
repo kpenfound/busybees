@@ -355,6 +355,12 @@ bees kill --scheduler      # the scheduler itself is hung
 Attach `--issue`/`--pr` whenever possible: that is how the scheduler routes the message
 to the right developer session, and how an answer unblocks a `bees:blocked` issue.
 
+`bees mail` talks to the state directory of `$BEES_STATE_DIR` when it is set (that is
+how a session reaches its own mailbox), but an explicit `--config` wins over it, so
+`bees -c other/bees.toml mail send ...` inside a session reaches the other project.
+The confirmation line names the state directory the message landed in:
+`sent <id> to <role> (<state dir>)`.
+
 ```sh
 bees mail send --to project_manager --issue 12 --subject "Which auth scheme?" --body "JWT or sessions?"
 bees mail send --to developer --pr 34 --issue 12 --subject "Review round 1" --body-file review.md

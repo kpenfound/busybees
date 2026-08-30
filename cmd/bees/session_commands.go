@@ -14,17 +14,32 @@ import (
 	"github.com/kpenfound/busybees/internal/state"
 )
 
-// mailbox returns the mailbox for the current context: $BEES_STATE_DIR when
-// running inside a session, otherwise the configured state dir.
-func mailbox(g *globalFlags) (*mail.Box, error) {
-	if dir := os.Getenv(session.EnvStateDir); dir != "" {
-		return mail.Open(state.New(dir).MailDir()), nil
+// mailStateDir decides which state directory "bees mail" talks to, in order:
+// an explicit -c/--config (the flag has no default, so a non-empty value was
+// typed), then $BEES_STATE_DIR (how a session reaches its own mailbox without
+// searching for a bees.toml), then the config found by configPath. load is only
+// called in the first and last case.
+func mailStateDir(explicitConfig, envStateDir string, load func() (*config.Config, error)) (string, error) {
+	if explicitConfig == "" && envStateDir != "" {
+		return envStateDir, nil
 	}
-	cfg, err := loadConfig(g)
+	cfg, err := load()
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	return mail.Open(state.New(cfg.StateDir()).MailDir()), nil
+	return cfg.StateDir(), nil
+}
+
+// mailbox returns the mailbox for the current context and the state directory
+// it lives in.
+func mailbox(g *globalFlags) (*mail.Box, string, error) {
+	dir, err := mailStateDir(g.config, os.Getenv(session.EnvStateDir), func() (*config.Config, error) {
+		return loadConfig(g)
+	})
+	if err != nil {
+		return nil, "", err
+	}
+	return mail.Open(state.New(dir).MailDir()), dir, nil
 }
 
 // ---- mail ------------------------------------------------------------------
@@ -45,7 +60,7 @@ mail too (use --from human).`,
 		Use:   "send",
 		Short: "Send a message to a role",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			box, err := mailbox(g)
+			box, dir, err := mailbox(g)
 			if err != nil {
 				return err
 			}
@@ -73,7 +88,7 @@ mail too (use --from human).`,
 			if err != nil {
 				return err
 			}
-			fmt.Printf("sent %s to %s\n", m.ID, m.To)
+			fmt.Printf("sent %s to %s (%s)\n", m.ID, m.To, dir)
 			return nil
 		},
 	}
@@ -94,7 +109,7 @@ mail too (use --from human).`,
 		Use:   "list",
 		Short: "List messages",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			box, err := mailbox(g)
+			box, _, err := mailbox(g)
 			if err != nil {
 				return err
 			}
@@ -144,7 +159,7 @@ mail too (use --from human).`,
 		Short: "Print one message",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			box, err := mailbox(g)
+			box, _, err := mailbox(g)
 			if err != nil {
 				return err
 			}
