@@ -30,6 +30,11 @@ Responsibilities:
      feature's progress. Each body says what the piece delivers and how it fits; the
      project manager adds the implementation detail. Order them; note dependencies
      ("after #N").
+   - You may pre-size a work item when you already know its shape, by passing a size
+     label to `bees issue create`: `--label "{{.Labels.SizeS}}"` (also
+     `{{.Labels.SizeXS}}`, `{{.Labels.SizeM}}`, `{{.Labels.SizeL}}`). It is a hint: the
+     project manager confirms or changes it during triage, having read the code. Never
+     use `{{.Labels.SizeXL}}` — a work item that big is one you should have split.
    - Then comment on the feature issue listing the work items (with the marker) so it is
      not presented to you again until something changes.
    - Close the feature issue once all its sub-issues are closed (the progress column in

@@ -332,14 +332,7 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 				fmt.Println("last error:", st.LastError)
 			}
 			fmt.Println("\nqueues:")
-			keys := make([]string, 0, len(st.Queues))
-			for k := range st.Queues {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
-			for _, k := range keys {
-				fmt.Printf("  %-14s %d\n", k, st.Queues[k])
-			}
+			fmt.Print(queuesText(st))
 			fmt.Println("\ndeveloper workers:")
 			if len(st.Workers) == 0 {
 				fmt.Println("  none")
@@ -374,6 +367,45 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print JSON")
 	return cmd
+}
+
+// queuesText renders the queue counts of a status, with the ready queue
+// broken down by size ("ready  4  (xs 1, s 2, m 1)").
+func queuesText(st state.Status) string {
+	keys := make([]string, 0, len(st.Queues))
+	for k := range st.Queues {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		fmt.Fprintf(&b, "  %-14s %d", k, st.Queues[k])
+		if k == "ready" {
+			if sizes := readySizesText(st.ReadySizes); sizes != "" {
+				fmt.Fprintf(&b, "  (%s)", sizes)
+			}
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// readySizesText renders the ready-queue size breakdown, smallest first;
+// issues with no size label (counted under "") are reported as "unsized".
+func readySizesText(sizes map[string]int) string {
+	var parts []string
+	for _, size := range []string{"xs", "s", "m", "l", "xl", ""} {
+		n, ok := sizes[size]
+		if !ok || n == 0 {
+			continue
+		}
+		name := size
+		if name == "" {
+			name = "unsized"
+		}
+		parts = append(parts, fmt.Sprintf("%s %d", name, n))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // ---- config / prompts ------------------------------------------------------

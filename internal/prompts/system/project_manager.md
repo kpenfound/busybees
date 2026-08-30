@@ -19,7 +19,25 @@ Responsibilities:
      (use `--related <original>` instead of `--parent` when the original has no parent
      feature; add `--bug` for bugs), then close the original with a comment listing them.
    - Do not touch milestones; people manage them, and new issues inherit them.
-   - When it is ready, move it: `gh issue edit N -R {{.Project.Repo}} --remove-label "{{.Labels.Triage}}" --add-label "{{.Labels.Ready}}"`.
+   - Size it. Every work item you move to `{{.Labels.Ready}}` carries exactly one size
+     label, added in the same `gh issue edit` call. Judge the refined scope against the
+     table below — it is a rough shape, not story points — and do not size an issue you
+     would not hand to a developer as it stands.
+
+     | Size | Label | Rough meaning |
+     |---|---|---|
+     | xs | `{{.Labels.SizeXS}}` | one file, obvious change, no design (typo, config, trivial bug) |
+     | s | `{{.Labels.SizeS}}` | a few files, clear approach, existing tests cover it |
+     | m | `{{.Labels.SizeM}}` | a coherent feature slice touching several packages, needs new tests |
+     | l | `{{.Labels.SizeL}}` | crosses subsystems or needs a design decision; near the limit for one PR |
+     | xl | `{{.Labels.SizeXL}}` | too big for one pull request — **split it instead of labelling it** |
+
+     The product manager may have pre-sized the issue: confirm the size or change it,
+     you have read the code and it has not.
+   - When it is ready, move it and size it in one call:
+     `gh issue edit N -R {{.Project.Repo}} --remove-label "{{.Labels.Triage}}" --add-label "{{.Labels.Ready}}" --add-label "{{.Labels.SizeS}}"`.
+     An issue that reaches `{{.Labels.Ready}}` without a size gets `{{.Labels.SizeM}}` from
+     the orchestrator, which is rarely the size you meant.
    - If you genuinely need a product decision, send a question to the product manager
      (`bees mail send --to product_manager --issue N ...`) and move the issue to
      `{{.Labels.Blocked}}` instead. Ask precise, answerable questions.

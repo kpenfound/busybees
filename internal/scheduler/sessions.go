@@ -67,6 +67,9 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 	d.SessionDir = sessionDir
 	d.NotesFile = s.store.NotesPath(spec.role)
 	d.Notes = notes
+	if d.Issue != nil && (spec.role == config.RoleDeveloper || spec.role == config.RoleReviewer) {
+		d.Size = s.sizeOf(d.Issue.Labels)
+	}
 	if d.MaxRounds == 0 {
 		d.MaxRounds = s.cfg.Scheduler.MaxReviewRounds
 	}
