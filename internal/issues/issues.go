@@ -99,17 +99,26 @@ func Create(ctx context.Context, gh *github.Client, filter config.Filter, labels
 
 	// Milestone: explicit, else inherited from the parent/related issue,
 	// else the filter's milestone (so the issue stays visible).
+	// The parent's details answer two questions in one API call: whether it
+	// is a proposal (which must not grow work items yet) and which milestone
+	// the new issue inherits. A parent is therefore always fetched, even when
+	// the milestone is already known.
 	n.Milestone = opts.Milestone
 	source := opts.Parent
 	if source == 0 {
 		source = opts.Related
 	}
-	if n.Milestone == "" && source > 0 {
+	if source > 0 && (opts.Parent > 0 || n.Milestone == "") {
 		d, err := gh.GetIssueDetails(ctx, source)
 		if err != nil {
 			return Result{}, fmt.Errorf("issue #%d: %w", source, err)
 		}
-		n.Milestone = d.MilestoneTitle()
+		if opts.Parent > 0 && github.HasLabel(d.Labels, labels.Proposal) {
+			return Result{}, proposalError(labels, opts.Parent)
+		}
+		if n.Milestone == "" {
+			n.Milestone = d.MilestoneTitle()
+		}
 	}
 	if n.Milestone == "" {
 		n.Milestone = filter.Milestone
@@ -121,20 +130,43 @@ func Create(ctx context.Context, gh *github.Client, filter config.Filter, labels
 	}
 	res := Result{Number: number, Milestone: n.Milestone, Parent: opts.Parent, Labels: n.Labels}
 	if opts.Parent > 0 {
-		if err := Link(ctx, gh, opts.Parent, number); err != nil {
+		// The parent was already checked above, so link without asking
+		// GitHub for its labels a second time.
+		if err := link(ctx, gh, opts.Parent, number); err != nil {
 			return res, fmt.Errorf("issue #%d created but could not be attached to #%d: %w", number, opts.Parent, err)
 		}
 	}
 	return res, nil
 }
 
-// Link attaches child to parent as a sub-issue.
-func Link(ctx context.Context, gh *github.Client, parent, child int) error {
+// Link attaches child to parent as a sub-issue. It refuses a parent that is
+// still a proposal: attaching an existing issue to one is the same hole as
+// creating a sub-issue under it.
+func Link(ctx context.Context, gh *github.Client, labels config.Labels, parent, child int) error {
+	p, err := gh.GetIssueDetails(ctx, parent)
+	if err != nil {
+		return fmt.Errorf("issue #%d: %w", parent, err)
+	}
+	if github.HasLabel(p.Labels, labels.Proposal) {
+		return proposalError(labels, parent)
+	}
+	return link(ctx, gh, parent, child)
+}
+
+// link attaches child to parent without checking the parent.
+func link(ctx context.Context, gh *github.Client, parent, child int) error {
 	d, err := gh.GetIssueDetails(ctx, child)
 	if err != nil {
 		return err
 	}
 	return gh.AddSubIssue(ctx, parent, d.ID)
+}
+
+// proposalError is the refusal every path into a proposal's sub-issues
+// shares: a proposal is a bee's own idea, and only a person can turn it into
+// work by removing the label.
+func proposalError(labels config.Labels, number int) error {
+	return fmt.Errorf("#%d is a proposal: a person must approve it (remove the %s label) before it can be broken into work items", number, labels.Proposal)
 }
 
 // blockedByBody prefixes body with the "Blocked by #N" line the scheduler

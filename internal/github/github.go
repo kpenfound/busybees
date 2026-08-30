@@ -815,6 +815,7 @@ type IssueDetails struct {
 	ID        int64           `json:"id"` // database id, needed for sub-issue calls
 	SubIssues SubIssueSummary `json:"sub_issues_summary"`
 	Milestone *MilestoneRef   `json:"milestone"`
+	Labels    []Label         `json:"labels"`
 }
 
 // MilestoneTitle returns the milestone title or "".

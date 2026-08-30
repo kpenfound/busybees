@@ -287,7 +287,7 @@ func (g *ghIssues) Create(ctx context.Context, opts issues.Options) (issues.Resu
 }
 
 func (g *ghIssues) Link(ctx context.Context, parent, child int) error {
-	return issues.Link(ctx, g.gh, parent, child)
+	return issues.Link(ctx, g.gh, g.labels, parent, child)
 }
 
 func TestIssueCreateAndLink(t *testing.T) {
