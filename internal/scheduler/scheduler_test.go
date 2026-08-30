@@ -30,7 +30,7 @@ import (
 // environment, performs a scripted action and prints a stream-json result.
 //
 // The flags that steer the fake (FAKE_CLAUDE, FAKE_DEV_HANG, FAKE_DEV_FAIL,
-// FAKE_COST)
+// FAKE_REVIEW_ALWAYS_CHANGES, FAKE_COST)
 // reach it through the ordinary environment, so they must NOT start with
 // BEES_: the runner strips inherited BEES_* variables from every session.
 func TestMain(m *testing.M) {
@@ -122,6 +122,16 @@ func fakeClaude() {
 			counter("checks")
 			prompt, _ := os.ReadFile(filepath.Join(sessionDir, "prompt.md"))
 			if _, err := box.Send(mail.Message{From: role, To: config.RoleDeveloper, Subject: "Required check failed: go / test", Body: "main error: TestX fails\n\n" + string(prompt), PR: pr, Issue: issue}); err != nil {
+				fail(err)
+			}
+			outcome = session.Outcome{Status: OutcomeChangesRequested}
+			break
+		}
+		// FAKE_REVIEW_ALWAYS_CHANGES never approves, which is the only way
+		// to reach the "not approved after N review rounds" escalation.
+		if os.Getenv("FAKE_REVIEW_ALWAYS_CHANGES") == "1" {
+			round := counter("review")
+			if _, err := box.Send(mail.Message{From: role, To: config.RoleDeveloper, Subject: fmt.Sprintf("Review round %d", round), Body: "still not right", PR: pr, Issue: issue}); err != nil {
 				fail(err)
 			}
 			outcome = session.Outcome{Status: OutcomeChangesRequested}
