@@ -95,6 +95,73 @@ func TestPreReviewChecksFailBeforeTheFirstReview(t *testing.T) {
 	}
 }
 
+// TestPreReviewChecksReadOncePerPullRequest: the read belongs to the first
+// review, not to every round. A second review round is an ordinary round —
+// no second read, no second wait, and no stale checks section claiming a head
+// the developer has already replaced is green.
+func TestPreReviewChecksReadOncePerPullRequest(t *testing.T) {
+	h := newHarness(t, prereviewTOML)
+	seedPreReviewIssue(t, h, "Two rounds")
+	h.gh.checks = []checksResponse{{`[{"name":"go / test","bucket":"pass","state":"SUCCESS"}]`, nil}}
+	runPreReviewLoop(t, h)
+
+	// Round 1 requests changes, round 2 approves; the prereview stage runs
+	// once, between the first developer session and the first review.
+	h.wantOrder("developer-issue-1-r1", "reviewer-pr-101-r1", "developer-issue-1-r2", "reviewer-pr-101-r2")
+	if n := h.gh.callCount("pr checks"); n != 1 {
+		t.Fatalf("the checks were read %d times for one pull request, want 1", n)
+	}
+	if review := promptOf(t, h, 1); !strings.Contains(review, "CI is green") {
+		t.Fatalf("the first review is missing the pre-review read:\n%s", review)
+	}
+	if review := promptOf(t, h, 3); strings.Contains(review, "## Required checks") {
+		t.Fatalf("the second review has a checks section read before the fix:\n%s", review)
+	}
+}
+
+// TestPreReviewChecksReadOnceAcrossThreeRounds: still once when the reviewer
+// keeps asking for changes, up to the escalation at max_review_rounds.
+func TestPreReviewChecksReadOnceAcrossThreeRounds(t *testing.T) {
+	t.Setenv("FAKE_REVIEW_ALWAYS_CHANGES", "1")
+	h := newHarness(t, prereviewTOML)
+	seedPreReviewIssue(t, h, "Never approved")
+	h.gh.checks = []checksResponse{{`[{"name":"go / test","bucket":"pass","state":"SUCCESS"}]`, nil}}
+	runPreReviewLoop(t, h)
+
+	h.wantOrder("developer-issue-1-r1", "reviewer-pr-101-r1", "developer-issue-1-r2", "reviewer-pr-101-r2",
+		"developer-issue-1-r3", "reviewer-pr-101-r3")
+	if n := h.gh.callCount("pr checks"); n != 1 {
+		t.Fatalf("the checks were read %d times over three review rounds, want 1", n)
+	}
+	if len(h.gh.comments[1]) != 1 {
+		t.Fatalf("want the max_review_rounds escalation, got: %v", h.gh.comments[1])
+	}
+}
+
+// TestPreReviewChecksOnAResumedWorker: a worker that finds an issue already in
+// review still reads the checks. The process has no memory across restarts, so
+// the reviewer it runs gets the same checks section a fresh worker would.
+func TestPreReviewChecksOnAResumedWorker(t *testing.T) {
+	h := newHarness(t, prereviewTOML)
+	seedPreReviewIssue(t, h, "Restarted mid-review")
+	h.gh.issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:review"}, {Name: "bees:size/s"}}
+	// The pull request exists from the start: this worker is a resumption.
+	if err := os.WriteFile(h.gh.prMarker, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	seedCounter(t, h, "review", 1) // approve on the first round
+	h.gh.checks = []checksResponse{{`[{"name":"go / test","bucket":"pass","state":"SUCCESS"}]`, nil}}
+	runPreReviewLoop(t, h)
+
+	h.wantOrder("reviewer-pr-101-r1")
+	if n := h.gh.callCount("pr checks"); n != 1 {
+		t.Fatalf("a resumed worker read the checks %d times, want 1", n)
+	}
+	if review := promptOf(t, h, 0); !strings.Contains(review, "CI is green") {
+		t.Fatalf("the resumed review is missing the checks section:\n%s", review)
+	}
+}
+
 // TestPreReviewChecksPendingReviewsAnyway: the read is bounded, and a slow CI
 // delays a review by pre_review_checks_timeout at most.
 func TestPreReviewChecksPendingReviewsAnyway(t *testing.T) {
@@ -169,25 +236,44 @@ func TestPreReviewChecksDisabled(t *testing.T) {
 
 // TestPreReviewChecksRecoverClearsTheDegradedEntry: the streak is per
 // operation and lives across issues, so a read that works again must clear it.
+// The read happens once per pull request, so the recovery is the next issue's.
 func TestPreReviewChecksRecoverClearsTheDegradedEntry(t *testing.T) {
 	h := newHarness(t, prereviewTOML)
 	seedPreReviewIssue(t, h, "Flaky gh")
-	h.gh.checks = []checksResponse{
-		{"", fmt.Errorf("HTTP 503: Service Unavailable")},
-		{`[{"name":"go / test","bucket":"pass","state":"SUCCESS"}]`, nil},
-	}
+	h.gh.checks = []checksResponse{{"", fmt.Errorf("HTTP 503: Service Unavailable")}}
 	runPreReviewLoop(t, h)
 
-	// Round 1 read failed, round 2 read passed.
-	h.wantOrder("developer-issue-1-r1", "reviewer-pr-101-r1", "developer-issue-1-r2", "reviewer-pr-101-r2")
+	// Issue 1: the read failed, so its review has no checks section.
 	if review := promptOf(t, h, 1); strings.Contains(review, "## Required checks") {
 		t.Fatalf("the failed read must not produce a checks section:\n%s", review)
 	}
-	if review := promptOf(t, h, 3); !strings.Contains(review, "CI is green") {
-		t.Fatalf("the recovered read is missing from the second review:\n%s", review)
-	}
 	h.sched.writeStatus()
 	st, err := h.store.LoadStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f := degradedOp(t, st, "pre-review-checks"); f.Count == 0 {
+		t.Fatalf("degraded entry after the failed read: %+v", f)
+	}
+	// A failed read is still one read: the failure does not buy the next
+	// round another attempt.
+	if n := h.gh.callCount("pr checks"); n != 1 {
+		t.Fatalf("a failed read was made %d times for one pull request, want 1", n)
+	}
+
+	// A second issue, whose read works, clears the streak.
+	seedReady(h, 2, "s", time.Now())
+	h.gh.checks = []checksResponse{{`[{"name":"go / test","bucket":"pass","state":"SUCCESS"}]`, nil}}
+	forcePoll(h)
+	runPreReviewLoop(t, h)
+
+	h.wantOrder("developer-issue-1-r1", "reviewer-pr-101-r1", "developer-issue-1-r2", "reviewer-pr-101-r2",
+		"developer-issue-2-r1", "reviewer-pr-202-r1")
+	if review := promptOf(t, h, 5); !strings.Contains(review, "CI is green") {
+		t.Fatalf("the recovered read is missing from the second issue's review:\n%s", review)
+	}
+	h.sched.writeStatus()
+	st, err = h.store.LoadStatus()
 	if err != nil {
 		t.Fatal(err)
 	}

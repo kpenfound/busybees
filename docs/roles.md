@@ -383,7 +383,9 @@ them under `## Required checks` and says CI is green. Still pending at the
 timeout, or a repository that reports no checks → the review happens anyway and
 the reviewer is told to run the tests itself. A failing check → checks mode
 below, *before* any review; the fix rounds are the same counter, and the
-reviewer only sees the pull request once it is green.
+reviewer only sees the pull request once it is green. The read is made once per
+pull request: a later review round has no checks section, because the checks
+that were read describe a head the developer has since replaced.
 
 ### Checks mode (a failing check)
 

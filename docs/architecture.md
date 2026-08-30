@@ -227,8 +227,8 @@ small state machine with four stages:
 stateDiagram-v2
     [*] --> develop
     [*] --> prereview: resumed with an open PR and label bees:review
-    develop --> prereview: pr-opened / pr-updated (PR found)
-    develop --> review: same, with pre_review_checks = false
+    develop --> prereview: pr-opened / pr-updated (PR found), before the first review
+    develop --> review: a later review round, or pre_review_checks = false
     prereview --> review: checks pass / none reported / pending at the timeout / read failed
     prereview --> develop: a check failed, reviewer (checks mode) mailed a fix request
     prereview --> prereview: reviewer re-ran the check (approved)
@@ -287,9 +287,18 @@ stateDiagram-v2
   Failed → `fixFailedChecks`, the same checks-mode reviewer and developer fix
   round the checks stage uses, and the developer's next `pr-updated` returns
   here (`afterDevelop = "prereview"`); every path out into `review` resets
-  `afterDevelop` to `"review"`. `bees status` reports the stage as `pre-review
-  checks`; unlike the checks stage it does not append the gate, because its own
-  name is the useful one.
+  `afterDevelop` to `"review"` and sets `prereviewDone`. The read belongs to the
+  first review, so once `prereviewDone` is set the developer's next `pr-updated`
+  goes straight to `review`: an ordinary changes-requested round pays neither
+  the extra read nor the wait, and cannot spend a check fix round. (The two
+  questions are separate, which is why `prereviewDone` exists: `afterDevelop` is
+  a stage name consumed as a stage name, and the changes-requested path leaves
+  it on `"review"`.) The checks section is handed to the review it was read for
+  and cleared afterwards, so a later round is not told a head the developer has
+  since replaced is green. A resumed worker has no memory of the read and makes
+  it again. `bees status` reports the stage as `pre-review checks`; unlike the
+  checks stage it does not append the gate, because its own name is the useful
+  one.
 - **Checks stage** (`auto_merge`). `approve` only labels the PR and issue
   `bees:approved`; merging happens in the `checks` stage. `awaitChecks` sleeps
   `checks_wait`, then polls every `checks_poll_interval` until `Summarize`
