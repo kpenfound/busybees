@@ -68,7 +68,19 @@ exist and behave identically. See [cli.md](cli.md#bees-mcp-serve-sessions).
 `<state_dir>/notes/<role>.md` is a role's only long-term memory. Its current
 contents are included in every task prompt and the role is told to update it
 before finishing: decisions, conventions, gotchas, what it tested. The file is
-created on the role's first run with just a `# <role> notes` heading.
+created on the role's first run with a `# <role> notes` heading and the four
+sections roles are asked to keep their notes under: **Project facts** (how to
+build, test and run the project), **Conventions**, **Decisions** and **Open
+questions**. Anything that does not fit goes under a heading of the role's
+choosing.
+
+Nothing else curates the file, so the scheduler asks the role to do it: every
+`scheduler.notes_consolidate_every` sessions (default 10), or earlier once the
+file grows past `scheduler.notes_max_bytes` (default 32768), the task prompt
+gains a paragraph asking the session to rewrite its notes into those sections —
+merge duplicates, drop what is stale or contradicted, keep decisions, commands
+and gotchas — on top of its normal work. Nothing is truncated or rewritten
+behind the role's back, and the counters live in `<state_dir>/<role>.json`.
 
 **Editing a notes file by hand is the most direct way to steer a role.** Write
 the product vision into `notes/product_manager.md`, coding conventions into
