@@ -141,6 +141,8 @@ orchestrator adds `bees:size/m` to any ready issue that has none. See
 | `retry_delay` | duration | `"10m"` | How long to wait before an attempt is repeated. `"0s"` retries immediately. |
 | `retry_with_fallback` | bool | `true` | Run the retry with the role's `fallback_model` as its primary model. Roles without a fallback model simply rerun. |
 | `triage_batch_size` | int | `5` | Maximum number of issues handed to the project manager in one session. |
+| `dispatch_order` | string | `"small-first"` | Which `bees:ready` issue a free developer takes next: `small-first` (smallest size first), `oldest` (whatever the size) or `large-first`. Ties are broken by age, oldest first; an issue without a size ranks as `m`. Issues already `bees:in-progress` or `bees:review` are resumed first and are never reordered. See [Sizing](workflow.md#size-decides-what-gets-built-next). |
+| `max_large_in_flight` | int | `1` | How many `bees:size/l` issues developer workers may hold at once. A larger issue over the cap is skipped and the free worker takes the next issue that fits. `0` means no cap; must be ≥ 0. |
 | `product_manager_interval` | duration | `"1h"` | Minimum time between product manager runs. Unread mail in the PM's inbox triggers an earlier run. |
 | `qa_interval` | duration | `"30m"` | Minimum time between QA runs. QA only runs when something was merged since its last run (the first run always happens). The merged-PR query itself runs at most once per `qa_interval` (tracked as `last_check` in `<state_dir>/qa.json`), not on every poll. |
 | `keep_workspaces` | bool | `false` | Leave temporary worktrees on disk after a session (debugging). |
@@ -257,19 +259,21 @@ checks are polled again — up to `max_check_fix_rounds`. Still pending at
 `checks_timeout`, or a merge that GitHub refuses (for example branch protection that
 needs a human review) → `bees:needs-human`. See [workflow.md](workflow.md#merging).
 
-### `[roles.developer]` only: commit flags
+### `[roles.developer]` only: commit flags and max size
 
-The developer is the only role that creates git commits, so this key is accepted
-**only** under `[roles.developer]`; setting it on `[global]` or another role is a
+These two keys describe the developer specifically, so they are accepted **only**
+under `[roles.developer]`; setting either on `[global]` or another role is a
 validation error.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `commit_flags` | string | `""` | Extra flags for every `git commit` the developer makes, for example `"--gpg-sign --signoff"`. Appended verbatim to the developer's system prompt as "When creating git commits, always use the following extra flags: `--gpg-sign --signoff`." |
+| `max_size` | string | `"l"` | The largest work item a developer takes: `xs`, `s`, `m`, `l` or `xl`. A `bees:ready` issue sized above it is never dispatched — the orchestrator moves it back to `bees:triage` and the project manager splits it. The project manager is told the limit in its prompt. See [Sizing](workflow.md#size-decides-what-gets-built-next). |
 
 ```toml
 [roles.developer]
 commit_flags = "--gpg-sign --signoff"
+max_size = "m"          # anything bigger goes back to triage to be split
 ```
 
 Signing (`--gpg-sign` / `-S`) happens inside a headless Claude Code session on the
@@ -286,7 +290,7 @@ For each role the effective settings are computed from `[global]` and
 |---|---|
 | `prompt` / `prompt_file` | Concatenated in this order, separated by blank lines: global `prompt`, global `prompt_file`, role `prompt`, role `prompt_file`. The result is appended to the role's built-in base prompt under an "Additional instructions from bees.toml" heading. |
 | `skills` | Union, order preserved, global first, duplicates dropped. |
-| `commit_flags` | Developer only; not merged from `[global]`. |
+| `commit_flags`, `max_size` | Developer only; not merged from `[global]`. |
 | `env` | union; the role wins on a name conflict |
 | `mcp` | Union by name. A role server with the same name as a global one replaces it. |
 | `model`, `fallback_model`, `effort`, `max_turns`, `timeout` | Role value if set, else global value, else the built-in default. |
@@ -380,6 +384,8 @@ headers = { Authorization = "Bearer $BROWSER_MCP_TOKEN" }
 | `scheduler.retry_delay` | `10m` |
 | `scheduler.retry_with_fallback` | `true` |
 | `scheduler.triage_batch_size` | `5` |
+| `scheduler.dispatch_order` | `small-first` |
+| `scheduler.max_large_in_flight` | `1` |
 | `scheduler.product_manager_interval` | `1h` |
 | `scheduler.qa_interval` | `30m` |
 | `scheduler.work_hours` | `""` (poll around the clock) |
@@ -393,6 +399,7 @@ headers = { Authorization = "Bearer $BROWSER_MCP_TOKEN" }
 | `roles.reviewer.auto_merge` | `false` |
 | `roles.reviewer.merge_method` | `squash` |
 | `roles.developer.commit_flags` | `""` (none) |
+| `roles.developer.max_size` | `l` |
 | `roles.reviewer.checks_wait` | `1m` |
 | `roles.reviewer.checks_poll_interval` | `2m` |
 | `roles.reviewer.checks_timeout` | `30m` |

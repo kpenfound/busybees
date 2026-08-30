@@ -61,6 +61,7 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 	d.Labels = s.labels
 	d.AutoMerge = s.cfg.Merge().AutoMerge
 	d.CommitFlags = s.cfg.CommitFlags()
+	d.MaxSize = s.cfg.MaxSize()
 	d.WorkDir = spec.workDir
 	d.Branch = spec.branch
 	d.StateDir = s.store.Dir

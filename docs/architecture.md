@@ -72,13 +72,21 @@ A full pass is:
      the filter did not require it);
    - a `bees:ready` issue with no size label gets `bees:size/m`, the default
      size (see [Sizing](workflow.md#sizing));
+   - a `bees:ready` issue sized above `roles.developer.max_size` (default `l`,
+     so normally a `bees:size/xl` one) goes back to `bees:triage` without a
+     comment, for the project manager to split;
    - a `bees:blocked` issue with unread developer mail about it becomes
      `bees:ready`; with unread project-manager mail it becomes `bees:triage`.
 4. **dispatch developers** – candidates are unowned `in-progress` and `review`
-   issues (resume after a restart) followed by `ready` issues. For each, a
-   slot is taken from a buffered channel sized `max_developers`; when none is
-   free the pass stops dispatching. A goroutine runs `workIssue` and returns
-   the slot when done.
+   issues (resume after a restart, never reordered) followed by `ready`
+   issues sorted by `scheduler.dispatch_order` (`sortReady`: smallest size
+   first by default, ties by age). A `bees:size/l` candidate is skipped while
+   `scheduler.max_large_in_flight` of them are already owned — the check runs
+   *before* a slot is taken, so a held issue does not keep a worker idle. For
+   the rest, a slot is taken from a buffered channel sized `max_developers`;
+   when none is free the pass stops dispatching. A goroutine runs `workIssue`
+   and returns the slot when done; the worker records the issue's size, which
+   is what the cap counts and what `bees status` shows.
 5. **dispatch singletons** – project manager (has triage issues or unread
    mail), product manager (unread mail, first run, or interval elapsed), QA
    (first run, or interval elapsed and something merged since — checked at

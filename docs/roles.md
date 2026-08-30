@@ -167,9 +167,10 @@ keeping the author's intent; splits oversized work items with
 there is no parent feature), closing the original with a comment; moves
 refined work items `bees:triage` →
 `bees:ready` with exactly one **size label** (`bees:size/xs` … `bees:size/l`)
-added in the same edit, splitting anything that sizes up as `xl` instead of
-labelling it; moves a work item to `bees:blocked` when it has asked the
-product manager; closes invalid or duplicate work items with a comment. It
+added in the same edit, splitting anything that sizes up above
+`roles.developer.max_size` (default `l`) instead of labelling it — the
+orchestrator sends such an issue straight back to `bees:triage`; moves a work
+item to `bees:blocked` when it has asked the product manager; closes invalid or duplicate work items with a comment. It
 never edits feature or feedback issues — those belong to the product
 manager — and never touches milestones. It is the only role besides the
 orchestrator that moves state labels.

@@ -671,6 +671,16 @@ func TestLabelBackstop(t *testing.T) {
 	if len(h.gh.history[8]) != 0 {
 		t.Fatalf("unrelated issue touched: %v", h.gh.history[8])
 	}
+	// The project manager is told the size it must not exceed when it sizes
+	// a work item, so it splits anything bigger instead.
+	dirs := h.sessions(config.RoleProjectManager)
+	if len(dirs) == 0 {
+		t.Fatal("no project manager session")
+	}
+	prompt, _ := os.ReadFile(filepath.Join(dirs[0], "system-prompt.md"))
+	if !strings.Contains(string(prompt), "anything larger than `l` is not dispatched") {
+		t.Fatalf("project manager system prompt does not carry max_size:\n%s", prompt)
+	}
 }
 
 func TestAutoMergeAfterChecks(t *testing.T) {

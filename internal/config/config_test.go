@@ -184,17 +184,22 @@ func TestSizeLabels(t *testing.T) {
 
 func TestValidation(t *testing.T) {
 	cases := map[string]string{
-		"bad repo":         "version = 1\n[project]\nrepo = \"nope\"\n",
-		"unknown role":     "version = 1\n[project]\nrepo = \"a/b\"\n[roles.intern]\nprompt = \"x\"\n",
-		"unknown key":      "version = 1\n[project]\nrepo = \"a/b\"\nrepository = \"x\"\n",
-		"mcp no command":   "version = 1\n[project]\nrepo = \"a/b\"\n[global.mcp.x]\nargs = [\"a\"]\n",
-		"bad effort":       "version = 1\n[project]\nrepo = \"a/b\"\n[global]\neffort = \"extreme\"\n",
-		"label with colon": "version = 1\n[project]\nrepo = \"a/b\"\n[filter]\nlabel = \"a:b\"\n",
-		"open filter":      "version = 1\n[project]\nrepo = \"a/b\"\n[filter]\nrequire_label = false\n",
-		"max devs zero":    "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nmax_developers = -1\n",
-		"negative retries": "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nretries = -1\n",
-		"too many retries": "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nretries = 6\n",
-		"negative delay":   "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nretry_delay = \"-1m\"\n",
+		"bad repo":             "version = 1\n[project]\nrepo = \"nope\"\n",
+		"unknown role":         "version = 1\n[project]\nrepo = \"a/b\"\n[roles.intern]\nprompt = \"x\"\n",
+		"unknown key":          "version = 1\n[project]\nrepo = \"a/b\"\nrepository = \"x\"\n",
+		"mcp no command":       "version = 1\n[project]\nrepo = \"a/b\"\n[global.mcp.x]\nargs = [\"a\"]\n",
+		"bad effort":           "version = 1\n[project]\nrepo = \"a/b\"\n[global]\neffort = \"extreme\"\n",
+		"label with colon":     "version = 1\n[project]\nrepo = \"a/b\"\n[filter]\nlabel = \"a:b\"\n",
+		"open filter":          "version = 1\n[project]\nrepo = \"a/b\"\n[filter]\nrequire_label = false\n",
+		"max devs zero":        "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nmax_developers = -1\n",
+		"negative retries":     "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nretries = -1\n",
+		"too many retries":     "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nretries = 6\n",
+		"negative delay":       "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nretry_delay = \"-1m\"\n",
+		"bad dispatch order":   "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\ndispatch_order = \"random\"\n",
+		"negative large cap":   "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nmax_large_in_flight = -1\n",
+		"bad max size":         "version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nmax_size = \"huge\"\n",
+		"max size on global":   "version = 1\n[project]\nrepo = \"a/b\"\n[global]\nmax_size = \"l\"\n",
+		"max size on reviewer": "version = 1\n[project]\nrepo = \"a/b\"\n[roles.reviewer]\nmax_size = \"l\"\n",
 	}
 	for name, body := range cases {
 		if _, err := Load(writeConfig(t, body)); err == nil {
@@ -290,6 +295,41 @@ func TestMergePolicy(t *testing.T) {
 	}
 	if cfg.CommitFlags() != "--gpg-sign --signoff" {
 		t.Fatalf("commit flags: %q", cfg.CommitFlags())
+	}
+}
+
+func TestDispatchSettings(t *testing.T) {
+	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Scheduler.DispatchOrder != DispatchSmallFirst || cfg.Scheduler.LargeInFlight() != 1 || cfg.MaxSize() != "l" {
+		t.Fatalf("defaults: order %q, large in flight %d, max size %q", cfg.Scheduler.DispatchOrder, cfg.Scheduler.LargeInFlight(), cfg.MaxSize())
+	}
+	cfg, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\ndispatch_order = \"large-first\"\nmax_large_in_flight = 0\n[roles.developer]\nmax_size = \"m\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 0 is a meaningful value (no cap), so it must survive applyDefaults.
+	if cfg.Scheduler.DispatchOrder != DispatchLargeFirst || cfg.Scheduler.LargeInFlight() != 0 || cfg.MaxSize() != "m" {
+		t.Fatalf("custom: order %q, large in flight %d, max size %q", cfg.Scheduler.DispatchOrder, cfg.Scheduler.LargeInFlight(), cfg.MaxSize())
+	}
+}
+
+// The error a bad value produces has to say what the valid ones are.
+func TestDispatchErrorsListTheValidValues(t *testing.T) {
+	for body, want := range map[string]string{
+		"version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\ndispatch_order = \"random\"\n": "small-first, oldest, large-first",
+		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nmax_size = \"huge\"\n":   "xs, s, m, l, xl",
+		"version = 1\n[project]\nrepo = \"a/b\"\n[global]\nmax_size = \"l\"\n":               "only valid under roles.developer",
+	} {
+		_, err := Load(writeConfig(t, body))
+		if err == nil {
+			t.Fatalf("%q: expected an error", body)
+		}
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
 	}
 }
 
