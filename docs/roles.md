@@ -187,11 +187,12 @@ told to break down, and marks them in the `Proposal` column of the feature
 table, because bees and people share one GitHub account and the author is no
 signal.
 
-A feature issue is *fresh* when a person created or commented on it after
-the product manager's last marker comment (`github.Issue.AwaitingBee`). When a
-person answers a `bees:question`, the orchestrator removes the label and the
-issue comes back as fresh; a fresh feature or feedback issue triggers a
-product manager run regardless of `product_manager_interval`.
+A feature issue is *fresh* when the human side had the last word on it: a
+person created or commented on it, and the product manager has not commented
+since (`github.Issue.AwaitingBee`). When a person answers a `bees:question`,
+the orchestrator removes the label and the issue comes back as fresh; a fresh
+feature or feedback issue triggers a product manager run regardless of
+`product_manager_interval`.
 
 **Feedback from people:** issues labelled `bees:feedback` are the product
 manager's inbox (feature ideas, product feedback, bug reports from humans) —

@@ -118,9 +118,9 @@ type Comment struct {
 // IsBee reports whether the comment was written by a bees role.
 func (c Comment) IsBee() bool { return strings.Contains(c.Body, BeesMarker) }
 
-// AwaitingBee reports whether the latest human activity on an issue (its
-// creation or a human comment) is more recent than the latest bee comment,
-// i.e. a bee still owes a reply.
+// AwaitingBee reports whether the human side had the last word on an issue —
+// its creation or a human comment, with a tie against a bee comment broken by
+// their order in the list — i.e. a bee still owes a reply.
 func (i Issue) AwaitingBee() bool { return i.awaitingBee(i.CreatedAt) }
 
 // AwaitingBeeComment reports whether a bee owes a reply because a person

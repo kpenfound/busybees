@@ -328,8 +328,8 @@ since the product manager's last marker comment on it) the product manager:
 4. later, closes the feature issue once all its sub-issues are closed, or
    when it no longer makes sense (saying why).
 
-You steer a feature by commenting on it: a human comment newer than the
-product manager's last reply makes the issue fresh again.
+You steer a feature by commenting on it: your comment gives the human side the
+last word and makes the issue fresh again.
 
 ### Questions for you: `bees:question`
 
@@ -337,9 +337,8 @@ When only a person can decide something — on a feature issue or a feedback
 issue — the product manager posts the question as a comment (with the marker),
 adds the `bees:question` label, and stops working on that issue. The label is
 purely for you: it marks issues waiting on a human. Answer in a comment; on
-the next poll the orchestrator sees a human comment newer than the product
-manager's last marker comment, removes `bees:question`, and the issue comes
-back to the product manager as fresh.
+the next poll the orchestrator sees that a person had the last word, removes
+`bees:question`, and the issue comes back to the product manager as fresh.
 
 Contrast with the other ways of getting something into the factory:
 

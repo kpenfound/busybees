@@ -415,6 +415,13 @@ func TestAwaitingBeeComment(t *testing.T) {
 		{"a bee answered within the second", []Comment{human(tie), bee(tie)}, false, false},
 		{"a human came back within the second", []Comment{human(created.Add(time.Minute)), bee(tie), human(tie)}, true, true},
 		{"a bee commented in the issue's second", []Comment{bee(created)}, false, false},
+		// Not chronological: the bee comment is older than the human one
+		// before it, so the human still had the last word. The second case
+		// is the same guard against the seed: for AwaitingBee the issue's
+		// creation is human activity at CreatedAt, and a comment older than
+		// that does not get the last word off it.
+		{"comments out of order", []Comment{human(created.Add(2 * time.Minute)), bee(created.Add(time.Minute))}, true, true},
+		{"a bee comment older than the issue", []Comment{bee(created.Add(-time.Minute))}, false, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
