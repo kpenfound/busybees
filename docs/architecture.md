@@ -141,7 +141,7 @@ stateDiagram-v2
     [*] --> prereview: resumed with an open PR and label bees:review
     develop --> prereview: pr-opened / pr-updated (PR found)
     develop --> review: same, with pre_review_checks = false
-    prereview --> review: checks pass, none required, or pending at pre_review_checks_timeout
+    prereview --> review: checks pass, none required, pending at pre_review_checks_timeout, or the read failed
     prereview --> develop: a check failed, reviewer (checks mode) mailed a fix request
     prereview --> prereview: reviewer re-ran the check (approved)
     prereview --> [*]: fix rounds exhausted / reviewer failed (escalate)
@@ -185,7 +185,9 @@ stateDiagram-v2
   `awaitChecks` with a deadline of `pre_review_checks_timeout`, so the reviewer
   starts from a green PR. Passed (including "no required checks") or still
   pending at the timeout → the review runs, with `Checks`/`ChecksStatus` in the
-  reviewer's prompt; the pending case tells it to run the tests itself. Failed
+  reviewer's prompt; the pending case tells it to run the tests itself. A read
+  that errors is advisory too: warn and review without a checks section (unlike
+  the checks stage, where the read is a merge gate). Failed
   → `fixFailedChecks`, the same checks-mode reviewer and developer fix round the
   checks stage uses, and the developer's next `pr-updated` returns here
   (`afterDevelop = "prereview"`). `bees status` reports the stage as

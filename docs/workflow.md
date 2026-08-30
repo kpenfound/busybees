@@ -321,6 +321,9 @@ and the reviewer starting, the worker waits `checks_wait` and polls
 - **Still pending** at `pre_review_checks_timeout`: the review happens anyway
   and the reviewer is told the checks were pending and that it should run the
   test-suite itself.
+- **The read itself fails** (`gh` errors, a rate limit, an API outage): the read
+  is advisory, so it is logged as a warning and the review happens anyway,
+  without a checks section in the reviewer's prompt.
 
 `bees status` shows the worker in the `pre-review checks` stage while it waits.
 Set `pre_review_checks = false` to go straight from the developer to the

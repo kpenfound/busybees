@@ -189,7 +189,7 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 			res, err := s.runSession(ctx, sessionSpec{
 				role: config.RoleReviewer, name: name, workDir: ws.RepoDir, branch: branch,
 				data: prompts.Data{Issue: &freshIssue, PR: &freshPR, PreviousRounds: previous, Round: bookkeeping.Round, MaxRounds: maxRounds,
-					Checks: reviewChecks, ChecksStatus: reviewStatus, ChecksTimeout: policy.PreReviewChecksTimeout.String()},
+					Checks: reviewChecks, ChecksStatus: reviewStatus, ChecksTimeout: shortDuration(policy.PreReviewChecksTimeout)},
 			})
 			if err != nil {
 				return err
@@ -225,13 +225,20 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 			log.Info("reading required checks before review", "pr", pr.Number, "timeout", policy.PreReviewChecksTimeout)
 			status, checks, err := s.awaitChecks(ctx, pr.Number, policy, policy.PreReviewChecksTimeout)
 			if err != nil {
-				return err
+				// The pre-review read is advisory: a broken `gh pr checks`
+				// must not cost the pull request its review.
+				log.Warn("could not read the required checks; reviewing anyway", "pr", pr.Number, "err", err)
+				reviewChecks, reviewStatus = nil, ""
+				afterDevelop = "review"
+				stage = "review"
+				continue
 			}
 			if status == github.ChecksPending {
 				log.Info("checks still pending; reviewing anyway", "pr", pr.Number, "timeout", policy.PreReviewChecksTimeout)
 			}
 			if status != github.ChecksFailed {
 				reviewChecks, reviewStatus = checks, string(status)
+				afterDevelop = "review"
 				stage = "review"
 				continue
 			}
@@ -434,4 +441,17 @@ func gitPull(ctx context.Context, dir string) (string, error) {
 		return out, nil
 	}
 	return out, err
+}
+
+// shortDuration renders a duration the way it is written in bees.toml: "10m"
+// rather than time.Duration's "10m0s".
+func shortDuration(d time.Duration) string {
+	s := d.String()
+	if strings.HasSuffix(s, "m0s") {
+		s = strings.TrimSuffix(s, "0s")
+	}
+	if strings.HasSuffix(s, "h0m") {
+		s = strings.TrimSuffix(s, "0m")
+	}
+	return s
 }

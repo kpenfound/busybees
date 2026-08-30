@@ -736,7 +736,6 @@ enabled = false
 `)
 	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Ship it", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}}, CreatedAt: time.Now()}
 	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
-	h.seedReviewCounter(1) // the reviewer approves the review it does get
 	pending := `[{"name":"go / test","bucket":"pending","state":"PENDING","link":"https://ci.example.com/run/1","workflow":"CI"}]`
 	failing := `[{"name":"go / test","bucket":"fail","state":"FAILURE","link":"https://ci.example.com/run/1","description":"1 test failed","workflow":"CI"}]`
 	passing := `[{"name":"go / test","bucket":"pass","state":"SUCCESS","link":"https://ci.example.com/run/2"}]`
@@ -751,10 +750,12 @@ enabled = false
 		t.Fatal(err)
 	}
 	// The failing check reached the reviewer in checks mode before any review.
-	h.wantOrder("developer-issue-1-r1-", "reviewer-pr-101-checks1-", "developer-issue-1-r1-checkfix1-", "reviewer-pr-101-r1-")
-	want := "bees:in-progress,bees:review,bees:in-progress,bees:approved"
-	if got := strings.Join(h.gh.history[1], ","); got != want {
-		t.Fatalf("history: %s\nwant    %s", got, want)
+	// Review round 2 is an ordinary feedback round: it must not be named as a
+	// check-fix round just because round 1 came back through the checks.
+	h.wantOrder("developer-issue-1-r1-", "reviewer-pr-101-checks1-", "developer-issue-1-r1-checkfix1-",
+		"reviewer-pr-101-r1-", "developer-issue-1-r2-", "reviewer-pr-101-r2-")
+	if last := h.gh.history[1][len(h.gh.history[1])-1]; last != "bees:approved" {
+		t.Fatalf("history: %v", h.gh.history[1])
 	}
 	if len(h.gh.comments[1]) != 0 {
 		t.Fatalf("unexpected escalation: %v", h.gh.comments[1])
@@ -803,6 +804,53 @@ enabled = false
 		if !strings.Contains(string(review), want) {
 			t.Errorf("reviewer prompt missing %q:\n%s", want, review)
 		}
+	}
+}
+
+func TestShortDuration(t *testing.T) {
+	for _, tc := range []struct {
+		in   time.Duration
+		want string
+	}{
+		{10 * time.Minute, "10m"},
+		{time.Hour, "1h"},
+		{90 * time.Second, "1m30s"},
+		{time.Millisecond, "1ms"},
+		{0, "0s"},
+	} {
+		if got := shortDuration(tc.in); got != tc.want {
+			t.Errorf("shortDuration(%s) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestPreReviewChecksErrorReviewsAnyway(t *testing.T) {
+	h := newHarness(t, baseTOML+`
+[roles.product_manager]
+enabled = false
+[roles.qa]
+enabled = false
+[roles.project_manager]
+enabled = false
+`)
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Broken gh", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}}, CreatedAt: time.Now()}
+	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
+	h.seedReviewCounter(1)
+	// `gh pr checks` fails outright: the pre-review read is advisory, so the
+	// review must still happen, just without a checks section.
+	h.gh.checks = []checksResponse{{"", fmt.Errorf("HTTP 503: Service Unavailable")}}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if err := h.sched.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	h.wantOrder("developer-issue-1-r1-", "reviewer-pr-101-r1-")
+	if len(h.gh.comments[1]) != 0 {
+		t.Fatalf("a failed checks read must not escalate: %v", h.gh.comments[1])
+	}
+	review, _ := os.ReadFile(filepath.Join(h.store.SessionsDir(), h.sessionOrder()[1], "prompt.md"))
+	if strings.Contains(string(review), "## Required checks") {
+		t.Fatalf("reviewer prompt has a checks section after a failed read:\n%s", review)
 	}
 }
 
