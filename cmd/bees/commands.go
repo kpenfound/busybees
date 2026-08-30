@@ -375,11 +375,13 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 				return err
 			}
 			counts, _ := a.mail.Counts()
-			today := todayTotal(store, time.Now())
+			now := time.Now()
+			today := todayTotal(store, now)
 			rows := roleRows(store, st)
 			if asJSON {
 				return json.NewEncoder(os.Stdout).Encode(map[string]any{
 					"status": st, "unread_mail": counts, "today": today, "notes_bytes": notesBytes(rows),
+					"work_hours": workHoursJSON(cfg.Scheduler, now),
 				})
 			}
 			fmt.Printf("repo: %s   state: %s\n", cfg.Project.Repo, cfg.StateDir())
@@ -389,25 +391,7 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 				fmt.Printf("scheduler: pid %d, last poll %s ago\n", st.PID, time.Since(st.LastPoll).Round(time.Second))
 			}
 			fmt.Println(todayText(today))
-			if cfg.Scheduler.WorkHoursEnabled() {
-				// Always the live answer: a stored one is stale as soon
-				// as the scheduler stops. status.json keeps its own record
-				// for --json.
-				in := cfg.Scheduler.InWorkHours(time.Now())
-				yes := "no"
-				if in {
-					yes = "yes"
-				}
-				line := fmt.Sprintf("work hours: %s (%s)", yes, cfg.Scheduler.WorkHoursDescription())
-				switch d := time.Until(st.NextPoll).Round(time.Second); {
-				case st.NextPoll.IsZero():
-				case d > 0:
-					line += fmt.Sprintf("   next GitHub poll in %s", d)
-				default:
-					line += "   next GitHub poll due"
-				}
-				fmt.Println(line)
-			}
+			fmt.Println(workHoursLine(cfg.Scheduler, st, now))
 			if st.LastError != "" {
 				fmt.Println("last error:", st.LastError)
 			}
@@ -429,7 +413,7 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 				fmt.Printf("  %-12s issue #%-5d %-3s %-10s %-20s since %s\n", w.Name, w.Issue, size, w.Stage, round, w.Since.Format(time.Kitchen))
 			}
 			fmt.Println("\nroles:")
-			fmt.Print(rolesText(rows, time.Now()))
+			fmt.Print(rolesText(rows, now))
 			fmt.Println("\nunread mail:")
 			if len(counts) == 0 {
 				fmt.Println("  none")
