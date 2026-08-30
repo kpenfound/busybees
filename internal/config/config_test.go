@@ -710,6 +710,8 @@ func TestWorkHoursValidation(t *testing.T) {
 		{"bad timezone", base + "work_hours = \"09:00-18:00\"\ntimezone = \"Mars/Olympus\"\n", "scheduler.timezone: "},
 		{"off hours too short", base + "poll_interval = \"5m\"\noff_hours_poll_interval = \"1m\"\nwork_hours = \"09:00-18:00\"\n",
 			"scheduler.off_hours_poll_interval (1m0s) must be >= scheduler.poll_interval (5m0s)"},
+		{"off hours shorter than a long poll interval", base + "poll_interval = \"1h\"\noff_hours_poll_interval = \"30m\"\nwork_hours = \"09:00-18:00\"\n",
+			"scheduler.off_hours_poll_interval (30m0s) must be >= scheduler.poll_interval (1h0m0s)"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -753,6 +755,27 @@ func TestWorkHoursDefaults(t *testing.T) {
 	}
 	if got := s.WorkHoursDescription(); got != "09:00-18:00 mon-fri, Local" {
 		t.Fatalf("description: %q", got)
+	}
+	// The injected default is never shorter than poll_interval: a file that
+	// only sets a long poll_interval must load, not fail validation on a key
+	// it does not contain.
+	for _, c := range []struct {
+		poll string
+		want time.Duration
+	}{
+		{"5m", DefaultOffHoursPollInterval},
+		{"1h", time.Hour},
+		{"2h", 2 * time.Hour},
+	} {
+		t.Run("poll_interval "+c.poll, func(t *testing.T) {
+			cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\npoll_interval = \""+c.poll+"\"\nwork_hours = \"09:00-18:00\"\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := cfg.Scheduler.OffHoursPollInterval.Duration; got != c.want {
+				t.Fatalf("off_hours_poll_interval = %s, want %s", got, c.want)
+			}
+		})
 	}
 }
 
@@ -809,6 +832,50 @@ func TestInWorkHours(t *testing.T) {
 	}
 	if got := overnight.WorkHoursDescription(); got != "22:00-06:00 fri, UTC" {
 		t.Fatalf("description: %q", got)
+	}
+}
+
+func TestNextWorkHoursStart(t *testing.T) {
+	load := func(t *testing.T, body string) Scheduler {
+		t.Helper()
+		cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\npoll_interval = \"5m\"\n"+body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cfg.Scheduler
+	}
+	utc := func(day, hour, min int) time.Time {
+		return time.Date(2026, 8, day, hour, min, 0, 0, time.UTC)
+	}
+	// 2026-08-28 is a Friday, 2026-08-29 a Saturday, 2026-08-31 a Monday.
+	weekdays := load(t, "work_hours = \"09:00-18:00\"\ntimezone = \"UTC\"\n")
+	overnight := load(t, "work_hours = \"22:00-06:00\"\nwork_days = [\"fri\"]\ntimezone = \"UTC\"\n")
+	disabled := load(t, "")
+	for _, c := range []struct {
+		name string
+		s    Scheduler
+		t    time.Time
+		want time.Time
+	}{
+		{"inside the window", weekdays, utc(31, 12, 0), time.Time{}},
+		{"just before the window opens", weekdays, utc(31, 8, 55), utc(31, 9, 0)},
+		{"the instant the window opens is already inside it", weekdays, utc(31, 9, 0), time.Time{}},
+		{"after the window, same day", weekdays, utc(31, 18, 30), utc(32, 9, 0)},
+		{"friday evening waits for monday", weekdays, utc(28, 18, 30), utc(31, 9, 0)},
+		{"saturday waits for monday", weekdays, utc(29, 12, 0), utc(31, 9, 0)},
+		{"overnight: saturday morning waits for friday", overnight, utc(29, 7, 0), time.Date(2026, 9, 4, 22, 0, 0, 0, time.UTC)},
+		{"overnight: inside the tail after midnight", overnight, utc(29, 5, 0), time.Time{}},
+		{"disabled", disabled, utc(29, 12, 0), time.Time{}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := c.s.NextWorkHoursStart(c.t)
+			if !got.Equal(c.want) {
+				t.Fatalf("NextWorkHoursStart(%s) = %s, want %s", c.t, got, c.want)
+			}
+			if !got.IsZero() && !got.After(c.t) {
+				t.Fatalf("NextWorkHoursStart(%s) = %s is not strictly after t", c.t, got)
+			}
+		})
 	}
 }
 
