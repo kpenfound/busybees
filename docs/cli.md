@@ -14,8 +14,14 @@ gets it automatically. Everything else is for humans.
 | Flag | Description |
 |---|---|
 | `-c, --config <path>` | Path to `bees.toml`. Default: `$BEES_CONFIG`, else search upwards from cwd. |
-| `-v, --verbose` | Debug logging. With `run`/`tick`/`exec`, also streams every claude event to stderr. |
+| `-v, --verbose` | Debug logging (same as `--log-level debug`). With `run`/`tick`/`exec`, also streams every claude event to stderr. |
+| `-q, --quiet` | Console shows only session summaries, warnings and errors. Cannot be combined with `-v` or `--log-level debug`. |
+| `--log-format <text\|json>` | Console log format. Default `text`; `$BEES_LOG_FORMAT`. |
+| `--log-level <debug\|info\|warn\|error>` | Console log level. Default `info`; `$BEES_LOG_LEVEL`. |
 | `-h, --help` | Help for any command. |
+
+A flag beats its environment variable, and an unknown value is an error naming
+the valid ones.
 
 ## Setting up
 
@@ -112,7 +118,34 @@ finish.
 bees run
 bees run --roles dev,reviewer
 bees -v run --once
+bees --log-format json --quiet run
 ```
+
+Every finished session prints one summary line. In `text` format they are the
+message alone, so a run reads as a report:
+
+```
+✓ project manager issue #12 done: "refined and moved to ready" (34 turns, $0.61, 3m02s)
+✓ developer issue #12 → PR #31 opened (87 turns, $2.41, 11m37s)
+✗ reviewer PR #31 changes requested: "tests missing for the error path" (52 turns, $1.18, 6m14s)
+✓ developer issue #12 → PR #31 updated (41 turns, $0.98, 5m03s)
+✓ reviewer PR #31 approved: "lgtm" (23 turns, $0.47, 2m41s)
+⚠ issue #14 escalated to a human: Required checks on #33 still fail after 2 fix rounds: go / test
+```
+
+With `--log-format json` the same line is an ordinary record carrying its
+numbers as fields:
+
+```json
+{"time":"2026-08-29T10:14:02Z","level":"INFO","msg":"✓ developer issue #12 → PR #31 opened","summary":true,"role":"developer","issue":12,"pr":31,"outcome":"pr-opened","turns":87,"cost_usd":2.41,"duration":697000000000,"note":""}
+```
+
+`--quiet` keeps the summary lines, warnings and errors and drops the rest, so a
+service can run the factory and still see what it did.
+
+`run`, `tick` and `exec` also write every record — at debug level, whatever the
+console flags say — as JSON to `<state_dir>/bees.log`. It rotates in place at
+10 MiB into `bees.log.1` and `bees.log.2`; older generations are dropped.
 
 ### `bees tick [--roles a,b]`
 

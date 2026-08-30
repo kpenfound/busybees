@@ -26,6 +26,7 @@ import (
 
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/github"
+	"github.com/kpenfound/busybees/internal/logging"
 	"github.com/kpenfound/busybees/internal/mail"
 	"github.com/kpenfound/busybees/internal/session"
 	"github.com/kpenfound/busybees/internal/state"
@@ -598,7 +599,8 @@ func (s *Scheduler) setState(ctx context.Context, number int, to string) error {
 // escalate marks an issue needs-human and leaves a comment for people.
 // This is the only place the factory writes a GitHub comment.
 func (s *Scheduler) escalate(ctx context.Context, number int, reason string) error {
-	s.log.Warn("escalating to human", "issue", number, "reason", reason)
+	s.log.Warn(fmt.Sprintf("⚠ issue #%d escalated to a human: %s", number, reason),
+		logging.SummaryKey, true, "issue", number, "outcome", "escalated", "note", reason)
 	if err := s.setState(ctx, number, s.labels.NeedsHuman); err != nil {
 		return err
 	}

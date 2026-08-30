@@ -373,7 +373,14 @@ oldest first, and `bees mail` works from any directory because sessions get
   product_manager.json           {last_run}
   qa.json                        {last_run, last_check}
   status.json                    live scheduler status for `bees status` (queues, workers, singletons, last_poll, last_error)
+  bees.log                       every record of the last scheduler runs as JSON, rotated
+                                 at 10 MiB into bees.log.1 and bees.log.2
 ```
+
+`bees.log` is written only by the commands that run sessions (`run`, `tick`,
+`exec`) and always contains every record at debug level, whatever the console
+flags say. `bees issue` and `bees mail` run inside sessions, concurrently with
+the scheduler, so they never open it.
 
 `bees init` makes sure the directory is ignored by git: if `git check-ignore`
 does not already ignore it (and it lives inside the clone), `/.bees/` is
