@@ -166,6 +166,7 @@ accepts aliases such as `pm`, `pjm`, `dev`, but the TOML keys must be the full n
 | `prompt` | string | `""` | Text appended to the role's built-in base prompt. |
 | `prompt_file` | string | `""` | Path (relative to `bees.toml`) whose contents are appended after `prompt`. Must exist. |
 | `skills` | string list | `[]` | Skills by git URL (see below). |
+| `skills_refresh` | string | `"24h"` | **Global only.** How stale a skill clone may get before it is pulled when a session needs it: `never`, `always` or a duration. See [Skills](#skills). |
 | `mcp.<name>` | table | — | MCP servers keyed by name (see below). |
 | `model` | string | `"opus"` | Claude model alias or full id passed as `claude --model`. |
 | `fallback_model` | string | `"sonnet"` | Passed as `claude --fallback-model`. Claude Code switches to it automatically when `model` has reached the account's usage limit. Omitted when equal to `model`. |
@@ -267,7 +268,17 @@ directory:
    exposing every skill in it.
 
 Anything else is an error. Generated wrappers are rebuilt on every session; clones are
-reused (they are not pulled automatically — delete the cache to refresh).
+reused.
+
+A clone is refreshed (`git pull --ff-only`) when a session needs it and it was last
+fetched more than `skills_refresh` ago — `24h` by default. `skills_refresh = "always"`
+pulls before every session, `"never"` never pulls. The fetch time is the mtime of a
+`<clone>.fetched` file next to the clone in the cache. A failed pull is logged as a
+warning and never stops a session: a reference pinned with `@tag` is a detached
+checkout and cannot be pulled, which is the point of pinning it.
+
+`bees skills list` shows what the cache holds and `bees skills update` refreshes it now,
+whatever the policy says (see [cli.md](cli.md#bees-skills-list)).
 
 ### MCP servers
 
@@ -323,6 +334,7 @@ headers = { Authorization = "Bearer $BROWSER_MCP_TOKEN" }
 | `roles.reviewer.auto_merge` | `false` |
 | `roles.reviewer.merge_method` | `squash` |
 | `roles.developer.commit_flags` | `""` (none) |
+| `skills_refresh` | `24h` |
 | `roles.reviewer.checks_wait` | `1m` |
 | `roles.reviewer.checks_poll_interval` | `2m` |
 | `roles.reviewer.checks_timeout` | `30m` |
