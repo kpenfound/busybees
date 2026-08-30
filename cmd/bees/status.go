@@ -60,3 +60,22 @@ func workHoursJSON(s config.Scheduler, now time.Time) workHoursView {
 	}
 	return v
 }
+
+// schedulerLine renders the "scheduler:" line of `bees status`. When
+// scheduler.max_cost_per_day is configured it also carries the rolling 24h
+// spend against it, and says so plainly while dispatch is paused. Both
+// numbers come from status.json — they are what the scheduler last computed,
+// not a fresh sum, so they go stale with the rest of the file when it stops.
+func schedulerLine(st state.Status, now time.Time) string {
+	line := "scheduler: never run"
+	if !st.UpdatedAt.IsZero() {
+		line = fmt.Sprintf("scheduler: pid %d, last poll %s ago", st.PID, now.Sub(st.LastPoll).Round(time.Second))
+	}
+	switch {
+	case st.BudgetPaused:
+		line += fmt.Sprintf("   paused: daily budget ($%.2f / $%.2f)", st.DaySpendUSD, st.DayBudgetUSD)
+	case st.DayBudgetUSD > 0:
+		line += fmt.Sprintf("   daily budget: $%.2f / $%.2f", st.DaySpendUSD, st.DayBudgetUSD)
+	}
+	return line
+}

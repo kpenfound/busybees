@@ -385,11 +385,7 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 				})
 			}
 			fmt.Printf("repo: %s   state: %s\n", cfg.Project.Repo, cfg.StateDir())
-			if st.UpdatedAt.IsZero() {
-				fmt.Println("scheduler: never run")
-			} else {
-				fmt.Printf("scheduler: pid %d, last poll %s ago\n", st.PID, time.Since(st.LastPoll).Round(time.Second))
-			}
+			fmt.Println(schedulerLine(st, now))
 			fmt.Println(todayText(today))
 			fmt.Println(workHoursLine(cfg.Scheduler, st, now))
 			if st.LastError != "" {
