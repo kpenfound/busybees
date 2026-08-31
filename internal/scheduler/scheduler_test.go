@@ -234,6 +234,11 @@ type fakeGH struct {
 	// ParentIssue query. Empty means "use the hardcoded answer below": issue
 	// 1 is a sub-issue of feature 5 while that feature exists.
 	parents map[int]int
+	// subIssues overrides the sub-issue summary the REST issue-details call
+	// answers for one issue. Absent means the shared default (3 sub-issues,
+	// 1 closed), which is what most tests want; a test about an issue that
+	// has not been broken down yet sets an empty summary for it.
+	subIssues map[int]github.SubIssueSummary
 	// parentErr makes the ParentIssue query fail for one work item, which is
 	// how a partial parent lookup is expressed: the other items still answer.
 	parentErr map[int]error
@@ -430,7 +435,11 @@ func (f *fakeGH) exec(ctx context.Context, args ...string) ([]byte, error) {
 		// REST issue details: repos/acme/widgets/issues/N
 		var n int
 		if _, err := fmt.Sscanf(path, "repos/acme/widgets/issues/%d", &n); err == nil && !strings.Contains(path, "/comments") {
-			return []byte(fmt.Sprintf(`{"id": %d, "milestone": null, "sub_issues_summary": {"total": 3, "completed": 1, "percent_completed": 33}}`, 1000+n)), nil
+			sum := github.SubIssueSummary{Total: 3, Completed: 1}
+			if s, ok := f.subIssues[n]; ok {
+				sum = s
+			}
+			return []byte(fmt.Sprintf(`{"id": %d, "milestone": null, "sub_issues_summary": {"total": %d, "completed": %d}}`, 1000+n, sum.Total, sum.Completed)), nil
 		}
 		if strings.Contains(path, "/pulls/") || strings.Contains(path, "/issues/") {
 			return []byte("[[]]"), nil
@@ -624,14 +633,15 @@ func newHarnessAt(t *testing.T, toml string, now time.Time) *harness {
 		t.Fatal(err)
 	}
 	gh := &fakeGH{
-		issues:   map[int]*github.Issue{},
-		prs:      map[int]*github.PR{},
-		prMarker: filepath.Join(store.Dir, "fake-pr-created"),
-		hidden:   map[int]bool{},
-		history:  map[int][]string{},
-		comments: map[int][]string{},
-		activity: map[string]string{},
-		errFor:   map[string]error{},
+		issues:    map[int]*github.Issue{},
+		prs:       map[int]*github.PR{},
+		prMarker:  filepath.Join(store.Dir, "fake-pr-created"),
+		hidden:    map[int]bool{},
+		history:   map[int][]string{},
+		comments:  map[int][]string{},
+		activity:  map[string]string{},
+		subIssues: map[int]github.SubIssueSummary{},
+		errFor:    map[string]error{},
 	}
 	// Like a repository `bees init` has just set up: every label exists.
 	for _, l := range cfg.Labels().All() {

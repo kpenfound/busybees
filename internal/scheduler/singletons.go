@@ -93,10 +93,18 @@ func (s *Scheduler) productManagerHasWork(ctx context.Context, snap *snapshot) b
 	// deserves an answer as promptly as on any other issue; freshIssues only
 	// looks at issues updated since the last run, so the proposal goes quiet
 	// again on the poll after that.
+	//
+	// An issue in planning mode is the same shape for the same reason: it
+	// waits for a person too, the run it would start can only reply to what
+	// they wrote, and a fresh comment is exactly the event worth waking for.
 	for _, i := range fresh {
-		if !github.HasLabel(i.Labels, s.labels.Proposal) || s.gh.AwaitingBeeComment(i) {
-			return true
+		if github.HasLabel(i.Labels, s.labels.Proposal) || github.HasLabel(i.Labels, s.labels.Planning) {
+			if s.gh.AwaitingBeeComment(i) {
+				return true
+			}
+			continue
 		}
+		return true
 	}
 	return false
 }
@@ -249,6 +257,66 @@ func (s *Scheduler) runProductManager(ctx context.Context, snap *snapshot) error
 	if err != nil {
 		return err
 	}
+	// Sub-issue progress of every feature, from GitHub. Read before the fresh
+	// lists are partitioned: it is also the record that says whether a
+	// planned feature has already been broken down.
+	progress := map[int]github.SubIssueSummary{}
+	for _, f := range snap.features {
+		d, err := s.gh.GetIssueDetails(ctx, f.Number)
+		if !s.op("feature-progress", err, "feature progress", "issue", f.Number, "err", err) {
+			progress[f.Number] = d.SubIssues
+		}
+	}
+	// Issues a person has agreed with the product manager (bees:planned) and
+	// that still need acting on. A planned feature drops off this list by
+	// gaining sub-issues — the summary above is the "has it been broken down
+	// already?" answer, so a later run cannot break it down twice — and a
+	// planned feedback issue by being closed, which takes it out of the poll.
+	fetched := map[int]github.Issue{}
+	for _, i := range append(append([]github.Issue{}, feedback...), fresh...) {
+		fetched[i.Number] = i
+	}
+	var planned []github.Issue
+	for _, i := range append(append([]github.Issue{}, snap.features...), snap.feedback...) {
+		if !github.HasLabel(i.Labels, s.labels.Planned) || github.HasLabel(i.Labels, s.labels.Planning) {
+			continue
+		}
+		if github.HasLabel(i.Labels, s.labels.Feature) && progress[i.Number].Total > 0 {
+			continue
+		}
+		full, ok := fetched[i.Number]
+		if !ok {
+			full, err = s.gh.GetIssue(ctx, i.Number)
+			if err != nil {
+				return err
+			}
+		}
+		planned = append(planned, full)
+	}
+	// An issue in planning mode is a conversation: it leaves both fresh lists
+	// for a section of its own, which lists no breakdown step. An agreed one
+	// leaves them for the same reason — its section is the one that says the
+	// scope is settled, and two sections would give two sets of instructions
+	// for one issue.
+	var planning []github.Issue
+	agreed := map[int]bool{}
+	for _, i := range planned {
+		agreed[i.Number] = true
+	}
+	split := func(list []github.Issue) []github.Issue {
+		var rest []github.Issue
+		for _, i := range list {
+			switch {
+			case github.HasLabel(i.Labels, s.labels.Planning):
+				planning = append(planning, i)
+			case agreed[i.Number]:
+			default:
+				rest = append(rest, i)
+			}
+		}
+		return rest
+	}
+	feedback, fresh = split(feedback), split(fresh)
 	// Proposals are partitioned out of the fresh features rather than kept
 	// out of freshIssues: that call is also what clears bees:question when a
 	// person answers, and the product manager may well have asked its
@@ -275,16 +343,11 @@ func (s *Scheduler) runProductManager(ctx context.Context, snap *snapshot) error
 		if err != nil {
 			return err
 		}
+		if github.HasLabel(full.Labels, s.labels.Planning) || agreed[n] {
+			continue
+		}
 		s.log.Info("approved proposal goes to the product manager", "issue", n)
 		freshFeatures = append(freshFeatures, full)
-	}
-	// Sub-issue progress of every feature, from GitHub.
-	progress := map[int]github.SubIssueSummary{}
-	for _, f := range snap.features {
-		d, err := s.gh.GetIssueDetails(ctx, f.Number)
-		if !s.op("feature-progress", err, "feature progress", "issue", f.Number, "err", err) {
-			progress[f.Number] = d.SubIssues
-		}
 	}
 	// Work items only: feature and feedback issues are listed separately.
 	var work []github.Issue
@@ -321,6 +384,7 @@ func (s *Scheduler) runProductManager(ctx context.Context, snap *snapshot) error
 	if err := s.runSingleton(ctx, config.RoleProductManager, prompts.Data{
 		Issues: work, PRs: snap.prs, Milestones: milestones, Inbox: inbox,
 		Feedback: feedback, FreshFeatures: freshFeatures, Proposals: proposals,
+		Planning: planning, Planned: planned,
 		Features: snap.features, Progress: progress, Parents: parents,
 		CompletedFeatures: complete,
 	}); err != nil {
