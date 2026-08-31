@@ -515,7 +515,8 @@ type Scheduler struct {
 	// (mail in the PM inbox triggers an earlier run).
 	ProductManagerInterval Duration `toml:"product_manager_interval" json:"product_manager_interval"`
 	// QAInterval is the minimum time between QA runs. QA only runs when
-	// something has been merged since its last run.
+	// something has been merged since its last run (mail in the QA inbox
+	// triggers an earlier run).
 	QAInterval Duration `toml:"qa_interval" json:"qa_interval"`
 	// TriageBatchSize is the maximum number of issues handed to the project
 	// manager in one session.
