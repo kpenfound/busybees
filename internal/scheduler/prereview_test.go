@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -456,5 +457,38 @@ func TestDefaultReviewStagesCostNoParentLookup(t *testing.T) {
 	// One query for the developer session, none for the review.
 	if n := h.gh.callCount("api graphql"); n != 1 {
 		t.Errorf("%d ParentIssue queries, want 1 (the developer's)", n)
+	}
+}
+
+// A failed parent lookup does not cost the review. The product-fit stage still
+// runs — against the README and the docs, which the stage's own prose says to
+// fall back to — and the failure is reported as a degraded operation, because
+// a silent nil is indistinguishable from a work item that belongs to no
+// feature, and the reviewer states that difference as a fact in its verdict
+// (#240). The developer stage looks the same parent up and swallows its error,
+// so the entry in status.json can only have come from the review stage.
+func TestAFailedParentLookupIsReportedAndTheReviewStillRuns(t *testing.T) {
+	h := newHarness(t, reviewStagesTOML)
+	seedPreReviewIssue(t, h, "Ship it")
+	h.gh.parentErr = map[int]error{1: errors.New("sub-issue query is down")}
+	h.gh.checks = []checksResponse{{`[{"name":"go / test","bucket":"pass","state":"SUCCESS"}]`, nil}}
+	seedCounter(t, h, "review", 1) // approve the first review
+	runPreReviewLoop(t, h)
+
+	h.wantOrder("developer-issue-1-r1", "reviewer-pr-101-r1")
+	review := promptOf(t, h, 1)
+	if !strings.Contains(review, "### `product-fit`") {
+		t.Errorf("a failed parent lookup cost the product-fit stage:\n%s", review)
+	}
+	st, err := h.store.LoadStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := degradedOp(t, st, "work-item-parent")
+	if f.Count != 1 {
+		t.Errorf("work-item-parent streak: %d, want 1", f.Count)
+	}
+	if !strings.Contains(f.LastError, "sub-issue query is down") {
+		t.Errorf("degraded entry does not name the failure: %+v", f)
 	}
 }

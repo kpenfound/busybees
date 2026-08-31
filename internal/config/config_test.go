@@ -1429,10 +1429,14 @@ func TestReviewStages(t *testing.T) {
 		t.Errorf("product-fit is not in the known set %v", KnownReviewStages)
 	}
 	// The resolver hands out a copy: a caller that sorts or appends to it
-	// must not rewrite the default for every later session.
+	// must not rewrite the default for every later session. Compare against a
+	// snapshot taken first, not against DefaultReviewStages itself: a resolver
+	// that returns the package slice mutates the want along with the got, and
+	// the assertion passes on exactly the code it exists to reject.
+	want := slices.Clone(DefaultReviewStages)
 	cfg.ReviewStages()[0] = "mutated"
-	if got := cfg.ReviewStages(); !slices.Equal(got, DefaultReviewStages) {
-		t.Errorf("stages after a caller mutated its copy: %v", got)
+	if got := cfg.ReviewStages(); !slices.Equal(got, want) {
+		t.Errorf("stages after a caller mutated its copy: %v, want %v", got, want)
 	}
 
 	cfg, err = Load(writeConfig(t, head+"[roles.reviewer]\nstages = [\"product-fit\", \"style\"]\n"))
@@ -1441,6 +1445,11 @@ func TestReviewStages(t *testing.T) {
 	}
 	if got := cfg.ReviewStages(); !slices.Equal(got, []string{"product-fit", "style"}) {
 		t.Errorf("configured stages: %v", got)
+	}
+	// A configured list is copied too, so a caller cannot rewrite the config.
+	cfg.ReviewStages()[0] = "mutated"
+	if got := cfg.ReviewStages(); !slices.Equal(got, []string{"product-fit", "style"}) {
+		t.Errorf("configured stages after a caller mutated its copy: %v", got)
 	}
 
 	for _, tc := range []struct {

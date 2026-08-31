@@ -218,10 +218,18 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 			// work item's parent feature, and it is off by default: looking the
 			// parent up unconditionally would add a GraphQL query to every
 			// review round of every repository for a section nobody renders.
+			// A failed lookup is reported but never fatal: the stage still runs
+			// against the README and the docs, which is worth more than a review
+			// that dies because a GraphQL query flaked. It is reported because
+			// the alternative — a silent nil — tells the reviewer the work item
+			// belongs to no feature, and that lands in the verdict as a fact.
 			stages := s.cfg.ReviewStages()
 			var parent *github.Parent
 			if slices.Contains(stages, config.StageProductFit) {
-				parent, _ = s.gh.ParentIssue(ctx, issue.Number)
+				p, err := s.gh.ParentIssue(ctx, issue.Number)
+				if !s.op("work-item-parent", err, "work item parent", "issue", issue.Number, "err", err) {
+					parent = p
+				}
 			}
 			name := fmt.Sprintf("reviewer-pr-%d-r%d", pr.Number, bookkeeping.Round)
 			log.Info("reviewer session", "pr", pr.Number, "round", bookkeeping.Round, "mail", len(inbox), "stages", strings.Join(stages, ","))

@@ -441,11 +441,12 @@ writes reaches the person who merges except its outcome note, which is why the
 note has to stand on its own.
 
 **Mail:** may send to `developer` only, with `pr` and `issue`, one
-consolidated message per round listing every point with file/line and the
-expected change. It also *receives* mail addressed to `reviewer` — in practice
-from a human (`bees mail send --from human --to reviewer`) — about the issue or
-the pull request: it is delivered to the next reviewer session, in review mode
-and in checks mode alike, and marked read afterwards. Mail from `human` is a
+consolidated message per round, its points grouped by stage, each listing the
+file/line and the expected change. It also *receives* mail addressed to
+`reviewer` — in practice from a human
+(`bees mail send --from human --to reviewer`) — about the issue or the pull
+request: it is delivered to the next reviewer session, in review mode and in
+checks mode alike, and marked read afterwards. Mail from `human` is a
 direction it follows literally, even where its prompt says otherwise.
 
 **Outcomes and what the orchestrator does:**

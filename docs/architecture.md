@@ -368,8 +368,12 @@ stateDiagram-v2
   worker never has to reject a stage name. `product-fit` is the one stage with
   a source of truth outside the diff and the issue: it needs the work item's
   parent feature, so the worker makes the `ParentIssue` GraphQL query only when
-  that stage is configured — off by default, and one call per review round when
-  it is on. A work item with no parent renders the stage without one.
+  that stage is configured — off by default, and one call per review round
+  when it is on. A work item with no parent renders the stage without one, and
+  so does one whose lookup fails: the failure is reported as the
+  `work-item-parent` degraded operation rather than costing the review,
+  because a silent nil would reach the verdict as "this work item belongs to
+  no feature".
 - **Prereview stage** (`pre_review_checks`, on by default, independent of
   `auto_merge`). Between the developer and the first review the worker calls
   `awaitChecks` with a deadline of `pre_review_checks_timeout`, so the reviewer
