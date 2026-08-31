@@ -111,6 +111,7 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 	}
 
 	started := s.now()
+	s.publish(sessionEvent(EventSessionStarted, spec))
 	res, err := s.runner.Run(ctx, session.Request{
 		Name:         spec.name,
 		Role:         role,
@@ -126,6 +127,9 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 	// tick — including when the session failed, which frees the slot too.
 	s.signal()
 	if err != nil {
+		failed := sessionEvent(EventSessionEnded, spec)
+		failed.Outcome, failed.Err = "failed", err.Error()
+		s.publish(failed)
 		return nil, err
 	}
 	// Whatever the session created must stay visible to the factory.
@@ -133,7 +137,22 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 	s.countSession(spec.role, d.ConsolidateNotes)
 	s.record(spec, res)
 	s.summarize(spec, res)
+	s.publish(endEvent(spec, res))
 	return res, nil
+}
+
+// endEvent describes a finished session for the event stream: what it
+// reported, what it cost and how long it took. A developer session that
+// opened a pull request names it, exactly as the summary line does, so a
+// view learns the number as soon as the session is over.
+func endEvent(spec sessionSpec, res *session.Result) Event {
+	ev := sessionEvent(EventSessionEnded, spec)
+	ev.Outcome, ev.Note = outcomeOf(res)
+	ev.CostUSD, ev.Duration = res.CostUSD, res.Duration
+	if res.Outcome.PR > 0 {
+		ev.PR = res.Outcome.PR
+	}
+	return ev
 }
 
 // consolidateNotes decides whether the session about to run is also asked

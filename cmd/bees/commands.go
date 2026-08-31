@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -308,10 +309,41 @@ func parseRoles(list string) (map[string]bool, error) {
 	return out, nil
 }
 
+// isTerminal reports whether f is a terminal. It is a variable so tests can
+// answer the question without one.
+var isTerminal = func(f *os.File) bool {
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
+}
+
+// tuiMode decides whether `bees run` takes over the terminal: only when a
+// person asked for it (no --no-tui) and stdout is one. Redirected to a file
+// or a pipe, or run as a service, the factory logs and nothing else.
+func tuiMode(noTUI bool, stdout *os.File) bool {
+	if noTUI {
+		return false
+	}
+	return isTerminal(stdout)
+}
+
+// logTUIMode is what `bees run` calls: it makes the decision and records it
+// for the log file. The renderer itself is #253, so today nothing reads the
+// answer — and the record is a debug one, so `bees run` prints exactly what
+// it printed before the flag existed, --no-tui or not.
+func logTUIMode(log *slog.Logger, noTUI bool, stdout *os.File) bool {
+	on := tuiMode(noTUI, stdout)
+	log.Debug("terminal UI", "enabled", on)
+	return on
+}
+
 func newRunCmd(g *globalFlags) *cobra.Command {
 	var once bool
 	var roles string
 	var skipDoctor bool
+	var noTUI bool
 	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "Run the factory until interrupted",
@@ -344,12 +376,14 @@ anyway; ` + "`bees tick`" + ` and ` + "`bees exec`" + ` never run the preflight.
 			if s.OnlyRoles, err = parseRoles(roles); err != nil {
 				return err
 			}
+			logTUIMode(a.log, noTUI, os.Stdout)
 			return s.Run(cmd.Context())
 		},
 	}
 	cmd.Flags().BoolVar(&once, "once", false, "do a single pass and exit when its sessions finish")
 	cmd.Flags().StringVar(&roles, "roles", "", "comma-separated roles to run (default: all enabled)")
 	cmd.Flags().BoolVar(&skipDoctor, "skip-doctor", false, "start without running the doctor preflight")
+	cmd.Flags().BoolVar(&noTUI, "no-tui", false, "log to the console instead of drawing the terminal UI")
 	return cmd
 }
 
