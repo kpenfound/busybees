@@ -348,9 +348,12 @@ with comment ids and the exact `gh` reply commands, and — from
 [conflicts with the default branch](workflow.md#conflicts-with-the-default-branch)),
 the round number and limit, its notes. It runs in a worktree on `bees/issue-N` (prefix
 from `project.branch_prefix`), already based on the default branch. The session
-environment carries `push.autoSetupRemote=true` and `push.default=current`
-(via `GIT_CONFIG_*` variables, so the clone's own git config is untouched) and a
-plain `git push` just works.
+environment carries `push.autoSetupRemote=true` and `push.default=current` (via
+`GIT_CONFIG_*` variables, so the clone's own git config is untouched) and a
+plain `git push` just works. With [`[github]`](configuration.md#github) set the
+session also carries the factory's `GH_TOKEN`, its commit identity and a git
+credential helper of gh's, so what it pushes, commits and opens is the bot's
+rather than the machine owner's.
 
 **Does on GitHub:** pushes the branch; opens the PR with `gh pr create` (body
 must contain `Closes #N`, a summary, and how it was tested) or updates the

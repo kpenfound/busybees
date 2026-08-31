@@ -189,13 +189,13 @@ func formatActivity(repo string, pr int, activity []github.Activity) string {
 //
 // One failing item does not stop the others: each is logged and skipped.
 //
-// Known narrowing with [github] set (#263): the listing asks GitHub for the
-// items the login bees acts as authored - it names that login since #243, but
-// it asked about the same account before - so it sees what bees' own code
-// created (already born matching the filter, since issues.Create applies it)
-// and not the pull requests a session opened with its own gh. The main path -
-// ensureVisible in the developer worker - is unaffected; it is this backstop
-// that narrows.
+// The listing asks GitHub for the items the login bees acts as authored - it
+// names that login since #243, but it asked about the same account before.
+// Since #242 a session's gh carries the same token, so a pull request a
+// session opened is that login's too and the backstop covers it again; what
+// it no longer covers with [github] set is an item a person opened by hand,
+// which is now their account's rather than the factory's. Repairing those is
+// `bees doctor --fix`, as it is for anything that predates the filter.
 func (s *Scheduler) adoptCreated(ctx context.Context, since time.Time) {
 	items, err := s.gh.ListCreatedSince(ctx, since)
 	if s.op("list-created", err, "visibility backstop: list created items", "err", err) {

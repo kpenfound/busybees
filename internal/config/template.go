@@ -175,8 +175,8 @@ label = "{{.Label}}"
 # A token for that login. A "$VAR" reference is expanded from the environment
 # bees runs in, so the secret itself stays out of this file.
 {{if .GitHubToken}}token = "{{.GitHubToken}}"{{else}}#token = "$BEES_GITHUB_TOKEN"{{end}}
-# Identity for commits made by developer sessions. Recorded here, but not
-# applied yet: sessions still commit with the machine's own git identity.
+# Identity for commits made by developer sessions. Either may be set on its
+# own; whichever is unset stays the machine's own git identity.
 #git_name = "busybees"
 #git_email = "busybees@example.com"
 

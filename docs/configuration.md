@@ -155,15 +155,16 @@ running it. `[github]` gives the orchestrator a login of its own.
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `login` | string | `""` | GitHub login the factory acts as. It is what `bees init` verifies the token against and what `bees status` reports; it is not itself a credential. |
-| `token` | string | `""` | A token for `login`, passed to every `gh` call the orchestrator makes as `GH_TOKEN`. A `"$VAR"` or `"${VAR}"` value is expanded from the environment bees runs in, so the secret itself stays out of `bees.toml`. A reference that expands to nothing is rejected at load time, naming the variable. |
-| `git_name` | string | `""` | Name for commits made by developer sessions. Recorded here but not applied yet: sessions still commit with the machine's own git identity. |
-| `git_email` | string | `""` | Email for those commits, with the same caveat. |
+| `token` | string | `""` | A token for `login`, passed as `GH_TOKEN` to every `gh` call the orchestrator makes and to every session it runs. A `"$VAR"` or `"${VAR}"` value is expanded from the environment bees runs in, so the secret itself stays out of `bees.toml`. A reference that expands to nothing is rejected at load time, naming the variable. |
+| `git_name` | string | `""` | Name for commits made by developer sessions, given to them as `GIT_AUTHOR_NAME` and `GIT_COMMITTER_NAME`. |
+| `git_email` | string | `""` | Email for those commits, as `GIT_AUTHOR_EMAIL` and `GIT_COMMITTER_EMAIL`. |
 
 `login` and `token` are set together: either alone is rejected with an error naming
 the key. A login on its own would make bees report an account it does not act as, and
 a token on its own leaves nothing to report without asking GitHub who it belongs to.
 `git_name` and `git_email` are an identity rather than a credential, so they are
-accepted on their own.
+accepted on their own, and either may be set without the other — whichever is unset
+leaves that half of the commit identity to the machine's own git configuration.
 
 With the table unset — the default, and what every `bees.toml` written before it looks
 like — nothing is injected and the factory behaves exactly as it always has.
@@ -174,17 +175,37 @@ login = "busybees-bot"
 token = "$BEES_GITHUB_TOKEN"
 ```
 
-**What the token covers.** Every GitHub call bees makes with its own code: polling for
-issues and pull requests, the label edits it makes, the review requests and escalation
-comments it posts, `bees init`'s label creation, `bees doctor`'s repository checks, and
-everything `bees issue`, `bees mail` and the built-in MCP tools do — a tool a session
-calls runs in bees' code, so it acts as the bot too. What the token does not cover is
-`gh` run by a Claude session itself: its `gh pr create`, its pushes and its commits
-still come from the machine's account. So the [comment marker](roles.md#common-ground)
-stays necessary — bee comments still arrive under your login from one half of the
-factory. Where a comment does come from the bot, the orchestrator reads its author as
-well as its marker: anything that login posted is the factory's, including the
+**What the token covers.** Everything the factory does on GitHub. That is every call
+bees makes with its own code — polling for issues and pull requests, the label edits
+it makes, the review requests and escalation comments it posts, `bees init`'s label
+creation, `bees doctor`'s repository checks, and everything `bees issue`, `bees mail`
+and the built-in MCP tools do — and, since the sessions get the token too, the `gh` a
+Claude session runs itself: its `gh pr create`, its `gh api` calls and the pushes it
+makes. Its commits are the bot's as well, when `git_name` and `git_email` are set.
+
+The [comment marker](roles.md#common-ground) stays necessary all the same, because
+`[github]` is optional: with the table unset every comment still arrives under your
+own login. Where a comment does come from the bot, the orchestrator reads its author
+as well as its marker — anything that login posted is the factory's, including the
 escalation comment, which carries no marker.
+
+**What sessions get.** A session runs with `GH_TOKEN` set to the token, with
+`GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL` and `GIT_COMMITTER_NAME`/`GIT_COMMITTER_EMAIL`
+from `git_name`/`git_email`, and with `credential.helper=!gh auth git-credential`
+configured for git — reset first, so a credential helper of your own does not answer a
+push before gh's does. Your stored credentials are neither read nor written. A session
+started with `[github]` unset gets none of these and behaves exactly as it always has.
+`bees` sets git configuration through `GIT_CONFIG_COUNT` and friends, and leaves the
+whole block alone when you have set `GIT_CONFIG_COUNT` yourself.
+
+**What the token needs.** A fine-grained personal access token, or a GitHub App
+installation token, scoped to the one repository with **write** access to *Issues*,
+*Pull requests* and *Contents*, and **read** access to *Metadata*. Issues and pull
+requests cover the labels, comments, milestones and reviews; contents covers the
+pushes developer sessions make; metadata is required by GitHub alongside the rest. A
+classic token works too, with the `repo` scope. `bees init` checks the token before
+the factory ever uses it: that GitHub accepts it, that it belongs to `login`, and that
+it can read the repository.
 
 ### `filter.assignee = "@me"` still means you
 
@@ -838,4 +859,6 @@ it inherited, plus:
 | `BEES_REVIEW_MODE` | `checks` for the reviewer's checks-mode sessions (diagnosing failed checks); unset otherwise. |
 | `SHELL` | The configured `shell`, when set. |
 | *configured `env`* | Every `[global.env]` / `[roles.<name>.env]` entry, `$VAR`-expanded from the bees environment. Set before the `BEES_*` variables, so those always win. |
-| `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_0`/`VALUE_0`, `GIT_CONFIG_KEY_1`/`VALUE_1` | `push.autoSetupRemote=true` and `push.default=current`, so a plain `git push` works on a fresh branch without touching the clone's git config. Only set when `GIT_CONFIG_COUNT` is not already in the bees environment. |
+| `GH_TOKEN` | [`github.token`](#github), when one is configured, so the session's own `gh` acts as the factory. Set with the `BEES_*` variables, after the configured `env`, so a role cannot give itself another identity. |
+| `GIT_AUTHOR_NAME`, `GIT_COMMITTER_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_EMAIL` | [`github.git_name`](#github) and `github.git_email`, when set, so a session's commits are the factory's. |
+| `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_n`/`VALUE_n` | `push.autoSetupRemote=true` and `push.default=current`, so a plain `git push` works on a fresh branch without touching the clone's git config; plus an empty `credential.helper` and `credential.helper=!gh auth git-credential` when `github.token` is set, so the push authenticates as the factory rather than through your stored credentials. `GIT_CONFIG_COUNT` is derived from the entries. Only set when `GIT_CONFIG_COUNT` is not already in the bees environment. |

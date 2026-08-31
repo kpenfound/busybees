@@ -259,9 +259,10 @@ type GitHub struct {
 	// from the environment bees runs in, so the secret need not be written
 	// into bees.toml. Read it through ResolvedToken, never directly.
 	Token string `toml:"token" json:"token"`
-	// GitName and GitEmail are the identity for commits the developer makes.
-	// They are recorded here but not applied yet: developer sessions still
-	// commit with the machine's own git identity.
+	// GitName and GitEmail are the identity for commits the developer makes:
+	// a session gets them as GIT_AUTHOR_* and GIT_COMMITTER_*. They are
+	// independent of Token and of each other — whichever is unset leaves that
+	// half of the identity to the machine's own git configuration.
 	GitName  string `toml:"git_name" json:"git_name"`
 	GitEmail string `toml:"git_email" json:"git_email"`
 }
