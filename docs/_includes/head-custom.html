@@ -1,0 +1,54 @@
+<!-- start custom head snippets, customize with your own _includes/head-custom.html file -->
+
+<!-- Setup Google Analytics -->
+{% include head-custom-google-analytics.html %}
+
+<!-- You can set your favicon here -->
+<!-- link rel="shortcut icon" type="image/x-icon" href="{{ '/favicon.ico' | relative_url }}" -->
+
+<!--
+  Render ```mermaid fenced blocks as diagrams.
+
+  GitHub renders them itself when the Markdown is read in the repository; the
+  published site cannot, because GitHub Pages builds it with its own Jekyll and
+  will not run a third-party plugin. So it is done in the browser instead:
+  mermaid is loaded from a CDN, at a pinned version so the site cannot break
+  under us, and only on pages that actually contain a diagram.
+
+  Everything above this comment is cayman's own _includes/head-custom.html (the
+  theme includes this file, so overriding it replaces that content); everything
+  below is ours. The pages themselves stay plain Markdown -- no front matter,
+  no Liquid, nothing that would spoil reading them on GitHub.
+
+  kramdown emits a mermaid block as `<pre><code class="language-mermaid">`,
+  which mermaid does not recognise, so each one is swapped for the
+  `<div class="mermaid">` it does.
+-->
+<script type="module">
+  const blocks = document.querySelectorAll('pre > code.language-mermaid');
+  if (blocks.length > 0) {
+    // Imported before anything is replaced: if the CDN is unreachable the page
+    // keeps the code blocks it has today rather than losing them.
+    const { default: mermaid } = await import('https://cdn.jsdelivr.net/npm/mermaid@11.17.2/dist/mermaid.esm.min.mjs');
+    mermaid.initialize({ startOnLoad: false });
+
+    const nodes = [];
+    for (const code of blocks) {
+      const source = code.textContent;
+      // A block mermaid cannot parse keeps its code block: readable source
+      // beats mermaid's error card, and the diagram is broken on GitHub too.
+      if (await mermaid.parse(source, { suppressErrors: true })) {
+        const div = document.createElement('div');
+        div.className = 'mermaid';
+        div.textContent = source;
+        code.parentNode.replaceWith(div);
+        nodes.push(div);
+      } else {
+        console.warn('mermaid: leaving an unparseable block as source\n' + source);
+      }
+    }
+    await mermaid.run({ nodes });
+  }
+</script>
+
+<!-- end custom head snippets -->
