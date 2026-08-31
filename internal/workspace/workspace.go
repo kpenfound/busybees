@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // Workspace is a temporary directory containing a git worktree.
@@ -37,6 +38,15 @@ type Manager struct {
 	Remote string
 	// Keep leaves workspaces on disk after Remove (debugging).
 	Keep bool
+
+	// mu serialises every operation that touches the main clone's .git
+	// directory. Git commands on one repository are not concurrency-safe
+	// against each other: `git fetch` enumerates .git/worktrees/<id>/HEAD to
+	// build its "have" set, so it can read an entry that a concurrent `git
+	// worktree add` is still writing and fail with "bad object
+	// worktrees/<id>/HEAD". The scheduler runs developer workers and the three
+	// singletons against one Manager, so those really do overlap.
+	mu sync.Mutex
 }
 
 // NewManager returns a manager. When root is empty a directory under the
@@ -63,6 +73,8 @@ func Git(ctx context.Context, dir string, args ...string) (string, error) {
 
 // Fetch updates the main clone from the remote.
 func (m *Manager) Fetch(ctx context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	_, err := Git(ctx, m.MainRepo, "fetch", "--prune", m.Remote)
 	return err
 }
@@ -70,6 +82,8 @@ func (m *Manager) Fetch(ctx context.Context) error {
 // Detached creates a workspace with a detached checkout of remote/<ref>
 // (used by roles that only read or test the default branch).
 func (m *Manager) Detached(ctx context.Context, name, ref string) (*Workspace, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	ws, err := m.prepare(name)
 	if err != nil {
 		return nil, err
@@ -85,6 +99,8 @@ func (m *Manager) Detached(ctx context.Context, name, ref string) (*Workspace, e
 // is checked out tracking the remote; if it exists only locally it is reused;
 // otherwise it is created from remote/<base>.
 func (m *Manager) Branch(ctx context.Context, name, branch, base string) (*Workspace, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	ws, err := m.prepare(name)
 	if err != nil {
 		return nil, err
@@ -122,6 +138,8 @@ func (m *Manager) Branch(ctx context.Context, name, branch, base string) (*Works
 
 // Remove deletes the worktree and temp directory (unless Keep is set).
 func (m *Manager) Remove(ctx context.Context, ws *Workspace) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if ws == nil {
 		return nil
 	}
@@ -136,10 +154,14 @@ func (m *Manager) Remove(ctx context.Context, ws *Workspace) error {
 
 // Prune removes stale worktree metadata (e.g. after a crash).
 func (m *Manager) Prune(ctx context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	_, err := Git(ctx, m.MainRepo, "worktree", "prune")
 	return err
 }
 
+// prepare allocates the temp directory a workspace lives in. It is called
+// with m.mu held; it must not take the lock itself.
 func (m *Manager) prepare(name string) (*Workspace, error) {
 	if err := os.MkdirAll(m.Root, 0o755); err != nil {
 		return nil, err
@@ -151,6 +173,7 @@ func (m *Manager) prepare(name string) (*Workspace, error) {
 	return &Workspace{Root: root, RepoDir: filepath.Join(root, filepath.Base(root)), MainRepo: m.MainRepo}, nil
 }
 
+// refExists is called with m.mu held; it must not take the lock itself.
 func (m *Manager) refExists(ctx context.Context, ref string) bool {
 	_, err := Git(ctx, m.MainRepo, "rev-parse", "--verify", "--quiet", ref)
 	return err == nil
