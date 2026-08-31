@@ -32,6 +32,18 @@ type Labels struct {
 	// state label. Only a person removes it, and that removal is the
 	// approval to break the feature into work items.
 	Proposal string // bees:proposal
+	// Planning marks a feature or feedback issue a person and the product
+	// manager are still agreeing on. While it is there the product manager
+	// only discusses the issue: it replies to every fresh comment with
+	// questions, options or a draft, and breaks nothing down. Not a state
+	// label — an issue in planning keeps whatever state it has. Only a
+	// person adds or removes it.
+	Planning string // bees:planning
+	// Planned marks an issue a person and the product manager have agreed:
+	// the person ends planning by swapping Planning for it, and the product
+	// manager's next run treats the issue as settled and breaks it down.
+	// Not a state label. Only a person adds or removes it.
+	Planned string // bees:planned
 	// Priority marks work a person wants built next. It is not a state
 	// label and nothing in the factory removes it. Two roles may add it:
 	// the project manager, to a work item that unblocks the factory
@@ -68,6 +80,8 @@ func LabelsFor(base string) Labels {
 		Feedback:   base + ":feedback",
 		Question:   base + ":question",
 		Proposal:   base + ":proposal",
+		Planning:   base + ":planning",
+		Planned:    base + ":planned",
 		Priority:   base + ":priority",
 		Triage:     base + ":triage",
 		Ready:      base + ":ready",
@@ -123,6 +137,8 @@ func (l Labels) All() []LabelSpec {
 		{l.Feedback, "C5DEF5", "Feature idea, product feedback or bug report for the product manager"},
 		{l.Question, "BFD4F2", "The product manager is waiting for a person to answer"},
 		{l.Proposal, "D4C5F9", "Feature issue a bee proposed; a person must approve it before breakdown"},
+		{l.Planning, "6F42C1", "A person and the product manager are agreeing this issue; discussion only, no breakdown"},
+		{l.Planned, "0052CC", "Agreed with a person: the product manager breaks it down on its next run"},
 		{l.Priority, "E99695", "A person wants this next: dispatched before the rest of the ready queue"},
 		{l.Triage, "E4E669", "Needs refinement by the project manager"},
 		{l.Ready, "0E8A16", "Detailed enough for a developer to pick up"},
