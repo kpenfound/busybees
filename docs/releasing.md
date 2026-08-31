@@ -78,12 +78,16 @@ A local `go build ./cmd/bees` passes no such flag and reports `dev` (or
 `dev (<commit>)` when Go's VCS stamps are available) instead. The full set of
 cases is in the [`bees version`](cli.md#bees-version) reference.
 
-## One-time repository setup
+## Actions permissions
 
-The workflow creates the release with the automatic `GITHUB_TOKEN` and so
-declares `permissions: contents: write`. That is enough on a repository whose
-default workflow permissions are read **or** write. If Settings → Actions →
-General → Workflow permissions is set to "Read repository contents" *and*
-"Allow GitHub Actions to create and approve pull requests" is off, confirm
-the job may still raise its own permissions — otherwise `gh release create`
-fails with a 403 on the first tag.
+The workflow creates the release with the automatic `GITHUB_TOKEN` and
+declares `permissions: contents: write` on its `publish` job. Settings →
+Actions → General → Workflow permissions sets the *default* a job's token
+starts from; an explicit `permissions:` block raises it, so the workflow
+works whether that setting is "Read repository contents and packages
+permissions" or "Read and write permissions". (The "Allow GitHub Actions to
+create and approve pull requests" checkbox next to it is about pull
+requests, not releases.)
+
+If `gh release create` ever fails with a 403, set that setting to "Read and
+write permissions" and re-push the tag.
