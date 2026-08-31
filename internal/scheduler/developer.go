@@ -480,6 +480,16 @@ var workerStages = []string{"develop", "prereview", "review", "checks"}
 // whose labels have left the review loop starts a fresh round. An issue with
 // nothing remembered (the first run, and every issue that existed before the
 // stage was recorded) starts exactly where it always did.
+//
+// The whole record belongs to the pull request it was written for, and is
+// dropped for any other one: both tests below compare the recorded number with
+// the open pull request the branch has now. A person can close a pull request
+// and open another on the same branch while no worker is running, and a record
+// left for the first says nothing about the second — its review has not
+// happened and its checks have not been read. A record with no number at all,
+// written before one was known, is dropped the same way: starting a stage
+// later than the truth is the expensive mistake, starting one earlier only
+// costs a session.
 func (s *Scheduler) resumeStage(log *slog.Logger, bk state.IssueState, issue github.Issue, pr *github.PR, policy config.MergePolicy) (stage, afterDevelop string, prereviewDone bool) {
 	fromLabel := "develop"
 	if pr != nil && s.stateOf(issue.Labels) == "review" {
@@ -499,15 +509,26 @@ func (s *Scheduler) resumeStage(log *slog.Logger, bk state.IssueState, issue git
 			"remembered", bk.WorkerStage, "state", s.stateOf(issue.Labels), "stage", fromLabel)
 		return fromLabel, "review", false
 	}
+	// Both pr.Number reads are safe by short-circuit: this one is only reached
+	// when stageMatchesLabels was true for a stage other than develop, which
+	// needs an open pull request either way it can be true, and the one below
+	// only when inReviewLoop was true, which needs one too.
+	if bk.WorkerStage != "develop" && bk.PR != pr.Number {
+		log.Info("the remembered stage belongs to another pull request; resuming from the label",
+			"remembered", bk.WorkerStage, "remembered_pr", bk.PR, "pr", pr.Number, "stage", fromLabel)
+		return fromLabel, "review", false
+	}
 	afterDevelop, prereviewDone = bk.AfterDevelop, bk.PreReviewDone
-	if !s.inReviewLoop(issue, pr) {
+	if !s.inReviewLoop(issue, pr) || bk.PR != pr.Number {
 		// The sub-state belongs to a pull request under review: which gate a
 		// developer round goes back to, and whether that pull request's checks
 		// have been read. develop matches any label, so without this an issue
 		// whose labels have left the review loop — bees:ready after
 		// reopenApproved sent an approved pull request back for more work —
 		// would carry a remembered after_develop of "checks" into a fresh
-		// round and merge the pull request without reviewing it.
+		// round and merge the pull request without reviewing it. The number
+		// test is the same rule for the other way the sub-state can be stale:
+		// the pull request it was written for is not the one open now.
 		afterDevelop, prereviewDone = "review", false
 	}
 	if afterDevelop != "prereview" && afterDevelop != "checks" {
