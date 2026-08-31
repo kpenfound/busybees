@@ -17,6 +17,11 @@ type TemplateData struct {
 	DefaultBranch string
 	Label         string
 	Assignee      string
+	// GitHubLogin and GitHubToken write the [github] table as active
+	// settings. They are only valid together; a file with one of them does
+	// not load.
+	GitHubLogin string
+	GitHubToken string
 	// ExplicitRepo writes repo as an active setting.
 	ExplicitRepo bool
 	// ExplicitBranch writes default_branch as an active setting. It is ignored
@@ -53,6 +58,8 @@ func Template(d TemplateData) (string, error) {
 	d.DefaultBranch = escapeTOML(d.DefaultBranch)
 	d.Label = escapeTOML(d.Label)
 	d.Assignee = escapeTOML(d.Assignee)
+	d.GitHubLogin = escapeTOML(d.GitHubLogin)
+	d.GitHubToken = escapeTOML(d.GitHubToken)
 	t, err := template.New("bees.toml").Parse(beesTOMLTemplate)
 	if err != nil {
 		return "", err
@@ -152,6 +159,26 @@ label = "{{.Label}}"
 {{if .Assignee}}assignee = "{{.Assignee}}"{{else}}#assignee = "@me"{{end}}
 # Only see items in this milestone.
 #milestone = ""
+
+#===============================================================================
+# GitHub account the factory acts as. Unset (the default) means the machine
+# owner's own gh login, so every issue, comment and label edit looks like it
+# came from the person running bees.
+#
+# login and token go together: set both, or neither. filter.assignee = "@me"
+# above is NOT affected — it says whose work the factory picks up, so it keeps
+# resolving to the person's own gh login.
+#===============================================================================
+[github]
+# GitHub login the factory acts as.
+{{if .GitHubLogin}}login = "{{.GitHubLogin}}"{{else}}#login = "busybees-bot"{{end}}
+# A token for that login. A "$VAR" reference is expanded from the environment
+# bees runs in, so the secret itself stays out of this file.
+{{if .GitHubToken}}token = "{{.GitHubToken}}"{{else}}#token = "$BEES_GITHUB_TOKEN"{{end}}
+# Identity for commits made by developer sessions. Recorded here, but not
+# applied yet: sessions still commit with the machine's own git identity.
+#git_name = "busybees"
+#git_email = "busybees@example.com"
 
 #===============================================================================
 # Scheduler

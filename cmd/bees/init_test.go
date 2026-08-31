@@ -40,6 +40,12 @@ func testInitDepsWithDoctor(table string) (initDeps, *int, *int) {
 			doctorCalls++
 			return table
 		},
+		verifyGitHub: func(_ context.Context, cfg *config.Config) (string, error) {
+			if cfg.GitHub.Configured() {
+				return cfg.GitHub.Login, nil
+			}
+			return "kyle", nil
+		},
 	}, &labelCalls, &doctorCalls
 }
 

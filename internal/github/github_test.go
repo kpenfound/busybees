@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -475,5 +477,86 @@ func TestBeeRole(t *testing.T) {
 				t.Errorf("Activity.IsBee() = %v, want %v", got, c.role != "")
 			}
 		})
+	}
+}
+
+// fakeGHOnPath puts a `gh` on PATH that reports the token it was given and
+// what it read on stdin. Tests must never reach the real gh; this one is the
+// only way to see the environment the client builds, because the Exec hooks
+// replace command execution wholesale and so never see it.
+func fakeGHOnPath(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	script := "#!/bin/sh\nprintf 'token=[%s] args=[%s] stdin=[%s]' \"$GH_TOKEN\" \"$*\" \"$(cat)\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// TestTokenReachesBothExecPaths pins that a configured token is carried by
+// every gh invocation the client makes. Both exec paths matter: run and
+// runStdin build their own command, and a token applied to only one of them
+// would leave EditBody (the --body-file - caller) acting as the wrong
+// account.
+func TestTokenReachesBothExecPaths(t *testing.T) {
+	fakeGHOnPath(t)
+	ctx := context.Background()
+
+	c := NewWithToken("acme/widgets", "ghp_bot")
+	out, err := c.Exec(ctx, "issue", "list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(out); got != "token=[ghp_bot] args=[issue list] stdin=[]" {
+		t.Errorf("Exec: %q", got)
+	}
+	out, err = c.ExecStdin(ctx, "body text", "issue", "edit", "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(out); got != "token=[ghp_bot] args=[issue edit 1] stdin=[body text]" {
+		t.Errorf("ExecStdin: %q", got)
+	}
+}
+
+// TestNoTokenInjectsNothing pins the default: with [github] unset the client
+// runs gh exactly as it always has, inheriting the machine's own
+// authentication rather than being handed an empty GH_TOKEN (which gh would
+// read as "no credentials" and fail on).
+func TestNoTokenInjectsNothing(t *testing.T) {
+	fakeGHOnPath(t)
+	t.Setenv("GH_TOKEN", "the-machines-own")
+	ctx := context.Background()
+
+	c := New("acme/widgets")
+	if c.Token != "" {
+		t.Fatalf("New set a token: %q", c.Token)
+	}
+	// Printing the whole environment would bury the point: report only what
+	// the builder added on top of the process's own.
+	if cmd := c.command(ctx, "issue", "list"); cmd.Env != nil {
+		var tokens []string
+		for _, e := range cmd.Env {
+			if strings.HasPrefix(e, "GH_TOKEN=") {
+				tokens = append(tokens, e)
+			}
+		}
+		t.Errorf("command builds an explicit environment without a token (%d vars, GH_TOKEN entries %q)", len(cmd.Env), tokens)
+	}
+	out, err := c.Exec(ctx, "issue", "list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(out); got != "token=[the-machines-own] args=[issue list] stdin=[]" {
+		t.Errorf("Exec: %q", got)
+	}
+	// And a configured token wins over the one the machine already has.
+	c = NewWithToken("acme/widgets", "ghp_bot")
+	if out, err = c.Exec(ctx, "issue", "list"); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(out); got != "token=[ghp_bot] args=[issue list] stdin=[]" {
+		t.Errorf("configured token does not win: %q", got)
 	}
 }

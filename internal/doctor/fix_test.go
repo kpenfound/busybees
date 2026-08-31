@@ -25,7 +25,10 @@ type repoGH struct {
 	issues     []*github.Issue
 	prs        []*github.PR
 	milestones []github.Milestone
-	// login is what `gh api user` answers, for filter.assignee = "@me".
+	// login is who is running bees, for filter.assignee = "@me". It is
+	// answered through Deps.CurrentUser, never through this fake: resolving
+	// "@me" with the client that carries github.token would answer as the
+	// account the factory acts as.
 	login string
 	// failWrites, when set, is the error every mutating call returns.
 	failWrites error
@@ -72,8 +75,6 @@ func (g *repoGH) answer(args []string) ([]byte, error) {
 			}
 		}
 		return mustJSON(g.t, out), nil
-	case joined == "api user --jq .login":
-		return []byte(g.login + "\n"), nil
 	case strings.Contains(joined, "/milestones?"):
 		return mustJSON(g.t, g.milestones), nil
 	case len(args) >= 3 && strings.HasSuffix(args[len(args)-3], "/assignees"):
@@ -251,6 +252,7 @@ func fixFixture(t *testing.T, gh *repoGH, extraFilter string) *fixture {
 	t.Helper()
 	f := setup(t, "\n[filter]\n"+extraFilter, nil)
 	gh.install(f.GitHub)
+	f.CurrentUser = func(context.Context) (string, error) { return gh.login, nil }
 	f.gh = nil // the mutable fake replaced the table-driven one
 	return f
 }

@@ -34,6 +34,8 @@ type initOptions struct {
 	remote        string
 	label         string
 	assignee      string
+	githubLogin   string
+	githubToken   string
 	print         bool
 	noLabels      bool
 }
@@ -44,6 +46,9 @@ type initDeps struct {
 	currentRepo func(ctx context.Context, dir string) (string, error)
 	repoBranch  func(ctx context.Context, repo string) (string, error)
 	syncLabels  func(ctx context.Context, cfg *config.Config) error
+	// verifyGitHub checks the configured token and returns the login the
+	// factory will act as.
+	verifyGitHub func(ctx context.Context, cfg *config.Config) (string, error)
 	// doctor renders the full doctor table for the configuration init wrote,
 	// role checks included. It never fails init: the point is to show what is
 	// left to set up.
@@ -52,11 +57,12 @@ type initDeps struct {
 
 func defaultInitDeps() initDeps {
 	return initDeps{
-		checkGH:     versions.CheckGH,
-		currentRepo: github.CurrentRepo,
-		repoBranch:  func(ctx context.Context, repo string) (string, error) { return github.New(repo).DefaultBranch(ctx) },
-		syncLabels:  syncLabels,
-		doctor:      doctorReport,
+		checkGH:      versions.CheckGH,
+		currentRepo:  github.CurrentRepo,
+		repoBranch:   func(ctx context.Context, repo string) (string, error) { return github.New(repo).DefaultBranch(ctx) },
+		syncLabels:   syncLabels,
+		verifyGitHub: verifyGitHubAccount,
+		doctor:       doctorReport,
 	}
 }
 
@@ -93,6 +99,8 @@ the directory exactly as it found it.`,
 	cmd.Flags().StringVar(&o.remote, "remote", config.DefaultRemote, "git remote the factory pushes to")
 	cmd.Flags().StringVar(&o.label, "label", config.DefaultLabel, "visibility label")
 	cmd.Flags().StringVar(&o.assignee, "assignee", "", "only see issues assigned to this login (\"@me\" for yourself)")
+	cmd.Flags().StringVar(&o.githubLogin, "github-login", "", "GitHub login the factory acts as (default: your own gh account)")
+	cmd.Flags().StringVar(&o.githubToken, "github-token", "", "token for --github-login; pass '$VAR' to read it from the environment instead of writing it into bees.toml")
 	cmd.Flags().BoolVar(&o.print, "print", false, "print the template instead of writing it")
 	cmd.Flags().BoolVar(&o.noLabels, "no-labels", false, "do not create GitHub labels")
 	return cmd
@@ -134,6 +142,8 @@ func runInit(ctx context.Context, o initOptions, d initDeps) error {
 			DefaultBranch:  branch,
 			Label:          o.label,
 			Assignee:       o.assignee,
+			GitHubLogin:    o.githubLogin,
+			GitHubToken:    o.githubToken,
 			ExplicitRepo:   o.repo != "",
 			ExplicitBranch: o.defaultBranch != "" || (o.repo != "" && branch != ""),
 		})
@@ -170,6 +180,13 @@ func runInit(ctx context.Context, o initOptions, d initDeps) error {
 	if err := cfg.Resolve(ctx); err != nil {
 		return fmt.Errorf("%w (pass --repo owner/name and --default-branch <name>, or set project.repo / project.default_branch after creating bees.toml with bees init --print)", err)
 	}
+	// Nothing is written until the account the factory will act as has been
+	// checked: a token that cannot read the repository would fail on the very
+	// next step (creating the labels) and leave a half-set-up directory.
+	login, err := d.verifyGitHub(ctx, cfg)
+	if err != nil {
+		return err
+	}
 
 	// Validated: from here on the writes happen.
 	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
@@ -188,6 +205,9 @@ func runInit(ctx context.Context, o initOptions, d initDeps) error {
 		if err := d.syncLabels(ctx, cfg); err != nil {
 			return fmt.Errorf("%w (run bees labels sync to retry creating the labels)", err)
 		}
+	}
+	if login != "" {
+		fmt.Printf("acting on GitHub as %s\n", login)
 	}
 	// A check that fails is not an init failure: bees.toml and the labels are
 	// written, and the table is the list of what is left to set up.
@@ -229,7 +249,7 @@ func ignoreStateDir(ctx context.Context, cfg *config.Config) {
 }
 
 func syncLabels(ctx context.Context, cfg *config.Config) error {
-	gh := github.New(cfg.Project.Repo)
+	gh := githubClient(cfg)
 	for _, l := range cfg.Labels().All() {
 		if err := gh.EnsureLabel(ctx, l.Name, l.Color, l.Description); err != nil {
 			return err
@@ -428,10 +448,10 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 			if asJSON {
 				return json.NewEncoder(os.Stdout).Encode(map[string]any{
 					"status": st, "unread_mail": counts, "today": today, "notes_bytes": notesBytes(rows),
-					"work_hours": workHoursJSON(cfg.Scheduler, now),
+					"work_hours": workHoursJSON(cfg.Scheduler, now), "acting_as": cfg.GitHub.Login,
 				})
 			}
-			fmt.Printf("repo: %s   state: %s\n", cfg.Project.Repo, cfg.StateDir())
+			fmt.Printf("repo: %s   state: %s%s\n", cfg.Project.Repo, cfg.StateDir(), actingAs(cfg))
 			fmt.Println(schedulerLine(st, now))
 			fmt.Println(todayText(today))
 			fmt.Println(workHoursLine(cfg.Scheduler, st, now))
