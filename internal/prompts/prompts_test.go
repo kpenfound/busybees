@@ -26,23 +26,24 @@ func sample() Data {
 		Filter:  config.Filter{Label: "bees", Assignee: "kyle"},
 		Labels:  config.LabelsFor("bees"),
 		WorkDir: "/tmp/ws", Branch: "bees/issue-4", StateDir: "/s", SessionDir: "/s/sessions/1", NotesFile: "/s/notes/x.md",
-		Notes:         "remember this",
-		Inbox:         []mail.Message{{ID: "m1", From: "reviewer", To: "developer", Subject: "Review round 1", Body: "please fix", PR: 9, CreatedAt: sampleMailTime}},
-		Issue:         &github.Issue{Number: 4, Title: "Add thing", Body: "details", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:feature"}}, Author: github.Author{Login: "kyle"}},
-		PR:            &github.PR{Number: 9, Title: "Add thing", HeadRefName: "bees/issue-4", BaseRefName: "main", Author: github.Author{Login: "bot"}},
-		Issues:        []github.Issue{{Number: 6, Title: "Waiting", Labels: []github.Label{{Name: "bees:triage"}, {Name: "bees:bug"}}}, {Number: 7, Title: "Building", Labels: []github.Label{{Name: "bees:in-progress"}}}},
-		TriageIssues:  []github.Issue{{Number: 5, Title: "Other", Body: "b"}},
-		MergedPRs:     []github.PR{{Number: 8, Title: "Merged", Body: "x"}},
-		Milestones:    []github.Milestone{{Number: 1, Title: "v1", Description: "first\nrelease"}},
-		Features:      []github.Issue{{Number: 12, Title: "Exports", Labels: []github.Label{{Name: "bees:feature"}, {Name: "bees:question"}}}},
-		Progress:      map[int]github.SubIssueSummary{12: {Total: 4, Completed: 2}},
-		Parent:        &github.Parent{Number: 12, Title: "Exports"},
-		Parents:       map[int]github.Parent{5: {Number: 12, Title: "Exports"}, 6: {Number: 12, Title: "Exports"}},
-		Blockers:      map[int][]int{5: {37}, 6: {37}},
-		FreshFeatures: []github.Issue{{Number: 13, Title: "Search", Body: "find things", Author: github.Author{Login: "kyle"}}},
-		Feedback:      []github.Issue{{Number: 9, Title: "Dark mode please", Body: "would be nice", Author: github.Author{Login: "kyle"}, Comments: []github.Comment{{Author: github.Author{Login: "kyle"}, Body: "also on mobile"}}}},
-		MaxSize:       "l",
-		Round:         1, MaxRounds: 3,
+		Notes:             "remember this",
+		Inbox:             []mail.Message{{ID: "m1", From: "reviewer", To: "developer", Subject: "Review round 1", Body: "please fix", PR: 9, CreatedAt: sampleMailTime}},
+		Issue:             &github.Issue{Number: 4, Title: "Add thing", Body: "details", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:feature"}}, Author: github.Author{Login: "kyle"}},
+		PR:                &github.PR{Number: 9, Title: "Add thing", HeadRefName: "bees/issue-4", BaseRefName: "main", Author: github.Author{Login: "bot"}},
+		Issues:            []github.Issue{{Number: 6, Title: "Waiting", Labels: []github.Label{{Name: "bees:triage"}, {Name: "bees:bug"}}}, {Number: 7, Title: "Building", Labels: []github.Label{{Name: "bees:in-progress"}}}},
+		TriageIssues:      []github.Issue{{Number: 5, Title: "Other", Body: "b"}},
+		MergedPRs:         []github.PR{{Number: 8, Title: "Merged", Body: "x"}},
+		Milestones:        []github.Milestone{{Number: 1, Title: "v1", Description: "first\nrelease"}},
+		Features:          []github.Issue{{Number: 12, Title: "Exports", Labels: []github.Label{{Name: "bees:feature"}, {Name: "bees:question"}}}},
+		Progress:          map[int]github.SubIssueSummary{12: {Total: 4, Completed: 2}},
+		Parent:            &github.Parent{Number: 12, Title: "Exports"},
+		Parents:           map[int]github.Parent{5: {Number: 12, Title: "Exports"}, 6: {Number: 12, Title: "Exports"}},
+		Blockers:          map[int][]int{5: {37}, 6: {37}},
+		FreshFeatures:     []github.Issue{{Number: 13, Title: "Search", Body: "find things", Author: github.Author{Login: "kyle"}}},
+		CompletedFeatures: []github.Issue{{Number: 14, Title: "Import", Body: "load things", Author: github.Author{Login: "kyle"}}},
+		Feedback:          []github.Issue{{Number: 9, Title: "Dark mode please", Body: "would be nice", Author: github.Author{Login: "kyle"}, Comments: []github.Comment{{Author: github.Author{Login: "kyle"}, Body: "also on mobile"}}}},
+		MaxSize:           "l",
+		Round:             1, MaxRounds: 3,
 	}
 }
 
@@ -465,11 +466,12 @@ func TestProductManagerAttachesLooseWorkItems(t *testing.T) {
 	}
 }
 
-// productManagerHasWork has four wake conditions, and the fourth is a person's
-// comment on a proposal (internal/scheduler/singletons.go:69-98). Proposals are
-// partitioned into their own task section, so that wake leaves the fresh-feature,
-// feedback and mail sections empty: an idle rule that names only those three
-// tells the session to answer a waiting person with `idle`.
+// Two of productManagerHasWork's wake conditions leave the fresh-feature,
+// feedback and mail sections of the task empty (internal/scheduler/singletons.go):
+// a person's comment on a proposal, and — since #239 — a feature whose every
+// sub-issue has closed. Both have a task section of their own, so an idle rule
+// that names only the first three sections tells the session to answer a waiting
+// person, or to leave a finished feature open, with `idle`.
 func TestProductManagerIdleRuleCoversProposals(t *testing.T) {
 	pm, err := System(config.RoleProductManager, sample(), "")
 	if err != nil {
@@ -482,6 +484,7 @@ func TestProductManagerIdleRuleCoversProposals(t *testing.T) {
 	for _, want := range []string{
 		"read the proposals section before you conclude anything",
 		"leaves that section on its own",
+		`"Features whose work is done" closed its last work item`,
 		"report `idle` and mean it",
 	} {
 		if !strings.Contains(idle, want) {
@@ -1048,4 +1051,61 @@ func TestProductManagerRoutesAReadyToBuildAsk(t *testing.T) {
 			t.Errorf("product manager system prompt missing %q:\n%s", want, sys)
 		}
 	}
+}
+
+// A feature whose every sub-issue has closed reaches the product manager in a
+// section of its own (#239), not as a row in the feature table where the
+// scheduler's one wake for it would be easy to miss. What that section asks
+// for is a single yes/no — is the feature's original intent complete? — so it
+// must not read as an invitation to keep a finished feature open by widening
+// it. The wants are matched against the flowed task because the framing
+// sentences wrap.
+func TestProductManagerTaskPresentsCompletedFeatures(t *testing.T) {
+	d := sample()
+	d.CompletedFeatures = []github.Issue{{Number: 14, Title: "Import", Body: "load csv files",
+		Author: github.Author{Login: "kyle"}}}
+	task, err := Task(config.RoleProductManager, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := section(t, task, "## Features whose work is done")
+	for _, want := range []string{
+		"#14: Import",
+		"load csv files",
+		"is the feature's original intent complete?",
+		"`gh issue close`",
+		"not an invitation to widen it",
+	} {
+		if !strings.Contains(flowed(done), flowed(want)) {
+			t.Errorf("completed-feature section missing %q:\n%s", want, done)
+		}
+	}
+	// The count in the heading is what tells a session at a glance that the
+	// section holds an event.
+	if !strings.Contains(task, "## Features whose work is done (1)") {
+		t.Errorf("completed-feature heading does not carry the count:\n%s", task)
+	}
+
+	// With nothing complete the section says so rather than disappearing, so
+	// the absence is readable too.
+	empty, err := Task(config.RoleProductManager, func() Data { d := sample(); d.CompletedFeatures = nil; return d }())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(empty, "## Features whose work is done (0)") ||
+		!strings.Contains(empty, "_None: no feature had its last open work item closed since you last ran._") {
+		t.Errorf("empty completed-feature section is missing:\n%s", empty)
+	}
+}
+
+// section returns what stands under a heading of a rendered task prompt, up
+// to the next heading.
+func section(t *testing.T, prompt, heading string) string {
+	t.Helper()
+	_, rest, ok := strings.Cut(prompt, heading)
+	if !ok {
+		t.Fatalf("prompt has no %q heading:\n%s", heading, prompt)
+	}
+	body, _, _ := strings.Cut(rest, "\n## ")
+	return body
 }

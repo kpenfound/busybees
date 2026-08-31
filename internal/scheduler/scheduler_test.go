@@ -230,6 +230,13 @@ type fakeGH struct {
 	labels []string
 	// milestones are the open milestones of the repository.
 	milestones []github.Milestone
+	// parents maps a work item to the feature it is a sub-issue of, for the
+	// ParentIssue query. Empty means "use the hardcoded answer below": issue
+	// 1 is a sub-issue of feature 5 while that feature exists.
+	parents map[int]int
+	// parentErr makes the ParentIssue query fail for one work item, which is
+	// how a partial parent lookup is expressed: the other items still answer.
+	parentErr map[int]error
 	// errFor makes a command fail: it is keyed by the command name, either
 	// the first two arguments ("label list") or the first one ("label"), or
 	// by "requested_reviewers" and "assignees" for the review-request and
@@ -249,6 +256,14 @@ func (f *fakeGH) callCount(cmd string) int {
 		}
 	}
 	return n
+}
+
+// total counts every logged gh call, whatever it was: what a test asserting
+// that a code path costs no GitHub call measures.
+func (f *fakeGH) total() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.calls)
 }
 
 // fakeClock is a settable clock for tests that drive the scheduler loop.
@@ -384,8 +399,24 @@ func (f *fakeGH) exec(ctx context.Context, args ...string) ([]byte, error) {
 			return []byte("{}"), nil
 		}
 		if args[1] == "graphql" {
+			n := 0
+			for _, a := range args {
+				if v, ok := strings.CutPrefix(a, "number="); ok {
+					n, _ = strconv.Atoi(v)
+				}
+			}
+			if err, ok := f.parentErr[n]; ok {
+				return nil, err
+			}
+			if p, ok := f.parents[n]; ok {
+				title := "Feature"
+				if i, ok := f.issues[p]; ok {
+					title = i.Title
+				}
+				return fmt.Appendf(nil, `{"data":{"repository":{"issue":{"parent":{"number":%d,"title":%q}}}}}`, p, title), nil
+			}
 			// parent lookup: issue 1 has parent 5 when it exists
-			if strings.Contains(strings.Join(args, " "), "number=1") {
+			if n == 1 {
 				if _, ok := f.issues[5]; ok {
 					return []byte(`{"data":{"repository":{"issue":{"parent":{"number":5,"title":"Exports"}}}}}`), nil
 				}
