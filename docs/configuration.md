@@ -174,12 +174,15 @@ login = "busybees-bot"
 token = "$BEES_GITHUB_TOKEN"
 ```
 
-**What the token covers.** The orchestrator's own calls: polling for issues and pull
-requests, the label edits it makes, the review requests and escalation comments it
-posts, `bees init`'s label creation, `bees doctor`'s repository checks, and everything
-`bees issue`, `bees mail` and the built-in MCP tools do on GitHub. What it does not
-cover is `gh` run by a Claude session itself — a session's own comments, pull requests
-and commits still come from the machine's account.
+**What the token covers.** Every GitHub call bees makes with its own code: polling for
+issues and pull requests, the label edits it makes, the review requests and escalation
+comments it posts, `bees init`'s label creation, `bees doctor`'s repository checks, and
+everything `bees issue`, `bees mail` and the built-in MCP tools do — a tool a session
+calls runs in bees' code, so it acts as the bot too. What the token does not cover is
+`gh` run by a Claude session itself: its `gh pr create`, its pushes and its commits
+still come from the machine's account. So the
+[comment marker](roles.md#common-ground) stays necessary — bee comments
+still arrive under your login from one half of the factory.
 
 ### `filter.assignee = "@me"` still means you
 
@@ -229,9 +232,12 @@ Durations use Go syntax: `"30s"`, `"5m"`, `"1h30m"`.
 
 ### Notifying a person
 
-The factory and the people it works for share one GitHub account, so nothing
-the factory writes notifies anybody: the comment author *is* you, and GitHub
-sends no mail for your own comments. `scheduler.notify` says who to reach:
+By default the factory and the people it works for share one GitHub account,
+so nothing the factory writes notifies anybody: the comment author *is* you,
+and GitHub sends no mail for your own comments. (With [`[github]`](#github)
+configured the orchestrator's own comments come from the bot instead, and a
+mention in one does reach you — but the factory does not rely on that.)
+`scheduler.notify` says who to reach:
 
 ```toml
 [scheduler]

@@ -599,6 +599,18 @@ func (c *Client) DefaultBranch(ctx context.Context) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// Login returns the login this client's calls act as: the account its token
+// belongs to, or the machine's own gh user when it carries none. It goes
+// through Exec, so it answers for the client that makes the factory's calls
+// (CurrentUser, which cannot carry a token, answers for the person).
+func (c *Client) Login(ctx context.Context) (string, error) {
+	out, err := c.Exec(ctx, "api", "user", "--jq", ".login")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // CurrentRepo detects the repo for the git checkout in dir.
 func CurrentRepo(ctx context.Context, dir string) (string, error) {
 	cmd := exec.CommandContext(ctx, "gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")

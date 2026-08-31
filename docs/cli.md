@@ -35,15 +35,18 @@ project), creates the state directory, adds it to the repository's `.gitignore`
 and prints a reminder to commit that, and creates the workflow labels in the GitHub
 repository. Refuses to overwrite an existing file. `bees.toml` is meant to be committed.
 
-init validates before it writes: the current directory must be a git clone, and the
+init validates before it writes: the current directory must be a git clone, the
 configuration it is about to write must parse and resolve to a repository and a default
-branch. Values are only written as active settings when you stated them or init really
-detected them; a value it could only guess stays a commented placeholder, so init fails
-rather than write a default branch nobody confirmed. A failed init leaves no `bees.toml`
-behind and the directory exactly as it was, so fixing what the error reports and running
-init again works. The one step that can fail after the local files exist is creating the
-labels; the error then says to run
-`bees labels sync`, not init again.
+branch, and — when `--github-login`/`--github-token` gave the factory an account of its
+own — GitHub must accept that token, it must belong to that login, and it must be able
+to read the repository. Init prints the login it will act as (`acting on GitHub as
+busybees-bot`); creating the labels is the same token's first real job. Values are only
+written as active settings when you stated them or init really detected them; a value it
+could only guess stays a commented placeholder, so init fails rather than write a
+default branch nobody confirmed. A failed init leaves no `bees.toml` behind and the
+directory exactly as it was, so fixing what the error reports and running init again
+works. The one step that can fail after the local files exist is creating the labels;
+the error then says to run `bees labels sync`, not init again.
 
 Last, init runs the **full** [`bees doctor`](#bees-doctor) — the expensive per-role
 checks included, since this is where a wrong skill URL or an unreachable MCP server is
@@ -58,6 +61,8 @@ and the table is the list of what is left to set up.
 | `--default-branch <name>` | Write `project.default_branch` as an active setting, as given: no detection, no check against the remote. Use it when the branch cannot be detected (a remote that cannot be reached), which is otherwise what makes init fail. |
 | `--label <name>` | Visibility label (default `bees`). |
 | `--assignee <login>` | Only see items assigned to this login; `@me` for yourself. |
+| `--github-login <login>` | Write `github.login`: the GitHub account the factory acts as. Needs `--github-token`. |
+| `--github-token <token>` | Write `github.token`. Pass `'$VAR'` (quoted, so the shell leaves it alone) to keep the secret out of `bees.toml` and read it from the environment instead. Needs `--github-login`. |
 | `--print` | Print the template to stdout instead of writing it. Writes nothing, so it works outside a git clone. |
 | `--no-labels` | Skip creating GitHub labels. |
 
@@ -266,11 +271,12 @@ run`, `tick`, `exec` and `status` run the same migration automatically on startu
 
 ### `bees config show [role]`
 
-Prints the resolved configuration as JSON: project, filter, scheduler and — for every
-role, or the one given — the effective prompt, skills, MCP servers, model, fallback
-model, limits and `enabled` after merging `[global]` with `[roles.<name>]`. The
+Prints the resolved configuration as JSON: project, filter, github, scheduler and — for
+every role, or the one given — the effective prompt, skills, MCP servers, model,
+fallback model, limits and `enabled` after merging `[global]` with `[roles.<name>]`. The
 global-only `skills_refresh` is printed under every role, since it governs how each
-role's skills are refreshed.
+role's skills are refreshed. `github.token` is never printed resolved: a `"$VAR"` value
+is shown as written and anything else as `"(set)"`.
 
 The JSON keys are the `bees.toml` key names, so you can match what is printed against
 what you wrote, and durations print as duration strings (`"45m0s"`). The role-specific
@@ -289,6 +295,7 @@ bees config show developer
   "path": "/src/widgets/bees.toml",
   "version": 1,
   "filter": { "label": "bees", "require_label": true, "assignee": "@me", "milestone": "" },
+  "github": { "login": "busybees-bot", "token": "$BEES_GITHUB_TOKEN", "git_name": "", "git_email": "" },
   "scheduler": { "poll_interval": "5m0s", "max_developers": 1, "max_review_rounds": 3, "...": "" },
   "roles": {
     "reviewer": {
@@ -430,6 +437,15 @@ owned by the product manager, `proposals`, the subset of `features` still waitin
 a person to approve them, and `open_prs`), running developer workers (issue, [size](workflow.md#sizing), stage, round, and the attempt number while a session is being retried), a row per
 role, and unread mail per role. Reads `status.json` from the state directory, so it
 works while `bees run` is active in another terminal.
+
+When [`[github]`](configuration.md#github) gives the factory an account of its own,
+the first line names it, so it is visible whose comments and labels the repository is
+about to see (`acting_as` in `--json`, empty when the factory uses your own gh login):
+
+```
+repo: acme/widgets   state: /home/kyle/src/acme/.bees   acting as: busybees-bot
+```
+
 
 A worker's stage is `develop`, `pre-review checks`, `review` or `checks`. Once the
 checks stage knows what it is waiting for, the stage names the gate — `checks (required)`, `checks (reported)`

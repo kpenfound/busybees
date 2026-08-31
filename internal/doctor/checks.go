@@ -67,7 +67,10 @@ func New(ctx context.Context, configPath, claudeBin string) *Deps {
 	d.Config = cfg
 	d.ResolveErr = cfg.Resolve(ctx)
 	if cfg.Project.Repo != "" {
-		d.GitHub = github.New(cfg.Project.Repo)
+		// The checks answer for the account the factory acts as, so they
+		// carry the same token the orchestrator's own calls do (config's
+		// [github] table; empty means the machine's own gh auth).
+		d.GitHub = github.NewWithToken(cfg.Project.Repo, cfg.GitHub.ResolvedToken())
 	}
 	// Keep is deliberately left off even when scheduler.keep_workspaces is
 	// set: doctor's worktree is a probe and always cleans up after itself.
@@ -184,7 +187,7 @@ func (d *Deps) checkGH(ctx context.Context) Result {
 	out, err := d.gh(ctx, "auth", "status", "--hostname", ghHost)
 	if err != nil {
 		return fail(name, GroupToolchain, oneLine(err.Error()),
-			"run `gh auth login` (bees uses your existing gh authentication)")
+			"run `gh auth login` (sessions use your own gh authentication, whatever [github] configures)")
 	}
 	text := hostBlock(string(out), ghHost)
 	account := ""
@@ -422,7 +425,7 @@ func (d *Deps) checkRepoAccess(ctx context.Context) Result {
 	out, err := d.gh(ctx, "repo", "view", repo, "--json", "nameWithOwner,viewerPermission")
 	if err != nil {
 		return fail(name, GroupGitHub, oneLine(err.Error()),
-			fmt.Sprintf("check that project.repo (%s) is right and that your gh account can see it", repo))
+			fmt.Sprintf("check that project.repo (%s) is right and that the account bees acts as can see it", repo))
 	}
 	var view struct {
 		NameWithOwner    string `json:"nameWithOwner"`

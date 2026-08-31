@@ -94,12 +94,8 @@ func newApp(ctx context.Context, g *globalFlags) (*app, error) {
 		return nil, fmt.Errorf("%s must live inside a git clone of %s: %w", cfg.Path, cfg.Project.Repo, err)
 	}
 
-	if cfg.Filter.Assignee == "@me" {
-		login, err := github.CurrentUser(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("resolve filter.assignee=@me: %w", err)
-		}
-		cfg.Filter.Assignee = login
+	if err := resolveFilterAssignee(ctx, cfg); err != nil {
+		return nil, err
 	}
 
 	store := state.New(cfg.StateDir())
@@ -140,7 +136,7 @@ func newApp(ctx context.Context, g *globalFlags) (*app, error) {
 	return &app{
 		cfg:    cfg,
 		store:  store,
-		gh:     github.New(cfg.Project.Repo),
+		gh:     githubClient(cfg),
 		mail:   mail.Open(store.MailDir()),
 		runner: runner,
 		ws:     ws,
