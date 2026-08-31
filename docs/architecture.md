@@ -381,25 +381,32 @@ stateDiagram-v2
   for it.
 - **Resume.** A worker records the stage it is in — `develop`, `prereview`,
   `review` or `checks` — and the loop state that goes with it in
-  `<state_dir>/issues/<n>.json`, before working each stage. A worker that finds
-  a recorded stage comes back to it, so a `bees run` killed in the checks stage
-  or in the middle of a check-fix round carries on there instead of re-running a
-  review that has already happened. A workflow label says an issue is in review,
-  never whether its review has already run. Labels stay the human-facing truth
-  all the same: a recorded stage they contradict — one of the three review-loop
-  stages on an issue with no open pull request, or one a person has put back to
-  `bees:ready` — is dropped with a log line, and the worker starts where the
-  labels say. So does a stage name this version does not run, which is what a
-  state file written by another one looks like. `develop` fits any label, so the
-  loop state recorded with it — which gate the round goes back to, and whether
-  the pre-review checks have been read — is dropped on the same test: an issue
-  whose labels have left the review loop starts a fresh round, whatever the last
-  worker was doing. An issue with nothing recorded — a first run, or one last
-  worked on before the stage was recorded — starts exactly where it always did:
-  the worker looks for an open PR whose head is the branch, and if one exists
-  and the issue is labelled `bees:review` it starts in the prereview stage
-  (review, with `pre_review_checks = false` or the reviewer disabled); otherwise
-  in develop. This is how work survives a restart of `bees run`.
+  `<state_dir>/issues/<n>.json`, before working each stage. A worker that
+  finds a recorded stage comes back to it, so a `bees run` killed in the
+  checks stage or in the middle of a check-fix round carries on there instead
+  of re-running a review that has already happened. A workflow label says an
+  issue is in review, never whether its review has already run. Labels stay
+  the human-facing truth all the same: a recorded stage they contradict — one
+  of the three review-loop stages on an issue with no open pull request, or
+  one a person has put back to `bees:ready` — is dropped with a log line, and
+  the worker starts where the labels say. So does a stage name this version
+  does not run, which is what a state file written by another one looks like.
+  `develop` fits any label, so the loop state recorded with it — which gate
+  the round goes back to, and whether the pre-review checks have been read —
+  is dropped on the same test: an issue whose labels have left the review loop
+  starts a fresh round, whatever the last worker was doing. The record also
+  belongs to the pull request it was written for, and the recorded number is
+  what says so: a person can close a pull request and open another on the same
+  branch while nothing is running, and neither the labels nor the branch tell
+  the two apart. A stage or loop state recorded for any other pull request —
+  or for none, before the number was known — is dropped the same way, so the
+  new pull request gets its own review. An issue with nothing recorded — a
+  first run, or one last worked on before the stage was recorded — starts
+  exactly where it always did: the worker looks for an open PR whose head is
+  the branch, and if one exists and the issue is labelled `bees:review` it
+  starts in the prereview stage (review, with `pre_review_checks = false` or
+  the reviewer disabled); otherwise in develop. This is how work survives a
+  restart of `bees run`.
 - **An interrupted session.** Resuming the stage says where the worker was;
   it says nothing about the session that was running when the scheduler died.
   That session left a transcript no `result.json` ever closed, and a branch
