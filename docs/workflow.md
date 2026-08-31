@@ -591,12 +591,13 @@ either one on its own is enough to make a comment a bee's:
   whatever else is configured, and while the factory shares your GitHub
   account — the default — it is the only signal there is.
 - **The author.** When [`[github]`](configuration.md#github) gives the
-  factory an account of its own, everything bees does in its own code acts as
-  that login, so any comment by it is the factory's whether or not it carries
-  a marker — the orchestrator's escalation comment, for one, carries none.
-  This says nothing about anybody else's comment: yours is yours even when it
-  quotes a marker, and comments a Claude session posts with its own `gh` are
-  still made with your account, so the marker is what identifies those.
+  factory an account of its own, everything bees does in its own code acts
+  as that login, so any comment by it is the factory's whether or not it
+  carries a marker — the orchestrator's escalation comment, for one, carries
+  none. Sessions carry the same token in `GH_TOKEN`, so a comment a Claude
+  session posts with its own `gh` is made by that login too and the author
+  signal covers it. This says nothing about anybody else's comment: yours is
+  yours even when it quotes a marker.
 
 The same two mechanisms decide whether a person had the last word on a
 feedback or feature issue, which is what wakes the product manager.
