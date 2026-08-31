@@ -451,6 +451,45 @@ func TestCheckProjectPrompts(t *testing.T) {
 	}
 }
 
+// A repository can carry both kinds of problem at once - a misspelled file no
+// role reads, and a separately oversized common.md - and one run has to name
+// both. Reporting the misspelling alone made discovering the second cost a
+// fix and a re-run (#309).
+func TestCheckProjectPromptsReportsEveryProblemInOneRun(t *testing.T) {
+	f := setup(t, "", nil)
+	dir := filepath.Join(f.clone, "bees", "prompts")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"develloper.md": "oops\n",
+		"common.md":     strings.Repeat("x", prompts.MaxProjectPromptBytes+1),
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	r := f.run(t, f.checkProjectPrompts)
+	wantResult(t, r, Fail, "bees/prompts/develloper.md", "bees/prompts/common.md")
+	// wantResult is satisfied by either field, so say which is which: both
+	// problems belong in the detail and both remedies in the remediation.
+	for _, s := range []string{"not read by any role: bees/prompts/develloper.md", "bees/prompts/common.md is ", "byte limit"} {
+		if !strings.Contains(r.Detail, s) {
+			t.Errorf("detail %q does not carry %q", r.Detail, s)
+		}
+	}
+	for _, s := range []string{"move it out of bees/prompts/", "fix the file:"} {
+		if !strings.Contains(r.Remediation, s) {
+			t.Errorf("remediation %q does not carry %q", r.Remediation, s)
+		}
+	}
+	// The known-file branch still dedupes: common.md is read by every role.
+	if n := strings.Count(r.Detail, "bees/prompts/common.md"); n != 1 {
+		t.Errorf("the same broken file is reported %d times: %s", n, r.Detail)
+	}
+}
+
 // ---- github ----------------------------------------------------------------
 
 func TestCheckRepoAccess(t *testing.T) {
