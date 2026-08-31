@@ -328,7 +328,8 @@ bees prompts show pm --rendered | less
 Runs the scheduler until interrupted. Every `poll_interval` (default 5m; two API calls
 per poll) it lists visible issues and PRs, delivers new human reviews and comments on
 factory PRs to the developer as mail (sending an approved issue back to `bees:ready`),
-reconciles labels (new issues enter triage, answered questions unblock), hands ready
+reconciles labels (unlabelled issues go to the product manager, answered questions
+unblock), hands ready
 issues to free developer workers and starts the product manager, project manager and
 QA when they have work. Ctrl-C stops polling and waits for running sessions to
 finish.
@@ -457,8 +458,9 @@ carries them as `notes_bytes` (role → bytes).
 
 A `no_state` queue counts issues that are visible to the factory but carry no
 workflow state label yet — usually ones a person just filed from the GitHub UI. The
-scheduler gives them `bees:triage` on its next reconcile, so the row normally
-disappears again within the same pass. A workflow-state queue is omitted while it is
+scheduler reads them as feedback and gives them `bees:feedback` on its next reconcile,
+so the row normally disappears again within the same pass and the `feedback` row grows
+by one. A workflow-state queue is omitted while it is
 empty (`feedback`, `features`, `proposals` and `open_prs` are always shown).
 
 Under the scheduler line it also reports what the factory has spent since midnight,

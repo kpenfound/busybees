@@ -10,8 +10,8 @@ This page describes what that looks like from the human side.
    `bees:feedback` (an idea, product feedback, a bug report), file a feature
    issue directly with `bees` + `bees:feature`, or send mail
    (`bees mail send --from human --to product_manager ...`). A concrete bug you
-   already understand can skip the product manager: `bees` + `bees:bug` goes
-   straight to triage.
+   already understand can skip the product manager: `bees` + `bees:bug` +
+   `bees:triage` goes straight to the project manager.
 2. **The product manager owns feature issues.** It makes each `bees:feature`
    issue detailed enough, asks *you* on the issue when only a person can decide
    something (label `bees:question`), and breaks the feature into work items —
@@ -77,13 +77,17 @@ not in `bees:triage`; humans can move any of them.
 
 Feature issues (`bees:feature`) and feedback issues (`bees:feedback`) are
 **not** in this diagram: they never carry a state label. They are the product
-manager's, and work items are what the product manager produces from them.
+manager's, and work items are what the product manager produces from them. An
+issue a person files with only the `bees` label becomes one of them: the
+orchestrator labels it `bees:feedback` and the product manager decides what it
+turns into. A person who wants it built enters the diagram directly by
+labelling it `bees:triage` or `bees:ready` (see [Filing work](#filing-work)).
 
 ```mermaid
 stateDiagram-v2
     [*] --> triage: product manager creates a work item (sub-issue of a feature)
-    [*] --> triage: human files issue with only the `bees` label\n(orchestrator adds bees:triage)
-    [*] --> ready: human labels bees:ready directly (fast-track)
+    [*] --> triage: human labels an issue bees:triage (spec it first)
+    [*] --> ready: human labels an issue bees:ready (build it as written)
     triage --> ready: project manager refines the issue
     triage --> blocked: project manager asks the product manager
     blocked --> triage: product manager answers (orchestrator)
@@ -115,7 +119,7 @@ stateDiagram-v2
 
 | Label | Meaning | Who sets it |
 |---|---|---|
-| `bees:triage` | Needs the project manager to make it buildable | Product manager (new work items), orchestrator (unlabelled issues), humans |
+| `bees:triage` | Needs the project manager to make it buildable | Product manager (new work items), humans |
 | `bees:ready` | Detailed enough for a developer | Project manager (`issue_set_state`, with a size), orchestrator (after an answer, human PR feedback on an approved issue, or an approved PR that conflicts with the default branch), humans |
 | `bees:in-progress` | A developer worker owns it and a branch exists | Orchestrator |
 | `bees:blocked` | Waiting on an answer to a question | Project manager (`issue_set_state`, asking the PM), orchestrator (developer asking) |
@@ -130,7 +134,7 @@ fifth: it sits *next to* a state label rather than replacing one):
 | Label | Meaning | Who sets it |
 |---|---|---|
 | `bees:feature` | A feature issue: owned by the product manager, which makes it detailed enough and breaks it into work items | Product manager, humans |
-| `bees:feedback` | The product manager's inbox: an idea, product feedback or a bug report from a person | Humans |
+| `bees:feedback` | The product manager's inbox: an idea, product feedback or a bug report from a person | Humans, orchestrator (an issue with no kind and no state label) |
 | `bees:question` | The product manager is waiting for a person to answer on a feature or feedback issue | Product manager (`issue_question`; removed by the orchestrator when the person replies) |
 | `bees:proposal` | A feature issue a bee wrote rather than a person; it sits next to `bees:feature`, and a person removes the label to approve it | `bees issue create --feature` (removed by a person) |
 
@@ -242,11 +246,14 @@ a priority `bees:size/l` one under `small-first`. Between two priority issues
 
 Set it from the GitHub UI like any other label. It is yours: it survives every
 state change, nothing in the factory removes it, and it stays on the issue
-until you take it off. One role may add it — the project manager, to a work
-item that unblocks the factory itself: the default branch does not build,
-every pull request's checks are red for the same reason, or the orchestrator
-cannot run. Its prompt rules out anything else, including reordering the queue
-by moving `bees:ready` issues back to `bees:triage`.
+until you take it off. Two roles may put it on an issue, both under narrow
+instructions. The project manager may add it to a work item that unblocks the
+factory itself: the default branch does not build, every pull request's checks
+are red for the same reason, or the orchestrator cannot run. Its prompt rules
+out anything else, including reordering the queue by moving `bees:ready`
+issues back to `bees:triage`. The product manager only *carries* one: put it
+on a feedback issue and the work item the product manager makes from that
+issue gets it too, so your lever survives the hop.
 
 Priority reorders the queue; it does not lift the limits. A priority
 `bees:size/l` issue still waits while `scheduler.max_large_in_flight` of them
@@ -268,8 +275,10 @@ issue.
 For a high-level feature idea ("we should support SSO"), product feedback
 ("onboarding feels clunky"), or a bug report you would rather have *weighed*
 than fixed verbatim, **create an issue with the `bees` label and the
-`bees:feedback` label.** That issue goes to the product manager, not to
-triage:
+`bees:feedback` label.** You can leave the second label off — an issue with
+`bees` and no kind or state label gets `bees:feedback` from the orchestrator on
+the next poll ([Filing work](#filing-work)) — but adding it yourself says what
+you meant. Either way the issue goes to the product manager, not to triage:
 
 - The orchestrator never adds a state label to it and the project manager
   never sees it. `bees status` counts these issues in its `feedback` queue.
@@ -346,35 +355,56 @@ Contrast with the other ways of getting something into the factory:
 |---|---|---|
 | An idea weighed, feedback heard, a bug considered | issue with `bees` + `bees:feedback` | Product manager |
 | A feature specified and broken into work items | issue with `bees` + `bees:feature` | Product manager |
-| A concrete piece of work built | issue with `bees` (optionally `bees:bug`), or `bees:ready` to fast-track | Project manager (triage), then a developer |
+| A concrete piece of work specified, then built | issue with `bees` + `bees:triage` (optionally `bees:bug`) | Project manager (triage), then a developer |
+| A concrete piece of work built as written | issue with `bees` + `bees:ready` | A developer |
 | A private note to a role, off GitHub | `bees mail send --from human --to product_manager --subject "..." --body "..."` | That role, on its next session |
 
 ## Filing work
 
 Work items normally come from the product manager breaking a feature issue
-down, but you can file one yourself: **create an issue and add the `bees`
-label.** That is all. On the next poll the orchestrator sees an issue with no
-state label, adds `bees:triage`, and the project manager picks it up: it reads
-the codebase and the parent feature issue if there is one (shown in its
-prompt), rewrites the body with scope, acceptance criteria and pointers to
-relevant code (keeping your intent, with `issue_edit_body`), splits it if it is
-too big (with `issue_create` with `ready: true` and `parent: <feature>`, or
-`related: <original>` when there is no parent feature), and moves it to
-`bees:ready` with a size. It never changes milestones. If the issue is invalid or a duplicate the project
-manager closes it with a comment. If it is really a *direction* rather than a
-piece of work — an idea whose first deliverable is a decision about what to
-build — the project manager does not invent acceptance criteria for it: it
-goes to the product manager and waits in `bees:blocked` until they answer.
-The project manager only ever edits work
-items; feature and feedback issues are the product manager's.
+down, but you can file one yourself. What happens next is decided by the
+labels you put on the issue, and the default is deliberately cautious.
 
-If the filter does not require the label (`require_label = false`) the
-orchestrator also adds the `bees` label at this point, so the issue is fully
-tagged either way.
+**An issue with the `bees` label and nothing else is read as feedback, not as
+a spec.** On the next poll the orchestrator labels it `bees:feedback` and it
+goes to the **product manager**, which weighs it and decides what it becomes —
+a feature, a work item, or a reasoned no — and replies on it (see [Feedback
+issues](#feedback-issues)). Nothing is specced or built until someone has
+authorised the scope. That is the mirror of the rule pointing the other way: a
+feature issue a *bee* writes is only a `bees:proposal` until you approve it.
+Between them, new scope enters the factory only through a person or through
+the product manager. If the filter does not require the label
+(`require_label = false`) the orchestrator adds `bees` in the same edit, so
+the issue is fully tagged either way.
 
-**Fast-track:** if your issue is already detailed enough, label it
-`bees:ready` yourself and it skips triage. The next free developer worker takes
-the oldest `bees:ready` issue first.
+**To have it built, give it a state label yourself.** That is the intended
+fast path, not a workaround: the feedback rule above applies only to an issue
+that carries no state label, so the one you set stands.
+
+- **`bees:triage` — "this is work; spec it first."** The project manager picks
+  it up: it reads the codebase and the parent feature issue if there is one
+  (shown in its prompt), rewrites the body with scope, acceptance criteria and
+  pointers to relevant code (keeping your intent, with `issue_edit_body`),
+  splits it if it is too big (with `issue_create` with `ready: true` and
+  `parent: <feature>`, or `related: <original>` when there is no parent
+  feature), and moves it to `bees:ready` with a size. It never changes
+  milestones. If the issue is invalid or a duplicate the project manager
+  closes it with a comment. If it is really a *direction* rather than a piece
+  of work — an idea whose first deliverable is a decision about what to build
+  — the project manager does not invent acceptance criteria for it: it goes to
+  the product manager and waits in `bees:blocked` until they answer. The
+  project manager only ever edits work items; feature and feedback issues are
+  the product manager's.
+- **`bees:ready` — "this is already detailed enough; build it as written."**
+  It skips triage: the next free developer worker takes the oldest
+  `bees:ready` issue first, and the orchestrator gives the issue the default
+  size if you did not pick one.
+
+Nothing else is added for you on that path, so put the `bees` label on the
+issue yourself when the filter requires it. The same rule decides where a bug
+report lands: `bees` + `bees:bug` on its own is feedback for the product
+manager, while `bees` + `bees:bug` + `bees:triage` goes straight to the
+project manager.
 
 **Steering:** anything a human writes — in an issue, in a pull request, or in
 mail to a role — is treated as authoritative by every role and outranks their
