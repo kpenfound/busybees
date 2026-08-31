@@ -173,7 +173,12 @@ A full pass is:
    `ProposalApprovedAt` when a person removes it — a label edit leaves no
    comment, so nothing else would notice — and a feature approved since the
    last run wakes the product manager and reaches it whatever `AwaitingBee`
-   says.
+   says. An issue a person put in
+   [planning mode](workflow.md#planning-with-the-product-manager)
+   (`bees:planning`) is the same shape for the same reason: only a comment on
+   it counts, because the run it would start can do nothing but reply to what
+   the person wrote. `bees:planned` wakes nothing at all — the issue waits for
+   the run `product_manager_interval` brings round.
 
    The last condition is a **feature whose work is done**
    (`completedFeatures`), and it makes no GitHub call: every
@@ -196,6 +201,9 @@ A full pass is:
    `Data.CompletedFeatures`, fresh
    feature issues as `Data.FreshFeatures` (proposals partitioned out into
    `Data.Proposals`, which the task prompt presents in a section of its own),
+   the issues carrying `bees:planning` as `Data.Planning` and the ones
+   carrying `bees:planned` as `Data.Planned` (both partitioned out of the
+   fresh lists into sections of their own),
    every open feature issue as
    `Data.Features` with its sub-issue progress in `Data.Progress` (one REST
    `gh api repos/../issues/N` per open feature, reading `sub_issues_summary`),
@@ -205,6 +213,18 @@ A full pass is:
    `runProjectManager` fills the same map for its triage items, and the
    developer worker for its one issue into `Data.Parent`; all three use one
    `ParentIssue` GraphQL query per issue.
+
+   **Planning mode.** The `Data.Planning` section lists no breakdown step and
+   the `Data.Planned` one says the scope is settled, which is the readable
+   half of the rule; the enforced half is that `internal/issues` refuses a
+   `bees:planning` issue as a `parent` and `issue_link` refuses it as a
+   parent, exactly as both already do a proposal, so a planning issue grows no
+   sub-issues whoever asks. A planned *feature* is in `Data.Planned` only
+   while `sub_issues_summary` reports no sub-issues — that is the "has it been
+   broken down already?" answer, and the sub-issues the breakdown creates are
+   what take it off the list, so no later run does it twice. A planned
+   *feedback* issue leaves the list by being closed, which takes it out of the
+   poll. Neither label is ever written by the factory.
 
    **Sub-issues and milestones.** Work items are native GitHub sub-issues of
    their feature. Roles create issues through the `issue_create` tool

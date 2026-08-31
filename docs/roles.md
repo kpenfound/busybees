@@ -9,7 +9,7 @@ what it may do, and how to shape it.
 
 | Role | Instances | Runs when |
 |---|---|---|
-| `product_manager` | singleton | unread mail, a fresh `bees:feedback` or `bees:feature` issue (a person created or commented on it since the PM last replied), a feature whose sub-issues have all closed, or `product_manager_interval` elapsed (first run immediately) |
+| `product_manager` | singleton | unread mail, a fresh `bees:feedback` or `bees:feature` issue (a person created or commented on it since the PM last replied — on a `bees:proposal` or `bees:planning` issue only a comment counts), a feature whose sub-issues have all closed, or `product_manager_interval` elapsed (first run immediately) |
 | `project_manager` | singleton | issues in `bees:triage`, or unread mail |
 | `developer` | pool of `scheduler.max_developers` workers | a `bees:ready` issue is waiting (or an in-progress/review issue needs resuming); a ready issue whose PR came back — human feedback, a conflict with the default branch — goes before new work |
 | `reviewer` | one per developer worker, in sequence | the worker's developer session opened or updated a PR; with `auto_merge`, also when a required check fails after approval |
@@ -123,7 +123,9 @@ a person, title); the features **whose work is done** — every sub-issue closed
 since the last run — in a section of their own; every open **work item**
 (state, kind, the **parent** feature it is a sub-issue of or `-`, milestone,
 title — feature and feedback issues are excluded from this table); open PRs;
-the **fresh `bees:feedback` issues** (full body and every comment); unread
+the **fresh `bees:feedback` issues** (full body and every comment); the
+issues a person put in **planning** with it and the ones they have **agreed**,
+each in a section of its own (full body and every comment); unread
 mail; its notes. It works from a detached
 checkout of the default branch and is told to read the codebase and README to
 understand what exists.
@@ -214,12 +216,29 @@ told to break down, and marks them in the `Proposal` column of the feature
 table, because bees and people share one GitHub account and the author is no
 signal.
 
+**Planning mode:** a person may put a feature or feedback issue in
+`bees:planning` to agree it with the product manager before anything is built.
+While the label is there the issue is a conversation: it is presented in a
+section of its own that lists no breakdown step, the product manager replies to
+each fresh comment with questions, options or a draft, and it creates nothing —
+`issue_create` (`parent:`) and `issue_link` refuse a planning issue, as they do
+a proposal. The person ends planning by swapping `bees:planning` for
+`bees:planned`, which the product manager treats as **agreed**: it does not
+re-open the scope, writes what was settled into the issue body as a short
+`## Decisions` section, records the outcome in its notes, and breaks the issue
+down. A feature is presented as agreed only while it has no sub-issues, so the
+breakdown happens once. Both labels are a person's: the product manager never
+adds or removes either. See [Planning with the product
+manager](workflow.md#planning-with-the-product-manager).
+
 A feature issue is *fresh* when the human side had the last word on it: a
 person created or commented on it, and the product manager has not commented
 since (`github.Client.AwaitingBee`). When a person answers a `bees:question`,
 the orchestrator removes the label and the issue comes back as fresh; a fresh
 feature or feedback issue triggers a product manager run regardless of
-`product_manager_interval`.
+`product_manager_interval` — except a proposal or a planning issue, where only
+a comment counts, since nobody has commented on one the moment it is labelled
+and it would otherwise wake the product manager on every poll.
 
 **Feedback from people:** issues labelled `bees:feedback` are the product
 manager's inbox (feature ideas, product feedback, bug reports from humans) —
@@ -249,15 +268,19 @@ prompt, and what was done about it is said in the outcome. It needs no feedback
 issue to hang a reply on.
 
 **Outcomes:** `done` (with a summary), `idle`, `failed`. A run with no fresh
-feature, no fresh feedback, no mail, no unanswered comment on a proposal and no
+feature, no fresh feedback, no mail, no unanswered comment on a proposal or a
+planning issue, and no
 completed feature was woken by `product_manager_interval` rather than by an
 event; the prompt tells the
 product manager to run the loose-work-item check and then report `idle` rather
-than look for work to invent. Proposals and completed features are the wake
-conditions that are easy to miss: both are partitioned out of the fresh
-features into a section of their own, so a person questioning a proposal — or a
-feature finishing its last work item — produces a task whose other three
-sections are empty. The orchestrator
+than look for work to invent. Proposals, planning issues and completed features
+are the wake conditions that are easy to miss: all three are partitioned out of
+the fresh features into a section of their own, so a person questioning a
+proposal, a person's comment on an issue in planning, or a
+feature finishing its last work item, produces a task whose other sections are
+empty. An issue carrying `bees:planned` is not a wake condition at all — it
+waits in its own section for whichever run comes next — so a clock-woken run
+still has that section to work before it reports `idle`. The orchestrator
 records the run time (which starts the `product_manager_interval` clock) and
 marks the delivered mail read. `failed` logs an error and backs the role off
 for five poll intervals.
