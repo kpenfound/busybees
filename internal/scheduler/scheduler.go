@@ -101,6 +101,13 @@ type Scheduler struct {
 	// priority lists the ready issues carrying bees:priority, so
 	// `bees status` can show that the lever took effect.
 	priority []int
+	// needsHuman and approved are the detail behind two of the queue counts:
+	// the issues the factory gave up on (with the reason it recorded when it
+	// did) and the pull requests waiting for a person to merge. Both are
+	// built from the same snapshot the counts are, so neither costs a
+	// GitHub call of its own.
+	needsHuman []state.Escalated
+	approved   []state.ApprovedPR
 	// dayPaused is true while the rolling 24h spend has reached
 	// scheduler.max_cost_per_day, and daySpend is that spend.
 	dayPaused bool
@@ -112,6 +119,13 @@ type Scheduler struct {
 	limitPausedUntil time.Time
 	// overBudget counts consecutive over-budget sessions per work item.
 	overBudget map[string]int
+	// live holds every session running right now, by the name the event
+	// stream publishes, and killed the ones a person stopped through
+	// KillSession (kill.go). Both are the live view's half of the picture:
+	// a name is all a view has, and these are what turn one back into a
+	// process to stop and a work item to hand over.
+	live   map[string]liveSession
+	killed map[string]bool
 	// interrupted holds, per issue, the session a killed scheduler left
 	// unfinished, until the worker that took the issue over runs a session
 	// of the role it happened to (interrupted.go).
@@ -176,6 +190,8 @@ func New(d Deps) (*Scheduler, error) {
 		waiting:      map[int][]int{},
 		warnedCycles: map[int]bool{},
 		readySizes:   map[string]int{},
+		live:         map[string]liveSession{},
+		killed:       map[string]bool{},
 		overBudget:   map[string]int{},
 		interrupted:  map[int]*session.Interrupted{},
 		wake:         make(chan struct{}, 1),
@@ -504,8 +520,12 @@ const queueNoState = "no_state"
 // setQueues records the queue sizes of a snapshot for `bees status`. Empty
 // state buckets are left out, so a queue only shows up while it has issues.
 func (s *Scheduler) setQueues(snap *snapshot) {
+	// Both read the state directory, one file per issue, so they are built
+	// before the lock rather than under it.
+	needsHuman, approved := s.escalatedIssues(snap), s.approvedPRs(snap)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.needsHuman, s.approved = needsHuman, approved
 	s.waiting = snap.waiting
 	s.queues = map[string]int{}
 	for st, list := range snap.byState {
@@ -533,6 +553,58 @@ func (s *Scheduler) setQueues(snap *snapshot) {
 		}
 	}
 	sort.Ints(s.priority)
+}
+
+// escalatedIssues describes the issues the factory has given up on, first
+// escalated first: which issue, what it is called and why it was escalated.
+// The reason is read from the issue's own bookkeeping, where escalate
+// recorded it — never from GitHub, so listing them costs the polling path
+// nothing. An issue a person labelled by hand, and one escalated before this
+// state directory existed, has no reason and no time; they come last, in
+// issue order.
+func (s *Scheduler) escalatedIssues(snap *snapshot) []state.Escalated {
+	var out []state.Escalated
+	for _, i := range snap.byState["needs-human"] {
+		e := state.Escalated{Issue: i.Number, Title: i.Title}
+		if bk, err := s.store.Issue(i.Number); err == nil {
+			e.Reason, e.Since = bk.Escalation, bk.EscalatedAt
+		}
+		out = append(out, e)
+	}
+	sort.Slice(out, func(a, b int) bool {
+		x, y := out[a], out[b]
+		if x.Since.IsZero() != y.Since.IsZero() {
+			return y.Since.IsZero()
+		}
+		if !x.Since.Equal(y.Since) {
+			return x.Since.Before(y.Since)
+		}
+		return x.Issue < y.Issue
+	})
+	return out
+}
+
+// approvedPRs describes the pull requests the reviewer approved and left for
+// a person to merge, oldest first. An approved issue whose pull request the
+// poll no longer finds open is left out: it has already been merged or
+// closed and the label has yet to catch up, so it is not something a person
+// is being asked to merge.
+func (s *Scheduler) approvedPRs(snap *snapshot) []state.ApprovedPR {
+	var out []state.ApprovedPR
+	for _, i := range snap.byState["approved"] {
+		pr, ok := snap.prByBranch[s.BranchFor(i.Number)]
+		if !ok {
+			continue
+		}
+		out = append(out, state.ApprovedPR{PR: pr.Number, Issue: i.Number, Title: pr.Title, Since: pr.CreatedAt})
+	}
+	sort.Slice(out, func(a, b int) bool {
+		if !out[a].Since.Equal(out[b].Since) {
+			return out[a].Since.Before(out[b].Since)
+		}
+		return out[a].PR < out[b].PR
+	})
+	return out
 }
 
 // stateOf returns the workflow state name ("triage", "ready", ...) of an
@@ -1161,6 +1233,17 @@ func (s *Scheduler) escalate(ctx context.Context, number int, reason string) err
 	if err := s.setState(ctx, number, s.labels.NeedsHuman); err != nil {
 		return err
 	}
+	// The reason reaches a person in the comment below and the log line
+	// above, and neither is readable from the poll. Record it where the
+	// factory's own views can read it back — a person looking at what the
+	// factory is stuck on wants the reason next to the issue, not a search
+	// through the log. After the label, never before: a reason recorded for
+	// an escalation that then failed to happen would be presented as the
+	// factory's the next time anybody labelled that issue by hand. Best
+	// effort — the escalation must not fail over its own bookkeeping.
+	if err := s.store.SetEscalation(number, oneLine(reason, escalationNoteLimit), s.now()); err != nil {
+		s.log.Warn("could not record the escalation reason", "issue", number, "err", err)
+	}
 	body := fmt.Sprintf("🐝 **busybees needs a human.**\n\n%s\n\nRemove the `%s` label and add `%s` (or `%s`) to hand it back to the factory.",
 		reason, s.labels.NeedsHuman, s.labels.Ready, s.labels.Triage)
 	// By default the factory and the people it works for share one GitHub
@@ -1206,6 +1289,8 @@ func (s *Scheduler) writeStatus() {
 		st.ReadySizes[k] = v
 	}
 	st.Priority = append([]int(nil), s.priority...)
+	st.NeedsHuman = append([]state.Escalated(nil), s.needsHuman...)
+	st.Approved = append([]state.ApprovedPR(nil), s.approved...)
 	st.Degraded = s.degradedLocked()
 	s.budgetStatus(&st)
 	s.limitStatus(&st)

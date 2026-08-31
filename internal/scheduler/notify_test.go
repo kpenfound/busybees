@@ -165,3 +165,28 @@ func TestProductManagerSessionIsToldTheMentions(t *testing.T) {
 		t.Fatalf("product manager system prompt does not carry the mentions:\n%s", prompt)
 	}
 }
+
+// An escalation that never happened records no reason. escalate labels the
+// issue first and records why afterwards: a reason left on an issue the label
+// edit failed for would be presented as the factory's the next time a person
+// labelled that issue bees:needs-human by hand.
+func TestAFailedEscalationRecordsNoReason(t *testing.T) {
+	h := newHarness(t, baseTOML)
+	h.gh.issues[12] = &github.Issue{Number: 12, Title: "Build the thing", State: "OPEN",
+		Labels: []github.Label{{Name: "bees"}, {Name: "bees:in-progress"}}}
+	h.gh.errFor["issue edit"] = errors.New("HTTP 502")
+
+	if err := h.sched.escalate(context.Background(), 12, "3 review rounds and no approval"); err == nil {
+		t.Fatal("the escalation reported no error although the label edit failed")
+	}
+	bk, err := h.store.Issue(12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bk.Escalation != "" {
+		t.Errorf("an escalation that failed recorded the reason %q", bk.Escalation)
+	}
+	if !bk.EscalatedAt.IsZero() {
+		t.Errorf("an escalation that failed recorded the time %v", bk.EscalatedAt)
+	}
+}

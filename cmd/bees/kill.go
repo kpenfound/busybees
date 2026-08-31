@@ -112,7 +112,7 @@ scheduler as well.`,
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be killed and removed")
 	cmd.Flags().BoolVar(&scheduler, "scheduler", false, "also stop a running bees scheduler")
-	cmd.Flags().DurationVar(&grace, "grace", 5*time.Second, "time to wait after SIGTERM before SIGKILL")
+	cmd.Flags().DurationVar(&grace, "grace", procs.DefaultGrace, "time to wait after SIGTERM before SIGKILL")
 	return cmd
 }
 

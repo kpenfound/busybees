@@ -374,8 +374,24 @@ func TestTheCursorSelectsWhichSessionIsOpened(t *testing.T) {
 		t.Errorf("enter opened a session other than the one the cursor was on:\n%s", view)
 	}
 
+	// The session the cursor was on ends. There is one cursor over the whole
+	// view (Model.targets), so it stays on the row it was on — which is now
+	// that session's row in Recent, a row enter has nothing to open. It must
+	// say so rather than open a session the cursor is not on, and ↑ must get
+	// back to one that is.
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m, _ = m.Update(ended("reviewer-pr-33-r1", config.RoleReviewer, 14, 33, 12, 0.4))
+	m, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = run(t, m, cmd)
+	view := plain(m.View())
+	if strings.Contains(view, "the first session") || strings.Contains(view, "the second session") {
+		t.Errorf("enter opened a session the cursor was not on:\n%s", view)
+	}
+	if !strings.Contains(view, "select a running session to watch it") {
+		t.Errorf("enter on a row that is not a session does not say so:\n%s", view)
+	}
+
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
 	m, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m, _ = run(t, m, cmd)
 	if view := plain(m.View()); !strings.Contains(view, "the first session") {
@@ -557,5 +573,42 @@ func TestASingletonSessionIsAboutNoWorkItem(t *testing.T) {
 	}
 	if len(*box) != 1 || (*box)[0].to != config.RoleProductManager {
 		t.Fatalf("the view delivered %+v, want one message to the product manager", *box)
+	}
+}
+
+// q stops the factory everywhere except in a message being typed, where it
+// is a letter. Ctrl-C cannot be typed and stops the factory there too, so
+// nothing is lost by the exception — and without it a person writing "queue
+// a retry" loses the factory to their first keystroke.
+func TestQIsALetterWhileAMessageIsBeingTyped(t *testing.T) {
+	dir := t.TempDir()
+	writeTranscript(t, dir, "the session's first words")
+	stops, sent := 0, ""
+	var m tea.Model = New(Deps{Repo: "acme/widgets", Now: func() time.Time { return fixed },
+		Stop: func() { stops++ },
+		Send: func(_ string, _, _ int, _, body string) error { sent = body; return nil },
+	})
+	m, _ = m.Update(watched("developer-issue-12-r1", config.RoleDeveloper, 12, 31, dir))
+	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = run(t, m, cmd)
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	for _, r := range "queue a retry" {
+		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	if stops != 0 {
+		t.Fatalf("typing a message stopped the factory %d times, want 0", stops)
+	}
+	if view := plain(m.View()); !strings.Contains(view, "› queue a retry") {
+		t.Errorf("the q of a typed message did not reach the composer:\n%s", view)
+	}
+	m, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = run(t, m, cmd)
+	if sent != "queue a retry" {
+		t.Errorf("the queued message is %q, want %q", sent, "queue a retry")
+	}
+
+	// The message is over, so q is a stop key again.
+	if _, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}}); stops != 1 {
+		t.Errorf("q asked the factory to stop %d times once the message was sent, want 1", stops)
 	}
 }

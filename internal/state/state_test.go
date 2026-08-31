@@ -314,11 +314,12 @@ func wantWorkerFields(t *testing.T, got IssueState, round int, when string) {
 // wholesale would forget that a person's PR feedback had been delivered
 // (delivering it twice), that a head had been mailed about (mailing it again,
 // which is the one thing conflict_notified_sha exists to prevent), that a
-// proposal had been approved (so the product manager is never told) and which
+// proposal had been approved (so the product manager is never told), which
 // sub-issues a feature had open (so a finished feature is reported twice, or
-// not at all). Each of those fields is owned by a method of its own and
-// carried over by SaveIssue; what SaveIssue does write is the worker's own
-// bookkeeping.
+// not at all) and why the factory gave the issue up (leaving the person it
+// was escalated to nothing to read but the label). Each of those fields is
+// owned by a method of its own and carried over by SaveIssue; what SaveIssue
+// does write is the worker's own bookkeeping.
 func TestThePollingPathsBookkeepingSurvivesASaveIssue(t *testing.T) {
 	s := New(t.TempDir())
 	if err := s.Init(); err != nil {
@@ -338,10 +339,11 @@ func TestThePollingPathsBookkeepingSurvivesASaveIssue(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Meanwhile the polling path records four things through their owners.
+	// Meanwhile the polling path records five things through their owners.
 	seen := time.Date(2026, 8, 31, 9, 0, 0, 0, time.UTC)
 	approved := time.Date(2026, 8, 31, 9, 30, 0, 0, time.UTC)
 	reported := time.Date(2026, 8, 31, 10, 0, 0, 0, time.UTC)
+	escalated := time.Date(2026, 8, 31, 10, 30, 0, 0, time.UTC)
 	for _, step := range []struct {
 		name string
 		fn   func() error
@@ -350,6 +352,7 @@ func TestThePollingPathsBookkeepingSurvivesASaveIssue(t *testing.T) {
 		{"SetConflictNotifiedSHA", func() error { return s.SetConflictNotifiedSHA(7, "deadbee") }},
 		{"SetProposal", func() error { return s.SetProposal(7, false, approved) }},
 		{"SetOpenChildren", func() error { return s.SetOpenChildren(7, []int{11, 12}, reported) }},
+		{"SetEscalation", func() error { return s.SetEscalation(7, "3 review rounds and no approval", escalated) }},
 	} {
 		if err := step.fn(); err != nil {
 			t.Fatalf("%s: %v", step.name, err)
@@ -383,6 +386,10 @@ func TestThePollingPathsBookkeepingSurvivesASaveIssue(t *testing.T) {
 	}
 	if !got.CompleteReportedAt.Equal(reported) {
 		t.Errorf("complete_reported_at: got %v want %v — the feature is reported complete twice", got.CompleteReportedAt, reported)
+	}
+	if got.Escalation != "3 review rounds and no approval" || !got.EscalatedAt.Equal(escalated) {
+		t.Errorf("escalation: got %q at %v — the person it was handed to is told nothing but the label",
+			got.Escalation, got.EscalatedAt)
 	}
 }
 
@@ -420,6 +427,15 @@ func TestTheOwnerMethodsPreserveTheWorkerFields(t *testing.T) {
 			want: func(t *testing.T, is IssueState) {
 				if !is.Proposal {
 					t.Error("proposal was not recorded")
+				}
+			},
+		},
+		{
+			name: "SetEscalation",
+			set:  func(s *Store) error { return s.SetEscalation(7, "gave up", time.Unix(2, 0).UTC()) },
+			want: func(t *testing.T, is IssueState) {
+				if is.Escalation != "gave up" || is.EscalatedAt.IsZero() {
+					t.Errorf("escalation: got %q at %v", is.Escalation, is.EscalatedAt)
 				}
 			},
 		},

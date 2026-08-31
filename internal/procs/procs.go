@@ -59,11 +59,40 @@ func Alive(pid int) bool {
 	return syscall.Kill(pid, 0) == nil || errors.Is(syscall.Kill(pid, 0), syscall.EPERM)
 }
 
+// DefaultGrace is how long a session is given to exit after SIGTERM before
+// it is killed outright. Every caller that stops a session uses it: `bees
+// kill` as its --grace default, and the live view's kill key.
+const DefaultGrace = 5 * time.Second
+
+// FromPIDFile returns the live session recorded in one session directory.
+// It reports false when the directory holds no pid file, when the process
+// the file names is gone — in which case the stale file is deleted — and,
+// when known is non-nil (the ps scan), when the pid is alive but is not a
+// claude session: a pid reused by an unrelated process after a reboot, which
+// must never be killed.
+func FromPIDFile(dir string, known map[int]Proc) (Proc, bool) {
+	b, err := os.ReadFile(filepath.Join(dir, PIDFile))
+	if err != nil {
+		return Proc{}, false
+	}
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+	if !Alive(pid) {
+		RemovePID(dir)
+		return Proc{}, false
+	}
+	if known != nil {
+		if _, ok := known[pid]; !ok {
+			RemovePID(dir) // alive, but not a claude session: pid reused
+			return Proc{}, false
+		}
+	}
+	pgid, _ := syscall.Getpgid(pid)
+	return Proc{PID: pid, PGID: pgid, Source: "pidfile", SessionDir: dir}, true
+}
+
 // FromPIDFiles returns live sessions recorded under sessionsDir and deletes
-// pid files of processes that no longer exist. When known is non-nil
-// (the ps scan), a recorded pid that is alive but is not a claude session
-// — a pid reused by an unrelated process after a reboot — is treated as
-// stale too, never killed.
+// pid files of processes that no longer exist, by asking FromPIDFile about
+// every session directory in turn.
 func FromPIDFiles(sessionsDir string, known map[int]Proc) ([]Proc, error) {
 	entries, err := os.ReadDir(sessionsDir)
 	if err != nil {
@@ -77,24 +106,9 @@ func FromPIDFiles(sessionsDir string, known map[int]Proc) ([]Proc, error) {
 		if !e.IsDir() {
 			continue
 		}
-		dir := filepath.Join(sessionsDir, e.Name())
-		b, err := os.ReadFile(filepath.Join(dir, PIDFile))
-		if err != nil {
-			continue
+		if p, ok := FromPIDFile(filepath.Join(sessionsDir, e.Name()), known); ok {
+			out = append(out, p)
 		}
-		pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
-		if !Alive(pid) {
-			RemovePID(dir)
-			continue
-		}
-		if known != nil {
-			if _, ok := known[pid]; !ok {
-				RemovePID(dir) // alive, but not a claude session: pid reused
-				continue
-			}
-		}
-		pgid, _ := syscall.Getpgid(pid)
-		out = append(out, Proc{PID: pid, PGID: pgid, Source: "pidfile", SessionDir: dir})
 	}
 	return out, nil
 }

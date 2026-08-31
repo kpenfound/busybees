@@ -34,8 +34,15 @@ type Deps struct {
 	// rendered view never depends on when it was rendered (#222).
 	Now func() time.Time
 	// Stop asks the factory to stop polling and drain, which is what Ctrl-C
-	// does. Nil means the view cannot stop anything.
+	// and q do. Nil means the view cannot stop anything.
 	Stop func()
+	// Kill stops one running session by the name the event stream gave it
+	// and hands the issue it was working on to a person
+	// (scheduler.KillSession). Nil means the view cannot stop a session.
+	Kill func(session string) error
+	// Open shows a URL to the person watching, in whatever they read GitHub
+	// in. Nil means the view cannot open anything.
+	Open func(url string) error
 	// Send queues a message a person typed in the session view. It goes to
 	// the mailbox every role already reads — addressed to the role the
 	// watched session is running as, carrying that session's issue and pull
@@ -47,7 +54,8 @@ type Deps struct {
 	// "queued for the next session" and means it. Nil means the view cannot
 	// send anything and does not offer to.
 	Send func(to string, issue, pr int, subject, body string) error
-	// Repo is the repository the factory is building, for the header.
+	// Repo is the repository the factory is building, for the header and
+	// for the GitHub links every row can be opened at.
 	Repo string
 }
 
@@ -76,6 +84,20 @@ type spend struct {
 	cost  float64
 }
 
+// finished is one session that has ended, as the Recent panel renders it.
+// Everything in it arrives on the session-ended event: nothing is looked up
+// afterwards.
+type finished struct {
+	role    string
+	issue   int
+	pr      int
+	at      time.Time
+	outcome string
+	note    string
+	cost    float64
+	took    time.Duration
+}
+
 // stage is the developer worker's stage for an issue, from the last stage
 // event about it.
 type stage struct {
@@ -83,9 +105,10 @@ type stage struct {
 	round int
 }
 
-// Model is the Bubble Tea model behind `bees run`'s view: the two panels,
-// Now and Queues, fed by the scheduler's event stream and by status.json,
-// and the session view one of them opens onto (session.go).
+// Model is the Bubble Tea model behind `bees run`'s view: five panels fed by
+// the scheduler's event stream and by status.json, the keys over them, and
+// the session view one of them opens onto (session.go). A terminal too short
+// for all five panels draws fewer (see layout).
 //
 // Update and View are ordinary functions of the model and its messages —
 // no terminal, no goroutines, no clock of their own — which is how the whole
@@ -99,6 +122,10 @@ type Model struct {
 	sessions []running
 	spent    map[string]spend
 	stages   map[int]stage
+	// recent are the sessions that have finished, newest first, capped at
+	// recentRows: a view of what just happened, not a log — ledger.jsonl and
+	// bees.log keep everything.
+	recent []finished
 
 	status state.Status
 	mail   map[string]int
@@ -107,22 +134,28 @@ type Model struct {
 	statusErr string
 
 	// watching is the session the session view is showing, or nil when the
-	// view is the two panels. selected is the row of the Now panel the
-	// cursor is on, and tailGen numbers the session views so the transcript
-	// loop of a closed one stops instead of racing the next.
+	// view is the panels; tailGen numbers the session views so the
+	// transcript loop of a closed one stops instead of racing the next.
 	watching *watch
-	selected int
 	tailGen  int
 
-	// width and height are the terminal's, from the last WindowSizeMsg.
-	// The panels are as tall as what is in them; the session view is as
-	// tall as the terminal, which is what reads the height.
+	// width and height are the terminal's, from the last WindowSizeMsg. The
+	// height is what the panels are fitted into (see layout), so the view is
+	// never taller than the terminal it is drawn in, and it is what the
+	// session view fills.
 	width  int
 	height int
 	ticks  int
-	// stopping is set by the first Ctrl-C: the factory has been asked to
-	// stop polling and drain, and the view stays up until it has.
+	// stopping is set by the first Ctrl-C or q: the factory has been asked
+	// to stop polling and drain, and the view stays up until it has.
 	stopping bool
+	// cursor is the selected row of the flat list every panel's rows join
+	// (see targets), and confirmKill that the next k stops it. notice is
+	// the one line the footer shows instead of the key hints: what the last
+	// key did, or why it could not.
+	notice      string
+	cursor      int
+	confirmKill bool
 }
 
 // New builds the model. Nothing is read and no goroutine is started until
@@ -145,6 +178,10 @@ type statusMsg struct {
 	mail   map[string]int
 	err    error
 }
+
+// actedMsg is what a key that did something outside the model reports back:
+// the empty string when it worked, and what went wrong when it did not.
+type actedMsg struct{ note string }
 
 // tickMsg redraws the view, so elapsed times and the countdown to the next
 // poll advance between events.
@@ -215,17 +252,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		// A shorter terminal draws fewer rows, and targets() enumerates only
+		// the drawn ones — so a resize can leave the cursor past the end
+		// exactly as a session ending can.
+		m.clampCursor()
 	case tea.KeyMsg:
 		return m.key(msg)
 	case eventMsg:
 		m.apply(scheduler.Event(msg))
+		m.clampCursor()
 		return m, tea.Batch(m.waitForEvent(), m.refresh())
+	case actedMsg:
+		m.notice = msg.note
 	case statusMsg:
 		if msg.err != nil {
 			m.statusErr = msg.err.Error()
 			return m, nil
 		}
 		m.statusErr, m.status, m.mail = "", msg.status, msg.mail
+		m.clampCursor()
 	case transcriptMsg:
 		m.applyTranscript(msg)
 	case tailMsg:
@@ -262,21 +307,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// key routes a key press. Ctrl-C is handled here rather than in either
-// screen, because stopping the factory is the same thing wherever a person
-// is: it asks the factory to stop polling and drain, exactly as it does
-// without the view, and the view stays up while it does — pressing it again
-// gives up on the drain and leaves the terminal, with the sessions still
-// finishing in the background. It is deliberately the only key that does
-// that: everything a person reads — the footer, docs/cli.md, the prompts —
-// says Ctrl-C, and a key that quietly stops the whole factory is not one to
-// discover by accident.
+// key routes a key press.
 //
-// Everything else belongs to the screen that is up: the panels move the Now
-// cursor and open a session view with it, and the session view has its own
-// (sessionKey).
+// Ctrl-C and q are handled here rather than in either screen, because
+// stopping the factory is the same thing wherever a person is: both ask it
+// to stop polling and drain, exactly as an interrupt does without the view,
+// and the view stays up while it does — pressing either again gives up on
+// the drain and leaves the terminal, with the sessions still finishing in
+// the background. Neither can be pressed by accident without being told what
+// it did: the footer says what they do before, and what they are doing
+// after.
+//
+// The one exception is a message being typed in the session view, where q is
+// a letter: Ctrl-C cannot be typed and still stops the factory there, but a
+// person writing "queue a retry" must not lose the factory to their first
+// keystroke.
+//
+// Everything else belongs to the screen that is up. On the panels the arrows
+// move one selection through every panel's rows in turn; enter opens the
+// selected session's transcript (session.go), o opens what is selected on
+// GitHub, and k stops the selected session and hands its issue to a person.
+// k asks first, the way Ctrl-C does: it is the one key here that throws work
+// away. The session view has its own keys (sessionKey), j and k among them —
+// they scroll a transcript there, which is where vim keys belong.
 func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if msg.String() == "ctrl+c" {
+	k := msg.String()
+	if k != "k" {
+		m.confirmKill = false
+	}
+	if k == "ctrl+c" || (k == "q" && !m.composing()) {
+		m.notice = ""
 		if m.stopping {
 			return m, tea.Quit
 		}
@@ -289,29 +349,150 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.watching != nil {
 		return m.sessionKey(msg)
 	}
-	switch msg.String() {
-	case "up", "k":
-		m.selected = max(0, m.selected-1)
-	case "down", "j":
-		m.selected = min(len(m.sessions)-1, m.selected+1)
+	switch k {
+	case "up", "shift+tab":
+		m.notice = ""
+		m.cursor = max(0, m.cursor-1)
+	case "down", "tab":
+		m.notice = ""
+		m.cursor = min(max(0, len(m.targets())-1), m.cursor+1)
 	case "enter":
 		if s, ok := m.selection(); ok {
+			m.notice = ""
 			m = m.open(s)
 			return m, tea.Batch(m.readTail(), tail(m.tailGen))
 		}
+		m.notice = "select a running session to watch it"
+	case "o":
+		return m.openOnGitHub()
+	case "k":
+		return m.kill()
 	}
 	return m, nil
 }
 
-// selection is the session the Now panel's cursor is on. It is the only
-// place m.selected is read, and so the only place it has to be kept inside
-// the list: sessions start and finish under the cursor, and pressing down
-// with nothing running leaves it at -1 until one does.
+// openOnGitHub shows the selected row's issue or pull request on GitHub.
+// One URL shape serves both: GitHub redirects an issue URL to the pull
+// request of the same number, so a row that is about either is one link.
+// (Model.open, in session.go, is the other kind of opening: the session
+// view, on the transcript of the session the cursor is on.)
+func (m Model) openOnGitHub() (tea.Model, tea.Cmd) {
+	t, ok := m.selected()
+	switch {
+	case !ok:
+		m.notice = "nothing to open"
+		return m, nil
+	case m.deps.Open == nil:
+		m.notice = "this view cannot open a browser"
+		return m, nil
+	}
+	n := t.pr
+	if n == 0 {
+		n = t.issue
+	}
+	if n == 0 || m.deps.Repo == "" {
+		m.notice = "the selected row is about no issue or pull request"
+		return m, nil
+	}
+	url := fmt.Sprintf("https://github.com/%s/issues/%d", m.deps.Repo, n)
+	open := m.deps.Open
+	m.notice = "opening " + url
+	return m, func() tea.Msg {
+		if err := open(url); err != nil {
+			return actedMsg{note: "could not open " + url + ": " + oneLine(err.Error())}
+		}
+		return actedMsg{}
+	}
+}
+
+// kill stops the selected session. The first press asks, because it throws
+// away whatever the session had done and hands its issue to a person; the
+// second does it, in the background, because stopping a process waits out a
+// grace period and the view must keep drawing while it does.
+func (m Model) kill() (tea.Model, tea.Cmd) {
+	s, ok := m.selection()
+	switch {
+	case !ok:
+		m.notice = "select a running session to stop it"
+		m.confirmKill = false
+		return m, nil
+	case m.deps.Kill == nil:
+		m.notice = "this view cannot stop a session"
+		m.confirmKill = false
+		return m, nil
+	case !m.confirmKill:
+		m.confirmKill = true
+		m.notice = fmt.Sprintf("k again to stop %s and hand %s to a person", s.name, number(s.issue))
+		return m, nil
+	}
+	m.confirmKill = false
+	m.notice = "stopping " + s.name
+	kill, name := m.deps.Kill, s.name
+	return m, func() tea.Msg {
+		if err := kill(name); err != nil {
+			return actedMsg{note: "could not stop " + name + ": " + oneLine(err.Error())}
+		}
+		return actedMsg{note: "stopped " + name}
+	}
+}
+
+// target is one row a person can select. session is the running session the
+// row is about, empty for a row that is not one; issue and pr are what it
+// links to.
+type target struct {
+	session string
+	issue   int
+	pr      int
+}
+
+// targets is every selectable row, in the order the panels draw them: the
+// running sessions, then what has just finished, then what the factory is
+// waiting for a person over, then what is waiting to be merged. One flat
+// list is what makes a single cursor and two keys enough.
+//
+// It enumerates only the rows that are *drawn*: a list squeezed by a short
+// terminal shows its first entries and accounts for the rest, and a panel
+// that did not fit at all shows none. Walking entries that are not on screen
+// would leave ↓ marking nothing and k naming a session a person cannot see.
+func (m Model) targets() []target {
+	l, want := m.layout(), m.want()
+	var out []target
+	for _, s := range m.sessions[:l.entries(0, want[0])] {
+		out = append(out, target{session: s.name, issue: s.issue, pr: s.pr})
+	}
+	for _, f := range m.recent[:l.entries(1, want[1])] {
+		out = append(out, target{issue: f.issue, pr: f.pr})
+	}
+	for _, e := range m.status.NeedsHuman[:l.entries(2, want[2])] {
+		out = append(out, target{issue: e.Issue})
+	}
+	for _, a := range m.status.Approved[:l.entries(3, want[3])] {
+		out = append(out, target{issue: a.Issue, pr: a.PR})
+	}
+	return out
+}
+
+// composing says whether a message is being typed in the session view. While
+// one is, every printable key belongs to it — including q, which is a stop
+// key everywhere else.
+func (m Model) composing() bool { return m.watching != nil && m.watching.composing }
+
+// selection is the running session the cursor is on, for the two keys that
+// act on a session rather than on a link: enter opens its transcript and k
+// stops it. There is one cursor over the whole view (see targets), so both
+// act on the row the ▸ is on — and on nothing at all when that row is not a
+// session.
 func (m Model) selection() (running, bool) {
-	if len(m.sessions) == 0 {
+	t, ok := m.selected()
+	if !ok || t.session == "" {
 		return running{}, false
 	}
-	return m.sessions[min(max(0, m.selected), len(m.sessions)-1)], true
+	for _, s := range m.sessions {
+		if s.name == t.session {
+			return s, true
+		}
+	}
+	return running{}, false
 }
 
 // applyTranscript folds a read of the watched session's transcript into it.
@@ -330,6 +511,22 @@ func (m *Model) applyTranscript(msg transcriptMsg) {
 	if n := len(m.watching.lines) - maxTranscriptLines; n > 0 {
 		m.watching.lines = m.watching.lines[n:]
 		m.watching.scroll = max(0, m.watching.scroll-n)
+	}
+}
+
+func (m Model) selected() (target, bool) {
+	t := m.targets()
+	if m.cursor < 0 || m.cursor >= len(t) {
+		return target{}, false
+	}
+	return t[m.cursor], true
+}
+
+// clampCursor keeps the selection inside the list after the factory has
+// moved on under it — a session ending, a queue emptying.
+func (m *Model) clampCursor() {
+	if n := len(m.targets()); m.cursor >= n {
+		m.cursor = max(0, n-1)
 	}
 }
 
@@ -354,6 +551,13 @@ func (m *Model) apply(ev scheduler.Event) {
 		s.turns += ev.Turns
 		s.cost += ev.CostUSD
 		m.spent[key] = s
+		m.recent = append([]finished{{
+			role: ev.Role, issue: ev.Issue, pr: ev.PR, at: ev.Time,
+			outcome: ev.Outcome, note: ev.Note, cost: ev.CostUSD, took: ev.Duration,
+		}}, m.recent...)
+		if len(m.recent) > recentRows {
+			m.recent = m.recent[:recentRows]
+		}
 	case scheduler.EventStage:
 		if ev.Issue > 0 {
 			m.stages[ev.Issue] = stage{name: ev.Stage, round: ev.Round}
@@ -385,9 +589,38 @@ func spendKey(issue int, role string) string {
 
 // ---- rendering -------------------------------------------------------------
 
-// defaultWidth is the width the view draws at until the terminal has told it
-// its own, and the width every test renders at.
-const defaultWidth = 100
+// defaultWidth and defaultHeight are the terminal the view assumes until it
+// has been told the real one — the classic 80x24, widened to the 100 columns
+// the Now panel's row is laid out for. Bubble Tea sends a WindowSizeMsg as
+// soon as the program starts, so in a terminal this is the first frame only;
+// it is a test that draws at it for long.
+const (
+	defaultWidth  = 100
+	defaultHeight = 24
+)
+
+// dims is the terminal's width and the columns of text inside a panel. Both
+// screens draw into the same box, so both ask here.
+func (m Model) dims() (w, inner int) {
+	if w = m.width; w <= 0 {
+		w = defaultWidth
+	}
+	// A panel's border takes two columns and its padding two more, so the
+	// text inside one is four columns narrower than the terminal.
+	if inner = w - 4; inner < 20 {
+		inner = 20
+	}
+	return w, inner
+}
+
+// rows is the terminal's height: what the panels are fitted into and what
+// the session view fills.
+func (m Model) rows() int {
+	if h := m.height; h > 0 {
+		return h
+	}
+	return defaultHeight
+}
 
 var (
 	titleStyle  = lipgloss.NewStyle().Bold(true)
@@ -397,24 +630,85 @@ var (
 	panelStyle  = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
 )
 
+// panelTitles are the four list panels, in the order View draws them and
+// the order the cursor walks their rows.
+var panelTitles = []string{"Now", "Recent", "Needs human", "Approved PRs"}
+
+// layout is how the view divides up the terminal it is drawn in. View and
+// targets both read it, so the cursor can only ever be on a row that is on
+// screen, and the rendered view is never taller than the terminal — Bubble
+// Tea keeps the *last* height lines of an over-long view, so one line too
+// many costs the header and one panel too many costs the Now panel, which is
+// the thing a person watching `bees run` is watching for.
+type layout struct {
+	width  int    // the terminal's columns
+	inner  int    // the columns of text inside a panel
+	rows   []int  // the lines each list panel has for its entries
+	drawn  int    // how many of the four list panels are drawn, from the top
+	queues string // the Queues panel, rendered to measure it
+}
+
+// entries is how many of list i the layout draws. A panel that did not fit
+// was never given rows, so this is 0 for it — layout shares rows out only
+// between the panels it draws, and every drawn list with anything in it
+// keeps one.
+func (l layout) entries(i, n int) int { return shown(n, l.rows[i]) }
+
+// want is how many entries each list panel has, in panel order.
+func (m Model) want() []int {
+	return []int{len(m.sessions), len(m.recent), len(m.status.NeedsHuman), len(m.status.Approved)}
+}
+
+// layout fits the view into the terminal. The header, the Now panel, the
+// Queues panel and the footer are what `bees run` is watched for, so they are
+// the last things to go: a terminal too short for everything loses the list
+// panels from the bottom — Approved PRs first, then Needs human, then Recent
+// — and the Queues panel goes on counting what they would have listed. What
+// room is left is shared out between the lists that are drawn.
+func (m Model) layout() layout {
+	var l layout
+	l.width, l.inner = m.dims()
+	l.queues = panel("Queues", m.queuesPanel(l.inner), l.inner)
+	want := m.want()
+	l.rows = make([]int, len(want))
+	// The header, the footer and the Queues panel are always drawn. A list
+	// panel spends three lines on its border and its title and a fourth on
+	// its column header — or, when it has nothing in it, on saying so.
+	fixed := 2 + strings.Count(l.queues, "\n") + 1
+	for l.drawn = len(want); l.drawn > 0; l.drawn-- {
+		avail, floor := m.rows()-fixed-4*l.drawn, 0
+		for _, n := range want[:l.drawn] {
+			if n > 0 {
+				floor++
+			}
+		}
+		if avail >= 0 && avail >= floor {
+			copy(l.rows, share(want[:l.drawn], avail))
+			break
+		}
+	}
+	return l
+}
+
 func (m Model) View() string {
-	w := m.width
-	if w <= 0 {
-		w = defaultWidth
-	}
-	// A panel's border takes two columns and its padding two more, so the
-	// text inside one is four columns narrower than the terminal.
-	inner := w - 4
-	if inner < 20 {
-		inner = 20
-	}
 	if m.watching != nil {
+		w, inner := m.dims()
 		return m.sessionView(w, inner)
 	}
+	l := m.layout()
+	want := m.want()
+	body := []func(w, rows, from int) string{m.nowPanel, m.recentPanel, m.needsHumanPanel, m.approvedPanel}
+
 	var b strings.Builder
-	b.WriteString(m.header(w) + "\n")
-	b.WriteString(panel("Now", m.nowPanel(inner), inner) + "\n")
-	b.WriteString(panel("Queues", m.queuesPanel(inner), inner) + "\n")
+	b.WriteString(m.header(l.width) + "\n")
+	// Where each panel's rows start in the one flat list the cursor moves
+	// through (see targets), so every panel marks the right row.
+	at := 0
+	for i := range l.drawn {
+		b.WriteString(panel(panelTitles[i], body[i](l.inner, l.rows[i], at), l.inner) + "\n")
+		at += l.entries(i, want[i])
+	}
+	b.WriteString(l.queues + "\n")
 	b.WriteString(hintStyle.Render(m.footer()))
 	return b.String()
 }
@@ -433,18 +727,24 @@ func (m Model) header(w int) string {
 	return left + strings.Repeat(" ", gap) + right
 }
 
-// footer says what Ctrl-C does, or what it did.
+// footer says what the keys do — or, when a key has just done something,
+// what it did and how it went. A notice outranks the hints: a person who
+// has just pressed one of them is owed the answer, and the hints come back
+// as soon as they press anything else.
 func (m Model) footer() string {
 	switch {
 	case m.stopping && len(m.sessions) > 0:
-		return fmt.Sprintf("stopping: waiting for %s to finish — ctrl-c again to leave them running",
+		return fmt.Sprintf("stopping: waiting for %s to finish — q or ctrl-c again to leave them running",
 			text.Count(len(m.sessions), "session"))
 	case m.stopping:
 		return "stopping: draining"
+	case m.notice != "":
+		return m.notice
 	case len(m.sessions) > 0:
-		return "↑/↓ select · enter watch a session · ctrl-c stops polling and drains"
+		return "↑↓ select · enter watch · o open on GitHub · k stop session · q or ctrl-c stops polling and drains"
 	default:
-		return "ctrl-c stops polling and drains"
+		// enter and k both act on a running session, and there are none.
+		return "↑↓ select · o open on GitHub · q or ctrl-c stops polling and drains"
 	}
 }
 
@@ -458,21 +758,18 @@ func panel(title, body string, w int) string {
 // nowPanel renders every running session: who is running it, what it is
 // about, the stage its developer worker is in, how long it has been going,
 // what the work item has spent so far and the model it runs on. The cursor
-// marks the one Enter opens the session view on.
-func (m Model) nowPanel(w int) string {
+// marks the one enter opens the session view on and k stops — the same ▸ the
+// other panels draw, because there is one selection over the whole view.
+func (m Model) nowPanel(w, rows, from int) string {
 	if len(m.sessions) == 0 {
 		return hintStyle.Render("no sessions running")
 	}
-	rows := []string{headerStyle.Render(clip(nowRow("", "role", "issue", "pr", "stage", "elapsed", "turns", "cost", "model"), w))}
-	sel, _ := m.selection()
-	for _, s := range m.sessions {
+	out := []string{headerStyle.Render(clip(nowRow("  ", "role", "issue", "pr", "stage", "elapsed", "turns", "cost", "model"), w))}
+	out = append(out, listRows(len(m.sessions), rows, func(i int) string {
+		s := m.sessions[i]
 		spent := m.spent[spendKey(s.issue, s.role)]
-		cursor := "  "
-		if s.name == sel.name {
-			cursor = "> "
-		}
-		rows = append(rows, clip(nowRow(
-			cursor,
+		return clip(nowRow(
+			mark(m.cursor, from+i),
 			prompts.Title(s.role),
 			number(s.issue),
 			number(s.pr),
@@ -481,9 +778,9 @@ func (m Model) nowPanel(w int) string {
 			strconv.Itoa(spent.turns),
 			fmt.Sprintf("$%.2f", spent.cost),
 			modelCell(s, w),
-		), w))
-	}
-	return strings.Join(rows, "\n")
+		), w)
+	})...)
+	return strings.Join(out, "\n")
 }
 
 // stageWidth is the width of the stage column, which every cell is cut to:
@@ -494,8 +791,8 @@ const stageWidth = 20
 
 // nowRow lays the Now panel's columns out. The header and every row go
 // through it, so they cannot drift apart.
-func nowRow(cursor, role, issue, pr, stage, elapsed, turns, cost, model string) string {
-	return fmt.Sprintf("%-2s%-16s %-5s %-5s %-*s %8s %6s %8s  %s", cursor, role, issue, pr, stageWidth, stage, elapsed, turns, cost, model)
+func nowRow(sel, role, issue, pr, stage, elapsed, turns, cost, model string) string {
+	return fmt.Sprintf("%s%-16s %-5s %-5s %-*s %8s %6s %8s  %s", sel, role, issue, pr, stageWidth, stage, elapsed, turns, cost, model)
 }
 
 // modelCell renders the last column: the model the session runs on, and
@@ -511,7 +808,7 @@ func modelCell(s running, w int) string {
 	if s.fallback {
 		marker = " (fallback)"
 	}
-	budget := w - lipgloss.Width(nowRow("", "", "", "", "", "", "", "", "")) - lipgloss.Width(marker)
+	budget := w - lipgloss.Width(nowRow("  ", "", "", "", "", "", "", "", "")) - lipgloss.Width(marker)
 	if budget < 1 {
 		// Not even room for the marker: give what room there is to it and
 		// let the row's own clip decide the rest. A cut "(fallback" still
