@@ -367,7 +367,9 @@ feature (number and title) when it is a sub-issue, the existing PR if this is
 a later review round, unread mail addressed to the developer about
 this issue or PR (project manager answers, reviewer feedback, feedback
 from people who reviewed the PR on GitHub, delivered as mail from `human`
-with comment ids and the exact `gh` reply commands, and — from
+with comment ids and the exact `gh` reply commands, a person's comments on
+the **issue** while it is in flight, delivered from `human` too and answered
+on the issue with the `comment` tool, and — from
 `orchestrator` — a request to bring the branch up to date when the PR
 [conflicts with the default branch](workflow.md#conflicts-with-the-default-branch)),
 the round number and limit, its notes. It runs in a worktree on `bees/issue-N` (prefix
@@ -482,7 +484,9 @@ file/line and the expected change. It also *receives* mail addressed to
 `reviewer` — in practice from a human
 (`bees mail send --from human --to reviewer`) — about the issue or the pull
 request: it is delivered to the next reviewer session, in review mode and in
-checks mode alike, and marked read afterwards. Mail from `human` is a
+checks mode alike, and marked read afterwards. It also gets a copy of any
+comment a person writes on an issue while it is in `bees:review`, so the round
+in flight takes the direction into account. Mail from `human` is a
 direction it follows literally, even where its prompt says otherwise.
 
 **Outcomes and what the orchestrator does:**
