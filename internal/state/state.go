@@ -141,6 +141,19 @@ type IssueState struct {
 	// feature it proposed may now be broken into work items.
 	Proposal           bool      `json:"proposal,omitempty"`
 	ProposalApprovedAt time.Time `json:"proposal_approved_at,omitempty"`
+	// OpenChildren are the open sub-issues a feature had when the product
+	// manager last ran, and CompleteReportedAt when the scheduler last told
+	// it that all of them had closed. Together they are how the scheduler
+	// notices a finished feature without asking GitHub on the polling path:
+	// GitHub's sub-issue summary carries counts only, so the numbers are
+	// remembered here and checked against the issues the poll still finds
+	// open. An empty or incomplete lookup is never recorded over a remembered
+	// one — no open children is the very state the check is about, and a
+	// truncated set would look like children that closed — and a set that
+	// changes clears the marker, so a feature that gains a sub-issue after
+	// being reported complete can be reported again.
+	OpenChildren       []int     `json:"open_children,omitempty"`
+	CompleteReportedAt time.Time `json:"complete_reported_at,omitempty"`
 	UpdatedAt          time.Time `json:"updated_at"`
 }
 

@@ -9,7 +9,7 @@ what it may do, and how to shape it.
 
 | Role | Instances | Runs when |
 |---|---|---|
-| `product_manager` | singleton | unread mail, a fresh `bees:feedback` or `bees:feature` issue (a person created or commented on it since the PM last replied), or `product_manager_interval` elapsed (first run immediately) |
+| `product_manager` | singleton | unread mail, a fresh `bees:feedback` or `bees:feature` issue (a person created or commented on it since the PM last replied), a feature whose sub-issues have all closed, or `product_manager_interval` elapsed (first run immediately) |
 | `project_manager` | singleton | issues in `bees:triage`, or unread mail |
 | `developer` | pool of `scheduler.max_developers` workers | a `bees:ready` issue is waiting (or an in-progress/review issue needs resuming); a ready issue whose PR came back — human feedback, a conflict with the default branch — goes before new work |
 | `reviewer` | one per developer worker, in sequence | the worker's developer session opened or updated a PR; with `auto_merge`, also when a required check fails after approval |
@@ -114,10 +114,12 @@ work items for the project manager. Milestones are not its job (see below).
 description); the **fresh feature issues** (full body and every comment); a
 table of *all* open feature issues (milestone, sub-issue **progress** as
 `completed/total` from GitHub's `sub_issues_summary`, whether it is waiting on
-a person, title); every open **work item** (state, kind, the **parent** feature
-it is a sub-issue of or `-`, milestone, title — feature and feedback issues are
-excluded from this table); open PRs; the **fresh `bees:feedback` issues** (full
-body and every comment); unread mail; its notes. It works from a detached
+a person, title); the features **whose work is done** — every sub-issue closed
+since the last run — in a section of their own; every open **work item**
+(state, kind, the **parent** feature it is a sub-issue of or `-`, milestone,
+title — feature and feedback issues are excluded from this table); open PRs;
+the **fresh `bees:feedback` issues** (full body and every comment); unread
+mail; its notes. It works from a detached
 checkout of the default branch and is told to read the codebase and README to
 understand what exists.
 
@@ -158,8 +160,27 @@ enter the workflow state machine. For each fresh one it:
    scheduler honours, see [Dependencies](workflow.md#dependencies)) rather than
    prose — then comments the list of work items on the feature
    issue (with the marker) so it is not re-presented until something changes;
-4. closes the feature issue when all its sub-issues are closed (the progress
-   column in its prompt shows this), or when it no longer makes sense.
+4. closes the feature issue when all its sub-issues are closed, or when it no
+   longer makes sense.
+
+**Features whose work is done.** The last sub-issue of a feature closing is an
+event nobody would otherwise report: the work items are gone from the queues
+and the feature sits open until the product manager next runs for another
+reason. The orchestrator notices it without asking GitHub. Each product manager
+run records, per feature, the numbers of its open sub-issues (it already looks
+each open work item's parent up for the `Parent` column); every later pass
+checks those numbers against the issues the poll still finds open, which is a
+purely local test and adds no call to the polling path. When they have all
+closed, the feature wakes the product manager and is presented in a section of
+its own, framed as one yes/no: is the feature's *original intent* complete? If
+it is, the product manager closes it; if it is not, it says on the issue what
+is missing and creates work items for exactly that — a finished feature is not
+an invitation to widen it. It is reported **once**: a feature the product
+manager looked at and deliberately left open is not raised again until it gains
+a sub-issue and that one closes too. A feature whose children all closed before
+the scheduler ever recorded them, or that no product manager run has seen, has
+nothing recorded and is picked up on the next run for any other reason, which
+`product_manager_interval` guarantees.
 
 Once a pass it also **attaches loose work items**. Only the issues the product
 manager creates itself get a `parent`: a bug a developer, reviewer or QA files,
@@ -223,13 +244,15 @@ prompt, and what was done about it is said in the outcome. It needs no feedback
 issue to hang a reply on.
 
 **Outcomes:** `done` (with a summary), `idle`, `failed`. A run with no fresh
-feature, no fresh feedback, no mail and no unanswered comment on a proposal was
-woken by `product_manager_interval` rather than by an event; the prompt tells the
+feature, no fresh feedback, no mail, no unanswered comment on a proposal and no
+completed feature was woken by `product_manager_interval` rather than by an
+event; the prompt tells the
 product manager to run the loose-work-item check and then report `idle` rather
-than look for work to invent. Proposals are the fourth wake condition and the
-one that is easy to miss: they are partitioned out of the fresh features into
-their own section, so a person questioning a proposal produces a task whose
-other three sections are empty. The orchestrator
+than look for work to invent. Proposals and completed features are the wake
+conditions that are easy to miss: both are partitioned out of the fresh
+features into a section of their own, so a person questioning a proposal — or a
+feature finishing its last work item — produces a task whose other three
+sections are empty. The orchestrator
 records the run time (which starts the `product_manager_interval` clock) and
 marks the delivered mail read. `failed` logs an error and backs the role off
 for five poll intervals.

@@ -51,6 +51,25 @@ removing the `{{.Labels.Proposal}}` label.
 _None waiting for a person._
 {{end}}
 
+## Features whose work is done ({{len .CompletedFeatures}})
+{{if .CompletedFeatures}}
+Every work item of each feature below has closed. One decision per feature, yes or
+no: **is the feature's original intent complete?** If it is, close the issue with
+`gh issue close` and a comment (with the marker) saying it shipped. If it is not,
+say on the issue what is still missing and create the work items for exactly that.
+A feature whose work is done is not an invitation to widen it: new scope belongs
+in a new feature issue, not in this one.
+{{- range .CompletedFeatures}}
+
+### #{{.Number}}: {{.Title}}
+- from: {{.Author.Login}} · {{.CreatedAt.Format "2006-01-02"}} · milestone: {{milestone .}} · {{.URL}}
+
+{{.Body}}
+{{- end}}
+{{else}}
+_None: no feature had its last open work item closed since you last ran._
+{{end}}
+
 ## All open feature issues ({{len .Features}})
 {{if .Features}}
 | # | Milestone | Progress | Proposal | Waiting on person | Title |
@@ -126,7 +145,9 @@ _No new mail._
 3. Reply to every question in your mail.
 4. Check the feature tree: the `Parent` column above says which feature each open work
    item is a sub-issue of, and every feature whose sub-issues are all closed should be
-   closed. Attach what is loose with `issue_link`; close what is done.
+   closed. Attach what is loose with `issue_link`; close what is done — starting with
+   the features under *Features whose work is done*, which are the ones that finished
+   since you last ran.
 5. Review the backlog against the vision and the milestones people have set, and create
    or adjust feature issues where the roadmap has a real gap. Keep the backlog healthy
    but small.

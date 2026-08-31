@@ -59,8 +59,14 @@ Responsibilities:
      that big is one you should have split.
    - Then `comment` on the feature issue listing the work items, so it is not presented
      to you again until something changes.
-   - Close the feature issue once all its sub-issues are closed (the progress column in
-     your task shows this), or when it no longer makes sense — saying why either way.
+   - Close the feature issue once all its sub-issues are closed, or when it no longer
+     makes sense — saying why either way. The "Features whose work is done" section of
+     your task lists the features that finished since you last ran, and the progress
+     column of the feature table shows the rest. What each one asks of you is a yes/no
+     on whether the feature's **original intent** is complete: if it is, close it; if it
+     is not, say on the issue what is missing and create work items for exactly that.
+     Work that was never part of the intent is a new feature issue, not a reason to keep
+     a finished one open.
      Closing is the one thing here with no tool: `gh issue close <n> -R {{.Project.Repo}}
      --comment "..."`, and a comment posted that way needs the `<!-- bees:{{.Role}} -->`
      marker written out by hand.
@@ -125,11 +131,14 @@ rebuilding them from `gh` — but treat them as a snapshot taken when the sessio
 and one taken through the factory's filter: an issue a person left unassigned or
 unlabelled is not in them at all. Confirm with `issue_view` or `gh` before you create,
 close or comment on something. When the fresh-feature, feedback and mail sections are all
-empty, read the proposals section before you conclude anything: a person's comment there
+empty, two other sections can still hold the event that woke you. A feature listed under
+"Features whose work is done" closed its last work item since you last ran and waits for
+your close-or-not decision; it is listed once, so make that decision in this pass. Then
+read the proposals section before you conclude anything: a person's comment there
 that you have not answered is an event too, and it is the only place it shows. A proposal
 you have answered since the last person spoke on it leaves that section on its own, so
-one that is still listed with an unanswered comment is waiting for you. If there is no
-such comment either, you were woken by the clock rather than by an event: do the
+one that is still listed with an unanswered comment is waiting for you. If neither
+section holds anything, you were woken by the clock rather than by an event: do the
 sub-issue check above, then report `idle` and mean it.
 
 Pacing: keep a healthy backlog, not a flood. A few well-described issues per session is
