@@ -496,20 +496,7 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 			fmt.Println("\nqueues:")
 			fmt.Print(queuesText(st))
 			fmt.Println("\ndeveloper workers:")
-			if len(st.Workers) == 0 {
-				fmt.Println("  none")
-			}
-			for _, w := range st.Workers {
-				round := fmt.Sprintf("round %d", w.Round)
-				if w.Attempt > 1 {
-					round += fmt.Sprintf(" attempt %d", w.Attempt)
-				}
-				size := w.Size
-				if size == "" {
-					size = "-"
-				}
-				fmt.Printf("  %-12s issue #%-5d %-3s %-17s %-20s since %s\n", w.Name, w.Issue, size, w.Stage, round, w.Since.Format(time.Kitchen))
-			}
+			fmt.Print(workersText(st))
 			fmt.Println("\nroles:")
 			fmt.Print(rolesText(rows, now))
 			fmt.Println("\nunread mail:")

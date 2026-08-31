@@ -99,6 +99,19 @@ func fakeClaude() {
 			return
 		}
 	}
+	// FAKE_COPY_ISSUE_STATE copies the issue's bookkeeping as it stands while
+	// this session runs to <state_dir>/running-<session dir>.json. It is the
+	// only way to see what the scheduler recorded *during* a session, which
+	// is exactly what a scheduler killed mid-session leaves behind.
+	if os.Getenv("FAKE_COPY_ISSUE_STATE") == "1" {
+		if n := os.Getenv(session.EnvIssue); n != "" {
+			if b, err := os.ReadFile(filepath.Join(stateDir, "issues", n+".json")); err == nil {
+				if err := os.WriteFile(filepath.Join(stateDir, "running-"+filepath.Base(sessionDir)+".json"), b, 0o644); err != nil {
+					fail(err)
+				}
+			}
+		}
+	}
 	counter := func(name string) int {
 		p := filepath.Join(stateDir, "fake-"+name)
 		n := 0

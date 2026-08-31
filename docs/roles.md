@@ -391,6 +391,17 @@ appends the marker, for reviews and conversation comments). When a human's reque
 the reviewer, the human wins. It must not change labels, must not push to the
 default branch, and must not fix unrelated bugs.
 
+**A session that was interrupted:** when a scheduler was killed while a
+session was working this issue, the session that takes over is told so before
+anything else — how far the interrupted one got, where its transcript is, and
+whether `bees kill` stopped it. A developer is told the branch may already
+carry commits, uncommitted edits or a pull request the interrupted session
+never reported, to carry on from rather than start over; a reviewer is told
+its round reported no verdict and starts over, and that the interrupted
+session may already have sent mail or posted on GitHub. Only the role that was
+interrupted is told, and only its first session; `bees status` marks the
+worker `resumed`. See [crash recovery](architecture.md#the-developer-worker).
+
 **Self-check:** before pushing, the developer checks the change the way the
 reviewer will. It runs the repository's own lint and test commands — the ones
 its README, CONTRIBUTING, CLAUDE.md, Makefile or CI configuration document —
@@ -442,7 +453,9 @@ request's checks as read just before the review (unless
 mail addressed to `reviewer` about the issue or the pull request (in practice
 from a human), the round number and limit, its notes. With a `product-fit`
 stage configured it is also given the work item's **parent feature**, the only
-thing that stage judges against. It runs in the same worktree as the developer
+thing that stage judges against, and when a scheduler was killed during a
+reviewer session for the issue, [what that session left
+behind](#developer). It runs in the same worktree as the developer
 for that issue, fast-forwarded to the latest push, so it reads the change in
 its context.
 
@@ -565,7 +578,8 @@ a second kind of session, rendered from `task/reviewer_checks.md` with
 
 **Given:** the PR, the issue, the list of failing checks (name,
 workflow, bucket, description, details link), the fix round and its limit,
-its notes.
+its notes, and — when a scheduler was killed during a reviewer session for
+the issue — [what that session left behind](#developer).
 
 **Does:** finds the cause without assuming a CI system — follows the details
 link, runs `gh pr checks`, reads the repository's docs and its own notes, uses
