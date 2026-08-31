@@ -808,8 +808,14 @@ func (d *Deps) checkPushes(ctx context.Context) Result {
 		return warn(name, GroupGitHub, "could not check: project.default_branch is not set, so there is no ref to probe",
 			"set project.default_branch in bees.toml (the project repo check above says the same thing), then run `bees doctor` again")
 	}
-	ref := fmt.Sprintf("repos/%s/git/refs/heads/%s", repo, url.PathEscape(branch))
-	out, err := d.gh(ctx, "api", ref)
+	// The read is git/ref (singular), GitHub's exact-match endpoint. git/refs
+	// prefix-matches: a default branch whose name is a prefix of another
+	// branch's - main alongside main-2 - answers with an array of every
+	// match, which no sha can be read out of. The write is git/refs, which
+	// is where GitHub puts the update.
+	readRef := fmt.Sprintf("repos/%s/git/ref/heads/%s", repo, url.PathEscape(branch))
+	writeRef := fmt.Sprintf("repos/%s/git/refs/heads/%s", repo, url.PathEscape(branch))
+	out, err := d.gh(ctx, "api", readRef)
 	if err == nil {
 		var head struct {
 			Object struct {
@@ -819,10 +825,10 @@ func (d *Deps) checkPushes(ctx context.Context) Result {
 		if uerr := json.Unmarshal(out, &head); uerr != nil || head.Object.SHA == "" {
 			return warn(name, GroupGitHub,
 				fmt.Sprintf("could not check: GitHub reported no commit for %s in %s", branch, repo),
-				"check that `gh api "+ref+"` answers, then run `bees doctor` again")
+				"check that `gh api "+readRef+"` answers, then run `bees doctor` again")
 		}
 		// The no-op: point the ref at the commit it already points at.
-		_, err = d.gh(ctx, "api", "--method", "PATCH", ref, "-f", "sha="+head.Object.SHA)
+		_, err = d.gh(ctx, "api", "--method", "PATCH", writeRef, "-f", "sha="+head.Object.SHA)
 	}
 	switch {
 	case err == nil:

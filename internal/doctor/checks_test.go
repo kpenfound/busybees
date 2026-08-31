@@ -711,7 +711,10 @@ func TestThePushProbeChangesNothing(t *testing.T) {
 	if len(f.gh.calls) != 2 {
 		t.Fatalf("made %d gh calls, want 2 (read the ref, then write it back): %v", len(f.gh.calls), f.gh.calls)
 	}
-	if got, want := strings.Join(f.gh.calls[0], " "), "api repos/owner/name/git/refs/heads/main"; got != want {
+	// git/ref, not git/refs: the plural endpoint prefix-matches, so a
+	// default branch whose name is a prefix of another branch's answers
+	// with an array of every match and the probe has no sha to write back.
+	if got, want := strings.Join(f.gh.calls[0], " "), "api repos/owner/name/git/ref/heads/main"; got != want {
 		t.Errorf("read the ref with `gh %s`, want `gh %s`", got, want)
 	}
 	got := strings.Join(f.gh.calls[1], " ")
