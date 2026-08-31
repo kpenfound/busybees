@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/prompts"
 	"github.com/kpenfound/busybees/internal/scheduler"
+	"github.com/kpenfound/busybees/internal/session"
 	"github.com/kpenfound/busybees/internal/state"
 	"github.com/kpenfound/busybees/internal/text"
 )
@@ -73,15 +75,27 @@ type running struct {
 	started  time.Time
 	model    string
 	fallback bool
+	// turns is how many assistant messages the session's transcript holds
+	// right now, recounted on the refresh tick (see countTurns). It lives
+	// here rather than in spent because the session-ended event replaces it
+	// with the number claude reports: the running entry is dropped in the
+	// same event that adds the real total, so nothing has to be undone.
+	turns int
 }
 
 // spend is what the sessions of one work item have reported so far. claude
 // reports turns and cost in the final event of a session's stream, so these
 // are the totals of the sessions that have *finished*: the running one adds
 // its own when it ends.
+//
+// known says whether any session of the work item has ended and reported a
+// cost. Until one has, the cost is not zero, it is unknown, and the Now
+// panel renders it as "-" — a session that genuinely cost $0.00 still
+// prints $0.00.
 type spend struct {
 	turns int
 	cost  float64
+	known bool
 }
 
 // finished is one session that has ended, as the Recent panel renders it.
@@ -183,6 +197,11 @@ type statusMsg struct {
 	err    error
 }
 
+// turnsMsg is a fresh count of the assistant messages in each running
+// session's transcript, keyed by session name. A session that has ended by
+// the time it arrives is simply not in the model any more.
+type turnsMsg map[string]int
+
 // actedMsg is what a key that did something outside the model reports back:
 // the empty string when it worked, and what went wrong when it did not.
 type actedMsg struct{ note string }
@@ -207,7 +226,7 @@ const redrawInterval = time.Second
 const refreshEvery = 5
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.waitForEvent(), m.refresh(), redraw())
+	return tea.Batch(m.waitForEvent(), m.refresh(), m.countTurns(), redraw())
 }
 
 // waitForEvent blocks on the event stream and delivers the next event. It is
@@ -248,6 +267,36 @@ func (m Model) refresh() tea.Cmd {
 	}
 }
 
+// countTurns counts the assistant messages of every running session's own
+// transcript, which is the only way to say how many turns a session that
+// has not finished has taken: claude reports num_turns in the result event
+// of its stream and nothing before it.
+//
+// It re-scans each file whole, on the refresh tick rather than on every
+// redraw — a transcript runs to a couple of megabytes and the number moves
+// every few minutes, so a count up to refreshEvery seconds stale costs
+// nothing and an offset per session to avoid the re-scan would be a third
+// place in this package tracking one.
+func (m Model) countTurns() tea.Cmd {
+	type live struct{ name, dir string }
+	open := make([]live, 0, len(m.sessions))
+	for _, s := range m.sessions {
+		if s.dir != "" {
+			open = append(open, live{s.name, s.dir})
+		}
+	}
+	if len(open) == 0 {
+		return nil
+	}
+	return func() tea.Msg {
+		out := make(turnsMsg, len(open))
+		for _, l := range open {
+			out[l.name] = session.CountTurns(filepath.Join(l.dir, session.TranscriptFile))
+		}
+		return out
+	}
+}
+
 func redraw() tea.Cmd {
 	return tea.Tick(redrawInterval, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
@@ -275,6 +324,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.statusErr, m.status, m.mail = "", msg.status, msg.mail
 		m.clampCursor()
+	case turnsMsg:
+		for i, s := range m.sessions {
+			if n, ok := msg[s.name]; ok {
+				m.sessions[i].turns = n
+			}
+		}
 	case transcriptMsg:
 		m.applyTranscript(msg)
 	case tailMsg:
@@ -300,7 +355,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		m.ticks++
 		if m.ticks%refreshEvery == 0 {
-			return m, tea.Batch(redraw(), m.refresh())
+			return m, tea.Batch(redraw(), m.refresh(), m.countTurns())
 		}
 		return m, redraw()
 	case Stopped:
@@ -580,6 +635,7 @@ func (m *Model) apply(ev scheduler.Event) {
 		s := m.spent[key]
 		s.turns += ev.Turns
 		s.cost += ev.CostUSD
+		s.known = true
 		m.spent[key] = s
 		m.recent = append([]finished{{
 			role: ev.Role, issue: ev.Issue, pr: ev.PR, at: ev.Time,
@@ -798,6 +854,15 @@ func (m Model) nowPanel(w, rows, from int) string {
 	out = append(out, listRows(len(m.sessions), rows, func(i int) string {
 		s := m.sessions[i]
 		spent := m.spent[spendKey(s.issue, s.role)]
+		// The turns of this session, counted live, on top of what the work
+		// item's finished sessions reported. The cost has no live half —
+		// claude prices a session only in its result event — so a work item
+		// nothing has finished on says so rather than printing $0.00, which
+		// reads as "spent nothing" and means "not known yet".
+		cost := "-"
+		if spent.known {
+			cost = fmt.Sprintf("$%.2f", spent.cost)
+		}
 		return clip(nowRow(
 			mark(m.cursor, from+i),
 			prompts.Title(s.role),
@@ -805,8 +870,8 @@ func (m Model) nowPanel(w, rows, from int) string {
 			number(s.pr),
 			clip(m.stageOf(s), stageWidth),
 			dur(m.deps.Now().Sub(s.started)),
-			strconv.Itoa(spent.turns),
-			fmt.Sprintf("$%.2f", spent.cost),
+			strconv.Itoa(s.turns+spent.turns),
+			cost,
 			modelCell(s, w),
 		), w)
 	})...)
