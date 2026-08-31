@@ -241,6 +241,12 @@ func (s *Scheduler) qaSince() time.Time {
 
 // qaHasWork asks GitHub for merged PRs at most once per qa_interval.
 func (s *Scheduler) qaHasWork(ctx context.Context) bool {
+	// A message addressed to qa is a direction, not something QA chose to do:
+	// qa_interval bounds the runs QA starts by itself, not the ones a person
+	// or the product manager asks for.
+	if s.hasUnreadMail(config.RoleQA, 0, 0) {
+		return true
+	}
 	rs, _ := s.store.Role(config.RoleQA)
 	if rs.LastRun.IsZero() {
 		return true
