@@ -1,17 +1,22 @@
-// Package tui draws the factory's live view: the two panels `bees run` shows
+// Package tui draws the factory's live view: the panels `bees run` shows
 // while it works, fed by the scheduler's event stream in the same process.
 //
 // Now lists every running session — role, issue or pull request, the stage
 // its developer worker is in, how long it has been going, what the work item
-// has spent and the model it runs on. Queues lists the numbers `bees status`
-// prints, read from status.json rather than computed a second way, together
-// with the unread mail per role and the time to the next GitHub poll.
+// has spent and the model it runs on — and Recent the ones that have
+// finished, with how each ended. Needs human is every issue the factory has
+// given up on and why; Approved PRs is what is waiting for a person to
+// merge. Queues lists the numbers `bees status` prints, read from
+// status.json rather than computed a second way, together with the unread
+// mail per role and the time to the next GitHub poll.
 //
-// The view is a subscriber and nothing more: it never asks the scheduler for
-// anything, and the scheduler never waits for it (an event it has no room
-// for is dropped). It is drawn only when `bees run` owns a terminal —
-// `bees run --no-tui`, a redirected stdout and `bees tick` log instead, and
-// their output is exactly what it was before there was a view.
+// The view is very nearly a subscriber and nothing more: everything it draws
+// comes from the event stream and from status.json, it polls no GitHub of
+// its own, and the scheduler never waits for it (an event it has no room for
+// is dropped). The one thing it asks the factory to *do* is stop a session,
+// on the k key, through Deps.Kill. It is drawn only when `bees run` owns a
+// terminal — `bees run --no-tui`, a redirected stdout and `bees tick` log
+// instead, and their output is exactly what it was before there was a view.
 package tui
 
 import (

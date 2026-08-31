@@ -8,7 +8,8 @@
 //	notes/archive/       notes files replaced by `bees notes reset`
 //	sessions/<id>/       one directory per claude session (prompts, transcript, result)
 //	issues/<n>.json      per-issue bookkeeping (review round, PR number, the
-//	                     developer worker's stage and its running session)
+//	                     developer worker's stage, its running session and,
+//	                     once the factory gives up, why it did)
 //	<role>.json          per-role bookkeeping (last run, session counters);
 //	                     every role has one, including developer and reviewer
 //	status.json          live scheduler status
@@ -56,7 +57,8 @@ This directory is managed by ` + "`bees`" + `. It holds:
 - notes/     each role's notes file (their only memory between sessions),
              with archive/ holding the ones ` + "`bees notes reset`" + ` replaced
 - sessions/  prompts, transcripts and results of every Claude Code session
-- issues/    per-issue bookkeeping (review rounds, the developer worker's stage)
+- issues/    per-issue bookkeeping (review rounds, the developer worker's stage,
+             and why the factory gave an issue up)
 - status.json live scheduler status (` + "`bees status`" + `)
 - ledger.jsonl one line per finished session: turns, cost and outcome (` + "`bees cost`" + `)
 - bees.log    every scheduler log record as JSON, rotated at 10 MiB

@@ -91,8 +91,8 @@ type stage struct {
 	round int
 }
 
-// Model is the Bubble Tea model behind `bees run`'s view: two panels, Now
-// and Queues, fed by the scheduler's event stream and by status.json.
+// Model is the Bubble Tea model behind `bees run`'s view: five panels fed by
+// the scheduler's event stream and by status.json, and the keys over them.
 //
 // Update and View are ordinary functions of the model and its messages —
 // no terminal, no goroutines, no clock of their own — which is how the whole
