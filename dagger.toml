@@ -19,4 +19,5 @@ includeExtraFiles = [
   "CLAUDE.md",
   ".github/workflows/release.yml",
   "docs/releasing.md",
+  "install.sh",
 ]

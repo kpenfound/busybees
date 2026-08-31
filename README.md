@@ -25,17 +25,51 @@ other roles through a local mailbox, and is configured by one file: `bees.toml`.
                  └────────────── humans merge ◀────────────────┘
 ```
 
-## Quick start
+## Install
 
-Prerequisites: Go 1.25+, [`gh`](https://cli.github.com/) 2.50.0 or newer
-(authenticated), `git`, and Claude Code (`claude`) 2.1.76 or newer, logged in.
-`bees` checks the `gh` and `claude` versions on startup; see
-[Requirements](docs/configuration.md#requirements).
+macOS and Linux, on amd64 (x86-64) and arm64:
 
 ```sh
-# install
-go install github.com/kpenfound/busybees/cmd/bees@latest
+curl -fsSL https://raw.githubusercontent.com/kpenfound/busybees/main/install.sh | sh
+```
 
+The script downloads the latest [release](https://github.com/kpenfound/busybees/releases),
+checks it against the SHA-256 sums published with it, and installs the `bees` binary in
+`/usr/local/bin` — using `sudo` only if that directory is not writable. Two variables
+change what it does:
+
+| Variable | Default | What it does |
+|---|---|---|
+| `BEES_VERSION` | the latest release | Install a particular version: `BEES_VERSION=v0.2.0`. |
+| `BEES_INSTALL_DIR` | `/usr/local/bin` | Install somewhere else: `BEES_INSTALL_DIR=$HOME/.local/bin`. |
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/kpenfound/busybees/main/install.sh |
+    BEES_VERSION=v0.2.0 BEES_INSTALL_DIR="$HOME/.local/bin" sh
+```
+
+Run from a file rather than a pipe, the version can also be the first argument
+(`sh install.sh v0.2.0`). Re-running the script upgrades an existing install in place,
+and a download that fails its checksum installs nothing.
+
+Anywhere the script does not cover — Windows, another architecture, or a build of
+unreleased `main` — build from source with Go 1.25+ instead:
+
+```sh
+go install github.com/kpenfound/busybees/cmd/bees@latest
+```
+
+[Releasing](docs/releasing.md) describes what a release contains and how to install one
+by hand.
+
+## Quick start
+
+Prerequisites: [`gh`](https://cli.github.com/) 2.50.0 or newer (authenticated), `git`,
+and Claude Code (`claude`) 2.1.76 or newer, logged in — plus Go 1.25+ if you build from
+source rather than installing a release. `bees` checks the `gh` and `claude` versions on
+startup; see [Requirements](docs/configuration.md#requirements).
+
+```sh
 # inside a clone of the project you want the bees to build
 cd ~/src/my-project
 bees init                # writes bees.toml, creates .bees/ and the GitHub labels

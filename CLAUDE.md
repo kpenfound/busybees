@@ -19,6 +19,11 @@ GitHub repository. Read `docs/architecture.md` before changing the scheduler.
   `v*` tag (see `docs/releasing.md`). There is deliberately no `push` or
   `pull_request` workflow: `dagger check` is the gate, and a CI-on-push workflow
   was added and reverted by a person on purpose. Do not add one.
+- `install.sh` (repository root) downloads a release. It parses the workflow's asset
+  names (`bees_<version>_<os>_<arch>.tar.gz` + `checksums.txt`), so those names are a
+  public interface: `cmd/bees/release_test.go` pins them against `docs/releasing.md`.
+  It is POSIX `sh`, has no test in the suite by design (it must not reach the
+  network), and is checked with `shellcheck -s sh install.sh`.
 
 ## Layout
 
