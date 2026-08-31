@@ -533,8 +533,16 @@ func TestNoTokenInjectsNothing(t *testing.T) {
 	if c.Token != "" {
 		t.Fatalf("New set a token: %q", c.Token)
 	}
+	// Printing the whole environment would bury the point: report only what
+	// the builder added on top of the process's own.
 	if cmd := c.command(ctx, "issue", "list"); cmd.Env != nil {
-		t.Errorf("command builds an explicit environment without a token: %v", cmd.Env)
+		var tokens []string
+		for _, e := range cmd.Env {
+			if strings.HasPrefix(e, "GH_TOKEN=") {
+				tokens = append(tokens, e)
+			}
+		}
+		t.Errorf("command builds an explicit environment without a token (%d vars, GH_TOKEN entries %q)", len(cmd.Env), tokens)
 	}
 	out, err := c.Exec(ctx, "issue", "list")
 	if err != nil {

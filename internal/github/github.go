@@ -328,6 +328,12 @@ func (q Query) Matches(labels []Label, assignees []Author, milestone string) boo
 	if q.Label != "" && !HasLabel(labels, q.Label) {
 		return false
 	}
+	// "@me" is not resolvable here, and it never arrives: bees resolves
+	// filter.assignee to a login with the machine owner's own gh
+	// authentication before it builds a query (see resolveFilterAssignee in
+	// cmd/bees). Letting it through unchecked is therefore about a hand-built
+	// query, not a fallback — and gh would answer it with whichever account
+	// the client's token belongs to, which is not what "@me" means to bees.
 	if q.Assignee != "" && q.Assignee != "@me" {
 		found := false
 		for _, a := range assignees {
