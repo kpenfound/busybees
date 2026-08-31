@@ -393,9 +393,31 @@ stateDiagram-v2
   and the issue is labelled `bees:review` it starts in the prereview stage
   (review, with `pre_review_checks = false` or the reviewer disabled); otherwise
   in develop. This is how work survives a restart of `bees run`.
+- **An interrupted session.** Resuming the stage says where the worker was;
+  it says nothing about the session that was running when the scheduler died.
+  That session left a transcript no `result.json` ever closed, and a branch
+  that may carry commits, uncommitted edits or even a pull request nobody
+  reported. So the scheduler records the session it is about to run in the
+  issue's bookkeeping (`session`: role, name, directory, start time) and
+  clears it when the session ends, whatever it ended with; a record that
+  outlives its session is the signal. The worker that takes the issue over
+  reads it and asks `session.CheckInterrupted` what the directory now says:
+  a pid file naming a live process means the session is *still running* —
+  another scheduler owns it, nothing is reported and the record is left
+  alone, because a session that has not written its result yet is simply a
+  session in progress — a `result.json` means it finished after all, and
+  anything else means it was interrupted. The first session of the role that
+  was interrupted is then told, at the top of its task prompt: how far the
+  session got (assistant messages counted in the transcript, an
+  approximation of the turn count the missing `result` event would have
+  carried), where the transcript is, whether it was stopped on purpose
+  (`bees kill` writes an `interrupted` marker into the directory it stops)
+  and that the branch may already carry its work. Another role's session is
+  told nothing — it could act on none of it — and the report never outlives
+  the worker that found it. `bees status` marks such a worker `resumed`.
 - **Rounds.** `<state_dir>/issues/<n>.json` records the review round, PR
   number, branch, `check_fix_rounds`, `worker_stage`, `after_develop`,
-  `pre_review_done`, `human_seen_at` and `conflict_notified_sha`. The round is
+  `pre_review_done`, `session`, `human_seen_at` and `conflict_notified_sha`. The round is
   incremented on every `changes-requested` and compared with
   `scheduler.max_review_rounds`; human feedback rounds do not count against the
   limit. `check_fix_rounds` is incremented each time the reviewer is asked to
@@ -687,7 +709,7 @@ oldest first, and `bees mail` works from any directory because sessions get
   sessions/<ts>-<name>-<rand>/   system-prompt.md, prompt.md, mcp.json, transcript.jsonl,
                                  stderr.log, outcome.json, result.json
   issues/<n>.json                {number, round, pr, branch, check_fix_rounds, worker_stage,
-                                 after_develop, pre_review_done, human_seen_at,
+                                 after_develop, pre_review_done, session, human_seen_at,
                                  conflict_notified_sha, updated_at}
   <role>.json                    per-role bookkeeping, one file per role that has run:
                                  {last_run, last_check, sessions, last_consolidated}
@@ -786,6 +808,11 @@ line also references this state directory's `sessions/` (every session's argv ca
 path prefix and also in its `filepath.EvalSymlinks` form). Sessions of another project's
 factory are never reported, so `bees kill` run with one project's config cannot strand
 another project's issues.
+Every session `bees kill` stops through a pid file is marked: it writes
+`<session dir>/interrupted` naming the kill, so the next session for that issue is
+told the session was stopped rather than left to guess that the machine crashed
+(see *An interrupted session* above; a process found only in the process table
+names no directory and is killed unmarked).
 `procs.Kill` sends SIGTERM to the process group (sessions are started with
 `Setpgid`, so MCP servers and shells belong to it), waits `--grace`, then SIGKILL.
 The command then removes every worktree of the main clone that lives under the

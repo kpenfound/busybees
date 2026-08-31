@@ -436,7 +436,7 @@ bees exec reviewer --pr 34
 Shows the last poll time and PID of the scheduler, queue sizes per workflow state
 (plus `feedback` and `features`, the open `bees:feedback` and `bees:feature` issues
 owned by the product manager, `proposals`, the subset of `features` still waiting for
-a person to approve them, and `open_prs`), running developer workers (issue, [size](workflow.md#sizing), stage, round, and the attempt number while a session is being retried), a row per
+a person to approve them, and `open_prs`), running developer workers (issue, [size](workflow.md#sizing), stage, round, the attempt number while a session is being retried, and whether the worker resumed), a row per
 role, and unread mail per role. Reads `status.json` from the state directory, so it
 works while `bees run` is active in another terminal.
 
@@ -455,6 +455,19 @@ or `checks (none)` — so a worker sitting in a 30-minute wait says whether it i
 waiting on the branch's required checks, on the checks the pull request happens to
 report, or on nothing at all. See
 [auto-merge](configuration.md#rolesreviewer-only-checks-and-auto-merge).
+
+A worker line ends with `resumed` when the worker took over from a session that a
+killed scheduler left unfinished, rather than starting fresh:
+
+```
+developer workers:
+  dev-1        issue #12    m   develop           round 1              since 8:22AM
+  dev-2        issue #14    s   review            round 2              since 8:31AM   resumed
+```
+
+The branch of a resumed worker may already carry work nobody reported, and the
+session that took over is told so in its prompt — see
+[crash recovery](architecture.md#the-developer-worker).
 
 The `roles:` table covers all five roles with what each is doing (`running` or
 `idle`; `-` for the developer and reviewer, whose work is in the workers table
@@ -631,6 +644,11 @@ references `<state_dir>/sessions/`. Another project's factory running on the sam
 machine is never touched, whichever config you point `bees kill` at. Pid files are
 cross-checked against that scan, so a pid reused by an unrelated process after a reboot
 is discarded, never killed.
+
+Each session it stops through a pid file is also marked as stopped, by an
+`interrupted` file in the session's directory. The next session for that issue is
+then told the session before it was stopped on purpose rather than lost with the
+machine, and that the branch may carry its unreported work.
 
 It refuses to run while a `bees run` scheduler is alive (killing sessions under a running
 scheduler would corrupt its state); pass `--scheduler` to stop the scheduler too.
