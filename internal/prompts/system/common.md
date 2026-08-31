@@ -70,8 +70,10 @@ feedback issue where the product manager is waiting for a person to answer.
 
 `{{.Labels.Priority}}` is a person's lever, not a state: an issue carrying it keeps its
 state label and is handed to a developer before the rest of the `{{.Labels.Ready}}`
-queue. Only a person adds it — with one exception, named in the project manager's
-instructions — and only a person removes it.
+queue. Only a person decides what carries it, and only a person removes it; where a
+role may add the label — carrying a person's decision from one issue to the work item
+that replaces it, or the one case named in the project manager's instructions — that
+role's own instructions say so.
 
 The orchestrator moves most labels for you. Only change labels where your role
 instructions say so.

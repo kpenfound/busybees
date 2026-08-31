@@ -102,8 +102,10 @@ require_label = false
 assignee = "@me"
 ```
 
-The factory picks up any issue assigned to you, adds `bees` and `bees:triage` to it on
-first sight, and assigns every PR or bug it creates back to you. Because state labels
+The factory picks up any issue assigned to you, adds `bees` and `bees:feedback` to it
+on first sight — an issue with no kind and no state label is read as feedback for the
+product manager, and you label it `bees:triage` or `bees:ready` yourself to have it
+built — and assigns every PR or bug it creates back to you. Because state labels
 are prefixed with `label`, several people can each run their own factory in the same
 repository with different labels (`kyle-bees`, `sam-bees`) without interfering.
 
@@ -120,7 +122,7 @@ and `bees labels sync` create them in GitHub.
 | `bees:feedback` | Feature idea, product feedback or bug report for the product manager (outside the state machine) |
 | `bees:question` | The product manager is waiting for a person to answer on a feature or feedback issue; removed by the orchestrator when they reply |
 | `bees:proposal` | A feature issue a bee wrote; it sits next to `bees:feature`, and a person removes the label to approve it |
-| `bees:priority` | A person wants this next: dispatched before the rest of the `bees:ready` queue. Not a state label; people set it, and the project manager may add it to a work item that unblocks the factory itself |
+| `bees:priority` | A person wants this next: dispatched before the rest of the `bees:ready` queue. Not a state label; people set it, the project manager may add it to a work item that unblocks the factory itself, and the product manager carries one from a feedback issue onto the work item it creates from it |
 | `bees:triage` | Needs refinement by the project manager |
 | `bees:ready` | Detailed enough for a developer to pick up |
 | `bees:in-progress` | A developer worker owns it |

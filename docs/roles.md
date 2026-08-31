@@ -198,9 +198,15 @@ feature or feedback issue triggers a product manager run regardless of
 **Feedback from people:** issues labelled `bees:feedback` are the product
 manager's inbox (feature ideas, product feedback, bug reports from humans) —
 the usual channel, not the only one, since a person can also write to it by
-mail; they never enter the workflow state machine. For each fresh one the
+mail; they never enter the workflow state machine. Not all of it is
+paragraph-sized: an issue a person files with only the `bees` label lands here
+too (the orchestrator labels it `bees:feedback`, see
+[Filing work](workflow.md#filing-work)), so some feedback is a small,
+already-well-formed ask. For each fresh one the
 product manager decides and acts (feature issues, bug work items, or a reasoned no), then must **reply on the feedback issue** with `comment`, saying
-what it did and linking created issues. It closes the
+what it did and linking created issues. A ready-to-build ask becomes a work
+item with `issue_create` (`related: <feedback issue>`) rather than a feature
+written around it, carrying `bees:priority` over if a person put it there. It closes the
 issue when fully actioned, or asks the person a question (`comment` +
 `issue_question`) and leaves it open. Freshness works exactly as for feature
 issues.
@@ -276,8 +282,8 @@ Three judgements the prompt makes for it, rather than leaving to the session:
   it re-checks that a bug still happens on the default branch before moving it
   to `bees:ready` — a bug that waited through a merge wave is often already
   fixed.
-- It may add [`bees:priority`](workflow.md#priority-do-this-next) — the one
-  exception to that label being a person's alone — to a work item that
+- It may add [`bees:priority`](workflow.md#priority-do-this-next) — a label
+  that is otherwise a person's to set — to a work item that
   unblocks the factory itself: the default branch does not build, every pull
   request's checks are red for the same reason, or the orchestrator cannot
   run. That is the only ordering it controls; it never moves `bees:ready`
