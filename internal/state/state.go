@@ -348,9 +348,9 @@ func (s *Store) writeJSON(path string, v any) error {
 	tmp := f.Name()
 	// A no-op after a successful rename; on every error path it is the
 	// cleanup. Its own error is deliberately ignored.
-	defer os.Remove(tmp)
+	defer func() { _ = os.Remove(tmp) }()
 	if _, err := f.Write(b); err != nil {
-		f.Close()
+		_ = f.Close()
 		return err
 	}
 	if err := f.Close(); err != nil {
