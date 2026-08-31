@@ -231,3 +231,23 @@ func TestALongModelNameIsShortenedAndTheFallbackMarkerIsNot(t *testing.T) {
 		}
 	}
 }
+
+// The stage column is cut to its own width, so a long stage name cannot push
+// the model column — and with it the (fallback) marker — off the end of the
+// row. "pre-review checks (reported)" is what the scheduler publishes for a
+// worker sitting in the pre-review gate (developer.go's setChecksGate).
+func TestALongStageNameDoesNotPushTheModelColumnOff(t *testing.T) {
+	view := drive(t, Deps{Repo: "acme/widgets"},
+		staged(12, "pre-review checks (reported)", 1),
+		started("developer-issue-12-r1", config.RoleDeveloper, 12, 31, fixed.Add(-time.Minute), "sonnet", true))
+	for _, want := range []string{"pre-review checks (…", "sonnet", "(fallback)"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("the long stage name crowded %q out of the row:\n%s", want, view)
+		}
+	}
+	for _, line := range strings.Split(view, "\n") {
+		if w := len([]rune(line)); w > defaultWidth {
+			t.Errorf("a %d-column line in a %d-column view: %q", w, defaultWidth, line)
+		}
+	}
+}

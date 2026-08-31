@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
@@ -19,7 +20,13 @@ import (
 // so nothing the view covers up is lost.
 func runWithTUI(ctx context.Context, a *app, s *scheduler.Scheduler, g *globalFlags, console io.Writer) error {
 	restore := quietConsole(a.logger, g.console, a.cfg.Logging, console)
-	defer restore()
+	// The view hands the console back itself the moment it comes down, so
+	// the drain a second Ctrl-C leaves running is watched with the console
+	// on. The deferred one is the safety net for the paths that never get
+	// there.
+	var once sync.Once
+	give := func() { once.Do(restore) }
+	defer give()
 	// --verbose streams claude's own events to stderr, which would scribble
 	// over the view exactly as the console log would. The log file and the
 	// per-session transcripts still have everything.
@@ -29,7 +36,7 @@ func runWithTUI(ctx context.Context, a *app, s *scheduler.Scheduler, g *globalFl
 		Mail:   a.mail.Counts,
 		Now:    time.Now,
 		Repo:   a.cfg.Project.Repo,
-	}, s)
+	}, s, give)
 }
 
 // quietConsole sends console logging to io.Discard and returns the function

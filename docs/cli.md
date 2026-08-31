@@ -15,7 +15,7 @@ Everything else is for humans.
 | Flag | Description |
 |---|---|
 | `-c, --config <path>` | Path to `bees.toml`. Default: `$BEES_CONFIG`, else search upwards from cwd. |
-| `-v, --verbose` | Debug logging (same as `--log-level debug`). With `run`/`tick`/`exec`, also streams every claude event to stderr. |
+| `-v, --verbose` | Debug logging (same as `--log-level debug`). With `run`/`tick`/`exec`, also streams every claude event to stderr — except under [the live view](#the-live-view), which owns the terminal; `bees run --no-tui` streams as before. |
 | `-q, --quiet` | Console shows only session summaries, warnings and errors. Cannot be combined with `-v` or `--log-level debug`. |
 | `--log-format <text\|json>` | Console log format. Default `text`; `$BEES_LOG_FORMAT`, then [`logging.format`](configuration.md#logging). |
 | `--log-level <debug\|info\|warn\|error>` | Console log level. Default `info`; `$BEES_LOG_LEVEL`, then [`logging.level`](configuration.md#logging). |
@@ -24,6 +24,11 @@ Everything else is for humans.
 A flag beats its environment variable, which beats the
 [`[logging]` table](configuration.md#logging) in `bees.toml`, which beats the
 default. An unknown value is an error naming the valid ones.
+
+With [the live view](#the-live-view) up — `bees run` in a terminal — the
+console shows nothing at all: these flags describe the console, and
+`<state_dir>/bees.log` gets every record whatever they say. `--no-tui` turns
+the view off.
 
 ## Setting up
 
@@ -368,7 +373,7 @@ only logs a warning; the run continues.
 
 | Flag | Description |
 |---|---|
-| `--once` | Do one pass and exit when the sessions it started finish. Same as `bees tick`. |
+| `--once` | Do one pass and exit when the sessions it started finish. Same scheduling as `bees tick`; in a terminal it draws [the live view](#the-live-view) rather than logging the pass, so `bees tick` or `--no-tui` is what prints a report. |
 | `--roles a,b` | Only run these roles (aliases accepted: `pm`, `pjm`, `dev`, `reviewer`, `qa`). |
 | `--skip-doctor` | Start without running the doctor preflight. |
 | `--no-tui` | Log to the console instead of drawing the terminal UI. A stdout that is not a terminal turns the UI off on its own. |

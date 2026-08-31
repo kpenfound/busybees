@@ -44,7 +44,12 @@ type Factory interface {
 // does without the view — and the view stays up until the drain is over. A
 // second press leaves the terminal early; the sessions it started are still
 // finishing, so the caller waits for them with the console back.
-func Run(ctx context.Context, d Deps, f Factory) error {
+//
+// down is called the moment the view has come down and before the drain is
+// waited out — `bees run` gives the console its logging back there, so the
+// person who pressed Ctrl-C twice watches the sessions finish instead of a
+// silent terminal. It may be nil.
+func Run(ctx context.Context, d Deps, f Factory, down func()) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	d.Events = f.Subscribe()
@@ -57,13 +62,18 @@ func Run(ctx context.Context, d Deps, f Factory) error {
 		done <- err
 		// Whatever stopped the factory — a drain the person asked for, a
 		// SIGTERM, --once finishing — the view has nothing left to show.
-		p.Send(Stopped{Err: err})
+		p.Send(Stopped{})
 	}()
 	_, err := p.Run()
-	// The view is down. Stop the factory if nothing has yet — the person
-	// gave up on the drain, or the view itself failed — and wait for it
-	// either way: the sessions it started are still finishing, and the
-	// console has its logging back to say so.
+	// The view is down: hand the terminal back before waiting on anything,
+	// so whatever the caller prints during the drain is seen.
+	if down != nil {
+		down()
+	}
+	// Stop the factory if nothing has yet — the person gave up on the
+	// drain, or the view itself failed — and wait for it either way: the
+	// sessions it started are still finishing, and the console has its
+	// logging back to say so.
 	cancel()
 	if runErr := <-done; err == nil {
 		return runErr

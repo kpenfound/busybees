@@ -91,12 +91,13 @@ type Model struct {
 	// view keeps drawing what it last read and says so.
 	statusErr string
 
-	width, height int
-	ticks         int
+	// width is the terminal's width, from the last WindowSizeMsg. The
+	// height is not read: the two panels are as tall as what is in them.
+	width int
+	ticks int
 	// stopping is set by the first Ctrl-C: the factory has been asked to
 	// stop polling and drain, and the view stays up until it has.
 	stopping bool
-	stopErr  error
 }
 
 // New builds the model. Nothing is read and no goroutine is started until
@@ -125,8 +126,9 @@ type statusMsg struct {
 type tickMsg time.Time
 
 // Stopped tells the view the factory has stopped and drained, which is the
-// one thing that ends the program on its own. The wiring in Run sends it.
-type Stopped struct{ Err error }
+// one thing that ends the program on its own. The wiring in Run sends it,
+// and carries nothing: Run returns the factory's error itself.
+type Stopped struct{}
 
 // redrawInterval is how often the view redraws itself between events: once a
 // second, because the elapsed times it shows are in seconds.
@@ -187,7 +189,7 @@ func redraw() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width, m.height = msg.Width, msg.Height
+		m.width = msg.Width
 	case tea.KeyMsg:
 		return m.key(msg)
 	case eventMsg:
@@ -206,19 +208,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, redraw()
 	case Stopped:
-		m.stopErr = msg.Err
+		// The factory is done and Run returns its error; the view has
+		// nothing left to draw.
 		return m, tea.Quit
 	}
 	return m, nil
 }
 
-// key handles the only two keys the view has. Ctrl-C (or q) asks the factory
-// to stop polling and drain, exactly as it does without the view, and the
-// view stays up while it does — pressing it again gives up on the drain and
-// leaves the terminal, with the sessions still finishing in the background.
+// key handles the only key the view has. Ctrl-C asks the factory to stop
+// polling and drain, exactly as it does without the view, and the view stays
+// up while it does — pressing it again gives up on the drain and leaves the
+// terminal, with the sessions still finishing in the background. There is
+// deliberately no second key for it: everything a person reads — the footer,
+// docs/cli.md, the prompts — says Ctrl-C, and a key that quietly stops the
+// whole factory is not one to discover by accident.
 func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "ctrl+c", "q":
+	case "ctrl+c":
 		if m.stopping {
 			return m, tea.Quit
 		}
@@ -264,8 +270,9 @@ func (m *Model) drop(name string) {
 
 // spendKey is what turns and cost are accumulated under: the issue when the
 // event is about one, so every session of a work item — developer rounds,
-// reviews, check fixes — adds to the same total, and the role otherwise, so
-// a singleton's runs accumulate too.
+// reviews, check fixes — adds to the same total. A singleton owns no work
+// item, so its runs accumulate under its role instead, for the life of the
+// process rather than of an issue.
 func spendKey(issue int, role string) string {
 	if issue > 0 {
 		return "issue-" + strconv.Itoa(issue)
@@ -354,7 +361,7 @@ func (m Model) nowPanel(w int) string {
 			prompts.Title(s.role),
 			number(s.issue),
 			number(s.pr),
-			m.stageOf(s),
+			clip(m.stageOf(s), stageWidth),
 			dur(m.deps.Now().Sub(s.started)),
 			strconv.Itoa(spent.turns),
 			fmt.Sprintf("$%.2f", spent.cost),
@@ -364,10 +371,16 @@ func (m Model) nowPanel(w int) string {
 	return strings.Join(rows, "\n")
 }
 
+// stageWidth is the width of the stage column, which every cell is cut to:
+// the stages the scheduler publishes run to "pre-review checks (reported)"
+// and a wider one would push the model column — and with it the (fallback)
+// marker — off the end of the row.
+const stageWidth = 20
+
 // nowRow lays the Now panel's columns out. The header and every row go
 // through it, so they cannot drift apart.
 func nowRow(role, issue, pr, stage, elapsed, turns, cost, model string) string {
-	return fmt.Sprintf("%-16s %-5s %-5s %-20s %8s %6s %8s  %s", role, issue, pr, stage, elapsed, turns, cost, model)
+	return fmt.Sprintf("%-16s %-5s %-5s %-*s %8s %6s %8s  %s", role, issue, pr, stageWidth, stage, elapsed, turns, cost, model)
 }
 
 // modelCell renders the last column: the model the session runs on, and
