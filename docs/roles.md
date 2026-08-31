@@ -700,7 +700,7 @@ prompt_file = "docs/qa-checklist.md"
   prompt needs more: it is compiled into the `bees` binary, so a change to
   `internal/prompts/*/*.md` reaches no session until `bees` is rebuilt and
   `bees run` restarted — `bees status` names the build the running scheduler
-  was started from.
+  was started from, and `bees doctor` warns when it is behind the repository.
 - **skills** are unioned (global first) and exposed to the session as plugin
   directories.
 - **mcp** servers are unioned; a role's server replaces a global one with the

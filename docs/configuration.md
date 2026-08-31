@@ -643,12 +643,14 @@ For each role the effective settings are computed from `[global]` and
 `bees config show <role>` prints the result.
 
 Only the *contents* of `prompt_file` are re-read for every session. The rest of this
-table — `prompt` included — comes from the `bees.toml` that was loaded when `bees run`
-started, so an edit to it reaches no session until the scheduler is restarted. The
-**base** role prompts need more than a restart: they are compiled into the `bees`
-binary, so a change to `internal/prompts/*/*.md` reaches no session until `bees` is
-rebuilt and `bees run` restarted. `bees status` names the build the running scheduler
-was started from, so it can be told from the one the repository has.
+table — `prompt` included — comes from the `bees.toml` that was loaded when `bees
+run` started, so an edit to it reaches no session until the scheduler is restarted.
+The **base** role prompts need more than a restart: they are compiled into the
+`bees` binary, so a change to `internal/prompts/*/*.md` reaches no session until
+`bees` is rebuilt and `bees run` restarted. `bees status` names the build the
+running scheduler was started from, so it can be told from the one the repository
+has, and [`bees doctor`](cli.md#bees-doctor) warns outright when that build is
+behind the commit the repository has checked out.
 
 ### Project prompt files
 

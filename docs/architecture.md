@@ -691,6 +691,9 @@ saved to `stderr.log` when non-empty, and `result.json` summarises the run.
   running as — in its `scheduler started` log line, and as `version` and
   `revision` in `status.json`, which is what `bees status` reports on the
   scheduler line — so the running prompts can be told from the repository's.
+  `bees doctor`'s **scheduler build is current** check makes that comparison
+  itself: it reads the recorded revision back and asks git where it sits
+  relative to `HEAD`, and warns when a running scheduler is behind it.
 - **Project prompt files.** `prompts.LoadProject` reads `bees/prompts/common.md` and
   `bees/prompts/<role>.md` from the **worktree** the session runs in, so a branch's
   own instructions apply to the session working on that branch. They are read at
