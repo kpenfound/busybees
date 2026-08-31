@@ -28,8 +28,17 @@ func TestTheTranscriptRendersWhatASessionSaidAndDid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading the fixture transcript: %v", err)
 	}
-	if st, err := os.Stat(fixtureTranscript); err != nil || off != st.Size() {
-		t.Fatalf("read %d bytes of a %v-byte transcript (%v)", off, st.Size(), err)
+	st, err := os.Stat(fixtureTranscript)
+	if err != nil {
+		// The arm that fires if the dagger.toml includeExtraFiles entry is
+		// ever dropped: the check container mounts only Go sources, so the
+		// fixture is simply absent there. Naming it beats dereferencing the
+		// nil FileInfo os.Stat returns with the error, which panics and
+		// takes the whole package's tests with it.
+		t.Fatalf("read %d bytes of the fixture transcript (%v)", off, err)
+	}
+	if off != st.Size() {
+		t.Fatalf("read %d bytes of a %d-byte transcript", off, st.Size())
 	}
 	got := strings.Join(lines, "\n")
 	for _, want := range []string{

@@ -481,8 +481,8 @@ that work item up next. Nothing reaches the session on screen: a headless
 `claude -p` reads its prompt and works to the end of it, and a follow-up
 turn written to its stdin is read and then ignored (measured while building
 this; [#293](https://github.com/kpenfound/busybees/issues/293) is the
-follow-up if that ever changes). The view says "queued for the next session"
-because that is what happened.
+record of that decision, and names what would reopen it). The view says
+"queued for the next session" because that is what happened.
 
 With the view off, every finished session prints one summary line. In `text`
 format they are the message alone, so a run reads as a report:

@@ -428,3 +428,134 @@ func hasTail(t *testing.T, cmd tea.Cmd, gen int) bool {
 	}
 	return false
 }
+
+// Only the session being read is marked ended. Sessions finish while
+// someone is watching another one — a factory normally has two or three
+// running — and the title saying "ended" over a session that is still
+// working is a claim the view has no business making.
+func TestOnlyTheWatchedSessionIsMarkedEnded(t *testing.T) {
+	first, second := t.TempDir(), t.TempDir()
+	writeTranscript(t, first, "the session being read")
+	writeTranscript(t, second, "another session")
+	m, _, cmd := watcher(t, first, watched("reviewer-pr-33-r1", config.RoleReviewer, 14, 33, second))
+	m, _ = run(t, m, cmd)
+
+	m, _ = m.Update(ended("reviewer-pr-33-r1", config.RoleReviewer, 14, 33, 12, 0.4))
+	if view := plain(m.View()); strings.Contains(view, "ended") {
+		t.Errorf("another session finishing marked the one being read ended:\n%s", view)
+	}
+	m, _ = m.Update(ended("developer-issue-12-r1", config.RoleDeveloper, 12, 31, 87, 2.41))
+	if view := plain(m.View()); !strings.Contains(view, "ended") {
+		t.Errorf("the session being read finished and the view does not say so:\n%s", view)
+	}
+}
+
+// A tick left over from a closed session view does not re-arm the loop of
+// the one that replaced it. Without the generation test it would: the tick
+// is scheduled ahead whatever the reader does, so closing a view and
+// opening another inside that window leaves the new view with two loops
+// reading the same file, and every such round trip adds one more.
+func TestAStaleTickDoesNotRearmTheNextSessionViewsLoop(t *testing.T) {
+	first, second := t.TempDir(), t.TempDir()
+	writeTranscript(t, first, "the first session")
+	writeTranscript(t, second, "the second session")
+	m, _, cmd := watcher(t, first, watched("reviewer-pr-33-r1", config.RoleReviewer, 14, 33, second))
+	m, _ = run(t, m, cmd)
+	stale := m.(Model).tailGen
+
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = run(t, m, cmd)
+	live := m.(Model).tailGen
+	if live == stale {
+		t.Fatalf("the second session view has the generation of the first (%d)", live)
+	}
+	if _, cmd := m.Update(tailMsg(stale)); hasTail(t, cmd, live) {
+		t.Error("a tick of the closed session view's loop re-armed the open one's")
+	}
+}
+
+// The transcript kept in memory is capped, and dropping the oldest lines
+// does not move what the reader is looking at. A session can run for hours
+// and nothing else bounds the slice; without the matching shift of the
+// scroll position, every line falling off the front would drag the text
+// under the reader's eyes forward by one.
+func TestALongTranscriptIsCappedWithoutMovingTheReader(t *testing.T) {
+	dir := t.TempDir()
+	says := make([]string, maxTranscriptLines)
+	for i := range says {
+		says[i] = fmt.Sprintf("line %04d", i)
+	}
+	writeTranscript(t, dir, says...)
+	m, _, cmd := watcher(t, dir)
+	m, _ = run(t, m, cmd)
+	if got := len(m.(Model).watching.lines); got != maxTranscriptLines {
+		t.Fatalf("kept %d lines of a %d-line transcript", got, maxTranscriptLines)
+	}
+
+	// Scroll away from the tail, and note the line at the top of the screen.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyHome})
+	for range 12 {
+		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	}
+	top := m.(Model).watching.scroll
+	want := fmt.Sprintf("line %04d", top)
+
+	// The session writes 100 more lines, so 100 fall off the front.
+	for i := maxTranscriptLines; i < maxTranscriptLines+100; i++ {
+		says = append(says, fmt.Sprintf("line %04d", i))
+	}
+	writeTranscript(t, dir, says...)
+	m, _ = run(t, m, m.(Model).readTail())
+
+	if got := len(m.(Model).watching.lines); got != maxTranscriptLines {
+		t.Errorf("kept %d lines of a %d-line transcript", got, len(says))
+	}
+	view := plain(m.View())
+	if !strings.Contains(view, "● "+want) {
+		t.Errorf("the reader was looking at %q and the truncation moved it:\n%s", want, view)
+	}
+}
+
+// A singleton runs on no work item at all, so the sentences about a message
+// to it simply end: "queued for the next product manager session", not
+// "… on no work item".
+func TestASingletonSessionIsAboutNoWorkItem(t *testing.T) {
+	dir := t.TempDir()
+	writeTranscript(t, dir, "reading the feedback")
+	box := &[]sent{}
+	d := Deps{
+		Repo: "acme/widgets",
+		Now:  func() time.Time { return fixed },
+		Send: func(to string, issue, pr int, subject, body string) error {
+			*box = append(*box, sent{to, issue, pr, subject, body})
+			return nil
+		},
+	}
+	var m tea.Model = New(d)
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
+	m, _ = m.Update(watched("product_manager-r1", config.RoleProductManager, 0, 0, dir))
+	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = run(t, m, cmd)
+
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("m")})
+	for _, r := range "look at the feedback queue" {
+		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	m, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = run(t, m, cmd)
+
+	view := plain(m.View())
+	if !strings.Contains(view, "queued for the next product manager session") {
+		t.Errorf("the view does not say where the message went:\n%s", view)
+	}
+	for _, unwanted := range []string{"no work item", "product manager session on"} {
+		if strings.Contains(view, unwanted) {
+			t.Errorf("the view says the message is about a work item (%q):\n%s", unwanted, view)
+		}
+	}
+	if len(*box) != 1 || (*box)[0].to != config.RoleProductManager {
+		t.Fatalf("the view delivered %+v, want one message to the product manager", *box)
+	}
+}

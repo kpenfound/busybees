@@ -229,8 +229,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case transcriptMsg:
 		m.applyTranscript(msg)
 	case tailMsg:
+		// The session view this loop belonged to has been closed, or closed
+		// and replaced by another. The generation test is the live half of
+		// that — closing increments the counter, so no tick a closed view
+		// left behind can match the open one's — and the nil test is the
+		// cheap invariant beneath it, for a close that ever forgets to.
 		if m.watching == nil || int(msg) != m.tailGen {
-			// The session view this loop belonged to has been closed.
 			return m, nil
 		}
 		// Read, then ask for the next read: this pair is the loop that

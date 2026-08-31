@@ -114,7 +114,7 @@ func (m Model) deliver(body string) tea.Cmd {
 	}
 	to, issue, pr := w.role, w.issue, w.pr
 	subject := "A person's message from the live view"
-	note := fmt.Sprintf("queued for the next %s session on %s", prompts.Title(to), about(issue, pr))
+	note := fmt.Sprintf("queued for the next %s session%s", prompts.Title(to), on(issue, pr))
 	return func() tea.Msg {
 		if err := send(to, issue, pr, subject, body); err != nil {
 			return sentMsg{err: err}
@@ -124,7 +124,9 @@ func (m Model) deliver(body string) tea.Cmd {
 }
 
 // about names what a message is addressed to, for the sentence the view
-// shows about it.
+// shows about it. A singleton runs on no work item at all, and the empty
+// string is what lets a sentence leave the phrase out rather than read
+// "on no work item".
 func about(issue, pr int) string {
 	switch {
 	case issue > 0:
@@ -132,8 +134,17 @@ func about(issue, pr int) string {
 	case pr > 0:
 		return "PR #" + fmt.Sprint(pr)
 	default:
-		return "no work item"
+		return ""
 	}
+}
+
+// on renders what a session is about as the trailing phrase of a sentence,
+// and renders nothing at all for a session that is about no work item.
+func on(issue, pr int) string {
+	if s := about(issue, pr); s != "" {
+		return " on " + s
+	}
+	return ""
 }
 
 // ---- keys ------------------------------------------------------------------
@@ -260,7 +271,7 @@ func (m Model) sessionPanel(w int) string {
 func (m Model) sessionTitle() string {
 	t := m.watching
 	parts := []string{prompts.Title(t.role), t.name}
-	if s := about(t.issue, t.pr); s != "no work item" {
+	if s := about(t.issue, t.pr); s != "" {
 		parts = append(parts, s)
 	}
 	if t.pr > 0 && t.issue > 0 {
@@ -284,8 +295,8 @@ func (m Model) sessionFooter() string {
 	t := m.watching
 	switch {
 	case t.composing:
-		return fmt.Sprintf("message for the next %s session on %s (enter queues it, esc cancels)",
-			prompts.Title(t.role), about(t.issue, t.pr))
+		return fmt.Sprintf("message for the next %s session%s (enter queues it, esc cancels)",
+			prompts.Title(t.role), on(t.issue, t.pr))
 	case t.err != "":
 		return "transcript: " + oneLine(t.err)
 	case t.sent != "":
