@@ -1017,9 +1017,6 @@ func (s *Scheduler) dispatchSingletons(ctx context.Context, snap *snapshot, mail
 				s.running[j.role] = false
 				s.mu.Unlock()
 				s.writeStatus()
-				// Free again, and its own poll-interval backoff is already
-				// set: a wake here lets another role's mail move now.
-				s.signal()
 			}()
 			err := j.run(ctx, snap)
 			if err != nil && ctx.Err() == nil {

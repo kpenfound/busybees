@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -206,5 +207,90 @@ func TestABurstOfSignalsCostsOneLocalPass(t *testing.T) {
 	cancel()
 	if <-waited {
 		t.Fatal("waitForTick reported a tick was due; it was cancelled")
+	}
+}
+
+// A session that writes mail in the middle of a developer worker's
+// develop → review loop does not make its recipient wait for the whole
+// worker: runSession signals when the session itself finishes, not only when
+// the worker returns its slot. The pre-review checks wait holds the worker
+// open long enough for the assertion to be about that and nothing else.
+func TestMailSentMidWorkerReachesItsRecipientBeforeTheWorkerEnds(t *testing.T) {
+	t.Setenv("FAKE_DEV_MAIL_TO", config.RoleProjectManager)
+	now := time.Date(2026, 3, 2, 10, 0, 0, 0, time.UTC)
+	h := newHarnessAt(t, wakeTOML+`
+[roles.product_manager]
+enabled = false
+[roles.qa]
+enabled = false
+[roles.reviewer]
+checks_wait = "2s"
+`, now)
+	seedReady(h, 1, "s", now.Add(-24*time.Hour))
+
+	stop := runLoop(t, h)
+	defer stop()
+
+	waitFor(t, time.Minute, "the project manager to be started by the developer's mail", func() bool {
+		return len(h.sessions(config.RoleProjectManager)) == 1
+	})
+	if idle(h) {
+		t.Fatal("the project manager only ran once the developer worker had finished: mail must not wait for the whole review loop")
+	}
+}
+
+// The two places the scheduler sends mail itself signal the wake, so the
+// developer session that answers a conflict notice or a person's review
+// comment starts on the pass that follows rather than at the next tick.
+func TestTheSchedulersOwnMailSignalsTheWake(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("conflict notice", func(t *testing.T) {
+		h := newHarness(t, devOnlyTOML)
+		seedApprovedPR(t, h, github.MergeableConflicting, "DIRTY", "aaa")
+
+		checkOnce(t, h)
+
+		if got := len(h.sched.wake); got != 1 {
+			t.Fatalf("%d wakes pending after the conflict notice, want 1", got)
+		}
+	})
+
+	t.Run("human feedback", func(t *testing.T) {
+		h := newHarness(t, devOnlyTOML)
+		seedApprovedPR(t, h, "MERGEABLE", "CLEAN", "aaa")
+		h.gh.prs[fakePR].UpdatedAt = time.Now()
+		when := time.Now().UTC().Format(time.RFC3339)
+		h.gh.activity["repos/acme/widgets/pulls/101/comments"] = fmt.Sprintf(`[
+			{"id": 555, "user": {"login": "kyle"}, "body": "please rename this", "path": "seed.txt", "line": 1, "html_url": "https://x/555", "created_at": %q}
+		]`, when)
+
+		snap, err := h.sched.poll(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := h.sched.deliverHumanFeedback(ctx, snap); err != nil {
+			t.Fatal(err)
+		}
+		if n := len(developerMail(t, h)); n != 1 {
+			t.Fatalf("%d messages in the developer's inbox, want the person's feedback", n)
+		}
+		if got := len(h.sched.wake); got != 1 {
+			t.Fatalf("%d wakes pending after the feedback was delivered, want 1", got)
+		}
+	})
+}
+
+// A wake still pending when the next full pass comes round is dropped: the
+// pass does everything the local pass it asked for would have done, and a
+// leftover signal would run a second one straight after it.
+func TestAFullPassSupersedesAPendingWake(t *testing.T) {
+	h := newHarness(t, noRolesTOML)
+	h.sched.signal()
+
+	runPass(t, h)
+
+	if got := len(h.sched.wake); got != 0 {
+		t.Fatalf("%d wakes survived the full pass, want 0", got)
 	}
 }
