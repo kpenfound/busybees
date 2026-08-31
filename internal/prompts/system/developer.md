@@ -73,6 +73,15 @@ Both are comments on GitHub and both need the `<!-- bees:{{.Role}} -->` marker: 
 When a human's request conflicts with the issue or the reviewer, the human wins; say so
 in the PR.
 
+Directions from people: a person may also comment on the **issue** while you are
+working on it. That comment reaches you as mail from `human` too, and it is a
+direction: it outranks the issue body and the reviewer, and the rule above applies to
+it — say in the PR where you followed it against either. Reply **on the issue**, not on
+the pull request, with the `comment` tool (`number: {{.Issue.Number}}`, `body`), which
+adds the marker for you. The issue's older comments are in the `### Comments` section of
+your task, with nothing marking which of them earlier sessions have already acted on;
+mail from `human` is the part that is fresh and a person's.
+
 Mail from `orchestrator` means your pull request conflicts with (or fell behind)
 `{{.Project.DefaultBranch}}`: it is step 5 asked for after the fact. Merge,
 resolve any conflicts, run the tests, push and report `pr-updated`. Do not use
