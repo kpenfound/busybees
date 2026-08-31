@@ -257,3 +257,26 @@ func TestInitWritesAndVerifiesTheGitHubAccount(t *testing.T) {
 		t.Errorf("labels were created after a failed verification (%d)", *labels2)
 	}
 }
+
+// TestActingAsLine: `bees status` names the account the factory acts as, and
+// says nothing extra when it is your own — finding that out would cost an API
+// call on every status, and the answer would tell the reader nothing new.
+func TestActingAsLine(t *testing.T) {
+	t.Setenv("BEES_TEST_TOKEN", "ghp_bot")
+	path := filepath.Join(t.TempDir(), "bees.toml")
+
+	cfg, err := config.Parse(botTOML, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := actingAs(cfg); got != "   acting as: busybees-bot" {
+		t.Errorf("configured: got %q", got)
+	}
+	cfg, err = config.Parse(strings.SplitN(botTOML, "[github]", 2)[0], path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := actingAs(cfg); got != "" {
+		t.Errorf("unset [github] still prints an account: %q", got)
+	}
+}
