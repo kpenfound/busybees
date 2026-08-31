@@ -126,6 +126,10 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 	}
 	start := sessionEvent(EventSessionStarted, spec)
 	start.Model, start.Fallback = role.Model, fallback
+	// Remembered under the same name the event carries, so a view that sees
+	// the session start can name it back to KillSession (kill.go).
+	s.recordLiveSession(spec.name, liveSession{role: spec.role, dir: sessionDir, issue: start.Issue, pr: start.PR})
+	defer s.dropLiveSession(spec.name)
 	s.publish(start)
 	res, err := s.runner.Run(ctx, session.Request{
 		Name:         spec.name,
@@ -491,6 +495,14 @@ func (s *Scheduler) runSessionWithRetry(ctx context.Context, spec sessionSpec) (
 		}
 		s.setWorkerAttempt(spec.worker, attempt)
 		res, err := s.runSession(ctx, try)
+		if s.tookKill(try.name) {
+			// A person stopped this session from the live view, and
+			// KillSession has already handed the issue to them. Retrying it
+			// would start the work again on an issue that is now theirs, and
+			// escalating it a second time would say the factory gave up
+			// where a person stepped in.
+			return nil, errSessionKilled
+		}
 		if err != nil {
 			return nil, err
 		}
