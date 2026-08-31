@@ -20,7 +20,7 @@ internal/mcpserver/  the built-in MCP server (`bees mcp serve`): mail, issue and
 internal/state/      state directory: notes, per-issue bookkeeping, singleton run times, status.json
 internal/scheduler/  the orchestrator: poll, human feedback, PR merge state, reconcile, developer worker pool, singleton roles, event stream
 internal/tui/        the live view `bees run` draws in a terminal: five panels and its keys
-internal/procs/      find and stop bees sessions after a crash (`bees kill`)
+internal/procs/      find and stop bees sessions: after a crash (`bees kill`) and one at a time from the live view
 internal/testutil/   test helpers (local bare git remote + clone)
 ```
 

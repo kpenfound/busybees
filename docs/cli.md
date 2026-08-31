@@ -345,8 +345,9 @@ reconciles labels (unlabelled issues go to the product manager, answered questio
 unblock), hands ready issues to free developer workers and starts the product manager,
 project manager and QA when they have work. It does not wait out the interval for what
 happens locally: a finished session wakes it, so a freed developer slot and mail one
-role wrote to another are picked up at once, without polling GitHub again. Ctrl-C
-stops polling and waits for running sessions to finish.
+role wrote to another are picked up at once, without polling GitHub again. Ctrl-C — or
+`q` in [the live view](#the-live-view) — stops polling and waits for running sessions
+to finish.
 
 Before the first poll it runs the **cheap half of [`bees doctor`](#bees-doctor)** —
 every check except the `roles` group, which clones skills and starts MCP servers — and
@@ -475,11 +476,15 @@ the session directory — and then labels its issue `bees:needs-human` with a
 comment saying a person stopped it, exactly as the factory giving up would.
 The session's own worker ends without retrying it. A singleton session
 (product manager, project manager, QA) owns no issue, so stopping one stops a
-session and nothing more.
+session and nothing more. Nothing is recorded as run either, so a singleton
+the factory still has work for starts again on the next pass.
 
-The view wants about 30 rows to show every panel at once; in a shorter
-terminal the lists shrink, each keeping at least one row and saying how many
-entries did not fit.
+The view wants about 30 rows to show every panel at once. In a shorter
+terminal the lists shrink first, each keeping one row and saying how many
+entries did not fit; when even that will not fit, whole panels go, from the
+bottom up — Approved PRs first, then Needs human, then Recent. The header,
+Now, Queues and the footer are the last things to go, and Queues goes on
+counting whatever the panels below it stopped listing.
 
 While the view is up, console logging is silenced — it would scribble over
 the panels — and `<state_dir>/bees.log` gets every record, so nothing is
