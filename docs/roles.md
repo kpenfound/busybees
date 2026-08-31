@@ -342,13 +342,15 @@ Three judgements the prompt makes for it, rather than leaving to the session:
   run. That is the only ordering it controls; it never moves `bees:ready`
   issues back to `bees:triage` to make another one the oldest.
 
-**Mail:** receives developer questions; may send to `product_manager`
-(product decisions) and `developer` (answers, always with `issue`). Prompts
-tell it to answer mail first, since developers are blocked on it, and to give
-decisions rather than options. Mail from `human` is treated as a direction
-rather than a question: it is followed literally even where it contradicts the
-prompt, and work it holds back stays in `bees:triage` with the hold written
-into the body.
+**Mail:** receives developer questions, and a person's comments on an issue it
+blocked out of triage, delivered from `human` (see
+[Commenting on the issue](workflow.md#commenting-on-the-issue)); may send to
+`product_manager` (product decisions) and `developer` (answers, always with
+`issue`). Prompts tell it to answer mail first, since developers are blocked on
+it, and to give decisions rather than options. Mail from `human` is treated as
+a direction rather than a question: it is followed literally even where it
+contradicts the prompt, and work it holds back stays in `bees:triage` with the
+hold written into the body.
 
 **Outcomes:** `done`, `idle`, `failed`. The orchestrator marks its mail read
 and records the run. Answers it sent take effect on the pass its finished

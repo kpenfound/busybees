@@ -564,9 +564,11 @@ The visible effect on GitHub is the `bees:blocked` label:
   project manager continues.
 
 Answers are delivered with the issue, so it does not matter which developer
-worker ends up with it. If you want to answer a question yourself, do it in
-the issue (roles treat human comments as authoritative) and move the label back
-to `bees:ready` or `bees:triage`, or send mail:
+worker ends up with it. If you want to answer a question yourself, comment on
+the issue: while it carries `bees:blocked` your comment is delivered to
+whoever asked, and the orchestrator moves the label back to `bees:ready` or
+`bees:triage` for you (see [Commenting on the issue](#commenting-on-the-issue)).
+Moving the label yourself still works, and so does mail:
 
 ```
 bees mail send --from human --to developer --issue 12 --subject "Re: which DB" --body "Use SQLite."
