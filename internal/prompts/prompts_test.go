@@ -164,8 +164,10 @@ func TestProjectManagerSeesTheRestOfTheTriageQueue(t *testing.T) {
 // applies it, because the role prompt rendered right after it contradicts the
 // absolute (#180). Two sentences: bees:priority ("only a person adds or
 // removes it", while the project manager may add it to a work item that
-// unblocks the factory), and what a person says is authoritative (issues and
-// PRs only, while a person can also write to a role through the mailbox).
+// unblocks the factory and the product manager carries one from a feedback
+// issue onto the work item it creates, #214), and what a person says is
+// authoritative (issues and PRs only, while a person can also write to a role
+// through the mailbox).
 func TestPreambleDoesNotOverstateWhatTheFactoryApplies(t *testing.T) {
 	for _, role := range config.Roles {
 		sys, err := System(role, sample(), "")
@@ -176,7 +178,7 @@ func TestPreambleDoesNotOverstateWhatTheFactoryApplies(t *testing.T) {
 			t.Errorf("%s preamble states bees:priority absolutely; the project manager may add it:\n%s", role, sys)
 		}
 		for _, want := range []string{
-			"Only a person adds it — with one exception, named in the project manager's",
+			"Only a person decides what carries it, and only a person removes it",
 			"in mail from `human` as\nauthoritative",
 		} {
 			if !strings.Contains(sys, want) {
@@ -967,6 +969,34 @@ func TestQAReadsItsMail(t *testing.T) {
 	} {
 		if !strings.Contains(sys, want) {
 			t.Errorf("qa system prompt missing %q:\n%s", want, sys)
+		}
+	}
+}
+
+// Since #213 an issue a person files with only the `bees` label is routed to
+// the product manager as feedback instead of into triage, so some of its
+// inbox is now a small, ready-to-build ask rather than an idea. The prompt is
+// the one place where that wording is load-bearing — the same rule is stated
+// in prose in docs/workflow.md and docs/roles.md, where a test would fight
+// every rewording — so the instruction is pinned here: turn the ask into a
+// work item related to the feedback issue rather than a feature written
+// around it, and carry the person's `bees:priority` onto the work item, which
+// is the half nothing else in the factory does for it.
+func TestProductManagerRoutesAReadyToBuildAsk(t *testing.T) {
+	sys, err := System(config.RoleProductManager, sample(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"An issue a person files with only the `bees`",
+		"no kind label, no state label",
+		"**do not write a feature around it**",
+		"`related: <the feedback issue>`",
+		"If the person put `bees:priority` on the",
+		"put it on the work item too",
+	} {
+		if !strings.Contains(sys, want) {
+			t.Errorf("product manager system prompt missing %q:\n%s", want, sys)
 		}
 	}
 }
