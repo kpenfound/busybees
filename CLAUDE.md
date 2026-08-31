@@ -33,7 +33,7 @@ GitHub repository. Read `docs/architecture.md` before changing the scheduler.
 - `internal/issues` — `bees issue create/link`: visible, labelled, sub-issue of a feature, milestone inherited.
 - `internal/procs` — pid files + `ps` scan to find and kill orphaned sessions (`bees kill`).
 - `internal/testutil` — local bare git remote + clone for tests.
-- `internal/session` — runs one `claude -p` session; outcome file written by `bees done`.
+- `internal/session` — runs one `claude -p` session; outcome file written by `bees done`; `CheckInterrupted` says whether a session directory belongs to a session that is running, one that finished, or one a killed scheduler left unfinished.
 - `internal/prompts` — embedded role prompts (`system/*.md`, `task/*.md`) rendered with `text/template`.
 - `internal/mcpserver` — the built-in MCP server (`bees mcp serve`) added to every session as `bees`, backed by the same code as the CLI: `mail_send`, `mail_list`, `issue_create`, `issue_link`, `issue_view`, `pr_view`, `comment` and `done` go to every role; role-scoped are `issue_edit_body` (both managers), `issue_set_state` (project manager) and `issue_question` (product manager). The name `bees` is reserved in bees.toml.
 - `internal/mail` — local JSON mailbox; the only channel between roles.

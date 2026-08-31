@@ -281,7 +281,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 	}
 	cmd.WaitDelay = 10 * time.Second
 
-	transcriptPath := filepath.Join(sessionDir, "transcript.jsonl")
+	transcriptPath := filepath.Join(sessionDir, TranscriptFile)
 	transcript, err := os.Create(transcriptPath)
 	if err != nil {
 		return nil, err
@@ -361,7 +361,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 	res.Outcome, res.HasOutcome = o, ok
 
 	if data, err := json.MarshalIndent(res, "", "  "); err == nil {
-		_ = os.WriteFile(filepath.Join(sessionDir, "result.json"), data, 0o644)
+		_ = os.WriteFile(filepath.Join(sessionDir, ResultFile), data, 0o644)
 	}
 	r.Logger.Info("session end", "session", req.Name, "turns", res.NumTurns, "cost_usd", res.CostUSD,
 		"duration", res.Duration.Round(time.Second), "error", res.IsError, "subtype", res.ErrorSubtype,
