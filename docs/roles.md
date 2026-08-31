@@ -199,15 +199,17 @@ feature or feedback issue triggers a product manager run regardless of
 manager's inbox (feature ideas, product feedback, bug reports from humans) —
 the usual channel, not the only one, since a person can also write to it by
 mail; they never enter the workflow state machine. Not all of it is
-paragraph-sized: an issue a person files with only the `bees` label lands here
-too (the orchestrator labels it `bees:feedback`, see
+paragraph-sized: an issue a person files with no state label and neither
+`bees:feature` nor `bees:feedback` — a bare `bees` issue, or a `bees:bug`
+report — lands here too (the orchestrator labels it `bees:feedback`, see
 [Filing work](workflow.md#filing-work)), so some feedback is a small,
-already-well-formed ask. For each fresh one the
-product manager decides and acts (feature issues, bug work items, or a reasoned no), then must **reply on the feedback issue** with `comment`, saying
-what it did and linking created issues. A ready-to-build ask becomes a work
-item with `issue_create` (`related: <feedback issue>`) rather than a feature
-written around it, carrying `bees:priority` over if a person put it there. It closes the
-issue when fully actioned, or asks the person a question (`comment` +
+already-well-formed ask. For each fresh one the product manager decides and
+acts (feature issues, bug work items, or a reasoned no), then must **reply
+on the feedback issue** with `comment`, saying what it did and linking
+created issues. A ready-to-build ask becomes a work item with `issue_create`
+(`related: <feedback issue>`) rather than a feature written around it,
+carrying `bees:priority` over if a person put it there. It closes the issue
+when fully actioned, or asks the person a question (`comment` +
 `issue_question`) and leaves it open. Freshness works exactly as for feature
 issues.
 

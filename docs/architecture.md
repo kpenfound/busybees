@@ -84,12 +84,13 @@ A full pass is:
    mailed about twice. An approved issue goes through `reopenApproved` as
    above. `UNKNOWN`/empty merge state is "not computed yet" and skipped.
 3. **reconcile** – label transitions driven by local state, in this order:
-   - an issue with no kind label and no state label is a person handing the
-     factory an idea, not a spec: it gets `bees:feedback` (and the `bees`
-     label if the filter did not require it) and is appended to
-     `snapshot.feedback`, so it reaches the **product manager** in the same
-     pass and never enters triage. A person who wants it built without that
-     hop labels it `bees:triage` or `bees:ready` themselves;
+   - an issue with no state label and neither `bees:feature` nor
+     `bees:feedback` is a person handing the factory an idea, not a spec: it
+     gets `bees:feedback` (and the `bees` label if the filter did not
+     require it) and is appended to `snapshot.feedback`, so it reaches the
+     **product manager** in the same pass and never enters triage. A person
+     who wants it built without that hop labels it `bees:triage` or
+     `bees:ready` themselves;
    - a `bees:blocked` issue with unread developer mail about it becomes
      `bees:ready`; with unread project-manager mail it becomes `bees:triage`;
    - a `bees:ready` issue with no size label gets `bees:size/m`, the default

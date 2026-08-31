@@ -134,7 +134,7 @@ fifth: it sits *next to* a state label rather than replacing one):
 | Label | Meaning | Who sets it |
 |---|---|---|
 | `bees:feature` | A feature issue: owned by the product manager, which makes it detailed enough and breaks it into work items | Product manager, humans |
-| `bees:feedback` | The product manager's inbox: an idea, product feedback or a bug report from a person | Humans, orchestrator (an issue with no kind and no state label) |
+| `bees:feedback` | The product manager's inbox: an idea, product feedback or a bug report from a person | Humans, orchestrator (an issue with no state label and neither `bees:feature` nor `bees:feedback`) |
 | `bees:question` | The product manager is waiting for a person to answer on a feature or feedback issue | Product manager (`issue_question`; removed by the orchestrator when the person replies) |
 | `bees:proposal` | A feature issue a bee wrote rather than a person; it sits next to `bees:feature`, and a person removes the label to approve it | `bees issue create --feature` (removed by a person) |
 
@@ -145,8 +145,12 @@ role that may add it, to a work item that unblocks the factory itself. See
 [Priority](#priority-do-this-next).
 
 `bees:bug` is a **kind label** on a work item (a bug filed by the developer,
-reviewer, QA or a human) and travels through the state machine like any other
-work item. Humans do not need to add a kind label.
+reviewer, QA or a human) and travels through the state machine like any
+other work item. A kind label says what an issue *is*, not where it goes:
+only `bees:feature` and `bees:feedback` keep an issue out of the feedback
+route, so `bees` + `bees:bug` with no state label is feedback for the
+product manager (see `bees` + `bees:bug` + `bees:triage` below for the fast
+path). Humans do not need to add a kind label.
 
 See [Talking to the product manager](#talking-to-the-product-manager) for how
 feature and feedback issues are handled.
@@ -276,9 +280,10 @@ For a high-level feature idea ("we should support SSO"), product feedback
 ("onboarding feels clunky"), or a bug report you would rather have *weighed*
 than fixed verbatim, **create an issue with the `bees` label and the
 `bees:feedback` label.** You can leave the second label off — an issue with
-`bees` and no kind or state label gets `bees:feedback` from the orchestrator on
-the next poll ([Filing work](#filing-work)) — but adding it yourself says what
-you meant. Either way the issue goes to the product manager, not to triage:
+`bees`, no state label and neither `bees:feature` nor `bees:feedback` gets
+`bees:feedback` from the orchestrator on the next poll
+([Filing work](#filing-work)) — but adding it yourself says what you meant.
+Either way the issue goes to the product manager, not to triage:
 
 - The orchestrator never adds a state label to it and the project manager
   never sees it. `bees status` counts these issues in its `feedback` queue.

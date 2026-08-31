@@ -102,12 +102,13 @@ require_label = false
 assignee = "@me"
 ```
 
-The factory picks up any issue assigned to you, adds `bees` and `bees:feedback` to it
-on first sight — an issue with no kind and no state label is read as feedback for the
-product manager, and you label it `bees:triage` or `bees:ready` yourself to have it
-built — and assigns every PR or bug it creates back to you. Because state labels
-are prefixed with `label`, several people can each run their own factory in the same
-repository with different labels (`kyle-bees`, `sam-bees`) without interfering.
+The factory picks up any issue assigned to you, adds `bees` and `bees:feedback` to
+it on first sight — an issue with no state label and neither `bees:feature` nor
+`bees:feedback` is read as feedback for the product manager, and you label it
+`bees:triage` or `bees:ready` yourself to have it built — and assigns every PR or
+bug it creates back to you. Because state labels are prefixed with `label`, several
+people can each run their own factory in the same repository with different labels
+(`kyle-bees`, `sam-bees`) without interfering.
 
 ### Workflow labels
 

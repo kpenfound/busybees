@@ -618,12 +618,12 @@ func (s *Scheduler) localPass(ctx context.Context) {
 
 // reconcile applies label transitions that depend on local state:
 //
-//   - a visible issue without a kind and without a state label is a person
-//     handing the factory an idea, not a spec: it gets bees:feedback and goes
-//     to the product manager, who decides what it becomes (and it receives
-//     the factory label if the filter does not already require it). A person
-//     who wants something built without that hop labels the issue bees:triage
-//     or bees:ready themselves;
+//   - a visible issue with no state label and neither bees:feature nor
+//     bees:feedback is a person handing the factory an idea, not a spec: it
+//     gets bees:feedback and goes to the product manager, who decides what it
+//     becomes (and it receives the factory label if the filter does not
+//     already require it). A person who wants something built without that
+//     hop labels the issue bees:triage or bees:ready themselves;
 //   - blocked issues whose question has been answered move back to the
 //     stage that asked (developer -> ready, project manager -> triage).
 //     Mail from a human about the issue counts as an answer too;

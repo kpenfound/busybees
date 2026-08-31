@@ -745,8 +745,9 @@ func TestFullDeveloperReviewLoop(t *testing.T) {
 	if len(h.gh.comments[1]) != 0 {
 		t.Fatalf("no escalation expected: %v", h.gh.comments[1])
 	}
-	// Issue 2 had no kind and no state label: it is an idea a person handed
-	// the factory, so it goes to the product manager as feedback.
+	// Issue 2 had no state label and neither bees:feature nor bees:feedback:
+	// it is an idea a person handed the factory, so it goes to the product
+	// manager as feedback.
 	if got := h.gh.history[2]; strings.Join(got, ",") != "bees:feedback" {
 		t.Fatalf("issue 2 label history: %v", got)
 	}
