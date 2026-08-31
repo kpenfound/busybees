@@ -568,7 +568,7 @@ func TestCheckGitHubLogin(t *testing.T) {
 // reply for, so an unguarded check fails here rather than merely costing one.
 func TestGitHubChecksAreSkippedWithoutTheTable(t *testing.T) {
 	f := setup(t, "", nil)
-	for _, run := range []func(context.Context) Result{f.checkGitHubLogin, f.checkIssueWrites} {
+	for _, run := range []func(context.Context) Result{f.checkGitHubLogin, f.checkIssueWrites, f.checkPushes} {
 		r := f.run(t, run)
 		wantResult(t, r, Pass, "[github] is not configured")
 	}
@@ -627,6 +627,98 @@ func TestTheWriteProbeLeavesNothingBehind(t *testing.T) {
 	}
 	got := strings.Join(f.gh.calls[0], " ")
 	want := "api --method PATCH repos/owner/name/labels/bees -f new_name=bees"
+	if got != want {
+		t.Errorf("probe ran `gh %s`, want `gh %s`", got, want)
+	}
+}
+
+// TestCheckPushes covers the sibling of #303 the issue-write check does not
+// reach (#312): a token granted Issues but not Contents passes every other
+// GitHub check bees has, and then every developer session's `git push` fails.
+// The refusal is GitHub's, so the probe has to be a real write.
+func TestCheckPushes(t *testing.T) {
+	const sha = "f5093ef8549ae5cb9afeb67e8fcaee9962ff23be"
+	cases := []struct {
+		name     string
+		toml     string
+		patch    ghReply
+		status   Status
+		detail   []string
+		absent   []string
+		noBranch bool
+	}{
+		{name: "the push is allowed", toml: githubTOML,
+			patch: ghReply{out: `{"ref":"refs/heads/main"}`}, status: Pass,
+			detail: []string{"beebot", "main", "owner/name"}},
+		// The failure the check exists for: the repository reads as ADMIN
+		// and the token was not granted Contents.
+		{name: "readable but not pushable", toml: githubTOML,
+			patch:  ghReply{err: errors.New("gh api: exit status 1: Resource not accessible by personal access token (HTTP 403)")},
+			status: Fail,
+			detail: []string{"cannot write branches", "Contents -> Read and write", "Pull requests -> Read and write", "`repo` scope"}},
+		// A protected default branch answers 422 whatever the token may do,
+		// so it must not be reported as a missing grant.
+		{name: "the branch is protected", toml: githubTOML,
+			patch:  ghReply{err: errors.New("gh api: exit status 1: HTTP 422: Reference cannot be updated")},
+			status: Warn,
+			detail: []string{"could not check", "protected branch"},
+			absent: []string{"Contents ->", "cannot write branches"}},
+		{name: "no such branch", toml: githubTOML,
+			patch:  ghReply{err: errors.New("gh api: exit status 1: Not Found (HTTP 404)")},
+			status: Warn, detail: []string{"could not check", "no main branch"}},
+		{name: "gh could not reach GitHub", toml: githubTOML,
+			patch:  ghReply{err: errors.New("gh api: exit status 1: dial tcp: lookup api.github.com: no such host")},
+			status: Warn, detail: []string{"could not check", "no such host"}},
+		// project.default_branch is reported by the config group; with no
+		// ref to probe there is nothing this check can say.
+		{name: "no default branch to probe", toml: githubTOML, noBranch: true,
+			status: Warn, detail: []string{"could not check", "project.default_branch"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := setup(t, c.toml, map[string]ghReply{
+				"api --method PATCH": c.patch,
+				"api repos":          {out: `{"object":{"sha":"` + sha + `"}}`},
+			})
+			if c.noBranch {
+				f.Config.Project.DefaultBranch = ""
+			}
+			r := f.run(t, f.checkPushes)
+			wantResult(t, r, c.status, c.detail...)
+			for _, a := range c.absent {
+				if strings.Contains(r.Detail+" "+r.Remediation, a) {
+					t.Errorf("result mentions %q:\n  detail: %s\n  remedy: %s", a, r.Detail, r.Remediation)
+				}
+			}
+		})
+	}
+}
+
+// TestThePushProbeChangesNothing pins the half of checkPushes no status can
+// express: the update sends the commit the ref already points at, so the
+// write GitHub's permission gate decides changes nothing and leaves nothing
+// behind. A fake cannot tell a no-op ref update from one that moves the
+// branch, and that difference is the whole reason this probe was chosen over
+// creating and deleting a branch - so the argv is the only seam it can be
+// read from.
+func TestThePushProbeChangesNothing(t *testing.T) {
+	const sha = "f5093ef8549ae5cb9afeb67e8fcaee9962ff23be"
+	f := setup(t, githubTOML, map[string]ghReply{
+		"api --method PATCH": {out: `{"ref":"refs/heads/main"}`},
+		"api repos":          {out: `{"object":{"sha":"` + sha + `"}}`},
+	})
+	wantResult(t, f.run(t, f.checkPushes), Pass)
+	if len(f.gh.calls) != 2 {
+		t.Fatalf("made %d gh calls, want 2 (read the ref, then write it back): %v", len(f.gh.calls), f.gh.calls)
+	}
+	// git/ref, not git/refs: the plural endpoint prefix-matches, so a
+	// default branch whose name is a prefix of another branch's answers
+	// with an array of every match and the probe has no sha to write back.
+	if got, want := strings.Join(f.gh.calls[0], " "), "api repos/owner/name/git/ref/heads/main"; got != want {
+		t.Errorf("read the ref with `gh %s`, want `gh %s`", got, want)
+	}
+	got := strings.Join(f.gh.calls[1], " ")
+	want := "api --method PATCH repos/owner/name/git/refs/heads/main -f sha=" + sha
 	if got != want {
 		t.Errorf("probe ran `gh %s`, want `gh %s`", got, want)
 	}
@@ -828,9 +920,9 @@ func TestCheckWorktree(t *testing.T) {
 func TestChecksCoverEveryGroup(t *testing.T) {
 	f := setup(t, "", nil)
 	checks := f.Checks()
-	// 18 cheap ones plus one per role: with nothing role-specific configured
+	// 19 cheap ones plus one per role: with nothing role-specific configured
 	// each role still reports one row.
-	if want := 18 + len(config.Roles); len(checks) != want {
+	if want := 19 + len(config.Roles); len(checks) != want {
 		t.Errorf("got %d checks, want %d", len(checks), want)
 	}
 	f.gh.replies = map[string]ghReply{
