@@ -441,8 +441,9 @@ func TestPriorityDoesNotJumpAResumedIssue(t *testing.T) {
 func TestReconcileKeepsThePriorityLabel(t *testing.T) {
 	h := newHarness(t, noRolesTOML)
 	base := time.Now().Add(-24 * time.Hour)
-	// An unlabelled issue a person marked priority: reconcile gives it
-	// bees:triage, and the project manager would move it on from there.
+	// An issue with no kind and no state that a person marked priority:
+	// reconcile hands it to the product manager as bees:feedback, and the
+	// priority label rides along onto whatever it becomes.
 	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Urgent", Body: "main does not build", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:priority"}}, CreatedAt: base}
 	// A ready priority issue without a size: reconcile sizes it.
@@ -459,8 +460,8 @@ func TestReconcileKeepsThePriorityLabel(t *testing.T) {
 			t.Fatalf("issue %d lost bees:priority: %v", n, h.gh.issues[n].Labels)
 		}
 	}
-	if !github.HasLabel(h.gh.issues[1].Labels, "bees:triage") {
-		t.Fatalf("issue 1 was not triaged: %v", h.gh.issues[1].Labels)
+	if !github.HasLabel(h.gh.issues[1].Labels, "bees:feedback") {
+		t.Fatalf("issue 1 did not go to the product manager: %v", h.gh.issues[1].Labels)
 	}
 	if !github.HasLabel(h.gh.issues[2].Labels, "bees:size/m") {
 		t.Fatalf("issue 2 was not sized: %v", h.gh.issues[2].Labels)

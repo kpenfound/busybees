@@ -722,6 +722,7 @@ func TestFullDeveloperReviewLoop(t *testing.T) {
 	h := newHarness(t, baseTOML)
 	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now()}
 	h.gh.issues[2] = &github.Issue{Number: 2, Title: "Human filed this", Body: "hi", State: "OPEN", Labels: []github.Label{{Name: "bees"}}, CreatedAt: time.Now()}
+	h.gh.issues[3] = &github.Issue{Number: 3, Title: "Spec me", Body: "vague", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:triage"}}, CreatedAt: time.Now()}
 	h.gh.prs[fakePR] = &github.PR{Number: fakePR, Title: "Build the thing", State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -744,8 +745,9 @@ func TestFullDeveloperReviewLoop(t *testing.T) {
 	if len(h.gh.comments[1]) != 0 {
 		t.Fatalf("no escalation expected: %v", h.gh.comments[1])
 	}
-	// Issue 2 had no state label and entered triage.
-	if got := h.gh.history[2]; strings.Join(got, ",") != "bees:triage" {
+	// Issue 2 had no kind and no state label: it is an idea a person handed
+	// the factory, so it goes to the product manager as feedback.
+	if got := h.gh.history[2]; strings.Join(got, ",") != "bees:feedback" {
 		t.Fatalf("issue 2 label history: %v", got)
 	}
 	// Sessions: 2 developer, 2 reviewer, and each singleton once.
@@ -776,11 +778,17 @@ func TestFullDeveloperReviewLoop(t *testing.T) {
 		rest = after
 	}
 
-	// The project manager saw issue 2 in its triage list.
+	// The project manager saw issue 3 in its triage list, and issue 2 — the
+	// idea reconcile relabelled — reached the product manager instead.
 	pjm := h.sessions(config.RoleProjectManager)
 	prompt, _ = os.ReadFile(filepath.Join(pjm[0], "prompt.md"))
-	if !strings.Contains(string(prompt), "#2: Human filed this") {
+	if !strings.Contains(string(prompt), "#3: Spec me") {
 		t.Fatalf("project manager prompt:\n%s", prompt)
+	}
+	pdm := h.sessions(config.RoleProductManager)
+	prompt, _ = os.ReadFile(filepath.Join(pdm[0], "prompt.md"))
+	if !strings.Contains(string(prompt), "#2: Human filed this") {
+		t.Fatalf("product manager prompt:\n%s", prompt)
 	}
 	// Mail was delivered (marked read) and bookkeeping recorded round 2.
 	unread, _ := h.box.List(mail.Filter{UnreadOnly: true})
@@ -1481,10 +1489,10 @@ func TestLocalPassDoesNotRedispatchFinishedIssues(t *testing.T) {
 	}
 }
 
-// An issue a human filed without a state label is labelled bees:triage once:
-// the cached poll a local pass classifies from is updated with the new label,
-// so the passes in between two GitHub polls do not repeat the edit.
-func TestLocalPassDoesNotRepeatTheTriageLabel(t *testing.T) {
+// An issue a human filed without a state label is labelled bees:feedback
+// once: the cached poll a local pass classifies from is updated with the new
+// label, so the passes in between two GitHub polls do not repeat the edit.
+func TestLocalPassDoesNotRepeatTheFeedbackLabel(t *testing.T) {
 	// Saturday: off hours, so only the first tick polls GitHub.
 	h := newHarnessAt(t, workHoursTOML, time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC))
 	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Filed from the GitHub UI", State: "OPEN", Labels: []github.Label{{Name: "bees"}}}
@@ -1500,8 +1508,8 @@ func TestLocalPassDoesNotRepeatTheTriageLabel(t *testing.T) {
 			t.Fatalf("local tick %d: full=%v err=%v", i, full, err)
 		}
 	}
-	if got := strings.Join(h.gh.history[1], ","); got != "bees:triage" {
-		t.Fatalf("label history: %q, want bees:triage once", got)
+	if got := strings.Join(h.gh.history[1], ","); got != "bees:feedback" {
+		t.Fatalf("label history: %q, want bees:feedback once", got)
 	}
 	if n := h.gh.callCount("issue list"); n != lists {
 		t.Fatalf("a local pass polled GitHub: %v", h.gh.calls)
@@ -1633,7 +1641,8 @@ func TestSizeSurvivesTheStateMachine(t *testing.T) {
 
 // An issue a human filed without a state label is counted under "no_state",
 // never under the empty string, and the count is refreshed after reconcile has
-// moved it into triage — not left stale until the next poll.
+// moved it out — not left stale until the next poll. It leaves the state
+// machine entirely: bees:feedback is a kind, so it lands in no queue at all.
 func TestNoStateQueueIsNamedAndRecountedAfterReconcile(t *testing.T) {
 	h := newHarness(t, baseTOML)
 	h.sched.OnlyRoles = map[string]bool{}
@@ -1675,8 +1684,13 @@ func TestNoStateQueueIsNamedAndRecountedAfterReconcile(t *testing.T) {
 	if st.Queues["no_state"] != 0 {
 		t.Errorf("after reconcile: no_state = %d, want 0 (%+v)", st.Queues["no_state"], st.Queues)
 	}
-	if st.Queues["triage"] != 1 {
-		t.Errorf("after reconcile: triage = %d, want 1 (%+v)", st.Queues["triage"], st.Queues)
+	// Issue 1 became feedback, which is no queue: it must not have been
+	// dropped into triage on the way out.
+	if st.Queues["triage"] != 0 {
+		t.Errorf("after reconcile: triage = %d, want 0 (%+v)", st.Queues["triage"], st.Queues)
+	}
+	if !github.HasLabel(h.gh.issues[1].Labels, "bees:feedback") {
+		t.Errorf("issue 1 labels %v, want bees:feedback", h.gh.issues[1].Labels)
 	}
 	// The unblocked issue moved to ready; counting it in both buckets would
 	// make `bees status` report more issues than exist.

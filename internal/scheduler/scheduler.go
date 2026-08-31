@@ -618,8 +618,12 @@ func (s *Scheduler) localPass(ctx context.Context) {
 
 // reconcile applies label transitions that depend on local state:
 //
-//   - visible issues without a state label enter triage (and receive the
-//     factory label if the filter does not already require it);
+//   - a visible issue without a kind and without a state label is a person
+//     handing the factory an idea, not a spec: it gets bees:feedback and goes
+//     to the product manager, who decides what it becomes (and it receives
+//     the factory label if the filter does not already require it). A person
+//     who wants something built without that hop labels the issue bees:triage
+//     or bees:ready themselves;
 //   - blocked issues whose question has been answered move back to the
 //     stage that asked (developer -> ready, project manager -> triage).
 //     Mail from a human about the issue counts as an answer too;
@@ -634,27 +638,30 @@ func (s *Scheduler) localPass(ctx context.Context) {
 // stale labels and repeat the edit on every one of them.
 func (s *Scheduler) reconcile(ctx context.Context, snap *snapshot) error {
 	var errs []error
-	var unlabelled []github.Issue
+	var unrouted []github.Issue
 	for _, i := range snap.byState[""] {
-		add := []string{s.labels.Triage}
+		add := []string{s.labels.Feedback}
 		if !github.HasLabel(i.Labels, s.labels.Base) {
 			add = append(add, s.labels.Base)
 		}
-		s.log.Info("new issue enters triage", "issue", i.Number, "title", i.Title)
+		s.log.Info("new issue goes to the product manager", "issue", i.Number, "title", i.Title)
 		if err := s.gh.EditLabels(ctx, i.Number, add, nil); err != nil {
 			errs = append(errs, err)
-			unlabelled = append(unlabelled, i)
+			unrouted = append(unrouted, i)
 			continue
 		}
 		for _, l := range add {
 			i.Labels = append(i.Labels, github.Label{Name: l})
 		}
-		snap.byState["triage"] = append(snap.byState["triage"], i)
+		// bees:feedback is a kind, not a state: the issue leaves the state
+		// machine altogether. Putting it in a byState bucket would hand it
+		// to the project manager, which is exactly the hop this avoids.
+		snap.feedback = append(snap.feedback, i)
 		// Keep the cached poll in step, or every local pass in between two
 		// polls asks GitHub to add the label again.
 		s.cacheIssue(i)
 	}
-	snap.byState[""] = unlabelled
+	snap.byState[""] = unrouted
 	var stillBlocked []github.Issue
 	for _, i := range snap.byState["blocked"] {
 		if s.hasUnreadMail(config.RoleDeveloper, i.Number, 0) {
