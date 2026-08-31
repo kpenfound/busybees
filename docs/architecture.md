@@ -134,11 +134,11 @@ A full pass is:
    is work in flight; every other approved issue is waiting for a person to
    merge it). Then `ready` issues that already have an open PR on their branch
    (`snapshot.prByBranch`; sent back by human feedback or a conflict —
-   finished before new work, oldest first),
-   followed by the remaining `ready` issues sorted by `sortReady`: issues a
-   person marked `bees:priority` first, then `scheduler.dispatch_order`
-   (smallest size first by default), ties by age. Priority is a separate axis
-   from size and reorders the queue only — it lifts no cap. A `bees:size/l` candidate that is new work is skipped while
+   finished before new work, oldest first), followed by the remaining `ready`
+   issues sorted by `sortReady`: issues a person marked `bees:priority` first,
+   then `scheduler.dispatch_order` (smallest size first by default), ties by
+   age. Priority is a separate axis from size and reorders the queue only — it
+   lifts no cap. A `bees:size/l` candidate that is new work is skipped while
    `scheduler.max_large_in_flight` of them are already owned — the check runs
    *before* a slot is taken, so a held issue does not keep a worker idle. For
    the rest, a slot is taken from a buffered channel sized `max_developers`;

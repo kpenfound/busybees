@@ -897,10 +897,10 @@ func (s *Scheduler) dispatchDevelopers(ctx context.Context, snap *snapshot, loca
 			continue
 		}
 		size := s.sizeOf(issue.Labels)
-		// The cap only holds back fresh work: a resumed in-progress or
-		// review issue, or a ready one with an open PR, is already in
-		// flight. Checked before a slot is taken, so a held issue does not
-		// keep a free developer idle.
+		// The cap only holds back fresh work: a resumed in-progress,
+		// review or post-approval-checks issue, or a ready one with an
+		// open PR, is already in flight. Checked before a slot is taken,
+		// so a held issue does not keep a free developer idle.
 		if largeLimit > 0 && size == sizeLarge && s.stateOf(issue.Labels) == "ready" && !resumed[issue.Number] && s.largeInFlight() >= largeLimit {
 			s.log.Info("large issue waits, cap reached", "issue", issue.Number, "max_large_in_flight", largeLimit)
 			continue
