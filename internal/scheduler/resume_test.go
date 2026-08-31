@@ -184,11 +184,12 @@ func TestAResumedDeveloperRoundDoesNotPayForTheReadAgain(t *testing.T) {
 }
 
 // TestResumeStage pins the whole decision a worker makes before it does
-// anything: what it remembered, filtered through what the labels say. The two
-// cases the loop tests cannot reach are here — a remembered review-loop stage
-// whose pull request has gone, and a state file another version wrote — along
-// with the one that matters most, an issue with nothing remembered at all,
-// which must start exactly where it always did.
+// anything: what it remembered, filtered through what the labels say and
+// which pull request it was remembered for. The two cases the loop tests
+// cannot reach are here — a remembered review-loop stage whose pull request
+// has gone, and a state file another version wrote — along with the one that
+// matters most, an issue with nothing remembered at all, which must start
+// exactly where it always did.
 func TestResumeStage(t *testing.T) {
 	h := newHarness(t, prereviewTOML)
 	pr := &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1"}
@@ -207,24 +208,38 @@ func TestResumeStage(t *testing.T) {
 			stage: "develop", after: "review"},
 		{name: "nothing remembered, a pull request in review", state: "review", pr: pr,
 			stage: "prereview", after: "review"},
-		{name: "remembered mid-checks", bk: state.IssueState{WorkerStage: "checks", AfterDevelop: "checks", PreReviewDone: true},
+		{name: "remembered mid-checks", bk: state.IssueState{PR: fakePR, WorkerStage: "checks", AfterDevelop: "checks", PreReviewDone: true},
 			state: "in-progress", pr: pr, stage: "checks", after: "checks", prereviewDone: true},
-		{name: "remembered mid-round, the read already made", bk: state.IssueState{WorkerStage: "develop", AfterDevelop: "review", PreReviewDone: true},
+		{name: "remembered mid-round, the read already made", bk: state.IssueState{PR: fakePR, WorkerStage: "develop", AfterDevelop: "review", PreReviewDone: true},
 			state: "review", pr: pr, stage: "develop", after: "review", prereviewDone: true},
+		// The record belongs to the pull request it was written for: the two
+		// above match the open one, these do not. A person can close a pull
+		// request and open another on the same branch while nothing is
+		// running, and the second one's review has not happened.
+		{name: "a checks stage recorded for another pull request", bk: state.IssueState{PR: 999, WorkerStage: "checks", AfterDevelop: "checks", PreReviewDone: true},
+			state: "in-progress", pr: pr, stage: "develop", after: "review"},
+		{name: "a develop stage whose sub-state was recorded for another pull request", bk: state.IssueState{PR: 999, WorkerStage: "develop", AfterDevelop: "checks", PreReviewDone: true},
+			state: "review", pr: pr, stage: "develop", after: "review"},
+		// Written before the number was known. Dropping it is the safe
+		// direction and is intended.
+		{name: "a record with no pull request number", bk: state.IssueState{WorkerStage: "checks", AfterDevelop: "checks", PreReviewDone: true},
+			state: "in-progress", pr: pr, stage: "develop", after: "review"},
+		{name: "a develop stage whose sub-state was recorded before the number was known", bk: state.IssueState{WorkerStage: "develop", AfterDevelop: "checks", PreReviewDone: true},
+			state: "review", pr: pr, stage: "develop", after: "review"},
 		// develop fits any label, so its sub-state is dropped on the same
 		// test the stages are: this issue is starting a fresh round.
-		{name: "a develop stage on an issue sent back to ready", bk: state.IssueState{WorkerStage: "develop", AfterDevelop: "checks", PreReviewDone: true},
+		{name: "a develop stage on an issue sent back to ready", bk: state.IssueState{PR: fakePR, WorkerStage: "develop", AfterDevelop: "checks", PreReviewDone: true},
 			state: "ready", pr: pr, stage: "develop", after: "review"},
 		// The label wins, and takes the sub-state with it.
-		{name: "a review stage on an issue sent back to ready", bk: state.IssueState{WorkerStage: "review", AfterDevelop: "review", PreReviewDone: true},
+		{name: "a review stage on an issue sent back to ready", bk: state.IssueState{PR: fakePR, WorkerStage: "review", AfterDevelop: "review", PreReviewDone: true},
 			state: "ready", pr: pr, stage: "develop", after: "review"},
-		{name: "a review stage whose pull request has gone", bk: state.IssueState{WorkerStage: "prereview", PreReviewDone: true},
+		{name: "a review stage whose pull request has gone", bk: state.IssueState{PR: fakePR, WorkerStage: "prereview", PreReviewDone: true},
 			state: "review", stage: "develop", after: "review"},
-		{name: "a stage no version of this worker runs", bk: state.IssueState{WorkerStage: "reviewing", PreReviewDone: true},
+		{name: "a stage no version of this worker runs", bk: state.IssueState{PR: fakePR, WorkerStage: "reviewing", PreReviewDone: true},
 			state: "review", pr: pr, stage: "prereview", after: "review"},
 		// Nothing in the file can send the worker to a stage that does not
 		// exist: both consumers of afterDevelop read anything else as review.
-		{name: "an after_develop no version of this worker runs", bk: state.IssueState{WorkerStage: "develop", AfterDevelop: "reviewing"},
+		{name: "an after_develop no version of this worker runs", bk: state.IssueState{PR: fakePR, WorkerStage: "develop", AfterDevelop: "reviewing"},
 			state: "review", pr: pr, stage: "develop", after: "review"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -503,4 +518,67 @@ func TestALocalPassResumesThePostApprovalChecks(t *testing.T) {
 		t.Fatalf("the local pass did not resume the checks stage: %v", h.gh.merged)
 	}
 	h.wantOrder("developer-issue-1-r1", "reviewer-pr-101-r1")
+}
+
+// TestASubStateRecordedForAnotherPullRequestIsDropped: the record belongs to
+// the pull request it was written for. A person can close a pull request and
+// open another on the same branch while no worker is running, and the labels
+// say nothing about the swap — bees:review is bees:review either way. A
+// remembered after_develop of "checks" carried onto the new pull request would
+// send the developer's push straight to the merge gate, so it is merged
+// without ever being reviewed.
+func TestASubStateRecordedForAnotherPullRequestIsDropped(t *testing.T) {
+	h := newHarness(t, checksTOML)
+	seedChecksIssue(t, h)
+	h.gh.issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:review"}, {Name: "bees:size/s"}}
+	if err := os.WriteFile(h.gh.prMarker, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The record was left for pull request 999 — approved, a check failed, the
+	// reviewer sent the developer a fix request — and 101 is what is open now.
+	if err := h.store.SaveIssue(state.IssueState{Number: 1, Round: 1, PR: 999, Branch: "bees/issue-1",
+		WorkerStage: "develop", AfterDevelop: "checks", PreReviewDone: true}); err != nil {
+		t.Fatal(err)
+	}
+	h.gh.checks = []checksResponse{{passingJSON, nil}}
+	runChecksLoop(t, h)
+
+	// A first round on this pull request: the developer session is not a
+	// check-fix round, and a reviewer sees the push before the gate merges it.
+	h.wantOrder("developer-issue-1-r1", "reviewer-pr-101-r1")
+	if n := len(h.sessions(config.RoleReviewer)); n != 1 {
+		t.Fatalf("%d reviewer sessions ran, want 1: pull request %d has never been reviewed", n, fakePR)
+	}
+	if len(h.gh.merged) != 1 || h.gh.merged[0] != fakePR {
+		t.Fatalf("merged %v", h.gh.merged)
+	}
+}
+
+// TestAStageRecordedForAnotherPullRequestIsDropped is the other half: the
+// stage itself, not just the loop state beside it. A remembered checks stage
+// agrees with bees:review whichever pull request it was recorded for, so
+// without the number test the worker would wait out the checks of a pull
+// request nobody has reviewed and merge it from the gate, with no session at
+// all. The label is what it starts from instead.
+func TestAStageRecordedForAnotherPullRequestIsDropped(t *testing.T) {
+	h := newHarness(t, checksTOML)
+	seedChecksIssue(t, h)
+	h.gh.issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:review"}, {Name: "bees:size/s"}}
+	if err := os.WriteFile(h.gh.prMarker, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.SaveIssue(state.IssueState{Number: 1, Round: 1, PR: 999, Branch: "bees/issue-1",
+		WorkerStage: "checks", AfterDevelop: "checks"}); err != nil {
+		t.Fatal(err)
+	}
+	h.gh.checks = []checksResponse{{passingJSON, nil}}
+	runChecksLoop(t, h)
+
+	h.wantOrder("reviewer-pr-101-r1")
+	if !strings.Contains(h.logs.String(), "the remembered stage belongs to another pull request") {
+		t.Fatalf("the stale record was not logged:\n%s", h.logs.String())
+	}
+	if len(h.gh.merged) != 1 || h.gh.merged[0] != fakePR {
+		t.Fatalf("merged %v", h.gh.merged)
+	}
 }
