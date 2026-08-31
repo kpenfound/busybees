@@ -193,10 +193,12 @@ escalation comment, which carries no marker.
 `GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL` and `GIT_COMMITTER_NAME`/`GIT_COMMITTER_EMAIL`
 from `git_name`/`git_email`, and with `credential.helper=!gh auth git-credential`
 configured for git — reset first, so a credential helper of your own does not answer a
-push before gh's does. Your stored credentials are neither read nor written. A session
-started with `[github]` unset gets none of these and behaves exactly as it always has.
-`bees` sets git configuration through `GIT_CONFIG_COUNT` and friends, and leaves the
-whole block alone when you have set `GIT_CONFIG_COUNT` yourself.
+push before gh's does. Your stored credentials are neither read nor written. The
+helper only steers **https** remotes: on an `ssh://` or `git@github.com:` remote the
+commits are still the factory's, but the push authenticates with the machine's own ssh
+key. A session started with `[github]` unset gets none of these and behaves exactly as
+it always has. `bees` sets git configuration through `GIT_CONFIG_COUNT` and friends,
+and leaves the whole block alone when you have set `GIT_CONFIG_COUNT` yourself.
 
 **What the token needs.** A fine-grained personal access token, or a GitHub App
 installation token, scoped to the one repository with **write** access to *Issues*,
@@ -861,4 +863,4 @@ it inherited, plus:
 | *configured `env`* | Every `[global.env]` / `[roles.<name>.env]` entry, `$VAR`-expanded from the bees environment. Set before the `BEES_*` variables, so those always win. |
 | `GH_TOKEN` | [`github.token`](#github), when one is configured, so the session's own `gh` acts as the factory. Set with the `BEES_*` variables, after the configured `env`, so a role cannot give itself another identity. |
 | `GIT_AUTHOR_NAME`, `GIT_COMMITTER_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_EMAIL` | [`github.git_name`](#github) and `github.git_email`, when set, so a session's commits are the factory's. |
-| `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_n`/`VALUE_n` | `push.autoSetupRemote=true` and `push.default=current`, so a plain `git push` works on a fresh branch without touching the clone's git config; plus an empty `credential.helper` and `credential.helper=!gh auth git-credential` when `github.token` is set, so the push authenticates as the factory rather than through your stored credentials. `GIT_CONFIG_COUNT` is derived from the entries. Only set when `GIT_CONFIG_COUNT` is not already in the bees environment. |
+| `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_n`/`VALUE_n` | `push.autoSetupRemote=true` and `push.default=current`, so a plain `git push` works on a fresh branch without touching the clone's git config; plus an empty `credential.helper` and `credential.helper=!gh auth git-credential` when `github.token` is set, so an https push authenticates as the factory rather than through your stored credentials. `GIT_CONFIG_COUNT` is derived from the entries. Only set when `GIT_CONFIG_COUNT` is not already in the bees environment. |

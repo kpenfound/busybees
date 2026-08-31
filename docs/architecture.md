@@ -545,11 +545,11 @@ configuration through `GIT_CONFIG_KEY_n` / `GIT_CONFIG_VALUE_n`, with
 plain `git push` on a branch the workspace created with `git worktree add
 --no-track -b …`; and, when `[github]` carries a token, an empty
 `credential.helper` followed by `credential.helper=!gh auth git-credential`,
-so that push authenticates as the factory. The empty value comes first because
-git asks helpers in configuration order and takes the first answer, and
-`GIT_CONFIG_*` is read last — without it the machine owner's own helper would
-answer and the push would be theirs. busybees never edits the clone's git
-configuration.
+so that an https push authenticates as the factory. The empty value comes
+first because git asks helpers in configuration order and takes the first
+answer, and `GIT_CONFIG_*` is read last — without it the machine owner's own
+helper would answer and the push would be theirs. busybees never edits the
+clone's git configuration.
 
 ## The mailbox
 
