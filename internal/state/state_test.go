@@ -1,8 +1,12 @@
 package state
 
 import (
+	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -106,5 +110,114 @@ func TestIssueCostSurvivesASaveIssue(t *testing.T) {
 	}
 	if got, _ := s.Issue(7); got.Cost != 9 || got.Sessions != 4 || got.Round != 2 {
 		t.Errorf("after seeding: %+v", got)
+	}
+}
+
+// Two goroutines saving the same issue must not corrupt its state file. Every
+// writer used to go through one temp name derived from the destination
+// (issues/<n>.json.tmp), so concurrent saves truncated and wrote the same
+// file and one could rename what the other was still writing. The result was
+// invalid JSON, and permanent: every reader of a corrupt IssueState warns and
+// carries on without rewriting it, so nothing ever repaired it.
+//
+// The assertion is on the errors and on the final read, not on the race
+// detector: this is a race between filesystem syscalls, not between memory
+// accesses, and -race does not see it.
+func TestConcurrentSaveIssue(t *testing.T) {
+	s := New(t.TempDir())
+	var (
+		mu    sync.Mutex
+		fails int
+		first error
+	)
+	fail := func(what string, err error) {
+		mu.Lock()
+		defer mu.Unlock()
+		fails++
+		if first == nil {
+			first = fmt.Errorf("%s: %w", what, err)
+		}
+	}
+	var wg sync.WaitGroup
+	for g := range 2 {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			// 6000 writes in total is the margin that makes this fail on
+			// every run against the shared temp name rather than flakily.
+			for i := range 3000 {
+				is, err := s.Issue(7)
+				if err != nil {
+					fail("read", err)
+					continue
+				}
+				if g == 0 {
+					is.OpenChildren = []int{1, 2, 3, i}
+				} else {
+					is.Proposal = i%2 == 0
+				}
+				if err := s.SaveIssue(is); err != nil {
+					fail("save", err)
+				}
+			}
+		}(g)
+	}
+	wg.Wait()
+	if fails > 0 {
+		t.Errorf("%d of 6000 read/write cycles failed, first: %v", fails, first)
+	}
+	if _, err := s.Issue(7); err != nil {
+		t.Fatalf("the issue state file is corrupt: %v", err)
+	}
+}
+
+// Every state file is written 0644 and leaves no temp file behind, on the
+// success path and on an error path alike.
+func TestWrittenStateFilesAreModeSixFourFourAndLeaveNoTempFile(t *testing.T) {
+	dir := t.TempDir()
+	s := New(dir)
+	if err := s.SaveIssue(IssueState{Number: 7, Round: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveRole("developer", RoleState{Sessions: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveStatus(Status{}); err != nil {
+		t.Fatal(err)
+	}
+	// A value json.MarshalIndent cannot encode fails before anything is
+	// created; one that fails mid-write is not reachable through the Store,
+	// so writeJSON's own error path is exercised directly.
+	if err := s.writeJSON(filepath.Join(dir, "bad.json"), func() {}); err == nil {
+		t.Error("writeJSON accepted an unmarshalable value")
+	}
+	// A destination that is a directory fails at the rename, after the temp
+	// file exists: that is the path the cleanup is there for.
+	if err := os.MkdirAll(filepath.Join(dir, "taken.json"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.writeJSON(filepath.Join(dir, "taken.json"), IssueState{Number: 1}); err == nil {
+		t.Error("writeJSON renamed over a directory")
+	}
+
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		if strings.HasSuffix(path, ".tmp") {
+			t.Errorf("temp file left behind: %s", path)
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if got := info.Mode().Perm(); got != 0o644 {
+			t.Errorf("%s: mode %o, want 644", path, got)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
