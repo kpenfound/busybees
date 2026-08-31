@@ -1214,17 +1214,19 @@ const escalationNoteLimit = 200
 func (s *Scheduler) escalate(ctx context.Context, number int, reason string) error {
 	s.log.Warn(fmt.Sprintf("⚠ issue #%d escalated to a human: %s", number, oneLine(reason, escalationNoteLimit)),
 		logging.SummaryKey, true, "issue", number, "outcome", "escalated", "note", reason)
+	if err := s.setState(ctx, number, s.labels.NeedsHuman); err != nil {
+		return err
+	}
 	// The reason reaches a person in the comment below and the log line
 	// above, and neither is readable from the poll. Record it where the
 	// factory's own views can read it back — a person looking at what the
 	// factory is stuck on wants the reason next to the issue, not a search
-	// through the log. Best effort: the escalation itself must not fail over
-	// its own bookkeeping.
+	// through the log. After the label, never before: a reason recorded for
+	// an escalation that then failed to happen would be presented as the
+	// factory's the next time anybody labelled that issue by hand. Best
+	// effort — the escalation must not fail over its own bookkeeping.
 	if err := s.store.SetEscalation(number, oneLine(reason, escalationNoteLimit), s.now()); err != nil {
 		s.log.Warn("could not record the escalation reason", "issue", number, "err", err)
-	}
-	if err := s.setState(ctx, number, s.labels.NeedsHuman); err != nil {
-		return err
 	}
 	body := fmt.Sprintf("🐝 **busybees needs a human.**\n\n%s\n\nRemove the `%s` label and add `%s` (or `%s`) to hand it back to the factory.",
 		reason, s.labels.NeedsHuman, s.labels.Ready, s.labels.Triage)
