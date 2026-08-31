@@ -466,6 +466,10 @@ There is no `quiet` key: `--quiet` is a shorthand for one invocation, not a way
 to run the factory. `level = "warn"` is the service-shaped equivalent (it also
 drops the one-line session summaries, which `--quiet` keeps).
 
+`bees run` in a terminal draws the live view instead of logging to the
+console, and silences console logging while it is up; `--no-tui`, a
+redirected stdout, and every other command log as this table says.
+
 The `bees.log` file in the state directory is not configurable here: it always
 gets every record at debug level, in JSON. See
 [`bees run`](cli.md#bees-run).
