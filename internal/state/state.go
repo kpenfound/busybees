@@ -147,10 +147,11 @@ type IssueState struct {
 	// notices a finished feature without asking GitHub on the polling path:
 	// GitHub's sub-issue summary carries counts only, so the numbers are
 	// remembered here and checked against the issues the poll still finds
-	// open. An empty set is never recorded over a remembered one — a feature
-	// with no open children is the very state the check is about — and a set
-	// that changes clears the marker, so a feature that gains a sub-issue
-	// after being reported complete can be reported again.
+	// open. An empty or incomplete lookup is never recorded over a remembered
+	// one — no open children is the very state the check is about, and a
+	// truncated set would look like children that closed — and a set that
+	// changes clears the marker, so a feature that gains a sub-issue after
+	// being reported complete can be reported again.
 	OpenChildren       []int     `json:"open_children,omitempty"`
 	CompleteReportedAt time.Time `json:"complete_reported_at,omitempty"`
 	UpdatedAt          time.Time `json:"updated_at"`

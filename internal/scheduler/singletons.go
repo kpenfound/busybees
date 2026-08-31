@@ -164,10 +164,14 @@ func (s *Scheduler) completedFeatures(snap *snapshot) []github.Issue {
 //
 // A feature with no open children is not recorded over the set it had: that
 // is the state the completeness check exists to spot, and forgetting the
-// children would also lose what the re-arm rule compares against. A set that
-// did change clears the marker, so a feature that gains a sub-issue after
-// being reported complete is reported again when that one closes.
-func (s *Scheduler) recordFeatureProgress(snap *snapshot, parents map[int]github.Parent, reported []github.Issue) {
+// children would also lose what the re-arm rule compares against. For the
+// same reason a run whose ParentIssue queries did not all answer (complete is
+// false) records nothing: a truncated answer is indistinguishable from
+// children that closed, and would report a feature complete while a real
+// sub-issue is still open. A set that did change clears the marker, so a
+// feature that gains a sub-issue after being reported complete is reported
+// again when that one closes.
+func (s *Scheduler) recordFeatureProgress(snap *snapshot, parents map[int]github.Parent, reported []github.Issue, complete bool) {
 	children := map[int][]int{}
 	for item, p := range parents {
 		children[p.Number] = append(children[p.Number], item)
@@ -184,7 +188,7 @@ func (s *Scheduler) recordFeatureProgress(snap *snapshot, parents map[int]github
 			s.log.Warn("read issue state", "issue", f.Number, "err", err)
 			continue
 		}
-		changed := len(openNow) > 0 && !slices.Equal(is.OpenChildren, openNow)
+		changed := complete && len(openNow) > 0 && !slices.Equal(is.OpenChildren, openNow)
 		if !changed && !done[f.Number] {
 			continue
 		}
@@ -295,9 +299,11 @@ func (s *Scheduler) runProductManager(ctx context.Context, snap *snapshot) error
 	// GraphQL query per work item, as runProjectManager does for its triage
 	// items.
 	parents := map[int]github.Parent{}
+	parentsComplete := true
 	for _, i := range work {
 		p, err := s.gh.ParentIssue(ctx, i.Number)
 		if s.op("work-item-parent", err, "work item parent", "issue", i.Number, "err", err) {
+			parentsComplete = false
 			continue
 		}
 		if p != nil {
@@ -312,13 +318,22 @@ func (s *Scheduler) runProductManager(ctx context.Context, snap *snapshot) error
 	for _, f := range complete {
 		s.log.Info("feature work is complete", "issue", f.Number)
 	}
-	s.recordFeatureProgress(snap, parents, complete)
-	return s.runSingleton(ctx, config.RoleProductManager, prompts.Data{
+	if err := s.runSingleton(ctx, config.RoleProductManager, prompts.Data{
 		Issues: work, PRs: snap.prs, Milestones: milestones, Inbox: inbox,
 		Feedback: feedback, FreshFeatures: freshFeatures, Proposals: proposals,
 		Features: snap.features, Progress: progress, Parents: parents,
 		CompletedFeatures: complete,
-	})
+	}); err != nil {
+		// No session delivered the report, so the trigger is not spent by
+		// this run: remember the children, but leave the feature armed. That
+		// also covers a session that reported failed — the role is backed off
+		// five poll intervals, so re-presenting costs at most one extra run,
+		// while losing the report costs the feature its only presentation.
+		s.recordFeatureProgress(snap, parents, nil, parentsComplete)
+		return err
+	}
+	s.recordFeatureProgress(snap, parents, complete, parentsComplete)
+	return nil
 }
 
 // ---- QA --------------------------------------------------------------------

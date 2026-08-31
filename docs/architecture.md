@@ -180,11 +180,13 @@ A full pass is:
    `snapshot.open`. Such a feature reaches the run as `Data.CompletedFeatures`,
    a task section of its own, and is marked `CompleteReportedAt` so it is
    reported once; a recorded set that changes clears the mark, so a feature
-   that gains a sub-issue can be reported again when that one closes. An empty
-   lookup never overwrites a recorded set — no open children is the state the
-   check is about — so a failed `ParentIssue` query costs nothing but the
-   `Parent` column. A feature the scheduler has never recorded children for
-   does not fire and waits for the interval.
+   that gains a sub-issue can be reported again when that one closes. A run
+   whose `ParentIssue` queries did not all answer records nothing — a partial
+   answer would look like children that closed — so a failed query costs the
+   `Parent` column and that run's recording, nothing else. A run whose product
+   manager session never started does not spend the report either. A feature
+   the scheduler has never recorded children for does not fire and waits for
+   the interval.
    `runProductManager` passes fresh feedback issues as `Data.Feedback`, the
    features whose every recorded sub-issue has closed as
    `Data.CompletedFeatures`, fresh
