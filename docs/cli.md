@@ -143,13 +143,9 @@ mismatch by name. That comparison matters because `github.login` is what tells t
 factory's own comments from a person's: a login naming an account other than the one
 posting means a person's comments are read as the factory's own and answered by
 nobody, or the login half of the rule is simply dead. A `[bot]` suffix is never
-stripped or added — it belongs in `bees.toml` exactly when GitHub uses it — so both
-`[bot]` shapes are named in the detail rather than quietly accepted: a user token
-whose login was written with the suffix is an ordinary mismatch and fails, and a
-GitHub App installation token, which authenticates as no user and so cannot answer the
-question at all, is a warning naming what to check by hand — the question has no
-answer there rather than a wrong one, and a failure would stop `bees run` on a token
-configuration the reference supports.
+stripped or added — it belongs in `bees.toml` exactly when GitHub uses it — so a user
+token whose login was written with the suffix is named in the detail rather than
+quietly accepted: it is an ordinary mismatch, and it fails.
 
 The second establishes that the account can write what bees writes. Repository
 permission does not imply it: a fine-grained token carries per-resource permissions on
@@ -518,7 +514,7 @@ The keys:
 | `↑` `↓` | Move the selection through every panel's rows in turn. |
 | `enter` | Watch the selected session's transcript (below). |
 | `o` | Open the selected issue or pull request on GitHub. |
-| `k` | Stop the selected session and hand its issue to a person. It asks first: press `k` again to confirm. |
+| `k` | Stop the selected session and hand its issue to a person. It asks first, naming the session: press `k` again to stop the one it named. |
 | `q`, `ctrl-c` | Stop polling and drain. Press again to leave the terminal early. |
 
 `q` and Ctrl-C stop polling and drain exactly as an interrupt does without
@@ -526,12 +522,14 @@ the view, and the view stays up until the running sessions have finished;
 pressing either again leaves the terminal and waits for the drain with the
 console back.
 
-`k` is the key that throws work away, and asks first. It stops the selected
-session the way [`bees kill`](#bees-kill---dry-run---scheduler---grace-5s)
-stops a leftover one — the process and its group, with an `interrupted` marker
-left in the session directory — and then labels its issue `bees:needs-human`
-with a comment saying a person stopped it, exactly as the factory giving up
-would. The session's own worker ends without retrying it. A singleton session
+`k` is the key that throws work away, and asks first: the first press names
+the session it would stop and the second stops that one, whatever the cursor
+has moved on to in between. It stops it the way
+[`bees kill`](#bees-kill---dry-run---scheduler---grace-5s) stops a leftover
+one — the process and its group, with an `interrupted` marker left in the
+session directory — and then labels its issue `bees:needs-human` with a
+comment saying a person stopped it, exactly as the factory giving up would.
+The session's own worker ends without retrying it. A singleton session
 (product manager, project manager, QA) owns no issue, so stopping one stops a
 session and nothing more. Nothing is recorded as run either, so a singleton
 the factory still has work for starts again on the next pass.

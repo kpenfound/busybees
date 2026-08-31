@@ -150,12 +150,16 @@ type Model struct {
 	// to stop polling and drain, and the view stays up until it has.
 	stopping bool
 	// cursor is the selected row of the flat list every panel's rows join
-	// (see targets), and confirmKill that the next k stops it. notice is
-	// the one line the footer shows instead of the key hints: what the last
-	// key did, or why it could not.
+	// (see targets). notice is the one line the footer shows instead of the
+	// key hints: what the last key did, or why it could not.
+	//
+	// confirmKill is the name of the session an armed k confirmation names,
+	// and empty when nothing is armed: the confirmation carries its target
+	// and the second press acts on that session, never on whatever the
+	// cursor is on by then (see kill).
 	notice      string
 	cursor      int
-	confirmKill bool
+	confirmKill string
 }
 
 // New builds the model. Nothing is read and no goroutine is started until
@@ -326,14 +330,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // Everything else belongs to the screen that is up. On the panels the arrows
 // move one selection through every panel's rows in turn; enter opens the
 // selected session's transcript (session.go), o opens what is selected on
-// GitHub, and k stops the selected session and hands its issue to a person.
-// k asks first, the way Ctrl-C does: it is the one key here that throws work
-// away. The session view has its own keys (sessionKey), j and k among them —
+// GitHub, and k stops a session and hands its issue to a person. k asks
+// first, the way Ctrl-C does: it is the one key here that throws work away,
+// so it asks about the selected session and then stops the one it named
+// (see kill). The session view has its own keys (sessionKey), j and k among them —
 // they scroll a transcript there, which is where vim keys belong.
 func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	k := msg.String()
 	if k != "k" {
-		m.confirmKill = false
+		m.confirmKill = ""
 	}
 	if k == "ctrl+c" || (k == "q" && !m.composing()) {
 		m.notice = ""
@@ -405,35 +410,60 @@ func (m Model) openOnGitHub() (tea.Model, tea.Cmd) {
 	}
 }
 
-// kill stops the selected session. The first press asks, because it throws
-// away whatever the session had done and hands its issue to a person; the
-// second does it, in the background, because stopping a process waits out a
-// grace period and the view must keep drawing while it does.
+// kill stops the session the confirmation names. The first press asks,
+// because it throws away whatever the session had done and hands its issue
+// to a person; the second does it, in the background, because stopping a
+// process waits out a grace period and the view must keep drawing while it
+// does.
+//
+// The confirmation carries its target: confirmKill holds the name the first
+// press showed, and the second press acts on that session rather than asking
+// the cursor again. The cursor is a flat index over rows the factory moves
+// under it (see targets), so a session earlier in the Now panel finishing
+// between the two presses shifts every later one up a row — asking again
+// would stop a session the person was never shown, which is exactly what a
+// confirmation exists to prevent. A named session that has finished in the
+// meantime stops nothing at all: killing whatever is selected by then is the
+// same bug in a different dress.
+//
+// Every other key disarms the confirmation (see key), so a person who moves
+// the cursor and presses k arms it afresh on the session they are now on.
 func (m Model) kill() (tea.Model, tea.Cmd) {
+	// Kill is non-nil here: nothing can be armed without it (below).
+	if name := m.confirmKill; name != "" {
+		m.confirmKill = ""
+		if !m.isRunning(name) {
+			m.notice = name + " has finished; nothing was stopped"
+			return m, nil
+		}
+		m.notice = "stopping " + name
+		kill := m.deps.Kill
+		return m, func() tea.Msg {
+			if err := kill(name); err != nil {
+				return actedMsg{note: "could not stop " + name + ": " + oneLine(err.Error())}
+			}
+			return actedMsg{note: "stopped " + name}
+		}
+	}
 	s, ok := m.selection()
 	switch {
 	case !ok:
 		m.notice = "select a running session to stop it"
-		m.confirmKill = false
 		return m, nil
 	case m.deps.Kill == nil:
 		m.notice = "this view cannot stop a session"
-		m.confirmKill = false
-		return m, nil
-	case !m.confirmKill:
-		m.confirmKill = true
-		m.notice = fmt.Sprintf("k again to stop %s and hand %s to a person", s.name, number(s.issue))
 		return m, nil
 	}
-	m.confirmKill = false
-	m.notice = "stopping " + s.name
-	kill, name := m.deps.Kill, s.name
-	return m, func() tea.Msg {
-		if err := kill(name); err != nil {
-			return actedMsg{note: "could not stop " + name + ": " + oneLine(err.Error())}
-		}
-		return actedMsg{note: "stopped " + name}
-	}
+	m.confirmKill = s.name
+	m.notice = fmt.Sprintf("k again to stop %s and hand %s to a person", s.name, number(s.issue))
+	return m, nil
+}
+
+// isRunning says whether a session of this name is still running, which is
+// what an armed confirmation is checked against: the Now panel is the whole
+// record of what the view knows to be alive (see apply).
+func (m Model) isRunning(name string) bool {
+	return slices.ContainsFunc(m.sessions, func(s running) bool { return s.name == name })
 }
 
 // target is one row a person can select. session is the running session the

@@ -673,18 +673,6 @@ func (d *Deps) checkGitHubLogin(ctx context.Context) Result {
 	want := d.Config.GitHub.Login
 	got, err := d.GitHub.Login(ctx)
 	if err != nil {
-		if strings.HasSuffix(want, botSuffix) {
-			// The first of the two "[bot]" cases, and the reason this branch
-			// is a warning rather than a failure: a GitHub App's installation
-			// token authenticates as no user, so `gh api user` cannot answer
-			// for it and this question has no answer to check. Say that
-			// instead of accepting the login on the strength of an error -
-			// and do not fail, because a failure here would stop `bees run`
-			// on a token configuration the documentation supports.
-			return warn(name, GroupGitHub,
-				fmt.Sprintf("could not check: github.login %s names a GitHub App, and an app installation token authenticates as no user, so `gh api user` cannot answer for it (%s)", want, oneLine(err.Error())),
-				fmt.Sprintf("check by hand that comments the factory posts are authored by %s: github.login is what tells its own comments from a person's. If this is not an app token, GitHub rejected it - fix github.token", want))
-		}
 		return fail(name, GroupGitHub, "github.token was not accepted by GitHub: "+oneLine(err.Error()),
 			fmt.Sprintf("check that github.token is a valid token belonging to %s, or remove github.login and github.token to act as your own gh account", want))
 	}
@@ -693,10 +681,10 @@ func (d *Deps) checkGitHubLogin(ctx context.Context) Result {
 	}
 	detail := fmt.Sprintf("github.token belongs to %s, github.login says %s", got, want)
 	if strings.EqualFold(want, got+botSuffix) {
-		// The second "[bot]" case: a user token whose login was written with
-		// the suffix a GitHub App would have. It is an ordinary mismatch -
-		// GitHub reports this account's comments under the bare login - but
-		// it is the mismatch somebody configuring a bot makes, so name it.
+		// A user token whose login was written with the suffix a GitHub App
+		// would have. It is an ordinary mismatch - GitHub reports this
+		// account's comments under the bare login - but it is the mismatch
+		// somebody configuring a bot makes, so name it.
 		detail += fmt.Sprintf(" - GitHub reports this account's comments as %s, without the %s suffix", got, botSuffix)
 	}
 	return fail(name, GroupGitHub, detail,

@@ -206,19 +206,21 @@ goes into the session's environment and never into a file. A session started wit
 git configuration through `GIT_CONFIG_COUNT` and friends, and leaves the whole block
 alone when you have set `GIT_CONFIG_COUNT` yourself.
 
-**What the token needs.** A fine-grained personal access token, or a GitHub App
-installation token, scoped to the one repository with **write** access to *Issues*,
-*Pull requests* and *Contents*, and **read** access to *Metadata*. Issues and pull
-requests cover the labels, comments, milestones and reviews; contents covers the
-pushes developer sessions make; metadata is required by GitHub alongside the rest. A
-classic token works too, with the `repo` scope. `bees init` checks the token before
-the factory ever uses it: that GitHub accepts it, that it belongs to `login`, and that
-it can read the repository. `bees doctor` asks the same two identity questions of
-whatever token is configured at the time, and one more that `bees init` does not: that
-the account can actually **write** issues. Repository permission does not imply it — a
-fine-grained token's per-resource permissions sit on top of the repository role, so a
-token can read the repository as `ADMIN` and still be refused every issue, comment and
-label the factory writes.
+**What the token needs.** A fine-grained personal access token, scoped to the one
+repository with **write** access to *Issues*, *Pull requests* and *Contents*, and
+**read** access to *Metadata*. Issues and pull requests cover the labels, comments,
+milestones and reviews; contents covers the pushes developer sessions make; metadata
+is required by GitHub alongside the rest. A classic token works too, with the `repo`
+scope. Either way the token has to belong to an account that has a login — a bot user
+account or your own — because `login` is compared with the account GitHub says the
+token authenticates as. `bees init` checks the token before the factory ever uses it:
+that GitHub accepts it, that it belongs to `login`, and that it can read the
+repository. `bees doctor` asks the same two identity questions of whatever token is
+configured at the time, and one more that `bees init` does not: that the account can
+actually **write** issues. Repository permission does not imply it — a fine-grained
+token's per-resource permissions sit on top of the repository role, so a token can
+read the repository as `ADMIN` and still be refused every issue, comment and label the
+factory writes.
 
 ### `filter.assignee = "@me"` still means you
 
