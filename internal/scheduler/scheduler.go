@@ -43,6 +43,16 @@ type Deps struct {
 	Workspaces *workspace.Manager
 	Store      *state.Store
 	Logger     *slog.Logger
+	// Version and Revision are the build the binary was started from:
+	// what `bees version` prints, and the untruncated commit behind it.
+	// cmd/bees resolves them (the `-ldflags -X main.version` override lives
+	// in package main) and the scheduler only records them, in the startup
+	// log line and in status.json, so a running factory can be attributed
+	// to a build — the role prompts are compiled in, so a merged prompt
+	// change reaches no session until bees is rebuilt and restarted. Both
+	// are empty when the caller supplies none, and then nothing is recorded.
+	Version  string
+	Revision string
 	// Now overrides the clock (tests).
 	Now func() time.Time
 }
@@ -59,6 +69,10 @@ type Scheduler struct {
 	store  *state.Store
 	log    *slog.Logger
 	now    func() time.Time
+	// version and revision describe the build this scheduler is running as
+	// (Deps.Version, Deps.Revision).
+	version  string
+	revision string
 
 	// Once makes Run perform a single poll/dispatch pass and wait for the
 	// work it started.
@@ -152,6 +166,8 @@ func New(d Deps) (*Scheduler, error) {
 		store:        d.Store,
 		log:          d.Logger,
 		now:          d.Now,
+		version:      d.Version,
+		revision:     d.Revision,
 		owned:        map[int]*state.Worker{},
 		running:      map[string]bool{},
 		backoff:      map[string]time.Time{},
@@ -185,7 +201,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	}
 	s.log.Info("scheduler started", "repo", s.cfg.Project.Repo, "filter", s.describeQuery(),
 		"max_developers", s.cfg.Scheduler.MaxDevelopers, "poll", s.cfg.Scheduler.PollInterval.Duration,
-		"work_hours", s.cfg.Scheduler.WorkHours)
+		"work_hours", s.cfg.Scheduler.WorkHours, "version", s.version)
 	for {
 		full, err := s.tick(ctx)
 		if err != nil {
@@ -1159,7 +1175,8 @@ func (s *Scheduler) escalate(ctx context.Context, number int, reason string) err
 
 func (s *Scheduler) writeStatus() {
 	s.mu.Lock()
-	st := state.Status{LastPoll: s.lastPoll, NextPoll: s.nextPoll, Singletons: map[string]string{}, Queues: map[string]int{}, LastError: s.lastErr}
+	st := state.Status{LastPoll: s.lastPoll, NextPoll: s.nextPoll, Version: s.version, Revision: s.revision,
+		Singletons: map[string]string{}, Queues: map[string]int{}, LastError: s.lastErr}
 	if s.cfg.Scheduler.WorkHoursEnabled() {
 		in := s.cfg.Scheduler.InWorkHours(s.now())
 		st.InWorkHours = &in

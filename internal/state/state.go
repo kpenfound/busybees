@@ -436,6 +436,19 @@ type Status struct {
 	// still runs local passes: every scheduler.poll_interval, and whenever a
 	// session finishes.
 	NextPoll time.Time `json:"next_poll,omitempty"`
+	// Version is the build the running scheduler was started from, as
+	// `bees version` reports it ("v0.2.0", "dev (abc123def456 modified)",
+	// or "dev"). Empty in a status.json written by a bees older than the
+	// field, and in one written by a scheduler given no version.
+	Version string `json:"version,omitempty"`
+	// Revision is the untruncated commit that build came from, empty when
+	// the binary carries no VCS stamps. Version truncates it for display;
+	// this is the raw value, so it can be compared against the repository.
+	//
+	// Both matter because the role prompts are compiled into the binary: a
+	// running factory serves the prompts of the build it was started from,
+	// whatever has since been merged.
+	Revision string `json:"revision,omitempty"`
 	// InWorkHours is nil when scheduler.work_hours is not configured.
 	InWorkHours *bool             `json:"in_work_hours,omitempty"`
 	Workers     []Worker          `json:"workers"`
