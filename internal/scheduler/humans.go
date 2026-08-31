@@ -61,18 +61,10 @@ func (s *Scheduler) deliverHumanFeedback(ctx context.Context, snap *snapshot) er
 		if last := activity[len(activity)-1].CreatedAt; last.After(seen) {
 			seen = last
 		}
-		authors := map[string]bool{}
-		for _, a := range activity {
-			authors[a.Author] = true
-		}
-		var names []string
-		for a := range authors {
-			names = append(names, a)
-		}
 		m := mail.Message{
 			From:    HumanSender,
 			To:      config.RoleDeveloper,
-			Subject: fmt.Sprintf("Feedback on PR #%d from %s", pr.Number, strings.Join(names, ", ")),
+			Subject: fmt.Sprintf("Feedback on PR #%d from %s", pr.Number, strings.Join(activityAuthors(activity), ", ")),
 			Body:    formatActivity(s.cfg.Project.Repo, pr.Number, activity),
 			Issue:   issueNum,
 			PR:      pr.Number,
@@ -139,8 +131,8 @@ var inFlightStates = []string{"in-progress", "review", "approved", "blocked"}
 // Nothing is lost — those comments are in the prompt's comment history.
 func (s *Scheduler) deliverHumanIssueComments(ctx context.Context, snap *snapshot) error {
 	var errs []string
-	for _, state := range inFlightStates {
-		for _, issue := range snap.byState[state] {
+	for _, st := range inFlightStates {
+		for _, issue := range snap.byState[st] {
 			n := issue.Number
 			bk, err := s.store.Issue(n)
 			if err != nil {
@@ -175,7 +167,7 @@ func (s *Scheduler) deliverHumanIssueComments(ctx context.Context, snap *snapsho
 			}
 			m := mail.Message{
 				From:    HumanSender,
-				To:      s.issueCommentRecipient(state, bk),
+				To:      s.issueCommentRecipient(st, bk),
 				Subject: fmt.Sprintf("Comment on issue #%d from %s", n, strings.Join(activityAuthors(activity), ", ")),
 				Body:    formatIssueComments(n, activity),
 				Issue:   n,
@@ -184,7 +176,7 @@ func (s *Scheduler) deliverHumanIssueComments(ctx context.Context, snap *snapsho
 				errs = append(errs, err.Error())
 				continue
 			}
-			if state == "review" {
+			if st == "review" {
 				// The reviewer's inbox matches on either number, so the
 				// issue alone would reach it; the PR is there because that
 				// is what a reviewer session is about.
@@ -199,7 +191,7 @@ func (s *Scheduler) deliverHumanIssueComments(ctx context.Context, snap *snapsho
 			if err := s.store.SetIssueHumanSeenAt(n, seen); err != nil {
 				errs = append(errs, err.Error())
 			}
-			s.log.Info("human issue comments delivered", "issue", n, "state", state, "to", m.To, "items", len(activity))
+			s.log.Info("human issue comments delivered", "issue", n, "state", st, "to", m.To, "items", len(activity))
 		}
 	}
 	if len(errs) > 0 {
@@ -208,12 +200,12 @@ func (s *Scheduler) deliverHumanIssueComments(ctx context.Context, snap *snapsho
 	return nil
 }
 
-// issueCommentRecipient names the role a comment on an issue in state goes
+// issueCommentRecipient names the role a comment on an issue in state st goes
 // to. Only blocked is ambiguous, and the developer worker's bookkeeping
 // settles it: a branch or a pull request means a developer session asked the
 // question, anything else means triage did.
-func (s *Scheduler) issueCommentRecipient(state string, bk state.IssueState) string {
-	if state == "blocked" && bk.Branch == "" && bk.PR == 0 {
+func (s *Scheduler) issueCommentRecipient(st string, bk state.IssueState) string {
+	if st == "blocked" && bk.Branch == "" && bk.PR == 0 {
 		return config.RoleProjectManager
 	}
 	return config.RoleDeveloper

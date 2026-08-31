@@ -326,3 +326,60 @@ func TestACommentOnAnIssueInReviewReachesTheDeveloperAndTheReviewer(t *testing.T
 		t.Errorf("reviewer mail left unread: %+v", unread)
 	}
 }
+
+// TestADeliveredCommentIsNotDeliveredAgain: the clock has to move past what
+// was *delivered*, not just past what was quiet. The updatedAt gate alone is
+// not enough — anything that touches the issue after a delivery (a bee's own
+// reply to the comment, a label edit) reopens it — so without the
+// SetIssueHumanSeenAt that follows a send, the same comment goes out as fresh
+// mail from `human` on every poll for as long as the issue is in flight.
+func TestADeliveredCommentIsNotDeliveredAgain(t *testing.T) {
+	now := time.Now()
+	h := newHarnessAt(t, noRolesTOML, now)
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Under way", State: "OPEN",
+		Labels:    []github.Label{{Name: "bees"}, {Name: "bees:in-progress"}, {Name: "bees:size/s"}},
+		CreatedAt: now.Add(-2 * time.Hour), UpdatedAt: now}
+	if err := h.store.SetIssueHumanSeenAt(1, now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	seedIssueComments(h, 1, issueComment(901, "kyle", "use the flag names the issue lists", now))
+
+	deliverIssueCommentsOnce(t, h)
+	if n := len(developerMail(t, h)); n != 1 {
+		t.Fatalf("%d messages after the comment, want 1", n)
+	}
+
+	// Something else touches the issue, so the updatedAt gate opens again.
+	h.gh.issues[1].UpdatedAt = now.Add(time.Minute)
+	deliverIssueCommentsOnce(t, h)
+
+	if msgs := developerMail(t, h); len(msgs) != 1 {
+		t.Fatalf("%d messages after the issue was touched again, want only the one already delivered: %+v", len(msgs), msgs)
+	}
+	bk, err := h.store.Issue(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bk.IssueHumanSeenAt.After(now.Add(-time.Hour)) {
+		t.Fatalf("issue_human_seen_at is still %v: the delivery did not advance the clock", bk.IssueHumanSeenAt)
+	}
+}
+
+// TestActivityAuthorsAreListedOnceInTheOrderTheyWrote pins the helper both
+// mail subjects now name their authors with. The order is the order people
+// wrote in, which is what makes a subject reproducible: the PR side used to
+// collect the authors in a map and range over it, so two people on one pull
+// request produced a different subject from one run to the next.
+func TestActivityAuthorsAreListedOnceInTheOrderTheyWrote(t *testing.T) {
+	at := time.Now()
+	activity := []github.Activity{
+		{Author: "kyle", CreatedAt: at},
+		{Author: "robin", CreatedAt: at.Add(time.Minute)},
+		{Author: "kyle", CreatedAt: at.Add(2 * time.Minute)},
+		{Author: "sam", CreatedAt: at.Add(3 * time.Minute)},
+	}
+	got := strings.Join(activityAuthors(activity), ", ")
+	if want := "kyle, robin, sam"; got != want {
+		t.Fatalf("activityAuthors = %q, want %q", got, want)
+	}
+}
