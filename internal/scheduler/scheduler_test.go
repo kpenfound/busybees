@@ -30,7 +30,7 @@ import (
 // environment, performs a scripted action and prints a stream-json result.
 //
 // The flags that steer the fake (FAKE_CLAUDE, FAKE_DEV_HANG, FAKE_DEV_FAIL,
-// FAKE_REVIEW_ALWAYS_CHANGES, FAKE_COST)
+// FAKE_DEV_MAIL_TO, FAKE_REVIEW_ALWAYS_CHANGES, FAKE_COST)
 // reach it through the ordinary environment, so they must NOT start with
 // BEES_: the runner strips inherited BEES_* variables from every session.
 func TestMain(m *testing.M) {
@@ -121,6 +121,14 @@ func fakeClaude() {
 		if os.Getenv("FAKE_DEV_FAIL") == "1" {
 			outcome = session.Outcome{Status: OutcomeFailed, Note: "cannot build"}
 			break
+		}
+		// FAKE_DEV_MAIL_TO makes the session write to another role before it
+		// finishes, the way a real one does with `bees mail send`: a
+		// different process appending to the same mailbox on disk.
+		if to := os.Getenv("FAKE_DEV_MAIL_TO"); to != "" {
+			if _, err := box.Send(mail.Message{From: role, To: to, Subject: "a question about the queue", Body: "please look at this"}); err != nil {
+				fail(err)
+			}
 		}
 		if err := os.WriteFile(fmt.Sprintf("work-%d.txt", n), []byte("done"), 0o644); err != nil {
 			fail(err)
