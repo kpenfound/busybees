@@ -52,14 +52,13 @@ func (s *Scheduler) deliverHumanFeedback(ctx context.Context, snap *snapshot) er
 			continue
 		}
 		// Whether or not humans wrote anything, remember we looked.
-		bk.HumanSeenAt = pr.UpdatedAt
+		seen := pr.UpdatedAt
 		if len(activity) == 0 {
-			_ = s.store.SaveIssue(bk)
+			_ = s.store.SetHumanSeenAt(issueNum, seen)
 			continue
 		}
-		last := activity[len(activity)-1].CreatedAt
-		if last.After(bk.HumanSeenAt) {
-			bk.HumanSeenAt = last
+		if last := activity[len(activity)-1].CreatedAt; last.After(seen) {
+			seen = last
 		}
 		authors := map[string]bool{}
 		for _, a := range activity {
@@ -83,7 +82,7 @@ func (s *Scheduler) deliverHumanFeedback(ctx context.Context, snap *snapshot) er
 		}
 		// The developer's answer to this is local work: wake the loop.
 		s.signal()
-		if err := s.store.SaveIssue(bk); err != nil {
+		if err := s.store.SetHumanSeenAt(issueNum, seen); err != nil {
 			errs = append(errs, err.Error())
 		}
 		s.log.Info("human feedback delivered to developer", "pr", pr.Number, "issue", issueNum, "items", len(activity))

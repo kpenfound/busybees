@@ -279,3 +279,211 @@ func TestWrittenStateFilesAreModeSixFourFourAndLeaveNoTempFile(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// workerFields is the bookkeeping a developer worker owns and writes through
+// SaveIssue. The two tests below are opposite halves of one rule — SaveIssue
+// writes these fields and carries every other one over from the file — so
+// they share the fixture rather than stating it twice.
+func workerFields(round int) IssueState {
+	return IssueState{
+		Number:         7,
+		Round:          round,
+		PR:             101,
+		Branch:         "bees/issue-7",
+		CheckFixRounds: 2,
+		WorkerStage:    "review",
+		AfterDevelop:   "checks",
+		PreReviewDone:  true,
+	}
+}
+
+func wantWorkerFields(t *testing.T, got IssueState, round int, when string) {
+	t.Helper()
+	if want := workerFields(round); got.Round != want.Round || got.PR != want.PR ||
+		got.Branch != want.Branch || got.CheckFixRounds != want.CheckFixRounds ||
+		got.WorkerStage != want.WorkerStage || got.AfterDevelop != want.AfterDevelop ||
+		got.PreReviewDone != want.PreReviewDone {
+		t.Errorf("%s: the developer worker's bookkeeping was lost: got %+v want %+v", when, got, want)
+	}
+}
+
+// TestThePollingPathsBookkeepingSurvivesASaveIssue: every field the scheduler
+// writes on its polling path has the same shape as the cost totals — a
+// developer worker holds one IssueState for the whole life of an issue, so
+// anything it did not load is stale by the time it saves. Saving its copy
+// wholesale would forget that a person's PR feedback had been delivered
+// (delivering it twice), that a head had been mailed about (mailing it again,
+// which is the one thing conflict_notified_sha exists to prevent), that a
+// proposal had been approved (so the product manager is never told) and which
+// sub-issues a feature had open (so a finished feature is reported twice, or
+// not at all). Each of those fields is owned by a method of its own and
+// carried over by SaveIssue; what SaveIssue does write is the worker's own
+// bookkeeping.
+func TestThePollingPathsBookkeepingSurvivesASaveIssue(t *testing.T) {
+	s := New(t.TempDir())
+	if err := s.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveIssue(workerFields(1)); err != nil {
+		t.Fatal(err)
+	}
+	// The feature carried the proposal label when the worker loaded it, so a
+	// stale save writes that observation back too.
+	if err := s.SetProposal(7, true, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	// The worker loads the issue once and holds it for the rest of its life.
+	held, err := s.Issue(7)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Meanwhile the polling path records four things through their owners.
+	seen := time.Date(2026, 8, 31, 9, 0, 0, 0, time.UTC)
+	approved := time.Date(2026, 8, 31, 9, 30, 0, 0, time.UTC)
+	reported := time.Date(2026, 8, 31, 10, 0, 0, 0, time.UTC)
+	for _, step := range []struct {
+		name string
+		fn   func() error
+	}{
+		{"SetHumanSeenAt", func() error { return s.SetHumanSeenAt(7, seen) }},
+		{"SetConflictNotifiedSHA", func() error { return s.SetConflictNotifiedSHA(7, "deadbee") }},
+		{"SetProposal", func() error { return s.SetProposal(7, false, approved) }},
+		{"SetOpenChildren", func() error { return s.SetOpenChildren(7, []int{11, 12}, reported) }},
+	} {
+		if err := step.fn(); err != nil {
+			t.Fatalf("%s: %v", step.name, err)
+		}
+	}
+
+	// The worker's next save must write its own fields and nothing else.
+	held.Round = 2
+	if err := s.SaveIssue(held); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Issue(7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantWorkerFields(t, got, 2, "after a save")
+	if !got.HumanSeenAt.Equal(seen) {
+		t.Errorf("human_seen_at: got %v want %v — feedback already delivered would be delivered again", got.HumanSeenAt, seen)
+	}
+	if got.ConflictNotifiedSHA != "deadbee" {
+		t.Errorf("conflict_notified_sha: got %q want %q — the same head would be mailed about twice", got.ConflictNotifiedSHA, "deadbee")
+	}
+	if got.Proposal {
+		t.Error("proposal: got true want false — the label observation was rolled back")
+	}
+	if !got.ProposalApprovedAt.Equal(approved) {
+		t.Errorf("proposal_approved_at: got %v want %v — the product manager is never told", got.ProposalApprovedAt, approved)
+	}
+	if len(got.OpenChildren) != 2 || got.OpenChildren[0] != 11 || got.OpenChildren[1] != 12 {
+		t.Errorf("open_children: got %v want [11 12]", got.OpenChildren)
+	}
+	if !got.CompleteReportedAt.Equal(reported) {
+		t.Errorf("complete_reported_at: got %v want %v — the feature is reported complete twice", got.CompleteReportedAt, reported)
+	}
+}
+
+// The other direction of the same rule: an owner method reads the file,
+// changes its own fields and writes it back, so it must keep whatever the
+// developer worker saved since — including a save that landed between the
+// owner's own read and its write on the previous call.
+func TestTheOwnerMethodsPreserveTheWorkerFields(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		set  func(s *Store) error
+		want func(t *testing.T, is IssueState)
+	}{
+		{
+			name: "SetHumanSeenAt",
+			set:  func(s *Store) error { return s.SetHumanSeenAt(7, time.Unix(1, 0).UTC()) },
+			want: func(t *testing.T, is IssueState) {
+				if is.HumanSeenAt.IsZero() {
+					t.Error("human_seen_at was not recorded")
+				}
+			},
+		},
+		{
+			name: "SetConflictNotifiedSHA",
+			set:  func(s *Store) error { return s.SetConflictNotifiedSHA(7, "cafe") },
+			want: func(t *testing.T, is IssueState) {
+				if is.ConflictNotifiedSHA != "cafe" {
+					t.Errorf("conflict_notified_sha: got %q", is.ConflictNotifiedSHA)
+				}
+			},
+		},
+		{
+			name: "SetProposal",
+			set:  func(s *Store) error { return s.SetProposal(7, true, time.Time{}) },
+			want: func(t *testing.T, is IssueState) {
+				if !is.Proposal {
+					t.Error("proposal was not recorded")
+				}
+			},
+		},
+		{
+			name: "SetOpenChildren",
+			set:  func(s *Store) error { return s.SetOpenChildren(7, []int{3}, time.Time{}) },
+			want: func(t *testing.T, is IssueState) {
+				if len(is.OpenChildren) != 1 || is.OpenChildren[0] != 3 {
+					t.Errorf("open_children: got %v want [3]", is.OpenChildren)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := New(t.TempDir())
+			if err := s.Init(); err != nil {
+				t.Fatal(err)
+			}
+			// The worker saved its bookkeeping; the owner method is called
+			// afterwards and must not write a copy that predates it.
+			if err := s.SaveIssue(workerFields(3)); err != nil {
+				t.Fatal(err)
+			}
+			if err := tc.set(s); err != nil {
+				t.Fatal(err)
+			}
+			got, err := s.Issue(7)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantWorkerFields(t, got, 3, "after "+tc.name)
+			tc.want(t, got)
+		})
+	}
+}
+
+// SetOpenChildren carries two rules the completeness check depends on: a nil
+// set leaves the remembered one alone (an empty or incomplete lookup is
+// indistinguishable from children that closed), and a set that differs clears
+// the report marker so a feature that gains a sub-issue can be reported
+// complete again.
+func TestSetOpenChildrenKeepsARememberedSet(t *testing.T) {
+	s := New(t.TempDir())
+	if err := s.Init(); err != nil {
+		t.Fatal(err)
+	}
+	reported := time.Date(2026, 8, 31, 10, 0, 0, 0, time.UTC)
+	if err := s.SetOpenChildren(7, []int{11, 12}, reported); err != nil {
+		t.Fatal(err)
+	}
+	// An empty lookup records nothing and forgets nothing.
+	if err := s.SetOpenChildren(7, nil, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Issue(7)
+	if len(got.OpenChildren) != 2 || !got.CompleteReportedAt.Equal(reported) {
+		t.Errorf("an empty lookup overwrote the remembered set: %v %v", got.OpenChildren, got.CompleteReportedAt)
+	}
+	// A set that changed re-arms the trigger.
+	if err := s.SetOpenChildren(7, []int{11, 12, 13}, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.Issue(7)
+	if len(got.OpenChildren) != 3 || !got.CompleteReportedAt.IsZero() {
+		t.Errorf("a changed set did not re-arm the trigger: %v %v", got.OpenChildren, got.CompleteReportedAt)
+	}
+}
