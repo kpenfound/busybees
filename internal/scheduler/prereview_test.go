@@ -385,3 +385,76 @@ func TestReviewerChecksSessionReceivesMail(t *testing.T) {
 		t.Errorf("reviewer mail left unread: %+v", unread)
 	}
 }
+
+// reviewStagesTOML runs the developer/reviewer loop alone with product-fit
+// added to the reviewer's stages, so the parent feature is looked up.
+const reviewStagesTOML = prereviewTOML + `
+[roles.reviewer]
+stages = ["implementation", "product-fit"]
+`
+
+// The reviewer's prompt carries the configured stages, in order, and the work
+// item's parent feature — which only the product-fit stage reads. Both halves
+// travel in prompts.Data, so the assertion is on the session's own prompt.md
+// rather than on anything the fake reviewer chose to say (#240).
+func TestReviewerStagesAndParentFeatureReachThePrompt(t *testing.T) {
+	h := newHarness(t, reviewStagesTOML)
+	seedPreReviewIssue(t, h, "Ship it")
+	h.gh.issues[5] = &github.Issue{Number: 5, Title: "Exports", State: "OPEN",
+		Labels: []github.Label{{Name: "bees"}, {Name: "bees:feature"}}, CreatedAt: time.Now()}
+	h.gh.parents = map[int]int{1: 5}
+	h.gh.checks = []checksResponse{{`[{"name":"go / test","bucket":"pass","state":"SUCCESS"}]`, nil}}
+	seedCounter(t, h, "review", 1) // approve the first review
+	runPreReviewLoop(t, h)
+
+	h.wantOrder("developer-issue-1-r1", "reviewer-pr-101-r1")
+	review := promptOf(t, h, 1)
+	if !strings.Contains(review, "## Review stages") {
+		t.Fatalf("the reviewer got no stages:\n%s", review)
+	}
+	// The configured order, not the order the task template happens to
+	// describe the stages in.
+	i, j := strings.Index(review, "### `implementation`"), strings.Index(review, "### `product-fit`")
+	if i < 0 || j < 0 || i > j {
+		t.Errorf("stages out of order (implementation %d, product-fit %d):\n%s", i, j, review)
+	}
+	if strings.Contains(review, "### `style`") || strings.Contains(review, "### `cleanliness`") {
+		t.Errorf("an unconfigured stage reached the reviewer:\n%s", review)
+	}
+	if !strings.Contains(review, "**#5: Exports**") {
+		t.Errorf("the parent feature did not reach the reviewer's prompt:\n%s", review)
+	}
+	// The developer's prompt is unaffected: it has always had the parent.
+	if dev := promptOf(t, h, 0); strings.Contains(dev, "## Review stages") {
+		t.Errorf("the developer was given review stages:\n%s", dev)
+	}
+}
+
+// The default stage list has no product-fit, so a default reviewer costs no
+// ParentIssue query: the parent lookup is one GraphQL call per review round,
+// and the only stage that reads it is off by default.
+func TestDefaultReviewStagesCostNoParentLookup(t *testing.T) {
+	h := newHarness(t, prereviewTOML)
+	seedPreReviewIssue(t, h, "Ship it")
+	h.gh.issues[5] = &github.Issue{Number: 5, Title: "Exports", State: "OPEN",
+		Labels: []github.Label{{Name: "bees"}, {Name: "bees:feature"}}, CreatedAt: time.Now()}
+	h.gh.parents = map[int]int{1: 5}
+	h.gh.checks = []checksResponse{{`[{"name":"go / test","bucket":"pass","state":"SUCCESS"}]`, nil}}
+	seedCounter(t, h, "review", 1) // approve the first review
+	runPreReviewLoop(t, h)
+
+	h.wantOrder("developer-issue-1-r1", "reviewer-pr-101-r1")
+	review := promptOf(t, h, 1)
+	for _, want := range []string{"### `implementation`", "### `completeness`", "### `cleanliness`", "### `style`"} {
+		if !strings.Contains(review, want) {
+			t.Errorf("the default stages are missing %q:\n%s", want, review)
+		}
+	}
+	if strings.Contains(review, "### `product-fit`") {
+		t.Errorf("product-fit is on by default:\n%s", review)
+	}
+	// One query for the developer session, none for the review.
+	if n := h.gh.callCount("api graphql"); n != 1 {
+		t.Errorf("%d ParentIssue queries, want 1 (the developer's)", n)
+	}
+}

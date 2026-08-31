@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -213,12 +214,22 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 			if err != nil {
 				return err
 			}
+			// product-fit is the only stage that judges the change against the
+			// work item's parent feature, and it is off by default: looking the
+			// parent up unconditionally would add a GraphQL query to every
+			// review round of every repository for a section nobody renders.
+			stages := s.cfg.ReviewStages()
+			var parent *github.Parent
+			if slices.Contains(stages, config.StageProductFit) {
+				parent, _ = s.gh.ParentIssue(ctx, issue.Number)
+			}
 			name := fmt.Sprintf("reviewer-pr-%d-r%d", pr.Number, bookkeeping.Round)
-			log.Info("reviewer session", "pr", pr.Number, "round", bookkeeping.Round, "mail", len(inbox))
+			log.Info("reviewer session", "pr", pr.Number, "round", bookkeeping.Round, "mail", len(inbox), "stages", strings.Join(stages, ","))
 			started := s.now()
 			res, err := s.runSessionWithRetry(ctx, sessionSpec{
 				role: config.RoleReviewer, name: name, workDir: ws.RepoDir, branch: branch, worker: w,
 				data: prompts.Data{Issue: &freshIssue, PR: &freshPR, Inbox: inbox, PreviousRounds: previous, Round: bookkeeping.Round, MaxRounds: maxRounds,
+					Stages: stages, Parent: parent,
 					Checks: roundChecks, ChecksStatus: roundStatus, ChecksTimeout: shortDuration(policy.PreReviewChecksTimeout)},
 			})
 			if err != nil {
