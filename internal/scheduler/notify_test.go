@@ -27,8 +27,8 @@ func requestedReviewers(h *harness) [][]string {
 	return out
 }
 
-// escalate mentions scheduler.notify: the factory and the people it works for
-// share one GitHub account, so a comment notifies nobody by itself.
+// escalate mentions scheduler.notify: by default the factory and the people it
+// works for share one GitHub account, so a comment notifies nobody by itself.
 func TestEscalationMentionsNotify(t *testing.T) {
 	h := newHarness(t, notifyTOML)
 	h.gh.issues[12] = &github.Issue{Number: 12, Title: "Build the thing", State: "OPEN",

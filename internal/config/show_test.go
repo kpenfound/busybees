@@ -190,6 +190,9 @@ func TestViewTagsMirrorTOMLTags(t *testing.T) {
 // TestViewCoversTemplateKeys walks every key the bees.toml template can set and
 // checks `bees config show` prints it under that name.
 func TestViewCoversTemplateKeys(t *testing.T) {
+	// github.token references this variable; an unset reference is a load
+	// error (see TestTemplateUncommented).
+	t.Setenv("BEES_GITHUB_TOKEN", "ghp_example")
 	text, err := Template(TemplateData{Repo: "acme/widgets", Assignee: "@me", ExplicitRepo: true, ExplicitBranch: true})
 	if err != nil {
 		t.Fatal(err)

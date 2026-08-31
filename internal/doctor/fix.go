@@ -78,17 +78,21 @@ func (d *Deps) fixFilter(ctx context.Context) ([]string, error) {
 
 // assignee resolves filter.assignee to the login the REST endpoint wants.
 // "@me" is a gh query shorthand, not a login: `bees run` resolves it at
-// startup, and doctor has to do the same before it can assign anything.
+// startup, and doctor has to do the same before it can assign anything - with
+// the person's own gh authentication (Deps.me), because "@me" means the
+// person whatever account [github] makes the factory act as. Resolving it
+// through d.gh would assign the factory's work to the bot, where the
+// orchestrator cannot see it.
 func (d *Deps) assignee(ctx context.Context) (string, error) {
 	login := d.Config.Filter.Assignee
 	if login != "@me" {
 		return login, nil
 	}
-	out, err := d.gh(ctx, "api", "user", "--jq", ".login")
+	out, err := d.me(ctx)
 	if err != nil {
 		return "", fmt.Errorf(`resolve filter.assignee="@me": %w`, err)
 	}
-	login = strings.TrimSpace(string(out))
+	login = strings.TrimSpace(out)
 	if login == "" {
 		return "", errors.New(`resolve filter.assignee="@me": gh reported no login`)
 	}

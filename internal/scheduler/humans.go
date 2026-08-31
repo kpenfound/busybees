@@ -186,6 +186,13 @@ func formatActivity(repo string, pr int, activity []github.Activity) string {
 // Repairing pre-existing items into a changed filter is `bees doctor --fix`.
 //
 // One failing item does not stop the others: each is logged and skipped.
+//
+// Known narrowing with [github] set (#263): the listing asks GitHub for the
+// items the account bees acts as authored, so it sees what bees' own code
+// created (already born matching the filter, since issues.Create applies it)
+// and not the pull requests a session opened with its own gh. The main path -
+// ensureVisible in the developer worker - is unaffected; it is this backstop
+// that narrows.
 func (s *Scheduler) adoptCreated(ctx context.Context, since time.Time) {
 	items, err := s.gh.ListCreatedSince(ctx, since)
 	if s.op("list-created", err, "visibility backstop: list created items", "err", err) {

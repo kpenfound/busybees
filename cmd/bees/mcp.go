@@ -171,14 +171,10 @@ func (b *backend) load(ctx context.Context) error {
 			return err
 		}
 	}
-	if cfg.Filter.Assignee == "@me" {
-		login, err := github.CurrentUser(ctx)
-		if err != nil {
-			return fmt.Errorf("resolve filter.assignee=@me: %w", err)
-		}
-		cfg.Filter.Assignee = login
+	if err := resolveFilterAssignee(ctx, cfg); err != nil {
+		return err
 	}
-	b.filter, b.labels, b.gh = cfg.Filter, cfg.Labels(), github.New(cfg.Project.Repo)
+	b.filter, b.labels, b.gh = cfg.Filter, cfg.Labels(), githubClient(cfg)
 	return nil
 }
 
