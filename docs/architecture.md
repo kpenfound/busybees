@@ -15,7 +15,7 @@ internal/mail/       the local mailbox: JSON messages under <state_dir>/mail/<ro
 internal/workspace/  temporary git worktrees created from the main clone
 internal/skills/     clones skill repos by git URL and exposes them as claude plugin dirs
 internal/session/    runs one headless `claude -p` session and collects its result and outcome
-internal/prompts/    embedded base prompts (system/*.md, task/*.md), the project's own bees/prompts/ files, and their renderer
+internal/prompts/    base prompts embedded in the binary (system/*.md, task/*.md), the project's own bees/prompts/ files, and their renderer
 internal/mcpserver/  the built-in MCP server (`bees mcp serve`): mail, issue and outcome tools, filtered by role
 internal/state/      state directory: notes, per-issue bookkeeping, singleton run times, status.json
 internal/scheduler/  the orchestrator: poll, human feedback, PR merge state, reconcile, developer worker pool, singleton roles, event stream
@@ -664,15 +664,22 @@ saved to `stderr.log` when non-empty, and `result.json` summarises the run.
   appends the role's custom text from `bees.toml` and then the project's own
   prompt files; `prompts.Task` renders `task/<role>.md`. Both take a single
   `prompts.Data` struct (project, filter, labels, workspace, notes, inbox,
-  issue, PR, lists, round).
-- **Project prompt files.** `prompts.LoadProject` reads `bees/prompts/common.md`
-  and `bees/prompts/<role>.md` from the **worktree** the session runs in, so a
-  branch's own instructions apply to the session working on that branch. A
-  missing directory is the normal case and is silent; a file that cannot be read
-  is skipped, never fatal, and recorded as the `project-prompts/<role>` degraded
-  operation — one per role, so a file only one role reads is not cleared by the
-  next session of another. `bees doctor` fails on the same files, and on one no
-  role would read.
+  issue, PR, lists, round). The base prompts are `go:embed`ed, so a running
+  scheduler serves the ones compiled into the binary it was started from: a
+  prompt change merged to the default branch reaches no session until `bees` is
+  rebuilt and `bees run` restarted. The scheduler records the build it is
+  running as — in its `scheduler started` log line, and as `version` and
+  `revision` in `status.json`, which is what `bees status` reports on the
+  scheduler line — so the running prompts can be told from the repository's.
+- **Project prompt files.** `prompts.LoadProject` reads `bees/prompts/common.md` and
+  `bees/prompts/<role>.md` from the **worktree** the session runs in, so a branch's
+  own instructions apply to the session working on that branch. They are read at
+  session start rather than embedded, so — unlike the base prompts above — editing
+  them takes effect on the next session with no rebuild and no restart. A missing
+  directory is the normal case and is silent; a file that cannot be read is skipped,
+  never fatal, and recorded as the `project-prompts/<role>` degraded operation — one
+  per role, so a file only one role reads is not cleared by the next session of
+  another. `bees doctor` fails on the same files, and on one no role would read.
 - **Skills.** `skills.Manager.Prepare` clones each URL (`<url>[@ref][#subdir]`)
   under `~/.cache/bees/repos/` and returns a plugin directory: the repo itself
   if it has `.claude-plugin/plugin.json`, otherwise a generated wrapper under

@@ -642,6 +642,13 @@ For each role the effective settings are computed from `[global]` and
 
 `bees config show <role>` prints the result.
 
+Everything in this table is read from `bees.toml` when a session starts, so an edit
+to it reaches the next session with nothing to rebuild. The **base** role prompts are
+not: they are compiled into the `bees` binary, so a change to
+`internal/prompts/*/*.md` reaches no session until `bees` is rebuilt and `bees run`
+restarted. `bees status` names the build the running scheduler was started from, so
+it can be told from the one the repository has.
+
 ### Project prompt files
 
 A project can keep its role instructions in the repository instead of in `bees.toml`,
@@ -676,9 +683,11 @@ The directory is `bees/`, without a dot, on purpose: `bees init` adds `/.bees/` 
 opposite of instructions reviewed like code — whatever `state_dir` points at.
 
 Sessions read the files from **their own worktree**, so the instructions that reach a
-session are the ones on the branch it is working on, not the ones on the default
-branch. `bees prompts show <role> --rendered` has no worktree and reads the checkout
-`bees.toml` sits in; it says so when it finds any.
+session are the ones on the branch it is working on, not the ones on the default branch.
+They are read at session start, which is also what makes them the exception to the
+rebuild above: an edit to `bees/prompts/*.md` takes effect on the next session without
+rebuilding or restarting anything. `bees prompts show <role> --rendered` has no worktree
+and reads the checkout `bees.toml` sits in; it says so when it finds any.
 
 A file bees cannot use — unreadable, or larger than 64 KiB — never takes a session
 down: the session warns, skips that file and runs with the rest. `bees doctor` is
