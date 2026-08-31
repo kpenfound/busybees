@@ -368,10 +368,13 @@ arrives sees the pass that event is about, never the one before it.
 `internal/tui` is the subscriber: the panels `bees run` draws in a terminal,
 and the session view one of them opens onto. Now and Recent are built from
 the session and stage events; Needs human, Approved PRs and Queues are
-`status.json`, re-read when an event says it has changed. The session view is
-neither: it tails the session's own `transcript.jsonl` from the directory the
-started event named, which costs the scheduler nothing and works just as well
-after the session has finished. While the view is up it also owns Ctrl-C —
+`status.json`, re-read when an event says it has changed. Two things are
+read from a session's own `transcript.jsonl`, in the directory the started
+event named, because no event carries them: the session view's transcript,
+and the turn count the Now panel shows for a session that is still running
+(claude reports `num_turns` in the final event of its stream and nothing
+before it). Both cost the scheduler nothing, and the first works just as
+well after the session has finished. While the view is up it also owns Ctrl-C —
 Bubble Tea puts the terminal in raw mode, so the interrupt arrives as a key
 rather than as a signal, and the view cancels the scheduler's context with it
 and stays up until the drain is over; `q` does the same.
