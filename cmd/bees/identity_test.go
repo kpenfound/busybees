@@ -129,7 +129,7 @@ func TestNoGitHubTableInjectsNoToken(t *testing.T) {
 // first two arguments ("api user", "repo view"); a call whose key is fails,
 // or that has no answer, returns an error. Tests must never run the real gh.
 func fakeGH(answers map[string]string, fails string) *github.Client {
-	c := github.NewWithToken("acme/widgets", "ghp_bot")
+	c := github.NewAs("acme/widgets", "bot", "ghp_bot")
 	c.Exec = func(_ context.Context, args ...string) ([]byte, error) {
 		key := strings.Join(args[:min(2, len(args))], " ")
 		out, ok := answers[key]
@@ -162,6 +162,11 @@ func TestVerifyGitHubAccount(t *testing.T) {
 	c := cfg(t)
 	if got := githubClient(c).Token; got != "ghp_bot" {
 		t.Fatalf("the verified client does not carry the configured token: %q", got)
+	}
+	// It carries the login as well: that is what makes a comment by the bot
+	// a bee's comment without a marker (#243).
+	if got := githubClient(c).ActsAs; got != "busybees-bot" {
+		t.Fatalf("the verified client does not act as the configured login: %q", got)
 	}
 	login, err := verifyAccount(ctx, c, fakeGH(map[string]string{"api user": "busybees-bot", "repo view": "main"}, ""))
 	if err != nil {

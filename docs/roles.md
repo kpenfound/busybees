@@ -47,10 +47,14 @@ test or run the product; that knowledge belongs to the repository. Roles read
 its README, CONTRIBUTING, CLAUDE.md, Makefile and CI config, and record the
 commands and gotchas in their notes file.
 
-**Comment marker.** Humans and bees share one GitHub account, so every comment
-a role posts on GitHub must end with the line `<!-- bees:<role> -->` (invisible
-when rendered). The orchestrator uses it to tell bee comments from human ones
-when it collects PR feedback for the developer.
+**Comment marker.** Humans and bees share one GitHub account unless
+[`[github]`](configuration.md#github) gives the factory one of its own, so
+every comment a role posts on GitHub must end with the line
+`<!-- bees:<role> -->` (invisible when rendered). The orchestrator uses it to
+tell bee comments from human ones when it collects PR feedback for the
+developer, and where the factory does have its own login it counts a comment
+by that login as a bee's too. The marker is required either way: a Claude
+session's own `gh` still posts under the human's account.
 
 Roles interact with GitHub through MCP tools where there is one, and through
 the already-authenticated `gh` CLI for everything else; with each other, only
@@ -211,7 +215,7 @@ signal.
 
 A feature issue is *fresh* when the human side had the last word on it: a
 person created or commented on it, and the product manager has not commented
-since (`github.Issue.AwaitingBee`). When a person answers a `bees:question`,
+since (`github.Client.AwaitingBee`). When a person answers a `bees:question`,
 the orchestrator removes the label and the issue comes back as fresh; a fresh
 feature or feedback issue triggers a product manager run regardless of
 `product_manager_interval`.

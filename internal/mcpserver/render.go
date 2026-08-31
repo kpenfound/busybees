@@ -69,11 +69,17 @@ func issueMeta(i github.Issue, l config.Labels) string {
 func short(label string, l config.Labels) string { return strings.TrimPrefix(label, l.Base+":") }
 
 // author says who wrote a comment: the bees role whose marker it carries, or
-// a person. Bees and humans share one GitHub account, so the login is not a
-// signal and the marker is the only one there is. github.BeeRole reads it,
-// so what the renderer shows a bee and what the scheduler acts on can never
-// disagree: a marker quoted mid-body is context, and only a body whose last
-// line is a marker — where withMarker puts it — is a bee's.
+// a person. github.BeeRole reads the marker, so a marker quoted mid-body is
+// context and only a body whose last line is a marker — where withMarker
+// puts it — is a bee's.
+//
+// The marker is all this reads. The orchestrator has a second signal, the
+// login [github] gives the factory (github.isBee), and every comment a role
+// writes carries a marker either way, so the two agree on everything a role
+// wrote; they part only over a comment the factory's account posted without
+// one — the orchestrator's escalation comment — which this renders as a
+// person's. The line above it names the comment's GitHub login, so a role
+// reading the issue can see whose it was.
 func author(body string) string {
 	role, ok := github.BeeRole(body)
 	if !ok {

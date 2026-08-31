@@ -20,9 +20,11 @@ const HumanSender = "human"
 // developer for that PR, and — when the issue was parked in approved —
 // moves it back to ready so a developer worker picks it up.
 //
-// Bee comments are recognised by github.BeeRole, because humans and bees
-// share one GitHub account: a comment is a bee's only when its last line is
-// the marker, so a person quoting the bee they answer still reaches the
+// Bee comments are dropped by github.Client.PRActivity: a comment is a bee's
+// when its last line is the marker (github.BeeRole) or when its author is the
+// login the factory acts as, and with [github] unset — humans and bees then
+// share one GitHub account — the marker is the only signal. The marker rule
+// is positional, so a person quoting the bee they answer still reaches the
 // developer.
 func (s *Scheduler) deliverHumanFeedback(ctx context.Context, snap *snapshot) error {
 	var errs []string
@@ -188,7 +190,8 @@ func formatActivity(repo string, pr int, activity []github.Activity) string {
 // One failing item does not stop the others: each is logged and skipped.
 //
 // Known narrowing with [github] set (#263): the listing asks GitHub for the
-// items the account bees acts as authored, so it sees what bees' own code
+// items the login bees acts as authored - it names that login since #243, but
+// it asked about the same account before - so it sees what bees' own code
 // created (already born matching the filter, since issues.Create applies it)
 // and not the pull requests a session opened with its own gh. The main path -
 // ensureVisible in the developer worker - is unaffected; it is this backstop

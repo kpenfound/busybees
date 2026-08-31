@@ -37,8 +37,10 @@ GitHub repository. Read `docs/architecture.md` before changing the scheduler.
 - Roles never talk to each other through GitHub comments; the mailbox is the only
   channel. Comments on GitHub are for people: every comment a bee posts ends with
   `<!-- bees:<role> -->` so the orchestrator can tell bee and human comments apart
-  (they share one `gh` account). The orchestrator itself only writes the
-  `needs-human` escalation comment.
+  (they share one `gh` account). With `[github]` set the orchestrator also reads a
+  comment by the login it acts as as a bee's — the marker is emitted either way.
+  The orchestrator itself only writes the `needs-human` escalation comment (which
+  carries no marker).
 - Milestones are managed by people. Bees never create, edit or close them; new issues
   inherit them via `bees issue create --parent/--related`.
 - Workflow label transitions happen in the scheduler, except the ones prompts

@@ -503,7 +503,7 @@ func TestTokenReachesBothExecPaths(t *testing.T) {
 	fakeGHOnPath(t)
 	ctx := context.Background()
 
-	c := NewWithToken("acme/widgets", "ghp_bot")
+	c := NewAs("acme/widgets", "bot", "ghp_bot")
 	out, err := c.Exec(ctx, "issue", "list")
 	if err != nil {
 		t.Fatal(err)
@@ -552,11 +552,187 @@ func TestNoTokenInjectsNothing(t *testing.T) {
 		t.Errorf("Exec: %q", got)
 	}
 	// And a configured token wins over the one the machine already has.
-	c = NewWithToken("acme/widgets", "ghp_bot")
+	c = NewAs("acme/widgets", "bot", "ghp_bot")
 	if out, err = c.Exec(ctx, "issue", "list"); err != nil {
 		t.Fatal(err)
 	}
 	if got := string(out); got != "token=[ghp_bot] args=[issue list] stdin=[]" {
 		t.Errorf("configured token does not win: %q", got)
+	}
+}
+
+// TestIsBeeCountsTheFactorysOwnLogin pins the two ways a comment is read as a
+// bee's (#243) and how they combine: the marker, which every role emits, and
+// — only where [github] gives the factory an account of its own — the author.
+// The login is an extra way to say yes and never overrides the positional
+// marker rule, so a person quoting a marker is still a person whatever is
+// configured; with no login this is exactly the marker rule, which is what
+// "[github] unset behaves as it did before" means.
+func TestIsBeeCountsTheFactorysOwnLogin(t *testing.T) {
+	const bot = "busybees-bot"
+	marker := "looks good to me\n\n<!-- bees:reviewer -->"
+	quoting := "Replying to the bot:\n> looks good to me\n> <!-- bees:reviewer -->\n\nActually please hold off."
+	// The orchestrator's escalation comment carries no marker, which is the
+	// case the author signal exists for.
+	escalation := "🐝 **busybees needs a human.**\n\nthe reviewer gave up"
+
+	cases := []struct {
+		name           string
+		login          string // what the client acts as ("" = the shared account)
+		author, body   string
+		want           bool
+		wantMarkerOnly bool // what the marker alone says, i.e. today's answer
+	}{
+		{"shared account, a bee's marker", "", "kyle", marker, true, true},
+		{"shared account, no marker", "", "kyle", escalation, false, false},
+		{"shared account, a quoted marker", "", "kyle", quoting, false, false},
+		{"the bot posted it without a marker", bot, bot, escalation, true, false},
+		{"logins are case-insensitive", bot, "BusyBees-Bot", escalation, true, false},
+		{"a person posted it without a marker", bot, "kyle", escalation, false, false},
+		{"a person quoted a marker", bot, "kyle", quoting, false, false},
+		{"a session's own comment still carries its marker", bot, "kyle", marker, true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := NewAs("a/b", tc.login, "")
+			if got := c.isBee(tc.author, tc.body); got != tc.want {
+				t.Errorf("isBee(%q, ...) with login %q = %v, want %v", tc.author, tc.login, got, tc.want)
+			}
+			// The methods on the plain data types read the marker only,
+			// whatever the client is configured with: they have no login.
+			cm := Comment{Author: Author{Login: tc.author}, Body: tc.body}
+			if got := cm.IsBee(); got != tc.wantMarkerOnly {
+				t.Errorf("Comment.IsBee() = %v, want %v", got, tc.wantMarkerOnly)
+			}
+			if got := (Activity{Author: tc.author, Body: tc.body}).IsBee(); got != tc.wantMarkerOnly {
+				t.Errorf("Activity.IsBee() = %v, want %v", got, tc.wantMarkerOnly)
+			}
+		})
+	}
+}
+
+// TestClientAwaitingBeeCountsTheFactorysOwnLogin is the same rule where it
+// decides something: an issue whose last word is the orchestrator's
+// escalation comment — the one comment the factory posts without a marker —
+// is not awaiting a bee once the factory has a login of its own, and still is
+// on a shared account, where nothing can tell that comment from a person's.
+func TestClientAwaitingBeeCountsTheFactorysOwnLogin(t *testing.T) {
+	const bot = "busybees-bot"
+	created := time.Now().Add(-time.Hour)
+	at := func(m int) time.Time { return created.Add(time.Duration(m) * time.Minute) }
+	person := Comment{Author: Author{Login: "kyle"}, Body: "please look at this", CreatedAt: at(1)}
+	escalation := Comment{Author: Author{Login: bot}, Body: "🐝 **busybees needs a human.**", CreatedAt: at(2)}
+	answered := Issue{Number: 6, CreatedAt: created, Comments: []Comment{person, escalation}}
+	cameBack := Issue{Number: 6, CreatedAt: created, Comments: []Comment{person, escalation,
+		Comment{Author: Author{Login: "kyle"}, Body: "here is the answer", CreatedAt: at(3)}}}
+
+	acting := NewAs("a/b", bot, "")
+	shared := New("a/b")
+	for _, tc := range []struct {
+		name string
+		c    *Client
+		i    Issue
+		want bool
+	}{
+		{"the factory had the last word", acting, answered, false},
+		{"on a shared account it reads as a person's", shared, answered, true},
+		{"a person came back after it", acting, cameBack, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.c.AwaitingBee(tc.i); got != tc.want {
+				t.Errorf("Client.AwaitingBee() = %v, want %v", got, tc.want)
+			}
+			if got := tc.c.AwaitingBeeComment(tc.i); got != tc.want {
+				t.Errorf("Client.AwaitingBeeComment() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+	// The methods on Issue answer for the shared account, whatever is
+	// configured elsewhere: they are the marker rule on its own.
+	if !answered.AwaitingBee() || !answered.AwaitingBeeComment() {
+		t.Error("Issue.AwaitingBee should read the marker only")
+	}
+}
+
+// TestPRActivityDropsTheFactorysOwnComments pins the same rule on the path
+// that decides what reaches the developer: a comment by the login the factory
+// acts as is the factory's whether or not it carries a marker, and everything
+// a person wrote still gets through — including a reply quoting a marker.
+func TestPRActivityDropsTheFactorysOwnComments(t *testing.T) {
+	const bot = "busybees-bot"
+	base := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	ts := func(m int) string { return base.Add(time.Duration(m) * time.Minute).Format(time.RFC3339) }
+	exec := func(ctx context.Context, args ...string) ([]byte, error) {
+		path := args[len(args)-1]
+		switch {
+		case strings.HasSuffix(path, "/reviews"):
+			return []byte(`[[{"id":1,"user":{"login":"` + bot + `"},"body":"no marker here","state":"CHANGES_REQUESTED","submitted_at":"` + ts(1) + `"}]]`), nil
+		case strings.Contains(path, "/pulls/"):
+			return []byte(`[[{"id":2,"user":{"login":"kyle"},"body":"rename this","path":"a.go","line":9,"created_at":"` + ts(2) + `"}]]`), nil
+		default:
+			return []byte(`[[{"id":3,"user":{"login":"kyle"},"body":"quoting you:\n> ack\n> <!-- bees:developer -->\n\nnot yet","created_at":"` + ts(3) + `"}]]`), nil
+		}
+	}
+	ids := func(c *Client) string {
+		got, err := c.PRActivity(context.Background(), 9, base)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, a := range got {
+			out = append(out, strconv.FormatInt(a.ID, 10))
+		}
+		return strings.Join(out, ",")
+	}
+
+	acting := NewAs("a/b", bot, "")
+	acting.Exec = exec
+	if got, want := ids(acting), "2,3"; got != want {
+		t.Errorf("with a login of its own: got %s, want %s", got, want)
+	}
+	// On a shared account the marker-less review is indistinguishable from a
+	// person's and still reaches the developer: today's behaviour, unchanged.
+	shared := New("a/b")
+	shared.Exec = exec
+	if got, want := ids(shared), "1,2,3"; got != want {
+		t.Errorf("on a shared account: got %s, want %s", got, want)
+	}
+}
+
+// TestListCreatedSinceSearchesByTheActingLogin pins the query the visibility
+// backstop sends: it names the account bees acts as, falling back to "@me"
+// when the factory has no login of its own. The fake gh ignores --search, so
+// the arguments are what there is to assert on — and they are what changed.
+func TestListCreatedSinceSearchesByTheActingLogin(t *testing.T) {
+	since := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name, login, want string
+	}{
+		{"the machine's own account", "", "author:@me created:>="},
+		{"a login of its own", "busybees-bot", "author:busybees-bot created:>="},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var searches []string
+			c := NewAs("a/b", tc.login, "")
+			c.Exec = func(ctx context.Context, args ...string) ([]byte, error) {
+				i := slices.Index(args, "--search")
+				if i < 0 || i+1 >= len(args) {
+					return nil, fmt.Errorf("no --search in %v", args)
+				}
+				searches = append(searches, args[i+1])
+				return []byte("[]"), nil
+			}
+			if _, err := c.ListCreatedSince(context.Background(), since); err != nil {
+				t.Fatal(err)
+			}
+			if len(searches) != 2 { // one for issues, one for pull requests
+				t.Fatalf("searches: %v", searches)
+			}
+			for _, s := range searches {
+				if !strings.HasPrefix(s, tc.want) {
+					t.Errorf("--search %q, want it to start with %q", s, tc.want)
+				}
+			}
+		})
 	}
 }

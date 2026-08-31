@@ -150,3 +150,47 @@ func TestBugIssueWithNoStateLabelGoesToTheProductManager(t *testing.T) {
 		t.Fatalf("queues %+v, want the issue in neither triage nor no_state", st.Queues)
 	}
 }
+
+// TestTheFactorysOwnLoginIsNotAPersonWaitingForAnAnswer pins what a
+// configured github.login changes in the scheduler (#243). The orchestrator's
+// escalation comment is the one comment the factory posts without a marker,
+// so on a shared account nothing can tell it from a person's and it makes a
+// feedback issue fresh; once the factory has an account of its own, the
+// author says whose it is and the issue is not waiting for a bee. A person
+// coming back after it is fresh either way.
+func TestTheFactorysOwnLoginIsNotAPersonWaitingForAnAnswer(t *testing.T) {
+	h := newHarness(t, managersTOML)
+	now := time.Now()
+	lastRun := now.Add(-time.Hour)
+	issue := &github.Issue{Number: 3, Title: "Dark mode please", Body: "idea", State: "OPEN",
+		Author:    github.Author{Login: "kyle"},
+		Labels:    []github.Label{{Name: "bees"}, {Name: "bees:feedback"}},
+		CreatedAt: now.Add(-2 * time.Hour), UpdatedAt: now,
+		Comments: []github.Comment{
+			{Author: github.Author{Login: "kyle"}, Body: "any news?", CreatedAt: now.Add(-30 * time.Minute)},
+			{Author: github.Author{Login: "busybees-bot"}, Body: "🐝 **busybees needs a human.**", CreatedAt: now.Add(-20 * time.Minute)},
+		}}
+	h.gh.issues[3] = issue
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	fresh := func() int {
+		got, err := h.sched.freshIssues(ctx, []github.Issue{*issue}, lastRun)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(got)
+	}
+	if n := fresh(); n != 1 {
+		t.Errorf("on a shared account the escalation comment reads as a person's: fresh = %d, want 1", n)
+	}
+	h.sched.gh.ActsAs = "busybees-bot"
+	if n := fresh(); n != 0 {
+		t.Errorf("the factory's own comment should not make the issue fresh: fresh = %d, want 0", n)
+	}
+	issue.Comments = append(issue.Comments,
+		github.Comment{Author: github.Author{Login: "kyle"}, Body: "here you go", CreatedAt: now.Add(-10 * time.Minute)})
+	if n := fresh(); n != 1 {
+		t.Errorf("a person came back: fresh = %d, want 1", n)
+	}
+}

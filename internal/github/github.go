@@ -22,6 +22,14 @@ import (
 // Client runs gh commands against one repository.
 type Client struct {
 	Repo string // owner/name
+	// ActsAs is the GitHub login this client's calls act as, when the factory
+	// has an account of its own (config's [github] table). It is what makes
+	// the author of a comment a signal: see isBee. Empty (the default) means
+	// the factory shares an account with the people it works for, which is
+	// what bees did before [github] existed, and then the comment marker is
+	// the only signal there is. It is configuration, unlike the Login method,
+	// which asks GitHub.
+	ActsAs string
 	// Token is the GitHub token this client's gh calls authenticate with,
 	// passed as GH_TOKEN. Empty (the default) runs gh with whatever
 	// authentication the machine already has, which is what bees did before
@@ -48,10 +56,13 @@ func New(repo string) *Client {
 	return c
 }
 
-// NewWithToken returns a client for repo whose gh calls act as the account
-// token belongs to. An empty token is New.
-func NewWithToken(repo, token string) *Client {
+// NewAs returns a client for repo that acts as login, a GitHub account of
+// the factory's own, authenticating with token. Login and token always come
+// together — config.GitHub.validate rejects either alone — so this is the one
+// constructor for that identity; empty ones are New.
+func NewAs(repo, login, token string) *Client {
 	c := New(repo)
+	c.ActsAs = login
 	c.Token = token
 	return c
 }
@@ -148,21 +159,68 @@ type Comment struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
-// IsBee reports whether the comment was written by a bees role. The rule is
+// IsBee reports whether the comment carries a bees role's marker. The rule is
 // positional — see BeeRole — so a person quoting a bee's marker is still a
 // person.
+//
+// It reads the marker only. Where the factory acts as a GitHub login of its
+// own the author is a signal too, and a client knows that login: prefer
+// Client.AwaitingBee and the filtering Client.PRActivity does over asking a
+// bare Comment.
 func (c Comment) IsBee() bool { _, ok := BeeRole(c.Body); return ok }
+
+// isBee reports whether a comment with this author and body was written by
+// the factory rather than by a person. There are two independent ways to say
+// yes:
+//
+//   - the marker: a body whose last non-empty line is "<!-- bees:<role> -->"
+//     (BeeRole). Every comment a role posts carries one, and it is the only
+//     signal there is while bees and people share a GitHub account.
+//   - the author: with [github] configured, everything bees does in its own
+//     code acts as that login, so a comment by it is the factory's whatever
+//     the body says — the escalation comment the orchestrator posts carries
+//     no marker, for one.
+//
+// The login is an extra way to say yes, never a way to say no to something
+// the marker already identified, and it says nothing about a comment written
+// by anyone else: a person quoting a marker is still a person, because the
+// marker rule is positional and their login is not the factory's.
+//
+// An empty login is every configuration that predates [github], and then this
+// is exactly the marker rule.
+func isBee(login, author, body string) bool {
+	if login != "" && strings.EqualFold(author, login) {
+		return true
+	}
+	_, ok := BeeRole(body)
+	return ok
+}
+
+// isBee is isBee for the login this client acts as.
+func (c *Client) isBee(author, body string) bool { return isBee(c.ActsAs, author, body) }
 
 // AwaitingBee reports whether the human side had the last word on an issue —
 // its creation or a human comment, with a tie against a bee comment broken by
 // their order in the list — i.e. a bee still owes a reply.
-func (i Issue) AwaitingBee() bool { return i.awaitingBee(i.CreatedAt) }
+//
+// It tells the two sides apart by the marker alone. Client.AwaitingBee is the
+// same question asked with the factory's own login as well, and is what the
+// orchestrator uses.
+func (i Issue) AwaitingBee() bool { return i.awaitingBee(i.CreatedAt, "") }
 
 // AwaitingBeeComment reports whether a bee owes a reply because a person
 // commented, not merely because the issue was created. Unlike AwaitingBee it
 // does not seed the human side with CreatedAt, so an issue nobody has
 // commented on is never awaiting a bee.
-func (i Issue) AwaitingBeeComment() bool { return i.awaitingBee(time.Time{}) }
+func (i Issue) AwaitingBeeComment() bool { return i.awaitingBee(time.Time{}, "") }
+
+// AwaitingBee is Issue.AwaitingBee with this client's login counted as a bee
+// as well as the marker.
+func (c *Client) AwaitingBee(i Issue) bool { return i.awaitingBee(i.CreatedAt, c.ActsAs) }
+
+// AwaitingBeeComment is Issue.AwaitingBeeComment with this client's login
+// counted as a bee as well as the marker.
+func (c *Client) AwaitingBeeComment(i Issue) bool { return i.awaitingBee(time.Time{}, c.ActsAs) }
 
 // awaitingBee reports whether the human side had the last word on the issue,
 // starting from seedHuman: the issue's creation time counts as human activity
@@ -173,14 +231,14 @@ func (i Issue) AwaitingBeeComment() bool { return i.awaitingBee(time.Time{}) }
 // resolution, so a person commenting in the same second as a bee would
 // otherwise lose the tie and their comment would never be answered. Comments
 // come back chronologically, so the last one in the list had the last word.
-func (i Issue) awaitingBee(seedHuman time.Time) bool {
+func (i Issue) awaitingBee(seedHuman time.Time, login string) bool {
 	human := !seedHuman.IsZero()
 	last := seedHuman
 	for _, c := range i.Comments {
 		if c.CreatedAt.Before(last) {
 			continue // out of order: a later comment keeps the last word
 		}
-		last, human = c.CreatedAt, !c.IsBee()
+		last, human = c.CreatedAt, !isBee(login, c.Author.Login, c.Body)
 	}
 	return human
 }
@@ -745,7 +803,9 @@ func (c *Client) Comment(ctx context.Context, number int, body string) error {
 
 // BeesMarker is the invisible marker every comment written by a bees role
 // carries, so the orchestrator can tell bee comments from human comments
-// made with the same GitHub account.
+// made with the same GitHub account. It is emitted whether or not [github]
+// gives the factory an account of its own: it costs nothing, and it is the
+// only signal that works on a shared account (see isBee).
 const BeesMarker = "<!-- bees:"
 
 // BeeRole reports the role that wrote a comment body, and whether it was a
@@ -800,9 +860,12 @@ type Activity struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// IsBee reports whether the activity was written by a bees role. The rule is
-// positional — see BeeRole — so a person quoting a bee's marker is still a
+// IsBee reports whether the activity carries a bees role's marker. The rule
+// is positional — see BeeRole — so a person quoting a bee's marker is still a
 // person, and their feedback still reaches the developer.
+//
+// Like Comment.IsBee it reads the marker only; PRActivity, which has a
+// client, also counts the login the factory acts as.
 func (a Activity) IsBee() bool { _, ok := BeeRole(a.Body); return ok }
 
 // PRActivity returns reviews and comments on a PR created after since,
@@ -860,7 +923,7 @@ func (c *Client) PRActivity(ctx context.Context, number int, since time.Time) ([
 
 	var filtered []Activity
 	for _, a := range out {
-		if a.CreatedAt.After(since) && !a.IsBee() {
+		if a.CreatedAt.After(since) && !c.isBee(a.Author, a.Body) {
 			filtered = append(filtered, a)
 		}
 	}
@@ -915,11 +978,19 @@ func (c Created) MilestoneTitle() string {
 // acts as, at or after t, regardless of labels. Used to make sure everything a
 // session created stays visible to the factory.
 //
-// "author:@me" is resolved by gh against the client's own credentials, so with
-// [github] set this asks about the bot rather than the machine owner - see the
-// note on Scheduler.adoptCreated.
+// The search names that account: the configured login, or "@me" when there is
+// none, which gh resolves against the credentials the call carries. The two
+// answer alike — a client that has a login carries that login's token — but
+// naming it says which account is meant instead of leaving it to whatever
+// authentication gh finds. Either way this asks about the account bees' own
+// code acts as, not about the machine owner - see the note on
+// Scheduler.adoptCreated.
 func (c *Client) ListCreatedSince(ctx context.Context, t time.Time) ([]Created, error) {
-	search := fmt.Sprintf("author:@me created:>=%s", t.UTC().Add(-time.Minute).Format("2006-01-02T15:04:05Z"))
+	author := "@me"
+	if c.ActsAs != "" {
+		author = c.ActsAs
+	}
+	search := fmt.Sprintf("author:%s created:>=%s", author, t.UTC().Add(-time.Minute).Format("2006-01-02T15:04:05Z"))
 	var out []Created
 	issuesOut, err := c.Exec(ctx, "issue", "list", "-R", c.Repo, "--state", "all", "--search", search, "--limit", "50", "--json", "number,labels,assignees,milestone,createdAt")
 	if err != nil {
