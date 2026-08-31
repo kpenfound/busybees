@@ -9,6 +9,7 @@ import (
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/mail"
+	"github.com/kpenfound/busybees/internal/state"
 )
 
 // HumanSender is the mailbox sender name used for feedback that came from
@@ -98,6 +99,155 @@ func (s *Scheduler) deliverHumanFeedback(ctx context.Context, snap *snapshot) er
 		return fmt.Errorf("human feedback: %s", strings.Join(errs, "; "))
 	}
 	return nil
+}
+
+// inFlightStates are the issue states in which the factory is working on an
+// issue, and so the states in which a person's comment on the issue itself
+// has somebody to reach. An issue in ready or triage has no session to steer
+// — the next one to run reads the comment out of the issue body's comment
+// history — and a feature or feedback issue is the product manager's, not
+// this delivery's.
+var inFlightStates = []string{"in-progress", "review", "approved", "blocked"}
+
+// deliverHumanIssueComments does for comments on an in-flight issue what
+// deliverHumanFeedback does for a pull request: it collects the comments
+// people wrote since the last check and mails them, as one message per issue
+// from HumanSender, to whoever is in a position to act on them.
+//
+// The developer session already renders the issue's whole comment history in
+// its prompt. What this adds is the four things that rendering cannot do:
+// reach the reviewer during a review, count as the answer that unblocks a
+// blocked issue (reconcile reads the mailbox for that, and runs after this in
+// the same pass), wake the loop, and mark a direction as fresh and a person's
+// rather than one line in a list.
+//
+// Who a comment reaches depends on the state:
+//
+//   - in-progress, approved: the developer.
+//   - review: the developer, and a copy to the reviewer so the round in
+//     flight takes the direction into account.
+//   - blocked: whoever is waiting. A block that came out of a developer
+//     session left a branch or a pull request in the bookkeeping; anything
+//     else came out of triage and belongs to the project manager. Mailing the
+//     developer either way would send an issue blocked on a triage question
+//     to a developer as ready, unrefined.
+//
+// The first pass that sees an issue in a flight state with no recorded
+// timestamp records the poll time and delivers nothing: a zero timestamp must
+// not mean "deliver every comment this issue ever received", which on the
+// first tick after an upgrade would replay the whole triage conversation.
+// Nothing is lost — those comments are in the prompt's comment history.
+func (s *Scheduler) deliverHumanIssueComments(ctx context.Context, snap *snapshot) error {
+	var errs []string
+	for _, state := range inFlightStates {
+		for _, issue := range snap.byState[state] {
+			n := issue.Number
+			bk, err := s.store.Issue(n)
+			if err != nil {
+				errs = append(errs, err.Error())
+				continue
+			}
+			if bk.IssueHumanSeenAt.IsZero() {
+				// First observation: seed the clock, deliver nothing.
+				if err := s.store.SetIssueHumanSeenAt(n, s.now()); err != nil {
+					errs = append(errs, err.Error())
+				}
+				continue
+			}
+			if !issue.UpdatedAt.After(bk.IssueHumanSeenAt) {
+				continue // nothing happened on the issue since we last looked
+			}
+			activity, err := s.gh.IssueActivity(ctx, n, bk.IssueHumanSeenAt)
+			if err != nil {
+				errs = append(errs, fmt.Sprintf("issue #%d activity: %v", n, err))
+				continue
+			}
+			// Whether or not people wrote anything, remember we looked.
+			seen := issue.UpdatedAt
+			if len(activity) == 0 {
+				if err := s.store.SetIssueHumanSeenAt(n, seen); err != nil {
+					errs = append(errs, err.Error())
+				}
+				continue
+			}
+			if last := activity[len(activity)-1].CreatedAt; last.After(seen) {
+				seen = last
+			}
+			m := mail.Message{
+				From:    HumanSender,
+				To:      s.issueCommentRecipient(state, bk),
+				Subject: fmt.Sprintf("Comment on issue #%d from %s", n, strings.Join(activityAuthors(activity), ", ")),
+				Body:    formatIssueComments(n, activity),
+				Issue:   n,
+			}
+			if _, err := s.mail.Send(m); err != nil {
+				errs = append(errs, err.Error())
+				continue
+			}
+			if state == "review" {
+				// The reviewer's inbox matches on either number, so the
+				// issue alone would reach it; the PR is there because that
+				// is what a reviewer session is about.
+				copyToReviewer := m
+				copyToReviewer.To, copyToReviewer.PR = config.RoleReviewer, bk.PR
+				if _, err := s.mail.Send(copyToReviewer); err != nil {
+					errs = append(errs, err.Error())
+				}
+			}
+			// Whoever was mailed has local work now: wake the loop.
+			s.signal()
+			if err := s.store.SetIssueHumanSeenAt(n, seen); err != nil {
+				errs = append(errs, err.Error())
+			}
+			s.log.Info("human issue comments delivered", "issue", n, "state", state, "to", m.To, "items", len(activity))
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("human issue comments: %s", strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+// issueCommentRecipient names the role a comment on an issue in state goes
+// to. Only blocked is ambiguous, and the developer worker's bookkeeping
+// settles it: a branch or a pull request means a developer session asked the
+// question, anything else means triage did.
+func (s *Scheduler) issueCommentRecipient(state string, bk state.IssueState) string {
+	if state == "blocked" && bk.Branch == "" && bk.PR == 0 {
+		return config.RoleProjectManager
+	}
+	return config.RoleDeveloper
+}
+
+// activityAuthors lists the distinct authors of activity, in the order they
+// first wrote.
+func activityAuthors(activity []github.Activity) []string {
+	seen := map[string]bool{}
+	var names []string
+	for _, a := range activity {
+		if !seen[a.Author] {
+			seen[a.Author] = true
+			names = append(names, a.Author)
+		}
+	}
+	return names
+}
+
+// formatIssueComments renders human comments on an issue as the body of a
+// mail message, with the command the recipient needs to reply on the issue.
+func formatIssueComments(issue int, activity []github.Activity) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "A person commented on issue #%d. Treat it as a direction: it outranks the issue body and the reviewer. Reply on the issue with the `comment` tool (`number: %d`), which adds the marker for you.\n", issue, issue)
+	for _, a := range activity {
+		sb.WriteString("\n---\n")
+		fmt.Fprintf(&sb, "**Comment** by %s — %s\n\n", a.Author, a.CreatedAt.Format(time.RFC3339))
+		sb.WriteString(strings.TrimSpace(a.Body))
+		sb.WriteString("\n")
+		if a.URL != "" {
+			fmt.Fprintf(&sb, "\n%s\n", a.URL)
+		}
+	}
+	return sb.String()
 }
 
 // reopenApproved sends an approved issue back to ready — its pull request
