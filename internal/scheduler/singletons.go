@@ -94,7 +94,7 @@ func (s *Scheduler) productManagerHasWork(ctx context.Context, snap *snapshot) b
 	// looks at issues updated since the last run, so the proposal goes quiet
 	// again on the poll after that.
 	for _, i := range fresh {
-		if !github.HasLabel(i.Labels, s.labels.Proposal) || i.AwaitingBeeComment() {
+		if !github.HasLabel(i.Labels, s.labels.Proposal) || s.gh.AwaitingBeeComment(i) {
 			return true
 		}
 	}
@@ -219,7 +219,7 @@ func (s *Scheduler) freshIssues(ctx context.Context, issues []github.Issue, last
 		if err != nil {
 			return nil, err
 		}
-		if !full.AwaitingBee() {
+		if !s.gh.AwaitingBee(full) {
 			continue
 		}
 		if github.HasLabel(full.Labels, s.labels.Question) {
