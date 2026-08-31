@@ -204,3 +204,96 @@ func worktreeCount(ctx context.Context, t *testing.T, clone string) int {
 	}
 	return n
 }
+
+// TestFetchDoesNotRaceWorktreeOperations guards #230: `git fetch` in the main
+// clone enumerates .git/worktrees/<id>/HEAD to build its "have" set, so it can
+// read an entry a concurrent `git worktree add` is still writing and fail the
+// whole fetch with:
+//
+//	fatal: bad object worktrees/<id>/HEAD
+//	error: <origin> did not send all necessary objects
+//
+// This is not the id-allocation race of #133/#142 (unique leaf names fixed
+// that): it is a read of one clone's .git against a write of it. The scheduler
+// overlaps exactly these two — runSingleton calls Fetch while developer
+// workers call Branch — so Manager serialises both behind one mutex, and every
+// call below must return without error.
+//
+// The width (24 workers) matters more than the depth: without the mutex this
+// fails on the first few rounds, 15 runs out of 15. The failure seen on macOS
+// is a sibling of the reported one rather than the fetch message above — `git
+// worktree add` racing the implicit prune inside another `worktree
+// remove`/`prune` ("failed to read .git/worktrees/<id>/commondir") — but it is
+// the same defect: concurrent git commands on one .git directory.
+func TestFetchDoesNotRaceWorktreeOperations(t *testing.T) {
+	ctx := context.Background()
+	_, clone := testutil.SetupRepos(t)
+	m := workspace.NewManager(clone, filepath.Join(t.TempDir(), "ws"))
+	if err := m.Fetch(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	const (
+		workers = 24
+		rounds  = 8
+	)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var failures []string
+	fail := func(format string, args ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+		if len(failures) < 20 {
+			failures = append(failures, fmt.Sprintf(format, args...))
+		}
+	}
+
+	for i := range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for r := range rounds {
+				// A third of the workers fetch and the rest churn worktrees,
+				// so a fetch always has adds, removes and prunes running
+				// against the same .git.
+				if i%3 == 0 {
+					if err := m.Fetch(ctx); err != nil {
+						fail("worker %d round %d: fetch: %v", i, r, err)
+						return
+					}
+					continue
+				}
+				name := fmt.Sprintf("w%d-r%d", i, r)
+				var (
+					ws  *workspace.Workspace
+					err error
+				)
+				if r%2 == 0 {
+					ws, err = m.Detached(ctx, name, "main")
+				} else {
+					ws, err = m.Branch(ctx, name, "bees/"+name, "main")
+				}
+				if err != nil {
+					fail("worker %d round %d: create: %v", i, r, err)
+					return
+				}
+				if err := m.Remove(ctx, ws); err != nil {
+					fail("worker %d round %d: remove: %v", i, r, err)
+					return
+				}
+				if err := m.Prune(ctx); err != nil {
+					fail("worker %d round %d: prune: %v", i, r, err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	for _, f := range failures {
+		t.Error(f)
+	}
+	if got := worktreeCount(ctx, t, clone); got != 1 {
+		t.Fatalf("after the run: got %d worktrees, want 1 (the clone)", got)
+	}
+}
