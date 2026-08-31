@@ -48,11 +48,23 @@ One gzipped tarball per platform, each holding a single executable named
 `<version>` is the tag exactly as pushed, **including the leading `v`** — the
 assets for `v0.2.0` are `bees_v0.2.0_linux_amd64.tar.gz` and friends.
 
-This naming scheme is a stable interface, not an implementation detail: the
-install script parses it to pick the right asset. Changing it breaks every
-installer already in the wild, so treat it like a public API.
+This naming scheme is a stable interface, not an implementation detail:
+`install.sh` at the root of this repository parses it to pick the right asset,
+and so does every copy of that script already in the wild. Changing it breaks
+them all, so treat it like a public API.
 
-Installing by hand is three commands:
+## Installing a release
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/kpenfound/busybees/main/install.sh | sh
+```
+
+`install.sh` picks the asset for this machine, verifies it against
+`checksums.txt` and installs it; `BEES_VERSION` and `BEES_INSTALL_DIR` change
+which release it fetches and where it puts it. The
+[README](https://github.com/kpenfound/busybees#install) documents both.
+
+Doing it by hand is three commands:
 
 ```sh
 curl -fsSLO https://github.com/kpenfound/busybees/releases/download/v0.2.0/bees_v0.2.0_linux_amd64.tar.gz

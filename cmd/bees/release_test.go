@@ -67,8 +67,8 @@ func TestReleaseWorkflowStampsAVariableThatExists(t *testing.T) {
 }
 
 // TestReleaseAssetNamesAreDocumented pins the asset naming scheme, which is a
-// public interface rather than an implementation detail: the install script
-// parses it to pick the right download. Both halves matter — a platform added
+// public interface rather than an implementation detail: install.sh at the
+// repository root parses it to pick the right download. Both halves matter — a platform added
 // to the matrix and left undocumented, and a documented platform the workflow
 // does not build.
 func TestReleaseAssetNamesAreDocumented(t *testing.T) {
