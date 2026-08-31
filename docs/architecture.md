@@ -337,7 +337,8 @@ small state machine with four stages:
 ```mermaid
 stateDiagram-v2
     [*] --> develop
-    [*] --> prereview: resumed with an open PR and label bees:review
+    [*] --> checks: resumed in the stage the issue's bookkeeping recorded
+    [*] --> prereview: resumed with nothing recorded, an open PR and label bees:review
     develop --> prereview: pr-opened / pr-updated (PR found), before the first review
     develop --> review: a later review round, or pre_review_checks = false
     prereview --> review: checks pass / none reported / pending at the timeout / read failed
@@ -371,13 +372,28 @@ stateDiagram-v2
   same unique name: `git worktree add` derives the id under `.git/worktrees/`
   from the directory's leaf name, and concurrent adds sharing one would race
   for it.
-- **Resume.** On start the worker looks for an open PR whose head is the
-  branch. If one exists and the issue is labelled `bees:review` it starts in
-  the prereview stage (review, with `pre_review_checks = false` or the reviewer
-  disabled); otherwise in develop. This is how work survives a restart of
-  `bees run`.
+- **Resume.** A worker records the stage it is in — `develop`, `prereview`,
+  `review` or `checks` — and the loop state that goes with it in
+  `<state_dir>/issues/<n>.json`, before working each stage. A worker that finds
+  a recorded stage comes back to it, so a `bees run` killed in the checks
+  stage or in the middle of a check-fix round carries on there instead of
+  re-running a review that has already happened. A workflow label says an issue is in
+  review, never whether its review has already run.
+  Labels stay the human-facing truth all the same: a recorded stage they
+  contradict — one of the three review-loop stages on an issue with no open
+  pull request, or one a person has put back to `bees:ready` — is dropped with
+  a log line, and the worker starts where the labels say. So does a stage name
+  this version does not run, which is what a state file written by another one
+  looks like.
+  An issue with nothing recorded — a first run, or one last worked on before
+  the stage was recorded — starts exactly where it always did: the worker
+  looks for an open PR whose head is the branch, and if one exists and the
+  issue is labelled `bees:review` it starts in the prereview stage (review,
+  with `pre_review_checks = false` or the reviewer disabled); otherwise in
+  develop. This is how work survives a restart of `bees run`.
 - **Rounds.** `<state_dir>/issues/<n>.json` records the review round, PR
-  number, branch, `check_fix_rounds`, `human_seen_at` and
+  number, branch, `check_fix_rounds`, `worker_stage`, `after_develop`,
+  `pre_review_done`, `human_seen_at` and
   `conflict_notified_sha`. The round is
   incremented on every `changes-requested` and compared with
   `scheduler.max_review_rounds`; human feedback rounds do not count against
@@ -422,10 +438,13 @@ stateDiagram-v2
   a stage name consumed as a stage name, and the changes-requested path leaves
   it on `"review"`.) The checks section is handed to the review it was read for
   and cleared afterwards, so a later round is not told a head the developer has
-  since replaced is green. A resumed worker has no memory of the read and makes
-  it again. `bees status` reports the stage as `pre-review checks`; unlike the
-  checks stage it does not append the gate, because its own name is the useful
-  one.
+  since replaced is green. Whether the read has happened is remembered
+  (`pre_review_done`), so a restarted worker does not pay for it twice; what it
+  read is deliberately not remembered, so a review that resumes runs without a
+  checks section, exactly like the second round of a loop nothing interrupted.
+  A worker with nothing recorded reads again. `bees status` reports the stage as
+  `pre-review checks`; unlike the checks stage it does not append the gate,
+  because its own name is the useful one.
 - **Checks stage** (`auto_merge`). `approve` only labels the PR and issue
   `bees:approved`; merging happens in the `checks` stage. `awaitChecks` sleeps
   `checks_wait`, then polls every `checks_poll_interval` until `Summarize`
@@ -666,7 +685,8 @@ oldest first, and `bees mail` works from any directory because sessions get
   notes/archive/<role>-<ts>.md   notes replaced by `bees notes reset`
   sessions/<ts>-<name>-<rand>/   system-prompt.md, prompt.md, mcp.json, transcript.jsonl,
                                  stderr.log, outcome.json, result.json
-  issues/<n>.json                {number, round, pr, branch, check_fix_rounds, human_seen_at,
+  issues/<n>.json                {number, round, pr, branch, check_fix_rounds, worker_stage,
+                                 after_develop, pre_review_done, human_seen_at,
                                  conflict_notified_sha, updated_at}
   <role>.json                    per-role bookkeeping, one file per role that has run:
                                  {last_run, last_check, sessions, last_consolidated}
