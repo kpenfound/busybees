@@ -1739,9 +1739,9 @@ func TestProductManagerSeesEachWorkItemsParent(t *testing.T) {
 // TestQAReceivesHumanMail: `bees mail send --from human --to qa` is a
 // documented channel, and until #199 runQA built its session with no Inbox at
 // all, so a message sat unread forever. The message reaches the next QA
-// session — mail is itself a reason to start one, whatever `qa_interval` is
-// (see TestMailStartsQARunInsideItsInterval) — and is marked read there, which
-// is what keeps the following session's mail section empty.
+// session — this test's own next run is its interval plus a new merge, not
+// the mail — and is marked read there, which is what keeps the following
+// session's mail section empty.
 func TestQAReceivesHumanMail(t *testing.T) {
 	h := newHarnessAt(t, baseTOML+"\n[roles.developer]\nenabled = false\n[roles.project_manager]\nenabled = false\n[roles.product_manager]\nenabled = false\n", time.Now())
 	merged := h.clock.now().Add(-time.Minute)
