@@ -340,7 +340,10 @@ since the product manager's last marker comment on it) the product manager:
 3. comments the list of work items on the feature issue (with the marker), so
    it is not presented to the product manager again until something changes;
 4. later, closes the feature issue once all its sub-issues are closed, or
-   when it no longer makes sense (saying why).
+   when it no longer makes sense (saying why). The orchestrator brings a
+   feature whose last open sub-issue has closed back to the product manager on
+   the next pass, in a section of its own — see
+   [Features, sub-issues and milestones](#features-sub-issues-and-milestones).
 
 You steer a feature by commenting on it: your comment gives the human side the
 last word and makes the issue fresh again.
@@ -807,9 +810,10 @@ passing.
 
 The product manager owns the roadmap of feature issues. It runs at least every
 `scheduler.product_manager_interval` (default 1h), or sooner when it has
-unread mail (questions from the project manager, reports from QA) or when a
+unread mail (questions from the project manager, reports from QA), when a
 feature or feedback issue is fresh (a proposal counts only once a person has
-commented on it: until then nobody but a person can move it). It writes
+commented on it: until then nobody but a person can move it), or when a
+feature's work is done (below). It writes
 feature issues
 (`issue_create` with `feature: true`) that describe user-visible outcomes rather than
 implementation, and breaks them into work items as described above — except that
@@ -819,6 +823,23 @@ person removes that label. Because
 work items are GitHub sub-issues of their feature, progress is visible on the
 feature issue itself, in GitHub's project views, and in the product manager's
 prompt.
+
+**A feature whose work is done comes back to the product manager.** The last
+open sub-issue of a feature closing is an event nobody would otherwise report:
+the work items are gone from the queues, and the feature would sit open until
+the product manager next ran for another reason. Each product manager run
+records which sub-issues of each feature are open; every later pass checks
+those numbers against the issues the poll still finds open, which costs no
+GitHub call. When all of them have closed the feature wakes the product
+manager, and is presented in a section of its own as one yes/no decision: is
+the feature's *original intent* complete? If it is, the product manager closes
+it; if it is not, it says on the issue what is still missing and creates work
+items for exactly that, because a finished feature is not an invitation to
+widen it. Only you can be sure, so it is a decision rather than an automatic
+close, and it is put once: a feature the product manager deliberately leaves
+open is not raised again until it gains a sub-issue and that one closes too. A
+feature whose sub-issues all closed before the orchestrator ever recorded them
+is picked up on its next run for any other reason instead.
 
 **Milestones are managed by people, never by bees.** No role creates, edits or
 closes a milestone; the product manager sees the open milestones read-only and

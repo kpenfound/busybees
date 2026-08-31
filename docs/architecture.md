@@ -139,7 +139,8 @@ A full pass is:
    and returns the slot when done; the worker records the issue's size, which
    is what the cap counts and what `bees status` shows.
 6. **dispatch singletons** – project manager (has triage issues or unread
-   mail), product manager (unread mail, first run, or interval elapsed), QA
+   mail), product manager (unread mail, first run, interval elapsed, or a
+   feature whose work is done), QA
    (unread mail, first run, or interval elapsed and something merged since —
    checked at most once per `qa_interval`). Each runs in its own goroutine,
    guarded by a `running` flag so at most one session per role exists.
@@ -169,7 +170,24 @@ A full pass is:
    comment, so nothing else would notice — and a feature approved since the
    last run wakes the product manager and reaches it whatever `AwaitingBee`
    says.
-   `runProductManager` passes fresh feedback issues as `Data.Feedback`, fresh
+
+   The last condition is a **feature whose work is done**
+   (`completedFeatures`), and it makes no GitHub call: every
+   `runProductManager` records each feature's open sub-issue numbers in
+   `<state_dir>/issues/<n>.json` (`IssueState.OpenChildren`, inverted from the
+   `Parents` map it already builds — `sub_issues_summary` carries counts, not
+   numbers), and the check asks whether every recorded number is absent from
+   `snapshot.open`. Such a feature reaches the run as `Data.CompletedFeatures`,
+   a task section of its own, and is marked `CompleteReportedAt` so it is
+   reported once; a recorded set that changes clears the mark, so a feature
+   that gains a sub-issue can be reported again when that one closes. An empty
+   lookup never overwrites a recorded set — no open children is the state the
+   check is about — so a failed `ParentIssue` query costs nothing but the
+   `Parent` column. A feature the scheduler has never recorded children for
+   does not fire and waits for the interval.
+   `runProductManager` passes fresh feedback issues as `Data.Feedback`, the
+   features whose every recorded sub-issue has closed as
+   `Data.CompletedFeatures`, fresh
    feature issues as `Data.FreshFeatures` (proposals partitioned out into
    `Data.Proposals`, which the task prompt presents in a section of its own),
    every open feature issue as
