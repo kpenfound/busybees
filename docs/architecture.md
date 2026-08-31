@@ -18,7 +18,7 @@ internal/session/    runs one headless `claude -p` session and collects its resu
 internal/prompts/    embedded base prompts (system/*.md, task/*.md) and their renderer
 internal/mcpserver/  the built-in MCP server (`bees mcp serve`): mail, issue and outcome tools, filtered by role
 internal/state/      state directory: notes, per-issue bookkeeping, singleton run times, status.json
-internal/scheduler/  the orchestrator: poll, human feedback, PR merge state, reconcile, developer worker pool, singleton roles
+internal/scheduler/  the orchestrator: poll, human feedback, PR merge state, reconcile, developer worker pool, singleton roles, event stream
 internal/procs/      find and stop bees sessions after a crash (`bees kill`)
 internal/testutil/   test helpers (local bare git remote + clone)
 ```
@@ -281,6 +281,20 @@ restricts dispatch to the named roles; a role with `enabled = false` in
 
 `status.json` is rewritten after every pass and whenever a worker or
 singleton starts or stops; `bees status` just reads it.
+
+**The event stream** (`events.go`) is the live half of the same picture, for
+a view running in the same process — a terminal UI, a log tail.
+`Scheduler.Subscribe` returns a buffered channel of `Event`s: a session
+started, a session ended (with its outcome and cost), a developer worker
+moved to another stage, a full pass finished. It is published *alongside*
+`writeStatus`, never instead of it: the event says something happened,
+`status.json` says what the factory now looks like.
+
+It is a view mechanism and nothing more. No scheduler decision depends on
+whether anyone is subscribed, and `publish` never blocks — an event a
+subscriber has no room for is dropped, so a view that stops reading loses
+events instead of slowing a pass down. Event timestamps come from the
+scheduler's clock, like everything else it records.
 
 ## The developer worker
 

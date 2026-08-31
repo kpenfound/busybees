@@ -363,6 +363,7 @@ only logs a warning; the run continues.
 | `--once` | Do one pass and exit when the sessions it started finish. Same as `bees tick`. |
 | `--roles a,b` | Only run these roles (aliases accepted: `pm`, `pjm`, `dev`, `reviewer`, `qa`). |
 | `--skip-doctor` | Start without running the doctor preflight. |
+| `--no-tui` | Log to the console instead of drawing the terminal UI. Nothing is drawn yet, so today the flag changes nothing; a stdout that is not a terminal turns the UI off on its own. |
 
 ```sh
 bees run
