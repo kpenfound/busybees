@@ -359,10 +359,12 @@ stateDiagram-v2
   to diagnose failing checks — the prereview and checks stages share the
   counter — and compared with `roles.reviewer.max_check_fix_rounds`. Check fix
   rounds do not count against `max_review_rounds`.
-- **Review stage** (`roles.reviewer.stages`). The reviewer's prompt carries the
-  configured stages in order, each a section of its own with its own focus and
-  its own verdict, and the reviewer is told to run every one of them rather
-  than stop at the first that blocks. The list is validated at load, so the
+- **The reviewer's review stages** (`roles.reviewer.stages`) — sections of one
+  reviewer session's prompt, not worker stages like the ones above and below:
+  a staged review is still one session. The prompt carries the configured
+  stages in order, each a section of its own with its own focus and its own
+  verdict, and the reviewer is told to run every one of them rather than stop
+  at the first that blocks. The list is validated at load, so the
   worker never has to reject a stage name. `product-fit` is the one stage with
   a source of truth outside the diff and the issue: it needs the work item's
   parent feature, so the worker makes the `ParentIssue` GraphQL query only when

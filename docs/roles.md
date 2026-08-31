@@ -461,6 +461,10 @@ changes honestly and lets the orchestrator escalate.
 
 ### Review stages (`roles.reviewer.stages`)
 
+These are stages *within* one reviewer session — sections of its prompt — not
+worker stages like the pre-review checks and checks stages below, which are
+separate sessions.
+
 A review is not one judgement. Asking for all of them at once produced reviews
 that commented on formatting while missing that the feature was half
 implemented, or blocked on product fit when the issue had been explicit — so
