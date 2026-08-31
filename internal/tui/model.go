@@ -270,7 +270,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // The arrows move one selection through every panel's rows in turn; o opens
 // what is selected on GitHub, and k stops the selected session and hands its
 // issue to a person. k asks first, the way Ctrl-C does: it is the one key
-// here that throws work away.
+// here that throws work away. Enter is deliberately unbound: it is the key a
+// person expects to open the thing they have selected *inside* the view, and
+// #246 is what does that.
 func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	k := msg.String()
 	if k != "k" {
@@ -292,7 +294,7 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "down", "tab":
 		m.notice = ""
 		m.cursor = min(max(0, len(m.targets())-1), m.cursor+1)
-	case "o", "enter":
+	case "o":
 		return m.open()
 	case "k":
 		return m.kill()

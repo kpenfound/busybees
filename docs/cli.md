@@ -459,7 +459,7 @@ The keys:
 | Key | What it does |
 |---|---|
 | `↑` `↓` | Move the selection through every panel's rows in turn. |
-| `o`, `enter` | Open the selected issue or pull request on GitHub. |
+| `o` | Open the selected issue or pull request on GitHub. |
 | `k` | Stop the selected session and hand its issue to a person. It asks first: press `k` again to confirm. |
 | `q`, `ctrl-c` | Stop polling and drain. Press again to leave the terminal early. |
 
