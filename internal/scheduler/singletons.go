@@ -565,7 +565,11 @@ func (s *Scheduler) RunRole(ctx context.Context, role string, issue, pr int) err
 				if err := s.setState(ctx, issue, s.labels.Review); err != nil {
 					return err
 				}
-				i.Labels = relabel(i.Labels, s.stateOf(i.Labels), s.labels.Review)
+				// relabel matches a full label name and stateOf returns the
+				// short state, so the state has to be spelled back out: given
+				// "in-progress" nothing is removed, the local copy carries
+				// both labels, and stateOf reads in-progress back out of it.
+				i.Labels = relabel(i.Labels, s.labels.Base+":"+s.stateOf(i.Labels), s.labels.Review)
 			}
 			if bk, err := s.store.Issue(issue); err == nil && bk.WorkerStage != "" {
 				bk.WorkerStage, bk.AfterDevelop, bk.PreReviewDone = "", "", false
