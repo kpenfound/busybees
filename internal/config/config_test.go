@@ -369,10 +369,11 @@ func TestMergePolicy(t *testing.T) {
 	if p = cfg.Merge(); p.PreReviewChecks || p.PreReviewChecksTimeout != 90*time.Second {
 		t.Fatalf("pre-review custom: %+v", p)
 	}
-	// Both pre-review keys belong to the reviewer only.
+	// Both pre-review keys belong to the reviewer only. stages joined the same
+	// list in #240, which is why the sentence names it too.
 	for _, scope := range []string{"[global]", "[roles.developer]"} {
 		_, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"+scope+"\npre_review_checks = true\npre_review_checks_timeout = \"5m\"\n"))
-		if err == nil || !strings.Contains(err.Error(), "pre_review_checks and pre_review_checks_timeout are only valid under roles.reviewer") {
+		if err == nil || !strings.Contains(err.Error(), "pre_review_checks, pre_review_checks_timeout and stages are only valid under roles.reviewer") {
 			t.Fatalf("%s: %v", scope, err)
 		}
 	}
@@ -1397,5 +1398,71 @@ func TestGitHubAccount(t *testing.T) {
 	// not credentials, so they do not need a token.
 	if _, err := Load(writeConfig(t, head+"[github]\ngit_name = \"busybees\"\ngit_email = \"bot@example.com\"\n")); err != nil {
 		t.Fatalf("git identity alone: %v", err)
+	}
+}
+
+// roles.reviewer.stages is the reviewer's ordered review stages. The default
+// carries no product-fit stage on purpose: it is what keeps the staged
+// reviewer's scope the same as the single-pass reviewer it replaced (#240).
+// An unknown stage and an explicitly empty list are both load errors, and the
+// error has to name the key, the bad value and the valid set, because a
+// mistyped stage would otherwise be silently skipped.
+func TestReviewStages(t *testing.T) {
+	head := "version = 1\n[project]\nrepo = \"a/b\"\n"
+	cfg, err := Load(writeConfig(t, head))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.ReviewStages(); !slices.Equal(got, DefaultReviewStages) {
+		t.Errorf("default stages: %v, want %v", got, DefaultReviewStages)
+	}
+	if slices.Contains(cfg.ReviewStages(), StageProductFit) {
+		t.Errorf("product-fit is on by default: %v", cfg.ReviewStages())
+	}
+	// Every default stage is a known one, and product-fit is known too.
+	for _, stage := range DefaultReviewStages {
+		if !slices.Contains(KnownReviewStages, stage) {
+			t.Errorf("default stage %q is not in the known set %v", stage, KnownReviewStages)
+		}
+	}
+	if !slices.Contains(KnownReviewStages, StageProductFit) {
+		t.Errorf("product-fit is not in the known set %v", KnownReviewStages)
+	}
+	// The resolver hands out a copy: a caller that sorts or appends to it
+	// must not rewrite the default for every later session.
+	cfg.ReviewStages()[0] = "mutated"
+	if got := cfg.ReviewStages(); !slices.Equal(got, DefaultReviewStages) {
+		t.Errorf("stages after a caller mutated its copy: %v", got)
+	}
+
+	cfg, err = Load(writeConfig(t, head+"[roles.reviewer]\nstages = [\"product-fit\", \"style\"]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.ReviewStages(); !slices.Equal(got, []string{"product-fit", "style"}) {
+		t.Errorf("configured stages: %v", got)
+	}
+
+	for _, tc := range []struct {
+		name, body, want string
+	}{
+		{"unknown stage", "[roles.reviewer]\nstages = [\"implementation\", \"vibes\"]\n",
+			"roles.reviewer.stages: unknown stage \"vibes\" (want one or more of implementation, completeness, cleanliness, style, product-fit)"},
+		{"empty list", "[roles.reviewer]\nstages = []\n",
+			"roles.reviewer.stages must name at least one stage (want one or more of implementation, completeness, cleanliness, style, product-fit)"},
+		{"global scope", "[global]\nstages = [\"style\"]\n",
+			"global: auto_merge, merge_method, checks_wait, checks_poll_interval, checks_timeout, max_check_fix_rounds, pre_review_checks, pre_review_checks_timeout and stages are only valid under roles.reviewer"},
+		{"another role", "[roles.developer]\nstages = [\"style\"]\n",
+			"roles.developer: auto_merge, merge_method, checks_wait, checks_poll_interval, checks_timeout, max_check_fix_rounds, pre_review_checks, pre_review_checks_timeout and stages are only valid under roles.reviewer"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Load(writeConfig(t, head+tc.body))
+			if err == nil {
+				t.Fatalf("loaded a config that should be rejected")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error is not actionable: %v", err)
+			}
+		})
 	}
 }
