@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/state"
 )
 
 // drain empties an event channel without blocking. It is called after Run
@@ -44,8 +45,9 @@ func count(events []Event, kind string) int {
 }
 
 // runEventFixture runs one developer -> reviewer loop over a single ready
-// issue and returns the events published (nil when subscribe is false, which
-// is the with-no-subscriber half of the test) and the sessions that ran.
+// issue and returns the events published and the sessions that ran. With
+// subscribe false nobody is listening, so there are no events to return and
+// the run is there to be compared against the subscribed one.
 func runEventFixture(t *testing.T, h *harness, subscribe bool) ([]Event, []string) {
 	t.Helper()
 	// The fake reviewer requests changes on its first review and approves
@@ -75,10 +77,11 @@ func TestSchedulerPublishesSessionStageAndPollEvents(t *testing.T) {
 	events, sessions := runEventFixture(t, h, true)
 
 	quiet := newHarnessAt(t, devOnlyTOML, time.Now())
-	noEvents, quietSessions := runEventFixture(t, quiet, false)
-	if len(noEvents) != 0 {
-		t.Errorf("no subscriber, yet %d events were collected", len(noEvents))
-	}
+	// The with-no-subscriber half is carried by this comparison, not by
+	// counting the quiet run's events: with nobody subscribed there is no
+	// channel to read, so a count of zero could never fail. What a publish
+	// that changed the pass would break is the pass itself.
+	_, quietSessions := runEventFixture(t, quiet, false)
 	if len(sessions) == 0 {
 		t.Fatalf("no session ran: %v", sessions)
 	}
@@ -199,5 +202,40 @@ func TestPublishDropsRatherThanBlocks(t *testing.T) {
 		if !got[0].Time.Equal(at) {
 			t.Errorf("%s subscriber: event stamped %s, want the scheduler's clock %s", name, got[0].Time, at)
 		}
+	}
+}
+
+// A view re-reads status.json when a poll event arrives, so the file must
+// already hold what the pass found when the event is published. The first
+// pass of an idle factory writes status.json nowhere else, so an event
+// published before writeStatus finds no file at all (#244).
+func TestPollEventArrivesAfterStatusIsWritten(t *testing.T) {
+	h := newHarnessAt(t, devOnlyTOML, time.Now())
+	sub := h.sched.Subscribe()
+	seen := make(chan state.Status, 1)
+	go func() {
+		for ev := range sub {
+			if ev.Kind != EventPoll {
+				continue
+			}
+			st, err := h.store.LoadStatus()
+			if err != nil {
+				t.Errorf("status.json: %v", err)
+			}
+			seen <- st
+			return
+		}
+	}()
+	if err := h.sched.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case st := <-seen:
+		if !st.LastPoll.Equal(h.clock.now()) {
+			t.Errorf("when the poll event arrived status.json said last_poll %s, want this pass's %s: the event was published before writeStatus",
+				st.LastPoll, h.clock.now())
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("no poll event")
 	}
 }

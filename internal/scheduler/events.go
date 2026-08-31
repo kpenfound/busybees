@@ -13,8 +13,8 @@ const (
 	// EventStage is emitted when a developer worker moves an issue to
 	// another stage of the develop -> prereview -> review -> checks loop.
 	EventStage = "stage"
-	// EventPoll is emitted at the end of every full pass, when the queues
-	// in status.json have been refreshed.
+	// EventPoll is emitted at the end of every full pass, after status.json
+	// has been rewritten, so a view may re-read it when one arrives.
 	EventPoll = "poll"
 )
 

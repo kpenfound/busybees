@@ -288,7 +288,9 @@ a view running in the same process — a terminal UI, a log tail.
 started, a session ended (with its outcome and cost), a developer worker
 moved to another stage, a full pass finished. It is published *alongside*
 `writeStatus`, never instead of it: the event says something happened,
-`status.json` says what the factory now looks like.
+`status.json` says what the factory now looks like. The poll event is
+published *after* the write, so a view that re-reads `status.json` when one
+arrives sees the pass that event is about, never the one before it.
 
 It is a view mechanism and nothing more. No scheduler decision depends on
 whether anyone is subscribed, and `publish` never blocks — an event a

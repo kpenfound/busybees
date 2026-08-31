@@ -192,16 +192,17 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			s.op("poll", nil, "")
 			s.setLastErr("")
 		}
+		s.writeStatus()
 		if full {
-			// Alongside writeStatus, never instead of it: the event says a
-			// poll has just finished, status.json says what it found.
+			// Published after writeStatus, never instead of it: the event
+			// says a poll has just finished and status.json — already on
+			// disk when a subscriber sees the event — says what it found.
 			ev := Event{Kind: EventPoll}
 			if err != nil {
 				ev.Err = err.Error()
 			}
 			s.publish(ev)
 		}
-		s.writeStatus()
 		if s.Once {
 			break
 		}
