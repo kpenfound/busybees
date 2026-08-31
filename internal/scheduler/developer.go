@@ -64,6 +64,16 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 	}
 	bookkeeping.Branch = branch
 
+	// A session this issue's bookkeeping still records as running, whose
+	// process is gone, was interrupted: a scheduler killed while it worked.
+	// The first session of that role gets told, and the worker is marked
+	// resumed for `bees status` (interrupted.go).
+	if in := s.takeInterrupted(log, &bookkeeping); in != nil {
+		s.markResumed(w)
+		s.holdInterrupted(issue.Number, in)
+		defer s.forgetInterrupted(issue.Number)
+	}
+
 	// Resume: an open PR for the branch means we are in the review loop.
 	pr, err := s.gh.FindPRForBranch(ctx, branch)
 	if err != nil {

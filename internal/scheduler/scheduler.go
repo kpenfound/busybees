@@ -98,6 +98,14 @@ type Scheduler struct {
 	limitPausedUntil time.Time
 	// overBudget counts consecutive over-budget sessions per work item.
 	overBudget map[string]int
+	// interrupted holds, per issue, the session a killed scheduler left
+	// unfinished, until the worker that took the issue over runs a session
+	// of the role it happened to (interrupted.go).
+	interrupted map[int]*session.Interrupted
+	// alive answers whether a pid is still running, and is how an
+	// interrupted session is told from a running one. nil is procs.Alive;
+	// tests replace it so no test has to kill a real process.
+	alive func(int) bool
 	// wake shortens the wait between two ticks: a purely local event (a
 	// session finishing, mail the scheduler itself sent) signals it and the
 	// loop runs a local pass at once instead of sitting out the rest of the
@@ -153,6 +161,7 @@ func New(d Deps) (*Scheduler, error) {
 		warnedCycles: map[int]bool{},
 		readySizes:   map[string]int{},
 		overBudget:   map[string]int{},
+		interrupted:  map[int]*session.Interrupted{},
 		wake:         make(chan struct{}, 1),
 		slots:        make(chan struct{}, d.Config.Scheduler.MaxDevelopers),
 	}

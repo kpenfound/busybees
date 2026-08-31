@@ -8,7 +8,7 @@
 //	notes/archive/       notes files replaced by `bees notes reset`
 //	sessions/<id>/       one directory per claude session (prompts, transcript, result)
 //	issues/<n>.json      per-issue bookkeeping (review round, PR number, the
-//	                     developer worker's stage)
+//	                     developer worker's stage and its running session)
 //	<role>.json          per-role bookkeeping (last run, session counters);
 //	                     every role has one, including developer and reviewer
 //	status.json          live scheduler status
@@ -139,6 +139,15 @@ type IssueState struct {
 	WorkerStage   string `json:"worker_stage,omitempty"`
 	AfterDevelop  string `json:"after_develop,omitempty"`
 	PreReviewDone bool   `json:"pre_review_done,omitempty"`
+	// Session is the session the scheduler last started for this issue,
+	// recorded before it runs and cleared when it ends. A record left
+	// behind is what says a scheduler was killed while a session ran: the
+	// directory it names holds a transcript no result file ever closed, and
+	// the branch may carry the partial work that session left. It sits with
+	// the worker's stage rather than in a file of its own because both
+	// answer the same question — where did the last attempt get to
+	// (scheduler.takeInterrupted).
+	Session *SessionRun `json:"session,omitempty"`
 	// HumanSeenAt is the timestamp of the latest human PR activity already
 	// delivered to the developer.
 	HumanSeenAt time.Time `json:"human_seen_at,omitempty"`
@@ -174,6 +183,16 @@ type IssueState struct {
 	OpenChildren       []int     `json:"open_children,omitempty"`
 	CompleteReportedAt time.Time `json:"complete_reported_at,omitempty"`
 	UpdatedAt          time.Time `json:"updated_at"`
+}
+
+// SessionRun is one session the scheduler started for an issue: who ran it,
+// what it was called and the directory holding its prompts, transcript and,
+// once it ends, its result.
+type SessionRun struct {
+	Role      string    `json:"role"`
+	Name      string    `json:"name"`
+	Dir       string    `json:"dir"`
+	StartedAt time.Time `json:"started_at"`
 }
 
 // Issue loads bookkeeping for an issue (zero value when none).
@@ -260,7 +279,11 @@ type Worker struct {
 	Round int    `json:"round"`
 	// Attempt is the 1-based attempt of the running session; > 1 means the
 	// previous attempt failed for infrastructure reasons and was retried.
-	Attempt int       `json:"attempt,omitempty"`
+	Attempt int `json:"attempt,omitempty"`
+	// Resumed marks a worker that took over from a session interrupted by a
+	// scheduler that was killed, rather than starting fresh: its branch may
+	// carry work nobody reported.
+	Resumed bool      `json:"resumed,omitempty"`
 	Since   time.Time `json:"since"`
 }
 
