@@ -837,7 +837,11 @@ func relabel(labels []github.Label, from, to string) []github.Label {
 // dispatchDevelopers hands issues to free developer workers. Issues that
 // are already in progress or in review but not owned by a worker (for
 // example after a restart) are resumed first and are never reordered: a
-// worker picking its issue back up after a restart must not be starved.
+// worker picking its issue back up after a restart must not be starved. An
+// approved issue joins them only when it is a resumption too — a worker died
+// waiting out the post-approval checks (resumableChecks); an approved issue
+// nothing was working on is waiting for a person to merge it, not for a
+// developer.
 // Ready issues that already have an open pull request come next, oldest
 // first — a PR that needs attention (human feedback, a conflict with the
 // default branch) is finished before new work is started. The rest of the
@@ -858,6 +862,11 @@ func (s *Scheduler) dispatchDevelopers(ctx context.Context, snap *snapshot, loca
 	var candidates []github.Issue
 	candidates = append(candidates, snap.byState["in-progress"]...)
 	candidates = append(candidates, snap.byState["review"]...)
+	for _, i := range snap.byState["approved"] {
+		if s.resumableChecks(snap, i) {
+			candidates = append(candidates, i)
+		}
+	}
 	var ready []github.Issue
 	// resumed marks the ready issues that are a pull request coming back
 	// for more work rather than something new.
@@ -888,10 +897,10 @@ func (s *Scheduler) dispatchDevelopers(ctx context.Context, snap *snapshot, loca
 			continue
 		}
 		size := s.sizeOf(issue.Labels)
-		// The cap only holds back fresh work: a resumed in-progress or
-		// review issue, or a ready one with an open PR, is already in
-		// flight. Checked before a slot is taken, so a held issue does not
-		// keep a free developer idle.
+		// The cap only holds back fresh work: a resumed in-progress,
+		// review or post-approval-checks issue, or a ready one with an
+		// open PR, is already in flight. Checked before a slot is taken,
+		// so a held issue does not keep a free developer idle.
 		if largeLimit > 0 && size == sizeLarge && s.stateOf(issue.Labels) == "ready" && !resumed[issue.Number] && s.largeInFlight() >= largeLimit {
 			s.log.Info("large issue waits, cap reached", "issue", issue.Number, "max_large_in_flight", largeLimit)
 			continue
@@ -902,7 +911,7 @@ func (s *Scheduler) dispatchDevelopers(ctx context.Context, snap *snapshot, loca
 			return // pool is full
 		}
 		if local {
-			live, ok := s.liveCandidate(ctx, issue)
+			live, ok := s.liveCandidate(ctx, issue, snap)
 			if !ok {
 				s.slots <- struct{}{}
 				continue
@@ -955,8 +964,10 @@ func (s *Scheduler) largeInFlight() int {
 // liveCandidate re-reads an issue picked from a stale (cached) snapshot and
 // reports whether a developer worker should still be started for it. It also
 // refreshes the cached copy, so an issue that has moved on is not fetched
-// again by the next local pass.
-func (s *Scheduler) liveCandidate(ctx context.Context, issue github.Issue) (github.Issue, bool) {
+// again by the next local pass. bees:approved is dispatchable only under the
+// gate the candidate list itself applies (resumableChecks): every other
+// approved issue is waiting for a person, not for a developer.
+func (s *Scheduler) liveCandidate(ctx context.Context, issue github.Issue, snap *snapshot) (github.Issue, bool) {
 	live, err := s.gh.GetIssue(ctx, issue.Number)
 	if s.op("issue-get", err, "live issue check failed, skipping", "issue", issue.Number, "err", err) {
 		return issue, false
@@ -968,9 +979,30 @@ func (s *Scheduler) liveCandidate(ctx context.Context, issue github.Issue) (gith
 	switch s.stateOf(live.Labels) {
 	case "ready", "in-progress", "review":
 		return live, true
+	case "approved":
+		return live, s.resumableChecks(snap, live)
 	default:
 		return live, false
 	}
+}
+
+// resumableChecks reports whether an approved issue is a developer worker's
+// unfinished business rather than a pull request waiting for a person to
+// merge it. approve() labels the issue bees:approved before the worker enters
+// the checks stage, so a scheduler killed while waiting out
+// roles.reviewer.checks_timeout leaves work in flight behind a label that
+// nothing else dispatches. The stage the worker recorded is what tells the
+// two apart, and it is read from the state directory: no GitHub call joins
+// the polling path for it.
+func (s *Scheduler) resumableChecks(snap *snapshot, issue github.Issue) bool {
+	if !s.hasOpenPR(snap, issue) {
+		return false
+	}
+	bk, err := s.store.Issue(issue.Number)
+	if err != nil {
+		return false
+	}
+	return bk.WorkerStage == "checks"
 }
 
 // cacheIssue replaces an issue in the lists kept from the last poll.

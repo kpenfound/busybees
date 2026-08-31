@@ -127,13 +127,18 @@ A full pass is:
      account, so it holds every role. See
      [The claude session limit](configuration.md#the-claude-session-limit).
 5. **dispatch developers** – candidates are unowned `in-progress` and `review`
-   issues (resume after a restart, never reordered), then `ready` issues that
-   already have an open PR on their branch (`snapshot.prByBranch`; sent back
-   by human feedback or a conflict — finished before new work, oldest first),
-   followed by the remaining `ready` issues sorted by `sortReady`: issues a
-   person marked `bees:priority` first, then `scheduler.dispatch_order`
-   (smallest size first by default), ties by age. Priority is a separate axis
-   from size and reorders the queue only — it lifts no cap. A `bees:size/l` candidate that is new work is skipped while
+   issues (resume after a restart, never reordered), along with an `approved`
+   issue whose worker was killed in the post-approval checks stage
+   (`resumableChecks`: an open PR and a `worker_stage` of `checks` recorded in
+   the state directory — `approve()` labels the issue before that wait, so it
+   is work in flight; every other approved issue is waiting for a person to
+   merge it). Then `ready` issues that already have an open PR on their branch
+   (`snapshot.prByBranch`; sent back by human feedback or a conflict —
+   finished before new work, oldest first), followed by the remaining `ready`
+   issues sorted by `sortReady`: issues a person marked `bees:priority` first,
+   then `scheduler.dispatch_order` (smallest size first by default), ties by
+   age. Priority is a separate axis from size and reorders the queue only — it
+   lifts no cap. A `bees:size/l` candidate that is new work is skipped while
    `scheduler.max_large_in_flight` of them are already owned — the check runs
    *before* a slot is taken, so a held issue does not keep a worker idle. For
    the rest, a slot is taken from a buffered channel sized `max_developers`;
@@ -259,11 +264,13 @@ stale — an issue a worker has since finished, one a developer parked in
 state label in the cache — so before spending a session on a candidate,
 `dispatchDevelopers` fetches that single issue (`gh issue view`) and drops it
 unless it is still open and in `bees:ready`, `bees:in-progress` or
-`bees:review`. The fresh copy replaces the cached one, so the next local pass
-does not ask again. That is one call immediately before a whole session, not
-per pass. The mailbox is not GitHub: the developer ↔ reviewer loop, the checks
-stage and mail-driven label transitions run at `poll_interval` — sooner when a
-wake asks for it — however the window is configured.
+`bees:review` — or in `bees:approved`, for the interrupted checks stage above,
+which is the one approved issue the same pass admitted. The fresh copy
+replaces the cached one, so the next local pass does not ask again. That is
+one call immediately before a whole session, not per pass. The mailbox is not
+GitHub: the developer ↔ reviewer loop, the checks stage and mail-driven label
+transitions run at `poll_interval` — sooner when a wake asks for it — however
+the window is configured.
 
 **Waking up.** Waiting out the poll interval for something that happened
 locally is pure downtime, so `Run` selects on a `wake` channel beside the poll

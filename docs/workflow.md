@@ -212,15 +212,17 @@ Who sets it:
 
 ### Size decides what gets built next
 
-When a developer worker is free, the orchestrator first checks whether an
-open pull request needs attention: anything already `bees:in-progress` or
-`bees:review` is resumed (a worker picking its issue back up after a restart
-is never held back), then any `bees:ready` issue that already has an open pull
-request — one sent back for [your feedback](#giving-the-developer-feedback) or
-because it [conflicts with the default branch](#conflicts-with-the-default-branch)
-— oldest first. Only then does it take new work from `bees:ready`:
-[`bees:priority`](#priority-do-this-next) issues first, then in the
-order `scheduler.dispatch_order` asks for:
+When a developer worker is free, the orchestrator first checks whether an open
+pull request needs attention: anything already `bees:in-progress` or
+`bees:review` is resumed, as is an issue in `bees:approved` whose
+post-approval checks were interrupted (a worker picking its issue back up
+after a restart is never held back), then any `bees:ready` issue that already
+has an open pull request — one sent back for
+[your feedback](#giving-the-developer-feedback) or because it
+[conflicts with the default branch](#conflicts-with-the-default-branch) —
+oldest first. Only then does it take new work from `bees:ready`:
+[`bees:priority`](#priority-do-this-next) issues first, then in the order
+`scheduler.dispatch_order` asks for:
 
 | `dispatch_order` | Order |
 |---|---|
@@ -252,8 +254,9 @@ Add `bees:priority` to a `bees:ready` issue and the next free developer takes
 it before the rest of the queue, whatever `scheduler.dispatch_order` says and
 however old the other issues are. That makes the whole dispatch order:
 
-1. issues being resumed (`bees:in-progress`, `bees:review`, and `bees:ready`
-   issues with an open pull request) — never reordered;
+1. issues being resumed (`bees:in-progress`, `bees:review`, an interrupted
+   post-approval checks stage in `bees:approved`, and `bees:ready` issues
+   with an open pull request) — never reordered;
 2. `bees:priority` issues;
 3. `scheduler.dispatch_order` (size, or age under `oldest`);
 4. age.
@@ -504,7 +507,8 @@ The label does not change: the issue stays `bees:ready`, `bees status` explains
 why it is not moving, and it becomes dispatchable on the first poll after its
 blocker closes. Holding an issue back never costs a developer pool slot, so the
 rest of the queue keeps moving; issues that are already `bees:in-progress` or
-`bees:review` are resumptions and are never held back.
+`bees:review`, and an interrupted post-approval checks stage in
+`bees:approved`, are resumptions and are never held back.
 
 If the declarations form a cycle (`#1` blocked by `#2` blocked by `#1`), the
 scheduler ignores the dependencies of the issues in it — otherwise nothing

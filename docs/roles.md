@@ -11,7 +11,7 @@ what it may do, and how to shape it.
 |---|---|---|
 | `product_manager` | singleton | unread mail, a fresh `bees:feedback` or `bees:feature` issue (a person created or commented on it since the PM last replied — on a `bees:proposal` or `bees:planning` issue only a comment counts), a feature whose sub-issues have all closed, or `product_manager_interval` elapsed (first run immediately) |
 | `project_manager` | singleton | issues in `bees:triage`, or unread mail |
-| `developer` | pool of `scheduler.max_developers` workers | a `bees:ready` issue is waiting (or an in-progress/review issue needs resuming); a ready issue whose PR came back — human feedback, a conflict with the default branch — goes before new work |
+| `developer` | pool of `scheduler.max_developers` workers | a `bees:ready` issue is waiting (or an in-progress/review issue needs resuming, or an interrupted post-approval checks stage in `bees:approved`); a ready issue whose PR came back — human feedback, a conflict with the default branch — goes before new work |
 | `reviewer` | one per developer worker, in sequence | the worker's developer session opened or updated a PR; with `auto_merge`, also when a required check fails after approval |
 | `qa` | singleton | unread mail, or `qa_interval` elapsed and something was merged (first run immediately; the merged-PR check runs at most once per `qa_interval`) |
 

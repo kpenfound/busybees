@@ -35,8 +35,9 @@ func (s *Scheduler) BranchFor(issue int) string {
 }
 
 // workIssue is the developer worker: it owns one issue from ready (or a
-// resumed in-progress/review state) until the reviewer approves it, the
-// developer asks a question, or the factory gives up.
+// resumed in-progress/review state, or an approved one whose post-approval
+// checks were interrupted) until the reviewer approves it, the developer asks
+// a question, or the factory gives up.
 func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.Worker) error {
 	branch := s.BranchFor(issue.Number)
 	log := s.log.With("worker", w.Name, "issue", issue.Number, "branch", branch)
@@ -513,12 +514,22 @@ func (s *Scheduler) resumeStage(log *slog.Logger, bk state.IssueState, issue git
 // the last worker remembered. An unknown stage (a state file written by
 // another version) matches nothing and is dropped the same way. The loop state
 // remembered alongside develop is tested separately, in resumeStage.
+//
+// bees:approved admits checks, and only checks: approve() sets that label
+// before the worker enters the post-approval wait, so the label an interrupted
+// checks stage comes back to is legitimately approved rather than in review.
+// Without it the worker would restart in develop and pay for a developer
+// session — and a second review — on a pull request that has already been
+// approved. The same reason as in-progress, one stage later.
 func (s *Scheduler) stageMatchesLabels(stage string, issue github.Issue, pr *github.PR) bool {
 	if stage == "develop" {
 		return true
 	}
 	if !slices.Contains(workerStages, stage) {
 		return false
+	}
+	if stage == "checks" && pr != nil && s.stateOf(issue.Labels) == "approved" {
+		return true
 	}
 	return s.inReviewLoop(issue, pr)
 }
