@@ -171,31 +171,30 @@ func formatActivity(repo string, pr int, activity []github.Activity) string {
 	return sb.String()
 }
 
-// adoptCreated is the visibility backstop: anything the account created since
-// a session started that carries a factory label — the base label (bees) or
+// adoptCreated is the visibility backstop: anything created since a session
+// started that carries a factory label — the base label (bees) or
 // any bees:-prefixed one (bees:bug, bees:feature, a state label) — but is
 // missing part of the filter — the base label, the configured assignee, or
 // (pull requests only) the configured milestone — is fixed up so it stays
 // visible to the factory. It is what catches a PR that never reached
 // ensureVisible because the worker crashed after `gh pr create`, or that a
-// person opened by hand on the shared account. A freshly created PR carries
+// person opened by hand. A freshly created PR carries
 // only the base label (that is all `gh pr create` is told to pass), and it
 // earns its first bees:-prefixed label at approval, so the base label has to
 // count or the backstop misses the whole pre-approval life of every PR.
 //
-// The gate stays: the account is shared with people, whose unrelated issues
-// and pull requests must not be assigned and milestoned by the factory.
+// The gate stays: the repository is shared with people, whose unrelated
+// issues and pull requests must not be assigned and milestoned by the
+// factory.
 // Repairing pre-existing items into a changed filter is `bees doctor --fix`.
 //
 // One failing item does not stop the others: each is logged and skipped.
 //
-// The listing asks GitHub for the items the login bees acts as authored - it
-// names that login since #243, but it asked about the same account before.
-// Since #242 a session's gh carries the same token, so a pull request a
-// session opened is that login's too and the backstop covers it again; what
-// it no longer covers with [github] set is an item a person opened by hand,
-// which is now their account's rather than the factory's. Repairing those is
-// `bees doctor --fix`, as it is for anything that predates the filter.
+// The listing is not scoped by author (ListCreatedSince): it asks for
+// everything created since the session started, whoever opened it, and the
+// label gate is what decides. That is what keeps a pull request a session
+// opened with its own `gh pr create`, and an item a person opened by hand,
+// in reach of the backstop whatever account each was opened from.
 func (s *Scheduler) adoptCreated(ctx context.Context, since time.Time) {
 	items, err := s.gh.ListCreatedSince(ctx, since)
 	if s.op("list-created", err, "visibility backstop: list created items", "err", err) {

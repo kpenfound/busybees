@@ -49,19 +49,20 @@ established repository makes every issue nobody ever assigned invisible in one
 commit. `bees doctor` reports that case with both counts ("34 open issues and 2
 pull requests carry `bees`, 0 match your filter").
 
-Everything outside the filter is invisible: the factory will never read, label
-or comment on it. The label is also the base name for the workflow labels
-below, so with `label = "hive"` the states become `hive:triage`, `hive:ready`
-and so on. Everything the factory creates itself gets the label (and the
-assignee, if one is configured) so it stays visible. The role prompts require
-it, and the orchestrator backstops it: after every session it lists the
-issues and PRs the account created since the session started and adds the
-base label (and assignee) to anything carrying `bees` or a `bees:*` label
-that lacks them — plus, on pull requests, the configured milestone. Both
-halves matter: a pull request a session just opened carries only `bees`, and
-it earns its first `bees:*` label at approval. Issues never get a
-milestone from a bee; that is a person's decision, and an issue `bees issue
-create` makes inherits one from the issue it relates to.
+Everything outside the filter is invisible: the factory will never read,
+label or comment on it. The label is also the base name for the workflow
+labels below, so with `label = "hive"` the states become `hive:triage`,
+`hive:ready` and so on. Everything the factory creates itself gets the label
+(and the assignee, if one is configured) so it stays visible. The role
+prompts require it, and the orchestrator backstops it: after every session
+it lists the issues and PRs created since the session started — whoever
+opened them — and adds the base label (and assignee) to anything carrying
+`bees` or a `bees:*` label that lacks them — plus, on pull requests, the
+configured milestone. Both halves matter: a pull request a session just
+opened carries only `bees`, and it earns its first `bees:*` label at
+approval. Issues never get a milestone from a bee; that is a person's
+decision, and an issue `bees issue create` makes inherits one from the issue
+it relates to.
 
 The typical solo setup is "label only": put `bees` on an issue and the factory
 picks it up. In a shared repository where one person wants busybees to handle
