@@ -146,7 +146,10 @@ type IssueState struct {
 	// the branch may carry the partial work that session left. It sits with
 	// the worker's stage rather than in a file of its own because both
 	// answer the same question — where did the last attempt get to
-	// (scheduler.takeInterrupted).
+	// (scheduler.takeInterrupted). SetIssueSession is its only writer:
+	// SaveIssue carries it over from the file, like the cost totals, so a
+	// worker holding an IssueState across several sessions cannot write
+	// back a record that has since been cleared.
 	Session *SessionRun `json:"session,omitempty"`
 	// HumanSeenAt is the timestamp of the latest human PR activity already
 	// delivered to the developer.
@@ -205,16 +208,32 @@ func (s *Store) Issue(n int) (IssueState, error) {
 	return is, err
 }
 
-// SaveIssue stores bookkeeping for an issue. The running cost totals are not
-// taken from is: they are owned by AddIssueCost and carried over from the
-// file, because a developer worker holds one IssueState for the whole life of
-// an issue and would otherwise write back the total as it was when it started.
+// SaveIssue stores bookkeeping for an issue. The running cost totals and the
+// running session are not taken from is: they are owned by AddIssueCost and
+// SetIssueSession and carried over from the file, because a developer worker
+// holds one IssueState for the whole life of an issue and would otherwise
+// write back the totals as they were when it started — and resurrect a
+// session record that has since been cleared.
 func (s *Store) SaveIssue(is IssueState) error {
 	if cur, err := s.Issue(is.Number); err == nil {
-		is.Cost, is.Sessions = cur.Cost, cur.Sessions
+		is.Cost, is.Sessions, is.Session = cur.Cost, cur.Sessions, cur.Session
 	}
 	is.UpdatedAt = time.Now().UTC()
 	return s.writeJSON(filepath.Join(s.Dir, "issues", strconv.Itoa(is.Number)+".json"), is)
+}
+
+// SetIssueSession records the session running for an issue, or clears it with
+// nil. It is the only writer of IssueState.Session: SaveIssue carries the
+// field over from the file, so a worker's own saves can neither clear a
+// record a session has just written nor write back one it has cleared.
+func (s *Store) SetIssueSession(n int, run *SessionRun) error {
+	is, err := s.Issue(n)
+	if err != nil {
+		return err
+	}
+	is.Number, is.Session = n, run
+	is.UpdatedAt = time.Now().UTC()
+	return s.writeJSON(filepath.Join(s.Dir, "issues", strconv.Itoa(n)+".json"), is)
 }
 
 // AddIssueCost adds one finished session to an issue's running total and

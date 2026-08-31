@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // A fresh notes file already has the shape roles are asked to consolidate
@@ -110,6 +111,63 @@ func TestIssueCostSurvivesASaveIssue(t *testing.T) {
 	}
 	if got, _ := s.Issue(7); got.Cost != 9 || got.Sessions != 4 || got.Round != 2 {
 		t.Errorf("after seeding: %+v", got)
+	}
+}
+
+// TestTheRunningSessionSurvivesASaveIssue: the record of the session running
+// for an issue has the same shape as the cost totals — a developer worker
+// holds one IssueState for the whole life of an issue while another writer
+// moves the record underneath it — but it fails in both directions, so it is
+// owned by SetIssueSession alone. A worker's save must neither resurrect a
+// record that has since been cleared (which would report a crash that never
+// happened to the next session) nor clear one a session has just written
+// (which would lose the report of a real one).
+func TestTheRunningSessionSurvivesASaveIssue(t *testing.T) {
+	s := New(t.TempDir())
+	if err := s.Init(); err != nil {
+		t.Fatal(err)
+	}
+	run := &SessionRun{Role: "developer", Name: "developer-issue-7-r1", Dir: "/s/7", StartedAt: time.Now().UTC()}
+	if err := s.SetIssueSession(7, run); err != nil {
+		t.Fatal(err)
+	}
+	// The worker loads the issue with the record in it, as it would after a
+	// crash, and the session it starts clears it.
+	held, err := s.Issue(7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if held.Session == nil {
+		t.Fatal("SetIssueSession recorded nothing")
+	}
+	if err := s.SetIssueSession(7, nil); err != nil {
+		t.Fatal(err)
+	}
+	held.Round = 3
+	if err := s.SaveIssue(held); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Issue(7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Round != 3 {
+		t.Errorf("round: got %d want 3", got.Round)
+	}
+	if got.Session != nil {
+		t.Errorf("a cleared record was resurrected by a stale save: %+v", got.Session)
+	}
+	// The other direction: a record written while the worker holds a copy
+	// that predates it survives the worker's next save.
+	if err := s.SetIssueSession(7, run); err != nil {
+		t.Fatal(err)
+	}
+	held.Round = 4
+	if err := s.SaveIssue(held); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Issue(7); got.Session == nil || got.Session.Name != run.Name {
+		t.Errorf("a stale save dropped the running session: %+v", got.Session)
 	}
 }
 

@@ -20,11 +20,11 @@ import (
 // for `bees status`.
 
 // takeInterrupted reports what the session recorded for an issue is doing
-// now, and consumes the record. It answers nil unless a session started and
-// never finished: a record whose session is still running is left alone —
-// its scheduler owns it, and a session that has not written its result yet
-// is simply a session in progress — and one whose session finished after
-// the record was written is cleared without a word.
+// now. It answers nil unless a session started and never finished: a record
+// whose session is still running is left alone — its scheduler owns it, and
+// a session that has not written its result yet is simply a session in
+// progress — and one whose session finished after the record was written is
+// cleared without a word.
 func (s *Scheduler) takeInterrupted(log *slog.Logger, bk *state.IssueState) *session.Interrupted {
 	rec := bk.Session
 	if rec == nil {
@@ -36,13 +36,22 @@ func (s *Scheduler) takeInterrupted(log *slog.Logger, bk *state.IssueState) *ses
 			"session", rec.Name, "role", rec.Role, "dir", rec.Dir)
 		return nil
 	}
-	bk.Session = nil
-	if err := s.store.SaveIssue(*bk); err != nil {
-		log.Warn("could not clear the recorded session", "session", rec.Name, "err", err)
-	}
 	if in == nil {
+		// It finished after the record was written: nothing to report, and
+		// the record is stale.
+		bk.Session = nil
+		if err := s.store.SetIssueSession(bk.Number, nil); err != nil {
+			log.Warn("could not clear the recorded session", "session", rec.Name, "err", err)
+		}
 		return nil
 	}
+	// An interruption is not consumed here. The record is the only thing
+	// that remembers it, and the session that must hear about it has not
+	// started yet: a worker that returns first — a gh error, the issue over
+	// its budget — would swallow the report while the branch still carried
+	// the work nobody reported. The next session for the issue overwrites
+	// the record as it starts (recordRunningSession) and clears it as it
+	// ends.
 	log.Info("the previous session for this issue was interrupted", "session", in.Name,
 		"role", in.Role, "turns", in.Turns, "killed", in.Killed, "transcript", in.Transcript)
 	return in
@@ -92,18 +101,13 @@ func (s *Scheduler) markResumed(w *state.Worker) {
 }
 
 // recordRunningSession writes the session about to run into the issue's
-// bookkeeping. The state is re-read here rather than taken from the copy the
-// worker holds: the worker's copy is a stage older, and this field is the
-// one thing about an issue that must survive the process that wrote it.
-// Failing to record it costs a crash report, never the session.
+// bookkeeping. It goes through SetIssueSession rather than the copy the
+// worker holds: that copy is a stage older, and this field is the one thing
+// about an issue that must survive the process that wrote it. Failing to
+// record it costs a crash report, never the session.
 func (s *Scheduler) recordRunningSession(spec sessionSpec, issue int, dir string) {
-	bk, err := s.store.Issue(issue)
-	if err != nil {
-		s.log.Warn("could not read issue bookkeeping", "issue", issue, "err", err)
-		return
-	}
-	bk.Session = &state.SessionRun{Role: spec.role, Name: spec.name, Dir: dir, StartedAt: s.now()}
-	if err := s.store.SaveIssue(bk); err != nil {
+	run := &state.SessionRun{Role: spec.role, Name: spec.name, Dir: dir, StartedAt: s.now()}
+	if err := s.store.SetIssueSession(issue, run); err != nil {
 		s.log.Warn("could not record the running session", "issue", issue, "session", spec.name, "err", err)
 	}
 }
@@ -111,16 +115,7 @@ func (s *Scheduler) recordRunningSession(spec sessionSpec, issue int, dir string
 // clearRunningSession removes that record: the session ended, whatever it
 // ended with, so nothing was interrupted.
 func (s *Scheduler) clearRunningSession(issue int) {
-	bk, err := s.store.Issue(issue)
-	if err != nil {
-		s.log.Warn("could not read issue bookkeeping", "issue", issue, "err", err)
-		return
-	}
-	if bk.Session == nil {
-		return
-	}
-	bk.Session = nil
-	if err := s.store.SaveIssue(bk); err != nil {
+	if err := s.store.SetIssueSession(issue, nil); err != nil {
 		s.log.Warn("could not clear the recorded session", "issue", issue, "err", err)
 	}
 }

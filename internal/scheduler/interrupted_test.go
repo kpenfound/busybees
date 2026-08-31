@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,12 +30,10 @@ func killedSession(t *testing.T, h *harness, issue int, role, name string, files
 			t.Fatal(err)
 		}
 	}
-	bk, err := h.store.Issue(issue)
-	if err != nil {
-		t.Fatal(err)
-	}
-	bk.Session = &state.SessionRun{Role: role, Name: name, Dir: dir, StartedAt: time.Now().Add(-time.Hour)}
-	if err := h.store.SaveIssue(bk); err != nil {
+	run := &state.SessionRun{Role: role, Name: name, Dir: dir, StartedAt: time.Now().Add(-time.Hour)}
+	// Through SetIssueSession, not SaveIssue: the record is owned by that
+	// one writer and SaveIssue carries the field over from the file.
+	if err := h.store.SetIssueSession(issue, run); err != nil {
 		t.Fatal(err)
 	}
 	return dir
@@ -74,8 +73,9 @@ func TestAKilledSessionIsReportedToTheNextSessionOfItsRole(t *testing.T) {
 			t.Errorf("the developer was not told about the interrupted session (missing %q):\n%s", want, prompt)
 		}
 	}
-	// The report is consumed: the record is gone, and the reviewer session of
-	// the same worker is not told about a developer session.
+	// The record is gone — the sessions that ran for this issue overwrote it
+	// as they started and cleared it as they ended — and the reviewer session
+	// of the same worker is not told about a developer session.
 	bk, err := h.store.Issue(1)
 	if err != nil {
 		t.Fatal(err)
@@ -117,10 +117,11 @@ func TestARunningSessionIsNeverReportedAsInterrupted(t *testing.T) {
 }
 
 // TestTakeInterruptedConsumesOnlyWhatIsNoLongerRunning pins the bookkeeping
-// the loop cannot show: the record of a session that is still running is left
-// where it is, and every other record is cleared — reported when the session
-// was interrupted, silently when it turns out to have finished after the
-// record was written.
+// the loop cannot show. The record of a session that is still running, and
+// of one that was interrupted, are both left where they are — the first
+// because its scheduler owns it, the second because no session has been told
+// yet; only a record whose session turns out to have finished is cleared, and
+// that one silently.
 func TestTakeInterruptedConsumesOnlyWhatIsNoLongerRunning(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -130,7 +131,7 @@ func TestTakeInterruptedConsumesOnlyWhatIsNoLongerRunning(t *testing.T) {
 		kept   bool
 	}{
 		{name: "interrupted", files: map[string]string{session.TranscriptFile: twoTurns},
-			alive: func(int) bool { return false }, report: true},
+			alive: func(int) bool { return false }, report: true, kept: true},
 		{name: "still running", files: map[string]string{session.TranscriptFile: twoTurns, procs.PIDFile: "4242\n"},
 			alive: func(int) bool { return true }, kept: true},
 		{name: "finished after all", files: map[string]string{session.TranscriptFile: twoTurns, session.ResultFile: "{}"},
@@ -205,8 +206,17 @@ func TestAnInterruptedReviewerSessionIsReportedToTheReviewer(t *testing.T) {
 	if dev := promptOf(t, h, 0); strings.Contains(dev, "never reported an outcome") {
 		t.Errorf("the developer was told about a reviewer's interrupted session:\n%s", dev)
 	}
-	if review := promptOf(t, h, 1); !strings.Contains(flowedPrompt(review), "reviewer session that ran for this issue before you was interrupted after 2 turns") {
+	review := promptOf(t, h, 1)
+	if !strings.Contains(flowedPrompt(review), "reviewer session that ran for this issue before you was interrupted after 2 turns") {
 		t.Errorf("the reviewer was not told about its own interrupted session:\n%s", review)
+	}
+	// And told what a reviewer can act on: the round starts over. The branch
+	// advice belongs to the developer — a reviewer session commits nothing.
+	if strings.Contains(flowedPrompt(review), "The branch may carry work it never reported") {
+		t.Errorf("the reviewer was given the developer's branch advice:\n%s", review)
+	}
+	if !strings.Contains(flowedPrompt(review), "It reported no verdict, so this round starts over") {
+		t.Errorf("the reviewer was not told its round starts over:\n%s", review)
 	}
 }
 
@@ -299,5 +309,33 @@ func TestTheRunningSessionIsRecordedWhileItRuns(t *testing.T) {
 	}
 	if after.Session != nil {
 		t.Errorf("a session that ended is still recorded as running: %+v", after.Session)
+	}
+}
+
+// TestAnInterruptionSurvivesAWorkerThatRanNoSession: the record is the only
+// thing that remembers a killed session, so a worker that returns before it
+// starts a session must not spend it on the way out. One failing `gh issue
+// edit` on the pass that takes the issue over is enough: no session is told,
+// and without the record no later session can be either, while the branch
+// still carries the work the killed session never reported.
+func TestAnInterruptionSurvivesAWorkerThatRanNoSession(t *testing.T) {
+	h := newHarness(t, devOnlyTOML)
+	seedReady(h, 1, "s", time.Now().Add(-time.Hour))
+	killedSession(t, h, 1, config.RoleDeveloper, "developer-issue-1-r1", map[string]string{
+		session.TranscriptFile: twoTurns,
+	})
+	h.sched.alive = func(int) bool { return false }
+	h.gh.errFor["issue edit"] = errors.New("gh: API rate limit exceeded")
+	runPass(t, h)
+
+	if names := h.sessionNames(); len(names) != 0 {
+		t.Fatalf("the fixture ran %v, want a worker that returns before it starts a session", names)
+	}
+	bk, err := h.store.Issue(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bk.Session == nil {
+		t.Fatal("the interruption was consumed by a worker that told no session about it")
 	}
 }

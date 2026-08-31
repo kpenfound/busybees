@@ -403,18 +403,26 @@ stateDiagram-v2
   outlives its session is the signal. The worker that takes the issue over
   reads it and asks `session.CheckInterrupted` what the directory now says:
   a pid file naming a live process means the session is *still running* —
-  another scheduler owns it, nothing is reported and the record is left
-  alone, because a session that has not written its result yet is simply a
-  session in progress — a `result.json` means it finished after all, and
-  anything else means it was interrupted. The first session of the role that
-  was interrupted is then told, at the top of its task prompt: how far the
-  session got (assistant messages counted in the transcript, an
+  another scheduler owns it, and nothing is reported, because a session that
+  has not written its result yet is simply a session in progress — a
+  `result.json` means it finished after all and the stale record is cleared,
+  and anything else means it was interrupted. The first session of the role
+  that was interrupted is then told, at the top of its task prompt: how far
+  the session got (assistant messages counted in the transcript, an
   approximation of the turn count the missing `result` event would have
-  carried), where the transcript is, whether it was stopped on purpose
-  (`bees kill` writes an `interrupted` marker into the directory it stops)
-  and that the branch may already carry its work. Another role's session is
-  told nothing — it could act on none of it — and the report never outlives
-  the worker that found it. `bees status` marks such a worker `resumed`.
+  carried), where the transcript is, and whether it was stopped on purpose
+  (`bees kill` writes an `interrupted` marker into the directory it stops).
+  What to do about it is per role: a developer is told the branch may
+  already carry the session's work, a reviewer that its round reported no
+  verdict and starts over. Another role's session is told nothing — it could
+  act on none of it — and the report never outlives the worker that found
+  it. `bees status` marks such a worker `resumed`. The record itself is not
+  consumed by the worker that reads it: it is the only thing that remembers
+  the interruption, so a worker that returns before it starts a session
+  leaves it for the next one. The next session for the issue overwrites it
+  as it starts and clears it as it ends, and `SetIssueSession` is its only
+  writer, so a worker holding older bookkeeping cannot write a consumed
+  record back.
 - **Rounds.** `<state_dir>/issues/<n>.json` records the review round, PR
   number, branch, `check_fix_rounds`, `worker_stage`, `after_develop`,
   `pre_review_done`, `session`, `human_seen_at` and `conflict_notified_sha`. The round is
@@ -707,7 +715,8 @@ oldest first, and `bees mail` works from any directory because sessions get
   notes/<role>.md                role memory (`bees notes show|edit|reset|add`)
   notes/archive/<role>-<ts>.md   notes replaced by `bees notes reset`
   sessions/<ts>-<name>-<rand>/   system-prompt.md, prompt.md, mcp.json, transcript.jsonl,
-                                 stderr.log, outcome.json, result.json
+                                 stderr.log, outcome.json, result.json, pid,
+                                 interrupted (written by `bees kill`)
   issues/<n>.json                {number, round, pr, branch, check_fix_rounds, worker_stage,
                                  after_develop, pre_review_done, session, human_seen_at,
                                  conflict_notified_sha, updated_at}
