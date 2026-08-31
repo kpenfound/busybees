@@ -464,6 +464,22 @@ func firstReviewStage(policy config.MergePolicy) string {
 // roles.reviewer.stages, which are sections of one reviewer session's prompt.
 var workerStages = []string{"develop", "prereview", "review", "checks"}
 
+// postApprovalFixRound reports whether a record is the develop round of a
+// post-approval check fix: the checks stage found a failing check, the
+// reviewer diagnosed it in checks mode and mailed the developer, and the
+// worker went back to develop with the checks as the gate it returns to.
+//
+// That record is written at the top of the loop, before the develop stage
+// relabels the issue bees:in-progress, so a worker killed — or a single
+// failing `gh issue edit` — in between leaves it behind a bees:approved
+// label: work in flight exactly as a record of the checks stage itself is,
+// one stage on. Only the record is tested here; each caller adds its own
+// label and pull request tests, because they have different things in hand
+// (a snapshot in resumableChecks, the pull request in resumeStage).
+func postApprovalFixRound(bk state.IssueState) bool {
+	return bk.WorkerStage == "develop" && bk.AfterDevelop == "checks"
+}
+
 // resumeStage decides where a developer worker starts, and with what loop
 // state. A worker that has run before left its stage in the issue's
 // bookkeeping, and resuming from it is the whole point: the workflow label
@@ -477,9 +493,13 @@ var workerStages = []string{"develop", "prereview", "review", "checks"}
 // has put back to bees:ready or bees:triage — is dropped, with a log line, and
 // the worker starts where the label says. develop contradicts no label, so the
 // loop state remembered with it is dropped on the same test instead: an issue
-// whose labels have left the review loop starts a fresh round. An issue with
-// nothing remembered (the first run, and every issue that existed before the
-// stage was recorded) starts exactly where it always did.
+// whose labels have left the review loop starts a fresh round. The one
+// exception is the develop round the post-approval checks send back
+// (postApprovalFixRound): it is recorded before the develop stage can relabel
+// the issue, so bees:approved is where it legitimately sits, and the gate it
+// returns to is the whole reason to resume it. An issue with nothing
+// remembered (the first run, and every issue that existed before the stage was
+// recorded) starts exactly where it always did.
 //
 // The whole record belongs to the pull request it was written for, and is
 // dropped for any other one: both tests below compare the recorded number with
@@ -519,7 +539,13 @@ func (s *Scheduler) resumeStage(log *slog.Logger, bk state.IssueState, issue git
 		return fromLabel, "review", false
 	}
 	afterDevelop, prereviewDone = bk.AfterDevelop, bk.PreReviewDone
-	if !s.inReviewLoop(issue, pr) || bk.PR != pr.Number {
+	// The post-approval fix round is the one develop record whose labels are
+	// legitimately outside the review loop: bees:approved, because the record
+	// was written before the develop stage could relabel the issue. Its gate
+	// is the whole reason to resume it, so it survives the drop below — and
+	// this is the third way a pr.Number read here is safe by short-circuit.
+	approvedFixRound := pr != nil && s.stateOf(issue.Labels) == "approved" && postApprovalFixRound(bk)
+	if (!s.inReviewLoop(issue, pr) && !approvedFixRound) || bk.PR != pr.Number {
 		// The sub-state belongs to a pull request under review: which gate a
 		// developer round goes back to, and whether that pull request's checks
 		// have been read. develop matches any label, so without this an issue
@@ -530,6 +556,13 @@ func (s *Scheduler) resumeStage(log *slog.Logger, bk state.IssueState, issue git
 		// test is the same rule for the other way the sub-state can be stale:
 		// the pull request it was written for is not the one open now.
 		afterDevelop, prereviewDone = "review", false
+	} else if approvedFixRound {
+		// pre_review_done says the pre-review checks were read for this pull
+		// request, which is a question about the first review; the round
+		// resuming here goes straight back to the checks gate without asking
+		// it, so keeping it would be dead state under a label the review loop
+		// has left.
+		prereviewDone = false
 	}
 	if afterDevelop != "prereview" && afterDevelop != "checks" {
 		afterDevelop = "review"

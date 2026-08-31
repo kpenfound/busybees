@@ -848,9 +848,9 @@ func relabel(labels []github.Label, from, to string) []github.Label {
 // example after a restart) are resumed first and are never reordered: a
 // worker picking its issue back up after a restart must not be starved. An
 // approved issue joins them only when it is a resumption too — a worker died
-// waiting out the post-approval checks (resumableChecks); an approved issue
-// nothing was working on is waiting for a person to merge it, not for a
-// developer.
+// waiting out the post-approval checks, or in the developer round they sent
+// back (resumableChecks); an approved issue nothing was working on is waiting
+// for a person to merge it, not for a developer.
 // Ready issues that already have an open pull request come next, oldest
 // first — a PR that needs attention (human feedback, a conflict with the
 // default branch) is finished before new work is started. The rest of the
@@ -1003,6 +1003,12 @@ func (s *Scheduler) liveCandidate(ctx context.Context, issue github.Issue, snap 
 // nothing else dispatches. The stage the worker recorded is what tells the
 // two apart, and it is read from the state directory: no GitHub call joins
 // the polling path for it.
+//
+// The develop round that gate sends back (postApprovalFixRound) counts too.
+// The stage is recorded before the develop stage relabels the issue
+// bees:in-progress, so a worker killed — or a single failing `gh issue edit` —
+// in between leaves that record behind the same bees:approved label: the same
+// work in flight, one stage on.
 func (s *Scheduler) resumableChecks(snap *snapshot, issue github.Issue) bool {
 	if !s.hasOpenPR(snap, issue) {
 		return false
@@ -1011,7 +1017,7 @@ func (s *Scheduler) resumableChecks(snap *snapshot, issue github.Issue) bool {
 	if err != nil {
 		return false
 	}
-	return bk.WorkerStage == "checks"
+	return bk.WorkerStage == "checks" || postApprovalFixRound(bk)
 }
 
 // cacheIssue replaces an issue in the lists kept from the last poll.

@@ -147,9 +147,13 @@ type IssueState struct {
 	// The label stays the human-facing truth all the same — a remembered stage
 	// it contradicts is dropped, and so are AfterDevelop and PreReviewDone
 	// once the labels say the pull request they belong to is no longer being
-	// reviewed. All three belong to the pull request PR names, so a record
-	// left for any other one — or written before a number was known — is
-	// dropped too (scheduler.resumeStage).
+	// reviewed. The exception is the developer round the post-approval checks
+	// send back, which is recorded under bees:approved before the develop
+	// stage can relabel the issue: it keeps the AfterDevelop that names the
+	// gate it returns to, and only PreReviewDone goes. All of them belong to
+	// the pull request PR names, so a record left for any other one — or
+	// written before a number was known — is dropped too
+	// (scheduler.resumeStage).
 	//
 	// These are the developer worker's stages, not roles.reviewer.stages,
 	// which are sections of one reviewer session's prompt. Like the fields
