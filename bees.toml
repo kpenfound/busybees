@@ -42,7 +42,7 @@ label = "bees"
 #require_label = true
 # Only see items assigned to this GitHub login. "@me" means the gh user.
 # Useful when one person runs busybees for their share of a shared repo.
-assignee = "@me"
+#assignee = "@me"
 # Only see items in this milestone.
 #milestone = ""
 
