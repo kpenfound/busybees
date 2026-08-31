@@ -1025,21 +1025,26 @@ func TestQAReadsItsMail(t *testing.T) {
 // every rewording — so the instruction is pinned here: turn the ask into a
 // work item related to the feedback issue rather than a feature written
 // around it, and carry the person's `bees:priority` onto the work item, which
-// is the half nothing else in the factory does for it.
+// is the half nothing else in the factory does for it. The condition itself
+// names the two labels that actually route (#226): `bees:bug` is a kind label
+// but not a routing kind, so a person's bug report with no state label reaches
+// the product manager the same way a bare `bees` issue does. The wants are
+// matched against the flowed prompt because that condition wraps.
 func TestProductManagerRoutesAReadyToBuildAsk(t *testing.T) {
 	sys, err := System(config.RoleProductManager, sample(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
+	flow := flowed(sys)
 	for _, want := range []string{
-		"An issue a person files with only the `bees`",
-		"no kind label, no state label",
+		"no state label and neither `bees:feature` nor `bees:feedback`",
+		"`bees:bug` report",
 		"**do not write a feature around it**",
 		"`related: <the feedback issue>`",
 		"If the person put `bees:priority` on the",
 		"put it on the work item too",
 	} {
-		if !strings.Contains(sys, want) {
+		if !strings.Contains(flow, want) {
 			t.Errorf("product manager system prompt missing %q:\n%s", want, sys)
 		}
 	}

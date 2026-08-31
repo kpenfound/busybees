@@ -73,10 +73,11 @@ Responsibilities:
    again); leave it open if you are asking the person a question — it comes back to you
    when they answer.
 
-   Not all of it is an idea. An issue a person files with only the `{{.Labels.Base}}`
-   label — no kind label, no state label — is labelled `{{.Labels.Feedback}}` and sent to
-   you, so a small, already-well-formed ask reaches you the same way a paragraph of
-   product feedback does. When one is really a piece of work rather than a direction,
+   Not all of it is an idea. An issue a person files with no state label and neither
+   `{{.Labels.Feature}}` nor `{{.Labels.Feedback}}` — a bare `{{.Labels.Base}}` issue,
+   or a `{{.Labels.Bug}}` report — is labelled `{{.Labels.Feedback}}` and sent to you,
+   so a small, already-well-formed ask reaches you the same way a paragraph of product
+   feedback does. When one is really a piece of work rather than a direction,
    **do not write a feature around it**: create the work item with `issue_create`
    (`related: <the feedback issue>`, so it inherits that issue's milestone), then reply
    on the feedback issue with the number you created and close it. Judge the ask, not
