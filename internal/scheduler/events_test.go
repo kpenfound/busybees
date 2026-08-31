@@ -2,6 +2,8 @@ package scheduler
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -310,5 +312,49 @@ func TestSessionEventsNameTheModelTheFallbackAndTheTurns(t *testing.T) {
 	}
 	if done.Turns <= 0 {
 		t.Errorf("the finished session reported %d turns: %v", done.Turns, done)
+	}
+}
+
+// A session-started event names the directory the session runs in, which is
+// where its transcript.jsonl is written. That is the one thing a view
+// needs to follow a running session and the one thing it cannot work out
+// for itself: NewSessionDir stamps a timestamp on the front of the session
+// name and a random suffix on the end, so the name alone does not say.
+func TestTheSessionStartedEventNamesTheSessionsDirectory(t *testing.T) {
+	h := newHarnessAt(t, devOnlyTOML, time.Now())
+	events, _ := runEventFixture(t, h, true)
+
+	start, ok := find(events, EventSessionStarted, config.RoleDeveloper)
+	if !ok {
+		t.Fatalf("no developer session-started event: %v", events)
+	}
+	if start.Dir == "" {
+		t.Fatal("the session-started event names no directory")
+	}
+	// It is the session's real directory: the prompt the scheduler wrote
+	// for that session is in it.
+	if _, err := os.Stat(filepath.Join(start.Dir, "prompt.md")); err != nil {
+		t.Errorf("the directory the event names is not the session's: %v", err)
+	}
+	if got := filepath.Base(filepath.Dir(start.Dir)); got != "sessions" {
+		t.Errorf("the event names %q, which is not under the sessions directory", start.Dir)
+	}
+	// A session's directory belongs to that session and to no other.
+	seen := map[string]string{}
+	for _, ev := range events {
+		if ev.Kind != EventSessionStarted {
+			continue
+		}
+		if other, ok := seen[ev.Dir]; ok {
+			t.Errorf("sessions %q and %q were both started in %q", other, ev.Session, ev.Dir)
+		}
+		seen[ev.Dir] = ev.Session
+	}
+	// Only a started session has one: a stage or poll event is about no
+	// session at all, and an ended one is already written to disk.
+	for _, ev := range events {
+		if ev.Kind != EventSessionStarted && ev.Dir != "" {
+			t.Errorf("a %s event names a session directory: %v", ev.Kind, ev)
+		}
 	}
 }

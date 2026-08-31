@@ -251,3 +251,23 @@ func TestALongStageNameDoesNotPushTheModelColumnOff(t *testing.T) {
 		}
 	}
 }
+
+// The Now panel marks the row Enter opens, and marks only that one: the
+// cursor is the whole of what tells a person which session they are about
+// to watch.
+func TestTheNowPanelMarksTheSelectedRow(t *testing.T) {
+	out := drive(t, Deps{Repo: "acme/widgets", Now: func() time.Time { return fixed }},
+		started("developer-issue-12-r1", config.RoleDeveloper, 12, 31, fixed, "opus", false),
+		started("reviewer-pr-33-r1", config.RoleReviewer, 14, 33, fixed, "sonnet", false),
+		tea.KeyMsg{Type: tea.KeyDown},
+	)
+	var marked []string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "│ > ") {
+			marked = append(marked, strings.TrimSpace(line))
+		}
+	}
+	if len(marked) != 1 || !strings.Contains(marked[0], "reviewer") {
+		t.Errorf("the Now panel marks %q, want the one row the cursor is on:\n%s", marked, out)
+	}
+}

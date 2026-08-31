@@ -36,6 +36,17 @@ type Deps struct {
 	// Stop asks the factory to stop polling and drain, which is what Ctrl-C
 	// does. Nil means the view cannot stop anything.
 	Stop func()
+	// Send queues a message a person typed in the session view. It goes to
+	// the mailbox every role already reads — addressed to the role the
+	// watched session is running as, carrying that session's issue and pull
+	// request so it reaches whichever session picks the work item up next.
+	//
+	// It is a message to the *role*, never to the running session: a
+	// headless `claude -p` cannot be told anything once it has started (see
+	// the session view's own note in docs/cli.md), so the view says
+	// "queued for the next session" and means it. Nil means the view cannot
+	// send anything and does not offer to.
+	Send func(to string, issue, pr int, subject, body string) error
 	// Repo is the repository the factory is building, for the header.
 	Repo string
 }
@@ -44,8 +55,11 @@ type Deps struct {
 // renders it. It is built from the session-started event and dropped when
 // the matching session-ended arrives.
 type running struct {
-	name     string
-	role     string
+	name string
+	role string
+	// dir is the session's own directory, which is where its
+	// transcript.jsonl is: what the session view follows.
+	dir      string
 	issue    int
 	pr       int
 	started  time.Time
@@ -69,8 +83,9 @@ type stage struct {
 	round int
 }
 
-// Model is the Bubble Tea model behind `bees run`'s view: two panels, Now
-// and Queues, fed by the scheduler's event stream and by status.json.
+// Model is the Bubble Tea model behind `bees run`'s view: the two panels,
+// Now and Queues, fed by the scheduler's event stream and by status.json,
+// and the session view one of them opens onto (session.go).
 //
 // Update and View are ordinary functions of the model and its messages —
 // no terminal, no goroutines, no clock of their own — which is how the whole
@@ -91,10 +106,20 @@ type Model struct {
 	// view keeps drawing what it last read and says so.
 	statusErr string
 
-	// width is the terminal's width, from the last WindowSizeMsg. The
-	// height is not read: the two panels are as tall as what is in them.
-	width int
-	ticks int
+	// watching is the session the session view is showing, or nil when the
+	// view is the two panels. selected is the row of the Now panel the
+	// cursor is on, and tailGen numbers the session views so the transcript
+	// loop of a closed one stops instead of racing the next.
+	watching *watch
+	selected int
+	tailGen  int
+
+	// width and height are the terminal's, from the last WindowSizeMsg.
+	// The panels are as tall as what is in them; the session view is as
+	// tall as the terminal, which is what reads the height.
+	width  int
+	height int
+	ticks  int
 	// stopping is set by the first Ctrl-C: the factory has been asked to
 	// stop polling and drain, and the view stays up until it has.
 	stopping bool
@@ -189,7 +214,7 @@ func redraw() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
+		m.width, m.height = msg.Width, msg.Height
 	case tea.KeyMsg:
 		return m.key(msg)
 	case eventMsg:
@@ -201,6 +226,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.statusErr, m.status, m.mail = "", msg.status, msg.mail
+	case transcriptMsg:
+		m.applyTranscript(msg)
+	case tailMsg:
+		// The session view this loop belonged to has been closed, or closed
+		// and replaced by another. The generation test is the live half of
+		// that — closing increments the counter, so no tick a closed view
+		// left behind can match the open one's — and the nil test is the
+		// cheap invariant beneath it, for a close that ever forgets to.
+		if m.watching == nil || int(msg) != m.tailGen {
+			return m, nil
+		}
+		// Read, then ask for the next read: this pair is the loop that
+		// makes the view follow a transcript being written.
+		return m, tea.Batch(m.readTail(), tail(m.tailGen))
+	case sentMsg:
+		if m.watching != nil {
+			if msg.err != nil {
+				m.watching.sent = "the message could not be queued: " + oneLine(msg.err.Error())
+			} else {
+				m.watching.sent = msg.note
+			}
+		}
 	case tickMsg:
 		m.ticks++
 		if m.ticks%refreshEvery == 0 {
@@ -215,16 +262,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// key handles the only key the view has. Ctrl-C asks the factory to stop
-// polling and drain, exactly as it does without the view, and the view stays
-// up while it does — pressing it again gives up on the drain and leaves the
-// terminal, with the sessions still finishing in the background. There is
-// deliberately no second key for it: everything a person reads — the footer,
-// docs/cli.md, the prompts — says Ctrl-C, and a key that quietly stops the
-// whole factory is not one to discover by accident.
+// key routes a key press. Ctrl-C is handled here rather than in either
+// screen, because stopping the factory is the same thing wherever a person
+// is: it asks the factory to stop polling and drain, exactly as it does
+// without the view, and the view stays up while it does — pressing it again
+// gives up on the drain and leaves the terminal, with the sessions still
+// finishing in the background. It is deliberately the only key that does
+// that: everything a person reads — the footer, docs/cli.md, the prompts —
+// says Ctrl-C, and a key that quietly stops the whole factory is not one to
+// discover by accident.
+//
+// Everything else belongs to the screen that is up: the panels move the Now
+// cursor and open a session view with it, and the session view has its own
+// (sessionKey).
 func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "ctrl+c":
+	if msg.String() == "ctrl+c" {
 		if m.stopping {
 			return m, tea.Quit
 		}
@@ -232,8 +284,53 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.deps.Stop != nil {
 			m.deps.Stop()
 		}
+		return m, nil
+	}
+	if m.watching != nil {
+		return m.sessionKey(msg)
+	}
+	switch msg.String() {
+	case "up", "k":
+		m.selected = max(0, m.selected-1)
+	case "down", "j":
+		m.selected = min(len(m.sessions)-1, m.selected+1)
+	case "enter":
+		if s, ok := m.selection(); ok {
+			m = m.open(s)
+			return m, tea.Batch(m.readTail(), tail(m.tailGen))
+		}
 	}
 	return m, nil
+}
+
+// selection is the session the Now panel's cursor is on. It is the only
+// place m.selected is read, and so the only place it has to be kept inside
+// the list: sessions start and finish under the cursor, and pressing down
+// with nothing running leaves it at -1 until one does.
+func (m Model) selection() (running, bool) {
+	if len(m.sessions) == 0 {
+		return running{}, false
+	}
+	return m.sessions[min(max(0, m.selected), len(m.sessions)-1)], true
+}
+
+// applyTranscript folds a read of the watched session's transcript into it.
+// A read that belongs to a closed session view is dropped, and one that
+// failed leaves what has already been read on screen.
+func (m *Model) applyTranscript(msg transcriptMsg) {
+	if m.watching == nil || msg.gen != m.tailGen {
+		return
+	}
+	if msg.err != nil {
+		m.watching.err = msg.err.Error()
+		return
+	}
+	m.watching.err, m.watching.off = "", msg.off
+	m.watching.lines = append(m.watching.lines, msg.lines...)
+	if n := len(m.watching.lines) - maxTranscriptLines; n > 0 {
+		m.watching.lines = m.watching.lines[n:]
+		m.watching.scroll = max(0, m.watching.scroll-n)
+	}
 }
 
 // apply folds one scheduler event into the model.
@@ -241,11 +338,17 @@ func (m *Model) apply(ev scheduler.Event) {
 	switch ev.Kind {
 	case scheduler.EventSessionStarted:
 		m.sessions = append(m.sessions, running{
-			name: ev.Session, role: ev.Role, issue: ev.Issue, pr: ev.PR,
+			name: ev.Session, role: ev.Role, dir: ev.Dir, issue: ev.Issue, pr: ev.PR,
 			started: ev.Time, model: ev.Model, fallback: ev.Fallback,
 		})
 	case scheduler.EventSessionEnded:
 		m.drop(ev.Session)
+		// A session being read stays on screen after it has finished: its
+		// transcript is on disk and its last words are usually the ones
+		// worth reading.
+		if m.watching != nil && m.watching.name == ev.Session {
+			m.watching.ended = true
+		}
 		key := spendKey(ev.Issue, ev.Role)
 		s := m.spent[key]
 		s.turns += ev.Turns
@@ -305,6 +408,9 @@ func (m Model) View() string {
 	if inner < 20 {
 		inner = 20
 	}
+	if m.watching != nil {
+		return m.sessionView(w, inner)
+	}
 	var b strings.Builder
 	b.WriteString(m.header(w) + "\n")
 	b.WriteString(panel("Now", m.nowPanel(inner), inner) + "\n")
@@ -335,6 +441,8 @@ func (m Model) footer() string {
 			text.Count(len(m.sessions), "session"))
 	case m.stopping:
 		return "stopping: draining"
+	case len(m.sessions) > 0:
+		return "↑/↓ select · enter watch a session · ctrl-c stops polling and drains"
 	default:
 		return "ctrl-c stops polling and drains"
 	}
@@ -349,15 +457,22 @@ func panel(title, body string, w int) string {
 
 // nowPanel renders every running session: who is running it, what it is
 // about, the stage its developer worker is in, how long it has been going,
-// what the work item has spent so far and the model it runs on.
+// what the work item has spent so far and the model it runs on. The cursor
+// marks the one Enter opens the session view on.
 func (m Model) nowPanel(w int) string {
 	if len(m.sessions) == 0 {
 		return hintStyle.Render("no sessions running")
 	}
-	rows := []string{headerStyle.Render(clip(nowRow("role", "issue", "pr", "stage", "elapsed", "turns", "cost", "model"), w))}
+	rows := []string{headerStyle.Render(clip(nowRow("", "role", "issue", "pr", "stage", "elapsed", "turns", "cost", "model"), w))}
+	sel, _ := m.selection()
 	for _, s := range m.sessions {
 		spent := m.spent[spendKey(s.issue, s.role)]
+		cursor := "  "
+		if s.name == sel.name {
+			cursor = "> "
+		}
 		rows = append(rows, clip(nowRow(
+			cursor,
 			prompts.Title(s.role),
 			number(s.issue),
 			number(s.pr),
@@ -379,8 +494,8 @@ const stageWidth = 20
 
 // nowRow lays the Now panel's columns out. The header and every row go
 // through it, so they cannot drift apart.
-func nowRow(role, issue, pr, stage, elapsed, turns, cost, model string) string {
-	return fmt.Sprintf("%-16s %-5s %-5s %-*s %8s %6s %8s  %s", role, issue, pr, stageWidth, stage, elapsed, turns, cost, model)
+func nowRow(cursor, role, issue, pr, stage, elapsed, turns, cost, model string) string {
+	return fmt.Sprintf("%-2s%-16s %-5s %-5s %-*s %8s %6s %8s  %s", cursor, role, issue, pr, stageWidth, stage, elapsed, turns, cost, model)
 }
 
 // modelCell renders the last column: the model the session runs on, and
@@ -396,7 +511,7 @@ func modelCell(s running, w int) string {
 	if s.fallback {
 		marker = " (fallback)"
 	}
-	budget := w - lipgloss.Width(nowRow("", "", "", "", "", "", "", "")) - lipgloss.Width(marker)
+	budget := w - lipgloss.Width(nowRow("", "", "", "", "", "", "", "", "")) - lipgloss.Width(marker)
 	if budget < 1 {
 		// Not even room for the marker: give what room there is to it and
 		// let the row's own clip decide the rest. A cut "(fallback" still
