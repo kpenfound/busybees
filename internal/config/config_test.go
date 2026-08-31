@@ -1401,6 +1401,40 @@ func TestGitHubAccount(t *testing.T) {
 	}
 }
 
+// TestGitHubTokenVar: a session has to be given the variable github.token
+// reads, not only the value it resolved to, because every in-session `bees`
+// command loads this config again and a $VAR that expands to nothing is a
+// load error. TokenVar is the name to set; it answers only for a token that
+// is a bare reference, since anything else needs no variable at all.
+func TestGitHubTokenVar(t *testing.T) {
+	for _, c := range []struct{ token, want string }{
+		{"$BEES_GITHUB_TOKEN", "BEES_GITHUB_TOKEN"},
+		{"${BEES_GITHUB_TOKEN}", "BEES_GITHUB_TOKEN"},
+		{"  $GH_PAT  ", "GH_PAT"},
+		{"", ""},
+		{"ghp_literal", ""},
+		{"$A$B", ""},
+		{"prefix-$VAR", ""},
+	} {
+		if got := (GitHub{Token: c.token}).TokenVar(); got != c.want {
+			t.Errorf("TokenVar(%q) = %q, want %q", c.token, got, c.want)
+		}
+	}
+
+	// The name and the value are two halves of one answer: bees resolves the
+	// token in its own environment and hands it to the session under this
+	// name, so what the session then loads is the same configuration.
+	t.Setenv("BEES_TEST_TOKEN", "ghp_secret")
+	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\ndefault_branch = \"main\"\n"+
+		"[github]\nlogin = \"busybees-bot\"\ntoken = \"$BEES_TEST_TOKEN\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := cfg.GitHub.TokenVar(); v != "BEES_TEST_TOKEN" || os.Getenv(v) != cfg.GitHub.ResolvedToken() {
+		t.Errorf("TokenVar %q does not name the variable ResolvedToken read", v)
+	}
+}
+
 // roles.reviewer.stages is the reviewer's ordered review stages. The default
 // carries no product-fit stage on purpose: it is what keeps the staged
 // reviewer's scope the same as the single-pass reviewer it replaced (#240).

@@ -198,9 +198,13 @@ configured for git — reset first, so a credential helper of your own does not 
 push before gh's does. Your stored credentials are neither read nor written. The
 helper only steers **https** remotes: on an `ssh://` or `git@github.com:` remote the
 commits are still the factory's, but the push authenticates with the machine's own ssh
-key. A session started with `[github]` unset gets none of these and behaves exactly as
-it always has. `bees` sets git configuration through `GIT_CONFIG_COUNT` and friends,
-and leaves the whole block alone when you have set `GIT_CONFIG_COUNT` yourself.
+key. When `token` is a `"$VAR"` reference the session is given that variable as well,
+holding the same resolved token, because the `bees` commands a session runs load
+`bees.toml` themselves and a reference that expands to nothing is a load error; it
+goes into the session's environment and never into a file. A session started with
+`[github]` unset gets none of these and behaves exactly as it always has. `bees` sets
+git configuration through `GIT_CONFIG_COUNT` and friends, and leaves the whole block
+alone when you have set `GIT_CONFIG_COUNT` yourself.
 
 **What the token needs.** A fine-grained personal access token, or a GitHub App
 installation token, scoped to the one repository with **write** access to *Issues*,
@@ -495,7 +499,7 @@ accepts aliases such as `pm`, `pjm`, `dev`, but the TOML keys must be the full n
 | `allowed_tools` | string list | `[]` | Passed as `claude --allowedTools`. |
 | `disallowed_tools` | string list | `[]` | Passed as `claude --disallowedTools`. |
 | `shell` | string | the shell bees runs under | Exported into sessions as `$SHELL`. Claude Code has no setting to force its Bash tool's shell; it uses the system default, which it discovers from `$SHELL`, so this is the lever available — but not a hard guarantee. Must be an existing executable. |
-| `env` | table | `{}` | Environment variables exported into every session: inherited by `claude`, its Bash tool, MCP servers and git. `$VAR` references are expanded from the bees process environment when the session starts. `[roles.<name>.env]` entries are merged over `[global.env]` (role wins per key). bees' own `BEES_*` variables always win. `BEES_*` variables are always set by bees for each session and are never inherited from the process that started it, so a session started from inside another one (a nested `bees run` or `bees exec`) never sees a stale issue, PR or branch. |
+| `env` | table | `{}` | Environment variables exported into every session: inherited by `claude`, its Bash tool, MCP servers and git. `$VAR` references are expanded from the bees process environment when the session starts. `[roles.<name>.env]` entries are merged over `[global.env]` (role wins per key). bees' own `BEES_*` variables always win. `BEES_*` variables are always set by bees for each session and are never inherited from the process that started it, so a session started from inside another one (a nested `bees run` or `bees exec`) never sees a stale issue, PR or branch; the only `BEES_*` name bees puts back after that strip is the one a `"$VAR"` [`github.token`](#github) reads, and it carries the value bees itself resolved. |
 | `enabled` | bool | `true` | **Roles only.** `false` takes the role out of the rotation. Disabling `reviewer` makes developer PRs count as approved as soon as they are opened (and, with `auto_merge`, go straight to the checks stage). |
 
 ### `[roles.reviewer]` only: checks and auto-merge
@@ -945,9 +949,11 @@ reach a session. The rest — `BEES_CLAUDE_BIN`, `BEES_CACHE_DIR`,
 of `--log-format` / `--log-level` — configure the `bees` process you start and
 are **not** inherited by the sessions it spawns (see [Exported into every
 session](#exported-into-every-session)), so a `bees` command a session runs
-itself sees their defaults. Every `BEES_*` variable a session sees is one bees
-set for it; to give sessions one of these knobs, put it in
-[`[global.env]`](#global-and-rolesname) instead.
+itself sees their defaults. Every `BEES_*` variable a session sees is one bees set
+for it, with one exception: when [`github.token`](#github) is a `"$VAR"`
+reference, bees sets that variable again after the strip, so the `bees` commands a
+session runs itself can still resolve it. To give sessions one of these knobs, put
+it in [`[global.env]`](#global-and-rolesname) instead.
 
 ### Exported into every session
 
@@ -971,5 +977,6 @@ it inherited, plus:
 | `SHELL` | The configured `shell`, when set. |
 | *configured `env`* | Every `[global.env]` / `[roles.<name>.env]` entry, `$VAR`-expanded from the bees environment. Set before the `BEES_*` variables, so those always win. |
 | `GH_TOKEN` | [`github.token`](#github), when one is configured, so the session's own `gh` acts as the factory. Set with the `BEES_*` variables, after the configured `env`, so a role cannot give itself another identity. |
+| *the variable `github.token` names* | When [`github.token`](#github) is a `"$VAR"` reference, that variable, holding the token bees resolved. Sessions load `bees.toml` themselves — the built-in MCP server behind every `bees` tool does it on each call — and a reference that expands to nothing is a load error, so the name has to survive the `BEES_*` strip. It is set in the session's environment only: the MCP server inherits it, and nothing writes it into the session directory. |
 | `GIT_AUTHOR_NAME`, `GIT_COMMITTER_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_EMAIL` | [`github.git_name`](#github) and `github.git_email`, when set, so a session's commits are the factory's. |
 | `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_n`/`VALUE_n` | `push.autoSetupRemote=true` and `push.default=current`, so a plain `git push` works on a fresh branch without touching the clone's git config; plus an empty `credential.helper` and `credential.helper=!gh auth git-credential` when `github.token` is set, so an https push authenticates as the factory rather than through your stored credentials. `GIT_CONFIG_COUNT` is derived from the entries. Only set when `GIT_CONFIG_COUNT` is not already in the bees environment. |

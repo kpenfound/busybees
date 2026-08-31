@@ -674,12 +674,17 @@ saved to `stderr.log` when non-empty, and `result.json` summarises the run.
   `BEES_NOTES_FILE`, `BEES_ISSUE`, `BEES_PR`, `BEES_BRANCH` when they apply and
   `BEES_REVIEW_MODE=checks` for the reviewer's checks-mode sessions; then the
   factory's own [GitHub identity](configuration.md#github) when `[github]`
-  configures one — `GH_TOKEN`, `GIT_AUTHOR_*` and `GIT_COMMITTER_*`; and, unless
-  `GIT_CONFIG_COUNT` is already set, the `GIT_CONFIG_*` entries below. The
-  directory holding the `bees` binary is prepended to `PATH` so `bees mail`,
-  `bees issue` and `bees done` resolve inside the session. The `BEES_*`
-  variables are also passed explicitly to the built-in MCP server rather than
-  left to inheritance.
+  configures one — `GH_TOKEN`, `GIT_AUTHOR_*` and `GIT_COMMITTER_*`, plus the
+  variable a `"$VAR"` `github.token` names, holding the token bees resolved: a
+  session loads `bees.toml` itself and a reference that expands to nothing is
+  a load error, so that one name survives the drop of every inherited
+  `BEES_*`; and, unless `GIT_CONFIG_COUNT` is already set, the `GIT_CONFIG_*`
+  entries below. The directory holding the `bees` binary is prepended to
+  `PATH` so `bees mail`, `bees issue` and `bees done` resolve inside the
+  session. The `BEES_*` variables are also passed explicitly to the built-in
+  MCP server rather than left to inheritance; the token variable deliberately
+  is not, because that entry is written to `mcp.json` in the session directory
+  and claude passes its own environment on to the server it starts.
 - **Prompts.** `prompts.System` renders `system/common.md` + `system/<role>.md`,
   appends the role's custom text from `bees.toml` and then the project's own
   prompt files; `prompts.Task` renders `task/<role>.md`. Both take a single
