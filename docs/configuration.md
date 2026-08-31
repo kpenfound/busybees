@@ -156,7 +156,7 @@ running it. `[github]` gives the orchestrator a login of its own.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `login` | string | `""` | GitHub login the factory acts as. It is what `bees init` verifies the token against and what `bees status` reports; it is not itself a credential. |
+| `login` | string | `""` | GitHub login the factory acts as. It is what `bees init` and `bees doctor` verify the token against and what `bees status` reports; it is not itself a credential. It also decides which comments the factory reads as its own, so it must be the login GitHub reports as the author of what the token writes — with a `[bot]` suffix exactly when GitHub uses one. |
 | `token` | string | `""` | A token for `login`, passed as `GH_TOKEN` to every `gh` call the orchestrator makes and to every session it runs. A `"$VAR"` or `"${VAR}"` value is expanded from the environment bees runs in, so the secret itself stays out of `bees.toml`. A reference that expands to nothing is rejected at load time, naming the variable. |
 | `git_name` | string | `""` | Name for commits made by developer sessions, given to them as `GIT_AUTHOR_NAME` and `GIT_COMMITTER_NAME`. |
 | `git_email` | string | `""` | Email for those commits, as `GIT_AUTHOR_EMAIL` and `GIT_COMMITTER_EMAIL`. |
@@ -213,7 +213,12 @@ requests cover the labels, comments, milestones and reviews; contents covers the
 pushes developer sessions make; metadata is required by GitHub alongside the rest. A
 classic token works too, with the `repo` scope. `bees init` checks the token before
 the factory ever uses it: that GitHub accepts it, that it belongs to `login`, and that
-it can read the repository.
+it can read the repository. `bees doctor` asks the same two identity questions of
+whatever token is configured at the time, and one more that `bees init` does not: that
+the account can actually **write** issues. Repository permission does not imply it — a
+fine-grained token's per-resource permissions sit on top of the repository role, so a
+token can read the repository as `ADMIN` and still be refused every issue, comment and
+label the factory writes.
 
 ### `filter.assignee = "@me"` still means you
 

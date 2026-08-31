@@ -474,6 +474,130 @@ func TestCheckRepoAccess(t *testing.T) {
 	}
 }
 
+// githubTOML configures [github]. The token is a literal: config.Validate
+// rejects a "$VAR" reference that expands to nothing, so a fixture that used
+// one would fail to load rather than reach the check.
+const githubTOML = `
+[github]
+login = "beebot"
+token = "ghp_fixture"
+`
+
+// TestCheckGitHubLogin covers the three answers `gh api user` can give for a
+// configured token - the login bees.toml names, a different one, and an error
+// - plus the two "[bot]" shapes, which are the ones somebody configuring a
+// bot account actually writes.
+func TestCheckGitHubLogin(t *testing.T) {
+	cases := []struct {
+		name   string
+		toml   string
+		reply  ghReply
+		status Status
+		detail []string
+	}{
+		{"the token belongs to the configured login", githubTOML,
+			ghReply{out: "beebot\n"}, Pass, []string{"beebot"}},
+		// GitHub logins are case-insensitive, and so is github.IsBee.
+		{"case does not matter", githubTOML,
+			ghReply{out: "BeeBot\n"}, Pass, []string{"BeeBot"}},
+		{"the token belongs to somebody else", githubTOML,
+			ghReply{out: "kyle\n"}, Fail,
+			[]string{"belongs to kyle", "github.login says beebot", `set github.login = "kyle"`}},
+		// A user token whose login was written with the suffix a GitHub App
+		// would carry. An ordinary mismatch, named as such.
+		{"a [bot] suffix on a user token", "\n[github]\nlogin = \"beebot[bot]\"\ntoken = \"ghp_fixture\"\n",
+			ghReply{out: "beebot\n"}, Fail,
+			[]string{"belongs to beebot", "without the [bot] suffix"}},
+		{"the token was rejected", githubTOML,
+			ghReply{err: errors.New("gh api user: exit status 1: Bad credentials")}, Fail,
+			[]string{"was not accepted by GitHub", "Bad credentials"}},
+		// An app installation token authenticates as no user, so this is the
+		// error a GitHub App login produces. A warning, not a failure: the
+		// question has no answer rather than a wrong one, and a failure here
+		// would stop `bees run` on a documented token configuration.
+		{"a rejected token under a [bot] login", "\n[github]\nlogin = \"agent[bot]\"\ntoken = \"ghp_fixture\"\n",
+			ghReply{err: errors.New("gh api user: exit status 1: Resource not accessible by integration")}, Warn,
+			[]string{"names a GitHub App", "cannot answer for it", "authored by agent[bot]"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := setup(t, c.toml, map[string]ghReply{"api user": c.reply})
+			wantResult(t, f.run(t, f.checkGitHubLogin), c.status, c.detail...)
+		})
+	}
+}
+
+// TestGitHubChecksAreSkippedWithoutTheTable pins the other half of "only when
+// [github] is configured": with the table unset there is no configured login
+// to check and no configured token to probe with, so both checks pass and
+// neither spends a gh call. The fake errors on any call it was not given a
+// reply for, so an unguarded check fails here rather than merely costing one.
+func TestGitHubChecksAreSkippedWithoutTheTable(t *testing.T) {
+	f := setup(t, "", nil)
+	for _, run := range []func(context.Context) Result{f.checkGitHubLogin, f.checkIssueWrites} {
+		r := f.run(t, run)
+		wantResult(t, r, Pass, "[github] is not configured")
+	}
+	if len(f.gh.calls) != 0 {
+		t.Errorf("asked GitHub %d times with [github] unset: %v", len(f.gh.calls), f.gh.calls)
+	}
+}
+
+// TestCheckIssueWrites covers the failure #303 was filed for: a token that
+// reads the repository as ADMIN and cannot create an issue. checkRepoAccess
+// passes on such a token, so the write has to be established rather than
+// inferred.
+func TestCheckIssueWrites(t *testing.T) {
+	cases := []struct {
+		name   string
+		reply  ghReply
+		status Status
+		detail []string
+	}{
+		{"the write is allowed",
+			ghReply{out: `{"name":"bees"}`}, Pass, []string{"beebot", "issue comments and labels"}},
+		// The reported failure, in GitHub's own words.
+		{"readable but not writable",
+			ghReply{err: errors.New("gh api: exit status 1: Resource not accessible by personal access token (HTTP 403)")},
+			Fail, []string{"cannot write issues", "Issues -> Read and write"}},
+		{"forbidden without the sentence",
+			ghReply{err: errors.New("gh api: exit status 1: HTTP 403")}, Fail, []string{"cannot write issues"}},
+		{"no label to probe with",
+			ghReply{err: errors.New("gh api: exit status 1: Not Found (HTTP 404)")},
+			Warn, []string{"no `bees` label", "bees labels sync"}},
+		{"gh could not reach GitHub",
+			ghReply{err: errors.New("gh api: exit status 1: dial tcp: lookup api.github.com: no such host")},
+			Warn, []string{"could not check", "no such host"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := setup(t, githubTOML, map[string]ghReply{"api --method PATCH": c.reply})
+			wantResult(t, f.run(t, f.checkIssueWrites), c.status, c.detail...)
+		})
+	}
+}
+
+// TestTheWriteProbeLeavesNothingBehind pins what the probe is, which is the
+// half of the check no status can express: renaming the base label to the
+// name it already has is a real write - so GitHub's permission gate is what
+// answers it - that changes nothing.
+//
+// The argv is the only seam this can be read from: a fake cannot tell a
+// no-op rename from one that renames the label, and the difference is the
+// whole reason this probe was chosen over creating an issue.
+func TestTheWriteProbeLeavesNothingBehind(t *testing.T) {
+	f := setup(t, githubTOML, map[string]ghReply{"api --method PATCH": {out: `{"name":"bees"}`}})
+	wantResult(t, f.run(t, f.checkIssueWrites), Pass)
+	if len(f.gh.calls) != 1 {
+		t.Fatalf("made %d gh calls, want 1: %v", len(f.gh.calls), f.gh.calls)
+	}
+	got := strings.Join(f.gh.calls[0], " ")
+	want := "api --method PATCH repos/owner/name/labels/bees -f new_name=bees"
+	if got != want {
+		t.Errorf("probe ran `gh %s`, want `gh %s`", got, want)
+	}
+}
+
 func TestCheckLabels(t *testing.T) {
 	f := setup(t, "", nil)
 	all := f.Config.Labels().All()
@@ -670,9 +794,9 @@ func TestCheckWorktree(t *testing.T) {
 func TestChecksCoverEveryGroup(t *testing.T) {
 	f := setup(t, "", nil)
 	checks := f.Checks()
-	// 16 cheap ones plus one per role: with nothing role-specific configured
+	// 18 cheap ones plus one per role: with nothing role-specific configured
 	// each role still reports one row.
-	if want := 16 + len(config.Roles); len(checks) != want {
+	if want := 18 + len(config.Roles); len(checks) != want {
 		t.Errorf("got %d checks, want %d", len(checks), want)
 	}
 	f.gh.replies = map[string]ghReply{

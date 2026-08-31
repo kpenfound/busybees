@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -108,7 +109,10 @@ func (d *Deps) Checks() []Check {
 		Check{Run: d.checkStateDirIgnored}, Check{Run: d.checkNotesWritable}, Check{Run: d.checkPromptFiles},
 		Check{Run: d.checkProjectPrompts}, Check{Run: d.checkSchedulerBuild})
 	if d.Config.Project.Repo != "" {
-		checks = append(checks, Check{Run: d.checkRepoAccess}, Check{Run: d.checkLabels},
+		// checkIssueWrites probes the base label, so it follows checkLabels,
+		// which is what says whether that label exists at all.
+		checks = append(checks, Check{Run: d.checkRepoAccess}, Check{Run: d.checkGitHubLogin},
+			Check{Run: d.checkLabels}, Check{Run: d.checkIssueWrites},
 			Check{Run: d.checkFilter, Fix: d.fixFilter}, Check{Run: d.checkAutoMerge})
 	}
 	if d.Workspaces != nil && d.Config.Project.DefaultBranch != "" {
@@ -634,6 +638,126 @@ func (d *Deps) checkRepoAccess(ctx context.Context) Result {
 			"developers push branches and open pull requests: ask for write access to "+repo)
 	}
 	return pass(name, GroupGitHub, fmt.Sprintf("%s (%s)", repo, view.ViewerPermission))
+}
+
+// botSuffix is what GitHub appends to a GitHub App's slug when it reports the
+// author of something the app wrote ("agent-kal[bot]"). bees neither adds nor
+// strips it: github.login is compared with the author login GitHub reports,
+// verbatim (github.IsBee), so it belongs in bees.toml exactly when GitHub
+// uses it and never otherwise.
+const botSuffix = "[bot]"
+
+// checkGitHubLogin reports whether github.token really belongs to the account
+// github.login names. Nothing else asks at run time - `bees init` verifies it
+// once, and a token replaced afterwards is never questioned again.
+//
+// It matters because github.login is what tells the factory's own comments
+// from a person's (github.IsBee counts a comment by that login as a bee's,
+// marker or no marker). A login naming an account other than the one actually
+// posting misattributes comments in whichever direction it is wrong: name a
+// person and every comment they write is read as the factory's own and
+// answered by nobody; name an account that writes nothing and the login half
+// of the rule is simply dead. Both are silent for as long as the factory runs.
+func (d *Deps) checkGitHubLogin(ctx context.Context) Result {
+	const name = "github.login matches token"
+	if !d.Config.GitHub.Configured() {
+		return pass(name, GroupGitHub, "[github] is not configured: the factory acts as the machine's own gh account")
+	}
+	want := d.Config.GitHub.Login
+	got, err := d.GitHub.Login(ctx)
+	if err != nil {
+		if strings.HasSuffix(want, botSuffix) {
+			// The first of the two "[bot]" cases, and the reason this branch
+			// is a warning rather than a failure: a GitHub App's installation
+			// token authenticates as no user, so `gh api user` cannot answer
+			// for it and this question has no answer to check. Say that
+			// instead of accepting the login on the strength of an error -
+			// and do not fail, because a failure here would stop `bees run`
+			// on a token configuration the documentation supports.
+			return warn(name, GroupGitHub,
+				fmt.Sprintf("could not check: github.login %s names a GitHub App, and an app installation token authenticates as no user, so `gh api user` cannot answer for it (%s)", want, oneLine(err.Error())),
+				fmt.Sprintf("check by hand that comments the factory posts are authored by %s: github.login is what tells its own comments from a person's. If this is not an app token, GitHub rejected it - fix github.token", want))
+		}
+		return fail(name, GroupGitHub, "github.token was not accepted by GitHub: "+oneLine(err.Error()),
+			fmt.Sprintf("check that github.token is a valid token belonging to %s, or remove github.login and github.token to act as your own gh account", want))
+	}
+	if strings.EqualFold(got, want) {
+		return pass(name, GroupGitHub, fmt.Sprintf("github.token belongs to %s", got))
+	}
+	detail := fmt.Sprintf("github.token belongs to %s, github.login says %s", got, want)
+	if strings.EqualFold(want, got+botSuffix) {
+		// The second "[bot]" case: a user token whose login was written with
+		// the suffix a GitHub App would have. It is an ordinary mismatch -
+		// GitHub reports this account's comments under the bare login - but
+		// it is the mismatch somebody configuring a bot makes, so name it.
+		detail += fmt.Sprintf(" - GitHub reports this account's comments as %s, without the %s suffix", got, botSuffix)
+	}
+	return fail(name, GroupGitHub, detail,
+		fmt.Sprintf("set github.login = %q, or configure a token belonging to %s: github.login decides which comments count as the factory's own, so a wrong one makes it read a person's comments as its own", got, want))
+}
+
+// notAccessible matches GitHub's refusal of a write the credentials are not
+// permitted to make. A fine-grained token that was not granted the resource
+// answers "Resource not accessible by personal access token"; the other 403s
+// (an archived repository, a role without push) are the same verdict for this
+// check, so the status code is matched as well as the sentence.
+var notAccessible = regexp.MustCompile(`(?i)resource not accessible|HTTP 403`)
+
+// noSuchResource matches the 404 the label probe answers when the base label
+// does not exist, which is a check that could not run rather than one that
+// failed. gh folds the status into the error message.
+var noSuchResource = regexp.MustCompile(`HTTP 404`)
+
+// checkIssueWrites establishes that the account the factory acts as can write
+// what bees writes, instead of inferring it from the repository's permission
+// level.
+//
+// checkRepoAccess reads viewerPermission, which describes a *repository*
+// role. A fine-grained personal access token carries per-resource permissions
+// on top of that role, so "ADMIN" and "cannot create an issue" are an
+// ordinary pair - and then every issue_create, comment and label edit in
+// every session fails, one session at a time, with nothing having said so
+// (#303).
+//
+// The probe is a no-op update of the base label: renaming it to the name it
+// already has. Three properties earn it the job.
+//
+//   - It is a real write, so GitHub's permission gate is what decides it. A
+//     probe that expects to be rejected for its payload cannot do this job:
+//     measured against a repository with issues disabled and an archived one,
+//     an invalid create-issue payload answers 422 either way, so the refusal
+//     never reaches the caller.
+//   - It changes nothing and leaves nothing behind: the label comes back
+//     byte for byte as it was, with no timeline entry and nothing to notify.
+//   - One permission covers all three things bees writes. A fine-grained
+//     token's "Issues" grant governs issues, issue comments and labels
+//     alike, so the cheapest of the three answers for the other two.
+func (d *Deps) checkIssueWrites(ctx context.Context) Result {
+	const name = "can write issues"
+	if !d.Config.GitHub.Configured() {
+		return pass(name, GroupGitHub, "[github] is not configured: the factory writes with the machine's own gh account")
+	}
+	repo, login := d.Config.Project.Repo, d.Config.GitHub.Login
+	label := d.Config.Labels().Base
+	_, err := d.gh(ctx, "api", "--method", "PATCH",
+		fmt.Sprintf("repos/%s/labels/%s", repo, url.PathEscape(label)), "-f", "new_name="+label)
+	switch {
+	case err == nil:
+		return pass(name, GroupGitHub, fmt.Sprintf("%s can write issues, issue comments and labels in %s", login, repo))
+	case notAccessible.MatchString(err.Error()):
+		return fail(name, GroupGitHub,
+			fmt.Sprintf("%s cannot write issues in %s: %s", login, repo, oneLine(err.Error())),
+			"grant github.token write access to issues - on a fine-grained personal access token that is Issues -> Read and write, "+
+				"on a classic one the `repo` scope. Repository permission is not enough on its own: without this, "+
+				"every issue, comment and label edit a session makes fails")
+	case noSuchResource.MatchString(err.Error()):
+		return warn(name, GroupGitHub,
+			fmt.Sprintf("could not check: %s has no `%s` label to write to", repo, label),
+			"run `bees labels sync` to create the workflow labels, then run `bees doctor` again")
+	}
+	return warn(name, GroupGitHub,
+		fmt.Sprintf("could not check whether %s can write issues in %s: %s", login, repo, oneLine(err.Error())),
+		"re-run `bees doctor`; if it keeps failing, check that gh can reach GitHub with github.token")
 }
 
 func (d *Deps) checkLabels(ctx context.Context) Result {
