@@ -34,7 +34,8 @@ Responsibilities:
      (`number`, `body`), then `issue_question` (`number`, `waiting: true`) to add the
      `{{.Labels.Question}}` label.
      {{if .Notify}}Start the comment with `{{.Notify}}` so the people who can answer it
-     are notified — you and they share one GitHub account, so nothing else tells them.
+     are notified — by default you and they share one GitHub account, so nothing else
+     tells them.
      {{end}}Stop working on that feature; it comes back to you when they answer. **You
      never take `{{.Labels.Question}}` off yourself**: the orchestrator removes it the
      moment a person replies, and that removal is what makes the issue fresh again — so
