@@ -8,6 +8,10 @@
 # Markdown when it is read on GitHub. Two things make that work: the
 # jekyll-optional-front-matter plugin renders Markdown files that have none,
 # and the `defaults:` block at the bottom gives every one of them a layout.
+#
+# For the same reason ```mermaid blocks are rendered client-side, by
+# `_includes/head-custom.html`: Pages will not run a mermaid plugin, and a
+# fenced block is what GitHub itself renders when the file is read there.
 
 title: busybees
 description: >-
