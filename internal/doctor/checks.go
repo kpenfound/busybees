@@ -9,12 +9,15 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/github"
+	"github.com/kpenfound/busybees/internal/procs"
 	"github.com/kpenfound/busybees/internal/prompts"
 	"github.com/kpenfound/busybees/internal/skills"
+	"github.com/kpenfound/busybees/internal/state"
 	"github.com/kpenfound/busybees/internal/text"
 	"github.com/kpenfound/busybees/internal/versions"
 	"github.com/kpenfound/busybees/internal/workspace"
@@ -54,11 +57,12 @@ type Deps struct {
 	// carries github.token - see machineGH.
 	MachineGitHub *github.Client
 
-	// LookPath, Git and CurrentUser default to exec.LookPath, workspace.Git
-	// and github.CurrentUser.
+	// LookPath, Git, CurrentUser and Alive default to exec.LookPath,
+	// workspace.Git, github.CurrentUser and procs.Alive.
 	LookPath    func(file string) (string, error)
 	Git         func(ctx context.Context, dir string, args ...string) (string, error)
 	CurrentUser func(ctx context.Context) (string, error)
+	Alive       func(pid int) bool
 }
 
 // New loads the bees.toml at configPath and returns the dependencies the
@@ -102,7 +106,7 @@ func (d *Deps) Checks() []Check {
 	}
 	checks = append(checks, Check{Run: d.checkProject}, Check{Run: d.checkRemote},
 		Check{Run: d.checkStateDirIgnored}, Check{Run: d.checkNotesWritable}, Check{Run: d.checkPromptFiles},
-		Check{Run: d.checkProjectPrompts})
+		Check{Run: d.checkProjectPrompts}, Check{Run: d.checkSchedulerBuild})
 	if d.Config.Project.Repo != "" {
 		checks = append(checks, Check{Run: d.checkRepoAccess}, Check{Run: d.checkLabels},
 			Check{Run: d.checkFilter, Fix: d.fixFilter}, Check{Run: d.checkAutoMerge})
@@ -131,6 +135,18 @@ func (d *Deps) me(ctx context.Context) (string, error) {
 		return d.CurrentUser(ctx)
 	}
 	return github.CurrentUser(ctx)
+}
+
+// alive answers whether the pid a status.json records is still a running
+// process. procs.Alive is the plain "is there a process with this pid"
+// answer, which is all this needs: procs' stricter "is it one of ours" test
+// (FromPIDFile) identifies claude *sessions* by their pid file and command
+// line, and the scheduler is neither.
+func (d *Deps) alive(pid int) bool {
+	if d.Alive != nil {
+		return d.Alive(pid)
+	}
+	return procs.Alive(pid)
 }
 
 func (d *Deps) git(ctx context.Context, dir string, args ...string) (string, error) {
@@ -499,6 +515,93 @@ func dedupe(in []string) []string {
 		out = append(out, s)
 	}
 	return out
+}
+
+// checkSchedulerBuild compares the build a running `bees run` is serving
+// against the repository it is building. The role prompts are compiled into
+// the binary, so a scheduler keeps serving the prompts of the build it was
+// started from whatever has since been merged: a prompt change reaches no
+// session until the binary is rebuilt and the scheduler restarted, and
+// nothing else in the factory says so.
+//
+// It warns and never fails, in every case. A scheduler behind HEAD is a real
+// factory doing real work and `bees doctor` exits non-zero on a failure, so
+// being behind is worth saying and not worth refusing to start over. It
+// passes rather than warns whenever the question does not arise - no
+// scheduler has run, none is running now, or the binary carries no revision
+// to compare - because the common case on a developer machine is a build
+// from a dirty tree, and a check that cries wolf there is worse than none.
+//
+// The comparison is against the checked-out repository, never the remote:
+// doctor must not need the network for this, and what is checked out is what
+// a person is about to rebuild from.
+func (d *Deps) checkSchedulerBuild(ctx context.Context) Result {
+	const name = "scheduler build is current"
+	const remedy = "rebuild and restart `bees run` to pick up prompt and code changes: the role prompts are compiled into the binary"
+
+	st, err := state.New(d.Config.StateDir()).LoadStatus()
+	if err != nil {
+		return warn(name, GroupConfig, "cannot read the scheduler status: "+oneLine(err.Error()),
+			fmt.Sprintf("check %s: a status.json bees cannot read also hides the queues from `bees status`",
+				filepath.Join(d.Config.StateDir(), "status.json")))
+	}
+	if st.UpdatedAt.IsZero() {
+		return pass(name, GroupConfig, "the scheduler has not run in "+d.Config.StateDir())
+	}
+	// A status.json outlives the run that wrote it, so a stale one says
+	// nothing about a live factory: only a running scheduler can be serving
+	// a stale build.
+	if !d.alive(st.PID) {
+		return pass(name, GroupConfig, "no scheduler is running")
+	}
+	if st.Revision == "" {
+		if st.Version == "" {
+			return pass(name, GroupConfig, "the running scheduler recorded no build")
+		}
+		return pass(name, GroupConfig, fmt.Sprintf("running build %s, which records no revision to compare", st.Version))
+	}
+	rev, short := st.Revision, abbrev(st.Revision)
+
+	head, err := d.git(ctx, d.Config.Dir(), "rev-parse", "HEAD")
+	if err != nil {
+		return warn(name, GroupConfig,
+			fmt.Sprintf("running %s, and this repository cannot say what HEAD is: %s", short, oneLine(err.Error())),
+			"run `git rev-parse HEAD` in "+d.Config.Dir()+" and fix what it reports: until it answers, nothing can say whether the running scheduler is current")
+	}
+	if head == rev {
+		return pass(name, GroupConfig, fmt.Sprintf("running %s, the commit HEAD is on", short))
+	}
+	// An unknown revision has to be ruled out before the ancestry test: git
+	// fails the same way for a commit it has never heard of as for one that
+	// is merely not an ancestor.
+	if _, err := d.git(ctx, d.Config.Dir(), "cat-file", "-e", rev+"^{commit}"); err != nil {
+		return warn(name, GroupConfig, fmt.Sprintf("running %s, which is not a commit in this repository", short),
+			remedy+" (it was built somewhere else, or from a commit that was never pushed here)")
+	}
+	// --is-ancestor prints nothing and answers with its exit status, which
+	// d.git turns into an error.
+	if _, err := d.git(ctx, d.Config.Dir(), "merge-base", "--is-ancestor", rev, "HEAD"); err != nil {
+		return warn(name, GroupConfig, fmt.Sprintf("running %s, which is not an ancestor of HEAD (%s)", short, abbrev(head)),
+			remedy+", or check out the branch the scheduler was built from")
+	}
+	behind := "behind HEAD"
+	if out, err := d.git(ctx, d.Config.Dir(), "rev-list", "--count", rev+"..HEAD"); err == nil {
+		if n, err := strconv.Atoi(strings.TrimSpace(out)); err == nil && n > 0 {
+			behind = text.Count(n, "commit") + " behind HEAD"
+		}
+	}
+	return warn(name, GroupConfig, fmt.Sprintf("running %s, which is %s (%s)", short, behind, abbrev(head)), remedy)
+}
+
+// abbrev shortens a commit for display, to the same length `bees version`
+// shows. Only the display is shortened: the comparisons above are between
+// whole revisions, because that is what the scheduler records and what
+// `git rev-parse HEAD` answers.
+func abbrev(rev string) string {
+	if len(rev) > versions.RevisionDisplayLen {
+		return rev[:versions.RevisionDisplayLen]
+	}
+	return rev
 }
 
 // ---- github ----------------------------------------------------------------
