@@ -106,6 +106,11 @@ type Scheduler struct {
 	wake  chan struct{}
 	wg    sync.WaitGroup
 	slots chan struct{}
+	// evMu guards subs, the event stream's subscribers (events.go). It is
+	// its own lock: publishing must never contend with, or depend on, the
+	// state mu protects.
+	evMu sync.Mutex
+	subs []chan Event
 	// Issues and PRs from the last successful poll, reused by local passes.
 	lastIssues []github.Issue
 	lastPRs    []github.PR
@@ -188,6 +193,16 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			s.setLastErr("")
 		}
 		s.writeStatus()
+		if full {
+			// Published after writeStatus, never instead of it: the event
+			// says a poll has just finished and status.json — already on
+			// disk when a subscriber sees the event — says what it found.
+			ev := Event{Kind: EventPoll}
+			if err != nil {
+				ev.Err = err.Error()
+			}
+			s.publish(ev)
+		}
 		if s.Once {
 			break
 		}
@@ -1135,8 +1150,10 @@ func (s *Scheduler) updateWorker(w *state.Worker, stage string, round int) {
 	w.Stage = stage
 	w.Round = round
 	w.Attempt = 1
+	issue := w.Issue
 	s.mu.Unlock()
 	s.writeStatus()
+	s.publish(Event{Kind: EventStage, Role: config.RoleDeveloper, Issue: issue, Stage: stage, Round: round})
 }
 
 // setWorkerAttempt records which attempt of the current stage is running so
