@@ -239,7 +239,6 @@ auto_merge = true
 # Tests the default branch after merges, files bugs, reports to the PM.
 [roles.qa]
 prompt = """
-It is not required that you open issues if there is nothing that meets the bar for a bug report. If the quality is good, no issues will be opened.
 #"""
 #prompt_file = ""
 #skills = []
