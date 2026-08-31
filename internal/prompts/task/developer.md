@@ -1,4 +1,4 @@
-{{if gt .Retry 0}}**Your previous attempt was interrupted before it finished.** The branch may
+{{template "interrupted" .}}{{if gt .Retry 0}}**Your previous attempt was interrupted before it finished.** The branch may
 already contain partial work — inspect the working tree and the branch's
 commits before writing anything, and continue from there rather than starting
 over.

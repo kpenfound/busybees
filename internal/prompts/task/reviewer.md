@@ -1,4 +1,4 @@
-# Task: review pull request #{{.PR.Number}} (round {{.Round}} of {{.MaxRounds}})
+{{template "interrupted" .}}# Task: review pull request #{{.PR.Number}} (round {{.Round}} of {{.MaxRounds}})
 
 ## Pull request #{{.PR.Number}}: {{.PR.Title}}
 {{.PR.URL}} — branch `{{.PR.HeadRefName}}` → `{{.PR.BaseRefName}}` · author: {{.PR.Author.Login}}

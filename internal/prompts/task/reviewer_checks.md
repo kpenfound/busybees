@@ -1,4 +1,4 @@
-# Task: checks failed on pull request #{{.PR.Number}} (fix round {{.Round}} of {{.MaxRounds}})
+{{template "interrupted" .}}# Task: checks failed on pull request #{{.PR.Number}} (fix round {{.Round}} of {{.MaxRounds}})
 
 A check on this pull request failed, so it cannot go forward — either before its first
 review, or after your approval with auto-merge on. Either way this session is not a

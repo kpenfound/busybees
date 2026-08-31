@@ -1329,3 +1329,70 @@ func taskSection(t *testing.T, task, heading string) string {
 	body, _, _ := strings.Cut(rest, "\n## ")
 	return body
 }
+
+// TestAnInterruptedSessionIsReportedAtTheTopOfTheTask: the session that takes
+// over from one a killed scheduler left unfinished is told so before it is
+// told anything else — how far it got, where its transcript is, and that the
+// branch may carry work nobody reported (#250). The assertion is deliberately
+// stronger than "the section is there": with nothing interrupted the task
+// prompt must be byte for byte the one this version has always rendered, so
+// the section is checked as a *prefix* of an otherwise unchanged prompt.
+func TestAnInterruptedSessionIsReportedAtTheTopOfTheTask(t *testing.T) {
+	in := &session.Interrupted{
+		Role: config.RoleDeveloper, Name: "20260831-081500-developer-issue-4-r1-ab",
+		Transcript: "/s/sessions/20260831-081500-developer-issue-4-r1-ab/transcript.jsonl",
+		Turns:      3, Killed: true, Note: "stopped by bees kill",
+	}
+	for _, name := range []string{config.RoleDeveloper, config.RoleReviewer, "reviewer_checks"} {
+		role := config.RoleReviewer
+		if name == config.RoleDeveloper {
+			role = config.RoleDeveloper
+		}
+		quiet, err := TaskNamed(role, name, sample())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(quiet, "never reported an outcome") {
+			t.Errorf("%s reports an interruption that never happened:\n%s", name, quiet)
+		}
+		d := sample()
+		d.Interrupted = in
+		task, err := TaskNamed(role, name, d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasSuffix(task, quiet) {
+			t.Errorf("%s: the interruption changed more than the section it adds:\n%s", name, task)
+			continue
+		}
+		section := strings.TrimSuffix(task, quiet)
+		for _, want := range []string{
+			"developer session that ran for this issue before you was stopped after 3 turns",
+			"never reported an outcome",
+			"/s/sessions/20260831-081500-developer-issue-4-r1-ab/transcript.jsonl",
+			"The branch may carry work it never reported",
+		} {
+			if !strings.Contains(flowed(section), want) {
+				t.Errorf("%s section missing %q:\n%s", name, want, section)
+			}
+		}
+	}
+}
+
+// TestAnInterruptionWithNothingToShowStillReads: a session killed in its
+// first seconds wrote no transcript and took no turn, and the section must
+// not then say "after 0 turns" or point at a file that does not exist.
+func TestAnInterruptionWithNothingToShowStillReads(t *testing.T) {
+	d := sample()
+	d.Interrupted = &session.Interrupted{Role: config.RoleDeveloper, Name: "x"}
+	task, err := Task(config.RoleDeveloper, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(task, "0 turns") {
+		t.Errorf("a session that took no turn is counted:\n%s", task)
+	}
+	if !strings.Contains(flowed(task), "It stopped before it wrote a transcript.") {
+		t.Errorf("no transcript, and the prompt does not say so:\n%s", task)
+	}
+}
