@@ -1,5 +1,7 @@
 // Package github is a thin wrapper around the `gh` CLI. It uses the user's
-// existing gh authentication, so the factory needs no extra tokens.
+// existing gh authentication unless a Client carries a Token, in which case
+// the calls that client makes act as the account that token belongs to
+// (config's [github] table).
 package github
 
 import (
@@ -8,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"regexp"
 	"sort"
@@ -19,6 +22,16 @@ import (
 // Client runs gh commands against one repository.
 type Client struct {
 	Repo string // owner/name
+	// Token is the GitHub token this client's gh calls authenticate with,
+	// passed as GH_TOKEN. Empty (the default) runs gh with whatever
+	// authentication the machine already has, which is what bees did before
+	// config's [github] table existed.
+	//
+	// It is a field rather than something the command builder reaches for so
+	// that a caller can be asserted to have wired the configured token
+	// through: the Exec hooks below replace command execution wholesale in
+	// tests, so the environment never reaches a fake.
+	Token string
 	// Exec overrides command execution (tests).
 	Exec func(ctx context.Context, args ...string) ([]byte, error)
 	// ExecStdin overrides command execution with input on gh's standard
@@ -27,7 +40,7 @@ type Client struct {
 	ExecStdin func(ctx context.Context, stdin string, args ...string) ([]byte, error)
 }
 
-// New returns a client for repo.
+// New returns a client for repo, authenticating as the machine's own gh user.
 func New(repo string) *Client {
 	c := &Client{Repo: repo}
 	c.Exec = c.run
@@ -35,8 +48,28 @@ func New(repo string) *Client {
 	return c
 }
 
-func (c *Client) run(ctx context.Context, args ...string) ([]byte, error) {
+// NewWithToken returns a client for repo whose gh calls act as the account
+// token belongs to. An empty token is New.
+func NewWithToken(repo, token string) *Client {
+	c := New(repo)
+	c.Token = token
+	return c
+}
+
+// command builds the gh command both exec paths run. It is the single place
+// the token is applied, so a third call site cannot be added without it.
+func (c *Client) command(ctx context.Context, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "gh", args...)
+	if c.Token != "" {
+		// os/exec keeps the last occurrence of a duplicated variable, so this
+		// wins over a GH_TOKEN the operator's own environment already has.
+		cmd.Env = append(os.Environ(), "GH_TOKEN="+c.Token)
+	}
+	return cmd
+}
+
+func (c *Client) run(ctx context.Context, args ...string) ([]byte, error) {
+	cmd := c.command(ctx, args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -47,7 +80,7 @@ func (c *Client) run(ctx context.Context, args ...string) ([]byte, error) {
 }
 
 func (c *Client) runStdin(ctx context.Context, stdin string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "gh", args...)
+	cmd := c.command(ctx, args...)
 	cmd.Stdin = strings.NewReader(stdin)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -472,7 +505,10 @@ func (c *Client) RequestReview(ctx context.Context, number int, reviewers ...str
 	return err
 }
 
-// CurrentUser returns the authenticated gh login.
+// CurrentUser returns the login of the account the machine's own gh is
+// authenticated as. It deliberately takes no client and no token: its one
+// caller is filter.assignee = "@me", which asks whose work the factory picks
+// up — the person's, not the account [github] makes bees act as.
 func CurrentUser(ctx context.Context) (string, error) {
 	cmd := exec.CommandContext(ctx, "gh", "api", "user", "--jq", ".login")
 	out, err := cmd.Output()
