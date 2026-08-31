@@ -441,9 +441,10 @@ func TestPriorityDoesNotJumpAResumedIssue(t *testing.T) {
 func TestReconcileKeepsThePriorityLabel(t *testing.T) {
 	h := newHarness(t, noRolesTOML)
 	base := time.Now().Add(-24 * time.Hour)
-	// An issue with no kind and no state that a person marked priority:
-	// reconcile hands it to the product manager as bees:feedback, and the
-	// priority label rides along onto whatever it becomes.
+	// An issue with no state label and neither bees:feature nor bees:feedback
+	// that a person marked priority: reconcile hands it to the product manager
+	// as bees:feedback, and the priority label rides along onto whatever it
+	// becomes.
 	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Urgent", Body: "main does not build", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:priority"}}, CreatedAt: base}
 	// A ready priority issue without a size: reconcile sizes it.

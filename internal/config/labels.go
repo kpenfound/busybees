@@ -15,7 +15,11 @@ type Labels struct {
 	// it detailed enough, breaks it into work items and closes it when they
 	// ship. Outside the workflow state machine.
 	Feature string // bees:feature
-	Bug     string // bees:bug     – a bug work item (developer, reviewer, QA or a human)
+	// Bug marks a bug work item (filed by the developer, reviewer, QA or a
+	// human). It says what the issue is, not where it goes: only Feature and
+	// Feedback route an issue out of the state machine, so a bug with no
+	// state label is read as feedback for the product manager.
+	Bug string // bees:bug
 	// Feedback marks the product manager's inbox: feature ideas, product
 	// feedback and bug reports from humans. Exempt from the workflow state
 	// machine; the product manager turns them into feature/bug issues.
