@@ -57,14 +57,14 @@ label = "bees"
 #===============================================================================
 [github]
 # GitHub login the factory acts as.
-login = "agent-kal[bot]"
+#login = "agent-kal[bot]"
 # A token for that login. A "$VAR" reference is expanded from the environment
 # bees runs in, so the secret itself stays out of this file.
-token = "$BEES_GITHUB_TOKEN"
+#token = "$BEES_GITHUB_TOKEN"
 # Identity for commits made by developer sessions. Either may be set on its
 # own; whichever is unset stays the machine's own git identity.
-git_name = "agent-kal[bot]"
-git_email = "agent-kal@kylepenfound.com"
+#git_name = "agent-kal[bot]"
+#git_email = "agent-kal@kylepenfound.com"
 
 #===============================================================================
 # Scheduler
