@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -12,6 +13,8 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/kpenfound/busybees/internal/github"
 )
 
 func writeConfig(t *testing.T, body string) string {
@@ -1264,5 +1267,61 @@ func TestLoggingSettings(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%q: %v", c.body, err)
 		}
+	}
+}
+
+// The assignee filter has no default. `bees init` without --assignee leaves the
+// key commented out, and an unset assignee means no assignee filter at all —
+// not "@me". Nothing else pins that: every other template test passes
+// Assignee: "@me", so a default introduced here would go unnoticed until the
+// factory stopped seeing every issue not assigned to the gh user.
+func TestFilterAssigneeDefaultsToUnset(t *testing.T) {
+	// `bees init` with no --assignee: the key is a commented placeholder.
+	text, err := Template(TemplateData{Repo: "acme/widgets", ExplicitRepo: true, ExplicitBranch: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "assignee") {
+			t.Fatalf("template carries an active assignee line: %q", line)
+		}
+	}
+	if !strings.Contains(text, `#assignee = "@me"`) {
+		t.Fatal("template should keep the commented #assignee placeholder")
+	}
+	cfg, err := Load(writeConfig(t, text))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Filter.Assignee != "" {
+		t.Fatalf("template assignee: %q, want unset", cfg.Filter.Assignee)
+	}
+
+	// A config with no [filter] table at all is the same. The label default
+	// still applies, so this is not vacuously true of the whole struct.
+	cfg, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Filter.Assignee != "" {
+		t.Fatalf("assignee without [filter]: %q, want unset", cfg.Filter.Assignee)
+	}
+	if cfg.Filter.Label != DefaultLabel {
+		t.Fatalf("label: %q, want the %q default", cfg.Filter.Label, DefaultLabel)
+	}
+
+	// And an unset assignee reaches gh as no --assignee argument at all.
+	var args []string
+	c := &github.Client{Repo: "acme/widgets"}
+	c.Exec = func(_ context.Context, a ...string) ([]byte, error) {
+		args = a
+		return []byte("[]"), nil
+	}
+	q := github.Query{Label: cfg.Filter.Label, Assignee: cfg.Filter.Assignee, Milestone: cfg.Filter.Milestone}
+	if _, err := c.ListOpenIssues(context.Background(), q); err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(args, "--assignee") {
+		t.Fatalf("gh call filters on an assignee: %v", args)
 	}
 }
