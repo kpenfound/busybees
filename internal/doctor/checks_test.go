@@ -11,6 +11,7 @@ import (
 
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/github"
+	"github.com/kpenfound/busybees/internal/prompts"
 	"github.com/kpenfound/busybees/internal/testutil"
 	"github.com/kpenfound/busybees/internal/workspace"
 )
@@ -411,6 +412,45 @@ func TestCheckPromptFiles(t *testing.T) {
 	wantResult(t, f.run(t, f.checkPromptFiles), Fail, "roles.developer.prompt_file extra.md")
 }
 
+// A repository that keeps role instructions in bees/prompts/ has them
+// checked here: a file no role will ever read (a misspelled role name) and a
+// file bees cannot use both have to fail loudly, because a session only warns
+// and carries on. A repository with no such directory - every repository that
+// has never heard of the feature - passes.
+func TestCheckProjectPrompts(t *testing.T) {
+	f := setup(t, "", nil)
+	wantResult(t, f.run(t, f.checkProjectPrompts), Pass, "no bees/prompts/ directory")
+
+	write := func(clone, name, body string) {
+		t.Helper()
+		dir := filepath.Join(clone, "bees", "prompts")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	write(f.clone, "common.md", "Speak plainly.\n")
+	write(f.clone, "developer.md", "Run make lint.\n")
+	wantResult(t, f.run(t, f.checkProjectPrompts), Pass, "bees/prompts/common.md", "bees/prompts/developer.md")
+
+	write(f.clone, "develloper.md", "oops\n")
+	wantResult(t, f.run(t, f.checkProjectPrompts), Fail, "bees/prompts/develloper.md", "developer.md")
+	if err := os.Remove(filepath.Join(f.clone, "bees", "prompts", "develloper.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	// common.md is read by every role, so the report must name it once.
+	write(f.clone, "common.md", strings.Repeat("x", prompts.MaxProjectPromptBytes+1))
+	r := f.run(t, f.checkProjectPrompts)
+	wantResult(t, r, Fail, "bees/prompts/common.md", "limit")
+	if n := strings.Count(r.Detail, "bees/prompts/common.md"); n != 1 {
+		t.Errorf("the same broken file is reported %d times: %s", n, r.Detail)
+	}
+}
+
 // ---- github ----------------------------------------------------------------
 
 func TestCheckRepoAccess(t *testing.T) {
@@ -630,9 +670,9 @@ func TestCheckWorktree(t *testing.T) {
 func TestChecksCoverEveryGroup(t *testing.T) {
 	f := setup(t, "", nil)
 	checks := f.Checks()
-	// 14 cheap ones plus one per role: with nothing role-specific configured
+	// 15 cheap ones plus one per role: with nothing role-specific configured
 	// each role still reports one row.
-	if want := 14 + len(config.Roles); len(checks) != want {
+	if want := 15 + len(config.Roles); len(checks) != want {
 		t.Errorf("got %d checks, want %d", len(checks), want)
 	}
 	f.gh.replies = map[string]ghReply{

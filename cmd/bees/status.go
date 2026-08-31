@@ -63,11 +63,12 @@ func workHoursJSON(s config.Scheduler, now time.Time) workHoursView {
 }
 
 // degradedText renders the "degraded:" section of `bees status`: the factory
-// operations that are failing right now, one line each. The name column fits
-// the longest operation name the scheduler can emit ("feature-progress"), so
-// the section stays aligned whichever operation is the failing one. It returns "" when
-// nothing is failing, and the caller prints no section at all — a clean run
-// should not carry an empty heading.
+// operations that are failing right now, one line each. The name column is a
+// minimum width, not a bound: most operation names fit it, but the longer ones
+// ("pre-review-checks", and the per-role "project-prompts/<role>") push the
+// rest of their own line right, and only that line loses its alignment. It
+// returns "" when nothing is failing, and the caller prints no section at all —
+// a clean run should not carry an empty heading.
 func degradedText(st state.Status) string {
 	if len(st.Degraded) == 0 {
 		return ""
