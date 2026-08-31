@@ -24,6 +24,9 @@ import (
 type GitHub interface {
 	// Rules returns the factory's visibility filter and label set.
 	Rules(ctx context.Context) (github.Query, config.Labels, error)
+	// ActsAs returns the GitHub login the factory acts as ([github].login),
+	// or "" when the factory shares an account with the people it works for.
+	ActsAs(ctx context.Context) (string, error)
 	Issue(ctx context.Context, number int) (github.Issue, error)
 	Parent(ctx context.Context, number int) (*github.Parent, error)
 	PR(ctx context.Context, number int) (github.PR, error)
@@ -136,7 +139,11 @@ func (s *server) issueView(ctx context.Context, _ *mcp.CallToolRequest, in issue
 	// The parent is context, not the answer: a repository or a token without
 	// sub-issues must still be able to read the issue.
 	parent, _ := s.github.Parent(ctx, n)
-	return text("%s", issueText(issue, parent, labels)), nil, nil
+	// So is the login the factory acts as: it only widens what counts as a
+	// bee's comment, and "" is the marker-only rule every configuration
+	// without [github] uses anyway.
+	actsAs, _ := s.github.ActsAs(ctx)
+	return text("%s", issueText(issue, parent, labels, actsAs)), nil, nil
 }
 
 // ---- pr_view ---------------------------------------------------------------

@@ -18,6 +18,7 @@ import (
 type fakeGitHub struct {
 	q      github.Query
 	labels config.Labels
+	actsAs string // the login [github] gives the factory ("" = a shared account)
 	issues map[int]github.Issue
 	prs    map[int]github.PR
 	parent *github.Parent
@@ -71,6 +72,8 @@ func labelsOf(names ...string) []github.Label {
 func (f *fakeGitHub) Rules(context.Context) (github.Query, config.Labels, error) {
 	return f.q, f.labels, nil
 }
+
+func (f *fakeGitHub) ActsAs(context.Context) (string, error) { return f.actsAs, nil }
 
 func (f *fakeGitHub) Issue(_ context.Context, number int) (github.Issue, error) {
 	i, ok := f.issues[number]
@@ -313,7 +316,7 @@ func TestCommentAlwaysEndsWithTheRolesMarker(t *testing.T) {
 				t.Fatalf("own marker appears %d times, want %d: %q", n, tc.wantOwn, f.comments[0].body)
 			}
 			// What every role reads back must name the role that posted it.
-			if got := author(f.comments[0].body); got != "bee: product_manager" {
+			if got := author("", "kyle", f.comments[0].body); got != "bee: product_manager" {
 				t.Fatalf("author(%q) = %q", f.comments[0].body, got)
 			}
 		})
@@ -493,6 +496,10 @@ func TestDescribeQuery(t *testing.T) {
 	}
 }
 
+// TestAuthorReadsTheMarker is the marker rule on its own: with [github]
+// unset — the configuration nearly every test and every factory that shares
+// an account with its people uses — the comment's login is not a signal and
+// issue_view renders exactly what it always has.
 func TestAuthorReadsTheMarker(t *testing.T) {
 	for body, want := range map[string]string{
 		"plain text":                        "human",
@@ -507,7 +514,7 @@ func TestAuthorReadsTheMarker(t *testing.T) {
 		"Replying to the bot:\n> looks good to me\n> <!-- bees:reviewer -->\n\nActually please hold off on merging.": "human",
 		"answering you:\n\n> <!-- bees:reviewer -->":                                                                 "human",
 	} {
-		if got := author(body); got != want {
+		if got := author("", "kyle", body); got != want {
 			t.Errorf("author(%q) = %q, want %q", body, got, want)
 		}
 	}
@@ -525,5 +532,86 @@ func TestToolsReportAFailingConfiguration(t *testing.T) {
 	res := h.callRaw("issue_view", map[string]any{"number": 36})
 	if !res.IsError || !strings.Contains(resultText(res), "no such file") {
 		t.Fatalf("result: %v %q", res.IsError, resultText(res))
+	}
+}
+
+// TestIssueViewMarksTheFactorysOwnCommentAsABees is the rule issue_view
+// shares with the orchestrator (#266): with [github] configured, a comment
+// the factory's own login posted is a bee's even with no marker on it. The
+// one comment that shape describes is the orchestrator's `needs-human`
+// escalation, and rendering it `(human)` told a role a person had said the
+// factory gave up — the one label whose being wrong changes what a role does.
+//
+// The login only ever says yes: a person's comment is still a person's,
+// whether or not they quote a marker and whether or not [github] is set.
+func TestIssueViewMarksTheFactorysOwnCommentAsABees(t *testing.T) {
+	const bot = "busybees-bot"
+	escalation := "🐝 **busybees needs a human.**\n\nthe reviewer gave up"
+	quoting := "Replying to the bot:\n> ok\n> <!-- bees:reviewer -->\n\nPlease hold off."
+
+	for _, tc := range []struct {
+		name        string
+		actsAs      string
+		login, body string
+		want        string
+	}{
+		{"the orchestrator's escalation, [github] set", bot, bot, escalation, "busybees-bot (bee)"},
+		{"logins are case-insensitive", bot, "BusyBees-Bot", escalation, "BusyBees-Bot (bee)"},
+		{"the same comment with [github] unset", "", bot, escalation, "busybees-bot (human)"},
+		{"a role's comment names the role", bot, bot, "done\n\n<!-- bees:developer -->", "busybees-bot (bee: developer)"},
+		{"a role's comment on a shared account", "", "kyle", "done\n\n<!-- bees:developer -->", "kyle (bee: developer)"},
+		{"a person, [github] set", bot, "kyle", "any thoughts?", "kyle (human)"},
+		{"a person quoting a marker, [github] set", bot, "kyle", quoting, "kyle (human)"},
+		{"a person quoting a marker, [github] unset", "", "kyle", quoting, "kyle (human)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeGitHub().issue(36, "bees:in-progress")
+			f.actsAs = tc.actsAs
+			i := f.issues[36]
+			i.Comments = []github.Comment{{
+				Author:    github.Author{Login: tc.login},
+				Body:      tc.body,
+				CreatedAt: time.Date(2026, 8, 31, 9, 0, 0, 0, time.UTC),
+			}}
+			f.issues[36] = i
+
+			h := newHarness(t, config.RoleDeveloper, Deps{GitHub: f})
+			got := h.call("issue_view", map[string]any{"number": 36})
+			if !strings.Contains(got, tc.want+" · 2026-08-31 09:00") {
+				t.Fatalf("issue_view does not render %q:\n%s", tc.want, got)
+			}
+		})
+	}
+}
+
+// errActsAs is a backend that can read an issue but not the configured
+// login: the shape of a `bees.toml` that fails to load only for that one
+// question. Reading the issue must still work.
+type errActsAs struct{ *fakeGitHub }
+
+func (errActsAs) ActsAs(context.Context) (string, error) {
+	return "", errors.New("bees.toml: no such file")
+}
+
+// TestIssueViewSurvivesAFailingLoginLookup pins that the login is context
+// and not the answer, exactly as the parent feature already is: a backend
+// that cannot supply it leaves issue_view rendering marker-only, which is
+// what every configuration without [github] gets anyway.
+func TestIssueViewSurvivesAFailingLoginLookup(t *testing.T) {
+	const bot = "busybees-bot"
+	f := newFakeGitHub().issue(36, "bees:in-progress")
+	f.actsAs = bot
+	i := f.issues[36]
+	i.Comments = []github.Comment{{
+		Author:    github.Author{Login: bot},
+		Body:      "🐝 **busybees needs a human.**",
+		CreatedAt: time.Date(2026, 8, 31, 9, 0, 0, 0, time.UTC),
+	}}
+	f.issues[36] = i
+
+	h := newHarness(t, config.RoleDeveloper, Deps{GitHub: errActsAs{f}})
+	got := h.call("issue_view", map[string]any{"number": 36})
+	if !strings.Contains(got, "busybees-bot (human) · 2026-08-31 09:00") {
+		t.Fatalf("issue_view did not fall back to the marker rule:\n%s", got)
 	}
 }

@@ -24,7 +24,7 @@ type Client struct {
 	Repo string // owner/name
 	// ActsAs is the GitHub login this client's calls act as, when the factory
 	// has an account of its own (config's [github] table). It is what makes
-	// the author of a comment a signal: see isBee. Empty (the default) means
+	// the author of a comment a signal: see IsBee. Empty (the default) means
 	// the factory shares an account with the people it works for, which is
 	// what bees did before [github] existed, and then the comment marker is
 	// the only signal there is. It is configuration, unlike the Login method,
@@ -169,7 +169,7 @@ type Comment struct {
 // bare Comment.
 func (c Comment) IsBee() bool { _, ok := BeeRole(c.Body); return ok }
 
-// isBee reports whether a comment with this author and body was written by
+// IsBee reports whether a comment with this author and body was written by
 // the factory rather than by a person. There are two independent ways to say
 // yes:
 //
@@ -188,7 +188,7 @@ func (c Comment) IsBee() bool { _, ok := BeeRole(c.Body); return ok }
 //
 // An empty login is every configuration that predates [github], and then this
 // is exactly the marker rule.
-func isBee(login, author, body string) bool {
+func IsBee(login, author, body string) bool {
 	if login != "" && strings.EqualFold(author, login) {
 		return true
 	}
@@ -196,8 +196,8 @@ func isBee(login, author, body string) bool {
 	return ok
 }
 
-// isBee is isBee for the login this client acts as.
-func (c *Client) isBee(author, body string) bool { return isBee(c.ActsAs, author, body) }
+// isBee is IsBee for the login this client acts as.
+func (c *Client) isBee(author, body string) bool { return IsBee(c.ActsAs, author, body) }
 
 // AwaitingBee reports whether the human side had the last word on an issue —
 // its creation or a human comment, with a tie against a bee comment broken by
@@ -238,7 +238,7 @@ func (i Issue) awaitingBee(seedHuman time.Time, login string) bool {
 		if c.CreatedAt.Before(last) {
 			continue // out of order: a later comment keeps the last word
 		}
-		last, human = c.CreatedAt, !isBee(login, c.Author.Login, c.Body)
+		last, human = c.CreatedAt, !IsBee(login, c.Author.Login, c.Body)
 	}
 	return human
 }
@@ -805,7 +805,7 @@ func (c *Client) Comment(ctx context.Context, number int, body string) error {
 // carries, so the orchestrator can tell bee comments from human comments
 // made with the same GitHub account. It is emitted whether or not [github]
 // gives the factory an account of its own: it costs nothing, and it is the
-// only signal that works on a shared account (see isBee).
+// only signal that works on a shared account (see IsBee).
 const BeesMarker = "<!-- bees:"
 
 // BeeRole reports the role that wrote a comment body, and whether it was a
