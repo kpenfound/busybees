@@ -130,7 +130,9 @@ type IssueState struct {
 	// instead of re-deriving one from the issue's workflow label: a label says
 	// an issue is in review, not whether its review has already happened.
 	// The label stays the human-facing truth all the same — a remembered stage
-	// it contradicts is dropped (scheduler.resumeStage).
+	// it contradicts is dropped, and so are AfterDevelop and PreReviewDone
+	// once the labels say the pull request they belong to is no longer being
+	// reviewed (scheduler.resumeStage).
 	//
 	// These are the developer worker's stages, not roles.reviewer.stages,
 	// which are sections of one reviewer session's prompt.

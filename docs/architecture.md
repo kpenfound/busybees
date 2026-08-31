@@ -375,32 +375,33 @@ stateDiagram-v2
 - **Resume.** A worker records the stage it is in — `develop`, `prereview`,
   `review` or `checks` — and the loop state that goes with it in
   `<state_dir>/issues/<n>.json`, before working each stage. A worker that finds
-  a recorded stage comes back to it, so a `bees run` killed in the checks
-  stage or in the middle of a check-fix round carries on there instead of
-  re-running a review that has already happened. A workflow label says an issue is in
-  review, never whether its review has already run.
-  Labels stay the human-facing truth all the same: a recorded stage they
-  contradict — one of the three review-loop stages on an issue with no open
-  pull request, or one a person has put back to `bees:ready` — is dropped with
-  a log line, and the worker starts where the labels say. So does a stage name
-  this version does not run, which is what a state file written by another one
-  looks like.
-  An issue with nothing recorded — a first run, or one last worked on before
-  the stage was recorded — starts exactly where it always did: the worker
-  looks for an open PR whose head is the branch, and if one exists and the
-  issue is labelled `bees:review` it starts in the prereview stage (review,
-  with `pre_review_checks = false` or the reviewer disabled); otherwise in
-  develop. This is how work survives a restart of `bees run`.
+  a recorded stage comes back to it, so a `bees run` killed in the checks stage
+  or in the middle of a check-fix round carries on there instead of re-running a
+  review that has already happened. A workflow label says an issue is in review,
+  never whether its review has already run. Labels stay the human-facing truth
+  all the same: a recorded stage they contradict — one of the three review-loop
+  stages on an issue with no open pull request, or one a person has put back to
+  `bees:ready` — is dropped with a log line, and the worker starts where the
+  labels say. So does a stage name this version does not run, which is what a
+  state file written by another one looks like. `develop` fits any label, so the
+  loop state recorded with it — which gate the round goes back to, and whether
+  the pre-review checks have been read — is dropped on the same test: an issue
+  whose labels have left the review loop starts a fresh round, whatever the last
+  worker was doing. An issue with nothing recorded — a first run, or one last
+  worked on before the stage was recorded — starts exactly where it always did:
+  the worker looks for an open PR whose head is the branch, and if one exists
+  and the issue is labelled `bees:review` it starts in the prereview stage
+  (review, with `pre_review_checks = false` or the reviewer disabled); otherwise
+  in develop. This is how work survives a restart of `bees run`.
 - **Rounds.** `<state_dir>/issues/<n>.json` records the review round, PR
   number, branch, `check_fix_rounds`, `worker_stage`, `after_develop`,
-  `pre_review_done`, `human_seen_at` and
-  `conflict_notified_sha`. The round is
+  `pre_review_done`, `human_seen_at` and `conflict_notified_sha`. The round is
   incremented on every `changes-requested` and compared with
-  `scheduler.max_review_rounds`; human feedback rounds do not count against
-  the limit. `check_fix_rounds` is incremented each time the reviewer is asked
-  to diagnose failing checks — the prereview and checks stages share the
-  counter — and compared with `roles.reviewer.max_check_fix_rounds`. Check fix
-  rounds do not count against `max_review_rounds`.
+  `scheduler.max_review_rounds`; human feedback rounds do not count against the
+  limit. `check_fix_rounds` is incremented each time the reviewer is asked to
+  diagnose failing checks — the prereview and checks stages share the counter —
+  and compared with `roles.reviewer.max_check_fix_rounds`. Check fix rounds do
+  not count against `max_review_rounds`.
 - **The reviewer's review stages** (`roles.reviewer.stages`) — sections of one
   reviewer session's prompt, not worker stages like the ones above and below:
   a staged review is still one session. The prompt carries the configured
@@ -424,12 +425,11 @@ stateDiagram-v2
   reviewer's prompt; the pending and the no-checks case tell it nothing was
   verified and to say so in its outcome note. A read that errors is advisory
   too: warn and review without a checks section (unlike the checks stage, where
-  the read is a merge gate),
-  recorded as the `pre-review-checks` degraded operation so a reviewer quietly
-  losing its checks section is visible.
-  Failed → `fixFailedChecks`, the same checks-mode reviewer and developer fix
-  round the checks stage uses, and the developer's next `pr-updated` returns
-  here (`afterDevelop = "prereview"`); every path out into `review` resets
+  the read is a merge gate), recorded as the `pre-review-checks` degraded
+  operation so a reviewer quietly losing its checks section is visible. Failed →
+  `fixFailedChecks`, the same checks-mode reviewer and developer fix round the
+  checks stage uses, and the developer's next `pr-updated` returns here
+  (`afterDevelop = "prereview"`); every path out into `review` resets
   `afterDevelop` to `"review"` and sets `prereviewDone`. The read belongs to the
   first review, so once `prereviewDone` is set the developer's next `pr-updated`
   goes straight to `review`: an ordinary changes-requested round pays neither
@@ -441,10 +441,11 @@ stateDiagram-v2
   since replaced is green. Whether the read has happened is remembered
   (`pre_review_done`), so a restarted worker does not pay for it twice; what it
   read is deliberately not remembered, so a review that resumes runs without a
-  checks section, exactly like the second round of a loop nothing interrupted.
-  A worker with nothing recorded reads again. `bees status` reports the stage as
-  `pre-review checks`; unlike the checks stage it does not append the gate,
-  because its own name is the useful one.
+  checks section, exactly like the second round of a loop nothing interrupted. A
+  worker with nothing recorded reads again, and so does one whose labels say the
+  pull request it recorded the read for is no longer under review. `bees status`
+  reports the stage as `pre-review checks`; unlike the checks stage it does not
+  append the gate, because its own name is the useful one.
 - **Checks stage** (`auto_merge`). `approve` only labels the PR and issue
   `bees:approved`; merging happens in the `checks` stage. `awaitChecks` sleeps
   `checks_wait`, then polls every `checks_poll_interval` until `Summarize`

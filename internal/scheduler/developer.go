@@ -81,7 +81,7 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 	//
 	// All three are remembered in the issue's bookkeeping (see resumeStage),
 	// so a scheduler killed mid-flight resumes where it stopped.
-	stage, afterDevelop, prereviewDone := s.resumeStage(bookkeeping, issue, pr, policy)
+	stage, afterDevelop, prereviewDone := s.resumeStage(log, bookkeeping, issue, pr, policy)
 	// The pre-review read, handed to the reviewer in its prompt.
 	var reviewChecks []github.Check
 	var reviewStatus string
@@ -464,10 +464,12 @@ var workerStages = []string{"develop", "prereview", "review", "checks"}
 // The label stays the human-facing truth. A remembered stage it contradicts —
 // a review-loop stage on an issue with no open pull request, or one a person
 // has put back to bees:ready or bees:triage — is dropped, with a log line, and
-// the worker starts where the label says. An issue with nothing remembered
-// (the first run, and every issue that existed before the stage was recorded)
-// starts exactly where it always did.
-func (s *Scheduler) resumeStage(bk state.IssueState, issue github.Issue, pr *github.PR, policy config.MergePolicy) (stage, afterDevelop string, prereviewDone bool) {
+// the worker starts where the label says. develop contradicts no label, so the
+// loop state remembered with it is dropped on the same test instead: an issue
+// whose labels have left the review loop starts a fresh round. An issue with
+// nothing remembered (the first run, and every issue that existed before the
+// stage was recorded) starts exactly where it always did.
+func (s *Scheduler) resumeStage(log *slog.Logger, bk state.IssueState, issue github.Issue, pr *github.PR, policy config.MergePolicy) (stage, afterDevelop string, prereviewDone bool) {
 	fromLabel := "develop"
 	if pr != nil && s.stateOf(issue.Labels) == "review" {
 		// A worker resuming into a review it has no record of reads the
@@ -482,15 +484,25 @@ func (s *Scheduler) resumeStage(bk state.IssueState, issue github.Issue, pr *git
 		return fromLabel, "review", false
 	}
 	if !s.stageMatchesLabels(bk.WorkerStage, issue, pr) {
-		s.log.Info("the remembered stage contradicts the issue's labels; resuming from the label",
-			"issue", issue.Number, "remembered", bk.WorkerStage, "state", s.stateOf(issue.Labels), "stage", fromLabel)
+		log.Info("the remembered stage contradicts the issue's labels; resuming from the label",
+			"remembered", bk.WorkerStage, "state", s.stateOf(issue.Labels), "stage", fromLabel)
 		return fromLabel, "review", false
 	}
-	afterDevelop = bk.AfterDevelop
+	afterDevelop, prereviewDone = bk.AfterDevelop, bk.PreReviewDone
+	if !s.inReviewLoop(issue, pr) {
+		// The sub-state belongs to a pull request under review: which gate a
+		// developer round goes back to, and whether that pull request's checks
+		// have been read. develop matches any label, so without this an issue
+		// whose labels have left the review loop — bees:ready after
+		// reopenApproved sent an approved pull request back for more work —
+		// would carry a remembered after_develop of "checks" into a fresh
+		// round and merge the pull request without reviewing it.
+		afterDevelop, prereviewDone = "review", false
+	}
 	if afterDevelop != "prereview" && afterDevelop != "checks" {
 		afterDevelop = "review"
 	}
-	return bk.WorkerStage, afterDevelop, bk.PreReviewDone
+	return bk.WorkerStage, afterDevelop, prereviewDone
 }
 
 // stageMatchesLabels reports whether a remembered stage still agrees with what
@@ -499,7 +511,8 @@ func (s *Scheduler) resumeStage(bk state.IssueState, issue github.Issue, pr *git
 // in a state that has not reached one — bees:ready after a conflict reopened
 // it, or anything a person set by hand — is one whose review is over whatever
 // the last worker remembered. An unknown stage (a state file written by
-// another version) matches nothing and is dropped the same way.
+// another version) matches nothing and is dropped the same way. The loop state
+// remembered alongside develop is tested separately, in resumeStage.
 func (s *Scheduler) stageMatchesLabels(stage string, issue github.Issue, pr *github.PR) bool {
 	if stage == "develop" {
 		return true
@@ -507,9 +520,15 @@ func (s *Scheduler) stageMatchesLabels(stage string, issue github.Issue, pr *git
 	if !slices.Contains(workerStages, stage) {
 		return false
 	}
-	// in-progress as well as review: the developer session of a check-fix
-	// round sets bees:in-progress and returns to the stage that found the
-	// failure, so a worker legitimately sits in checks under either label.
+	return s.inReviewLoop(issue, pr)
+}
+
+// inReviewLoop reports whether the issue's labels still say a pull request of
+// this issue is being worked on. in-progress as well as review: the developer
+// session of a check-fix round sets bees:in-progress and returns to the stage
+// that found the failure, so a worker legitimately sits in checks under either
+// label.
+func (s *Scheduler) inReviewLoop(issue github.Issue, pr *github.PR) bool {
 	st := s.stateOf(issue.Labels)
 	return pr != nil && (st == "review" || st == "in-progress")
 }

@@ -211,6 +211,10 @@ func TestResumeStage(t *testing.T) {
 			state: "in-progress", pr: pr, stage: "checks", after: "checks", prereviewDone: true},
 		{name: "remembered mid-round, the read already made", bk: state.IssueState{WorkerStage: "develop", AfterDevelop: "review", PreReviewDone: true},
 			state: "review", pr: pr, stage: "develop", after: "review", prereviewDone: true},
+		// develop fits any label, so its sub-state is dropped on the same
+		// test the stages are: this issue is starting a fresh round.
+		{name: "a develop stage on an issue sent back to ready", bk: state.IssueState{WorkerStage: "develop", AfterDevelop: "checks", PreReviewDone: true},
+			state: "ready", pr: pr, stage: "develop", after: "review"},
 		// The label wins, and takes the sub-state with it.
 		{name: "a review stage on an issue sent back to ready", bk: state.IssueState{WorkerStage: "review", AfterDevelop: "review", PreReviewDone: true},
 			state: "ready", pr: pr, stage: "develop", after: "review"},
@@ -224,7 +228,7 @@ func TestResumeStage(t *testing.T) {
 			state: "review", pr: pr, stage: "develop", after: "review"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			stage, after, done := h.sched.resumeStage(tc.bk, labelled(tc.state), tc.pr, h.cfg.Merge())
+			stage, after, done := h.sched.resumeStage(h.sched.log, tc.bk, labelled(tc.state), tc.pr, h.cfg.Merge())
 			if stage != tc.stage || after != tc.after || done != tc.prereviewDone {
 				t.Errorf("resumeStage = (%q, %q, %v), want (%q, %q, %v)", stage, after, done, tc.stage, tc.after, tc.prereviewDone)
 			}
@@ -262,5 +266,34 @@ func TestExecReviewerForgetsARecordedStage(t *testing.T) {
 	// forgotten state claimed had already happened.
 	if n := h.gh.callCount("pr checks"); n != 1 {
 		t.Fatalf("the checks were read %d times, want 1", n)
+	}
+}
+
+// TestASubStateDoesNotSurviveTheIssueGoingBackToReady: develop matches any
+// label, so its sub-state has to be checked separately. A worker in a
+// post-approval check-fix round records develop with after_develop "checks";
+// when its pull request then gets human feedback, reopenApproved sends the
+// issue back to bees:ready — a fresh developer round, which must end in a
+// review, not in the merge gate the remembered after_develop points at.
+func TestASubStateDoesNotSurviveTheIssueGoingBackToReady(t *testing.T) {
+	h := newHarness(t, checksTOML)
+	seedChecksIssue(t, h)
+	if err := os.WriteFile(h.gh.prMarker, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// What the killed worker left: it had approved the pull request, a check
+	// failed, and the reviewer sent the developer a fix request.
+	if err := h.store.SaveIssue(state.IssueState{Number: 1, Round: 1, PR: fakePR, Branch: "bees/issue-1",
+		WorkerStage: "develop", AfterDevelop: "checks", PreReviewDone: true}); err != nil {
+		t.Fatal(err)
+	}
+	h.gh.checks = []checksResponse{{passingJSON, nil}}
+	runChecksLoop(t, h)
+
+	// The label says ready, so this is a first round: the developer's push is
+	// reviewed before the checks gate merges it.
+	h.wantOrder("developer-issue-1-r1", "reviewer-pr-101-r1")
+	if len(h.gh.merged) != 1 || h.gh.merged[0] != fakePR {
+		t.Fatalf("merged %v", h.gh.merged)
 	}
 }
