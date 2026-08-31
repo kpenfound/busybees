@@ -764,8 +764,8 @@ the project manager rework it).
 QA is a singleton that runs against a detached checkout of the default
 branch, so it only ever sees merged work. It runs when at least
 `scheduler.qa_interval` (default 30m) has passed since its last run **and**
-something matching the filter has been merged since then (that merged-PR check
-itself happens at most once per `qa_interval`); its very first run
+something matching the filter has been merged since then (that merged-PR
+check itself happens at most once per `qa_interval`); its very first run
 happens immediately and looks back seven days. Unread mail in the QA inbox
 triggers an earlier run, whatever the interval: `qa_interval` is a floor on
 the runs QA starts by itself, not on the ones a person or the product

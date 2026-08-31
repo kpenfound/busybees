@@ -139,9 +139,8 @@ A full pass is:
 6. **dispatch singletons** – project manager (has triage issues or unread
    mail), product manager (unread mail, first run, or interval elapsed), QA
    (unread mail, first run, or interval elapsed and something merged since —
-   checked at most once per `qa_interval`). Each runs in
-   its own goroutine, guarded by a `running` flag so at most one session per
-   role exists.
+   checked at most once per `qa_interval`). Each runs in its own goroutine,
+   guarded by a `running` flag so at most one session per role exists.
 
    The product manager's "has work" test also looks at `snapshot.feedback`
    and `snapshot.features`: `freshIssues` fetches comments (`gh issue view`)
