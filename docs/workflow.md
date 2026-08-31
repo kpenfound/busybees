@@ -625,7 +625,8 @@ The read happens once per pull request. A later review round — the developer
 answering the reviewer's feedback — goes straight to the reviewer, with no
 second read, no second wait and no checks section: the checks that were read
 describe a head the developer has since replaced. A restarted `bees run` does
-read them again, because the process has no memory of the first read.
+not read them again either: that the read happened is recorded in
+`<state_dir>/issues/<n>.json` along with the stage the worker was in.
 
 `bees status` shows the worker in the `pre-review checks` stage while it waits.
 Set `pre_review_checks = false` to go straight from the developer to the

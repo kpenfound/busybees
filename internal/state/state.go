@@ -7,7 +7,8 @@
 //	notes/<role>.md      per-role notes, the roles' only long-term memory
 //	notes/archive/       notes files replaced by `bees notes reset`
 //	sessions/<id>/       one directory per claude session (prompts, transcript, result)
-//	issues/<n>.json      per-issue bookkeeping (review round, PR number)
+//	issues/<n>.json      per-issue bookkeeping (review round, PR number, the
+//	                     developer worker's stage)
 //	<role>.json          per-role bookkeeping (last run, session counters);
 //	                     every role has one, including developer and reviewer
 //	status.json          live scheduler status
@@ -54,7 +55,7 @@ This directory is managed by ` + "`bees`" + `. It holds:
 - notes/     each role's notes file (their only memory between sessions),
              with archive/ holding the ones ` + "`bees notes reset`" + ` replaced
 - sessions/  prompts, transcripts and results of every Claude Code session
-- issues/    per-issue bookkeeping (review rounds)
+- issues/    per-issue bookkeeping (review rounds, the developer worker's stage)
 - status.json live scheduler status (` + "`bees status`" + `)
 - ledger.jsonl one line per finished session: turns, cost and outcome (` + "`bees cost`" + `)
 - bees.log    every scheduler log record as JSON, rotated at 10 MiB
@@ -120,6 +121,24 @@ type IssueState struct {
 	// CheckFixRounds counts reviewer-diagnoses/developer-fixes iterations
 	// for failing required checks.
 	CheckFixRounds int `json:"check_fix_rounds,omitempty"`
+	// WorkerStage is the stage the developer worker (scheduler.workIssue) was
+	// in — "develop", "prereview", "review" or "checks" — AfterDevelop the
+	// stage its next developer session leads back to, and PreReviewDone
+	// whether the pre-review checks have already been read for this pull
+	// request. They are the worker's loop state, written on every transition,
+	// so a scheduler killed mid-flight comes back to the stage it was in
+	// instead of re-deriving one from the issue's workflow label: a label says
+	// an issue is in review, not whether its review has already happened.
+	// The label stays the human-facing truth all the same — a remembered stage
+	// it contradicts is dropped, and so are AfterDevelop and PreReviewDone
+	// once the labels say the pull request they belong to is no longer being
+	// reviewed (scheduler.resumeStage).
+	//
+	// These are the developer worker's stages, not roles.reviewer.stages,
+	// which are sections of one reviewer session's prompt.
+	WorkerStage   string `json:"worker_stage,omitempty"`
+	AfterDevelop  string `json:"after_develop,omitempty"`
+	PreReviewDone bool   `json:"pre_review_done,omitempty"`
 	// HumanSeenAt is the timestamp of the latest human PR activity already
 	// delivered to the developer.
 	HumanSeenAt time.Time `json:"human_seen_at,omitempty"`
