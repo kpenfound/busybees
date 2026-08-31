@@ -371,7 +371,9 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 
 // beesEnv returns the BEES_* variables that describe the session, in a stable
 // order. They go both into claude's environment and, explicitly, into the
-// built-in MCP server's entry in mcp.json.
+// built-in MCP server's entry in mcp.json — which is written to the session
+// directory, so nothing secret may join them. The variable github.token reads
+// is set in env alone for that reason.
 func (r *Runner) beesEnv(req Request, sessionDir string) []envVar {
 	vars := []envVar{
 		{EnvRole, req.Role.Name},
@@ -422,7 +424,8 @@ func (r *Runner) env(req Request, sessionDir string) []string {
 	// inherited ones keeps a session started from inside another session (a
 	// nested `bees run`, `bees exec`, or a test binary) from picking up a stale
 	// issue, PR or branch number; the ones this session has none of are then
-	// absent rather than wrong.
+	// absent rather than wrong. The one exception is the variable
+	// github.token reads, put back below with the value bees resolved.
 	envs := os.Environ()
 	env := make([]string, 0, len(envs))
 	for _, kv := range envs {
@@ -450,6 +453,19 @@ func (r *Runner) env(req Request, sessionDir string) []string {
 	// second identity for itself.
 	if token := r.GitHub.ResolvedToken(); token != "" {
 		set(EnvGHToken, token)
+		// github.token may be a $VAR reference, and when the operator named a
+		// BEES_* variable the strip above drops it — leaving a session whose
+		// gh works but whose own `bees` commands cannot load bees.toml at all,
+		// because a reference that expands to nothing is a load error. Put the
+		// name back, holding the value the scheduler resolved, so no session
+		// can be handed a token from a stale environment. It is deliberately
+		// not one of beesEnv's variables: those are written into mcp.json in
+		// the session directory, and the secret must not reach disk. claude
+		// passes its own environment on to the MCP server it starts, so the
+		// built-in one is served by this.
+		if v := r.GitHub.TokenVar(); v != "" {
+			set(v, token)
+		}
 	}
 	for _, v := range r.gitIdentity() {
 		set(v.name, v.value)

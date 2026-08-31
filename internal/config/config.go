@@ -282,6 +282,14 @@ func (g GitHub) ResolvedToken() string {
 	return strings.TrimSpace(os.ExpandEnv(g.Token))
 }
 
+// TokenVar names the environment variable github.token reads, for a token
+// that is a single $VAR or ${VAR} reference, and "" for anything else. The
+// value alone is not enough to hand on: every in-session `bees` command
+// (`bees mcp serve` above all) loads this config again, and a reference that
+// expands to nothing is a load error, so a session has to be given the
+// variable under the name bees.toml names.
+func (g GitHub) TokenVar() string { return tokenVar(g.Token) }
+
 // tokenVar names the environment variable a token consisting of a single $VAR
 // or ${VAR} reference reads, so an error can say which variable to set. It
 // returns "" for a token that is not a bare reference.

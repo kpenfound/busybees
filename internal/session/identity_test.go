@@ -30,6 +30,17 @@ const machineEnv = "machine-owner"
 // environment it was handed, last assignment winning as os/exec does.
 func sessionEnv(t *testing.T, gh config.GitHub) map[string]string {
 	t.Helper()
+	env, _ := sessionEnvDir(t, gh)
+	return env
+}
+
+// sessionEnvDir is sessionEnv plus the session directory, for the callers that
+// have something to say about what was written there. The environment is
+// dumped outside that directory on purpose: it holds every secret a session
+// was given, and a test asserting nothing secret reached the session directory
+// must not be reading its own scaffolding.
+func sessionEnvDir(t *testing.T, gh config.GitHub) (map[string]string, string) {
+	t.Helper()
 	for _, k := range []string{EnvGHToken, "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"} {
 		t.Setenv(k, machineEnv)
 	}
@@ -38,8 +49,9 @@ func sessionEnv(t *testing.T, gh config.GitHub) map[string]string {
 	// runs in.
 	t.Setenv("GIT_CONFIG_COUNT", "")
 
+	dump := filepath.Join(t.TempDir(), "env.txt")
 	bin := fakeClaude(t, `
-env > "$BEES_SESSION_DIR/env.txt"
+env > `+dump+`
 echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
 `)
 	r := newRunner(t, bin)
@@ -51,7 +63,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := os.ReadFile(filepath.Join(res.SessionDir, "env.txt"))
+	b, err := os.ReadFile(dump)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +74,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
 			out[k] = v
 		}
 	}
-	return out
+	return out, res.SessionDir
 }
 
 // gitConfigEntries reads the GIT_CONFIG_KEY_n / GIT_CONFIG_VALUE_n pairs back
@@ -213,5 +225,73 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
 	want := "busybees|bot@example.com|busybees|bot@example.com|a commit by the factory"
 	if got := strings.TrimSpace(out); got != want {
 		t.Errorf("pushed commit = %q, want %q", got, want)
+	}
+}
+
+// TestTheTokenVariableReachesTheSession: github.token may be a "$VAR"
+// reference, and env strips every inherited BEES_* variable, so a
+// BEES_-prefixed name never reached the session. Its gh still worked — the
+// scheduler resolves the token and passes GH_TOKEN — but every in-session
+// `bees` command loads bees.toml again, and a reference that expands to
+// nothing is a load error, so the built-in MCP server behind issue_view,
+// comment, done and the rest failed on the first call. The name has to reach
+// the session; the value it carries is the one the scheduler resolved, so a
+// session can never be handed a token from a stale environment.
+func TestTheTokenVariableReachesTheSession(t *testing.T) {
+	const varName = "BEES_TEST_SESSION_TOKEN"
+	const secret = "ghp_only_in_the_environment"
+	const toml = "version = 1\n[project]\nrepo = \"a/b\"\ndefault_branch = \"main\"\n" +
+		"[github]\nlogin = \"busybees-bot\"\ntoken = \"$" + varName + "\"\n"
+
+	// The environment bees itself runs in, which is where the secret lives.
+	t.Setenv(varName, secret)
+	env, dir := sessionEnvDir(t, config.GitHub{Login: "busybees-bot", Token: "$" + varName})
+
+	if env[varName] != secret {
+		t.Errorf("%s = %q, want the resolved token: without it a session cannot load bees.toml", varName, env[varName])
+	}
+	if env[EnvGHToken] != secret {
+		t.Errorf("%s = %q, want %q", EnvGHToken, env[EnvGHToken], secret)
+	}
+
+	// Load bees.toml the way an in-session `bees mcp serve` does: with the
+	// environment the session was handed and nothing else. Dropping the test
+	// process's own copy of the variable first is what makes the load below an
+	// assertion about the session rather than about this process.
+	path := filepath.Join(t.TempDir(), "bees.toml")
+	if err := os.WriteFile(path, []byte(toml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Unsetenv(varName); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := config.Load(path); err == nil {
+		t.Fatal("bees.toml loads with the variable unset: the check below could not fail")
+	}
+	for k, v := range env {
+		if strings.HasPrefix(k, beesEnvPrefix) {
+			t.Setenv(k, v)
+		}
+	}
+	if _, err := config.Load(path); err != nil {
+		t.Errorf("a session started with [github] configured cannot load bees.toml: %v", err)
+	}
+
+	// mcp.json and the prompts are written into the session directory, which
+	// outlives the session; the secret must be in none of them.
+	if err := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(b), secret) {
+			t.Errorf("the token was written to %s", p)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
