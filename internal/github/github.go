@@ -982,9 +982,9 @@ func (c Created) MilestoneTitle() string {
 // none, which gh resolves against the credentials the call carries. The two
 // answer alike — a client that has a login carries that login's token — but
 // naming it says which account is meant instead of leaving it to whatever
-// authentication gh finds. Either way this asks about the account bees' own
-// code acts as, not about the machine owner - see the note on
-// Scheduler.adoptCreated.
+// authentication gh finds. Either way this asks about the account the factory
+// acts as, which since #242 is also the account its sessions' gh acts as -
+// see the note on Scheduler.adoptCreated for what that covers.
 func (c *Client) ListCreatedSince(ctx context.Context, t time.Time) ([]Created, error) {
 	author := "@me"
 	if c.ActsAs != "" {

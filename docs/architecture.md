@@ -500,12 +500,14 @@ saved to `stderr.log` when non-empty, and `result.json` summarises the run.
   `SHELL` when `shell` is set; then `BEES_ROLE`, `BEES_SESSION_DIR`,
   `BEES_STATE_DIR`, `BEES_CONFIG`, `BEES_REPO`, `BEES_LABEL`, `BEES_BIN`, plus
   `BEES_NOTES_FILE`, `BEES_ISSUE`, `BEES_PR`, `BEES_BRANCH` when they apply and
-  `BEES_REVIEW_MODE=checks` for the reviewer's checks-mode sessions; and, unless
-  `GIT_CONFIG_COUNT` is already set, `GIT_CONFIG_*` entries for
-  `push.autoSetupRemote=true` / `push.default=current`. The directory holding
-  the `bees` binary is prepended to `PATH` so `bees mail`, `bees issue` and
-  `bees done` resolve inside the session. The `BEES_*` variables are also passed
-  explicitly to the built-in MCP server rather than left to inheritance.
+  `BEES_REVIEW_MODE=checks` for the reviewer's checks-mode sessions; then the
+  factory's own [GitHub identity](configuration.md#github) when `[github]`
+  configures one — `GH_TOKEN`, `GIT_AUTHOR_*` and `GIT_COMMITTER_*`; and, unless
+  `GIT_CONFIG_COUNT` is already set, the `GIT_CONFIG_*` entries below. The
+  directory holding the `bees` binary is prepended to `PATH` so `bees mail`,
+  `bees issue` and `bees done` resolve inside the session. The `BEES_*`
+  variables are also passed explicitly to the built-in MCP server rather than
+  left to inheritance.
 - **Prompts.** `prompts.System` renders `system/common.md` + `system/<role>.md`
   and appends the role's custom text from `bees.toml`; `prompts.Task` renders
   `task/<role>.md`. Both take a single `prompts.Data` struct (project, filter,
@@ -536,11 +538,18 @@ saved to `stderr.log` when non-empty, and `result.json` summarises the run.
   its own process group and on expiry the whole group is `SIGKILL`ed so MCP
   servers die with it. The result is marked `TimedOut`.
 
-Unless `GIT_CONFIG_COUNT` is already set, the runner also exports
-`GIT_CONFIG_COUNT=2` with `push.autoSetupRemote=true` and `push.default=current`,
-so a session can run a plain `git push` on a branch the workspace created with
-`git worktree add --no-track -b …` without busybees ever editing the clone's git
-configuration.
+Unless `GIT_CONFIG_COUNT` is already set, the runner also exports git
+configuration through `GIT_CONFIG_KEY_n` / `GIT_CONFIG_VALUE_n`, with
+`GIT_CONFIG_COUNT` derived from the entries it built rather than written out:
+`push.autoSetupRemote=true` and `push.default=current`, so a session can run a
+plain `git push` on a branch the workspace created with `git worktree add
+--no-track -b …`; and, when `[github]` carries a token, an empty
+`credential.helper` followed by `credential.helper=!gh auth git-credential`,
+so that an https push authenticates as the factory. The empty value comes
+first because git asks helpers in configuration order and takes the first
+answer, and `GIT_CONFIG_*` is read last — without it the machine owner's own
+helper would answer and the push would be theirs. busybees never edits the
+clone's git configuration.
 
 ## The mailbox
 
@@ -582,20 +591,20 @@ Messages are addressed to a **role**, not a session. Delivery rules:
 
 **Visibility backstop.** After every session (`runSession` in `sessions.go`)
 the scheduler calls `adoptCreated`: `github.Client.ListCreatedSince` lists
-issues and PRs matching
-`author:<the account bees acts as> created:>=<session start>` regardless of
-labels (the login [`[github]`](configuration.md#github) configures, or `@me`
-when there is none, which `gh` resolves against the credentials the client
-carries — either way the bot rather than the machine owner once `[github]` is
-set, see issue #263), and anything carrying `<label>` or a `<label>:*` label
-but missing part of the filter is repaired through the same `ensureVisible`
+issues and PRs matching `author:<the account bees acts as>
+created:>=<session start>` regardless of labels (the login
+[`[github]`](configuration.md#github) configures, or `@me` when there is
+none, which `gh` resolves against the credentials the client carries —
+sessions carry the same token, so a pull request one of them opened is that
+account's too), and anything carrying `<label>` or a `<label>:*` label but
+missing part of the filter is repaired through the same `ensureVisible`
 helper the developer worker uses on a PR it opened — the base label, the
 configured `filter.assignee`, and, for pull requests only, the configured
 `filter.milestone`. Both halves of the gate are needed: a pull request a
 session just opened carries only `<label>`, and earns its first `<label>:*`
-label at approval. Items with no factory label at all are left alone, and one
-item that cannot be repaired is logged and skipped rather than stopping the
-others.
+label at approval. Items with no factory label at all are left alone, and
+one item that cannot be repaired is logged and skipped rather than stopping
+the others.
 
 A milestone is set on pull requests and never on issues: a milestone on an
 issue is a person's decision, and an issue the factory creates inherits one
