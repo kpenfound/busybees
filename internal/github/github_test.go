@@ -706,20 +706,23 @@ func TestPRActivityDropsTheFactorysOwnComments(t *testing.T) {
 	}
 }
 
-// TestListCreatedSinceSearchesByTheActingLogin pins the query the visibility
-// backstop sends: it names the account bees acts as, falling back to "@me"
-// when the factory has no login of its own. The fake gh ignores --search, so
-// the arguments are what there is to assert on — and they are what changed.
-func TestListCreatedSinceSearchesByTheActingLogin(t *testing.T) {
+// TestListCreatedSinceCarriesNoAuthorQualifier pins the query the visibility
+// backstop sends: a created:>= bound and nothing about who opened the item.
+// The backstop exists for a pull request a session opened with its own
+// `gh pr create` and for an item a person opened by hand, and neither is
+// reliably the acting account's — scoping the search by author dropped
+// exactly those and kept the ones bees created through its own code, which
+// never needed repairing (#263, #268). The fake gh ignores --search, so the
+// arguments are the only place this can be asserted.
+func TestListCreatedSinceCarriesNoAuthorQualifier(t *testing.T) {
 	since := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
-	for _, tc := range []struct {
-		name, login, want string
-	}{
-		{"the machine's own account", "", "author:@me created:>="},
-		{"a login of its own", "busybees-bot", "author:busybees-bot created:>="},
+	for _, tc := range []struct{ name, login string }{
+		{"the machine's own account", ""},
+		{"a login of its own", "busybees-bot"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var searches []string
+			var limits int
 			c := NewAs("a/b", tc.login, "")
 			c.Exec = func(ctx context.Context, args ...string) ([]byte, error) {
 				i := slices.Index(args, "--search")
@@ -727,6 +730,9 @@ func TestListCreatedSinceSearchesByTheActingLogin(t *testing.T) {
 					return nil, fmt.Errorf("no --search in %v", args)
 				}
 				searches = append(searches, args[i+1])
+				if j := slices.Index(args, "--limit"); j >= 0 && j+1 < len(args) && args[j+1] == "50" {
+					limits++
+				}
 				return []byte("[]"), nil
 			}
 			if _, err := c.ListCreatedSince(context.Background(), since); err != nil {
@@ -735,9 +741,15 @@ func TestListCreatedSinceSearchesByTheActingLogin(t *testing.T) {
 			if len(searches) != 2 { // one for issues, one for pull requests
 				t.Fatalf("searches: %v", searches)
 			}
-			for _, s := range searches {
-				if !strings.HasPrefix(s, tc.want) {
-					t.Errorf("--search %q, want it to start with %q", s, tc.want)
+			if limits != 2 {
+				t.Errorf("--limit 50 on %d of 2 calls", limits)
+			}
+			for _, q := range searches {
+				if strings.Contains(q, "author:") {
+					t.Errorf("--search %q scopes the backstop by author", q)
+				}
+				if want := "created:>=2026-08-30T11:59:00Z"; !strings.Contains(q, want) {
+					t.Errorf("--search %q, want it to contain %q", q, want)
 				}
 			}
 		})

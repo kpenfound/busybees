@@ -957,7 +957,7 @@ func (c *Client) apiList(ctx context.Context, path string, v any) error {
 	return json.Unmarshal(merged, v)
 }
 
-// Created is an issue or PR created by the current account.
+// Created is an issue or PR created recently, whoever opened it.
 type Created struct {
 	Number    int
 	IsPR      bool
@@ -974,23 +974,20 @@ func (c Created) MilestoneTitle() string {
 	return c.Milestone.Title
 }
 
-// ListCreatedSince returns issues and PRs authored by the account this client
-// acts as, at or after t, regardless of labels. Used to make sure everything a
-// session created stays visible to the factory.
+// ListCreatedSince returns issues and PRs created at or after t, regardless of
+// labels and regardless of who opened them. Used to make sure everything
+// created while a session ran stays visible to the factory.
 //
-// The search names that account: the configured login, or "@me" when there is
-// none, which gh resolves against the credentials the call carries. The two
-// answer alike — a client that has a login carries that login's token — but
-// naming it says which account is meant instead of leaving it to whatever
-// authentication gh finds. Either way this asks about the account the factory
-// acts as, which since #242 is also the account its sessions' gh acts as -
-// see the note on Scheduler.adoptCreated for what that covers.
+// The search carries no author: qualifier on purpose. The two kinds of item
+// the backstop exists for are a pull request a developer session opened with
+// its own `gh pr create` and an issue or pull request a person opened by
+// hand, and neither is reliably authored by the account this client
+// authenticates as — an author: qualifier drops exactly the items that need
+// repairing and keeps the ones bees created through its own code, which
+// issues.Create already gave the whole filter. Who owns an item is decided by
+// its labels, in Scheduler.adoptCreated.
 func (c *Client) ListCreatedSince(ctx context.Context, t time.Time) ([]Created, error) {
-	author := "@me"
-	if c.ActsAs != "" {
-		author = c.ActsAs
-	}
-	search := fmt.Sprintf("author:%s created:>=%s", author, t.UTC().Add(-time.Minute).Format("2006-01-02T15:04:05Z"))
+	search := fmt.Sprintf("created:>=%s", t.UTC().Add(-time.Minute).Format("2006-01-02T15:04:05Z"))
 	var out []Created
 	issuesOut, err := c.Exec(ctx, "issue", "list", "-R", c.Repo, "--state", "all", "--search", search, "--limit", "50", "--json", "number,labels,assignees,milestone,createdAt")
 	if err != nil {
