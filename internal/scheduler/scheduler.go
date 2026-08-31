@@ -828,6 +828,11 @@ func (s *Scheduler) reconcile(ctx context.Context, snap *snapshot) error {
 	return errors.Join(errs...)
 }
 
+// relabel replaces one label with another in a local copy of an issue's
+// labels, so a pass that has just edited them on GitHub reads what GitHub now
+// shows. from is a full label name ("bees:ready"), not the short state
+// stateOf returns: given a short name nothing is removed and the copy carries
+// both labels.
 func relabel(labels []github.Label, from, to string) []github.Label {
 	out := make([]github.Label, 0, len(labels)+1)
 	for _, l := range labels {

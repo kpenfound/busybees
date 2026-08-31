@@ -297,3 +297,32 @@ func TestASubStateDoesNotSurviveTheIssueGoingBackToReady(t *testing.T) {
 		t.Fatalf("merged %v", h.gh.merged)
 	}
 }
+
+// TestExecReviewerReviewsAnIssueThatIsNotYetInReview: `bees exec reviewer`
+// forces the review stage by rewriting the issue's state label, and the local
+// copy the worker reads has to be rewritten too. relabel matches a full label
+// name while stateOf returns the short state, so spelling the state back out
+// is what actually removes the old label: given "in-progress" nothing was
+// removed, the copy carried bees:in-progress and bees:review at once, and
+// stateOf — first hit in StateLabels() order — read in-progress back out and
+// started a developer session instead of a review.
+func TestExecReviewerReviewsAnIssueThatIsNotYetInReview(t *testing.T) {
+	h := newHarness(t, prereviewTOML)
+	seedPreReviewIssue(t, h, "Review what is already pushed")
+	h.gh.issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:in-progress"}, {Name: "bees:size/s"}}
+	if err := os.WriteFile(h.gh.prMarker, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	seedCounter(t, h, "review", 1) // approve straight away
+	h.gh.checks = []checksResponse{{passingJSON, nil}}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if err := h.sched.RunRole(ctx, config.RoleReviewer, 1, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	h.wantOrder("reviewer-pr-101-r1")
+	if n := len(h.sessions(config.RoleDeveloper)); n != 0 {
+		t.Fatalf("%d developer sessions ran, want none: exec reviewer asked for a review", n)
+	}
+}
