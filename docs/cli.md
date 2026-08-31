@@ -906,6 +906,7 @@ Prints `bees <version>`, resolved from the binary itself:
 | `go build ./cmd/bees` in a clone | The version Go stamps from the checkout — on Go 1.24+ a pseudo-version, with `+dirty` appended when the working tree has uncommitted changes. |
 | A build whose module version is `(devel)` but that carries VCS stamps | `bees dev (b24a0605c2a1)` — the 12-character commit, with ` modified` appended when the working tree was dirty. |
 | Built with `-ldflags "-X main.version=v1.2.3"` | `bees v1.2.3`. The override wins over everything else. |
+| A binary from a [GitHub release](releasing.md) | `bees v0.2.0` — the tag the release was cut from, stamped through that same override. |
 | No build information at all | `bees dev`. |
 
 ### `bees completion <shell>`
