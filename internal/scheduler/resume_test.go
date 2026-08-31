@@ -230,6 +230,18 @@ func TestResumeStage(t *testing.T) {
 		// test the stages are: this issue is starting a fresh round.
 		{name: "a develop stage on an issue sent back to ready", bk: state.IssueState{PR: fakePR, WorkerStage: "develop", AfterDevelop: "checks", PreReviewDone: true},
 			state: "ready", pr: pr, stage: "develop", after: "review"},
+		// The one develop record whose labels are legitimately outside the
+		// review loop: the post-approval checks sent it back to the developer
+		// and it was recorded before the develop stage could relabel the
+		// issue. Its gate survives; pre_review_done does not, because nothing
+		// on the way back to the checks asks whether the first review's read
+		// was made.
+		{name: "a post-approval fix round under approved", bk: state.IssueState{PR: fakePR, WorkerStage: "develop", AfterDevelop: "checks", PreReviewDone: true},
+			state: "approved", pr: pr, stage: "develop", after: "checks"},
+		{name: "a post-approval fix round recorded for another pull request", bk: state.IssueState{PR: 999, WorkerStage: "develop", AfterDevelop: "checks", PreReviewDone: true},
+			state: "approved", pr: pr, stage: "develop", after: "review"},
+		{name: "a post-approval fix round whose pull request has gone", bk: state.IssueState{PR: fakePR, WorkerStage: "develop", AfterDevelop: "checks", PreReviewDone: true},
+			state: "approved", stage: "develop", after: "review"},
 		// The label wins, and takes the sub-state with it.
 		{name: "a review stage on an issue sent back to ready", bk: state.IssueState{PR: fakePR, WorkerStage: "review", AfterDevelop: "review", PreReviewDone: true},
 			state: "ready", pr: pr, stage: "develop", after: "review"},
@@ -390,8 +402,9 @@ func TestAWorkerKilledInThePostApprovalChecksIsResumed(t *testing.T) {
 // TestAnApprovedIssueThatIsNotAResumptionIsNotDispatched: bees:approved still
 // means "waiting for a person to merge" for every issue a person would
 // recognise as approved. Only the stage a worker recorded says otherwise, so
-// an approved issue with nothing remembered — or with a stage that is not the
-// post-approval checks — is left exactly where it is.
+// an approved issue with nothing remembered — or with a stage that is neither
+// the post-approval checks nor the develop round they send back — is left
+// exactly where it is.
 func TestAnApprovedIssueThatIsNotAResumptionIsNotDispatched(t *testing.T) {
 	checks := &state.IssueState{Number: 1, Round: 1, PR: fakePR, Branch: "bees/issue-1",
 		WorkerStage: "checks", AfterDevelop: "checks"}
@@ -407,6 +420,10 @@ func TestAnApprovedIssueThatIsNotAResumptionIsNotDispatched(t *testing.T) {
 		{"nothing remembered", nil, true},
 		{"a stage other than checks", &state.IssueState{Number: 1, Round: 1, PR: fakePR, Branch: "bees/issue-1",
 			WorkerStage: "review", AfterDevelop: "review"}, true},
+		// develop is recorded by every round there is; only the gate it
+		// returns to says this one came from the post-approval checks.
+		{"a develop round that leads to a review", &state.IssueState{Number: 1, Round: 1, PR: fakePR, Branch: "bees/issue-1",
+			WorkerStage: "develop", AfterDevelop: "review"}, true},
 		{"a checks stage whose pull request has gone", checks, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -580,5 +597,76 @@ func TestAStageRecordedForAnotherPullRequestIsDropped(t *testing.T) {
 	}
 	if len(h.gh.merged) != 1 || h.gh.merged[0] != fakePR {
 		t.Fatalf("merged %v", h.gh.merged)
+	}
+}
+
+// TestAWorkerKilledInAPostApprovalFixRoundIsResumed: the post-approval checks
+// send a failing pull request back to the developer, and the worker records
+// that round — develop, with the checks as the gate it returns to — at the top
+// of its loop, before the develop stage relabels the issue bees:in-progress. A
+// scheduler killed there, or a single failing `gh issue edit`, leaves the
+// round behind a bees:approved label: the same work in flight as an
+// interrupted checks stage, one stage on, and nothing merged it or escalated
+// it. The next pass takes it back and carries the round through to the merge.
+func TestAWorkerKilledInAPostApprovalFixRoundIsResumed(t *testing.T) {
+	h := newHarnessAt(t, checksTOML, time.Now())
+	seedChecksIssue(t, h)
+	h.gh.issues[1].CreatedAt = time.Now().Add(-time.Hour)
+	h.gh.issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:approved"}, {Name: "bees:size/s"}}
+	if err := os.WriteFile(h.gh.prMarker, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Approved, waiting out the post-approval checks, when the scheduler was
+	// restarted: the resumption #281 added.
+	if err := h.store.SaveIssue(state.IssueState{Number: 1, Round: 1, PR: fakePR, Branch: "bees/issue-1",
+		WorkerStage: "checks", AfterDevelop: "review"}); err != nil {
+		t.Fatal(err)
+	}
+	h.gh.checks = []checksResponse{
+		{failingJSON, fmt.Errorf("exit status 1")}, // the gate: a check failed
+		{passingJSON, nil},                         // green once the fix is pushed
+	}
+	// GitHub answers the relabel to bees:in-progress with a 502 — the same
+	// window a kill lands in, and the one the reporter measured.
+	h.gh.errFor["issue edit"] = fmt.Errorf("gh: 502 Bad Gateway")
+	runPass(t, h)
+
+	h.wantOrder("reviewer-pr-101-checks1")
+	if got := h.stateOfIssue(1); got != "approved" {
+		t.Fatalf("issue state label after the crash is %q, want approved", got)
+	}
+	bk, err := h.store.Issue(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bk.WorkerStage != "develop" || bk.AfterDevelop != "checks" {
+		t.Fatalf("bookkeeping after the crash: %+v", bk)
+	}
+	if len(h.gh.merged) != 0 {
+		t.Fatalf("nothing was merged yet, got %v", h.gh.merged)
+	}
+
+	// GitHub is healthy again. The failed worker set a backoff on the issue;
+	// a real restart is a new process, so step over it.
+	delete(h.gh.errFor, "issue edit")
+	h.clock.advance(6 * h.cfg.Scheduler.PollInterval.Duration)
+	forcePoll(h)
+	runPass(t, h)
+
+	if got := h.stateOfIssue(1); got != "in-progress" {
+		t.Fatalf("the resumed round left the issue at %q, want in-progress", got)
+	}
+	if len(h.gh.merged) != 1 || h.gh.merged[0] != fakePR {
+		t.Fatalf("the resumed fix round did not merge: %v", h.gh.merged)
+	}
+	// The developer's fix goes straight back to the gate that asked for it.
+	// The reviewer diagnosed the failure in checks mode and has nothing left
+	// to say: a second review of an approved pull request is the cost the
+	// remembered after_develop exists to avoid.
+	h.wantOrder("reviewer-pr-101-checks1", "developer-issue-1-r1-checkfix1")
+	for _, name := range h.sessionNames() {
+		if strings.HasPrefix(name, "reviewer-") && !strings.Contains(name, "-checks") {
+			t.Fatalf("the resumed round ran a reviewer in review mode: %v", h.sessionNames())
+		}
 	}
 }
