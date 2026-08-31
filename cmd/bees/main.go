@@ -22,6 +22,10 @@ import (
 // version is the release version stamped in by
 // `-ldflags "-X main.version=..."`. Without it, versions.Bees falls back to
 // the module version or VCS revision Go records in the binary.
+//
+// .github/workflows/release.yml stamps it with the tag it was triggered by, so
+// renaming this variable means renaming it there too; release_test.go fails
+// when the two drift.
 var version = "dev"
 
 func main() {

@@ -15,6 +15,10 @@ GitHub repository. Read `docs/architecture.md` before changing the scheduler.
   `github.Client.Exec`; `claude` is faked by the test binary itself (see `TestMain` in
   `internal/scheduler/scheduler_test.go`) or a shell script (`internal/session`).
   Git is real: tests create a bare origin with `internal/testutil.SetupRepos`.
+- `.github/workflows/release.yml` is the only workflow, and its only trigger is a
+  `v*` tag (see `docs/releasing.md`). There is deliberately no `push` or
+  `pull_request` workflow: `dagger check` is the gate, and a CI-on-push workflow
+  was added and reverted by a person on purpose. Do not add one.
 
 ## Layout
 

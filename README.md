@@ -149,6 +149,7 @@ These pages are also published at
 | [docs/configuration.md](docs/configuration.md) | Complete `bees.toml` reference |
 | [docs/cli.md](docs/cli.md) | Every `bees` command |
 | [docs/architecture.md](docs/architecture.md) | Internals, state directory, testing strategy |
+| [docs/releasing.md](docs/releasing.md) | Cutting a release: the tag, the workflow, the assets it publishes |
 
 ## Development
 

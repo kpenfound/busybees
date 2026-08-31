@@ -10,6 +10,13 @@ source = "github.com/dagger/go"
 base = "golang:1.26-bookworm"
 # The built-in Go patterns mount only Go sources, so tests that read a repo
 # file need it listed here: bees.example.toml is a golden file compared against
-# internal/config's template by TestExampleTOMLInSync, and CLAUDE.md's command
-# list is pinned against cmd/bees by TestCLAUDEMdListsEveryCommand.
-includeExtraFiles = ["bees.example.toml", "CLAUDE.md"]
+# internal/config's template by TestExampleTOMLInSync, CLAUDE.md's command
+# list is pinned against cmd/bees by TestCLAUDEMdListsEveryCommand, and the
+# release workflow is pinned against cmd/bees' version variable and against
+# docs/releasing.md by cmd/bees/release_test.go.
+includeExtraFiles = [
+  "bees.example.toml",
+  "CLAUDE.md",
+  ".github/workflows/release.yml",
+  "docs/releasing.md",
+]
