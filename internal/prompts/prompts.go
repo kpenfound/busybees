@@ -106,6 +106,13 @@ type Data struct {
 	Proposals []github.Issue
 	// Progress maps a feature issue number to its sub-issue summary.
 	Progress map[int]github.SubIssueSummary
+	// CompletedFeatures holds the open features whose every sub-issue has
+	// closed since the product manager last ran: its work is finished and the
+	// only decision left is whether to close the feature. Set for the product
+	// manager, and only for the run that first notices; a feature it looks at
+	// and leaves open is not listed again until it gains a sub-issue and that
+	// one closes too.
+	CompletedFeatures []github.Issue
 	// Parent is the feature a work item belongs to, when it is a sub-issue.
 	Parent *github.Parent
 	// Parents maps an issue number to its parent feature, for the issues that
