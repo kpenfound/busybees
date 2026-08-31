@@ -326,3 +326,181 @@ func TestExecReviewerReviewsAnIssueThatIsNotYetInReview(t *testing.T) {
 		t.Fatalf("%d developer sessions ran, want none: exec reviewer asked for a review", n)
 	}
 }
+
+// TestAWorkerKilledInThePostApprovalChecksIsResumed: approve() labels the
+// issue bees:approved before the worker enters the checks stage, so a
+// scheduler killed while waiting out checks_timeout leaves work in flight
+// behind a label no dispatch pass used to look at — with auto_merge on,
+// nothing merged the pull request and nothing escalated it. The issue is a
+// resumption like any other: the second run goes straight back to the checks
+// it was waiting for and merges, without a developer or a reviewer session.
+func TestAWorkerKilledInThePostApprovalChecksIsResumed(t *testing.T) {
+	h := newHarnessAt(t, checksTOML, time.Now())
+	seedChecksIssue(t, h)
+	h.gh.issues[1].CreatedAt = time.Now().Add(-time.Hour)
+	h.gh.checks = []checksResponse{
+		{"", fmt.Errorf("gh: could not reach github")}, // the post-approval read the scheduler dies on
+		{passingJSON, nil}, // green by the time it comes back
+	}
+	runPass(t, h)
+
+	h.wantOrder("developer-issue-1-r1", "reviewer-pr-101-r1")
+	if got := h.stateOfIssue(1); got != "approved" {
+		t.Fatalf("issue state label after the crash is %q, want approved", got)
+	}
+	bk, err := h.store.Issue(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bk.WorkerStage != "checks" {
+		t.Fatalf("bookkeeping after the crash: %+v", bk)
+	}
+	if len(h.gh.merged) != 0 {
+		t.Fatalf("nothing was merged yet, got %v", h.gh.merged)
+	}
+
+	// Restart. The failed worker set a backoff on the issue; a real restart is
+	// a new process, so step over it.
+	h.clock.advance(6 * h.cfg.Scheduler.PollInterval.Duration)
+	forcePoll(h)
+	runPass(t, h)
+
+	if len(h.gh.merged) != 1 || h.gh.merged[0] != fakePR {
+		t.Fatalf("the resumed checks stage did not merge: %v", h.gh.merged)
+	}
+	// Not one extra session: the review has already happened and is paid for.
+	h.wantOrder("developer-issue-1-r1", "reviewer-pr-101-r1")
+}
+
+// TestAnApprovedIssueThatIsNotAResumptionIsNotDispatched: bees:approved still
+// means "waiting for a person to merge" for every issue a person would
+// recognise as approved. Only the stage a worker recorded says otherwise, so
+// an approved issue with nothing remembered — or with a stage that is not the
+// post-approval checks — is left exactly where it is.
+func TestAnApprovedIssueThatIsNotAResumptionIsNotDispatched(t *testing.T) {
+	checks := &state.IssueState{Number: 1, Round: 1, PR: fakePR, Branch: "bees/issue-1",
+		WorkerStage: "checks", AfterDevelop: "checks"}
+	for _, tc := range []struct {
+		name string
+		bk   *state.IssueState
+		// openPR is whether a pull request for the branch is open. The
+		// remembered checks stage belongs to one, and without it the worker
+		// would fall back to a developer round on a pull request that has
+		// already been merged or closed.
+		openPR bool
+	}{
+		{"nothing remembered", nil, true},
+		{"a stage other than checks", &state.IssueState{Number: 1, Round: 1, PR: fakePR, Branch: "bees/issue-1",
+			WorkerStage: "review", AfterDevelop: "review"}, true},
+		{"a checks stage whose pull request has gone", checks, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, checksTOML)
+			seedChecksIssue(t, h)
+			h.gh.issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:approved"}, {Name: "bees:size/s"}}
+			if tc.openPR {
+				if err := os.WriteFile(h.gh.prMarker, nil, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.bk != nil {
+				if err := h.store.SaveIssue(*tc.bk); err != nil {
+					t.Fatal(err)
+				}
+			}
+			h.gh.checks = []checksResponse{{passingJSON, nil}}
+			runPass(t, h)
+
+			if n := sessionCount(h); n != 0 {
+				t.Fatalf("%d sessions ran on an approved issue waiting for a person: %v", n, h.sessionNames())
+			}
+			if got := h.stateOfIssue(1); got != "approved" {
+				t.Fatalf("the issue was relabelled %q", got)
+			}
+			if len(h.gh.merged) != 0 {
+				t.Fatalf("an approved pull request was merged behind a person's back: %v", h.gh.merged)
+			}
+			if n := h.gh.callCount("pr checks"); n != 0 {
+				t.Fatalf("the checks were read %d times, want none: no worker was resumed", n)
+			}
+		})
+	}
+}
+
+// TestWithoutAutoMergeAnApprovedIssueStaysWithThePerson pins what makes
+// gating the resumption on roles.reviewer.auto_merge redundant: with it off,
+// approve() returns before the checks stage, so worker_stage never becomes
+// "checks" and the approved issue is never a candidate — the merge is the
+// person's, exactly as it was.
+func TestWithoutAutoMergeAnApprovedIssueStaysWithThePerson(t *testing.T) {
+	h := newHarnessAt(t, strings.Replace(checksTOML, "auto_merge = true", "auto_merge = false", 1), time.Now())
+	seedChecksIssue(t, h)
+	h.gh.issues[1].CreatedAt = time.Now().Add(-time.Hour)
+	h.gh.checks = []checksResponse{{passingJSON, nil}}
+	runPass(t, h)
+
+	h.wantOrder("developer-issue-1-r1", "reviewer-pr-101-r1")
+	bk, err := h.store.Issue(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bk.WorkerStage != "review" {
+		t.Fatalf("the worker stopped at %+v, want the review stage: without auto_merge it never enters checks", bk)
+	}
+
+	h.clock.advance(6 * h.cfg.Scheduler.PollInterval.Duration)
+	forcePoll(h)
+	runPass(t, h)
+
+	h.wantOrder("developer-issue-1-r1", "reviewer-pr-101-r1")
+	if got := h.stateOfIssue(1); got != "approved" {
+		t.Fatalf("the issue was relabelled %q", got)
+	}
+	if len(h.gh.merged) != 0 {
+		t.Fatalf("a pull request was merged with auto_merge off: %v", h.gh.merged)
+	}
+	if n := h.gh.callCount("pr checks"); n != 0 {
+		t.Fatalf("the checks were read %d times with auto_merge off, want none", n)
+	}
+}
+
+// TestALocalPassResumesThePostApprovalChecks: a local pass dispatches from the
+// snapshot of the last poll and confirms each candidate with one `gh issue
+// view` before spending a session on it. That confirmation has to admit
+// bees:approved under the same gate the candidate list uses, or the resumption
+// is fetched and dropped on every local pass and only ever starts at a full
+// poll.
+func TestALocalPassResumesThePostApprovalChecks(t *testing.T) {
+	h := newHarnessAt(t, checksTOML, time.Now())
+	seedChecksIssue(t, h)
+	h.gh.issues[1].CreatedAt = time.Now().Add(-time.Hour)
+	h.gh.checks = []checksResponse{
+		{"", fmt.Errorf("gh: could not reach github")},
+		{passingJSON, nil},
+	}
+	runPass(t, h)
+	h.wantOrder("developer-issue-1-r1", "reviewer-pr-101-r1")
+
+	// A full poll that sees the crashed state: the issue is approved and its
+	// pull request is open. Nothing is dispatched from it, because the failed
+	// worker's backoff is still running.
+	forcePoll(h)
+	runPass(t, h)
+	h.wantOrder("developer-issue-1-r1", "reviewer-pr-101-r1")
+	if len(h.gh.merged) != 0 {
+		t.Fatalf("dispatched while backed off: %v", h.gh.merged)
+	}
+
+	// The backoff expires. The next pass is a local one — nextPoll is set —
+	// so it works from that snapshot and confirms the issue live.
+	h.sched.setBackoff("issue-1", -time.Hour)
+	runPass(t, h)
+
+	if n := polls(h); n != 2 {
+		t.Fatalf("%d polls, want 2: the resumption must come from a local pass", n)
+	}
+	if len(h.gh.merged) != 1 || h.gh.merged[0] != fakePR {
+		t.Fatalf("the local pass did not resume the checks stage: %v", h.gh.merged)
+	}
+	h.wantOrder("developer-issue-1-r1", "reviewer-pr-101-r1")
+}
