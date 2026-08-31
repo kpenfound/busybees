@@ -1257,3 +1257,75 @@ func TestReviewerSystemPromptCarriesTheStagedRules(t *testing.T) {
 		}
 	}
 }
+
+// Planning mode has two sections in the product manager's task, and they say
+// opposite things: while a person is still agreeing an issue nothing is
+// created from it, and once they have agreed it the scope is settled. Both
+// name the labels through config, never as literals, and the empty case says
+// so rather than rendering an empty heading.
+func TestProductManagerTaskRendersPlanningMode(t *testing.T) {
+	labels := config.LabelsFor("bees")
+	issue := func(n int, title string, names ...string) github.Issue {
+		i := github.Issue{Number: n, Title: title, Body: "why " + title, Author: github.Author{Login: "kyle"}}
+		for _, l := range names {
+			i.Labels = append(i.Labels, github.Label{Name: l})
+		}
+		return i
+	}
+	d := sample()
+	d.Planning = []github.Issue{issue(50, "Offline mode", labels.Feature, labels.Planning)}
+	d.Planned = []github.Issue{issue(51, "Exports", labels.Feature, labels.Planned)}
+
+	task, err := Task(config.RoleProductManager, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planning := taskSection(t, task, "## Planning with a person")
+	for _, want := range []string{
+		"#50: Offline mode", "why Offline mode",
+		"Break nothing down from these",
+		"never add or remove either",
+	} {
+		if !strings.Contains(flowed(planning), flowed(want)) {
+			t.Errorf("planning section is missing %q:\n%s", want, planning)
+		}
+	}
+	if strings.Contains(planning, "#51") {
+		t.Errorf("an agreed issue is presented as still in planning:\n%s", planning)
+	}
+	planned := taskSection(t, task, "## Agreed with a person")
+	for _, want := range []string{
+		"#51: Exports",
+		"It is **settled**. Do not re-open the scope",
+		"`## Decisions` section",
+		"break none of them down twice",
+	} {
+		if !strings.Contains(flowed(planned), flowed(want)) {
+			t.Errorf("agreed section is missing %q:\n%s", want, planned)
+		}
+	}
+	if strings.Contains(planned, "#50") {
+		t.Errorf("an issue still in planning is presented as agreed:\n%s", planned)
+	}
+
+	// Nothing in planning: both sections state that rather than disappearing.
+	d.Planning, d.Planned = nil, nil
+	task, err = Task(config.RoleProductManager, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(taskSection(t, task, "## Planning with a person"), "_Nothing is in planning._") {
+		t.Errorf("empty planning section:\n%s", task)
+	}
+}
+
+// taskSection returns what stands under a heading, up to the next one.
+func taskSection(t *testing.T, task, heading string) string {
+	t.Helper()
+	_, rest, ok := strings.Cut(task, heading)
+	if !ok {
+		t.Fatalf("task has no %q heading:\n%s", heading, task)
+	}
+	body, _, _ := strings.Cut(rest, "\n## ")
+	return body
+}

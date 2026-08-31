@@ -104,6 +104,17 @@ type Data struct {
 	// into work items until a person removes bees:proposal. They are never
 	// in FreshFeatures.
 	Proposals []github.Issue
+	// Planning holds the feature and feedback issues a person put in
+	// planning mode (bees:planning): the product manager discusses them and
+	// breaks nothing down. They are never in Feedback, FreshFeatures or
+	// Proposals. Set for the product manager.
+	Planning []github.Issue
+	// Planned holds the issues a person agreed with the product manager
+	// (bees:planned) that still need acting on: a feature with no sub-issues
+	// yet, or an open feedback issue. A planned feature that already has
+	// sub-issues has been broken down and is not listed again. Set for the
+	// product manager.
+	Planned []github.Issue
 	// Progress maps a feature issue number to its sub-issue summary.
 	Progress map[int]github.SubIssueSummary
 	// CompletedFeatures holds the open features whose every sub-issue has
