@@ -98,8 +98,14 @@ type Scheduler struct {
 	limitPausedUntil time.Time
 	// overBudget counts consecutive over-budget sessions per work item.
 	overBudget map[string]int
-	wg         sync.WaitGroup
-	slots      chan struct{}
+	// wake shortens the wait between two ticks: a purely local event (a
+	// session finishing, mail the scheduler itself sent) signals it and the
+	// loop runs a local pass at once instead of sitting out the rest of the
+	// poll interval. Buffered with one slot, so a burst of signals coalesces
+	// into a single pass.
+	wake  chan struct{}
+	wg    sync.WaitGroup
+	slots chan struct{}
 	// Issues and PRs from the last successful poll, reused by local passes.
 	lastIssues []github.Issue
 	lastPRs    []github.PR
@@ -142,6 +148,7 @@ func New(d Deps) (*Scheduler, error) {
 		warnedCycles: map[int]bool{},
 		readySizes:   map[string]int{},
 		overBudget:   map[string]int{},
+		wake:         make(chan struct{}, 1),
 		slots:        make(chan struct{}, d.Config.Scheduler.MaxDevelopers),
 	}
 	for i := 0; i < d.Config.Scheduler.MaxDevelopers; i++ {
@@ -184,17 +191,69 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		if s.Once {
 			break
 		}
-		select {
-		case <-ctx.Done():
-			goto drain
-		case <-time.After(s.cfg.Scheduler.PollInterval.Duration):
+		if !s.waitForTick(ctx) {
+			break
 		}
 	}
-drain:
 	s.log.Info("waiting for running sessions to finish")
 	s.wg.Wait()
 	s.writeStatus()
 	return nil
+}
+
+// waitForTick sleeps until the next tick is due, running a local pass for
+// every wake signalled in the meantime, and reports whether the loop should
+// go on (false = the context was cancelled).
+//
+// A wake never becomes a full pass: it runs localPass directly, so no matter
+// how many local events happen between two ticks the polling cadence is
+// exactly what poll_interval and the work-hours window say. The timer is
+// started once and is not restarted by a wake, for the same reason.
+func (s *Scheduler) waitForTick(ctx context.Context) bool {
+	timer := time.NewTimer(s.cfg.Scheduler.PollInterval.Duration)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-timer.C:
+			return true
+		case <-s.wake:
+			s.localPass(ctx)
+			s.writeStatus()
+		}
+	}
+}
+
+// signal asks the loop to run a local pass now rather than at the next tick.
+// It is what makes the factory react to a purely local event — a session
+// finishing (which frees a developer slot and may have written mail to
+// another role) or mail the scheduler itself sent — instead of leaving the
+// work to sit for up to a poll interval.
+//
+// Never blocks: the channel holds one slot and a signal that finds it full
+// is dropped, because the pass it asks for has not run yet and will see
+// everything the dropped signal would have.
+//
+// Mail written by another process (`bees mail send`, or the MCP server
+// attached to a session) cannot signal an in-process channel. It does not
+// need to: the session that sent it signals when it finishes, and the local
+// pass that follows re-reads the mailbox from disk. Mail a person sends by
+// hand while nothing is running still waits for the next tick.
+func (s *Scheduler) signal() {
+	select {
+	case s.wake <- struct{}{}:
+	default:
+	}
+}
+
+// drainWake drops a pending wake. It is called before a full pass, which
+// does strictly more than the local pass the signal asked for.
+func (s *Scheduler) drainWake() {
+	select {
+	case <-s.wake:
+	default:
+	}
 }
 
 // ensureLabels creates the workflow labels the repository does not have
@@ -556,6 +615,9 @@ func (s *Scheduler) tick(ctx context.Context) (bool, error) {
 		s.localPass(ctx)
 		return false, nil
 	}
+	// A wake that is still pending asks for a local pass; the full pass
+	// about to run supersedes it.
+	s.drainWake()
 	err := s.pass(ctx)
 	wait := s.cfg.Scheduler.PollIntervalAt(now)
 	if next := s.cfg.Scheduler.NextWorkHoursStart(now); !next.IsZero() && next.Before(now.Add(wait)) {
@@ -595,9 +657,9 @@ func (s *Scheduler) pass(ctx context.Context) error {
 
 // localPass is a pass that makes no GitHub read calls of its own: it reuses
 // the issue and PR lists from the last poll, so everything driven by the
-// local mailbox (answered questions, review rounds) keeps moving at
-// poll_interval even when GitHub is only polled every
-// off_hours_poll_interval. It deliberately skips the human-feedback fetch,
+// local mailbox (answered questions, review rounds) keeps moving when a
+// session finishes (signal) and at poll_interval even when GitHub is only
+// polled every off_hours_poll_interval. It deliberately skips the human-feedback fetch,
 // and with it the interval and merged-PR has-work checks, all of which query
 // GitHub: on a local pass a singleton starts only when it has unread mail.
 // Until the first successful poll it does nothing.
@@ -842,6 +904,11 @@ func (s *Scheduler) dispatchDevelopers(ctx context.Context, snap *snapshot, loca
 				s.mu.Unlock()
 				s.slots <- struct{}{}
 				s.writeStatus()
+				// The session that finished last signalled while this
+				// worker still held the slot. Signal again now that it is
+				// back in the pool, or the next ready issue would wait for
+				// the tick after all.
+				s.signal()
 			}()
 			if err := s.workIssue(ctx, issue, w); err != nil && ctx.Err() == nil {
 				s.log.Error("developer worker failed", "issue", issue.Number, "err", err)

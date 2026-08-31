@@ -223,9 +223,10 @@ timezone = "America/New_York"
 ```
 
 Only the **GitHub polling cadence** changes. The scheduler keeps ticking every
-`poll_interval`; a tick that is not due for a poll runs a *local pass* that
-reuses the last poll's issue and PR lists (see
-[The scheduler loop](architecture.md#the-scheduler-loop)). Everything driven by
+`poll_interval`, and a finished session wakes it in between; a tick that is not
+due for a poll runs a *local pass* that reuses the last poll's issue and PR
+lists (see [The scheduler loop](architecture.md#the-scheduler-loop)).
+Everything driven by
 the local mailbox — the developer ↔ reviewer loop, answered questions moving
 `bees:blocked` back to `bees:ready`, the checks stage — runs at full speed at
 every hour of the day. `bees tick` and `bees exec` ignore the window and always
