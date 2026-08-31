@@ -165,9 +165,16 @@ func Title(role string) string {
 	return role
 }
 
-// System renders the full system prompt for a role: the common preamble,
-// the role's base prompt, and any custom text from bees.toml.
-func System(role string, d Data, custom string) (string, error) {
+// System renders the full system prompt for a role: the common preamble, the
+// role's base prompt, the custom text from bees.toml, and last the project's
+// own prompt files (LoadProject). Order matters: bees.toml comes after the
+// base prompt so an operator can override it, and the repository's files come
+// after bees.toml so a machine-specific setting still wins.
+//
+// project is variadic because a repository with no bees/prompts/ directory is
+// the normal case, and passing none renders exactly the prompt bees rendered
+// before project prompt files existed.
+func System(role string, d Data, custom string, project ...ProjectPrompt) (string, error) {
 	d.Role = role
 	d.RoleTitle = Title(role)
 	d.CreateFlags = CreateFlags(d.Filter)
@@ -182,6 +189,11 @@ func System(role string, d Data, custom string) (string, error) {
 	parts := []string{common, base}
 	if s := strings.TrimSpace(custom); s != "" {
 		parts = append(parts, "## Additional instructions from bees.toml\n\n"+s)
+	}
+	for _, p := range project {
+		if s := strings.TrimSpace(p.Text); s != "" {
+			parts = append(parts, "## Additional instructions from "+p.Path+"\n\n"+s)
+		}
 	}
 	return strings.Join(parts, "\n\n"), nil
 }

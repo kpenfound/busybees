@@ -13,6 +13,7 @@ import (
 
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/github"
+	"github.com/kpenfound/busybees/internal/prompts"
 	"github.com/kpenfound/busybees/internal/skills"
 	"github.com/kpenfound/busybees/internal/text"
 	"github.com/kpenfound/busybees/internal/versions"
@@ -100,7 +101,8 @@ func (d *Deps) Checks() []Check {
 		return checks
 	}
 	checks = append(checks, Check{Run: d.checkProject}, Check{Run: d.checkRemote},
-		Check{Run: d.checkStateDirIgnored}, Check{Run: d.checkNotesWritable}, Check{Run: d.checkPromptFiles})
+		Check{Run: d.checkStateDirIgnored}, Check{Run: d.checkNotesWritable}, Check{Run: d.checkPromptFiles},
+		Check{Run: d.checkProjectPrompts})
 	if d.Config.Project.Repo != "" {
 		checks = append(checks, Check{Run: d.checkRepoAccess}, Check{Run: d.checkLabels},
 			Check{Run: d.checkFilter, Fix: d.fixFilter}, Check{Run: d.checkAutoMerge})
@@ -444,6 +446,59 @@ func (d *Deps) checkPromptFiles(context.Context) Result {
 			"create the files, or remove the prompt_file keys from bees.toml")
 	}
 	return pass(name, GroupConfig, strings.Join(found, ", "))
+}
+
+// checkProjectPrompts inspects bees/prompts/ in the repository bees.toml sits
+// in: the role instructions a project versions with its code. A repository
+// with no such directory is the normal case and passes silently.
+//
+// It reads the main clone. A session reads the same files from its own
+// worktree, so a branch can carry instructions this check never sees - which
+// is the point of the feature, and why the detail names the checkout.
+func (d *Deps) checkProjectPrompts(context.Context) Result {
+	const name = "project prompt files"
+	dir := d.Config.Dir()
+	known, unknown, err := prompts.ProjectPromptFiles(dir)
+	if err != nil {
+		return fail(name, GroupConfig, oneLine(err.Error()),
+			fmt.Sprintf("make %s readable, or remove it", filepath.Join(dir, prompts.ProjectDir)))
+	}
+	if len(known) == 0 && len(unknown) == 0 {
+		return pass(name, GroupConfig, "no "+prompts.ProjectDir+"/ directory")
+	}
+	if len(unknown) > 0 {
+		return fail(name, GroupConfig, "not read by any role: "+strings.Join(unknown, ", "),
+			fmt.Sprintf("rename to %s or one of %s.md, or move it out of %s/: every file in there is a role's instructions",
+				prompts.CommonPromptFile, strings.Join(config.Roles, ".md, "), prompts.ProjectDir))
+	}
+	// Every file that a role would read has to be readable and within the
+	// size limit, whichever role it belongs to.
+	var broken []string
+	for _, role := range config.Roles {
+		if _, err := prompts.LoadProject(dir, role); err != nil {
+			broken = append(broken, oneLine(err.Error()))
+		}
+	}
+	if len(broken) > 0 {
+		return fail(name, GroupConfig, strings.Join(dedupe(broken), "; "),
+			"fix the file: every session reading that role's prompt skips it with a warning")
+	}
+	return pass(name, GroupConfig, strings.Join(known, ", "))
+}
+
+// dedupe drops repeated strings, keeping the first of each. common.md is read
+// by every role, so a broken one is reported once rather than five times.
+func dedupe(in []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	return out
 }
 
 // ---- github ----------------------------------------------------------------

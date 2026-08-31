@@ -689,8 +689,12 @@ prompt_file = "docs/qa-checklist.md"
 
 - **prompt / prompt_file** are appended to the role's base prompt under an
   "Additional instructions from bees.toml" heading, in the order global
-  prompt, global file, role prompt, role file. `bees prompts show <role>`
-  prints the base prompt; `--rendered` shows the whole thing for this project.
+  prompt, global file, role prompt, role file. The repository's own
+  [project prompt files](configuration.md#project-prompt-files) —
+  `bees/prompts/common.md` and `bees/prompts/<role>.md`, read from the
+  session's worktree — are appended after them, so `bees.toml` still wins.
+  `bees prompts show <role>` prints the base prompt; `--rendered` shows the
+  whole thing for this project.
 - **skills** are unioned (global first) and exposed to the session as plugin
   directories.
 - **mcp** servers are unioned; a role's server replaces a global one with the

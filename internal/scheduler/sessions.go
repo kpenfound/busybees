@@ -89,7 +89,17 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 		d.Interrupted = s.interruptedFor(d.Issue.Number, spec.role)
 	}
 
-	system, err := prompts.System(spec.role, d, role.Prompt)
+	// The project's own prompt files come from the worktree, so a branch's
+	// bees/prompts/<role>.md applies to the session working on that branch.
+	// A file bees cannot read must never take a session down: the ones that
+	// did read are used, the rest are skipped with a warning, and `bees
+	// doctor` is where a broken file fails loudly. The degraded operation is
+	// keyed by role because each role reads a different set of files: one
+	// role's session succeeding says nothing about another role's file, and
+	// a shared name would let it clear the streak.
+	project, perr := prompts.LoadProject(spec.workDir, spec.role)
+	s.op("project-prompts/"+spec.role, perr, "project prompt file skipped", "role", spec.role, "err", perr)
+	system, err := prompts.System(spec.role, d, role.Prompt, project...)
 	if err != nil {
 		return nil, err
 	}
