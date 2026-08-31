@@ -79,6 +79,27 @@ A full pass is:
    If the issue was `approved`, `reopenApproved` relabels it `ready` and
    removes `bees:approved` from the PR, so a developer worker picks it up on
    step 5 (an issue a worker still owns — the checks stage — is left alone).
+   **Comments on the issue** are collected in the same step, from the same
+   file, and *before* the pull request's — an approved issue that gets both
+   leaves the in-flight buckets in `reopenApproved`. For every issue in one
+   of the four in-flight states (`in-progress`, `review`, `approved`,
+   `blocked`) whose `updatedAt` moved past `issue_human_seen_at`, the issue's
+   own comments are fetched (1 call, `github.Client.IssueActivity`, which
+   reads the same endpoint and applies the same bee filter as the third block
+   of `PRActivity`). What people wrote goes out as one message from `human`
+   (`issue == N`) to the role that can act on it: the developer for
+   `in-progress` and `approved`; the developer *and* the reviewer for
+   `review`, so the round in flight sees it; and for `blocked`, whoever is
+   waiting — a branch or a PR in the bookkeeping means a developer session
+   asked the question (reconcile then makes the issue `ready`), anything else
+   means triage did (`triage`). `issue_human_seen_at` is a second clock, kept
+   apart from `human_seen_at` so neither stream suppresses the other. The
+   first pass that sees an issue in a flight state with no clock records the
+   poll time and delivers nothing: a zero value must not mean "replay every
+   comment this issue ever received". A developer session renders the issue's
+   whole comment history anyway; what the mail adds is that a comment is
+   fresh, that it is a person's, that it reaches the reviewer, that it
+   unblocks a blocked issue, and that it wakes the loop.
    **PR merge state** (`conflicts.go`, `checkPRs`) runs right after, over
    the same PRs: `gh pr list` already returns `mergeable`, `mergeStateStatus`
    and `headRefOid`, so this costs nothing. For an issue in `review` or
@@ -301,20 +322,22 @@ interval after it finishes, and a failing singleton or developer issue waits
 five poll intervals. This stops a broken session from burning tokens in a tight
 loop.
 
-**API budget.** Every poll costs exactly two `gh` calls (`issue list`,
-`pr list`); everything else is gated on what those lists report so an idle
-factory stays at two calls per poll (and, with `scheduler.work_hours` set, at
-two calls per `off_hours_poll_interval` outside working hours). Human PR feedback is fetched (3 calls)
-only for PRs whose `updatedAt` moved past `human_seen_at`; product-manager
-feedback/feature comments (1 `issue view` each) only for issues whose
-`updatedAt` is newer than the PM's last run; QA's merged-PR query runs at most
-once per `qa_interval`, recorded as `last_check` in `<state_dir>/qa.json` so
-an elapsed interval with nothing merged does not re-query on every poll; the
-checks stage polls `gh pr checks` every `roles.reviewer.checks_poll_interval`
-(default 2m), not every poll; the visibility backstop makes two list calls after
-each session; and worker stage transitions make a handful of `issue view` /
-`pr view` / `issue edit` calls. Sessions call `gh` on their own on top of
-this, which busybees does not meter.
+**API budget.** Every poll costs exactly two `gh` calls (`issue list`, `pr
+list`); everything else is gated on what those lists report so an idle factory
+stays at two calls per poll (and, with `scheduler.work_hours` set, at two calls
+per `off_hours_poll_interval` outside working hours). Human PR feedback is
+fetched (3 calls) only for PRs whose `updatedAt` moved past `human_seen_at`, and
+a person's comments on an in-flight issue (1 call) only for issues whose
+`updatedAt` moved past `issue_human_seen_at`; product-manager feedback/feature
+comments (1 `issue view` each) only for issues whose `updatedAt` is newer than
+the PM's last run; QA's merged-PR query runs at most once per `qa_interval`,
+recorded as `last_check` in `<state_dir>/qa.json` so an elapsed interval with
+nothing merged does not re-query on every poll; the checks stage polls `gh pr
+checks` every `roles.reviewer.checks_poll_interval` (default 2m), not every
+poll; the visibility backstop makes two list calls after each session; and
+worker stage transitions make a handful of `issue view` / `pr view` / `issue
+edit` calls. Sessions call `gh` on their own on top of this, which busybees does
+not meter.
 
 **Once mode.** `Once = true` (`bees tick`, `bees run --once`) performs a single
 pass and then waits for everything it started. `OnlyRoles` (`--roles`)
@@ -485,30 +508,30 @@ stateDiagram-v2
   record back.
 - **Rounds.** `<state_dir>/issues/<n>.json` records the review round, PR
   number, branch, `check_fix_rounds`, `worker_stage`, `after_develop`,
-  `pre_review_done`, `session`, `human_seen_at` and `conflict_notified_sha`,
-  plus the cost totals, the proposal observation, a feature's open children
-  and, once the factory has given the issue up, `escalation` and
-  `escalated_at`. Only the round, PR number, branch, `check_fix_rounds` and
-  the three worker-stage fields belong to the developer worker, and
-  `state.Store.SaveIssue` is what writes them. Every other field has an owner
-  method on `state.Store` — `AddIssueCost`, `SetIssueSession`,
-  `SetHumanSeenAt`, `SetConflictNotifiedSHA`, `SetProposal`,
-  `SetOpenChildren` and `SetEscalation` — each reading the file, changing its
-  own fields and writing it back, and `SaveIssue` carries them over from the
-  file rather than taking them from its argument. The split matters because a
-  worker holds one copy of the file for the whole life of an issue while the
-  polling path keeps
-  writing to the same file: saving that copy wholesale would put back what the
-  worker loaded when it started, and the polling path's bookkeeping is exactly
-  the kind that must not be undone — feedback already delivered would be
-  delivered again, a head already mailed about mailed about again, an approval
-  forgotten, a finished feature reported twice or not at all. The round is
-  incremented on every `changes-requested` and compared with
-  `scheduler.max_review_rounds`; human feedback rounds do not count against the
-  limit. `check_fix_rounds` is incremented each time the reviewer is asked to
-  diagnose failing checks — the prereview and checks stages share the counter —
-  and compared with `roles.reviewer.max_check_fix_rounds`. Check fix rounds do
-  not count against `max_review_rounds`.
+  `pre_review_done`, `session`, `human_seen_at`, `issue_human_seen_at` and
+  `conflict_notified_sha`, plus the cost totals, the proposal observation, a
+  feature's open children and, once the factory has given the issue up,
+  `escalation` and `escalated_at`. Only the round, PR number, branch,
+  `check_fix_rounds` and the three worker-stage fields belong to the developer
+  worker, and `state.Store.SaveIssue` is what writes them. Every other field
+  has an owner method on `state.Store` — `AddIssueCost`, `SetIssueSession`,
+  `SetHumanSeenAt`, `SetIssueHumanSeenAt`, `SetConflictNotifiedSHA`,
+  `SetProposal`, `SetOpenChildren` and `SetEscalation` — each reading the
+  file, changing its own fields and writing it back, and `SaveIssue` carries
+  them over from the file rather than taking them from its argument. The split
+  matters because a worker holds one copy of the file for the whole life of an
+  issue while the polling path keeps writing to the same file: saving that
+  copy wholesale would put back what the worker loaded when it started, and
+  the polling path's bookkeeping is exactly the kind that must not be undone —
+  feedback already delivered would be delivered again, a head already mailed
+  about mailed about again, an approval forgotten, a finished feature reported
+  twice or not at all. The round is incremented on every `changes-requested`
+  and compared with `scheduler.max_review_rounds`; human feedback rounds do
+  not count against the limit. `check_fix_rounds` is incremented each time the
+  reviewer is asked to diagnose failing checks — the prereview and checks
+  stages share the counter — and compared with
+  `roles.reviewer.max_check_fix_rounds`. Check fix rounds do not count against
+  `max_review_rounds`.
 - **The reviewer's review stages** (`roles.reviewer.stages`) — sections of one
   reviewer session's prompt, not worker stages like the ones above and below:
   a staged review is still one session. The prompt carries the configured
@@ -780,11 +803,12 @@ Messages are addressed to a **role**, not a session. Delivery rules:
 - Reconcile uses *unread* mail to relabel blocked issues; the scheduler's
   `sentSince` check uses creation time to verify a session really sent what it
   claimed.
-- Human PR feedback enters the mailbox as messages from `human` (see the
-  scheduler loop); people can also send mail by hand with
-  `bees mail send --from human`, or by typing one in the live view's session
-  view, which writes the same thing. The scheduler's own requests — bring a PR
-  up to date with the default branch — come from `orchestrator`.
+- Human PR feedback, and a person's comments on an in-flight issue, enter the
+  mailbox as messages from `human` (see the scheduler loop); people can also
+  send mail by hand with `bees mail send --from human`, or by typing one in
+  the live view's session view, which writes the same thing. The scheduler's
+  own requests — bring a PR up to date with the default branch — come from
+  `orchestrator`.
 
 **Visibility backstop.** After every session (`runSession` in `sessions.go`)
 the scheduler calls `adoptCreated`: `github.Client.ListCreatedSince` lists
@@ -825,7 +849,8 @@ oldest first, and `bees mail` works from any directory because sessions get
                                  interrupted (written by `bees kill` and by the view's k key)
   issues/<n>.json                {number, round, pr, branch, check_fix_rounds, worker_stage,
                                  after_develop, pre_review_done, session, human_seen_at,
-                                 conflict_notified_sha, escalation, escalated_at, updated_at}
+                                 issue_human_seen_at, conflict_notified_sha, escalation,
+                                 escalated_at, updated_at}
   <role>.json                    per-role bookkeeping, one file per role that has run:
                                  {last_run, last_check, sessions, last_consolidated}
   status.json                    live scheduler status for `bees status` (queues, workers, singletons, last_poll, last_error)

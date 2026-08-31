@@ -907,6 +907,32 @@ func (c *Client) PRActivity(ctx context.Context, number int, since time.Time) ([
 		out = append(out, Activity{Kind: "review-comment", ID: r.ID, Author: r.User.Login, Body: r.Body, Path: r.Path, Line: r.Line, URL: r.HTMLURL, CreatedAt: r.CreatedAt})
 	}
 
+	comments, err := c.issueComments(ctx, number)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, comments...)
+
+	return c.freshHumanActivity(out, since), nil
+}
+
+// IssueActivity returns the conversation comments on an issue created after
+// since, oldest first, excluding those written by bees roles. It reads the
+// same endpoint as PRActivity's third block — GitHub's issues API addresses a
+// pull request by the same number — and applies the same bee filter, so a
+// person's comment on the issue reaches the factory exactly as a comment on
+// the pull request does.
+func (c *Client) IssueActivity(ctx context.Context, number int, since time.Time) ([]Activity, error) {
+	comments, err := c.issueComments(ctx, number)
+	if err != nil {
+		return nil, err
+	}
+	return c.freshHumanActivity(comments, since), nil
+}
+
+// issueComments reads the conversation comments on an issue or pull request,
+// unfiltered and in the order GitHub returns them.
+func (c *Client) issueComments(ctx context.Context, number int) ([]Activity, error) {
 	var comments []struct {
 		ID        int64     `json:"id"`
 		User      Author    `json:"user"`
@@ -917,18 +943,26 @@ func (c *Client) PRActivity(ctx context.Context, number int, since time.Time) ([
 	if err := c.apiList(ctx, fmt.Sprintf("repos/%s/issues/%d/comments", c.Repo, number), &comments); err != nil {
 		return nil, err
 	}
+	out := make([]Activity, 0, len(comments))
 	for _, r := range comments {
 		out = append(out, Activity{Kind: "comment", ID: r.ID, Author: r.User.Login, Body: r.Body, URL: r.HTMLURL, CreatedAt: r.CreatedAt})
 	}
+	return out, nil
+}
 
+// freshHumanActivity keeps the activity written by people after since and
+// sorts it oldest first. A comment is a bee's when its last line is the
+// marker or when its author is the login the factory acts as (Client.isBee),
+// so a person quoting a bee still gets through.
+func (c *Client) freshHumanActivity(in []Activity, since time.Time) []Activity {
 	var filtered []Activity
-	for _, a := range out {
+	for _, a := range in {
 		if a.CreatedAt.After(since) && !c.isBee(a.Author, a.Body) {
 			filtered = append(filtered, a)
 		}
 	}
 	sort.Slice(filtered, func(i, j int) bool { return filtered[i].CreatedAt.Before(filtered[j].CreatedAt) })
-	return filtered, nil
+	return filtered
 }
 
 func (c *Client) apiList(ctx context.Context, path string, v any) error {

@@ -311,8 +311,9 @@ func wantWorkerFields(t *testing.T, got IssueState, round int, when string) {
 // writes on its polling path has the same shape as the cost totals — a
 // developer worker holds one IssueState for the whole life of an issue, so
 // anything it did not load is stale by the time it saves. Saving its copy
-// wholesale would forget that a person's PR feedback had been delivered
-// (delivering it twice), that a head had been mailed about (mailing it again,
+// wholesale would forget that a person's PR feedback and their comments on
+// the issue had been delivered (delivering both twice, and each on a clock of
+// its own), that a head had been mailed about (mailing it again,
 // which is the one thing conflict_notified_sha exists to prevent), that a
 // proposal had been approved (so the product manager is never told), which
 // sub-issues a feature had open (so a finished feature is reported twice, or
@@ -339,8 +340,9 @@ func TestThePollingPathsBookkeepingSurvivesASaveIssue(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Meanwhile the polling path records five things through their owners.
+	// Meanwhile the polling path records six things through their owners.
 	seen := time.Date(2026, 8, 31, 9, 0, 0, 0, time.UTC)
+	issueSeen := time.Date(2026, 8, 31, 9, 15, 0, 0, time.UTC)
 	approved := time.Date(2026, 8, 31, 9, 30, 0, 0, time.UTC)
 	reported := time.Date(2026, 8, 31, 10, 0, 0, 0, time.UTC)
 	escalated := time.Date(2026, 8, 31, 10, 30, 0, 0, time.UTC)
@@ -349,6 +351,7 @@ func TestThePollingPathsBookkeepingSurvivesASaveIssue(t *testing.T) {
 		fn   func() error
 	}{
 		{"SetHumanSeenAt", func() error { return s.SetHumanSeenAt(7, seen) }},
+		{"SetIssueHumanSeenAt", func() error { return s.SetIssueHumanSeenAt(7, issueSeen) }},
 		{"SetConflictNotifiedSHA", func() error { return s.SetConflictNotifiedSHA(7, "deadbee") }},
 		{"SetProposal", func() error { return s.SetProposal(7, false, approved) }},
 		{"SetOpenChildren", func() error { return s.SetOpenChildren(7, []int{11, 12}, reported) }},
@@ -371,6 +374,9 @@ func TestThePollingPathsBookkeepingSurvivesASaveIssue(t *testing.T) {
 	wantWorkerFields(t, got, 2, "after a save")
 	if !got.HumanSeenAt.Equal(seen) {
 		t.Errorf("human_seen_at: got %v want %v — feedback already delivered would be delivered again", got.HumanSeenAt, seen)
+	}
+	if !got.IssueHumanSeenAt.Equal(issueSeen) {
+		t.Errorf("issue_human_seen_at: got %v want %v — the issue's comments would be delivered again", got.IssueHumanSeenAt, issueSeen)
 	}
 	if got.ConflictNotifiedSHA != "deadbee" {
 		t.Errorf("conflict_notified_sha: got %q want %q — the same head would be mailed about twice", got.ConflictNotifiedSHA, "deadbee")
@@ -409,6 +415,15 @@ func TestTheOwnerMethodsPreserveTheWorkerFields(t *testing.T) {
 			want: func(t *testing.T, is IssueState) {
 				if is.HumanSeenAt.IsZero() {
 					t.Error("human_seen_at was not recorded")
+				}
+			},
+		},
+		{
+			name: "SetIssueHumanSeenAt",
+			set:  func(s *Store) error { return s.SetIssueHumanSeenAt(7, time.Unix(2, 0).UTC()) },
+			want: func(t *testing.T, is IssueState) {
+				if is.IssueHumanSeenAt.IsZero() {
+					t.Error("issue_human_seen_at was not recorded")
 				}
 			},
 		},

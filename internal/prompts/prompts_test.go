@@ -1425,3 +1425,33 @@ func TestAnInterruptionWithNothingToShowStillReads(t *testing.T) {
 		t.Errorf("no transcript, and the prompt does not say so:\n%s", task)
 	}
 }
+
+// A person's comment on the issue reaches the developer as mail from `human`
+// (scheduler.deliverHumanIssueComments, #304). The prompt has to say three
+// things a rendering of the comment history cannot: that such a comment is a
+// direction rather than context, where it ranks against the issue and the
+// reviewer, and that the reply goes on the issue rather than on the pull
+// request — the paragraph above it sends every reply to the PR.
+func TestDeveloperTakesDirectionsFromPeopleOnTheIssue(t *testing.T) {
+	sys, err := System(config.RoleDeveloper, sample(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	flow := flowed(sys)
+	for _, want := range []string{
+		"Directions from people",
+		"comment on the **issue** while you are working on it",
+		"reaches you as mail from `human`",
+		"it outranks the issue body and the reviewer",
+		"Reply **on the issue**, not on the pull request, with the `comment` tool",
+	} {
+		if !strings.Contains(flow, want) {
+			t.Errorf("developer prompt is missing %q:\n%s", want, sys)
+		}
+	}
+	// The reply target is the issue's own number, not a placeholder: a
+	// developer session renders one issue.
+	if !strings.Contains(flow, fmt.Sprintf("`number: %d`", sample().Issue.Number)) {
+		t.Errorf("developer prompt does not name the issue number to reply to:\n%s", sys)
+	}
+}
