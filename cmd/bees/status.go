@@ -152,6 +152,12 @@ func shortDur(d time.Duration) string {
 // The claude session limit is reported before the daily budget: it is the
 // harder stop, and it names the time it lifts because that is the only
 // thing a person can do anything about.
+//
+// The build the running scheduler was started from comes last, after
+// anything that has stopped the factory: it is attribution rather than a
+// thing to act on. It is omitted entirely when status.json carries no
+// version — one written by a bees older than the field — so the line reads
+// exactly as it always did.
 func schedulerLine(st state.Status, now time.Time) string {
 	line := "scheduler: never run"
 	if !st.UpdatedAt.IsZero() {
@@ -165,6 +171,9 @@ func schedulerLine(st state.Status, now time.Time) string {
 		line += fmt.Sprintf("   paused: daily budget ($%.2f / $%.2f)", st.DaySpendUSD, st.DayBudgetUSD)
 	case st.DayBudgetUSD > 0:
 		line += fmt.Sprintf("   daily budget: $%.2f / $%.2f", st.DaySpendUSD, st.DayBudgetUSD)
+	}
+	if st.Version != "" {
+		line += "   build " + st.Version
 	}
 	return line
 }

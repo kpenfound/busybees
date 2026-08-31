@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/github"
@@ -151,6 +152,8 @@ func (a *app) scheduler() (*scheduler.Scheduler, error) {
 	// and `bees mail` run inside sessions, concurrently with the scheduler,
 	// and must not race its rotation.
 	attachLogFile(a.logger, a.log, filepath.Join(a.store.Dir, "bees.log"))
+	bi, _ := debug.ReadBuildInfo()
+	buildVersion, buildRevision := schedulerBuild(version, bi)
 	return scheduler.New(scheduler.Deps{
 		Config:     a.cfg,
 		GitHub:     a.gh,
@@ -159,7 +162,22 @@ func (a *app) scheduler() (*scheduler.Scheduler, error) {
 		Workspaces: a.ws,
 		Store:      a.store,
 		Logger:     a.log,
+		Version:    buildVersion,
+		Revision:   buildRevision,
 	})
+}
+
+// schedulerBuild resolves the build the scheduler records in its startup log
+// line and in status.json: the version `bees version` prints, and the
+// untruncated commit behind it (the version truncates it for display; #297
+// compares the raw one against the repository).
+//
+// cmd/bees resolves it and hands it to the scheduler rather than the other
+// way round, because the release build's `-ldflags -X main.version` override
+// sets a variable of this package — the same one `bees version` reads.
+func schedulerBuild(override string, bi *debug.BuildInfo) (version, revision string) {
+	revision, _ = versions.Revision(bi)
+	return versions.Bees(override, bi), revision
 }
 
 // attachLogFile adds the state directory's log file to l. A state directory
