@@ -120,11 +120,11 @@ func NotesSkeleton(role string) string {
 // (scheduler.workIssue) holds one IssueState for the whole life of an issue
 // and writes it back with SaveIssue, while the scheduler's polling path
 // writes single fields through the owner methods on Store (SetIssueSession,
-// AddIssueCost, SetHumanSeenAt, SetConflictNotifiedSHA, SetProposal,
-// SetOpenChildren), each of which reads the file, changes its own fields and
-// writes it back. SaveIssue carries every field it does not own over from the
-// file, so a worker's copy — loaded when it started, and by then stale —
-// cannot erase what the polling path recorded while it ran.
+// AddIssueCost, SetHumanSeenAt, SetIssueHumanSeenAt, SetConflictNotifiedSHA,
+// SetProposal, SetOpenChildren), each of which reads the file, changes its own
+// fields and writes it back. SaveIssue carries every field it does not own
+// over from the file, so a worker's copy — loaded when it started, and by then
+// stale — cannot erase what the polling path recorded while it ran.
 type IssueState struct {
 	// Number is the issue these fields belong to and UpdatedAt when the file
 	// was last written; every writer sets both.
@@ -180,6 +180,15 @@ type IssueState struct {
 	// (scheduler.deliverHumanFeedback): delivering the same review twice is
 	// exactly what it exists to prevent, so SaveIssue carries it over.
 	HumanSeenAt time.Time `json:"human_seen_at,omitempty"`
+	// IssueHumanSeenAt is the timestamp of the latest human *issue* comment
+	// already delivered. It is separate from HumanSeenAt, which is the pull
+	// request's: one stream's clock must not suppress the other's. It is
+	// owned by SetIssueHumanSeenAt (scheduler.deliverHumanIssueComments) and
+	// carried over by SaveIssue for the same reason HumanSeenAt is. A zero
+	// value means the issue has not yet been seen in a flight state; the
+	// first pass that sees it there records the poll time and delivers
+	// nothing, so an upgrade does not replay the whole comment history.
+	IssueHumanSeenAt time.Time `json:"issue_human_seen_at,omitempty"`
 	// ConflictNotifiedSHA is the PR head commit the developer was last told
 	// to bring up to date with the default branch; the same head is never
 	// mailed about twice. It is owned by SetConflictNotifiedSHA
@@ -261,12 +270,13 @@ func (s *Store) Issue(n int) (IssueState, error) {
 // feature-completeness bookkeeping the polling path recorded in the meantime.
 // Each of those fields has an owner method that reads, changes and writes the
 // file (AddIssueCost, SetIssueSession, SetHumanSeenAt,
-// SetConflictNotifiedSHA, SetProposal, SetOpenChildren); this is the other
-// half of that rule.
+// SetIssueHumanSeenAt, SetConflictNotifiedSHA, SetProposal, SetOpenChildren);
+// this is the other half of that rule.
 func (s *Store) SaveIssue(is IssueState) error {
 	if cur, err := s.Issue(is.Number); err == nil {
 		is.Cost, is.Sessions, is.Session = cur.Cost, cur.Sessions, cur.Session
 		is.HumanSeenAt, is.ConflictNotifiedSHA = cur.HumanSeenAt, cur.ConflictNotifiedSHA
+		is.IssueHumanSeenAt = cur.IssueHumanSeenAt
 		is.Proposal, is.ProposalApprovedAt = cur.Proposal, cur.ProposalApprovedAt
 		is.OpenChildren, is.CompleteReportedAt = cur.OpenChildren, cur.CompleteReportedAt
 		is.Escalation, is.EscalatedAt = cur.Escalation, cur.EscalatedAt
@@ -315,6 +325,21 @@ func (s *Store) SetHumanSeenAt(n int, t time.Time) error {
 		return err
 	}
 	is.Number, is.HumanSeenAt = n, t
+	is.UpdatedAt = time.Now().UTC()
+	return s.writeJSON(filepath.Join(s.Dir, "issues", strconv.Itoa(n)+".json"), is)
+}
+
+// SetIssueHumanSeenAt records how far the scheduler has read an issue's own
+// human comments. It is the only writer of IssueState.IssueHumanSeenAt, and
+// deliberately separate from SetHumanSeenAt: the pull request and the issue
+// are two comment streams, and advancing one clock past the other would drop
+// the comments it has not delivered yet.
+func (s *Store) SetIssueHumanSeenAt(n int, t time.Time) error {
+	is, err := s.Issue(n)
+	if err != nil {
+		return err
+	}
+	is.Number, is.IssueHumanSeenAt = n, t
 	is.UpdatedAt = time.Now().UTC()
 	return s.writeJSON(filepath.Join(s.Dir, "issues", strconv.Itoa(n)+".json"), is)
 }
