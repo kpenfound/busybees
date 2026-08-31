@@ -336,8 +336,28 @@ func (s *Store) writeJSON(path string, v any) error {
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+	// A temp name derived from the destination is shared by every writer of
+	// that path: two goroutines saving the same issue would truncate and
+	// write one file, and one could rename what the other is still writing,
+	// leaving JSON no reader ever repairs. A unique temp file per call makes
+	// concurrent saves last-write-wins instead.
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	// A no-op after a successful rename; on every error path it is the
+	// cleanup. Its own error is deliberately ignored.
+	defer func() { _ = os.Remove(tmp) }()
+	if _, err := f.Write(b); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	// os.CreateTemp creates the file 0600; state files are 0644.
+	if err := os.Chmod(tmp, 0o644); err != nil {
 		return err
 	}
 	return os.Rename(tmp, path)
