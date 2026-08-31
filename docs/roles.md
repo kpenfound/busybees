@@ -694,11 +694,13 @@ prompt_file = "docs/qa-checklist.md"
   `bees/prompts/common.md` and `bees/prompts/<role>.md`, read from the
   session's worktree — are appended after them, so `bees.toml` still wins.
   `bees prompts show <role>` prints the base prompt; `--rendered` shows the
-  whole thing for this project. All four are read when a session starts, so
-  editing them changes the next session. The **base** prompt is not: it is
-  compiled into the `bees` binary, so a change to `internal/prompts/*/*.md`
-  reaches no session until `bees` is rebuilt and `bees run` restarted —
-  `bees status` names the build the running scheduler was started from.
+  whole thing for this project. A `prompt_file`'s contents are re-read for
+  each session, but `prompt` — like every other key in `bees.toml` — is read
+  once when `bees run` starts, so changing it needs a restart. The **base**
+  prompt needs more: it is compiled into the `bees` binary, so a change to
+  `internal/prompts/*/*.md` reaches no session until `bees` is rebuilt and
+  `bees run` restarted — `bees status` names the build the running scheduler
+  was started from.
 - **skills** are unioned (global first) and exposed to the session as plugin
   directories.
 - **mcp** servers are unioned; a role's server replaces a global one with the

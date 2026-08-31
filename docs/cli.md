@@ -634,8 +634,8 @@ different window from `today:` above — and says plainly when the budget has pa
 dispatch:
 
 ```
-scheduler: pid 4711, last poll 12s ago   daily budget: $42.10 / $100.00
-scheduler: pid 4711, last poll 12s ago   paused: daily budget ($101.20 / $100.00)
+scheduler: pid 4711, last poll 12s ago   daily budget: $42.10 / $100.00   build v0.2.0
+scheduler: pid 4711, last poll 12s ago   paused: daily budget ($101.20 / $100.00)   build v0.2.0
 ```
 
 While it is paused the scheduler keeps polling and reconciling labels but starts no
@@ -648,7 +648,7 @@ factory the same way, and is reported before the budget because it is the harder
 stop — it names the time it lifts (`limit_paused_until` in `--json`):
 
 ```
-scheduler: pid 4711, last poll 12s ago   paused: claude session limit until 23:50 (in 37m)
+scheduler: pid 4711, last poll 12s ago   paused: claude session limit until 23:50 (in 37m)   build v0.2.0
 ```
 
 The `ready` queue also carries a breakdown by [size](workflow.md#sizing)

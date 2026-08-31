@@ -299,15 +299,12 @@ func TestWorkersTextMarksAResumedWorker(t *testing.T) {
 
 // `bees status --json` needed no new key for the running build: the two
 // fields ride along inside the marshalled `status` object, which is the whole
-// state.Status. The test marshals the map the command builds, so a second,
-// top-level copy of the version added later fails here rather than quietly
-// giving a consumer two places to read it from.
+// state.Status. The test marshals `statusJSON`, the object the command itself
+// prints, so a second, top-level copy of the version added there later fails
+// here rather than quietly giving a consumer two places to read it from.
 func TestStatusJSONCarriesTheBuildInsideStatus(t *testing.T) {
 	st := state.Status{Version: "dev (abc123def456 modified)", Revision: "abc123def456789"}
-	raw, err := json.Marshal(map[string]any{
-		"status": st, "unread_mail": map[string]int{}, "today": nil, "notes_bytes": map[string]int{},
-		"work_hours": nil, "acting_as": "",
-	})
+	raw, err := json.Marshal(statusJSON(&config.Config{}, st, map[string]int{}, costGroup{}, nil, time.Now()))
 	if err != nil {
 		t.Fatal(err)
 	}
