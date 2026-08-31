@@ -21,9 +21,9 @@ Everything else is for humans.
 | `--log-level <debug\|info\|warn\|error>` | Console log level. Default `info`; `$BEES_LOG_LEVEL`, then [`logging.level`](configuration.md#logging). |
 | `-h, --help` | Help for any command. |
 
-A flag beats its environment variable, which beats the [`[logging]`
-table](configuration.md#logging) in `bees.toml`, which beats the default. An
-unknown value is an error naming the valid ones.
+A flag beats its environment variable, which beats the
+[`[logging]` table](configuration.md#logging) in `bees.toml`, which beats the
+default. An unknown value is an error naming the valid ones.
 
 ## Setting up
 
@@ -464,7 +464,9 @@ by one. A workflow-state queue is omitted while it is
 empty (`feedback`, `features`, `proposals` and `open_prs` are always shown).
 
 Under the scheduler line it also reports what the factory has spent since midnight,
-summed from the [session ledger](#bees-cost) (`today` in `--json`):
+summed from the
+[session ledger](#bees-cost---since-24h---by-roleissueday---json) (`today` in
+`--json`):
 
 ```
 today: 23 sessions, 412 turns, $8.12
