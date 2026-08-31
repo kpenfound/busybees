@@ -1,6 +1,7 @@
 package prompts
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,14 @@ import (
 	"github.com/kpenfound/busybees/internal/session"
 )
 
+// sampleMailTime is a fixed timestamp, never time.Now(): tests render the
+// same prompt from two independent sample() calls and compare the two strings,
+// and mail.Format renders a message's timestamp at second precision, so a
+// wall-clock fixture differs whenever the two calls straddle a second
+// boundary. Nothing asserts on the rendered value; TestSampleFixtureIsDeterministic
+// guards the rule.
+var sampleMailTime = time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+
 func sample() Data {
 	return Data{
 		Project: config.Project{Repo: "acme/widgets", DefaultBranch: "main", Remote: "origin"},
@@ -18,7 +27,7 @@ func sample() Data {
 		Labels:  config.LabelsFor("bees"),
 		WorkDir: "/tmp/ws", Branch: "bees/issue-4", StateDir: "/s", SessionDir: "/s/sessions/1", NotesFile: "/s/notes/x.md",
 		Notes:         "remember this",
-		Inbox:         []mail.Message{{ID: "m1", From: "reviewer", To: "developer", Subject: "Review round 1", Body: "please fix", PR: 9, CreatedAt: time.Now()}},
+		Inbox:         []mail.Message{{ID: "m1", From: "reviewer", To: "developer", Subject: "Review round 1", Body: "please fix", PR: 9, CreatedAt: sampleMailTime}},
 		Issue:         &github.Issue{Number: 4, Title: "Add thing", Body: "details", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:feature"}}, Author: github.Author{Login: "kyle"}},
 		PR:            &github.PR{Number: 9, Title: "Add thing", HeadRefName: "bees/issue-4", BaseRefName: "main", Author: github.Author{Login: "bot"}},
 		Issues:        []github.Issue{{Number: 6, Title: "Waiting", Labels: []github.Label{{Name: "bees:triage"}, {Name: "bees:bug"}}}, {Number: 7, Title: "Building", Labels: []github.Label{{Name: "bees:in-progress"}}}},
@@ -96,6 +105,41 @@ func TestConsolidateNotesParagraph(t *testing.T) {
 			t.Errorf("%s asks before showing the notes:\n%s", name, on)
 		}
 	}
+}
+
+// No field of sample() may depend on the wall clock. Several tests render the
+// same prompt from two independent sample() calls and compare the two strings
+// byte for byte (TestConsolidateNotesParagraph does), and mail.Format renders
+// a message's timestamp at second precision — so a time.Now() fixture makes
+// those tests fail whenever the two calls land either side of a second
+// boundary. Rendering deliberately across a boundary turns that one-in-a-few-
+// thousand flake into a failure every run.
+func TestSampleFixtureIsDeterministic(t *testing.T) {
+	first, err := Task(config.RoleDeveloper, sample())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for start := time.Now(); time.Now().Truncate(time.Second).Equal(start.Truncate(time.Second)); {
+		time.Sleep(time.Millisecond)
+	}
+	second, err := Task(config.RoleDeveloper, sample())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second {
+		t.Errorf("two sample() renders differ, so a fixture field depends on the wall clock:\n%s", firstDiffLine(first, second))
+	}
+}
+
+// firstDiffLine describes where two renders that should be identical part ways.
+func firstDiffLine(a, b string) string {
+	as, bs := strings.Split(a, "\n"), strings.Split(b, "\n")
+	for i := 0; i < len(as) && i < len(bs); i++ {
+		if as[i] != bs[i] {
+			return fmt.Sprintf("line %d:\n  %q\n  %q", i+1, as[i], bs[i])
+		}
+	}
+	return fmt.Sprintf("%d lines vs %d lines", len(as), len(bs))
 }
 
 // The system prompt tells every role what shape its notes should have, so
