@@ -234,6 +234,9 @@ type fakeGH struct {
 	// ParentIssue query. Empty means "use the hardcoded answer below": issue
 	// 1 is a sub-issue of feature 5 while that feature exists.
 	parents map[int]int
+	// parentErr makes the ParentIssue query fail for one work item, which is
+	// how a partial parent lookup is expressed: the other items still answer.
+	parentErr map[int]error
 	// errFor makes a command fail: it is keyed by the command name, either
 	// the first two arguments ("label list") or the first one ("label"), or
 	// by "requested_reviewers" and "assignees" for the review-request and
@@ -401,6 +404,9 @@ func (f *fakeGH) exec(ctx context.Context, args ...string) ([]byte, error) {
 				if v, ok := strings.CutPrefix(a, "number="); ok {
 					n, _ = strconv.Atoi(v)
 				}
+			}
+			if err, ok := f.parentErr[n]; ok {
+				return nil, err
 			}
 			if p, ok := f.parents[n]; ok {
 				title := "Feature"

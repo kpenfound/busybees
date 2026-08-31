@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -265,5 +267,141 @@ func TestAnEmptyParentLookupKeepsTheRecordedSubIssues(t *testing.T) {
 	}
 	if !strings.Contains(section(t, lastPMPrompt(t, h), "## Features whose work is done"), "#5: Exports") {
 		t.Error("the finished feature is not presented for a close decision")
+	}
+}
+
+// A session that never ran cannot have delivered the report, so the trigger
+// is not spent by it: the account hitting its session limit must not cost the
+// feature its one presentation. The house pattern at the same seam is the
+// same — markRun and MarkRead both happen after the session.
+func TestAFailedProductManagerSessionDoesNotSpendTheReport(t *testing.T) {
+	now := time.Now()
+	h := newHarnessAt(t, pmOnlyTOML, now)
+	seedFeature(h, 5, "Exports", now.Add(-2*time.Hour))
+	quietFeature(h, 5, now.Add(-time.Hour))
+	seedWorkItem(h, 1, "Export to CSV", now.Add(-time.Hour))
+	runPass(t, h)
+
+	// The last work item closes while the account is out of capacity: the
+	// session dies without reporting an outcome, the way one that could not
+	// start does.
+	t.Setenv("FAKE_LIMIT", strconv.FormatInt(now.Add(time.Hour).Unix(), 10))
+	h.gh.issues[1].State = "CLOSED"
+	nextPass(t, h)
+	is, err := h.store.Issue(5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !is.CompleteReportedAt.IsZero() {
+		t.Fatalf("a session that never ran spent the report: %v", is.CompleteReportedAt)
+	}
+
+	// With capacity back, the finished feature is still presented.
+	t.Setenv("FAKE_LIMIT", "")
+	h.clock.advance(3 * time.Hour)
+	forcePoll(h)
+	runPass(t, h)
+	done := section(t, lastPMPrompt(t, h), "## Features whose work is done")
+	if !strings.Contains(done, "#5: Exports") {
+		t.Errorf("the finished feature was lost by the failed session:\n%s", done)
+	}
+}
+
+// A parent lookup that only partly answered is not a memory either: recording
+// the truncated set would look exactly like the missing children having
+// closed, and the next pass would report the feature complete while a real
+// sub-issue is still open.
+func TestAPartialParentLookupKeepsTheRecordedSubIssues(t *testing.T) {
+	now := time.Now()
+	h := newHarnessAt(t, pmOnlyTOML, now)
+	h.gh.parents = map[int]int{1: 5, 7: 5}
+	seedFeature(h, 5, "Exports", now.Add(-2*time.Hour))
+	quietFeature(h, 5, now.Add(-time.Hour))
+	seedWorkItem(h, 1, "Export to CSV", now.Add(-time.Hour))
+	seedWorkItem(h, 7, "Export to XLSX", now.Add(-time.Hour))
+	runPass(t, h)
+	is, err := h.store.Issue(5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(is.OpenChildren, []int{1, 7}) {
+		t.Fatalf("the feature's open sub-issues were not recorded: %+v", is.OpenChildren)
+	}
+
+	// #7's query fails on the next run: #1 still answers, so the lookup is
+	// non-empty but short of one child.
+	h.gh.parentErr = map[int]error{7: errors.New("sub-issue query is down")}
+	if _, err := h.box.Send(mail.Message{From: HumanSender, To: config.RoleProductManager,
+		Subject: "how is Exports going", Body: "?"}); err != nil {
+		t.Fatal(err)
+	}
+	nextPass(t, h)
+	if n := len(h.sessions(config.RoleProductManager)); n != 2 {
+		t.Fatalf("mail did not start a product manager session: %d, want 2", n)
+	}
+	is, err = h.store.Issue(5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(is.OpenChildren, []int{1, 7}) {
+		t.Fatalf("a partial lookup was recorded over the remembered set: %+v", is.OpenChildren)
+	}
+
+	// So closing #1 while #7 is still open reports nothing.
+	h.gh.issues[1].State = "CLOSED"
+	nextPass(t, h)
+	if n := len(h.sessions(config.RoleProductManager)); n != 2 {
+		t.Errorf("a feature with an open sub-issue was reported complete: %d sessions, want 2", n)
+	}
+}
+
+// A failed run still saw the sub-issues, so it records them even though it
+// does not spend the report: a feature that gains a work item while the
+// account is out of capacity would otherwise keep the mark it was given
+// before that item existed, and closing the new item would clear nothing —
+// the feature could never be reported again.
+func TestAFailedProductManagerSessionStillRecordsTheSubIssues(t *testing.T) {
+	now := time.Now()
+	h := newHarnessAt(t, pmOnlyTOML, now)
+	h.gh.parents = map[int]int{1: 5, 7: 5}
+	seedFeature(h, 5, "Exports", now.Add(-2*time.Hour))
+	quietFeature(h, 5, now.Add(-time.Hour))
+	seedWorkItem(h, 1, "Export to CSV", now.Add(-time.Hour))
+	runPass(t, h)
+	h.gh.issues[1].State = "CLOSED"
+	nextPass(t, h)
+	if is, err := h.store.Issue(5); err != nil || is.CompleteReportedAt.IsZero() {
+		t.Fatalf("the feature was not reported complete: %+v (%v)", is, err)
+	}
+
+	// The product manager decided the feature needed one more work item, and
+	// the run that would have recorded it dies on the session limit.
+	seedWorkItem(h, 7, "Export to XLSX", now)
+	if _, err := h.box.Send(mail.Message{From: HumanSender, To: config.RoleProductManager,
+		Subject: "how is Exports going", Body: "?"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAKE_LIMIT", strconv.FormatInt(now.Add(10*time.Minute).Unix(), 10))
+	nextPass(t, h)
+	is, err := h.store.Issue(5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(is.OpenChildren, []int{7}) {
+		t.Fatalf("the failed run did not record the new sub-issue: %+v", is.OpenChildren)
+	}
+	if !is.CompleteReportedAt.IsZero() {
+		t.Fatalf("the new sub-issue did not re-arm the check: %v", is.CompleteReportedAt)
+	}
+
+	// Closing it reports the feature complete again, well inside
+	// product_manager_interval so nothing but the trigger can be the wake.
+	t.Setenv("FAKE_LIMIT", "")
+	h.clock.advance(15 * time.Minute)
+	h.gh.issues[7].State = "CLOSED"
+	forcePoll(h)
+	runPass(t, h)
+	if !strings.Contains(section(t, lastPMPrompt(t, h), "## Features whose work is done"), "#5: Exports") {
+		t.Error("the re-armed feature is not presented for a close decision")
 	}
 }
