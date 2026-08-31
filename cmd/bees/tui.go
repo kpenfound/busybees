@@ -8,6 +8,7 @@ import (
 
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/logging"
+	"github.com/kpenfound/busybees/internal/mail"
 	"github.com/kpenfound/busybees/internal/scheduler"
 	"github.com/kpenfound/busybees/internal/tui"
 )
@@ -35,6 +36,7 @@ func runWithTUI(ctx context.Context, a *app, s *scheduler.Scheduler, g *globalFl
 		Status: a.store.LoadStatus,
 		Mail:   a.mail.Counts,
 		Now:    time.Now,
+		Send:   sendFromView(a),
 		Repo:   a.cfg.Project.Repo,
 	}, s, give)
 }
@@ -53,5 +55,20 @@ func quietConsole(l *logging.Logger, f consoleFlags, cfg config.Logging, console
 	return func() {
 		o.Console = console
 		l.SetConsole(o)
+	}
+}
+
+// sendFromView delivers a message typed in the session view. It is an
+// ordinary mailbox entry from `human` — the same channel `bees mail send
+// --from human` writes and every role's prompt calls authoritative — so
+// what a person types while watching a session reaches whichever session
+// picks that work item up next.
+func sendFromView(a *app) func(to string, issue, pr int, subject, body string) error {
+	return func(to string, issue, pr int, subject, body string) error {
+		_, err := a.mail.Send(mail.Message{
+			From: scheduler.HumanSender, To: to, Issue: issue, PR: pr,
+			Subject: subject, Body: body,
+		})
+		return err
 	}
 }
