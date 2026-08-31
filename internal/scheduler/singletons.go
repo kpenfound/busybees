@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
@@ -77,6 +78,9 @@ func (s *Scheduler) productManagerHasWork(ctx context.Context, snap *snapshot) b
 	if len(s.approvedSince(snap.features, rs.LastRun)) > 0 {
 		return true
 	}
+	if len(s.completedFeatures(snap)) > 0 {
+		return true
+	}
 	fresh, err := s.freshIssues(ctx, append(append([]github.Issue{}, snap.feedback...), snap.features...), rs.LastRun)
 	if err != nil {
 		return false
@@ -114,6 +118,87 @@ func (s *Scheduler) approvedSince(features []github.Issue, t time.Time) []int {
 		}
 	}
 	return out
+}
+
+// completedFeatures returns the open features whose work is done: every
+// sub-issue the product manager last saw open has closed since, and the
+// product manager has not been told about it yet. Nothing here asks GitHub:
+// the child numbers were recorded by the last runProductManager and
+// snap.open comes from the poll, so the check costs no call on the polling
+// path — which is the whole point, since it runs on every pass.
+//
+// A feature whose children all closed before the scheduler ever recorded
+// them, or that no product manager session has ever seen, has no recorded
+// set and does not fire. It reaches the product manager on the next run for
+// any other reason, which product_manager_interval guarantees.
+func (s *Scheduler) completedFeatures(snap *snapshot) []github.Issue {
+	var out []github.Issue
+	for _, f := range snap.features {
+		is, err := s.store.Issue(f.Number)
+		if err != nil {
+			s.log.Warn("read issue state", "issue", f.Number, "err", err)
+			continue
+		}
+		if len(is.OpenChildren) == 0 || !is.CompleteReportedAt.IsZero() {
+			continue
+		}
+		done := true
+		for _, c := range is.OpenChildren {
+			if snap.open[c] {
+				done = false
+				break
+			}
+		}
+		if done {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// recordFeatureProgress remembers, for every open feature, which of its
+// sub-issues are open right now, so a later pass can notice locally that they
+// have all closed. The numbers come from the parents map runProductManager
+// already builds; reported are the features presented as complete in this
+// run, which are marked so the trigger fires once.
+//
+// A feature with no open children is not recorded over the set it had: that
+// is the state the completeness check exists to spot, and forgetting the
+// children would also lose what the re-arm rule compares against. A set that
+// did change clears the marker, so a feature that gains a sub-issue after
+// being reported complete is reported again when that one closes.
+func (s *Scheduler) recordFeatureProgress(snap *snapshot, parents map[int]github.Parent, reported []github.Issue) {
+	children := map[int][]int{}
+	for item, p := range parents {
+		children[p.Number] = append(children[p.Number], item)
+	}
+	done := map[int]bool{}
+	for _, f := range reported {
+		done[f.Number] = true
+	}
+	for _, f := range snap.features {
+		openNow := children[f.Number]
+		slices.Sort(openNow)
+		is, err := s.store.Issue(f.Number)
+		if err != nil {
+			s.log.Warn("read issue state", "issue", f.Number, "err", err)
+			continue
+		}
+		changed := len(openNow) > 0 && !slices.Equal(is.OpenChildren, openNow)
+		if !changed && !done[f.Number] {
+			continue
+		}
+		if changed {
+			is.OpenChildren = openNow
+			is.CompleteReportedAt = time.Time{}
+		}
+		if done[f.Number] {
+			is.CompleteReportedAt = s.now()
+		}
+		if err := s.store.SaveIssue(is); err != nil {
+			s.log.Warn("save issue state", "issue", f.Number, "err", err)
+		}
+	}
 }
 
 // freshIssues returns the issues (feedback or feature) a human has created
@@ -219,10 +304,20 @@ func (s *Scheduler) runProductManager(ctx context.Context, snap *snapshot) error
 			parents[i.Number] = *p
 		}
 	}
+	// Features whose every recorded sub-issue has closed: the prompt asks the
+	// product manager to decide whether to close them, and recording the open
+	// children (and that these were reported) is what makes the next pass's
+	// local check possible.
+	complete := s.completedFeatures(snap)
+	for _, f := range complete {
+		s.log.Info("feature work is complete", "issue", f.Number)
+	}
+	s.recordFeatureProgress(snap, parents, complete)
 	return s.runSingleton(ctx, config.RoleProductManager, prompts.Data{
 		Issues: work, PRs: snap.prs, Milestones: milestones, Inbox: inbox,
 		Feedback: feedback, FreshFeatures: freshFeatures, Proposals: proposals,
 		Features: snap.features, Progress: progress, Parents: parents,
+		CompletedFeatures: complete,
 	})
 }
 
