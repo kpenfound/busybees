@@ -363,7 +363,7 @@ github
   ✗ workflow labels             2 of 19 missing: bees:size/l, bees:size/xl
       → run `bees labels sync`
 ...
-Error: preflight: 1 of 14 checks failed — fix them, run `bees doctor --fix`, or start anyway with `bees run --skip-doctor`
+Error: preflight: 1 of 15 checks failed — fix them, run `bees doctor --fix`, or start anyway with `bees run --skip-doctor`
 ```
 
 At start it lists the repository's labels once and creates any workflow label

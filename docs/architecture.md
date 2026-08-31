@@ -515,8 +515,10 @@ saved to `stderr.log` when non-empty, and `result.json` summarises the run.
   and `bees/prompts/<role>.md` from the **worktree** the session runs in, so a
   branch's own instructions apply to the session working on that branch. A
   missing directory is the normal case and is silent; a file that cannot be read
-  is the `project-prompts` degraded operation and is skipped, never fatal.
-  `bees doctor` fails on the same files, and on one no role would read.
+  is skipped, never fatal, and recorded as the `project-prompts/<role>` degraded
+  operation — one per role, so a file only one role reads is not cleared by the
+  next session of another. `bees doctor` fails on the same files, and on one no
+  role would read.
 - **Skills.** `skills.Manager.Prepare` clones each URL (`<url>[@ref][#subdir]`)
   under `~/.cache/bees/repos/` and returns a plugin directory: the repo itself
   if it has `.claude-plugin/plugin.json`, otherwise a generated wrapper under

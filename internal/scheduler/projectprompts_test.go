@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/prompts"
 	"github.com/kpenfound/busybees/internal/state"
 	"github.com/kpenfound/busybees/internal/workspace"
 )
@@ -118,7 +119,7 @@ func TestNoProjectPromptsIsSilent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if hasDegradedOp(st, "project-prompts") {
+	if hasDegradedOp(st, "project-prompts/"+config.RoleDeveloper) {
 		t.Errorf("a missing bees/prompts/ directory was recorded as a degraded operation: %+v", st.Degraded)
 	}
 }
@@ -148,7 +149,37 @@ func TestBrokenProjectPromptWarnsAndTheSessionStillRuns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hasDegradedOp(st, "project-prompts") {
+	if !hasDegradedOp(st, "project-prompts/"+config.RoleDeveloper) {
 		t.Errorf("an unusable project prompt file was not reported: %+v", st.Degraded)
+	}
+}
+
+// A broken project prompt file belongs to one role: bees/prompts/developer.md
+// is read by the developer and by nobody else. The degraded operation has to be
+// keyed by that role, or the next session of any other role - the reviewer, one
+// worker stage later - reads its own files successfully and clears the streak,
+// and `bees status` stops reporting a file every developer session still skips.
+func TestABrokenProjectPromptSurvivesAnotherRolesSession(t *testing.T) {
+	h := newHarnessAt(t, baseTOML+devAndReviewerTOML, time.Now())
+	commitProjectPrompt(t, h.clone, "bees/issue-1", "developer.md",
+		strings.Repeat("x", prompts.MaxProjectPromptBytes+1))
+	seedReady(h, 1, "m", time.Now().Add(-time.Hour))
+	seedCounter(t, h, "review", 1)
+
+	if err := h.sched.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if names := h.sessionNames(); len(names) < 2 {
+		t.Fatalf("want a developer and a reviewer session, got %v", names)
+	}
+	if !strings.Contains(h.logs.String(), "project prompt file skipped") {
+		t.Fatalf("the developer session did not skip the broken file:\n%s", h.logs.String())
+	}
+	st, err := h.store.LoadStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasDegradedOp(st, "project-prompts/"+config.RoleDeveloper) {
+		t.Errorf("the reviewer's session cleared the developer's broken file: %+v", st.Degraded)
 	}
 }

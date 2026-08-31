@@ -468,8 +468,8 @@ func (d *Deps) checkProjectPrompts(context.Context) Result {
 	}
 	if len(unknown) > 0 {
 		return fail(name, GroupConfig, "not read by any role: "+strings.Join(unknown, ", "),
-			fmt.Sprintf("rename to %s or one of %s.md, or delete the file",
-				prompts.CommonPromptFile, strings.Join(config.Roles, ".md, ")))
+			fmt.Sprintf("rename to %s or one of %s.md, or move it out of %s/: every file in there is a role's instructions",
+				prompts.CommonPromptFile, strings.Join(config.Roles, ".md, "), prompts.ProjectDir))
 	}
 	// Every file that a role would read has to be readable and within the
 	// size limit, whichever role it belongs to.
