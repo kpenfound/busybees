@@ -216,11 +216,12 @@ account or your own — because `login` is compared with the account GitHub says
 token authenticates as. `bees init` checks the token before the factory ever uses it:
 that GitHub accepts it, that it belongs to `login`, and that it can read the
 repository. `bees doctor` asks the same two identity questions of whatever token is
-configured at the time, and one more that `bees init` does not: that the account can
-actually **write** issues. Repository permission does not imply it — a fine-grained
-token's per-resource permissions sit on top of the repository role, so a token can
-read the repository as `ADMIN` and still be refused every issue, comment and label the
-factory writes.
+configured at the time, and two more that `bees init` does not: that the account can
+actually **write** issues, and that it can actually **push branches**. Repository
+permission does not imply either — a fine-grained token's per-resource permissions sit
+on top of the repository role, so a token can read the repository as `ADMIN` and still
+be refused every issue, comment and label the factory writes, or every branch a
+developer session pushes.
 
 ### `filter.assignee = "@me"` still means you
 
