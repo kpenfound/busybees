@@ -1,0 +1,83 @@
+# Release workflow: cross-compiles bees for every supported platform and
+# publishes the binaries on a GitHub release.
+#
+# It runs only when a person pushes a `v*` tag. There is deliberately no
+# `push` or `pull_request` trigger: this repository's own gate is
+# `dagger check`, run by hand (see docs/architecture.md), and a CI workflow
+# was added and reverted on purpose.
+#
+# How to cut a release, and what one contains, is documented in
+# docs/releasing.md. The asset names are a stable interface: the install
+# script parses them.
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# Needed by `gh release create` in the publish job.
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build the binary and its tarball
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          mkdir -p dist/bin
+          go build -trimpath -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" -o dist/bin/bees ./cmd/bees
+          tar -czf "dist/bees_${GITHUB_REF_NAME}_${GOOS}_${GOARCH}.tar.gz" -C dist/bin bees
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bees_${{ github.ref_name }}_${{ matrix.goos }}_${{ matrix.goarch }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: publish the release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Write checksums.txt
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum bees_*.tar.gz > checksums.txt
+          cat checksums.txt
+      - name: Create the release and upload the assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            dist/bees_*.tar.gz dist/checksums.txt
