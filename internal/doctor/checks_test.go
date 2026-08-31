@@ -102,6 +102,11 @@ func setupIn(t *testing.T, clone, extra string, replies map[string]ghReply) *fix
 	}
 	gh := &fakeGH{t: t, replies: replies}
 	gh.install(d.GitHub)
+	// `gh auth status` runs through a second, untokened client, and "who is
+	// running bees?" through no client at all: both need their own fake or
+	// the fixture reaches the real gh.
+	gh.install(d.MachineGitHub)
+	d.CurrentUser = func(context.Context) (string, error) { return "kyle", nil }
 	d.LookPath = func(file string) (string, error) {
 		if file == "git" || file == "gh" {
 			return "/usr/bin/" + file, nil
@@ -720,4 +725,76 @@ func TestCheckAutoMergeWarnsWithoutPermissionToRead(t *testing.T) {
 	// with the error one-lined, never a failure (the `bees run` preflight
 	// refuses to start on a failure).
 	wantResult(t, f.run(t, f.checkAutoMerge), Warn, "could not be read", "Must have admin rights", "admin rights on the repository")
+}
+
+// TestDoctorResolvesAtMeAsThePerson pins that filter.assignee = "@me" means
+// the person running bees on doctor's paths too, with [github] set. The
+// client doctor's repository checks run through carries github.token, and gh
+// answers both `api user` and `--assignee @me` as the account that token
+// belongs to - so resolving "@me" through it would make `bees doctor --fix`
+// assign the factory's work to the bot, which the orchestrator (which
+// resolves "@me" to the person) then cannot see, and would make the filter
+// check report on somebody else's issues.
+func TestDoctorResolvesAtMeAsThePerson(t *testing.T) {
+	t.Setenv("BEES_TEST_TOKEN", "ghp_bot")
+	f := setup(t, "\n[filter]\nassignee = \"@me\"\n\n[github]\nlogin = \"busybees-bot\"\ntoken = \"$BEES_TEST_TOKEN\"\n",
+		map[string]ghReply{
+			// What gh answers when it runs with the bot's GH_TOKEN set.
+			"api user":   {out: "busybees-bot\n"},
+			"issue list": {out: "[]"},
+			"pr list":    {out: "[]"},
+		})
+	f.CurrentUser = func(context.Context) (string, error) { return "kyle", nil }
+
+	login, err := f.assignee(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if login != "kyle" {
+		t.Errorf("bees doctor --fix would assign the factory's work to %q, not to the person", login)
+	}
+
+	f.run(t, f.checkFilter)
+	for _, c := range f.gh.calls {
+		joined := strings.Join(c, " ")
+		if strings.Contains(joined, "@me") {
+			t.Errorf("`@me` was sent to gh, which resolves it as github.token's account: gh %s", joined)
+		}
+		if strings.Contains(joined, "--assignee") && !strings.Contains(joined, "--assignee kyle") {
+			t.Errorf("the filter check asks GitHub for somebody else's issues: gh %s", joined)
+		}
+	}
+}
+
+// TestGHAuthStatusIsAskedOfTheMachineAccount pins that `gh auth status` is
+// the one check that does not carry github.token. It reports the machine's
+// own authentication, which is what every Claude session uses whatever
+// [github] configures; run with the bot's GH_TOKEN, gh reports the token's
+// account first and unions both accounts' `Token scopes:` lines, so a
+// github.token missing `repo` would pass on the strength of the person's
+// scopes - the merge hostBlock exists to prevent.
+func TestGHAuthStatusIsAskedOfTheMachineAccount(t *testing.T) {
+	t.Setenv("BEES_TEST_TOKEN", "ghp_bot")
+	f := setup(t, "\n[github]\nlogin = \"busybees-bot\"\ntoken = \"$BEES_TEST_TOKEN\"\n", nil)
+
+	if got := f.GitHub.Token; got != "ghp_bot" {
+		t.Errorf("the repository checks act as %q, want the configured token", got)
+	}
+	if got := f.MachineGitHub.Token; got != "" {
+		t.Errorf("`gh auth status` carries a token (%q), so it reports on the bot instead of the machine", got)
+	}
+
+	var used *github.Client
+	for _, c := range []*github.Client{f.GitHub, f.MachineGitHub} {
+		c.Exec = func(client *github.Client) func(context.Context, ...string) ([]byte, error) {
+			return func(context.Context, ...string) ([]byte, error) {
+				used = client
+				return []byte("github.com\n  ✓ Logged in to github.com account kyle (keyring)\n  - Token scopes: 'repo'\n"), nil
+			}
+		}(c)
+	}
+	wantResult(t, f.run(t, f.checkGH), Pass, "kyle")
+	if used != f.MachineGitHub {
+		t.Error("`gh auth status` ran through the client that carries github.token")
+	}
 }

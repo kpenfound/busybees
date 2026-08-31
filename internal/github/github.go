@@ -328,12 +328,13 @@ func (q Query) Matches(labels []Label, assignees []Author, milestone string) boo
 	if q.Label != "" && !HasLabel(labels, q.Label) {
 		return false
 	}
-	// "@me" is not resolvable here, and it never arrives: bees resolves
-	// filter.assignee to a login with the machine owner's own gh
-	// authentication before it builds a query (see resolveFilterAssignee in
-	// cmd/bees). Letting it through unchecked is therefore about a hand-built
-	// query, not a fallback — and gh would answer it with whichever account
-	// the client's token belongs to, which is not what "@me" means to bees.
+	// "@me" is not resolvable here, so it is let through unchecked. Every
+	// caller resolves filter.assignee to a login with the machine owner's own
+	// gh authentication first (resolveFilterAssignee in cmd/bees, Deps.me in
+	// internal/doctor), because that is whose work the factory picks up — so
+	// a "@me" arriving here is a hand-built query rather than the filter, and
+	// gh would answer such a query as whichever account the client's token
+	// belongs to, which is not what "@me" means to bees.
 	if q.Assignee != "" && q.Assignee != "@me" {
 		found := false
 		for _, a := range assignees {
@@ -512,9 +513,10 @@ func (c *Client) RequestReview(ctx context.Context, number int, reviewers ...str
 }
 
 // CurrentUser returns the login of the account the machine's own gh is
-// authenticated as. It deliberately takes no client and no token: its one
-// caller is filter.assignee = "@me", which asks whose work the factory picks
-// up — the person's, not the account [github] makes bees act as.
+// authenticated as. It deliberately takes no client and no token, because
+// every caller is resolving filter.assignee = "@me", which asks whose work
+// the factory picks up — the person's, not the account [github] makes bees
+// act as. Resolving it through a Client would answer as that account.
 func CurrentUser(ctx context.Context) (string, error) {
 	cmd := exec.CommandContext(ctx, "gh", "api", "user", "--jq", ".login")
 	out, err := cmd.Output()
@@ -909,9 +911,13 @@ func (c Created) MilestoneTitle() string {
 	return c.Milestone.Title
 }
 
-// ListCreatedSince returns issues and PRs authored by the gh user at or
-// after t, regardless of labels. Used to make sure everything a session
-// created stays visible to the factory.
+// ListCreatedSince returns issues and PRs authored by the account this client
+// acts as, at or after t, regardless of labels. Used to make sure everything a
+// session created stays visible to the factory.
+//
+// "author:@me" is resolved by gh against the client's own credentials, so with
+// [github] set this asks about the bot rather than the machine owner - see the
+// note on Scheduler.adoptCreated.
 func (c *Client) ListCreatedSince(ctx context.Context, t time.Time) ([]Created, error) {
 	search := fmt.Sprintf("author:@me created:>=%s", t.UTC().Add(-time.Minute).Format("2006-01-02T15:04:05Z"))
 	var out []Created

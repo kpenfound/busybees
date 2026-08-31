@@ -48,9 +48,16 @@ type Deps struct {
 	// ClaudeBin is the claude executable. Default "claude".
 	ClaudeBin string
 
-	// LookPath and Git default to exec.LookPath and workspace.Git.
-	LookPath func(file string) (string, error)
-	Git      func(ctx context.Context, dir string, args ...string) (string, error)
+	// MachineGitHub runs the one gh command that is about the machine's own
+	// authentication rather than the repository: `gh auth status`. It never
+	// carries github.token - see machineGH.
+	MachineGitHub *github.Client
+
+	// LookPath, Git and CurrentUser default to exec.LookPath, workspace.Git
+	// and github.CurrentUser.
+	LookPath    func(file string) (string, error)
+	Git         func(ctx context.Context, dir string, args ...string) (string, error)
+	CurrentUser func(ctx context.Context) (string, error)
 }
 
 // New loads the bees.toml at configPath and returns the dependencies the
@@ -58,7 +65,7 @@ type Deps struct {
 // does not resolve is reported by the config checks instead, so the toolchain
 // checks still run on a machine that has no bees.toml yet.
 func New(ctx context.Context, configPath, claudeBin string) *Deps {
-	d := &Deps{ConfigPath: configPath, ClaudeBin: claudeBin}
+	d := &Deps{ConfigPath: configPath, ClaudeBin: claudeBin, MachineGitHub: github.New("")}
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		d.ConfigErr = err
@@ -113,6 +120,17 @@ func (d *Deps) lookPath(file string) (string, error) {
 	return exec.LookPath(file)
 }
 
+// me is the login of the person running bees. filter.assignee = "@me" says
+// whose work the factory picks up, which is theirs, so it is resolved with
+// their own gh authentication - never through d.gh, whose client carries
+// github.token and would answer as the account the factory acts as.
+func (d *Deps) me(ctx context.Context) (string, error) {
+	if d.CurrentUser != nil {
+		return d.CurrentUser(ctx)
+	}
+	return github.CurrentUser(ctx)
+}
+
 func (d *Deps) git(ctx context.Context, dir string, args ...string) (string, error) {
 	if d.Git != nil {
 		return d.Git(ctx, dir, args...)
@@ -124,6 +142,20 @@ func (d *Deps) git(ctx context.Context, dir string, args ...string) (string, err
 // fake it) and with a repository-less client otherwise.
 func (d *Deps) gh(ctx context.Context, args ...string) ([]byte, error) {
 	c := d.GitHub
+	if c == nil {
+		c = github.New("")
+	}
+	return c.Exec(ctx, args...)
+}
+
+// machineGH runs a gh command as the machine owner, never as the account
+// [github] configures. Sessions authenticate with the machine's own gh
+// whatever [github] says, so the check that inspects that authentication has
+// to ask about it - and `gh auth status` run with GH_TOKEN set reports the
+// token's account first and unions the two accounts' scopes, which is exactly
+// the merge hostBlock exists to prevent.
+func (d *Deps) machineGH(ctx context.Context, args ...string) ([]byte, error) {
+	c := d.MachineGitHub
 	if c == nil {
 		c = github.New("")
 	}
@@ -184,7 +216,7 @@ func (d *Deps) checkGH(ctx context.Context) Result {
 	// a failure goes to stderr, which the client folds into the error.
 	// --hostname makes gh exit non-zero when that host is not logged in, which
 	// the error branch below already turns into the right answer for bees.
-	out, err := d.gh(ctx, "auth", "status", "--hostname", ghHost)
+	out, err := d.machineGH(ctx, "auth", "status", "--hostname", ghHost)
 	if err != nil {
 		return fail(name, GroupToolchain, oneLine(err.Error()),
 			"run `gh auth login` (sessions use your own gh authentication, whatever [github] configures)")
@@ -573,6 +605,17 @@ func unrequiredGate(name, branch, why string) Result {
 func (d *Deps) checkFilter(ctx context.Context) Result {
 	const name = "filter matches issues"
 	q := Query(d.Config)
+	if q.Assignee == "@me" {
+		// gh resolves "@me" against whatever token the client carries, which
+		// with [github] set is the account the factory acts as: ask who is
+		// running bees instead, the same way the orchestrator does.
+		login, err := d.assignee(ctx)
+		if err != nil {
+			return fail(name, GroupGitHub, oneLine(err.Error()),
+				"run `gh auth login`: bees resolves filter.assignee = \"@me\" with your own gh account, not with github.token")
+		}
+		q.Assignee = login
+	}
 	issues, err := d.GitHub.ListOpenIssues(ctx, q)
 	if err != nil {
 		// A filter.assignee that is not a real login makes gh error instead of

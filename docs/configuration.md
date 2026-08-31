@@ -188,9 +188,9 @@ still arrive under your login from one half of the factory.
 
 `"@me"` says whose work the factory picks up, which is the person's, not the bot's. It
 is resolved to a login with the machine owner's own `gh` authentication before any
-token is used, in the orchestrator and in the MCP server alike, so setting `[github]`
-never changes which issues are visible. To have the factory pick up the bot's issues
-instead, write the bot's login out in full:
+token is used — in the orchestrator, in the MCP server and in `bees doctor` alike — so
+setting `[github]` never changes which issues are visible. To have the factory pick up
+the bot's issues instead, write the bot's login out in full:
 
 ```toml
 [filter]
