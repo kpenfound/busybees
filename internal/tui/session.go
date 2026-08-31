@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/kpenfound/busybees/internal/prompts"
+	"github.com/kpenfound/busybees/internal/text"
 )
 
 // watch is the session the session view is showing: which session it is,
@@ -283,9 +284,20 @@ func (m Model) sessionTitle() string {
 // did. It never says "sent": the message is a mailbox entry for the *next*
 // session on this work item, and a person must not read it as a word in the
 // ear of the session they are watching.
+//
+// Stopping outranks all of it, composer included, and in the panels footer's
+// own words (model.go): Model.key takes ctrl+c before sessionKey ever sees
+// it, so the factory is stopped while a message is being typed too, and a
+// footer that went on offering to queue one would hide that. Nothing is
+// lost — sessionView draws the draft on its own line above this.
 func (m Model) sessionFooter() string {
 	t := m.watching
 	switch {
+	case m.stopping && len(m.sessions) > 0:
+		return fmt.Sprintf("stopping: waiting for %s to finish — q or ctrl-c again to leave them running",
+			text.Count(len(m.sessions), "session"))
+	case m.stopping:
+		return "stopping: draining"
 	case t.composing:
 		return fmt.Sprintf("message for the next %s session%s (enter queues it, esc cancels)",
 			prompts.Title(t.role), on(t.issue, t.pr))
