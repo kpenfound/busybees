@@ -143,13 +143,9 @@ mismatch by name. That comparison matters because `github.login` is what tells t
 factory's own comments from a person's: a login naming an account other than the one
 posting means a person's comments are read as the factory's own and answered by
 nobody, or the login half of the rule is simply dead. A `[bot]` suffix is never
-stripped or added — it belongs in `bees.toml` exactly when GitHub uses it — so both
-`[bot]` shapes are named in the detail rather than quietly accepted: a user token
-whose login was written with the suffix is an ordinary mismatch and fails, and a
-GitHub App installation token, which authenticates as no user and so cannot answer the
-question at all, is a warning naming what to check by hand — the question has no
-answer there rather than a wrong one, and a failure would stop `bees run` on a token
-configuration the reference supports.
+stripped or added — it belongs in `bees.toml` exactly when GitHub uses it — so a user
+token whose login was written with the suffix is named in the detail rather than
+quietly accepted: it is an ordinary mismatch, and it fails.
 
 The second establishes that the account can write what bees writes. Repository
 permission does not imply it: a fine-grained token carries per-resource permissions on

@@ -524,8 +524,10 @@ token = "ghp_fixture"
 
 // TestCheckGitHubLogin covers the three answers `gh api user` can give for a
 // configured token - the login bees.toml names, a different one, and an error
-// - plus the two "[bot]" shapes, which are the ones somebody configuring a
-// bot account actually writes.
+// - plus the "[bot]" shape somebody configuring a bot account actually
+// writes. An error is a failure whatever github.login says (#306): the login
+// is compared with the account GitHub reports, so a token that authenticates
+// as no account is a token bees cannot run as.
 func TestCheckGitHubLogin(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -550,13 +552,6 @@ func TestCheckGitHubLogin(t *testing.T) {
 		{"the token was rejected", githubTOML,
 			ghReply{err: errors.New("gh api user: exit status 1: Bad credentials")}, Fail,
 			[]string{"was not accepted by GitHub", "Bad credentials"}},
-		// An app installation token authenticates as no user, so this is the
-		// error a GitHub App login produces. A warning, not a failure: the
-		// question has no answer rather than a wrong one, and a failure here
-		// would stop `bees run` on a documented token configuration.
-		{"a rejected token under a [bot] login", "\n[github]\nlogin = \"agent[bot]\"\ntoken = \"ghp_fixture\"\n",
-			ghReply{err: errors.New("gh api user: exit status 1: Resource not accessible by integration")}, Warn,
-			[]string{"names a GitHub App", "cannot answer for it", "authored by agent[bot]"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
