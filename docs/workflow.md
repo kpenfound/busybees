@@ -872,7 +872,7 @@ sequenceDiagram
     O->>Dev: Session on branch bees/issue-N
     Dev->>GH: push, gh pr create (Closes #N)
     Dev->>O: done: pr-opened
-    O->>GH: label PR `bees`; issue → bees:review
+    O->>GH: label PR `bees`, issue → bees:review
     O->>Rev: Session on PR branch
     Rev-->>Dev: mail: review round 1 feedback
     Rev->>O: done: changes-requested
