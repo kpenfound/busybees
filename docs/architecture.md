@@ -120,8 +120,8 @@ A full pass is:
      (`rate_limit_backoff` when there was none, capped at 8h). A session that
      reported no outcome also returns at once, without spending a retry; one
      that did its work and reported is still read normally. The limit is per
-     account, so it holds every role. See [The claude session
-     limit](configuration.md#the-claude-session-limit).
+     account, so it holds every role. See
+     [The claude session limit](configuration.md#the-claude-session-limit).
 5. **dispatch developers** – candidates are unowned `in-progress` and `review`
    issues (resume after a restart, never reordered), then `ready` issues that
    already have an open PR on their branch (`snapshot.prByBranch`; sent back

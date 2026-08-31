@@ -139,6 +139,9 @@ prompt = "Follow the conventions in CONTRIBUTING.md. Prefer table-driven tests."
 
 ## Documentation
 
+These pages are also published at
+**<https://kpenfound.github.io/busybees/>**.
+
 | Document | What it covers |
 |---|---|
 | [docs/workflow.md](docs/workflow.md) | The GitHub-centred workflow: filter, label state machine, questions, review loop, escalation, QA |

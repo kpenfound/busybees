@@ -289,9 +289,10 @@ the three `max_cost_*` keys below.
 ### Cost budgets
 
 Nothing limits what a factory spends by default: all three budgets are `0`,
-which means unlimited. They are spent against the [session
-ledger](cli.md#bees-cost) — the same numbers `bees cost` reports — so a retried
-session counts like any other, and setting one is enough to make it bite:
+which means unlimited. They are spent against the
+[session ledger](cli.md#bees-cost---since-24h---by-roleissueday---json) — the
+same numbers `bees cost` reports — so a retried session counts like any other,
+and setting one is enough to make it bite:
 
 ```toml
 [scheduler]
