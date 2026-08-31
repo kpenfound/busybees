@@ -130,22 +130,25 @@ A full pass is:
 5. **dispatch developers** – candidates are unowned `in-progress` and `review`
    issues (resume after a restart, never reordered), along with an `approved`
    issue whose worker was killed in the post-approval checks stage
-   (`resumableChecks`: an open PR and a `worker_stage` of `checks` recorded in
-   the state directory — `approve()` labels the issue before that wait, so it
-   is work in flight; every other approved issue is waiting for a person to
-   merge it). Then `ready` issues that already have an open PR on their branch
-   (`snapshot.prByBranch`; sent back by human feedback or a conflict —
-   finished before new work, oldest first), followed by the remaining `ready`
-   issues sorted by `sortReady`: issues a person marked `bees:priority` first,
-   then `scheduler.dispatch_order` (smallest size first by default), ties by
-   age. Priority is a separate axis from size and reorders the queue only — it
-   lifts no cap. A `bees:size/l` candidate that is new work is skipped while
-   `scheduler.max_large_in_flight` of them are already owned — the check runs
-   *before* a slot is taken, so a held issue does not keep a worker idle. For
-   the rest, a slot is taken from a buffered channel sized `max_developers`;
-   when none is free the pass stops dispatching. A goroutine runs `workIssue`
-   and returns the slot when done; the worker records the issue's size, which
-   is what the cap counts and what `bees status` shows.
+   (`resumableChecks`: an open PR and, recorded in the state directory, either
+   a `worker_stage` of `checks` or the developer round those checks sent back
+   — `develop` with an `after_develop` of `checks`, which is recorded before
+   the develop stage relabels the issue. `approve()` labels the issue before
+   that wait, so both are work in flight; every other approved issue is
+   waiting for a person to merge it). Then `ready` issues that already have an
+   open PR on their branch (`snapshot.prByBranch`; sent back by human feedback
+   or a conflict — finished before new work, oldest first), followed by the
+   remaining `ready` issues sorted by `sortReady`: issues a person marked
+   `bees:priority` first, then `scheduler.dispatch_order` (smallest size first
+   by default), ties by age. Priority is a separate axis from size and
+   reorders the queue only — it lifts no cap. A `bees:size/l` candidate that
+   is new work is skipped while `scheduler.max_large_in_flight` of them are
+   already owned — the check runs *before* a slot is taken, so a held issue
+   does not keep a worker idle. For the rest, a slot is taken from a buffered
+   channel sized `max_developers`; when none is free the pass stops
+   dispatching. A goroutine runs `workIssue` and returns the slot when done;
+   the worker records the issue's size, which is what the cap counts and what
+   `bees status` shows.
 6. **dispatch singletons** – project manager (has triage issues or unread
    mail), product manager (unread mail, first run, interval elapsed, or a
    feature whose work is done), QA
@@ -403,19 +406,25 @@ stateDiagram-v2
   `develop` fits any label, so the loop state recorded with it — which gate
   the round goes back to, and whether the pre-review checks have been read —
   is dropped on the same test: an issue whose labels have left the review loop
-  starts a fresh round, whatever the last worker was doing. The record also
-  belongs to the pull request it was written for, and the recorded number is
-  what says so: a person can close a pull request and open another on the same
-  branch while nothing is running, and neither the labels nor the branch tell
-  the two apart. A stage or loop state recorded for any other pull request —
-  or for none, before the number was known — is dropped the same way, so the
-  new pull request gets its own review. An issue with nothing recorded — a
-  first run, or one last worked on before the stage was recorded — starts
-  exactly where it always did: the worker looks for an open PR whose head is
-  the branch, and if one exists and the issue is labelled `bees:review` it
-  starts in the prereview stage (review, with `pre_review_checks = false` or
-  the reviewer disabled); otherwise in develop. This is how work survives a
-  restart of `bees run`.
+  starts a fresh round, whatever the last worker was doing. One develop record
+  is exempt, because its labels are outside the review loop legitimately: the
+  round the post-approval checks send back to the developer is recorded
+  (`after_develop` of `checks`) before the develop stage can relabel the issue
+  `bees:in-progress`, so it sits under `bees:approved` and keeps the gate it
+  returns to. Only `pre_review_done` goes with the label there — nothing on
+  the way back to the checks asks whether the first review's read was made.
+  The record also belongs to the pull request it was written for, and the
+  recorded number is what says so: a person can close a pull request and open
+  another on the same branch while nothing is running, and neither the labels
+  nor the branch tell the two apart. A stage or loop state recorded for any
+  other pull request — or for none, before the number was known — is dropped
+  the same way, so the new pull request gets its own review. An issue with
+  nothing recorded — a first run, or one last worked on before the stage was
+  recorded — starts exactly where it always did: the worker looks for an open
+  PR whose head is the branch, and if one exists and the issue is labelled
+  `bees:review` it starts in the prereview stage (review, with
+  `pre_review_checks = false` or the reviewer disabled); otherwise in develop.
+  This is how work survives a restart of `bees run`.
 - **An interrupted session.** Resuming the stage says where the worker was;
   it says nothing about the session that was running when the scheduler died.
   That session left a transcript no `result.json` ever closed, and a branch
