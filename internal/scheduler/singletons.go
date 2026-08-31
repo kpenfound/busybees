@@ -93,10 +93,18 @@ func (s *Scheduler) productManagerHasWork(ctx context.Context, snap *snapshot) b
 	// deserves an answer as promptly as on any other issue; freshIssues only
 	// looks at issues updated since the last run, so the proposal goes quiet
 	// again on the poll after that.
+	//
+	// An issue in planning mode is the same shape for the same reason: it
+	// waits for a person too, the run it would start can only reply to what
+	// they wrote, and a fresh comment is exactly the event worth waking for.
 	for _, i := range fresh {
-		if !github.HasLabel(i.Labels, s.labels.Proposal) || s.gh.AwaitingBeeComment(i) {
-			return true
+		if github.HasLabel(i.Labels, s.labels.Proposal) || github.HasLabel(i.Labels, s.labels.Planning) {
+			if s.gh.AwaitingBeeComment(i) {
+				return true
+			}
+			continue
 		}
+		return true
 	}
 	return false
 }
@@ -170,7 +178,10 @@ func (s *Scheduler) completedFeatures(snap *snapshot) []github.Issue {
 // children that closed, and would report a feature complete while a real
 // sub-issue is still open. A set that did change clears the marker, so a
 // feature that gains a sub-issue after being reported complete is reported
-// again when that one closes.
+// again when that one closes. This function decides what to record;
+// state.Store.SetOpenChildren, which owns both fields, is what writes it —
+// the polling path never saves a whole IssueState, because a developer worker
+// may be holding one for the same issue.
 func (s *Scheduler) recordFeatureProgress(snap *snapshot, parents map[int]github.Parent, reported []github.Issue, complete bool) {
 	children := map[int][]int{}
 	for item, p := range parents {
@@ -183,23 +194,20 @@ func (s *Scheduler) recordFeatureProgress(snap *snapshot, parents map[int]github
 	for _, f := range snap.features {
 		openNow := children[f.Number]
 		slices.Sort(openNow)
-		is, err := s.store.Issue(f.Number)
-		if err != nil {
-			s.log.Warn("read issue state", "issue", f.Number, "err", err)
-			continue
+		// A nil set is how SetOpenChildren is told not to record this run's
+		// lookup over the one it remembers.
+		var record []int
+		if complete && len(openNow) > 0 {
+			record = openNow
 		}
-		changed := complete && len(openNow) > 0 && !slices.Equal(is.OpenChildren, openNow)
-		if !changed && !done[f.Number] {
-			continue
-		}
-		if changed {
-			is.OpenChildren = openNow
-			is.CompleteReportedAt = time.Time{}
-		}
+		var reportedAt time.Time
 		if done[f.Number] {
-			is.CompleteReportedAt = s.now()
+			reportedAt = s.now()
 		}
-		if err := s.store.SaveIssue(is); err != nil {
+		if record == nil && reportedAt.IsZero() {
+			continue
+		}
+		if err := s.store.SetOpenChildren(f.Number, record, reportedAt); err != nil {
 			s.log.Warn("save issue state", "issue", f.Number, "err", err)
 		}
 	}
@@ -249,6 +257,81 @@ func (s *Scheduler) runProductManager(ctx context.Context, snap *snapshot) error
 	if err != nil {
 		return err
 	}
+	// Sub-issue progress of every feature, from GitHub. Read before the fresh
+	// lists are partitioned: it is also the record that says whether a
+	// planned feature has already been broken down.
+	progress := map[int]github.SubIssueSummary{}
+	for _, f := range snap.features {
+		d, err := s.gh.GetIssueDetails(ctx, f.Number)
+		if !s.op("feature-progress", err, "feature progress", "issue", f.Number, "err", err) {
+			progress[f.Number] = d.SubIssues
+		}
+	}
+	// Issues a person has agreed with the product manager (bees:planned) and
+	// that still need acting on. A planned feature drops off this list by
+	// gaining sub-issues — the summary above is the "has it been broken down
+	// already?" answer, so a later run cannot break it down twice — and a
+	// planned feedback issue by being closed, which takes it out of the poll.
+	fetched := map[int]github.Issue{}
+	for _, i := range append(append([]github.Issue{}, feedback...), fresh...) {
+		fetched[i.Number] = i
+	}
+	var planned []github.Issue
+	for _, i := range append(append([]github.Issue{}, snap.features...), snap.feedback...) {
+		if !github.HasLabel(i.Labels, s.labels.Planned) || github.HasLabel(i.Labels, s.labels.Planning) {
+			continue
+		}
+		// A proposal is agreed by a person removing bees:proposal. While it
+		// is still there the issue is not approved, and issues.Create refuses
+		// it as a parent, so presenting it as agreed would ask for a
+		// breakdown the tools go on to refuse. It stays a proposal.
+		if github.HasLabel(i.Labels, s.labels.Proposal) {
+			continue
+		}
+		// The sub-issue summary answers "has this been broken down already?"
+		// only when it could be read. A failed lookup leaves no entry at all,
+		// and a missing entry is not evidence of no sub-issues: taking it for
+		// one would hand back a feature broken down weeks ago, under a
+		// heading saying the scope is settled. Fail closed; it comes back on
+		// the next run.
+		if github.HasLabel(i.Labels, s.labels.Feature) {
+			if p, ok := progress[i.Number]; !ok || p.Total > 0 {
+				continue
+			}
+		}
+		full, ok := fetched[i.Number]
+		if !ok {
+			full, err = s.gh.GetIssue(ctx, i.Number)
+			if err != nil {
+				return err
+			}
+		}
+		planned = append(planned, full)
+	}
+	// An issue in planning mode is a conversation: it leaves both fresh lists
+	// for a section of its own, which lists no breakdown step. An agreed one
+	// leaves them for the same reason — its section is the one that says the
+	// scope is settled, and two sections would give two sets of instructions
+	// for one issue.
+	var planning []github.Issue
+	agreed := map[int]bool{}
+	for _, i := range planned {
+		agreed[i.Number] = true
+	}
+	split := func(list []github.Issue) []github.Issue {
+		var rest []github.Issue
+		for _, i := range list {
+			switch {
+			case github.HasLabel(i.Labels, s.labels.Planning):
+				planning = append(planning, i)
+			case agreed[i.Number]:
+			default:
+				rest = append(rest, i)
+			}
+		}
+		return rest
+	}
+	feedback, fresh = split(feedback), split(fresh)
 	// Proposals are partitioned out of the fresh features rather than kept
 	// out of freshIssues: that call is also what clears bees:question when a
 	// person answers, and the product manager may well have asked its
@@ -275,16 +358,11 @@ func (s *Scheduler) runProductManager(ctx context.Context, snap *snapshot) error
 		if err != nil {
 			return err
 		}
+		if github.HasLabel(full.Labels, s.labels.Planning) || agreed[n] {
+			continue
+		}
 		s.log.Info("approved proposal goes to the product manager", "issue", n)
 		freshFeatures = append(freshFeatures, full)
-	}
-	// Sub-issue progress of every feature, from GitHub.
-	progress := map[int]github.SubIssueSummary{}
-	for _, f := range snap.features {
-		d, err := s.gh.GetIssueDetails(ctx, f.Number)
-		if !s.op("feature-progress", err, "feature progress", "issue", f.Number, "err", err) {
-			progress[f.Number] = d.SubIssues
-		}
 	}
 	// Work items only: feature and feedback issues are listed separately.
 	var work []github.Issue
@@ -321,6 +399,7 @@ func (s *Scheduler) runProductManager(ctx context.Context, snap *snapshot) error
 	if err := s.runSingleton(ctx, config.RoleProductManager, prompts.Data{
 		Issues: work, PRs: snap.prs, Milestones: milestones, Inbox: inbox,
 		Feedback: feedback, FreshFeatures: freshFeatures, Proposals: proposals,
+		Planning: planning, Planned: planned,
 		Features: snap.features, Progress: progress, Parents: parents,
 		CompletedFeatures: complete,
 	}); err != nil {
@@ -476,12 +555,26 @@ func (s *Scheduler) RunRole(ctx context.Context, role string, issue, pr int) err
 		if err != nil {
 			return err
 		}
-		if role == config.RoleReviewer && s.stateOf(i.Labels) != "review" {
-			// Force the worker into the review stage.
-			if err := s.setState(ctx, issue, s.labels.Review); err != nil {
-				return err
+		if role == config.RoleReviewer {
+			// Force the worker into the review stage. `bees exec reviewer` is
+			// an instruction, not a resumption, so the stage the last worker
+			// recorded is forgotten as well as the label rewritten: otherwise
+			// an issue whose worker stopped in develop or checks would resume
+			// there and run anything but a review.
+			if s.stateOf(i.Labels) != "review" {
+				if err := s.setState(ctx, issue, s.labels.Review); err != nil {
+					return err
+				}
+				// relabel matches a full label name and stateOf returns the
+				// short state, so the state has to be spelled back out: given
+				// "in-progress" nothing is removed, the local copy carries
+				// both labels, and stateOf reads in-progress back out of it.
+				i.Labels = relabel(i.Labels, s.labels.Base+":"+s.stateOf(i.Labels), s.labels.Review)
 			}
-			i.Labels = relabel(i.Labels, s.stateOf(i.Labels), s.labels.Review)
+			if bk, err := s.store.Issue(issue); err == nil && bk.WorkerStage != "" {
+				bk.WorkerStage, bk.AfterDevelop, bk.PreReviewDone = "", "", false
+				_ = s.store.SaveIssue(bk)
+			}
 		}
 		w := &state.Worker{Name: "exec-" + role, Issue: issue, Size: s.sizeOf(i.Labels), Since: s.now()}
 		s.mu.Lock()

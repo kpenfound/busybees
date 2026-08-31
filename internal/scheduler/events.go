@@ -41,6 +41,12 @@ type Event struct {
 	// Session is the session name (the directory under sessions/), empty
 	// for stage and poll events.
 	Session string
+	// Dir is the session's own directory, where its transcript.jsonl is
+	// written. It is set on session-started only — that is where a view
+	// learns which directory to follow, and the name alone cannot say:
+	// NewSessionDir stamps a timestamp on the front and a random suffix on
+	// the end of it.
+	Dir string
 	// Issue and PR are what the event is about; zero when it is about
 	// neither (a singleton session, a poll).
 	Issue int
@@ -50,11 +56,21 @@ type Event struct {
 	Stage string
 	// Round is the review round a stage event belongs to.
 	Round int
+	// Model is the claude model the session runs with and Fallback marks a
+	// session running on the role's fallback model
+	// (scheduler.retry_with_fallback). Both are set on session-started
+	// only: a view renders them for a session that is still running, and
+	// the model a finished session used is in the ledger.
+	Model    string
+	Fallback bool
 	// Outcome and Note are what a finished session reported, or the
 	// synthetic "failed" of a session that reported nothing.
 	Outcome string
 	Note    string
-	// CostUSD and Duration are what a finished session cost.
+	// Turns, CostUSD and Duration are what a finished session took, cost
+	// and how long it ran. claude reports all three in the final event of
+	// its stream, so they arrive with session-ended and never before it.
+	Turns    int
 	CostUSD  float64
 	Duration time.Duration
 	// Err is set on a poll that failed and on a session that could not be

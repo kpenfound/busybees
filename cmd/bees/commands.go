@@ -331,9 +331,10 @@ func tuiMode(noTUI bool, stdout *os.File) bool {
 }
 
 // logTUIMode is what `bees run` calls: it makes the decision and records it
-// for the log file. The renderer itself is #253, so today nothing reads the
-// answer — and the record is a debug one, so `bees run` prints exactly what
-// it printed before the flag existed, --no-tui or not.
+// for the log file. The record is a debug one, so `bees run --no-tui` and a
+// redirected stdout print exactly what they printed before the flag existed
+// (#244); with the UI on the console is silenced anyway and the log file has
+// it.
 func logTUIMode(log *slog.Logger, noTUI bool, stdout *os.File) bool {
 	on := tuiMode(noTUI, stdout)
 	log.Debug("terminal UI", "enabled", on)
@@ -352,6 +353,10 @@ func newRunCmd(g *globalFlags) *cobra.Command {
 Claude Code sessions: a pool of developer workers plus the product manager,
 project manager and QA singletons. Ctrl-C stops polling and waits for running
 sessions to finish.
+
+In a terminal it draws a live view of the factory — what is running now and
+what is queued — and logs to ` + "`<state_dir>/bees.log`" + ` instead of the console.
+--no-tui, or a stdout that is not a terminal, logs to the console as before.
 
 Before the first poll it runs the cheap half of ` + "`bees doctor`" + ` (everything
 except the per-role checks, which clone skills and start MCP servers) and
@@ -377,7 +382,9 @@ anyway; ` + "`bees tick`" + ` and ` + "`bees exec`" + ` never run the preflight.
 			if s.OnlyRoles, err = parseRoles(roles); err != nil {
 				return err
 			}
-			logTUIMode(a.log, noTUI, os.Stdout)
+			if logTUIMode(a.log, noTUI, os.Stdout) {
+				return runWithTUI(cmd.Context(), a, s, g, cmd.ErrOrStderr())
+			}
 			return s.Run(cmd.Context())
 		},
 	}
@@ -497,20 +504,7 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 			fmt.Println("\nqueues:")
 			fmt.Print(queuesText(st))
 			fmt.Println("\ndeveloper workers:")
-			if len(st.Workers) == 0 {
-				fmt.Println("  none")
-			}
-			for _, w := range st.Workers {
-				round := fmt.Sprintf("round %d", w.Round)
-				if w.Attempt > 1 {
-					round += fmt.Sprintf(" attempt %d", w.Attempt)
-				}
-				size := w.Size
-				if size == "" {
-					size = "-"
-				}
-				fmt.Printf("  %-12s issue #%-5d %-3s %-17s %-20s since %s\n", w.Name, w.Issue, size, w.Stage, round, w.Since.Format(time.Kitchen))
-			}
+			fmt.Print(workersText(st))
 			fmt.Println("\nroles:")
 			fmt.Print(rolesText(rows, now))
 			fmt.Println("\nunread mail:")

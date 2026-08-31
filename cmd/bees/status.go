@@ -93,6 +93,34 @@ func failureCount(f state.OpFailure) string {
 	return fmt.Sprintf("%d consecutive failures over %s", f.Count, shortDur(f.Last.Sub(f.First)))
 }
 
+// workersText renders the "developer workers:" section of `bees status`: one
+// line per running worker, with the issue it owns, its size, the stage it is
+// in, the round it is on and, when it took over from a session a killed
+// scheduler left unfinished, that it resumed rather than started fresh — the
+// branch of a resumed worker may already carry work nobody reported.
+func workersText(st state.Status) string {
+	if len(st.Workers) == 0 {
+		return "  none\n"
+	}
+	var b strings.Builder
+	for _, w := range st.Workers {
+		round := fmt.Sprintf("round %d", w.Round)
+		if w.Attempt > 1 {
+			round += fmt.Sprintf(" attempt %d", w.Attempt)
+		}
+		size := w.Size
+		if size == "" {
+			size = "-"
+		}
+		fmt.Fprintf(&b, "  %-12s issue #%-5d %-3s %-17s %-20s since %s", w.Name, w.Issue, size, w.Stage, round, w.Since.Format(time.Kitchen))
+		if w.Resumed {
+			b.WriteString("   resumed")
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
 // shortDur renders a duration the way bees.toml writes one ("3h10m", "45s"):
 // time.Duration.String() keeps a trailing "0m0s" that says nothing.
 //

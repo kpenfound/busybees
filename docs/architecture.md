@@ -19,12 +19,13 @@ internal/prompts/    embedded base prompts (system/*.md, task/*.md), the project
 internal/mcpserver/  the built-in MCP server (`bees mcp serve`): mail, issue and outcome tools, filtered by role
 internal/state/      state directory: notes, per-issue bookkeeping, singleton run times, status.json
 internal/scheduler/  the orchestrator: poll, human feedback, PR merge state, reconcile, developer worker pool, singleton roles, event stream
+internal/tui/        the live view `bees run` draws in a terminal: the Now and Queues panels, and one session's transcript
 internal/procs/      find and stop bees sessions after a crash (`bees kill`)
 internal/testutil/   test helpers (local bare git remote + clone)
 ```
 
-Dependency direction is strictly downwards: `cmd/bees` → `scheduler` →
-everything else; `scheduler` is the only package that knows about all the
+Dependency direction is strictly downwards: `cmd/bees` → `tui` →
+`scheduler` → everything else; `scheduler` is the only package that knows about all the
 others. `github` and `session` execute external programs (`gh`, `claude`) and
 both expose an override point (`Client.Exec`, `Runner.ClaudeBin`) so tests
 never need the real ones.
@@ -127,19 +128,27 @@ A full pass is:
      account, so it holds every role. See
      [The claude session limit](configuration.md#the-claude-session-limit).
 5. **dispatch developers** – candidates are unowned `in-progress` and `review`
-   issues (resume after a restart, never reordered), then `ready` issues that
-   already have an open PR on their branch (`snapshot.prByBranch`; sent back
-   by human feedback or a conflict — finished before new work, oldest first),
-   followed by the remaining `ready` issues sorted by `sortReady`: issues a
-   person marked `bees:priority` first, then `scheduler.dispatch_order`
-   (smallest size first by default), ties by age. Priority is a separate axis
-   from size and reorders the queue only — it lifts no cap. A `bees:size/l` candidate that is new work is skipped while
-   `scheduler.max_large_in_flight` of them are already owned — the check runs
-   *before* a slot is taken, so a held issue does not keep a worker idle. For
-   the rest, a slot is taken from a buffered channel sized `max_developers`;
-   when none is free the pass stops dispatching. A goroutine runs `workIssue`
-   and returns the slot when done; the worker records the issue's size, which
-   is what the cap counts and what `bees status` shows.
+   issues (resume after a restart, never reordered), along with an `approved`
+   issue whose worker was killed in the post-approval checks stage
+   (`resumableChecks`: an open PR and, recorded in the state directory, either
+   a `worker_stage` of `checks` or the developer round those checks sent back
+   — `develop` with an `after_develop` of `checks`, which is recorded before
+   the develop stage relabels the issue. `approve()` labels the issue before
+   that wait, so both are work in flight; every other approved issue is
+   waiting for a person to merge it). Then `ready` issues that already have an
+   open PR on their branch (`snapshot.prByBranch`; sent back by human feedback
+   or a conflict — finished before new work, oldest first), followed by the
+   remaining `ready` issues sorted by `sortReady`: issues a person marked
+   `bees:priority` first, then `scheduler.dispatch_order` (smallest size first
+   by default), ties by age. Priority is a separate axis from size and
+   reorders the queue only — it lifts no cap. A `bees:size/l` candidate that
+   is new work is skipped while `scheduler.max_large_in_flight` of them are
+   already owned — the check runs *before* a slot is taken, so a held issue
+   does not keep a worker idle. For the rest, a slot is taken from a buffered
+   channel sized `max_developers`; when none is free the pass stops
+   dispatching. A goroutine runs `workIssue` and returns the slot when done;
+   the worker records the issue's size, which is what the cap counts and what
+   `bees status` shows.
 6. **dispatch singletons** – project manager (has triage issues or unread
    mail), product manager (unread mail, first run, interval elapsed, or a
    feature whose work is done), QA
@@ -173,7 +182,12 @@ A full pass is:
    `ProposalApprovedAt` when a person removes it — a label edit leaves no
    comment, so nothing else would notice — and a feature approved since the
    last run wakes the product manager and reaches it whatever `AwaitingBee`
-   says.
+   says. An issue a person put in
+   [planning mode](workflow.md#planning-with-the-product-manager)
+   (`bees:planning`) is the same shape for the same reason: only a comment on
+   it counts, because the run it would start can do nothing but reply to what
+   the person wrote. `bees:planned` wakes nothing at all — the issue waits for
+   the run `product_manager_interval` brings round.
 
    The last condition is a **feature whose work is done**
    (`completedFeatures`), and it makes no GitHub call: every
@@ -196,6 +210,9 @@ A full pass is:
    `Data.CompletedFeatures`, fresh
    feature issues as `Data.FreshFeatures` (proposals partitioned out into
    `Data.Proposals`, which the task prompt presents in a section of its own),
+   the issues carrying `bees:planning` as `Data.Planning` and the ones
+   carrying `bees:planned` as `Data.Planned` (both partitioned out of the
+   fresh lists into sections of their own),
    every open feature issue as
    `Data.Features` with its sub-issue progress in `Data.Progress` (one REST
    `gh api repos/../issues/N` per open feature, reading `sub_issues_summary`),
@@ -205,6 +222,24 @@ A full pass is:
    `runProjectManager` fills the same map for its triage items, and the
    developer worker for its one issue into `Data.Parent`; all three use one
    `ParentIssue` GraphQL query per issue.
+
+   **Planning mode.** The `Data.Planning` section lists no breakdown step and
+   the `Data.Planned` one says the scope is settled, which is the readable
+   half of the rule; the enforced half is that `internal/issues` refuses a
+   `bees:planning` issue as a `parent` and `issue_link` refuses it as a
+   parent, exactly as both already do a proposal, so a planning issue grows no
+   sub-issues whoever asks. A planned *feature* is in `Data.Planned` only
+   while `sub_issues_summary` reports no sub-issues — that is the "has it been
+   broken down already?" answer, and the sub-issues the breakdown creates are
+   what take it off the list, so no later run does it twice. A planned
+   *feedback* issue leaves the list by being closed, which takes it out of the
+   poll. The summary is that answer only when it can be *read*: a feature whose
+   `feature-progress` lookup failed leaves no entry at all, and a missing entry
+   is not evidence of no sub-issues, so such a feature waits for the next run
+   rather than being presented again. An issue still carrying `bees:proposal`
+   is not agreed either, whatever else a person put on it — the proposal label
+   is what says they have not approved it — so it stays in the proposals
+   section. Neither planning label is ever written by the factory.
 
    **Sub-issues and milestones.** Work items are native GitHub sub-issues of
    their feature. Roles create issues through the `issue_create` tool
@@ -233,11 +268,13 @@ stale — an issue a worker has since finished, one a developer parked in
 state label in the cache — so before spending a session on a candidate,
 `dispatchDevelopers` fetches that single issue (`gh issue view`) and drops it
 unless it is still open and in `bees:ready`, `bees:in-progress` or
-`bees:review`. The fresh copy replaces the cached one, so the next local pass
-does not ask again. That is one call immediately before a whole session, not
-per pass. The mailbox is not GitHub: the developer ↔ reviewer loop, the checks
-stage and mail-driven label transitions run at `poll_interval` — sooner when a
-wake asks for it — however the window is configured.
+`bees:review` — or in `bees:approved`, for the interrupted checks stage above,
+which is the one approved issue the same pass admitted. The fresh copy
+replaces the cached one, so the next local pass does not ask again. That is
+one call immediately before a whole session, not per pass. The mailbox is not
+GitHub: the developer ↔ reviewer loop, the checks stage and mail-driven label
+transitions run at `poll_interval` — sooner when a wake asks for it — however
+the window is configured.
 
 **Waking up.** Waiting out the poll interval for something that happened
 locally is pure downtime, so `Run` selects on a `wake` channel beside the poll
@@ -289,12 +326,33 @@ singleton starts or stops; `bees status` just reads it.
 **The event stream** (`events.go`) is the live half of the same picture, for
 a view running in the same process — a terminal UI, a log tail.
 `Scheduler.Subscribe` returns a buffered channel of `Event`s: a session
-started, a session ended (with its outcome and cost), a developer worker
-moved to another stage, a full pass finished. It is published *alongside*
+started (with the model it runs on, whether that is the role's fallback, and
+the directory it runs in — which is where its `transcript.jsonl` is, and the
+one thing a view cannot work out from the session's name), a session ended
+(with its outcome, turns and cost), a developer worker moved to another
+stage, a full pass finished. It is published *alongside*
 `writeStatus`, never instead of it: the event says something happened,
 `status.json` says what the factory now looks like. The poll event is
 published *after* the write, so a view that re-reads `status.json` when one
 arrives sees the pass that event is about, never the one before it.
+
+`internal/tui` is the subscriber: the two panels `bees run` draws in a
+terminal, and the session view one of them opens onto. Now is built from the
+session and stage events; Queues is `status.json`, re-read when an event
+says it has changed. The session view is neither: it tails the session's own
+`transcript.jsonl` from the directory the started event named, which costs
+the scheduler nothing and works just as well after the session has finished.
+While the view is up it also owns Ctrl-C — Bubble Tea puts the terminal in
+raw mode, so the interrupt arrives as a key rather than as a signal, and the
+view cancels the scheduler's context with it and stays up until the drain is
+over.
+
+The view's one write is the message a person types in the session view: an
+ordinary mailbox entry from `human`, addressed to the role that session is
+running as and carrying its issue and pull request. It reaches the *next*
+session on that work item, never the one on screen — a headless `claude -p`
+works to the end of the prompt it was started with, and a follow-up turn
+written to its stdin is read and then ignored.
 
 It is a view mechanism and nothing more. No scheduler decision depends on
 whether anyone is subscribed, and `publish` never blocks — an event a
@@ -311,7 +369,8 @@ small state machine with four stages:
 ```mermaid
 stateDiagram-v2
     [*] --> develop
-    [*] --> prereview: resumed with an open PR and label bees:review
+    [*] --> checks: resumed in the stage the issue's bookkeeping recorded
+    [*] --> prereview: resumed with nothing recorded, an open PR and label bees:review
     develop --> prereview: pr-opened / pr-updated (PR found), before the first review
     develop --> review: a later review round, or pre_review_checks = false
     prereview --> review: checks pass / none reported / pending at the timeout / read failed
@@ -345,20 +404,109 @@ stateDiagram-v2
   same unique name: `git worktree add` derives the id under `.git/worktrees/`
   from the directory's leaf name, and concurrent adds sharing one would race
   for it.
-- **Resume.** On start the worker looks for an open PR whose head is the
-  branch. If one exists and the issue is labelled `bees:review` it starts in
-  the prereview stage (review, with `pre_review_checks = false` or the reviewer
-  disabled); otherwise in develop. This is how work survives a restart of
-  `bees run`.
+- **Resume.** A worker records the stage it is in — `develop`, `prereview`,
+  `review` or `checks` — and the loop state that goes with it in
+  `<state_dir>/issues/<n>.json`, before working each stage. A worker that
+  finds a recorded stage comes back to it, so a `bees run` killed in the
+  checks stage or in the middle of a check-fix round carries on there instead
+  of re-running a review that has already happened. A workflow label says an
+  issue is in review, never whether its review has already run. Labels stay
+  the human-facing truth all the same: a recorded stage they contradict — one
+  of the three review-loop stages on an issue with no open pull request, or
+  one a person has put back to `bees:ready` — is dropped with a log line, and
+  the worker starts where the labels say. So does a stage name this version
+  does not run, which is what a state file written by another one looks like.
+  `develop` fits any label, so the loop state recorded with it — which gate
+  the round goes back to, and whether the pre-review checks have been read —
+  is dropped on the same test: an issue whose labels have left the review loop
+  starts a fresh round, whatever the last worker was doing. One develop record
+  is exempt, because its labels are outside the review loop legitimately: the
+  round the post-approval checks send back to the developer is recorded
+  (`after_develop` of `checks`) before the develop stage can relabel the issue
+  `bees:in-progress`, so it sits under `bees:approved` and keeps the gate it
+  returns to. Only `pre_review_done` goes with the label there — nothing on
+  the way back to the checks asks whether the first review's read was made.
+  The record also belongs to the pull request it was written for, and the
+  recorded number is what says so: a person can close a pull request and open
+  another on the same branch while nothing is running, and neither the labels
+  nor the branch tell the two apart. A stage or loop state recorded for any
+  other pull request — or for none, before the number was known — is dropped
+  the same way, so the new pull request gets its own review. An issue with
+  nothing recorded — a first run, or one last worked on before the stage was
+  recorded — starts exactly where it always did: the worker looks for an open
+  PR whose head is the branch, and if one exists and the issue is labelled
+  `bees:review` it starts in the prereview stage (review, with
+  `pre_review_checks = false` or the reviewer disabled); otherwise in develop.
+  This is how work survives a restart of `bees run`.
+- **An interrupted session.** Resuming the stage says where the worker was;
+  it says nothing about the session that was running when the scheduler died.
+  That session left a transcript no `result.json` ever closed, and a branch
+  that may carry commits, uncommitted edits or even a pull request nobody
+  reported. So the scheduler records the session it is about to run in the
+  issue's bookkeeping (`session`: role, name, directory, start time) and
+  clears it when the session ends, whatever it ended with; a record that
+  outlives its session is the signal. The worker that takes the issue over
+  reads it and asks `session.CheckInterrupted` what the directory now says:
+  a pid file naming a live process means the session is *still running* —
+  another scheduler owns it, and nothing is reported, because a session that
+  has not written its result yet is simply a session in progress — a
+  `result.json` means it finished after all and the stale record is cleared,
+  and anything else means it was interrupted. The first session of the role
+  that was interrupted is then told, at the top of its task prompt: how far
+  the session got (assistant messages counted in the transcript, an
+  approximation of the turn count the missing `result` event would have
+  carried), where the transcript is, and whether it was stopped on purpose
+  (`bees kill` writes an `interrupted` marker into the directory it stops).
+  What to do about it is per role: a developer is told the branch may
+  already carry the session's work, a reviewer that its round reported no
+  verdict and starts over. Another role's session is told nothing — it could
+  act on none of it — and the report never outlives the worker that found
+  it. `bees status` marks such a worker `resumed`. The record itself is not
+  consumed by the worker that reads it: it is the only thing that remembers
+  the interruption, so a worker that returns before it starts a session
+  leaves it for the next one. The next session for the issue overwrites it
+  as it starts and clears it as it ends, and `SetIssueSession` is its only
+  writer, so a worker holding older bookkeeping cannot write a consumed
+  record back.
 - **Rounds.** `<state_dir>/issues/<n>.json` records the review round, PR
-  number, branch, `check_fix_rounds`, `human_seen_at` and
-  `conflict_notified_sha`. The round is
+  number, branch, `check_fix_rounds`, `worker_stage`, `after_develop`,
+  `pre_review_done`, `session`, `human_seen_at` and `conflict_notified_sha`,
+  plus the cost totals, the proposal observation and a feature's open
+  children. Only the round, PR number, branch, `check_fix_rounds` and the
+  three worker-stage fields belong to the developer worker, and
+  `state.Store.SaveIssue` is what writes them. Every other field has an owner
+  method on `state.Store` — `AddIssueCost`, `SetIssueSession`,
+  `SetHumanSeenAt`, `SetConflictNotifiedSHA`, `SetProposal` and
+  `SetOpenChildren` — each reading the file, changing its own fields and
+  writing it back, and `SaveIssue` carries them over from the file rather than
+  taking them from its argument. The split matters because a worker holds one
+  copy of the file for the whole life of an issue while the polling path keeps
+  writing to the same file: saving that copy wholesale would put back what the
+  worker loaded when it started, and the polling path's bookkeeping is exactly
+  the kind that must not be undone — feedback already delivered would be
+  delivered again, a head already mailed about mailed about again, an approval
+  forgotten, a finished feature reported twice or not at all. The round is
   incremented on every `changes-requested` and compared with
-  `scheduler.max_review_rounds`; human feedback rounds do not count against
-  the limit. `check_fix_rounds` is incremented each time the reviewer is asked
-  to diagnose failing checks — the prereview and checks stages share the
-  counter — and compared with `roles.reviewer.max_check_fix_rounds`. Check fix
-  rounds do not count against `max_review_rounds`.
+  `scheduler.max_review_rounds`; human feedback rounds do not count against the
+  limit. `check_fix_rounds` is incremented each time the reviewer is asked to
+  diagnose failing checks — the prereview and checks stages share the counter —
+  and compared with `roles.reviewer.max_check_fix_rounds`. Check fix rounds do
+  not count against `max_review_rounds`.
+- **The reviewer's review stages** (`roles.reviewer.stages`) — sections of one
+  reviewer session's prompt, not worker stages like the ones above and below:
+  a staged review is still one session. The prompt carries the configured
+  stages in order, each a section of its own with its own focus and its own
+  verdict, and the reviewer is told to run every one of them rather than stop
+  at the first that blocks. The list is validated at load, so the
+  worker never has to reject a stage name. `product-fit` is the one stage with
+  a source of truth outside the diff and the issue: it needs the work item's
+  parent feature, so the worker makes the `ParentIssue` GraphQL query only when
+  that stage is configured — off by default, and one call per review round
+  when it is on. A work item with no parent renders the stage without one, and
+  so does one whose lookup fails: the failure is reported as the
+  `work-item-parent` degraded operation rather than costing the review,
+  because a silent nil would reach the verdict as "this work item belongs to
+  no feature".
 - **Prereview stage** (`pre_review_checks`, on by default, independent of
   `auto_merge`). Between the developer and the first review the worker calls
   `awaitChecks` with a deadline of `pre_review_checks_timeout`, so the reviewer
@@ -367,12 +515,11 @@ stateDiagram-v2
   reviewer's prompt; the pending and the no-checks case tell it nothing was
   verified and to say so in its outcome note. A read that errors is advisory
   too: warn and review without a checks section (unlike the checks stage, where
-  the read is a merge gate),
-  recorded as the `pre-review-checks` degraded operation so a reviewer quietly
-  losing its checks section is visible.
-  Failed → `fixFailedChecks`, the same checks-mode reviewer and developer fix
-  round the checks stage uses, and the developer's next `pr-updated` returns
-  here (`afterDevelop = "prereview"`); every path out into `review` resets
+  the read is a merge gate), recorded as the `pre-review-checks` degraded
+  operation so a reviewer quietly losing its checks section is visible. Failed →
+  `fixFailedChecks`, the same checks-mode reviewer and developer fix round the
+  checks stage uses, and the developer's next `pr-updated` returns here
+  (`afterDevelop = "prereview"`); every path out into `review` resets
   `afterDevelop` to `"review"` and sets `prereviewDone`. The read belongs to the
   first review, so once `prereviewDone` is set the developer's next `pr-updated`
   goes straight to `review`: an ordinary changes-requested round pays neither
@@ -381,10 +528,15 @@ stateDiagram-v2
   a stage name consumed as a stage name, and the changes-requested path leaves
   it on `"review"`.) The checks section is handed to the review it was read for
   and cleared afterwards, so a later round is not told a head the developer has
-  since replaced is green. A resumed worker has no memory of the read and makes
-  it again. `bees status` reports the stage as `pre-review checks`; unlike the
-  checks stage it does not append the gate, because its own name is the useful
-  one.
+  since replaced is green. Whether the read has happened is remembered
+  (`pre_review_done`), so a restarted worker does not pay for it twice; what it
+  read is deliberately not remembered, so a review that resumes runs without a
+  checks section, exactly like the second round of a loop nothing interrupted. A
+  worker with nothing recorded reads again, and so does one whose labels say the
+  pull request it recorded the read for is no longer under review — or whose
+  record names another pull request, or none at all. `bees status` reports the
+  stage as `pre-review checks`; unlike the checks stage it does not append the
+  gate, because its own name is the useful one.
 - **Checks stage** (`auto_merge`). `approve` only labels the PR and issue
   `bees:approved`; merging happens in the `checks` stage. `awaitChecks` sleeps
   `checks_wait`, then polls every `checks_poll_interval` until `Summarize`
@@ -500,12 +652,14 @@ saved to `stderr.log` when non-empty, and `result.json` summarises the run.
   `SHELL` when `shell` is set; then `BEES_ROLE`, `BEES_SESSION_DIR`,
   `BEES_STATE_DIR`, `BEES_CONFIG`, `BEES_REPO`, `BEES_LABEL`, `BEES_BIN`, plus
   `BEES_NOTES_FILE`, `BEES_ISSUE`, `BEES_PR`, `BEES_BRANCH` when they apply and
-  `BEES_REVIEW_MODE=checks` for the reviewer's checks-mode sessions; and, unless
-  `GIT_CONFIG_COUNT` is already set, `GIT_CONFIG_*` entries for
-  `push.autoSetupRemote=true` / `push.default=current`. The directory holding
-  the `bees` binary is prepended to `PATH` so `bees mail`, `bees issue` and
-  `bees done` resolve inside the session. The `BEES_*` variables are also passed
-  explicitly to the built-in MCP server rather than left to inheritance.
+  `BEES_REVIEW_MODE=checks` for the reviewer's checks-mode sessions; then the
+  factory's own [GitHub identity](configuration.md#github) when `[github]`
+  configures one — `GH_TOKEN`, `GIT_AUTHOR_*` and `GIT_COMMITTER_*`; and, unless
+  `GIT_CONFIG_COUNT` is already set, the `GIT_CONFIG_*` entries below. The
+  directory holding the `bees` binary is prepended to `PATH` so `bees mail`,
+  `bees issue` and `bees done` resolve inside the session. The `BEES_*`
+  variables are also passed explicitly to the built-in MCP server rather than
+  left to inheritance.
 - **Prompts.** `prompts.System` renders `system/common.md` + `system/<role>.md`,
   appends the role's custom text from `bees.toml` and then the project's own
   prompt files; `prompts.Task` renders `task/<role>.md`. Both take a single
@@ -545,11 +699,18 @@ saved to `stderr.log` when non-empty, and `result.json` summarises the run.
   its own process group and on expiry the whole group is `SIGKILL`ed so MCP
   servers die with it. The result is marked `TimedOut`.
 
-Unless `GIT_CONFIG_COUNT` is already set, the runner also exports
-`GIT_CONFIG_COUNT=2` with `push.autoSetupRemote=true` and `push.default=current`,
-so a session can run a plain `git push` on a branch the workspace created with
-`git worktree add --no-track -b …` without busybees ever editing the clone's git
-configuration.
+Unless `GIT_CONFIG_COUNT` is already set, the runner also exports git
+configuration through `GIT_CONFIG_KEY_n` / `GIT_CONFIG_VALUE_n`, with
+`GIT_CONFIG_COUNT` derived from the entries it built rather than written out:
+`push.autoSetupRemote=true` and `push.default=current`, so a session can run a
+plain `git push` on a branch the workspace created with `git worktree add
+--no-track -b …`; and, when `[github]` carries a token, an empty
+`credential.helper` followed by `credential.helper=!gh auth git-credential`,
+so that an https push authenticates as the factory. The empty value comes
+first because git asks helpers in configuration order and takes the first
+answer, and `GIT_CONFIG_*` is read last — without it the machine owner's own
+helper would answer and the push would be theirs. busybees never edits the
+clone's git configuration.
 
 ## The mailbox
 
@@ -586,24 +747,25 @@ Messages are addressed to a **role**, not a session. Delivery rules:
   claimed.
 - Human PR feedback enters the mailbox as messages from `human` (see the
   scheduler loop); people can also send mail by hand with
-  `bees mail send --from human`. The scheduler's own requests — bring a PR
+  `bees mail send --from human`, or by typing one in the live view's session
+  view, which writes the same thing. The scheduler's own requests — bring a PR
   up to date with the default branch — come from `orchestrator`.
 
 **Visibility backstop.** After every session (`runSession` in `sessions.go`)
 the scheduler calls `adoptCreated`: `github.Client.ListCreatedSince` lists
-issues and PRs matching
-`author:<the account bees acts as> created:>=<session start>` regardless of
-labels (the login [`[github]`](configuration.md#github) configures, or `@me`
-when there is none, which `gh` resolves against the credentials the client
-carries — either way the bot rather than the machine owner once `[github]` is
-set, see issue #263), and anything carrying `<label>` or a `<label>:*` label
-but missing part of the filter is repaired through the same `ensureVisible`
-helper the developer worker uses on a PR it opened — the base label, the
-configured `filter.assignee`, and, for pull requests only, the configured
-`filter.milestone`. Both halves of the gate are needed: a pull request a
-session just opened carries only `<label>`, and earns its first `<label>:*`
-label at approval. Items with no factory label at all are left alone, and one
-item that cannot be repaired is logged and skipped rather than stopping the
+issues and PRs matching `created:>=<session start>` regardless of labels and
+regardless of who opened them, and anything carrying `<label>` or a
+`<label>:*` label but missing part of the filter is repaired through the
+same `ensureVisible` helper the developer worker uses on a PR it opened —
+the base label, the configured `filter.assignee`, and, for pull requests
+only, the configured `filter.milestone`. The search carries no `author:`
+qualifier: the items the backstop exists for are a pull request a session
+opened with its own `gh pr create` and an item a person opened by hand,
+neither of which is reliably the account bees acts as, so the label gate is
+what decides. Both halves of that gate are needed: a pull request a session
+just opened carries only `<label>`, and earns its first `<label>:*` label at
+approval. Items with no factory label at all are left alone, and one item
+that cannot be repaired is logged and skipped rather than stopping the
 others.
 
 A milestone is set on pull requests and never on issues: a milestone on an
@@ -624,8 +786,10 @@ oldest first, and `bees mail` works from any directory because sessions get
   notes/<role>.md                role memory (`bees notes show|edit|reset|add`)
   notes/archive/<role>-<ts>.md   notes replaced by `bees notes reset`
   sessions/<ts>-<name>-<rand>/   system-prompt.md, prompt.md, mcp.json, transcript.jsonl,
-                                 stderr.log, outcome.json, result.json
-  issues/<n>.json                {number, round, pr, branch, check_fix_rounds, human_seen_at,
+                                 stderr.log, outcome.json, result.json, pid,
+                                 interrupted (written by `bees kill`)
+  issues/<n>.json                {number, round, pr, branch, check_fix_rounds, worker_stage,
+                                 after_develop, pre_review_done, session, human_seen_at,
                                  conflict_notified_sha, updated_at}
   <role>.json                    per-role bookkeeping, one file per role that has run:
                                  {last_run, last_check, sessions, last_consolidated}
@@ -724,6 +888,11 @@ line also references this state directory's `sessions/` (every session's argv ca
 path prefix and also in its `filepath.EvalSymlinks` form). Sessions of another project's
 factory are never reported, so `bees kill` run with one project's config cannot strand
 another project's issues.
+Every session `bees kill` stops through a pid file is marked: it writes
+`<session dir>/interrupted` naming the kill, so the next session for that issue is
+told the session was stopped rather than left to guess that the machine crashed
+(see *An interrupted session* above; a process found only in the process table
+names no directory and is killed unmarked).
 `procs.Kill` sends SIGTERM to the process group (sessions are started with
 `Setpgid`, so MCP servers and shells belong to it), waits `--grace`, then SIGKILL.
 The command then removes every worktree of the main clone that lives under the

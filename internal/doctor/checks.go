@@ -151,11 +151,11 @@ func (d *Deps) gh(ctx context.Context, args ...string) ([]byte, error) {
 }
 
 // machineGH runs a gh command as the machine owner, never as the account
-// [github] configures. Sessions authenticate with the machine's own gh
-// whatever [github] says, so the check that inspects that authentication has
-// to ask about it - and `gh auth status` run with GH_TOKEN set reports the
-// token's account first and unions the two accounts' scopes, which is exactly
-// the merge hostBlock exists to prevent.
+// [github] configures. `gh auth status` is a question about the machine, and
+// run with GH_TOKEN set it reports the token's account first and unions the
+// two accounts' scopes, which is exactly the merge hostBlock exists to
+// prevent. The machine's own gh still has work to do with [github] set: it is
+// what resolves filter.assignee = "@me" (see d.me).
 func (d *Deps) machineGH(ctx context.Context, args ...string) ([]byte, error) {
 	c := d.MachineGitHub
 	if c == nil {
@@ -221,7 +221,7 @@ func (d *Deps) checkGH(ctx context.Context) Result {
 	out, err := d.machineGH(ctx, "auth", "status", "--hostname", ghHost)
 	if err != nil {
 		return fail(name, GroupToolchain, oneLine(err.Error()),
-			"run `gh auth login` (sessions use your own gh authentication, whatever [github] configures)")
+			"run `gh auth login`: bees resolves filter.assignee = \"@me\" with your own gh account, and falls back to it wherever [github] configures no token")
 	}
 	text := hostBlock(string(out), ghHost)
 	account := ""

@@ -7,7 +7,8 @@
 //	notes/<role>.md      per-role notes, the roles' only long-term memory
 //	notes/archive/       notes files replaced by `bees notes reset`
 //	sessions/<id>/       one directory per claude session (prompts, transcript, result)
-//	issues/<n>.json      per-issue bookkeeping (review round, PR number)
+//	issues/<n>.json      per-issue bookkeeping (review round, PR number, the
+//	                     developer worker's stage and its running session)
 //	<role>.json          per-role bookkeeping (last run, session counters);
 //	                     every role has one, including developer and reviewer
 //	status.json          live scheduler status
@@ -21,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -54,7 +56,7 @@ This directory is managed by ` + "`bees`" + `. It holds:
 - notes/     each role's notes file (their only memory between sessions),
              with archive/ holding the ones ` + "`bees notes reset`" + ` replaced
 - sessions/  prompts, transcripts and results of every Claude Code session
-- issues/    per-issue bookkeeping (review rounds)
+- issues/    per-issue bookkeeping (review rounds, the developer worker's stage)
 - status.json live scheduler status (` + "`bees status`" + `)
 - ledger.jsonl one line per finished session: turns, cost and outcome (` + "`bees cost`" + `)
 - bees.log    every scheduler log record as JSON, rotated at 10 MiB
@@ -111,21 +113,75 @@ func NotesSkeleton(role string) string {
 	return b.String()
 }
 
-// IssueState is per-issue bookkeeping.
+// IssueState is per-issue bookkeeping. Two writers share the file and every
+// field below says which one owns it: the developer worker
+// (scheduler.workIssue) holds one IssueState for the whole life of an issue
+// and writes it back with SaveIssue, while the scheduler's polling path
+// writes single fields through the owner methods on Store (SetIssueSession,
+// AddIssueCost, SetHumanSeenAt, SetConflictNotifiedSHA, SetProposal,
+// SetOpenChildren), each of which reads the file, changes its own fields and
+// writes it back. SaveIssue carries every field it does not own over from the
+// file, so a worker's copy — loaded when it started, and by then stale —
+// cannot erase what the polling path recorded while it ran.
 type IssueState struct {
-	Number int    `json:"number"`
-	Round  int    `json:"round"`
-	PR     int    `json:"pr,omitempty"`
-	Branch string `json:"branch,omitempty"`
-	// CheckFixRounds counts reviewer-diagnoses/developer-fixes iterations
-	// for failing required checks.
-	CheckFixRounds int `json:"check_fix_rounds,omitempty"`
+	// Number is the issue these fields belong to and UpdatedAt when the file
+	// was last written; every writer sets both.
+	Number int `json:"number"`
+	// Round is the review round the developer worker is on, PR the pull
+	// request it opened, Branch the branch it works on and CheckFixRounds
+	// how many reviewer-diagnoses/developer-fixes iterations failing
+	// required checks have cost. They are the worker's own bookkeeping,
+	// written through SaveIssue.
+	Round          int    `json:"round"`
+	PR             int    `json:"pr,omitempty"`
+	Branch         string `json:"branch,omitempty"`
+	CheckFixRounds int    `json:"check_fix_rounds,omitempty"`
+	// WorkerStage is the stage the developer worker (scheduler.workIssue) was
+	// in — "develop", "prereview", "review" or "checks" — AfterDevelop the
+	// stage its next developer session leads back to, and PreReviewDone
+	// whether the pre-review checks have already been read for this pull
+	// request. They are the worker's loop state, written on every transition,
+	// so a scheduler killed mid-flight comes back to the stage it was in
+	// instead of re-deriving one from the issue's workflow label: a label says
+	// an issue is in review, not whether its review has already happened.
+	// The label stays the human-facing truth all the same — a remembered stage
+	// it contradicts is dropped, and so are AfterDevelop and PreReviewDone
+	// once the labels say the pull request they belong to is no longer being
+	// reviewed. The exception is the developer round the post-approval checks
+	// send back, which is recorded under bees:approved before the develop
+	// stage can relabel the issue: it keeps the AfterDevelop that names the
+	// gate it returns to, and only PreReviewDone goes. All of them belong to
+	// the pull request PR names, so a record left for any other one — or
+	// written before a number was known — is dropped too
+	// (scheduler.resumeStage).
+	//
+	// These are the developer worker's stages, not roles.reviewer.stages,
+	// which are sections of one reviewer session's prompt. Like the fields
+	// above they belong to the worker and are written through SaveIssue.
+	WorkerStage   string `json:"worker_stage,omitempty"`
+	AfterDevelop  string `json:"after_develop,omitempty"`
+	PreReviewDone bool   `json:"pre_review_done,omitempty"`
+	// Session is the session the scheduler last started for this issue,
+	// recorded before it runs and cleared when it ends. A record left
+	// behind is what says a scheduler was killed while a session ran: the
+	// directory it names holds a transcript no result file ever closed, and
+	// the branch may carry the partial work that session left. It sits with
+	// the worker's stage rather than in a file of its own because both
+	// answer the same question — where did the last attempt get to
+	// (scheduler.takeInterrupted). SetIssueSession is its only writer:
+	// SaveIssue carries it over from the file, like the cost totals, so a
+	// worker holding an IssueState across several sessions cannot write
+	// back a record that has since been cleared.
+	Session *SessionRun `json:"session,omitempty"`
 	// HumanSeenAt is the timestamp of the latest human PR activity already
-	// delivered to the developer.
+	// delivered to the developer. It is owned by SetHumanSeenAt
+	// (scheduler.deliverHumanFeedback): delivering the same review twice is
+	// exactly what it exists to prevent, so SaveIssue carries it over.
 	HumanSeenAt time.Time `json:"human_seen_at,omitempty"`
 	// ConflictNotifiedSHA is the PR head commit the developer was last told
 	// to bring up to date with the default branch; the same head is never
-	// mailed about twice.
+	// mailed about twice. It is owned by SetConflictNotifiedSHA
+	// (scheduler.checkPRs) and carried over by SaveIssue for the same reason.
 	ConflictNotifiedSHA string `json:"conflict_notified_sha,omitempty"`
 	// Cost is what every session run for this issue has cost so far, in USD,
 	// and Sessions how many sessions that was. Both are owned by
@@ -138,7 +194,9 @@ type IssueState struct {
 	// observation, and ProposalApprovedAt when the scheduler saw a person
 	// remove it. Approval is a label edit and leaves no comment, so it is
 	// remembered here: nothing else would tell the product manager that a
-	// feature it proposed may now be broken into work items.
+	// feature it proposed may now be broken into work items. Both are owned
+	// by SetProposal (scheduler.observeProposals) and carried over by
+	// SaveIssue.
 	Proposal           bool      `json:"proposal,omitempty"`
 	ProposalApprovedAt time.Time `json:"proposal_approved_at,omitempty"`
 	// OpenChildren are the open sub-issues a feature had when the product
@@ -151,10 +209,22 @@ type IssueState struct {
 	// one — no open children is the very state the check is about, and a
 	// truncated set would look like children that closed — and a set that
 	// changes clears the marker, so a feature that gains a sub-issue after
-	// being reported complete can be reported again.
+	// being reported complete can be reported again. Both are owned by
+	// SetOpenChildren (scheduler.recordFeatureProgress), which is where those
+	// rules live, and carried over by SaveIssue.
 	OpenChildren       []int     `json:"open_children,omitempty"`
 	CompleteReportedAt time.Time `json:"complete_reported_at,omitempty"`
 	UpdatedAt          time.Time `json:"updated_at"`
+}
+
+// SessionRun is one session the scheduler started for an issue: who ran it,
+// what it was called and the directory holding its prompts, transcript and,
+// once it ends, its result.
+type SessionRun struct {
+	Role      string    `json:"role"`
+	Name      string    `json:"name"`
+	Dir       string    `json:"dir"`
+	StartedAt time.Time `json:"started_at"`
 }
 
 // Issue loads bookkeeping for an issue (zero value when none).
@@ -167,16 +237,124 @@ func (s *Store) Issue(n int) (IssueState, error) {
 	return is, err
 }
 
-// SaveIssue stores bookkeeping for an issue. The running cost totals are not
-// taken from is: they are owned by AddIssueCost and carried over from the
-// file, because a developer worker holds one IssueState for the whole life of
-// an issue and would otherwise write back the total as it was when it started.
+// SaveIssue saves the developer worker's bookkeeping for an issue: the review
+// round, its pull request and branch, the check-fix rounds and the worker's
+// stage. Every other field is taken from the file rather than from is,
+// because a developer worker holds one IssueState for the whole life of an
+// issue while the scheduler's polling path keeps writing to the same file:
+// saving the worker's copy wholesale would write back the cost totals as they
+// were when it started, resurrect a session record that has since been
+// cleared, and undo the delivered-feedback, notified-head, proposal and
+// feature-completeness bookkeeping the polling path recorded in the meantime.
+// Each of those fields has an owner method that reads, changes and writes the
+// file (AddIssueCost, SetIssueSession, SetHumanSeenAt,
+// SetConflictNotifiedSHA, SetProposal, SetOpenChildren); this is the other
+// half of that rule.
 func (s *Store) SaveIssue(is IssueState) error {
 	if cur, err := s.Issue(is.Number); err == nil {
-		is.Cost, is.Sessions = cur.Cost, cur.Sessions
+		is.Cost, is.Sessions, is.Session = cur.Cost, cur.Sessions, cur.Session
+		is.HumanSeenAt, is.ConflictNotifiedSHA = cur.HumanSeenAt, cur.ConflictNotifiedSHA
+		is.Proposal, is.ProposalApprovedAt = cur.Proposal, cur.ProposalApprovedAt
+		is.OpenChildren, is.CompleteReportedAt = cur.OpenChildren, cur.CompleteReportedAt
 	}
 	is.UpdatedAt = time.Now().UTC()
 	return s.writeJSON(filepath.Join(s.Dir, "issues", strconv.Itoa(is.Number)+".json"), is)
+}
+
+// SetIssueSession records the session running for an issue, or clears it with
+// nil. It is the only writer of IssueState.Session: SaveIssue carries the
+// field over from the file, so a worker's own saves can neither clear a
+// record a session has just written nor write back one it has cleared.
+func (s *Store) SetIssueSession(n int, run *SessionRun) error {
+	is, err := s.Issue(n)
+	if err != nil {
+		return err
+	}
+	is.Number, is.Session = n, run
+	is.UpdatedAt = time.Now().UTC()
+	return s.writeJSON(filepath.Join(s.Dir, "issues", strconv.Itoa(n)+".json"), is)
+}
+
+// SetHumanSeenAt records how far the scheduler has read a pull request's
+// human reviews and comments. It is the only writer of IssueState.HumanSeenAt:
+// SaveIssue carries the field over from the file, so a developer worker
+// holding an IssueState across several sessions cannot write back an older
+// mark and have the same feedback delivered to it twice.
+func (s *Store) SetHumanSeenAt(n int, t time.Time) error {
+	is, err := s.Issue(n)
+	if err != nil {
+		return err
+	}
+	is.Number, is.HumanSeenAt = n, t
+	is.UpdatedAt = time.Now().UTC()
+	return s.writeJSON(filepath.Join(s.Dir, "issues", strconv.Itoa(n)+".json"), is)
+}
+
+// SetConflictNotifiedSHA records the pull request head the developer was told
+// to bring up to date. It is the only writer of
+// IssueState.ConflictNotifiedSHA: SaveIssue carries the field over from the
+// file, so a developer worker's own saves cannot forget the head and have the
+// scheduler mail about it again.
+func (s *Store) SetConflictNotifiedSHA(n int, sha string) error {
+	is, err := s.Issue(n)
+	if err != nil {
+		return err
+	}
+	is.Number, is.ConflictNotifiedSHA = n, sha
+	is.UpdatedAt = time.Now().UTC()
+	return s.writeJSON(filepath.Join(s.Dir, "issues", strconv.Itoa(n)+".json"), is)
+}
+
+// SetProposal records whether a feature carries the proposal label, and with
+// a non-zero approvedAt that a person has just removed it. A zero approvedAt
+// leaves any approval already recorded alone: an approval is only ever
+// observed once. The two fields are written together because the second is
+// meaningless without the first, and SetProposal is their only writer —
+// SaveIssue carries them over from the file, so a developer worker cannot
+// forget an approval and leave the product manager unaware of it.
+func (s *Store) SetProposal(n int, proposal bool, approvedAt time.Time) error {
+	is, err := s.Issue(n)
+	if err != nil {
+		return err
+	}
+	is.Number, is.Proposal = n, proposal
+	if !approvedAt.IsZero() {
+		is.ProposalApprovedAt = approvedAt
+	}
+	is.UpdatedAt = time.Now().UTC()
+	return s.writeJSON(filepath.Join(s.Dir, "issues", strconv.Itoa(n)+".json"), is)
+}
+
+// SetOpenChildren records a feature's open sub-issues, and with a non-zero
+// reportedAt that the scheduler has just presented the feature as complete.
+// A nil children leaves the remembered set alone, which is how a caller says
+// its lookup was empty or incomplete and must not be recorded; a set that
+// differs from the remembered one clears the report marker, so a feature that
+// gains a sub-issue can be reported complete again. Nothing is written when
+// neither applies.
+//
+// The two fields are written together because neither means anything without
+// the other, and SetOpenChildren is their only writer: SaveIssue carries them
+// over from the file, so a developer worker cannot report a finished feature
+// twice by writing back a set of children that has since been reported on.
+func (s *Store) SetOpenChildren(n int, children []int, reportedAt time.Time) error {
+	is, err := s.Issue(n)
+	if err != nil {
+		return err
+	}
+	changed := children != nil && !slices.Equal(is.OpenChildren, children)
+	if !changed && reportedAt.IsZero() {
+		return nil
+	}
+	if changed {
+		is.OpenChildren, is.CompleteReportedAt = children, time.Time{}
+	}
+	if !reportedAt.IsZero() {
+		is.CompleteReportedAt = reportedAt
+	}
+	is.Number = n
+	is.UpdatedAt = time.Now().UTC()
+	return s.writeJSON(filepath.Join(s.Dir, "issues", strconv.Itoa(n)+".json"), is)
 }
 
 // AddIssueCost adds one finished session to an issue's running total and
@@ -241,7 +419,11 @@ type Worker struct {
 	Round int    `json:"round"`
 	// Attempt is the 1-based attempt of the running session; > 1 means the
 	// previous attempt failed for infrastructure reasons and was retried.
-	Attempt int       `json:"attempt,omitempty"`
+	Attempt int `json:"attempt,omitempty"`
+	// Resumed marks a worker that took over from a session interrupted by a
+	// scheduler that was killed, rather than starting fresh: its branch may
+	// carry work nobody reported.
+	Resumed bool      `json:"resumed,omitempty"`
 	Since   time.Time `json:"since"`
 }
 

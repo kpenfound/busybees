@@ -243,3 +243,31 @@ func TestSchedulerLine(t *testing.T) {
 		})
 	}
 }
+
+// A worker that took over from a session a killed scheduler left unfinished
+// is marked resumed, because its branch may already carry work nobody
+// reported; one that started fresh reads exactly as it always did (#250).
+func TestWorkersTextMarksAResumedWorker(t *testing.T) {
+	since := time.Date(2026, 8, 31, 8, 22, 0, 0, time.Local)
+	fresh := state.Worker{Name: "dev-1", Issue: 7, Size: "m", Stage: "developer", Round: 1, Since: since}
+	resumed := state.Worker{Name: "dev-2", Issue: 9, Size: "s", Stage: "reviewer", Round: 2, Since: since, Resumed: true}
+
+	if got := workersText(state.Status{}); got != "  none\n" {
+		t.Errorf("no workers renders %q", got)
+	}
+	got := workersText(state.Status{Workers: []state.Worker{fresh, resumed}})
+	lines := strings.Split(strings.TrimSuffix(got, "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("two workers render %d lines:\n%s", len(lines), got)
+	}
+	if strings.Contains(lines[0], "resumed") {
+		t.Errorf("a worker that started fresh is marked resumed: %q", lines[0])
+	}
+	if !strings.HasSuffix(lines[1], "   resumed") {
+		t.Errorf("a resumed worker is not marked: %q", lines[1])
+	}
+	// Everything the line said before is still on it, in the same columns.
+	if !strings.HasPrefix(lines[1], "  dev-2        issue #9     s   reviewer          round 2              since ") {
+		t.Errorf("the columns moved: %q", lines[1])
+	}
+}

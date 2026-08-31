@@ -9,9 +9,9 @@ what it may do, and how to shape it.
 
 | Role | Instances | Runs when |
 |---|---|---|
-| `product_manager` | singleton | unread mail, a fresh `bees:feedback` or `bees:feature` issue (a person created or commented on it since the PM last replied), a feature whose sub-issues have all closed, or `product_manager_interval` elapsed (first run immediately) |
+| `product_manager` | singleton | unread mail, a fresh `bees:feedback` or `bees:feature` issue (a person created or commented on it since the PM last replied — on a `bees:proposal` or `bees:planning` issue only a comment counts), a feature whose sub-issues have all closed, or `product_manager_interval` elapsed (first run immediately) |
 | `project_manager` | singleton | issues in `bees:triage`, or unread mail |
-| `developer` | pool of `scheduler.max_developers` workers | a `bees:ready` issue is waiting (or an in-progress/review issue needs resuming); a ready issue whose PR came back — human feedback, a conflict with the default branch — goes before new work |
+| `developer` | pool of `scheduler.max_developers` workers | a `bees:ready` issue is waiting (or an in-progress/review issue needs resuming, or an interrupted post-approval checks stage in `bees:approved`); a ready issue whose PR came back — human feedback, a conflict with the default branch — goes before new work |
 | `reviewer` | one per developer worker, in sequence | the worker's developer session opened or updated a PR; with `auto_merge`, also when a required check fails after approval |
 | `qa` | singleton | unread mail, or `qa_interval` elapsed and something was merged (first run immediately; the merged-PR check runs at most once per `qa_interval`) |
 
@@ -53,8 +53,9 @@ every comment a role posts on GitHub must end with the line
 `<!-- bees:<role> -->` (invisible when rendered). The orchestrator uses it to
 tell bee comments from human ones when it collects PR feedback for the
 developer, and where the factory does have its own login it counts a comment
-by that login as a bee's too. The marker is required either way: a Claude
-session's own `gh` still posts under the human's account.
+by that login as a bee's too — sessions carry that login's token, so their
+own `gh` posts as it as well. The marker is required either way: with no
+`[github]` account it is the only signal there is.
 
 Roles interact with GitHub through MCP tools where there is one, and through
 the already-authenticated `gh` CLI for everything else; with each other, only
@@ -122,7 +123,9 @@ a person, title); the features **whose work is done** — every sub-issue closed
 since the last run — in a section of their own; every open **work item**
 (state, kind, the **parent** feature it is a sub-issue of or `-`, milestone,
 title — feature and feedback issues are excluded from this table); open PRs;
-the **fresh `bees:feedback` issues** (full body and every comment); unread
+the **fresh `bees:feedback` issues** (full body and every comment); the
+issues a person put in **planning** with it and the ones they have **agreed**,
+each in a section of its own (full body and every comment); unread
 mail; its notes. It works from a detached
 checkout of the default branch and is told to read the codebase and README to
 understand what exists.
@@ -213,12 +216,29 @@ told to break down, and marks them in the `Proposal` column of the feature
 table, because bees and people share one GitHub account and the author is no
 signal.
 
+**Planning mode:** a person may put a feature or feedback issue in
+`bees:planning` to agree it with the product manager before anything is built.
+While the label is there the issue is a conversation: it is presented in a
+section of its own that lists no breakdown step, the product manager replies to
+each fresh comment with questions, options or a draft, and it creates nothing —
+`issue_create` (`parent:`) and `issue_link` refuse a planning issue, as they do
+a proposal. The person ends planning by swapping `bees:planning` for
+`bees:planned`, which the product manager treats as **agreed**: it does not
+re-open the scope, writes what was settled into the issue body as a short
+`## Decisions` section, records the outcome in its notes, and breaks the issue
+down. A feature is presented as agreed only while it has no sub-issues, so the
+breakdown happens once. Both labels are a person's: the product manager never
+adds or removes either. See
+[Planning with the product manager](workflow.md#planning-with-the-product-manager).
+
 A feature issue is *fresh* when the human side had the last word on it: a
 person created or commented on it, and the product manager has not commented
 since (`github.Client.AwaitingBee`). When a person answers a `bees:question`,
 the orchestrator removes the label and the issue comes back as fresh; a fresh
 feature or feedback issue triggers a product manager run regardless of
-`product_manager_interval`.
+`product_manager_interval` — except a proposal or a planning issue, where only
+a comment counts, since nobody has commented on one the moment it is labelled
+and it would otherwise wake the product manager on every poll.
 
 **Feedback from people:** issues labelled `bees:feedback` are the product
 manager's inbox (feature ideas, product feedback, bug reports from humans) —
@@ -248,15 +268,19 @@ prompt, and what was done about it is said in the outcome. It needs no feedback
 issue to hang a reply on.
 
 **Outcomes:** `done` (with a summary), `idle`, `failed`. A run with no fresh
-feature, no fresh feedback, no mail, no unanswered comment on a proposal and no
+feature, no fresh feedback, no mail, no unanswered comment on a proposal or a
+planning issue, and no
 completed feature was woken by `product_manager_interval` rather than by an
 event; the prompt tells the
 product manager to run the loose-work-item check and then report `idle` rather
-than look for work to invent. Proposals and completed features are the wake
-conditions that are easy to miss: both are partitioned out of the fresh
-features into a section of their own, so a person questioning a proposal — or a
-feature finishing its last work item — produces a task whose other three
-sections are empty. The orchestrator
+than look for work to invent. Proposals, planning issues and completed features
+are the wake conditions that are easy to miss: all three are partitioned out of
+the fresh features into a section of their own, so a person questioning a
+proposal, a person's comment on an issue in planning, or a
+feature finishing its last work item, produces a task whose other sections are
+empty. An issue carrying `bees:planned` is not a wake condition at all — it
+waits in its own section for whichever run comes next — so a clock-woken run
+still has that section to work before it reports `idle`. The orchestrator
 records the run time (which starts the `product_manager_interval` clock) and
 marks the delivered mail read. `failed` logs an error and backs the role off
 for five poll intervals.
@@ -348,9 +372,12 @@ with comment ids and the exact `gh` reply commands, and — from
 [conflicts with the default branch](workflow.md#conflicts-with-the-default-branch)),
 the round number and limit, its notes. It runs in a worktree on `bees/issue-N` (prefix
 from `project.branch_prefix`), already based on the default branch. The session
-environment carries `push.autoSetupRemote=true` and `push.default=current`
-(via `GIT_CONFIG_*` variables, so the clone's own git config is untouched) and a
-plain `git push` just works.
+environment carries `push.autoSetupRemote=true` and `push.default=current` (via
+`GIT_CONFIG_*` variables, so the clone's own git config is untouched) and a
+plain `git push` just works. With [`[github]`](configuration.md#github) set the
+session also carries the factory's `GH_TOKEN`, its commit identity and a git
+credential helper of gh's, so what it pushes, commits and opens is the bot's
+rather than the machine owner's.
 
 **Does on GitHub:** pushes the branch; opens the PR with `gh pr create` (body
 must contain `Closes #N`, a summary, and how it was tested) or updates the
@@ -363,6 +390,17 @@ that reply with `<!-- bees:developer -->` itself; the `comment` tool, which
 appends the marker, for reviews and conversation comments). When a human's request conflicts with the issue or
 the reviewer, the human wins. It must not change labels, must not push to the
 default branch, and must not fix unrelated bugs.
+
+**A session that was interrupted:** when a scheduler was killed while a
+session was working this issue, the session that takes over is told so before
+anything else — how far the interrupted one got, where its transcript is, and
+whether `bees kill` stopped it. A developer is told the branch may already
+carry commits, uncommitted edits or a pull request the interrupted session
+never reported, to carry on from rather than start over; a reviewer is told
+its round reported no verdict and starts over, and that the interrupted
+session may already have sent mail or posted on GitHub. Only the role that was
+interrupted is told, and only its first session; `bees status` marks the
+worker `resumed`. See [crash recovery](architecture.md#the-developer-worker).
 
 **Self-check:** before pushing, the developer checks the change the way the
 reviewer will. It runs the repository's own lint and test commands — the ones
@@ -408,13 +446,18 @@ merging: `auto_merge` and its companions live under `[roles.reviewer]` (see
 [configuration.md](configuration.md#rolesreviewer-only-checks-and-auto-merge)).
 
 **Given:** the PR (title, body, branch, author), the linked issue, the
-issue's **size** and a sentence on the scrutiny it warrants (see
-[Sizing](workflow.md#sizing)), the status of the pull request's checks as read
-just before the review (unless `pre_review_checks = false`), its own feedback
-from previous rounds, unread mail addressed to `reviewer` about the issue or
-the pull request (in practice from a human), the round number and limit, its
-notes. It runs in the same worktree as the developer for that issue,
-fast-forwarded to the latest push, so it reads the change in its context.
+**review stages** to run (below), the issue's **size** and a sentence on the
+scrutiny it warrants (see [Sizing](workflow.md#sizing)), the status of the pull
+request's checks as read just before the review (unless
+`pre_review_checks = false`), its own feedback from previous rounds, unread
+mail addressed to `reviewer` about the issue or the pull request (in practice
+from a human), the round number and limit, its notes. With a `product-fit`
+stage configured it is also given the work item's **parent feature**, the only
+thing that stage judges against, and when a scheduler was killed during a
+reviewer session for the issue, [what that session left
+behind](#developer). It runs in the same worktree as the developer
+for that issue, fast-forwarded to the latest push, so it reads the change in
+its context.
 
 **Verifying is CI's job.** The prompt tells the reviewer to judge the change
 from the code and not to spend the session re-running the repository's
@@ -434,23 +477,80 @@ writes reaches the person who merges except its outcome note, which is why the
 note has to stand on its own.
 
 **Mail:** may send to `developer` only, with `pr` and `issue`, one
-consolidated message per round listing every point with file/line and the
-expected change. It also *receives* mail addressed to `reviewer` — in practice
-from a human (`bees mail send --from human --to reviewer`) — about the issue or
-the pull request: it is delivered to the next reviewer session, in review mode
-and in checks mode alike, and marked read afterwards. Mail from `human` is a
+consolidated message per round, its points grouped by stage, each listing the
+file/line and the expected change. It also *receives* mail addressed to
+`reviewer` — in practice from a human
+(`bees mail send --from human --to reviewer`) — about the issue or the pull
+request: it is delivered to the next reviewer session, in review mode and in
+checks mode alike, and marked read afterwards. Mail from `human` is a
 direction it follows literally, even where its prompt says otherwise.
 
 **Outcomes and what the orchestrator does:**
 
 | Status | Orchestrator |
 |---|---|
-| `approved` | Labels the PR and the issue `bees:approved`. Without `auto_merge` the worker is freed and a human merges. With `auto_merge` the worker enters the checks stage (below). |
+| `approved` | Every configured stage passed. Labels the PR and the issue `bees:approved`. Without `auto_merge` the worker is freed and a human merges. With `auto_merge` the worker enters the checks stage (below). |
 | `changes-requested` | Verifies feedback mail to the developer was sent during the session (none: escalate). If the round limit is reached: escalate. Otherwise increments the round, moves the issue back to `bees:in-progress` and runs the developer with the feedback. |
 | `failed` (or no outcome / timeout / error) | Escalates to `bees:needs-human`. |
 
 The reviewer is told when it is on the final round so it still requests
 changes honestly and lets the orchestrator escalate.
+
+### Review stages (`roles.reviewer.stages`)
+
+These are stages *within* one reviewer session — sections of its prompt — not
+worker stages like the pre-review checks and checks stages below, which are
+separate sessions.
+
+A review is not one judgement. Asking for all of them at once produced reviews
+that commented on formatting while missing that the feature was half
+implemented, or blocked on product fit when the issue had been explicit — so
+the review runs as **ordered stages**, each with its own focus, its own source
+of truth and its own verdict.
+
+| Stage | Question it answers | Source of truth |
+|---|---|---|
+| `style` | Does it follow the repository's formatting and lint conventions? | the repository's conventions, CLAUDE.md, the linter |
+| `cleanliness` | Is it clear, small, free of dead code and needless abstraction? | the diff |
+| `implementation` | Is it correct? Error handling, edge cases, tests, security. | the diff |
+| `completeness` | Does it deliver the work item's acceptance criteria? | the issue |
+| `product-fit` | Does it fit the parent feature and the product direction? | the parent feature, the README and the docs |
+
+**The default is `["implementation", "completeness", "cleanliness", "style"]`**,
+in that order: the most valuable judgement first, so the reviewer spends its
+best attention on correctness and reaches formatting last. `product-fit` is
+**off by default** — a work item the project manager already scoped is not the
+place to re-open the product decision, and leaving it off is also what keeps
+the default review's scope the same as the single-pass reviewer it replaced.
+It is the one stage that needs the work item's parent feature, so the
+orchestrator looks the parent up only when the stage is configured; a work item
+that belongs to no feature gets the stage anyway, judged against the README and
+the docs, and the reviewer is told to say so.
+
+**No early exit.** Every configured stage runs, even after one of them has
+already found something to block on. The developer fixes one round of feedback
+at a time, so a stage skipped because an earlier one failed costs a whole extra
+round when its findings finally arrive.
+
+**Feedback and approval.** Each stage ends with a verdict line of its own
+(`<stage>: pass` / `<stage>: fail`). Requesting changes still sends exactly one
+message to the developer, its points **grouped by stage** in the stages' order,
+each group headed by that stage's verdict. An approval means every configured
+stage passed: one failed stage is `changes-requested`, whatever the others
+said. The outcome note — the only thing that reaches the person who merges —
+carries the stages that ran and how each came out.
+
+**One session, several sections.** All the stages run in one reviewer session,
+as sections of its task prompt, rather than one session per stage: a session
+per stage would multiply the cost and each one would have to re-read the diff
+and the issue from scratch. Per-stage sessions remain a possible follow-up if
+the sections turn out to bleed into each other — the stage list is already the
+seam they would be split along.
+
+The list is validated at load: a stage that is not one of the five above, an
+empty list, and `stages` set anywhere but `[roles.reviewer]` are all load
+errors. See
+[configuration.md](configuration.md#rolesreviewer-only-the-review-stages).
 
 ### Pre-review checks (`pre_review_checks`, on by default)
 
@@ -478,7 +578,8 @@ a second kind of session, rendered from `task/reviewer_checks.md` with
 
 **Given:** the PR, the issue, the list of failing checks (name,
 workflow, bucket, description, details link), the fix round and its limit,
-its notes.
+its notes, and — when a scheduler was killed during a reviewer session for
+the issue — [what that session left behind](#developer).
 
 **Does:** finds the cause without assuming a CI system — follows the details
 link, runs `gh pr checks`, reads the repository's docs and its own notes, uses

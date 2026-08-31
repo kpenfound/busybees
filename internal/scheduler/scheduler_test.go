@@ -99,6 +99,19 @@ func fakeClaude() {
 			return
 		}
 	}
+	// FAKE_COPY_ISSUE_STATE copies the issue's bookkeeping as it stands while
+	// this session runs to <state_dir>/running-<session dir>.json. It is the
+	// only way to see what the scheduler recorded *during* a session, which
+	// is exactly what a scheduler killed mid-session leaves behind.
+	if os.Getenv("FAKE_COPY_ISSUE_STATE") == "1" {
+		if n := os.Getenv(session.EnvIssue); n != "" {
+			if b, err := os.ReadFile(filepath.Join(stateDir, "issues", n+".json")); err == nil {
+				if err := os.WriteFile(filepath.Join(stateDir, "running-"+filepath.Base(sessionDir)+".json"), b, 0o644); err != nil {
+					fail(err)
+				}
+			}
+		}
+	}
 	counter := func(name string) int {
 		p := filepath.Join(stateDir, "fake-"+name)
 		n := 0
@@ -234,6 +247,11 @@ type fakeGH struct {
 	// ParentIssue query. Empty means "use the hardcoded answer below": issue
 	// 1 is a sub-issue of feature 5 while that feature exists.
 	parents map[int]int
+	// subIssues overrides the sub-issue summary the REST issue-details call
+	// answers for one issue. Absent means the shared default (3 sub-issues,
+	// 1 closed), which is what most tests want; a test about an issue that
+	// has not been broken down yet sets an empty summary for it.
+	subIssues map[int]github.SubIssueSummary
 	// parentErr makes the ParentIssue query fail for one work item, which is
 	// how a partial parent lookup is expressed: the other items still answer.
 	parentErr map[int]error
@@ -430,7 +448,11 @@ func (f *fakeGH) exec(ctx context.Context, args ...string) ([]byte, error) {
 		// REST issue details: repos/acme/widgets/issues/N
 		var n int
 		if _, err := fmt.Sscanf(path, "repos/acme/widgets/issues/%d", &n); err == nil && !strings.Contains(path, "/comments") {
-			return []byte(fmt.Sprintf(`{"id": %d, "milestone": null, "sub_issues_summary": {"total": 3, "completed": 1, "percent_completed": 33}}`, 1000+n)), nil
+			sum := github.SubIssueSummary{Total: 3, Completed: 1}
+			if s, ok := f.subIssues[n]; ok {
+				sum = s
+			}
+			return []byte(fmt.Sprintf(`{"id": %d, "milestone": null, "sub_issues_summary": {"total": %d, "completed": %d}}`, 1000+n, sum.Total, sum.Completed)), nil
 		}
 		if strings.Contains(path, "/pulls/") || strings.Contains(path, "/issues/") {
 			return []byte("[[]]"), nil
@@ -624,14 +646,15 @@ func newHarnessAt(t *testing.T, toml string, now time.Time) *harness {
 		t.Fatal(err)
 	}
 	gh := &fakeGH{
-		issues:   map[int]*github.Issue{},
-		prs:      map[int]*github.PR{},
-		prMarker: filepath.Join(store.Dir, "fake-pr-created"),
-		hidden:   map[int]bool{},
-		history:  map[int][]string{},
-		comments: map[int][]string{},
-		activity: map[string]string{},
-		errFor:   map[string]error{},
+		issues:    map[int]*github.Issue{},
+		prs:       map[int]*github.PR{},
+		prMarker:  filepath.Join(store.Dir, "fake-pr-created"),
+		hidden:    map[int]bool{},
+		history:   map[int][]string{},
+		comments:  map[int][]string{},
+		activity:  map[string]string{},
+		subIssues: map[int]github.SubIssueSummary{},
+		errFor:    map[string]error{},
 	}
 	// Like a repository `bees init` has just set up: every label exists.
 	for _, l := range cfg.Labels().All() {
@@ -672,6 +695,14 @@ func newHarnessAt(t *testing.T, toml string, now time.Time) *harness {
 	}
 	sched.Once = true
 	return &harness{t: t, cfg: cfg, gh: gh, store: store, box: box, sched: sched, clone: clone, logs: logs, clock: clock}
+}
+
+// stateOfIssue is the workflow state label the fake GitHub now carries for an
+// issue, which is what a restarted scheduler would read.
+func (h *harness) stateOfIssue(n int) string {
+	h.gh.mu.Lock()
+	defer h.gh.mu.Unlock()
+	return h.sched.stateOf(h.gh.issues[n].Labels)
 }
 
 func (h *harness) sessions(role string) []string {

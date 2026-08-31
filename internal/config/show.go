@@ -60,6 +60,8 @@ type RoleView struct {
 	CommitFlags *string            `json:"commit_flags,omitempty"`
 	MaxSize     *string            `json:"max_size,omitempty"`
 	ModelBySize *map[string]string `json:"model_by_size,omitempty"`
+	// Stages is only set on the reviewer.
+	Stages *[]string `json:"stages,omitempty"`
 	// MergeView is only set on the reviewer; its keys are inlined.
 	*MergeView
 }
@@ -140,6 +142,8 @@ func (c *Config) View(roles []string) (View, error) {
 			maps.Copy(bySize, rr.ModelBySize)
 			rv.ModelBySize = &bySize
 		case RoleReviewer:
+			stages := c.ReviewStages()
+			rv.Stages = &stages
 			m := c.Merge()
 			rv.MergeView = &MergeView{
 				AutoMerge:          m.AutoMerge,

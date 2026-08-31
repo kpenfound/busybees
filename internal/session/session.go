@@ -51,6 +51,11 @@ const (
 // never inherited from the process that started the scheduler.
 const beesEnvPrefix = "BEES_"
 
+// EnvGHToken is the variable gh reads its credentials from. It is not one of
+// bees' own BEES_* variables — it is gh's, set for a session only when
+// [github] configures a token — so it survives the BEES_ strip in env.
+const EnvGHToken = "GH_TOKEN"
+
 // Request describes one session to run.
 type Request struct {
 	// Name identifies the session in logs, e.g. "developer-issue-12-r1".
@@ -167,6 +172,11 @@ type Runner struct {
 	ConfigPath string
 	Repo       string
 	Label      string
+	// GitHub is the identity a session acts as: the token its `gh` calls and
+	// its pushes use, and the name and email its commits carry. The zero
+	// value means the machine's own gh authentication and git identity,
+	// which is what every configuration without [github] gets.
+	GitHub config.GitHub
 	// Skills prepares skill plugin dirs. Optional.
 	Skills *skills.Manager
 	// AddDirs are extra directories claude may access (the state dir).
@@ -271,7 +281,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 	}
 	cmd.WaitDelay = 10 * time.Second
 
-	transcriptPath := filepath.Join(sessionDir, "transcript.jsonl")
+	transcriptPath := filepath.Join(sessionDir, TranscriptFile)
 	transcript, err := os.Create(transcriptPath)
 	if err != nil {
 		return nil, err
@@ -351,7 +361,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 	res.Outcome, res.HasOutcome = o, ok
 
 	if data, err := json.MarshalIndent(res, "", "  "); err == nil {
-		_ = os.WriteFile(filepath.Join(sessionDir, "result.json"), data, 0o644)
+		_ = os.WriteFile(filepath.Join(sessionDir, ResultFile), data, 0o644)
 	}
 	r.Logger.Info("session end", "session", req.Name, "turns", res.NumTurns, "cost_usd", res.CostUSD,
 		"duration", res.Duration.Round(time.Second), "error", res.IsError, "subtype", res.ErrorSubtype,
@@ -434,19 +444,71 @@ func (r *Runner) env(req Request, sessionDir string) []string {
 	if r.BeesBin != "" {
 		set("PATH", filepath.Dir(r.BeesBin)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	}
+	// The factory's own GitHub identity, so a session's gh, pushes and
+	// commits are the bot's rather than the machine owner's. It sits with
+	// bees' own variables, after req.Role.Env, so a role cannot configure a
+	// second identity for itself.
+	if token := r.GitHub.ResolvedToken(); token != "" {
+		set(EnvGHToken, token)
+	}
+	for _, v := range r.gitIdentity() {
+		set(v.name, v.value)
+	}
 	// Let sessions run a plain `git push` on a fresh branch without touching
 	// the user's git configuration (git >= 2.31 reads GIT_CONFIG_* vars).
+	// GIT_CONFIG_COUNT is derived from the entries and never written by hand:
+	// a count that is one short silently drops the last entry.
 	if os.Getenv("GIT_CONFIG_COUNT") == "" {
-		set("GIT_CONFIG_COUNT", "2")
-		set("GIT_CONFIG_KEY_0", "push.autoSetupRemote")
-		set("GIT_CONFIG_VALUE_0", "true")
-		set("GIT_CONFIG_KEY_1", "push.default")
-		set("GIT_CONFIG_VALUE_1", "current")
+		entries := r.gitConfig()
+		for i, e := range entries {
+			n := strconv.Itoa(i)
+			set("GIT_CONFIG_KEY_"+n, e.name)
+			set("GIT_CONFIG_VALUE_"+n, e.value)
+		}
+		set("GIT_CONFIG_COUNT", strconv.Itoa(len(entries)))
 	}
 	for k, v := range req.Env {
 		set(k, v)
 	}
 	return env
+}
+
+// gitIdentity is the author and committer a session's commits carry. The two
+// keys are independent: config accepts git_name or git_email on its own, and
+// whichever is unset stays the machine's, because a half-set identity is
+// still better than a wrong one.
+func (r *Runner) gitIdentity() []envVar {
+	var vars []envVar
+	if n := r.GitHub.GitName; n != "" {
+		vars = append(vars, envVar{"GIT_AUTHOR_NAME", n}, envVar{"GIT_COMMITTER_NAME", n})
+	}
+	if e := r.GitHub.GitEmail; e != "" {
+		vars = append(vars, envVar{"GIT_AUTHOR_EMAIL", e}, envVar{"GIT_COMMITTER_EMAIL", e})
+	}
+	return vars
+}
+
+// gitConfig is the git configuration a session runs with, as the key/value
+// pairs env numbers into GIT_CONFIG_KEY_n and GIT_CONFIG_VALUE_n.
+func (r *Runner) gitConfig() []envVar {
+	entries := []envVar{
+		{"push.autoSetupRemote", "true"},
+		{"push.default", "current"},
+	}
+	if r.GitHub.ResolvedToken() != "" {
+		// Push over https as the bot, without reading or writing the
+		// person's stored credentials. The empty value is load-bearing:
+		// git asks credential helpers in configuration order and takes the
+		// first answer, and GIT_CONFIG_* entries are read last, so without
+		// it the machine owner's helper (a keychain, or their own gh)
+		// answers first and the push is theirs. An empty credential.helper
+		// resets the list built so far.
+		entries = append(entries,
+			envVar{"credential.helper", ""},
+			envVar{"credential.helper", "!gh auth git-credential"},
+		)
+	}
+	return entries
 }
 
 // NewSessionDir creates a fresh per-session directory under SessionsDir.

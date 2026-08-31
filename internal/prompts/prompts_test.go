@@ -2,6 +2,7 @@ package prompts
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -37,6 +38,7 @@ func sample() Data {
 		Features:          []github.Issue{{Number: 12, Title: "Exports", Labels: []github.Label{{Name: "bees:feature"}, {Name: "bees:question"}}}},
 		Progress:          map[int]github.SubIssueSummary{12: {Total: 4, Completed: 2}},
 		Parent:            &github.Parent{Number: 12, Title: "Exports"},
+		Stages:            config.DefaultReviewStages,
 		Parents:           map[int]github.Parent{5: {Number: 12, Title: "Exports"}, 6: {Number: 12, Title: "Exports"}},
 		Blockers:          map[int][]int{5: {37}, 6: {37}},
 		FreshFeatures:     []github.Issue{{Number: 13, Title: "Search", Body: "find things", Author: github.Author{Login: "kyle"}}},
@@ -1108,4 +1110,318 @@ func section(t *testing.T, prompt, heading string) string {
 	}
 	body, _, _ := strings.Cut(rest, "\n## ")
 	return body
+}
+
+// stageHeadings extracts the stage names the reviewer's task template knows
+// how to describe: the backticked token on every line that starts with the
+// stable prefix "### `". Each stage's block in the template is headed by one,
+// so the names are read off the prose the reviewer actually gets rather than
+// off the {{if}} chain that selects it.
+func stageHeadings(t *testing.T) []string {
+	t.Helper()
+	b, err := files.ReadFile("task/reviewer.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, line := range strings.Split(string(b), "\n") {
+		rest, ok := strings.CutPrefix(line, "### `")
+		if !ok {
+			continue
+		}
+		name, _, ok := strings.Cut(rest, "`")
+		if !ok {
+			t.Fatalf("unterminated stage heading: %q", line)
+		}
+		names = append(names, name)
+	}
+	if len(names) == 0 {
+		t.Fatalf("no \"### `\" stage heading in task/reviewer.md; the pin has lost its anchor")
+	}
+	return names
+}
+
+// The task template describes each stage in prose, and config validates
+// roles.reviewer.stages against config.KnownReviewStages — two lists that have
+// to name the same stages. A stage the config accepts but the template cannot
+// describe renders as a heading-less gap the reviewer silently skips; a stage
+// the template describes but the config rejects can never be configured. The
+// comparison is a set both ways, because the template's order is the order the
+// {{if}} chain happens to be written in, not a contract (the *rendered* order
+// is the configured one — see TestReviewerStagesRenderInTheConfiguredOrder).
+func TestReviewerTaskDescribesEveryKnownStage(t *testing.T) {
+	got, want := stageHeadings(t), slices.Clone(config.KnownReviewStages)
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("task/reviewer.md describes %v; config.KnownReviewStages is %v", got, want)
+	}
+}
+
+// Only the configured stages are rendered, in the configured order, and the
+// section is absent altogether when no stage is set — which is what keeps the
+// reviewer's checks-mode task, and every other role, unaffected by #240.
+func TestReviewerStagesRenderInTheConfiguredOrder(t *testing.T) {
+	d := sample()
+	d.Stages = []string{"style", "implementation"}
+	rev, err := Task(config.RoleReviewer, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rev, "## Review stages") {
+		t.Fatalf("no stages section:\n%s", rev)
+	}
+	if i, j := strings.Index(rev, "### `style`"), strings.Index(rev, "### `implementation`"); i < 0 || j < 0 || i > j {
+		t.Errorf("stages are not rendered in the configured order (style at %d, implementation at %d):\n%s", i, j, rev)
+	}
+	for _, gone := range []string{"### `cleanliness`", "### `completeness`", "### `product-fit`"} {
+		if strings.Contains(rev, gone) {
+			t.Errorf("unconfigured stage %q is rendered:\n%s", gone, rev)
+		}
+	}
+	// Every stage ends in a verdict, and one failure blocks the approval.
+	for _, want := range []string{"<stage>: pass —", "<stage>: fail —", "Approve only when every stage passed"} {
+		if !strings.Contains(rev, want) {
+			t.Errorf("stages section missing %q:\n%s", want, rev)
+		}
+	}
+	if !strings.Contains(flowed(rev), "grouped by stage** in the stages' order") {
+		t.Errorf("the instructions do not ask for feedback grouped by stage:\n%s", rev)
+	}
+
+	d.Stages = nil
+	rev, err = Task(config.RoleReviewer, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(rev, "## Review stages") || strings.Contains(rev, "### `style`") {
+		t.Errorf("the stages section survives an empty stage list:\n%s", rev)
+	}
+	checks, err := TaskNamed(config.RoleReviewer, "reviewer_checks", sample())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(checks, "## Review stages") {
+		t.Errorf("the checks-mode task reviews in stages:\n%s", checks)
+	}
+}
+
+// product-fit is the one stage with a source of truth outside the diff and the
+// issue, so it is the one stage that needs Data.Parent. It has to render both
+// ways: the scheduler leaves Parent nil for a work item that belongs to no
+// feature, and the stage must then say what it judged against instead rather
+// than render a dangling "#: ".
+func TestProductFitStageNamesTheParentFeature(t *testing.T) {
+	d := sample()
+	d.Stages = []string{config.StageProductFit}
+	rev, err := Task(config.RoleReviewer, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(flowed(rev), "**#12: Exports** — is the source of truth") {
+		t.Errorf("product-fit does not name the parent feature:\n%s", rev)
+	}
+
+	d.Parent = nil
+	rev, err = Task(config.RoleReviewer, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(flowed(rev), "belongs to no feature, so the README and the docs are the only source of truth") {
+		t.Errorf("product-fit without a parent feature:\n%s", rev)
+	}
+	if strings.Contains(rev, "#0") || strings.Contains(rev, "**#: ") {
+		t.Errorf("product-fit renders an empty parent reference:\n%s", rev)
+	}
+}
+
+// The reviewer's system prompt carries the rules that do not vary with the
+// configured stage list: run every one, a verdict each, one grouped message,
+// and an approval that needs them all. The task carries the list itself.
+func TestReviewerSystemPromptCarriesTheStagedRules(t *testing.T) {
+	sys, err := System(config.RoleReviewer, sample(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	flow := flowed(sys)
+	for _, want := range []string{
+		"Run **every** stage, and do not stop at the first one that finds something you would block on",
+		"Give each stage a verdict line of its own",
+		"**Approve** when every stage passed",
+		"A single failed stage is `changes-requested`, whatever the others said",
+		"**grouped by stage**, the stages in the task's order",
+		"A checks-mode session runs no stages",
+	} {
+		if !strings.Contains(flow, want) {
+			t.Errorf("reviewer system prompt missing %q:\n%s", want, sys)
+		}
+	}
+}
+
+// Planning mode has two sections in the product manager's task, and they say
+// opposite things: while a person is still agreeing an issue nothing is
+// created from it, and once they have agreed it the scope is settled. Both
+// name the labels through config, never as literals, and the empty case says
+// so rather than rendering an empty heading.
+func TestProductManagerTaskRendersPlanningMode(t *testing.T) {
+	labels := config.LabelsFor("bees")
+	issue := func(n int, title string, names ...string) github.Issue {
+		i := github.Issue{Number: n, Title: title, Body: "why " + title, Author: github.Author{Login: "kyle"}}
+		for _, l := range names {
+			i.Labels = append(i.Labels, github.Label{Name: l})
+		}
+		return i
+	}
+	d := sample()
+	d.Planning = []github.Issue{issue(50, "Offline mode", labels.Feature, labels.Planning)}
+	d.Planned = []github.Issue{issue(51, "Exports", labels.Feature, labels.Planned)}
+
+	task, err := Task(config.RoleProductManager, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planning := taskSection(t, task, "## Planning with a person")
+	for _, want := range []string{
+		"#50: Offline mode", "why Offline mode",
+		"Break nothing down from these",
+		"never add or remove either",
+	} {
+		if !strings.Contains(flowed(planning), flowed(want)) {
+			t.Errorf("planning section is missing %q:\n%s", want, planning)
+		}
+	}
+	if strings.Contains(planning, "#51") {
+		t.Errorf("an agreed issue is presented as still in planning:\n%s", planning)
+	}
+	planned := taskSection(t, task, "## Agreed with a person")
+	for _, want := range []string{
+		"#51: Exports",
+		"It is **settled**. Do not re-open the scope",
+		"`## Decisions` section",
+		"break none of them down twice",
+	} {
+		if !strings.Contains(flowed(planned), flowed(want)) {
+			t.Errorf("agreed section is missing %q:\n%s", want, planned)
+		}
+	}
+	if strings.Contains(planned, "#50") {
+		t.Errorf("an issue still in planning is presented as agreed:\n%s", planned)
+	}
+
+	// Nothing in planning: both sections state that rather than disappearing.
+	d.Planning, d.Planned = nil, nil
+	task, err = Task(config.RoleProductManager, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(taskSection(t, task, "## Planning with a person"), "_Nothing is in planning._") {
+		t.Errorf("empty planning section:\n%s", task)
+	}
+}
+
+// taskSection returns what stands under a heading, up to the next one.
+func taskSection(t *testing.T, task, heading string) string {
+	t.Helper()
+	_, rest, ok := strings.Cut(task, heading)
+	if !ok {
+		t.Fatalf("task has no %q heading:\n%s", heading, task)
+	}
+	body, _, _ := strings.Cut(rest, "\n## ")
+	return body
+}
+
+// TestAnInterruptedSessionIsReportedAtTheTopOfTheTask: the session that takes
+// over from one a killed scheduler left unfinished is told so before it is
+// told anything else — how far it got, where its transcript is, and what its
+// own role has to do about it (#250). The assertion is deliberately stronger
+// than "the section is there": with nothing interrupted the task prompt must
+// be byte for byte the one this version has always rendered, so the section
+// is checked as a *prefix* of an otherwise unchanged prompt.
+//
+// The advice is per role and only half of it is true of a reviewer: a
+// reviewer session commits nothing and opens no pull request, and a round
+// that reported no verdict has to be redone rather than carried on from. So
+// each template is rendered with an interruption of the role it serves, and
+// the wording the other role gets must be absent.
+func TestAnInterruptedSessionIsReportedAtTheTopOfTheTask(t *testing.T) {
+	const transcript = "/s/sessions/20260831-081500-developer-issue-4-r1-ab/transcript.jsonl"
+	cases := []struct {
+		name    string
+		role    string
+		want    []string
+		unwant  []string
+		summary string
+	}{
+		{
+			name: config.RoleDeveloper, role: config.RoleDeveloper,
+			summary: "developer session that ran for this issue before you was stopped after 3 turns",
+			want:    []string{"The branch may carry work it never reported"},
+			unwant:  []string{"this round starts over"},
+		},
+		{
+			name: config.RoleReviewer, role: config.RoleReviewer,
+			summary: "reviewer session that ran for this issue before you was stopped after 3 turns",
+			want:    []string{"It reported no verdict, so this round starts over"},
+			unwant:  []string{"The branch may carry work it never reported"},
+		},
+		{
+			name: "reviewer_checks", role: config.RoleReviewer,
+			summary: "reviewer session that ran for this issue before you was stopped after 3 turns",
+			want:    []string{"It reported no verdict, so this round starts over"},
+			unwant:  []string{"The branch may carry work it never reported"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			quiet, err := TaskNamed(tc.role, tc.name, sample())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(quiet, "never reported an outcome") {
+				t.Errorf("%s reports an interruption that never happened:\n%s", tc.name, quiet)
+			}
+			d := sample()
+			d.Interrupted = &session.Interrupted{
+				Role: tc.role, Name: "20260831-081500-" + tc.role + "-issue-4-r1-ab",
+				Transcript: transcript, Turns: 3, Killed: true, Note: "stopped by bees kill",
+			}
+			task, err := TaskNamed(tc.role, tc.name, d)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasSuffix(task, quiet) {
+				t.Fatalf("%s: the interruption changed more than the section it adds:\n%s", tc.name, task)
+			}
+			section := strings.TrimSuffix(task, quiet)
+			wants := append([]string{tc.summary, "never reported an outcome", transcript}, tc.want...)
+			for _, want := range wants {
+				if !strings.Contains(flowed(section), want) {
+					t.Errorf("%s section missing %q:\n%s", tc.name, want, section)
+				}
+			}
+			for _, unwant := range tc.unwant {
+				if strings.Contains(flowed(section), unwant) {
+					t.Errorf("%s section carries the other role's advice (%q):\n%s", tc.name, unwant, section)
+				}
+			}
+		})
+	}
+}
+
+// TestAnInterruptionWithNothingToShowStillReads: a session killed in its
+// first seconds wrote no transcript and took no turn, and the section must
+// not then say "after 0 turns" or point at a file that does not exist.
+func TestAnInterruptionWithNothingToShowStillReads(t *testing.T) {
+	d := sample()
+	d.Interrupted = &session.Interrupted{Role: config.RoleDeveloper, Name: "x"}
+	task, err := Task(config.RoleDeveloper, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(task, "0 turns") {
+		t.Errorf("a session that took no turn is counted:\n%s", task)
+	}
+	if !strings.Contains(flowed(task), "It stopped before it wrote a transcript.") {
+		t.Errorf("no transcript, and the prompt does not say so:\n%s", task)
+	}
 }

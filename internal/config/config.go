@@ -259,9 +259,10 @@ type GitHub struct {
 	// from the environment bees runs in, so the secret need not be written
 	// into bees.toml. Read it through ResolvedToken, never directly.
 	Token string `toml:"token" json:"token"`
-	// GitName and GitEmail are the identity for commits the developer makes.
-	// They are recorded here but not applied yet: developer sessions still
-	// commit with the machine's own git identity.
+	// GitName and GitEmail are the identity for commits the developer makes:
+	// a session gets them as GIT_AUTHOR_* and GIT_COMMITTER_*. They are
+	// independent of Token and of each other — whichever is unset leaves that
+	// half of the identity to the machine's own git configuration.
 	GitName  string `toml:"git_name" json:"git_name"`
 	GitEmail string `toml:"git_email" json:"git_email"`
 }
@@ -427,6 +428,10 @@ type RoleSettings struct {
 	// PreReviewChecksTimeout bounds that pre-review read: still pending
 	// after this and the review happens anyway. Default 10m.
 	PreReviewChecksTimeout Duration `toml:"pre_review_checks_timeout"`
+	// Stages are the review stages a reviewer session runs, in order, each
+	// with its own focus and its own verdict. One or more of
+	// KnownReviewStages; unset means DefaultReviewStages.
+	Stages []string `toml:"stages"`
 }
 
 // MergePolicy is the reviewer's checks configuration. It covers both the
@@ -443,6 +448,38 @@ type MergePolicy struct {
 	// which runs whether or not AutoMerge is set.
 	PreReviewChecks        bool
 	PreReviewChecksTimeout time.Duration
+}
+
+// KnownReviewStages are the review stages roles.reviewer.stages may name. A
+// reviewer session runs the configured ones in order and gives each its own
+// verdict; approval needs every one of them to pass.
+//
+//   - implementation — is it correct? Error handling, edge cases, tests, security.
+//   - completeness   — does it deliver the work item's acceptance criteria?
+//   - cleanliness    — is it clear, small and free of dead code?
+//   - style          — does it follow the repository's formatting and lint conventions?
+//   - product-fit    — does it fit the parent feature and the product direction?
+var KnownReviewStages = []string{"implementation", "completeness", "cleanliness", "style", StageProductFit}
+
+// DefaultReviewStages is roles.reviewer.stages when it is not set: the four
+// stages that judge the change against the work item. StageProductFit is
+// deliberately absent, so the default reproduces the single-pass reviewer's
+// scope — a work item the project manager already scoped is not the place to
+// re-open the product decision, and only a configured product-fit stage makes
+// the parent feature worth a lookup.
+var DefaultReviewStages = []string{"implementation", "completeness", "cleanliness", "style"}
+
+// StageProductFit is the one stage that needs the work item's parent feature:
+// the scheduler looks the parent up only when it is configured.
+const StageProductFit = "product-fit"
+
+// ReviewStages returns the resolved roles.reviewer.stages. Validate has
+// already rejected an unknown stage and an empty list.
+func (c *Config) ReviewStages() []string {
+	if s := c.Roles[RoleReviewer].Stages; len(s) > 0 {
+		return slices.Clone(s)
+	}
+	return slices.Clone(DefaultReviewStages)
 }
 
 // Defaults for the merge policy.
@@ -1245,8 +1282,8 @@ func (c *Config) Validate() error {
 	}
 	check := func(scope string, rs RoleSettings) {
 		if scope != "roles."+RoleReviewer {
-			if rs.AutoMerge != nil || rs.MergeMethod != "" || rs.ChecksWait.Duration != 0 || rs.ChecksPollInterval.Duration != 0 || rs.ChecksTimeout.Duration != 0 || rs.MaxCheckFixRounds != 0 || rs.PreReviewChecks != nil || rs.PreReviewChecksTimeout.Duration != 0 {
-				errs = append(errs, fmt.Sprintf("%s: auto_merge, merge_method, checks_wait, checks_poll_interval, checks_timeout, max_check_fix_rounds, pre_review_checks and pre_review_checks_timeout are only valid under roles.reviewer", scope))
+			if rs.AutoMerge != nil || rs.MergeMethod != "" || rs.ChecksWait.Duration != 0 || rs.ChecksPollInterval.Duration != 0 || rs.ChecksTimeout.Duration != 0 || rs.MaxCheckFixRounds != 0 || rs.PreReviewChecks != nil || rs.PreReviewChecksTimeout.Duration != 0 || rs.Stages != nil {
+				errs = append(errs, fmt.Sprintf("%s: auto_merge, merge_method, checks_wait, checks_poll_interval, checks_timeout, max_check_fix_rounds, pre_review_checks, pre_review_checks_timeout and stages are only valid under roles.reviewer", scope))
 			}
 		}
 		if scope != "global" && rs.SkillsRefresh != "" {
@@ -1266,6 +1303,16 @@ func (c *Config) Validate() error {
 				errs = append(errs, fmt.Sprintf("%s.model_by_size: unknown size %q (want one of %s)", scope, size, strings.Join(Sizes, ", ")))
 			case strings.TrimSpace(rs.ModelBySize[size]) == "":
 				errs = append(errs, fmt.Sprintf("%s.model_by_size.%s must name a model", scope, size))
+			}
+		}
+		// An unset list means the default; an explicit empty one is a
+		// configuration error, not "review nothing".
+		if rs.Stages != nil && len(rs.Stages) == 0 {
+			errs = append(errs, fmt.Sprintf("%s.stages must name at least one stage (want one or more of %s)", scope, strings.Join(KnownReviewStages, ", ")))
+		}
+		for _, stage := range rs.Stages {
+			if !slices.Contains(KnownReviewStages, stage) {
+				errs = append(errs, fmt.Sprintf("%s.stages: unknown stage %q (want one or more of %s)", scope, stage, strings.Join(KnownReviewStages, ", ")))
 			}
 		}
 		switch rs.MergeMethod {

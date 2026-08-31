@@ -46,7 +46,8 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 	if spec.role == config.RoleDeveloper && spec.data.Issue != nil {
 		role.Model = role.ModelFor(s.sizeOf(spec.data.Issue.Labels))
 	}
-	if spec.useFallback && role.FallbackModel != "" {
+	fallback := spec.useFallback && role.FallbackModel != ""
+	if fallback {
 		role.Model = role.FallbackModel
 	}
 	if err := s.store.EnsureNotes(spec.role); err != nil {
@@ -81,6 +82,11 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 	}
 	if d.MaxRounds == 0 {
 		d.MaxRounds = s.cfg.Scheduler.MaxReviewRounds
+	}
+	if d.Issue != nil {
+		// What a scheduler killed while working this issue left behind, for
+		// the first session of the role it was killed in.
+		d.Interrupted = s.interruptedFor(d.Issue.Number, spec.role)
 	}
 
 	// The project's own prompt files come from the worktree, so a branch's
@@ -121,7 +127,17 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 	}
 
 	started := s.now()
-	s.publish(sessionEvent(EventSessionStarted, spec))
+	// Record the session before it runs and clear it however it ends: a
+	// record that outlives its session is what tells the next one that this
+	// scheduler was killed while the session was working (interrupted.go).
+	if d.Issue != nil {
+		s.recordRunningSession(spec, d.Issue.Number, sessionDir)
+		defer s.clearRunningSession(d.Issue.Number)
+	}
+	start := sessionEvent(EventSessionStarted, spec)
+	start.Model, start.Fallback = role.Model, fallback
+	start.Dir = sessionDir
+	s.publish(start)
 	res, err := s.runner.Run(ctx, session.Request{
 		Name:         spec.name,
 		Role:         role,
@@ -158,7 +174,7 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 func endEvent(spec sessionSpec, res *session.Result) Event {
 	ev := sessionEvent(EventSessionEnded, spec)
 	ev.Outcome, ev.Note = outcomeOf(res)
-	ev.CostUSD, ev.Duration = res.CostUSD, res.Duration
+	ev.Turns, ev.CostUSD, ev.Duration = res.NumTurns, res.CostUSD, res.Duration
 	if res.Outcome.PR > 0 {
 		ev.PR = res.Outcome.PR
 	}

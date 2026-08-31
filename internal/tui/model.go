@@ -1,0 +1,655 @@
+package tui
+
+import (
+	"fmt"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+
+	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/prompts"
+	"github.com/kpenfound/busybees/internal/scheduler"
+	"github.com/kpenfound/busybees/internal/state"
+	"github.com/kpenfound/busybees/internal/text"
+)
+
+// Deps are the view's inputs. Everything the model reads comes through one
+// of them, so Update and View can be exercised without a terminal, without a
+// scheduler and without the wall clock.
+type Deps struct {
+	// Events is the scheduler's event stream (Scheduler.Subscribe). A nil
+	// channel means "no live events", which is what a test drives.
+	Events <-chan scheduler.Event
+	// Status reads status.json. It is the same file `bees status` reads and
+	// the only source of the queue counts, so the two can never disagree.
+	Status func() (state.Status, error)
+	// Mail counts unread messages per role, as `bees status` does.
+	Mail func() (map[string]int, error)
+	// Now is the clock every elapsed time and every countdown is measured
+	// against. Production passes time.Now; a test passes its own, so a
+	// rendered view never depends on when it was rendered (#222).
+	Now func() time.Time
+	// Stop asks the factory to stop polling and drain, which is what Ctrl-C
+	// does. Nil means the view cannot stop anything.
+	Stop func()
+	// Send queues a message a person typed in the session view. It goes to
+	// the mailbox every role already reads — addressed to the role the
+	// watched session is running as, carrying that session's issue and pull
+	// request so it reaches whichever session picks the work item up next.
+	//
+	// It is a message to the *role*, never to the running session: a
+	// headless `claude -p` cannot be told anything once it has started (see
+	// the session view's own note in docs/cli.md), so the view says
+	// "queued for the next session" and means it. Nil means the view cannot
+	// send anything and does not offer to.
+	Send func(to string, issue, pr int, subject, body string) error
+	// Repo is the repository the factory is building, for the header.
+	Repo string
+}
+
+// running is one session the factory is running right now, as the Now panel
+// renders it. It is built from the session-started event and dropped when
+// the matching session-ended arrives.
+type running struct {
+	name string
+	role string
+	// dir is the session's own directory, which is where its
+	// transcript.jsonl is: what the session view follows.
+	dir      string
+	issue    int
+	pr       int
+	started  time.Time
+	model    string
+	fallback bool
+}
+
+// spend is what the sessions of one work item have reported so far. claude
+// reports turns and cost in the final event of a session's stream, so these
+// are the totals of the sessions that have *finished*: the running one adds
+// its own when it ends.
+type spend struct {
+	turns int
+	cost  float64
+}
+
+// stage is the developer worker's stage for an issue, from the last stage
+// event about it.
+type stage struct {
+	name  string
+	round int
+}
+
+// Model is the Bubble Tea model behind `bees run`'s view: the two panels,
+// Now and Queues, fed by the scheduler's event stream and by status.json,
+// and the session view one of them opens onto (session.go).
+//
+// Update and View are ordinary functions of the model and its messages —
+// no terminal, no goroutines, no clock of their own — which is how the whole
+// view is tested (model_test.go).
+type Model struct {
+	deps Deps
+
+	// sessions are the running sessions in the order they started; spent
+	// and stages are keyed by the work item an event was about (see
+	// spendKey) and by issue number.
+	sessions []running
+	spent    map[string]spend
+	stages   map[int]stage
+
+	status state.Status
+	mail   map[string]int
+	// statusErr is the last error reading status.json or the mailbox. The
+	// view keeps drawing what it last read and says so.
+	statusErr string
+
+	// watching is the session the session view is showing, or nil when the
+	// view is the two panels. selected is the row of the Now panel the
+	// cursor is on, and tailGen numbers the session views so the transcript
+	// loop of a closed one stops instead of racing the next.
+	watching *watch
+	selected int
+	tailGen  int
+
+	// width and height are the terminal's, from the last WindowSizeMsg.
+	// The panels are as tall as what is in them; the session view is as
+	// tall as the terminal, which is what reads the height.
+	width  int
+	height int
+	ticks  int
+	// stopping is set by the first Ctrl-C: the factory has been asked to
+	// stop polling and drain, and the view stays up until it has.
+	stopping bool
+}
+
+// New builds the model. Nothing is read and no goroutine is started until
+// Init runs.
+func New(d Deps) Model {
+	if d.Now == nil {
+		d.Now = time.Now
+	}
+	return Model{deps: d, spent: map[string]spend{}, stages: map[int]stage{}}
+}
+
+// ---- messages --------------------------------------------------------------
+
+// eventMsg is one scheduler event delivered to the model.
+type eventMsg scheduler.Event
+
+// statusMsg is a fresh read of status.json and the mailbox.
+type statusMsg struct {
+	status state.Status
+	mail   map[string]int
+	err    error
+}
+
+// tickMsg redraws the view, so elapsed times and the countdown to the next
+// poll advance between events.
+type tickMsg time.Time
+
+// Stopped tells the view the factory has stopped and drained, which is the
+// one thing that ends the program on its own. The wiring in Run sends it,
+// and carries nothing: Run returns the factory's error itself.
+type Stopped struct{}
+
+// redrawInterval is how often the view redraws itself between events: once a
+// second, because the elapsed times it shows are in seconds.
+const redrawInterval = time.Second
+
+// refreshEvery is how many redraws pass before status.json and the mailbox
+// are re-read without an event asking for it. Events cover everything the
+// scheduler does; this catches what another process did (a session sending
+// mail, a person running `bees mail send`).
+const refreshEvery = 5
+
+func (m Model) Init() tea.Cmd {
+	return tea.Batch(m.waitForEvent(), m.refresh(), redraw())
+}
+
+// waitForEvent blocks on the event stream and delivers the next event. It is
+// re-issued after every event, so exactly one read is outstanding at a time.
+func (m Model) waitForEvent() tea.Cmd {
+	ch := m.deps.Events
+	if ch == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		ev, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return eventMsg(ev)
+	}
+}
+
+// refresh re-reads status.json and the mailbox — the same numbers `bees
+// status` prints, computed by the scheduler and read here, never recomputed.
+func (m Model) refresh() tea.Cmd {
+	read, counts := m.deps.Status, m.deps.Mail
+	if read == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		st, err := read()
+		if err != nil {
+			return statusMsg{err: err}
+		}
+		msg := statusMsg{status: st}
+		if counts != nil {
+			if msg.mail, err = counts(); err != nil {
+				return statusMsg{status: st, err: err}
+			}
+		}
+		return msg
+	}
+}
+
+func redraw() tea.Cmd {
+	return tea.Tick(redrawInterval, func(t time.Time) tea.Msg { return tickMsg(t) })
+}
+
+func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width, m.height = msg.Width, msg.Height
+	case tea.KeyMsg:
+		return m.key(msg)
+	case eventMsg:
+		m.apply(scheduler.Event(msg))
+		return m, tea.Batch(m.waitForEvent(), m.refresh())
+	case statusMsg:
+		if msg.err != nil {
+			m.statusErr = msg.err.Error()
+			return m, nil
+		}
+		m.statusErr, m.status, m.mail = "", msg.status, msg.mail
+	case transcriptMsg:
+		m.applyTranscript(msg)
+	case tailMsg:
+		// The session view this loop belonged to has been closed, or closed
+		// and replaced by another. The generation test is the live half of
+		// that — closing increments the counter, so no tick a closed view
+		// left behind can match the open one's — and the nil test is the
+		// cheap invariant beneath it, for a close that ever forgets to.
+		if m.watching == nil || int(msg) != m.tailGen {
+			return m, nil
+		}
+		// Read, then ask for the next read: this pair is the loop that
+		// makes the view follow a transcript being written.
+		return m, tea.Batch(m.readTail(), tail(m.tailGen))
+	case sentMsg:
+		if m.watching != nil {
+			if msg.err != nil {
+				m.watching.sent = "the message could not be queued: " + oneLine(msg.err.Error())
+			} else {
+				m.watching.sent = msg.note
+			}
+		}
+	case tickMsg:
+		m.ticks++
+		if m.ticks%refreshEvery == 0 {
+			return m, tea.Batch(redraw(), m.refresh())
+		}
+		return m, redraw()
+	case Stopped:
+		// The factory is done and Run returns its error; the view has
+		// nothing left to draw.
+		return m, tea.Quit
+	}
+	return m, nil
+}
+
+// key routes a key press. Ctrl-C is handled here rather than in either
+// screen, because stopping the factory is the same thing wherever a person
+// is: it asks the factory to stop polling and drain, exactly as it does
+// without the view, and the view stays up while it does — pressing it again
+// gives up on the drain and leaves the terminal, with the sessions still
+// finishing in the background. It is deliberately the only key that does
+// that: everything a person reads — the footer, docs/cli.md, the prompts —
+// says Ctrl-C, and a key that quietly stops the whole factory is not one to
+// discover by accident.
+//
+// Everything else belongs to the screen that is up: the panels move the Now
+// cursor and open a session view with it, and the session view has its own
+// (sessionKey).
+func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.String() == "ctrl+c" {
+		if m.stopping {
+			return m, tea.Quit
+		}
+		m.stopping = true
+		if m.deps.Stop != nil {
+			m.deps.Stop()
+		}
+		return m, nil
+	}
+	if m.watching != nil {
+		return m.sessionKey(msg)
+	}
+	switch msg.String() {
+	case "up", "k":
+		m.selected = max(0, m.selected-1)
+	case "down", "j":
+		m.selected = min(len(m.sessions)-1, m.selected+1)
+	case "enter":
+		if s, ok := m.selection(); ok {
+			m = m.open(s)
+			return m, tea.Batch(m.readTail(), tail(m.tailGen))
+		}
+	}
+	return m, nil
+}
+
+// selection is the session the Now panel's cursor is on. It is the only
+// place m.selected is read, and so the only place it has to be kept inside
+// the list: sessions start and finish under the cursor, and pressing down
+// with nothing running leaves it at -1 until one does.
+func (m Model) selection() (running, bool) {
+	if len(m.sessions) == 0 {
+		return running{}, false
+	}
+	return m.sessions[min(max(0, m.selected), len(m.sessions)-1)], true
+}
+
+// applyTranscript folds a read of the watched session's transcript into it.
+// A read that belongs to a closed session view is dropped, and one that
+// failed leaves what has already been read on screen.
+func (m *Model) applyTranscript(msg transcriptMsg) {
+	if m.watching == nil || msg.gen != m.tailGen {
+		return
+	}
+	if msg.err != nil {
+		m.watching.err = msg.err.Error()
+		return
+	}
+	m.watching.err, m.watching.off = "", msg.off
+	m.watching.lines = append(m.watching.lines, msg.lines...)
+	if n := len(m.watching.lines) - maxTranscriptLines; n > 0 {
+		m.watching.lines = m.watching.lines[n:]
+		m.watching.scroll = max(0, m.watching.scroll-n)
+	}
+}
+
+// apply folds one scheduler event into the model.
+func (m *Model) apply(ev scheduler.Event) {
+	switch ev.Kind {
+	case scheduler.EventSessionStarted:
+		m.sessions = append(m.sessions, running{
+			name: ev.Session, role: ev.Role, dir: ev.Dir, issue: ev.Issue, pr: ev.PR,
+			started: ev.Time, model: ev.Model, fallback: ev.Fallback,
+		})
+	case scheduler.EventSessionEnded:
+		m.drop(ev.Session)
+		// A session being read stays on screen after it has finished: its
+		// transcript is on disk and its last words are usually the ones
+		// worth reading.
+		if m.watching != nil && m.watching.name == ev.Session {
+			m.watching.ended = true
+		}
+		key := spendKey(ev.Issue, ev.Role)
+		s := m.spent[key]
+		s.turns += ev.Turns
+		s.cost += ev.CostUSD
+		m.spent[key] = s
+	case scheduler.EventStage:
+		if ev.Issue > 0 {
+			m.stages[ev.Issue] = stage{name: ev.Stage, round: ev.Round}
+		}
+	}
+}
+
+// drop removes a finished session from the running list.
+func (m *Model) drop(name string) {
+	for i, s := range m.sessions {
+		if s.name == name {
+			m.sessions = append(m.sessions[:i:i], m.sessions[i+1:]...)
+			return
+		}
+	}
+}
+
+// spendKey is what turns and cost are accumulated under: the issue when the
+// event is about one, so every session of a work item — developer rounds,
+// reviews, check fixes — adds to the same total. A singleton owns no work
+// item, so its runs accumulate under its role instead, for the life of the
+// process rather than of an issue.
+func spendKey(issue int, role string) string {
+	if issue > 0 {
+		return "issue-" + strconv.Itoa(issue)
+	}
+	return "role-" + role
+}
+
+// ---- rendering -------------------------------------------------------------
+
+// defaultWidth is the width the view draws at until the terminal has told it
+// its own, and the width every test renders at.
+const defaultWidth = 100
+
+var (
+	titleStyle  = lipgloss.NewStyle().Bold(true)
+	headerStyle = lipgloss.NewStyle().Faint(true)
+	hintStyle   = lipgloss.NewStyle().Faint(true)
+	warnStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
+	panelStyle  = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
+)
+
+func (m Model) View() string {
+	w := m.width
+	if w <= 0 {
+		w = defaultWidth
+	}
+	// A panel's border takes two columns and its padding two more, so the
+	// text inside one is four columns narrower than the terminal.
+	inner := w - 4
+	if inner < 20 {
+		inner = 20
+	}
+	if m.watching != nil {
+		return m.sessionView(w, inner)
+	}
+	var b strings.Builder
+	b.WriteString(m.header(w) + "\n")
+	b.WriteString(panel("Now", m.nowPanel(inner), inner) + "\n")
+	b.WriteString(panel("Queues", m.queuesPanel(inner), inner) + "\n")
+	b.WriteString(hintStyle.Render(m.footer()))
+	return b.String()
+}
+
+// header names the repository and the clock the view is drawing at.
+func (m Model) header(w int) string {
+	left := titleStyle.Render("busybees") + "  " + m.deps.Repo
+	right := m.deps.Now().Format("15:04:05")
+	if m.statusErr != "" {
+		right = warnStyle.Render("status: "+oneLine(m.statusErr)) + "   " + right
+	}
+	gap := w - lipgloss.Width(left) - lipgloss.Width(right)
+	if gap < 1 {
+		gap = 1
+	}
+	return left + strings.Repeat(" ", gap) + right
+}
+
+// footer says what Ctrl-C does, or what it did.
+func (m Model) footer() string {
+	switch {
+	case m.stopping && len(m.sessions) > 0:
+		return fmt.Sprintf("stopping: waiting for %s to finish — ctrl-c again to leave them running",
+			text.Count(len(m.sessions), "session"))
+	case m.stopping:
+		return "stopping: draining"
+	case len(m.sessions) > 0:
+		return "↑/↓ select · enter watch a session · ctrl-c stops polling and drains"
+	default:
+		return "ctrl-c stops polling and drains"
+	}
+}
+
+// panel draws one titled box around w columns of text. lipgloss counts the
+// padding in the width it is given and the border outside it, so the box
+// itself ends up w+4 columns wide.
+func panel(title, body string, w int) string {
+	return panelStyle.Width(w + 2).Render(titleStyle.Render(title) + "\n" + body)
+}
+
+// nowPanel renders every running session: who is running it, what it is
+// about, the stage its developer worker is in, how long it has been going,
+// what the work item has spent so far and the model it runs on. The cursor
+// marks the one Enter opens the session view on.
+func (m Model) nowPanel(w int) string {
+	if len(m.sessions) == 0 {
+		return hintStyle.Render("no sessions running")
+	}
+	rows := []string{headerStyle.Render(clip(nowRow("", "role", "issue", "pr", "stage", "elapsed", "turns", "cost", "model"), w))}
+	sel, _ := m.selection()
+	for _, s := range m.sessions {
+		spent := m.spent[spendKey(s.issue, s.role)]
+		cursor := "  "
+		if s.name == sel.name {
+			cursor = "> "
+		}
+		rows = append(rows, clip(nowRow(
+			cursor,
+			prompts.Title(s.role),
+			number(s.issue),
+			number(s.pr),
+			clip(m.stageOf(s), stageWidth),
+			dur(m.deps.Now().Sub(s.started)),
+			strconv.Itoa(spent.turns),
+			fmt.Sprintf("$%.2f", spent.cost),
+			modelCell(s, w),
+		), w))
+	}
+	return strings.Join(rows, "\n")
+}
+
+// stageWidth is the width of the stage column, which every cell is cut to:
+// the stages the scheduler publishes run to "pre-review checks (reported)"
+// and a wider one would push the model column — and with it the (fallback)
+// marker — off the end of the row.
+const stageWidth = 20
+
+// nowRow lays the Now panel's columns out. The header and every row go
+// through it, so they cannot drift apart.
+func nowRow(cursor, role, issue, pr, stage, elapsed, turns, cost, model string) string {
+	return fmt.Sprintf("%-2s%-16s %-5s %-5s %-*s %8s %6s %8s  %s", cursor, role, issue, pr, stageWidth, stage, elapsed, turns, cost, model)
+}
+
+// modelCell renders the last column: the model the session runs on, and
+// whether it is the role's fallback. The model *name* is what gets shortened
+// when the row does not fit, never the marker — a session running on the
+// fallback model is the thing a person watching wants to see, and a name
+// long enough to crowd it out is the least surprising part of the row.
+func modelCell(s running, w int) string {
+	name, marker := s.model, ""
+	if name == "" {
+		name = "-"
+	}
+	if s.fallback {
+		marker = " (fallback)"
+	}
+	budget := w - lipgloss.Width(nowRow("", "", "", "", "", "", "", "", "")) - lipgloss.Width(marker)
+	if budget < 1 {
+		// Not even room for the marker: give what room there is to it and
+		// let the row's own clip decide the rest. A cut "(fallback" still
+		// says more than a cut model name.
+		return strings.TrimSpace(marker)
+	}
+	return clip(name, budget) + marker
+}
+
+// stageOf names the stage a session is running in: the developer worker's
+// stage for the issue, with the round it is on. A singleton role owns no
+// issue and so has no stage.
+func (m Model) stageOf(s running) string {
+	st, ok := m.stages[s.issue]
+	if !ok {
+		return "-"
+	}
+	if st.round > 0 {
+		return fmt.Sprintf("%s r%d", st.name, st.round)
+	}
+	return st.name
+}
+
+// queueOrder is the order the Queues panel lists the counts in: the workflow
+// states in the order an issue passes through them, then the two kinds that
+// live outside the state machine, then the pull requests. Every row is
+// printed whether or not the scheduler recorded a count for it, so an idle
+// factory reads as zeros rather than as an empty box.
+var queueOrder = []string{
+	"triage", "ready", "in-progress", "review", "approved", "blocked", "needs-human",
+	"features", "feedback", "open_prs",
+}
+
+// queueCell is the width of one "name count" cell of the Queues grid: the
+// widest queue name plus the count column, which is what %-13s %3d renders.
+const queueCell = 17
+
+// queueTitles are the queue names that read badly as their status.json key.
+var queueTitles = map[string]string{"open_prs": "open PRs", "no_state": "no state"}
+
+// queuesPanel renders the counts `bees status` prints, read from
+// status.json rather than computed a second time, plus the unread mail per
+// role and the time to the next GitHub poll.
+func (m Model) queuesPanel(w int) string {
+	var cells []string
+	for _, k := range queueNames(m.status.Queues) {
+		cells = append(cells, fmt.Sprintf("%-13s %3d", queueTitle(k), m.status.Queues[k]))
+	}
+	// As many cells per line as the panel is wide enough for: each is
+	// queueCell columns and they are separated by two more.
+	per := max(1, (w+2)/(queueCell+2))
+	var rows []string
+	for i := 0; i < len(cells); i += per {
+		rows = append(rows, clip(strings.Join(cells[i:min(i+per, len(cells))], "  "), w))
+	}
+	rows = append(rows, clip(fmt.Sprintf("%-13s %s", "unread mail", m.mailText()), w))
+	rows = append(rows, clip(fmt.Sprintf("%-13s %s", "next poll", m.nextPollText()), w))
+	return strings.Join(rows, "\n")
+}
+
+// queueNames lists the queues to print: the known ones in their own order,
+// then anything else status.json carries, so a queue this version does not
+// know about is still shown.
+func queueNames(queues map[string]int) []string {
+	names := slices.Clone(queueOrder)
+	var extra []string
+	for k := range queues {
+		if !slices.Contains(queueOrder, k) {
+			extra = append(extra, k)
+		}
+	}
+	slices.Sort(extra)
+	return append(names, extra...)
+}
+
+func queueTitle(k string) string {
+	if t, ok := queueTitles[k]; ok {
+		return t
+	}
+	return k
+}
+
+// mailText lists the roles with unread mail, or says there is none.
+func (m Model) mailText() string {
+	var parts []string
+	for _, r := range config.Roles {
+		if n := m.mail[r]; n > 0 {
+			parts = append(parts, fmt.Sprintf("%s %d", prompts.Title(r), n))
+		}
+	}
+	if len(parts) == 0 {
+		return "none"
+	}
+	return strings.Join(parts, ", ")
+}
+
+// nextPollText counts down to the next GitHub poll, from the time the
+// scheduler recorded for it.
+func (m Model) nextPollText() string {
+	switch d := m.status.NextPoll.Sub(m.deps.Now()); {
+	case m.status.NextPoll.IsZero():
+		return "not scheduled yet"
+	case d > 0:
+		return "in " + dur(d)
+	default:
+		return "due"
+	}
+}
+
+// dur renders an elapsed time or a countdown to the second.
+func dur(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	return d.Round(time.Second).String()
+}
+
+// number renders an issue or pull request number, or a dash when the session
+// is about neither.
+func number(n int) string {
+	if n <= 0 {
+		return "-"
+	}
+	return "#" + strconv.Itoa(n)
+}
+
+// clip cuts a line to the width of the panel it is drawn in, so a long model
+// name or a wide terminal-less default never wraps the box.
+func clip(s string, w int) string {
+	if w <= 0 || lipgloss.Width(s) <= w {
+		return s
+	}
+	r := []rune(s)
+	if len(r) <= w {
+		return s
+	}
+	return string(r[:w-1]) + "…"
+}
+
+// oneLine flattens an error for the header.
+func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }

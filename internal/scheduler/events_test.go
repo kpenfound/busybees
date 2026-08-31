@@ -2,10 +2,13 @@ package scheduler
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/state"
 )
 
@@ -237,5 +240,121 @@ func TestPollEventArrivesAfterStatusIsWritten(t *testing.T) {
 		}
 	case <-time.After(30 * time.Second):
 		t.Fatal("no poll event")
+	}
+}
+
+// fallbackTOML makes the developer's first attempt hang until its timeout
+// kills it, so the retry runs — and runs on the role's fallback model.
+const fallbackTOML = baseTOML + `
+retries = 1
+retry_delay = "0s"
+[roles.developer]
+model = "opus"
+fallback_model = "haiku"
+timeout = "3s"
+[roles.product_manager]
+enabled = false
+[roles.project_manager]
+enabled = false
+[roles.qa]
+enabled = false
+`
+
+// A session-started event names the model the session runs on and says when
+// it is the role's fallback rather than its model: a view drawing what the
+// factory is doing right now has no other way to know, because the model is
+// resolved per session (the size picks it, a retry overrides it) and a
+// running session has reported nothing yet. What the session took is on the
+// other end of the pair: turns arrive with session-ended, because claude
+// reports them in the final event of its stream.
+func TestSessionEventsNameTheModelTheFallbackAndTheTurns(t *testing.T) {
+	t.Setenv("FAKE_DEV_HANG", "1")
+	h := newHarness(t, fallbackTOML)
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", State: "OPEN",
+		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now().Add(-time.Hour)}
+	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
+	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true} // reviewer disabled: the PR is approved without one
+
+	sub := h.sched.Subscribe()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if err := h.sched.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	events := drain(sub)
+
+	var starts []Event
+	for _, ev := range events {
+		if ev.Kind == EventSessionStarted && ev.Role == config.RoleDeveloper {
+			starts = append(starts, ev)
+		}
+	}
+	if len(starts) != 2 {
+		t.Fatalf("%d developer session-started events, want the attempt and its retry: %v", len(starts), starts)
+	}
+	if starts[0].Model != "opus" || starts[0].Fallback {
+		t.Errorf("first attempt ran on model %q (fallback %v), want opus and no fallback", starts[0].Model, starts[0].Fallback)
+	}
+	if starts[1].Model != "haiku" || !starts[1].Fallback {
+		t.Errorf("the retry ran on model %q (fallback %v), want haiku and the fallback marked", starts[1].Model, starts[1].Fallback)
+	}
+
+	// The first attempt was killed and reported nothing; the retry is the
+	// session that has turns to report.
+	var done Event
+	for _, ev := range events {
+		if ev.Kind == EventSessionEnded && ev.Outcome == OutcomePROpened {
+			done = ev
+		}
+	}
+	if done.Kind == "" {
+		t.Fatalf("no developer session ended with %q: %v", OutcomePROpened, events)
+	}
+	if done.Turns <= 0 {
+		t.Errorf("the finished session reported %d turns: %v", done.Turns, done)
+	}
+}
+
+// A session-started event names the directory the session runs in, which is
+// where its transcript.jsonl is written. That is the one thing a view
+// needs to follow a running session and the one thing it cannot work out
+// for itself: NewSessionDir stamps a timestamp on the front of the session
+// name and a random suffix on the end, so the name alone does not say.
+func TestTheSessionStartedEventNamesTheSessionsDirectory(t *testing.T) {
+	h := newHarnessAt(t, devOnlyTOML, time.Now())
+	events, _ := runEventFixture(t, h, true)
+
+	start, ok := find(events, EventSessionStarted, config.RoleDeveloper)
+	if !ok {
+		t.Fatalf("no developer session-started event: %v", events)
+	}
+	if start.Dir == "" {
+		t.Fatal("the session-started event names no directory")
+	}
+	// It is the session's real directory: the prompt the scheduler wrote
+	// for that session is in it.
+	if _, err := os.Stat(filepath.Join(start.Dir, "prompt.md")); err != nil {
+		t.Errorf("the directory the event names is not the session's: %v", err)
+	}
+	if got := filepath.Base(filepath.Dir(start.Dir)); got != "sessions" {
+		t.Errorf("the event names %q, which is not under the sessions directory", start.Dir)
+	}
+	// A session's directory belongs to that session and to no other.
+	seen := map[string]string{}
+	for _, ev := range events {
+		if ev.Kind != EventSessionStarted {
+			continue
+		}
+		if other, ok := seen[ev.Dir]; ok {
+			t.Errorf("sessions %q and %q were both started in %q", other, ev.Session, ev.Dir)
+		}
+		seen[ev.Dir] = ev.Session
+	}
+	// Only a started session has one: a stage or poll event is about no
+	// session at all, and an ended one is already written to disk.
+	for _, ev := range events {
+		if ev.Kind != EventSessionStarted && ev.Dir != "" {
+			t.Errorf("a %s event names a session directory: %v", ev.Kind, ev)
+		}
 	}
 }

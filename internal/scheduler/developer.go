@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -34,8 +35,9 @@ func (s *Scheduler) BranchFor(issue int) string {
 }
 
 // workIssue is the developer worker: it owns one issue from ready (or a
-// resumed in-progress/review state) until the reviewer approves it, the
-// developer asks a question, or the factory gives up.
+// resumed in-progress/review state, or an approved one whose post-approval
+// checks were interrupted) until the reviewer approves it, the developer asks
+// a question, or the factory gives up.
 func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.Worker) error {
 	branch := s.BranchFor(issue.Number)
 	log := s.log.With("worker", w.Name, "issue", issue.Number, "branch", branch)
@@ -63,6 +65,16 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 	}
 	bookkeeping.Branch = branch
 
+	// A session this issue's bookkeeping still records as running, whose
+	// process is gone, was interrupted: a scheduler killed while it worked.
+	// The first session of that role gets told, and the worker is marked
+	// resumed for `bees status` (interrupted.go).
+	if in := s.takeInterrupted(log, &bookkeeping); in != nil {
+		s.markResumed(w)
+		s.holdInterrupted(issue.Number, in)
+		defer s.forgetInterrupted(issue.Number)
+	}
+
 	// Resume: an open PR for the branch means we are in the review loop.
 	pr, err := s.gh.FindPRForBranch(ctx, branch)
 	if err != nil {
@@ -70,24 +82,17 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 	}
 	maxRounds := s.cfg.Scheduler.MaxReviewRounds
 	policy := s.cfg.Merge()
-	stage := "develop"
-	if pr != nil && s.stateOf(issue.Labels) == "review" {
-		// A restarted worker reads the checks too, so the reviewer it runs
-		// gets the same status a fresh one would.
-		stage = "review"
-		if s.roleEnabled(config.RoleReviewer) {
-			stage = firstReviewStage(policy)
-		}
-	}
-	// afterDevelop is where a developer session leads: the first review
-	// (through the pre-review checks), or — when the developer is fixing
-	// failing checks — straight back to the stage that found them.
-	afterDevelop := "review"
-	// prereviewDone records that the pre-review checks have been read for this
-	// pull request. The read belongs to the first review, not to every round,
-	// and afterDevelop cannot answer that question: it is a stage name, and the
-	// changes-requested path leaves it on "review".
-	prereviewDone := false
+	// stage is where the worker is; afterDevelop is where a developer session
+	// leads: the first review (through the pre-review checks), or — when the
+	// developer is fixing failing checks — straight back to the stage that
+	// found them. prereviewDone records that the pre-review checks have been
+	// read for this pull request: the read belongs to the first review, not to
+	// every round, and afterDevelop cannot answer that question, because it is
+	// a stage name and the changes-requested path leaves it on "review".
+	//
+	// All three are remembered in the issue's bookkeeping (see resumeStage),
+	// so a scheduler killed mid-flight resumes where it stopped.
+	stage, afterDevelop, prereviewDone := s.resumeStage(log, bookkeeping, issue, pr, policy)
 	// The pre-review read, handed to the reviewer in its prompt.
 	var reviewChecks []github.Check
 	var reviewStatus string
@@ -95,6 +100,14 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+		// Remember the stage before working it, so a scheduler killed here
+		// resumes in it. Written once at the top of the loop rather than at
+		// every `stage =`: every transition passes through here, so none of
+		// them can be forgotten, and a stage nothing changed costs no write.
+		if bookkeeping.WorkerStage != stage || bookkeeping.AfterDevelop != afterDevelop || bookkeeping.PreReviewDone != prereviewDone {
+			bookkeeping.WorkerStage, bookkeeping.AfterDevelop, bookkeeping.PreReviewDone = stage, afterDevelop, prereviewDone
+			_ = s.store.SaveIssue(bookkeeping)
 		}
 		// The per-issue budget is checked between stages, never while a
 		// session runs: the one that took the issue over its budget has
@@ -213,12 +226,30 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 			if err != nil {
 				return err
 			}
+			// product-fit is the only stage that judges the change against the
+			// work item's parent feature, and it is off by default: looking the
+			// parent up unconditionally would add a GraphQL query to every
+			// review round of every repository for a section nobody renders.
+			// A failed lookup is reported but never fatal: the stage still runs
+			// against the README and the docs, which is worth more than a review
+			// that dies because a GraphQL query flaked. It is reported because
+			// the alternative — a silent nil — tells the reviewer the work item
+			// belongs to no feature, and that lands in the verdict as a fact.
+			stages := s.cfg.ReviewStages()
+			var parent *github.Parent
+			if slices.Contains(stages, config.StageProductFit) {
+				p, err := s.gh.ParentIssue(ctx, issue.Number)
+				if !s.op("work-item-parent", err, "work item parent", "issue", issue.Number, "err", err) {
+					parent = p
+				}
+			}
 			name := fmt.Sprintf("reviewer-pr-%d-r%d", pr.Number, bookkeeping.Round)
-			log.Info("reviewer session", "pr", pr.Number, "round", bookkeeping.Round, "mail", len(inbox))
+			log.Info("reviewer session", "pr", pr.Number, "round", bookkeeping.Round, "mail", len(inbox), "stages", strings.Join(stages, ","))
 			started := s.now()
 			res, err := s.runSessionWithRetry(ctx, sessionSpec{
 				role: config.RoleReviewer, name: name, workDir: ws.RepoDir, branch: branch, worker: w,
 				data: prompts.Data{Issue: &freshIssue, PR: &freshPR, Inbox: inbox, PreviousRounds: previous, Round: bookkeeping.Round, MaxRounds: maxRounds,
+					Stages: stages, Parent: parent,
 					Checks: roundChecks, ChecksStatus: roundStatus, ChecksTimeout: shortDuration(policy.PreReviewChecksTimeout)},
 			})
 			if err != nil {
@@ -426,6 +457,155 @@ func firstReviewStage(policy config.MergePolicy) string {
 		return "prereview"
 	}
 	return "review"
+}
+
+// workerStages are the stages workIssue runs, and the values IssueState
+// remembers. They are the developer worker's own state machine, not
+// roles.reviewer.stages, which are sections of one reviewer session's prompt.
+var workerStages = []string{"develop", "prereview", "review", "checks"}
+
+// postApprovalFixRound reports whether a record is the develop round of a
+// post-approval check fix: the checks stage found a failing check, the
+// reviewer diagnosed it in checks mode and mailed the developer, and the
+// worker went back to develop with the checks as the gate it returns to.
+//
+// That record is written at the top of the loop, before the develop stage
+// relabels the issue bees:in-progress, so a worker killed — or a single
+// failing `gh issue edit` — in between leaves it behind a bees:approved
+// label: work in flight exactly as a record of the checks stage itself is,
+// one stage on. Only the record is tested here; each caller adds its own
+// label and pull request tests, because they have different things in hand
+// (a snapshot in resumableChecks, the pull request in resumeStage).
+func postApprovalFixRound(bk state.IssueState) bool {
+	return bk.WorkerStage == "develop" && bk.AfterDevelop == "checks"
+}
+
+// resumeStage decides where a developer worker starts, and with what loop
+// state. A worker that has run before left its stage in the issue's
+// bookkeeping, and resuming from it is the whole point: the workflow label
+// says an issue is in review, never whether its review has already happened,
+// so a scheduler killed in the checks stage or halfway through a check-fix
+// round would otherwise restart as a full first review and pay for a reviewer
+// session that has already run.
+//
+// The label stays the human-facing truth. A remembered stage it contradicts —
+// a review-loop stage on an issue with no open pull request, or one a person
+// has put back to bees:ready or bees:triage — is dropped, with a log line, and
+// the worker starts where the label says. develop contradicts no label, so the
+// loop state remembered with it is dropped on the same test instead: an issue
+// whose labels have left the review loop starts a fresh round. The one
+// exception is the develop round the post-approval checks send back
+// (postApprovalFixRound): it is recorded before the develop stage can relabel
+// the issue, so bees:approved is where it legitimately sits, and the gate it
+// returns to is the whole reason to resume it. An issue with nothing
+// remembered (the first run, and every issue that existed before the stage was
+// recorded) starts exactly where it always did.
+//
+// The whole record belongs to the pull request it was written for, and is
+// dropped for any other one: both tests below compare the recorded number with
+// the open pull request the branch has now. A person can close a pull request
+// and open another on the same branch while no worker is running, and a record
+// left for the first says nothing about the second — its review has not
+// happened and its checks have not been read. A record with no number at all,
+// written before one was known, is dropped the same way: starting a stage
+// later than the truth is the expensive mistake, starting one earlier only
+// costs a session.
+func (s *Scheduler) resumeStage(log *slog.Logger, bk state.IssueState, issue github.Issue, pr *github.PR, policy config.MergePolicy) (stage, afterDevelop string, prereviewDone bool) {
+	fromLabel := "develop"
+	if pr != nil && s.stateOf(issue.Labels) == "review" {
+		// A worker resuming into a review it has no record of reads the
+		// checks first, so the reviewer it runs gets the same status a fresh
+		// one would.
+		fromLabel = "review"
+		if s.roleEnabled(config.RoleReviewer) {
+			fromLabel = firstReviewStage(policy)
+		}
+	}
+	if bk.WorkerStage == "" {
+		return fromLabel, "review", false
+	}
+	if !s.stageMatchesLabels(bk.WorkerStage, issue, pr) {
+		log.Info("the remembered stage contradicts the issue's labels; resuming from the label",
+			"remembered", bk.WorkerStage, "state", s.stateOf(issue.Labels), "stage", fromLabel)
+		return fromLabel, "review", false
+	}
+	// Both pr.Number reads are safe by short-circuit: this one is only reached
+	// when stageMatchesLabels was true for a stage other than develop, which
+	// needs an open pull request either way it can be true, and the one below
+	// only when inReviewLoop was true, which needs one too.
+	if bk.WorkerStage != "develop" && bk.PR != pr.Number {
+		log.Info("the remembered stage belongs to another pull request; resuming from the label",
+			"remembered", bk.WorkerStage, "remembered_pr", bk.PR, "pr", pr.Number, "stage", fromLabel)
+		return fromLabel, "review", false
+	}
+	afterDevelop, prereviewDone = bk.AfterDevelop, bk.PreReviewDone
+	// The post-approval fix round is the one develop record whose labels are
+	// legitimately outside the review loop: bees:approved, because the record
+	// was written before the develop stage could relabel the issue. Its gate
+	// is the whole reason to resume it, so it survives the drop below — and
+	// this is the third way a pr.Number read here is safe by short-circuit.
+	approvedFixRound := pr != nil && s.stateOf(issue.Labels) == "approved" && postApprovalFixRound(bk)
+	if (!s.inReviewLoop(issue, pr) && !approvedFixRound) || bk.PR != pr.Number {
+		// The sub-state belongs to a pull request under review: which gate a
+		// developer round goes back to, and whether that pull request's checks
+		// have been read. develop matches any label, so without this an issue
+		// whose labels have left the review loop — bees:ready after
+		// reopenApproved sent an approved pull request back for more work —
+		// would carry a remembered after_develop of "checks" into a fresh
+		// round and merge the pull request without reviewing it. The number
+		// test is the same rule for the other way the sub-state can be stale:
+		// the pull request it was written for is not the one open now.
+		afterDevelop, prereviewDone = "review", false
+	} else if approvedFixRound {
+		// pre_review_done says the pre-review checks were read for this pull
+		// request, which is a question about the first review; the round
+		// resuming here goes straight back to the checks gate without asking
+		// it, so keeping it would be dead state under a label the review loop
+		// has left.
+		prereviewDone = false
+	}
+	if afterDevelop != "prereview" && afterDevelop != "checks" {
+		afterDevelop = "review"
+	}
+	return bk.WorkerStage, afterDevelop, prereviewDone
+}
+
+// stageMatchesLabels reports whether a remembered stage still agrees with what
+// the issue's labels say. Only develop needs nothing: the three stages of the
+// review loop are meaningless without an open pull request, and an issue back
+// in a state that has not reached one — bees:ready after a conflict reopened
+// it, or anything a person set by hand — is one whose review is over whatever
+// the last worker remembered. An unknown stage (a state file written by
+// another version) matches nothing and is dropped the same way. The loop state
+// remembered alongside develop is tested separately, in resumeStage.
+//
+// bees:approved admits checks, and only checks: approve() sets that label
+// before the worker enters the post-approval wait, so the label an interrupted
+// checks stage comes back to is legitimately approved rather than in review.
+// Without it the worker would restart in develop and pay for a developer
+// session — and a second review — on a pull request that has already been
+// approved. The same reason as in-progress, one stage later.
+func (s *Scheduler) stageMatchesLabels(stage string, issue github.Issue, pr *github.PR) bool {
+	if stage == "develop" {
+		return true
+	}
+	if !slices.Contains(workerStages, stage) {
+		return false
+	}
+	if stage == "checks" && pr != nil && s.stateOf(issue.Labels) == "approved" {
+		return true
+	}
+	return s.inReviewLoop(issue, pr)
+}
+
+// inReviewLoop reports whether the issue's labels still say a pull request of
+// this issue is being worked on. in-progress as well as review: the developer
+// session of a check-fix round sets bees:in-progress and returns to the stage
+// that found the failure, so a worker legitimately sits in checks under either
+// label.
+func (s *Scheduler) inReviewLoop(issue github.Issue, pr *github.PR) bool {
+	st := s.stateOf(issue.Labels)
+	return pr != nil && (st == "review" || st == "in-progress")
 }
 
 // checksGate is the set of checks a wait is gated on. It is chosen on the

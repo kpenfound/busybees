@@ -61,8 +61,8 @@ label = "bees"
 # A token for that login. A "$VAR" reference is expanded from the environment
 # bees runs in, so the secret itself stays out of this file.
 #token = "$BEES_GITHUB_TOKEN"
-# Identity for commits made by developer sessions. Recorded here, but not
-# applied yet: sessions still commit with the machine's own git identity.
+# Identity for commits made by developer sessions. Either may be set on its
+# own; whichever is unset stays the machine's own git identity.
 #git_name = "busybees"
 #git_email = "busybees@example.com"
 
@@ -314,6 +314,12 @@ label = "bees"
 #pre_review_checks = true
 # Review anyway when those checks are still pending after this long.
 #pre_review_checks_timeout = "10m"
+# The review stages, in order. Each gets its own focus and its own verdict,
+# and an approval needs every one of them to pass. One or more of
+# implementation, completeness, cleanliness, style, product-fit. product-fit
+# judges the change against the work item's parent feature and is off by
+# default.
+#stages = ["implementation", "completeness", "cleanliness", "style"]
 #shell = "/bin/bash"
 #[roles.reviewer.env]
 #EXAMPLE = "value"

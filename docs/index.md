@@ -22,3 +22,4 @@ quick start; these pages are the reference.
 | [Workflow](workflow.md) | The GitHub-centred workflow: filter, label state machine, questions, review loop, escalation, QA |
 | [Configuration](configuration.md) | Complete `bees.toml` reference |
 | [CLI](cli.md) | Every `bees` command |
+| [Releasing](releasing.md) | Cutting a release: the tag, the workflow, the assets it publishes |

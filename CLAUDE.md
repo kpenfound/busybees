@@ -15,6 +15,15 @@ GitHub repository. Read `docs/architecture.md` before changing the scheduler.
   `github.Client.Exec`; `claude` is faked by the test binary itself (see `TestMain` in
   `internal/scheduler/scheduler_test.go`) or a shell script (`internal/session`).
   Git is real: tests create a bare origin with `internal/testutil.SetupRepos`.
+- `.github/workflows/release.yml` is the only workflow, and its only trigger is a
+  `v*` tag (see `docs/releasing.md`). There is deliberately no `push` or
+  `pull_request` workflow: `dagger check` is the gate, and a CI-on-push workflow
+  was added and reverted by a person on purpose. Do not add one.
+- `install.sh` (repository root) downloads a release. It parses the workflow's asset
+  names (`bees_<version>_<os>_<arch>.tar.gz` + `checksums.txt`), so those names are a
+  public interface: `cmd/bees/release_test.go` pins them against `docs/releasing.md`.
+  It is POSIX `sh`, has no test in the suite by design (it must not reach the
+  network), and is checked with `shellcheck -s sh install.sh`.
 
 ## Layout
 
@@ -24,9 +33,10 @@ GitHub repository. Read `docs/architecture.md` before changing the scheduler.
 - `internal/issues` — `bees issue create/link`: visible, labelled, sub-issue of a feature, milestone inherited.
 - `internal/procs` — pid files + `ps` scan to find and kill orphaned sessions (`bees kill`).
 - `internal/testutil` — local bare git remote + clone for tests.
-- `internal/session` — runs one `claude -p` session; outcome file written by `bees done`.
+- `internal/session` — runs one `claude -p` session; outcome file written by `bees done`; `CheckInterrupted` says whether a session directory belongs to a session that is running, one that finished, or one a killed scheduler left unfinished.
 - `internal/prompts` — embedded role prompts (`system/*.md`, `task/*.md`) rendered with `text/template`; `project.go` appends the project repository's own `bees/prompts/common.md` and `bees/prompts/<role>.md`, read from the session's worktree.
 - `internal/mcpserver` — the built-in MCP server (`bees mcp serve`) added to every session as `bees`, backed by the same code as the CLI: `mail_send`, `mail_list`, `issue_create`, `issue_link`, `issue_view`, `pr_view`, `comment` and `done` go to every role; role-scoped are `issue_edit_body` (both managers), `issue_set_state` (project manager) and `issue_question` (product manager). The name `bees` is reserved in bees.toml.
+- `internal/tui` — the live view `bees run` draws in a terminal (bubbletea + lipgloss): the Now and Queues panels, fed by `scheduler.Subscribe` and `status.json`, and a session view (`session.go`) that tails one session's `transcript.jsonl` and queues a message from `human` for the next session on that work item. Drawn only when stdout is a terminal and `--no-tui` was not given (`tuiMode` in `cmd/bees`), and it silences console logging while it is up.
 - `internal/mail` — local JSON mailbox; the only channel between roles.
 - `internal/github` — thin `gh` wrapper. `internal/workspace` — git worktrees. `internal/skills` — skills by git URL → `--plugin-dir`.
 - `internal/state` — state dir layout (`mail/`, `notes/`, `sessions/`, `issues/`, `status.json`).

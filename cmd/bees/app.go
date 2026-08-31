@@ -126,6 +126,7 @@ func newApp(ctx context.Context, g *globalFlags) (*app, error) {
 		ConfigPath:  cfg.Path,
 		Repo:        cfg.Project.Repo,
 		Label:       cfg.Filter.Label,
+		GitHub:      cfg.GitHub,
 		Skills:      skillMgr,
 		AddDirs:     []string{store.Dir},
 		Logger:      log,

@@ -12,6 +12,7 @@ import (
 
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/procs"
+	"github.com/kpenfound/busybees/internal/session"
 	"github.com/kpenfound/busybees/internal/state"
 	"github.com/kpenfound/busybees/internal/workspace"
 )
@@ -75,6 +76,14 @@ scheduler as well.`,
 				}
 				if err := procs.Kill(p, grace); err != nil {
 					fmt.Fprintf(os.Stderr, "warning: pid %d: %v\n", p.PID, err)
+				}
+				// A session stopped here wrote no result, and the next
+				// session for its issue would otherwise have to guess
+				// whether the machine crashed. Only sessions found through a
+				// pid file name their directory; a process found in the
+				// process table alone is killed just the same, unmarked.
+				if err := session.MarkInterrupted(p.SessionDir, "stopped by bees kill"); err != nil {
+					fmt.Fprintf(os.Stderr, "warning: mark session interrupted: %v\n", err)
 				}
 			}
 

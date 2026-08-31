@@ -124,6 +124,8 @@ and `bees labels sync` create them in GitHub.
 | `bees:feedback` | Feature idea, product feedback or bug report for the product manager (outside the state machine) |
 | `bees:question` | The product manager is waiting for a person to answer on a feature or feedback issue; removed by the orchestrator when they reply |
 | `bees:proposal` | A feature issue a bee wrote; it sits next to `bees:feature`, and a person removes the label to approve it |
+| `bees:planning` | A person and the product manager are still agreeing a feature or feedback issue: the product manager only discusses it and breaks nothing down. Not a state label; only a person sets or removes it. See [Planning with the product manager](workflow.md#planning-with-the-product-manager) |
+| `bees:planned` | A person ended planning: the scope is agreed, and the product manager breaks the issue down on its next run without re-opening it. Not a state label; only a person sets or removes it |
 | `bees:priority` | A person wants this next: dispatched before the rest of the `bees:ready` queue. Not a state label; people set it, the project manager may add it to a work item that unblocks the factory itself, and the product manager carries one from a feedback issue onto the work item it creates from it |
 | `bees:triage` | Needs refinement by the project manager |
 | `bees:ready` | Detailed enough for a developer to pick up |
@@ -155,15 +157,16 @@ running it. `[github]` gives the orchestrator a login of its own.
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `login` | string | `""` | GitHub login the factory acts as. It is what `bees init` verifies the token against and what `bees status` reports; it is not itself a credential. |
-| `token` | string | `""` | A token for `login`, passed to every `gh` call the orchestrator makes as `GH_TOKEN`. A `"$VAR"` or `"${VAR}"` value is expanded from the environment bees runs in, so the secret itself stays out of `bees.toml`. A reference that expands to nothing is rejected at load time, naming the variable. |
-| `git_name` | string | `""` | Name for commits made by developer sessions. Recorded here but not applied yet: sessions still commit with the machine's own git identity. |
-| `git_email` | string | `""` | Email for those commits, with the same caveat. |
+| `token` | string | `""` | A token for `login`, passed as `GH_TOKEN` to every `gh` call the orchestrator makes and to every session it runs. A `"$VAR"` or `"${VAR}"` value is expanded from the environment bees runs in, so the secret itself stays out of `bees.toml`. A reference that expands to nothing is rejected at load time, naming the variable. |
+| `git_name` | string | `""` | Name for commits made by developer sessions, given to them as `GIT_AUTHOR_NAME` and `GIT_COMMITTER_NAME`. |
+| `git_email` | string | `""` | Email for those commits, as `GIT_AUTHOR_EMAIL` and `GIT_COMMITTER_EMAIL`. |
 
 `login` and `token` are set together: either alone is rejected with an error naming
 the key. A login on its own would make bees report an account it does not act as, and
 a token on its own leaves nothing to report without asking GitHub who it belongs to.
 `git_name` and `git_email` are an identity rather than a credential, so they are
-accepted on their own.
+accepted on their own, and either may be set without the other — whichever is unset
+leaves that half of the commit identity to the machine's own git configuration.
 
 With the table unset — the default, and what every `bees.toml` written before it looks
 like — nothing is injected and the factory behaves exactly as it always has.
@@ -174,17 +177,39 @@ login = "busybees-bot"
 token = "$BEES_GITHUB_TOKEN"
 ```
 
-**What the token covers.** Every GitHub call bees makes with its own code: polling for
-issues and pull requests, the label edits it makes, the review requests and escalation
-comments it posts, `bees init`'s label creation, `bees doctor`'s repository checks, and
-everything `bees issue`, `bees mail` and the built-in MCP tools do — a tool a session
-calls runs in bees' code, so it acts as the bot too. What the token does not cover is
-`gh` run by a Claude session itself: its `gh pr create`, its pushes and its commits
-still come from the machine's account. So the [comment marker](roles.md#common-ground)
-stays necessary — bee comments still arrive under your login from one half of the
-factory. Where a comment does come from the bot, the orchestrator reads its author as
-well as its marker: anything that login posted is the factory's, including the
+**What the token covers.** Everything the factory does on GitHub. That is every call
+bees makes with its own code — polling for issues and pull requests, the label edits
+it makes, the review requests and escalation comments it posts, `bees init`'s label
+creation, `bees doctor`'s repository checks, and everything `bees issue`, `bees mail`
+and the built-in MCP tools do — and, since the sessions get the token too, the `gh` a
+Claude session runs itself: its `gh pr create`, its `gh api` calls and the pushes it
+makes. Its commits are the bot's as well, when `git_name` and `git_email` are set.
+
+The [comment marker](roles.md#common-ground) stays necessary all the same, because
+`[github]` is optional: with the table unset every comment still arrives under your
+own login. Where a comment does come from the bot, the orchestrator reads its author
+as well as its marker — anything that login posted is the factory's, including the
 escalation comment, which carries no marker.
+
+**What sessions get.** A session runs with `GH_TOKEN` set to the token, with
+`GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL` and `GIT_COMMITTER_NAME`/`GIT_COMMITTER_EMAIL`
+from `git_name`/`git_email`, and with `credential.helper=!gh auth git-credential`
+configured for git — reset first, so a credential helper of your own does not answer a
+push before gh's does. Your stored credentials are neither read nor written. The
+helper only steers **https** remotes: on an `ssh://` or `git@github.com:` remote the
+commits are still the factory's, but the push authenticates with the machine's own ssh
+key. A session started with `[github]` unset gets none of these and behaves exactly as
+it always has. `bees` sets git configuration through `GIT_CONFIG_COUNT` and friends,
+and leaves the whole block alone when you have set `GIT_CONFIG_COUNT` yourself.
+
+**What the token needs.** A fine-grained personal access token, or a GitHub App
+installation token, scoped to the one repository with **write** access to *Issues*,
+*Pull requests* and *Contents*, and **read** access to *Metadata*. Issues and pull
+requests cover the labels, comments, milestones and reviews; contents covers the
+pushes developer sessions make; metadata is required by GitHub alongside the rest. A
+classic token works too, with the `repo` scope. `bees init` checks the token before
+the factory ever uses it: that GitHub accepts it, that it belongs to `login`, and that
+it can read the repository.
 
 ### `filter.assignee = "@me"` still means you
 
@@ -213,7 +238,7 @@ assignee = "busybees-bot"
 | `triage_batch_size` | int | `5` | Maximum number of issues handed to the project manager in one session. |
 | `notes_consolidate_every` | int | `10` | Sessions a role runs between two passes in which it is also asked to consolidate its [notes file](roles.md#notes-files) into the standard sections. `0` means the default; must be ≥ 0. |
 | `notes_max_bytes` | int | `32768` | Ask for consolidation early, whatever the session count, once a notes file has grown past this many bytes. `0` means the default; must be ≥ 0. |
-| `dispatch_order` | string | `"small-first"` | Which `bees:ready` issue a free developer takes next: `small-first` (smallest size first), `oldest` (whatever the size) or `large-first`. Ties are broken by age, oldest first; an issue without a size ranks as `m`. Issues already `bees:in-progress` or `bees:review`, and `bees:ready` issues that already have an open pull request, are resumed first and are never reordered. Issues carrying `bees:priority` come before everything else in the ready queue, whatever this key says. See [Sizing](workflow.md#size-decides-what-gets-built-next). |
+| `dispatch_order` | string | `"small-first"` | Which `bees:ready` issue a free developer takes next: `small-first` (smallest size first), `oldest` (whatever the size) or `large-first`. Ties are broken by age, oldest first; an issue without a size ranks as `m`. Issues already `bees:in-progress` or `bees:review`, an issue in `bees:approved` whose post-approval checks were interrupted, and `bees:ready` issues that already have an open pull request, are resumed first and are never reordered. Issues carrying `bees:priority` come before everything else in the ready queue, whatever this key says. See [Sizing](workflow.md#size-decides-what-gets-built-next). |
 | `max_large_in_flight` | int | `1` | How many `bees:size/l` issues developer workers may hold at once. A larger issue over the cap is skipped and the free worker takes the next issue that fits. `0` means no cap; must be ≥ 0. |
 | `pr_fix_conflicts` | bool | `true` | Hand an open pull request that **conflicts** with the default branch back to its developer: the developer is mailed (from `orchestrator`) to merge the default branch, resolve, test and push, and an approved issue goes back to `bees:ready` ahead of new work. See [Conflicts with the default branch](workflow.md#conflicts-with-the-default-branch). |
 | `pr_keep_updated` | bool | `false` | Do the same when a pull request is merely **behind** the default branch (it would merge cleanly, but was not tested against what is on the default branch now). |
@@ -330,11 +355,12 @@ frugal:
 | Human PR feedback | 3 calls per PR (reviews, review comments, comments) | only for PRs whose `updatedAt` moved since the last look |
 | Product-manager has-work check | 1 `issue view` per feedback/feature issue | only for issues whose `updatedAt` is newer than the PM's last run; the check for a feature whose sub-issues have all closed adds none — it compares the sub-issue numbers recorded on the last PM run with the issues the poll found open |
 | Product-manager run | 1 `issue view` per open feedback/feature issue, plus 1 REST call per open feature (sub-issue progress) and 1 GraphQL call per open work item (parent feature) | every PM run (not gated by `updatedAt`) |
+| Planning mode | 1 extra `issue view` per `bees:planned` issue the freshness check did not already fetch the comments of | every PM run, while an issue is agreed and not yet acted on |
 | QA merged-PR check | 1 call | at most once per `qa_interval` |
 | Checks (auto-merge) | 1 call per poll of the checks stage, 2 when the branch requires no check | every `roles.reviewer.checks_poll_interval` while waiting |
 | Visibility backstop | 2 list calls | after every session |
 | Feature progress | 1 REST call per open feature issue (`sub_issues_summary`) | per product manager run |
-| Parent feature lookup | 1 GraphQL call per triage item, 1 per open work item, and 1 per developer session | per project manager run / product manager run / developer session |
+| Parent feature lookup | 1 GraphQL call per triage item, 1 per open work item, 1 per developer session, and 1 per review round with a `product-fit` stage configured (none by default) | per project manager run / product manager run / developer session / reviewer session |
 | `bees issue create --parent` | 3 calls (parent details, create, attach as sub-issue); `--related` 2; plain 1 | whenever a role files an issue |
 | Worker stage transitions | a handful of `issue view` / `pr view` / `issue edit` calls | per transition |
 
@@ -440,6 +466,10 @@ There is no `quiet` key: `--quiet` is a shorthand for one invocation, not a way
 to run the factory. `level = "warn"` is the service-shaped equivalent (it also
 drops the one-line session summaries, which `--quiet` keeps).
 
+`bees run` in a terminal draws the live view instead of logging to the
+console, and silences console logging while it is up; `--no-tui`, a
+redirected stdout, and every other command log as this table says.
+
 The `bees.log` file in the state directory is not configurable here: it always
 gets every record at debug level, in JSON. See
 [`bees run`](cli.md#bees-run).
@@ -520,6 +550,44 @@ that the checks passed. `bees doctor` says which of the three is in force, and
 `bees status` shows it in the worker stage (`checks (required)`, `checks (reported)`,
 `checks (none)`).
 
+### `[roles.reviewer]` only: the review stages
+
+The reviewer reviews in ordered stages, each with its own focus, its own source
+of truth and its own verdict. `stages` is accepted **only** under
+`[roles.reviewer]`; setting it on `[global]` or another role is a validation
+error, like the checks keys above.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `stages` | string list | `["implementation", "completeness", "cleanliness", "style"]` | The review stages to run, in order. One or more of `implementation`, `completeness`, `cleanliness`, `style`, `product-fit`. |
+
+| Stage | Question it answers | Source of truth |
+|---|---|---|
+| `style` | Does it follow the repository's formatting and lint conventions? | the repository's conventions, CLAUDE.md, the linter |
+| `cleanliness` | Is it clear, small, free of dead code and needless abstraction? | the diff |
+| `implementation` | Is it correct? Error handling, edge cases, tests, security. | the diff |
+| `completeness` | Does it deliver the work item's acceptance criteria? | the issue |
+| `product-fit` | Does it fit the parent feature and the product direction? | the parent feature, the README and the docs |
+
+Every configured stage runs — the reviewer is told not to stop at the first one
+that finds something to block on — and each ends with a verdict line of its
+own. Requesting changes still sends one message to the developer, its points
+grouped by stage in the stages' order. An approval means every configured stage
+passed.
+
+**`product-fit` is off by default.** A work item the project manager already
+scoped is not the place to re-open the product decision, and leaving it off is
+what keeps the default review's scope the same as the single-pass reviewer it
+replaced. It is also the only stage that reads the work item's parent feature,
+so the orchestrator makes that lookup — one GraphQL call per review round —
+only when the stage is configured.
+
+Both mistakes are load errors that name the key, the bad value and the valid
+set: a stage that is not one of the five, and an empty `stages = []`, which
+means a misconfiguration rather than "review nothing". See
+[roles.md](roles.md#review-stages-rolesreviewerstages) for why the default is
+what it is.
+
 ### `[roles.developer]` only: commit flags, max size and per-size models
 
 These three keys describe the developer specifically, so they are accepted **only**
@@ -570,6 +638,7 @@ For each role the effective settings are computed from `[global]` and
 | `allowed_tools`, `disallowed_tools` | Global list followed by role list. |
 | `enabled` | Role only. |
 | `auto_merge`, `merge_method`, `checks_wait`, `checks_poll_interval`, `checks_timeout`, `max_check_fix_rounds`, `pre_review_checks`, `pre_review_checks_timeout` | `roles.reviewer` only; they form the checks and merge policy `bees config show reviewer` prints. |
+| `stages` | `roles.reviewer` only; not merged from `[global]`. `bees config show reviewer` prints the resolved list. |
 
 `bees config show <role>` prints the result.
 
@@ -755,6 +824,7 @@ headers = { Authorization = "Bearer $BROWSER_MCP_TOKEN" }
 | `roles.reviewer.max_check_fix_rounds` | `2` |
 | `roles.reviewer.pre_review_checks` | `true` |
 | `roles.reviewer.pre_review_checks_timeout` | `10m` |
+| `roles.reviewer.stages` | `["implementation", "completeness", "cleanliness", "style"]` |
 
 ## Examples
 
@@ -888,4 +958,6 @@ it inherited, plus:
 | `BEES_REVIEW_MODE` | `checks` for the reviewer's checks-mode sessions (diagnosing failed checks); unset otherwise. |
 | `SHELL` | The configured `shell`, when set. |
 | *configured `env`* | Every `[global.env]` / `[roles.<name>.env]` entry, `$VAR`-expanded from the bees environment. Set before the `BEES_*` variables, so those always win. |
-| `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_0`/`VALUE_0`, `GIT_CONFIG_KEY_1`/`VALUE_1` | `push.autoSetupRemote=true` and `push.default=current`, so a plain `git push` works on a fresh branch without touching the clone's git config. Only set when `GIT_CONFIG_COUNT` is not already in the bees environment. |
+| `GH_TOKEN` | [`github.token`](#github), when one is configured, so the session's own `gh` acts as the factory. Set with the `BEES_*` variables, after the configured `env`, so a role cannot give itself another identity. |
+| `GIT_AUTHOR_NAME`, `GIT_COMMITTER_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_EMAIL` | [`github.git_name`](#github) and `github.git_email`, when set, so a session's commits are the factory's. |
+| `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_n`/`VALUE_n` | `push.autoSetupRemote=true` and `push.default=current`, so a plain `git push` works on a fresh branch without touching the clone's git config; plus an empty `credential.helper` and `credential.helper=!gh auth git-credential` when `github.token` is set, so an https push authenticates as the factory rather than through your stored credentials. `GIT_CONFIG_COUNT` is derived from the entries. Only set when `GIT_CONFIG_COUNT` is not already in the bees environment. |

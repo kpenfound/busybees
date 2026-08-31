@@ -13,19 +13,20 @@ import (
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/mail"
+	"github.com/kpenfound/busybees/internal/session"
+	"github.com/kpenfound/busybees/internal/text"
 )
 
 //go:embed system/*.md task/*.md partials/*.md
 var files embed.FS
 
-// consolidateTemplate is the name task prompts use to pull in the
-// "consolidate your notes this session" paragraph:
+// The partials in partials/ are registered under their file names and pulled
+// into a task prompt with {{template "<name>" .}}. Each renders nothing
+// unless the field it is about is set, so it costs a session nothing until
+// the scheduler has something to say:
 //
-//	{{template "consolidate" .}}
-//
-// It renders nothing unless Data.ConsolidateNotes is set, so the paragraph
-// costs a session nothing until the scheduler asks for it.
-const consolidateTemplate = "consolidate"
+//	{{template "consolidate" .}}   rewrite your notes this session
+//	{{template "interrupted" .}}   the session before this one was killed
 
 // Data is everything a prompt template can reference. Fields that do not
 // apply to a role are left zero.
@@ -82,6 +83,12 @@ type Data struct {
 	// Retry is the number of times this session has already been attempted
 	// and failed for infrastructure reasons (0 on a first attempt).
 	Retry int
+	// Interrupted is the session that ran for this issue before this one and
+	// never finished: a scheduler killed while it worked. Set for the first
+	// session of the role that was interrupted, and nil for every other
+	// session — including every session of a factory that has not been
+	// killed, which renders exactly what it always did.
+	Interrupted *session.Interrupted
 
 	// FailedChecks is set for the reviewer's checks-mode task.
 	FailedChecks []github.Check
@@ -104,6 +111,17 @@ type Data struct {
 	// into work items until a person removes bees:proposal. They are never
 	// in FreshFeatures.
 	Proposals []github.Issue
+	// Planning holds the feature and feedback issues a person put in
+	// planning mode (bees:planning): the product manager discusses them and
+	// breaks nothing down. They are never in Feedback, FreshFeatures or
+	// Proposals. Set for the product manager.
+	Planning []github.Issue
+	// Planned holds the issues a person agreed with the product manager
+	// (bees:planned) that still need acting on: a feature with no sub-issues
+	// yet, or an open feedback issue. A planned feature that already has
+	// sub-issues has been broken down and is not listed again. Set for the
+	// product manager.
+	Planned []github.Issue
 	// Progress maps a feature issue number to its sub-issue summary.
 	Progress map[int]github.SubIssueSummary
 	// CompletedFeatures holds the open features whose every sub-issue has
@@ -113,7 +131,14 @@ type Data struct {
 	// and leaves open is not listed again until it gains a sub-issue and that
 	// one closes too.
 	CompletedFeatures []github.Issue
+	// Stages are the reviewer's review stages (roles.reviewer.stages), in the
+	// order to run them. Set for a reviewer review session; empty for every
+	// other role and for the reviewer's checks-mode task, which diagnoses one
+	// failure rather than reviewing.
+	Stages []string
 	// Parent is the feature a work item belongs to, when it is a sub-issue.
+	// Set for a developer session, and for a reviewer session whose stages
+	// include config.StageProductFit — the only stage that reads it.
 	Parent *github.Parent
 	// Parents maps an issue number to its parent feature, for the issues that
 	// have one: the triage items (project manager) and the open work items
@@ -219,6 +244,7 @@ func render(name string, d Data) (string, error) {
 	labels := d.Labels
 	funcs := template.FuncMap{
 		"formatMail": mail.Format,
+		"count":      text.Count,
 		"labels": func(ls []github.Label) string {
 			return strings.Join(github.LabelNames(ls), ", ")
 		},
@@ -280,12 +306,22 @@ func render(name string, d Data) (string, error) {
 		},
 	}
 	t := template.New(name).Funcs(funcs)
-	partial, err := files.ReadFile("partials/" + consolidateTemplate + ".md")
+	// Every partial is registered under its file name, so a task template
+	// pulls one in with {{template "<name>" .}} and nothing else has to be
+	// told about it.
+	entries, err := files.ReadDir("partials")
 	if err != nil {
 		return "", err
 	}
-	if _, err := t.New(consolidateTemplate).Parse(string(partial)); err != nil {
-		return "", fmt.Errorf("prompt %s: %w", consolidateTemplate, err)
+	for _, e := range entries {
+		partial, err := files.ReadFile("partials/" + e.Name())
+		if err != nil {
+			return "", err
+		}
+		pname := strings.TrimSuffix(e.Name(), ".md")
+		if _, err := t.New(pname).Parse(string(partial)); err != nil {
+			return "", fmt.Errorf("prompt %s: %w", pname, err)
+		}
 	}
 	if _, err := t.Parse(string(src)); err != nil {
 		return "", fmt.Errorf("prompt %s: %w", name, err)
