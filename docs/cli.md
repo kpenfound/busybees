@@ -390,9 +390,9 @@ bees --log-format json --quiet run
 
 In a terminal, `bees run` draws the factory instead of logging to it: a
 full-screen view, redrawn as sessions start and finish and as the queues
-change. It subscribes to the scheduler's event stream in the same process
-and re-reads `status.json`; it never polls GitHub itself and the scheduler
-never waits for it.
+change, with a session view behind it. It subscribes to the scheduler's
+event stream in the same process and re-reads `status.json`; it never polls
+GitHub itself and the scheduler never waits for it.
 
 ```
 busybees  acme/widgets                                                                      10:03:08
@@ -406,8 +406,8 @@ busybees  acme/widgets                                                          
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Recent                                                                                           │
 │   role             issue pr    outcome                took     cost  note                        │
-│   project manager  #12   -     done                   3m2s    $0.61  refined and moved to ready  │
 │   reviewer         #12   #31   changes-requested     6m14s    $1.18  tests missing for the erro… │
+│   project manager  #12   -     done                   3m2s    $0.61  refined and moved to ready  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Needs human                                                                                      │
@@ -427,7 +427,7 @@ busybees  acme/widgets                                                          
 │ unread mail   product manager 1, developer 2                                                     │
 │ next poll     in 2m30s                                                                           │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
-↑↓ select · o open on GitHub · k stop the selected session · q or ctrl-c stops polling and drains
+↑↓ select · enter watch · o open on GitHub · k stop session · q or ctrl-c stops polling and drains
 ```
 
 **Now** is every session running right now: the role, the issue and pull
@@ -436,7 +436,9 @@ is on, how long it has been going, and the model it runs on — `(fallback)`
 when a retry is running on the role's `fallback_model`. The turns and cost
 columns are what the *work item* has spent in the sessions that have already
 finished: claude reports both only in the final event of a session's stream,
-so the running session adds its own when it ends.
+so the running session adds its own when it ends. `↑`/`↓` move the cursor
+down the list and Enter opens [the session view](#watching-one-session) on
+the session it is on.
 
 **Recent** is what just happened: the sessions that have finished, newest
 first, with how each ended, what it said about it, how long it took and what
@@ -460,6 +462,7 @@ The keys:
 | Key | What it does |
 |---|---|
 | `↑` `↓` | Move the selection through every panel's rows in turn. |
+| `enter` | Watch the selected session's transcript (below). |
 | `o` | Open the selected issue or pull request on GitHub. |
 | `k` | Stop the selected session and hand its issue to a person. It asks first: press `k` again to confirm. |
 | `q`, `ctrl-c` | Stop polling and drain. Press again to leave the terminal early. |
@@ -469,12 +472,12 @@ the view, and the view stays up until the running sessions have finished;
 pressing either again leaves the terminal and waits for the drain with the
 console back.
 
-`k` is the only key that changes anything. It stops the selected session the
-way [`bees kill`](#bees-kill---dry-run---scheduler---grace-5s) stops a
-leftover one — the process and its group, with an `interrupted` marker left in
-the session directory — and then labels its issue `bees:needs-human` with a
-comment saying a person stopped it, exactly as the factory giving up would.
-The session's own worker ends without retrying it. A singleton session
+`k` is the key that throws work away, and asks first. It stops the selected
+session the way [`bees kill`](#bees-kill---dry-run---scheduler---grace-5s)
+stops a leftover one — the process and its group, with an `interrupted` marker
+left in the session directory — and then labels its issue `bees:needs-human`
+with a comment saying a person stopped it, exactly as the factory giving up
+would. The session's own worker ends without retrying it. A singleton session
 (product manager, project manager, QA) owns no issue, so stopping one stops a
 session and nothing more. Nothing is recorded as run either, so a singleton
 the factory still has work for starts again on the next pass.
@@ -490,6 +493,59 @@ While the view is up, console logging is silenced — it would scribble over
 the panels — and `<state_dir>/bees.log` gets every record, so nothing is
 lost. `--no-tui`, a redirected or piped stdout, and `bees tick` log as
 before.
+
+#### Watching one session
+
+Enter on a session in the Now panel opens its transcript, and the view keeps
+reading it as the session writes: the session's own words, the tools it
+called and how each one answered, the way Claude Code's own output reads. It
+is the session's `transcript.jsonl` under `<state_dir>/sessions/`, so
+nothing extra is asked of the scheduler and nothing is lost when the view is
+closed.
+
+```
+busybees  acme/widgets                                                                      10:03:08
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ developer · developer-issue-12-r2 · issue #12 · PR #31  —  following                             │
+│ ● I'll start by reading the issue and the tests around it.                                       │
+│ ● Bash(go test ./internal/scheduler/ -run TestResumeStage)                                       │
+│   ⎿ ok  github.com/kpenfound/busybees/internal/scheduler  0.412s (+2 lines)                      │
+│ ✻ thinking                                                                                       │
+│ ● Edit(internal/scheduler/developer.go)                                                          │
+│   ⎿ The file has been updated.                                                                   │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+esc back · ↑/↓ scroll · end follow · m message · q or ctrl-c drains
+```
+
+The view follows the tail as the session writes to it. `↑`/`↓`, `PgUp`/`PgDn`
+and `Home` scroll; scrolling away stops it following so a line arriving does
+not take what you are reading away, and scrolling back to the end — or `End`
+— resumes it. A session that finishes while you are reading it stays on
+screen, marked `ended`; `esc` goes back to the panels.
+
+**A message goes to the next session, not to the one on screen.** `m` opens
+a line to type one, and Enter queues it:
+
+```
+message for the next developer session on issue #12 (enter queues it, esc cancels)
+…
+queued for the next developer session on issue #12
+```
+
+It is an ordinary mailbox message from `human` — the same channel
+`bees mail send --from human` writes and every role's prompt calls
+authoritative — addressed to the role that session is running as and
+carrying its issue and pull request, so it reaches whichever session picks
+that work item up next. Nothing reaches the session on screen: a headless
+`claude -p` reads its prompt and works to the end of it, and a follow-up
+turn written to its stdin is read and then ignored (measured while building
+this; [#293](https://github.com/kpenfound/busybees/issues/293) is the
+record of that decision, and names what would reopen it). The view says
+"queued for the next session" because that is what happened.
+
+While a message is being typed, `q` is a letter rather than a stop key —
+Ctrl-C still stops the factory, so nothing is lost by the exception.
 
 With the view off, every finished session prints one summary line. In `text`
 format they are the message alone, so a run reads as a report:

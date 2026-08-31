@@ -126,8 +126,13 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 	}
 	start := sessionEvent(EventSessionStarted, spec)
 	start.Model, start.Fallback = role.Model, fallback
+	start.Dir = sessionDir
 	// Remembered under the same name the event carries, so a view that sees
-	// the session start can name it back to KillSession (kill.go).
+	// the session start can name it back to KillSession (kill.go). The event
+	// carries the directory too, for a view that only wants to read the
+	// transcript in it; KillSession takes a name, so that stopping a session
+	// is asking the scheduler about one of its own rather than handing it a
+	// path to kill.
 	s.recordLiveSession(spec.name, liveSession{role: spec.role, dir: sessionDir, issue: start.Issue, pr: start.PR})
 	defer s.dropLiveSession(spec.name)
 	s.publish(start)

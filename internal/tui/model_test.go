@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +21,13 @@ import (
 // (#222).
 var fixed = time.Date(2026, 8, 31, 10, 3, 8, 0, time.UTC)
 
+// panelHeight is the terminal drive draws in: tall enough for all five
+// panels, so a test that is not about the layout does not have to say so.
+// The view's own default is the classic 24 rows, which is shorter than all
+// five panels — a test that is about the height sends its own
+// WindowSizeMsg, and drive then leaves the size alone.
+const panelHeight = 40
+
 // drive feeds the model a sequence of messages and returns the view it
 // renders afterwards, with any styling stripped. It is the whole test
 // harness: Update and View are plain functions, so nothing here needs a
@@ -30,6 +38,12 @@ func drive(t *testing.T, d Deps, msgs ...tea.Msg) string {
 		d.Now = func() time.Time { return fixed }
 	}
 	var m tea.Model = New(d)
+	if !slices.ContainsFunc(msgs, func(msg tea.Msg) bool {
+		_, ok := msg.(tea.WindowSizeMsg)
+		return ok
+	}) {
+		m, _ = m.Update(tea.WindowSizeMsg{Width: defaultWidth, Height: panelHeight})
+	}
 	for _, msg := range msgs {
 		m, _ = m.Update(msg)
 	}
@@ -371,6 +385,7 @@ func runCmd(t *testing.T, cmd tea.Cmd) tea.Msg {
 func TestQStopsTheFactoryLikeCtrlC(t *testing.T) {
 	stops := 0
 	var view tea.Model = New(Deps{Now: func() time.Time { return fixed }, Stop: func() { stops++ }})
+	view, _ = view.Update(tea.WindowSizeMsg{Width: defaultWidth, Height: panelHeight})
 	view, _ = view.Update(started("developer-issue-12-r1", config.RoleDeveloper, 12, 0, fixed, "opus", false))
 	if got := plain(view.View()); !strings.Contains(got, "q or ctrl-c stops polling and drains") {
 		t.Errorf("the footer does not say what q does:\n%s", got)
@@ -470,6 +485,7 @@ func TestOpenShowsTheSelectedIssueOrPullRequest(t *testing.T) {
 				opened = append(opened, u)
 				return nil
 			}})
+			view, _ = view.Update(tea.WindowSizeMsg{Width: defaultWidth, Height: panelHeight})
 			view, _ = view.Update(started("developer-issue-12-r1", config.RoleDeveloper, 12, 31, fixed, "opus", false))
 			view, _ = view.Update(statusMsg{status: state.Status{
 				NeedsHuman: []state.Escalated{escalated(44, "Parser", "gave up", fixed)},
@@ -700,6 +716,104 @@ func TestTheSelectionIsAlwaysOnARowThatIsDrawn(t *testing.T) {
 			view, _ = view.Update(tea.KeyMsg{Type: tea.KeyDown})
 			if got := plain(view.View()); !strings.Contains(got, "▸ ") {
 				t.Fatalf("%d rows down in a %d-row terminal, nothing on screen is marked as selected:\n%s", n, h, got)
+			}
+		}
+	}
+}
+
+// The Now panel marks the row enter opens and k stops, and marks only that
+// one: the cursor is the whole of what tells a person which session they are
+// about to act on. It is the same ▸ every other panel draws, because there
+// is one selection over the whole view.
+func TestTheNowPanelMarksTheSelectedRow(t *testing.T) {
+	out := drive(t, Deps{Repo: "acme/widgets", Now: func() time.Time { return fixed }},
+		started("developer-issue-12-r1", config.RoleDeveloper, 12, 31, fixed, "opus", false),
+		started("reviewer-pr-33-r1", config.RoleReviewer, 14, 33, fixed, "sonnet", false),
+		tea.KeyMsg{Type: tea.KeyDown},
+	)
+	var marked []string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "│ ▸ ") {
+			marked = append(marked, strings.TrimSpace(line))
+		}
+	}
+	if len(marked) != 1 || !strings.Contains(marked[0], "reviewer") {
+		t.Errorf("the Now panel marks %q, want the one row the cursor is on:\n%s", marked, out)
+	}
+}
+
+// The selection survives the terminal being resized. targets() enumerates
+// only the rows the layout draws, so a shorter terminal has fewer of them:
+// without a clamp the cursor is left past the end, nothing is marked, o and
+// k both say there is nothing selected, and ↑ — the key a person reaches for
+// — walks back through rows that are not there before anything reappears.
+func TestResizingTheTerminalKeepsTheSelectionOnScreen(t *testing.T) {
+	msgs := []tea.Msg{tea.WindowSizeMsg{Width: defaultWidth, Height: panelHeight}}
+	for i := range 3 {
+		msgs = append(msgs, started(
+			fmt.Sprintf("developer-issue-%d-r1", 10+i), config.RoleDeveloper, 10+i, 30+i, fixed, "opus", false))
+	}
+	for i := range 8 {
+		msgs = append(msgs, endedAs(
+			fmt.Sprintf("reviewer-pr-%d-r1", 50+i), config.RoleReviewer, 50+i, 0, "approved", "fine", 0.1, time.Minute))
+	}
+	st := state.Status{}
+	for i := range 3 {
+		st.NeedsHuman = append(st.NeedsHuman, escalated(70+i, "stuck", "gave up", fixed.Add(-time.Hour)))
+		st.Approved = append(st.Approved, approvedPR(90+i, 80+i, "waiting", fixed.Add(-time.Hour)))
+	}
+	msgs = append(msgs, statusMsg{status: st})
+
+	var view tea.Model = New(Deps{Repo: "acme/widgets", Now: func() time.Time { return fixed }})
+	for _, msg := range msgs {
+		view, _ = view.Update(msg)
+	}
+	for range 12 {
+		view, _ = view.Update(tea.KeyMsg{Type: tea.KeyDown})
+	}
+	for _, h := range []int{24, 20} {
+		view, _ = view.Update(tea.WindowSizeMsg{Width: defaultWidth, Height: h})
+		if got := plain(view.View()); !strings.Contains(got, "▸ ") {
+			t.Fatalf("after the terminal shrank to %d rows, nothing on screen is marked as selected:\n%s", h, got)
+		}
+	}
+}
+
+// A list panel that is drawn always has a row to draw in. layout makes room
+// for one row per non-empty list before it shares the rest out; without that
+// floor a panel can be drawn with its column header and nothing under it,
+// four lines of box saying nothing, while a panel below it still lists rows.
+func TestADrawnListPanelAlwaysHasARow(t *testing.T) {
+	base := []tea.Msg{
+		started("developer-issue-1-r1", config.RoleDeveloper, 10, 30, fixed, "opus", false),
+		started("developer-issue-2-r1", config.RoleDeveloper, 11, 31, fixed, "opus", false),
+	}
+	for i := range 4 {
+		base = append(base, endedAs(
+			fmt.Sprintf("reviewer-pr-%d-r1", 50+i), config.RoleReviewer, 50+i, 0, "approved", "fine", 0.1, time.Minute))
+	}
+	st := state.Status{}
+	for i := range 2 {
+		st.NeedsHuman = append(st.NeedsHuman, escalated(70+i, "stuck", "gave up", fixed.Add(-time.Hour)))
+		st.Approved = append(st.Approved, approvedPR(90+i, 80+i, "waiting", fixed.Add(-time.Hour)))
+	}
+	base = append(base, statusMsg{status: st})
+
+	// Every column header of a list panel, so an empty one is spotted
+	// whatever the panel.
+	headers := []string{"role             issue pr    stage", "role             issue pr    outcome",
+		"issue waiting", "pr    issue open"}
+	for h := 14; h <= 30; h++ {
+		msgs := append([]tea.Msg{tea.WindowSizeMsg{Width: defaultWidth, Height: h}}, base...)
+		lines := strings.Split(drive(t, Deps{Repo: "acme/widgets"}, msgs...), "\n")
+		for i := 0; i+1 < len(lines); i++ {
+			isHeader := false
+			for _, want := range headers {
+				isHeader = isHeader || strings.Contains(lines[i], want)
+			}
+			if isHeader && strings.Contains(lines[i+1], "╰") {
+				t.Errorf("in a %d-row terminal a panel is drawn with a column header and no rows:\n%s",
+					h, strings.Join(lines, "\n"))
 			}
 		}
 	}

@@ -19,7 +19,7 @@ internal/prompts/    embedded base prompts (system/*.md, task/*.md) and their re
 internal/mcpserver/  the built-in MCP server (`bees mcp serve`): mail, issue and outcome tools, filtered by role
 internal/state/      state directory: notes, per-issue bookkeeping, singleton run times, status.json
 internal/scheduler/  the orchestrator: poll, human feedback, PR merge state, reconcile, developer worker pool, singleton roles, event stream
-internal/tui/        the live view `bees run` draws in a terminal: five panels and its keys
+internal/tui/        the live view `bees run` draws in a terminal: five panels, its keys, and one session's transcript
 internal/procs/      find and stop bees sessions: after a crash (`bees kill`) and one at a time from the live view
 internal/testutil/   test helpers (local bare git remote + clone)
 ```
@@ -332,21 +332,26 @@ issue, so neither costs a GitHub call.
 **The event stream** (`events.go`) is the live half of the same picture, for
 a view running in the same process — a terminal UI, a log tail.
 `Scheduler.Subscribe` returns a buffered channel of `Event`s: a session
-started (with the model it runs on, and whether that is the role's
-fallback), a session ended (with its outcome, turns and cost), a developer
-worker moved to another stage, a full pass finished. It is published *alongside*
+started (with the model it runs on, whether that is the role's fallback, and
+the directory it runs in — which is where its `transcript.jsonl` is, and the
+one thing a view cannot work out from the session's name), a session ended
+(with its outcome, turns and cost), a developer worker moved to another
+stage, a full pass finished. It is published *alongside*
 `writeStatus`, never instead of it: the event says something happened,
 `status.json` says what the factory now looks like. The poll event is
 published *after* the write, so a view that re-reads `status.json` when one
 arrives sees the pass that event is about, never the one before it.
 
-`internal/tui` is the subscriber: the panels `bees run` draws in a terminal.
-Now and Recent are built from the session and stage events; Needs human,
-Approved PRs and Queues are `status.json`, re-read when an event says it has
-changed. While the view is up it also owns Ctrl-C — Bubble Tea puts the
-terminal in raw mode, so the interrupt arrives as a key rather than as a
-signal, and the view cancels the scheduler's context with it and stays up
-until the drain is over; `q` does the same.
+`internal/tui` is the subscriber: the panels `bees run` draws in a terminal,
+and the session view one of them opens onto. Now and Recent are built from
+the session and stage events; Needs human, Approved PRs and Queues are
+`status.json`, re-read when an event says it has changed. The session view is
+neither: it tails the session's own `transcript.jsonl` from the directory the
+started event named, which costs the scheduler nothing and works just as well
+after the session has finished. While the view is up it also owns Ctrl-C —
+Bubble Tea puts the terminal in raw mode, so the interrupt arrives as a key
+rather than as a signal, and the view cancels the scheduler's context with it
+and stays up until the drain is over; `q` does the same.
 
 Its `k` key is the one thing it asks the scheduler to *do*:
 `Scheduler.KillSession` stops one running session by the name the event
@@ -355,6 +360,13 @@ the session directory recorded when the session started — and escalates the
 issue it was working on. The mark it leaves behind is read by
 `runSessionWithRetry`, so the session's own worker ends without retrying it
 and without escalating the issue a second time.
+
+The view's one write is the message a person types in the session view: an
+ordinary mailbox entry from `human`, addressed to the role that session is
+running as and carrying its issue and pull request. It reaches the *next*
+session on that work item, never the one on screen — a headless `claude -p`
+works to the end of the prompt it was started with, and a follow-up turn
+written to its stdin is read and then ignored.
 
 It is a view mechanism and nothing more. No scheduler decision depends on
 whether anyone is subscribed, and `publish` never blocks — an event a
@@ -746,7 +758,8 @@ Messages are addressed to a **role**, not a session. Delivery rules:
   claimed.
 - Human PR feedback enters the mailbox as messages from `human` (see the
   scheduler loop); people can also send mail by hand with
-  `bees mail send --from human`. The scheduler's own requests — bring a PR
+  `bees mail send --from human`, or by typing one in the live view's session
+  view, which writes the same thing. The scheduler's own requests — bring a PR
   up to date with the default branch — come from `orchestrator`.
 
 **Visibility backstop.** After every session (`runSession` in `sessions.go`)

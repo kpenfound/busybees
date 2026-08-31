@@ -43,6 +43,17 @@ type Deps struct {
 	// Open shows a URL to the person watching, in whatever they read GitHub
 	// in. Nil means the view cannot open anything.
 	Open func(url string) error
+	// Send queues a message a person typed in the session view. It goes to
+	// the mailbox every role already reads — addressed to the role the
+	// watched session is running as, carrying that session's issue and pull
+	// request so it reaches whichever session picks the work item up next.
+	//
+	// It is a message to the *role*, never to the running session: a
+	// headless `claude -p` cannot be told anything once it has started (see
+	// the session view's own note in docs/cli.md), so the view says
+	// "queued for the next session" and means it. Nil means the view cannot
+	// send anything and does not offer to.
+	Send func(to string, issue, pr int, subject, body string) error
 	// Repo is the repository the factory is building, for the header and
 	// for the GitHub links every row can be opened at.
 	Repo string
@@ -52,8 +63,11 @@ type Deps struct {
 // renders it. It is built from the session-started event and dropped when
 // the matching session-ended arrives.
 type running struct {
-	name     string
-	role     string
+	name string
+	role string
+	// dir is the session's own directory, which is where its
+	// transcript.jsonl is: what the session view follows.
+	dir      string
 	issue    int
 	pr       int
 	started  time.Time
@@ -92,8 +106,9 @@ type stage struct {
 }
 
 // Model is the Bubble Tea model behind `bees run`'s view: five panels fed by
-// the scheduler's event stream and by status.json, and the keys over them.
-// A terminal too short for all five draws fewer (see layout).
+// the scheduler's event stream and by status.json, the keys over them, and
+// the session view one of them opens onto (session.go). A terminal too short
+// for all five panels draws fewer (see layout).
 //
 // Update and View are ordinary functions of the model and its messages —
 // no terminal, no goroutines, no clock of their own — which is how the whole
@@ -118,9 +133,16 @@ type Model struct {
 	// view keeps drawing what it last read and says so.
 	statusErr string
 
+	// watching is the session the session view is showing, or nil when the
+	// view is the panels; tailGen numbers the session views so the
+	// transcript loop of a closed one stops instead of racing the next.
+	watching *watch
+	tailGen  int
+
 	// width and height are the terminal's, from the last WindowSizeMsg. The
 	// height is what the panels are fitted into (see layout), so the view is
-	// never taller than the terminal it is drawn in.
+	// never taller than the terminal it is drawn in, and it is what the
+	// session view fills.
 	width  int
 	height int
 	ticks  int
@@ -230,6 +252,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		// A shorter terminal draws fewer rows, and targets() enumerates only
+		// the drawn ones — so a resize can leave the cursor past the end
+		// exactly as a session ending can.
+		m.clampCursor()
 	case tea.KeyMsg:
 		return m.key(msg)
 	case eventMsg:
@@ -245,6 +271,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.statusErr, m.status, m.mail = "", msg.status, msg.mail
 		m.clampCursor()
+	case transcriptMsg:
+		m.applyTranscript(msg)
+	case tailMsg:
+		// The session view this loop belonged to has been closed, or closed
+		// and replaced by another. The generation test is the live half of
+		// that — closing increments the counter, so no tick a closed view
+		// left behind can match the open one's — and the nil test is the
+		// cheap invariant beneath it, for a close that ever forgets to.
+		if m.watching == nil || int(msg) != m.tailGen {
+			return m, nil
+		}
+		// Read, then ask for the next read: this pair is the loop that
+		// makes the view follow a transcript being written.
+		return m, tea.Batch(m.readTail(), tail(m.tailGen))
+	case sentMsg:
+		if m.watching != nil {
+			if msg.err != nil {
+				m.watching.sent = "the message could not be queued: " + oneLine(msg.err.Error())
+			} else {
+				m.watching.sent = msg.note
+			}
+		}
 	case tickMsg:
 		m.ticks++
 		if m.ticks%refreshEvery == 0 {
@@ -259,28 +307,35 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// key handles the view's keys.
+// key routes a key press.
 //
-// Ctrl-C and q both ask the factory to stop polling and drain, exactly as an
-// interrupt does without the view, and the view stays up while it does —
-// pressing either again gives up on the drain and leaves the terminal, with
-// the sessions still finishing in the background. Neither is a key that can
-// be pressed by accident without being told what it did: the footer says
-// what they do before, and what they are doing after.
+// Ctrl-C and q are handled here rather than in either screen, because
+// stopping the factory is the same thing wherever a person is: both ask it
+// to stop polling and drain, exactly as an interrupt does without the view,
+// and the view stays up while it does — pressing either again gives up on
+// the drain and leaves the terminal, with the sessions still finishing in
+// the background. Neither can be pressed by accident without being told what
+// it did: the footer says what they do before, and what they are doing
+// after.
 //
-// The arrows move one selection through every panel's rows in turn; o opens
-// what is selected on GitHub, and k stops the selected session and hands its
-// issue to a person. k asks first, the way Ctrl-C does: it is the one key
-// here that throws work away. Enter is deliberately unbound: it is the key a
-// person expects to open the thing they have selected *inside* the view, and
-// #246 is what does that.
+// The one exception is a message being typed in the session view, where q is
+// a letter: Ctrl-C cannot be typed and still stops the factory there, but a
+// person writing "queue a retry" must not lose the factory to their first
+// keystroke.
+//
+// Everything else belongs to the screen that is up. On the panels the arrows
+// move one selection through every panel's rows in turn; enter opens the
+// selected session's transcript (session.go), o opens what is selected on
+// GitHub, and k stops the selected session and hands its issue to a person.
+// k asks first, the way Ctrl-C does: it is the one key here that throws work
+// away. The session view has its own keys (sessionKey), j and k among them —
+// they scroll a transcript there, which is where vim keys belong.
 func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	k := msg.String()
 	if k != "k" {
 		m.confirmKill = false
 	}
-	switch k {
-	case "ctrl+c", "q":
+	if k == "ctrl+c" || (k == "q" && !m.composing()) {
 		m.notice = ""
 		if m.stopping {
 			return m, tea.Quit
@@ -289,24 +344,39 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.deps.Stop != nil {
 			m.deps.Stop()
 		}
+		return m, nil
+	}
+	if m.watching != nil {
+		return m.sessionKey(msg)
+	}
+	switch k {
 	case "up", "shift+tab":
 		m.notice = ""
 		m.cursor = max(0, m.cursor-1)
 	case "down", "tab":
 		m.notice = ""
 		m.cursor = min(max(0, len(m.targets())-1), m.cursor+1)
+	case "enter":
+		if s, ok := m.selection(); ok {
+			m.notice = ""
+			m = m.open(s)
+			return m, tea.Batch(m.readTail(), tail(m.tailGen))
+		}
+		m.notice = "select a running session to watch it"
 	case "o":
-		return m.open()
+		return m.openOnGitHub()
 	case "k":
 		return m.kill()
 	}
 	return m, nil
 }
 
-// open shows the selected row's issue or pull request on GitHub. One URL
-// shape serves both: GitHub redirects an issue URL to the pull request of
-// the same number, so a row that is about either is one link.
-func (m Model) open() (tea.Model, tea.Cmd) {
+// openOnGitHub shows the selected row's issue or pull request on GitHub.
+// One URL shape serves both: GitHub redirects an issue URL to the pull
+// request of the same number, so a row that is about either is one link.
+// (Model.open, in session.go, is the other kind of opening: the session
+// view, on the transcript of the session the cursor is on.)
+func (m Model) openOnGitHub() (tea.Model, tea.Cmd) {
 	t, ok := m.selected()
 	switch {
 	case !ok:
@@ -340,9 +410,9 @@ func (m Model) open() (tea.Model, tea.Cmd) {
 // second does it, in the background, because stopping a process waits out a
 // grace period and the view must keep drawing while it does.
 func (m Model) kill() (tea.Model, tea.Cmd) {
-	t, ok := m.selected()
+	s, ok := m.selection()
 	switch {
-	case !ok || t.session == "":
+	case !ok:
 		m.notice = "select a running session to stop it"
 		m.confirmKill = false
 		return m, nil
@@ -352,12 +422,12 @@ func (m Model) kill() (tea.Model, tea.Cmd) {
 		return m, nil
 	case !m.confirmKill:
 		m.confirmKill = true
-		m.notice = fmt.Sprintf("k again to stop %s and hand %s to a person", t.session, number(t.issue))
+		m.notice = fmt.Sprintf("k again to stop %s and hand %s to a person", s.name, number(s.issue))
 		return m, nil
 	}
 	m.confirmKill = false
-	m.notice = "stopping " + t.session
-	kill, name := m.deps.Kill, t.session
+	m.notice = "stopping " + s.name
+	kill, name := m.deps.Kill, s.name
 	return m, func() tea.Msg {
 		if err := kill(name); err != nil {
 			return actedMsg{note: "could not stop " + name + ": " + oneLine(err.Error())}
@@ -402,6 +472,48 @@ func (m Model) targets() []target {
 	return out
 }
 
+// composing says whether a message is being typed in the session view. While
+// one is, every printable key belongs to it — including q, which is a stop
+// key everywhere else.
+func (m Model) composing() bool { return m.watching != nil && m.watching.composing }
+
+// selection is the running session the cursor is on, for the two keys that
+// act on a session rather than on a link: enter opens its transcript and k
+// stops it. There is one cursor over the whole view (see targets), so both
+// act on the row the ▸ is on — and on nothing at all when that row is not a
+// session.
+func (m Model) selection() (running, bool) {
+	t, ok := m.selected()
+	if !ok || t.session == "" {
+		return running{}, false
+	}
+	for _, s := range m.sessions {
+		if s.name == t.session {
+			return s, true
+		}
+	}
+	return running{}, false
+}
+
+// applyTranscript folds a read of the watched session's transcript into it.
+// A read that belongs to a closed session view is dropped, and one that
+// failed leaves what has already been read on screen.
+func (m *Model) applyTranscript(msg transcriptMsg) {
+	if m.watching == nil || msg.gen != m.tailGen {
+		return
+	}
+	if msg.err != nil {
+		m.watching.err = msg.err.Error()
+		return
+	}
+	m.watching.err, m.watching.off = "", msg.off
+	m.watching.lines = append(m.watching.lines, msg.lines...)
+	if n := len(m.watching.lines) - maxTranscriptLines; n > 0 {
+		m.watching.lines = m.watching.lines[n:]
+		m.watching.scroll = max(0, m.watching.scroll-n)
+	}
+}
+
 func (m Model) selected() (target, bool) {
 	t := m.targets()
 	if m.cursor < 0 || m.cursor >= len(t) {
@@ -423,11 +535,17 @@ func (m *Model) apply(ev scheduler.Event) {
 	switch ev.Kind {
 	case scheduler.EventSessionStarted:
 		m.sessions = append(m.sessions, running{
-			name: ev.Session, role: ev.Role, issue: ev.Issue, pr: ev.PR,
+			name: ev.Session, role: ev.Role, dir: ev.Dir, issue: ev.Issue, pr: ev.PR,
 			started: ev.Time, model: ev.Model, fallback: ev.Fallback,
 		})
 	case scheduler.EventSessionEnded:
 		m.drop(ev.Session)
+		// A session being read stays on screen after it has finished: its
+		// transcript is on disk and its last words are usually the ones
+		// worth reading.
+		if m.watching != nil && m.watching.name == ev.Session {
+			m.watching.ended = true
+		}
 		key := spendKey(ev.Issue, ev.Role)
 		s := m.spent[key]
 		s.turns += ev.Turns
@@ -471,12 +589,38 @@ func spendKey(issue int, role string) string {
 
 // ---- rendering -------------------------------------------------------------
 
-// defaultWidth and defaultHeight are what the view draws at until the
-// terminal has told it its own, and what every test renders at.
+// defaultWidth and defaultHeight are the terminal the view assumes until it
+// has been told the real one — the classic 80x24, widened to the 100 columns
+// the Now panel's row is laid out for. Bubble Tea sends a WindowSizeMsg as
+// soon as the program starts, so in a terminal this is the first frame only;
+// it is a test that draws at it for long.
 const (
 	defaultWidth  = 100
-	defaultHeight = 40
+	defaultHeight = 24
 )
+
+// dims is the terminal's width and the columns of text inside a panel. Both
+// screens draw into the same box, so both ask here.
+func (m Model) dims() (w, inner int) {
+	if w = m.width; w <= 0 {
+		w = defaultWidth
+	}
+	// A panel's border takes two columns and its padding two more, so the
+	// text inside one is four columns narrower than the terminal.
+	if inner = w - 4; inner < 20 {
+		inner = 20
+	}
+	return w, inner
+}
+
+// rows is the terminal's height: what the panels are fitted into and what
+// the session view fills.
+func (m Model) rows() int {
+	if h := m.height; h > 0 {
+		return h
+	}
+	return defaultHeight
+}
 
 var (
 	titleStyle  = lipgloss.NewStyle().Bold(true)
@@ -522,19 +666,8 @@ func (m Model) want() []int {
 // — and the Queues panel goes on counting what they would have listed. What
 // room is left is shared out between the lists that are drawn.
 func (m Model) layout() layout {
-	l := layout{width: m.width}
-	if l.width <= 0 {
-		l.width = defaultWidth
-	}
-	// A panel's border takes two columns and its padding two more, so the
-	// text inside one is four columns narrower than the terminal.
-	if l.inner = l.width - 4; l.inner < 20 {
-		l.inner = 20
-	}
-	h := m.height
-	if h <= 0 {
-		h = defaultHeight
-	}
+	var l layout
+	l.width, l.inner = m.dims()
 	l.queues = panel("Queues", m.queuesPanel(l.inner), l.inner)
 	want := m.want()
 	l.rows = make([]int, len(want))
@@ -543,7 +676,7 @@ func (m Model) layout() layout {
 	// its column header — or, when it has nothing in it, on saying so.
 	fixed := 2 + strings.Count(l.queues, "\n") + 1
 	for l.drawn = len(want); l.drawn > 0; l.drawn-- {
-		avail, floor := h-fixed-4*l.drawn, 0
+		avail, floor := m.rows()-fixed-4*l.drawn, 0
 		for _, n := range want[:l.drawn] {
 			if n > 0 {
 				floor++
@@ -558,6 +691,10 @@ func (m Model) layout() layout {
 }
 
 func (m Model) View() string {
+	if m.watching != nil {
+		w, inner := m.dims()
+		return m.sessionView(w, inner)
+	}
 	l := m.layout()
 	want := m.want()
 	body := []func(w, rows, from int) string{m.nowPanel, m.recentPanel, m.needsHumanPanel, m.approvedPanel}
@@ -603,8 +740,11 @@ func (m Model) footer() string {
 		return "stopping: draining"
 	case m.notice != "":
 		return m.notice
+	case len(m.sessions) > 0:
+		return "↑↓ select · enter watch · o open on GitHub · k stop session · q or ctrl-c stops polling and drains"
 	default:
-		return "↑↓ select · o open on GitHub · k stop the selected session · q or ctrl-c stops polling and drains"
+		// enter and k both act on a running session, and there are none.
+		return "↑↓ select · o open on GitHub · q or ctrl-c stops polling and drains"
 	}
 }
 
@@ -617,7 +757,9 @@ func panel(title, body string, w int) string {
 
 // nowPanel renders every running session: who is running it, what it is
 // about, the stage its developer worker is in, how long it has been going,
-// what the work item has spent so far and the model it runs on.
+// what the work item has spent so far and the model it runs on. The cursor
+// marks the one enter opens the session view on and k stops — the same ▸ the
+// other panels draw, because there is one selection over the whole view.
 func (m Model) nowPanel(w, rows, from int) string {
 	if len(m.sessions) == 0 {
 		return hintStyle.Render("no sessions running")
