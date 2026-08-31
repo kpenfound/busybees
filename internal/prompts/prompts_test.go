@@ -1332,50 +1332,79 @@ func taskSection(t *testing.T, task, heading string) string {
 
 // TestAnInterruptedSessionIsReportedAtTheTopOfTheTask: the session that takes
 // over from one a killed scheduler left unfinished is told so before it is
-// told anything else — how far it got, where its transcript is, and that the
-// branch may carry work nobody reported (#250). The assertion is deliberately
-// stronger than "the section is there": with nothing interrupted the task
-// prompt must be byte for byte the one this version has always rendered, so
-// the section is checked as a *prefix* of an otherwise unchanged prompt.
+// told anything else — how far it got, where its transcript is, and what its
+// own role has to do about it (#250). The assertion is deliberately stronger
+// than "the section is there": with nothing interrupted the task prompt must
+// be byte for byte the one this version has always rendered, so the section
+// is checked as a *prefix* of an otherwise unchanged prompt.
+//
+// The advice is per role and only half of it is true of a reviewer: a
+// reviewer session commits nothing and opens no pull request, and a round
+// that reported no verdict has to be redone rather than carried on from. So
+// each template is rendered with an interruption of the role it serves, and
+// the wording the other role gets must be absent.
 func TestAnInterruptedSessionIsReportedAtTheTopOfTheTask(t *testing.T) {
-	in := &session.Interrupted{
-		Role: config.RoleDeveloper, Name: "20260831-081500-developer-issue-4-r1-ab",
-		Transcript: "/s/sessions/20260831-081500-developer-issue-4-r1-ab/transcript.jsonl",
-		Turns:      3, Killed: true, Note: "stopped by bees kill",
+	const transcript = "/s/sessions/20260831-081500-developer-issue-4-r1-ab/transcript.jsonl"
+	cases := []struct {
+		name    string
+		role    string
+		want    []string
+		unwant  []string
+		summary string
+	}{
+		{
+			name: config.RoleDeveloper, role: config.RoleDeveloper,
+			summary: "developer session that ran for this issue before you was stopped after 3 turns",
+			want:    []string{"The branch may carry work it never reported"},
+			unwant:  []string{"this round starts over"},
+		},
+		{
+			name: config.RoleReviewer, role: config.RoleReviewer,
+			summary: "reviewer session that ran for this issue before you was stopped after 3 turns",
+			want:    []string{"It reported no verdict, so this round starts over"},
+			unwant:  []string{"The branch may carry work it never reported"},
+		},
+		{
+			name: "reviewer_checks", role: config.RoleReviewer,
+			summary: "reviewer session that ran for this issue before you was stopped after 3 turns",
+			want:    []string{"It reported no verdict, so this round starts over"},
+			unwant:  []string{"The branch may carry work it never reported"},
+		},
 	}
-	for _, name := range []string{config.RoleDeveloper, config.RoleReviewer, "reviewer_checks"} {
-		role := config.RoleReviewer
-		if name == config.RoleDeveloper {
-			role = config.RoleDeveloper
-		}
-		quiet, err := TaskNamed(role, name, sample())
-		if err != nil {
-			t.Fatal(err)
-		}
-		if strings.Contains(quiet, "never reported an outcome") {
-			t.Errorf("%s reports an interruption that never happened:\n%s", name, quiet)
-		}
-		d := sample()
-		d.Interrupted = in
-		task, err := TaskNamed(role, name, d)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.HasSuffix(task, quiet) {
-			t.Errorf("%s: the interruption changed more than the section it adds:\n%s", name, task)
-			continue
-		}
-		section := strings.TrimSuffix(task, quiet)
-		for _, want := range []string{
-			"developer session that ran for this issue before you was stopped after 3 turns",
-			"never reported an outcome",
-			"/s/sessions/20260831-081500-developer-issue-4-r1-ab/transcript.jsonl",
-			"The branch may carry work it never reported",
-		} {
-			if !strings.Contains(flowed(section), want) {
-				t.Errorf("%s section missing %q:\n%s", name, want, section)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			quiet, err := TaskNamed(tc.role, tc.name, sample())
+			if err != nil {
+				t.Fatal(err)
 			}
-		}
+			if strings.Contains(quiet, "never reported an outcome") {
+				t.Errorf("%s reports an interruption that never happened:\n%s", tc.name, quiet)
+			}
+			d := sample()
+			d.Interrupted = &session.Interrupted{
+				Role: tc.role, Name: "20260831-081500-" + tc.role + "-issue-4-r1-ab",
+				Transcript: transcript, Turns: 3, Killed: true, Note: "stopped by bees kill",
+			}
+			task, err := TaskNamed(tc.role, tc.name, d)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasSuffix(task, quiet) {
+				t.Fatalf("%s: the interruption changed more than the section it adds:\n%s", tc.name, task)
+			}
+			section := strings.TrimSuffix(task, quiet)
+			wants := append([]string{tc.summary, "never reported an outcome", transcript}, tc.want...)
+			for _, want := range wants {
+				if !strings.Contains(flowed(section), want) {
+					t.Errorf("%s section missing %q:\n%s", tc.name, want, section)
+				}
+			}
+			for _, unwant := range tc.unwant {
+				if strings.Contains(flowed(section), unwant) {
+					t.Errorf("%s section carries the other role's advice (%q):\n%s", tc.name, unwant, section)
+				}
+			}
+		})
 	}
 }
 
