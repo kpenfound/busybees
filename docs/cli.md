@@ -607,7 +607,7 @@ bees exec reviewer --pr 34
 
 ### `bees status [--json]`
 
-Shows the last poll time and PID of the scheduler, queue sizes per workflow state
+Shows the scheduler's last poll time, PID and build, queue sizes per workflow state
 (plus `feedback` and `features`, the open `bees:feedback` and `bees:feature` issues
 owned by the product manager, `proposals`, the subset of `features` still waiting for
 a person to approve them, and `open_prs`), running developer workers (issue, [size](workflow.md#sizing), stage, round, the attempt number while a session is being retried, and whether the worker resumed), a row per
@@ -621,6 +621,19 @@ about to see (`acting_as` in `--json`, empty when the factory uses your own gh l
 ```
 repo: acme/widgets   state: /home/kyle/src/acme/.bees   acting as: busybees-bot
 ```
+
+The scheduler line ends with the build `bees run` was started from — what
+[`bees version`](#bees-version) prints for it (`version` in `--json`, with the
+untruncated commit as `revision`):
+
+```
+scheduler: pid 4711, last poll 12s ago   build dev (b24a0605c2a1 modified)
+```
+
+The [role prompts](roles.md#customising-a-role) are compiled into the binary, so a
+running factory serves the prompts of that build: a prompt change merged to the
+default branch reaches no session until `bees` is rebuilt and `bees run` restarted.
+The segment is absent from a `status.json` written by a bees older than the field.
 
 
 A worker's stage is `develop`, `pre-review checks`, `review` or `checks`. Once the
@@ -684,8 +697,8 @@ different window from `today:` above — and says plainly when the budget has pa
 dispatch:
 
 ```
-scheduler: pid 4711, last poll 12s ago   daily budget: $42.10 / $100.00
-scheduler: pid 4711, last poll 12s ago   paused: daily budget ($101.20 / $100.00)
+scheduler: pid 4711, last poll 12s ago   daily budget: $42.10 / $100.00   build v0.2.0
+scheduler: pid 4711, last poll 12s ago   paused: daily budget ($101.20 / $100.00)   build v0.2.0
 ```
 
 While it is paused the scheduler keeps polling and reconciling labels but starts no
@@ -698,7 +711,7 @@ factory the same way, and is reported before the budget because it is the harder
 stop — it names the time it lifts (`limit_paused_until` in `--json`):
 
 ```
-scheduler: pid 4711, last poll 12s ago   paused: claude session limit until 23:50 (in 37m)
+scheduler: pid 4711, last poll 12s ago   paused: claude session limit until 23:50 (in 37m)   build v0.2.0
 ```
 
 The `ready` queue also carries a breakdown by [size](workflow.md#sizing)

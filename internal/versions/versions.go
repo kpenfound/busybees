@@ -130,8 +130,35 @@ func Bees(override string, bi *debug.BuildInfo) string {
 	if v := bi.Main.Version; v != "" && v != "(devel)" {
 		return v
 	}
-	var rev string
-	var modified bool
+	rev, modified := Revision(bi)
+	if rev == "" {
+		return DevVersion
+	}
+	if len(rev) > RevisionDisplayLen {
+		rev = rev[:RevisionDisplayLen]
+	}
+	if modified {
+		return fmt.Sprintf("%s (%s modified)", DevVersion, rev)
+	}
+	return fmt.Sprintf("%s (%s)", DevVersion, rev)
+}
+
+// RevisionDisplayLen is how much of a revision Bees shows: enough to name a
+// commit, short enough to read in a status line.
+const RevisionDisplayLen = 12
+
+// Revision digs the VCS stamps Go writes into a binary by default
+// (`-buildvcs=auto`) out of its build information: the full commit the binary
+// was built from, and whether the tree was dirty at the time. Both are zero
+// for a binary that carries no VCS settings — one built from a source tarball,
+// from a module cache, or with `-buildvcs=false`.
+//
+// Bees renders these; the revision is recorded untruncated in status.json, so
+// the running scheduler's build can be compared against the repository.
+func Revision(bi *debug.BuildInfo) (rev string, modified bool) {
+	if bi == nil {
+		return "", false
+	}
 	for _, s := range bi.Settings {
 		switch s.Key {
 		case "vcs.revision":
@@ -140,14 +167,5 @@ func Bees(override string, bi *debug.BuildInfo) string {
 			modified = s.Value == "true"
 		}
 	}
-	if rev == "" {
-		return DevVersion
-	}
-	if len(rev) > 12 {
-		rev = rev[:12]
-	}
-	if modified {
-		return fmt.Sprintf("%s (%s modified)", DevVersion, rev)
-	}
-	return fmt.Sprintf("%s (%s)", DevVersion, rev)
+	return rev, modified
 }

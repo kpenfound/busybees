@@ -102,3 +102,36 @@ func TestBees(t *testing.T) {
 		})
 	}
 }
+
+// Revision is the one parser for the VCS stamps: it returns the commit
+// untruncated (Bees is what shortens it for display) and says whether the
+// tree was dirty, and answers empty for a binary carrying no stamps at all.
+func TestRevision(t *testing.T) {
+	build := func(settings ...debug.BuildSetting) *debug.BuildInfo {
+		return &debug.BuildInfo{Main: debug.Module{Version: "(devel)"}, Settings: settings}
+	}
+	rev := func(v string) debug.BuildSetting { return debug.BuildSetting{Key: "vcs.revision", Value: v} }
+	mod := func(v string) debug.BuildSetting { return debug.BuildSetting{Key: "vcs.modified", Value: v} }
+
+	for _, c := range []struct {
+		name    string
+		bi      *debug.BuildInfo
+		wantRev string
+		wantMod bool
+	}{
+		{"clean revision", build(rev("b24a0605c2a1e9f0d3c4"), mod("false")), "b24a0605c2a1e9f0d3c4", false},
+		{"modified revision", build(rev("b24a0605c2a1e9f0d3c4"), mod("true")), "b24a0605c2a1e9f0d3c4", true},
+		{"longer than the display length", build(rev("b24a0605c2a1e9f0d3c4b5a6978869d3d1e2f3a4")), "b24a0605c2a1e9f0d3c4b5a6978869d3d1e2f3a4", false},
+		{"shorter than the display length", build(rev("b24a06")), "b24a06", false},
+		{"no vcs settings", build(), "", false},
+		{"other settings only", build(debug.BuildSetting{Key: "GOARCH", Value: "arm64"}), "", false},
+		{"no build info", nil, "", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			gotRev, gotMod := Revision(c.bi)
+			if gotRev != c.wantRev || gotMod != c.wantMod {
+				t.Errorf("Revision() = %q, %v; want %q, %v", gotRev, gotMod, c.wantRev, c.wantMod)
+			}
+		})
+	}
+}

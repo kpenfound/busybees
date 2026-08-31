@@ -197,6 +197,31 @@ func TestSchedulerLine(t *testing.T) {
 		{name: "never run", st: state.Status{}, want: "scheduler: never run"},
 		{name: "running, no budget", st: running, want: "scheduler: pid 42, last poll 1m30s ago"},
 		{
+			// A status.json that records the build the running scheduler
+			// was started from names it, because the role prompts are
+			// compiled in and a merged prompt change reaches no session
+			// until bees is rebuilt and `bees run` restarted (#296).
+			name: "running a recorded build",
+			st: state.Status{UpdatedAt: now, PID: 42, LastPoll: now.Add(-90 * time.Second),
+				Version: "dev (abc123def456 modified)", Revision: "abc123def456789"},
+			want: "scheduler: pid 42, last poll 1m30s ago   build dev (abc123def456 modified)",
+		},
+		{
+			// The build comes after anything that has stopped the factory:
+			// it is attribution, not something to act on.
+			name: "a recorded build under a pause",
+			st: state.Status{UpdatedAt: now, PID: 42, LastPoll: now, BudgetPaused: true,
+				DaySpendUSD: 101.2, DayBudgetUSD: 100, Version: "v0.2.0"},
+			want: "scheduler: pid 42, last poll 0s ago   paused: daily budget ($101.20 / $100.00)   build v0.2.0",
+		},
+		{
+			// A revision with no version is not a build anyone resolved:
+			// only Version turns the segment on.
+			name: "a revision without a version",
+			st:   state.Status{UpdatedAt: now, PID: 42, LastPoll: now.Add(-90 * time.Second), Revision: "abc123def456789"},
+			want: "scheduler: pid 42, last poll 1m30s ago",
+		},
+		{
 			name: "running under a budget",
 			st:   state.Status{UpdatedAt: now, PID: 42, LastPoll: now, DaySpendUSD: 42.1, DayBudgetUSD: 100},
 			want: "scheduler: pid 42, last poll 0s ago   daily budget: $42.10 / $100.00",
@@ -269,5 +294,39 @@ func TestWorkersTextMarksAResumedWorker(t *testing.T) {
 	// Everything the line said before is still on it, in the same columns.
 	if !strings.HasPrefix(lines[1], "  dev-2        issue #9     s   reviewer          round 2              since ") {
 		t.Errorf("the columns moved: %q", lines[1])
+	}
+}
+
+// `bees status --json` needed no new key for the running build: the two
+// fields ride along inside the marshalled `status` object, which is the whole
+// state.Status. The test marshals `statusJSON`, the object the command itself
+// prints, so a second, top-level copy of the version added there later fails
+// here rather than quietly giving a consumer two places to read it from.
+func TestStatusJSONCarriesTheBuildInsideStatus(t *testing.T) {
+	st := state.Status{Version: "dev (abc123def456 modified)", Revision: "abc123def456789"}
+	raw, err := json.Marshal(statusJSON(&config.Config{}, st, map[string]int{}, costGroup{}, nil, time.Now()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Status map[string]any `json:"status"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Status["version"] != st.Version {
+		t.Errorf("status.version: got %v want %q", got.Status["version"], st.Version)
+	}
+	if got.Status["revision"] != st.Revision {
+		t.Errorf("status.revision: got %v want %q", got.Status["revision"], st.Revision)
+	}
+	var top map[string]any
+	if err := json.Unmarshal(raw, &top); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"version", "revision", "build"} {
+		if _, ok := top[key]; ok {
+			t.Errorf("--json grew a top-level %q key; the build belongs inside status", key)
+		}
 	}
 }

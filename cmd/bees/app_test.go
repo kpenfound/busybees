@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"testing"
 
@@ -72,5 +73,43 @@ func TestLoadConfigAppliesTheLoggingTable(t *testing.T) {
 	}
 	if !strings.HasPrefix(out, "{") {
 		t.Errorf("logging.format ignored: %q", out)
+	}
+}
+
+// The build handed to the scheduler is the one `bees version` prints, plus
+// the untruncated revision behind it: the version is for a person to read and
+// the revision is what #297 compares against the repository, so the two must
+// not collapse into one. Built from a hand-made *debug.BuildInfo — under
+// `go test` the real one describes the test binary, not bees.
+func TestSchedulerBuild(t *testing.T) {
+	build := func(main string, settings ...debug.BuildSetting) *debug.BuildInfo {
+		return &debug.BuildInfo{Main: debug.Module{Version: main}, Settings: settings}
+	}
+	rev := func(v string) debug.BuildSetting { return debug.BuildSetting{Key: "vcs.revision", Value: v} }
+	mod := func(v string) debug.BuildSetting { return debug.BuildSetting{Key: "vcs.modified", Value: v} }
+	const sha = "b24a0605c2a1e9f0d3c4b5a6978869d3d1e2f3a4"
+
+	for _, c := range []struct {
+		name         string
+		override     string
+		bi           *debug.BuildInfo
+		wantVersion  string
+		wantRevision string
+	}{
+		{"release build", "v0.2.0", build("(devel)", rev(sha), mod("false")), "v0.2.0", sha},
+		{"local build of a dirty tree", "dev", build("(devel)", rev(sha), mod("true")), "dev (b24a0605c2a1 modified)", sha},
+		{"local build of a clean tree", "dev", build("(devel)", rev(sha), mod("false")), "dev (b24a0605c2a1)", sha},
+		{"no vcs stamps", "dev", build("(devel)"), "dev", ""},
+		{"no build info at all", "dev", nil, "dev", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			gotVersion, gotRevision := schedulerBuild(c.override, c.bi)
+			if gotVersion != c.wantVersion {
+				t.Errorf("version: got %q want %q", gotVersion, c.wantVersion)
+			}
+			if gotRevision != c.wantRevision {
+				t.Errorf("revision: got %q want %q", gotRevision, c.wantRevision)
+			}
+		})
 	}
 }

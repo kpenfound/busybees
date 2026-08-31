@@ -503,3 +503,54 @@ func TestSetOpenChildrenKeepsARememberedSet(t *testing.T) {
 		t.Errorf("a changed set did not re-arm the trigger: %v %v", got.OpenChildren, got.CompleteReportedAt)
 	}
 }
+
+// The build the scheduler is running as survives a status.json round trip:
+// #297 compares the revision against the repository, so it is recorded raw
+// rather than as the 12-character form Version shows.
+func TestStatusCarriesTheRunningBuild(t *testing.T) {
+	s := New(t.TempDir())
+	want := Status{
+		Version:  "dev (b24a0605c2a1 modified)",
+		Revision: "b24a0605c2a1e9f0d3c4b5a6978869d3d1e2f3a4",
+	}
+	if err := s.SaveStatus(want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.LoadStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Version != want.Version {
+		t.Errorf("version: got %q want %q", got.Version, want.Version)
+	}
+	if got.Revision != want.Revision {
+		t.Errorf("revision: got %q want %q", got.Revision, want.Revision)
+	}
+}
+
+// A scheduler given no build records none: the two keys are absent from the
+// file, so a status.json written by a bees that does not resolve them reads
+// exactly like one written before the fields existed.
+func TestStatusOmitsAnAbsentBuild(t *testing.T) {
+	dir := t.TempDir()
+	s := New(dir)
+	if err := s.SaveStatus(Status{}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "status.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{`"version"`, `"revision"`} {
+		if strings.Contains(string(raw), key) {
+			t.Errorf("status.json carries %s with no build recorded:\n%s", key, raw)
+		}
+	}
+	got, err := s.LoadStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Version != "" || got.Revision != "" {
+		t.Errorf("got %q / %q, want both empty", got.Version, got.Revision)
+	}
+}

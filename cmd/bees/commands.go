@@ -488,10 +488,7 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 			today := todayTotal(store, now)
 			rows := roleRows(store, st)
 			if asJSON {
-				return json.NewEncoder(os.Stdout).Encode(map[string]any{
-					"status": st, "unread_mail": counts, "today": today, "notes_bytes": notesBytes(rows),
-					"work_hours": workHoursJSON(cfg.Scheduler, now), "acting_as": cfg.GitHub.Login,
-				})
+				return json.NewEncoder(os.Stdout).Encode(statusJSON(cfg, st, counts, today, rows, now))
 			}
 			fmt.Printf("repo: %s   state: %s%s\n", cfg.Project.Repo, cfg.StateDir(), actingAs(cfg))
 			fmt.Println(schedulerLine(st, now))
@@ -581,6 +578,16 @@ type roleRow struct {
 	State   string    // "running"/"idle"; "-" for the pooled roles
 	LastRun time.Time // zero when the role has never run
 	Notes   int64     // size of notes/<role>.md in bytes
+}
+
+// statusJSON is the object `bees status --json` prints. It is a function so a
+// test can assert what that object carries: the build the scheduler is running
+// rides along inside `status`, and must not gain a second, top-level copy.
+func statusJSON(cfg *config.Config, st state.Status, counts map[string]int, today costGroup, rows []roleRow, now time.Time) map[string]any {
+	return map[string]any{
+		"status": st, "unread_mail": counts, "today": today, "notes_bytes": notesBytes(rows),
+		"work_hours": workHoursJSON(cfg.Scheduler, now), "acting_as": cfg.GitHub.Login,
+	}
 }
 
 // roleRows collects a row for every role. Notes sizes are read from the files
