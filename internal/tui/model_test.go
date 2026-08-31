@@ -541,10 +541,11 @@ func TestTheSelectionMovesThroughEveryPanelAndStaysInside(t *testing.T) {
 	}
 }
 
-// share gives every list a row whatever happens — an empty panel says it is
-// empty and a squeezed one still says something — and hands the rest to the
-// lists furthest from what they want, so a long list cannot starve a short
-// one.
+// share gives a row to every list that has something in it — a list with
+// nothing says so in a line of its own, and takes no rows for it — and hands
+// what is left round the lists a row at a time, so a long list cannot starve
+// a short one. Layout makes room for the floor rows before it calls share;
+// asking for less than that is what makes a panel go entirely.
 func TestShareGivesEveryListARowAndSpreadsTheRest(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -552,8 +553,9 @@ func TestShareGivesEveryListARowAndSpreadsTheRest(t *testing.T) {
 		avail int
 		got   []int
 	}{
-		{"everything fits", []int{2, 1, 0, 3}, 20, []int{2, 1, 1, 3}},
-		{"nothing fits", []int{4, 4, 4, 4}, 0, []int{1, 1, 1, 1}},
+		{"everything fits", []int{2, 1, 0, 3}, 20, []int{2, 1, 0, 3}},
+		{"an empty list takes no rows", []int{0, 0, 0, 0}, 6, []int{0, 0, 0, 0}},
+		{"nothing fits", []int{4, 4, 4, 4}, 0, []int{0, 0, 0, 0}},
 		{"a long list does not starve a short one", []int{20, 1, 1, 2}, 8, []int{4, 1, 1, 2}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -585,5 +587,120 @@ func TestAListTooLongForItsPanelAccountsForTheRest(t *testing.T) {
 	}
 	if got := strings.Join(listRows(2, 3, row), "|"); got != "row0|row1" {
 		t.Errorf("listRows(2, 3) = %q, want both entries and no accounting line", got)
+	}
+}
+
+// The view never draws more lines than the terminal has. Bubble Tea keeps
+// the LAST height lines of an over-long view, so one line too many costs the
+// header and one panel too many costs the Now panel: the person watching
+// loses what is running, which is the thing they are watching for.
+func TestTheViewFitsTheTerminalItIsDrawnIn(t *testing.T) {
+	busy := []tea.Msg{
+		started("developer-issue-1-r1", config.RoleDeveloper, 1, 2, fixed, "opus", false),
+		eventMsg(scheduler.Event{Kind: scheduler.EventSessionEnded, Time: fixed, Session: "x",
+			Role: config.RoleReviewer, Issue: 3, Outcome: "approved"}),
+		statusMsg{status: state.Status{
+			NeedsHuman: []state.Escalated{{Issue: 7, Title: "t", Since: fixed.Add(-time.Hour)}},
+			Approved:   []state.ApprovedPR{{PR: 9, Issue: 8, Title: "t", Since: fixed.Add(-time.Hour)}},
+		}},
+	}
+	// A list with more entries than rows spends one of its rows saying how
+	// many did not fit, which has to come out of the budget rather than on
+	// top of it: four panels each one line over is the header and the Now
+	// panel gone.
+	crowded := []tea.Msg{}
+	for i := range 4 {
+		crowded = append(crowded, started(
+			fmt.Sprintf("developer-issue-%d-r1", 10+i), config.RoleDeveloper, 10+i, 20+i, fixed, "opus", false))
+		crowded = append(crowded, eventMsg(scheduler.Event{Kind: scheduler.EventSessionEnded, Time: fixed,
+			Session: fmt.Sprintf("s%d", i), Role: config.RoleReviewer, Issue: 30 + i, Outcome: "approved"}))
+	}
+	st := state.Status{}
+	for i := range 4 {
+		st.NeedsHuman = append(st.NeedsHuman, state.Escalated{Issue: 70 + i, Title: "t", Since: fixed.Add(-time.Hour)})
+		st.Approved = append(st.Approved, state.ApprovedPR{PR: 90 + i, Issue: 80 + i, Title: "t", Since: fixed.Add(-time.Hour)})
+	}
+	crowded = append(crowded, statusMsg{status: st})
+
+	for _, tc := range []struct {
+		name string
+		msgs []tea.Msg
+	}{
+		{"an idle factory", nil},
+		{"something in every panel", busy},
+		{"more in every panel than fits", crowded},
+	} {
+		for _, h := range []int{20, 24, 30, 40} {
+			view := drive(t, Deps{Repo: "acme/widgets"},
+				append([]tea.Msg{tea.WindowSizeMsg{Width: 100, Height: h}}, tc.msgs...)...)
+			if got := strings.Count(view, "\n") + 1; got > h {
+				t.Errorf("%s in a %d-row terminal draws %d lines: the top %d are cut off, header first",
+					tc.name, h, got, got-h)
+			}
+		}
+	}
+}
+
+// The header, the Now panel, the Queues panel and the footer are the last
+// things a short terminal loses: the lists below Now go from the bottom, and
+// Queues goes on counting what they would have listed.
+func TestAShortTerminalDropsTheListsFromTheBottom(t *testing.T) {
+	for _, tc := range []struct {
+		height int
+		gone   []string
+	}{
+		{40, nil},
+		{24, []string{"Approved PRs"}},
+		{20, []string{"Approved PRs", "Needs human"}},
+	} {
+		view := drive(t, Deps{Repo: "acme/widgets"}, tea.WindowSizeMsg{Width: 100, Height: tc.height})
+		for _, want := range []string{"busybees", "Now", "Queues", "needs-human     0", "q or ctrl-c"} {
+			if !strings.Contains(view, want) {
+				t.Errorf("a %d-row terminal lost %q, which it should keep last of all:\n%s", tc.height, want, view)
+			}
+		}
+		for _, gone := range tc.gone {
+			if strings.Contains(view, gone) {
+				t.Errorf("a %d-row terminal still draws the %s panel:\n%s", tc.height, gone, view)
+			}
+		}
+	}
+}
+
+// The selection is always on a row that is drawn. A list squeezed by a short
+// terminal draws its first rows and accounts for the rest, but the cursor
+// walks every entry, so ↓ past the last drawn row leaves nothing marked:
+// the key looks dead and k then names a session that is not on screen.
+func TestTheSelectionIsAlwaysOnARowThatIsDrawn(t *testing.T) {
+	msgs := []tea.Msg{tea.WindowSizeMsg{Width: 100, Height: 40}}
+	for i := range 3 {
+		msgs = append(msgs, started(
+			"developer-issue-"+string(rune('1'+i))+"-r1", config.RoleDeveloper, 10+i, 30+i, fixed, "opus", false))
+	}
+	for i := range 8 {
+		msgs = append(msgs, eventMsg(scheduler.Event{
+			Kind: scheduler.EventSessionEnded, Time: fixed, Session: "s" + string(rune('a'+i)),
+			Role: config.RoleReviewer, Issue: 50 + i, Outcome: "approved", Note: "fine"}))
+	}
+	st := state.Status{}
+	for i := range 3 {
+		st.NeedsHuman = append(st.NeedsHuman, state.Escalated{Issue: 70 + i, Title: "t", Reason: "why", Since: fixed.Add(-time.Hour)})
+		st.Approved = append(st.Approved, state.ApprovedPR{PR: 90 + i, Issue: 80 + i, Title: "t", Since: fixed.Add(-time.Hour)})
+	}
+	msgs = append(msgs, statusMsg{status: st})
+
+	// And in a terminal short enough that whole panels are dropped: their
+	// entries are not on screen at all, so they are not rows to select.
+	for _, h := range []int{40, 24, 20} {
+		var view tea.Model = New(Deps{Repo: "acme/widgets", Now: func() time.Time { return fixed }})
+		for _, msg := range append([]tea.Msg{tea.WindowSizeMsg{Width: 100, Height: h}}, msgs[1:]...) {
+			view, _ = view.Update(msg)
+		}
+		for n := 1; n < 17; n++ {
+			view, _ = view.Update(tea.KeyMsg{Type: tea.KeyDown})
+			if got := plain(view.View()); !strings.Contains(got, "▸ ") {
+				t.Fatalf("%d rows down in a %d-row terminal, nothing on screen is marked as selected:\n%s", n, h, got)
+			}
+		}
 	}
 }

@@ -93,6 +93,7 @@ type stage struct {
 
 // Model is the Bubble Tea model behind `bees run`'s view: five panels fed by
 // the scheduler's event stream and by status.json, and the keys over them.
+// A terminal too short for all five draws fewer (see layout).
 //
 // Update and View are ordinary functions of the model and its messages —
 // no terminal, no goroutines, no clock of their own — which is how the whole
@@ -118,8 +119,8 @@ type Model struct {
 	statusErr string
 
 	// width and height are the terminal's, from the last WindowSizeMsg. The
-	// height is what the four lists share out between them (see share), so
-	// the whole view fits whatever it is drawn in.
+	// height is what the panels are fitted into (see layout), so the view is
+	// never taller than the terminal it is drawn in.
 	width  int
 	height int
 	ticks  int
@@ -378,18 +379,24 @@ type target struct {
 // running sessions, then what has just finished, then what the factory is
 // waiting for a person over, then what is waiting to be merged. One flat
 // list is what makes a single cursor and two keys enough.
+//
+// It enumerates only the rows that are *drawn*: a list squeezed by a short
+// terminal shows its first entries and accounts for the rest, and a panel
+// that did not fit at all shows none. Walking entries that are not on screen
+// would leave ↓ marking nothing and k naming a session a person cannot see.
 func (m Model) targets() []target {
+	l, want := m.layout(), m.want()
 	var out []target
-	for _, s := range m.sessions {
+	for _, s := range m.sessions[:l.entries(0, want[0])] {
 		out = append(out, target{session: s.name, issue: s.issue, pr: s.pr})
 	}
-	for _, f := range m.recent {
+	for _, f := range m.recent[:l.entries(1, want[1])] {
 		out = append(out, target{issue: f.issue, pr: f.pr})
 	}
-	for _, e := range m.status.NeedsHuman {
+	for _, e := range m.status.NeedsHuman[:l.entries(2, want[2])] {
 		out = append(out, target{issue: e.Issue})
 	}
-	for _, a := range m.status.Approved {
+	for _, a := range m.status.Approved[:l.entries(3, want[3])] {
 		out = append(out, target{issue: a.Issue, pr: a.PR})
 	}
 	return out
@@ -479,46 +486,92 @@ var (
 	panelStyle  = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
 )
 
-func (m Model) View() string {
-	w := m.width
-	if w <= 0 {
-		w = defaultWidth
+// panelTitles are the four list panels, in the order View draws them and
+// the order the cursor walks their rows.
+var panelTitles = []string{"Now", "Recent", "Needs human", "Approved PRs"}
+
+// layout is how the view divides up the terminal it is drawn in. View and
+// targets both read it, so the cursor can only ever be on a row that is on
+// screen, and the rendered view is never taller than the terminal — Bubble
+// Tea keeps the *last* height lines of an over-long view, so one line too
+// many costs the header and one panel too many costs the Now panel, which is
+// the thing a person watching `bees run` is watching for.
+type layout struct {
+	width  int    // the terminal's columns
+	inner  int    // the columns of text inside a panel
+	rows   []int  // the lines each list panel has for its entries
+	drawn  int    // how many of the four list panels are drawn, from the top
+	queues string // the Queues panel, rendered to measure it
+}
+
+// entries is how many of list i the layout draws. A panel that did not fit
+// was never given rows, so this is 0 for it — layout shares rows out only
+// between the panels it draws, and every drawn list with anything in it
+// keeps one.
+func (l layout) entries(i, n int) int { return shown(n, l.rows[i]) }
+
+// want is how many entries each list panel has, in panel order.
+func (m Model) want() []int {
+	return []int{len(m.sessions), len(m.recent), len(m.status.NeedsHuman), len(m.status.Approved)}
+}
+
+// layout fits the view into the terminal. The header, the Now panel, the
+// Queues panel and the footer are what `bees run` is watched for, so they are
+// the last things to go: a terminal too short for everything loses the list
+// panels from the bottom — Approved PRs first, then Needs human, then Recent
+// — and the Queues panel goes on counting what they would have listed. What
+// room is left is shared out between the lists that are drawn.
+func (m Model) layout() layout {
+	l := layout{width: m.width}
+	if l.width <= 0 {
+		l.width = defaultWidth
 	}
 	// A panel's border takes two columns and its padding two more, so the
 	// text inside one is four columns narrower than the terminal.
-	inner := w - 4
-	if inner < 20 {
-		inner = 20
+	if l.inner = l.width - 4; l.inner < 20 {
+		l.inner = 20
 	}
 	h := m.height
 	if h <= 0 {
 		h = defaultHeight
 	}
-	// Queues is as tall as its own contents; the four lists divide what is
-	// left of the terminal between them, so the whole view fits in it.
-	queues := panel("Queues", m.queuesPanel(inner), inner)
-	want := []int{len(m.sessions), len(m.recent), len(m.status.NeedsHuman), len(m.status.Approved)}
-	// The header, the footer, the Queues panel, and each list panel's two
-	// border lines and title — plus, for a list with anything in it, its
-	// column header.
-	avail := h - 2 - strings.Count(queues, "\n") - 1 - 3*len(want)
-	for _, n := range want {
-		if n > 0 {
-			avail--
+	l.queues = panel("Queues", m.queuesPanel(l.inner), l.inner)
+	want := m.want()
+	l.rows = make([]int, len(want))
+	// The header, the footer and the Queues panel are always drawn. A list
+	// panel spends three lines on its border and its title and a fourth on
+	// its column header — or, when it has nothing in it, on saying so.
+	fixed := 2 + strings.Count(l.queues, "\n") + 1
+	for l.drawn = len(want); l.drawn > 0; l.drawn-- {
+		avail, floor := h-fixed-4*l.drawn, 0
+		for _, n := range want[:l.drawn] {
+			if n > 0 {
+				floor++
+			}
+		}
+		if avail >= 0 && avail >= floor {
+			copy(l.rows, share(want[:l.drawn], avail))
+			break
 		}
 	}
-	rows := share(want, avail)
-	// Where each panel's rows start in the one flat list the cursor moves
-	// through (see targets), so every panel marks the right row.
-	at := []int{0, want[0], want[0] + want[1], want[0] + want[1] + want[2]}
+	return l
+}
+
+func (m Model) View() string {
+	l := m.layout()
+	want := m.want()
+	body := []func(w, rows, from int) string{m.nowPanel, m.recentPanel, m.needsHumanPanel, m.approvedPanel}
 
 	var b strings.Builder
-	b.WriteString(m.header(w) + "\n")
-	b.WriteString(panel("Now", m.nowPanel(inner, rows[0], at[0]), inner) + "\n")
-	b.WriteString(panel("Recent", m.recentPanel(inner, rows[1], at[1]), inner) + "\n")
-	b.WriteString(panel("Needs human", m.needsHumanPanel(inner, rows[2], at[2]), inner) + "\n")
-	b.WriteString(panel("Approved PRs", m.approvedPanel(inner, rows[3], at[3]), inner) + "\n")
-	b.WriteString(queues + "\n")
+	b.WriteString(m.header(l.width) + "\n")
+	// Where each panel's rows start in the one flat list the cursor moves
+	// through (see targets), so every panel marks the right row.
+	at := 0
+	for i := range l.drawn {
+		b.WriteString(panel(panelTitles[i], body[i](l.inner, l.rows[i], at), l.inner) + "\n")
+		at += l.entries(i, want[i])
+	}
+	b.WriteString(l.queues + "\n")
 	b.WriteString(hintStyle.Render(m.footer()))
 	return b.String()
 }

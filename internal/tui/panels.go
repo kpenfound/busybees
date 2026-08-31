@@ -130,27 +130,40 @@ func mark(cursor, row int) string {
 	return "  "
 }
 
-// listRows draws a list of n entries in the rows it has been given: row(i)
-// per entry, and a last row accounting for the ones that did not fit, so
-// what is on screen and what is not always add up.
+// shown is how many of a list's n entries are drawn in the rows it has been
+// given. It is the one answer both listRows and targets read, so the cursor
+// can only ever be on a row that is on screen.
 //
-// With a single row to draw in there is no room for that accounting, and
+// A list longer than its rows spends one of them accounting for the entries
+// that did not fit. With a single row there is no space for that line and
 // the row goes to an entry instead: one of the pull requests waiting to be
 // merged says more than the news that some are, and the Queues panel counts
 // them either way.
-func listRows(n, rows int, row func(i int) string) []string {
-	show, note := n, false
-	if n > rows {
-		show, note = rows, false
-		if rows > 1 {
-			show, note = rows-1, true
-		}
+func shown(n, rows int) int {
+	switch {
+	case rows <= 0:
+		return 0
+	case n <= rows:
+		return n
+	case rows == 1:
+		return 1
+	default:
+		return rows - 1
 	}
+}
+
+// listRows draws a list of n entries in the rows it has been given: row(i)
+// per drawn entry, and a last row accounting for the ones that did not fit,
+// so what is on screen and what is not always add up. It draws exactly rows
+// lines whenever the list has that many entries, which is what lets the
+// layout add its panels up (see Model.layout).
+func listRows(n, rows int, row func(i int) string) []string {
+	show := shown(n, rows)
 	out := make([]string, 0, show+1)
 	for i := range show {
 		out = append(out, row(i))
 	}
-	if note {
+	if show < n && rows > 1 {
 		out = append(out, hintStyle.Render(fmt.Sprintf("  … %d more", n-show)))
 	}
 	return out
@@ -176,24 +189,27 @@ func age(t, now time.Time) string {
 }
 
 // share divides avail rows between the lists, each of which wants as many
-// rows as it has entries. Every list keeps a row whatever happens — an empty
-// panel says it is empty, and a panel squeezed to nothing says nothing at
-// all — and what is left over is dealt out a row at a time to whoever still
+// rows as it has entries. A list with nothing in it takes no rows — its
+// panel says it is empty in a line of its own — and every list that has
+// something keeps one row, which Model.layout makes room for before it calls
+// share. What is left over is dealt out a row at a time to whoever still
 // wants one, so a list of twenty cannot starve a list of two.
 func share(want []int, avail int) []int {
 	got := make([]int, len(want))
-	for i := range got {
-		got[i] = 1
+	for i := range want {
+		if want[i] > 0 && avail > 0 {
+			got[i], avail = 1, avail-1
+		}
 	}
-	for left := avail - len(want); left > 0; {
+	for avail > 0 {
 		dealt := false
 		for i := range want {
-			if left == 0 {
+			if avail == 0 {
 				break
 			}
-			if got[i] < want[i] {
+			if got[i] > 0 && got[i] < want[i] {
 				got[i]++
-				left--
+				avail--
 				dealt = true
 			}
 		}
