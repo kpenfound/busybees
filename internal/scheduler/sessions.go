@@ -126,6 +126,7 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 	}
 	start := sessionEvent(EventSessionStarted, spec)
 	start.Model, start.Fallback = role.Model, fallback
+	start.Dir = sessionDir
 	s.publish(start)
 	res, err := s.runner.Run(ctx, session.Request{
 		Name:         spec.name,

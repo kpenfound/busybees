@@ -41,6 +41,12 @@ type Event struct {
 	// Session is the session name (the directory under sessions/), empty
 	// for stage and poll events.
 	Session string
+	// Dir is the session's own directory, where its transcript.jsonl is
+	// written. It is set on session-started only — that is where a view
+	// learns which directory to follow, and the name alone cannot say:
+	// NewSessionDir stamps a timestamp on the front and a random suffix on
+	// the end of it.
+	Dir string
 	// Issue and PR are what the event is about; zero when it is about
 	// neither (a singleton session, a poll).
 	Issue int
