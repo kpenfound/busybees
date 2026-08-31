@@ -206,6 +206,17 @@ func (b *backend) Rules(ctx context.Context) (github.Query, config.Labels, error
 	return q, b.labels, nil
 }
 
+// ActsAs returns the GitHub login the factory acts as, which is what
+// [github].login configures and what githubClient already gave the client.
+// It is configuration, not a question for GitHub — Client.Login is the one
+// that asks.
+func (b *backend) ActsAs(ctx context.Context) (string, error) {
+	if err := b.load(ctx); err != nil {
+		return "", err
+	}
+	return b.gh.ActsAs, nil
+}
+
 func (b *backend) Issue(ctx context.Context, number int) (github.Issue, error) {
 	if err := b.load(ctx); err != nil {
 		return github.Issue{}, err

@@ -15,8 +15,9 @@ const timeFormat = "2006-01-02 15:04"
 // issueText renders an issue the way a role needs to read it: what the
 // factory thinks it is (labels, milestone, the feature it belongs to), the
 // body, then the whole conversation oldest first with every comment marked
-// as a bee's or a person's.
-func issueText(i github.Issue, parent *github.Parent, l config.Labels) string {
+// as a bee's or a person's. actsAs is the login the factory acts as, which
+// author needs; see there.
+func issueText(i github.Issue, parent *github.Parent, l config.Labels, actsAs string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "#%d %s\n", i.Number, i.Title)
 	if meta := issueMeta(i, l); meta != "" {
@@ -36,7 +37,8 @@ func issueText(i github.Issue, parent *github.Parent, l config.Labels) string {
 	fmt.Fprintf(&b, "\ncomments (%d):\n", len(i.Comments))
 	for _, c := range i.Comments {
 		fmt.Fprintf(&b, "\n%s (%s) · %s\n%s\n",
-			c.Author.Login, author(c.Body), c.CreatedAt.UTC().Format(timeFormat), strings.TrimRight(c.Body, "\n"))
+			c.Author.Login, author(actsAs, c.Author.Login, c.Body), c.CreatedAt.UTC().Format(timeFormat),
+			strings.TrimRight(c.Body, "\n"))
 	}
 	return b.String()
 }
@@ -68,24 +70,28 @@ func issueMeta(i github.Issue, l config.Labels) string {
 // short drops the factory's label prefix ("bees:ready" -> "ready").
 func short(label string, l config.Labels) string { return strings.TrimPrefix(label, l.Base+":") }
 
-// author says who wrote a comment: the bees role whose marker it carries, or
-// a person. github.BeeRole reads the marker, so a marker quoted mid-body is
-// context and only a body whose last line is a marker — where withMarker
-// puts it — is a bee's.
+// author says who wrote a comment, by the same rule the orchestrator uses
+// (github.IsBee): the marker, and — where [github] gives the factory a login
+// of its own — the comment's author.
 //
-// The marker is all this reads. The orchestrator has a second signal, the
-// login [github] gives the factory (github.isBee), and every comment a role
-// writes carries a marker either way, so the two agree on everything a role
-// wrote; they part only over a comment the factory's account posted without
-// one — the orchestrator's escalation comment — which this renders as a
-// person's. The line above it names the comment's GitHub login, so a role
-// reading the issue can see whose it was.
-func author(body string) string {
-	role, ok := github.BeeRole(body)
-	if !ok {
-		return "human"
+// A comment carrying a role's marker is that role's. github.BeeRole reads the
+// marker positionally, so a marker quoted mid-body is context and only a body
+// whose last line is one — where withMarker puts it — counts. A comment the
+// factory's own login posted without a marker is a bee's with no role to
+// name: that is the orchestrator itself, whose escalation comment carries no
+// marker. Everything else is a person's, including a person quoting a marker,
+// because the login only ever says yes.
+//
+// actsAs is empty on every configuration without [github], and then this is
+// exactly the marker rule.
+func author(actsAs, commentAuthor, body string) string {
+	if role, ok := github.BeeRole(body); ok {
+		return "bee: " + role
 	}
-	return "bee: " + role
+	if github.IsBee(actsAs, commentAuthor, body) {
+		return "bee"
+	}
+	return "human"
 }
 
 // prText renders a pull request: what it is, whether its required checks are
