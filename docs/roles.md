@@ -53,8 +53,9 @@ every comment a role posts on GitHub must end with the line
 `<!-- bees:<role> -->` (invisible when rendered). The orchestrator uses it to
 tell bee comments from human ones when it collects PR feedback for the
 developer, and where the factory does have its own login it counts a comment
-by that login as a bee's too. The marker is required either way: a Claude
-session's own `gh` still posts under the human's account.
+by that login as a bee's too — sessions carry that login's token, so their
+own `gh` posts as it as well. The marker is required either way: with no
+`[github]` account it is the only signal there is.
 
 Roles interact with GitHub through MCP tools where there is one, and through
 the already-authenticated `gh` CLI for everything else; with each other, only
