@@ -1,7 +1,7 @@
 # busybees state (mail, notes, session transcripts)
 /.bees/
 # build output
-/bees
+/bin/
 /dist/
 # jekyll build output (docs/ is the GitHub Pages source)
 /docs/_site/
