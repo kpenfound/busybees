@@ -142,8 +142,10 @@ func TestPreReviewChecksReadOnceAcrossThreeRounds(t *testing.T) {
 }
 
 // TestPreReviewChecksOnAResumedWorker: a worker that finds an issue already in
-// review still reads the checks. The process has no memory across restarts, so
-// the reviewer it runs gets the same checks section a fresh worker would.
+// review, with nothing recorded about it, still reads the checks. The label
+// says the issue is in review, not that its review has happened, so the
+// reviewer it runs gets the same checks section a fresh worker would. A worker
+// that did record a read does not repeat it (resume_test.go).
 func TestPreReviewChecksOnAResumedWorker(t *testing.T) {
 	h := newHarness(t, prereviewTOML)
 	seedPreReviewIssue(t, h, "Restarted mid-review")

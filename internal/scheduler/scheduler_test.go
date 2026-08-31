@@ -684,6 +684,14 @@ func newHarnessAt(t *testing.T, toml string, now time.Time) *harness {
 	return &harness{t: t, cfg: cfg, gh: gh, store: store, box: box, sched: sched, clone: clone, logs: logs, clock: clock}
 }
 
+// stateOfIssue is the workflow state label the fake GitHub now carries for an
+// issue, which is what a restarted scheduler would read.
+func (h *harness) stateOfIssue(n int) string {
+	h.gh.mu.Lock()
+	defer h.gh.mu.Unlock()
+	return h.sched.stateOf(h.gh.issues[n].Labels)
+}
+
 func (h *harness) sessions(role string) []string {
 	entries, _ := os.ReadDir(h.store.SessionsDir())
 	var out []string

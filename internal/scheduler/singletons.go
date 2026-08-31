@@ -555,12 +555,22 @@ func (s *Scheduler) RunRole(ctx context.Context, role string, issue, pr int) err
 		if err != nil {
 			return err
 		}
-		if role == config.RoleReviewer && s.stateOf(i.Labels) != "review" {
-			// Force the worker into the review stage.
-			if err := s.setState(ctx, issue, s.labels.Review); err != nil {
-				return err
+		if role == config.RoleReviewer {
+			// Force the worker into the review stage. `bees exec reviewer` is
+			// an instruction, not a resumption, so the stage the last worker
+			// recorded is forgotten as well as the label rewritten: otherwise
+			// an issue whose worker stopped in develop or checks would resume
+			// there and run anything but a review.
+			if s.stateOf(i.Labels) != "review" {
+				if err := s.setState(ctx, issue, s.labels.Review); err != nil {
+					return err
+				}
+				i.Labels = relabel(i.Labels, s.stateOf(i.Labels), s.labels.Review)
 			}
-			i.Labels = relabel(i.Labels, s.stateOf(i.Labels), s.labels.Review)
+			if bk, err := s.store.Issue(issue); err == nil && bk.WorkerStage != "" {
+				bk.WorkerStage, bk.AfterDevelop, bk.PreReviewDone = "", "", false
+				_ = s.store.SaveIssue(bk)
+			}
 		}
 		w := &state.Worker{Name: "exec-" + role, Issue: issue, Size: s.sizeOf(i.Labels), Since: s.now()}
 		s.mu.Lock()
