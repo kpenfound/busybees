@@ -323,8 +323,9 @@ singleton starts or stops; `bees status` just reads it.
 **The event stream** (`events.go`) is the live half of the same picture, for
 a view running in the same process — a terminal UI, a log tail.
 `Scheduler.Subscribe` returns a buffered channel of `Event`s: a session
-started, a session ended (with its outcome and cost), a developer worker
-moved to another stage, a full pass finished. It is published *alongside*
+started (with the model it runs on, and whether that is the role's
+fallback), a session ended (with its outcome, turns and cost), a developer
+worker moved to another stage, a full pass finished. It is published *alongside*
 `writeStatus`, never instead of it: the event says something happened,
 `status.json` says what the factory now looks like. The poll event is
 published *after* the write, so a view that re-reads `status.json` when one
