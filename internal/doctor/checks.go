@@ -112,7 +112,7 @@ func (d *Deps) Checks() []Check {
 		// checkIssueWrites probes the base label, so it follows checkLabels,
 		// which is what says whether that label exists at all.
 		checks = append(checks, Check{Run: d.checkRepoAccess}, Check{Run: d.checkGitHubLogin},
-			Check{Run: d.checkLabels}, Check{Run: d.checkIssueWrites},
+			Check{Run: d.checkLabels}, Check{Run: d.checkIssueWrites}, Check{Run: d.checkPushes},
 			Check{Run: d.checkFilter, Fix: d.fixFilter}, Check{Run: d.checkAutoMerge})
 	}
 	if d.Workspaces != nil && d.Config.Project.DefaultBranch != "" {
@@ -752,6 +752,100 @@ func (d *Deps) checkIssueWrites(ctx context.Context) Result {
 	}
 	return warn(name, GroupGitHub,
 		fmt.Sprintf("could not check whether %s can write issues in %s: %s", login, repo, oneLine(err.Error())),
+		"re-run `bees doctor`; if it keeps failing, check that gh can reach GitHub with github.token")
+}
+
+// unprocessable matches GitHub's 422, which a ref update answers when it will
+// not make the change for a reason that is not permission - a protected
+// branch is the realistic one. A refusal the credentials could not have
+// avoided says nothing about the Contents grant, so it is a check that could
+// not run rather than one that failed.
+var unprocessable = regexp.MustCompile(`HTTP 422`)
+
+// checkPushes establishes that the account the factory acts as can write the
+// repository's git refs, which is what every developer session's `git push`
+// needs.
+//
+// checkRepoAccess is the only other check that speaks to pushing, and it
+// answers a different question: viewerPermission is a *repository role*, and
+// a fine-grained personal access token carries per-resource permissions on
+// top of that role. So a token granted Issues but not Contents reads the
+// repository as ADMIN, passes every other GitHub check bees has - including
+// `can write issues`, whose probe the Issues grant covers - and then fails
+// every push. That costs a session and an escalation per work item,
+// discovered mid-pass (#312).
+//
+// The probe is a no-op ref update: setting the default branch to the commit
+// it already points at, read first. Like the label probe it is a real write,
+// so GitHub's permission gate is what decides it, and git refs are exactly
+// what a fine-grained token's Contents permission governs - the same
+// permission `git push` is refused by. Measured against this repository, the
+// PATCH answers 200 with the ref unchanged: no commit, no push event, nothing
+// in the timeline, and nothing to clean up if doctor dies halfway.
+//
+// Two candidates were rejected. `GET repos/{repo}` reports a `permissions`
+// object, but it is the same repository-role answer viewerPermission gives,
+// and trusting a reported permission field is the inference this check exists
+// to stop making. Creating and deleting a probe branch is a real write too,
+// but it fires create and delete events and is visible in the branch list
+// while it exists.
+//
+// Pull requests are deliberately not probed: it is a separate fine-grained
+// permission, and every side-effect-free candidate perturbs something (a
+// no-op PATCH on an open pull request bumps its updated_at, which
+// scheduler.deliverHumanFeedback reads as "something happened here"). The
+// Contents refusal is the earlier failure anyway - a session that cannot push
+// never reaches `gh pr create` - so the remediation names both grants
+// together instead.
+func (d *Deps) checkPushes(ctx context.Context) Result {
+	const name = "can push branches"
+	if !d.Config.GitHub.Configured() {
+		return pass(name, GroupGitHub, "[github] is not configured: the factory pushes with the machine's own gh account")
+	}
+	repo, login := d.Config.Project.Repo, d.Config.GitHub.Login
+	branch := d.Config.Project.DefaultBranch
+	if branch == "" {
+		return warn(name, GroupGitHub, "could not check: project.default_branch is not set, so there is no ref to probe",
+			"set project.default_branch in bees.toml (the project repo check above says the same thing), then run `bees doctor` again")
+	}
+	ref := fmt.Sprintf("repos/%s/git/refs/heads/%s", repo, url.PathEscape(branch))
+	out, err := d.gh(ctx, "api", ref)
+	if err == nil {
+		var head struct {
+			Object struct {
+				SHA string `json:"sha"`
+			} `json:"object"`
+		}
+		if uerr := json.Unmarshal(out, &head); uerr != nil || head.Object.SHA == "" {
+			return warn(name, GroupGitHub,
+				fmt.Sprintf("could not check: GitHub reported no commit for %s in %s", branch, repo),
+				"check that `gh api "+ref+"` answers, then run `bees doctor` again")
+		}
+		// The no-op: point the ref at the commit it already points at.
+		_, err = d.gh(ctx, "api", "--method", "PATCH", ref, "-f", "sha="+head.Object.SHA)
+	}
+	switch {
+	case err == nil:
+		return pass(name, GroupGitHub, fmt.Sprintf("%s can update %s in %s", login, branch, repo))
+	case notAccessible.MatchString(err.Error()):
+		return fail(name, GroupGitHub,
+			fmt.Sprintf("%s cannot write branches in %s: %s", login, repo, oneLine(err.Error())),
+			"grant github.token write access to the repository's contents - on a fine-grained personal access token that is "+
+				"Contents -> Read and write, and Pull requests -> Read and write, which the session needs next; on a classic "+
+				"one the `repo` scope. Repository permission is not enough on its own: without this, every developer session's "+
+				"`git push` fails and the issue is escalated")
+	case noSuchResource.MatchString(err.Error()):
+		return warn(name, GroupGitHub,
+			fmt.Sprintf("could not check: %s has no %s branch to probe with", repo, branch),
+			"check that project.default_branch names a branch that exists in "+repo+", then run `bees doctor` again")
+	case unprocessable.MatchString(err.Error()):
+		return warn(name, GroupGitHub,
+			fmt.Sprintf("could not check: GitHub would not update %s in %s: %s", branch, repo, oneLine(err.Error())),
+			"a protected branch answers this way whatever the token may do, so it says nothing about the grant: check by hand "+
+				"that github.token has write access to the repository's contents")
+	}
+	return warn(name, GroupGitHub,
+		fmt.Sprintf("could not check whether %s can push branches in %s: %s", login, repo, oneLine(err.Error())),
 		"re-run `bees doctor`; if it keeps failing, check that gh can reach GitHub with github.token")
 }
 
