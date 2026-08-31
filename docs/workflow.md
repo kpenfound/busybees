@@ -40,7 +40,7 @@ block in `bees.toml`. All configured criteria must match:
 | Criterion | Key | Default | Meaning |
 |---|---|---|---|
 | Label | `filter.label` | `bees` | Item carries the label (when `require_label = true`) |
-| Assignee | `filter.assignee` | unset | Item is assigned to this GitHub login (`@me` = the `gh` user) |
+| Assignee | `filter.assignee` | unset | Item is assigned to this GitHub login (`@me` = your own `gh` login, never the [`[github]`](configuration.md#github) account) |
 | Milestone | `filter.milestone` | unset | Item belongs to this milestone |
 
 The criteria are ANDed, so adding one to a factory that is already running hides

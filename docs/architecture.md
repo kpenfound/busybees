@@ -540,17 +540,20 @@ Messages are addressed to a **role**, not a session. Delivery rules:
   `bees mail send --from human`. The scheduler's own requests — bring a PR
   up to date with the default branch — come from `orchestrator`.
 
-**Visibility backstop.** After every session (`runSession` in `sessions.go`) the
-scheduler calls `adoptCreated`: `github.Client.ListCreatedSince` lists issues
-and PRs matching `author:@me created:>=<session start>` regardless of labels,
-and anything carrying `<label>` or a `<label>:*` label but missing part of the
-filter is repaired through the same `ensureVisible` helper the developer worker
-uses on a PR it opened — the base label, the configured `filter.assignee`, and,
-for pull requests only, the configured `filter.milestone`. Both halves of the
-gate are needed: a pull request a session just opened carries only `<label>`,
-and earns its first `<label>:*` label at approval. Items with no factory
-label at all are left alone, and one item that cannot be repaired is logged
-and skipped rather than stopping the others.
+**Visibility backstop.** After every session (`runSession` in `sessions.go`)
+the scheduler calls `adoptCreated`: `github.Client.ListCreatedSince` lists
+issues and PRs matching `author:@me created:>=<session start>` regardless of
+labels (`gh` resolves `@me` against the credentials the client carries, so
+with [`[github]`](configuration.md#github) set this is the bot rather than the
+machine owner — see issue #263), and anything carrying `<label>` or a
+`<label>:*` label but missing part of the filter is repaired through the same
+`ensureVisible` helper the developer worker uses on a PR it opened — the base
+label, the configured `filter.assignee`, and, for pull requests only, the
+configured `filter.milestone`. Both halves of the gate are needed: a pull
+request a session just opened carries only `<label>`, and earns its first
+`<label>:*` label at approval. Items with no factory label at all are left
+alone, and one item that cannot be repaired is logged and skipped rather than
+stopping the others.
 
 A milestone is set on pull requests and never on issues: a milestone on an
 issue is a person's decision, and an issue the factory creates inherits one
