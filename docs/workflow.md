@@ -479,7 +479,9 @@ project manager.
 
 **Steering:** anything a human writes — in an issue, in a pull request, or in
 mail to a role — is treated as authoritative by every role and outranks their
-prompts, so commenting on an issue is the way to change direction. Labels are
+prompts, so commenting on an issue is the way to change direction: while the
+factory is working on it, your comment is delivered as mail
+(see [Commenting on the issue](#commenting-on-the-issue)). Labels are
 also yours to move: relabel to `bees:triage` to send an issue back for
 refinement, or remove the `bees` label to take it out of the factory entirely.
 
@@ -562,9 +564,11 @@ The visible effect on GitHub is the `bees:blocked` label:
   project manager continues.
 
 Answers are delivered with the issue, so it does not matter which developer
-worker ends up with it. If you want to answer a question yourself, do it in
-the issue (roles treat human comments as authoritative) and move the label back
-to `bees:ready` or `bees:triage`, or send mail:
+worker ends up with it. If you want to answer a question yourself, comment on
+the issue: while it carries `bees:blocked` your comment is delivered to
+whoever asked, and the orchestrator moves the label back to `bees:ready` or
+`bees:triage` for you (see [Commenting on the issue](#commenting-on-the-issue)).
+Moving the label yourself still works, and so does mail:
 
 ```
 bees mail send --from human --to developer --issue 12 --subject "Re: which DB" --body "Use SQLite."
@@ -647,7 +651,9 @@ empty approvals. Whatever is left is sent to the developer as one mail
 message from `human`, listing each item with its author, file and line,
 comment id, link and the exact `gh` command to reply to it. The timestamp of
 the last item delivered is recorded as `human_seen_at` in
-`<state_dir>/issues/<n>.json`.
+`<state_dir>/issues/<n>.json`; comments on the issue itself have a clock of
+their own next to it, `issue_human_seen_at`, so that reading one stream never
+suppresses the other.
 
 **How the orchestrator tells a bee comment from yours.** Two mechanisms, and
 either one on its own is enough to make a comment a bee's:
@@ -680,6 +686,47 @@ What happens next depends on the issue's state:
   mail is delivered to the next developer session for that PR.
 - **`bees:blocked`**: mail for the developer counts as an answer, so the issue
   becomes `bees:ready` on the same poll.
+
+### Commenting on the issue
+
+The same steering works on the **issue**, which is where a person is more
+likely to write when there is no pull request yet — or when the direction is
+about the work rather than about the diff. On every poll the orchestrator also
+looks at each issue it is working on, in the four in-flight states
+`bees:in-progress`, `bees:review`, `bees:approved` and `bees:blocked`, whose
+`updatedAt` moved since it last checked, and collects the issue's own comments
+written since then. Bee comments are dropped by the same two mechanisms above.
+Whatever is left is sent as one message from `human`, and who it reaches
+depends on the state:
+
+- **`bees:in-progress`, `bees:approved`**: the developer.
+- **`bees:review`**: the developer, and a copy to the reviewer, so the round
+  in flight takes your direction into account rather than ruling on the PR
+  without it.
+- **`bees:blocked`**: whoever is waiting for the answer. An issue blocked out
+  of a developer session — one that already has a branch or a pull request —
+  goes to the developer and becomes `bees:ready` on the same poll; one blocked
+  out of triage goes to the project manager and becomes `bees:triage`.
+
+The developer replies on the issue with its `comment` tool, and treats your
+comment the way it treats a comment on the pull request: as a direction that
+outranks the issue body and the reviewer.
+
+Unlike feedback on the pull request, a comment on an issue in `bees:approved`
+does **not** send it back to `bees:ready`: "looks good, merge it" is as likely
+a comment there as "change this", and the label is a person's cue to merge.
+The message waits for the developer's next session on that issue — the
+auto-merge checks stage, a comment on the PR, or your own relabel. Comment on
+the pull request instead if you want the work reopened.
+
+**The first time the orchestrator sees an issue in one of those states it
+delivers nothing**, and records the time instead — a fresh state directory, or
+the first poll after an upgrade, must not replay every comment an issue has
+ever received. Delivery starts from what is written after that. Nothing is
+lost: a developer session's prompt renders the issue's whole comment history
+anyway, so an older comment is context it already reads. What the mail adds is
+that the comment is fresh, that it is a person's, and that it reaches a
+reviewer or unblocks a blocked issue.
 
 You can also mail a developer directly, with or without a PR:
 

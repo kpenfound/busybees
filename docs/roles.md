@@ -342,13 +342,15 @@ Three judgements the prompt makes for it, rather than leaving to the session:
   run. That is the only ordering it controls; it never moves `bees:ready`
   issues back to `bees:triage` to make another one the oldest.
 
-**Mail:** receives developer questions; may send to `product_manager`
-(product decisions) and `developer` (answers, always with `issue`). Prompts
-tell it to answer mail first, since developers are blocked on it, and to give
-decisions rather than options. Mail from `human` is treated as a direction
-rather than a question: it is followed literally even where it contradicts the
-prompt, and work it holds back stays in `bees:triage` with the hold written
-into the body.
+**Mail:** receives developer questions, and a person's comments on an issue it
+blocked out of triage, delivered from `human` (see
+[Commenting on the issue](workflow.md#commenting-on-the-issue)); may send to
+`product_manager` (product decisions) and `developer` (answers, always with
+`issue`). Prompts tell it to answer mail first, since developers are blocked on
+it, and to give decisions rather than options. Mail from `human` is treated as
+a direction rather than a question: it is followed literally even where it
+contradicts the prompt, and work it holds back stays in `bees:triage` with the
+hold written into the body.
 
 **Outcomes:** `done`, `idle`, `failed`. The orchestrator marks its mail read
 and records the run. Answers it sent take effect on the pass its finished
@@ -367,7 +369,9 @@ feature (number and title) when it is a sub-issue, the existing PR if this is
 a later review round, unread mail addressed to the developer about
 this issue or PR (project manager answers, reviewer feedback, feedback
 from people who reviewed the PR on GitHub, delivered as mail from `human`
-with comment ids and the exact `gh` reply commands, and — from
+with comment ids and the exact `gh` reply commands, a person's comments on
+the **issue** while it is in flight, delivered from `human` too and answered
+on the issue with the `comment` tool, and — from
 `orchestrator` — a request to bring the branch up to date when the PR
 [conflicts with the default branch](workflow.md#conflicts-with-the-default-branch)),
 the round number and limit, its notes. It runs in a worktree on `bees/issue-N` (prefix
@@ -482,7 +486,9 @@ file/line and the expected change. It also *receives* mail addressed to
 `reviewer` — in practice from a human
 (`bees mail send --from human --to reviewer`) — about the issue or the pull
 request: it is delivered to the next reviewer session, in review mode and in
-checks mode alike, and marked read afterwards. Mail from `human` is a
+checks mode alike, and marked read afterwards. It also gets a copy of any
+comment a person writes on an issue while it is in `bees:review`, so the round
+in flight takes the direction into account. Mail from `human` is a
 direction it follows literally, even where its prompt says otherwise.
 
 **Outcomes and what the orchestrator does:**

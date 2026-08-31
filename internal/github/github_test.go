@@ -755,3 +755,61 @@ func TestListCreatedSinceCarriesNoAuthorQualifier(t *testing.T) {
 		})
 	}
 }
+
+// TestIssueActivity: an issue's own comments reach the factory under exactly
+// the rules a pull request's do — nothing older than since, nothing a bee
+// wrote (the marker, or the login the factory acts as), oldest first — and
+// nothing but the conversation comments: an issue has no reviews and no
+// inline comments, so IssueActivity must read one endpoint, not three.
+func TestIssueActivity(t *testing.T) {
+	const bot = "busybees-bot"
+	base := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	ts := func(m int) string { return base.Add(time.Duration(m) * time.Minute).Format(time.RFC3339) }
+	var paths []string
+	exec := func(ctx context.Context, args ...string) ([]byte, error) {
+		path := args[len(args)-1]
+		paths = append(paths, path)
+		return []byte(`[[{"id":1,"user":{"login":"kyle"},"body":"too old","created_at":"` + ts(-5) + `"},
+			{"id":2,"user":{"login":"kyle"},"body":"quoting you:\n> <!-- bees:developer -->\n\nhold off","created_at":"` + ts(3) + `"},
+			{"id":3,"user":{"login":"kyle"},"body":"on it\n\n<!-- bees:developer -->","created_at":"` + ts(4) + `"},
+			{"id":4,"user":{"login":"` + bot + `"},"body":"no marker here","created_at":"` + ts(5) + `"},
+			{"id":5,"user":{"login":"kyle"},"body":"and rename the flag","created_at":"` + ts(1) + `"}]]`), nil
+	}
+
+	acting := NewAs("a/b", bot, "")
+	acting.Exec = exec
+	got, err := acting.IssueActivity(context.Background(), 9, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, a := range got {
+		if a.Kind != "comment" {
+			t.Errorf("kind %q, want comment: an issue has only conversation comments", a.Kind)
+		}
+		ids = append(ids, strconv.FormatInt(a.ID, 10))
+	}
+	if want := "5,2"; strings.Join(ids, ",") != want {
+		t.Fatalf("with a login of its own: got %v, want %s (oldest first, no bee and nothing older than since)", ids, want)
+	}
+	if len(paths) != 1 || paths[0] != "repos/a/b/issues/9/comments" {
+		t.Fatalf("read %v, want only the issue's comment endpoint", paths)
+	}
+
+	// On a shared account the marker is the only signal, so the bot's
+	// marker-less comment is a person's.
+	shared := New("a/b")
+	shared.Exec = exec
+	paths = nil
+	got, err = shared.IssueActivity(context.Background(), 9, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids = nil
+	for _, a := range got {
+		ids = append(ids, strconv.FormatInt(a.ID, 10))
+	}
+	if want := "5,2,4"; strings.Join(ids, ",") != want {
+		t.Fatalf("on a shared account: got %v, want %s", ids, want)
+	}
+}

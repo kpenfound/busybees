@@ -755,6 +755,11 @@ func (s *Scheduler) pass(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// Issue comments are delivered before PR feedback: an approved issue
+	// that gets both goes back to ready in deliverHumanFeedback, out of
+	// every in-flight bucket, and the loop below reads those buckets.
+	err = s.deliverHumanIssueComments(ctx, snap)
+	s.op("human-issue-comments", err, "human issue comments", "err", err)
 	err = s.deliverHumanFeedback(ctx, snap)
 	s.op("human-feedback", err, "human feedback", "err", err)
 	err = s.checkPRs(ctx, snap)

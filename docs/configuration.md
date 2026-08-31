@@ -365,6 +365,7 @@ frugal:
 |---|---|---|
 | A poll | 2 calls (`gh issue list`, `gh pr list`) | every `poll_interval`, or every `off_hours_poll_interval` outside `work_hours` |
 | Human PR feedback | 3 calls per PR (reviews, review comments, comments) | only for PRs whose `updatedAt` moved since the last look |
+| Human issue comments | 1 call per issue | only for issues in `bees:in-progress`, `bees:review`, `bees:approved` or `bees:blocked` whose `updatedAt` moved since the last look; none on the first pass that sees an issue in one of those states |
 | Product-manager has-work check | 1 `issue view` per feedback/feature issue | only for issues whose `updatedAt` is newer than the PM's last run; the check for a feature whose sub-issues have all closed adds none — it compares the sub-issue numbers recorded on the last PM run with the issues the poll found open |
 | Product-manager run | 1 `issue view` per open feedback/feature issue, plus 1 REST call per open feature (sub-issue progress) and 1 GraphQL call per open work item (parent feature) | every PM run (not gated by `updatedAt`) |
 | Planning mode | 1 extra `issue view` per `bees:planned` issue the freshness check did not already fetch the comments of | every PM run, while an issue is agreed and not yet acted on |

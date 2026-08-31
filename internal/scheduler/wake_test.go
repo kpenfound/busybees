@@ -239,9 +239,10 @@ checks_wait = "2s"
 	}
 }
 
-// The two places the scheduler sends mail itself signal the wake, so the
-// developer session that answers a conflict notice or a person's review
-// comment starts on the pass that follows rather than at the next tick.
+// The three places the scheduler sends mail itself signal the wake, so the
+// session that answers a conflict notice, a person's review comment or a
+// person's comment on the issue starts on the pass that follows rather than
+// at the next tick.
 func TestTheSchedulersOwnMailSignalsTheWake(t *testing.T) {
 	ctx := context.Background()
 
@@ -277,6 +278,32 @@ func TestTheSchedulersOwnMailSignalsTheWake(t *testing.T) {
 		}
 		if got := len(h.sched.wake); got != 1 {
 			t.Fatalf("%d wakes pending after the feedback was delivered, want 1", got)
+		}
+	})
+
+	t.Run("issue comment", func(t *testing.T) {
+		now := time.Now()
+		h := newHarnessAt(t, devOnlyTOML, now)
+		h.gh.issues[1] = &github.Issue{Number: 1, Title: "Under way", State: "OPEN",
+			Labels:    []github.Label{{Name: "bees"}, {Name: "bees:in-progress"}, {Name: "bees:size/s"}},
+			CreatedAt: now.Add(-2 * time.Hour), UpdatedAt: now}
+		if err := h.store.SetIssueHumanSeenAt(1, now.Add(-time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		seedIssueComments(h, 1, issueComment(901, "kyle", "use the flag names the issue lists", now))
+
+		snap, err := h.sched.poll(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := h.sched.deliverHumanIssueComments(ctx, snap); err != nil {
+			t.Fatal(err)
+		}
+		if n := len(developerMail(t, h)); n != 1 {
+			t.Fatalf("%d messages in the developer's inbox, want the person's comment", n)
+		}
+		if got := len(h.sched.wake); got != 1 {
+			t.Fatalf("%d wakes pending after the comment was delivered, want 1", got)
 		}
 	})
 }
