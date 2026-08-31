@@ -238,7 +238,8 @@ type Status struct {
 	PID       int       `json:"pid"`
 	LastPoll  time.Time `json:"last_poll"`
 	// NextPoll is when the scheduler next polls GitHub. Between polls it
-	// still runs local passes every scheduler.poll_interval.
+	// still runs local passes: every scheduler.poll_interval, and whenever a
+	// session finishes.
 	NextPoll time.Time `json:"next_poll,omitempty"`
 	// InWorkHours is nil when scheduler.work_hours is not configured.
 	InWorkHours *bool             `json:"in_work_hours,omitempty"`

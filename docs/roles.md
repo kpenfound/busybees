@@ -300,8 +300,9 @@ prompt, and work it holds back stays in `bees:triage` with the hold written
 into the body.
 
 **Outcomes:** `done`, `idle`, `failed`. The orchestrator marks its mail read
-and records the run. Answers it sent take effect on the next poll: an issue
-in `bees:blocked` with unread developer mail is relabelled `bees:ready`. The
+and records the run. Answers it sent take effect on the pass its finished
+session wakes: an issue in `bees:blocked` with unread developer mail is
+relabelled `bees:ready`. The
 same mechanism returns its own questions: an issue it blocked goes back to
 `bees:triage` once there is unread mail for the project manager about it, so
 the question it sends must carry the issue number.

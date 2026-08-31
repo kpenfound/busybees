@@ -657,9 +657,9 @@ func (s *Scheduler) pass(ctx context.Context) error {
 
 // localPass is a pass that makes no GitHub read calls of its own: it reuses
 // the issue and PR lists from the last poll, so everything driven by the
-// local mailbox (answered questions, review rounds) keeps moving at
-// poll_interval even when GitHub is only polled every
-// off_hours_poll_interval. It deliberately skips the human-feedback fetch,
+// local mailbox (answered questions, review rounds) keeps moving when a
+// session finishes (signal) and at poll_interval even when GitHub is only
+// polled every off_hours_poll_interval. It deliberately skips the human-feedback fetch,
 // and with it the interval and merged-PR has-work checks, all of which query
 // GitHub: on a local pass a singleton starts only when it has unread mail.
 // Until the first successful poll it does nothing.

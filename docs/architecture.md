@@ -35,16 +35,18 @@ never need the real ones.
 creates the workflow labels the repository is missing (`ensureLabels`: one
 `gh label list`, then `gh label create` for each name it does not find, matched
 case-insensitively — existing labels are left alone, and a failure only warns),
-then ticks every `scheduler.poll_interval` (default 5m) until the context is
-cancelled. Ctrl-C stops polling and waits for running sessions to finish.
+then ticks every `scheduler.poll_interval` (default 5m) — or sooner, when a
+local event wakes it (below) — until the context is cancelled. Ctrl-C stops
+polling and waits for running sessions to finish.
 
 Each tick (`tick`) is either a **full pass** or a **local pass**. A full pass
 runs when the tick is at or past the next scheduled GitHub poll, and schedules
 the next one `Scheduler.PollIntervalAt(now)` later — `poll_interval`, or
 `off_hours_poll_interval` when `scheduler.work_hours` is configured and now
 falls outside the window (see [Work hours](configuration.md#work-hours)).
-Without `work_hours` that is always `poll_interval`, so every tick is a full
-pass. If the poll fails with a rate-limit error (`isRateLimited`: the message
+Without `work_hours` that is always `poll_interval`, so every *scheduled*
+tick is a full pass and the local passes in between are the ones a wake asks
+for. If the poll fails with a rate-limit error (`isRateLimited`: the message
 contains "rate limit", "secondary rate" or "abuse detection") the next poll is
 pushed out by `scheduler.rate_limit_backoff` (default 15m) instead, whatever
 the window says.
@@ -190,16 +192,16 @@ A full pass is:
    `GetIssueDetails`). The factory never creates, edits or closes milestones;
    people do, and the bees inherit.
 
-**Local passes.** A tick that is not due for a GitHub poll runs `localPass`
-instead: it re-runs `classify` over the issue and PR lists cached from the last
-successful poll (`classify` never mutates them, so the cache survives
-`reconcile` appending to `snapshot.byState`), then does steps 3 and 4 and
-dispatches only the singletons that have unread mail. It deliberately skips
-the poll itself, the human-feedback fetch (step 2) and the product-manager and
-QA "has work" checks, all of which read GitHub; label *writes* made by
-`reconcile` and dispatch still happen, because what a local pass protects is
-the polling budget, not every API call. Until the first successful poll there
-is nothing cached and a local pass does nothing.
+**Local passes.** A tick that is not due for a GitHub poll — and every wake —
+runs `localPass` instead: it re-runs `classify` over the issue and PR lists
+cached from the last successful poll (`classify` never mutates them, so the
+cache survives `reconcile` appending to `snapshot.byState`), then does steps 3
+and 4 and dispatches only the singletons that have unread mail. It deliberately
+skips the poll itself, the human-feedback fetch (step 2) and the
+product-manager and QA "has work" checks, all of which read GitHub; label
+*writes* made by `reconcile` and dispatch still happen, because what a local
+pass protects is the polling budget, not every API call. Until the first
+successful poll there is nothing cached and a local pass does nothing.
 
 The one read a local pass does make is a confirmation. Its snapshot can be
 stale — an issue a worker has since finished, one a developer parked in
@@ -209,9 +211,28 @@ state label in the cache — so before spending a session on a candidate,
 unless it is still open and in `bees:ready`, `bees:in-progress` or
 `bees:review`. The fresh copy replaces the cached one, so the next local pass
 does not ask again. That is one call immediately before a whole session, not
-per pass. The mailbox is not GitHub: the
-developer ↔ reviewer loop, the checks stage and mail-driven label transitions
-run at `poll_interval` however the window is configured.
+per pass. The mailbox is not GitHub: the developer ↔ reviewer loop, the checks
+stage and mail-driven label transitions run at `poll_interval` — sooner when a
+wake asks for it — however the window is configured.
+
+**Waking up.** Waiting out the poll interval for something that happened
+locally is pure downtime, so `Run` selects on a `wake` channel beside the poll
+timer and runs a local pass for every signal. Three things signal it: a session
+finishing (`runSession`), a developer worker returning its slot to the pool
+(the two are separate events — a worker runs several sessions before its slot
+comes free), and the two messages the scheduler sends itself (the conflict
+notice in `checkPRs` and the human feedback `deliverHumanFeedback` forwards). A
+wake is never a full pass: no extra GitHub call, and the polling cadence is
+exactly what `poll_interval` and the window say. The channel holds one signal,
+so a burst of finished sessions costs one pass rather than one each, and a full
+pass drops whatever is pending because it does strictly more.
+
+Mail written by another process — `bees mail send`, or the MCP server attached
+to a session — cannot signal an in-process channel, and the mailbox is
+deliberately not watched for changes. It does not need to be: the session that
+wrote the mail signals when it finishes, and the local pass that follows
+re-reads the mailbox from disk. Mail a person sends by hand while nothing is
+running waits for the next tick.
 
 **Backoff.** A singleton is never dispatched again sooner than one poll
 interval after it finishes, and a failing singleton or developer issue waits

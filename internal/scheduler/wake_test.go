@@ -107,7 +107,7 @@ func TestAFreedDeveloperSlotIsFilledOnTheWake(t *testing.T) {
 	stop := runLoop(t, h)
 	defer stop()
 
-	waitFor(t, time.Minute, "both ready issues to be worked", func() bool {
+	waitFor(t, 30*time.Second, "both ready issues to be worked", func() bool {
 		return len(h.sessions(config.RoleDeveloper)) == 2 && idle(h)
 	})
 	if got := polls(h); got != 1 {
@@ -141,7 +141,7 @@ enabled = false
 	stop := runLoop(t, h)
 	defer stop()
 
-	waitFor(t, time.Minute, "the project manager to answer the developer's mail", func() bool {
+	waitFor(t, 30*time.Second, "the project manager to answer the developer's mail", func() bool {
 		unread, err := h.box.List(mail.Filter{To: config.RoleProjectManager, UnreadOnly: true})
 		return err == nil && len(h.sessions(config.RoleProjectManager)) == 1 && len(unread) == 0
 	})
@@ -196,7 +196,7 @@ func TestABurstOfSignalsCostsOneLocalPass(t *testing.T) {
 	defer cancel()
 	waited := make(chan bool, 1)
 	go func() { waited <- h.sched.waitForTick(ctx) }()
-	waitFor(t, time.Minute, "the local pass the wake asked for", func() bool {
+	waitFor(t, 30*time.Second, "the local pass the wake asked for", func() bool {
 		return h.gh.callCount("issue edit") > before
 	})
 	// Ten passes would all have run by now; the poll timer is an hour away.
@@ -231,7 +231,7 @@ checks_wait = "2s"
 	stop := runLoop(t, h)
 	defer stop()
 
-	waitFor(t, time.Minute, "the project manager to be started by the developer's mail", func() bool {
+	waitFor(t, 30*time.Second, "the project manager to be started by the developer's mail", func() bool {
 		return len(h.sessions(config.RoleProjectManager)) == 1
 	})
 	if idle(h) {
