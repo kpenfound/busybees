@@ -100,7 +100,7 @@ what it found grouped by area:
 |---|---|
 | `toolchain` | `git` on `PATH`; `gh` on `PATH`, authenticated and holding the `repo` token scope; `claude` (or `$BEES_CLAUDE_BIN`) runnable and new enough. |
 | `config` | `bees.toml` loads and validates; `project.repo` and `project.default_branch` are set or derivable; the remote answers; the state directory is ignored by git; the notes directory is writable; every configured `prompt_file` exists; the repository's `bees/prompts/` files are all readable and named after a role; a running scheduler is serving a build of the commit that is checked out. |
-| `github` | The repository is readable and writable (`viewerPermission`); every workflow label exists; the visibility filter matches at least one open issue; with `auto_merge` on, what a merge is actually gated on. |
+| `github` | The repository is readable and writable (`viewerPermission`); with `[github]` set, that `github.token` belongs to `github.login`; every workflow label exists; with `[github]` set, that the account can actually write issues, issue comments and labels; the visibility filter matches at least one open issue; with `auto_merge` on, what a merge is actually gated on. |
 | `workspace` | A worktree can be created under `workspace_root` and removed again. |
 | `roles` | Per role: every configured skill URL clones and produces a plugin directory; every configured MCP server starts and answers an `initialize` request within 15s; a configured `shell` can be executed. |
 
@@ -134,6 +134,33 @@ the remote, so doctor still works offline. It passes and says so whenever the
 question does not arise: no scheduler has run, none is running now (a `status.json`
 outlives the run that wrote it), or the binary carries no revision to compare — a
 release build, or one built from a tree with no VCS stamps.
+
+The two **[`[github]`](configuration.md#github) checks** answer what
+`viewerPermission` cannot, and both are silent — a pass saying so — when the table is
+unset, because there is then no configured account to check. The first compares the
+login `github.token` actually authenticates as with `github.login`, and reports a
+mismatch by name. That comparison matters because `github.login` is what tells the
+factory's own comments from a person's: a login naming an account other than the one
+posting means a person's comments are read as the factory's own and answered by
+nobody, or the login half of the rule is simply dead. A `[bot]` suffix is never
+stripped or added — it belongs in `bees.toml` exactly when GitHub uses it — so both
+`[bot]` shapes are named in the detail rather than quietly accepted: a user token
+whose login was written with the suffix is an ordinary mismatch and fails, and a
+GitHub App installation token, which authenticates as no user and so cannot answer the
+question at all, is a warning naming what to check by hand — the question has no
+answer there rather than a wrong one, and a failure would stop `bees run` on a token
+configuration the reference supports.
+
+The second establishes that the account can write what bees writes. Repository
+permission does not imply it: a fine-grained token carries per-resource permissions on
+top of the repository role, so `ADMIN` and "cannot create an issue" are an ordinary
+pair — and then every `issue_create`, comment and label edit in every session fails,
+one session at a time, with nothing having said so. The probe is a **no-op update of
+the base label**, renaming it to the name it already has. It is a real write, so
+GitHub's permission gate is what answers it, and it changes nothing and leaves nothing
+behind. One permission covers all three things bees writes — a fine-grained token's
+*Issues* grant governs issues, issue comments and labels alike — so the cheapest of
+them answers for the others, and the remediation names what to grant.
 
 Every warning and failure prints the command that fixes it on the next line; doctor
 changes nothing unless `--fix` is given.
@@ -174,8 +201,10 @@ config
 
 github
   ✓ repo readable and writable  kyle/proj (ADMIN)
+  ✓ github.login matches token  github.token belongs to proj-bot
   ✗ workflow labels             2 of 17 missing: bees:size/l, bees:size/xl
       → run `bees labels sync`
+  ✓ can write issues            proj-bot can write issues, issue comments and labels in kyle/proj
   ✓ filter matches issues       12 open issues matching label bees
   ✓ auto_merge check gate       auto_merge is off: people merge pull requests themselves
 
@@ -191,7 +220,7 @@ roles
   ✓ reviewer                    enabled, no skills, MCP servers or shell configured
   ✓ qa                          disabled (roles.qa.enabled = false)
 
-22 checks: 18 passed, 2 warnings, 2 failed
+24 checks: 20 passed, 2 warnings, 2 failed
 ```
 
 | Flag | Description |
@@ -388,7 +417,7 @@ github
   ✗ workflow labels             2 of 19 missing: bees:size/l, bees:size/xl
       → run `bees labels sync`
 ...
-Error: preflight: 1 of 16 checks failed — fix them, run `bees doctor --fix`, or start anyway with `bees run --skip-doctor`
+Error: preflight: 1 of 18 checks failed — fix them, run `bees doctor --fix`, or start anyway with `bees run --skip-doctor`
 ```
 
 At start it lists the repository's labels once and creates any workflow label
