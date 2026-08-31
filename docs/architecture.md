@@ -487,9 +487,10 @@ stateDiagram-v2
   read is deliberately not remembered, so a review that resumes runs without a
   checks section, exactly like the second round of a loop nothing interrupted. A
   worker with nothing recorded reads again, and so does one whose labels say the
-  pull request it recorded the read for is no longer under review. `bees status`
-  reports the stage as `pre-review checks`; unlike the checks stage it does not
-  append the gate, because its own name is the useful one.
+  pull request it recorded the read for is no longer under review — or whose
+  record names another pull request, or none at all. `bees status` reports the
+  stage as `pre-review checks`; unlike the checks stage it does not append the
+  gate, because its own name is the useful one.
 - **Checks stage** (`auto_merge`). `approve` only labels the PR and issue
   `bees:approved`; merging happens in the `checks` stage. `awaitChecks` sleeps
   `checks_wait`, then polls every `checks_poll_interval` until `Summarize`

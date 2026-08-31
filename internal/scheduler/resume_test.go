@@ -224,6 +224,8 @@ func TestResumeStage(t *testing.T) {
 		// direction and is intended.
 		{name: "a record with no pull request number", bk: state.IssueState{WorkerStage: "checks", AfterDevelop: "checks", PreReviewDone: true},
 			state: "in-progress", pr: pr, stage: "develop", after: "review"},
+		{name: "a develop stage whose sub-state was recorded before the number was known", bk: state.IssueState{WorkerStage: "develop", AfterDevelop: "checks", PreReviewDone: true},
+			state: "review", pr: pr, stage: "develop", after: "review"},
 		// develop fits any label, so its sub-state is dropped on the same
 		// test the stages are: this issue is starting a fresh round.
 		{name: "a develop stage on an issue sent back to ready", bk: state.IssueState{PR: fakePR, WorkerStage: "develop", AfterDevelop: "checks", PreReviewDone: true},
