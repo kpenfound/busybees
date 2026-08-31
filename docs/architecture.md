@@ -19,12 +19,13 @@ internal/prompts/    embedded base prompts (system/*.md, task/*.md) and their re
 internal/mcpserver/  the built-in MCP server (`bees mcp serve`): mail, issue and outcome tools, filtered by role
 internal/state/      state directory: notes, per-issue bookkeeping, singleton run times, status.json
 internal/scheduler/  the orchestrator: poll, human feedback, PR merge state, reconcile, developer worker pool, singleton roles, event stream
+internal/tui/        the live view `bees run` draws in a terminal: the Now and Queues panels
 internal/procs/      find and stop bees sessions after a crash (`bees kill`)
 internal/testutil/   test helpers (local bare git remote + clone)
 ```
 
-Dependency direction is strictly downwards: `cmd/bees` → `scheduler` →
-everything else; `scheduler` is the only package that knows about all the
+Dependency direction is strictly downwards: `cmd/bees` → `tui` →
+`scheduler` → everything else; `scheduler` is the only package that knows about all the
 others. `github` and `session` execute external programs (`gh`, `claude`) and
 both expose an override point (`Client.Exec`, `Runner.ClaudeBin`) so tests
 never need the real ones.
@@ -325,12 +326,20 @@ singleton starts or stops; `bees status` just reads it.
 **The event stream** (`events.go`) is the live half of the same picture, for
 a view running in the same process — a terminal UI, a log tail.
 `Scheduler.Subscribe` returns a buffered channel of `Event`s: a session
-started, a session ended (with its outcome and cost), a developer worker
-moved to another stage, a full pass finished. It is published *alongside*
+started (with the model it runs on, and whether that is the role's
+fallback), a session ended (with its outcome, turns and cost), a developer
+worker moved to another stage, a full pass finished. It is published *alongside*
 `writeStatus`, never instead of it: the event says something happened,
 `status.json` says what the factory now looks like. The poll event is
 published *after* the write, so a view that re-reads `status.json` when one
 arrives sees the pass that event is about, never the one before it.
+
+`internal/tui` is the subscriber: the two panels `bees run` draws in a
+terminal. Now is built from the session and stage events; Queues is
+`status.json`, re-read when an event says it has changed. While the view is
+up it also owns Ctrl-C — Bubble Tea puts the terminal in raw mode, so the
+interrupt arrives as a key rather than as a signal, and the view cancels the
+scheduler's context with it and stays up until the drain is over.
 
 It is a view mechanism and nothing more. No scheduler decision depends on
 whether anyone is subscribed, and `publish` never blocks — an event a

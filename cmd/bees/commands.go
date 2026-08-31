@@ -330,9 +330,10 @@ func tuiMode(noTUI bool, stdout *os.File) bool {
 }
 
 // logTUIMode is what `bees run` calls: it makes the decision and records it
-// for the log file. The renderer itself is #253, so today nothing reads the
-// answer — and the record is a debug one, so `bees run` prints exactly what
-// it printed before the flag existed, --no-tui or not.
+// for the log file. The record is a debug one, so `bees run --no-tui` and a
+// redirected stdout print exactly what they printed before the flag existed
+// (#244); with the UI on the console is silenced anyway and the log file has
+// it.
 func logTUIMode(log *slog.Logger, noTUI bool, stdout *os.File) bool {
 	on := tuiMode(noTUI, stdout)
 	log.Debug("terminal UI", "enabled", on)
@@ -351,6 +352,10 @@ func newRunCmd(g *globalFlags) *cobra.Command {
 Claude Code sessions: a pool of developer workers plus the product manager,
 project manager and QA singletons. Ctrl-C stops polling and waits for running
 sessions to finish.
+
+In a terminal it draws a live view of the factory — what is running now and
+what is queued — and logs to ` + "`<state_dir>/bees.log`" + ` instead of the console.
+--no-tui, or a stdout that is not a terminal, logs to the console as before.
 
 Before the first poll it runs the cheap half of ` + "`bees doctor`" + ` (everything
 except the per-role checks, which clone skills and start MCP servers) and
@@ -376,7 +381,9 @@ anyway; ` + "`bees tick`" + ` and ` + "`bees exec`" + ` never run the preflight.
 			if s.OnlyRoles, err = parseRoles(roles); err != nil {
 				return err
 			}
-			logTUIMode(a.log, noTUI, os.Stdout)
+			if logTUIMode(a.log, noTUI, os.Stdout) {
+				return runWithTUI(cmd.Context(), a, s, g, cmd.ErrOrStderr())
+			}
 			return s.Run(cmd.Context())
 		},
 	}

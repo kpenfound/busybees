@@ -46,7 +46,8 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 	if spec.role == config.RoleDeveloper && spec.data.Issue != nil {
 		role.Model = role.ModelFor(s.sizeOf(spec.data.Issue.Labels))
 	}
-	if spec.useFallback && role.FallbackModel != "" {
+	fallback := spec.useFallback && role.FallbackModel != ""
+	if fallback {
 		role.Model = role.FallbackModel
 	}
 	if err := s.store.EnsureNotes(spec.role); err != nil {
@@ -123,7 +124,9 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 		s.recordRunningSession(spec, d.Issue.Number, sessionDir)
 		defer s.clearRunningSession(d.Issue.Number)
 	}
-	s.publish(sessionEvent(EventSessionStarted, spec))
+	start := sessionEvent(EventSessionStarted, spec)
+	start.Model, start.Fallback = role.Model, fallback
+	s.publish(start)
 	res, err := s.runner.Run(ctx, session.Request{
 		Name:         spec.name,
 		Role:         role,
@@ -160,7 +163,7 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 func endEvent(spec sessionSpec, res *session.Result) Event {
 	ev := sessionEvent(EventSessionEnded, spec)
 	ev.Outcome, ev.Note = outcomeOf(res)
-	ev.CostUSD, ev.Duration = res.CostUSD, res.Duration
+	ev.Turns, ev.CostUSD, ev.Duration = res.NumTurns, res.CostUSD, res.Duration
 	if res.Outcome.PR > 0 {
 		ev.PR = res.Outcome.PR
 	}

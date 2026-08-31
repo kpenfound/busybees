@@ -76,7 +76,7 @@ bees init                # writes bees.toml, creates .bees/ and the GitHub label
 $EDITOR bees.toml        # pick models, add skills, set filter/scheduler options
 bees doctor              # check the toolchain, the config, GitHub access, worktrees and the roles
 
-# run the factory
+# run the factory (in a terminal it draws a live view; --no-tui logs instead)
 bees run
 ```
 

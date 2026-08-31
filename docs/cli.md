@@ -15,7 +15,7 @@ Everything else is for humans.
 | Flag | Description |
 |---|---|
 | `-c, --config <path>` | Path to `bees.toml`. Default: `$BEES_CONFIG`, else search upwards from cwd. |
-| `-v, --verbose` | Debug logging (same as `--log-level debug`). With `run`/`tick`/`exec`, also streams every claude event to stderr. |
+| `-v, --verbose` | Debug logging (same as `--log-level debug`). With `run`/`tick`/`exec`, also streams every claude event to stderr — except under [the live view](#the-live-view), which owns the terminal; `bees run --no-tui` streams as before. |
 | `-q, --quiet` | Console shows only session summaries, warnings and errors. Cannot be combined with `-v` or `--log-level debug`. |
 | `--log-format <text\|json>` | Console log format. Default `text`; `$BEES_LOG_FORMAT`, then [`logging.format`](configuration.md#logging). |
 | `--log-level <debug\|info\|warn\|error>` | Console log level. Default `info`; `$BEES_LOG_LEVEL`, then [`logging.level`](configuration.md#logging). |
@@ -24,6 +24,11 @@ Everything else is for humans.
 A flag beats its environment variable, which beats the
 [`[logging]` table](configuration.md#logging) in `bees.toml`, which beats the
 default. An unknown value is an error naming the valid ones.
+
+With [the live view](#the-live-view) up — `bees run` in a terminal — the
+console shows nothing at all: these flags describe the console, and
+`<state_dir>/bees.log` gets every record whatever they say. `--no-tui` turns
+the view off.
 
 ## Setting up
 
@@ -368,10 +373,10 @@ only logs a warning; the run continues.
 
 | Flag | Description |
 |---|---|
-| `--once` | Do one pass and exit when the sessions it started finish. Same as `bees tick`. |
+| `--once` | Do one pass and exit when the sessions it started finish. Same scheduling as `bees tick`; in a terminal it draws [the live view](#the-live-view) rather than logging the pass, so `bees tick` or `--no-tui` is what prints a report. |
 | `--roles a,b` | Only run these roles (aliases accepted: `pm`, `pjm`, `dev`, `reviewer`, `qa`). |
 | `--skip-doctor` | Start without running the doctor preflight. |
-| `--no-tui` | Log to the console instead of drawing the terminal UI. Nothing is drawn yet, so today the flag changes nothing; a stdout that is not a terminal turns the UI off on its own. |
+| `--no-tui` | Log to the console instead of drawing the terminal UI. A stdout that is not a terminal turns the UI off on its own. |
 
 ```sh
 bees run
@@ -380,8 +385,54 @@ bees -v run --once
 bees --log-format json --quiet run
 ```
 
-Every finished session prints one summary line. In `text` format they are the
-message alone, so a run reads as a report:
+### The live view
+
+In a terminal, `bees run` draws the factory instead of logging to it: a
+full-screen view of two panels, redrawn as sessions start and finish and as
+the queues change. It subscribes to the scheduler's event stream in the same
+process and re-reads `status.json`; it never polls GitHub itself and the
+scheduler never waits for it.
+
+```
+busybees  acme/widgets                                                                      10:03:08
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Now                                                                                              │
+│ role             issue pr    stage                 elapsed  turns     cost  model                │
+│ developer        #12   #31   developer r2            3m20s     87    $2.41  opus                 │
+│ reviewer         #14   #33   pre-review checks r1      42s      0    $0.00  sonnet (fallback)    │
+│ product manager  -     -     -                          9s      0    $0.00  sonnet               │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Queues                                                                                           │
+│ triage          2  ready           4  in-progress     2  review          1  approved        0    │
+│ blocked         0  needs-human     0  features        5  feedback        1  open PRs        3    │
+│ unread mail   product manager 1, developer 2                                                     │
+│ next poll     in 2m30s                                                                           │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+ctrl-c stops polling and drains
+```
+
+**Now** is every session running right now: the role, the issue and pull
+request it is about, the stage its developer worker is in with the round it
+is on, how long it has been going, and the model it runs on — `(fallback)`
+when a retry is running on the role's `fallback_model`. The turns and cost
+columns are what the *work item* has spent in the sessions that have already
+finished: claude reports both only in the final event of a session's stream,
+so the running session adds its own when it ends.
+
+**Queues** is what `bees status` prints, read from the same `status.json`
+rather than counted a second way: every queue, whether or not anything is in
+it, the unread mail per role and the countdown to the next GitHub poll.
+
+Ctrl-C stops polling and drains exactly as it does without the view, and the
+view stays up until the running sessions have finished; pressing it again
+leaves the terminal and waits for the drain with the console back. While the
+view is up, console logging is silenced — it would scribble over the panels —
+and `<state_dir>/bees.log` gets every record, so nothing is lost. `--no-tui`,
+a redirected or piped stdout, and `bees tick` log as before.
+
+With the view off, every finished session prints one summary line. In `text`
+format they are the message alone, so a run reads as a report:
 
 ```
 ✓ project manager issue #12 done: "refined and moved to ready" (34 turns, $0.61, 3m02s)
