@@ -281,8 +281,23 @@ func (s *Scheduler) runProductManager(ctx context.Context, snap *snapshot) error
 		if !github.HasLabel(i.Labels, s.labels.Planned) || github.HasLabel(i.Labels, s.labels.Planning) {
 			continue
 		}
-		if github.HasLabel(i.Labels, s.labels.Feature) && progress[i.Number].Total > 0 {
+		// A proposal is agreed by a person removing bees:proposal. While it
+		// is still there the issue is not approved, and issues.Create refuses
+		// it as a parent, so presenting it as agreed would ask for a
+		// breakdown the tools go on to refuse. It stays a proposal.
+		if github.HasLabel(i.Labels, s.labels.Proposal) {
 			continue
+		}
+		// The sub-issue summary answers "has this been broken down already?"
+		// only when it could be read. A failed lookup leaves no entry at all,
+		// and a missing entry is not evidence of no sub-issues: taking it for
+		// one would hand back a feature broken down weeks ago, under a
+		// heading saying the scope is settled. Fail closed; it comes back on
+		// the next run.
+		if github.HasLabel(i.Labels, s.labels.Feature) {
+			if p, ok := progress[i.Number]; !ok || p.Total > 0 {
+				continue
+			}
 		}
 		full, ok := fetched[i.Number]
 		if !ok {

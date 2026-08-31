@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -160,5 +161,78 @@ func TestClassifyIgnoresThePlanningLabels(t *testing.T) {
 	}
 	if len(snap.proposals) != 0 {
 		t.Errorf("proposals: %v", snap.proposals)
+	}
+}
+
+// A bees:planned feature is presented for breakdown only when the factory
+// actually knows it has no sub-issues. GetIssueDetails failing leaves no
+// entry in progress at all, and a zero-valued one reads as "nothing has been
+// built from it yet": one flaked REST call would hand the product manager a
+// feature it broke down last week, under a heading telling it the scope is
+// settled and to break it down.
+func TestAPlannedFeatureIsNotRePresentedWhenItsProgressIsUnknown(t *testing.T) {
+	now := time.Now()
+	h := newHarnessAt(t, pmOnlyTOML, now)
+	seedFeature(h, 6, "Offline mode", now.Add(-time.Hour), "bees:planned")
+	h.gh.subIssues[6] = github.SubIssueSummary{Total: 2}
+	quietFeature(h, 6, now.Add(-30*time.Minute))
+	h.gh.errFor["api repos/acme/widgets/issues/6"] = errors.New("gh: HTTP 502")
+
+	runPass(t, h)
+
+	agreed := section(t, lastPMPrompt(t, h), "## Agreed with a person")
+	if strings.Contains(agreed, "#6") {
+		t.Errorf("a feature whose progress could not be read is presented for breakdown:\n%s", agreed)
+	}
+}
+
+// The ordinary way planning ends: a person's comment is the last word and
+// they swap the label straight after it, so the issue is still fresh. It
+// belongs in the agreed section and nowhere else — two sections would give
+// the product manager two sets of instructions for one issue.
+func TestAnAgreedIssueLeavesTheFreshLists(t *testing.T) {
+	now := time.Now()
+	h := newHarnessAt(t, pmOnlyTOML, now)
+	seedFeature(h, 5, "Exports", now.Add(-time.Hour))
+	seedFeature(h, 6, "Offline mode", now.Add(-time.Hour), "bees:planned")
+	h.gh.subIssues[6] = github.SubIssueSummary{}
+	humanComment(h, 6, "agreed, go ahead", now.Add(-time.Minute))
+
+	runPass(t, h)
+
+	prompt := lastPMPrompt(t, h)
+	if agreed := section(t, prompt, "## Agreed with a person"); !strings.Contains(agreed, "#6: Offline mode") {
+		t.Errorf("agreed section missing #6:\n%s", agreed)
+	}
+	breakdown := section(t, prompt, "## Feature issues needing you")
+	if strings.Contains(breakdown, "#6") {
+		t.Errorf("an agreed issue is also presented as a fresh feature:\n%s", breakdown)
+	}
+	if !strings.Contains(breakdown, "#5: Exports") {
+		t.Errorf("an ordinary fresh feature is no longer presented:\n%s", breakdown)
+	}
+}
+
+// A person can mark a bee's proposal bees:planned without removing
+// bees:proposal — ending planning is documented as a swap of the planning
+// label and says nothing about the proposal one. The proposal label is what
+// says a person has not approved it yet, and issues.Create refuses it as a
+// parent, so it stays in the proposals section: presenting it as agreed would
+// ask for a breakdown the tools then refuse.
+func TestAPlannedProposalIsStillAProposal(t *testing.T) {
+	now := time.Now()
+	h := newHarnessAt(t, pmOnlyTOML, now)
+	seedFeature(h, 6, "Offline mode", now.Add(-time.Hour), "bees:proposal", "bees:planned")
+	h.gh.subIssues[6] = github.SubIssueSummary{}
+	humanComment(h, 6, "what about conflicts?", now.Add(-time.Minute))
+
+	runPass(t, h)
+
+	prompt := lastPMPrompt(t, h)
+	if agreed := section(t, prompt, "## Agreed with a person"); strings.Contains(agreed, "#6") {
+		t.Errorf("an unapproved proposal is presented as agreed:\n%s", agreed)
+	}
+	if p := section(t, prompt, "## Proposals awaiting a person's approval"); !strings.Contains(p, "#6: Offline mode") {
+		t.Errorf("proposals section missing #6:\n%s", p)
 	}
 }
