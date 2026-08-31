@@ -113,7 +113,14 @@ type Data struct {
 	// and leaves open is not listed again until it gains a sub-issue and that
 	// one closes too.
 	CompletedFeatures []github.Issue
+	// Stages are the reviewer's review stages (roles.reviewer.stages), in the
+	// order to run them. Set for a reviewer review session; empty for every
+	// other role and for the reviewer's checks-mode task, which diagnoses one
+	// failure rather than reviewing.
+	Stages []string
 	// Parent is the feature a work item belongs to, when it is a sub-issue.
+	// Set for a developer session, and for a reviewer session whose stages
+	// include config.StageProductFit — the only stage that reads it.
 	Parent *github.Parent
 	// Parents maps an issue number to its parent feature, for the issues that
 	// have one: the triage items (project manager) and the open work items

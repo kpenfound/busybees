@@ -359,6 +359,21 @@ stateDiagram-v2
   to diagnose failing checks — the prereview and checks stages share the
   counter — and compared with `roles.reviewer.max_check_fix_rounds`. Check fix
   rounds do not count against `max_review_rounds`.
+- **The reviewer's review stages** (`roles.reviewer.stages`) — sections of one
+  reviewer session's prompt, not worker stages like the ones above and below:
+  a staged review is still one session. The prompt carries the configured
+  stages in order, each a section of its own with its own focus and its own
+  verdict, and the reviewer is told to run every one of them rather than stop
+  at the first that blocks. The list is validated at load, so the
+  worker never has to reject a stage name. `product-fit` is the one stage with
+  a source of truth outside the diff and the issue: it needs the work item's
+  parent feature, so the worker makes the `ParentIssue` GraphQL query only when
+  that stage is configured — off by default, and one call per review round
+  when it is on. A work item with no parent renders the stage without one, and
+  so does one whose lookup fails: the failure is reported as the
+  `work-item-parent` degraded operation rather than costing the review,
+  because a silent nil would reach the verdict as "this work item belongs to
+  no feature".
 - **Prereview stage** (`pre_review_checks`, on by default, independent of
   `auto_merge`). Between the developer and the first review the worker calls
   `awaitChecks` with a deadline of `pre_review_checks_timeout`, so the reviewer

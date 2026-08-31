@@ -357,7 +357,7 @@ frugal:
 | Checks (auto-merge) | 1 call per poll of the checks stage, 2 when the branch requires no check | every `roles.reviewer.checks_poll_interval` while waiting |
 | Visibility backstop | 2 list calls | after every session |
 | Feature progress | 1 REST call per open feature issue (`sub_issues_summary`) | per product manager run |
-| Parent feature lookup | 1 GraphQL call per triage item, 1 per open work item, and 1 per developer session | per project manager run / product manager run / developer session |
+| Parent feature lookup | 1 GraphQL call per triage item, 1 per open work item, 1 per developer session, and 1 per review round with a `product-fit` stage configured (none by default) | per project manager run / product manager run / developer session / reviewer session |
 | `bees issue create --parent` | 3 calls (parent details, create, attach as sub-issue); `--related` 2; plain 1 | whenever a role files an issue |
 | Worker stage transitions | a handful of `issue view` / `pr view` / `issue edit` calls | per transition |
 
@@ -543,6 +543,44 @@ that the checks passed. `bees doctor` says which of the three is in force, and
 `bees status` shows it in the worker stage (`checks (required)`, `checks (reported)`,
 `checks (none)`).
 
+### `[roles.reviewer]` only: the review stages
+
+The reviewer reviews in ordered stages, each with its own focus, its own source
+of truth and its own verdict. `stages` is accepted **only** under
+`[roles.reviewer]`; setting it on `[global]` or another role is a validation
+error, like the checks keys above.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `stages` | string list | `["implementation", "completeness", "cleanliness", "style"]` | The review stages to run, in order. One or more of `implementation`, `completeness`, `cleanliness`, `style`, `product-fit`. |
+
+| Stage | Question it answers | Source of truth |
+|---|---|---|
+| `style` | Does it follow the repository's formatting and lint conventions? | the repository's conventions, CLAUDE.md, the linter |
+| `cleanliness` | Is it clear, small, free of dead code and needless abstraction? | the diff |
+| `implementation` | Is it correct? Error handling, edge cases, tests, security. | the diff |
+| `completeness` | Does it deliver the work item's acceptance criteria? | the issue |
+| `product-fit` | Does it fit the parent feature and the product direction? | the parent feature, the README and the docs |
+
+Every configured stage runs — the reviewer is told not to stop at the first one
+that finds something to block on — and each ends with a verdict line of its
+own. Requesting changes still sends one message to the developer, its points
+grouped by stage in the stages' order. An approval means every configured stage
+passed.
+
+**`product-fit` is off by default.** A work item the project manager already
+scoped is not the place to re-open the product decision, and leaving it off is
+what keeps the default review's scope the same as the single-pass reviewer it
+replaced. It is also the only stage that reads the work item's parent feature,
+so the orchestrator makes that lookup — one GraphQL call per review round —
+only when the stage is configured.
+
+Both mistakes are load errors that name the key, the bad value and the valid
+set: a stage that is not one of the five, and an empty `stages = []`, which
+means a misconfiguration rather than "review nothing". See
+[roles.md](roles.md#review-stages-rolesreviewerstages) for why the default is
+what it is.
+
 ### `[roles.developer]` only: commit flags, max size and per-size models
 
 These three keys describe the developer specifically, so they are accepted **only**
@@ -593,6 +631,7 @@ For each role the effective settings are computed from `[global]` and
 | `allowed_tools`, `disallowed_tools` | Global list followed by role list. |
 | `enabled` | Role only. |
 | `auto_merge`, `merge_method`, `checks_wait`, `checks_poll_interval`, `checks_timeout`, `max_check_fix_rounds`, `pre_review_checks`, `pre_review_checks_timeout` | `roles.reviewer` only; they form the checks and merge policy `bees config show reviewer` prints. |
+| `stages` | `roles.reviewer` only; not merged from `[global]`. `bees config show reviewer` prints the resolved list. |
 
 `bees config show <role>` prints the result.
 
@@ -728,6 +767,7 @@ headers = { Authorization = "Bearer $BROWSER_MCP_TOKEN" }
 | `roles.reviewer.max_check_fix_rounds` | `2` |
 | `roles.reviewer.pre_review_checks` | `true` |
 | `roles.reviewer.pre_review_checks_timeout` | `10m` |
+| `roles.reviewer.stages` | `["implementation", "completeness", "cleanliness", "style"]` |
 
 ## Examples
 

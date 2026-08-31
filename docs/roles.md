@@ -412,13 +412,16 @@ merging: `auto_merge` and its companions live under `[roles.reviewer]` (see
 [configuration.md](configuration.md#rolesreviewer-only-checks-and-auto-merge)).
 
 **Given:** the PR (title, body, branch, author), the linked issue, the
-issue's **size** and a sentence on the scrutiny it warrants (see
-[Sizing](workflow.md#sizing)), the status of the pull request's checks as read
-just before the review (unless `pre_review_checks = false`), its own feedback
-from previous rounds, unread mail addressed to `reviewer` about the issue or
-the pull request (in practice from a human), the round number and limit, its
-notes. It runs in the same worktree as the developer for that issue,
-fast-forwarded to the latest push, so it reads the change in its context.
+**review stages** to run (below), the issue's **size** and a sentence on the
+scrutiny it warrants (see [Sizing](workflow.md#sizing)), the status of the pull
+request's checks as read just before the review (unless
+`pre_review_checks = false`), its own feedback from previous rounds, unread
+mail addressed to `reviewer` about the issue or the pull request (in practice
+from a human), the round number and limit, its notes. With a `product-fit`
+stage configured it is also given the work item's **parent feature**, the only
+thing that stage judges against. It runs in the same worktree as the developer
+for that issue, fast-forwarded to the latest push, so it reads the change in
+its context.
 
 **Verifying is CI's job.** The prompt tells the reviewer to judge the change
 from the code and not to spend the session re-running the repository's
@@ -438,23 +441,80 @@ writes reaches the person who merges except its outcome note, which is why the
 note has to stand on its own.
 
 **Mail:** may send to `developer` only, with `pr` and `issue`, one
-consolidated message per round listing every point with file/line and the
-expected change. It also *receives* mail addressed to `reviewer` — in practice
-from a human (`bees mail send --from human --to reviewer`) — about the issue or
-the pull request: it is delivered to the next reviewer session, in review mode
-and in checks mode alike, and marked read afterwards. Mail from `human` is a
+consolidated message per round, its points grouped by stage, each listing the
+file/line and the expected change. It also *receives* mail addressed to
+`reviewer` — in practice from a human
+(`bees mail send --from human --to reviewer`) — about the issue or the pull
+request: it is delivered to the next reviewer session, in review mode and in
+checks mode alike, and marked read afterwards. Mail from `human` is a
 direction it follows literally, even where its prompt says otherwise.
 
 **Outcomes and what the orchestrator does:**
 
 | Status | Orchestrator |
 |---|---|
-| `approved` | Labels the PR and the issue `bees:approved`. Without `auto_merge` the worker is freed and a human merges. With `auto_merge` the worker enters the checks stage (below). |
+| `approved` | Every configured stage passed. Labels the PR and the issue `bees:approved`. Without `auto_merge` the worker is freed and a human merges. With `auto_merge` the worker enters the checks stage (below). |
 | `changes-requested` | Verifies feedback mail to the developer was sent during the session (none: escalate). If the round limit is reached: escalate. Otherwise increments the round, moves the issue back to `bees:in-progress` and runs the developer with the feedback. |
 | `failed` (or no outcome / timeout / error) | Escalates to `bees:needs-human`. |
 
 The reviewer is told when it is on the final round so it still requests
 changes honestly and lets the orchestrator escalate.
+
+### Review stages (`roles.reviewer.stages`)
+
+These are stages *within* one reviewer session — sections of its prompt — not
+worker stages like the pre-review checks and checks stages below, which are
+separate sessions.
+
+A review is not one judgement. Asking for all of them at once produced reviews
+that commented on formatting while missing that the feature was half
+implemented, or blocked on product fit when the issue had been explicit — so
+the review runs as **ordered stages**, each with its own focus, its own source
+of truth and its own verdict.
+
+| Stage | Question it answers | Source of truth |
+|---|---|---|
+| `style` | Does it follow the repository's formatting and lint conventions? | the repository's conventions, CLAUDE.md, the linter |
+| `cleanliness` | Is it clear, small, free of dead code and needless abstraction? | the diff |
+| `implementation` | Is it correct? Error handling, edge cases, tests, security. | the diff |
+| `completeness` | Does it deliver the work item's acceptance criteria? | the issue |
+| `product-fit` | Does it fit the parent feature and the product direction? | the parent feature, the README and the docs |
+
+**The default is `["implementation", "completeness", "cleanliness", "style"]`**,
+in that order: the most valuable judgement first, so the reviewer spends its
+best attention on correctness and reaches formatting last. `product-fit` is
+**off by default** — a work item the project manager already scoped is not the
+place to re-open the product decision, and leaving it off is also what keeps
+the default review's scope the same as the single-pass reviewer it replaced.
+It is the one stage that needs the work item's parent feature, so the
+orchestrator looks the parent up only when the stage is configured; a work item
+that belongs to no feature gets the stage anyway, judged against the README and
+the docs, and the reviewer is told to say so.
+
+**No early exit.** Every configured stage runs, even after one of them has
+already found something to block on. The developer fixes one round of feedback
+at a time, so a stage skipped because an earlier one failed costs a whole extra
+round when its findings finally arrive.
+
+**Feedback and approval.** Each stage ends with a verdict line of its own
+(`<stage>: pass` / `<stage>: fail`). Requesting changes still sends exactly one
+message to the developer, its points **grouped by stage** in the stages' order,
+each group headed by that stage's verdict. An approval means every configured
+stage passed: one failed stage is `changes-requested`, whatever the others
+said. The outcome note — the only thing that reaches the person who merges —
+carries the stages that ran and how each came out.
+
+**One session, several sections.** All the stages run in one reviewer session,
+as sections of its task prompt, rather than one session per stage: a session
+per stage would multiply the cost and each one would have to re-read the diff
+and the issue from scratch. Per-stage sessions remain a possible follow-up if
+the sections turn out to bleed into each other — the stage list is already the
+seam they would be split along.
+
+The list is validated at load: a stage that is not one of the five above, an
+empty list, and `stages` set anywhere but `[roles.reviewer]` are all load
+errors. See
+[configuration.md](configuration.md#rolesreviewer-only-the-review-stages).
 
 ### Pre-review checks (`pre_review_checks`, on by default)
 

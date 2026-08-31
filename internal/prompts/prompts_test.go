@@ -2,6 +2,7 @@ package prompts
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -37,6 +38,7 @@ func sample() Data {
 		Features:          []github.Issue{{Number: 12, Title: "Exports", Labels: []github.Label{{Name: "bees:feature"}, {Name: "bees:question"}}}},
 		Progress:          map[int]github.SubIssueSummary{12: {Total: 4, Completed: 2}},
 		Parent:            &github.Parent{Number: 12, Title: "Exports"},
+		Stages:            config.DefaultReviewStages,
 		Parents:           map[int]github.Parent{5: {Number: 12, Title: "Exports"}, 6: {Number: 12, Title: "Exports"}},
 		Blockers:          map[int][]int{5: {37}, 6: {37}},
 		FreshFeatures:     []github.Issue{{Number: 13, Title: "Search", Body: "find things", Author: github.Author{Login: "kyle"}}},
@@ -1108,4 +1110,150 @@ func section(t *testing.T, prompt, heading string) string {
 	}
 	body, _, _ := strings.Cut(rest, "\n## ")
 	return body
+}
+
+// stageHeadings extracts the stage names the reviewer's task template knows
+// how to describe: the backticked token on every line that starts with the
+// stable prefix "### `". Each stage's block in the template is headed by one,
+// so the names are read off the prose the reviewer actually gets rather than
+// off the {{if}} chain that selects it.
+func stageHeadings(t *testing.T) []string {
+	t.Helper()
+	b, err := files.ReadFile("task/reviewer.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, line := range strings.Split(string(b), "\n") {
+		rest, ok := strings.CutPrefix(line, "### `")
+		if !ok {
+			continue
+		}
+		name, _, ok := strings.Cut(rest, "`")
+		if !ok {
+			t.Fatalf("unterminated stage heading: %q", line)
+		}
+		names = append(names, name)
+	}
+	if len(names) == 0 {
+		t.Fatalf("no \"### `\" stage heading in task/reviewer.md; the pin has lost its anchor")
+	}
+	return names
+}
+
+// The task template describes each stage in prose, and config validates
+// roles.reviewer.stages against config.KnownReviewStages — two lists that have
+// to name the same stages. A stage the config accepts but the template cannot
+// describe renders as a heading-less gap the reviewer silently skips; a stage
+// the template describes but the config rejects can never be configured. The
+// comparison is a set both ways, because the template's order is the order the
+// {{if}} chain happens to be written in, not a contract (the *rendered* order
+// is the configured one — see TestReviewerStagesRenderInTheConfiguredOrder).
+func TestReviewerTaskDescribesEveryKnownStage(t *testing.T) {
+	got, want := stageHeadings(t), slices.Clone(config.KnownReviewStages)
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("task/reviewer.md describes %v; config.KnownReviewStages is %v", got, want)
+	}
+}
+
+// Only the configured stages are rendered, in the configured order, and the
+// section is absent altogether when no stage is set — which is what keeps the
+// reviewer's checks-mode task, and every other role, unaffected by #240.
+func TestReviewerStagesRenderInTheConfiguredOrder(t *testing.T) {
+	d := sample()
+	d.Stages = []string{"style", "implementation"}
+	rev, err := Task(config.RoleReviewer, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rev, "## Review stages") {
+		t.Fatalf("no stages section:\n%s", rev)
+	}
+	if i, j := strings.Index(rev, "### `style`"), strings.Index(rev, "### `implementation`"); i < 0 || j < 0 || i > j {
+		t.Errorf("stages are not rendered in the configured order (style at %d, implementation at %d):\n%s", i, j, rev)
+	}
+	for _, gone := range []string{"### `cleanliness`", "### `completeness`", "### `product-fit`"} {
+		if strings.Contains(rev, gone) {
+			t.Errorf("unconfigured stage %q is rendered:\n%s", gone, rev)
+		}
+	}
+	// Every stage ends in a verdict, and one failure blocks the approval.
+	for _, want := range []string{"<stage>: pass —", "<stage>: fail —", "Approve only when every stage passed"} {
+		if !strings.Contains(rev, want) {
+			t.Errorf("stages section missing %q:\n%s", want, rev)
+		}
+	}
+	if !strings.Contains(flowed(rev), "grouped by stage** in the stages' order") {
+		t.Errorf("the instructions do not ask for feedback grouped by stage:\n%s", rev)
+	}
+
+	d.Stages = nil
+	rev, err = Task(config.RoleReviewer, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(rev, "## Review stages") || strings.Contains(rev, "### `style`") {
+		t.Errorf("the stages section survives an empty stage list:\n%s", rev)
+	}
+	checks, err := TaskNamed(config.RoleReviewer, "reviewer_checks", sample())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(checks, "## Review stages") {
+		t.Errorf("the checks-mode task reviews in stages:\n%s", checks)
+	}
+}
+
+// product-fit is the one stage with a source of truth outside the diff and the
+// issue, so it is the one stage that needs Data.Parent. It has to render both
+// ways: the scheduler leaves Parent nil for a work item that belongs to no
+// feature, and the stage must then say what it judged against instead rather
+// than render a dangling "#: ".
+func TestProductFitStageNamesTheParentFeature(t *testing.T) {
+	d := sample()
+	d.Stages = []string{config.StageProductFit}
+	rev, err := Task(config.RoleReviewer, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(flowed(rev), "**#12: Exports** — is the source of truth") {
+		t.Errorf("product-fit does not name the parent feature:\n%s", rev)
+	}
+
+	d.Parent = nil
+	rev, err = Task(config.RoleReviewer, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(flowed(rev), "belongs to no feature, so the README and the docs are the only source of truth") {
+		t.Errorf("product-fit without a parent feature:\n%s", rev)
+	}
+	if strings.Contains(rev, "#0") || strings.Contains(rev, "**#: ") {
+		t.Errorf("product-fit renders an empty parent reference:\n%s", rev)
+	}
+}
+
+// The reviewer's system prompt carries the rules that do not vary with the
+// configured stage list: run every one, a verdict each, one grouped message,
+// and an approval that needs them all. The task carries the list itself.
+func TestReviewerSystemPromptCarriesTheStagedRules(t *testing.T) {
+	sys, err := System(config.RoleReviewer, sample(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	flow := flowed(sys)
+	for _, want := range []string{
+		"Run **every** stage, and do not stop at the first one that finds something you would block on",
+		"Give each stage a verdict line of its own",
+		"**Approve** when every stage passed",
+		"A single failed stage is `changes-requested`, whatever the others said",
+		"**grouped by stage**, the stages in the task's order",
+		"A checks-mode session runs no stages",
+	} {
+		if !strings.Contains(flow, want) {
+			t.Errorf("reviewer system prompt missing %q:\n%s", want, sys)
+		}
+	}
 }

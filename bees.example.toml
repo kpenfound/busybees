@@ -314,6 +314,12 @@ label = "bees"
 #pre_review_checks = true
 # Review anyway when those checks are still pending after this long.
 #pre_review_checks_timeout = "10m"
+# The review stages, in order. Each gets its own focus and its own verdict,
+# and an approval needs every one of them to pass. One or more of
+# implementation, completeness, cleanliness, style, product-fit. product-fit
+# judges the change against the work item's parent feature and is off by
+# default.
+#stages = ["implementation", "completeness", "cleanliness", "style"]
 #shell = "/bin/bash"
 #[roles.reviewer.env]
 #EXAMPLE = "value"

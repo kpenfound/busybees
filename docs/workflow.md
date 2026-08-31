@@ -515,14 +515,17 @@ Each developer worker runs a strictly sequential loop for its issue:
 developer → reviewer → developer → reviewer → … → approved
 ```
 
-The reviewer checks out the PR branch, reads the diff and the issue, and either
-approves or sends one consolidated feedback message to the developer through the
-mailbox. Verifying that the change builds and passes is CI's job: the reviewer
-judges it from the code rather than re-running the repository's test-suite. It
-does not submit a GitHub review, comment on the pull request, or push to the
-branch. On "changes requested" the orchestrator moves the issue back to
-`bees:in-progress`, runs the developer again with the feedback in its prompt,
-and the developer pushes and reports `pr-updated`.
+The reviewer checks out the PR branch, reads the diff and the issue, and works
+through the ordered review stages `roles.reviewer.stages` configures —
+correctness, acceptance criteria, cleanliness and style by default — giving each
+its own verdict. It then either approves, which needs every stage to have
+passed, or sends one consolidated feedback message to the developer through the
+mailbox, its points grouped by stage. Verifying that the change builds and
+passes is CI's job: the reviewer judges it from the code rather than re-running
+the repository's test-suite. It does not submit a GitHub review, comment on the
+pull request, or push to the branch. On "changes requested" the orchestrator
+moves the issue back to `bees:in-progress`, runs the developer again with the
+feedback in its prompt, and the developer pushes and reports `pr-updated`.
 
 `scheduler.max_review_rounds` (default 3) caps the number of reviewer passes.
 If the last round still requests changes the issue is escalated (below). The
