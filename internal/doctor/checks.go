@@ -77,7 +77,7 @@ func New(ctx context.Context, configPath, claudeBin string) *Deps {
 		// The checks answer for the account the factory acts as, so they
 		// carry the same token the orchestrator's own calls do (config's
 		// [github] table; empty means the machine's own gh auth).
-		d.GitHub = github.NewWithToken(cfg.Project.Repo, cfg.GitHub.ResolvedToken())
+		d.GitHub = github.NewAs(cfg.Project.Repo, cfg.GitHub.Login, cfg.GitHub.ResolvedToken())
 	}
 	// Keep is deliberately left off even when scheduler.keep_workspaces is
 	// set: doctor's worktree is a probe and always cleans up after itself.

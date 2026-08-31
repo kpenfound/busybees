@@ -20,7 +20,7 @@ var meLookup = github.CurrentUser
 // rejected a token that expands to nothing, so an empty token here means the
 // operator asked for today's behaviour.
 func githubClient(cfg *config.Config) *github.Client {
-	return github.NewWithToken(cfg.Project.Repo, cfg.GitHub.ResolvedToken())
+	return github.NewAs(cfg.Project.Repo, cfg.GitHub.Login, cfg.GitHub.ResolvedToken())
 }
 
 // resolveFilterAssignee replaces filter.assignee = "@me" with the login of
