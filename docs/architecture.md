@@ -138,8 +138,8 @@ A full pass is:
    is what the cap counts and what `bees status` shows.
 6. **dispatch singletons** – project manager (has triage issues or unread
    mail), product manager (unread mail, first run, or interval elapsed), QA
-   (first run, or interval elapsed and something merged since — checked at
-   most once per `qa_interval`). Each runs in
+   (unread mail, first run, or interval elapsed and something merged since —
+   checked at most once per `qa_interval`). Each runs in
    its own goroutine, guarded by a `running` flag so at most one session per
    role exists.
 

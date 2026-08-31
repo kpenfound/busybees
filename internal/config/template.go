@@ -196,9 +196,11 @@ label = "{{.Label}}"
 # person: mentioned in the needs-human comment and in the product manager's
 # questions, and asked to review an approved pull request. No leading @.
 #notify = ["your-github-login", "your-org/your-team"]
-# Minimum time between product manager runs (mail triggers an earlier run).
+# Minimum time between product manager runs (mail in the PM inbox triggers an
+# earlier run).
 #product_manager_interval = "1h"
-# Minimum time between QA runs. QA only runs when something was merged.
+# Minimum time between QA runs. QA only runs when something was merged (mail in
+# the QA inbox triggers an earlier run).
 #qa_interval = "30m"
 # Work hours: outside this window GitHub is polled every off_hours_poll_interval
 # instead of poll_interval (the mailbox keeps running at full speed). Leave it

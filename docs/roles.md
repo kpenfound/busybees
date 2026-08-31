@@ -13,7 +13,7 @@ what it may do, and how to shape it.
 | `project_manager` | singleton | issues in `bees:triage`, or unread mail |
 | `developer` | pool of `scheduler.max_developers` workers | a `bees:ready` issue is waiting (or an in-progress/review issue needs resuming); a ready issue whose PR came back — human feedback, a conflict with the default branch — goes before new work |
 | `reviewer` | one per developer worker, in sequence | the worker's developer session opened or updated a PR; with `auto_merge`, also when a required check fails after approval |
-| `qa` | singleton | `qa_interval` elapsed and something was merged (first run immediately; the merged-PR check runs at most once per `qa_interval`) |
+| `qa` | singleton | unread mail, or `qa_interval` elapsed and something was merged (first run immediately; the merged-PR check runs at most once per `qa_interval`) |
 
 A developer worker owns one issue at a time and runs a strictly sequential
 developer → reviewer → developer … loop for it. Reviewer concurrency therefore
@@ -518,8 +518,8 @@ proposal a person approves. QA never opens feature issues itself.
 tested, what works, bugs filed, product-level observations), sent even when
 nothing was found, and skipped only when QA could not test at all. It also
 *receives* mail addressed to `qa` — in practice from a human
-(`bees mail send --from human --to qa`): it is delivered to the next QA
-session, whenever that run happens, and marked read afterwards. Mail from
+(`bees mail send --from human --to qa`): unread mail starts a QA run on the
+next pass, whatever `qa_interval` is, and is marked read there. Mail from
 `human` is a direction QA follows literally, even where its prompt says
 otherwise.
 
