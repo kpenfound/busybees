@@ -1,0 +1,42 @@
+# GitHub Pages configuration for the busybees documentation site.
+#
+# The site is built by GitHub Pages' own Jekyll from the `main` branch's /docs
+# folder: Settings -> Pages -> Source: "Deploy from a branch", branch `main`,
+# folder `/docs`. There is no build workflow and no generator to install.
+#
+# The pages themselves carry no front matter, so `docs/*.md` stays plain
+# Markdown when it is read on GitHub. Two things make that work: the
+# jekyll-optional-front-matter plugin renders Markdown files that have none,
+# and the `defaults:` block at the bottom gives every one of them a layout.
+
+title: busybees
+description: >-
+  A lightweight software factory: a Go CLI that runs a staff of headless
+  Claude Code sessions against a GitHub repository.
+repository: kpenfound/busybees
+
+url: https://kpenfound.github.io
+baseurl: /busybees
+
+remote_theme: pages-themes/cayman@v0.2.0
+
+# All of these are enabled by GitHub Pages anyway; they are listed so it is
+# visible which ones this site depends on.
+plugins:
+  - jekyll-remote-theme          # remote_theme, above
+  - jekyll-optional-front-matter # render .md files that have no front matter
+  - jekyll-titles-from-headings  # page title from the leading "# " heading
+  - jekyll-relative-links        # rewrite `foo.md` links to the built page
+  - jekyll-seo-tag
+  - jekyll-sitemap
+
+# The leading "# Heading" becomes the page title, which the theme prints in the
+# page header, so drop it from the body rather than showing it twice.
+titles_from_headings:
+  strip_title: true
+
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: default

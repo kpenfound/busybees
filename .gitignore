@@ -3,3 +3,7 @@
 # build output
 /bees
 /dist/
+# jekyll build output (docs/ is the GitHub Pages source)
+/docs/_site/
+/docs/.jekyll-cache/
+/docs/Gemfile.lock

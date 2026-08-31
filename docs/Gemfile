@@ -1,0 +1,9 @@
+# Preview the site the way GitHub Pages builds it:
+#
+#   cd docs && bundle install && bundle exec jekyll serve
+#
+# GitHub Pages needs none of this — it builds docs/ itself from the `main`
+# branch. This file exists only so the published site can be previewed locally.
+source "https://rubygems.org"
+
+gem "github-pages", group: :jekyll_plugins
