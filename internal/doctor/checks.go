@@ -486,10 +486,14 @@ func (d *Deps) checkProjectPrompts(context.Context) Result {
 	if len(known) == 0 && len(unknown) == 0 {
 		return pass(name, GroupConfig, "no "+prompts.ProjectDir+"/ directory")
 	}
+	// A misspelled name and a broken known file are separate problems, and a
+	// repository can have both: report them in one run rather than making the
+	// second one cost a fix and a re-run.
+	var problems, remedies []string
 	if len(unknown) > 0 {
-		return fail(name, GroupConfig, "not read by any role: "+strings.Join(unknown, ", "),
-			fmt.Sprintf("rename to %s or one of %s.md, or move it out of %s/: every file in there is a role's instructions",
-				prompts.CommonPromptFile, strings.Join(config.Roles, ".md, "), prompts.ProjectDir))
+		problems = append(problems, "not read by any role: "+strings.Join(unknown, ", "))
+		remedies = append(remedies, fmt.Sprintf("rename to %s or one of %s.md, or move it out of %s/: every file in there is a role's instructions",
+			prompts.CommonPromptFile, strings.Join(config.Roles, ".md, "), prompts.ProjectDir))
 	}
 	// Every file that a role would read has to be readable and within the
 	// size limit, whichever role it belongs to.
@@ -500,8 +504,11 @@ func (d *Deps) checkProjectPrompts(context.Context) Result {
 		}
 	}
 	if len(broken) > 0 {
-		return fail(name, GroupConfig, strings.Join(dedupe(broken), "; "),
-			"fix the file: every session reading that role's prompt skips it with a warning")
+		problems = append(problems, broken...)
+		remedies = append(remedies, "fix the file: every session reading that role's prompt skips it with a warning")
+	}
+	if len(problems) > 0 {
+		return fail(name, GroupConfig, strings.Join(dedupe(problems), "; "), strings.Join(remedies, "; "))
 	}
 	return pass(name, GroupConfig, strings.Join(known, ", "))
 }
