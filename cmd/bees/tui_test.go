@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/logging"
 	"github.com/kpenfound/busybees/internal/testutil"
 	"github.com/kpenfound/busybees/internal/versions"
@@ -184,5 +185,74 @@ func TestSchedulerCommandsWriteTheStateDirLogFile(t *testing.T) {
 	}
 	if !strings.Contains(file, "dispatching") {
 		t.Errorf("%s did not get the debug record the console dropped: %q", path, file)
+	}
+}
+
+// While the view owns the terminal the console log has to be silent, or its
+// records scribble over the panels. Only the console destination changes:
+// the state directory's log file still gets every record, so nothing the
+// view covers up is lost — and when the view is gone the console gets its
+// logging back, which is what a person who pressed Ctrl-C twice watches the
+// drain in.
+func TestTheViewSilencesTheConsoleAndGivesItBack(t *testing.T) {
+	var console bytes.Buffer
+	lg := logging.New(logging.Options{Format: logging.FormatText, Level: slog.LevelInfo, Console: &console})
+	t.Cleanup(func() { _ = lg.Close() })
+	file := filepath.Join(t.TempDir(), "bees.log")
+	if err := lg.AttachFile(file); err != nil {
+		t.Fatal(err)
+	}
+
+	restore := quietConsole(lg, consoleFlags{format: logging.FormatText, level: slog.LevelInfo}, config.Logging{}, &console)
+	lg.Info("dispatching", "issue", 7)
+	if console.Len() != 0 {
+		t.Errorf("the console printed %q while the view was up", console.String())
+	}
+	restore()
+	lg.Info("polled github", "issues", 3)
+	if !strings.Contains(console.String(), "polled github") {
+		t.Errorf("the console did not get its logging back: %q", console.String())
+	}
+	if strings.Contains(console.String(), "dispatching") {
+		t.Errorf("the silenced record reached the console after all: %q", console.String())
+	}
+
+	b, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "dispatching") {
+		t.Errorf("%s lost the record the console was not shown: %q", file, string(b))
+	}
+}
+
+// `bees run` draws the view only when it decided to: the same seam the flag
+// and the terminal check go through picks between the view and the console
+// (#244), and with no terminal `bees run` still runs the scheduler and logs.
+func TestRunDrawsTheViewOnlyWhenTheModeSaysSo(t *testing.T) {
+	real := isTerminal
+	t.Cleanup(func() { isTerminal = real })
+	for _, tc := range []struct {
+		name     string
+		terminal bool
+		noTUI    bool
+		want     bool
+	}{
+		{"a terminal", true, false, true},
+		{"--no-tui", true, true, false},
+		{"a pipe", false, false, false},
+	} {
+		isTerminal = func(*os.File) bool { return tc.terminal }
+		var console bytes.Buffer
+		lg := logging.New(logging.Options{Format: logging.FormatText, Level: slog.LevelDebug, Console: &console})
+		if got := logTUIMode(lg.Logger, tc.noTUI, os.Stdout); got != tc.want {
+			t.Errorf("%s: the view is %v, want %v", tc.name, got, tc.want)
+		}
+		if err := lg.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(console.String(), "terminal UI") {
+			t.Errorf("%s: the decision was not recorded: %q", tc.name, console.String())
+		}
 	}
 }
