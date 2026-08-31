@@ -121,8 +121,9 @@ func approvedRow(sel, pr, issue, open, title string) string {
 	return fmt.Sprintf("%s%-5s %-5s %-9s  %s", sel, pr, issue, open, title)
 }
 
-// mark draws the selection: the row the cursor is on is the one k stops and
-// o opens, so every panel's rows carry the same two columns for it.
+// mark draws the selection: the row the cursor is on is the one o opens and
+// the one k asks about, so every panel's rows carry the same two columns for
+// it.
 func mark(cursor, row int) string {
 	if cursor == row {
 		return "▸ "
