@@ -99,7 +99,10 @@ issue with `bees` + `bees:feedback`: it goes to the **product manager**, which t
 into feature issues, replies on it, and closes it when done. An issue you label only
 `bees` goes there too; label it `bees:triage` or `bees:ready` yourself to have it built
 without that hop. A concrete bug can skip all that: `bees` + `bees:bug` + `bees:triage`
-goes straight to the project manager. Milestones stay yours: bees never
+goes straight to the project manager. For anything non-trivial, add `bees:planning`
+first: the product manager then only *discusses* the issue — questions, options, a
+draft to react to — until you swap the label for `bees:planned`, which is your
+agreement for it to break the work down. Milestones stay yours: bees never
 create or change them, but every issue they create inherits the milestone of the issue
 it grew out of.
 

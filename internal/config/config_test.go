@@ -152,7 +152,7 @@ func TestDefaults(t *testing.T) {
 		t.Fatalf("state dir: %s", cfg.StateDir())
 	}
 	l := cfg.Labels()
-	if l.Ready != "bees:ready" || l.Base != "bees" || len(l.All()) != 19 {
+	if l.Ready != "bees:ready" || l.Base != "bees" || len(l.All()) != 21 {
 		t.Fatalf("labels: %+v", l)
 	}
 }
@@ -1473,5 +1473,35 @@ func TestReviewStages(t *testing.T) {
 				t.Errorf("error is not actionable: %v", err)
 			}
 		})
+	}
+}
+
+// bees:planning and bees:planned are a person's lever on a feature or
+// feedback issue, not a state: an issue in planning keeps whatever state
+// label it has, so neither may appear among the state or size labels — and
+// both must be in All(), or the scheduler's ensureLabels never creates them
+// in a repository that predates them and every edit using one fails.
+func TestPlanningLabels(t *testing.T) {
+	l := LabelsFor("bees")
+	if l.Planning != "bees:planning" || l.Planned != "bees:planned" {
+		t.Fatalf("planning labels: %q %q", l.Planning, l.Planned)
+	}
+	all := map[string]LabelSpec{}
+	for _, spec := range l.All() {
+		all[spec.Name] = spec
+	}
+	for _, name := range []string{l.Planning, l.Planned} {
+		spec, ok := all[name]
+		if !ok {
+			t.Errorf("%s missing from All()", name)
+		} else if spec.Color == "" || spec.Description == "" {
+			t.Errorf("%s: colour %q description %q", name, spec.Color, spec.Description)
+		}
+		if slices.Contains(l.StateLabels(), name) {
+			t.Errorf("%s is a state label", name)
+		}
+		if slices.Contains(l.SizeLabels(), name) {
+			t.Errorf("%s is a size label", name)
+		}
 	}
 }

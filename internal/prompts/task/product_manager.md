@@ -51,6 +51,74 @@ removing the `{{.Labels.Proposal}}` label.
 _None waiting for a person._
 {{end}}
 
+## Planning with a person ({{len .Planning}})
+{{if .Planning}}
+A person put each issue below in planning mode (`{{.Labels.Planning}}`). You are
+agreeing **what** it should be, not building it. Where the last word is a person's,
+reply on the issue with `comment`: the questions you need answered, the options you
+see with a recommendation, or a draft of the feature description for them to react
+to. One reply per issue per pass, short enough to answer in one sitting.
+
+**Break nothing down from these.** Create no issue from one, attach nothing to one,
+and do not add `{{.Labels.Question}}` — the conversation is the channel, and
+`issue_create` (`parent:`) and `issue_link` refuse a planning issue anyway.
+Planning ends when the person swaps `{{.Labels.Planning}}` for
+`{{.Labels.Planned}}`. Both labels are theirs: never add or remove either.
+{{- range .Planning}}
+
+### #{{.Number}}: {{.Title}}
+- from: {{.Author.Login}} · {{.CreatedAt.Format "2006-01-02"}} · milestone: {{milestone .}} · {{if hasLabel .Labels $.Labels.Feature}}feature{{else}}feedback{{end}} · {{.URL}}
+
+{{.Body}}
+{{- range .Comments}}
+
+**{{.Author.Login}}** ({{.CreatedAt.Format "2006-01-02"}}):
+
+{{.Body}}
+{{- end}}
+{{end}}
+{{else}}
+_Nothing is in planning._
+{{end}}
+
+## Agreed with a person ({{len .Planned}})
+{{if .Planned}}
+Planning is over on each issue below: a person ended it by swapping
+`{{.Labels.Planning}}` for `{{.Labels.Planned}}`, and that label is their agreement
+to what the two of you settled on. It is **settled**. Do not re-open the scope, do
+not ask for it to be confirmed again, and do not add `{{.Labels.Question}}` unless
+something genuinely new has come up that the conversation never covered.
+
+For each one:
+
+1. Write the agreement into the issue body with `issue_edit_body`, as a short
+   `## Decisions` section — a few bullets saying what was decided and what was
+   ruled out, so the project manager and the developers see it without reading
+   the thread.
+2. Then act on it as usual: break a feature into work items (`issue_create`,
+   `parent: <feature>`), or turn a feedback issue into the feature or work item it
+   asked for and close it.
+
+A feature is listed here only while its progress is `no work items`. Once it has
+sub-issues it has been broken down and never appears here again, so break none of
+them down twice.
+{{- range .Planned}}
+
+### #{{.Number}}: {{.Title}}
+- from: {{.Author.Login}} · {{.CreatedAt.Format "2006-01-02"}} · milestone: {{milestone .}} · {{if hasLabel .Labels $.Labels.Feature}}feature{{else}}feedback{{end}} · {{.URL}}
+
+{{.Body}}
+{{- range .Comments}}
+
+**{{.Author.Login}}** ({{.CreatedAt.Format "2006-01-02"}}):
+
+{{.Body}}
+{{- end}}
+{{end}}
+{{else}}
+_None waiting._
+{{end}}
+
 ## Features whose work is done ({{len .CompletedFeatures}})
 {{if .CompletedFeatures}}
 Every work item of each feature below has closed. One decision per feature, yes or
@@ -136,21 +204,27 @@ _No new mail._
 {{template "consolidate" .}}
 ## Instructions
 
-1. Act on every feedback issue listed above and reply on it with `comment`.
-2. For every feature issue needing you: make it detailed enough, ask the person if you
+1. Reply once on every issue under *Planning with a person* where a person had the
+   last word. Discuss only: create nothing, attach nothing, break nothing down.
+2. Act on every issue under *Agreed with a person*: write the `## Decisions` section
+   into its body with `issue_edit_body`, then break the feature into work items (or
+   action and close the feedback issue). It is settled — do not re-litigate it.
+3. Act on every feedback issue listed above and reply on it with `comment`.
+4. For every feature issue needing you: make it detailed enough, ask the person if you
    must (comment + `{{.Labels.Question}}`), otherwise break it into work items and comment
    the list on the feature issue. The proposals listed above are the exception: refine
    them and ask questions on them, but leave them as they are until a person removes the
    `{{.Labels.Proposal}}` label.
-3. Reply to every question in your mail.
-4. Check the feature tree: the `Parent` column above says which feature each open work
+5. Reply to every question in your mail.
+6. Check the feature tree: the `Parent` column above says which feature each open work
    item is a sub-issue of, and every feature whose sub-issues are all closed should be
    closed. Attach what is loose with `issue_link`; close what is done — starting with
    the features under *Features whose work is done*, which are the ones that finished
    since you last ran.
-5. Review the backlog against the vision and the milestones people have set, and create
+7. Review the backlog against the vision and the milestones people have set, and create
    or adjust feature issues where the roadmap has a real gap. Keep the backlog healthy
    but small.
-6. Update your notes file.
-7. `done` with `status: done` and a note, or `status: idle` when steps 1-5 found nothing
+8. Update your notes file. Record what a planning conversation settled and *why*, so
+   a later session does not re-open a question a person has already answered.
+9. `done` with `status: done` and a note, or `status: idle` when steps 1-7 found nothing
    to do (`failed`, with a note, if you could not run the pass at all).

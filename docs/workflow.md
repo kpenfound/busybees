@@ -129,8 +129,9 @@ stateDiagram-v2
 | `bees:needs-human` | The factory gave up on it | Orchestrator |
 
 Four more labels sit **outside** the state machine; issues carrying them
-never get a state label and are never triaged (`bees:priority` below is a
-fifth: it sits *next to* a state label rather than replacing one):
+never get a state label and are never triaged (`bees:priority`,
+`bees:planning` and `bees:planned` below are three more: they sit *next to* a
+state label rather than replacing one):
 
 | Label | Meaning | Who sets it |
 |---|---|---|
@@ -138,6 +139,18 @@ fifth: it sits *next to* a state label rather than replacing one):
 | `bees:feedback` | The product manager's inbox: an idea, product feedback or a bug report from a person | Humans, orchestrator (an issue with no state label and neither `bees:feature` nor `bees:feedback`) |
 | `bees:question` | The product manager is waiting for a person to answer on a feature or feedback issue | Product manager (`issue_question`; removed by the orchestrator when the person replies) |
 | `bees:proposal` | A feature issue a bee wrote rather than a person; it sits next to `bees:feature`, and a person removes the label to approve it | `bees issue create --feature` (removed by a person) |
+
+`bees:planning` and `bees:planned` are how you agree something with the
+product manager before anything is built. Neither is a state label: an issue
+carrying one keeps whatever state it has, and `classify` does not route on
+them. **Both are yours alone** — the product manager never adds or removes
+either. See [Planning with the product
+manager](#planning-with-the-product-manager).
+
+| Label | Meaning | Who sets it |
+|---|---|---|
+| `bees:planning` | A feature or feedback issue you and the product manager are still agreeing; it discusses the issue and breaks nothing down | Humans |
+| `bees:planned` | The two of you have agreed it; the product manager treats the scope as settled and breaks it down on its next run | Humans |
 
 `bees:priority` says "build this next". It is not a state label: an issue keeps
 exactly one of `bees:triage`/`bees:ready`/… alongside it, and it survives every
@@ -290,7 +303,9 @@ Either way the issue goes to the product manager, not to triage:
   never sees it. `bees status` counts these issues in its `feedback` queue.
 - A *fresh* feedback issue wakes the product manager on the next poll instead
   of waiting for `product_manager_interval`. Fresh means you created it, or
-  commented on it, after the product manager's last reply.
+  commented on it, after the product manager's last reply — except in
+  [planning mode](#planning-with-the-product-manager), where only a comment
+  counts.
 - The product manager reads it (with all its comments), decides what to do,
   and does it: creates or adjusts feature issues, files a bug work item, or
   declines. (It never touches milestones — those are yours.)
@@ -337,7 +352,8 @@ since the product manager's last marker comment on it) the product manager:
    An existing issue can be attached with `issue_link` (`parent: <feature>`, `child: <item>`),
    which makes the sub-issue relationship and, when the issue is in no
    milestone, puts it in the feature's.
-   Both refuse a feature that is still a proposal;
+   Both refuse a feature that is still a proposal, or one a person has put in
+   planning;
 3. comments the list of work items on the feature issue (with the marker), so
    it is not presented to the product manager again until something changes;
 4. later, closes the feature issue once all its sub-issues are closed, or
@@ -348,6 +364,48 @@ since the product manager's last marker comment on it) the product manager:
 
 You steer a feature by commenting on it: your comment gives the human side the
 last word and makes the issue fresh again.
+
+### Planning with the product manager
+
+A feature issue is one-shot: by the time it exists, you and the product
+manager have never actually *agreed* on it. For anything non-trivial, plan it
+first.
+
+**Put `bees:planning` on a feature or feedback issue.** While the label is
+there the product manager only *discusses* it. Every comment you leave starts
+a run, and it replies on the issue: the questions it needs answered, the
+options it sees with a recommendation, or a draft of the feature description
+for you to react to. It creates nothing, attaches nothing and asks nothing
+with `bees:question` — the conversation is the channel. The suppression is
+not only a prompt rule: the issue is presented in a section of its own that
+lists no breakdown step, and `bees issue create --parent <planning issue>`
+and `bees issue link` refuse outright, so it grows no sub-issues whoever
+asks. An untouched planning issue is not work: the product manager wakes for
+your comment, not for the label.
+
+**End planning by swapping `bees:planning` for `bees:planned`.** That label
+is your agreement. On its next run the product manager treats the issue as
+**settled** — it does not re-open the scope or ask for it to be confirmed
+again, and adds `bees:question` only if something genuinely new comes up that
+the conversation never covered. It writes what was agreed into the issue body
+as a short `## Decisions` section, so the project manager and the developers
+see it without reading the thread, records the outcome in its notes, and then
+breaks the feature into work items (or actions and closes the feedback
+issue).
+
+It does that **once**: a feature is presented for breakdown only while it has
+no sub-issues, so the ones the breakdown creates are what take it off the
+list. Nothing about `bees:planned` wakes the product manager, so the run that
+picks it up is the next one `product_manager_interval` (or a comment of
+yours) brings round — at most an hour with the default.
+
+One exception: if the issue is a proposal the product manager wrote
+(`bees:proposal`), that label is what says you have not approved it, and it
+outranks `bees:planned` — take it off as well, or the issue stays a proposal
+waiting for you.
+
+Leave `bees:planned` on the issue or take it off; the factory neither reads
+it again nor removes it.
 
 ### Questions for you: `bees:question`
 
@@ -363,6 +421,7 @@ Contrast with the other ways of getting something into the factory:
 | You want | Do this | Who handles it |
 |---|---|---|
 | An idea weighed, feedback heard, a bug considered | issue with `bees` + `bees:feedback` | Product manager |
+| A non-trivial idea thought through with you *before* anything is specced | issue with `bees` + `bees:feedback` (or `bees:feature`) + `bees:planning` | Product manager, in [planning mode](#planning-with-the-product-manager) |
 | A feature specified and broken into work items | issue with `bees` + `bees:feature` | Product manager |
 | A concrete piece of work specified, then built | issue with `bees` + `bees:triage` (optionally `bees:bug`) | Project manager (triage), then a developer |
 | A concrete piece of work built as written | issue with `bees` + `bees:ready` | A developer |
@@ -833,15 +892,18 @@ passing.
 The product manager owns the roadmap of feature issues. It runs at least every
 `scheduler.product_manager_interval` (default 1h), or sooner when it has
 unread mail (questions from the project manager, reports from QA), when a
-feature or feedback issue is fresh (a proposal counts only once a person has
-commented on it: until then nobody but a person can move it), or when a
+feature or feedback issue is fresh (a proposal, and an issue in
+[planning](#planning-with-the-product-manager), count only once a person has
+commented: until then nobody but a person can move either), or when a
 feature's work is done (below). It writes
 feature issues
 (`issue_create` with `feature: true`) that describe user-visible outcomes rather than
 implementation, and breaks them into work items as described above — except that
 a feature issue it wrote itself starts as a
 [proposal](#feature-issues) (`bees:proposal`) and is only broken down once a
-person removes that label. Because
+person removes that label, and an issue a person put in
+[planning](#planning-with-the-product-manager) (`bees:planning`) is only
+discussed until they swap that label for `bees:planned`. Because
 work items are GitHub sub-issues of their feature, progress is visible on the
 feature issue itself, in GitHub's project views, and in the product manager's
 prompt.

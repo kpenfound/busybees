@@ -124,6 +124,8 @@ and `bees labels sync` create them in GitHub.
 | `bees:feedback` | Feature idea, product feedback or bug report for the product manager (outside the state machine) |
 | `bees:question` | The product manager is waiting for a person to answer on a feature or feedback issue; removed by the orchestrator when they reply |
 | `bees:proposal` | A feature issue a bee wrote; it sits next to `bees:feature`, and a person removes the label to approve it |
+| `bees:planning` | A person and the product manager are still agreeing a feature or feedback issue: the product manager only discusses it and breaks nothing down. Not a state label; only a person sets or removes it. See [Planning with the product manager](workflow.md#planning-with-the-product-manager) |
+| `bees:planned` | A person ended planning: the scope is agreed, and the product manager breaks the issue down on its next run without re-opening it. Not a state label; only a person sets or removes it |
 | `bees:priority` | A person wants this next: dispatched before the rest of the `bees:ready` queue. Not a state label; people set it, the project manager may add it to a work item that unblocks the factory itself, and the product manager carries one from a feedback issue onto the work item it creates from it |
 | `bees:triage` | Needs refinement by the project manager |
 | `bees:ready` | Detailed enough for a developer to pick up |
@@ -353,6 +355,7 @@ frugal:
 | Human PR feedback | 3 calls per PR (reviews, review comments, comments) | only for PRs whose `updatedAt` moved since the last look |
 | Product-manager has-work check | 1 `issue view` per feedback/feature issue | only for issues whose `updatedAt` is newer than the PM's last run; the check for a feature whose sub-issues have all closed adds none — it compares the sub-issue numbers recorded on the last PM run with the issues the poll found open |
 | Product-manager run | 1 `issue view` per open feedback/feature issue, plus 1 REST call per open feature (sub-issue progress) and 1 GraphQL call per open work item (parent feature) | every PM run (not gated by `updatedAt`) |
+| Planning mode | 1 extra `issue view` per `bees:planned` issue the freshness check did not already fetch the comments of | every PM run, while an issue is agreed and not yet acted on |
 | QA merged-PR check | 1 call | at most once per `qa_interval` |
 | Checks (auto-merge) | 1 call per poll of the checks stage, 2 when the branch requires no check | every `roles.reviewer.checks_poll_interval` while waiting |
 | Visibility backstop | 2 list calls | after every session |

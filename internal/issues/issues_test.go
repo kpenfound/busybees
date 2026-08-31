@@ -32,6 +32,10 @@ func fakeWith(t *testing.T, parentMilestone, childMilestone string) (*github.Cli
 		case strings.HasPrefix(call, "api repos/acme/widgets/issues/13"):
 			// A proposal: a feature issue a bee wrote, not approved yet.
 			return []byte(`{"id": 9013, "milestone": {"title":"v1"}, "labels": [{"name":"bees"},{"name":"bees:feature"},{"name":"bees:proposal"}]}`), nil
+		case strings.HasPrefix(call, "api repos/acme/widgets/issues/14"):
+			// In planning: a person is still agreeing it with the product
+			// manager, so nothing is broken down from it yet.
+			return []byte(`{"id": 9014, "milestone": {"title":"v1"}, "labels": [{"name":"bees"},{"name":"bees:feature"},{"name":"bees:planning"}]}`), nil
 		case strings.HasPrefix(call, "api repos/acme/widgets/issues/77"):
 			ms := "null"
 			if childMilestone != "" {
@@ -44,7 +48,8 @@ func fakeWith(t *testing.T, parentMilestone, childMilestone string) (*github.Cli
 			return []byte(`{}`), nil
 		case strings.HasPrefix(call, "issue create"):
 			return []byte("https://github.com/acme/widgets/issues/77\n"), nil
-		case strings.HasPrefix(call, "api --method POST repos/acme/widgets/issues/12/sub_issues"):
+		case strings.HasPrefix(call, "api --method POST repos/acme/widgets/issues/12/sub_issues"),
+			strings.HasPrefix(call, "api --method POST repos/acme/widgets/issues/14/sub_issues"):
 			return []byte(`{}`), nil
 		}
 		t.Fatalf("unexpected call: %s", call)
@@ -286,5 +291,44 @@ func TestLinkReportsAMilestoneFailure(t *testing.T) {
 	}
 	if joined := strings.Join(*calls, "\n"); !strings.Contains(joined, "sub_issues") {
 		t.Errorf("the link itself should have been made:\n%s", joined)
+	}
+}
+
+// An issue a person put in planning mode is a conversation, not a spec: it
+// must grow no sub-issues through either door until they end planning by
+// swapping the label for bees:planned, and the refusal must happen before
+// anything is created.
+func TestAPlanningIssueGrowsNoSubIssues(t *testing.T) {
+	labels := config.LabelsFor("bees")
+	filter := config.Filter{Label: "bees"}
+
+	gh, calls := fake(t, "v1")
+	_, err := Create(context.Background(), gh, filter, labels, Options{Title: "t", Kind: KindTask, Parent: 14})
+	if err == nil {
+		t.Fatal("--parent on a planning issue must fail")
+	}
+	for _, want := range []string{"#14", "bees:planning", "bees:planned"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name %q", err, want)
+		}
+	}
+	if joined := strings.Join(*calls, "\n"); strings.Contains(joined, "issue create") {
+		t.Errorf("the issue was created before the refusal:\n%s", joined)
+	}
+
+	// Same hole, other door.
+	gh, calls = fake(t, "v1")
+	if _, err := Link(context.Background(), gh, labels, 14, 77); err == nil {
+		t.Fatal("linking to a planning issue must fail")
+	}
+	if joined := strings.Join(*calls, "\n"); strings.Contains(joined, "sub_issues") {
+		t.Errorf("the issue was attached before the refusal:\n%s", joined)
+	}
+
+	// --related only inherits a milestone: it creates no sub-issue, so it is
+	// not this hole and stays allowed.
+	gh, _ = fake(t, "v1")
+	if _, err := Create(context.Background(), gh, filter, labels, Options{Title: "t", Kind: KindTask, Related: 14}); err != nil {
+		t.Errorf("--related on a planning issue: %v", err)
 	}
 }
