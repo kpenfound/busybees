@@ -75,30 +75,78 @@ func TestProjectPromptFilesAreAppendedInOrder(t *testing.T) {
 // Every repository that has never heard of this feature has no bees/prompts/
 // directory, so that case must render byte for byte the prompt bees rendered
 // before it existed - and read the directory silently, with no error.
+//
+// The comparison is run against a repository that has the directory but not
+// this role's files, so it is a real comparison rather than one Go guarantees:
+// a LoadProject that globbed the directory instead of naming the two files it
+// reads would put another role's instructions in this role's prompt.
 func TestNoProjectPromptsRendersTheSamePromptAsBefore(t *testing.T) {
-	repo := t.TempDir()
+	bare := t.TempDir()
+	populated := t.TempDir()
+	writeProjectPrompt(t, populated, "notes.md", "not a role, never read.")
 	for _, role := range config.Roles {
-		project, err := LoadProject(repo, role)
+		writeProjectPrompt(t, populated, role+".md", "instructions for "+role+".")
+	}
+
+	for _, role := range config.Roles {
+		// Before the feature existed there was no fourth argument at all.
+		before, err := System(role, sample(), "custom instructions here")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		project, err := LoadProject(bare, role)
 		if err != nil {
 			t.Fatalf("%s: reading a repository with no %s must not fail: %v", role, ProjectDir, err)
 		}
 		if len(project) != 0 {
 			t.Fatalf("%s: %+v", role, project)
 		}
-		with, err := System(role, sample(), "custom instructions here", project...)
+		after, err := System(role, sample(), "custom instructions here", project...)
 		if err != nil {
 			t.Fatal(err)
 		}
-		without, err := System(role, sample(), "custom instructions here")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if with != without {
+		if after != before {
 			t.Errorf("%s system prompt changed for a repository with no %s/", role, ProjectDir)
 		}
-		if strings.Contains(with, "Additional instructions from bees/") {
-			t.Errorf("%s system prompt names a project prompt file that does not exist:\n%s", role, with)
+		if strings.Contains(after, "Additional instructions from bees/") {
+			t.Errorf("%s system prompt names a project prompt file that does not exist:\n%s", role, after)
 		}
+
+		// Same repository minus this role's own files: still today's prompt.
+		other := t.TempDir()
+		for _, name := range []string{"notes.md"} {
+			writeProjectPrompt(t, other, name, "not a role, never read.")
+		}
+		for _, r := range config.Roles {
+			if r != role {
+				writeProjectPrompt(t, other, r+".md", "instructions for "+r+".")
+			}
+		}
+		project, err = LoadProject(other, role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(project) != 0 {
+			t.Fatalf("%s read files that are not its own: %+v", role, project)
+		}
+		elsewhere, err := System(role, sample(), "custom instructions here", project...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if elsewhere != before {
+			t.Errorf("%s system prompt changed because of another role's project prompt file", role)
+		}
+	}
+
+	// Every role does read common.md, so the fixture above is not silent
+	// because the loader reads nothing at all.
+	project, err := LoadProject(populated, config.RoleQA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(project) != 1 || project[0].Path != "bees/prompts/qa.md" {
+		t.Fatalf("qa project prompts: %+v", project)
 	}
 }
 
