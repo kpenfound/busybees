@@ -757,6 +757,11 @@ func TestFullDeveloperReviewLoop(t *testing.T) {
 			t.Errorf("%s sessions: got %d want %d", role, got, n)
 		}
 	}
+	// Report every role's count above, then stop: the assertions below index
+	// these session slices, so a missing session would panic instead of failing.
+	if t.Failed() {
+		t.FailNow()
+	}
 	// The second developer session received the reviewer's mail.
 	dev := h.sessions(config.RoleDeveloper)
 	prompt, _ := os.ReadFile(filepath.Join(dev[1], "prompt.md"))
