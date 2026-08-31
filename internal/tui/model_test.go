@@ -919,3 +919,148 @@ func TestKillOnAnotherSessionAsksAgain(t *testing.T) {
 		t.Errorf("k stopped %v, want the session it asked about", killed)
 	}
 }
+
+// nowLines picks the Now panel's header and the row naming mark out of a
+// rendered view. Both are drawn inside the same box, so they share a border
+// prefix and a column of one is a column of the other.
+func nowLines(t *testing.T, view, mark string) (header, row string) {
+	t.Helper()
+	for _, line := range strings.Split(view, "\n") {
+		switch {
+		case header == "" && strings.Contains(line, "elapsed") && strings.Contains(line, "turns"):
+			header = line
+		case row == "" && strings.Contains(line, mark):
+			row = line
+		}
+	}
+	if header == "" || row == "" {
+		t.Fatalf("the Now panel has no header or no row for %q:\n%s", mark, view)
+	}
+	return header, row
+}
+
+// column returns the value of a Now panel row's column, found by where the
+// header's own label ends: every column but the last is right-aligned and
+// the header and the rows are laid out by one nowRow call, so a label's
+// right edge is its cells' right edge. A cell formatted anywhere else would
+// not end there, and the token this cuts out would be the wrong one.
+//
+// Columns are counted in runes, not bytes: the cursor's ▸ is one column
+// wide and three bytes long.
+func column(t *testing.T, header, row, label string) string {
+	t.Helper()
+	end := at(t, header, label) + len([]rune(label))
+	r := []rune(row)
+	if end > len(r) {
+		t.Fatalf("the %q column ends past the row:\nheader %q\nrow    %q", label, header, row)
+	}
+	fields := strings.Fields(string(r[:end]))
+	if len(fields) == 0 {
+		t.Fatalf("the %q column of the row is empty:\nheader %q\nrow    %q", label, header, row)
+	}
+	return fields[len(fields)-1]
+}
+
+// at is the column want starts in, in runes.
+func at(t *testing.T, line, want string) int {
+	t.Helper()
+	i := strings.Index(line, want)
+	if i < 0 {
+		t.Fatalf("no %q in %q", want, line)
+	}
+	return len([]rune(line[:i]))
+}
+
+// A running session's turns come from its own transcript. claude reports
+// num_turns in the result event of its stream and nothing before it, so a
+// session that has not ended has no reported turn count — and 0 in that
+// column reads as "doing nothing" over a session doing real work (#313).
+// The count is taken on the refresh tick, the same one that re-reads
+// status.json, not on every redraw.
+func TestTheNowPanelCountsARunningSessionsTurns(t *testing.T) {
+	dir := t.TempDir()
+	writeTranscript(t, dir, "reading the issue", "grepping", "editing", "running the tests", "pushing")
+
+	var m tea.Model = New(Deps{Repo: "acme/widgets", Now: func() time.Time { return fixed }})
+	m, _ = m.Update(tea.WindowSizeMsg{Width: defaultWidth, Height: panelHeight})
+	m, _ = m.Update(watched("developer-issue-12-r1", config.RoleDeveloper, 12, 31, dir))
+
+	var cmd tea.Cmd
+	for i := 0; i < refreshEvery; i++ {
+		m, cmd = m.Update(tickMsg(fixed))
+	}
+	m, _ = run(t, m, cmd)
+
+	view := plain(m.View())
+	header, row := nowLines(t, view, "developer")
+	if got := column(t, header, row, "turns"); got != "5" {
+		t.Errorf("the Now panel shows %q turns for a session whose transcript holds 5 assistant messages:\n%s", got, view)
+	}
+	// The columns still line up: the last one starts where its header does.
+	if want, got := at(t, header, "model"), at(t, row, "opus"); want != got {
+		t.Errorf("the model column starts at %d in the row and %d in the header:\n%s", got, want, view)
+	}
+}
+
+// The live count is only ever a stand-in. When the session ends, the number
+// claude reports takes its place: the running entry is dropped in the same
+// event that adds the real total, so the two are never added together.
+func TestALiveTurnCountIsReplacedByTheOneTheSessionReports(t *testing.T) {
+	dir := t.TempDir()
+	writeTranscript(t, dir, "reading the issue", "grepping", "editing", "running the tests", "pushing")
+
+	var m tea.Model = New(Deps{Repo: "acme/widgets", Now: func() time.Time { return fixed }})
+	m, _ = m.Update(tea.WindowSizeMsg{Width: defaultWidth, Height: panelHeight})
+	m, _ = m.Update(watched("developer-issue-12-r1", config.RoleDeveloper, 12, 31, dir))
+	var cmd tea.Cmd
+	for i := 0; i < refreshEvery; i++ {
+		m, cmd = m.Update(tickMsg(fixed))
+	}
+	m, _ = run(t, m, cmd)
+	// The live count must really have been taken, or this proves nothing.
+	view := plain(m.View())
+	header, row := nowLines(t, view, "developer")
+	if got := column(t, header, row, "turns"); got != "5" {
+		t.Fatalf("the running session was not counted (%q turns):\n%s", got, view)
+	}
+
+	m, _ = m.Update(ended("developer-issue-12-r1", config.RoleDeveloper, 12, 31, 40, 1.25))
+	m, _ = m.Update(staged(12, "reviewer", 1))
+	m, _ = m.Update(started("reviewer-pr-31-r1", config.RoleReviewer, 12, 31, fixed.Add(-30*time.Second), "opus", false))
+
+	view = plain(m.View())
+	header, row = nowLines(t, view, "reviewer r1")
+	if got := column(t, header, row, "turns"); got != "40" {
+		t.Errorf("the next session of issue #12 shows %q turns, want the 40 the finished one reported:\n%s", got, view)
+	}
+}
+
+// An unknown cost is not a cost of zero. Until a session of the work item
+// has ended and said what it cost, the cell says "-" the way an unknown
+// issue or PR does; a session that really did cost nothing still prints
+// $0.00.
+func TestAnUnknownCostIsNotZero(t *testing.T) {
+	deps := Deps{Repo: "acme/widgets"}
+	view := drive(t, deps,
+		staged(12, "developer", 1),
+		started("developer-issue-12-r1", config.RoleDeveloper, 12, 31, fixed.Add(-time.Minute), "opus", false),
+	)
+	header, row := nowLines(t, view, "developer r1")
+	if got := column(t, header, row, "cost"); got != "-" {
+		t.Errorf("a work item no session has finished on shows a cost of %q, want -:\n%s", got, view)
+	}
+	if strings.Contains(row, "$0.00") {
+		t.Errorf("the row prints $0.00 for a cost nothing has reported yet:\n%s", row)
+	}
+
+	view = drive(t, deps,
+		started("developer-issue-12-r1", config.RoleDeveloper, 12, 31, fixed.Add(-time.Minute), "opus", false),
+		ended("developer-issue-12-r1", config.RoleDeveloper, 12, 31, 3, 0),
+		staged(12, "reviewer", 1),
+		started("reviewer-pr-31-r1", config.RoleReviewer, 12, 31, fixed.Add(-30*time.Second), "opus", false),
+	)
+	header, row = nowLines(t, view, "reviewer r1")
+	if got := column(t, header, row, "cost"); got != "$0.00" {
+		t.Errorf("a work item whose session reported $0.00 shows a cost of %q:\n%s", got, view)
+	}
+}

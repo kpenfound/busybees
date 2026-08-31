@@ -463,9 +463,9 @@ busybees  acme/widgets                                                          
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Now                                                                                              │
 │   role             issue pr    stage                 elapsed  turns     cost  model              │
-│ ▸ developer        #12   #31   developer r2            3m20s      0    $1.79  opus               │
-│   reviewer         #14   #33   pre-review checks r1      42s      0    $0.00  sonnet (fallback)  │
-│   product manager  -     -     -                          9s      0    $0.00  sonnet             │
+│ ▸ developer        #12   #31   developer r2            3m20s     61    $1.79  opus               │
+│   reviewer         #14   #33   pre-review checks r1      42s      9        -  sonnet (fallback)  │
+│   product manager  -     -     -                          9s      4        -  sonnet             │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Recent                                                                                           │
@@ -497,12 +497,18 @@ busybees  acme/widgets                                                          
 **Now** is every session running right now: the role, the issue and pull
 request it is about, the stage its developer worker is in with the round it
 is on, how long it has been going, and the model it runs on — `(fallback)`
-when a retry is running on the role's `fallback_model`. The turns and cost
-columns are what the *work item* has spent in the sessions that have already
-finished: claude reports both only in the final event of a session's stream,
-so the running session adds its own when it ends. `↑`/`↓` move the cursor
-down the list and Enter opens [the session view](#watching-one-session) on
-the session it is on.
+when a retry is running on the role's `fallback_model`. `↑`/`↓` move the
+cursor down the list and Enter opens
+[the session view](#watching-one-session) on the session it is on.
+
+**Turns** is what the *work item* has taken: the sessions of it that have
+already finished, plus the assistant messages the running session's own
+`transcript.jsonl` holds right now, recounted every few seconds. **Cost** is
+the finished sessions only, and it is `-` until one of them has ended —
+claude prices a session in the final event of its stream and says nothing
+before it, so a work item nothing has finished on has no cost yet rather
+than a cost of zero. A session that really did cost nothing still prints
+`$0.00`.
 
 **Recent** is what just happened: the sessions that have finished, newest
 first, with how each ended, what it said about it, how long it took and what
