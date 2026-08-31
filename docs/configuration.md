@@ -11,12 +11,13 @@ never written as a setting: it stays a commented placeholder and init fails inst
 `bees config validate` checks the file; `bees config show` prints the resolved settings
 for every role after merging.
 
-The file starts with a `version` key, followed by six top-level tables:
+The file starts with a `version` key, followed by seven top-level tables:
 
 | Table | Purpose |
 |---|---|
 | `[project]` | The git remote, repository, default branch and state directory |
 | `[filter]` | Which GitHub issues and pull requests the factory can see |
+| `[github]` | The GitHub account the factory itself acts as |
 | `[scheduler]` | Concurrency, polling and review-loop limits |
 | `[logging]` | Console log format and level |
 | `[global]` | Prompt, skills, MCP servers, model, shell and environment settings applied to every role |
@@ -144,6 +145,54 @@ orchestrator adds `bees:size/m` to any ready issue that has none. See
 | `bees:size/m` | A coherent feature slice touching several packages, needs new tests |
 | `bees:size/l` | Crosses subsystems or needs a design decision; near the limit for one PR |
 | `bees:size/xl` | Too big for one pull request — split it instead of labelling it |
+
+## `[github]`
+
+By default the factory uses whatever account the machine's `gh` is logged in with, so
+every issue, comment and label edit it makes looks like it came from the person
+running it. `[github]` gives the orchestrator a login of its own.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `login` | string | `""` | GitHub login the factory acts as. It is what `bees init` verifies the token against and what `bees status` reports; it is not itself a credential. |
+| `token` | string | `""` | A token for `login`, passed to every `gh` call the orchestrator makes as `GH_TOKEN`. A `"$VAR"` or `"${VAR}"` value is expanded from the environment bees runs in, so the secret itself stays out of `bees.toml`. A reference that expands to nothing is rejected at load time, naming the variable. |
+| `git_name` | string | `""` | Name for commits made by developer sessions. Recorded here but not applied yet: sessions still commit with the machine's own git identity. |
+| `git_email` | string | `""` | Email for those commits, with the same caveat. |
+
+`login` and `token` are set together: either alone is rejected with an error naming
+the key. A login on its own would make bees report an account it does not act as, and
+a token on its own leaves nothing to report without asking GitHub who it belongs to.
+`git_name` and `git_email` are an identity rather than a credential, so they are
+accepted on their own.
+
+With the table unset — the default, and what every `bees.toml` written before it looks
+like — nothing is injected and the factory behaves exactly as it always has.
+
+```toml
+[github]
+login = "busybees-bot"
+token = "$BEES_GITHUB_TOKEN"
+```
+
+**What the token covers.** The orchestrator's own calls: polling for issues and pull
+requests, the label edits it makes, the review requests and escalation comments it
+posts, `bees init`'s label creation, `bees doctor`'s repository checks, and everything
+`bees issue`, `bees mail` and the built-in MCP tools do on GitHub. What it does not
+cover is `gh` run by a Claude session itself — a session's own comments, pull requests
+and commits still come from the machine's account.
+
+### `filter.assignee = "@me"` still means you
+
+`"@me"` says whose work the factory picks up, which is the person's, not the bot's. It
+is resolved to a login with the machine owner's own `gh` authentication before any
+token is used, in the orchestrator and in the MCP server alike, so setting `[github]`
+never changes which issues are visible. To have the factory pick up the bot's issues
+instead, write the bot's login out in full:
+
+```toml
+[filter]
+assignee = "busybees-bot"
+```
 
 ## `[scheduler]`
 
@@ -604,6 +653,8 @@ headers = { Authorization = "Bearer $BROWSER_MCP_TOKEN" }
 | `project.branch_prefix` | `bees/` |
 | `filter.label` | `bees` |
 | `filter.require_label` | `true` |
+| `github.login` | `""` (the machine's own gh account) |
+| `github.token` | `""` |
 | `scheduler.poll_interval` | `5m` |
 | `scheduler.rate_limit_backoff` | `15m` |
 | `scheduler.max_developers` | `1` |

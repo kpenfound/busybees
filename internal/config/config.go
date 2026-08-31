@@ -184,6 +184,7 @@ type Config struct {
 
 	Project   Project                 `toml:"project"`
 	Filter    Filter                  `toml:"filter"`
+	GitHub    GitHub                  `toml:"github"`
 	Global    RoleSettings            `toml:"global"`
 	Scheduler Scheduler               `toml:"scheduler"`
 	Logging   Logging                 `toml:"logging"`
@@ -236,6 +237,101 @@ type Filter struct {
 
 // LabelRequired reports whether the label is part of the visibility gate.
 func (f Filter) LabelRequired() bool { return f.RequireLabel == nil || *f.RequireLabel }
+
+// GitHub is the GitHub account the factory itself acts as. Everything unset
+// means the machine owner's own `gh` authentication, which is what bees has
+// always used.
+//
+// Login and Token are set together: a login on its own would make bees report
+// an account it does not act as, and a token on its own leaves nothing to
+// report without asking GitHub who it belongs to. Validate rejects either
+// alone.
+//
+// Note that filter.assignee = "@me" is deliberately *not* affected: it says
+// whose work the factory picks up, which is the person's, so it is resolved
+// with the machine owner's own gh authentication before any token is used.
+type GitHub struct {
+	// Login is the account the factory's own gh calls act as. `bees init`
+	// verifies the token against it and `bees status` reports it; it is not
+	// itself a credential.
+	Login string `toml:"login" json:"login"`
+	// Token authenticates Login. A "$VAR" or "${VAR}" reference is expanded
+	// from the environment bees runs in, so the secret need not be written
+	// into bees.toml. Read it through ResolvedToken, never directly.
+	Token string `toml:"token" json:"token"`
+	// GitName and GitEmail are the identity for commits the developer makes.
+	// They are recorded here but not applied yet: developer sessions still
+	// commit with the machine's own git identity.
+	GitName  string `toml:"git_name" json:"git_name"`
+	GitEmail string `toml:"git_email" json:"git_email"`
+}
+
+// Configured reports whether the factory acts as an account of its own. It is
+// false for every configuration that predates [github], which is what makes
+// "unset means today's behaviour" hold.
+func (g GitHub) Configured() bool { return g.Login != "" && g.Token != "" }
+
+// ResolvedToken is the token with $VAR references expanded, or "" when no
+// token is configured. Validate has already rejected a reference that expands
+// to nothing, so an empty result here means "use the machine's own gh auth".
+func (g GitHub) ResolvedToken() string {
+	if g.Token == "" {
+		return ""
+	}
+	return strings.TrimSpace(os.ExpandEnv(g.Token))
+}
+
+// tokenVar names the environment variable a token consisting of a single $VAR
+// or ${VAR} reference reads, so an error can say which variable to set. It
+// returns "" for a token that is not a bare reference.
+func tokenVar(token string) string {
+	t := strings.TrimSpace(token)
+	if !strings.HasPrefix(t, "$") {
+		return ""
+	}
+	name := strings.TrimPrefix(strings.TrimSuffix(strings.TrimPrefix(t, "${"), "}"), "$")
+	if name == "" || strings.ContainsAny(name, " $\t{}") {
+		return ""
+	}
+	return name
+}
+
+// validate checks [github] as a whole. The two halves of an identity are
+// useless apart, and a $VAR that expands to nothing is the shape a
+// misconfigured deployment actually takes, so each is rejected by name with
+// the two ways out: complete the setting, or drop the table and act as the
+// machine owner again.
+func (g GitHub) validate() []string {
+	var errs []string
+	switch {
+	case g.Login != "" && g.Token == "":
+		errs = append(errs, "github.login is set without github.token: add a token for that login, or remove github.login to act as your own gh account")
+	case g.Token != "" && g.Login == "":
+		errs = append(errs, "github.token is set without github.login: add the login the token belongs to, or remove github.token to act as your own gh account")
+	}
+	if g.Token != "" && g.ResolvedToken() == "" {
+		where := fmt.Sprintf("github.token %q expands to nothing", g.Token)
+		if v := tokenVar(g.Token); v != "" {
+			where = fmt.Sprintf("github.token reads $%s, which is not set", v)
+		}
+		errs = append(errs, where+": set it in the environment bees runs in, or remove github.login and github.token to act as your own gh account")
+	}
+	return errs
+}
+
+// RedactedToken is what `bees config show` prints for the token: a $VAR
+// reference as written (it carries no secret and is the useful thing to see),
+// and anything else as a placeholder. The resolved value is never printed —
+// `bees config show` output ends up in issues and pastes.
+func (g GitHub) RedactedToken() string {
+	if g.Token == "" {
+		return ""
+	}
+	if tokenVar(g.Token) != "" {
+		return g.Token
+	}
+	return "(set)"
+}
 
 // BuiltinMCPServer is the name of the MCP server bees adds to every session
 // (`bees mcp serve`). The name is reserved: bees.toml may not define it.
@@ -1086,6 +1182,7 @@ func (c *Config) Validate() error {
 	if !c.Filter.LabelRequired() && c.Filter.Assignee == "" && c.Filter.Milestone == "" {
 		errs = append(errs, "filter.require_label = false needs filter.assignee or filter.milestone, otherwise every issue in the repo is visible")
 	}
+	errs = append(errs, c.GitHub.validate()...)
 	for name := range c.Roles {
 		if _, err := CanonicalRole(name); err != nil || name != mustCanonical(name) {
 			errs = append(errs, fmt.Sprintf("roles.%s: unknown role (want one of %s)", name, strings.Join(Roles, ", ")))

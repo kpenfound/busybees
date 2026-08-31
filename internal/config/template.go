@@ -154,6 +154,26 @@ label = "{{.Label}}"
 #milestone = ""
 
 #===============================================================================
+# GitHub account the factory acts as. Unset (the default) means the machine
+# owner's own gh login, so every issue, comment and label edit looks like it
+# came from the person running bees.
+#
+# login and token go together: set both, or neither. filter.assignee = "@me"
+# above is NOT affected — it says whose work the factory picks up, so it keeps
+# resolving to the person's own gh login.
+#===============================================================================
+[github]
+# GitHub login the factory acts as.
+#login = "busybees-bot"
+# A token for that login. A "$VAR" reference is expanded from the environment
+# bees runs in, so the secret itself stays out of this file.
+#token = "$BEES_GITHUB_TOKEN"
+# Identity for commits made by developer sessions. Recorded here, but not
+# applied yet: sessions still commit with the machine's own git identity.
+#git_name = "busybees"
+#git_email = "busybees@example.com"
+
+#===============================================================================
 # Scheduler
 #===============================================================================
 [scheduler]

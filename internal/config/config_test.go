@@ -498,6 +498,10 @@ func TestModelBySizeErrorsNameTheBadKey(t *testing.T) {
 // template is valid TOML with a value the loader accepts: a user should be
 // able to uncomment any line and have it work.
 func TestTemplateUncommented(t *testing.T) {
+	// The commented github.token names an environment variable, and a
+	// reference that expands to nothing is a load error by design, so the
+	// uncommented template only loads where the variable exists.
+	t.Setenv("BEES_GITHUB_TOKEN", "ghp_example")
 	text, err := Template(TemplateData{Repo: "acme/widgets", ExplicitRepo: true, ExplicitBranch: true})
 	if err != nil {
 		t.Fatal(err)
@@ -511,6 +515,9 @@ func TestTemplateUncommented(t *testing.T) {
 	}
 	if cfg.Filter.Assignee != "@me" || len(cfg.Global.MCP) != 2 || cfg.Roles[RoleQA].MCP["example"].Command != "example-mcp" {
 		t.Fatalf("filter/mcp: %+v %+v", cfg.Filter, cfg.Global.MCP)
+	}
+	if !cfg.GitHub.Configured() || cfg.GitHub.ResolvedToken() != "ghp_example" || cfg.GitHub.GitEmail == "" {
+		t.Fatalf("github: %+v", cfg.GitHub)
 	}
 	// And the template as written (defaults commented) yields the same resolved roles.
 	base, err := Load(writeConfig(t, text))
@@ -1323,5 +1330,72 @@ func TestFilterAssigneeDefaultsToUnset(t *testing.T) {
 	}
 	if slices.Contains(args, "--assignee") {
 		t.Fatalf("gh call filters on an assignee: %v", args)
+	}
+}
+
+// TestGitHubAccount covers the [github] table: the two halves of the identity
+// are only accepted together, the token's $VAR is expanded from the
+// environment, and a reference that expands to nothing is rejected by name.
+// The default — nothing set — must stay "act as the machine owner", which is
+// what makes an existing bees.toml behave exactly as it did before [github]
+// existed.
+func TestGitHubAccount(t *testing.T) {
+	const head = "version = 1\n[project]\nrepo = \"a/b\"\ndefault_branch = \"main\"\n"
+
+	cfg, err := Load(writeConfig(t, head))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.GitHub.Configured() || cfg.GitHub.ResolvedToken() != "" || cfg.GitHub.RedactedToken() != "" {
+		t.Fatalf("unset [github] is not the machine owner's account: %+v", cfg.GitHub)
+	}
+
+	t.Setenv("BEES_TEST_TOKEN", "ghp_secret")
+	cfg, err = Load(writeConfig(t, head+"[github]\nlogin = \"busybees-bot\"\ntoken = \"$BEES_TEST_TOKEN\"\ngit_name = \"busybees\"\ngit_email = \"bot@example.com\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.GitHub.Configured() || cfg.GitHub.Login != "busybees-bot" {
+		t.Fatalf("github: %+v", cfg.GitHub)
+	}
+	if got := cfg.GitHub.ResolvedToken(); got != "ghp_secret" {
+		t.Errorf("$VAR expansion: got %q want %q", got, "ghp_secret")
+	}
+	if cfg.GitHub.GitName != "busybees" || cfg.GitHub.GitEmail != "bot@example.com" {
+		t.Errorf("git identity: %+v", cfg.GitHub)
+	}
+	// The secret never reaches `bees config show`; the reference does.
+	if got := cfg.GitHub.RedactedToken(); got != "$BEES_TEST_TOKEN" {
+		t.Errorf("redacted token: got %q want %q", got, "$BEES_TEST_TOKEN")
+	}
+	if got := (GitHub{Token: "ghp_literal"}).RedactedToken(); got != "(set)" || strings.Contains(got, "ghp_literal") {
+		t.Errorf("literal token is printed: got %q", got)
+	}
+
+	for _, tc := range []struct{ name, body, want string }{
+		{"login alone", "[github]\nlogin = \"busybees-bot\"\n", "github.login is set without github.token"},
+		{"token alone", "[github]\ntoken = \"$BEES_TEST_TOKEN\"\n", "github.token is set without github.login"},
+		{"unset variable", "[github]\nlogin = \"busybees-bot\"\ntoken = \"$BEES_TEST_MISSING\"\n", "github.token reads $BEES_TEST_MISSING, which is not set"},
+		{"empty expansion", "[github]\nlogin = \"busybees-bot\"\ntoken = \"  \"\n", "expands to nothing"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Load(writeConfig(t, head+tc.body))
+			if err == nil {
+				t.Fatalf("loaded a config that should be rejected")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error does not name the key: %v", err)
+			}
+			// Every one of them says how to get back to today's behaviour.
+			if !strings.Contains(err.Error(), "act as your own gh account") {
+				t.Errorf("error does not say what to change: %v", err)
+			}
+		})
+	}
+
+	// git_name / git_email alone are fine: they are an identity for commits,
+	// not credentials, so they do not need a token.
+	if _, err := Load(writeConfig(t, head+"[github]\ngit_name = \"busybees\"\ngit_email = \"bot@example.com\"\n")); err != nil {
+		t.Fatalf("git identity alone: %v", err)
 	}
 }

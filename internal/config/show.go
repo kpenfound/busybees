@@ -11,6 +11,7 @@ type View struct {
 	Version   int                 `json:"version"`
 	Project   Project             `json:"project"`
 	Filter    FilterView          `json:"filter"`
+	GitHub    GitHubView          `json:"github"`
 	Scheduler Scheduler           `json:"scheduler"`
 	Logging   Logging             `json:"logging"`
 	Roles     map[string]RoleView `json:"roles"`
@@ -23,6 +24,16 @@ type FilterView struct {
 	RequireLabel bool   `json:"require_label"`
 	Assignee     string `json:"assignee"`
 	Milestone    string `json:"milestone"`
+}
+
+// GitHubView is [github] as printed. The token is redacted (see
+// GitHub.RedactedToken): the resolved secret must never reach `bees config
+// show`, whose output people paste into issues.
+type GitHubView struct {
+	Login    string `json:"login"`
+	Token    string `json:"token"`
+	GitName  string `json:"git_name"`
+	GitEmail string `json:"git_email"`
 }
 
 // RoleView is a ResolvedRole under its bees.toml key names. The role-specific
@@ -73,6 +84,7 @@ func (c *Config) View(roles []string) (View, error) {
 		Version:   c.Version,
 		Project:   c.Project,
 		Filter:    FilterView{Label: c.Filter.Label, RequireLabel: c.Filter.LabelRequired(), Assignee: c.Filter.Assignee, Milestone: c.Filter.Milestone},
+		GitHub:    GitHubView{Login: c.GitHub.Login, Token: c.GitHub.RedactedToken(), GitName: c.GitHub.GitName, GitEmail: c.GitHub.GitEmail},
 		Scheduler: c.Scheduler,
 		Logging:   c.Logging,
 		Roles:     map[string]RoleView{},
