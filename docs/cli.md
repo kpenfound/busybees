@@ -99,28 +99,44 @@ what it found grouped by area:
 | Group | Checks |
 |---|---|
 | `toolchain` | `git` on `PATH`; `gh` on `PATH`, authenticated and holding the `repo` token scope; `claude` (or `$BEES_CLAUDE_BIN`) runnable and new enough. |
-| `config` | `bees.toml` loads and validates; `project.repo` and `project.default_branch` are set or derivable; the remote answers; the state directory is ignored by git; the notes directory is writable; every configured `prompt_file` exists; the repository's `bees/prompts/` files are all readable and named after a role. |
+| `config` | `bees.toml` loads and validates; `project.repo` and `project.default_branch` are set or derivable; the remote answers; the state directory is ignored by git; the notes directory is writable; every configured `prompt_file` exists; the repository's `bees/prompts/` files are all readable and named after a role; a running scheduler is serving a build of the commit that is checked out. |
 | `github` | The repository is readable and writable (`viewerPermission`); every workflow label exists; the visibility filter matches at least one open issue; with `auto_merge` on, what a merge is actually gated on. |
 | `workspace` | A worktree can be created under `workspace_root` and removed again. |
 | `roles` | Per role: every configured skill URL clones and produces a plugin directory; every configured MCP server starts and answers an `initialize` request within 15s; a configured `shell` can be executed. |
 
 A **failure** (`✗`) means the factory cannot run: a missing tool, a repository it
-cannot push to, missing workflow labels. A **warning** (`!`) means something that
-will probably bite you but does not stop a session: a state directory that is not
-git-ignored (notes and transcripts would be committed), a filter that matches no
-open issue (usually a misconfigured label or assignee), a Claude Code older than
-bees expects. The filter check tells the two empty cases apart: when nothing matches
-the filter but open issues or pull requests carry the base label, it reports both
-counts and spells the filter out (`0 match your filter (label=bees AND
-assignee=kyle)`) - that is a filter criterion hiding work the factory already owns,
-not an empty repository, and the fix is `bees doctor --fix` (below) or unsetting the
-criterion in `bees.toml`. The auto-merge check is a warning of the same kind: with
-`roles.reviewer.auto_merge` on and no check required on the default branch, bees gates
-a merge on whatever checks the pull request reports, which is worth knowing once —
-requiring your CI checks in the branch protection rules is the fix, and leaving it as
-it is a legitimate choice. bees never enables or edits branch protection itself, and
-the check is silent when `auto_merge` is off. Every warning and failure prints the
-command that fixes it on the next line; doctor changes nothing unless `--fix` is given.
+cannot push to, missing workflow labels. A **warning** (`!`) means something that will
+probably bite you but does not stop a session: a state directory that is not
+git-ignored (notes and transcripts would be committed), a filter that matches no open
+issue (usually a misconfigured label or assignee), a Claude Code older than bees
+expects, a running scheduler older than the repository it is building. The filter
+check tells the two empty cases apart: when nothing matches the filter but open issues
+or pull requests carry the base label, it reports both counts and spells the filter
+out (`0 match your filter (label=bees AND assignee=kyle)`) - that is a filter
+criterion hiding work the factory already owns, not an empty repository, and the fix
+is `bees doctor --fix` (below) or unsetting the criterion in `bees.toml`. The
+auto-merge check is a warning of the same kind: with `roles.reviewer.auto_merge` on
+and no check required on the default branch, bees gates a merge on whatever checks the
+pull request reports, which is worth knowing once — requiring your CI checks in the
+branch protection rules is the fix, and leaving it as it is a legitimate choice. bees
+never enables or edits branch protection itself, and the check is silent when
+`auto_merge` is off.
+
+The **scheduler build** check is another warning of that kind, and the one to read
+after merging a change to a role prompt. The prompts are compiled into the binary,
+so a running `bees run` keeps serving the ones it was started from: the check reads
+the revision the scheduler recorded in `status.json` and asks git where it sits
+relative to `HEAD`, and warns when it is behind it, is not an ancestor of it, or is
+a commit this repository has never seen. The repair is always to rebuild and restart
+the factory, which doctor will not do to a running one — hence a warning, never a
+failure, and never `--fix`. It compares against what is checked out and never asks
+the remote, so doctor still works offline. It passes and says so whenever the
+question does not arise: no scheduler has run, none is running now (a `status.json`
+outlives the run that wrote it), or the binary carries no revision to compare — a
+release build, or one built from a tree with no VCS stamps.
+
+Every warning and failure prints the command that fixes it on the next line; doctor
+changes nothing unless `--fix` is given.
 
 doctor exits 1 when a check failed and 0 when only warnings are present, so it can
 gate a deploy. Checks that need something that is missing are left out rather than
@@ -153,6 +169,8 @@ config
   ✓ notes dir writable          /home/kyle/src/proj/.bees/notes
   ✓ prompt files exist          no prompt_file configured
   ✓ project prompt files        no bees/prompts/ directory
+  ! scheduler build is current  running 4773767e3b1a, which is 6 commits behind HEAD (9f56e8a2c104)
+      → rebuild and restart `bees run` to pick up prompt and code changes: the role prompts are compiled into the binary
 
 github
   ✓ repo readable and writable  kyle/proj (ADMIN)
@@ -173,7 +191,7 @@ roles
   ✓ reviewer                    enabled, no skills, MCP servers or shell configured
   ✓ qa                          disabled (roles.qa.enabled = false)
 
-21 checks: 18 passed, 1 warning, 2 failed
+22 checks: 18 passed, 2 warnings, 2 failed
 ```
 
 | Flag | Description |
@@ -370,7 +388,7 @@ github
   ✗ workflow labels             2 of 19 missing: bees:size/l, bees:size/xl
       → run `bees labels sync`
 ...
-Error: preflight: 1 of 15 checks failed — fix them, run `bees doctor --fix`, or start anyway with `bees run --skip-doctor`
+Error: preflight: 1 of 16 checks failed — fix them, run `bees doctor --fix`, or start anyway with `bees run --skip-doctor`
 ```
 
 At start it lists the repository's labels once and creates any workflow label
@@ -633,7 +651,9 @@ scheduler: pid 4711, last poll 12s ago   build dev (b24a0605c2a1 modified)
 The [role prompts](roles.md#customising-a-role) are compiled into the binary, so a
 running factory serves the prompts of that build: a prompt change merged to the
 default branch reaches no session until `bees` is rebuilt and `bees run` restarted.
-The segment is absent from a `status.json` written by a bees older than the field.
+[`bees doctor`](#bees-doctor) compares that build against the repository and warns
+when the running scheduler is behind it. The segment is absent from a `status.json`
+written by a bees older than the field.
 
 
 A worker's stage is `develop`, `pre-review checks`, `review` or `checks`. Once the

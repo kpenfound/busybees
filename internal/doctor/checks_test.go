@@ -670,9 +670,9 @@ func TestCheckWorktree(t *testing.T) {
 func TestChecksCoverEveryGroup(t *testing.T) {
 	f := setup(t, "", nil)
 	checks := f.Checks()
-	// 15 cheap ones plus one per role: with nothing role-specific configured
+	// 16 cheap ones plus one per role: with nothing role-specific configured
 	// each role still reports one row.
-	if want := 15 + len(config.Roles); len(checks) != want {
+	if want := 16 + len(config.Roles); len(checks) != want {
 		t.Errorf("got %d checks, want %d", len(checks), want)
 	}
 	f.gh.replies = map[string]ghReply{
