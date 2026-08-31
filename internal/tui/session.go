@@ -225,10 +225,6 @@ func (w *watch) scrollBy(n, height int) {
 
 // ---- rendering -------------------------------------------------------------
 
-// defaultHeight is the height the view draws at until the terminal has told
-// it its own, and the height every test renders at.
-const defaultHeight = 24
-
 // chrome is how many of the terminal's rows the session view spends on
 // something other than transcript: the header, the panel's border and
 // title, the composer line and the footer.
@@ -236,11 +232,7 @@ const chrome = 7
 
 // transcriptHeight is how many lines of transcript fit on screen.
 func (m Model) transcriptHeight() int {
-	h := m.height
-	if h <= 0 {
-		h = defaultHeight
-	}
-	return max(3, h-chrome)
+	return max(3, m.rows()-chrome)
 }
 
 // sessionPanel renders the transcript: the lines the reader is on, followed
@@ -302,9 +294,9 @@ func (m Model) sessionFooter() string {
 	case t.sent != "":
 		return t.sent
 	case m.deps.Send == nil:
-		return "esc back · ↑/↓ scroll · end follow · ctrl-c stops polling and drains"
+		return "esc back · ↑/↓ scroll · end follow · q or ctrl-c stops polling and drains"
 	default:
-		return "esc back · ↑/↓ scroll · end follow · m message · ctrl-c stops polling and drains"
+		return "esc back · ↑/↓ scroll · end follow · m message · q or ctrl-c drains"
 	}
 }
 

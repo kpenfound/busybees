@@ -352,8 +352,9 @@ reconciles labels (unlabelled issues go to the product manager, answered questio
 unblock), hands ready issues to free developer workers and starts the product manager,
 project manager and QA when they have work. It does not wait out the interval for what
 happens locally: a finished session wakes it, so a freed developer slot and mail one
-role wrote to another are picked up at once, without polling GitHub again. Ctrl-C
-stops polling and waits for running sessions to finish.
+role wrote to another are picked up at once, without polling GitHub again. Ctrl-C — or
+`q` in [the live view](#the-live-view) — stops polling and waits for running sessions
+to finish.
 
 Before the first poll it runs the **cheap half of [`bees doctor`](#bees-doctor)** —
 every check except the `roles` group, which clones skills and starts MCP servers — and
@@ -395,28 +396,45 @@ bees --log-format json --quiet run
 ### The live view
 
 In a terminal, `bees run` draws the factory instead of logging to it: a
-full-screen view of two panels, redrawn as sessions start and finish and as
-the queues change, with a session view behind them. It subscribes to the
-scheduler's event stream in the same process and re-reads `status.json`; it
-never polls GitHub itself and the scheduler never waits for it.
+full-screen view, redrawn as sessions start and finish and as the queues
+change, with a session view behind it. It subscribes to the scheduler's
+event stream in the same process and re-reads `status.json`; it never polls
+GitHub itself and the scheduler never waits for it.
 
 ```
 busybees  acme/widgets                                                                      10:03:08
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Now                                                                                              │
 │   role             issue pr    stage                 elapsed  turns     cost  model              │
-│ > developer        #12   #31   developer r2            3m20s     87    $2.41  opus               │
+│ ▸ developer        #12   #31   developer r2            3m20s      0    $1.79  opus               │
 │   reviewer         #14   #33   pre-review checks r1      42s      0    $0.00  sonnet (fallback)  │
 │   product manager  -     -     -                          9s      0    $0.00  sonnet             │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Recent                                                                                           │
+│   role             issue pr    outcome                took     cost  note                        │
+│   reviewer         #12   #31   changes-requested     6m14s    $1.18  tests missing for the erro… │
+│   project manager  #12   -     done                   3m2s    $0.61  refined and moved to ready  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Needs human                                                                                      │
+│   issue waiting   title                       why                                                │
+│   #44   2d        Parser drops a token        Checks on #52 still fail after 2 fix rounds: go /… │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Approved PRs                                                                                     │
+│   pr    issue open       title                                                                   │
+│   #60   #20   1d         Retry a session that hit the account limit                              │
+│   #62   #22   3h         Docs: the release workflow                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Queues                                                                                           │
-│ triage          2  ready           4  in-progress     2  review          1  approved        0    │
-│ blocked         0  needs-human     0  features        5  feedback        1  open PRs        3    │
+│ triage          2  ready           4  in-progress     2  review          1  approved        2    │
+│ blocked         0  needs-human     1  features        5  feedback        1  open PRs        3    │
 │ unread mail   product manager 1, developer 2                                                     │
 │ next poll     in 2m30s                                                                           │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
-↑/↓ select · enter watch a session · ctrl-c stops polling and drains
+↑↓ select · enter watch · o open on GitHub · k stop session · q or ctrl-c stops polling and drains
 ```
 
 **Now** is every session running right now: the role, the issue and pull
@@ -429,17 +447,59 @@ so the running session adds its own when it ends. `↑`/`↓` move the cursor
 down the list and Enter opens [the session view](#watching-one-session) on
 the session it is on.
 
+**Recent** is what just happened: the sessions that have finished, newest
+first, with how each ended, what it said about it, how long it took and what
+it cost. It is a view, not a log — `bees cost` reads every session out of
+`ledger.jsonl`, and `<state_dir>/bees.log` has every record.
+
+**Needs human** is every issue carrying `bees:needs-human`: how long it has
+been waiting and why the factory gave it up, in the words the escalation
+comment used. An issue *you* labelled by hand has no recorded reason and says
+so.
+
+**Approved PRs** is what the reviewer approved and left for a person to
+merge, oldest first — the queue that grows when nobody is merging.
+
 **Queues** is what `bees status` prints, read from the same `status.json`
 rather than counted a second way: every queue, whether or not anything is in
 it, the unread mail per role and the countdown to the next GitHub poll.
 
-Ctrl-C stops polling and drains exactly as it does without the view, and the
-view stays up until the running sessions have finished; pressing it again
-leaves the terminal and waits for the drain with the console back. It is the
-only key that stops anything, in either screen. While the view is up,
-console logging is silenced — it would scribble over the panels — and
-`<state_dir>/bees.log` gets every record, so nothing is lost. `--no-tui`, a
-redirected or piped stdout, and `bees tick` log as before.
+The keys:
+
+| Key | What it does |
+|---|---|
+| `↑` `↓` | Move the selection through every panel's rows in turn. |
+| `enter` | Watch the selected session's transcript (below). |
+| `o` | Open the selected issue or pull request on GitHub. |
+| `k` | Stop the selected session and hand its issue to a person. It asks first: press `k` again to confirm. |
+| `q`, `ctrl-c` | Stop polling and drain. Press again to leave the terminal early. |
+
+`q` and Ctrl-C stop polling and drain exactly as an interrupt does without
+the view, and the view stays up until the running sessions have finished;
+pressing either again leaves the terminal and waits for the drain with the
+console back.
+
+`k` is the key that throws work away, and asks first. It stops the selected
+session the way [`bees kill`](#bees-kill---dry-run---scheduler---grace-5s)
+stops a leftover one — the process and its group, with an `interrupted` marker
+left in the session directory — and then labels its issue `bees:needs-human`
+with a comment saying a person stopped it, exactly as the factory giving up
+would. The session's own worker ends without retrying it. A singleton session
+(product manager, project manager, QA) owns no issue, so stopping one stops a
+session and nothing more. Nothing is recorded as run either, so a singleton
+the factory still has work for starts again on the next pass.
+
+The view wants about 30 rows to show every panel at once. In a shorter
+terminal the lists shrink first, each keeping one row and saying how many
+entries did not fit; when even that will not fit, whole panels go, from the
+bottom up — Approved PRs first, then Needs human, then Recent. The header,
+Now, Queues and the footer are the last things to go, and Queues goes on
+counting whatever the panels below it stopped listing.
+
+While the view is up, console logging is silenced — it would scribble over
+the panels — and `<state_dir>/bees.log` gets every record, so nothing is
+lost. `--no-tui`, a redirected or piped stdout, and `bees tick` log as
+before.
 
 #### Watching one session
 
@@ -462,7 +522,7 @@ busybees  acme/widgets                                                          
 │   ⎿ The file has been updated.                                                                   │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 
-esc back · ↑/↓ scroll · end follow · m message · ctrl-c stops polling and drains
+esc back · ↑/↓ scroll · end follow · m message · q or ctrl-c drains
 ```
 
 The view follows the tail as the session writes to it. `↑`/`↓`, `PgUp`/`PgDn`
@@ -490,6 +550,9 @@ turn written to its stdin is read and then ignored (measured while building
 this; [#293](https://github.com/kpenfound/busybees/issues/293) is the
 record of that decision, and names what would reopen it). The view says
 "queued for the next session" because that is what happened.
+
+While a message is being typed, `q` is a letter rather than a stop key —
+Ctrl-C still stops the factory, so nothing is lost by the exception.
 
 With the view off, every finished session prints one summary line. In `text`
 format they are the message alone, so a run reads as a report:
@@ -705,6 +768,12 @@ waiting on dependencies:
 `--json` carries the same information as `waiting_on_deps` (issue number → open
 blockers).
 
+Two queue counts also have their detail in `--json`, though the text output
+prints the counts alone: `needs_human` names each escalated issue with the
+reason the factory recorded when it gave up, and `approved` names each pull
+request waiting for a person to merge, oldest first.
+[The live view](#the-live-view) is what draws them as panels.
+
 ### Degraded operations
 
 A factory operation that keeps failing — assigning what a session created, editing a
@@ -761,8 +830,12 @@ Each session it stops through a pid file is also marked as stopped, by an
 then told the session before it was stopped on purpose rather than lost with the
 machine, and that the branch may carry its unreported work.
 
-It refuses to run while a `bees run` scheduler is alive (killing sessions under a running
-scheduler would corrupt its state); pass `--scheduler` to stop the scheduler too.
+It refuses to run while a `bees run` scheduler is alive (killing sessions under a
+running scheduler would corrupt its state); pass `--scheduler` to stop the scheduler
+too. To stop one session of a factory that is still running, use `k` in
+[the live view](#the-live-view): it stops the process the same way and hands that
+session's issue to a person, which is what a running scheduler needs and this command
+does not do.
 
 | Flag | Meaning |
 |---|---|

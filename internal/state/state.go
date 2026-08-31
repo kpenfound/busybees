@@ -8,7 +8,8 @@
 //	notes/archive/       notes files replaced by `bees notes reset`
 //	sessions/<id>/       one directory per claude session (prompts, transcript, result)
 //	issues/<n>.json      per-issue bookkeeping (review round, PR number, the
-//	                     developer worker's stage and its running session)
+//	                     developer worker's stage, its running session and,
+//	                     once the factory gives up, why it did)
 //	<role>.json          per-role bookkeeping (last run, session counters);
 //	                     every role has one, including developer and reviewer
 //	status.json          live scheduler status
@@ -56,7 +57,8 @@ This directory is managed by ` + "`bees`" + `. It holds:
 - notes/     each role's notes file (their only memory between sessions),
              with archive/ holding the ones ` + "`bees notes reset`" + ` replaced
 - sessions/  prompts, transcripts and results of every Claude Code session
-- issues/    per-issue bookkeeping (review rounds, the developer worker's stage)
+- issues/    per-issue bookkeeping (review rounds, the developer worker's stage,
+             and why the factory gave an issue up)
 - status.json live scheduler status (` + "`bees status`" + `)
 - ledger.jsonl one line per finished session: turns, cost and outcome (` + "`bees cost`" + `)
 - bees.log    every scheduler log record as JSON, rotated at 10 MiB
@@ -214,7 +216,18 @@ type IssueState struct {
 	// rules live, and carried over by SaveIssue.
 	OpenChildren       []int     `json:"open_children,omitempty"`
 	CompleteReportedAt time.Time `json:"complete_reported_at,omitempty"`
-	UpdatedAt          time.Time `json:"updated_at"`
+	// Escalation is why the factory gave this issue up to a person and
+	// EscalatedAt when it did. The bees:needs-human label says that it
+	// happened; the reason is said once, in a GitHub comment and in the log,
+	// and neither is readable from the poll — so it is recorded here, where a
+	// view can show the person the factory is waiting for what it is waiting
+	// about without asking GitHub for it. An issue a person labelled by hand,
+	// or one escalated before this state directory existed, has neither.
+	// Both are owned by SetEscalation (scheduler.escalate) and carried over
+	// by SaveIssue.
+	Escalation  string    `json:"escalation,omitempty"`
+	EscalatedAt time.Time `json:"escalated_at,omitempty"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // SessionRun is one session the scheduler started for an issue: who ran it,
@@ -256,6 +269,7 @@ func (s *Store) SaveIssue(is IssueState) error {
 		is.HumanSeenAt, is.ConflictNotifiedSHA = cur.HumanSeenAt, cur.ConflictNotifiedSHA
 		is.Proposal, is.ProposalApprovedAt = cur.Proposal, cur.ProposalApprovedAt
 		is.OpenChildren, is.CompleteReportedAt = cur.OpenChildren, cur.CompleteReportedAt
+		is.Escalation, is.EscalatedAt = cur.Escalation, cur.EscalatedAt
 	}
 	is.UpdatedAt = time.Now().UTC()
 	return s.writeJSON(filepath.Join(s.Dir, "issues", strconv.Itoa(is.Number)+".json"), is)
@@ -271,6 +285,21 @@ func (s *Store) SetIssueSession(n int, run *SessionRun) error {
 		return err
 	}
 	is.Number, is.Session = n, run
+	is.UpdatedAt = time.Now().UTC()
+	return s.writeJSON(filepath.Join(s.Dir, "issues", strconv.Itoa(n)+".json"), is)
+}
+
+// SetEscalation records why the factory gave an issue up to a person, and
+// when. It is the only writer of IssueState.Escalation and EscalatedAt:
+// SaveIssue carries them over from the file, so a developer worker still
+// holding an IssueState for the issue it was escalated over cannot erase the
+// one record of the reason.
+func (s *Store) SetEscalation(n int, reason string, at time.Time) error {
+	is, err := s.Issue(n)
+	if err != nil {
+		return err
+	}
+	is.Number, is.Escalation, is.EscalatedAt = n, reason, at
 	is.UpdatedAt = time.Now().UTC()
 	return s.writeJSON(filepath.Join(s.Dir, "issues", strconv.Itoa(n)+".json"), is)
 }
@@ -462,11 +491,47 @@ type Status struct {
 	// WaitingOnDeps maps a ready issue to the blockers it declares that are
 	// still open, so `bees status` can explain why it is not being built.
 	WaitingOnDeps map[int][]int `json:"waiting_on_deps,omitempty"`
-	LastError     string        `json:"last_error,omitempty"`
+	// NeedsHuman lists the issues the factory has given up on and is waiting
+	// for a person over, first escalated first. Queues counts them; this is
+	// what they are, so a view can say which issue and why without asking
+	// GitHub a second time.
+	NeedsHuman []Escalated `json:"needs_human,omitempty"`
+	// Approved lists the pull requests the reviewer approved and that are
+	// waiting for a person to merge, oldest first. Like NeedsHuman it is the
+	// detail behind a queue count, built from the poll the count came from.
+	Approved  []ApprovedPR `json:"approved,omitempty"`
+	LastError string       `json:"last_error,omitempty"`
 	// Degraded lists the factory operations that are failing right now, one
 	// entry per operation, sorted by name. Absent when the last pass was
 	// clean.
 	Degraded []OpFailure `json:"degraded,omitempty"`
+}
+
+// Escalated is one issue the factory handed to a person: which issue, what
+// it is called, why the factory gave it up and when. The reason is what
+// scheduler.escalate recorded (IssueState.Escalation); it is empty for an
+// issue a person labelled by hand, and for one escalated before this state
+// directory existed.
+type Escalated struct {
+	Issue  int    `json:"issue"`
+	Title  string `json:"title"`
+	Reason string `json:"reason,omitempty"`
+	// Since is when the factory escalated the issue, zero when it did not
+	// record one.
+	Since time.Time `json:"since,omitempty"`
+}
+
+// ApprovedPR is one pull request the reviewer approved and left for a person
+// to merge: the pull request, the issue it closes and when it was opened.
+//
+// Opened, not approved: the approval is a label edit and the poll carries no
+// time for it, and the number a person waiting to merge is really being told
+// is how long the change has been in flight.
+type ApprovedPR struct {
+	PR    int       `json:"pr"`
+	Issue int       `json:"issue"`
+	Title string    `json:"title"`
+	Since time.Time `json:"since,omitempty"`
 }
 
 // OpFailure is the current failure streak of one named factory operation

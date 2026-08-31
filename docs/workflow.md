@@ -824,7 +824,10 @@ the issue to a human:
   [`scheduler.max_cost_per_issue`](configuration.md#cost-budgets), or two
   sessions in a row cost more than `scheduler.max_cost_per_session`. The
   comment names the spend, so the choice is between raising the budget and
-  finishing the work by hand. Both budgets are off by default.
+  finishing the work by hand. Both budgets are off by default;
+- a person stopped the session working on it, with `k` in
+  [the live view](cli.md#the-live-view). That one is not the factory giving
+  up — it is a person taking the work back — and the comment says so.
 
 A budget the factory hits does not always escalate: `scheduler.max_cost_per_day`
 pauses dispatch instead. Nothing is labelled, no comment is written, and the
@@ -833,7 +836,11 @@ new until the rolling 24-hour spend falls back under the budget. `bees status`
 reports the pause.
 
 The orchestrator sets `bees:needs-human` and posts a comment on the issue
-explaining why; the comment mentions everyone in
+explaining why. It records the same reason in
+`<state_dir>/issues/<n>.json`, which is where `bees run`'s live view reads it
+to say what the factory is stuck on without asking GitHub again; an issue
+*you* label `bees:needs-human` by hand has no such record, and the view says
+that rather than inventing one. The comment mentions everyone in
 [`scheduler.notify`](configuration.md#notifying-a-person), since the factory
 posts under your own account and a comment notifies nobody by itself.
 **This is the only comment the orchestrator itself writes.** Roles

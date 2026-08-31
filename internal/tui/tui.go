@@ -1,23 +1,28 @@
 // Package tui draws the factory's live view: what `bees run` shows while it
 // works, fed by the scheduler's event stream in the same process.
 //
-// It has two screens. The first is the two panels: Now lists every running
+// It has two screens. The first is the panels. Now lists every running
 // session — role, issue or pull request, the stage its developer worker is
-// in, how long it has been going, what the work item has spent and the
-// model it runs on — and Queues lists the numbers `bees status` prints,
-// read from status.json rather than computed a second way, together with
-// the unread mail per role and the time to the next GitHub poll. The second
-// is the session view (session.go): the transcript of one running session,
-// followed as it is written, and a line to type a message for the next
-// session on that work item.
+// in, how long it has been going, what the work item has spent and the model
+// it runs on — and Recent the ones that have finished, with how each ended.
+// Needs human is every issue the factory has given up on and why; Approved
+// PRs is what is waiting for a person to merge. Queues lists the numbers
+// `bees status` prints, read from status.json rather than computed a second
+// way, together with the unread mail per role and the time to the next
+// GitHub poll. A terminal too short for all five panels draws fewer, from
+// the bottom of that order (Model.layout). The second screen is the session
+// view (session.go): the transcript of one running session, followed as it
+// is written, and a line to type a message for the next session on that
+// work item.
 //
-// The view asks the scheduler for nothing, and the scheduler never waits
-// for it (an event it has no room for is dropped). Everything else it shows
-// it reads from disk: status.json, the mailbox and the per-session
-// transcript.jsonl. Its one write is that message, and it goes to the same
-// mailbox every role already reads. It is drawn only when `bees run` owns a
-// terminal — `bees run --no-tui`, a redirected stdout and `bees tick` log
-// instead, and their output is exactly what it was before there was a
+// The view polls no GitHub of its own, and the scheduler never waits for it
+// (an event it has no room for is dropped). Everything it shows it reads
+// from the event stream or from disk: status.json, the mailbox and the
+// per-session transcript.jsonl. It asks the factory to *do* only two things:
+// stop a session, on the k key, through Deps.Kill; and queue a message for
+// the next one, on m, through Deps.Send. It is drawn only when `bees run`
+// owns a terminal — `bees run --no-tui`, a redirected stdout and `bees tick`
+// log instead, and their output is exactly what it was before there was a
 // view.
 package tui
 

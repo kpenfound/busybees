@@ -256,3 +256,30 @@ func TestRunDrawsTheViewOnlyWhenTheModeSaysSo(t *testing.T) {
 		}
 	}
 }
+
+// The browser key hands the URL to the platform's opener as an argument of
+// its own. It is built from the configured repository, and a URL that
+// reached a shell would be a hazard rather than a link.
+func TestTheBrowserOpenerNeverBuildsAShellCommand(t *testing.T) {
+	const url = "https://github.com/acme/widgets/issues/31"
+	for _, tc := range []struct{ goos, want string }{
+		{"darwin", "open"},
+		{"linux", "xdg-open"},
+		{"windows", "rundll32"},
+	} {
+		t.Run(tc.goos, func(t *testing.T) {
+			cmd := browserCommand(tc.goos, url)
+			if filepath.Base(cmd.Path) != tc.want && cmd.Args[0] != tc.want {
+				t.Errorf("%s opens with %q, want %q", tc.goos, cmd.Args[0], tc.want)
+			}
+			if got := cmd.Args[len(cmd.Args)-1]; got != url {
+				t.Errorf("%s was given %q as the URL, want %q", tc.goos, got, url)
+			}
+			for _, a := range cmd.Args {
+				if strings.ContainsAny(a, "|;&") && a != url {
+					t.Errorf("%s builds a shell command: %q", tc.goos, cmd.Args)
+				}
+			}
+		})
+	}
+}

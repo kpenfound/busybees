@@ -19,8 +19,8 @@ internal/prompts/    embedded base prompts (system/*.md, task/*.md), the project
 internal/mcpserver/  the built-in MCP server (`bees mcp serve`): mail, issue and outcome tools, filtered by role
 internal/state/      state directory: notes, per-issue bookkeeping, singleton run times, status.json
 internal/scheduler/  the orchestrator: poll, human feedback, PR merge state, reconcile, developer worker pool, singleton roles, event stream
-internal/tui/        the live view `bees run` draws in a terminal: the Now and Queues panels, and one session's transcript
-internal/procs/      find and stop bees sessions after a crash (`bees kill`)
+internal/tui/        the live view `bees run` draws in a terminal: five panels, its keys, and one session's transcript
+internal/procs/      find and stop bees sessions: after a crash (`bees kill`) and one at a time from the live view
 internal/testutil/   test helpers (local bare git remote + clone)
 ```
 
@@ -37,8 +37,9 @@ creates the workflow labels the repository is missing (`ensureLabels`: one
 `gh label list`, then `gh label create` for each name it does not find, matched
 case-insensitively — existing labels are left alone, and a failure only warns),
 then ticks every `scheduler.poll_interval` (default 5m) — or sooner, when a
-local event wakes it (below) — until the context is cancelled. Ctrl-C stops
-polling and waits for running sessions to finish.
+local event wakes it (below) — until the context is cancelled. Ctrl-C (and
+`q` under the live view) stops polling and waits for running sessions to
+finish.
 
 Each tick (`tick`) is either a **full pass** or a **local pass**. A full pass
 runs when the tick is at or past the next scheduled GitHub poll, and schedules
@@ -321,7 +322,12 @@ restricts dispatch to the named roles; a role with `enabled = false` in
 `bees.toml` is skipped regardless.
 
 `status.json` is rewritten after every pass and whenever a worker or
-singleton starts or stops; `bees status` just reads it.
+singleton starts or stops; `bees status` just reads it. Two of its queue
+counts also carry their detail: `needs_human` names each escalated issue and
+why (from `escalation` above), and `approved` names each pull request waiting
+for a person to merge, oldest first. Both are built in `setQueues` from the
+snapshot the counts came from plus one state-directory read per escalated
+issue, so neither costs a GitHub call.
 
 **The event stream** (`events.go`) is the live half of the same picture, for
 a view running in the same process — a terminal UI, a log tail.
@@ -336,16 +342,24 @@ stage, a full pass finished. It is published *alongside*
 published *after* the write, so a view that re-reads `status.json` when one
 arrives sees the pass that event is about, never the one before it.
 
-`internal/tui` is the subscriber: the two panels `bees run` draws in a
-terminal, and the session view one of them opens onto. Now is built from the
-session and stage events; Queues is `status.json`, re-read when an event
-says it has changed. The session view is neither: it tails the session's own
-`transcript.jsonl` from the directory the started event named, which costs
-the scheduler nothing and works just as well after the session has finished.
-While the view is up it also owns Ctrl-C — Bubble Tea puts the terminal in
-raw mode, so the interrupt arrives as a key rather than as a signal, and the
-view cancels the scheduler's context with it and stays up until the drain is
-over.
+`internal/tui` is the subscriber: the panels `bees run` draws in a terminal,
+and the session view one of them opens onto. Now and Recent are built from
+the session and stage events; Needs human, Approved PRs and Queues are
+`status.json`, re-read when an event says it has changed. The session view is
+neither: it tails the session's own `transcript.jsonl` from the directory the
+started event named, which costs the scheduler nothing and works just as well
+after the session has finished. While the view is up it also owns Ctrl-C —
+Bubble Tea puts the terminal in raw mode, so the interrupt arrives as a key
+rather than as a signal, and the view cancels the scheduler's context with it
+and stays up until the drain is over; `q` does the same.
+
+Its `k` key is the one thing it asks the scheduler to *do*:
+`Scheduler.KillSession` stops one running session by the name the event
+stream published — `internal/procs`, the same stop path as `bees kill`, over
+the session directory recorded when the session started — and escalates the
+issue it was working on. The mark it leaves behind is read by
+`runSessionWithRetry`, so the session's own worker ends without retrying it
+and without escalating the issue a second time.
 
 The view's one write is the message a person types in the session view: an
 ordinary mailbox entry from `human`, addressed to the role that session is
@@ -456,7 +470,8 @@ stateDiagram-v2
   the session got (assistant messages counted in the transcript, an
   approximation of the turn count the missing `result` event would have
   carried), where the transcript is, and whether it was stopped on purpose
-  (`bees kill` writes an `interrupted` marker into the directory it stops).
+  (`bees kill`, and the live view's `k` key, write an `interrupted` marker
+  into the directory they stop).
   What to do about it is per role: a developer is told the branch may
   already carry the session's work, a reviewer that its round reported no
   verdict and starts over. Another role's session is told nothing — it could
@@ -471,16 +486,18 @@ stateDiagram-v2
 - **Rounds.** `<state_dir>/issues/<n>.json` records the review round, PR
   number, branch, `check_fix_rounds`, `worker_stage`, `after_develop`,
   `pre_review_done`, `session`, `human_seen_at` and `conflict_notified_sha`,
-  plus the cost totals, the proposal observation and a feature's open
-  children. Only the round, PR number, branch, `check_fix_rounds` and the
-  three worker-stage fields belong to the developer worker, and
+  plus the cost totals, the proposal observation, a feature's open children
+  and, once the factory has given the issue up, `escalation` and
+  `escalated_at`. Only the round, PR number, branch, `check_fix_rounds` and
+  the three worker-stage fields belong to the developer worker, and
   `state.Store.SaveIssue` is what writes them. Every other field has an owner
   method on `state.Store` — `AddIssueCost`, `SetIssueSession`,
-  `SetHumanSeenAt`, `SetConflictNotifiedSHA`, `SetProposal` and
-  `SetOpenChildren` — each reading the file, changing its own fields and
-  writing it back, and `SaveIssue` carries them over from the file rather than
-  taking them from its argument. The split matters because a worker holds one
-  copy of the file for the whole life of an issue while the polling path keeps
+  `SetHumanSeenAt`, `SetConflictNotifiedSHA`, `SetProposal`,
+  `SetOpenChildren` and `SetEscalation` — each reading the file, changing its
+  own fields and writing it back, and `SaveIssue` carries them over from the
+  file rather than taking them from its argument. The split matters because a
+  worker holds one copy of the file for the whole life of an issue while the
+  polling path keeps
   writing to the same file: saving that copy wholesale would put back what the
   worker loaded when it started, and the polling path's bookkeeping is exactly
   the kind that must not be undone — feedback already delivered would be
@@ -572,10 +589,13 @@ stateDiagram-v2
   number, else by branch), `question` must have produced mail to the project
   manager during the session, and `changes-requested` mail to the developer.
   A claim without the side effect is escalated rather than trusted.
-- **Escalation** (`escalate`) sets `bees:needs-human` and posts a comment;
-  it is the only GitHub comment the orchestrator itself writes. Roles comment on
-  GitHub to people (developer PR replies, product-manager replies and questions
-  on feedback/feature issues), always with the `<!-- bees:<role> -->` marker.
+- **Escalation** (`escalate`) sets `bees:needs-human`, posts a comment and
+  records the same reason on the issue's own bookkeeping (`SetEscalation`).
+  The comment is the only GitHub comment the orchestrator itself writes; the
+  record is what lets a view say what the factory is stuck on without asking
+  GitHub for it. Roles comment on GitHub to people (developer PR replies,
+  product-manager replies and questions on feedback/feature issues), always
+  with the `<!-- bees:<role> -->` marker.
 
 Singleton roles share `runSingleton`: detached worktree on the default branch,
 one session, mark delivered mail read, record `LastRun` in
@@ -787,10 +807,10 @@ oldest first, and `bees mail` works from any directory because sessions get
   notes/archive/<role>-<ts>.md   notes replaced by `bees notes reset`
   sessions/<ts>-<name>-<rand>/   system-prompt.md, prompt.md, mcp.json, transcript.jsonl,
                                  stderr.log, outcome.json, result.json, pid,
-                                 interrupted (written by `bees kill`)
+                                 interrupted (written by `bees kill` and by the view's k key)
   issues/<n>.json                {number, round, pr, branch, check_fix_rounds, worker_stage,
                                  after_develop, pre_review_done, session, human_seen_at,
-                                 conflict_notified_sha, updated_at}
+                                 conflict_notified_sha, escalation, escalated_at, updated_at}
   <role>.json                    per-role bookkeeping, one file per role that has run:
                                  {last_run, last_check, sessions, last_consolidated}
   status.json                    live scheduler status for `bees status` (queues, workers, singletons, last_poll, last_error)

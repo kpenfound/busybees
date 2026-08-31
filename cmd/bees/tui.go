@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"io"
+	"os/exec"
+	"runtime"
 	"sync"
 	"time"
 
@@ -36,9 +38,45 @@ func runWithTUI(ctx context.Context, a *app, s *scheduler.Scheduler, g *globalFl
 		Status: a.store.LoadStatus,
 		Mail:   a.mail.Counts,
 		Now:    time.Now,
-		Send:   sendFromView(a),
-		Repo:   a.cfg.Project.Repo,
+		Kill: func(name string) error {
+			// Not the view's context: stopping a session and handing its
+			// issue over must finish even when the factory is draining.
+			return s.KillSession(context.WithoutCancel(ctx), name)
+		},
+		Open: openInBrowser,
+		Send: sendFromView(a),
+		Repo: a.cfg.Project.Repo,
 	}, s, give)
+}
+
+// openInBrowser shows a URL in whatever the person watching reads GitHub in.
+// It starts the platform's opener and does not wait for it: on Linux
+// xdg-open often *is* the browser process and would not return until the
+// browser was closed.
+func openInBrowser(url string) error {
+	cmd := browserCommand(runtime.GOOS, url)
+	// The view owns the terminal; anything the opener says would be drawn
+	// over the panels, and <state_dir>/bees.log is where a failure belongs.
+	cmd.Stdout, cmd.Stderr = nil, nil
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go func() { _ = cmd.Wait() }() // reap it; nothing waits on the browser
+	return nil
+}
+
+// browserCommand is the platform's opener, with the URL as an argument of
+// its own: it is built from the configured repository and must never be
+// handed to a shell to take apart.
+func browserCommand(goos, url string) *exec.Cmd {
+	switch goos {
+	case "darwin":
+		return exec.Command("open", url)
+	case "windows":
+		return exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+	default:
+		return exec.Command("xdg-open", url)
+	}
 }
 
 // quietConsole sends console logging to io.Discard and returns the function
