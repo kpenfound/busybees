@@ -79,6 +79,8 @@ func (s *Scheduler) deliverHumanFeedback(ctx context.Context, snap *snapshot) er
 			errs = append(errs, err.Error())
 			continue
 		}
+		// The developer's answer to this is local work: wake the loop.
+		s.signal()
 		if err := s.store.SaveIssue(bk); err != nil {
 			errs = append(errs, err.Error())
 		}

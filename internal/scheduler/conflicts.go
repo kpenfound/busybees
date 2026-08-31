@@ -74,6 +74,8 @@ func (s *Scheduler) checkPRs(ctx context.Context, snap *snapshot) error {
 			errs = append(errs, err.Error())
 			continue
 		}
+		// The developer's answer to this is local work: wake the loop.
+		s.signal()
 		bk.ConflictNotifiedSHA = pr.HeadSHA
 		if err := s.store.SaveIssue(bk); err != nil {
 			errs = append(errs, err.Error())

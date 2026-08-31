@@ -120,6 +120,11 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 		Env:          env,
 		SessionDir:   sessionDir,
 	})
+	// A finished session is the factory's main local event: it may have
+	// written mail to another role, and it is one step closer to freeing the
+	// slot it holds. Wake the loop rather than let that wait for the next
+	// tick — including when the session failed, which frees the slot too.
+	s.signal()
 	if err != nil {
 		return nil, err
 	}
