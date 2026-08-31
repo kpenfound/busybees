@@ -224,7 +224,13 @@ A full pass is:
    broken down already?" answer, and the sub-issues the breakdown creates are
    what take it off the list, so no later run does it twice. A planned
    *feedback* issue leaves the list by being closed, which takes it out of the
-   poll. Neither label is ever written by the factory.
+   poll. The summary is that answer only when it can be *read*: a feature whose
+   `feature-progress` lookup failed leaves no entry at all, and a missing entry
+   is not evidence of no sub-issues, so such a feature waits for the next run
+   rather than being presented again. An issue still carrying `bees:proposal`
+   is not agreed either, whatever else a person put on it — the proposal label
+   is what says they have not approved it — so it stays in the proposals
+   section. Neither planning label is ever written by the factory.
 
    **Sub-issues and milestones.** Work items are native GitHub sub-issues of
    their feature. Roles create issues through the `issue_create` tool

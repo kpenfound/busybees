@@ -228,8 +228,8 @@ re-open the scope, writes what was settled into the issue body as a short
 `## Decisions` section, records the outcome in its notes, and breaks the issue
 down. A feature is presented as agreed only while it has no sub-issues, so the
 breakdown happens once. Both labels are a person's: the product manager never
-adds or removes either. See [Planning with the product
-manager](workflow.md#planning-with-the-product-manager).
+adds or removes either. See
+[Planning with the product manager](workflow.md#planning-with-the-product-manager).
 
 A feature issue is *fresh* when the human side had the last word on it: a
 person created or commented on it, and the product manager has not commented

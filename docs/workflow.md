@@ -303,7 +303,9 @@ Either way the issue goes to the product manager, not to triage:
   never sees it. `bees status` counts these issues in its `feedback` queue.
 - A *fresh* feedback issue wakes the product manager on the next poll instead
   of waiting for `product_manager_interval`. Fresh means you created it, or
-  commented on it, after the product manager's last reply.
+  commented on it, after the product manager's last reply — except in
+  [planning mode](#planning-with-the-product-manager), where only a comment
+  counts.
 - The product manager reads it (with all its comments), decides what to do,
   and does it: creates or adjusts feature issues, files a bug work item, or
   declines. (It never touches milestones — those are yours.)
@@ -350,7 +352,8 @@ since the product manager's last marker comment on it) the product manager:
    An existing issue can be attached with `issue_link` (`parent: <feature>`, `child: <item>`),
    which makes the sub-issue relationship and, when the issue is in no
    milestone, puts it in the feature's.
-   Both refuse a feature that is still a proposal;
+   Both refuse a feature that is still a proposal, or one a person has put in
+   planning;
 3. comments the list of work items on the feature issue (with the marker), so
    it is not presented to the product manager again until something changes;
 4. later, closes the feature issue once all its sub-issues are closed, or
@@ -395,6 +398,11 @@ no sub-issues, so the ones the breakdown creates are what take it off the
 list. Nothing about `bees:planned` wakes the product manager, so the run that
 picks it up is the next one `product_manager_interval` (or a comment of
 yours) brings round — at most an hour with the default.
+
+One exception: if the issue is a proposal the product manager wrote
+(`bees:proposal`), that label is what says you have not approved it, and it
+outranks `bees:planned` — take it off as well, or the issue stays a proposal
+waiting for you.
 
 Leave `bees:planned` on the issue or take it off; the factory neither reads
 it again nor removes it.

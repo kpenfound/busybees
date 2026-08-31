@@ -776,7 +776,7 @@ Becoming a sub-issue carries the feature's milestone across, exactly as `--paren
 on `bees issue create`, so an issue attached after the fact lands in the same release as
 one created under the feature. It only ever *fills in* a milestone: an issue that already
 has one keeps it, and the command says which milestone it set, if any. Refuses a parent
-that is still a proposal.
+that is still a proposal, or that a person has put in planning (`bees:planning`).
 
 ## Reporting outcomes
 
