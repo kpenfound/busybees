@@ -848,6 +848,11 @@ func TestFullDeveloperReviewLoop(t *testing.T) {
 			t.Errorf("%s ledger entries: got %d want %d", role, got, n)
 		}
 	}
+	// Report every role's count above, then stop: the assertions below index
+	// these ledger buckets, so a missing entry would panic instead of failing.
+	if t.Failed() {
+		t.FailNow()
+	}
 	for i, want := range []string{OutcomePROpened, OutcomePRUpdated} {
 		got := byRole[config.RoleDeveloper][i]
 		if got.Outcome != want || got.Issue != 1 || got.PR != fakePR {
