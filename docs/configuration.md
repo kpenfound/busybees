@@ -561,7 +561,7 @@ For each role the effective settings are computed from `[global]` and
 
 | Setting | Rule |
 |---|---|
-| `prompt` / `prompt_file` | Concatenated in this order, separated by blank lines: global `prompt`, global `prompt_file`, role `prompt`, role `prompt_file`. The result is appended to the role's built-in base prompt under an "Additional instructions from bees.toml" heading. |
+| `prompt` / `prompt_file` | Concatenated in this order, separated by blank lines: global `prompt`, global `prompt_file`, role `prompt`, role `prompt_file`. The result is appended to the role's built-in base prompt under an "Additional instructions from bees.toml" heading, and the repository's own [project prompt files](#project-prompt-files) after that. |
 | `skills` | Union, order preserved, global first, duplicates dropped. |
 | `commit_flags`, `max_size`, `model_by_size` | Developer only; not merged from `[global]`. |
 | `env` | union; the role wins on a name conflict |
@@ -572,6 +572,56 @@ For each role the effective settings are computed from `[global]` and
 | `auto_merge`, `merge_method`, `checks_wait`, `checks_poll_interval`, `checks_timeout`, `max_check_fix_rounds`, `pre_review_checks`, `pre_review_checks_timeout` | `roles.reviewer` only; they form the checks and merge policy `bees config show reviewer` prints. |
 
 `bees config show <role>` prints the result.
+
+### Project prompt files
+
+A project can keep its role instructions in the repository instead of in `bees.toml`,
+so they are versioned, reviewed in a pull request like code, and a branch can carry
+experimental instructions the reviewer sees in the diff.
+
+If the repository contains `bees/prompts/common.md`, its text is appended to every
+role's system prompt; `bees/prompts/<role>.md` is appended to that role's. Nothing has
+to be configured — the files are the whole convention, and a repository with no
+`bees/prompts/` directory (every repository that has never used the feature) renders
+exactly the prompt it rendered before.
+
+```
+bees/prompts/common.md            every role
+bees/prompts/developer.md         the developer
+bees/prompts/product_manager.md   the product manager
+```
+
+The four sources are appended to a role's built-in base prompt in this order, each
+under a heading naming where it came from:
+
+1. `[global]` `prompt` / `prompt_file`
+2. `[roles.<name>]` `prompt` / `prompt_file`
+3. `bees/prompts/common.md`
+4. `bees/prompts/<role>.md`
+
+`bees.toml` comes first so a machine-specific override still wins over what the
+repository says.
+
+The directory is `bees/`, without a dot, on purpose: `bees init` adds `/.bees/` to
+`.gitignore`, so files under `.bees/prompts/` would be untracked by default — the
+opposite of instructions reviewed like code — whatever `state_dir` points at.
+
+Sessions read the files from **their own worktree**, so the instructions that reach a
+session are the ones on the branch it is working on, not the ones on the default
+branch. `bees prompts show <role> --rendered` has no worktree and reads the checkout
+`bees.toml` sits in; it says so when it finds any.
+
+A file bees cannot use — unreadable, or larger than 64 KiB — never takes a session
+down: the session warns, skips that file and runs with the rest. `bees doctor` is
+where those fail loudly, together with a file no role will ever read (a misspelled
+role name such as `bees/prompts/develloper.md`).
+
+> These files are instructions to an agent, taken from the repository and applied to
+> the branch a session is building. Anyone who can land a commit on a branch can
+> change what the sessions working on that branch are told to do. That is the point of
+> the feature rather than a defect in it, but it is the same trust boundary as a CI
+> configuration in the repository: review changes to `bees/prompts/` as you would
+> review changes to a workflow file.
 
 ### Skills
 

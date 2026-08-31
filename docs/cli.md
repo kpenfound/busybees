@@ -94,7 +94,7 @@ what it found grouped by area:
 | Group | Checks |
 |---|---|
 | `toolchain` | `git` on `PATH`; `gh` on `PATH`, authenticated and holding the `repo` token scope; `claude` (or `$BEES_CLAUDE_BIN`) runnable and new enough. |
-| `config` | `bees.toml` loads and validates; `project.repo` and `project.default_branch` are set or derivable; the remote answers; the state directory is ignored by git; the notes directory is writable; every configured `prompt_file` exists. |
+| `config` | `bees.toml` loads and validates; `project.repo` and `project.default_branch` are set or derivable; the remote answers; the state directory is ignored by git; the notes directory is writable; every configured `prompt_file` exists; the repository's `bees/prompts/` files are all readable and named after a role. |
 | `github` | The repository is readable and writable (`viewerPermission`); every workflow label exists; the visibility filter matches at least one open issue; with `auto_merge` on, what a merge is actually gated on. |
 | `workspace` | A worktree can be created under `workspace_root` and removed again. |
 | `roles` | Per role: every configured skill URL clones and produces a plugin directory; every configured MCP server starts and answers an `initialize` request within 15s; a configured `shell` can be executed. |
@@ -147,6 +147,7 @@ config
       → add "/.bees/" to .gitignore: notes, mail and session transcripts would be committed otherwise
   ✓ notes dir writable          /home/kyle/src/proj/.bees/notes
   ✓ prompt files exist          no prompt_file configured
+  ✓ project prompt files        no bees/prompts/ directory
 
 github
   ✓ repo readable and writable  kyle/proj (ADMIN)
@@ -167,7 +168,7 @@ roles
   ✓ reviewer                    enabled, no skills, MCP servers or shell configured
   ✓ qa                          disabled (roles.qa.enabled = false)
 
-20 checks: 17 passed, 1 warning, 2 failed
+21 checks: 18 passed, 1 warning, 2 failed
 ```
 
 | Flag | Description |
@@ -320,8 +321,14 @@ bees config show developer
 
 Without `--rendered`, prints the role's built-in base prompt (the part busybees ships).
 With `--rendered`, prints the full system prompt the role would receive for this
-project: common preamble, base prompt and your `bees.toml` additions, with placeholder
+project: common preamble, base prompt, your `bees.toml` additions and the repository's
+own [project prompt files](configuration.md#project-prompt-files), with placeholder
 values for the worktree and issue.
+
+The project prompt files are read from the checkout `bees.toml` sits in, which is the
+only one this command has. A session reads them from its own worktree, so a branch that
+changes `bees/prompts/` renders a different prompt; when the command finds any, it says
+so on stderr.
 
 ```sh
 bees prompts show reviewer

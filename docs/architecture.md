@@ -15,7 +15,7 @@ internal/mail/       the local mailbox: JSON messages under <state_dir>/mail/<ro
 internal/workspace/  temporary git worktrees created from the main clone
 internal/skills/     clones skill repos by git URL and exposes them as claude plugin dirs
 internal/session/    runs one headless `claude -p` session and collects its result and outcome
-internal/prompts/    embedded base prompts (system/*.md, task/*.md) and their renderer
+internal/prompts/    embedded base prompts (system/*.md, task/*.md), the project's own bees/prompts/ files, and their renderer
 internal/mcpserver/  the built-in MCP server (`bees mcp serve`): mail, issue and outcome tools, filtered by role
 internal/state/      state directory: notes, per-issue bookkeeping, singleton run times, status.json
 internal/scheduler/  the orchestrator: poll, human feedback, PR merge state, reconcile, developer worker pool, singleton roles, event stream
@@ -506,10 +506,17 @@ saved to `stderr.log` when non-empty, and `result.json` summarises the run.
   the `bees` binary is prepended to `PATH` so `bees mail`, `bees issue` and
   `bees done` resolve inside the session. The `BEES_*` variables are also passed
   explicitly to the built-in MCP server rather than left to inheritance.
-- **Prompts.** `prompts.System` renders `system/common.md` + `system/<role>.md`
-  and appends the role's custom text from `bees.toml`; `prompts.Task` renders
-  `task/<role>.md`. Both take a single `prompts.Data` struct (project, filter,
-  labels, workspace, notes, inbox, issue, PR, lists, round).
+- **Prompts.** `prompts.System` renders `system/common.md` + `system/<role>.md`,
+  appends the role's custom text from `bees.toml` and then the project's own
+  prompt files; `prompts.Task` renders `task/<role>.md`. Both take a single
+  `prompts.Data` struct (project, filter, labels, workspace, notes, inbox,
+  issue, PR, lists, round).
+- **Project prompt files.** `prompts.LoadProject` reads `bees/prompts/common.md`
+  and `bees/prompts/<role>.md` from the **worktree** the session runs in, so a
+  branch's own instructions apply to the session working on that branch. A
+  missing directory is the normal case and is silent; a file that cannot be read
+  is the `project-prompts` degraded operation and is skipped, never fatal.
+  `bees doctor` fails on the same files, and on one no role would read.
 - **Skills.** `skills.Manager.Prepare` clones each URL (`<url>[@ref][#subdir]`)
   under `~/.cache/bees/repos/` and returns a plugin directory: the repo itself
   if it has `.claude-plugin/plugin.json`, otherwise a generated wrapper under
