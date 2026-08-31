@@ -76,8 +76,7 @@ func (s *Scheduler) checkPRs(ctx context.Context, snap *snapshot) error {
 		}
 		// The developer's answer to this is local work: wake the loop.
 		s.signal()
-		bk.ConflictNotifiedSHA = pr.HeadSHA
-		if err := s.store.SaveIssue(bk); err != nil {
+		if err := s.store.SetConflictNotifiedSHA(issue.Number, pr.HeadSHA); err != nil {
 			errs = append(errs, err.Error())
 		}
 		s.log.Info("pull request needs updating; developer notified", "pr", pr.Number, "issue", issue.Number, "reason", reason, "head", short(pr.HeadSHA))

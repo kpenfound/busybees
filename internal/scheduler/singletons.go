@@ -178,7 +178,10 @@ func (s *Scheduler) completedFeatures(snap *snapshot) []github.Issue {
 // children that closed, and would report a feature complete while a real
 // sub-issue is still open. A set that did change clears the marker, so a
 // feature that gains a sub-issue after being reported complete is reported
-// again when that one closes.
+// again when that one closes. This function decides what to record;
+// state.Store.SetOpenChildren, which owns both fields, is what writes it —
+// the polling path never saves a whole IssueState, because a developer worker
+// may be holding one for the same issue.
 func (s *Scheduler) recordFeatureProgress(snap *snapshot, parents map[int]github.Parent, reported []github.Issue, complete bool) {
 	children := map[int][]int{}
 	for item, p := range parents {
@@ -191,23 +194,20 @@ func (s *Scheduler) recordFeatureProgress(snap *snapshot, parents map[int]github
 	for _, f := range snap.features {
 		openNow := children[f.Number]
 		slices.Sort(openNow)
-		is, err := s.store.Issue(f.Number)
-		if err != nil {
-			s.log.Warn("read issue state", "issue", f.Number, "err", err)
-			continue
+		// A nil set is how SetOpenChildren is told not to record this run's
+		// lookup over the one it remembers.
+		var record []int
+		if complete && len(openNow) > 0 {
+			record = openNow
 		}
-		changed := complete && len(openNow) > 0 && !slices.Equal(is.OpenChildren, openNow)
-		if !changed && !done[f.Number] {
-			continue
-		}
-		if changed {
-			is.OpenChildren = openNow
-			is.CompleteReportedAt = time.Time{}
-		}
+		var reportedAt time.Time
 		if done[f.Number] {
-			is.CompleteReportedAt = s.now()
+			reportedAt = s.now()
 		}
-		if err := s.store.SaveIssue(is); err != nil {
+		if record == nil && reportedAt.IsZero() {
+			continue
+		}
+		if err := s.store.SetOpenChildren(f.Number, record, reportedAt); err != nil {
 			s.log.Warn("save issue state", "issue", f.Number, "err", err)
 		}
 	}

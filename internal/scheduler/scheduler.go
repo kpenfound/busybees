@@ -589,12 +589,12 @@ func (s *Scheduler) observeProposals(snap *snapshot) []error {
 		if is.Proposal == proposal {
 			continue
 		}
+		var approvedAt time.Time
 		if is.Proposal {
 			s.log.Info("person approved a proposal", "issue", i.Number)
-			is.ProposalApprovedAt = s.now()
+			approvedAt = s.now()
 		}
-		is.Proposal = proposal
-		if err := s.store.SaveIssue(is); err != nil {
+		if err := s.store.SetProposal(i.Number, proposal, approvedAt); err != nil {
 			errs = append(errs, err)
 		}
 	}

@@ -432,7 +432,22 @@ stateDiagram-v2
   record back.
 - **Rounds.** `<state_dir>/issues/<n>.json` records the review round, PR
   number, branch, `check_fix_rounds`, `worker_stage`, `after_develop`,
-  `pre_review_done`, `session`, `human_seen_at` and `conflict_notified_sha`. The round is
+  `pre_review_done`, `session`, `human_seen_at` and `conflict_notified_sha`,
+  plus the cost totals, the proposal observation and a feature's open
+  children. Only the round, PR number, branch, `check_fix_rounds` and the
+  three worker-stage fields belong to the developer worker, and
+  `state.Store.SaveIssue` is what writes them. Every other field has an owner
+  method on `state.Store` — `AddIssueCost`, `SetIssueSession`,
+  `SetHumanSeenAt`, `SetConflictNotifiedSHA`, `SetProposal` and
+  `SetOpenChildren` — each reading the file, changing its own fields and
+  writing it back, and `SaveIssue` carries them over from the file rather than
+  taking them from its argument. The split matters because a worker holds one
+  copy of the file for the whole life of an issue while the polling path keeps
+  writing to the same file: saving that copy wholesale would put back what the
+  worker loaded when it started, and the polling path's bookkeeping is exactly
+  the kind that must not be undone — feedback already delivered would be
+  delivered again, a head already mailed about mailed about again, an approval
+  forgotten, a finished feature reported twice or not at all. The round is
   incremented on every `changes-requested` and compared with
   `scheduler.max_review_rounds`; human feedback rounds do not count against the
   limit. `check_fix_rounds` is incremented each time the reviewer is asked to

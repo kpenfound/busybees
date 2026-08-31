@@ -150,7 +150,9 @@ func TestTheCompletedFeatureCheckCostsNoGitHubCalls(t *testing.T) {
 	base := h.gh.total() - before
 
 	// A recorded sub-issue that is still open: the same calls, no more.
-	if err := h.store.SaveIssue(state.IssueState{Number: 5, OpenChildren: []int{1}}); err != nil {
+	// Seeded through the owner of the two fields — SaveIssue writes the
+	// developer worker's bookkeeping and carries these over from the file.
+	if err := h.store.SetOpenChildren(5, []int{1}, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	before = h.gh.total()
@@ -162,7 +164,7 @@ func TestTheCompletedFeatureCheckCostsNoGitHubCalls(t *testing.T) {
 	}
 
 	// And the check that fires makes no call at all.
-	if err := h.store.SaveIssue(state.IssueState{Number: 5, OpenChildren: []int{77}}); err != nil {
+	if err := h.store.SetOpenChildren(5, []int{77}, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	before = h.gh.total()
