@@ -113,8 +113,13 @@ func Create(ctx context.Context, gh *github.Client, filter config.Filter, labels
 		if err != nil {
 			return Result{}, fmt.Errorf("issue #%d: %w", source, err)
 		}
-		if opts.Parent > 0 && github.HasLabel(d.Labels, labels.Proposal) {
-			return Result{}, proposalError(labels, opts.Parent)
+		if opts.Parent > 0 {
+			if github.HasLabel(d.Labels, labels.Proposal) {
+				return Result{}, proposalError(labels, opts.Parent)
+			}
+			if github.HasLabel(d.Labels, labels.Planning) {
+				return Result{}, planningError(labels, opts.Parent)
+			}
 		}
 		if n.Milestone == "" {
 			n.Milestone = d.MilestoneTitle()
@@ -160,8 +165,8 @@ func (r LinkResult) String() string {
 }
 
 // Link attaches child to parent as a sub-issue. It refuses a parent that is
-// still a proposal: attaching an existing issue to one is the same hole as
-// creating a sub-issue under it.
+// still a proposal, or that a person has put in planning: attaching an
+// existing issue to one is the same hole as creating a sub-issue under it.
 func Link(ctx context.Context, gh *github.Client, labels config.Labels, parent, child int) (LinkResult, error) {
 	p, err := gh.GetIssueDetails(ctx, parent)
 	if err != nil {
@@ -169,6 +174,9 @@ func Link(ctx context.Context, gh *github.Client, labels config.Labels, parent, 
 	}
 	if github.HasLabel(p.Labels, labels.Proposal) {
 		return LinkResult{}, proposalError(labels, parent)
+	}
+	if github.HasLabel(p.Labels, labels.Planning) {
+		return LinkResult{}, planningError(labels, parent)
 	}
 	return link(ctx, gh, parent, child, p.MilestoneTitle())
 }
@@ -202,6 +210,14 @@ func link(ctx context.Context, gh *github.Client, parent, child int, milestone s
 // work by removing the label.
 func proposalError(labels config.Labels, number int) error {
 	return fmt.Errorf("#%d is a proposal: a person must approve it (remove the %s label) before it can be broken into work items", number, labels.Proposal)
+}
+
+// planningError is the refusal every path into a planning issue's sub-issues
+// shares: while a person is still agreeing an issue with the product manager
+// it is a conversation, not a spec, and nothing is broken down from it until
+// they end planning by swapping the label for bees:planned.
+func planningError(labels config.Labels, number int) error {
+	return fmt.Errorf("#%d is in planning: a person must end it (swap the %s label for %s) before it can be broken into work items", number, labels.Planning, labels.Planned)
 }
 
 // blockedByBody prefixes body with the "Blocked by #N" line the scheduler
