@@ -818,3 +818,104 @@ func TestADrawnListPanelAlwaysHasARow(t *testing.T) {
 		}
 	}
 }
+
+// The confirmation names one session and stops that one. The cursor is a
+// flat index over rows the factory moves under it, so an earlier session
+// finishing between the two k presses shifts every later one up a row: the
+// second press must act on the name the first one showed, not on whatever
+// the cursor points at by then (#308).
+func TestKillStopsTheSessionTheConfirmationNamed(t *testing.T) {
+	var killed []string
+	var view tea.Model = New(Deps{Repo: "acme/widgets", Now: func() time.Time { return fixed },
+		Kill: func(name string) error { killed = append(killed, name); return nil }})
+	view, _ = view.Update(tea.WindowSizeMsg{Width: defaultWidth, Height: panelHeight})
+	view, _ = view.Update(started("developer-A", config.RoleDeveloper, 10, 0, fixed, "sonnet", false))
+	view, _ = view.Update(started("developer-B", config.RoleDeveloper, 20, 0, fixed, "sonnet", false))
+	view, _ = view.Update(started("developer-C", config.RoleDeveloper, 30, 0, fixed, "sonnet", false))
+
+	view, _ = view.Update(tea.KeyMsg{Type: tea.KeyDown})
+	view, cmd := view.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	if cmd != nil || len(killed) != 0 {
+		t.Fatalf("the first k stopped %v without asking", killed)
+	}
+	if got := plain(view.View()); !strings.Contains(got, "k again to stop developer-B and hand #20 to a person") {
+		t.Fatalf("the confirmation does not name the selected session:\n%s", got)
+	}
+
+	// An unrelated session earlier in the Now panel finishes: developer-B
+	// and developer-C move up a row, and the cursor does not move with them.
+	view, _ = view.Update(ended("developer-A", config.RoleDeveloper, 10, 0, 4, 0.02))
+	if s, ok := view.(Model).selection(); !ok || s.name != "developer-C" {
+		t.Fatalf("the fixture does not reproduce the drift: the cursor is on %+v", s)
+	}
+
+	view, cmd = view.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	if msg := runCmd(t, cmd); msg != (actedMsg{note: "stopped developer-B"}) {
+		t.Errorf("the kill reported %+v", msg)
+	}
+	if !slices.Equal(killed, []string{"developer-B"}) {
+		t.Errorf("k stopped %v, want only the session the confirmation named", killed)
+	}
+	if got := plain(view.View()); !strings.Contains(got, "stopping developer-B") {
+		t.Errorf("the view does not say which session is being stopped:\n%s", got)
+	}
+}
+
+// A confirmation whose session has finished before the second press stops
+// nothing: the person read that name, and stopping whatever is selected
+// instead is the bug this asks about (#308).
+func TestKillStopsNothingWhenTheNamedSessionHasFinished(t *testing.T) {
+	var killed []string
+	var view tea.Model = New(Deps{Repo: "acme/widgets", Now: func() time.Time { return fixed },
+		Kill: func(name string) error { killed = append(killed, name); return nil }})
+	view, _ = view.Update(tea.WindowSizeMsg{Width: defaultWidth, Height: panelHeight})
+	view, _ = view.Update(started("developer-A", config.RoleDeveloper, 10, 0, fixed, "sonnet", false))
+	view, _ = view.Update(started("developer-B", config.RoleDeveloper, 20, 0, fixed, "sonnet", false))
+	view, _ = view.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	view, _ = view.Update(ended("developer-A", config.RoleDeveloper, 10, 0, 4, 0.02))
+
+	// The command a firing k returns is what stops a session, so a test
+	// that only looks at the model cannot tell a kill from a refusal: run
+	// whatever comes back.
+	view, cmd := view.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	if cmd != nil {
+		if msg := runCmd(t, cmd); msg != nil {
+			t.Errorf("k reported %+v after the session it named had finished", msg)
+		}
+	}
+	if len(killed) != 0 {
+		t.Errorf("k stopped %v after the session it named had finished", killed)
+	}
+	if got := plain(view.View()); !strings.Contains(got, "developer-A has finished; nothing was stopped") {
+		t.Errorf("the view does not say why nothing was stopped:\n%s", got)
+	}
+}
+
+// Moving the cursor disarms the confirmation, so k on another session asks
+// about that one instead of firing at the one named before (#308).
+func TestKillOnAnotherSessionAsksAgain(t *testing.T) {
+	var killed []string
+	var view tea.Model = New(Deps{Repo: "acme/widgets", Now: func() time.Time { return fixed },
+		Kill: func(name string) error { killed = append(killed, name); return nil }})
+	view, _ = view.Update(tea.WindowSizeMsg{Width: defaultWidth, Height: panelHeight})
+	view, _ = view.Update(started("developer-A", config.RoleDeveloper, 10, 0, fixed, "sonnet", false))
+	view, _ = view.Update(started("developer-B", config.RoleDeveloper, 20, 0, fixed, "sonnet", false))
+
+	view, _ = view.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	view, _ = view.Update(tea.KeyMsg{Type: tea.KeyDown})
+	view, cmd := view.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	if cmd != nil || len(killed) != 0 {
+		t.Fatalf("k on another session stopped %v instead of asking about it", killed)
+	}
+	if got := plain(view.View()); !strings.Contains(got, "k again to stop developer-B and hand #20 to a person") {
+		t.Fatalf("k does not ask about the session that is selected now:\n%s", got)
+	}
+
+	_, cmd = view.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	if msg := runCmd(t, cmd); msg != (actedMsg{note: "stopped developer-B"}) {
+		t.Errorf("the kill reported %+v", msg)
+	}
+	if !slices.Equal(killed, []string{"developer-B"}) {
+		t.Errorf("k stopped %v, want the session it asked about", killed)
+	}
+}

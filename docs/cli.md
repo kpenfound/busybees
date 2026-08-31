@@ -518,7 +518,7 @@ The keys:
 | `↑` `↓` | Move the selection through every panel's rows in turn. |
 | `enter` | Watch the selected session's transcript (below). |
 | `o` | Open the selected issue or pull request on GitHub. |
-| `k` | Stop the selected session and hand its issue to a person. It asks first: press `k` again to confirm. |
+| `k` | Stop the selected session and hand its issue to a person. It asks first, naming the session: press `k` again to stop the one it named. |
 | `q`, `ctrl-c` | Stop polling and drain. Press again to leave the terminal early. |
 
 `q` and Ctrl-C stop polling and drain exactly as an interrupt does without
@@ -526,12 +526,14 @@ the view, and the view stays up until the running sessions have finished;
 pressing either again leaves the terminal and waits for the drain with the
 console back.
 
-`k` is the key that throws work away, and asks first. It stops the selected
-session the way [`bees kill`](#bees-kill---dry-run---scheduler---grace-5s)
-stops a leftover one — the process and its group, with an `interrupted` marker
-left in the session directory — and then labels its issue `bees:needs-human`
-with a comment saying a person stopped it, exactly as the factory giving up
-would. The session's own worker ends without retrying it. A singleton session
+`k` is the key that throws work away, and asks first: the first press names
+the session it would stop and the second stops that one, whatever the cursor
+has moved on to in between. It stops it the way
+[`bees kill`](#bees-kill---dry-run---scheduler---grace-5s) stops a leftover
+one — the process and its group, with an `interrupted` marker left in the
+session directory — and then labels its issue `bees:needs-human` with a
+comment saying a person stopped it, exactly as the factory giving up would.
+The session's own worker ends without retrying it. A singleton session
 (product manager, project manager, QA) owns no issue, so stopping one stops a
 session and nothing more. Nothing is recorded as run either, so a singleton
 the factory still has work for starts again on the next pass.
