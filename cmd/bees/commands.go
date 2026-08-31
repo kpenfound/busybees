@@ -19,6 +19,7 @@ import (
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/prompts"
 	"github.com/kpenfound/busybees/internal/state"
+	"github.com/kpenfound/busybees/internal/text"
 	"github.com/kpenfound/busybees/internal/versions"
 	"github.com/kpenfound/busybees/internal/workspace"
 )
@@ -750,11 +751,19 @@ func newPromptsCmd(g *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			text, err := renderedPrompt(cfg, role)
+			out, project, err := renderedPrompt(cfg, role)
 			if err != nil {
 				return err
 			}
-			fmt.Print(text)
+			fmt.Print(out)
+			if len(project) > 0 {
+				// The files come from this checkout. A session reads them
+				// from its own worktree, so a branch that changes them
+				// renders a different prompt - say so rather than let this
+				// read as the prompt every session gets.
+				_, _ = fmt.Fprintf(os.Stderr, "\nnote: %s read from %s. A session reads them from its own branch, which may differ.\n",
+					text.Count(len(project), "project prompt file"), cfg.Dir())
+			}
 			return nil
 		},
 	}
@@ -769,10 +778,21 @@ func newPromptsCmd(g *globalFlags) *cobra.Command {
 //
 // Every field the scheduler sets from the config in runSession belongs here
 // too, or the command prints an empty value for it.
-func renderedPrompt(cfg *config.Config, role string) (string, error) {
+//
+// The project's own prompt files (prompts.LoadProject) are read from the main
+// clone - the checkout bees.toml sits in - because this command runs outside
+// any session and has no worktree. It returns them so the caller can say so:
+// a session reads them from its own branch, which may carry different text.
+// A file that cannot be read is an error here, where a person is looking at
+// the prompt, rather than the warning a session skips it with.
+func renderedPrompt(cfg *config.Config, role string) (string, []prompts.ProjectPrompt, error) {
 	rr, err := cfg.Role(role)
 	if err != nil {
-		return "", err
+		return "", nil, err
+	}
+	project, err := prompts.LoadProject(cfg.Dir(), role)
+	if err != nil {
+		return "", nil, err
 	}
 	store := state.New(cfg.StateDir())
 	d := prompts.Data{
@@ -783,7 +803,8 @@ func renderedPrompt(cfg *config.Config, role string) (string, error) {
 		Issue:     &github.Issue{Number: 1, Title: "<issue>"}, PR: &github.PR{Number: 2, Title: "<pr>"},
 		Round: 1, MaxRounds: cfg.Scheduler.MaxReviewRounds,
 	}
-	return prompts.System(role, d, rr.Prompt)
+	out, err := prompts.System(role, d, rr.Prompt, project...)
+	return out, project, err
 }
 
 // readBody reads a message body from --body, --body-file or stdin.
