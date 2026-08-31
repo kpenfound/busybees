@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -143,7 +144,11 @@ func TestQueuesPanelShowsTheStatusNumbers(t *testing.T) {
 func TestEmptyStateReadsAsEmpty(t *testing.T) {
 	view := drive(t, Deps{Repo: "acme/widgets"})
 	for _, want := range []string{
-		"acme/widgets", "Now", "no sessions running", "Queues",
+		"acme/widgets", "Now", "no sessions running",
+		"Recent", "no sessions have finished yet",
+		"Needs human", "nothing is waiting for a person",
+		"Approved PRs", "no approved pull requests are waiting to be merged",
+		"Queues",
 		"triage          0", "ready           0", "open PRs        0",
 		"unread mail   none", "next poll     not scheduled yet",
 	} {
@@ -249,5 +254,336 @@ func TestALongStageNameDoesNotPushTheModelColumnOff(t *testing.T) {
 		if w := len([]rune(line)); w > defaultWidth {
 			t.Errorf("a %d-column line in a %d-column view: %q", w, defaultWidth, line)
 		}
+	}
+}
+
+// endedAs is a session-ended event carrying everything the Recent panel
+// renders: how it ended, what it said about it, what it cost and how long it
+// took.
+func endedAs(name, role string, issue, pr int, outcome, note string, cost float64, took time.Duration) tea.Msg {
+	return eventMsg(scheduler.Event{
+		Kind: scheduler.EventSessionEnded, Time: fixed, Session: name, Role: role,
+		Issue: issue, PR: pr, Outcome: outcome, Note: note, CostUSD: cost, Duration: took,
+	})
+}
+
+// escalated and approved are what the scheduler records in status.json for
+// the two panels that are about people rather than about sessions.
+func escalated(n int, title, reason string, since time.Time) state.Escalated {
+	return state.Escalated{Issue: n, Title: title, Reason: reason, Since: since}
+}
+
+func approvedPR(pr, issue int, title string, since time.Time) state.ApprovedPR {
+	return state.ApprovedPR{PR: pr, Issue: issue, Title: title, Since: since}
+}
+
+// The Recent panel is what just happened: the sessions that have finished,
+// newest first, with how each ended, what it said about it, how long it took
+// and what it cost. Every one of those arrives on the session-ended event —
+// the view looks nothing up.
+func TestRecentPanelListsWhatHasFinished(t *testing.T) {
+	view := drive(t, Deps{Repo: "acme/widgets"},
+		// A note is a session's own prose and is the last column, so it is
+		// what a narrow terminal cuts. Give this one room to be read whole.
+		tea.WindowSizeMsg{Width: 130, Height: 40},
+		endedAs("project-manager-1", config.RoleProjectManager, 12, 0, "done", "refined and moved to ready", 0.61, 3*time.Minute+2*time.Second),
+		endedAs("reviewer-pr-31-r1", config.RoleReviewer, 12, 31, "changes-requested", "tests missing for the error path", 1.18, 6*time.Minute+14*time.Second),
+	)
+	for _, want := range []string{
+		"Recent", "reviewer", "#12", "#31", "changes-requested", "6m14s", "$1.18",
+		"tests missing for the error path",
+		"project manager", "done", "3m2s", "$0.61", "refined and moved to ready",
+	} {
+		if !strings.Contains(view, want) {
+			t.Errorf("the Recent panel does not mention %q:\n%s", want, view)
+		}
+	}
+	// Newest first: the review that just ended is above the refinement.
+	if i, j := strings.Index(view, "changes-requested"), strings.Index(view, "refined and moved"); i > j {
+		t.Errorf("the Recent panel is oldest first:\n%s", view)
+	}
+	// A session that reported nothing at all says so rather than showing an
+	// empty column.
+	blank := drive(t, Deps{Repo: "acme/widgets"},
+		endedAs("developer-issue-9-r1", config.RoleDeveloper, 9, 0, "", "", 0, time.Second))
+	if !strings.Contains(blank, "no outcome") {
+		t.Errorf("a session that reported no outcome renders as a blank cell:\n%s", blank)
+	}
+}
+
+// Needs human is the panel that tells a person the factory is stuck and
+// waiting for them: which issue, how long it has been waiting and why it was
+// given up on. The reason is the one the scheduler recorded when it
+// escalated; an issue a person labelled by hand has none, and says so rather
+// than leaving a cell that reads like a rendering fault.
+func TestNeedsHumanPanelSaysWhichIssueAndWhy(t *testing.T) {
+	view := drive(t, Deps{Repo: "acme/widgets"}, statusMsg{status: state.Status{
+		NeedsHuman: []state.Escalated{
+			escalated(44, "Parser drops a token", "3 review rounds and no approval", fixed.Add(-50*time.Hour)),
+			escalated(51, "Flaky worktree test", "", time.Time{}),
+		},
+	}})
+	for _, want := range []string{
+		"Needs human", "#44", "2d", "Parser drops a token", "3 review rounds and no approval",
+		"#51", "Flaky worktree test", "no reason recorded",
+	} {
+		if !strings.Contains(view, want) {
+			t.Errorf("the Needs human panel does not mention %q:\n%s", want, view)
+		}
+	}
+}
+
+// Approved PRs is what is waiting for a person to merge, oldest first — the
+// order the scheduler put them in.
+func TestApprovedPanelListsWhatIsWaitingToBeMerged(t *testing.T) {
+	view := drive(t, Deps{Repo: "acme/widgets"}, statusMsg{status: state.Status{
+		Approved: []state.ApprovedPR{
+			approvedPR(60, 20, "Retry a session that hit the account limit", fixed.Add(-30*time.Hour)),
+			approvedPR(62, 22, "Docs: the release workflow", fixed.Add(-3*time.Hour)),
+		},
+	}})
+	for _, want := range []string{"Approved PRs", "#60", "#20", "1d", "Retry a session", "#62", "#22", "3h", "Docs: the release"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("the Approved PRs panel does not mention %q:\n%s", want, view)
+		}
+	}
+	if i, j := strings.Index(view, "#60"), strings.Index(view, "#62"); i > j {
+		t.Errorf("the Approved PRs panel does not keep the order it was given:\n%s", view)
+	}
+}
+
+// runCmd runs the command a key returned and gives back the message it
+// produced. The keys that do something outside the model — stopping a
+// session, opening a browser — do it in a command so the view keeps drawing
+// while they take their time.
+func runCmd(t *testing.T, cmd tea.Cmd) tea.Msg {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("the key returned no command")
+	}
+	return cmd()
+}
+
+// q stops the factory exactly as Ctrl-C does: the first press asks it to
+// stop polling and drain and the view stays up, the second gives up on the
+// drain. It is a key a person can find without reading anything, so the
+// footer says what it does.
+func TestQStopsTheFactoryLikeCtrlC(t *testing.T) {
+	stops := 0
+	var view tea.Model = New(Deps{Now: func() time.Time { return fixed }, Stop: func() { stops++ }})
+	view, _ = view.Update(started("developer-issue-12-r1", config.RoleDeveloper, 12, 0, fixed, "opus", false))
+	if got := plain(view.View()); !strings.Contains(got, "q or ctrl-c stops polling and drains") {
+		t.Errorf("the footer does not say what q does:\n%s", got)
+	}
+
+	view, cmd := view.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	if stops != 1 {
+		t.Errorf("q asked the factory to stop %d times, want 1", stops)
+	}
+	if cmd != nil {
+		t.Error("q quit the view instead of waiting for the drain")
+	}
+	if got := plain(view.View()); !strings.Contains(got, "stopping: waiting for 1 session") {
+		t.Errorf("the view does not say it is stopping:\n%s", got)
+	}
+	if _, cmd = view.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}}); cmd == nil {
+		t.Error("a second q did not quit the view")
+	}
+}
+
+// k stops the selected session and hands its issue to a person, through the
+// scheduler's own kill path. It asks first: it is the one key here that
+// throws work away, so a single press says what it is about to do and the
+// second does it.
+func TestKillStopsTheSelectedSessionAfterAsking(t *testing.T) {
+	var killed []string
+	deps := Deps{Repo: "acme/widgets", Kill: func(name string) error {
+		killed = append(killed, name)
+		return nil
+	}}
+	var view tea.Model = New(deps)
+	view, _ = view.Update(started("developer-issue-12-r1", config.RoleDeveloper, 12, 31, fixed, "opus", false))
+
+	view, cmd := view.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	if cmd != nil || len(killed) != 0 {
+		t.Fatalf("the first k stopped %v without asking", killed)
+	}
+	if got := plain(view.View()); !strings.Contains(got, "k again to stop developer-issue-12-r1") {
+		t.Errorf("the first k does not say what the second will do:\n%s", got)
+	}
+
+	view, cmd = view.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	if msg := runCmd(t, cmd); msg != (actedMsg{note: "stopped developer-issue-12-r1"}) {
+		t.Errorf("the kill reported %+v", msg)
+	}
+	if len(killed) != 1 || killed[0] != "developer-issue-12-r1" {
+		t.Fatalf("k stopped %v, want the selected session", killed)
+	}
+	// What the kill reported is what the footer says.
+	view, _ = view.Update(actedMsg{note: "stopped developer-issue-12-r1"})
+	if got := plain(view.View()); !strings.Contains(got, "stopped developer-issue-12-r1") {
+		t.Errorf("the footer does not report what the kill did:\n%s", got)
+	}
+	// And a failure is reported rather than swallowed.
+	fails := New(Deps{Repo: "acme/widgets", Kill: func(string) error { return errors.New("no such process") }})
+	var f tea.Model = fails
+	f, _ = f.Update(started("developer-issue-12-r1", config.RoleDeveloper, 12, 31, fixed, "opus", false))
+	f, _ = f.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	_, cmd = f.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	if msg, ok := runCmd(t, cmd).(actedMsg); !ok || !strings.Contains(msg.note, "no such process") {
+		t.Errorf("a failed kill reported %+v", msg)
+	}
+}
+
+// Only a running session can be stopped: k on any other row says so instead
+// of stopping something else, and asks nothing.
+func TestKillOnARowThatIsNotASessionStopsNothing(t *testing.T) {
+	killed := 0
+	view := drive(t, Deps{Repo: "acme/widgets", Kill: func(string) error { killed++; return nil }},
+		statusMsg{status: state.Status{NeedsHuman: []state.Escalated{escalated(44, "Parser", "gave up", fixed)}}},
+		tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}},
+		tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	if killed != 0 {
+		t.Errorf("k stopped %d sessions from a row that is not one", killed)
+	}
+	if !strings.Contains(view, "select a running session") {
+		t.Errorf("k does not say why it stopped nothing:\n%s", view)
+	}
+}
+
+// o opens the selected row on GitHub. One URL shape serves an issue and a
+// pull request alike, because GitHub redirects between them — so the row
+// decides the number and nothing has to know which kind it is.
+func TestOpenShowsTheSelectedIssueOrPullRequest(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		down int
+		want string
+	}{
+		{"a running session opens its pull request", 0, "https://github.com/acme/widgets/issues/31"},
+		{"an escalated issue opens the issue", 1, "https://github.com/acme/widgets/issues/44"},
+		{"an approved pull request opens the pull request", 2, "https://github.com/acme/widgets/issues/60"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var opened []string
+			var view tea.Model = New(Deps{Repo: "acme/widgets", Open: func(u string) error {
+				opened = append(opened, u)
+				return nil
+			}})
+			view, _ = view.Update(started("developer-issue-12-r1", config.RoleDeveloper, 12, 31, fixed, "opus", false))
+			view, _ = view.Update(statusMsg{status: state.Status{
+				NeedsHuman: []state.Escalated{escalated(44, "Parser", "gave up", fixed)},
+				Approved:   []state.ApprovedPR{approvedPR(60, 20, "Retry", fixed)},
+			}})
+			for range tc.down {
+				view, _ = view.Update(tea.KeyMsg{Type: tea.KeyDown})
+			}
+			_, cmd := view.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+			runCmd(t, cmd)
+			if len(opened) != 1 || opened[0] != tc.want {
+				t.Errorf("o opened %v, want %q", opened, tc.want)
+			}
+		})
+	}
+}
+
+// The selection is one cursor over every panel's rows in turn, so a person
+// reaches everything with two keys. It is drawn where it is, and it never
+// runs off the end of a list that has shrunk under it.
+func TestTheSelectionMovesThroughEveryPanelAndStaysInside(t *testing.T) {
+	deps := Deps{Repo: "acme/widgets"}
+	msgs := []tea.Msg{
+		started("developer-issue-12-r1", config.RoleDeveloper, 12, 31, fixed, "opus", false),
+		endedAs("reviewer-pr-31-r1", config.RoleReviewer, 12, 31, "approved", "looks good", 0.5, time.Minute),
+		statusMsg{status: state.Status{
+			NeedsHuman: []state.Escalated{escalated(44, "Parser", "gave up", fixed)},
+			Approved:   []state.ApprovedPR{approvedPR(60, 20, "Retry", fixed)},
+		}},
+	}
+	// The four rows, in the order the panels draw them.
+	for i, want := range []string{"developer-issue-12", "approved", "#44", "#60"} {
+		down := make([]tea.Msg, i)
+		for j := range down {
+			down[j] = tea.KeyMsg{Type: tea.KeyDown}
+		}
+		view := drive(t, deps, append(append([]tea.Msg{}, msgs...), down...)...)
+		var marked string
+		for _, line := range strings.Split(view, "\n") {
+			if strings.Contains(line, "▸ ") {
+				marked = line
+			}
+		}
+		switch {
+		case marked == "":
+			t.Fatalf("%d rows down, nothing is marked as selected:\n%s", i, view)
+		case want == "developer-issue-12" && !strings.Contains(marked, "developer"):
+			t.Errorf("%d rows down, the marked row is %q", i, marked)
+		case want != "developer-issue-12" && !strings.Contains(marked, want):
+			t.Errorf("%d rows down, the marked row is %q, want one about %q", i, marked, want)
+		}
+	}
+	// The cursor is on the last row; the queues emptying under it must not
+	// leave it pointing past the end.
+	var view tea.Model = New(deps)
+	for _, msg := range msgs {
+		view, _ = view.Update(msg)
+	}
+	for range 3 {
+		view, _ = view.Update(tea.KeyMsg{Type: tea.KeyDown})
+	}
+	view, _ = view.Update(statusMsg{status: state.Status{}})
+	m, ok := view.(Model)
+	if !ok {
+		t.Fatal("the model is not a Model")
+	}
+	if n := len(m.targets()); m.cursor >= n {
+		t.Errorf("the cursor is on row %d of %d rows", m.cursor, n)
+	}
+}
+
+// share gives every list a row whatever happens — an empty panel says it is
+// empty and a squeezed one still says something — and hands the rest to the
+// lists furthest from what they want, so a long list cannot starve a short
+// one.
+func TestShareGivesEveryListARowAndSpreadsTheRest(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		want  []int
+		avail int
+		got   []int
+	}{
+		{"everything fits", []int{2, 1, 0, 3}, 20, []int{2, 1, 1, 3}},
+		{"nothing fits", []int{4, 4, 4, 4}, 0, []int{1, 1, 1, 1}},
+		{"a long list does not starve a short one", []int{20, 1, 1, 2}, 8, []int{4, 1, 1, 2}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := share(tc.want, tc.avail)
+			if len(got) != len(tc.got) {
+				t.Fatalf("share(%v, %d) = %v", tc.want, tc.avail, got)
+			}
+			for i := range got {
+				if got[i] != tc.got[i] {
+					t.Fatalf("share(%v, %d) = %v, want %v", tc.want, tc.avail, got, tc.got)
+				}
+			}
+		})
+	}
+}
+
+// A list with more entries than rows says how many did not fit, so what is
+// on screen and what is not add up. With a single row there is no space for
+// that line and the row goes to an entry: one of the things waiting for a
+// person says more than the news that some are.
+func TestAListTooLongForItsPanelAccountsForTheRest(t *testing.T) {
+	row := func(i int) string { return fmt.Sprintf("row%d", i) }
+	got := strings.Join(listRows(5, 3, row), "|")
+	if want := "row0|row1|  … 3 more"; got != want {
+		t.Errorf("listRows(5, 3) = %q, want %q", got, want)
+	}
+	if got := strings.Join(listRows(5, 1, row), "|"); got != "row0" {
+		t.Errorf("listRows(5, 1) = %q, want one entry and no room for anything else", got)
+	}
+	if got := strings.Join(listRows(2, 3, row), "|"); got != "row0|row1" {
+		t.Errorf("listRows(2, 3) = %q, want both entries and no accounting line", got)
 	}
 }
