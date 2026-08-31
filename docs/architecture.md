@@ -67,7 +67,7 @@ A full pass is:
    conversation comments with `gh api --paginate` (`github.Client.PRActivity`).
    Comments bees wrote, and empty approvals, are dropped. A comment is a
    bee's if its last line is a `<!-- bees:<role> -->` marker, or if its
-   author is the login `[github]` gives the factory (`github.isBee`); with
+   author is the login `[github]` gives the factory (`github.IsBee`); with
    `[github]` unset — bees then share the human's `gh` account — the marker
    is the only signal. Only the last line counts (`github.BeeRole`), so a
    person quoting the bee they answer still reaches the developer. The rest

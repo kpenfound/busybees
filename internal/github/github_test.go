@@ -562,7 +562,8 @@ func TestNoTokenInjectsNothing(t *testing.T) {
 }
 
 // TestIsBeeCountsTheFactorysOwnLogin pins the two ways a comment is read as a
-// bee's (#243) and how they combine: the marker, which every role emits, and
+// bee's (#243, exported for the MCP renderer in #266) and how they combine:
+// the marker, which every role emits, and
 // — only where [github] gives the factory an account of its own — the author.
 // The login is an extra way to say yes and never overrides the positional
 // marker rule, so a person quoting a marker is still a person whatever is
@@ -594,6 +595,12 @@ func TestIsBeeCountsTheFactorysOwnLogin(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			if got := IsBee(tc.login, tc.author, tc.body); got != tc.want {
+				t.Errorf("IsBee(%q, %q, ...) = %v, want %v", tc.login, tc.author, got, tc.want)
+			}
+			// Client.isBee is the same rule asked with the login the client
+			// acts as, and there is one implementation of it (#266): the
+			// renderer in internal/mcpserver calls the exported one.
 			c := NewAs("a/b", tc.login, "")
 			if got := c.isBee(tc.author, tc.body); got != tc.want {
 				t.Errorf("isBee(%q, ...) with login %q = %v, want %v", tc.author, tc.login, got, tc.want)
