@@ -65,9 +65,11 @@ A full pass is:
    visible, if `pr.updatedAt` is later than the issue's `human_seen_at` (or
    the PR's creation time), fetch its reviews, inline review comments and
    conversation comments with `gh api --paginate` (`github.Client.PRActivity`).
-   Items whose last line is a `<!-- bees:<role> -->` marker — comments
-   written by bees, which share the human's `gh` account — and empty
-   approvals are dropped. Only the last line counts (`github.BeeRole`), so a
+   Comments bees wrote, and empty approvals, are dropped. A comment is a
+   bee's if its last line is a `<!-- bees:<role> -->` marker, or if its
+   author is the login `[github]` gives the factory (`github.isBee`); with
+   `[github]` unset — bees then share the human's `gh` account — the marker
+   is the only signal. Only the last line counts (`github.BeeRole`), so a
    person quoting the bee they answer still reaches the developer. The rest
    are mailed to the developer as one message from `human` (`issue == N`,
    `pr == M`) whose body carries each item's id and the `gh` command to reply
@@ -148,10 +150,12 @@ A full pass is:
    The product manager's "has work" test also looks at `snapshot.feedback`
    and `snapshot.features`: `freshIssues` fetches comments (`gh issue view`)
    only for issues whose `updatedAt` is later than the product manager's last
-   run, and keeps those where `Issue.AwaitingBee()` is true — the human side
-   (creation, or a comment whose last line is not a `<!-- bees:<role> -->`
-   marker) had the last word. A person quoting the bee they are answering is
-   still a person: the marker only counts where a bee puts it, at the end.
+   run, and keeps those where `Client.AwaitingBee` is true — the human side
+   (creation, or a comment that is not a bee's by either of the two rules
+   above: no `<!-- bees:<role> -->` marker on its last line, and not authored
+   by the factory's own login) had the last word. A person quoting the bee
+   they are answering is still a person: the marker only counts where a bee
+   puts it, at the end, and the login is theirs, not the factory's.
    `gh` reports comment times at second resolution, so a tie is broken by the
    comments' order in the list rather than by comparing timestamps: a person
    commenting in the same second as a bee is still awaiting a bee. A fresh
@@ -159,7 +163,7 @@ A full pass is:
    person answered). Any fresh issue triggers a run outside
    `product_manager_interval`. A
    [proposal](workflow.md#feature-issues) only does so once a person has
-   commented on it (`Issue.AwaitingBeeComment()`, which is `AwaitingBee`
+   commented on it (`Client.AwaitingBeeComment`, which is `AwaitingBee`
    without the creation seeded in): nobody has commented on one a bee wrote,
    so it is fresh forever, and counting that would wake the product manager
    on every poll for a decision only a person can make. A person's question
@@ -562,18 +566,20 @@ Messages are addressed to a **role**, not a session. Delivery rules:
 
 **Visibility backstop.** After every session (`runSession` in `sessions.go`)
 the scheduler calls `adoptCreated`: `github.Client.ListCreatedSince` lists
-issues and PRs matching `author:@me created:>=<session start>` regardless of
-labels (`gh` resolves `@me` against the credentials the client carries, so
-with [`[github]`](configuration.md#github) set this is the bot rather than the
-machine owner — see issue #263), and anything carrying `<label>` or a
-`<label>:*` label but missing part of the filter is repaired through the same
-`ensureVisible` helper the developer worker uses on a PR it opened — the base
-label, the configured `filter.assignee`, and, for pull requests only, the
-configured `filter.milestone`. Both halves of the gate are needed: a pull
-request a session just opened carries only `<label>`, and earns its first
-`<label>:*` label at approval. Items with no factory label at all are left
-alone, and one item that cannot be repaired is logged and skipped rather than
-stopping the others.
+issues and PRs matching
+`author:<the account bees acts as> created:>=<session start>` regardless of
+labels (the login [`[github]`](configuration.md#github) configures, or `@me`
+when there is none, which `gh` resolves against the credentials the client
+carries — either way the bot rather than the machine owner once `[github]` is
+set, see issue #263), and anything carrying `<label>` or a `<label>:*` label
+but missing part of the filter is repaired through the same `ensureVisible`
+helper the developer worker uses on a PR it opened — the base label, the
+configured `filter.assignee`, and, for pull requests only, the configured
+`filter.milestone`. Both halves of the gate are needed: a pull request a
+session just opened carries only `<label>`, and earns its first `<label>:*`
+label at approval. Items with no factory label at all are left alone, and one
+item that cannot be repaired is logged and skipped rather than stopping the
+others.
 
 A milestone is set on pull requests and never on issues: a milestone on an
 issue is a person's decision, and an issue the factory creates inherits one

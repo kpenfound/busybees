@@ -180,9 +180,11 @@ comments it posts, `bees init`'s label creation, `bees doctor`'s repository chec
 everything `bees issue`, `bees mail` and the built-in MCP tools do — a tool a session
 calls runs in bees' code, so it acts as the bot too. What the token does not cover is
 `gh` run by a Claude session itself: its `gh pr create`, its pushes and its commits
-still come from the machine's account. So the
-[comment marker](roles.md#common-ground) stays necessary — bee comments
-still arrive under your login from one half of the factory.
+still come from the machine's account. So the [comment marker](roles.md#common-ground)
+stays necessary — bee comments still arrive under your login from one half of the
+factory. Where a comment does come from the bot, the orchestrator reads its author as
+well as its marker: anything that login posted is the factory's, including the
+escalation comment, which carries no marker.
 
 ### `filter.assignee = "@me"` still means you
 

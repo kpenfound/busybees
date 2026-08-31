@@ -574,14 +574,31 @@ You do not need the mailbox to steer a developer: review the pull request on
 GitHub like you would review a colleague's. On every poll the orchestrator
 looks at each open factory PR whose `updatedAt` moved since it last checked
 and collects, via the GitHub API, the reviews, inline review comments and
-conversation comments written since then. It ignores comments whose last
-line is a `<!-- bees:<role> -->` marker (bees and humans share one `gh`
-account, so every comment a bee posts ends with that line; quoting one
-earlier in a reply does not make the reply a bee's) and empty approvals.
-Whatever is left is sent to the developer as one mail message from `human`,
-listing each item with its author, file and line, comment id, link and the
-exact `gh` command to reply to it. The timestamp of the last item delivered
-is recorded as `human_seen_at` in `<state_dir>/issues/<n>.json`.
+conversation comments written since then. It drops the ones bees wrote and
+empty approvals. Whatever is left is sent to the developer as one mail
+message from `human`, listing each item with its author, file and line,
+comment id, link and the exact `gh` command to reply to it. The timestamp of
+the last item delivered is recorded as `human_seen_at` in
+`<state_dir>/issues/<n>.json`.
+
+**How the orchestrator tells a bee comment from yours.** Two mechanisms, and
+either one on its own is enough to make a comment a bee's:
+
+- **The marker.** Every comment a role posts ends with the invisible line
+  `<!-- bees:<role> -->`. Only a comment's *last* line counts, so quoting a
+  marker earlier in a reply does not make the reply a bee's. Bees emit it
+  whatever else is configured, and while the factory shares your GitHub
+  account — the default — it is the only signal there is.
+- **The author.** When [`[github]`](configuration.md#github) gives the
+  factory an account of its own, everything bees does in its own code acts as
+  that login, so any comment by it is the factory's whether or not it carries
+  a marker — the orchestrator's escalation comment, for one, carries none.
+  This says nothing about anybody else's comment: yours is yours even when it
+  quotes a marker, and comments a Claude session posts with its own `gh` are
+  still made with your account, so the marker is what identifies those.
+
+The same two mechanisms decide whether a person had the last word on a
+feedback or feature issue, which is what wakes the product manager.
 
 What happens next depends on the issue's state:
 
