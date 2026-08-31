@@ -458,13 +458,15 @@ saved to `stderr.log` when non-empty, and `result.json` summarises the run.
   the resolved role (`$VAR` in `env` and `headers` expanded from the bees process
   environment) and the built-in `bees` server — `<bees binary> mcp serve` over
   stdio, with the session's `BEES_*` variables in its `env`. It serves the
-  factory's own operations (`mail_send`, `mail_list`, `issue_create`,
-  `issue_link`, `done`) as tools backed by the same `internal/mail`,
-  `internal/issues` and `session.Report` code the CLI uses, so a session calls a
-  schema instead of composing a command line. The tool schemas depend on
-  `BEES_ROLE`: `done`'s `status` enum is the role's valid outcomes. The name
-  `bees` is reserved in `bees.toml`. See `internal/mcpserver` and
-  [cli.md](cli.md#bees-mcp-serve-sessions).
+  factory's own operations as tools backed by the same `internal/mail`,
+  `internal/issues`, `internal/github` and `session.Report` code the CLI uses,
+  so a session calls a schema instead of composing a command line: `mail_send`,
+  `mail_list`, `issue_create`, `issue_link`, `done`, `issue_view`, `pr_view` and
+  `comment` go to every session; `issue_edit_body` to the two managers,
+  `issue_set_state` to the project manager and `issue_question` to the product
+  manager. The tool schemas depend on `BEES_ROLE`: `done`'s `status` enum is the
+  role's valid outcomes. The name `bees` is reserved in `bees.toml`. See
+  `internal/mcpserver` and [cli.md](cli.md#bees-mcp-serve-sessions).
 - **Timeout.** The role's `timeout` bounds the command context; claude runs in
   its own process group and on expiry the whole group is `SIGKILL`ed so MCP
   servers die with it. The result is marked `TimedOut`.
