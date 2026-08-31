@@ -62,6 +62,24 @@ func (f *fakeGH) install(c *github.Client) {
 	}
 }
 
+// installAll fakes every gh client a Deps can run a command through, filling
+// in the ones New left nil. Deps carries more than one - repository questions
+// go through GitHub, `gh auth status` through MachineGitHub - and both
+// Deps.gh and Deps.machineGH fall back to a fresh real client when their
+// field is nil, so a client this helper misses runs the real gh against the
+// machine's own credentials. Installing on all of them here gives a future
+// third client one place to update.
+func (f *fakeGH) installAll(d *Deps) {
+	if d.GitHub == nil {
+		d.GitHub = github.New("")
+	}
+	if d.MachineGitHub == nil {
+		d.MachineGitHub = github.New("")
+	}
+	f.install(d.GitHub)
+	f.install(d.MachineGitHub)
+}
+
 // fakeClaude writes a shell script standing in for the claude binary, as
 // internal/session does.
 func fakeClaude(t *testing.T, output string) string {
@@ -101,11 +119,9 @@ func setupIn(t *testing.T, clone, extra string, replies map[string]ghReply) *fix
 		t.Fatalf("load bees.toml: %v", d.ConfigErr)
 	}
 	gh := &fakeGH{t: t, replies: replies}
-	gh.install(d.GitHub)
-	// `gh auth status` runs through a second, untokened client, and "who is
-	// running bees?" through no client at all: both need their own fake or
-	// the fixture reaches the real gh.
-	gh.install(d.MachineGitHub)
+	gh.installAll(d)
+	// "who is running bees?" is asked through no client at all, so it needs
+	// its own fake or the fixture reaches the real gh.
 	d.CurrentUser = func(context.Context) (string, error) { return "kyle", nil }
 	d.LookPath = func(file string) (string, error) {
 		if file == "git" || file == "gh" {
@@ -649,8 +665,7 @@ func TestChecksWithoutAResolvedRepo(t *testing.T) {
 	// A local origin: config.Resolve cannot derive a GitHub repository.
 	d := New(context.Background(), path, fakeClaude(t, "2.9.0 (Claude Code)"))
 	gh := &fakeGH{t: t, replies: map[string]ghReply{"auth status": {out: "- Token scopes: 'repo'"}}}
-	d.GitHub = github.New("")
-	gh.install(d.GitHub)
+	gh.installAll(d)
 	d.LookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
 	if d.ResolveErr == nil {
 		t.Fatal("expected resolution to fail for a non-GitHub remote")
@@ -662,6 +677,12 @@ func TestChecksWithoutAResolvedRepo(t *testing.T) {
 		if r.Group == GroupGitHub {
 			t.Errorf("github checks must be skipped without a repository: %+v", r)
 		}
+	}
+	// Every gh call a check makes has to land on the fake. An empty list
+	// means a check ran through a client this test did not install one on,
+	// and so reached the real gh with the machine's own credentials.
+	if len(gh.calls) == 0 {
+		t.Error("no gh call reached the fake: a check ran the real gh")
 	}
 }
 
