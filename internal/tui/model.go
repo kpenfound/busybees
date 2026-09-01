@@ -708,17 +708,18 @@ func (m Model) rows() int {
 	return defaultHeight
 }
 
-var (
-	titleStyle  = lipgloss.NewStyle().Bold(true)
-	headerStyle = lipgloss.NewStyle().Faint(true)
-	hintStyle   = lipgloss.NewStyle().Faint(true)
-	warnStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
-	panelStyle  = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
-)
-
 // panelTitles are the four list panels, in the order View draws them and
 // the order the cursor walks their rows.
 var panelTitles = []string{"Now", "Recent", "Needs human", "Approved PRs"}
+
+// The two panels that hold what is waiting for a person, by their index in
+// panelTitles. View draws them in a colour of their own while they hold
+// anything, so a person can see the factory is waiting on them without
+// reading a row.
+const (
+	panelNeedsHuman = 2
+	panelApproved   = 3
+)
 
 // layout is how the view divides up the terminal it is drawn in. View and
 // targets both read it, so the cursor can only ever be on a row that is on
@@ -754,7 +755,7 @@ func (m Model) want() []int {
 func (m Model) layout() layout {
 	var l layout
 	l.width, l.inner = m.dims()
-	l.queues = panel("Queues", m.queuesPanel(l.inner), l.inner)
+	l.queues = panel("Queues", m.queuesPanel(l.inner), l.inner, titleStyle)
 	want := m.want()
 	l.rows = make([]int, len(want))
 	// The header, the footer and the Queues panel are always drawn. A list
@@ -791,7 +792,7 @@ func (m Model) View() string {
 	// through (see targets), so every panel marks the right row.
 	at := 0
 	for i := range l.drawn {
-		b.WriteString(panel(panelTitles[i], body[i](l.inner, l.rows[i], at), l.inner) + "\n")
+		b.WriteString(panel(panelTitles[i], body[i](l.inner, l.rows[i], at), l.inner, m.panelStyleOf(i)) + "\n")
 		at += l.entries(i, want[i])
 	}
 	b.WriteString(l.queues + "\n")
@@ -834,11 +835,27 @@ func (m Model) footer() string {
 	}
 }
 
-// panel draws one titled box around w columns of text. lipgloss counts the
-// padding in the width it is given and the border outside it, so the box
-// itself ends up w+4 columns wide.
-func panel(title, body string, w int) string {
-	return panelStyle.Width(w + 2).Render(titleStyle.Render(title) + "\n" + body)
+// panel draws one titled box around w columns of text, with its title and
+// its border painted in style. lipgloss counts the padding in the width it
+// is given and the border outside it, so the box itself ends up w+4 columns
+// wide.
+func panel(title, body string, w int, style lipgloss.Style) string {
+	return boxStyle(style).Width(w + 2).Render(style.Render(title) + "\n" + body)
+}
+
+// panelStyleOf is the colour a list panel's title and border are drawn in.
+// The two panels that say what is waiting for a person are picked out while
+// they hold anything and read like every other panel when they are empty, so
+// the view says "nothing needs you" by looking ordinary.
+func (m Model) panelStyleOf(i int) lipgloss.Style {
+	switch {
+	case i == panelNeedsHuman && len(m.status.NeedsHuman) > 0:
+		return warnTitleStyle
+	case i == panelApproved && len(m.status.Approved) > 0:
+		return cleanTitleStyle
+	default:
+		return titleStyle
+	}
 }
 
 // nowPanel renders every running session: who is running it, what it is
@@ -863,7 +880,10 @@ func (m Model) nowPanel(w, rows, from int) string {
 		if spent.known {
 			cost = fmt.Sprintf("$%.2f", spent.cost)
 		}
-		return clip(nowRow(
+		// The whole row is coloured, after it has been laid out and cut:
+		// nowRow pads by byte count and clip cuts by rune, and neither can
+		// be handed a cell carrying escape sequences.
+		return roleStyle(s.role).Render(clip(nowRow(
 			mark(m.cursor, from+i),
 			prompts.Title(s.role),
 			number(s.issue),
@@ -873,7 +893,7 @@ func (m Model) nowPanel(w, rows, from int) string {
 			strconv.Itoa(s.turns+spent.turns),
 			cost,
 			modelCell(s, w),
-		), w)
+		), w))
 	})...)
 	return strings.Join(out, "\n")
 }

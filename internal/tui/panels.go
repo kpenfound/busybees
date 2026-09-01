@@ -24,7 +24,10 @@ func (m Model) recentPanel(w, rows, from int) string {
 	out := []string{headerStyle.Render(clip(recentRow("  ", "role", "issue", "pr", "outcome", "took", "cost", "note"), w))}
 	out = append(out, listRows(len(m.recent), rows, func(i int) string {
 		f := m.recent[i]
-		return clip(recentRow(
+		// The whole row is coloured, after it has been laid out and cut: a
+		// cell carrying escape sequences would lose recentRow's padding,
+		// which counts bytes, and could be cut mid-escape by clip.
+		return outcomeStyle(f.outcome).Render(clip(recentRow(
 			mark(m.cursor, from+i),
 			prompts.Title(f.role),
 			number(f.issue),
@@ -33,7 +36,7 @@ func (m Model) recentPanel(w, rows, from int) string {
 			dur(f.took),
 			fmt.Sprintf("$%.2f", f.cost),
 			oneLine(f.note),
-		), w)
+		), w))
 	})...)
 	return strings.Join(out, "\n")
 }

@@ -527,6 +527,16 @@ merge, oldest first — the queue that grows when nobody is merging.
 rather than counted a second way: every queue, whether or not anything is in
 it, the unread mail per role and the countdown to the next GitHub poll.
 
+**Colour** is a second way to read the same rows, never the only way:
+everything it tells apart is already spelled out in the row's own words. A
+running session is coloured by its role, a finished one by how it ended —
+green for the ones that worked, yellow for the ones that want a person, red
+for a failure and for a session that reported no outcome at all. The two
+panels that hold what is waiting for *you* say so with their title and border
+while they hold anything, and look like every other panel when they are empty.
+The colours are the terminal's own, so they follow whatever palette you have
+set and are readable on a light background and a dark one alike.
+
 The keys:
 
 | Key | What it does |
