@@ -410,8 +410,9 @@ unblock), hands ready issues to free developer workers and starts the product ma
 project manager and QA when they have work. It does not wait out the interval for what
 happens locally: a finished session wakes it, so a freed developer slot and mail one
 role wrote to another are picked up at once, without polling GitHub again. Ctrl-C — or
-`q` in [the live view](#the-live-view) — stops polling and waits for running sessions
-to finish.
+`q` in [the live view](#the-live-view) — stops polling, starts nothing new and waits
+for running sessions to finish, each still bounded by its role's `timeout`; a second
+Ctrl-C stops them now.
 
 Before the first poll it runs the **cheap half of [`bees doctor`](#bees-doctor)** —
 every check except the `roles` group, which clones skills and starts MCP servers — and
@@ -491,7 +492,7 @@ busybees  acme/widgets                                                          
 │ unread mail   product manager 1, developer 2                                                     │
 │ next poll     in 2m30s                                                                           │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
-↑↓ select · enter watch · o open on GitHub · k stop session · q or ctrl-c stops polling and drains
+↑↓ select · enter watch · o open on GitHub · k stop session · q or ctrl-c stops (sessions finish)
 ```
 
 **Now** is every session running right now: the role, the issue and pull
@@ -545,12 +546,16 @@ The keys:
 | `enter` | Watch the selected session's transcript (below). |
 | `o` | Open the selected issue or pull request on GitHub. |
 | `k` | Stop the selected session and hand its issue to a person. It asks first, naming the session: press `k` again to stop the one it named. |
-| `q`, `ctrl-c` | Stop polling and drain. Press again to leave the terminal early. |
+| `q`, `ctrl-c` | Stop the factory: nothing new starts and the running sessions finish. Press again to stop those sessions now, and a third time to leave the terminal early. |
 
-`q` and Ctrl-C stop polling and drain exactly as an interrupt does without
-the view, and the view stays up until the running sessions have finished;
-pressing either again leaves the terminal and waits for the drain with the
-console back.
+`q` and Ctrl-C stop the factory exactly as an interrupt does without the
+view: polling stops, nothing new starts, and the view stays up — its footer
+counting the sessions still running — until they have finished. Pressing
+either again stops those sessions now, killed mid-work the way a
+[crashed scheduler](architecture.md#running-a-session) would leave them, so
+the next `bees run` resumes each issue and tells its next session what was
+interrupted. A third press leaves the terminal and waits out whatever is
+still coming down with the console back.
 
 `k` is the key that throws work away, and asks first: the first press names
 the session it would stop and the second stops that one, whatever the cursor
@@ -597,7 +602,7 @@ busybees  acme/widgets                                                          
 │   ⎿ The file has been updated.                                                                   │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 
-esc back · ↑/↓ scroll · end follow · m message · q or ctrl-c drains
+esc back · ↑/↓ scroll · end follow · m message · q or ctrl-c stops (sessions finish)
 ```
 
 The view follows the tail as the session writes to it. `↑`/`↓`, `PgUp`/`PgDn`
