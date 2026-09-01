@@ -213,6 +213,24 @@ func TestSizeLabels(t *testing.T) {
 	}
 }
 
+// TestNeedsHumanWinsTheStatePrecedence pins the ORDER of StateLabels, not
+// just its contents. Every derivation of an issue's state — the
+// scheduler's stateOf, the MCP server's, and the stateLabel template func —
+// takes the first label in this list that the issue carries, so the order
+// is what decides which of two state labels wins.
+//
+// bees:needs-human must be first because a person parks an issue by adding
+// it from the GitHub issue list, which does not remove the state label
+// underneath. Last, as it was until #322, it lost to that label and the
+// factory kept dispatching the issue. Restoring "workflow order" here
+// reopens that bug in three places at once.
+func TestNeedsHumanWinsTheStatePrecedence(t *testing.T) {
+	l := LabelsFor("bees")
+	if got := l.StateLabels()[0]; got != l.NeedsHuman {
+		t.Errorf("StateLabels()[0] = %q, want %q", got, l.NeedsHuman)
+	}
+}
+
 func TestKindLabels(t *testing.T) {
 	l := LabelsFor("bees")
 	if l.Proposal != "bees:proposal" {

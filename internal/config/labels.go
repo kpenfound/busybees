@@ -101,9 +101,21 @@ func LabelsFor(base string) Labels {
 // Labels returns the label set for this configuration.
 func (c *Config) Labels() Labels { return LabelsFor(c.Filter.Label) }
 
-// StateLabels lists the mutually exclusive workflow state labels.
+// StateLabels lists the mutually exclusive workflow state labels in
+// PRECEDENCE order, not in workflow order: every caller derives an issue's
+// state by taking the first label in this list that the issue carries.
+//
+// NeedsHuman comes first so that a person can park an issue by adding
+// bees:needs-human from the GitHub issue list without also removing the
+// state label underneath it. Adding a label there does not remove another
+// one, so an issue held that way carries two state labels, and the hold
+// only works while it wins. Removing bees:needs-human hands the issue back
+// to whatever state label is still on it.
+//
+// All and the live view's queueOrder deliberately keep workflow order:
+// neither derives a state, and both are read by a person.
 func (l Labels) StateLabels() []string {
-	return []string{l.Triage, l.Ready, l.InProgress, l.Blocked, l.Review, l.Approved, l.NeedsHuman}
+	return []string{l.NeedsHuman, l.Triage, l.Ready, l.InProgress, l.Blocked, l.Review, l.Approved}
 }
 
 // SizeLabels lists the size labels, smallest first. An issue carries at
