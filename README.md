@@ -194,7 +194,6 @@ busybees builds and tests with [Dagger](https://dagger.io). Set the release befo
 running it:
 
 ```sh
-export DAGGER_X_RELEASE=v1.0.0-beta.11
 dagger check            # go:lint-all, go:test-all, go:generate-all
 ```
 
