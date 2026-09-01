@@ -383,3 +383,194 @@ func TestActivityAuthorsAreListedOnceInTheOrderTheyWrote(t *testing.T) {
 		t.Fatalf("activityAuthors = %q, want %q", got, want)
 	}
 }
+
+// TestAnAnswerToATriageQuestionSurvivesTheSeed is #320. The first-observation
+// seed delivers nothing, so an issue that has never been in a state that
+// carries a clock swallows the first comment written on it. The two blocked
+// paths used to differ: an issue blocked out of a developer session was
+// in-progress first, which seeded its clock, while one blocked out of triage
+// went straight from bees:triage to bees:blocked and had none — so the first
+// pass that saw it blocked seeded and dropped the answer a person had already
+// written, silently and for good.
+//
+// Giving bees:triage a clock closes it: the issue is always observed in
+// triage before anything can block it, so by the time it is blocked the clock
+// is already at the last poll before the state changed.
+func TestAnAnswerToATriageQuestionSurvivesTheSeed(t *testing.T) {
+	now := time.Now()
+	h := newHarnessAt(t, noRolesTOML, now)
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Needs refining", State: "OPEN",
+		Labels:    []github.Label{{Name: "bees"}, {Name: "bees:triage"}, {Name: "bees:size/s"}},
+		CreatedAt: now.Add(-2 * time.Hour), UpdatedAt: now.Add(-time.Hour)}
+
+	// Pass 1 sees the issue in triage. It delivers nothing — the project
+	// manager's own prompt renders the comment history — but it records the
+	// clock, which is what the pass after it needs.
+	deliverIssueCommentsOnce(t, h)
+
+	bk, err := h.store.Issue(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bk.IssueHumanSeenAt.Equal(now.UTC()) {
+		t.Fatalf("issue_human_seen_at after the triage pass is %v, want the poll time %v", bk.IssueHumanSeenAt, now.UTC())
+	}
+	if n := h.gh.callCount("api --paginate"); n != 0 {
+		t.Fatalf("%d comment fetches for an issue in triage, want none", n)
+	}
+
+	// The project manager asks its question and blocks the issue; a person
+	// answers before the next poll. Nothing about this issue has ever been in
+	// a developer worker's bookkeeping, so the answer belongs to the project
+	// manager.
+	h.clock.advance(time.Minute)
+	answered := now.Add(time.Minute)
+	h.gh.issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:blocked"}, {Name: "bees:size/s"}}
+	h.gh.issues[1].UpdatedAt = answered
+	seedIssueComments(h, 1, issueComment(901, "kyle", "yes, both flags, and keep the old one working", answered))
+
+	snap := deliverIssueCommentsOnce(t, h)
+
+	msgs := roleMail(t, h, config.RoleProjectManager)
+	if len(msgs) != 1 {
+		t.Fatalf("%d messages for the project manager, want the answer: %+v", len(msgs), msgs)
+	}
+	if msgs[0].From != HumanSender || msgs[0].Issue != 1 {
+		t.Errorf("mail: %+v", msgs[0])
+	}
+	if !strings.Contains(msgs[0].Body, "yes, both flags, and keep the old one working") {
+		t.Errorf("mail body missing the answer:\n%s", msgs[0].Body)
+	}
+	if got := developerMail(t, h); len(got) != 0 {
+		t.Errorf("the developer was mailed an unrefined issue: %+v", got)
+	}
+	// The mail is what lifts bees:blocked, and reconcile runs after this in
+	// the same pass.
+	if err := h.sched.reconcile(context.Background(), snap); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.stateOfIssue(1); got != "triage" {
+		t.Fatalf("issue state is %q, want triage", got)
+	}
+}
+
+// TestATriageConversationIsNotReplayedOnceTheIssueBlocks: giving triage a
+// clock must not weaken decision 2 of #304. Comments written before the
+// factory first saw the issue are history, not direction — on the first tick
+// after an upgrade the whole triage conversation would otherwise arrive as
+// fresh mail from a person — so the seed still swallows them, on the pass
+// that seeds and on the pass that finds the issue blocked.
+//
+// It also pins why the triage clock is refreshed on every pass rather than
+// seeded once: a comment written while the issue sat in triage is part of
+// that conversation too. Seeded once, an issue that spent days in triage
+// would deliver every comment written across all of them the moment it
+// changed state.
+func TestATriageConversationIsNotReplayedOnceTheIssueBlocks(t *testing.T) {
+	now := time.Now()
+	h := newHarnessAt(t, noRolesTOML, now)
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Long-standing", State: "OPEN",
+		Labels:    []github.Label{{Name: "bees"}, {Name: "bees:triage"}, {Name: "bees:size/s"}},
+		CreatedAt: now.Add(-3 * time.Hour), UpdatedAt: now.Add(-2 * time.Hour)}
+	seedIssueComments(h, 1,
+		issueComment(901, "kyle", "we discussed this weeks ago", now.Add(-2*time.Hour)),
+		issueComment(902, "robin", "and settled on the second option", now.Add(-90*time.Minute)))
+
+	deliverIssueCommentsOnce(t, h)
+
+	if msgs := roleMail(t, h, config.RoleProjectManager); len(msgs) != 0 {
+		t.Fatalf("the triage pass delivered %d messages, want none: %+v", len(msgs), msgs)
+	}
+
+	// A pass later the issue is still in triage and the conversation has
+	// gone on. That comment is history too, and the clock moves with it.
+	h.clock.advance(time.Minute)
+	h.gh.issues[1].UpdatedAt = now.Add(time.Minute)
+	seedIssueComments(h, 1,
+		issueComment(901, "kyle", "we discussed this weeks ago", now.Add(-2*time.Hour)),
+		issueComment(902, "robin", "and settled on the second option", now.Add(-90*time.Minute)),
+		issueComment(903, "kyle", "still the second option", now.Add(time.Minute)))
+
+	deliverIssueCommentsOnce(t, h)
+
+	// The issue blocks, and something touches it so the updatedAt gate opens:
+	// every comment is older than the clock, so every one is still history.
+	h.clock.advance(time.Minute)
+	h.gh.issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:blocked"}, {Name: "bees:size/s"}}
+	h.gh.issues[1].UpdatedAt = now.Add(2 * time.Minute)
+
+	deliverIssueCommentsOnce(t, h)
+
+	for _, role := range []string{config.RoleProjectManager, config.RoleDeveloper} {
+		if msgs := roleMail(t, h, role); len(msgs) != 0 {
+			t.Fatalf("%s was sent the triage conversation: %+v", role, msgs)
+		}
+	}
+}
+
+// TestTheReadyQueueDoesNotBankCommentsForTheDeveloper is the other half of
+// the same rule. Giving triage a clock also gives an issue that leaves triage
+// a clock, and without a matching seed in ready that clock would stay at the
+// last triage poll for as long as the issue waited to be dispatched — so an
+// issue that sat days in the ready queue would hand every comment written
+// across all of them to the developer as fresh direction on its first
+// in-progress pass. Seeding ready too keeps the clock where decision 3 of
+// #320 puts it: the last poll before the state changed.
+//
+// A comment written after that last pre-flight poll is a different thing, and
+// it is still delivered — that window is the bug #320 exists to close.
+func TestTheReadyQueueDoesNotBankCommentsForTheDeveloper(t *testing.T) {
+	now := time.Now()
+	h := newHarnessAt(t, noRolesTOML, now)
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Waiting its turn", State: "OPEN",
+		Labels:    []github.Label{{Name: "bees"}, {Name: "bees:triage"}, {Name: "bees:size/s"}},
+		CreatedAt: now.Add(-3 * time.Hour), UpdatedAt: now.Add(-2 * time.Hour)}
+
+	// Pass 1: triage. The clock starts here.
+	deliverIssueCommentsOnce(t, h)
+
+	// The issue is refined and joins the ready queue, where it waits. A
+	// person comments while it waits; nobody is working on it, so nothing is
+	// delivered and the clock moves past the comment.
+	h.clock.advance(time.Hour)
+	h.gh.issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}
+	h.gh.issues[1].UpdatedAt = now.Add(30 * time.Minute)
+	seedIssueComments(h, 1, issueComment(901, "kyle", "while you are in there, rename the flag", now.Add(30*time.Minute)))
+
+	deliverIssueCommentsOnce(t, h)
+
+	if msgs := roleMail(t, h, config.RoleDeveloper); len(msgs) != 0 {
+		t.Fatalf("the ready pass delivered %d messages, want none: %+v", len(msgs), msgs)
+	}
+	bk, err := h.store.Issue(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := now.Add(time.Hour).UTC(); !bk.IssueHumanSeenAt.Equal(want) {
+		t.Fatalf("issue_human_seen_at after the ready pass is %v, want the poll time %v", bk.IssueHumanSeenAt, want)
+	}
+
+	// A person adds one more comment, and the issue is dispatched. Only the
+	// comment written since the last pre-flight poll is direction the
+	// developer has not had a chance to read as history.
+	h.clock.advance(time.Hour)
+	fresh := now.Add(90 * time.Minute)
+	h.gh.issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:in-progress"}, {Name: "bees:size/s"}}
+	h.gh.issues[1].UpdatedAt = fresh
+	seedIssueComments(h, 1,
+		issueComment(901, "kyle", "while you are in there, rename the flag", now.Add(30*time.Minute)),
+		issueComment(902, "robin", "and drop the second argument", fresh))
+
+	deliverIssueCommentsOnce(t, h)
+
+	msgs := roleMail(t, h, config.RoleDeveloper)
+	if len(msgs) != 1 {
+		t.Fatalf("%d messages for the developer, want the one fresh comment: %+v", len(msgs), msgs)
+	}
+	if !strings.Contains(msgs[0].Body, "drop the second argument") {
+		t.Errorf("mail body missing the fresh comment:\n%s", msgs[0].Body)
+	}
+	if strings.Contains(msgs[0].Body, "rename the flag") {
+		t.Errorf("the ready queue's comments were banked and delivered as fresh:\n%s", msgs[0].Body)
+	}
+}

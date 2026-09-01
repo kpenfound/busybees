@@ -95,11 +95,29 @@ func (s *Scheduler) deliverHumanFeedback(ctx context.Context, snap *snapshot) er
 
 // inFlightStates are the issue states in which the factory is working on an
 // issue, and so the states in which a person's comment on the issue itself
-// has somebody to reach. An issue in ready or triage has no session to steer
-// — the next one to run reads the comment out of the issue body's comment
-// history — and a feature or feedback issue is the product manager's, not
-// this delivery's.
+// has somebody to reach. An issue in ready has no session to steer — the next
+// one to run reads the comment out of the issue body's comment history — and
+// a feature or feedback issue is the product manager's, not this delivery's.
+//
+// The states in preFlightStates are deliberately not here: they carry a clock
+// but never deliver. In both, the session that acts on the issue next renders
+// its whole comment history in its own prompt, so mail would be a second copy
+// of what that session is about to read anyway.
 var inFlightStates = []string{"in-progress", "review", "approved", "blocked"}
+
+// preFlightStates are the states an issue passes through before the factory
+// works on it. They deliver nothing, but they record the poll time, so that
+// an issue reaching a flight state arrives with its clock at the last poll
+// before the state changed rather than at zero.
+//
+// That is what makes the answer to a blocking triage question arrive: an
+// issue is always observed in triage before anything can block it, so a
+// bees:blocked issue always has a clock and the pass that finds it blocked
+// delivers instead of seeding. ready is here for the other half of the same
+// rule — without it an issue that waited days in the ready queue would hand
+// its whole waiting period's comments to the developer on the first
+// in-progress pass. See deliverHumanIssueComments.
+var preFlightStates = []string{"triage", "ready"}
 
 // deliverHumanIssueComments does for comments on an in-flight issue what
 // deliverHumanFeedback does for a pull request: it collects the comments
@@ -129,8 +147,27 @@ var inFlightStates = []string{"in-progress", "review", "approved", "blocked"}
 // not mean "deliver every comment this issue ever received", which on the
 // first tick after an upgrade would replay the whole triage conversation.
 // Nothing is lost — those comments are in the prompt's comment history.
+//
+// That seed is why the states in preFlightStates carry a clock too, though
+// they never deliver. An issue is always observed in triage before anything
+// can block it — the pass that dispatches the project manager has already
+// polled it — so recording the poll time there is what makes the answer to a
+// triage question arrive: without it the first pass that sees the issue
+// blocked would seed instead of deliver, and a person who answered inside
+// that window would have their answer dropped for good. The clock is
+// refreshed on every pass, not seeded once, so it stays at "the last poll
+// before the state changed" — seeded once, an issue that sat in triage or in
+// the ready queue for days would deliver every comment written across all of
+// it on its first in-flight pass.
 func (s *Scheduler) deliverHumanIssueComments(ctx context.Context, snap *snapshot) error {
 	var errs []string
+	for _, st := range preFlightStates {
+		for _, issue := range snap.byState[st] {
+			if err := s.store.SetIssueHumanSeenAt(issue.Number, s.now()); err != nil {
+				errs = append(errs, err.Error())
+			}
+		}
+	}
 	for _, st := range inFlightStates {
 		for _, issue := range snap.byState[st] {
 			n := issue.Number
