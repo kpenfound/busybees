@@ -74,7 +74,10 @@ their share of the work, set `assignee = "@me"` and optionally
 Each visible issue carries exactly one **state label**. The orchestrator moves
 most of them; the project manager moves a few, through the `issue_set_state`
 tool, which is the only move it is offered and which refuses an issue that is
-not in `bees:triage`; humans can move any of them.
+not in `bees:triage`; humans can move any of them. The one exception is
+`bees:needs-human`, which a person may add *on top of* an issue's state label
+to park it where it is; see
+[Holding an issue by hand](#holding-an-issue-by-hand).
 
 Feature issues (`bees:feature`) and feedback issues (`bees:feedback`) are
 **not** in this diagram: they never carry a state label. They are the product
@@ -118,6 +121,11 @@ stateDiagram-v2
     state "bees:needs-human" as needs_human
 ```
 
+The two edges out of `needs_human` describe an issue the *factory* escalated:
+it moved the state label, so there is one to add back. An issue a person held
+by hand still carries its own state label underneath, and removing
+`bees:needs-human` is the whole of the undo.
+
 | Label | Meaning | Who sets it |
 |---|---|---|
 | `bees:triage` | Needs the project manager to make it buildable | Product manager (new work items), humans |
@@ -126,7 +134,7 @@ stateDiagram-v2
 | `bees:blocked` | Waiting on an answer to a question | Project manager (`issue_set_state`, asking the PM), orchestrator (developer asking) |
 | `bees:review` | A pull request is open and in the review loop | Orchestrator |
 | `bees:approved` | Reviewer approved; waiting for a human to merge (or, with `roles.reviewer.auto_merge`, for the checks) | Orchestrator (also put on the PR) |
-| `bees:needs-human` | The factory gave up on it | Orchestrator |
+| `bees:needs-human` | The factory gave up on it, or a person is holding it | Orchestrator, humans |
 
 Four more labels sit **outside** the state machine; issues carrying them
 never get a state label and are never triaged (`bees:priority`,
@@ -916,6 +924,26 @@ transcripts are under `<state_dir>/sessions/`.
 To hand the issue back, remove `bees:needs-human` and add `bees:ready` (to
 retry development, the branch and any PR are reused) or `bees:triage` (to have
 the project manager rework it).
+
+### Holding an issue by hand
+
+`bees:needs-human` is not only the factory's escalation marker: it is also how
+*you* stop the factory working on something. Add it to an issue from the
+GitHub issue list, **without** removing the state label underneath, and the
+issue is held where it is. Nothing dispatches it, it drops out of its own
+queue, and the Needs human panel lists it — with no reason, since you did not
+escalate it and there is none to show.
+
+Remove the label and the issue goes straight back to whatever state label it
+still carries, with nothing else to do. The factory never tidies the pair up,
+so a held issue keeps its place in the workflow for as long as you leave the
+label on.
+
+While the hold is on, the issue is out of the states the orchestrator delivers
+your comments from, so a comment you write on it reaches nobody until you lift
+the hold. That is the point — nothing is working on it. Comment first, then
+remove the label, and the session that picks the issue up reads the whole
+conversation in its prompt.
 
 ## QA
 

@@ -133,7 +133,7 @@ and `bees labels sync` create them in GitHub.
 | `bees:blocked` | Waiting on an answer to a question |
 | `bees:review` | Pull request open and under review |
 | `bees:approved` | Reviewer approved; waiting for a human to merge |
-| `bees:needs-human` | The factory gave up; a person must step in |
+| `bees:needs-human` | The factory gave up, or a person is holding the issue; either way a person must step in |
 
 An issue also carries at most one **size label**, independently of its state.
 The project manager sets it when it moves a work item to `bees:ready`; the
