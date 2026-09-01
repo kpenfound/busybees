@@ -68,3 +68,20 @@ GitHub repository. Read `docs/architecture.md` before changing the scheduler.
   memory; `Config.Rewrite` writes it back. Tightening validation (a newly reserved
   name or rejected value) is not a migration either: fail to load with an actionable
   error naming the key and what to change.
+
+## Documentation
+
+- Docs describe the current state. They never describe a change from previous
+  behaviour: no "now", no "no longer", no "as of v0.2".
+- Docs instruct, they do not sell. No marketing language, no piled-up adjectives.
+- Prefer an example over an extended explanation.
+- `README.md` holds a brief overview of the project, installation, and a list of
+  key features, each one a brief description plus a link to where it is
+  explained. Nothing else.
+- `CONTRIBUTING.md` holds testing instructions, style rules and the contributor
+  workflow.
+- `docs/` is product documentation for people using bees. It does not describe
+  the development of this project. `docs/releasing.md` is the exception and
+  stays where it is, because `cmd/bees/release_test.go` pins the asset names it
+  documents.
+- The `unslop` writing skill applies to every markdown file.
