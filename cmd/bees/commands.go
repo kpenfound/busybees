@@ -351,8 +351,8 @@ func newRunCmd(g *globalFlags) *cobra.Command {
 		Short: "Run the factory until interrupted",
 		Long: `run polls GitHub, keeps the workflow labels consistent and dispatches
 Claude Code sessions: a pool of developer workers plus the product manager,
-project manager and QA singletons. Ctrl-C stops polling and waits for running
-sessions to finish.
+project manager and QA singletons. Ctrl-C stops polling, starts nothing new
+and waits for running sessions to finish; a second Ctrl-C stops them now.
 
 In a terminal it draws a live view of the factory — what is running now and
 what is queued — and logs to ` + "`<state_dir>/bees.log`" + ` instead of the console.
@@ -385,6 +385,7 @@ anyway; ` + "`bees tick`" + ` and ` + "`bees exec`" + ` never run the preflight.
 			if logTUIMode(a.log, noTUI, os.Stdout) {
 				return runWithTUI(cmd.Context(), a, s, g, cmd.ErrOrStderr())
 			}
+			defer hardStopOnSecondInterrupt(s.HardStop)()
 			return s.Run(cmd.Context())
 		},
 	}
@@ -428,6 +429,7 @@ func newTickCmd(g *globalFlags) *cobra.Command {
 			if s.OnlyRoles, err = parseRoles(roles); err != nil {
 				return err
 			}
+			defer hardStopOnSecondInterrupt(s.HardStop)()
 			return s.Run(cmd.Context())
 		},
 	}
