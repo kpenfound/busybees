@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
@@ -75,5 +76,34 @@ func TestNeedsHumanHoldsAnIssueThatKeepsItsStateLabel(t *testing.T) {
 	}
 	if got := snap.byState["needs-human"]; len(got) != 0 {
 		t.Errorf("still escalated after the hold was lifted: %+v", got)
+	}
+}
+
+// TestExecReviewerOnAHeldIssueStillReviews: `bees exec reviewer` forces the
+// review stage by rewriting the issue's state label, and the local copy the
+// worker reads has to be rewritten the same way. A held issue carries two
+// state labels, so removing only the one stateOf names leaves the other
+// behind: with bees:needs-human first the copy kept bees:in-progress,
+// stateOf read that back out and a developer session ran instead of the
+// review that was asked for.
+func TestExecReviewerOnAHeldIssueStillReviews(t *testing.T) {
+	h := newHarness(t, prereviewTOML)
+	seedPreReviewIssue(t, h, "Review what is already pushed")
+	h.gh.issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:in-progress"},
+		{Name: "bees:size/s"}, {Name: "bees:needs-human"}}
+	if err := os.WriteFile(h.gh.prMarker, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	seedCounter(t, h, "review", 1) // approve straight away
+	h.gh.checks = []checksResponse{{passingJSON, nil}}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if err := h.sched.RunRole(ctx, config.RoleReviewer, 1, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	h.wantOrder("reviewer-pr-101-r1")
+	if n := len(h.sessions(config.RoleDeveloper)); n != 0 {
+		t.Fatalf("%d developer sessions ran, want none: exec reviewer asked for a review", n)
 	}
 }

@@ -53,14 +53,15 @@ type Labels struct {
 	// thing that reads it.
 	Priority string // bees:priority
 
-	// Issue workflow state labels (exactly one at a time).
+	// Issue workflow state labels (one at a time, except while a person
+	// holds an issue with NeedsHuman on top of one — see StateLabels).
 	Triage     string // bees:triage      – needs project manager refinement
 	Ready      string // bees:ready       – detailed enough, waiting for a developer
 	InProgress string // bees:in-progress – a developer worker owns it
 	Blocked    string // bees:blocked     – waiting on an answer to a question
 	Review     string // bees:review      – PR open, reviewer loop running
 	Approved   string // bees:approved    – reviewer approved, waiting for merge
-	NeedsHuman string // bees:needs-human – the factory gave up; a person must step in
+	NeedsHuman string // bees:needs-human – the factory gave up, or a person holds it
 
 	// Size labels (at most one at a time, orthogonal to the state labels).
 	// The project manager sets one when it moves a work item to Ready.
