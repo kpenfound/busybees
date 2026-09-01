@@ -8,6 +8,8 @@ Humans steer it through GitHub. Create and label issues, comment, merge pull req
 the bees do the rest. Every role runs in its own temporary git worktree, talks to the
 other roles through a local mailbox, and is configured by one file: `bees.toml`.
 
+Contributing to busybees itself? See [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ```
         ┌──────────────────┐ features → sub-issue work items┌──────────────────┐
         │  product manager │ ─────────────────────────────▶ │  project manager │
@@ -187,19 +189,6 @@ These pages are also published at
 | [docs/cli.md](docs/cli.md) | Every `bees` command |
 | [docs/architecture.md](docs/architecture.md) | Internals, state directory, testing strategy |
 | [docs/releasing.md](docs/releasing.md) | Cutting a release: the tag, the workflow, the assets it publishes |
-
-## Development
-
-busybees builds and tests with [Dagger](https://dagger.io). Set the release before
-running it:
-
-```sh
-dagger check            # go:lint-all, go:test-all, go:generate-all
-```
-
-`go build ./... && go test ./...` also works locally. Tests never call the real
-`claude` or `gh`: GitHub is faked in-process and the test binary stands in for
-`claude`, but git is real (tests push to a local bare remote).
 
 ## Status
 
