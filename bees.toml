@@ -90,7 +90,7 @@ skills = [
 #timeout = "45m"
 # Tool restrictions passed straight to claude.
 #allowed_tools = []
-#disallowed_tools = ["WebSearch"]
+disallowed_tools = ["Artifact"]
 # Shell for claude's Bash tool in sessions (exported as $SHELL).
 #shell = "/bin/bash"
 
@@ -138,7 +138,7 @@ effort = "medium"
 #max_size = "l"
 # Run a cheaper (or stronger) model for some work item sizes. Keys are the
 # sizes xs, s, m, l and xl; a size with no entry uses model above.
-#model_by_size = { xs = "sonnet", s = "sonnet", l = "fable" }
+model_by_size = { xs = "sonnet", s = "sonnet", l = "fable" }
 # Skills by git URL: <url>[@ref][#sub/dir], cloned and exposed to claude as
 # plugins. Skills in the repository's .claude/skills/ and in ~/.claude/skills/
 # are available automatically and need not be listed.
