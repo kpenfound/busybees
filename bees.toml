@@ -90,7 +90,7 @@ skills = [
 #timeout = "45m"
 # Tool restrictions passed straight to claude.
 #allowed_tools = []
-#disallowed_tools = ["WebSearch"]
+disallowed_tools = ["Artifact"]
 # Shell for claude's Bash tool in sessions (exported as $SHELL).
 #shell = "/bin/bash"
 
