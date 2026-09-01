@@ -1,12 +1,4 @@
 # bees.toml — configuration for a busybees software factory.
-#
-# Every option is listed here. Lines starting with "#" are commented out and
-# show the default value; uncomment a line to change it. Run
-# `bees config show` to see the resolved settings for every role.
-
-# Format version of this file. bees refuses files newer than it understands and
-# upgrades older ones in memory. Leave it alone; bees releases that change the
-# format say what to do.
 version = 1
 
 #===============================================================================
@@ -17,54 +9,33 @@ version = 1
 #remote = "origin"
 # GitHub repository, as owner/name. Derived from the remote's URL when unset.
 #repo = "kpenfound/busybees"
-# Branch developers branch from and QA tests. Derived from the remote's HEAD
-# when unset.
-#default_branch = "main"
-# What the product is and how to build, test and run it belong in the
-# repository's own documentation (README, CONTRIBUTING, CLAUDE.md); the roles
-# read it and keep what they learn in their notes.
-# Directory for mail, notes, session logs and scheduler state, relative to
-# this file. `bees init` adds it to .gitignore.
-#state_dir = ".bees"
 # Prefix for developer branches (bees/issue-12).
-#branch_prefix = "bees/"
+branch_prefix = "bees/"
+
 
 #===============================================================================
-# Visibility filter — which issues and pull requests the factory can see.
-# Criteria are ANDed. Everything the factory creates is made to match.
+# Issue Filter
 #===============================================================================
 [filter]
 # The factory's label; also the base name of the workflow labels
 # (bees:triage, bees:ready, bees:in-progress, ...).
 label = "bees"
-# Set to false to let assignee and/or milestone alone define visibility. The
-# label is still applied to everything the factory creates.
-#require_label = true
-# Only see items assigned to this GitHub login. "@me" means the gh user.
-# Useful when one person runs busybees for their share of a shared repo.
-#assignee = "@me"
 # Only see items in this milestone.
 #milestone = ""
 
 #===============================================================================
-# GitHub account the factory acts as. Unset (the default) means the machine
-# owner's own gh login, so every issue, comment and label edit looks like it
-# came from the person running bees.
-#
-# login and token go together: set both, or neither. filter.assignee = "@me"
-# above is NOT affected — it says whose work the factory picks up, so it keeps
-# resolving to the person's own gh login.
+# GitHub account the factory acts as.
 #===============================================================================
 [github]
 # GitHub login the factory acts as.
-#login = "agent-kal[bot]"
+login = "penfoundapps"
 # A token for that login. A "$VAR" reference is expanded from the environment
 # bees runs in, so the secret itself stays out of this file.
-#token = "$BEES_GITHUB_TOKEN"
+token = "$BEES_GITHUB_TOKEN"
 # Identity for commits made by developer sessions. Either may be set on its
 # own; whichever is unset stays the machine's own git identity.
-#git_name = "agent-kal[bot]"
-#git_email = "agent-kal@kylepenfound.com"
+git_name = "penfoundapps"
+git_email = "penfoundapps@gmail.com"
 
 #===============================================================================
 # Scheduler
@@ -73,28 +44,27 @@ label = "bees"
 # How often GitHub is polled for work. Each poll costs two API calls; keep it
 # infrequent. Sessions make their own gh calls on top of this.
 poll_interval = "10m"
-# How long to pause polling after GitHub reports a rate limit.
-#rate_limit_backoff = "15m"
 # Concurrent developer workers. Each runs a sequential developer <-> reviewer
 # loop for one issue; reviewer concurrency follows developer concurrency.
 max_developers = 2
-# Developer/reviewer iterations before an issue is escalated to a human.
-#max_review_rounds = 3
-# Issues handed to the project manager per session.
-#triage_batch_size = 5
-# Minimum time between product manager runs (mail triggers an earlier run).
-#product_manager_interval = "1h"
 # Minimum time between QA runs. QA only runs when something was merged.
 qa_interval = "4h"
-# Keep temp worktrees after sessions finish (debugging).
-#keep_workspaces = false
-# Where temp worktrees are created (default: the system temp dir).
-#workspace_root = ""
+# GitHub logins and/or org/team slugs the factory turns to when it needs a
+# person: mentioned in the needs-human comment and in the product manager's
+# questions, and asked to review an approved pull request. No leading @.
+notify = ["kpenfound"]
+# The first poll of the work day happens the moment the window opens, whatever
+# off_hours_poll_interval is.
+work_hours = "11:00-20:00"
+# Default: 1h, or poll_interval when that is longer.
+off_hours_poll_interval = "2h"
+work_days = ["mon", "tue", "wed", "thu", "fri"]
+# Whole factory, rolling 24 hours. At or over it no new session starts; the
+# sessions already running finish.
+max_cost_per_day = 300.0
 
 #===============================================================================
-# Global role settings — apply to every role, merged with [roles.<name>]:
-# prompts concatenate (global first), skills union, env and mcp servers union
-# (the role wins on a name conflict), scalars fall back to global then defaults.
+# Global role settings
 #===============================================================================
 [global]
 # Text appended to every role's base prompt.
@@ -105,9 +75,9 @@ qa_interval = "4h"
 # Skills by git URL: <url>[@ref][#sub/dir], cloned and exposed to claude as
 # plugins. Skills in the repository's .claude/skills/ and in ~/.claude/skills/
 # are available automatically and need not be listed.
-#skills = [
-#  "https://github.com/anthropics/skills#skills/webapp-testing",
-#]
+skills = [
+  "https://github.com/poteto/plugins#pstack/skills/unslop",
+]
 # claude model, and the model used once it has hit its usage limit.
 #model = "opus"
 #fallback_model = "sonnet"
@@ -125,9 +95,9 @@ qa_interval = "4h"
 # Environment variables exported into every session (claude, its Bash tool,
 # MCP servers, git). $VARS are expanded from the bees environment. Roles can
 # add or override entries in [roles.<name>.env].
-#[global.env]
-#CI = "true"
-#NPM_TOKEN = "$NPM_TOKEN"
+[global.env]
+CI = "true"
+DAGGER_X_RELEASE = "v1.0.0-beta.11"
 
 # MCP servers available to every role, one table per server. stdio servers
 # use command/args/env; remote servers use url (+ type = "http" | "sse",
@@ -136,120 +106,77 @@ qa_interval = "4h"
 #command = "npx"
 #args = ["-y", "@modelcontextprotocol/server-github"]
 #env = { GITHUB_PERSONAL_ACCESS_TOKEN = "$GITHUB_TOKEN" }
-#
-#[global.mcp.docs]
-#type = "http"
-#url = "https://mcp.example.com/docs"
-#headers = { Authorization = "Bearer $DOCS_TOKEN" }
+
 
 #===============================================================================
-# Per-role settings. Every key from [global] is valid here, plus enabled;
-# the developer also takes commit_flags and the reviewer the auto-merge keys.
+# Per-role settings.
 #===============================================================================
 
 # Owns the product vision and feature issues; breaks features into work items.
 [roles.product_manager]
-#prompt = """
-#"""
-#prompt_file = ""
-#skills = []
 #model = "opus"
 #fallback_model = "sonnet"
 effort = "medium"
-#max_turns = 200
-#timeout = "45m"
-#enabled = true
-#shell = "/bin/bash"
-#[roles.product_manager.env]
-#EXAMPLE = "value"
-#[roles.product_manager.mcp.example]
-#command = "example-mcp"
 
 # Triages issues into build-ready work and answers developer questions.
 [roles.project_manager]
-#prompt = """
-#"""
-#prompt_file = ""
-#skills = []
 #model = "opus"
 #fallback_model = "sonnet"
 effort = "medium"
-#max_turns = 200
-#timeout = "45m"
-#enabled = true
-#shell = "/bin/bash"
-#[roles.project_manager.env]
-#EXAMPLE = "value"
-#[roles.project_manager.mcp.example]
-#command = "example-mcp"
 
 # Implements one issue on a branch and opens a pull request.
 [roles.developer]
-#prompt = """
-#"""
 # Extra flags for every git commit the developer makes.
 #commit_flags = "--gpg-sign --signoff"
-#prompt_file = ""
-#skills = []
 #model = "opus"
 #fallback_model = "sonnet"
 #effort = "high"
-#max_turns = 200
-#timeout = "45m"
-#enabled = true
-#shell = "/bin/bash"
-#[roles.developer.env]
-#EXAMPLE = "value"
-#[roles.developer.mcp.example]
-#command = "example-mcp"
+# Largest size a developer takes: xs, s, m, l or xl. Anything bigger is sent
+# back to triage for the project manager to split.
+#max_size = "l"
+# Run a cheaper (or stronger) model for some work item sizes. Keys are the
+# sizes xs, s, m, l and xl; a size with no entry uses model above.
+#model_by_size = { xs = "sonnet", s = "sonnet", l = "fable" }
+# Skills by git URL: <url>[@ref][#sub/dir], cloned and exposed to claude as
+# plugins. Skills in the repository's .claude/skills/ and in ~/.claude/skills/
+# are available automatically and need not be listed.
+skills = [
+  "https://github.com/mattpocock/skills#skills/engineering/codebase-design",
+  "https://github.com/mattpocock/skills#skills/engineering/resolving-merge-conflicts",
+  "https://github.com/mattpocock/skills#skills/engineering/tdd",
+]
 
 # Reviews pull requests and, optionally, merges them once checks are green.
 [roles.reviewer]
-#prompt = """
-#"""
-#prompt_file = ""
-#skills = []
 #model = "opus"
 #fallback_model = "sonnet"
 #effort = "high"
-#max_turns = 200
-#timeout = "45m"
-# Disabling the reviewer treats pull requests as approved as soon as the
-# developer opens them.
-#enabled = true
 # Merge approved pull requests automatically once the required checks are
 # green. Off: humans merge. When checks fail the reviewer diagnoses the main
 # error and hands it to the developer to fix (up to max_check_fix_rounds).
 auto_merge = true
-# squash, merge or rebase.
-#merge_method = "squash"
 # Wait after approval before polling checks; some take a moment to start.
 #checks_wait = "1m"
 # How often to poll the checks while waiting (one API call each).
 #checks_poll_interval = "2m"
 # Escalate to a human if checks are still pending after this long.
 #checks_timeout = "30m"
-#max_check_fix_rounds = 2
-#shell = "/bin/bash"
-#[roles.reviewer.env]
-#EXAMPLE = "value"
-#[roles.reviewer.mcp.example]
-#command = "example-mcp"
+# Skills by git URL: <url>[@ref][#sub/dir], cloned and exposed to claude as
+# plugins. Skills in the repository's .claude/skills/ and in ~/.claude/skills/
+# are available automatically and need not be listed.
+skills = [
+  "https://github.com/mattpocock/skills#skills/engineering/code-review",
+]
+# The review stages, in order. Each gets its own focus and its own verdict,
+# and an approval needs every one of them to pass. One or more of
+# implementation, completeness, cleanliness, style, product-fit. product-fit
+# judges the change against the work item's parent feature and is off by
+# default.
+#stages = ["implementation", "completeness", "cleanliness", "style"]
 
 # Tests the default branch after merges, files bugs, reports to the PM.
 [roles.qa]
-prompt = """
-#"""
-#prompt_file = ""
-#skills = []
 model = "sonnet"
 #fallback_model = "sonnet"
-#effort = "high"
-#max_turns = 200
-#timeout = "45m"
+effort = "medium"
 #enabled = true
-#shell = "/bin/bash"
-#[roles.qa.env]
-#EXAMPLE = "value"
-#[roles.qa.mcp.example]
-#command = "example-mcp"
