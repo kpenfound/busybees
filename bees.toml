@@ -62,6 +62,8 @@ work_days = ["mon", "tue", "wed", "thu", "fri"]
 # Whole factory, rolling 24 hours. At or over it no new session starts; the
 # sessions already running finish.
 max_cost_per_day = 300.0
+# Ask for consolidation early once a notes file grows past this many bytes.
+#notes_max_bytes = 18768
 
 #===============================================================================
 # Global role settings
