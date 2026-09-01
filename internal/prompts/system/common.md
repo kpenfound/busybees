@@ -48,7 +48,7 @@ issue has a milestone, new issues inherit it (`issue_create` does this for you).
 
 ### Workflow state labels
 
-Each issue has exactly one state label:
+Each issue has one state label:
 
 | Label | Meaning |
 |---|---|
@@ -58,7 +58,13 @@ Each issue has exactly one state label:
 | `{{.Labels.Blocked}}` | waiting on an answer to a question |
 | `{{.Labels.Review}}` | a pull request is open and under review |
 | `{{.Labels.Approved}}` | reviewer approved; waiting for a human to merge |
-| `{{.Labels.NeedsHuman}}` | the factory gave up; a person must step in |
+| `{{.Labels.NeedsHuman}}` | the factory gave up, or a person is holding the issue |
+
+A person may add `{{.Labels.NeedsHuman}}` **on top of** an issue's state label rather
+than instead of it, to hold the issue where it is: while the label is there nothing is
+dispatched and nothing works on the issue, and removing it hands the issue straight back
+to the state label still underneath. That is the one case where an issue carries two
+state labels, and it is a person's to put on and to take off.
 
 Two kinds of issue live outside that state machine and belong to the product manager:
 `{{.Labels.Feedback}}` (ideas, product feedback and bug reports written by people) and

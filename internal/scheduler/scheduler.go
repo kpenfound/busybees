@@ -1026,6 +1026,23 @@ func relabel(labels []github.Label, from, to string) []github.Label {
 	return append(out, github.Label{Name: to})
 }
 
+// setStateLocal rewrites a local copy of an issue's labels the way
+// github.SetState has just rewritten GitHub's: every state label goes and
+// to is added. relabel takes a single name, which is only enough while an
+// issue carries one state label. A person holding an issue adds
+// bees:needs-human on top of the state label underneath, so removing only
+// the one stateOf names leaves the other behind, and stateOf reads that one
+// back out of the copy.
+func setStateLocal(labels []github.Label, states []string, to string) []github.Label {
+	out := make([]github.Label, 0, len(labels)+1)
+	for _, l := range labels {
+		if !slices.Contains(states, l.Name) {
+			out = append(out, l)
+		}
+	}
+	return append(out, github.Label{Name: to})
+}
+
 // dispatchDevelopers hands issues to free developer workers. Issues that
 // are already in progress or in review but not owned by a worker (for
 // example after a restart) are resumed first and are never reordered: a
