@@ -99,7 +99,14 @@ A full pass is:
    comment this issue ever received". A developer session renders the issue's
    whole comment history anyway; what the mail adds is that a comment is
    fresh, that it is a person's, that it reaches the reviewer, that it
-   unblocks a blocked issue, and that it wakes the loop.
+   unblocks a blocked issue, and that it wakes the loop. An issue in `triage`
+   carries the clock too and never delivers — the project manager's prompt
+   renders the comment history, so mail would be a second copy of it — and
+   its clock is re-recorded on every pass it is still in triage, which costs
+   no `gh` call. That is what makes an answer to a blocking triage question
+   arrive: the issue is always observed in triage before it can be blocked,
+   so by the time it is `blocked` it has a clock, and the first pass to see
+   it there delivers instead of seeding.
    **PR merge state** (`conflicts.go`, `checkPRs`) runs right after, over
    the same PRs: `gh pr list` already returns `mergeable`, `mergeStateStatus`
    and `headRefOid`, so this costs nothing. For an issue in `review` or

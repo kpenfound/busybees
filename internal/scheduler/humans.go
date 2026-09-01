@@ -95,10 +95,15 @@ func (s *Scheduler) deliverHumanFeedback(ctx context.Context, snap *snapshot) er
 
 // inFlightStates are the issue states in which the factory is working on an
 // issue, and so the states in which a person's comment on the issue itself
-// has somebody to reach. An issue in ready or triage has no session to steer
-// — the next one to run reads the comment out of the issue body's comment
-// history — and a feature or feedback issue is the product manager's, not
-// this delivery's.
+// has somebody to reach. An issue in ready has no session to steer — the next
+// one to run reads the comment out of the issue body's comment history — and
+// a feature or feedback issue is the product manager's, not this delivery's.
+//
+// triage is deliberately not here: it carries a clock but never delivers. Its
+// comments already reach the project manager, whose prompt renders the
+// issue's whole comment history, so mailing them would be a second copy of
+// what the session is about to read anyway. What the clock is for is the
+// issue that goes triage -> blocked: see deliverHumanIssueComments.
 var inFlightStates = []string{"in-progress", "review", "approved", "blocked"}
 
 // deliverHumanIssueComments does for comments on an in-flight issue what
@@ -129,8 +134,24 @@ var inFlightStates = []string{"in-progress", "review", "approved", "blocked"}
 // not mean "deliver every comment this issue ever received", which on the
 // first tick after an upgrade would replay the whole triage conversation.
 // Nothing is lost — those comments are in the prompt's comment history.
+//
+// That seed is why triage carries a clock too, though it never delivers. An
+// issue is always observed in triage before anything can block it — the pass
+// that dispatches the project manager has already polled it — so recording
+// the poll time there is what makes the answer to a triage question arrive:
+// without it the first pass that sees the issue blocked would seed instead of
+// deliver, and a person who answered inside that window would have their
+// answer dropped for good. The clock is refreshed on every pass the issue is
+// in triage, not seeded once, so it stays at "the last poll before the state
+// changed" — seeded once, an issue that sat in triage for days would deliver
+// every comment written across all of it on its first in-flight pass.
 func (s *Scheduler) deliverHumanIssueComments(ctx context.Context, snap *snapshot) error {
 	var errs []string
+	for _, issue := range snap.byState["triage"] {
+		if err := s.store.SetIssueHumanSeenAt(issue.Number, s.now()); err != nil {
+			errs = append(errs, err.Error())
+		}
+	}
 	for _, st := range inFlightStates {
 		for _, issue := range snap.byState[st] {
 			n := issue.Number

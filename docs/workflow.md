@@ -695,7 +695,10 @@ about the work rather than about the diff. On every poll the orchestrator also
 looks at each issue it is working on, in the four in-flight states
 `bees:in-progress`, `bees:review`, `bees:approved` and `bees:blocked`, whose
 `updatedAt` moved since it last checked, and collects the issue's own comments
-written since then. Bee comments are dropped by the same two mechanisms above.
+written since then. `bees:triage` is deliberately not on that list: the
+orchestrator records the time on a triage issue but never mails a comment on
+one, because the project manager reads the issue's whole comment history in
+its own prompt. Bee comments are dropped by the same two mechanisms above.
 Whatever is left is sent as one message from `human`, and who it reaches
 depends on the state:
 
@@ -727,6 +730,14 @@ lost: a developer session's prompt renders the issue's whole comment history
 anyway, so an older comment is context it already reads. What the mail adds is
 that the comment is fresh, that it is a person's, and that it reaches a
 reviewer or unblocks a blocked issue.
+
+A `bees:triage` issue is the exception that makes the rest work: it is not
+delivered from, but the orchestrator records the time on it anyway, on every
+poll it is still in triage. An issue is always seen in triage before anything
+can block it, so a question the project manager blocks on already has a clock
+— and your answer reaches it on the next poll however quickly you write it.
+Without that clock the first poll to see the issue `bees:blocked` would record
+the time and swallow an answer you had already written.
 
 You can also mail a developer directly, with or without a PR:
 
