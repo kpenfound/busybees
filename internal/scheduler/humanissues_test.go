@@ -507,3 +507,70 @@ func TestATriageConversationIsNotReplayedOnceTheIssueBlocks(t *testing.T) {
 		}
 	}
 }
+
+// TestTheReadyQueueDoesNotBankCommentsForTheDeveloper is the other half of
+// the same rule. Giving triage a clock also gives an issue that leaves triage
+// a clock, and without a matching seed in ready that clock would stay at the
+// last triage poll for as long as the issue waited to be dispatched — so an
+// issue that sat days in the ready queue would hand every comment written
+// across all of them to the developer as fresh direction on its first
+// in-progress pass. Seeding ready too keeps the clock where decision 3 of
+// #320 puts it: the last poll before the state changed.
+//
+// A comment written after that last pre-flight poll is a different thing, and
+// it is still delivered — that window is the bug #320 exists to close.
+func TestTheReadyQueueDoesNotBankCommentsForTheDeveloper(t *testing.T) {
+	now := time.Now()
+	h := newHarnessAt(t, noRolesTOML, now)
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Waiting its turn", State: "OPEN",
+		Labels:    []github.Label{{Name: "bees"}, {Name: "bees:triage"}, {Name: "bees:size/s"}},
+		CreatedAt: now.Add(-3 * time.Hour), UpdatedAt: now.Add(-2 * time.Hour)}
+
+	// Pass 1: triage. The clock starts here.
+	deliverIssueCommentsOnce(t, h)
+
+	// The issue is refined and joins the ready queue, where it waits. A
+	// person comments while it waits; nobody is working on it, so nothing is
+	// delivered and the clock moves past the comment.
+	h.clock.advance(time.Hour)
+	h.gh.issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}
+	h.gh.issues[1].UpdatedAt = now.Add(30 * time.Minute)
+	seedIssueComments(h, 1, issueComment(901, "kyle", "while you are in there, rename the flag", now.Add(30*time.Minute)))
+
+	deliverIssueCommentsOnce(t, h)
+
+	if msgs := roleMail(t, h, config.RoleDeveloper); len(msgs) != 0 {
+		t.Fatalf("the ready pass delivered %d messages, want none: %+v", len(msgs), msgs)
+	}
+	bk, err := h.store.Issue(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := now.Add(time.Hour).UTC(); !bk.IssueHumanSeenAt.Equal(want) {
+		t.Fatalf("issue_human_seen_at after the ready pass is %v, want the poll time %v", bk.IssueHumanSeenAt, want)
+	}
+
+	// A person adds one more comment, and the issue is dispatched. Only the
+	// comment written since the last pre-flight poll is direction the
+	// developer has not had a chance to read as history.
+	h.clock.advance(time.Hour)
+	fresh := now.Add(90 * time.Minute)
+	h.gh.issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:in-progress"}, {Name: "bees:size/s"}}
+	h.gh.issues[1].UpdatedAt = fresh
+	seedIssueComments(h, 1,
+		issueComment(901, "kyle", "while you are in there, rename the flag", now.Add(30*time.Minute)),
+		issueComment(902, "robin", "and drop the second argument", fresh))
+
+	deliverIssueCommentsOnce(t, h)
+
+	msgs := roleMail(t, h, config.RoleDeveloper)
+	if len(msgs) != 1 {
+		t.Fatalf("%d messages for the developer, want the one fresh comment: %+v", len(msgs), msgs)
+	}
+	if !strings.Contains(msgs[0].Body, "drop the second argument") {
+		t.Errorf("mail body missing the fresh comment:\n%s", msgs[0].Body)
+	}
+	if strings.Contains(msgs[0].Body, "rename the flag") {
+		t.Errorf("the ready queue's comments were banked and delivered as fresh:\n%s", msgs[0].Body)
+	}
+}
