@@ -46,8 +46,25 @@ func sessionEnvDir(t *testing.T, gh config.GitHub) (map[string]string, string) {
 	}
 	// The GIT_CONFIG_* block defers to an operator who set the count
 	// themselves; pin it empty so the test does not depend on the shell it
-	// runs in.
+	// runs in. The numbered entries need the same treatment, and for a
+	// sharper reason: this repository's own bees.toml sets [github], so a
+	// suite run from inside a developer session inherits the four entries
+	// that session was handed. The runner overwrites keys 0 and 1 itself,
+	// but 2 and 3 would survive and gitConfigEntries would read the outer
+	// factory's credential helper back as an injection (#328). t.Setenv
+	// registers the cleanup that restores the original value; the
+	// os.Unsetenv after it makes the variable genuinely absent, which is
+	// what gitConfigEntries' stop condition needs.
 	t.Setenv("GIT_CONFIG_COUNT", "")
+	for _, kv := range os.Environ() {
+		k, _, _ := strings.Cut(kv, "=")
+		if strings.HasPrefix(k, "GIT_CONFIG_KEY_") || strings.HasPrefix(k, "GIT_CONFIG_VALUE_") {
+			t.Setenv(k, "")
+			if err := os.Unsetenv(k); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 
 	dump := filepath.Join(t.TempDir(), "env.txt")
 	bin := fakeClaude(t, `
@@ -146,6 +163,39 @@ func TestGitHubIdentityReachesTheSession(t *testing.T) {
 		}
 		if env[EnvGHToken] != machineEnv {
 			t.Errorf("%s = %q, want the machine's own %q", EnvGHToken, env[EnvGHToken], machineEnv)
+		}
+	})
+
+	// This repository's own bees.toml sets [github], so the suite is
+	// regularly run from inside a session that was handed the whole
+	// GIT_CONFIG_* block. The runner writes keys 0 and 1 itself; 2 and 3 are
+	// the credential helper, and before #328 they survived into the dumped
+	// environment and read back as an injection the runner had not made.
+	// The ambient block is seeded here, before sessionEnv is called, because
+	// that is the order the real case has: sessionEnvDir reads os.Environ()
+	// when the session starts.
+	t.Run("inside a session of this repository", func(t *testing.T) {
+		t.Setenv("GIT_CONFIG_COUNT", "4")
+		for i, e := range []envVar{
+			{"push.autoSetupRemote", "true"},
+			{"push.default", "current"},
+			{"credential.helper", ""},
+			{"credential.helper", "!gh auth git-credential"},
+		} {
+			t.Setenv("GIT_CONFIG_KEY_"+strconv.Itoa(i), e.name)
+			t.Setenv("GIT_CONFIG_VALUE_"+strconv.Itoa(i), e.value)
+		}
+
+		env := sessionEnv(t, config.GitHub{})
+		entries := gitConfigEntries(env)
+		for _, e := range entries {
+			if e.name == "credential.helper" {
+				t.Errorf("a credential helper was read back with no token to use: %+v: "+
+					"the enclosing session's own entries survived into the environment under test", e)
+			}
+		}
+		if env["GIT_CONFIG_COUNT"] != strconv.Itoa(len(entries)) {
+			t.Errorf("GIT_CONFIG_COUNT = %q but %d entries are set: %+v", env["GIT_CONFIG_COUNT"], len(entries), entries)
 		}
 	})
 }
