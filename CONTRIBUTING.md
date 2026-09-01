@@ -16,8 +16,8 @@ dagger check
 ```
 
 `dagger check` runs `go:lint-all`, `go:test-all` and `go:generate-all` from the
-`github.com/dagger/go` module. The export is required, and `dagger` refuses to
-run without it.
+`github.com/dagger/go` module. Without the export there are no checks to run:
+`dagger check` prints a few green lines and exits 0, having checked nothing.
 
 ### Testing rules
 
@@ -26,12 +26,13 @@ run without it.
   `TestMain` in `internal/scheduler/scheduler_test.go`) or by a shell script
   (`internal/session`). Git is real: tests create a bare origin with
   `internal/testutil.SetupRepos`.
-- `install.sh` is checked with `shellcheck -s sh install.sh` and has no test in
-  the suite by design, because it must not reach the network.
-- A test that reads a repository file — a fixture, a doc page, anything
-  outside `internal/`'s own Go sources — must list that file in
-  `dagger.toml`'s `includeExtraFiles`, or it passes locally and fails under
-  `dagger check`: the check container mounts only Go sources.
+- `install.sh` is checked with `shellcheck -s sh install.sh`. No test runs it,
+  by design, because it must not reach the network; `cmd/bees/release_test.go`
+  reads its text to pin the asset names it parses.
+- A test that reads a repository file — a fixture, a doc page, anything that
+  is not a Go source — must list that file in `dagger.toml`'s
+  `includeExtraFiles`, or it passes locally and fails under `dagger check`:
+  the check container mounts only Go sources.
 
 ### Go and markdown style
 
