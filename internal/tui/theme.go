@@ -34,9 +34,11 @@ const (
 	colorWarn      = colorAttention
 
 	// One colour per role, so the Now panel can be read as who is working
-	// rather than by spelling out each row. None of them is red or yellow:
-	// a role is not a verdict, and a developer's row must never read as an
-	// alarm.
+	// rather than by spelling out each row. None of them is red: a role is
+	// not a verdict, and a running session must never read as a failure.
+	// Five roles need one hue more than is left once red and the plain
+	// yellow of the attention class are spoken for, so QA takes the bright
+	// yellow beside it.
 	colorProductManager = lipgloss.Color("5")  // magenta
 	colorProjectManager = lipgloss.Color("4")  // blue
 	colorDeveloper      = lipgloss.Color("6")  // cyan

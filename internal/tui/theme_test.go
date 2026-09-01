@@ -6,7 +6,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/kpenfound/busybees/internal/config"
@@ -173,4 +175,129 @@ func TestTheWaitingPanelsArePickedOut(t *testing.T) {
 			t.Errorf("the %s panel is drawn in %v, want the ordinary title colour %v", panelTitles[i], got, plainTitle)
 		}
 	}
+}
+
+// ansiProfile is termenv.ANSI, the profile the palette's ANSI 0-15 colours
+// are emitted under. It is a plain int so this package does not import
+// termenv, which is an indirect dependency and would churn go.mod.
+const ansiProfile = 2
+
+// sgr is the escape sequence a style paints with, taken from a render of the
+// style's own. Comparing against this rather than against a literal escape
+// sequence keeps the assertion about the palette rather than about how
+// lipgloss spells it.
+func sgr(t *testing.T, style lipgloss.Style) string {
+	t.Helper()
+	r := style.Render("x")
+	i := strings.Index(r, "x")
+	if i <= 0 {
+		t.Fatalf("a style with the foreground %v rendered %q with no escape sequence: is the colour profile off?",
+			style.GetForeground(), r)
+	}
+	return r[:i]
+}
+
+// paintedModel is a view with a row of every colour in it: one running
+// session per role, one finished session per outcome class, and something in
+// each of the two panels that wait for a person.
+func paintedModel(t *testing.T) Model {
+	t.Helper()
+	msgs := []tea.Msg{
+		tea.WindowSizeMsg{Width: defaultWidth, Height: panelHeight},
+		started("pm", config.RoleProductManager, 0, 0, fixed, "claude-opus-5", false),
+		started("pjm", config.RoleProjectManager, 0, 0, fixed, "claude-opus-5", false),
+		started("dev", config.RoleDeveloper, 1, 0, fixed, "claude-opus-5", false),
+		started("rev", config.RoleReviewer, 1, 9, fixed, "claude-opus-5", false),
+		started("qa", config.RoleQA, 0, 0, fixed, "claude-sonnet-5", false),
+		endedAs("dev-2", config.RoleDeveloper, 2, 0, "approved", "clean", 0.1, time.Second),
+		endedAs("dev-3", config.RoleDeveloper, 3, 0, "changes-requested", "attention", 0.1, time.Second),
+		endedAs("dev-4", config.RoleDeveloper, 4, 0, "failed", "bad", 0.1, time.Second),
+		statusMsg{status: state.Status{
+			NeedsHuman: []state.Escalated{escalated(5, "stuck", "why", fixed)},
+			Approved:   []state.ApprovedPR{approvedPR(6, 7, "done", fixed)},
+		}},
+	}
+	var m tea.Model = New(Deps{Repo: "acme/widgets", Now: func() time.Time { return fixed }})
+	for _, msg := range msgs {
+		m, _ = m.Update(msg)
+	}
+	return m.(Model)
+}
+
+// TestTheViewIsActuallyPainted is what says the palette reaches the screen.
+// Every other test in this file asserts on a style object, and a style object
+// cannot tell whether anything renders through it: replacing roleStyle(s.role)
+// in nowPanel with an unstyled style deletes the feature and leaves the
+// package green. `go test` is not a terminal, so lipgloss detects a profile
+// with no colour in it and renders every style as a no-op; the profile is
+// package-global state, no test in this package runs in parallel, and the
+// defer puts back whatever was detected.
+func TestTheViewIsActuallyPainted(t *testing.T) {
+	saved := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(ansiProfile)
+	defer lipgloss.SetColorProfile(saved)
+
+	m := paintedModel(t)
+	_, inner := m.dims()
+
+	// A running session's row is painted by its role.
+	now := strings.Split(m.nowPanel(inner, len(m.sessions), 0), "\n")[1:]
+	if len(now) != len(config.Roles) {
+		t.Fatalf("the Now panel drew %d rows, want one per role", len(now))
+	}
+	for i, role := range config.Roles {
+		if want := sgr(t, roleStyle(role)); !strings.HasPrefix(now[i], want) {
+			t.Errorf("the %s row is painted %q, want the role's own %q", role, prefix(now[i]), want)
+		}
+	}
+
+	// A finished session's row is painted by the class of its outcome.
+	recent := strings.Split(m.recentPanel(inner, len(m.recent), 0), "\n")[1:]
+	for i, outcome := range []string{"failed", "changes-requested", "approved"} {
+		if want := sgr(t, outcomeStyle(outcome)); !strings.HasPrefix(recent[i], want) {
+			t.Errorf("a %s row is painted %q, want its class's %q", outcome, prefix(recent[i]), want)
+		}
+	}
+
+	// A panel's title and border are painted in the style View picks for it,
+	// so the two panels that wait for a person are picked out on screen and
+	// not merely in panelStyleOf.
+	view := m.View()
+	for _, p := range []struct {
+		title string
+		style lipgloss.Style
+	}{
+		{"Now", titleStyle}, {"Recent", titleStyle},
+		{"Needs human", warnTitleStyle}, {"Approved PRs", cleanTitleStyle},
+	} {
+		// The border carries the title's colour without its weight, which
+		// is what boxStyle builds it from.
+		title, border := sgr(t, p.style), sgr(t, p.style.UnsetBold())
+		if !strings.Contains(view, title+p.title) {
+			t.Errorf("the %s panel's title is not painted %q", p.title, title)
+		}
+		if !strings.Contains(view, border+"╭") {
+			t.Errorf("the %s panel's border is not painted %q to match its title", p.title, border)
+		}
+	}
+
+	// Painting a row changes nothing about where it sits: the styles are
+	// foreground-only and are applied after the row has been laid out and
+	// cut, so the view a terminal with colour is given is the view without
+	// it, with escape sequences added.
+	lipgloss.SetColorProfile(saved)
+	if stripped := plain(view); stripped != m.View() {
+		t.Errorf("colour moved the view:\n--- painted, stripped ---\n%s\n--- unpainted ---\n%s", stripped, m.View())
+	}
+}
+
+// prefix is the escape sequence a rendered line starts with, for a failure
+// message that would otherwise print the whole row. A row that carries no
+// escape sequence at all is the ordinary failure here, so it says that
+// rather than printing eighty columns of unpainted text.
+func prefix(line string) string {
+	if loc := ansi.FindStringIndex(line); loc != nil && loc[0] == 0 {
+		return line[:loc[1]]
+	}
+	return "no escape sequence"
 }
