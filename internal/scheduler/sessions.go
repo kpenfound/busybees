@@ -127,12 +127,27 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 	}
 
 	started := s.now()
+	// The session's own context: cancelling the loop's ctx leaves it alone,
+	// so an interrupted `bees run` finishes the session, and only HardStop —
+	// which cancels this one — kills it (scheduler.go).
+	sctx := s.sessionContext(ctx)
 	// Record the session before it runs and clear it however it ends: a
 	// record that outlives its session is what tells the next one that this
 	// scheduler was killed while the session was working (interrupted.go).
+	// A session HardStop killed is the one deliberate exception: its record
+	// is kept, because the record *is* the crash report the next scheduler
+	// resumes from — a stopped factory left the work exactly as a killed one
+	// would have. A session that had already finished when the hard stop
+	// landed wrote its result file, so the stale record it leaves is cleared
+	// silently by the next worker (takeInterrupted).
 	if d.Issue != nil {
 		s.recordRunningSession(spec, d.Issue.Number, sessionDir)
-		defer s.clearRunningSession(d.Issue.Number)
+		defer func() {
+			if sctx.Err() != nil {
+				return
+			}
+			s.clearRunningSession(d.Issue.Number)
+		}()
 	}
 	start := sessionEvent(EventSessionStarted, spec)
 	start.Model, start.Fallback = role.Model, fallback
@@ -146,7 +161,7 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 	s.recordLiveSession(spec.name, liveSession{role: spec.role, dir: sessionDir, issue: start.Issue, pr: start.PR})
 	defer s.dropLiveSession(spec.name)
 	s.publish(start)
-	res, err := s.runner.Run(ctx, session.Request{
+	res, err := s.runner.Run(sctx, session.Request{
 		Name:         spec.name,
 		Role:         role,
 		WorkDir:      spec.workDir,

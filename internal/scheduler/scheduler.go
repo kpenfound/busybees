@@ -31,6 +31,7 @@ import (
 	"github.com/kpenfound/busybees/internal/mail"
 	"github.com/kpenfound/busybees/internal/session"
 	"github.com/kpenfound/busybees/internal/state"
+	"github.com/kpenfound/busybees/internal/text"
 	"github.com/kpenfound/busybees/internal/workspace"
 )
 
@@ -142,6 +143,17 @@ type Scheduler struct {
 	wake  chan struct{}
 	wg    sync.WaitGroup
 	slots chan struct{}
+	// sessionCtx is the context every session runs under while Run is
+	// running, and stopSessions cancels it. It is derived from Run's context
+	// but not cancelled with it: cancelling the loop stops polling and
+	// dispatch and lets the running sessions finish (each still bounded by
+	// its role's timeout), which is the cool-down an interrupt or the live
+	// view's stop key asks for. HardStop is the other stop: it cancels this
+	// context, which kills every running session's process group. Both are
+	// nil outside Run — a session started another way (`bees exec`) runs
+	// under its caller's context and dies with it, as it always has.
+	sessionCtx   context.Context
+	stopSessions context.CancelFunc
 	// evMu guards subs, the event stream's subscribers (events.go). It is
 	// its own lock: publishing must never contend with, or depend on, the
 	// state mu protects.
@@ -204,11 +216,29 @@ func New(d Deps) (*Scheduler, error) {
 }
 
 // Run executes the loop until ctx is cancelled (or, with Once, until one
-// pass and the work it started have completed).
+// pass and the work it started have completed). Cancelling ctx stops
+// nothing that is already running: the loop starts no new session and waits
+// for the ones in flight to finish, and HardStop is what stops those too.
 func (s *Scheduler) Run(ctx context.Context) error {
 	if err := s.store.Init(); err != nil {
 		return err
 	}
+	// The sessions' own context (see the field's comment): cancelling ctx
+	// must leave running sessions alone, so they run under a context that
+	// only HardStop — and the deferred cancel, after every session has
+	// already finished — cancels.
+	sessionCtx, stopSessions := context.WithCancel(context.WithoutCancel(ctx))
+	s.mu.Lock()
+	s.sessionCtx, s.stopSessions = sessionCtx, stopSessions
+	s.mu.Unlock()
+	defer func() {
+		stopSessions()
+		// Cleared so a session run outside a loop afterwards (tests drive
+		// Run more than once) is not handed a cancelled context.
+		s.mu.Lock()
+		s.sessionCtx, s.stopSessions = nil, nil
+		s.mu.Unlock()
+	}()
 	if err := s.ws.Prune(ctx); err != nil {
 		s.log.Warn("worktree prune failed", "err", err)
 	}
@@ -251,10 +281,70 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			break
 		}
 	}
-	s.log.Info("waiting for running sessions to finish")
+	if n := s.liveCount(); n > 0 {
+		msg := "waiting for " + text.Count(n, "running session") + " to finish"
+		if ctx.Err() != nil {
+			msg += "; interrupt again to stop them now"
+		}
+		s.log.Info(msg)
+	}
 	s.wg.Wait()
 	s.writeStatus()
 	return nil
+}
+
+// HardStop stops the sessions that are running right now, by cancelling the
+// context they run under: each one's process group is killed exactly as a
+// timeout kills it, and its directory — a transcript no result file closed,
+// plus the marker written here — is what CheckInterrupted reports as an
+// interrupted session, so the next `bees run` resumes the work through the
+// ordinary crash-recovery path. It is the second half of stopping the
+// factory: cancelling Run's context asks for the cool-down (finish what is
+// running, start nothing new), and HardStop is the second interrupt — or the
+// second press in the live view — for the person who will not wait it out.
+// Outside Run it does nothing.
+func (s *Scheduler) HardStop() {
+	s.mu.Lock()
+	stop := s.stopSessions
+	dirs := make([]string, 0, len(s.live))
+	for _, ls := range s.live {
+		dirs = append(dirs, ls.dir)
+	}
+	s.mu.Unlock()
+	if stop == nil {
+		return
+	}
+	if len(dirs) > 0 {
+		s.log.Warn("stopping " + text.Count(len(dirs), "running session") + " now")
+	}
+	// Marked before the kill, like KillSession: the next session for each
+	// work item is told its predecessor was stopped on purpose rather than
+	// left to guess that the machine crashed.
+	for _, dir := range dirs {
+		if err := session.MarkInterrupted(dir, "stopped with the factory: bees run was interrupted twice"); err != nil {
+			s.log.Warn("could not mark the stopped session", "dir", dir, "err", err)
+		}
+	}
+	stop()
+}
+
+// liveCount is how many sessions are running right now.
+func (s *Scheduler) liveCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.live)
+}
+
+// sessionContext is the context a session about to start runs under: the
+// session context Run derived, so the loop's cancellation cannot reach it —
+// or, outside Run, the caller's own context.
+func (s *Scheduler) sessionContext(ctx context.Context) context.Context {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.sessionCtx != nil {
+		return s.sessionCtx
+	}
+	return ctx
 }
 
 // waitForTick sleeps until the next tick is due, running a local pass for
@@ -958,7 +1048,10 @@ func relabel(labels []github.Label, from, to string) []github.Label {
 // spending a session on such an issue the live issue is fetched once and the
 // candidate dropped unless it is still open and in a dispatchable state.
 func (s *Scheduler) dispatchDevelopers(ctx context.Context, snap *snapshot, local bool) {
-	if !s.roleEnabled(config.RoleDeveloper) || s.limitPaused() || s.dayBudgetReached() {
+	// ctx.Err() is the stop key: sessions run under their own context, so a
+	// pass that is still finishing when the loop's context is cancelled
+	// would otherwise start work the cool-down promised not to.
+	if ctx.Err() != nil || !s.roleEnabled(config.RoleDeveloper) || s.limitPaused() || s.dayBudgetReached() {
 		return
 	}
 	var candidates []github.Issue
@@ -1146,7 +1239,10 @@ func (s *Scheduler) dispatchSingletons(ctx context.Context, snap *snapshot, mail
 			jobs[i].want = func() bool { return s.hasUnreadMail(role, 0, 0) }
 		}
 	}
-	if s.limitPaused() || s.dayBudgetReached() {
+	// The same three gates as dispatchDevelopers, ctx.Err() included: a
+	// cancelled loop context means the factory is stopping and no singleton
+	// may start.
+	if ctx.Err() != nil || s.limitPaused() || s.dayBudgetReached() {
 		return
 	}
 	for _, j := range jobs {
