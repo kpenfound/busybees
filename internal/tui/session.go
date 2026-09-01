@@ -318,7 +318,7 @@ func (m Model) sessionView(w, inner int) string {
 	t := m.watching
 	var b strings.Builder
 	b.WriteString(m.header(w) + "\n")
-	b.WriteString(panel(clip(m.sessionTitle(), inner), m.sessionPanel(inner), inner) + "\n")
+	b.WriteString(panel(clip(m.sessionTitle(), inner), m.sessionPanel(inner), inner, titleStyle) + "\n")
 	if t.composing {
 		b.WriteString(clip("› "+t.draft+"▏", w) + "\n")
 	} else {
