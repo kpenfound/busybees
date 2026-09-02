@@ -7,10 +7,11 @@ import (
 	"github.com/kpenfound/busybees/internal/state"
 )
 
-// Crash recovery. A session that was running when the scheduler died leaves
-// a directory with a transcript no result file ever closed, and a branch
-// that may carry work nobody reported. Nothing used to say so: the next
-// session for the issue started as if the branch were untouched.
+// Crash recovery. A session that never finished — the scheduler dying
+// while it worked, or a hard stop killing it — leaves a directory with a
+// transcript no result file ever closed, and a branch that may carry work
+// nobody reported. Nothing used to say so: the next session for the issue
+// started as if the branch were untouched.
 //
 // The scheduler records the session it is about to run in the issue's
 // bookkeeping (state.IssueState.Session) and clears it when the session
