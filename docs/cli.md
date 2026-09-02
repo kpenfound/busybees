@@ -518,11 +518,11 @@ cursor down the list and Enter opens
 **Turns** is what the *work item* has taken: the sessions of it that have
 already finished, plus the assistant messages the running session's own
 `transcript.jsonl` holds right now, recounted every few seconds. **Cost** is
-the finished sessions only, and it is `-` until one of them has ended —
-claude prices a session in the final event of its stream and says nothing
-before it, so a work item nothing has finished on has no cost yet rather
-than a cost of zero. A session that really did cost nothing still prints
-`$0.00`.
+the finished sessions only, and it is `-` until one of them has ended and
+reported a cost — claude prices a session in the final event of its stream
+and says nothing before it, so a session that ended without reaching that
+event (killed by a signal, most often) leaves the cost unknown rather than a
+cost of zero. A session that really did cost nothing still prints `$0.00`.
 
 **Recent** is what just happened: the sessions that have finished, newest
 first, with how each ended, what it said about it, how long it took and what

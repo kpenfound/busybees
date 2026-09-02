@@ -68,7 +68,17 @@ func started(name, role string, issue, pr int, at time.Time, model string, fallb
 func ended(name, role string, issue, pr int, turns int, cost float64) tea.Msg {
 	return eventMsg(scheduler.Event{
 		Kind: scheduler.EventSessionEnded, Time: fixed, Session: name, Role: role,
-		Issue: issue, PR: pr, Outcome: "pr-opened", Turns: turns, CostUSD: cost,
+		Issue: issue, PR: pr, Outcome: "pr-opened", Turns: turns, CostUSD: cost, CostKnown: true,
+	})
+}
+
+// endedUnknownCost is a session-ended event for a session that ended with no
+// result event, so its cost is not a real zero but unpriced (a signalled
+// process, most often — see #359).
+func endedUnknownCost(name, role string, issue, pr int, turns int) tea.Msg {
+	return eventMsg(scheduler.Event{
+		Kind: scheduler.EventSessionEnded, Time: fixed, Session: name, Role: role,
+		Issue: issue, PR: pr, Outcome: "failed", Turns: turns,
 	})
 }
 
@@ -294,7 +304,7 @@ func TestALongStageNameDoesNotPushTheModelColumnOff(t *testing.T) {
 func endedAs(name, role string, issue, pr int, outcome, note string, cost float64, took time.Duration) tea.Msg {
 	return eventMsg(scheduler.Event{
 		Kind: scheduler.EventSessionEnded, Time: fixed, Session: name, Role: role,
-		Issue: issue, PR: pr, Outcome: outcome, Note: note, CostUSD: cost, Duration: took,
+		Issue: issue, PR: pr, Outcome: outcome, Note: note, CostUSD: cost, CostKnown: true, Duration: took,
 	})
 }
 
@@ -339,6 +349,56 @@ func TestRecentPanelListsWhatHasFinished(t *testing.T) {
 		endedAs("developer-issue-9-r1", config.RoleDeveloper, 9, 0, "", "", 0, time.Second))
 	if !strings.Contains(blank, "no outcome") {
 		t.Errorf("a session that reported no outcome renders as a blank cell:\n%s", blank)
+	}
+}
+
+// recentLines is nowLines for the Recent panel: locate its header by two
+// labels only it carries, then the row naming mark.
+func recentLines(t *testing.T, view, mark string) (header, row string) {
+	t.Helper()
+	for _, line := range strings.Split(view, "\n") {
+		switch {
+		case header == "" && strings.Contains(line, "outcome") && strings.Contains(line, "took"):
+			header = line
+		case row == "" && strings.Contains(line, mark):
+			row = line
+		}
+	}
+	if header == "" || row == "" {
+		t.Fatalf("the Recent panel has no header or no row for %q:\n%s", mark, view)
+	}
+	return header, row
+}
+
+// The Recent panel renders a session's cost the same way the Now panel
+// does: "-" for a cost claude never reported (a signalled process, most
+// often), and "$0.00" only for a session that genuinely cost nothing.
+func TestRecentPanelRendersCostTheSameWayTheNowPanelDoes(t *testing.T) {
+	view := drive(t, Deps{Repo: "acme/widgets"},
+		endedUnknownCost("developer-issue-9-r1", config.RoleDeveloper, 9, 0, 3),
+	)
+	header, row := recentLines(t, view, "developer")
+	if got := column(t, header, row, "cost"); got != "-" {
+		t.Errorf("a session with no reported cost shows %q, want -:\n%s", got, view)
+	}
+	if strings.Contains(row, "$0.00") {
+		t.Errorf("the row prints $0.00 for a cost nothing has reported:\n%s", row)
+	}
+
+	view = drive(t, Deps{Repo: "acme/widgets"},
+		endedAs("developer-issue-9-r1", config.RoleDeveloper, 9, 0, "pr-opened", "", 0, time.Second),
+	)
+	header, row = recentLines(t, view, "developer")
+	if got := column(t, header, row, "cost"); got != "$0.00" {
+		t.Errorf("a session that really cost $0.00 shows %q:\n%s", got, view)
+	}
+
+	view = drive(t, Deps{Repo: "acme/widgets"},
+		endedAs("developer-issue-9-r1", config.RoleDeveloper, 9, 0, "pr-opened", "", 2.41, time.Second),
+	)
+	header, row = recentLines(t, view, "developer")
+	if got := column(t, header, row, "cost"); got != "$2.41" {
+		t.Errorf("a session that cost $2.41 shows %q:\n%s", got, view)
 	}
 }
 
@@ -1151,5 +1211,19 @@ func TestAnUnknownCostIsNotZero(t *testing.T) {
 	header, row = nowLines(t, view, "reviewer r1")
 	if got := column(t, header, row, "cost"); got != "$0.00" {
 		t.Errorf("a work item whose session reported $0.00 shows a cost of %q:\n%s", got, view)
+	}
+
+	// A session that ended with no result event (a signalled process, most
+	// often) reported no cost at all: the work item's spend is still
+	// unknown, not zero, exactly like the case before any session finished.
+	view = drive(t, deps,
+		started("developer-issue-12-r1", config.RoleDeveloper, 12, 31, fixed.Add(-time.Minute), "opus", false),
+		endedUnknownCost("developer-issue-12-r1", config.RoleDeveloper, 12, 31, 3),
+		staged(12, "reviewer", 1),
+		started("reviewer-pr-31-r1", config.RoleReviewer, 12, 31, fixed.Add(-30*time.Second), "opus", false),
+	)
+	header, row = nowLines(t, view, "reviewer r1")
+	if got := column(t, header, row, "cost"); got != "-" {
+		t.Errorf("a work item whose only finished session reported no cost shows %q, want -:\n%s", got, view)
 	}
 }

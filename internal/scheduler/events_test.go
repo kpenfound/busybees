@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -114,6 +115,9 @@ func TestSchedulerPublishesSessionStageAndPollEvents(t *testing.T) {
 	if end.CostUSD <= 0 {
 		t.Errorf("developer ended with no cost: %v", end)
 	}
+	if !end.CostKnown {
+		t.Errorf("developer ended with a reported cost but CostKnown false: %v", end)
+	}
 	if _, ok := find(events, EventSessionStarted, config.RoleReviewer); !ok {
 		t.Errorf("no reviewer session-started event: %v", events)
 	}
@@ -137,6 +141,32 @@ func TestSchedulerPublishesSessionStageAndPollEvents(t *testing.T) {
 		if !ev.Time.Equal(h.clock.now()) {
 			t.Fatalf("%s event is stamped %s, want the injected clock's %s", ev.Kind, ev.Time, h.clock.now())
 		}
+	}
+}
+
+// A session that ends without claude's final result event carries no known
+// cost, and the event stream must say so rather than let the field default
+// to a confident-looking zero (#371, the live view's half of #359).
+func TestSessionEndedEventCarriesWhetherTheCostIsKnown(t *testing.T) {
+	t.Setenv("FAKE_SIGNAL", "9")
+	h := newHarness(t, strings.Replace(devOnlyTOML, "[scheduler]\n", "[scheduler]\nretries = 0\n", 1))
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", State: "OPEN",
+		CreatedAt: time.Now().Add(-time.Hour),
+		Labels:    []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}}
+
+	sub := h.sched.Subscribe()
+	h.sched.Once = true
+	if err := h.sched.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	events := drain(sub)
+	end, ok := find(events, EventSessionEnded, config.RoleDeveloper)
+	if !ok {
+		t.Fatalf("no developer session-ended event: %v", events)
+	}
+	if end.CostKnown {
+		t.Errorf("a signalled session's cost is reported as known: %v", end)
 	}
 }
 

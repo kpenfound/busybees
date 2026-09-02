@@ -199,6 +199,7 @@ func endEvent(spec sessionSpec, res *session.Result) Event {
 	ev := sessionEvent(EventSessionEnded, spec)
 	ev.Outcome, ev.Note = outcomeOf(res)
 	ev.Turns, ev.CostUSD, ev.Duration = res.NumTurns, res.CostUSD, res.Duration
+	ev.CostKnown = res.CostKnown
 	if res.Outcome.PR > 0 {
 		ev.PR = res.Outcome.PR
 	}

@@ -107,14 +107,15 @@ type spend struct {
 // Everything in it arrives on the session-ended event: nothing is looked up
 // afterwards.
 type finished struct {
-	role    string
-	issue   int
-	pr      int
-	at      time.Time
-	outcome string
-	note    string
-	cost    float64
-	took    time.Duration
+	role      string
+	issue     int
+	pr        int
+	at        time.Time
+	outcome   string
+	note      string
+	cost      float64
+	costKnown bool
+	took      time.Duration
 }
 
 // stage is the developer worker's stage for an issue, from the last stage
@@ -651,11 +652,11 @@ func (m *Model) apply(ev scheduler.Event) {
 		s := m.spent[key]
 		s.turns += ev.Turns
 		s.cost += ev.CostUSD
-		s.known = true
+		s.known = s.known || ev.CostKnown
 		m.spent[key] = s
 		m.recent = append([]finished{{
 			role: ev.Role, issue: ev.Issue, pr: ev.PR, at: ev.Time,
-			outcome: ev.Outcome, note: ev.Note, cost: ev.CostUSD, took: ev.Duration,
+			outcome: ev.Outcome, note: ev.Note, cost: ev.CostUSD, costKnown: ev.CostKnown, took: ev.Duration,
 		}}, m.recent...)
 		if len(m.recent) > recentRows {
 			m.recent = m.recent[:recentRows]
