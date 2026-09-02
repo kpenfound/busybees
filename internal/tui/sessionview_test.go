@@ -14,6 +14,7 @@ import (
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/scheduler"
 	"github.com/kpenfound/busybees/internal/session"
+	"github.com/kpenfound/busybees/internal/state"
 )
 
 // sent is one message the view asked to have delivered.
@@ -119,6 +120,20 @@ func TestSelectingASessionStreamsItsTranscript(t *testing.T) {
 	}
 	if strings.Count(view, "reading the issue") != 1 {
 		t.Errorf("the view rendered a line it had already read:\n%s", view)
+	}
+}
+
+// The pause notice is in the header, which both screens share, so it shows
+// up while watching a session too — not just on the panels screen.
+func TestSessionViewHeaderShowsThePauseNotice(t *testing.T) {
+	dir := t.TempDir()
+	writeTranscript(t, dir, "reading the issue")
+	m, _, cmd := watcher(t, dir)
+	m, _ = run(t, m, cmd)
+	m, _ = m.Update(statusMsg{status: state.Status{BudgetPaused: true, DaySpendUSD: 323.8, DayBudgetUSD: 300}})
+	view := plain(m.View())
+	if !strings.Contains(view, "⏸ daily budget ($323.80 / $300.00)") {
+		t.Errorf("the session view header does not show the pause notice:\n%s", view)
 	}
 }
 
