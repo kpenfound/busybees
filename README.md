@@ -20,10 +20,14 @@ curl -fsSL https://raw.githubusercontent.com/kpenfound/busybees/main/install.sh 
 
 The script downloads the latest [release](https://github.com/kpenfound/busybees/releases),
 checks it against the SHA-256 sums published with it, and installs the `bees` binary in
-`/usr/local/bin` — using `sudo` only if that directory is not writable.
-`BEES_VERSION=v0.2.0` installs a particular version and
-`BEES_INSTALL_DIR=$HOME/.local/bin` installs somewhere else. Re-running the
-script upgrades an existing install in place.
+`/usr/local/bin` — using `sudo` only if that directory is not writable. Re-running it
+upgrades an existing install in place. `BEES_VERSION` picks a release and
+`BEES_INSTALL_DIR` where it goes; both go on `sh`, not on `curl`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/kpenfound/busybees/main/install.sh |
+    BEES_VERSION=v0.2.0 BEES_INSTALL_DIR="$HOME/.local/bin" sh
+```
 
 Anywhere the script does not cover — Windows, another architecture, or a build of
 unreleased `main` — build from source with Go 1.25+ instead:
