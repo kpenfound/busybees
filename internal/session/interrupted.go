@@ -104,14 +104,12 @@ func CheckInterrupted(role, dir string, alive func(int) bool) (*Interrupted, boo
 }
 
 // CountTurns counts the assistant messages of a transcript that no result
-// event has closed. A finished session takes its turn count from the result
-// event of claude's stream, and an interrupted one never emitted that
-// event, so the messages are counted instead: close enough to say how far
-// the session had got, and not the same number claude would have reported.
-//
-// The live view counts a *running* session's transcript the same way, for
-// the same reason: until the session ends there is no result event to ask.
-// A missing or unreadable file is 0.
+// event has closed. A session takes its turn count from the result event of
+// claude's stream, and three kinds of session never emitted one: an
+// interrupted one, a running one the live view is watching, and one whose
+// claude process died from a signal. The messages are counted instead:
+// close enough to say how far the session had got, and not the same number
+// claude would have reported. A missing or unreadable file is 0.
 func CountTurns(path string) int {
 	f, err := os.Open(path)
 	if err != nil {
