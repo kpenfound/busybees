@@ -55,10 +55,10 @@ qa_interval = "4h"
 notify = ["kpenfound"]
 # The first poll of the work day happens the moment the window opens, whatever
 # off_hours_poll_interval is.
-work_hours = "11:00-20:00"
+work_hours = "11:00-24:00"
 # Default: 1h, or poll_interval when that is longer.
 off_hours_poll_interval = "2h"
-work_days = ["mon", "tue", "wed", "thu", "fri"]
+work_days = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 # Whole factory, rolling 24 hours. At or over it no new session starts; the
 # sessions already running finish.
 max_cost_per_day = 300.0
