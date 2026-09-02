@@ -408,23 +408,37 @@ func TestManagerPromptsDescribeSizes(t *testing.T) {
 // The product manager may report every status the done tool offers it, and no
 // other. The prompt is where a session learns them, so the two must not drift:
 // internal/session owns the enum.
-func TestProductManagerPromptListsEveryOutcome(t *testing.T) {
-	pm, err := System(config.RoleProductManager, sample(), "")
-	if err != nil {
-		t.Fatal(err)
+// Every role's prompt ends with the statuses that role may report, and that
+// sentence is where a session learns them: internal/session owns the enum, so
+// the two must not drift (#355 is the same drift in `bees done --help`).
+func TestEveryRolePromptListsEveryOutcome(t *testing.T) {
+	var every []string
+	for _, role := range config.Roles {
+		every = append(every, session.ValidOutcomes(role)...)
 	}
-	_, statuses, ok := strings.Cut(pm, "Outcome statuses:")
-	if !ok {
-		t.Fatalf("product manager prompt has no outcome statuses line:\n%s", pm)
-	}
-	for _, want := range session.ValidOutcomes(config.RoleProductManager) {
-		if !strings.Contains(statuses, "`"+want+"`") {
-			t.Errorf("product manager prompt does not offer the %q outcome:\n%s", want, statuses)
+	for _, role := range config.Roles {
+		sys, err := System(role, sample(), "")
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-	for _, other := range []string{"pr-opened", "pr-updated", "question", "approved", "changes-requested"} {
-		if strings.Contains(statuses, "`"+other+"`") {
-			t.Errorf("product manager prompt offers %q, which is another role's outcome:\n%s", other, statuses)
+		_, statuses, ok := strings.Cut(sys, "Outcome statuses:")
+		if !ok {
+			t.Errorf("%s prompt has no outcome statuses line:\n%s", role, sys)
+			continue
+		}
+		want := session.ValidOutcomes(role)
+		for _, w := range want {
+			if !strings.Contains(statuses, "`"+w+"`") {
+				t.Errorf("%s prompt does not offer the %q outcome:%s", role, w, statuses)
+			}
+		}
+		for _, other := range every {
+			if slices.Contains(want, other) {
+				continue
+			}
+			if strings.Contains(statuses, "`"+other+"`") {
+				t.Errorf("%s prompt offers %q, which is another role's outcome:%s", role, other, statuses)
+			}
 		}
 	}
 }
