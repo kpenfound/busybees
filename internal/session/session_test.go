@@ -377,3 +377,93 @@ echo '{"type":"result","subtype":"error_during_execution","is_error":true,"resul
 		})
 	}
 }
+
+// TestSignalledSessionReportsTheSignal covers a claude process that dies
+// from a signal rather than exiting. Go reports an ExitCode of -1 for one,
+// which says nothing about why it died, and no result event is emitted, so
+// the session used to be reported as "exit_-1" with 0 turns and $0.00 even
+// when it had worked for minutes. The signal names the cause, and the turns
+// are recovered from the transcript.
+func TestSignalledSessionReportsTheSignal(t *testing.T) {
+	tests := []struct {
+		name    string
+		kill    string
+		subtype string
+		signal  int
+	}{
+		{name: "SIGKILL", kill: "kill -9 $$", subtype: "signal_killed", signal: 9},
+		{name: "SIGHUP", kill: "kill -1 $$", subtype: "signal_hangup", signal: 1},
+		// The only signal whose name is two words, so the one that pins
+		// the snake case the other subtypes are written in.
+		{name: "SIGPIPE", kill: "kill -13 $$", subtype: "signal_broken_pipe", signal: 13},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			bin := fakeClaude(t, `
+echo '{"type":"assistant","message":{"content":[{"type":"text","text":"one"}]}}'
+echo '{"type":"assistant","message":{"content":[{"type":"text","text":"two"}]}}'
+echo '{"type":"assistant","message":{"content":[{"type":"text","text":"three"}]}}'
+`+tc.kill+`
+`)
+			r := newRunner(t, bin)
+			res, err := r.Run(context.Background(), Request{Name: "sig", Role: config.ResolvedRole{Name: "developer", Model: "opus", MaxTurns: 10, Timeout: time.Minute}, WorkDir: t.TempDir()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res.ErrorSubtype != tc.subtype || res.Signal != tc.signal || res.ExitCode != -1 || !res.IsError {
+				t.Errorf("subtype %q signal %d exit %d is_error %v, want %q %d -1 true",
+					res.ErrorSubtype, res.Signal, res.ExitCode, res.IsError, tc.subtype, tc.signal)
+			}
+			// The session did work; a report of 0 turns says it did none.
+			if res.NumTurns != 3 {
+				t.Errorf("turns: got %d, want 3", res.NumTurns)
+			}
+			if res.CostKnown {
+				t.Error("cost reported as known for a session that emitted no result event")
+			}
+			// result.json is what a person reads afterwards.
+			b, err := os.ReadFile(filepath.Join(res.SessionDir, ResultFile))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got Result
+			if err := json.Unmarshal(b, &got); err != nil {
+				t.Fatal(err)
+			}
+			if got.Signal != tc.signal || got.ErrorSubtype != tc.subtype || got.NumTurns != 3 || got.CostKnown {
+				t.Errorf("result.json: %+v", got)
+			}
+		})
+	}
+}
+
+// TestRealExitCodeKeepsItsSubtype pins the other half: a process that
+// exited of its own accord still reports exit_<n> and no signal.
+func TestRealExitCodeKeepsItsSubtype(t *testing.T) {
+	bin := fakeClaude(t, "exit 3\n")
+	r := newRunner(t, bin)
+	res, err := r.Run(context.Background(), Request{Name: "exit3", Role: config.ResolvedRole{Name: "qa", Model: "opus", MaxTurns: 10, Timeout: time.Minute}, WorkDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ErrorSubtype != "exit_3" || res.ExitCode != 3 || res.Signal != 0 {
+		t.Fatalf("subtype %q exit %d signal %d", res.ErrorSubtype, res.ExitCode, res.Signal)
+	}
+}
+
+// TestASubtypeFromTheStreamWins pins that a subtype claude itself reported
+// is not overwritten, whether the process then exits or is signalled.
+func TestASubtypeFromTheStreamWins(t *testing.T) {
+	bin := fakeClaude(t, `
+echo '{"type":"result","subtype":"error_max_turns","is_error":true,"result":"ran out","num_turns":10,"total_cost_usd":1.5}'
+kill -9 $$
+`)
+	r := newRunner(t, bin)
+	res, err := r.Run(context.Background(), Request{Name: "streamwins", Role: config.ResolvedRole{Name: "qa", Model: "opus", MaxTurns: 10, Timeout: time.Minute}, WorkDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ErrorSubtype != "error_max_turns" || res.Signal != 9 || res.NumTurns != 10 || !res.CostKnown || res.CostUSD != 1.5 {
+		t.Fatalf("result: %+v", res)
+	}
+}

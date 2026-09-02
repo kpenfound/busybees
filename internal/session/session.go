@@ -77,22 +77,32 @@ type Request struct {
 
 // Result is what a finished session produced.
 type Result struct {
-	Name         string        `json:"name"`
-	Role         string        `json:"role"`
-	SessionDir   string        `json:"session_dir"`
-	Transcript   string        `json:"transcript"`
-	StartedAt    time.Time     `json:"started_at"`
-	Duration     time.Duration `json:"duration"`
-	ExitCode     int           `json:"exit_code"`
-	ClaudeID     string        `json:"claude_session_id,omitempty"`
-	ResultText   string        `json:"result_text,omitempty"`
-	IsError      bool          `json:"is_error"`
-	ErrorSubtype string        `json:"error_subtype,omitempty"`
-	NumTurns     int           `json:"num_turns"`
-	CostUSD      float64       `json:"cost_usd"`
-	TimedOut     bool          `json:"timed_out"`
-	Outcome      Outcome       `json:"outcome"`
-	HasOutcome   bool          `json:"has_outcome"`
+	Name       string        `json:"name"`
+	Role       string        `json:"role"`
+	SessionDir string        `json:"session_dir"`
+	Transcript string        `json:"transcript"`
+	StartedAt  time.Time     `json:"started_at"`
+	Duration   time.Duration `json:"duration"`
+	ExitCode   int           `json:"exit_code"`
+	// Signal is the signal that terminated claude, or 0 when it exited of
+	// its own accord. Go reports an ExitCode of -1 for a signalled process
+	// and the signal is the only part that says why, so both are recorded:
+	// the number here, its name in ErrorSubtype ("signal_killed").
+	Signal       int     `json:"signal,omitempty"`
+	ClaudeID     string  `json:"claude_session_id,omitempty"`
+	ResultText   string  `json:"result_text,omitempty"`
+	IsError      bool    `json:"is_error"`
+	ErrorSubtype string  `json:"error_subtype,omitempty"`
+	NumTurns     int     `json:"num_turns"`
+	CostUSD      float64 `json:"cost_usd"`
+	// CostKnown says whether CostUSD is what the session cost or merely
+	// what is known about it: claude reports the cost in the result event
+	// of its stream alone, so a session killed before it emitted one has
+	// no cost at all rather than a cost of zero. Nothing derives one.
+	CostKnown  bool    `json:"cost_known"`
+	TimedOut   bool    `json:"timed_out"`
+	Outcome    Outcome `json:"outcome"`
+	HasOutcome bool    `json:"has_outcome"`
 	// RateLimit is the last rate-limit event of the session's stream, or
 	// nil when it carried none.
 	RateLimit *RateLimit `json:"rate_limit,omitempty"`
@@ -322,10 +332,17 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 		res.IsError = final.IsError
 		res.NumTurns = final.NumTurns
 		res.CostUSD = final.TotalCostUSD
+		res.CostKnown = true
 		if final.Subtype != "success" {
 			res.ErrorSubtype = final.Subtype
 			res.IsError = true
 		}
+	} else {
+		// No result event: claude never reported how far it had got, so the
+		// assistant messages it wrote are counted instead. A session that
+		// died after four minutes of work reported zero turns otherwise,
+		// which reads as a session that did nothing.
+		res.NumTurns = CountTurns(transcriptPath)
 	}
 	var exitErr *exec.ExitError
 	switch {
@@ -348,8 +365,16 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 	case errors.As(waitErr, &exitErr):
 		res.ExitCode = exitErr.ExitCode()
 		res.IsError = true
+		sig, signalled := terminatingSignal(exitErr.ProcessState)
+		if signalled {
+			res.Signal = int(sig)
+		}
 		if res.ErrorSubtype == "" {
-			res.ErrorSubtype = "exit_" + strconv.Itoa(res.ExitCode)
+			if signalled {
+				res.ErrorSubtype = "signal_" + signalName(sig)
+			} else {
+				res.ErrorSubtype = "exit_" + strconv.Itoa(res.ExitCode)
+			}
 		}
 	case waitErr != nil:
 		return nil, fmt.Errorf("claude: %w", waitErr)
@@ -380,6 +405,28 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 		"duration", res.Duration.Round(time.Second), "error", res.IsError, "subtype", res.ErrorSubtype,
 		"outcome", res.Outcome.Status)
 	return res, nil
+}
+
+// terminatingSignal reports the signal that killed a process, if one did.
+// Go reports an ExitCode of -1 for a signalled process, which says nothing
+// about why it died: SIGKILL from the out-of-memory killer and SIGHUP from
+// a closing terminal read very differently. The wait status carries the
+// signal, and bees is built for darwin and linux, where it is always a
+// syscall.WaitStatus.
+func terminatingSignal(st *os.ProcessState) (syscall.Signal, bool) {
+	ws, ok := st.Sys().(syscall.WaitStatus)
+	if !ok || !ws.Signaled() {
+		return 0, false
+	}
+	return ws.Signal(), true
+}
+
+// signalName renders a signal for an error subtype: the name the operating
+// system gives it, in the snake case the other subtypes use ("killed",
+// "hangup", "broken pipe" -> "signal_killed", "signal_hangup",
+// "signal_broken_pipe").
+func signalName(sig syscall.Signal) string {
+	return strings.ReplaceAll(sig.String(), " ", "_")
 }
 
 // beesEnv returns the BEES_* variables that describe the session, in a stable
