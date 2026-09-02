@@ -938,7 +938,8 @@ by an unrelated process after a reboot is discarded, never killed.
 Each session it stops through a pid file is also marked as stopped, by an
 `interrupted` file in the session's directory. The next session for that issue
 is then told the session before it was stopped on purpose rather than lost
-with the machine, and that the branch may carry its unreported work.
+with the machine, and — when it was a developer session — that the branch may
+carry its unreported work.
 
 It refuses to run while a `bees run` scheduler is alive (killing sessions
 under a running scheduler would corrupt its state); pass `--scheduler` to stop
