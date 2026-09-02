@@ -2,9 +2,12 @@ package main
 
 import (
 	"errors"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/session"
 )
 
 // sandboxConfig is a config whose state dir is somewhere nothing else writes,
@@ -76,5 +79,39 @@ func TestMailStateDirReportsLoadFailures(t *testing.T) {
 	boom := errors.New("no bees.toml found")
 	if _, err := mailStateDir("", "", func() (*config.Config, error) { return nil, boom }); !errors.Is(err, boom) {
 		t.Errorf("err = %v, want %v", err, boom)
+	}
+}
+
+// doneLong's status table is derived from session.ValidOutcomes, so it
+// cannot drift from what "bees done" actually validates (#355: it used to
+// be a hardcoded literal that omitted "failed" for both managers).
+func TestDoneLongMatchesValidOutcomes(t *testing.T) {
+	long := doneLong()
+	lines := strings.Split(long, "\n")
+	for _, role := range config.Roles {
+		prefix := "  " + role
+		var statuses []string
+		found := false
+		for _, line := range lines {
+			if !strings.HasPrefix(line, prefix) {
+				continue
+			}
+			found = true
+			rest := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+			statuses = strings.Split(rest, ", ")
+			break
+		}
+		if !found {
+			t.Fatalf("no line for role %q in:\n%s", role, long)
+		}
+
+		want := session.ValidOutcomes(role)
+		got := slices.Clone(statuses)
+		slices.Sort(got)
+		wantSorted := slices.Clone(want)
+		slices.Sort(wantSorted)
+		if !slices.Equal(got, wantSorted) {
+			t.Errorf("role %s: statuses = %v, want %v (session.ValidOutcomes)", role, statuses, want)
+		}
 	}
 }

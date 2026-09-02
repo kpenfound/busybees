@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -263,20 +264,34 @@ managed by people; the factory only inherits them.`
 
 // ---- done ------------------------------------------------------------------
 
+// doneLong builds the done command's Long text from the same authority
+// (session.ValidOutcomes) that validates a reported outcome, so the two
+// cannot drift apart. The role column is aligned to the longest role name
+// in config.Roles.
+func doneLong() string {
+	width := 0
+	for _, role := range config.Roles {
+		if len(role) > width {
+			width = len(role)
+		}
+	}
+	var b strings.Builder
+	b.WriteString("done records the session's outcome for the orchestrator. Valid statuses:\n\n")
+	for _, role := range config.Roles {
+		fmt.Fprintf(&b, "  %-*s  %s\n", width, role, strings.Join(session.ValidOutcomes(role), ", "))
+	}
+	b.WriteString("\npr-opened and pr-updated require a pull request number (--pr or $BEES_PR).")
+	return b.String()
+}
+
 func newDoneCmd() *cobra.Command {
 	var note string
 	var pr, issue int
 	cmd := &cobra.Command{
 		Use:   "done <status>",
 		Short: "Report the outcome of the current session (run by sessions, last thing they do)",
-		Long: `done records the session's outcome for the orchestrator. Valid statuses:
-
-  product_manager  done, idle
-  project_manager  done, idle
-  developer        pr-opened --pr N, pr-updated --pr N, question, failed
-  reviewer         approved, changes-requested, failed
-  qa               done, failed`,
-		Args: cobra.ExactArgs(1),
+		Long:  doneLong(),
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if pr == 0 {
 				pr = envInt(session.EnvPR)
