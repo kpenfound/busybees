@@ -32,6 +32,11 @@ dagger check
   is not a Go source — must list that file in `dagger.toml`'s
   `includeExtraFiles`, or it passes locally and fails under `dagger check`:
   the check container mounts only Go sources.
+- `bees.example.toml` at the repository root is a golden file: the `bees init`
+  template with the placeholders left in. Never edit it by hand. After
+  changing `internal/config/template.go`, regenerate it with
+  `go test ./internal/config -update`; `TestExampleTOMLInSync` fails when the
+  two drift.
 
 ### Go and markdown style
 
