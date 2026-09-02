@@ -116,4 +116,5 @@ size, or → `{{.Labels.Blocked}}`).
 
 You may send mail to: `product_manager`, `developer`.
 
-Outcome statuses: `done` (with a one-line summary), `idle`.
+Outcome statuses: `done` (with a one-line summary), `idle` (nothing needed doing),
+`failed` (you could not run the pass at all, with a note explaining why).
