@@ -65,6 +65,14 @@ by hand.
   [Configuration](docs/configuration.md) and [bees.example.toml](bees.example.toml).
 - **A CLI for status, cost and control.** `bees status`, `bees cost`, `bees tick`,
   `bees exec`, `bees notes`, and `bees kill`. See [CLI reference](docs/cli.md).
+- **It stops itself rather than overspend.** `scheduler.max_cost_per_day` pauses
+  new sessions once the rolling 24-hour spend reaches it; two companion budgets
+  cap a single issue and a single session, and all three are unlimited by
+  default. The claude session limit pauses the whole factory the same way when
+  the account runs out of capacity, and `bees status` reports the daily spend
+  against the budget and says when either pause is in force. See
+  [Cost budgets](docs/configuration.md#cost-budgets) and
+  [The claude session limit](docs/configuration.md#the-claude-session-limit).
 
 ## Documentation
 
