@@ -263,3 +263,73 @@ func TestACooldownStillEscalatesAtTheRoundLimit(t *testing.T) {
 		t.Errorf("the escalation does not say the pull request ran out of review rounds: %q", c)
 	}
 }
+
+// A cool-down that lands between two of a worker's stages has no session to
+// count, and the console must not fall silent for as long as the worker
+// takes to finish the issue it is carrying. The counted line stays exactly
+// what it was: it counts the sessions running at that instant, which is
+// still true, and TestCancellingTheLoopLetsTheRunningSessionFinish pins it
+// through a real run.
+func TestStopNoticeSaysWhatTheWaitIsFor(t *testing.T) {
+	cases := []struct {
+		name     string
+		sessions int
+		held     int
+		cooling  bool
+		want     string
+	}{
+		{"a cool-down with a session running", 1, 1, true,
+			"waiting for 1 running session to finish; interrupt again to stop them now"},
+		{"a cool-down between two stages", 0, 1, true,
+			"waiting for the work in flight to finish; interrupt again to stop it now"},
+		{"a --once run whose sessions are still going", 2, 1, false,
+			"waiting for 2 running sessions to finish"},
+		// Nothing was interrupted, so there is no "again" to offer and the
+		// worker is not being waited out by anybody's request.
+		{"a --once run between two stages", 0, 1, false, ""},
+		{"nothing in flight", 0, 0, true, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := stopNotice(c.sessions, c.held, c.cooling); got != c.want {
+				t.Errorf("stopNotice(%d, %d, %v) = %q, want %q", c.sessions, c.held, c.cooling, got, c.want)
+			}
+		})
+	}
+}
+
+// The wait a person is in is what the line is about, so Run reads the
+// issues workers hold as well as the sessions running: a cool-down landing
+// between two of a worker's stages — here in the pre-review checks wait —
+// has no session to count, and silence would leave the console saying
+// nothing for as long as the worker takes to finish its issue.
+func TestACooldownBetweenTwoStagesSaysWhatItIsWaitingFor(t *testing.T) {
+	// Two seconds of pre-review wait is the gap the cancel lands in. The
+	// developer session is released first and the reviewer's cannot start
+	// until the wait is over, so the worker is between stages by
+	// construction rather than by timing.
+	h := newHarness(t, prereviewTOML+"[roles.reviewer]\nchecks_wait = \"2s\"\nchecks_poll_interval = \"10ms\"\n")
+	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true, config.RoleReviewer: true}
+	h.gh.checks = []checksResponse{{`[{"name":"go / test","bucket":"pass","state":"SUCCESS"}]`, nil}}
+	seedCounter(t, h, "review", 1)
+	_, release, cancel, done := startHeldSession(t, h, func(dir string) bool {
+		_, err := os.Stat(filepath.Join(dir, "args.txt"))
+		return err == nil
+	}, "the developer session to start")
+	defer cancel()
+
+	if err := os.WriteFile(release, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 30*time.Second, "the worker to be between two stages", func() bool {
+		return h.sched.liveCount() == 0 && h.sched.heldIssues() > 0
+	})
+	cancel()
+	if err := waitRun(t, done); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if logs := h.logs.String(); !strings.Contains(logs, "waiting for the work in flight to finish; interrupt again to stop it now") {
+		t.Errorf("the console says nothing about the issue the worker is still carrying:\n%s", logs)
+	}
+}

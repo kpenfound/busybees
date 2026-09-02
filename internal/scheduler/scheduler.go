@@ -285,11 +285,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			break
 		}
 	}
-	if n := s.liveCount(); n > 0 {
-		msg := "waiting for " + text.Count(n, "running session") + " to finish"
-		if ctx.Err() != nil {
-			msg += "; interrupt again to stop them now"
-		}
+	if msg := stopNotice(s.liveCount(), s.heldIssues(), ctx.Err() != nil); msg != "" {
 		s.log.Info(msg)
 	}
 	s.wg.Wait()
@@ -337,6 +333,34 @@ func (s *Scheduler) liveCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.live)
+}
+
+// heldIssues is how many issues developer workers are carrying right now.
+func (s *Scheduler) heldIssues() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.owned)
+}
+
+// stopNotice is the line Run logs on its way out, saying what the wait is
+// for: the sessions running at that moment, counted, or — when the cool-down
+// landed between two of a worker's stages, so there is no session to count —
+// the issue that worker is still carrying. Silence there would leave the
+// console saying nothing for as long as the worker takes. Empty when nothing
+// is in flight, and on a tick or --once run the cool-down half is empty too:
+// "again" would name an interrupt that never happened.
+func stopNotice(sessions, held int, cooling bool) string {
+	switch {
+	case sessions > 0:
+		msg := "waiting for " + text.Count(sessions, "running session") + " to finish"
+		if cooling {
+			msg += "; interrupt again to stop them now"
+		}
+		return msg
+	case cooling && held > 0:
+		return "waiting for the work in flight to finish; interrupt again to stop it now"
+	}
+	return ""
 }
 
 // sessionContext is the context a session about to start runs under: the
