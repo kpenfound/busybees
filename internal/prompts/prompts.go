@@ -84,10 +84,11 @@ type Data struct {
 	// and failed for infrastructure reasons (0 on a first attempt).
 	Retry int
 	// Interrupted is the session that ran for this issue before this one and
-	// never finished: a scheduler killed while it worked. Set for the first
-	// session of the role that was interrupted, and nil for every other
-	// session — including every session of a factory that has not been
-	// killed, which renders exactly what it always did.
+	// never finished: a scheduler dying while it worked, or a hard stop.
+	// Set for the first session of the role that was interrupted, and nil
+	// for every other session — including every session of a factory that
+	// was neither killed nor hard-stopped, which renders exactly what it
+	// always did.
 	Interrupted *session.Interrupted
 
 	// FailedChecks is set for the reviewer's checks-mode task.

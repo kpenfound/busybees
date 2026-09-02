@@ -165,12 +165,12 @@ type IssueState struct {
 	PreReviewDone bool   `json:"pre_review_done,omitempty"`
 	// Session is the session the scheduler last started for this issue,
 	// recorded before it runs and cleared when it ends. A record left
-	// behind is what says a session never finished — a scheduler killed
-	// while it ran, or a hard stop: the
-	// directory it names holds a transcript no result file ever closed, and
-	// the branch may carry the partial work that session left. It sits with
-	// the worker's stage rather than in a file of its own because both
-	// answer the same question — where did the last attempt get to
+	// behind is what says a session never finished — a scheduler dying
+	// while it ran, or a hard stop. The directory it names holds a
+	// transcript no result file ever closed, and the branch may carry the
+	// partial work that session left. It sits with the worker's stage
+	// rather than in a file of its own because both answer the same
+	// question — where did the last attempt get to
 	// (scheduler.takeInterrupted). SetIssueSession is its only writer:
 	// SaveIssue carries it over from the file, like the cost totals, so a
 	// worker holding an IssueState across several sessions cannot write
@@ -478,9 +478,9 @@ type Worker struct {
 	// Attempt is the 1-based attempt of the running session; > 1 means the
 	// previous attempt failed for infrastructure reasons and was retried.
 	Attempt int `json:"attempt,omitempty"`
-	// Resumed marks a worker that took over from a session interrupted by a
-	// scheduler that was killed, rather than starting fresh: its branch may
-	// carry work nobody reported.
+	// Resumed marks a worker that took over from a session that never
+	// finished — a scheduler dying while it ran, or a hard stop — rather
+	// than starting fresh: its branch may carry work nobody reported.
 	Resumed bool      `json:"resumed,omitempty"`
 	Since   time.Time `json:"since"`
 }
