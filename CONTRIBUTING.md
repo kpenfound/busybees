@@ -5,13 +5,12 @@
 Iterate with:
 
 ```sh
-go build ./... && go test ./...
+dagger check
 ```
 
 The gate before committing is Dagger:
 
 ```sh
-export DAGGER_X_RELEASE=v1.0.0-beta.11
 dagger check
 ```
 
@@ -45,8 +44,9 @@ Match the style of the surrounding code. For markdown, follow the rules in
 2. Open a pull request. There is deliberately no `push` or `pull_request`
    workflow: `.github/workflows/release.yml` is the only one, and its only
    trigger is a `v*` tag. PR #116 added a CI-on-push workflow and PR #121
-   reverted it sixteen minutes later. `dagger check`, run by hand, is the
-   gate. Do not add a CI workflow back.
+   reverted it sixteen minutes later. All dagger checks run automatically
+   on pull requests with Dagger Cloud Checks.
+
 3. A reviewer goes through the PR. Address feedback and keep `dagger check`
    green until it is approved and merged.
 
