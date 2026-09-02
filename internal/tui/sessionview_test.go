@@ -614,30 +614,38 @@ func TestQIsALetterWhileAMessageIsBeingTyped(t *testing.T) {
 }
 
 // The session view says the factory is stopping, in the panels footer's own
-// words. The first q asks it to stop and the view stays up for the drain;
-// only a second press gives up on it. Without this the screen does not
-// change at all, and a person who reads the first press as a dead key
-// presses again and leaves with sessions still running.
+// words. The first q asks it to stop and the view stays up while the
+// running sessions finish; a second press stops those sessions too and says
+// so. Without this the screen does not change at all, and a person who
+// reads the first press as a dead key presses again without being told what
+// that second press now does.
 func TestStoppingTheFactoryIsSaidInTheSessionViewToo(t *testing.T) {
 	dir := t.TempDir()
 	writeTranscript(t, dir, "reading the issue")
-	stops := 0
+	stops, hard := 0, 0
 	m, _, cmd := watcher(t, dir)
 	m, _ = run(t, m, cmd)
-	m = withStop(m, &stops)
+	m = withStop(m, &stops, &hard)
 
 	m, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
 	if stops != 1 {
 		t.Errorf("q asked the factory to stop %d times, want 1", stops)
 	}
 	if cmd != nil {
-		t.Error("q quit the session view instead of waiting for the drain")
+		t.Error("q quit the session view instead of waiting for the sessions")
 	}
-	if got := plain(m.View()); !strings.Contains(got, "stopping: waiting for 1 session to finish — q or ctrl-c again to leave them running") {
+	if got := plain(m.View()); !strings.Contains(got, "stopping: waiting for 1 running session to finish — q or ctrl-c again stops them now") {
 		t.Errorf("the session view does not say it is stopping:\n%s", got)
 	}
+	m, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	if hard != 1 || cmd != nil {
+		t.Errorf("a second q must stop the sessions and stay up: hard stops %d, cmd %v", hard, cmd)
+	}
+	if got := plain(m.View()); !strings.Contains(got, "stopping 1 running session now") {
+		t.Errorf("the session view does not say the sessions are being stopped:\n%s", got)
+	}
 	if _, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}}); cmd == nil {
-		t.Error("a second q did not quit the session view")
+		t.Error("a third q did not quit the session view")
 	}
 }
 
@@ -650,7 +658,7 @@ func TestTheSessionViewCountsTheSessionsItIsWaitingFor(t *testing.T) {
 	m, _ = run(t, m, cmd)
 
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
-	if got := plain(m.View()); !strings.Contains(got, "stopping: waiting for 2 sessions to finish") {
+	if got := plain(m.View()); !strings.Contains(got, "stopping: waiting for 2 running sessions to finish") {
 		t.Errorf("the session view miscounts what it is waiting for:\n%s", got)
 	}
 }
@@ -658,7 +666,7 @@ func TestTheSessionViewCountsTheSessionsItIsWaitingFor(t *testing.T) {
 // With nothing left running there is nothing to wait for, and the session
 // view says so in the panels footer's words. A session that ended while it
 // was being read is still on screen, which is how a person gets here.
-func TestTheSessionViewSaysDrainingWithNoSessionsLeft(t *testing.T) {
+func TestTheSessionViewSaysStoppingWithNoSessionsLeft(t *testing.T) {
 	dir := t.TempDir()
 	writeTranscript(t, dir, "opening the pull request")
 	m, _, cmd := watcher(t, dir)
@@ -666,8 +674,8 @@ func TestTheSessionViewSaysDrainingWithNoSessionsLeft(t *testing.T) {
 	m, _ = m.Update(ended("developer-issue-12-r1", config.RoleDeveloper, 12, 31, 87, 2.41))
 
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
-	if got := plain(m.View()); !strings.Contains(got, "stopping: draining") {
-		t.Errorf("the session view does not say it is draining:\n%s", got)
+	if got := plain(m.View()); !strings.Contains(got, "stopping: nothing left running") {
+		t.Errorf("the session view does not say nothing is left running:\n%s", got)
 	}
 }
 
@@ -680,7 +688,7 @@ func TestCtrlCWhileTypingAMessageSaysTheFactoryIsStopping(t *testing.T) {
 	stops := 0
 	m, _, cmd := watcher(t, dir)
 	m, _ = run(t, m, cmd)
-	m = withStop(m, &stops)
+	m = withStop(m, &stops, nil)
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
 	for _, r := range "queue a retry" {
 		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
@@ -694,7 +702,7 @@ func TestCtrlCWhileTypingAMessageSaysTheFactoryIsStopping(t *testing.T) {
 		t.Error("ctrl-c quit the session view instead of waiting for the drain")
 	}
 	got := plain(m.View())
-	if !strings.Contains(got, "stopping: waiting for 1 session to finish") {
+	if !strings.Contains(got, "stopping: waiting for 1 running session to finish") {
 		t.Errorf("the composer's footer hides that the factory is stopping:\n%s", got)
 	}
 	if !strings.Contains(got, "› queue a retry") {
@@ -702,11 +710,14 @@ func TestCtrlCWhileTypingAMessageSaysTheFactoryIsStopping(t *testing.T) {
 	}
 }
 
-// withStop gives a model built by watcher somewhere to count stops. watcher
-// builds its own Deps, and a stop counter is the one thing these tests need
-// that a message box cannot carry.
-func withStop(m tea.Model, stops *int) tea.Model {
+// withStop gives a model built by watcher somewhere to count the two stops.
+// watcher builds its own Deps, and the counters are the one thing these
+// tests need that a message box cannot carry. hard may be nil.
+func withStop(m tea.Model, stops, hard *int) tea.Model {
 	v := m.(Model)
 	v.deps.Stop = func() { *stops++ }
+	if hard != nil {
+		v.deps.HardStop = func() { *hard++ }
+	}
 	return v
 }

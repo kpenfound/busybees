@@ -38,8 +38,10 @@ creates the workflow labels the repository is missing (`ensureLabels`: one
 case-insensitively — existing labels are left alone, and a failure only warns),
 then ticks every `scheduler.poll_interval` (default 5m) — or sooner, when a
 local event wakes it (below) — until the context is cancelled. Ctrl-C (and
-`q` under the live view) stops polling and waits for running sessions to
-finish.
+`q` under the live view) stops polling, starts nothing new and waits for
+running sessions to finish; a second interrupt stops them too
+(`Scheduler.HardStop` — see *Stopping* under
+[Running a session](#running-a-session)).
 
 Each tick (`tick`) is either a **full pass** or a **local pass**. A full pass
 runs when the tick is at or past the next scheduled GitHub poll, and schedules
@@ -142,7 +144,10 @@ A full pass is:
 4. **pauses** (`budgets.go`, `limits.go`) – two things can stop steps 5 and 6
    from starting anything new; workers already running finish their loop
    either way, and each pause is logged once when it starts and once when it
-   lifts, and reported by `bees status`.
+   lifts, and reported by `bees status`. (A cancelled loop context gates the
+   same two steps: a pass still finishing when the factory is asked to stop
+   must not start work the cool-down promised not to — see *Stopping* under
+   [Running a session](#running-a-session).)
    - **cost budget** – with `scheduler.max_cost_per_day` set, the ledger is
      summed over the last 24 hours before anything is dispatched. The other
      two budgets are enforced elsewhere: `max_cost_per_issue` between a
@@ -385,10 +390,13 @@ and the turn count the Now panel shows for a session that is still running
 before it). Both cost the scheduler nothing, and the first works just as
 well after the session has finished. While the view is up it also owns Ctrl-C —
 Bubble Tea puts the terminal in raw mode, so the interrupt arrives as a key
-rather than as a signal, and the view cancels the scheduler's context with it
-and stays up until the drain is over; `q` does the same.
+rather than as a signal. The view cancels the scheduler's context with it and
+stays up while the running sessions finish; a second press calls
+`Scheduler.HardStop`, which stops those sessions too, and a third leaves the
+terminal early. `q` does the same.
 
-Its `k` key is the one thing it asks the scheduler to *do*:
+Beyond the two stops above, its `k` key is the one thing it asks the
+scheduler to *do*:
 `Scheduler.KillSession` stops one running session by the name the event
 stream published — `internal/procs`, the same stop path as `bees kill`, over
 the session directory recorded when the session started — and escalates the
@@ -505,8 +513,8 @@ stateDiagram-v2
   the session got (assistant messages counted in the transcript, an
   approximation of the turn count the missing `result` event would have
   carried), where the transcript is, and whether it was stopped on purpose
-  (`bees kill`, and the live view's `k` key, write an `interrupted` marker
-  into the directory they stop).
+  (`bees kill`, the live view's `k` key and `Scheduler.HardStop` write an
+  `interrupted` marker into the directories they stop).
   What to do about it is per role: a developer is told the branch may
   already carry the session's work, a reviewer that its round reported no
   verdict and starts over. Another role's session is told nothing — it could
@@ -768,6 +776,19 @@ saved to `stderr.log` when non-empty, and `result.json` summarises the run.
 - **Timeout.** The role's `timeout` bounds the command context; claude runs in
   its own process group and on expiry the whole group is `SIGKILL`ed so MCP
   servers die with it. The result is marked `TimedOut`.
+- **Stopping.** Sessions do not run under the loop's context: `Run` derives a
+  second one for them, so cancelling the loop — an interrupt, or the live
+  view's stop key — stops polling and dispatch and lets every running session
+  finish, each still bounded by its role's `timeout`. That is the cool-down,
+  and `s.wg.Wait()` at the end of `Run` is what waits it out.
+  `Scheduler.HardStop` — the second interrupt, or the second press in the
+  view — cancels the sessions' context instead: each process group is killed
+  exactly as a timeout kills it, but no result file is written and the
+  running-session record in the issue's bookkeeping is kept, so the directory
+  reads as an interrupted session (`session.CheckInterrupted`) and the next
+  `bees run` resumes the issue and tells its next session what was stopped —
+  the same crash-recovery path a killed scheduler goes through, with a marker
+  saying the stop was deliberate.
 
 Unless `GIT_CONFIG_COUNT` is already set, the runner also exports git
 configuration through `GIT_CONFIG_KEY_n` / `GIT_CONFIG_VALUE_n`, with
@@ -858,7 +879,7 @@ oldest first, and `bees mail` works from any directory because sessions get
   notes/archive/<role>-<ts>.md   notes replaced by `bees notes reset`
   sessions/<ts>-<name>-<rand>/   system-prompt.md, prompt.md, mcp.json, transcript.jsonl,
                                  stderr.log, outcome.json, result.json, pid,
-                                 interrupted (written by `bees kill` and by the view's k key)
+                                 interrupted (written by `bees kill`, the view's k key and a hard stop)
   issues/<n>.json                {number, round, pr, branch, check_fix_rounds, worker_stage,
                                  after_develop, pre_review_done, session, human_seen_at,
                                  issue_human_seen_at, conflict_notified_sha, escalation,

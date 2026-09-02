@@ -35,9 +35,14 @@ type Deps struct {
 	// against. Production passes time.Now; a test passes its own, so a
 	// rendered view never depends on when it was rendered (#222).
 	Now func() time.Time
-	// Stop asks the factory to stop polling and drain, which is what Ctrl-C
-	// and q do. Nil means the view cannot stop anything.
+	// Stop asks the factory to stop polling, start nothing new and let the
+	// running sessions finish, which is what the first Ctrl-C or q does.
+	// Nil means the view cannot stop anything.
 	Stop func()
+	// HardStop stops the running sessions too (Scheduler.HardStop), which
+	// is what a second Ctrl-C or q does once Stop has been asked. Nil means
+	// the view can only wait the sessions out.
+	HardStop func()
 	// Kill stops one running session by the name the event stream gave it
 	// and hands the issue it was working on to a person
 	// (scheduler.KillSession). Nil means the view cannot stop a session.
@@ -161,8 +166,11 @@ type Model struct {
 	height int
 	ticks  int
 	// stopping is set by the first Ctrl-C or q: the factory has been asked
-	// to stop polling and drain, and the view stays up until it has.
-	stopping bool
+	// to stop polling and start nothing new, its running sessions finish,
+	// and the view stays up until they have. hardStopped is the second
+	// press: the running sessions have been stopped too (Deps.HardStop).
+	stopping    bool
+	hardStopped bool
 	// cursor is the selected row of the flat list every panel's rows join
 	// (see targets). notice is the one line the footer shows instead of the
 	// key hints: what the last key did, or why it could not.
@@ -369,13 +377,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // key routes a key press.
 //
 // Ctrl-C and q are handled here rather than in either screen, because
-// stopping the factory is the same thing wherever a person is: both ask it
-// to stop polling and drain, exactly as an interrupt does without the view,
-// and the view stays up while it does — pressing either again gives up on
-// the drain and leaves the terminal, with the sessions still finishing in
-// the background. Neither can be pressed by accident without being told what
-// it did: the footer says what they do before, and what they are doing
-// after.
+// stopping the factory is the same thing wherever a person is. The first
+// press asks it to stop polling and start nothing new, exactly as an
+// interrupt does without the view, and the view stays up while the running
+// sessions finish; the second stops those sessions too (Deps.HardStop),
+// exactly as a second interrupt does; a third gives up on watching and
+// leaves the terminal, with the factory still coming down behind it.
+// Neither can be pressed by accident without being told what it did: the
+// footer says what they do before, and what they are doing after.
 //
 // The one exception is a message being typed in the session view, where q is
 // a letter: Ctrl-C cannot be typed and still stops the factory there, but a
@@ -397,8 +406,15 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if k == "ctrl+c" || (k == "q" && !m.composing()) {
 		m.notice = ""
-		if m.stopping {
+		switch {
+		case m.hardStopped:
 			return m, tea.Quit
+		case m.stopping:
+			m.hardStopped = true
+			if m.deps.HardStop != nil {
+				m.deps.HardStop()
+			}
+			return m, nil
 		}
 		m.stopping = true
 		if m.deps.Stop != nil {
@@ -814,24 +830,42 @@ func (m Model) header(w int) string {
 	return left + strings.Repeat(" ", gap) + right
 }
 
+// stoppingNotice is the footer both screens show once the factory has been
+// asked to stop: which of the two stops is in force — the cool-down, where
+// the running sessions finish, or the hard stop, where they are being killed
+// — and how many sessions it is about. Empty when nothing is stopping.
+func (m Model) stoppingNotice() string {
+	n := len(m.sessions)
+	switch {
+	case m.hardStopped && n > 0:
+		return fmt.Sprintf("stopping %s now", text.Count(n, "running session"))
+	case m.hardStopped:
+		return "stopping"
+	case m.stopping && n > 0:
+		return fmt.Sprintf("stopping: waiting for %s to finish — q or ctrl-c again stops them now",
+			text.Count(n, "running session"))
+	case m.stopping:
+		return "stopping: nothing left running"
+	}
+	return ""
+}
+
 // footer says what the keys do — or, when a key has just done something,
 // what it did and how it went. A notice outranks the hints: a person who
 // has just pressed one of them is owed the answer, and the hints come back
 // as soon as they press anything else.
 func (m Model) footer() string {
+	if s := m.stoppingNotice(); s != "" {
+		return s
+	}
 	switch {
-	case m.stopping && len(m.sessions) > 0:
-		return fmt.Sprintf("stopping: waiting for %s to finish — q or ctrl-c again to leave them running",
-			text.Count(len(m.sessions), "session"))
-	case m.stopping:
-		return "stopping: draining"
 	case m.notice != "":
 		return m.notice
 	case len(m.sessions) > 0:
-		return "↑↓ select · enter watch · o open on GitHub · k stop session · q or ctrl-c stops polling and drains"
+		return "↑↓ select · enter watch · o open on GitHub · k stop session · q or ctrl-c stops (sessions finish)"
 	default:
 		// enter and k both act on a running session, and there are none.
-		return "↑↓ select · o open on GitHub · q or ctrl-c stops polling and drains"
+		return "↑↓ select · o open on GitHub · q or ctrl-c stops (sessions finish)"
 	}
 }
 

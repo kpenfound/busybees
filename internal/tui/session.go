@@ -8,7 +8,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/kpenfound/busybees/internal/prompts"
-	"github.com/kpenfound/busybees/internal/text"
 )
 
 // watch is the session the session view is showing: which session it is,
@@ -293,11 +292,8 @@ func (m Model) sessionTitle() string {
 func (m Model) sessionFooter() string {
 	t := m.watching
 	switch {
-	case m.stopping && len(m.sessions) > 0:
-		return fmt.Sprintf("stopping: waiting for %s to finish — q or ctrl-c again to leave them running",
-			text.Count(len(m.sessions), "session"))
-	case m.stopping:
-		return "stopping: draining"
+	case m.stopping || m.hardStopped:
+		return m.stoppingNotice()
 	case t.composing:
 		return fmt.Sprintf("message for the next %s session%s (enter queues it, esc cancels)",
 			prompts.Title(t.role), on(t.issue, t.pr))
@@ -306,9 +302,9 @@ func (m Model) sessionFooter() string {
 	case t.sent != "":
 		return t.sent
 	case m.deps.Send == nil:
-		return "esc back · ↑/↓ scroll · end follow · q or ctrl-c stops polling and drains"
+		return "esc back · ↑/↓ scroll · end follow · q or ctrl-c stops (sessions finish)"
 	default:
-		return "esc back · ↑/↓ scroll · end follow · m message · q or ctrl-c drains"
+		return "esc back · ↑/↓ scroll · end follow · m message · q or ctrl-c stops (sessions finish)"
 	}
 }
 
