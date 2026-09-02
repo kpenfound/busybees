@@ -91,7 +91,7 @@ func failureCount(f state.OpFailure) string {
 	if f.Count < 2 {
 		return "1 failure"
 	}
-	return fmt.Sprintf("%d consecutive failures over %s", f.Count, shortDur(f.Last.Sub(f.First)))
+	return fmt.Sprintf("%d consecutive failures over %s", f.Count, state.ShortDur(f.Last.Sub(f.First)))
 }
 
 // workersText renders the "developer workers:" section of `bees status`: one
@@ -123,28 +123,6 @@ func workersText(st state.Status) string {
 	return b.String()
 }
 
-// shortDur renders a duration the way bees.toml writes one ("3h10m", "45s"):
-// time.Duration.String() keeps a trailing "0m0s" that says nothing.
-//
-// The rounding to whole seconds happens first, so the rounded value picks the
-// branch: 59.6s rounds up to a whole minute and must print "1m", not the
-// "1m0s" that Duration.String() would give it.
-func shortDur(d time.Duration) string {
-	d = d.Round(time.Second)
-	if d < time.Minute {
-		return d.String()
-	}
-	h, m := int(d/time.Hour), int(d/time.Minute)%60
-	switch {
-	case h == 0:
-		return fmt.Sprintf("%dm", m)
-	case m == 0:
-		return fmt.Sprintf("%dh", h)
-	default:
-		return fmt.Sprintf("%dh%dm", h, m)
-	}
-}
-
 // schedulerLine renders the "scheduler:" line of `bees status`. When
 // scheduler.max_cost_per_day is configured it also carries the rolling 24h
 // spend against it, and says so plainly while dispatch is paused. Both
@@ -164,12 +142,9 @@ func schedulerLine(st state.Status, now time.Time) string {
 	if !st.UpdatedAt.IsZero() {
 		line = fmt.Sprintf("scheduler: pid %d, last poll %s ago", st.PID, now.Sub(st.LastPoll).Round(time.Second))
 	}
-	switch {
-	case st.LimitPausedUntil.After(now):
-		line += fmt.Sprintf("   paused: claude session limit until %s (in %s)",
-			st.LimitPausedUntil.Local().Format("15:04"), shortDur(st.LimitPausedUntil.Sub(now)))
-	case st.BudgetPaused:
-		line += fmt.Sprintf("   paused: daily budget ($%.2f / $%.2f)", st.DaySpendUSD, st.DayBudgetUSD)
+	switch notice := st.PauseNotice(now); {
+	case notice != "":
+		line += "   paused: " + notice
 	case st.DayBudgetUSD > 0:
 		line += fmt.Sprintf("   daily budget: $%.2f / $%.2f", st.DaySpendUSD, st.DayBudgetUSD)
 	}

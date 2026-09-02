@@ -314,7 +314,12 @@ type summary struct {
 	note    string
 	turns   int
 	cost    float64
-	dur     time.Duration
+	// costKnown says whether cost is what the session cost. claude reports
+	// the cost in the result event of its stream alone, so a session that
+	// died before emitting one has no cost rather than a cost of zero, and
+	// the line says so instead of printing $0.00.
+	costKnown bool
+	dur       time.Duration
 }
 
 // summarize emits the one-line report of a finished session. It runs for
@@ -322,12 +327,13 @@ type summary struct {
 func (s *Scheduler) summarize(spec sessionSpec, res *session.Result) {
 	status, note := outcomeOf(res)
 	sum := summary{
-		role:    spec.role,
-		outcome: status,
-		note:    note,
-		turns:   res.NumTurns,
-		cost:    res.CostUSD,
-		dur:     res.Duration,
+		role:      spec.role,
+		outcome:   status,
+		note:      note,
+		turns:     res.NumTurns,
+		cost:      res.CostUSD,
+		costKnown: res.CostKnown,
+		dur:       res.Duration,
 	}
 	if spec.data.Issue != nil {
 		sum.issue = spec.data.Issue.Number
@@ -346,6 +352,9 @@ func (s *Scheduler) summarize(spec sessionSpec, res *session.Result) {
 // formatSummary renders a session summary:
 //
 //	<mark> <role title> <subject> <phrase>[: "<note>"] (<turns>, $<cost>, <duration>)
+//
+// A session whose cost is not known — one killed before claude reported it
+// — reads "cost unknown" where the amount goes.
 func formatSummary(sum summary) string {
 	var b strings.Builder
 	b.WriteString(summaryMark(sum.outcome))
@@ -357,7 +366,11 @@ func formatSummary(sum summary) string {
 	if sum.note != "" {
 		b.WriteString(`: "` + oneLine(sum.note, noteLimit) + `"`)
 	}
-	fmt.Fprintf(&b, " (%s, $%.2f, %s)", text.Count(sum.turns, "turn"), sum.cost, sum.dur.Round(time.Second))
+	cost := "cost unknown"
+	if sum.costKnown {
+		cost = fmt.Sprintf("$%.2f", sum.cost)
+	}
+	fmt.Fprintf(&b, " (%s, %s, %s)", text.Count(sum.turns, "turn"), cost, sum.dur.Round(time.Second))
 	return b.String()
 }
 

@@ -594,6 +594,15 @@ bottom up — Approved PRs first, then Needs human, then Recent. The header,
 Now, Queues and the footer are the last things to go, and Queues goes on
 counting whatever the panels below it stopped listing.
 
+Whenever dispatch is paused, the header says so and why, next to the clock —
+so a factory sitting on a full queue with an empty Now panel does not read as
+idle. See [`bees status`](#bees-status---json) for what the numbers mean and
+when each pause lifts:
+
+```
+busybees  acme/widgets                                 ⏸ daily budget ($101.20 / $100.00)   10:03:08
+```
+
 While the view is up, console logging is silenced — it would scribble over
 the panels — and `<state_dir>/bees.log` gets every record, so nothing is
 lost. `--no-tui`, a redirected or piped stdout, and `bees tick` log as

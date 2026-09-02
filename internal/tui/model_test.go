@@ -383,6 +383,78 @@ func TestApprovedPanelListsWhatIsWaitingToBeMerged(t *testing.T) {
 	}
 }
 
+// The header says whenever dispatch is paused and why, with the numbers
+// behind it: a paused factory whose Now panel is empty otherwise reads
+// exactly like an idle one (#367). The clock the test drives against is in
+// time.Local, like schedulerLine's own tests, because the notice prints a
+// wall-clock time.
+func TestHeaderShowsWhyDispatchIsPaused(t *testing.T) {
+	local := time.Date(2026, 8, 31, 10, 3, 0, 0, time.Local)
+	deps := Deps{Repo: "acme/widgets", Now: func() time.Time { return local }}
+	for _, tc := range []struct {
+		name   string
+		status state.Status
+		want   string
+	}{
+		{
+			name:   "claude session limit",
+			status: state.Status{LimitPausedUntil: local.Add(42 * time.Minute)},
+			want:   "⏸ claude session limit until 10:45 (in 42m)",
+		},
+		{
+			name:   "daily budget",
+			status: state.Status{BudgetPaused: true, DaySpendUSD: 323.8, DayBudgetUSD: 300},
+			want:   "⏸ daily budget ($323.80 / $300.00)",
+		},
+		{
+			// The session-limit pause is the harder stop and wins while it
+			// is in force.
+			name: "both",
+			status: state.Status{LimitPausedUntil: local.Add(42 * time.Minute),
+				BudgetPaused: true, DaySpendUSD: 323.8, DayBudgetUSD: 300},
+			want: "⏸ claude session limit until 10:45 (in 42m)",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			view := drive(t, deps, statusMsg{status: tc.status})
+			if !strings.Contains(view, tc.want) {
+				t.Errorf("the header does not say %q:\n%s", tc.want, view)
+			}
+		})
+	}
+}
+
+// With neither pause in force the header carries no trace of the notice,
+// whatever the daily budget fields say: a budget being spent is not a
+// condition that stops the factory, so it stays out of the header (the
+// unpaused "daily budget: $x / $y" clause is `bees status`'s own, not the
+// live view's).
+func TestHeaderIsUnchangedWithNoPause(t *testing.T) {
+	deps := Deps{Repo: "acme/widgets", Now: func() time.Time { return fixed }}
+	bare := drive(t, deps)
+	withBudget := drive(t, deps, statusMsg{status: state.Status{DaySpendUSD: 42.1, DayBudgetUSD: 100}})
+	firstLine := func(v string) string { return strings.SplitN(v, "\n", 2)[0] }
+	if got, want := firstLine(withBudget), firstLine(bare); got != want {
+		t.Errorf("the header changed with no pause in force:\ngot  %q\nwant %q", got, want)
+	}
+	if strings.Contains(firstLine(bare), "⏸") {
+		t.Errorf("the header shows a pause the factory is not observing:\n%s", firstLine(bare))
+	}
+}
+
+// The pause notice's ⏸ is a wide rune, and the header's gap already clamps
+// at a minimum of one column, so a narrow terminal degrades instead of
+// panicking.
+func TestHeaderDegradesInANarrowTerminal(t *testing.T) {
+	deps := Deps{Repo: "acme/widgets", Now: func() time.Time { return fixed }}
+	view := drive(t, deps,
+		tea.WindowSizeMsg{Width: 20, Height: panelHeight},
+		statusMsg{status: state.Status{BudgetPaused: true, DaySpendUSD: 323.8, DayBudgetUSD: 300}})
+	if !strings.Contains(view, "⏸") {
+		t.Errorf("a narrow terminal drops the pause notice instead of degrading:\n%s", view)
+	}
+}
+
 // runCmd runs the command a key returned and gives back the message it
 // produced. The keys that do something outside the model — stopping a
 // session, opening a browser — do it in a command so the view keeps drawing
