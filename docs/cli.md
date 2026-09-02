@@ -420,8 +420,11 @@ work. It does not wait out the interval for what happens locally: a finished
 session wakes it, so a freed developer slot and mail one role wrote to another
 are picked up at once, without polling GitHub again. Ctrl-C — or `q` in
 [the live view](#the-live-view) — stops polling, starts nothing new and waits
-for running sessions to finish, each still bounded by its role's `timeout`; a
-second Ctrl-C stops them now.
+for the work already in flight to finish. An issue a developer worker holds
+goes on through the stages it has left — a developer session is followed by
+the review that belongs with it — until it is approved, escalated, out of
+`max_review_rounds` or over `max_cost_per_issue`; each session is still
+bounded by its role's `timeout`. A second Ctrl-C stops them now.
 
 Before the first poll it runs the cheap half of [`bees doctor`](#bees-doctor) —
 every check except the `roles` group, which clones skills and starts MCP
@@ -556,12 +559,17 @@ The keys:
 | `enter` | Watch the selected session's transcript (below). |
 | `o` | Open the selected issue or pull request on GitHub. |
 | `k` | Stop the selected session and hand its issue to a person. It asks first, naming the session: press `k` again to stop the one it named. |
-| `q`, `ctrl-c` | Stop the factory: nothing new starts and the running sessions finish. Press again to stop those sessions now, and a third time to leave the terminal early. |
+| `q`, `ctrl-c` | Stop the factory: nothing new starts and the work in flight finishes. Press again to stop the running sessions now, and a third time to leave the terminal early. |
 
 `q` and Ctrl-C stop the factory exactly as an interrupt does without the
 view: polling stops, nothing new starts, and the view stays up — its footer
-counting the sessions still running — until they have finished. Pressing
-either again stops those sessions now, killed mid-work the way a
+saying what it is still waiting for — until the work in flight is done. An
+issue a developer worker already holds is not left mid-loop: it runs on
+through its remaining stages, so the review that belongs with a developer
+session that was running still starts, and the Now panel picks it up like
+any other session; the work item ends where the loop ends it — approved,
+escalated, out of review rounds or over its cost budget. Pressing either
+again stops the running sessions now, killed mid-work the way a
 [crashed scheduler](architecture.md#running-a-session) would leave them, so
 the next `bees run` resumes each issue and tells its next session what was
 interrupted. A third press leaves the terminal and waits out whatever is

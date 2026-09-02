@@ -36,7 +36,7 @@ type Deps struct {
 	// rendered view never depends on when it was rendered (#222).
 	Now func() time.Time
 	// Stop asks the factory to stop polling, start nothing new and let the
-	// running sessions finish, which is what the first Ctrl-C or q does.
+	// work in flight finish, which is what the first Ctrl-C or q does.
 	// Nil means the view cannot stop anything.
 	Stop func()
 	// HardStop stops the running sessions too (Scheduler.HardStop), which
@@ -166,8 +166,8 @@ type Model struct {
 	height int
 	ticks  int
 	// stopping is set by the first Ctrl-C or q: the factory has been asked
-	// to stop polling and start nothing new, its running sessions finish,
-	// and the view stays up until they have. hardStopped is the second
+	// to stop polling and start nothing new, the work in flight finishes,
+	// and the view stays up until it has. hardStopped is the second
 	// press: the running sessions have been stopped too (Deps.HardStop).
 	stopping    bool
 	hardStopped bool
@@ -379,8 +379,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // Ctrl-C and q are handled here rather than in either screen, because
 // stopping the factory is the same thing wherever a person is. The first
 // press asks it to stop polling and start nothing new, exactly as an
-// interrupt does without the view, and the view stays up while the running
-// sessions finish; the second stops those sessions too (Deps.HardStop),
+// interrupt does without the view, and the view stays up while the work in
+// flight finishes; the second stops the running sessions too (Deps.HardStop),
 // exactly as a second interrupt does; a third gives up on watching and
 // leaves the terminal, with the factory still coming down behind it.
 // Neither can be pressed by accident without being told what it did: the
@@ -838,8 +838,9 @@ func (m Model) header(w int) string {
 
 // stoppingNotice is the footer both screens show once the factory has been
 // asked to stop: which of the two stops is in force — the cool-down, where
-// the running sessions finish, or the hard stop, where they are being killed
-// — and how many sessions it is about. Empty when nothing is stopping.
+// the work in flight finishes, or the hard stop, where the running sessions
+// are being killed — and how many sessions it is about. Empty when nothing
+// is stopping.
 func (m Model) stoppingNotice() string {
 	n := len(m.sessions)
 	switch {
@@ -851,7 +852,9 @@ func (m Model) stoppingNotice() string {
 		return fmt.Sprintf("stopping: waiting for %s to finish — q or ctrl-c again stops them now",
 			text.Count(n, "running session"))
 	case m.stopping:
-		return "stopping: nothing left running"
+		// Not "nothing left running": a developer worker between two of
+		// its stages has no session and is still carrying its issue.
+		return "stopping: waiting for the work in flight to finish — q or ctrl-c again stops it now"
 	}
 	return ""
 }

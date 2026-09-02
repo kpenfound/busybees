@@ -20,9 +20,15 @@ import (
 // cannot finish before the test decides what happens to it — cancelling the
 // loop is racing nothing. It returns the session directory, the release
 // path, the loop's cancel and the channel Run's error arrives on.
+//
+// The developer is the only role that runs unless the caller has already
+// said otherwise: a test about what the worker does after that session
+// enables the reviewer too.
 func startHeldSession(t *testing.T, h *harness, cond func(dir string) bool, what string) (dir, release string, cancel context.CancelFunc, done chan error) {
 	t.Helper()
-	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true}
+	if h.sched.OnlyRoles == nil {
+		h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true}
+	}
 	release = filepath.Join(t.TempDir(), "release")
 	t.Setenv("FAKE_WAIT_FOR", release)
 	seedReady(h, 1, "s", time.Now().Add(-time.Hour))
@@ -163,4 +169,167 @@ func TestNoSessionStartsAfterTheLoopIsCancelled(t *testing.T) {
 func TestHardStopOutsideRunDoesNothing(t *testing.T) {
 	h := newHarness(t, devOnlyTOML)
 	h.sched.HardStop()
+}
+
+// One work item's develop -> review loop is one piece of work in progress,
+// so a cool-down carries it to a natural end: the developer session that was
+// running when the loop's context was cancelled is followed by the review
+// that belongs with it, and the issue reaches approval (#339). Before the
+// change the worker checked the loop's context between stages, so a stop
+// landed mid-issue and the review never ran.
+func TestACooldownCarriesTheWorkerIntoItsReview(t *testing.T) {
+	h := newHarness(t, prereviewTOML)
+	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true, config.RoleReviewer: true}
+	// The pre-review read has an answer, and the first review approves
+	// rather than asking for a round the cool-down would have to carry too.
+	h.gh.checks = []checksResponse{{`[{"name":"go / test","bucket":"pass","state":"SUCCESS"}]`, nil}}
+	seedCounter(t, h, "review", 1)
+	_, release, cancel, done := startHeldSession(t, h, func(dir string) bool {
+		_, err := os.Stat(filepath.Join(dir, "args.txt"))
+		return err == nil
+	}, "the developer session to start")
+	defer cancel()
+
+	cancel()
+	if err := os.WriteFile(release, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := waitRun(t, done); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if n := len(h.sessions(config.RoleReviewer)); n != 1 {
+		t.Fatalf("%d reviewer sessions after the loop was cancelled, want 1: the worker must run the stages its issue has left", n)
+	}
+	if got := h.gh.history[1]; len(got) == 0 || got[len(got)-1] != "bees:approved" {
+		t.Errorf("issue 1 label history %v, want it to end at bees:approved", got)
+	}
+}
+
+// The hard stop is the other half: it cancels the context the worker itself
+// runs under, so the developer session is killed and the review that would
+// have followed it does not run.
+func TestAHardStopEndsTheWorkerBeforeItsReview(t *testing.T) {
+	h := newHarness(t, prereviewTOML)
+	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true, config.RoleReviewer: true}
+	// The release file is never created: only the hard stop ends the session.
+	_, _, cancel, done := startHeldSession(t, h, func(dir string) bool {
+		_, err := os.Stat(filepath.Join(dir, procs.PIDFile))
+		return err == nil
+	}, "the developer session's process")
+	defer cancel()
+
+	cancel()
+	h.sched.HardStop()
+	if err := waitRun(t, done); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if n := len(h.sessions(config.RoleReviewer)); n != 0 {
+		t.Errorf("%d reviewer sessions after a hard stop, want 0: the worker must end where it stands", n)
+	}
+}
+
+// The exits the loop already has are what bounds a cool-down, and they still
+// work in one: a worker that runs out of review rounds escalates the issue
+// and returns, exactly as it does with the loop still running.
+func TestACooldownStillEscalatesAtTheRoundLimit(t *testing.T) {
+	h := newHarness(t, strings.Replace(prereviewTOML, "max_review_rounds = 3", "max_review_rounds = 1", 1))
+	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true, config.RoleReviewer: true}
+	h.gh.checks = []checksResponse{{`[{"name":"go / test","bucket":"pass","state":"SUCCESS"}]`, nil}}
+	// The one round this issue has requests changes, which is the round
+	// limit reached.
+	_, release, cancel, done := startHeldSession(t, h, func(dir string) bool {
+		_, err := os.Stat(filepath.Join(dir, "args.txt"))
+		return err == nil
+	}, "the developer session to start")
+	defer cancel()
+
+	cancel()
+	if err := os.WriteFile(release, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := waitRun(t, done); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if n := len(h.sessions(config.RoleReviewer)); n != 1 {
+		t.Fatalf("%d reviewer sessions, want 1: the round limit must end the loop, not the cool-down", n)
+	}
+	if got := h.gh.history[1]; len(got) == 0 || got[len(got)-1] != "bees:needs-human" {
+		t.Errorf("issue 1 label history %v, want it to end at bees:needs-human", got)
+	}
+	if c := strings.Join(h.gh.comments[1], "\n"); !strings.Contains(c, "review round") {
+		t.Errorf("the escalation does not say the pull request ran out of review rounds: %q", c)
+	}
+}
+
+// A cool-down that lands between two of a worker's stages has no session to
+// count, and the console must not fall silent for as long as the worker
+// takes to finish the issue it is carrying. The counted line stays exactly
+// what it was: it counts the sessions running at that instant, which is
+// still true, and TestCancellingTheLoopLetsTheRunningSessionFinish pins it
+// through a real run.
+func TestStopNoticeSaysWhatTheWaitIsFor(t *testing.T) {
+	cases := []struct {
+		name     string
+		sessions int
+		held     int
+		cooling  bool
+		want     string
+	}{
+		{"a cool-down with a session running", 1, 1, true,
+			"waiting for 1 running session to finish; interrupt again to stop them now"},
+		{"a cool-down between two stages", 0, 1, true,
+			"waiting for the work in flight to finish; interrupt again to stop it now"},
+		{"a --once run whose sessions are still going", 2, 1, false,
+			"waiting for 2 running sessions to finish"},
+		// Nothing was interrupted, so there is no "again" to offer and the
+		// worker is not being waited out by anybody's request.
+		{"a --once run between two stages", 0, 1, false, ""},
+		{"nothing in flight", 0, 0, true, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := stopNotice(c.sessions, c.held, c.cooling); got != c.want {
+				t.Errorf("stopNotice(%d, %d, %v) = %q, want %q", c.sessions, c.held, c.cooling, got, c.want)
+			}
+		})
+	}
+}
+
+// The wait a person is in is what the line is about, so Run reads the
+// issues workers hold as well as the sessions running: a cool-down landing
+// between two of a worker's stages — here in the pre-review checks wait —
+// has no session to count, and silence would leave the console saying
+// nothing for as long as the worker takes to finish its issue.
+func TestACooldownBetweenTwoStagesSaysWhatItIsWaitingFor(t *testing.T) {
+	// Two seconds of pre-review wait is the gap the cancel lands in. The
+	// developer session is released first and the reviewer's cannot start
+	// until the wait is over, so the worker is between stages by
+	// construction rather than by timing.
+	h := newHarness(t, prereviewTOML+"[roles.reviewer]\nchecks_wait = \"2s\"\nchecks_poll_interval = \"10ms\"\n")
+	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true, config.RoleReviewer: true}
+	h.gh.checks = []checksResponse{{`[{"name":"go / test","bucket":"pass","state":"SUCCESS"}]`, nil}}
+	seedCounter(t, h, "review", 1)
+	_, release, cancel, done := startHeldSession(t, h, func(dir string) bool {
+		_, err := os.Stat(filepath.Join(dir, "args.txt"))
+		return err == nil
+	}, "the developer session to start")
+	defer cancel()
+
+	if err := os.WriteFile(release, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 30*time.Second, "the worker to be between two stages", func() bool {
+		return h.sched.liveCount() == 0 && h.sched.heldIssues() > 0
+	})
+	cancel()
+	if err := waitRun(t, done); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if logs := h.logs.String(); !strings.Contains(logs, "waiting for the work in flight to finish; interrupt again to stop it now") {
+		t.Errorf("the console says nothing about the issue the worker is still carrying:\n%s", logs)
+	}
 }

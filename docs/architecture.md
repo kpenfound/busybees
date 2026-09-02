@@ -38,9 +38,10 @@ creates the workflow labels the repository is missing (`ensureLabels`: one
 case-insensitively — existing labels are left alone, and a failure only warns),
 then ticks every `scheduler.poll_interval` (default 5m) — or sooner, when a
 local event wakes it (below) — until the context is cancelled. Ctrl-C (and
-`q` under the live view) stops polling, starts nothing new and waits for
-running sessions to finish; a second interrupt stops them too
-(`Scheduler.HardStop` — see *Stopping* under
+`q` under the live view) stops polling, starts nothing new and waits for the
+work in flight to finish: the running sessions, and each issue a developer
+worker holds, on through the stages it has left. A second interrupt stops
+the sessions too (`Scheduler.HardStop` — see *Stopping* under
 [Running a session](#running-a-session)).
 
 Each tick (`tick`) is either a **full pass** or a **local pass**. A full pass
@@ -391,9 +392,9 @@ before it). Both cost the scheduler nothing, and the first works just as
 well after the session has finished. While the view is up it also owns Ctrl-C —
 Bubble Tea puts the terminal in raw mode, so the interrupt arrives as a key
 rather than as a signal. The view cancels the scheduler's context with it and
-stays up while the running sessions finish; a second press calls
-`Scheduler.HardStop`, which stops those sessions too, and a third leaves the
-terminal early. `q` does the same.
+stays up while the work in flight finishes; a second press calls
+`Scheduler.HardStop`, which stops the running sessions too, and a third leaves
+the terminal early. `q` does the same.
 
 Beyond the two stops above, its `k` key is the one thing it asks the
 scheduler to *do*:
@@ -779,8 +780,14 @@ saved to `stderr.log` when non-empty, and `result.json` summarises the run.
 - **Stopping.** Sessions do not run under the loop's context: `Run` derives a
   second one for them, so cancelling the loop — an interrupt, or the live
   view's stop key — stops polling and dispatch and lets every running session
-  finish, each still bounded by its role's `timeout`. That is the cool-down,
-  and `s.wg.Wait()` at the end of `Run` is what waits it out.
+  finish, each still bounded by its role's `timeout`. A developer worker runs
+  under that context too (`workIssue`), so an issue one already holds is
+  carried through the stages it has left rather than dropped between two of
+  them: the loop ends where it always ends, at an approval, an escalation,
+  `max_review_rounds` or `max_cost_per_issue`. The gate that stops a *new*
+  issue being taken, and every singleton, is the loop's context and stays
+  there. That is the cool-down, and `s.wg.Wait()` at the end of `Run` is what
+  waits it out.
   `Scheduler.HardStop` — the second interrupt, or the second press in the
   view — cancels the sessions' context instead: each process group is killed
   exactly as a timeout kills it, but no result file is written and the

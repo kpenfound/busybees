@@ -9,7 +9,7 @@ import (
 // hardStopOnSecondInterrupt makes a second Ctrl-C (or SIGTERM) stop the
 // factory's running sessions. The first interrupt is consumed by main's
 // signal.NotifyContext, which cancels the command context — the cool-down:
-// polling stops and the running sessions finish — and a context can only be
+// polling stops and the work in flight finishes — and a context can only be
 // cancelled once, so without this a second interrupt would do nothing at all
 // and a person who wants out would be stuck waiting on a long session.
 //

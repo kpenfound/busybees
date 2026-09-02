@@ -146,9 +146,11 @@ type Scheduler struct {
 	// sessionCtx is the context every session runs under while Run is
 	// running, and stopSessions cancels it. It is derived from Run's context
 	// but not cancelled with it: cancelling the loop stops polling and
-	// dispatch and lets the running sessions finish (each still bounded by
-	// its role's timeout), which is the cool-down an interrupt or the live
-	// view's stop key asks for. HardStop is the other stop: it cancels this
+	// dispatch and lets the work in flight finish — every running session
+	// (each still bounded by its role's timeout), and every issue a
+	// developer worker already holds, through the stages it has left
+	// (workIssue) — which is the cool-down an interrupt or the live view's
+	// stop key asks for. HardStop is the other stop: it cancels this
 	// context, which kills every running session's process group. Both are
 	// nil outside Run — a session started another way (`bees exec`) runs
 	// under its caller's context and dies with it, as it always has.
@@ -217,8 +219,10 @@ func New(d Deps) (*Scheduler, error) {
 
 // Run executes the loop until ctx is cancelled (or, with Once, until one
 // pass and the work it started have completed). Cancelling ctx stops
-// nothing that is already running: the loop starts no new session and waits
-// for the ones in flight to finish, and HardStop is what stops those too.
+// nothing that is already running: the loop takes no new issue and starts no
+// singleton, and waits for the work in flight — the running sessions, and
+// the rest of the loop of every issue a developer worker holds — to finish.
+// HardStop is what stops that too.
 func (s *Scheduler) Run(ctx context.Context) error {
 	if err := s.store.Init(); err != nil {
 		return err
@@ -281,11 +285,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			break
 		}
 	}
-	if n := s.liveCount(); n > 0 {
-		msg := "waiting for " + text.Count(n, "running session") + " to finish"
-		if ctx.Err() != nil {
-			msg += "; interrupt again to stop them now"
-		}
+	if msg := stopNotice(s.liveCount(), s.heldIssues(), ctx.Err() != nil); msg != "" {
 		s.log.Info(msg)
 	}
 	s.wg.Wait()
@@ -333,6 +333,34 @@ func (s *Scheduler) liveCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.live)
+}
+
+// heldIssues is how many issues developer workers are carrying right now.
+func (s *Scheduler) heldIssues() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.owned)
+}
+
+// stopNotice is the line Run logs on its way out, saying what the wait is
+// for: the sessions running at that moment, counted, or — when the cool-down
+// landed between two of a worker's stages, so there is no session to count —
+// the issue that worker is still carrying. Silence there would leave the
+// console saying nothing for as long as the worker takes. Empty when nothing
+// is in flight, and on a tick or --once run the cool-down half is empty too:
+// "again" would name an interrupt that never happened.
+func stopNotice(sessions, held int, cooling bool) string {
+	switch {
+	case sessions > 0:
+		msg := "waiting for " + text.Count(sessions, "running session") + " to finish"
+		if cooling {
+			msg += "; interrupt again to stop them now"
+		}
+		return msg
+	case cooling && held > 0:
+		return "waiting for the work in flight to finish; interrupt again to stop it now"
+	}
+	return ""
 }
 
 // sessionContext is the context a session about to start runs under: the
@@ -1151,7 +1179,11 @@ func (s *Scheduler) dispatchDevelopers(ctx context.Context, snap *snapshot, loca
 				// the tick after all.
 				s.signal()
 			}()
-			if err := s.workIssue(ctx, issue, w); err != nil && ctx.Err() == nil {
+			// The worker runs under the sessions' context and keeps going
+			// through a cool-down (workIssue), so a failure during one is a
+			// real failure and earns its log line and its backoff. Only the
+			// hard stop that cancels that context makes them noise.
+			if err := s.workIssue(ctx, issue, w); err != nil && s.sessionContext(ctx).Err() == nil {
 				s.log.Error("developer worker failed", "issue", issue.Number, "err", err)
 				s.setBackoff(fmt.Sprintf("issue-%d", issue.Number), 5*s.cfg.Scheduler.PollInterval.Duration)
 			}

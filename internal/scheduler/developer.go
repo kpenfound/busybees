@@ -39,6 +39,22 @@ func (s *Scheduler) BranchFor(issue int) string {
 // checks were interrupted) until the reviewer approves it, the developer asks
 // a question, or the factory gives up.
 func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.Worker) error {
+	// One work item's develop -> review -> checks loop is one piece of work
+	// in progress, even though several roles take part in it, so a worker
+	// that already holds an issue runs under the sessions' own context: a
+	// cool-down (the loop's context cancelled) stops the polling and the
+	// dispatch that would take a *new* issue, and lets this one reach a
+	// natural end — approved, escalated, out of review rounds, or over its
+	// per-issue cost budget. Those bounds are what stops a cool-down running
+	// forever; there is no other limit. A hard stop cancels this context
+	// too, and then the loop below returns at the next stage.
+	//
+	// Not the loop's context, because the whole worker is on it: with only
+	// the loop check swapped, the stages after a cancellation would run
+	// their `gh` and `git` calls on a cancelled context and fail one by one.
+	// Outside Run (`bees exec`) this is the caller's own context, so that
+	// path is unchanged.
+	ctx = s.sessionContext(ctx)
 	branch := s.BranchFor(issue.Number)
 	log := s.log.With("worker", w.Name, "issue", issue.Number, "branch", branch)
 
@@ -98,6 +114,9 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 	var reviewStatus string
 
 	for {
+		// The sessions' context, so this is the hard stop and not the
+		// cool-down: the stage the worker was about to start is left in the
+		// bookkeeping above for a restarted scheduler to resume.
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
