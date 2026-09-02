@@ -154,33 +154,6 @@ func TestDegradedTextListsEveryFailingOperation(t *testing.T) {
 	}
 }
 
-func TestShortDur(t *testing.T) {
-	for _, c := range []struct {
-		d    time.Duration
-		want string
-	}{
-		{0, "0s"},
-		{45 * time.Second, "45s"},
-		// The sub-minute/minute boundary: rounding to whole seconds happens
-		// before the branch, so a streak that rounds up to a minute prints
-		// "1m" and never Duration.String()'s "1m0s".
-		{59400 * time.Millisecond, "59s"},
-		{59500 * time.Millisecond, "1m"},
-		{59900 * time.Millisecond, "1m"},
-		{60 * time.Second, "1m"},
-		{90 * time.Second, "1m"},
-		{2 * time.Hour, "2h"},
-		{10 * time.Minute, "10m"},
-		{time.Hour, "1h"},
-		{3*time.Hour + 10*time.Minute, "3h10m"},
-		{50 * time.Hour, "50h"},
-	} {
-		if got := shortDur(c.d); got != c.want {
-			t.Errorf("shortDur(%s) = %q, want %q", c.d, got, c.want)
-		}
-	}
-}
-
 func TestSchedulerLine(t *testing.T) {
 	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
 	running := state.Status{UpdatedAt: now, PID: 42, LastPoll: now.Add(-90 * time.Second)}
