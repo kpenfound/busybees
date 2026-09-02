@@ -45,8 +45,8 @@ var programOptions = func() []tea.ProgramOption {
 
 // Factory is the half of the scheduler the view drives: it subscribes to the
 // event stream, runs until its context is cancelled — which starts nothing
-// new and lets the work in flight finish — and stops the sessions of it too
-// when HardStop is called.
+// new and lets the work in flight finish — and stops the running sessions
+// too when HardStop is called.
 type Factory interface {
 	Subscribe() <-chan scheduler.Event
 	Run(ctx context.Context) error
@@ -57,9 +57,9 @@ type Factory interface {
 //
 // Ctrl-C is handled by the view rather than by a signal, because Bubble Tea
 // puts the terminal in raw mode: the first press cancels the factory's
-// context — which stops polling, starts nothing new and lets the running
-// sessions finish, exactly as an interrupt does without the view — and the
-// view stays up until they have. A second press stops those sessions too
+// context — which stops polling, starts nothing new and lets the work in
+// flight finish, exactly as an interrupt does without the view — and the
+// view stays up until it has. A second press stops the running sessions too
 // (Factory.HardStop), and a third leaves the terminal early; whatever is
 // still coming down, the caller waits for it with the console back.
 //

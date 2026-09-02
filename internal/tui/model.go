@@ -379,8 +379,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // Ctrl-C and q are handled here rather than in either screen, because
 // stopping the factory is the same thing wherever a person is. The first
 // press asks it to stop polling and start nothing new, exactly as an
-// interrupt does without the view, and the view stays up while the running
-// sessions finish; the second stops those sessions too (Deps.HardStop),
+// interrupt does without the view, and the view stays up while the work in
+// flight finishes; the second stops the running sessions too (Deps.HardStop),
 // exactly as a second interrupt does; a third gives up on watching and
 // leaves the terminal, with the factory still coming down behind it.
 // Neither can be pressed by accident without being told what it did: the
@@ -832,8 +832,9 @@ func (m Model) header(w int) string {
 
 // stoppingNotice is the footer both screens show once the factory has been
 // asked to stop: which of the two stops is in force — the cool-down, where
-// the running sessions finish, or the hard stop, where they are being killed
-// — and how many sessions it is about. Empty when nothing is stopping.
+// the work in flight finishes, or the hard stop, where the running sessions
+// are being killed — and how many sessions it is about. Empty when nothing
+// is stopping.
 func (m Model) stoppingNotice() string {
 	n := len(m.sessions)
 	switch {
@@ -845,7 +846,9 @@ func (m Model) stoppingNotice() string {
 		return fmt.Sprintf("stopping: waiting for %s to finish — q or ctrl-c again stops them now",
 			text.Count(n, "running session"))
 	case m.stopping:
-		return "stopping: nothing left running"
+		// Not "nothing left running": a developer worker between two of
+		// its stages has no session and is still carrying its issue.
+		return "stopping: waiting for the work in flight to finish — q or ctrl-c again stops it now"
 	}
 	return ""
 }

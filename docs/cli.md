@@ -563,7 +563,7 @@ The keys:
 
 `q` and Ctrl-C stop the factory exactly as an interrupt does without the
 view: polling stops, nothing new starts, and the view stays up — its footer
-counting the sessions still running — until the work in flight is done. An
+saying what it is still waiting for — until the work in flight is done. An
 issue a developer worker already holds is not left mid-loop: it runs on
 through its remaining stages, so the Now panel can still start the review
 that belongs with a developer session that was running, and the work item

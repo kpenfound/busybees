@@ -663,10 +663,12 @@ func TestTheSessionViewCountsTheSessionsItIsWaitingFor(t *testing.T) {
 	}
 }
 
-// With nothing left running there is nothing to wait for, and the session
-// view says so in the panels footer's words. A session that ended while it
-// was being read is still on screen, which is how a person gets here.
-func TestTheSessionViewSaysStoppingWithNoSessionsLeft(t *testing.T) {
+// With no session running the cool-down is not over: a developer worker
+// carries the issue it holds on through the stages it has left, so the
+// footer says the work in flight is still finishing rather than that
+// nothing is left. A session that ended while it was being read is still on
+// screen, which is how a person gets here.
+func TestTheSessionViewSaysStoppingWithNoSessionRunning(t *testing.T) {
 	dir := t.TempDir()
 	writeTranscript(t, dir, "opening the pull request")
 	m, _, cmd := watcher(t, dir)
@@ -674,8 +676,8 @@ func TestTheSessionViewSaysStoppingWithNoSessionsLeft(t *testing.T) {
 	m, _ = m.Update(ended("developer-issue-12-r1", config.RoleDeveloper, 12, 31, 87, 2.41))
 
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
-	if got := plain(m.View()); !strings.Contains(got, "stopping: nothing left running") {
-		t.Errorf("the session view does not say nothing is left running:\n%s", got)
+	if got := plain(m.View()); !strings.Contains(got, "stopping: waiting for the work in flight to finish") {
+		t.Errorf("the session view does not say the work in flight is still finishing:\n%s", got)
 	}
 }
 
