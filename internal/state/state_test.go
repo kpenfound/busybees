@@ -569,3 +569,92 @@ func TestStatusOmitsAnAbsentBuild(t *testing.T) {
 		t.Errorf("got %q / %q, want both empty", got.Version, got.Revision)
 	}
 }
+
+func TestShortDur(t *testing.T) {
+	for _, c := range []struct {
+		d    time.Duration
+		want string
+	}{
+		{0, "0s"},
+		{45 * time.Second, "45s"},
+		// The sub-minute/minute boundary: rounding to whole seconds happens
+		// before the branch, so a streak that rounds up to a minute prints
+		// "1m" and never Duration.String()'s "1m0s".
+		{59400 * time.Millisecond, "59s"},
+		{59500 * time.Millisecond, "1m"},
+		{59900 * time.Millisecond, "1m"},
+		{60 * time.Second, "1m"},
+		{90 * time.Second, "1m"},
+		{2 * time.Hour, "2h"},
+		{10 * time.Minute, "10m"},
+		{time.Hour, "1h"},
+		{3*time.Hour + 10*time.Minute, "3h10m"},
+		{50 * time.Hour, "50h"},
+	} {
+		if got := ShortDur(c.d); got != c.want {
+			t.Errorf("ShortDur(%s) = %q, want %q", c.d, got, c.want)
+		}
+	}
+}
+
+// PauseNotice is the text `bees status` and the live view's header agree on
+// for why dispatch is paused, or "" when it is not.
+func TestPauseNotice(t *testing.T) {
+	local := time.Date(2026, 3, 1, 12, 0, 0, 0, time.Local)
+	for _, tc := range []struct {
+		name string
+		st   Status
+		now  time.Time
+		want string
+	}{
+		{
+			name: "limit pause",
+			st:   Status{LimitPausedUntil: local.Add(37 * time.Minute)},
+			now:  local,
+			want: "claude session limit until 12:37 (in 37m)",
+		},
+		{
+			name: "budget pause",
+			st:   Status{BudgetPaused: true, DaySpendUSD: 101.2, DayBudgetUSD: 100},
+			now:  local,
+			want: "daily budget ($101.20 / $100.00)",
+		},
+		{
+			// The session-limit pause outranks the budget pause while it is
+			// in force: it is the harder stop.
+			name: "both at once",
+			st: Status{LimitPausedUntil: local.Add(2 * time.Hour),
+				BudgetPaused: true, DaySpendUSD: 101.2, DayBudgetUSD: 100},
+			now:  local,
+			want: "claude session limit until 14:00 (in 2h)",
+		},
+		{
+			name: "neither",
+			st:   Status{DaySpendUSD: 42.1, DayBudgetUSD: 100},
+			now:  local,
+			want: "",
+		},
+		{
+			// A LimitPausedUntil in the past is not a pause at all — nothing
+			// has looked at it since it lifted — so a budget pause behind it
+			// wins, and with no budget pause either the result is "".
+			name: "the session limit has reset, budget pause behind it",
+			st: Status{LimitPausedUntil: local.Add(-time.Minute),
+				BudgetPaused: true, DaySpendUSD: 101.2, DayBudgetUSD: 100},
+			now:  local,
+			want: "daily budget ($101.20 / $100.00)",
+		},
+		{
+			name: "the session limit has reset, no budget pause",
+			st:   Status{LimitPausedUntil: local.Add(-time.Minute)},
+			now:  local,
+			want: "",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.st.PauseNotice(tc.now); got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

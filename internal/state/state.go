@@ -549,6 +549,46 @@ type Status struct {
 	Degraded []OpFailure `json:"degraded,omitempty"`
 }
 
+// PauseNotice says why dispatch is paused, or "" when it is not. The claude
+// session limit is reported before the daily budget: it is the harder stop,
+// and it names the time it lifts because that is the only thing a person can
+// do anything about. A LimitPausedUntil in the past is not a pause at all —
+// nothing has looked at it since it lifted, and a budget pause behind it
+// wins instead.
+func (s Status) PauseNotice(now time.Time) string {
+	switch {
+	case s.LimitPausedUntil.After(now):
+		return fmt.Sprintf("claude session limit until %s (in %s)",
+			s.LimitPausedUntil.Local().Format("15:04"), ShortDur(s.LimitPausedUntil.Sub(now)))
+	case s.BudgetPaused:
+		return fmt.Sprintf("daily budget ($%.2f / $%.2f)", s.DaySpendUSD, s.DayBudgetUSD)
+	default:
+		return ""
+	}
+}
+
+// ShortDur renders a duration the way bees.toml writes one ("3h10m", "45s"):
+// time.Duration.String() keeps a trailing "0m0s" that says nothing.
+//
+// The rounding to whole seconds happens first, so the rounded value picks the
+// branch: 59.6s rounds up to a whole minute and must print "1m", not the
+// "1m0s" that Duration.String() would give it.
+func ShortDur(d time.Duration) string {
+	d = d.Round(time.Second)
+	if d < time.Minute {
+		return d.String()
+	}
+	h, m := int(d/time.Hour), int(d/time.Minute)%60
+	switch {
+	case h == 0:
+		return fmt.Sprintf("%dm", m)
+	case m == 0:
+		return fmt.Sprintf("%dh", h)
+	default:
+		return fmt.Sprintf("%dh%dm", h, m)
+	}
+}
+
 // Escalated is one issue the factory handed to a person: which issue, what
 // it is called, why the factory gave it up and when. The reason is what
 // scheduler.escalate recorded (IssueState.Escalation); it is empty for an
