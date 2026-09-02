@@ -45,7 +45,7 @@ var programOptions = func() []tea.ProgramOption {
 
 // Factory is the half of the scheduler the view drives: it subscribes to the
 // event stream, runs until its context is cancelled — which starts nothing
-// new and lets the running sessions finish — and stops those sessions too
+// new and lets the work in flight finish — and stops the sessions of it too
 // when HardStop is called.
 type Factory interface {
 	Subscribe() <-chan scheduler.Event

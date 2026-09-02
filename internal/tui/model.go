@@ -36,7 +36,7 @@ type Deps struct {
 	// rendered view never depends on when it was rendered (#222).
 	Now func() time.Time
 	// Stop asks the factory to stop polling, start nothing new and let the
-	// running sessions finish, which is what the first Ctrl-C or q does.
+	// work in flight finish, which is what the first Ctrl-C or q does.
 	// Nil means the view cannot stop anything.
 	Stop func()
 	// HardStop stops the running sessions too (Scheduler.HardStop), which
@@ -166,8 +166,8 @@ type Model struct {
 	height int
 	ticks  int
 	// stopping is set by the first Ctrl-C or q: the factory has been asked
-	// to stop polling and start nothing new, its running sessions finish,
-	// and the view stays up until they have. hardStopped is the second
+	// to stop polling and start nothing new, the work in flight finishes,
+	// and the view stays up until it has. hardStopped is the second
 	// press: the running sessions have been stopped too (Deps.HardStop).
 	stopping    bool
 	hardStopped bool
