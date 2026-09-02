@@ -725,8 +725,8 @@ waiting on the branch's required checks, on the checks the pull request happens 
 report, or on nothing at all. See
 [auto-merge](configuration.md#rolesreviewer-only-checks-and-auto-merge).
 
-A worker line ends with `resumed` when the worker took over from a session that a
-killed scheduler left unfinished, rather than starting fresh:
+A worker line ends with `resumed` when the worker took over from a session that
+never finished — a killed scheduler, or a hard stop — rather than starting fresh:
 
 ```
 developer workers:

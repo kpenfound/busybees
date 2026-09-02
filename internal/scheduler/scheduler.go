@@ -127,9 +127,9 @@ type Scheduler struct {
 	// process to stop and a work item to hand over.
 	live   map[string]liveSession
 	killed map[string]bool
-	// interrupted holds, per issue, the session a killed scheduler left
-	// unfinished, until the worker that took the issue over runs a session
-	// of the role it happened to (interrupted.go).
+	// interrupted holds, per issue, the session a killed scheduler or a
+	// hard stop left unfinished, until the worker that took the issue over
+	// runs a session of the role it happened to (interrupted.go).
 	interrupted map[int]*session.Interrupted
 	// alive answers whether a pid is still running, and is how an
 	// interrupted session is told from a running one. nil is procs.Alive;

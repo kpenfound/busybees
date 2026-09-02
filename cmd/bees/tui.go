@@ -18,15 +18,17 @@ import (
 // runWithTUI runs the factory with the terminal UI drawn over it. The view
 // owns the terminal for as long as the factory runs, so the console logging
 // is silenced while it is up and given back before anything else prints —
-// including the drain, which a person who pressed Ctrl-C twice waits out
-// with the console back. <state_dir>/bees.log keeps every record throughout,
-// so nothing the view covers up is lost.
+// including whatever is still coming down, which a person who left the view
+// early (a third Ctrl-C) watches with the console back.
+// <state_dir>/bees.log keeps every record throughout, so nothing the view
+// covers up is lost.
 func runWithTUI(ctx context.Context, a *app, s *scheduler.Scheduler, g *globalFlags, console io.Writer) error {
 	restore := quietConsole(a.logger, g.console, a.cfg.Logging, console)
 	// The view hands the console back itself the moment it comes down, so
-	// the drain a second Ctrl-C leaves running is watched with the console
-	// on. The deferred one is the safety net for the paths that never get
-	// there.
+	// whatever a third Ctrl-C leaves still coming down — sessions the
+	// second press stopped, or ones it never had to — is watched with the
+	// console on. The deferred one is the safety net for the paths that
+	// never get there.
 	var once sync.Once
 	give := func() { once.Do(restore) }
 	defer give()
