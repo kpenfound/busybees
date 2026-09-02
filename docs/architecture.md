@@ -39,9 +39,9 @@ case-insensitively — existing labels are left alone, and a failure only warns)
 then ticks every `scheduler.poll_interval` (default 5m) — or sooner, when a
 local event wakes it (below) — until the context is cancelled. Ctrl-C (and
 `q` under the live view) stops polling, starts nothing new and waits for the
-work in flight to finish, an issue a developer worker holds through the
-stages it has left; a second interrupt stops them too
-(`Scheduler.HardStop` — see *Stopping* under
+work in flight to finish: the running sessions, and each issue a developer
+worker holds, on through the stages it has left. A second interrupt stops
+the sessions too (`Scheduler.HardStop` — see *Stopping* under
 [Running a session](#running-a-session)).
 
 Each tick (`tick`) is either a **full pass** or a **local pass**. A full pass
