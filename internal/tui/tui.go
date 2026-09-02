@@ -18,9 +18,11 @@
 // The view polls no GitHub of its own, and the scheduler never waits for it
 // (an event it has no room for is dropped). Everything it shows it reads
 // from the event stream or from disk: status.json, the mailbox and the
-// per-session transcript.jsonl. It asks the factory to *do* only two things:
-// stop a session, on the k key, through Deps.Kill; and queue a message for
-// the next one, on m, through Deps.Send. It is drawn only when `bees run`
+// per-session transcript.jsonl. Beyond the two stop keys (q and Ctrl-C,
+// which cancel the factory's context and, pressed again, call HardStop), it
+// asks the factory to *do* only two things: stop a session, on the k key,
+// through Deps.Kill; and queue a message for the next one, on m, through
+// Deps.Send. It is drawn only when `bees run`
 // owns a terminal — `bees run --no-tui`, a redirected stdout and `bees tick`
 // log instead, and their output is exactly what it was before there was a
 // view.
@@ -42,30 +44,35 @@ var programOptions = func() []tea.ProgramOption {
 }
 
 // Factory is the half of the scheduler the view drives: it subscribes to the
-// event stream and runs until its context is cancelled.
+// event stream, runs until its context is cancelled — which starts nothing
+// new and lets the running sessions finish — and stops those sessions too
+// when HardStop is called.
 type Factory interface {
 	Subscribe() <-chan scheduler.Event
 	Run(ctx context.Context) error
+	HardStop()
 }
 
 // Run draws the view while f runs, and returns what f returned.
 //
 // Ctrl-C is handled by the view rather than by a signal, because Bubble Tea
 // puts the terminal in raw mode: the first press cancels the factory's
-// context — which is what stops polling and drains, exactly as an interrupt
-// does without the view — and the view stays up until the drain is over. A
-// second press leaves the terminal early; the sessions it started are still
-// finishing, so the caller waits for them with the console back.
+// context — which stops polling, starts nothing new and lets the running
+// sessions finish, exactly as an interrupt does without the view — and the
+// view stays up until they have. A second press stops those sessions too
+// (Factory.HardStop), and a third leaves the terminal early; whatever is
+// still coming down, the caller waits for it with the console back.
 //
-// down is called the moment the view has come down and before the drain is
-// waited out — `bees run` gives the console its logging back there, so the
-// person who pressed Ctrl-C twice watches the sessions finish instead of a
+// down is called the moment the view has come down and before the factory
+// is waited out — `bees run` gives the console its logging back there, so a
+// person who left the view early watches the stop finish instead of a
 // silent terminal. It may be nil.
 func Run(ctx context.Context, d Deps, f Factory, down func()) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	d.Events = f.Subscribe()
 	d.Stop = cancel
+	d.HardStop = f.HardStop
 
 	p := tea.NewProgram(New(d), programOptions()...)
 	done := make(chan error, 1)
@@ -82,10 +89,9 @@ func Run(ctx context.Context, d Deps, f Factory, down func()) error {
 	if down != nil {
 		down()
 	}
-	// Stop the factory if nothing has yet — the person gave up on the
-	// drain, or the view itself failed — and wait for it either way: the
-	// sessions it started are still finishing, and the console has its
-	// logging back to say so.
+	// Stop the factory if nothing has yet — the person left the view, or
+	// it failed on its own — and wait for it either way: whatever is still
+	// coming down logs with the console back.
 	cancel()
 	if runErr := <-done; err == nil {
 		return runErr

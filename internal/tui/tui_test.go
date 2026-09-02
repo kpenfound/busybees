@@ -28,13 +28,16 @@ func headless(t *testing.T) {
 // fakeFactory stands in for the scheduler: it subscribes like one and runs
 // until its context is cancelled or until it is told to stop.
 type fakeFactory struct {
-	events chan scheduler.Event
-	stop   chan struct{}
-	err    error
-	ctxErr error
+	events    chan scheduler.Event
+	stop      chan struct{}
+	err       error
+	ctxErr    error
+	hardStops atomic.Int32
 }
 
 func (f *fakeFactory) Subscribe() <-chan scheduler.Event { return f.events }
+
+func (f *fakeFactory) HardStop() { f.hardStops.Add(1) }
 
 func (f *fakeFactory) Run(ctx context.Context) error {
 	select {
@@ -123,11 +126,11 @@ func TestCtrlCInTheViewCancelsTheFactory(t *testing.T) {
 	_ = keyboard.Close()
 }
 
-// The console comes back before the drain is waited out, not after it. A
-// second Ctrl-C leaves the terminal while the sessions the factory started
-// are still finishing and still logging their summaries, so the hand-back
-// has to happen before Run waits on the factory: otherwise the person
-// watches a silent terminal for as long as the drain takes.
+// The console comes back before the factory is waited out, not after it. A
+// third Ctrl-C leaves the terminal while the factory is still coming down
+// and still logging, so the hand-back has to happen before Run waits on the
+// factory: otherwise the person watches a silent terminal for as long as
+// the stop takes.
 func TestTheTerminalIsHandedBackBeforeTheDrain(t *testing.T) {
 	keys, keyboard := io.Pipe()
 	real := programOptions
@@ -154,7 +157,7 @@ func TestTheTerminalIsHandedBackBeforeTheDrain(t *testing.T) {
 		done <- Run(context.Background(), Deps{Repo: "acme/widgets"}, f,
 			func() { close(handedBack) })
 	}()
-	if _, err := keyboard.Write([]byte{3, 3}); err != nil { // ^C, then ^C again
+	if _, err := keyboard.Write([]byte{3, 3, 3}); err != nil { // ^C: cool down, stop now, leave
 		t.Fatal(err)
 	}
 	select {
@@ -179,6 +182,8 @@ type drainingFactory struct {
 }
 
 func (f *drainingFactory) Subscribe() <-chan scheduler.Event { return f.events }
+
+func (f *drainingFactory) HardStop() {}
 
 func (f *drainingFactory) Run(ctx context.Context) error {
 	<-ctx.Done()

@@ -81,6 +81,19 @@ func fakeClaude() {
 		_, _ = fmt.Fprintln(f, filepath.Base(sessionDir))
 		_ = f.Close()
 	}
+	// FAKE_WAIT_FOR holds the session "running" until the named file exists:
+	// how a test acts on a session that is observably in flight — cancelling
+	// the loop, hard-stopping the factory — with no timing window, because
+	// the session cannot finish before the test creates the file. The wait is
+	// capped so a test that never creates it still ends.
+	if p := os.Getenv("FAKE_WAIT_FOR"); p != "" {
+		for i := 0; i < 3000; i++ {
+			if _, err := os.Stat(p); err == nil {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
 	// FAKE_LIMIT makes a session hit the account-wide claude session limit,
 	// whatever its role: it emits a blocking rate_limit_event. The value is
 	// the resetsAt unix timestamp, or "none" for an event that carried

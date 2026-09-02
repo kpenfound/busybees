@@ -20,10 +20,10 @@ const ResultFile = "result.json"
 const TranscriptFile = "transcript.jsonl"
 
 // InterruptedFile marks a session directory whose session was stopped on
-// purpose — `bees kill` and the live view's kill key write it — so the next
-// session can be told it was stopped rather than left to guess that the
-// machine crashed. It holds one
-// line of prose, which is what MarkInterrupted was given.
+// purpose — `bees kill`, the live view's kill key and the scheduler's hard
+// stop write it — so the next session can be told it was stopped rather
+// than left to guess that the machine crashed. It holds one line of prose,
+// which is what MarkInterrupted was given.
 const InterruptedFile = "interrupted"
 
 // Interrupted describes a session that started and never finished: no

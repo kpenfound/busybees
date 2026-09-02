@@ -172,28 +172,45 @@ func TestEmptyStateReadsAsEmpty(t *testing.T) {
 	}
 }
 
-// Ctrl-C asks the factory to stop polling and drain, and the view stays up
-// while it does — a second press gives up on the drain. Nothing but the
-// factory stopping quits the program on its own.
+// Ctrl-C asks the factory to stop polling and let the running sessions
+// finish, and the view stays up while they do. A second press stops those
+// sessions too (Deps.HardStop) and still stays up; only a third leaves the
+// terminal early. Nothing but the factory stopping quits the program on its
+// own. The footer names the two stops apart, with the count through
+// text.Count so one session never reads "1 sessions" (#338).
 func TestCtrlCStopsTheFactoryAndTheViewWaits(t *testing.T) {
-	stops := 0
-	m := New(Deps{Now: func() time.Time { return fixed }, Stop: func() { stops++ }})
+	stops, hard := 0, 0
+	m := New(Deps{Now: func() time.Time { return fixed }, Stop: func() { stops++ }, HardStop: func() { hard++ }})
 	var view tea.Model = m
 	view, _ = view.Update(started("developer-issue-12-r1", config.RoleDeveloper, 12, 0, fixed, "opus", false))
 
 	view, cmd := view.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
-	if stops != 1 {
-		t.Errorf("ctrl-c asked the factory to stop %d times, want 1", stops)
+	if stops != 1 || hard != 0 {
+		t.Errorf("the first ctrl-c stopped %d times and hard-stopped %d, want 1 and 0", stops, hard)
 	}
 	if cmd != nil {
-		t.Error("ctrl-c quit the view instead of waiting for the drain")
+		t.Error("ctrl-c quit the view instead of waiting for the sessions")
 	}
-	if got := plain(view.View()); !strings.Contains(got, "stopping: waiting for 1 session") {
-		t.Errorf("the view does not say it is stopping:\n%s", got)
+	if got := plain(view.View()); !strings.Contains(got, "stopping: waiting for 1 running session to finish — q or ctrl-c again stops them now") {
+		t.Errorf("the view does not say it is cooling down:\n%s", got)
+	}
+
+	view, cmd = view.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if hard != 1 {
+		t.Errorf("the second ctrl-c hard-stopped %d times, want 1", hard)
+	}
+	if cmd != nil {
+		t.Error("the second ctrl-c quit the view instead of stopping the sessions")
+	}
+	if got := plain(view.View()); !strings.Contains(got, "stopping 1 running session now") {
+		t.Errorf("the view does not say the sessions are being stopped:\n%s", got)
 	}
 
 	if _, cmd = view.Update(tea.KeyMsg{Type: tea.KeyCtrlC}); cmd == nil {
-		t.Error("a second ctrl-c did not quit the view")
+		t.Error("a third ctrl-c did not quit the view")
+	}
+	if hard != 1 {
+		t.Errorf("the third ctrl-c hard-stopped again (%d times in all): it only leaves the terminal", hard)
 	}
 	if _, cmd = view.Update(Stopped{}); cmd == nil {
 		t.Error("the factory stopping did not quit the view")
@@ -379,15 +396,15 @@ func runCmd(t *testing.T, cmd tea.Cmd) tea.Msg {
 }
 
 // q stops the factory exactly as Ctrl-C does: the first press asks it to
-// stop polling and drain and the view stays up, the second gives up on the
-// drain. It is a key a person can find without reading anything, so the
-// footer says what it does.
+// stop polling and let the sessions finish and the view stays up, the
+// second stops the sessions too. It is a key a person can find without
+// reading anything, so the footer says what it does.
 func TestQStopsTheFactoryLikeCtrlC(t *testing.T) {
-	stops := 0
-	var view tea.Model = New(Deps{Now: func() time.Time { return fixed }, Stop: func() { stops++ }})
+	stops, hard := 0, 0
+	var view tea.Model = New(Deps{Now: func() time.Time { return fixed }, Stop: func() { stops++ }, HardStop: func() { hard++ }})
 	view, _ = view.Update(tea.WindowSizeMsg{Width: defaultWidth, Height: panelHeight})
 	view, _ = view.Update(started("developer-issue-12-r1", config.RoleDeveloper, 12, 0, fixed, "opus", false))
-	if got := plain(view.View()); !strings.Contains(got, "q or ctrl-c stops polling and drains") {
+	if got := plain(view.View()); !strings.Contains(got, "q or ctrl-c stops (sessions finish)") {
 		t.Errorf("the footer does not say what q does:\n%s", got)
 	}
 
@@ -396,13 +413,13 @@ func TestQStopsTheFactoryLikeCtrlC(t *testing.T) {
 		t.Errorf("q asked the factory to stop %d times, want 1", stops)
 	}
 	if cmd != nil {
-		t.Error("q quit the view instead of waiting for the drain")
+		t.Error("q quit the view instead of waiting for the sessions")
 	}
-	if got := plain(view.View()); !strings.Contains(got, "stopping: waiting for 1 session") {
+	if got := plain(view.View()); !strings.Contains(got, "stopping: waiting for 1 running session") {
 		t.Errorf("the view does not say it is stopping:\n%s", got)
 	}
-	if _, cmd = view.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}}); cmd == nil {
-		t.Error("a second q did not quit the view")
+	if _, cmd = view.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}}); cmd != nil || hard != 1 {
+		t.Errorf("a second q must stop the sessions and stay up: hard stops %d, cmd %v", hard, cmd)
 	}
 }
 

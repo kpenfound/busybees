@@ -165,7 +165,8 @@ type IssueState struct {
 	PreReviewDone bool   `json:"pre_review_done,omitempty"`
 	// Session is the session the scheduler last started for this issue,
 	// recorded before it runs and cleared when it ends. A record left
-	// behind is what says a scheduler was killed while a session ran: the
+	// behind is what says a session never finished — a scheduler killed
+	// while it ran, or a hard stop: the
 	// directory it names holds a transcript no result file ever closed, and
 	// the branch may carry the partial work that session left. It sits with
 	// the worker's stage rather than in a file of its own because both

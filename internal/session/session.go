@@ -187,7 +187,9 @@ type Runner struct {
 }
 
 // Run executes the session and returns its result. An error is returned
-// only when the session could not be started or produced no usable result;
+// only when the session could not be started, produced no usable result, or
+// was stopped by its context being cancelled — that one also leaves no
+// result file, so the session directory reads as an interrupted session;
 // a session that ran but reported failure returns a Result with IsError set.
 func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 	if r.Logger == nil {
@@ -332,6 +334,17 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 		res.IsError = true
 		res.ExitCode = -1
 		res.ErrorSubtype = "timeout"
+	case runCtx.Err() == context.Canceled && waitErr != nil:
+		// The caller cancelled the session — Scheduler.HardStop, or an
+		// interrupt around a run outside the loop — and the process group
+		// was killed before it finished. No result file is written: its
+		// absence is what says a session never finished, and is what lets
+		// CheckInterrupted report the directory as interrupted so the next
+		// run resumes the work through the ordinary crash-recovery path. A
+		// process that had already exited cleanly (waitErr nil) finished
+		// its work whatever the context says, and is reported as usual.
+		r.Logger.Warn("session stopped", "session", req.Name, "role", req.Role.Name)
+		return nil, fmt.Errorf("session stopped: %w", context.Cause(runCtx))
 	case errors.As(waitErr, &exitErr):
 		res.ExitCode = exitErr.ExitCode()
 		res.IsError = true
