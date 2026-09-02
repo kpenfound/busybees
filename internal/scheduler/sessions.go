@@ -84,8 +84,9 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 		d.MaxRounds = s.cfg.Scheduler.MaxReviewRounds
 	}
 	if d.Issue != nil {
-		// What a scheduler killed while working this issue left behind, for
-		// the first session of the role it was killed in.
+		// What a session that never finished on this issue left behind — a
+		// scheduler dying while it worked, or a hard stop — for the first
+		// session of the role it was interrupted in.
 		d.Interrupted = s.interruptedFor(d.Issue.Number, spec.role)
 	}
 
