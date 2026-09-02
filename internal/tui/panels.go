@@ -24,6 +24,13 @@ func (m Model) recentPanel(w, rows, from int) string {
 	out := []string{headerStyle.Render(clip(recentRow("  ", "role", "issue", "pr", "outcome", "took", "cost", "note"), w))}
 	out = append(out, listRows(len(m.recent), rows, func(i int) string {
 		f := m.recent[i]
+		// A session that ended with no result event never reported a cost:
+		// "-" says so, rather than the confident-looking "$0.00" a session
+		// that genuinely cost nothing still prints.
+		cost := "-"
+		if f.costKnown {
+			cost = fmt.Sprintf("$%.2f", f.cost)
+		}
 		// The whole row is coloured, after it has been laid out and cut: a
 		// cell carrying escape sequences would lose recentRow's padding,
 		// which counts bytes, and could be cut mid-escape by clip.
@@ -34,7 +41,7 @@ func (m Model) recentPanel(w, rows, from int) string {
 			number(f.pr),
 			clip(outcomeText(f.outcome), outcomeWidth),
 			dur(f.took),
-			fmt.Sprintf("$%.2f", f.cost),
+			cost,
 			oneLine(f.note),
 		), w))
 	})...)

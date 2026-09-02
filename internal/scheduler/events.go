@@ -70,9 +70,13 @@ type Event struct {
 	// Turns, CostUSD and Duration are what a finished session took, cost
 	// and how long it ran. claude reports all three in the final event of
 	// its stream, so they arrive with session-ended and never before it.
-	Turns    int
-	CostUSD  float64
-	Duration time.Duration
+	// CostKnown is false when a session ended without that final event (a
+	// signalled process, most often), in which case CostUSD is not a real
+	// zero but an unpriced session.
+	Turns     int
+	CostUSD   float64
+	CostKnown bool
+	Duration  time.Duration
 	// Err is set on a poll that failed and on a session that could not be
 	// run at all.
 	Err string
