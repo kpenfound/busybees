@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -30,7 +31,7 @@ import (
 // environment, performs a scripted action and prints a stream-json result.
 //
 // The flags that steer the fake (FAKE_CLAUDE, FAKE_DEV_HANG, FAKE_DEV_FAIL,
-// FAKE_DEV_MAIL_TO, FAKE_REVIEW_ALWAYS_CHANGES, FAKE_COST)
+// FAKE_DEV_MAIL_TO, FAKE_REVIEW_ALWAYS_CHANGES, FAKE_COST, FAKE_SIGNAL)
 // reach it through the ordinary environment, so they must NOT start with
 // BEES_: the runner strips inherited BEES_* variables from every session.
 func TestMain(m *testing.M) {
@@ -111,6 +112,24 @@ func fakeClaude() {
 			fmt.Println(`{"type":"result","subtype":"success","is_error":false,"result":"You've hit your session limit","session_id":"fake","num_turns":1,"total_cost_usd":0.01}`)
 			return
 		}
+	}
+	// FAKE_SIGNAL kills this session with the named signal — whatever its
+	// role — after writing a few assistant messages, the way a session the
+	// OS or a closing terminal kills dies: no result event, so no turn
+	// count and no cost from claude, and a wait status rather than an exit
+	// code. The value is the signal number.
+	if v := os.Getenv("FAKE_SIGNAL"); v != "" {
+		sig, err := strconv.Atoi(v)
+		if err != nil {
+			fail(err)
+		}
+		for i := 0; i < 3; i++ {
+			fmt.Println(`{"type":"assistant","message":{"content":[{"type":"text","text":"working"}]}}`)
+		}
+		if err := syscall.Kill(os.Getpid(), syscall.Signal(sig)); err != nil {
+			fail(err)
+		}
+		select {} // the signal arrives; never reached
 	}
 	// FAKE_COPY_ISSUE_STATE copies the issue's bookkeeping as it stands while
 	// this session runs to <state_dir>/running-<session dir>.json. It is the
