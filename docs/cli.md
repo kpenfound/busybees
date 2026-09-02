@@ -565,11 +565,11 @@ The keys:
 view: polling stops, nothing new starts, and the view stays up — its footer
 saying what it is still waiting for — until the work in flight is done. An
 issue a developer worker already holds is not left mid-loop: it runs on
-through its remaining stages, so the Now panel can still start the review
-that belongs with a developer session that was running, and the work item
-ends where the loop ends it — approved, escalated, out of review rounds or
-over its cost budget. Pressing either again stops those sessions now, killed
-mid-work the way a
+through its remaining stages, so the review that belongs with a developer
+session that was running still starts, and the Now panel picks it up like
+any other session; the work item ends where the loop ends it — approved,
+escalated, out of review rounds or over its cost budget. Pressing either
+again stops the running sessions now, killed mid-work the way a
 [crashed scheduler](architecture.md#running-a-session) would leave them, so
 the next `bees run` resumes each issue and tells its next session what was
 interrupted. A third press leaves the terminal and waits out whatever is

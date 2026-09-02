@@ -393,8 +393,8 @@ well after the session has finished. While the view is up it also owns Ctrl-C â€
 Bubble Tea puts the terminal in raw mode, so the interrupt arrives as a key
 rather than as a signal. The view cancels the scheduler's context with it and
 stays up while the work in flight finishes; a second press calls
-`Scheduler.HardStop`, which stops those sessions too, and a third leaves the
-terminal early. `q` does the same.
+`Scheduler.HardStop`, which stops the running sessions too, and a third leaves
+the terminal early. `q` does the same.
 
 Beyond the two stops above, its `k` key is the one thing it asks the
 scheduler to *do*:

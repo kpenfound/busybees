@@ -629,8 +629,8 @@ func TestQIsALetterWhileAMessageIsBeingTyped(t *testing.T) {
 }
 
 // The session view says the factory is stopping, in the panels footer's own
-// words. The first q asks it to stop and the view stays up while the
-// running sessions finish; a second press stops those sessions too and says
+// words. The first q asks it to stop and the view stays up while the work in
+// flight finishes; a second press stops the running sessions too and says
 // so. Without this the screen does not change at all, and a person who
 // reads the first press as a dead key presses again without being told what
 // that second press now does.
