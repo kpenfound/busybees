@@ -96,9 +96,10 @@ func failureCount(f state.OpFailure) string {
 
 // workersText renders the "developer workers:" section of `bees status`: one
 // line per running worker, with the issue it owns, its size, the stage it is
-// in, the round it is on and, when it took over from a session a killed
-// scheduler left unfinished, that it resumed rather than started fresh — the
-// branch of a resumed worker may already carry work nobody reported.
+// in, the round it is on and, when it took over from a session that never
+// finished — a scheduler dying while it ran, or a hard stop — that it
+// resumed rather than started fresh: the branch of a resumed worker may
+// already carry work nobody reported.
 func workersText(st state.Status) string {
 	if len(st.Workers) == 0 {
 		return "  none\n"
