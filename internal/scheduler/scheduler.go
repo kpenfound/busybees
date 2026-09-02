@@ -146,9 +146,11 @@ type Scheduler struct {
 	// sessionCtx is the context every session runs under while Run is
 	// running, and stopSessions cancels it. It is derived from Run's context
 	// but not cancelled with it: cancelling the loop stops polling and
-	// dispatch and lets the running sessions finish (each still bounded by
-	// its role's timeout), which is the cool-down an interrupt or the live
-	// view's stop key asks for. HardStop is the other stop: it cancels this
+	// dispatch and lets the work in flight finish — every running session
+	// (each still bounded by its role's timeout), and every issue a
+	// developer worker already holds, through the stages it has left
+	// (workIssue) — which is the cool-down an interrupt or the live view's
+	// stop key asks for. HardStop is the other stop: it cancels this
 	// context, which kills every running session's process group. Both are
 	// nil outside Run — a session started another way (`bees exec`) runs
 	// under its caller's context and dies with it, as it always has.
@@ -217,8 +219,10 @@ func New(d Deps) (*Scheduler, error) {
 
 // Run executes the loop until ctx is cancelled (or, with Once, until one
 // pass and the work it started have completed). Cancelling ctx stops
-// nothing that is already running: the loop starts no new session and waits
-// for the ones in flight to finish, and HardStop is what stops those too.
+// nothing that is already running: the loop takes no new issue and starts no
+// singleton, and waits for the work in flight — the running sessions, and
+// the rest of the loop of every issue a developer worker holds — to finish.
+// HardStop is what stops that too.
 func (s *Scheduler) Run(ctx context.Context) error {
 	if err := s.store.Init(); err != nil {
 		return err
@@ -1151,7 +1155,11 @@ func (s *Scheduler) dispatchDevelopers(ctx context.Context, snap *snapshot, loca
 				// the tick after all.
 				s.signal()
 			}()
-			if err := s.workIssue(ctx, issue, w); err != nil && ctx.Err() == nil {
+			// The worker runs under the sessions' context and keeps going
+			// through a cool-down (workIssue), so a failure during one is a
+			// real failure and earns its log line and its backoff. Only the
+			// hard stop that cancels that context makes them noise.
+			if err := s.workIssue(ctx, issue, w); err != nil && s.sessionContext(ctx).Err() == nil {
 				s.log.Error("developer worker failed", "issue", issue.Number, "err", err)
 				s.setBackoff(fmt.Sprintf("issue-%d", issue.Number), 5*s.cfg.Scheduler.PollInterval.Duration)
 			}
