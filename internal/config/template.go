@@ -251,8 +251,8 @@ label = "{{.Label}}"
 # sessions already running finish.
 #max_cost_per_day = 100.0
 # How far the rolling 24 hours has to fall back, as a percentage of
-# max_cost_per_day, before new sessions start again: paused at $100.00, the
-# factory below resumes under $80.00 rather than at $99.99.
+# max_cost_per_day, before new sessions start again: at 80, a factory paused at
+# $100.00 resumes under $80.00 rather than at $99.99.
 #max_cost_per_day_resume_percent = 80.0
 # A single session. Checked after it ran (claude cannot be stopped on cost), and
 # an over-budget session is treated as failed.
