@@ -170,8 +170,8 @@ type migration func(text string) (string, error)
 
 // migrations[n] converts a version-n file to version n+1. Files without a
 // version key are version 0. Load applies the steps in memory; Config.Rewrite
-// (run by bees run/tick/exec/status and `bees config migrate`) writes the
-// result back to disk.
+// (run by bees run/tick/exec/status/issue create/issue link and `bees config
+// migrate`) writes the result back to disk.
 var migrations = map[int]migration{
 	0: addVersionKey,
 }

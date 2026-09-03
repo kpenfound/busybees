@@ -684,8 +684,8 @@ func newConfigCmd(g *globalFlags) *cobra.Command {
 		Short: "Rewrite bees.toml to the current format version",
 		Long: `migrate loads bees.toml, applies the migrations that bring it to the format
 version this bees understands and writes the result back, keeping the original
-as bees.toml.v<old>.bak. Comments are preserved. bees run, tick, exec and
-status do the same automatically on startup.`,
+as bees.toml.v<old>.bak. Comments are preserved. bees run, tick, exec, status,
+issue create and issue link do the same automatically on startup.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := loadConfig(g)
 			if err != nil {
