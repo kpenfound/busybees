@@ -734,6 +734,27 @@ func TestSkillsRefresh(t *testing.T) {
 	}
 }
 
+func TestEnabledUnderGlobalIsRejected(t *testing.T) {
+	for _, body := range []string{
+		"version = 1\n[project]\nrepo = \"a/b\"\n[global]\nenabled = false\n",
+		"version = 1\n[project]\nrepo = \"a/b\"\n[global]\nenabled = true\n",
+	} {
+		_, err := Load(writeConfig(t, body))
+		if err == nil || !strings.Contains(err.Error(), "global: enabled is only valid under roles.<name>") {
+			t.Fatalf("%q: got %v", body, err)
+		}
+	}
+
+	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nenabled = false\n"))
+	if err != nil {
+		t.Fatalf("roles.developer.enabled: %v", err)
+	}
+	dev, _ := cfg.Role(RoleDeveloper)
+	if dev.Enabled {
+		t.Fatal("roles.developer.enabled = false should disable the role")
+	}
+}
+
 func TestSkillsRefreshPolicy(t *testing.T) {
 	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"))
 	if err != nil {

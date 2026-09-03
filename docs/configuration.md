@@ -453,7 +453,7 @@ The CLI accepts aliases such as `pm` and `dev`; the TOML keys do not.
 | `disallowed_tools` | string list | `[]` | Passed as `claude --disallowedTools`. |
 | `shell` | string | the shell bees runs under | Exported into sessions as `$SHELL`. Claude Code discovers its Bash tool's shell from `$SHELL`, so this is the lever, without being a guarantee. Must be an existing file. |
 | `env` | table | `{}` | Environment variables exported into every session: `claude`, its Bash tool, MCP servers and git see them. A `$VAR` value is expanded from the bees process environment when the session starts. A name may not be empty or contain `=` or a space. See [Exported into every session](#exported-into-every-session) for how it meets the variables bees sets itself. |
-| `enabled` | bool | `true` | `false` takes a role out of the rotation. Disabling `reviewer` makes a developer's pull request count as approved the moment it is opened, and with `auto_merge` it goes straight to the checks stage. Under `[global]` the key is accepted and ignored. |
+| `enabled` | bool | `true` | Roles only. `false` takes a role out of the rotation. Disabling `reviewer` makes a developer's pull request count as approved the moment it is opened, and with `auto_merge` it goes straight to the checks stage. Under `[global]` the key is an error. |
 
 ### `[roles.reviewer]` only: checks and auto-merge
 

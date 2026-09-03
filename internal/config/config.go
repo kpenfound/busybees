@@ -1299,6 +1299,9 @@ func (c *Config) Validate() error {
 		} else if _, _, err := parseSkillsRefresh(rs.SkillsRefresh); err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", scope, err))
 		}
+		if scope == "global" && rs.Enabled != nil {
+			errs = append(errs, fmt.Sprintf("%s: enabled is only valid under roles.<name>", scope))
+		}
 		if scope != "roles."+RoleDeveloper && (rs.CommitFlags != "" || rs.MaxSize != "" || len(rs.ModelBySize) > 0) {
 			errs = append(errs, fmt.Sprintf("%s: commit_flags, max_size and model_by_size are only valid under roles.developer", scope))
 		}
