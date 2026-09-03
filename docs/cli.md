@@ -884,7 +884,7 @@ counted on the `ready` row and listed below the queues:
 
 ```
 queues:
-  ready          4  (xs 1, s 1, 2 waiting on deps)
+  ready          4  (xs 1, s 3, 2 waiting on deps)
 
 waiting on dependencies:
   #40  blocked by #37
