@@ -334,8 +334,8 @@ keys, bad repo, invalid MCP server, ...).
 Rewrites `bees.toml` to the current format version (see
 [`version`](configuration.md#version)), keeping the original as
 `bees.toml.v<old>.bak`. Prints "already version N" when nothing needs doing.
-`bees run`, `tick`, `exec` and `status` run the same migration automatically on
-startup.
+`bees run`, `tick`, `exec`, `status`, `issue create` and `issue link` run the
+same migration automatically on startup.
 
 ### `bees config show [role]`
 
