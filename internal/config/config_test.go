@@ -1288,6 +1288,44 @@ func TestCostBudgets(t *testing.T) {
 	}
 }
 
+// TestDailyBudgetResumePercent pins the boundaries of
+// scheduler.max_cost_per_day_resume_percent (#365). It is a percentage of
+// max_cost_per_day rather than an amount, and a TOML float has no "unset"
+// distinct from 0, so — like notes_consolidate_every and notes_max_bytes — 0
+// means the default, which is 100: an existing bees.toml that does not carry
+// the key behaves exactly as it did.
+func TestDailyBudgetResumePercent(t *testing.T) {
+	const head = "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\n"
+	for _, tc := range []struct {
+		name string
+		toml string
+		want float64
+	}{
+		{"absent", "", 100},
+		{"zero means the default", "max_cost_per_day_resume_percent = 0.0\n", 100},
+		{"configured", "max_cost_per_day = 100.0\nmax_cost_per_day_resume_percent = 80.0\n", 80},
+		{"the whole budget", "max_cost_per_day_resume_percent = 100.0\n", 100},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := Load(writeConfig(t, head+tc.toml))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := cfg.Scheduler.MaxCostPerDayResumePercent; got != tc.want {
+				t.Errorf("max_cost_per_day_resume_percent: got %v want %v", got, tc.want)
+			}
+		})
+	}
+	// Out of range either way, naming the key so the message says what to
+	// change.
+	for _, v := range []string{"-1.0", "100.1"} {
+		_, err := Load(writeConfig(t, head+"max_cost_per_day_resume_percent = "+v+"\n"))
+		if err == nil || !strings.Contains(err.Error(), "scheduler.max_cost_per_day_resume_percent must be between 0 and 100") {
+			t.Errorf("max_cost_per_day_resume_percent = %s: %v", v, err)
+		}
+	}
+}
+
 // [logging] defaults to the flag defaults when absent, round-trips what the
 // file says, and rejects a value neither the flags nor the file accept.
 func TestLoggingSettings(t *testing.T) {

@@ -518,8 +518,10 @@ type Status struct {
 	// Priority lists the ready issues carrying bees:priority, smallest
 	// number first: the queue a person told the factory to build next.
 	Priority []int `json:"priority,omitempty"`
-	// BudgetPaused is true while the rolling 24h spend has reached
-	// scheduler.max_cost_per_day and no new session is being dispatched.
+	// BudgetPaused is true while no new session is being dispatched because
+	// the rolling 24h spend reached scheduler.max_cost_per_day and has not
+	// yet fallen back to scheduler.max_cost_per_day_resume_percent of it, so
+	// DaySpendUSD can be under DayBudgetUSD while this is still true.
 	BudgetPaused bool `json:"budget_paused,omitempty"`
 	// DaySpendUSD is that rolling 24h spend, and DayBudgetUSD the budget it
 	// is measured against (0 when no daily budget is configured).

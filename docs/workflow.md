@@ -902,8 +902,9 @@ the issue to a human:
 A budget the factory hits does not always escalate: `scheduler.max_cost_per_day`
 pauses dispatch instead. Nothing is labelled, no comment is written, and the
 workers already running finish their loop; the scheduler simply starts nothing
-new until the rolling 24-hour spend falls back under the budget. `bees status`
-reports the pause.
+new until the rolling 24-hour spend falls back to the threshold
+[`max_cost_per_day_resume_percent`](configuration.md#cost-budgets) sets, which
+by default is the budget itself. `bees status` reports the pause.
 
 The orchestrator sets `bees:needs-human` and posts a comment on the issue
 explaining why. It records the same reason in

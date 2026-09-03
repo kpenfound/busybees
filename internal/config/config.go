@@ -119,6 +119,11 @@ const (
 	// DefaultNotesMaxBytes is the notes size above which consolidation is
 	// asked for early, without waiting for the session count.
 	DefaultNotesMaxBytes = 32768
+	// DefaultMaxCostPerDayResumePercent is the fraction of
+	// scheduler.max_cost_per_day the rolling 24-hour spend has to fall back
+	// to before dispatch starts again. 100 means dispatch resumes as soon as
+	// the window is under budget.
+	DefaultMaxCostPerDayResumePercent = 100.0
 	// DefaultLogFormat and DefaultLogLevel are the console logging defaults;
 	// they mirror the --log-format and --log-level flag defaults, so an
 	// absent [logging] table logs exactly as bees always did.
@@ -706,6 +711,14 @@ type Scheduler struct {
 	// hours, in USD. At or over it no new session is dispatched; the
 	// sessions already running finish. 0 (the default) is unlimited.
 	MaxCostPerDay float64 `toml:"max_cost_per_day" json:"max_cost_per_day"`
+	// MaxCostPerDayResumePercent is how far the rolling 24-hour spend has to
+	// fall back, as a percentage of MaxCostPerDay, before dispatch starts
+	// again: paused at max_cost_per_day, the factory stays paused until the
+	// window is below max_cost_per_day * this / 100. A percentage rather
+	// than an amount, so it keeps its meaning when the budget is raised.
+	// 0 means the default of 100, at which dispatch resumes as soon as the
+	// window is under budget. Ignored when MaxCostPerDay is 0.
+	MaxCostPerDayResumePercent float64 `toml:"max_cost_per_day_resume_percent" json:"max_cost_per_day_resume_percent"`
 	// MaxCostPerSession caps what a single session may cost, in USD. A
 	// session cannot be stopped on cost while it runs, so this is checked
 	// once it has finished: an over-budget session is treated as failed.
@@ -1165,6 +1178,9 @@ func (c *Config) applyDefaults() {
 	if c.Scheduler.NotesMaxBytes == 0 {
 		c.Scheduler.NotesMaxBytes = DefaultNotesMaxBytes
 	}
+	if c.Scheduler.MaxCostPerDayResumePercent == 0 {
+		c.Scheduler.MaxCostPerDayResumePercent = DefaultMaxCostPerDayResumePercent
+	}
 	if c.Global.SkillsRefresh == "" {
 		c.Global.SkillsRefresh = DefaultSkillsRefresh
 	}
@@ -1278,6 +1294,12 @@ func (c *Config) Validate() error {
 		if b.v < 0 {
 			errs = append(errs, fmt.Sprintf("scheduler.%s must be >= 0 (0 means unlimited)", b.key))
 		}
+	}
+	// Its own check rather than a row in the loop above: this one is a
+	// percentage of max_cost_per_day, so its range is 0-100 rather than
+	// "any amount".
+	if p := c.Scheduler.MaxCostPerDayResumePercent; p < 0 || p > 100 {
+		errs = append(errs, "scheduler.max_cost_per_day_resume_percent must be between 0 and 100 (0 means the default of 100)")
 	}
 	errs = append(errs, c.Scheduler.parseWorkHours()...)
 	// The flag parsers own the list of valid values, so bees.toml and the

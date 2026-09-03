@@ -242,6 +242,7 @@ assignee = "busybees-bot"
 | `qa_interval` | duration | `"30m"` | Minimum time between QA runs. QA runs when something was merged since its last run (the first run always happens); mail in its inbox starts one earlier. The merged-PR query runs at most once per interval. |
 | `max_cost_per_issue` | float | `0` | USD one work item may cost across every session run for it. `0` is unlimited; a negative value is rejected. See [Cost budgets](#cost-budgets). |
 | `max_cost_per_day` | float | `0` | USD the whole factory may spend over a rolling 24 hours. `0` is unlimited; a negative value is rejected. |
+| `max_cost_per_day_resume_percent` | float | `100` | How far the rolling 24 hours has to fall back before dispatch starts again, as a percentage of `max_cost_per_day`: at `80` a factory paused at $100.00 stays paused until the window is under $80.00, rather than resuming at $99.99 and going straight over again. `100` (the default) resumes as soon as the window is under budget, `0` means that default, and a value outside 0-100 is rejected. See [Cost budgets](#cost-budgets). |
 | `max_cost_per_session` | float | `0` | USD one session may cost. `0` is unlimited; a negative value is rejected. |
 | `keep_workspaces` | bool | `false` | Leave temporary worktrees on disk after a session, for debugging. |
 | `workspace_root` | string | `""` | Directory temporary worktrees are created under. Empty means `bees` under the system temp directory. |
@@ -363,8 +364,11 @@ first moment the factory can act on it:
   $25.00").
 - Per day, before anything is dispatched. At or over the budget the scheduler
   keeps polling and reconciling labels but starts no session; workers already
-  running finish their loop. The pause is logged once and `bees status` names
-  it.
+  running finish their loop. Dispatch starts again once the window has fallen
+  back to `max_cost_per_day_resume_percent` of the budget, by default the
+  budget itself, so at `80` a factory paused at $100.00 resumes under $80.00
+  rather than at $99.99. The pause is logged once, the release names the
+  threshold it crossed, and `bees status` names the pause while it lasts.
 - Per session, after the session ended. An over-budget session is treated as
   failed whatever it reported, so it is retried once, with the role's
   `fallback_model` when `retry_with_fallback` is on. Two over-budget sessions
