@@ -248,10 +248,14 @@ func TestProjectManagerMayOnlyReorderTheQueueWithPriority(t *testing.T) {
 	for _, want := range []string{
 		"You are the one exception to",
 		"Never move `bees:ready` issues back",
+		"in its own order (`scheduler.dispatch_order`)",
 	} {
-		if !strings.Contains(sys, want) {
+		if !strings.Contains(flowed(sys), want) {
 			t.Errorf("project manager system prompt missing %q:\n%s", want, sys)
 		}
+	}
+	if strings.Contains(flowed(sys), "takes the oldest") {
+		t.Errorf("project manager system prompt still states dispatch order as oldest-first:\n%s", sys)
 	}
 }
 

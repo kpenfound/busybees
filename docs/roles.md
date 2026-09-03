@@ -340,7 +340,7 @@ Three judgements the prompt makes for it, rather than leaving to the session:
   unblocks the factory itself: the default branch does not build, every pull
   request's checks are red for the same reason, or the orchestrator cannot
   run. That is the only ordering it controls; it never moves `bees:ready`
-  issues back to `bees:triage` to make another one the oldest.
+  issues back to `bees:triage` to reorder the queue.
 
 **Mail:** receives developer questions, and a person's comments on an issue it
 blocked out of triage, delivered from `human` (see
