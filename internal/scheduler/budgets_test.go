@@ -152,6 +152,135 @@ func TestDailyBudgetStopsNewSessions(t *testing.T) {
 	}
 }
 
+// TestDailyBudgetResumesAtTheResumeThreshold drives the whole hysteresis
+// (#365): with max_cost_per_day = 100 and max_cost_per_day_resume_percent =
+// 80 the factory pauses at $100 and stays paused all the way down to $80,
+// rather than resuming a cent under the budget and dispatching straight over
+// it again. The rolling window falls by advancing the fake clock so seeded
+// ledger entries age out of it, so the fixture names no wall-clock time.
+func TestDailyBudgetResumesAtTheResumeThreshold(t *testing.T) {
+	start := time.Date(2026, 3, 4, 12, 0, 0, 0, time.UTC)
+	h := newHarnessAt(t, baseTOML+"max_cost_per_day = 100.0\nmax_cost_per_day_resume_percent = 80.0\n"+devAndReviewerTOML, start)
+	seedCounter(t, h, "review", 1) // the reviewer approves its first review
+	// $100 in the window, in entries that age out one pass at a time.
+	for _, e := range []state.LedgerEntry{
+		{Time: start.Add(-23 * time.Hour), Role: config.RoleDeveloper, Session: "a", Issue: 9, CostUSD: 15},
+		{Time: start.Add(-22 * time.Hour), Role: config.RoleDeveloper, Session: "b", Issue: 9, CostUSD: 5},
+		{Time: start.Add(-21 * time.Hour), Role: config.RoleDeveloper, Session: "c", Issue: 9, CostUSD: 1},
+		{Time: start.Add(-1 * time.Hour), Role: config.RoleReviewer, Session: "d", Issue: 9, CostUSD: 79},
+	} {
+		if err := h.store.AppendLedger(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN",
+		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: start.Add(-time.Hour)}
+	h.gh.prs[fakePR] = &github.PR{Number: fakePR, Title: "Build the thing", State: "OPEN",
+		HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
+
+	for _, tc := range []struct {
+		name    string
+		advance time.Duration
+		spend   float64
+	}{
+		// Exactly at the budget pauses: the pause side is >=.
+		{"at the budget", 0, 100},
+		// Between the two thresholds the factory stays paused, where a
+		// single threshold would have dispatched again.
+		{"between the thresholds", time.Hour + 5*time.Minute, 85},
+		// Exactly at the resume threshold stays paused too: resuming is a
+		// strict <.
+		{"at the resume threshold", time.Hour, 80},
+	} {
+		h.clock.advance(tc.advance)
+		forcePoll(h)
+		runPass(t, h)
+		if n := sessionCount(h); n != 0 {
+			t.Fatalf("%s ($%.2f of $100.00): %d sessions started", tc.name, tc.spend, n)
+		}
+		if got := h.gh.history[1]; len(got) != 0 {
+			t.Fatalf("%s: issue 1 was picked up: %v", tc.name, got)
+		}
+		st, err := h.store.LoadStatus()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !st.BudgetPaused || st.DaySpendUSD != tc.spend {
+			t.Fatalf("%s: paused %v, spent %v want %v", tc.name, st.BudgetPaused, st.DaySpendUSD, tc.spend)
+		}
+	}
+
+	// A pass below the resume threshold dispatches again.
+	h.clock.advance(time.Hour)
+	forcePoll(h)
+	runPass(t, h)
+	if n := sessionCount(h); n == 0 {
+		t.Error("nothing dispatched below the resume threshold")
+	}
+	if got := h.gh.history[1]; len(got) == 0 {
+		t.Error("issue 1 was not picked up below the resume threshold")
+	}
+	if !strings.Contains(h.logs.String(), "daily cost budget released ($79.00, back under the $80.00 resume threshold of $100.00 in the last 24h)") {
+		t.Errorf("the resume threshold is not named in the log:\n%s", h.logs.String())
+	}
+}
+
+// TestTheDefaultResumePercentKeepsTodaysBehaviour covers the two ways #365
+// changes nothing: a bees.toml with no resume percent resumes the moment the
+// rolling window is under budget (the default is 100%, at which the two
+// thresholds are the same number), and the key is inert when there is no
+// daily budget for it to be a percentage of.
+func TestTheDefaultResumePercentKeepsTodaysBehaviour(t *testing.T) {
+	start := time.Date(2026, 3, 4, 12, 0, 0, 0, time.UTC)
+	seed := func(t *testing.T, toml string, entries ...state.LedgerEntry) *harness {
+		t.Helper()
+		h := newHarnessAt(t, baseTOML+toml+devAndReviewerTOML, start)
+		seedCounter(t, h, "review", 1)
+		for _, e := range entries {
+			if err := h.store.AppendLedger(e); err != nil {
+				t.Fatal(err)
+			}
+		}
+		h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN",
+			Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: start.Add(-time.Hour)}
+		h.gh.prs[fakePR] = &github.PR{Number: fakePR, Title: "Build the thing", State: "OPEN",
+			HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
+		return h
+	}
+
+	t.Run("resumes as soon as the window is under budget", func(t *testing.T) {
+		h := seed(t, "max_cost_per_day = 100.0\n",
+			state.LedgerEntry{Time: start.Add(-23 * time.Hour), Role: config.RoleDeveloper, Session: "a", Issue: 9, CostUSD: 0.01},
+			state.LedgerEntry{Time: start.Add(-time.Hour), Role: config.RoleDeveloper, Session: "b", Issue: 9, CostUSD: 99.99})
+		runPass(t, h)
+		if n := sessionCount(h); n != 0 {
+			t.Fatalf("%d sessions started at the budget", n)
+		}
+		// A cent under the budget, which is also the default resume
+		// threshold: dispatch starts again.
+		h.clock.advance(time.Hour + 5*time.Minute)
+		forcePoll(h)
+		runPass(t, h)
+		if n := sessionCount(h); n == 0 {
+			t.Error("nothing dispatched a cent under the budget")
+		}
+	})
+
+	t.Run("inert without a daily budget", func(t *testing.T) {
+		h := seed(t, "max_cost_per_day_resume_percent = 80.0\n",
+			state.LedgerEntry{Time: start.Add(-time.Hour), Role: config.RoleDeveloper, Session: "a", Issue: 9, CostUSD: 500})
+		runPass(t, h)
+		if n := sessionCount(h); n == 0 {
+			t.Error("nothing dispatched with no daily budget set")
+		}
+		if st, err := h.store.LoadStatus(); err != nil {
+			t.Fatal(err)
+		} else if st.BudgetPaused {
+			t.Error("paused with no daily budget set")
+		}
+	})
+}
+
 // TestDailyBudgetDoesNotInterruptARunningWorker crosses the budget in the
 // middle of a worker's loop: the worker finishes to approval, and it is the
 // next pass that starts nothing.

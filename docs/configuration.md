@@ -259,6 +259,7 @@ assignee = "busybees-bot"
 | `qa_interval` | duration | `"30m"` | Minimum time between QA runs. QA only runs when something was merged since its last run (the first run always happens); mail in the QA inbox triggers an earlier run. The merged-PR query itself runs at most once per `qa_interval` (tracked as `last_check` in `<state_dir>/qa.json`), not on every poll. |
 | `max_cost_per_issue` | float | `0` | USD one work item may cost across every session run for it — developer, reviewer, retries, check fixes. Checked between a developer worker's stages, never mid session, so the session that passes it finishes and its work stays on the branch; the issue is then escalated with what it spent. `0` (the default) is unlimited; must be ≥ 0. See [Cost budgets](#cost-budgets). |
 | `max_cost_per_day` | float | `0` | USD the whole factory may spend over a rolling 24 hours. At or over it no new session is dispatched — no developer worker, no singleton — while the sessions already running finish normally. `0` (the default) is unlimited; must be ≥ 0. |
+| `max_cost_per_day_resume_percent` | float | `100` | How far the rolling 24 hours has to fall back before dispatch starts again, as a percentage of `max_cost_per_day`: at `80` a factory paused at $100.00 stays paused until the window is below $80.00, instead of resuming a cent under the budget and going straight over it again. A percentage rather than an amount, so it keeps its meaning when the budget is raised. `100` (the default) resumes as soon as the window is under budget, and `0` means that default. Must be between 0 and 100, and is ignored when `max_cost_per_day` is `0`. See [Cost budgets](#cost-budgets). |
 | `max_cost_per_session` | float | `0` | USD a single session may cost. `claude -p` cannot be stopped on cost while it runs, so this is checked once it has finished: an over-budget session is treated as failed, and two in a row for the same work item escalate it. `0` (the default) is unlimited; must be ≥ 0. |
 | `keep_workspaces` | bool | `false` | Leave temporary worktrees on disk after a session (debugging). |
 | `workspace_root` | string | `""` | Directory temporary worktrees are created under. Empty means `$TMPDIR/bees`. |
@@ -408,8 +409,14 @@ session is never interrupted on cost:
   `max_cost_per_issue` budget of $25.00"*).
 - **Per day** — summed over the last 24 hours before anything is dispatched.
   At or over the budget the scheduler keeps polling and reconciling labels but
-  starts no new session; workers already running finish their loop. The pause
-  is logged once, and `bees status` says so on its scheduler line.
+  starts no new session; workers already running finish their loop. Dispatch
+  starts again once the window has fallen back to
+  `max_cost_per_day_resume_percent` of the budget — by default the budget
+  itself, so a factory with `max_cost_per_day = 100.00` and
+  `max_cost_per_day_resume_percent = 80` pauses at $100.00 and resumes under
+  $80.00 rather than at $99.99. The pause is logged once, the release names
+  the threshold it crossed, and `bees status` says so on its scheduler line
+  while it lasts.
 - **Per session** — checked after the session ended. An over-budget session is
   treated as failed whatever it reported, which means it is retried once (with
   the role's `fallback_model` when `retry_with_fallback` is on, usually the
@@ -826,6 +833,7 @@ headers = { Authorization = "Bearer $BROWSER_MCP_TOKEN" }
 | `scheduler.qa_interval` | `30m` |
 | `scheduler.max_cost_per_issue` | `0` (unlimited) |
 | `scheduler.max_cost_per_day` | `0` (unlimited) |
+| `scheduler.max_cost_per_day_resume_percent` | `100` (resume as soon as the window is under budget) |
 | `scheduler.max_cost_per_session` | `0` (unlimited) |
 | `scheduler.work_hours` | `""` (poll around the clock) |
 | `scheduler.off_hours_poll_interval` | `1h`, or `poll_interval` when that is longer |

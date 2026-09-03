@@ -110,7 +110,10 @@ type Scheduler struct {
 	needsHuman []state.Escalated
 	approved   []state.ApprovedPR
 	// dayPaused is true while the rolling 24h spend has reached
-	// scheduler.max_cost_per_day, and daySpend is that spend.
+	// scheduler.max_cost_per_day, and daySpend is that spend. It is in
+	// memory only: a factory restarted while the window sits between
+	// scheduler.max_cost_per_day_resume_percent and the budget starts
+	// dispatching again rather than waiting the pause out.
 	dayPaused bool
 	daySpend  float64
 	// limitPausedUntil is when dispatch resumes after a session hit the

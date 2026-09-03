@@ -97,7 +97,10 @@ func (s *Scheduler) overIssueBudget(issue int) (string, bool) {
 // checkDayBudget sums the ledger over the last 24 hours and decides whether
 // dispatch is paused. It runs once per pass, before anything is dispatched,
 // and logs only when the answer changes: a paused factory keeps polling, and
-// a line per poll would drown everything else.
+// a line per poll would drown everything else. The two thresholds differ —
+// it pauses at scheduler.max_cost_per_day and resumes under
+// scheduler.max_cost_per_day_resume_percent of it — so the factory backs off
+// instead of oscillating on the edge of the budget.
 func (s *Scheduler) checkDayBudget() {
 	budget := s.cfg.Scheduler.MaxCostPerDay
 	if budget <= 0 {
@@ -115,9 +118,18 @@ func (s *Scheduler) checkDayBudget() {
 	for _, e := range entries {
 		spent += e.CostUSD
 	}
-	paused := spent >= budget
+	resume := budget * s.cfg.Scheduler.MaxCostPerDayResumePercent / 100
 	s.mu.Lock()
 	was := s.dayPaused
+	// Hysteresis: the factory pauses at the budget and, once paused, stays
+	// paused until the window has fallen back to the resume threshold.
+	// Resuming the moment the window is a cent under budget only dispatches
+	// enough to go over it again. At the default 100% the threshold is the
+	// budget itself and this is the plain "under budget" test.
+	paused := spent >= budget
+	if was {
+		paused = spent >= resume
+	}
 	s.dayPaused, s.daySpend = paused, spent
 	s.mu.Unlock()
 	switch {
@@ -125,8 +137,11 @@ func (s *Scheduler) checkDayBudget() {
 		s.log.Warn(fmt.Sprintf("⏸ daily cost budget reached ($%.2f of $%.2f in the last 24h); starting no new sessions", spent, budget),
 			logging.SummaryKey, true, "cost_usd", spent, "max_cost_per_day", budget)
 	case was && !paused:
-		s.log.Info(fmt.Sprintf("▶ daily cost budget no longer reached ($%.2f of $%.2f in the last 24h); dispatching again", spent, budget),
-			logging.SummaryKey, true, "cost_usd", spent, "max_cost_per_day", budget)
+		// The threshold is named because it is what the pause was waiting
+		// for: without it a pause that lasted while the window sat between
+		// the two numbers reads as arbitrarily long in bees.log.
+		s.log.Info(fmt.Sprintf("▶ daily cost budget released ($%.2f, back under the $%.2f resume threshold of $%.2f in the last 24h); dispatching again", spent, resume, budget),
+			logging.SummaryKey, true, "cost_usd", spent, "max_cost_per_day", budget, "resume_threshold_usd", resume)
 	}
 }
 
