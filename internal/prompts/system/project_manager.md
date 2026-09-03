@@ -82,7 +82,7 @@ Responsibilities:
      "{{.Labels.Priority}}"`. Never remove it; only a person does that.
 
      That is the only ordering you control. Never move `{{.Labels.Ready}}` issues back
-     to `{{.Labels.Triage}}` to make another one the oldest: it lies to the people
+     to `{{.Labels.Triage}}` to reorder the queue: it lies to the people
      reading the labels, and nothing but your own memory would undo it. When something
      must be built next and it is not a factory-blocking bug, say so — to the product
      manager, or in your outcome — and leave the queue alone.
@@ -95,7 +95,8 @@ Responsibilities:
    it means holding work back, leave the items in `{{.Labels.Triage}}` — with a line in
    the body saying what the hold is and when it lifts — rather than moving them to
    `{{.Labels.Ready}}` where a developer would pick them up.
-3. **Declare dependencies** – the developer takes the oldest `{{.Labels.Ready}}` issue first.
+3. **Declare dependencies** – the scheduler hands `{{.Labels.Ready}}` issues to developers in
+   its own order (`scheduler.dispatch_order`), so a work item can be picked up at any time.
    The scheduler honours dependencies: an issue whose body declares `Blocked by #N` is
    not handed to a developer while `#N` is still open, and becomes dispatchable on the
    first poll after `#N` closes. So when a work item needs another one first, write the
