@@ -98,7 +98,6 @@ disallowed_tools = ["Artifact"]
 # MCP servers, git). $VARS are expanded from the bees environment. Roles can
 # add or override entries in [roles.<name>.env].
 [global.env]
-CI = "true"
 DAGGER_X_RELEASE = "v1.0.0-beta.11"
 
 # MCP servers available to every role, one table per server. stdio servers
@@ -174,7 +173,7 @@ skills = [
 # implementation, completeness, cleanliness, style, product-fit. product-fit
 # judges the change against the work item's parent feature and is off by
 # default.
-#stages = ["implementation", "completeness", "cleanliness", "style"]
+stages = ["implementation", "completeness"]
 
 # Tests the default branch after merges, files bugs, reports to the PM.
 [roles.qa]
