@@ -40,7 +40,7 @@ prompt; the [visibility filter](workflow.md#what-the-factory-can-see); the
 mailbox; how to report an outcome; the notes file; the environment
 (repository, working directory, branch, state directory, session directory);
 how to learn the project; and the ground rules. `bees prompts show <role>
---rendered` prints the whole prompt a role receives for this project.
+--rendered` prints the whole system prompt a role receives for this project.
 
 **People outrank the prompt.** Anything a person writes, in an issue, on a
 pull request or in mail from `human`, is authoritative for every role. Mail
@@ -207,8 +207,7 @@ default branch.
 `bees:triage` in full, each with its parent feature and the open issues it is
 blocked by. The rest of the triage queue in a table of its own, which the
 prompt says is triage work too. A table of every other visible issue: state,
-kind, blockers, milestone, title. The open pull requests. Unread mail. Its
-notes.
+kind, blockers, milestone, title. Unread mail. Its notes.
 
 **Does.** Rewrites a work item's body with `issue_edit_body`: context, scope
 in and out, acceptance criteria, pointers to code, testing expectations,
@@ -272,8 +271,9 @@ sets `push.autoSetupRemote=true` and `push.default=current` through
 `GIT_CONFIG_*` variables, so a plain `git push` works and the clone's own git
 configuration is untouched. With [`[github]`](configuration.md#github) set it
 also carries the factory's token, commit identity and a git credential helper,
-so what it commits, pushes and opens is the factory's rather than the machine
-owner's. `commit_flags` tells it to add flags to every `git commit` it makes.
+so what it commits and opens is the factory's rather than the machine owner's,
+and an https push authenticates as the factory too. `commit_flags` tells it to
+add flags to every `git commit` it makes.
 
 **Does.** Explores the codebase, implements on the branch in small commits,
 adds or updates tests and runs the test-suite the way the repository
@@ -580,7 +580,7 @@ prompt_file = "docs/qa-checklist.md"
   [project prompt files](configuration.md#project-prompt-files),
   `bees/prompts/common.md` and `bees/prompts/<role>.md`, read from the
   session's worktree, come after them. `bees prompts show <role>` prints the
-  base prompt, and `--rendered` the whole thing for this project. A
+  base prompt, and `--rendered` the whole system prompt for this project. A
   `prompt_file`'s contents are re-read for each session; `prompt`, like every
   other key in `bees.toml`, is read when `bees run` starts, so changing it
   needs a restart. The base prompt is compiled into the `bees` binary, so
