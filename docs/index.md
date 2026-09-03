@@ -64,7 +64,7 @@ reads and edits a role's notes file — its only memory between sessions — and
 
 | Document | What it covers |
 |---|---|
-| [Architecture](architecture.md) | Internals, state directory, testing strategy |
+| [Architecture](architecture.md) | How `bees run` works: the scheduler loop, the developer worker, sessions, the mailbox, the state directory, crash recovery |
 | [Roles](roles.md) | Each role's responsibilities, inputs, outcomes, and how to customise or disable it |
 | [Workflow](workflow.md) | The GitHub-centred workflow: filter, label state machine, questions, review loop, escalation, QA |
 | [Configuration](configuration.md) | Complete `bees.toml` reference |
