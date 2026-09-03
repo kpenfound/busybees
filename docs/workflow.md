@@ -49,7 +49,7 @@ unassigned `bees` issues and every one of them disappears in one commit.
 `bees doctor` reports that case with both counts:
 
 ```
-34 open issues and 2 pull requests carry `bees`, 0 match your filter
+34 open issues and 2 pull requests carry `bees`, 0 match your filter (label=bees AND assignee=kyle)
 ```
 
 The label is also the prefix of every workflow label, so with
@@ -509,7 +509,7 @@ why it is not moving, and it becomes dispatchable on the first poll after its
 blocker closes:
 
 ```
-ready          4  (xs 1, s 1, 2 waiting on deps)
+ready          4  (xs 1, s 3, 2 waiting on deps)
 ```
 
 Holding an issue back never costs a developer pool slot, so the rest of the
