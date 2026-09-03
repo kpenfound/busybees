@@ -4,7 +4,7 @@ A release of busybees is a set of prebuilt `bees` binaries attached to a
 GitHub release, built by `.github/workflows/release.yml` when a person pushes
 a `v*` tag. That tag is the only thing in the repository that triggers a
 workflow: the project's own gate is `dagger check`, run by hand (see
-[Architecture](architecture.md#testing)).
+[CONTRIBUTING.md](https://github.com/kpenfound/busybees/blob/main/CONTRIBUTING.md#building-and-testing)).
 
 ## Cutting a release
 
