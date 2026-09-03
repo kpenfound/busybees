@@ -85,7 +85,7 @@ These pages are also published at
 | [docs/roles.md](docs/roles.md) | Each role's responsibilities, inputs, outcomes, and how to customise or disable it |
 | [docs/configuration.md](docs/configuration.md) | Complete `bees.toml` reference |
 | [docs/cli.md](docs/cli.md) | Every `bees` command |
-| [docs/architecture.md](docs/architecture.md) | Internals, state directory, testing strategy |
+| [docs/architecture.md](docs/architecture.md) | How `bees run` works: the scheduler loop, the developer worker, sessions, the mailbox, the state directory, crash recovery |
 | [docs/releasing.md](docs/releasing.md) | Cutting a release: the tag, the workflow, the assets it publishes |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Building, testing and the contributor workflow |
 
