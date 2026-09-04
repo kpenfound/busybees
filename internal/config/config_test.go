@@ -152,7 +152,7 @@ func TestDefaults(t *testing.T) {
 		t.Fatalf("state dir: %s", cfg.StateDir())
 	}
 	l := cfg.Labels()
-	if l.Ready != "bees:ready" || l.Base != "bees" || len(l.All()) != 21 {
+	if l.Ready != "bees:ready" || l.Base != "bees" || len(l.All()) != 22 {
 		t.Fatalf("labels: %+v", l)
 	}
 }
@@ -1614,5 +1614,36 @@ func TestPlanningLabels(t *testing.T) {
 		if slices.Contains(l.SizeLabels(), name) {
 			t.Errorf("%s is a size label", name)
 		}
+	}
+}
+
+// TestReviewRequestedLabel pins the two halves of a label that lives on a
+// pull request rather than an issue: `bees init`, `bees labels sync` and the
+// scheduler's start-up all create it (All), and nothing derives a state
+// from it (StateLabels), so a pull request carrying it next to bees:review
+// keeps its state.
+func TestReviewRequestedLabel(t *testing.T) {
+	l := LabelsFor("bees")
+	if l.ReviewRequested != "bees:review-requested" {
+		t.Fatalf("review-requested label: %q", l.ReviewRequested)
+	}
+	var found bool
+	for _, spec := range l.All() {
+		if spec.Name != l.ReviewRequested {
+			continue
+		}
+		found = true
+		if spec.Color == "" || spec.Description == "" {
+			t.Errorf("%s: colour %q description %q", spec.Name, spec.Color, spec.Description)
+		}
+	}
+	if !found {
+		t.Errorf("%s missing from All()", l.ReviewRequested)
+	}
+	if slices.Contains(l.StateLabels(), l.ReviewRequested) {
+		t.Errorf("%s is a state label", l.ReviewRequested)
+	}
+	if slices.Contains(l.SizeLabels(), l.ReviewRequested) {
+		t.Errorf("%s is a size label", l.ReviewRequested)
 	}
 }

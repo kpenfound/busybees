@@ -52,6 +52,13 @@ type Labels struct {
 	// issues out of the ready queue before anything else, and is the only
 	// thing that reads it.
 	Priority string // bees:priority
+	// ReviewRequested goes on a pull request, not an issue: a person puts it
+	// on any open pull request the factory can see to ask the reviewer for
+	// one review pass, whoever opened the pull request. Not a state label.
+	// The orchestrator removes it as it starts the session, so one label is
+	// one pass, served even when the session fails, and adding it again asks
+	// for another.
+	ReviewRequested string // bees:review-requested
 
 	// Issue workflow state labels (one at a time, except while a person
 	// holds an issue with NeedsHuman on top of one — see StateLabels).
@@ -75,27 +82,28 @@ type Labels struct {
 // LabelsFor derives the label set from the base visibility label.
 func LabelsFor(base string) Labels {
 	return Labels{
-		Base:       base,
-		Feature:    base + ":feature",
-		Bug:        base + ":bug",
-		Feedback:   base + ":feedback",
-		Question:   base + ":question",
-		Proposal:   base + ":proposal",
-		Planning:   base + ":planning",
-		Planned:    base + ":planned",
-		Priority:   base + ":priority",
-		Triage:     base + ":triage",
-		Ready:      base + ":ready",
-		InProgress: base + ":in-progress",
-		Blocked:    base + ":blocked",
-		Review:     base + ":review",
-		Approved:   base + ":approved",
-		NeedsHuman: base + ":needs-human",
-		SizeXS:     base + ":size/xs",
-		SizeS:      base + ":size/s",
-		SizeM:      base + ":size/m",
-		SizeL:      base + ":size/l",
-		SizeXL:     base + ":size/xl",
+		Base:            base,
+		Feature:         base + ":feature",
+		Bug:             base + ":bug",
+		Feedback:        base + ":feedback",
+		Question:        base + ":question",
+		Proposal:        base + ":proposal",
+		Planning:        base + ":planning",
+		Planned:         base + ":planned",
+		Priority:        base + ":priority",
+		ReviewRequested: base + ":review-requested",
+		Triage:          base + ":triage",
+		Ready:           base + ":ready",
+		InProgress:      base + ":in-progress",
+		Blocked:         base + ":blocked",
+		Review:          base + ":review",
+		Approved:        base + ":approved",
+		NeedsHuman:      base + ":needs-human",
+		SizeXS:          base + ":size/xs",
+		SizeS:           base + ":size/s",
+		SizeM:           base + ":size/m",
+		SizeL:           base + ":size/l",
+		SizeXL:          base + ":size/xl",
 	}
 }
 
@@ -153,6 +161,7 @@ func (l Labels) All() []LabelSpec {
 		{l.Planning, "6F42C1", "A person and the product manager are agreeing this issue; discussion only, no breakdown"},
 		{l.Planned, "0052CC", "Agreed with a person: the product manager breaks it down on its next run"},
 		{l.Priority, "E99695", "A person wants this next: dispatched before the rest of the ready queue"},
+		{l.ReviewRequested, "F9D0C4", "On a pull request: a person asks the reviewer for one review pass; removed when it starts"},
 		{l.Triage, "E4E669", "Needs refinement by the project manager"},
 		{l.Ready, "0E8A16", "Detailed enough for a developer to pick up"},
 		{l.InProgress, "5319E7", "A developer is working on it"},
