@@ -185,8 +185,9 @@ named after the role (`developer skills`, `qa mcp`), so the table says which
 role is broken rather than that something is. A role that configures none of
 the three still gets a line, and a role with `enabled = false` is reported as
 disabled rather than dropped silently. The skills are cloned into the cache a
-session uses (`$BEES_CACHE_DIR`, else `~/.cache/bees`), so doctor warms it
-instead of duplicating the work.
+session uses (`$BEES_CACHE_DIR`, else the user cache directory: `~/.cache/bees`
+on Linux, `~/Library/Caches/bees` on macOS), so doctor warms it instead of
+duplicating the work.
 
 ```
 $ bees doctor
