@@ -889,6 +889,10 @@ func (s *Scheduler) pass(ctx context.Context) error {
 	s.op("reconcile", err, "reconcile", "err", capErrors(err))
 	s.checkDayBudget()
 	s.dispatchDevelopers(ctx, snap, false)
+	// After the developers, so a ready issue is never starved by a review
+	// request, and only here: a local pass would dispatch from a cached
+	// pull request list that still carries a label removed on GitHub.
+	s.dispatchRequestedReviews(ctx, snap)
 	s.dispatchSingletons(ctx, snap, false)
 	return nil
 }

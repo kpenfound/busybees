@@ -31,7 +31,7 @@ import (
 // environment, performs a scripted action and prints a stream-json result.
 //
 // The flags that steer the fake (FAKE_CLAUDE, FAKE_DEV_HANG, FAKE_DEV_FAIL,
-// FAKE_DEV_MAIL_TO, FAKE_REVIEW_ALWAYS_CHANGES, FAKE_COST, FAKE_SIGNAL)
+// FAKE_DEV_MAIL_TO, FAKE_REVIEW_ALWAYS_CHANGES, FAKE_REVIEW_FAIL, FAKE_COST, FAKE_SIGNAL)
 // reach it through the ordinary environment, so they must NOT start with
 // BEES_: the runner strips inherited BEES_* variables from every session.
 func TestMain(m *testing.M) {
@@ -203,6 +203,13 @@ func fakeClaude() {
 				fail(err)
 			}
 			outcome = session.Outcome{Status: OutcomeChangesRequested}
+			break
+		}
+		// FAKE_REVIEW_FAIL reports `failed` outright, the way a reviewer
+		// that could not review does.
+		if os.Getenv("FAKE_REVIEW_FAIL") == "1" {
+			counter("review")
+			outcome = session.Outcome{Status: OutcomeFailed, Note: "cannot read the diff"}
 			break
 		}
 		// FAKE_REVIEW_ALWAYS_CHANGES never approves, which is the only way
