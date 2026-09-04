@@ -1473,3 +1473,47 @@ func TestDeveloperTakesDirectionsFromPeopleOnTheIssue(t *testing.T) {
 		t.Errorf("developer prompt does not name the issue number to reply to:\n%s", sys)
 	}
 }
+
+// A review a person asked for by labelling a pull request has no issue
+// behind it: both reviewer prompts must render with Data.Issue nil, and the
+// sentences that name the issue must keep their wording when it is set.
+func TestRequestedReviewRendersWithoutAnIssue(t *testing.T) {
+	d := sample()
+	d.Issue = nil
+	d.PR = &github.PR{Number: 42, Title: "Fix the widget", Body: "It was broken.", URL: "https://github.com/acme/widgets/pull/42",
+		HeadRefName: "fix-widget", BaseRefName: "main", Author: github.Author{Login: "kyle"}}
+	sys, err := System(config.RoleReviewer, d, "")
+	if err != nil {
+		t.Fatalf("system prompt with no issue: %v", err)
+	}
+	for _, want := range []string{"`mail_send` (`to: developer`, `pr: 42`, `subject:", "(`issue_create` with `bug: true`);"} {
+		if !strings.Contains(flowed(sys), want) {
+			t.Errorf("system prompt without an issue lacks %q", want)
+		}
+	}
+	task, err := TaskNamed(config.RoleReviewer, "reviewer_requested", d)
+	if err != nil {
+		t.Fatalf("requested-review task with no issue: %v", err)
+	}
+	for _, want := range []string{"# Task: review pull request #42 (requested by a person)", "`bees:review-requested`",
+		"## Pull request #42: Fix the widget", "https://github.com/acme/widgets/pull/42", "branch `fix-widget` → `main`", "author: kyle", "It was broken.",
+		"## Mail for you (1)", "please fix", "## Your notes", "remember this", "gh pr diff 42 -R acme/widgets", "`pr_view`", "`status: approved`", "`status: changes-requested`"} {
+		if !strings.Contains(task, want) {
+			t.Errorf("requested-review task lacks %q:\n%s", want, task)
+		}
+	}
+	if strings.Contains(task, "## Issue") {
+		t.Errorf("requested-review task renders an issue section:\n%s", task)
+	}
+
+	// With an issue, the review-loop sentences read as they always have.
+	sys, err = System(config.RoleReviewer, sample(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"`mail_send` (`to: developer`, `pr: 9`, `issue: 4`, `subject:", "(`issue_create` with `bug: true`, `related: 4`);"} {
+		if !strings.Contains(flowed(sys), want) {
+			t.Errorf("system prompt with an issue lacks %q", want)
+		}
+	}
+}
