@@ -145,7 +145,7 @@ by hand still carries its state label underneath, and removing
 | `bees:approved` | The reviewer approved. Waiting for you to merge, or for the checks with `auto_merge` | Orchestrator (on the pull request too) |
 | `bees:needs-human` | The factory gave up on it, or you are holding it | Orchestrator, you |
 
-Four labels sit outside the state machine. An issue carrying `bees:feature`
+Five labels sit outside the state machine. An issue carrying `bees:feature`
 or `bees:feedback` never gets a state label and is never triaged:
 
 | Label | Meaning | Who sets it |
@@ -154,6 +154,7 @@ or `bees:feedback` never gets a state label and is never triaged:
 | `bees:feedback` | The product manager's inbox: an idea, product feedback or a bug report from a person | You, orchestrator (an issue with no state label and neither `bees:feature` nor `bees:feedback`) |
 | `bees:question` | The product manager is waiting for you to answer on a feature or feedback issue | Product manager. The orchestrator removes it when you reply |
 | `bees:proposal` | A feature issue a bee wrote. It sits next to `bees:feature`, and you remove it to approve the feature | `bees issue create --feature`. Only you remove it |
+| `bees:review-requested` | On a pull request, not an issue: one review pass from the reviewer, whoever opened the pull request. See [Asking for a review of any pull request](#asking-for-a-review-of-any-pull-request) | You. The orchestrator removes it as the review starts |
 
 Three more sit next to a state label rather than replacing one.
 
@@ -617,6 +618,30 @@ refuses one from the pull request's own author, which with a shared account
 is usually the configured login. With the reviewer role
 [disabled](roles.md#disabling-a-role), a pull request is approved as soon as
 the developer opens it.
+
+### Asking for a review of any pull request
+
+The review loop above runs on the pull requests the factory's developers open.
+To have the reviewer look at any other open pull request, your own or
+anyone's, put `bees:review-requested` on it. The pull request needs the `bees`
+label too, or it is outside the [filter](#what-the-factory-can-see) and the
+factory never sees it; with `filter.assignee` set, assign it as well.
+
+One label is one review pass. The next poll starts a reviewer session on the
+pull request, in a read-only checkout of its head branch, and removes the
+label as the session starts: it is gone whether the session approves, requests
+changes or fails, and adding it again asks for another pass. A request that
+arrives while a review of the same pull request is still running waits for the
+poll after it. The session takes a developer slot, so
+`scheduler.max_developers` bounds these reviews together with the developer
+workers, and it starts only after every ready issue that can be dispatched has
+been, so a request never starves the queue. A session that fails is logged,
+and the pull request is not tried again for five poll intervals: there is no
+issue to escalate.
+
+A head branch the factory's remote does not have, a pull request from a fork
+or a branch deleted since, does not stop the review: the session runs from a
+checkout of the default branch and reads the change with `gh pr diff`.
 
 ### Before the review: the checks
 

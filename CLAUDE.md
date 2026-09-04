@@ -29,7 +29,7 @@ GitHub repository. Read `docs/architecture.md` before changing the scheduler.
 
 - `cmd/bees` — cobra CLI (`init`, `run`, `tick`, `exec`, `status`, `cost`, `kill`, `mail`, `notes`, `issue`, `done`, `mcp`, `doctor`, `config`, `skills`, `prompts`, `labels`, `version`).
 - `internal/config` — `bees.toml` schema (commented-defaults template in `template.go`), global/role merging, labels, repo/branch derivation from the git remote (`resolve.go`).
-- `internal/scheduler` — the loop: poll → deliver human feedback (`humans.go`: comments on an in-flight issue, then reviews and comments on a PR) → reconcile labels → dispatch developer workers (`developer.go`: develop → review → checks stages) → dispatch singletons (`singletons.go`). `events.go` publishes a non-blocking event stream (`Subscribe`) for views, alongside `status.json`.
+- `internal/scheduler` — the loop: poll → deliver human feedback (`humans.go`: comments on an in-flight issue, then reviews and comments on a PR) → reconcile labels → dispatch developer workers (`developer.go`: develop → review → checks stages) → dispatch requested reviews (`reviewrequests.go`: a reviewer session for a pull request a person labelled `bees:review-requested`, full passes only) → dispatch singletons (`singletons.go`). `events.go` publishes a non-blocking event stream (`Subscribe`) for views, alongside `status.json`.
 - `internal/issues` — `bees issue create/link`: visible, labelled, sub-issue of a feature, milestone inherited.
 - `internal/procs` — pid files + `ps` scan to find and kill orphaned sessions (`bees kill`, and the live view's `k` key through `Scheduler.KillSession`).
 - `internal/testutil` — local bare git remote + clone for tests.

@@ -120,6 +120,7 @@ and `bees labels sync` create them in GitHub.
 | `bees:planning` | A person and the product manager are still agreeing a feature or feedback issue; the product manager discusses and breaks nothing down. Not a state label; only a person sets or removes it. See [Planning with the product manager](workflow.md#planning-with-the-product-manager) |
 | `bees:planned` | A person ended planning: the scope is agreed and the product manager breaks the issue down on its next run. Not a state label; only a person sets or removes it |
 | `bees:priority` | A person wants this next: dispatched before the rest of the `bees:ready` queue. Not a state label. People set it; the project manager may add it to a work item that unblocks the factory itself, and the product manager carries one from a feedback issue onto the work item it creates from it |
+| `bees:review-requested` | On a pull request, not an issue: a person asks the reviewer for one review pass, whoever opened the pull request. Not a state label; the orchestrator removes it as the review starts. See [Asking for a review of any pull request](workflow.md#asking-for-a-review-of-any-pull-request) |
 | `bees:triage` | Needs refinement by the project manager |
 | `bees:ready` | Detailed enough for a developer |
 | `bees:in-progress` | A developer worker owns it |
