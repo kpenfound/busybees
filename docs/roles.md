@@ -410,9 +410,9 @@ changes honestly and lets the orchestrator escalate. The loop as a whole,
 
 A person asks for a review of any pull request the factory can see, their
 own or anyone's, by putting `bees:review-requested` on it; how the label is
-picked up and removed is under [Asking for a review of any pull
-request](workflow.md#asking-for-a-review-of-any-pull-request). The session
-is the reviewer role with its prompts switched to this mode.
+picked up and removed is under
+[Asking for a review of any pull request](workflow.md#asking-for-a-review-of-any-pull-request).
+The session is the reviewer role with its prompts switched to this mode.
 
 **Reads.** The pull request (title, body, branches, author); a statement that
 there is no issue and no acceptance criteria, so the description and the

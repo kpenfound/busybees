@@ -599,9 +599,10 @@ criteria, cleanliness and style, giving each its own verdict. It then either
 approves, which needs every stage to pass, or sends the developer one
 consolidated message through the mailbox, its points grouped by stage.
 Verifying that the change builds and passes is CI's job: the reviewer judges
-the change from the code and does not re-run the repository's test-suite. It
-does not submit a GitHub review, comment on the pull request, or push to the
-branch. On changes requested the orchestrator moves the issue back to
+the change from the code and does not re-run the repository's test-suite. On
+a developer's pull request it does not submit a GitHub review, comment on the
+pull request, or push to the branch. On changes requested the orchestrator
+moves the issue back to
 `bees:in-progress` and runs the developer again with the feedback in its
 prompt. The developer pushes and reports `pr-updated`.
 
