@@ -45,6 +45,7 @@ func TestMissingLabelsAreCreatedAtStart(t *testing.T) {
 	dropLabel(h, "bees:priority")
 	dropLabel(h, "bees:planning")
 	dropLabel(h, "bees:planned")
+	dropLabel(h, "bees:review-requested")
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
@@ -53,7 +54,7 @@ func TestMissingLabelsAreCreatedAtStart(t *testing.T) {
 	}
 	got := createdLabels(h)
 	slices.Sort(got)
-	if want := []string{"bees:planned", "bees:planning", "bees:priority", "bees:review", "bees:size/m"}; !slices.Equal(got, want) {
+	if want := []string{"bees:planned", "bees:planning", "bees:priority", "bees:review", "bees:review-requested", "bees:size/m"}; !slices.Equal(got, want) {
 		t.Fatalf("labels created: %v, want %v", got, want)
 	}
 	if !strings.Contains(h.logs.String(), "created missing label") {

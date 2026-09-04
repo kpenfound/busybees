@@ -14,12 +14,14 @@ labels, the queues and the review loop, is on [workflow.md](workflow.md).
 | `product_manager` | singleton | unread mail; `scheduler.product_manager_interval` (default 1h) elapsed since its last run, the first run being immediate; a person approved a proposal by removing `bees:proposal`; a feature whose recorded sub-issues have all closed; a fresh `bees:feedback` or `bees:feature` issue, one a person created or commented on since the product manager last replied (on a `bees:proposal` or `bees:planning` issue only a comment counts) |
 | `project_manager` | singleton | an issue in `bees:triage`, or unread mail |
 | `developer` | pool of `scheduler.max_developers` workers (default 1) | a `bees:ready` issue is waiting, or an issue in `bees:in-progress`, `bees:review` or `bees:approved` has a worker to resume. A ready issue that already has a pull request goes before new work |
-| `reviewer` | one per developer worker, in turn with it | the worker's developer session opened or updated a pull request; a check on that pull request failed, before the first review or, with `auto_merge`, after approval |
+| `reviewer` | one per developer worker, in turn with it; one per requested review, in a developer slot | the worker's developer session opened or updated a pull request; a check on that pull request failed, before the first review or, with `auto_merge`, after approval; a person put `bees:review-requested` on a pull request |
 | `qa` | singleton | unread mail; or `scheduler.qa_interval` (default 30m) elapsed and something was merged since its last run, the first run being immediate |
 
 A developer worker owns one issue at a time and runs developer, reviewer,
-developer, and so on for it, one session at a time. There are never more
-reviewer sessions than developer workers, and never two for one pull request.
+developer, and so on for it, one session at a time. A review a person asks for
+with `bees:review-requested` runs outside any worker and takes a slot from the
+same `scheduler.max_developers` pool, so that number bounds every reviewer
+session too.
 A singleton runs one session at a time and waits at least
 `scheduler.poll_interval` (default 5m) after a session ends before starting
 the next; after a session that reported `failed` it waits five poll intervals.
@@ -341,6 +343,13 @@ else, they are a load error. See
 Reviews one pull request and decides whether it is ready to merge. It also
 owns the checks and the merge: `auto_merge` and its companions are
 `roles.reviewer` keys.
+
+A review a person asks for by putting `bees:review-requested` on any visible
+pull request is a session of the same role with no issue behind it: it reads
+the pull request, the mail addressed to `reviewer` about it and its notes,
+runs in a read-only checkout of the head branch, and reports `approved` or
+`changes-requested` with a note. See [Asking for a review of any pull
+request](workflow.md#asking-for-a-review-of-any-pull-request).
 
 **Reads.** The pull request (title, body, branches, author); the issue with
 its body; the [review stages](#review-stages-rolesreviewerstages) to run; the

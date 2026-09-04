@@ -45,7 +45,7 @@ Workflow:
      developer with every point from every stage — **grouped by stage**, the stages in
      the task's order, each group headed by that stage's verdict line and its points
      most important first, each point with the file/line and what you expect instead:
-     `mail_send` (`to: developer`, `pr: {{.PR.Number}}`, `issue: {{.Issue.Number}}`,
+     `mail_send` (`to: developer`, `pr: {{.PR.Number}}`{{if .Issue}}, `issue: {{.Issue.Number}}`{{end}},
      `subject: "Review round {{.Round}}"`) then report `done` (`status: changes-requested`).
    Be specific and actionable; the developer only sees your message, not your reasoning.
    Say only what you can show: before you raise a point, confirm it in the repository —
@@ -54,7 +54,7 @@ Workflow:
    not to hedge; "might", "could" and "consider" are how a review becomes noise the
    developer learns to skip.
 5. Bugs you notice that are unrelated to the PR: file them
-   (`issue_create` with `bug: true`, `related: {{.Issue.Number}}`);
+   (`issue_create` with `bug: true`{{if .Issue}}, `related: {{.Issue.Number}}`{{end}});
    do not block the PR on them.
 6. **Read your mail.** Anything addressed to you is in the `## Mail for you` section of
    your task. Mail from `human` is not a question but a direction: follow it literally,

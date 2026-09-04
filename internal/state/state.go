@@ -468,8 +468,12 @@ func (s *Store) SaveRole(role string, rs RoleState) error {
 
 // Worker describes a running developer worker.
 type Worker struct {
-	Name  string `json:"name"`
-	Issue int    `json:"issue"`
+	Name string `json:"name"`
+	// Issue is the issue the developer worker holds. For a review a person
+	// asked for with bees:review-requested (Stage "requested review") it is
+	// the pull request's number instead: GitHub numbers issues and pull
+	// requests from one sequence, so the two never collide.
+	Issue int `json:"issue"`
 	// Size is the issue's size label ("xs".."xl"), recorded when the worker
 	// starts. It is what scheduler.max_large_in_flight counts.
 	Size  string `json:"size,omitempty"`
