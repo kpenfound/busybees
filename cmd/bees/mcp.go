@@ -272,3 +272,10 @@ func (b *backend) EditLabels(ctx context.Context, number int, add, remove []stri
 	}
 	return b.gh.EditLabels(ctx, number, add, remove)
 }
+
+func (b *backend) SubmitReview(ctx context.Context, number int, event, body string) error {
+	if err := b.load(ctx); err != nil {
+		return err
+	}
+	return b.gh.SubmitReview(ctx, number, event, body)
+}

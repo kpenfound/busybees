@@ -28,6 +28,7 @@ type fakeGitHub struct {
 	comments []numberedBody
 	bodies   []numberedBody
 	edits    []labelEdit
+	reviews  []review
 }
 
 type numberedBody struct {
@@ -114,9 +115,20 @@ func (f *fakeGitHub) EditLabels(_ context.Context, number int, add, remove []str
 	return nil
 }
 
+type review struct {
+	number int
+	event  string
+	body   string
+}
+
+func (f *fakeGitHub) SubmitReview(_ context.Context, number int, event, body string) error {
+	f.reviews = append(f.reviews, review{number, event, body})
+	return nil
+}
+
 // wrote reports whether the backend was asked to change anything.
 func (f *fakeGitHub) wrote() bool {
-	return len(f.comments)+len(f.bodies)+len(f.edits) > 0
+	return len(f.comments)+len(f.bodies)+len(f.edits)+len(f.reviews) > 0
 }
 
 // ---- tool lists ------------------------------------------------------------
@@ -127,7 +139,7 @@ func TestGitHubToolsPerRole(t *testing.T) {
 	base := "comment, done, issue_create, issue_link, issue_view, mail_list, mail_send, pr_view"
 	for role, want := range map[string]string{
 		config.RoleDeveloper: base,
-		config.RoleReviewer:  base,
+		config.RoleReviewer:  "comment, done, issue_create, issue_link, issue_view, mail_list, mail_send, pr_view, submit_review",
 		config.RoleQA:        base,
 		config.RoleProjectManager: "comment, done, issue_create, issue_edit_body, issue_link, " +
 			"issue_set_state, issue_view, mail_list, mail_send, pr_view",
@@ -135,7 +147,7 @@ func TestGitHubToolsPerRole(t *testing.T) {
 			"issue_question, issue_view, mail_list, mail_send, pr_view",
 		// Hand use through `bees mcp serve`: everything.
 		"": "comment, done, issue_create, issue_edit_body, issue_link, issue_question, " +
-			"issue_set_state, issue_view, mail_list, mail_send, pr_view",
+			"issue_set_state, issue_view, mail_list, mail_send, pr_view, submit_review",
 	} {
 		list, err := Tools(context.Background(), Env{Role: role})
 		if err != nil {
@@ -160,6 +172,7 @@ func TestGitHubToolsWithoutABackend(t *testing.T) {
 		"issue_edit_body": {"number": 12, "body": "hello"},
 		"issue_set_state": {"number": 12, "state": "blocked"},
 		"issue_question":  {"number": 12, "waiting": true},
+		"submit_review":   {"number": 12, "event": "approve", "body": "fine"},
 	} {
 		res := h.callRaw(name, args)
 		if !res.IsError || !strings.Contains(resultText(res), "bees.toml") {
@@ -349,6 +362,65 @@ func TestCommentRefusesOutsideTheFilterAndWithoutABody(t *testing.T) {
 	}
 	if f.wrote() {
 		t.Fatalf("a refused comment was posted: %v", f.comments)
+	}
+}
+
+// ---- submit_review ---------------------------------------------------------
+
+// A requested review ends in one GitHub review whose body carries the
+// reviewer's marker, on the pull request the session is working on unless
+// another is named.
+func TestSubmitReviewOnTheSessionsPullRequest(t *testing.T) {
+	f := newFakeGitHub()
+	f.prs[72] = github.PR{Number: 72, Labels: labelsOf("bees"), Assignees: []github.Author{{Login: "kyle"}}}
+	h := newHarness(t, config.RoleReviewer, Deps{GitHub: f})
+	body := "implementation: pass — the diff does what the description says\nstyle: fail — `x` shadows the package\n"
+	got := h.call("submit_review", map[string]any{"event": "request-changes", "body": body})
+	if !strings.Contains(got, "request-changes") || !strings.Contains(got, "#72") {
+		t.Errorf("result: %q", got)
+	}
+	if len(f.reviews) != 1 {
+		t.Fatalf("reviews: %v", f.reviews)
+	}
+	r := f.reviews[0]
+	if r.number != 72 || r.event != "request-changes" {
+		t.Errorf("review: %+v", r)
+	}
+	if want := strings.TrimRight(body, "\n") + "\n\n<!-- bees:reviewer -->"; r.body != want {
+		t.Errorf("body:\n%q\nwant\n%q", r.body, want)
+	}
+	if role, ok := github.BeeRole(r.body); !ok || role != config.RoleReviewer {
+		t.Errorf("the review body does not read as the reviewer's: %q", r.body)
+	}
+	// Approving already-marked text does not double the marker.
+	h.call("submit_review", map[string]any{"number": 72, "event": "approve", "body": "all four stages pass\n\n<!-- bees:reviewer -->"})
+	if r := f.reviews[1]; r.event != "approve" || strings.Count(r.body, "<!-- bees:reviewer -->") != 1 {
+		t.Errorf("second review: %+v", r)
+	}
+}
+
+func TestSubmitReviewRefusals(t *testing.T) {
+	f := newFakeGitHub()
+	f.prs[72] = github.PR{Number: 72, Labels: labelsOf("bees"), Assignees: []github.Author{{Login: "kyle"}}}
+	f.prs[73] = github.PR{Number: 73, Labels: labelsOf("bees")} // not assigned to kyle
+	f.issues[36] = github.Issue{Number: 36, Labels: labelsOf("bees"), Assignees: []github.Author{{Login: "kyle"}}}
+	h := newHarness(t, config.RoleReviewer, Deps{GitHub: f})
+	for name, tc := range map[string]struct {
+		args map[string]any
+		want string
+	}{
+		"outside the filter":          {map[string]any{"number": 73, "event": "approve", "body": "fine"}, "does not match the factory's filter"},
+		"an issue":                    {map[string]any{"number": 36, "event": "approve", "body": "fine"}, "no pull request #36"},
+		"no body":                     {map[string]any{"number": 72, "event": "approve", "body": " \n"}, "needs a body"},
+		"a verdict gh does not spell": {map[string]any{"number": 72, "event": "approved", "body": "fine"}, "approved"},
+	} {
+		res := h.callRaw("submit_review", tc.args)
+		if !res.IsError || !strings.Contains(resultText(res), tc.want) {
+			t.Errorf("%s: %v %q, want an error naming %q", name, res.IsError, resultText(res), tc.want)
+		}
+	}
+	if f.wrote() {
+		t.Fatalf("a refused review was submitted: %v", f.reviews)
 	}
 }
 

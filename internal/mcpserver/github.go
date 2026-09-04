@@ -35,6 +35,9 @@ type GitHub interface {
 	Comment(ctx context.Context, number int, body string) error
 	EditBody(ctx context.Context, number int, body string) error
 	EditLabels(ctx context.Context, number int, add, remove []string) error
+	// SubmitReview submits one review on a pull request: event is one of
+	// github.ReviewEvents.
+	SubmitReview(ctx context.Context, number int, event, body string) error
 }
 
 // errNoGitHub is what every GitHub tool reports when there is no backend,
@@ -100,6 +103,21 @@ func (s *server) addGitHubTools(srv *mcp.Server) {
 		}, s.issueSetState)
 	}
 
+	if s.roleIs(config.RoleReviewer) {
+		mcp.AddTool(srv, &mcp.Tool{
+			Name:  "submit_review",
+			Title: "Submit a review on a pull request",
+			Description: "Submit one GitHub review on a pull request a person asked the factory to " +
+				"review: approve, request-changes or comment, with the whole verdict in the body. " +
+				"Only for a requested review; a developer's pull request gets its feedback by " +
+				"mail. Defaults to the pull request this session is working on. The marker that " +
+				"tells your reviews apart from a person's is appended for you.",
+			InputSchema: schemaFor[submitReviewInput](map[string][]string{
+				"event": github.ReviewEvents,
+			}),
+		}, s.submitReview)
+	}
+
 	if s.roleIs(config.RoleProductManager) {
 		mcp.AddTool(srv, &mcp.Tool{
 			Name:  "issue_question",
@@ -156,23 +174,9 @@ func (s *server) prView(ctx context.Context, _ *mcp.CallToolRequest, in prViewIn
 	if s.github == nil {
 		return nil, nil, errNoGitHub
 	}
-	n := in.Number
-	if n == 0 {
-		n = s.env.PR
-	}
-	if n == 0 {
-		return nil, nil, errors.New("no pull request number: this session is not working on a pull request")
-	}
-	q, _, err := s.github.Rules(ctx)
+	n, pr, err := s.visiblePR(ctx, in.Number)
 	if err != nil {
 		return nil, nil, err
-	}
-	pr, err := s.github.PR(ctx, n)
-	if err != nil {
-		return nil, nil, err
-	}
-	if !q.Matches(pr.Labels, pr.Assignees, prMilestone(pr)) {
-		return nil, nil, outsideFilter(n, q)
 	}
 	checks, err := s.github.Checks(ctx, n)
 	if err != nil {
@@ -183,6 +187,30 @@ func (s *server) prView(ctx context.Context, _ *mcp.CallToolRequest, in prViewIn
 		return nil, nil, err
 	}
 	return text("%s", prText(pr, checks, activity)), nil, nil
+}
+
+// visiblePR resolves a pull request number (0 means the one this session
+// is working on) to the pull request, refusing one outside the filter.
+func (s *server) visiblePR(ctx context.Context, number int) (int, github.PR, error) {
+	n := number
+	if n == 0 {
+		n = s.env.PR
+	}
+	if n == 0 {
+		return 0, github.PR{}, errors.New("no pull request number: this session is not working on a pull request")
+	}
+	q, _, err := s.github.Rules(ctx)
+	if err != nil {
+		return 0, github.PR{}, err
+	}
+	pr, err := s.github.PR(ctx, n)
+	if err != nil {
+		return 0, github.PR{}, err
+	}
+	if !q.Matches(pr.Labels, pr.Assignees, prMilestone(pr)) {
+		return 0, github.PR{}, outsideFilter(n, q)
+	}
+	return n, pr, nil
 }
 
 // ---- comment ---------------------------------------------------------------
@@ -314,6 +342,37 @@ func (s *server) issueSetState(ctx context.Context, _ *mcp.CallToolRequest, in i
 		return nil, nil, err
 	}
 	return text("#%d is now %s", in.Number, strings.Join(add, " + ")), nil, nil
+}
+
+// ---- submit_review ---------------------------------------------------------
+
+type submitReviewInput struct {
+	Number int    `json:"number,omitempty" jsonschema:"pull request to review (defaults to the pull request this session is working on)"`
+	Event  string `json:"event" jsonschema:"the verdict: approve when every stage passed, request-changes when any failed, comment when you may not approve (the pull request's author is the login the factory acts as)"`
+	Body   string `json:"body" jsonschema:"the review: each stage's verdict line and the points under it, in the stages' order"`
+}
+
+func (s *server) submitReview(ctx context.Context, _ *mcp.CallToolRequest, in submitReviewInput) (*mcp.CallToolResult, any, error) {
+	if s.github == nil {
+		return nil, nil, errNoGitHub
+	}
+	if strings.TrimSpace(in.Body) == "" {
+		return nil, nil, errors.New("a review needs a body")
+	}
+	if !slices.Contains(github.ReviewEvents, in.Event) {
+		return nil, nil, fmt.Errorf("unknown review event %q (want %s)", in.Event, strings.Join(github.ReviewEvents, ", "))
+	}
+	if s.env.Role == "" {
+		return nil, nil, errors.New("reviews can only be submitted from a session ($BEES_ROLE is not set)")
+	}
+	number, _, err := s.visiblePR(ctx, in.Number)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := s.github.SubmitReview(ctx, number, in.Event, withMarker(in.Body, s.env.Role)); err != nil {
+		return nil, nil, err
+	}
+	return text("submitted a %s review on #%d", in.Event, number), nil, nil
 }
 
 // stateLabel maps a short state name to its label, or "" when the name is
