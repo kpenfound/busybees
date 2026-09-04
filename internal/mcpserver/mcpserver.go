@@ -5,7 +5,7 @@
 // The server is the same code the CLI runs: mail_send/mail_list go through
 // internal/mail, issue_create/issue_link through internal/issues and done
 // through session.Report. The GitHub tools (issue_view, pr_view, comment,
-// issue_edit_body, issue_set_state, issue_question) go through a `gh` client
+// issue_edit_body, issue_set_state, issue_question, submit_review) go through a `gh` client
 // and enforce the factory's rules — the visibility filter, the comment
 // marker, who owns which issue — instead of restating them in a prompt. It is started by claude as `bees mcp serve` and
 // takes its context (role, state dir, session dir, issue, PR) from the BEES_*
