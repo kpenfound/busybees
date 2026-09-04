@@ -190,11 +190,14 @@ func TestARequestedReviewsVerdictIsTheEvent(t *testing.T) {
 		want    string
 		prompt  string
 	}{
-		"shared account":     {"", false, "--approve", "The factory has no GitHub account of its own"},
-		"its own account":    {"busybees-bot", false, "--approve", "The factory acts as `busybees-bot` on GitHub. The pull request's author is `kyle`"},
-		"the author":         {"kyle", false, "--comment", "The factory acts as `kyle` on GitHub. That is this pull request's author"},
-		"a failed stage":     {"busybees-bot", true, "--request-changes", ""},
-		"the author, failed": {"kyle", true, "--request-changes", ""},
+		"shared account":  {"", false, "--approve", "The factory has no GitHub account of its own"},
+		"its own account": {"busybees-bot", false, "--approve", "The factory acts as `busybees-bot` on GitHub. The pull request's author is `kyle`"},
+		"the author":      {"kyle", false, "--comment", "The factory acts as `kyle` on GitHub. That is this pull request's author"},
+		// GitHub logins are case-insensitive: [github].login as a person
+		// typed it against the author as GitHub spells it.
+		"the author, other casing": {"Kyle", false, "--comment", "The factory acts as `Kyle` on GitHub. That is this pull request's author"},
+		"a failed stage":           {"busybees-bot", true, "--request-changes", ""},
+		"the author, failed":       {"kyle", true, "--request-changes", ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := newHarnessAt(t, reviewOnlyTOML, requestedReviewClock)

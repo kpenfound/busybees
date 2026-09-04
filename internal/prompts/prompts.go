@@ -315,6 +315,7 @@ func render(name string, d Data) (string, error) {
 			}
 			return i.Milestone.Title
 		},
+		"eqFold": strings.EqualFold,
 		"oneline": func(s string) string {
 			s = strings.ReplaceAll(strings.TrimSpace(s), "\n", " ")
 			if len(s) > 120 {
