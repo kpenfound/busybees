@@ -1166,7 +1166,7 @@ func section(t *testing.T, prompt, heading string) string {
 // off the {{if}} chain that selects it.
 func stageHeadings(t *testing.T) []string {
 	t.Helper()
-	b, err := files.ReadFile("task/reviewer.md")
+	b, err := files.ReadFile("partials/stages.md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1183,7 +1183,7 @@ func stageHeadings(t *testing.T) []string {
 		names = append(names, name)
 	}
 	if len(names) == 0 {
-		t.Fatalf("no \"### `\" stage heading in task/reviewer.md; the pin has lost its anchor")
+		t.Fatalf("no \"### `\" stage heading in partials/stages.md; the pin has lost its anchor")
 	}
 	return names
 }
@@ -1201,7 +1201,7 @@ func TestReviewerTaskDescribesEveryKnownStage(t *testing.T) {
 	slices.Sort(got)
 	slices.Sort(want)
 	if !slices.Equal(got, want) {
-		t.Errorf("task/reviewer.md describes %v; config.KnownReviewStages is %v", got, want)
+		t.Errorf("partials/stages.md describes %v; config.KnownReviewStages is %v", got, want)
 	}
 }
 
@@ -1543,6 +1543,149 @@ func TestRequestedReviewRendersWithoutAnIssue(t *testing.T) {
 	for _, want := range []string{"`mail_send` (`to: developer`, `pr: 9`, `issue: 4`, `subject:", "(`issue_create` with `bug: true`, `related: 4`);"} {
 		if !strings.Contains(flowed(sys), want) {
 			t.Errorf("system prompt with an issue lacks %q", want)
+		}
+	}
+}
+
+// requestedReview is the Data a requested review renders from: no issue, a
+// person's pull request, and the mode set.
+func requestedReview() Data {
+	d := sample()
+	d.Issue = nil
+	d.Mode = "requested"
+	d.ActsAs = "busybees-bot"
+	d.PR = &github.PR{Number: 42, Title: "Fix the widget", Body: "It was broken.", URL: "https://github.com/acme/widgets/pull/42",
+		HeadRefName: "fix-widget", BaseRefName: "main", Author: github.Author{Login: "kyle"}}
+	return d
+}
+
+// A requested review puts its verdict on the pull request as a GitHub
+// review: the system prompt says so only in that mode, and the mode leaves
+// a developer's review, which mails the developer, untouched.
+func TestRequestedReviewSystemPromptSubmitsAReview(t *testing.T) {
+	sys, err := System(config.RoleReviewer, requestedReview(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	flow := flowed(sys)
+	for _, want := range []string{
+		"put your verdict on it as a GitHub review",
+		"exactly one GitHub review, submitted with `submit_review` (`number: 42`)",
+		"**Approve** (`event: approve`) when every stage passed",
+		"**Request changes** (`event: request-changes`) when any stage failed",
+		"**Comment** (`event: comment`) in place of `approve` when the pull request's author is the login the factory acts as",
+		"The `<!-- bees:reviewer -->` marker is appended for you",
+		"There is no developer on this pull request, so you send no mail",
+		"Outcome statuses: `approved`, `changes-requested` (both after submitting the review), `failed`",
+	} {
+		if !strings.Contains(flow, want) {
+			t.Errorf("requested-review system prompt lacks %q:\n%s", want, sys)
+		}
+	}
+	for _, gone := range []string{"Do not submit a GitHub review", "`mail_send` (`to: developer`", "linked issue", "You may send mail to: `developer`", "the developer learns to skip"} {
+		if strings.Contains(flow, gone) {
+			t.Errorf("requested-review system prompt still says %q:\n%s", gone, sys)
+		}
+	}
+
+	// A developer's pull request: the review-loop rules, and no review tool.
+	normal, err := System(config.RoleReviewer, sample(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	flow = flowed(normal)
+	for _, want := range []string{"Do not submit a GitHub review and do not post your feedback as a comment", "`mail_send` (`to: developer`, `pr: 9`, `issue: 4`", "You may send mail to: `developer`, and to no one else"} {
+		if !strings.Contains(flow, want) {
+			t.Errorf("reviewer system prompt lacks %q:\n%s", want, normal)
+		}
+	}
+	for _, gone := range []string{"submit_review", "event: approve", "GitHub refuses an approval"} {
+		if strings.Contains(flow, gone) {
+			t.Errorf("reviewer system prompt for a developer's pull request mentions %q:\n%s", gone, normal)
+		}
+	}
+	// The mode is the only switch: the same data without it renders the
+	// review-loop prompt, issue or no issue.
+	d := requestedReview()
+	d.Mode = ""
+	off, err := System(config.RoleReviewer, d, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(off, "submit_review") || !strings.Contains(off, "Do not submit a GitHub review") {
+		t.Errorf("Mode empty with no issue rendered the requested-review prompt:\n%s", off)
+	}
+}
+
+// The requested-review task is the whole brief: the pull request, the
+// stages judged against its description rather than an issue, who the
+// factory is on GitHub, and the review to submit.
+func TestRequestedReviewTaskHasNoIssueAndSubmitsAReview(t *testing.T) {
+	d := requestedReview()
+	d.Stages = append(slices.Clone(config.DefaultReviewStages), "product-fit")
+	task, err := TaskNamed(config.RoleReviewer, "reviewer_requested", d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	flow := flowed(task)
+	for _, want := range []string{
+		"## No issue, no acceptance criteria",
+		"Do not invent criteria the description does not state",
+		"## Who you are on GitHub",
+		"The factory acts as `busybees-bot` on GitHub. The pull request's author is `kyle`, so an approval is accepted.",
+		"## Review stages",
+		"### `implementation`", "### `completeness`", "### `cleanliness`", "### `style`", "### `product-fit`",
+		"The pull request's description is the source of truth: there is no issue and no acceptance criteria",
+		"This pull request belongs to no feature, so the README and the docs are the only source of truth",
+		"Approve only when every stage passed",
+		"submit your verdict as exactly one GitHub review with `submit_review` (`number: 42`)",
+		"`event: approve` when every stage passed, `event: request-changes` when any failed, `event: comment` in place of `approve`",
+		"Then report `done` with `status: approved` (after an approval, or a comment in its place) or `status: changes-requested`",
+		"send no mail",
+	} {
+		if !strings.Contains(flow, want) {
+			t.Errorf("requested-review task lacks %q:\n%s", want, task)
+		}
+	}
+	for _, gone := range []string{"## Issue", "acceptance criteria one at a time", "the issue never mentioned", "changes the issue did not ask for", "work item", "mail_send"} {
+		if strings.Contains(flow, gone) {
+			t.Errorf("requested-review task still says %q:\n%s", gone, task)
+		}
+	}
+
+	// The factory is the author: comment instead of approve.
+	d.ActsAs = "kyle"
+	same, err := TaskNamed(config.RoleReviewer, "reviewer_requested", d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "The factory acts as `kyle` on GitHub. That is this pull request's author, and GitHub refuses an approval from a pull request's own author: where you would approve, submit a `comment` review instead"; !strings.Contains(flowed(same), want) {
+		t.Errorf("same-account task lacks %q:\n%s", want, same)
+	}
+	// No [github]: the session finds out whose account it is.
+	d.ActsAs = ""
+	shared, err := TaskNamed(config.RoleReviewer, "reviewer_requested", d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"The factory has no GitHub account of its own", "Run `gh api user --jq .login` before you submit", "When that login is `kyle`, this pull request's author, GitHub refuses an approval"} {
+		if !strings.Contains(flowed(shared), want) {
+			t.Errorf("shared-account task lacks %q:\n%s", want, shared)
+		}
+	}
+	if strings.Contains(shared, "The factory acts as") {
+		t.Errorf("shared-account task names a login it does not have:\n%s", shared)
+	}
+
+	// The stages prose is shared with the review-loop task, which keeps
+	// naming the issue.
+	loop, err := Task(config.RoleReviewer, sample())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"The issue above is the source of truth. Take its acceptance criteria one at a time", "the inputs and states the issue never mentioned", "changes the issue did not ask for"} {
+		if !strings.Contains(flowed(loop), want) {
+			t.Errorf("review-loop task lacks %q:\n%s", want, loop)
 		}
 	}
 }

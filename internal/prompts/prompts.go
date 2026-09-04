@@ -27,6 +27,7 @@ var files embed.FS
 //
 //	{{template "consolidate" .}}   rewrite your notes this session
 //	{{template "interrupted" .}}   the session before this one was killed
+//	{{template "stages" .}}        the reviewer's review stages (renders nothing without .Stages)
 
 // Data is everything a prompt template can reference. Fields that do not
 // apply to a role are left zero.
@@ -137,6 +138,18 @@ type Data struct {
 	// other role and for the reviewer's checks-mode task, which diagnoses one
 	// failure rather than reviewing.
 	Stages []string
+	// Mode is the variant of a role's session, empty for every session that
+	// existed before it: "requested" for a reviewer reviewing a pull request
+	// a person asked about with bees:review-requested, which has no issue
+	// and no developer behind it and puts its verdict on GitHub as a review.
+	// Set only for a requested review.
+	Mode string
+	// ActsAs is the GitHub login the factory acts as ([github].login), or
+	// empty when it shares an account with the people it works for. Set
+	// only for a requested review, where the reviewer needs it to know
+	// whether GitHub will accept its approval: it refuses one from the pull
+	// request's own author.
+	ActsAs string
 	// Parent is the feature a work item belongs to, when it is a sub-issue.
 	// Set for a developer session, and for a reviewer session whose stages
 	// include config.StageProductFit — the only stage that reads it.
