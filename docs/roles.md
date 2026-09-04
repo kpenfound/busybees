@@ -165,8 +165,8 @@ comment with the mentions from
 [`scheduler.notify`](configuration.md#notifying-a-person) when it is set; the
 orchestrator removes the label when the person answers, and `waiting: false`
 only withdraws a question. Replies on every feedback issue it acts on, and
-routes a ready-to-build ask straight to a work item (`issue_create`, `related:
-<feedback issue>`, carrying `bees:priority` over with `gh issue edit
+routes a ready-to-build ask straight to a work item (`issue_create`,
+`related: <feedback issue>`, carrying `bees:priority` over with `gh issue edit
 --add-label` when a person put it there) rather than writing a feature around
 it. Closes feature and feedback issues with `gh issue close`, the one action
 with no tool, writing the marker into the closing comment by hand. Never
