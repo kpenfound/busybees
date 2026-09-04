@@ -151,7 +151,8 @@ func CacheDir() string {
 	return DefaultCacheDir()
 }
 
-// DefaultCacheDir returns ~/.cache/bees.
+// DefaultCacheDir returns the user cache directory: ~/.cache/bees on Linux,
+// ~/Library/Caches/bees on macOS.
 func DefaultCacheDir() string {
 	if dir, err := os.UserCacheDir(); err == nil {
 		return filepath.Join(dir, "bees")

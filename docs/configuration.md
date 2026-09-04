@@ -652,7 +652,8 @@ trust boundary as a CI configuration in the repository: review changes to
 ### Skills
 
 Skills are referenced by git URL and cloned into a cache directory,
-`~/.cache/bees/repos` unless `BEES_CACHE_DIR` says otherwise. They reach Claude
+`~/.cache/bees/repos` on Linux (`~/Library/Caches/bees/repos` on macOS)
+unless `BEES_CACHE_DIR` says otherwise. They reach Claude
 Code as plugin directories (`claude --plugin-dir`), so the worktree is never
 modified. Skills in the repository's `.claude/skills/` and in
 `~/.claude/skills/` are available without being listed.
@@ -804,7 +805,7 @@ Set `BEES_SKIP_VERSION_CHECK=1` to run with an unsupported version anyway.
 |---|---|
 | `BEES_CONFIG` | Path of `bees.toml` when `--config` is not given. Set inside sessions. |
 | `BEES_CLAUDE_BIN` | The `claude` executable to run. Default `claude` on `PATH`. |
-| `BEES_CACHE_DIR` | Cache directory for skill clones and generated plugins. Default `~/.cache/bees`. |
+| `BEES_CACHE_DIR` | Cache directory for skill clones and generated plugins. Default `~/.cache/bees` on Linux, `~/Library/Caches/bees` on macOS. |
 | `BEES_SKIP_VERSION_CHECK` | When non-empty, skip the `gh` and `claude` version checks. |
 | `BEES_STATE_DIR` | `bees mail` and `bees notes` use this state directory without loading `bees.toml`, unless `--config` is given, in which case that file's state directory wins. Set inside sessions. |
 | `BEES_SESSION_DIR` | Where `bees done` writes `outcome.json`; `bees done` refuses to run without it. Set inside sessions. |
