@@ -207,6 +207,35 @@ func TestProjectManagerSeesTheRestOfTheTriageQueue(t *testing.T) {
 	}
 }
 
+// runProjectManager (internal/scheduler/singletons.go) passes the open pull
+// requests as Data.PRs; the template must render them, or the field is dead
+// data the project manager never sees (#388).
+func TestProjectManagerSeesOpenPullRequests(t *testing.T) {
+	d := sample()
+	d.PRs = []github.PR{{Number: 9, Title: "Add thing", HeadRefName: "bees/issue-4"}}
+	pjm, err := Task(config.RoleProjectManager, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"## Open pull requests (1)",
+		"| 9 | Add thing | bees/issue-4 |",
+	} {
+		if !strings.Contains(pjm, want) {
+			t.Errorf("project manager task missing %q:\n%s", want, pjm)
+		}
+	}
+
+	d.PRs = nil
+	pjm, err = Task(config.RoleProjectManager, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(pjm, "## Open pull requests (0)") || !strings.Contains(pjm, "_None._") {
+		t.Errorf("project manager task missing the empty pull-request case:\n%s", pjm)
+	}
+}
+
 // The shared preamble must not state a rule more absolutely than the factory
 // applies it, because the role prompt rendered right after it contradicts the
 // absolute (#180). Two sentences: bees:priority ("only a person adds or

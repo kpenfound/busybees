@@ -46,6 +46,17 @@ _No new mail._
 _None._
 {{end}}
 
+## Open pull requests ({{len .PRs}})
+{{if .PRs}}
+| # | Title | Branch |
+|---|---|---|
+{{- range .PRs}}
+| {{.Number}} | {{.Title}} | {{.HeadRefName}} |
+{{- end}}
+{{else}}
+_None._
+{{end}}
+
 ## Your notes
 
 {{if .Notes}}{{.Notes}}{{else}}_Empty._{{end}}

@@ -209,7 +209,8 @@ default branch.
 `bees:triage` in full, each with its parent feature and the open issues it is
 blocked by. The rest of the triage queue in a table of its own, which the
 prompt says is triage work too. A table of every other visible issue: state,
-kind, blockers, milestone, title. Unread mail. Its notes.
+kind, blockers, milestone, title. The open pull requests. Unread mail. Its
+notes.
 
 **Does.** Rewrites a work item's body with `issue_edit_body`: context, scope
 in and out, acceptance criteria, pointers to code, testing expectations,
