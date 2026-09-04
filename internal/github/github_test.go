@@ -272,6 +272,54 @@ func TestEditBody(t *testing.T) {
 	}
 }
 
+// TestSubmitReview pins the argument list for each of the three events and
+// that the body travels on standard input, as EditBody's does: a review body
+// is markdown of any length.
+func TestSubmitReview(t *testing.T) {
+	body := "implementation: pass\n\nA body with \"quotes\", $shell and a trailing newline.\n\n<!-- bees:reviewer -->\n"
+	for _, event := range ReviewEvents {
+		var args []string
+		var stdin string
+		calls := 0
+		c := New("a/b")
+		c.Exec = func(ctx context.Context, a ...string) ([]byte, error) {
+			t.Fatalf("SubmitReview used Exec, which cannot carry the body: %v", a)
+			return nil, nil
+		}
+		c.ExecStdin = func(ctx context.Context, in string, a ...string) ([]byte, error) {
+			calls++
+			args, stdin = a, in
+			return nil, nil
+		}
+		if err := c.SubmitReview(context.Background(), 42, event, body); err != nil {
+			t.Fatalf("%s: %v", event, err)
+		}
+		if calls != 1 {
+			t.Fatalf("%s: calls: %d", event, calls)
+		}
+		if got, want := strings.Join(args, " "), "pr review 42 -R a/b --"+event+" --body-file -"; got != want {
+			t.Errorf("%s: args = %q, want %q", event, got, want)
+		}
+		if stdin != body {
+			t.Errorf("%s: stdin = %q, want %q", event, stdin, body)
+		}
+		for _, a := range args {
+			if strings.Contains(a, "implementation") {
+				t.Errorf("%s: the body reached the command line: %v", event, args)
+			}
+		}
+	}
+	// An event gh does not spell is refused before anything runs.
+	c := New("a/b")
+	c.ExecStdin = func(ctx context.Context, in string, a ...string) ([]byte, error) {
+		t.Fatalf("an unknown event reached gh: %v", a)
+		return nil, nil
+	}
+	if err := c.SubmitReview(context.Background(), 42, "approved", body); err == nil || !strings.Contains(err.Error(), `"approved"`) {
+		t.Errorf("unknown event: err = %v, want one naming it", err)
+	}
+}
+
 func TestAssignUsesTheRESTEndpoint(t *testing.T) {
 	var calls [][]string
 	c := New("a/b")

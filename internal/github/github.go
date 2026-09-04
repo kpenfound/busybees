@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -695,6 +696,31 @@ func (c *Client) MergePR(ctx context.Context, number int, method string) error {
 		method = "squash"
 	}
 	_, err := c.Exec(ctx, "pr", "merge", strconv.Itoa(number), "-R", c.Repo, "--"+method, "--delete-branch")
+	return err
+}
+
+// ReviewEvents are the verdicts SubmitReview accepts, as gh spells them:
+// --approve, --request-changes or --comment.
+var ReviewEvents = []string{"approve", "request-changes", "comment"}
+
+// SubmitReview submits one review on a pull request with the given event
+// (one of ReviewEvents) and body. The body travels on standard input, as
+// EditBody's does: a review body is arbitrary markdown of any length, and an
+// argument would be both size-limited and quoting-sensitive.
+//
+// It submits what it is given and decides nothing: GitHub refuses an
+// approval from a pull request's own author, and whether the factory is that
+// author is the caller's to know (the reviewer's prompt tells it the login
+// the factory acts as, and it comments instead).
+func (c *Client) SubmitReview(ctx context.Context, number int, event, body string) error {
+	if !slices.Contains(ReviewEvents, event) {
+		return fmt.Errorf("github: unknown review event %q (want %s)", event, strings.Join(ReviewEvents, ", "))
+	}
+	args := []string{"pr", "review", strconv.Itoa(number), "-R", c.Repo, "--" + event, "--body-file", "-"}
+	if c.ExecStdin == nil {
+		return errors.New("github: no ExecStdin")
+	}
+	_, err := c.ExecStdin(ctx, body, args...)
 	return err
 }
 
