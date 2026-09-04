@@ -75,13 +75,14 @@ you could not finish.
 **Tools.** The factory's own operations and the GitHub actions a role performs
 are MCP tools, served to every session by the built-in `bees` server. Eight go
 to every role: `mail_send`, `mail_list`, `issue_create`, `issue_link`,
-`issue_view`, `pr_view`, `comment` and `done`. Three are role-scoped:
-`issue_edit_body` (both managers), `issue_set_state` (project manager) and
-`issue_question` (product manager). The tools enforce the factory's rules:
-nothing outside the filter can be read or written, `comment` appends the
-marker, `issue_edit_body` refuses a feature or feedback issue for anyone but
-the product manager, and `issue_set_state` only moves an issue out of
-`bees:triage`. A tool a role is not offered is one it may not use, and the
+`issue_view`, `pr_view`, `comment` and `done`. Four are role-scoped:
+`issue_edit_body` (both managers), `issue_set_state` (project manager),
+`issue_question` (product manager) and `submit_review` (reviewer, for a
+requested review only). The tools enforce the factory's rules: nothing
+outside the filter can be read or written, `comment` and `submit_review`
+append the marker, `issue_edit_body` refuses a feature or feedback issue for
+anyone but the product manager, and `issue_set_state` only moves an issue
+out of `bees:triage`. A tool a role is not offered is one it may not use, and the
 prompt tells it not to reach for `gh` instead. `gh`, already authenticated, is
 for everything without a tool: `gh pr create`, `gh pr diff`, `gh issue close`,
 `gh api`. Issues are always created with `issue_create`, which applies the
@@ -345,11 +346,11 @@ owns the checks and the merge: `auto_merge` and its companions are
 `roles.reviewer` keys.
 
 A review a person asks for by putting `bees:review-requested` on any visible
-pull request is a session of the same role with no issue behind it: it reads
-the pull request, the mail addressed to `reviewer` about it and its notes,
-runs in a read-only checkout of the head branch, and reports `approved` or
-`changes-requested` with a note. See [Asking for a review of any pull
-request](workflow.md#asking-for-a-review-of-any-pull-request).
+pull request is a session of the same role in a second mode, with no issue
+and no developer behind it, whose verdict is one GitHub review on the pull
+request: see [Requested reviews](#requested-reviews-beesreview-requested)
+below. The rest of this section describes the review of a developer's pull
+request.
 
 **Reads.** The pull request (title, body, branches, author); the issue with
 its body; the [review stages](#review-stages-rolesreviewerstages) to run; the
@@ -373,8 +374,9 @@ without the change, then unhandled errors, security and scope creep. What the
 formatter, the linter and the checks enforce is not a review point. It raises
 only what it can show, the input and the wrong result, never a "might" or a
 "consider". It files unrelated bugs with `issue_create` (`bug: true`,
-`related: <issue>`) rather than blocking on them. It does not submit a GitHub
-review, comment on the pull request, push to the branch or change labels.
+`related: <issue>`) rather than blocking on them. On a developer's pull
+request it does not submit a GitHub review, comment on the pull request, push
+to the branch or change labels.
 Nothing it writes reaches the person who merges except its outcome note, so
 the note carries the stages that ran and how each came out, what it chose not
 to block on, and, when no check was reported, that nothing was verified for
@@ -403,6 +405,44 @@ The reviewer is told when it is on the final round, so it still requests
 changes honestly and lets the orchestrator escalate. The loop as a whole,
 `max_review_rounds` and what the person merging sees are under
 [Review](workflow.md#review) and [Merging](workflow.md#merging).
+
+### Requested reviews (`bees:review-requested`)
+
+A person asks for a review of any pull request the factory can see, their
+own or anyone's, by putting `bees:review-requested` on it; how the label is
+picked up and removed is under [Asking for a review of any pull
+request](workflow.md#asking-for-a-review-of-any-pull-request). The session
+is the reviewer role with its prompts switched to this mode.
+
+**Reads.** The pull request (title, body, branches, author); a statement that
+there is no issue and no acceptance criteria, so the description and the
+diff are the whole brief and criteria the description does not state are not
+to be invented; the login the factory acts as, with a sentence saying whether
+that is the pull request's author (with no `[github]` table it is told to
+find out with `gh api user`); unread mail addressed to `reviewer` about the
+pull request; its notes; and the same [review stages](#review-stages-rolesreviewerstages),
+with `completeness` judged against the description and `product-fit` against
+the README and the docs alone. It runs in a read-only checkout of the head
+branch, or of the default branch when the remote does not have it.
+
+**Does.** Reads the diff and the pull request as in a review, runs every
+stage, and submits exactly one GitHub review with `submit_review`:
+`approve` when every stage passed, `request-changes` when any failed, and
+`comment` in place of `approve` when the pull request's author is the login
+the factory acts as, because GitHub refuses an approval from a pull request's
+own author, saying in the body why it is a comment. The body carries every
+stage's verdict line in the stages' order with its points under it, and ends
+with the `<!-- bees:reviewer -->` marker. It posts nothing else on the pull
+request, pushes nothing and changes no label.
+
+**Mail.** Sends none: there is no developer on the pull request. It receives
+mail addressed to `reviewer` about the pull request.
+
+**Outcomes.** `approved` after an approval or a comment in its place,
+`changes-requested` after a request for changes: both are logged, and
+nothing is labelled, because there is no issue. `failed`, or no outcome, is
+logged and the pull request is not tried again for five poll intervals; a
+person adds the label again to ask for another pass.
 
 ### Review stages (`roles.reviewer.stages`)
 

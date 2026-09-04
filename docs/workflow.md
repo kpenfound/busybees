@@ -643,6 +643,22 @@ A head branch the factory's remote does not have, a pull request from a fork
 or a branch deleted since, does not stop the review: the session runs from a
 checkout of the default branch and reads the change with `gh pr diff`.
 
+The verdict is one GitHub review on the pull request, because there is no
+developer to mail and no issue to label: `approve` when every review stage
+passed, `request-changes` when any failed, each stage's verdict line and its
+points in the body, ending with the `<!-- bees:reviewer -->` marker. There is
+no issue, so the reviewer judges the change against the pull request's
+description and the repository's conventions, not against acceptance
+criteria. GitHub refuses an approval from a pull request's own author: when
+the author is the login the factory acts as, the reviewer submits a `comment`
+review in place of the approval and says so in it. With no `[github]` table
+the factory acts as the account `gh` is signed in with, so a review of that
+person's own pull request is a comment too. The review never comes back in
+as feedback: the orchestrator reads reviews and comments only on a pull
+request that closes a visible factory issue, and this one closes none. What
+the reviewer reads and does in this mode is under
+[Requested reviews](roles.md#requested-reviews-beesreview-requested).
+
 ### Before the review: the checks
 
 The developer runs the repository's own lint and test commands before it

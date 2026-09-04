@@ -149,7 +149,9 @@ func (s *Scheduler) runRequestedReview(ctx context.Context, pr github.PR, w *sta
 	log.Info("requested review session", "mail", len(inbox))
 	res, err := s.runSessionWithRetry(ctx, sessionSpec{
 		role: config.RoleReviewer, name: name, task: "reviewer_requested", workDir: ws.RepoDir, worker: w,
-		data: prompts.Data{PR: &freshPR, Inbox: inbox, Stages: stages, Round: 1},
+		// Mode switches the reviewer's prompts to the requested review; ActsAs
+		// tells it whose approval GitHub would refuse (its own author's).
+		data: prompts.Data{PR: &freshPR, Inbox: inbox, Stages: stages, Round: 1, Mode: prompts.ModeRequested, ActsAs: s.gh.ActsAs},
 	})
 	if err != nil {
 		return err

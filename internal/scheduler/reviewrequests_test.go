@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -120,17 +121,146 @@ func TestReviewRequestedLabelDispatchesOneReviewer(t *testing.T) {
 	if strings.Contains(prompt, "## Issue") {
 		t.Errorf("a requested review rendered an issue section:\n%s", prompt)
 	}
-	// The session had no issue: the fake records its environment through
-	// the mail it sends, which carries the PR and no issue.
-	msgs, err := h.box.List(mail.Filter{To: config.RoleDeveloper})
-	if err != nil {
-		t.Fatal(err)
+	for _, want := range []string{"## No issue, no acceptance criteria", "## Review stages", "### `implementation`", "`submit_review`"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("prompt lacks %q:\n%s", want, prompt)
+		}
 	}
-	if len(msgs) != 1 || msgs[0].PR != 42 || msgs[0].Issue != 0 {
-		t.Errorf("reviewer mail: %+v, want one message about PR 42 and no issue", msgs)
+	if sys := systemPromptOf(t, h, 0); !strings.Contains(sys, "submitted with `submit_review`") || strings.Contains(sys, "Do not submit a GitHub review") {
+		t.Errorf("the system prompt is not the requested-review one:\n%s", sys)
+	}
+	// The session had no issue and no developer to mail: its verdict is one
+	// GitHub review on the pull request, and the record it leaves carries
+	// no issue number.
+	rev := reviewOf(t, dir)
+	if rev.issue != "" {
+		t.Errorf("the session ran with BEES_ISSUE=%q; a requested review has no issue", rev.issue)
+	}
+	if got, want := strings.Join(rev.args, " "), "pr review 42 -R acme/widgets --approve --body-file -"; got != want {
+		t.Errorf("gh call: %q, want %q", got, want)
+	}
+	if role, ok := github.BeeRole(rev.body); !ok || role != config.RoleReviewer {
+		t.Errorf("the review body does not end with the reviewer's marker:\n%s", rev.body)
+	}
+	if msgs, err := h.box.List(mail.Filter{To: config.RoleDeveloper}); err != nil || len(msgs) != 0 {
+		t.Errorf("a requested review mailed the developer: %+v %v", msgs, err)
+	}
+	if !strings.Contains(h.logs.String(), "requested review finished") {
+		t.Errorf("no log line about the outcome:\n%s", h.logs.String())
 	}
 	if !strings.Contains(h.logs.String(), "review requested on a pull request") {
 		t.Errorf("no log line about the request:\n%s", h.logs.String())
+	}
+}
+
+// review is the gh call the fake reviewer recorded when it submitted its
+// review: the argument list, the body it sent on stdin, and the BEES_ISSUE
+// it ran with.
+type review struct {
+	args  []string
+	body  string
+	issue string
+}
+
+func reviewOf(t *testing.T, sessionDir string) review {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(sessionDir, "review.json"))
+	if err != nil {
+		t.Fatalf("the session submitted no review: %v", err)
+	}
+	var rec struct {
+		Args  []string `json:"args"`
+		Stdin string   `json:"stdin"`
+		Issue string   `json:"issue"`
+	}
+	if err := json.Unmarshal(b, &rec); err != nil {
+		t.Fatal(err)
+	}
+	return review{args: rec.Args, body: rec.Stdin, issue: rec.Issue}
+}
+
+// The verdict is approve when every stage passed, request-changes when one
+// failed, and comment in place of approve when the pull request's author is
+// the login the factory acts as, which GitHub would refuse to approve. The
+// prompt tells the reviewer that login; the fake reads it there.
+func TestARequestedReviewsVerdictIsTheEvent(t *testing.T) {
+	for name, tc := range map[string]struct {
+		actsAs  string
+		changes bool
+		want    string
+		prompt  string
+	}{
+		"shared account":     {"", false, "--approve", "The factory has no GitHub account of its own"},
+		"its own account":    {"busybees-bot", false, "--approve", "The factory acts as `busybees-bot` on GitHub. The pull request's author is `kyle`"},
+		"the author":         {"kyle", false, "--comment", "The factory acts as `kyle` on GitHub. That is this pull request's author"},
+		"a failed stage":     {"busybees-bot", true, "--request-changes", ""},
+		"the author, failed": {"kyle", true, "--request-changes", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarnessAt(t, reviewOnlyTOML, requestedReviewClock)
+			pushBranch(t, h.clone, "fix-widget")
+			// What github.NewAs sets from [github].login.
+			h.sched.gh.ActsAs = tc.actsAs
+			if tc.changes {
+				t.Setenv("FAKE_REVIEW_ALWAYS_CHANGES", "1")
+			}
+			h.gh.prs[42] = personsPR("bees", "bees:review-requested")
+			runPass(t, h)
+			dirs := h.sessions(config.RoleReviewer)
+			if len(dirs) != 1 {
+				t.Fatalf("reviewer sessions: %d, want 1", len(dirs))
+			}
+			if tc.prompt != "" && !strings.Contains(promptOf(t, h, 0), tc.prompt) {
+				t.Errorf("prompt lacks %q:\n%s", tc.prompt, promptOf(t, h, 0))
+			}
+			rev := reviewOf(t, dirs[0])
+			if got, want := strings.Join(rev.args, " "), "pr review 42 -R acme/widgets "+tc.want+" --body-file -"; got != want {
+				t.Errorf("gh call: %q, want %q", got, want)
+			}
+			if !strings.Contains(h.logs.String(), "requested review finished") || strings.Contains(h.logs.String(), "requested review failed") {
+				t.Errorf("outcome log:\n%s", h.logs.String())
+			}
+			if got := h.gh.callCount("issue comment"); got != 0 {
+				t.Errorf("%d comments posted; a requested review escalates nothing", got)
+			}
+		})
+	}
+}
+
+// The review the factory submits on a person's pull request must not come
+// back in as feedback: deliverHumanFeedback reads reviews and comments only
+// on a pull request that closes a visible factory issue, and a person's
+// closes none, so it never asks GitHub about it.
+func TestAPersonsPullRequestIsNeverHumanFeedback(t *testing.T) {
+	h := newHarnessAt(t, reviewOnlyTOML, requestedReviewClock)
+	pr := personsPR("bees")
+	// Something happened on it since it was opened: a review, from a
+	// person or from the factory, either of which would be mailed to a
+	// developer if the pull request were the factory's.
+	pr.UpdatedAt = time.Date(2026, 9, 2, 9, 0, 0, 0, time.UTC)
+	h.gh.prs[42] = pr
+	at := pr.UpdatedAt.Format(time.RFC3339)
+	h.gh.activity["repos/acme/widgets/pulls/42/reviews"] = `[
+		{"id": 1, "user": {"login": "kyle"}, "body": "looks wrong", "state": "CHANGES_REQUESTED", "html_url": "https://x/1", "submitted_at": "` + at + `"},
+		{"id": 2, "user": {"login": "kyle"}, "body": "implementation: pass\n\n<!-- bees:reviewer -->", "state": "APPROVED", "html_url": "https://x/2", "submitted_at": "` + at + `"}
+	]`
+	h.gh.activity["repos/acme/widgets/pulls/42/comments"] = `[
+		{"id": 3, "user": {"login": "kyle"}, "body": "and this", "path": "a.go", "line": 1, "html_url": "https://x/3", "created_at": "` + at + `"}
+	]`
+	h.gh.activity["repos/acme/widgets/issues/42/comments"] = `[
+		{"id": 4, "user": {"login": "kyle"}, "body": "ping", "html_url": "https://x/4", "created_at": "` + at + `"}
+	]`
+	runPass(t, h)
+
+	if msgs, err := h.box.List(mail.Filter{From: HumanSender}); err != nil || len(msgs) != 0 {
+		t.Errorf("human feedback mailed for a person's pull request: %+v %v", msgs, err)
+	}
+	h.gh.mu.Lock()
+	defer h.gh.mu.Unlock()
+	for _, c := range h.gh.calls {
+		if len(c) >= 2 && c[0] == "api" && strings.Contains(c[1], "/42/") {
+			t.Errorf("the activity of a person's pull request was read: gh %s", strings.Join(c, " "))
+		}
 	}
 }
 

@@ -31,9 +31,22 @@ import (
 // environment, performs a scripted action and prints a stream-json result.
 //
 // The flags that steer the fake (FAKE_CLAUDE, FAKE_DEV_HANG, FAKE_DEV_FAIL,
-// FAKE_DEV_MAIL_TO, FAKE_REVIEW_ALWAYS_CHANGES, FAKE_REVIEW_FAIL, FAKE_COST, FAKE_SIGNAL)
+// FAKE_DEV_MAIL_TO, FAKE_REVIEW_ALWAYS_CHANGES, FAKE_REVIEW_FAIL, FAKE_COST, FAKE_SIGNAL,
+// FAKE_WAIT_FOR, FAKE_LIMIT, FAKE_LIMIT_WITH_OUTCOME, FAKE_RESULT_TEXT, FAKE_COPY_ISSUE_STATE)
 // reach it through the ordinary environment, so they must NOT start with
 // BEES_: the runner strips inherited BEES_* variables from every session.
+// promptField returns what a rendered prompt says between prefix and the
+// next stop, or "" when the prefix is absent: how the fake reviewer reads
+// the pull request's author and the factory's login off its task.
+func promptField(prompt, prefix, stop string) string {
+	_, rest, ok := strings.Cut(prompt, prefix)
+	if !ok {
+		return ""
+	}
+	field, _, _ := strings.Cut(rest, stop)
+	return strings.TrimSpace(field)
+}
+
 func TestMain(m *testing.M) {
 	if os.Getenv("FAKE_CLAUDE") == "1" {
 		fakeClaude()
@@ -210,6 +223,45 @@ func fakeClaude() {
 		if os.Getenv("FAKE_REVIEW_FAIL") == "1" {
 			counter("review")
 			outcome = session.Outcome{Status: OutcomeFailed, Note: "cannot read the diff"}
+			break
+		}
+		// No issue: a review a person asked for with bees:review-requested.
+		// There is no developer to mail, so the fake does what the prompt
+		// tells a real reviewer: it reads the pull request's author and the
+		// login the factory acts as off its task, and submits one review
+		// through github.Client.SubmitReview — approve, or comment when the
+		// factory is the author, or request-changes under
+		// FAKE_REVIEW_ALWAYS_CHANGES. The gh call is recorded in the session
+		// directory as review.json ({"args", "stdin", "issue"}) for tests to
+		// read, since the scheduler's fake gh lives in another process.
+		if issue == 0 {
+			counter("review")
+			prompt, err := os.ReadFile(filepath.Join(sessionDir, "prompt.md"))
+			if err != nil {
+				fail(err)
+			}
+			author := promptField(string(prompt), "· author: ", "\n")
+			actsAs := promptField(string(prompt), "The factory acts as `", "`")
+			event, status := "approve", OutcomeApproved
+			switch {
+			case os.Getenv("FAKE_REVIEW_ALWAYS_CHANGES") == "1":
+				event, status = "request-changes", OutcomeChangesRequested
+			case actsAs != "" && actsAs == author:
+				event = "comment"
+			}
+			body := "implementation: pass — does what the description says\n\n<!-- bees:reviewer -->"
+			c := github.New(os.Getenv(session.EnvRepo))
+			c.ExecStdin = func(_ context.Context, stdin string, args ...string) ([]byte, error) {
+				rec, err := json.Marshal(map[string]any{"args": args, "stdin": stdin, "issue": os.Getenv(session.EnvIssue)})
+				if err != nil {
+					return nil, err
+				}
+				return nil, os.WriteFile(filepath.Join(sessionDir, "review.json"), rec, 0o644)
+			}
+			if err := c.SubmitReview(context.Background(), pr, event, body); err != nil {
+				fail(err)
+			}
+			outcome = session.Outcome{Status: status, Note: "one review submitted"}
 			break
 		}
 		// FAKE_REVIEW_ALWAYS_CHANGES never approves, which is the only way

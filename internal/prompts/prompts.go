@@ -163,6 +163,10 @@ type Data struct {
 	Blockers map[int][]int
 }
 
+// ModeRequested is Data.Mode for a reviewer session on a pull request a
+// person asked about: the templates test for this string.
+const ModeRequested = "requested"
+
 var titles = map[string]string{
 	config.RoleProductManager: "product manager",
 	config.RoleProjectManager: "project manager",

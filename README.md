@@ -56,6 +56,9 @@ by hand.
 - **A developer → reviewer loop.** A developer implements a work item and opens a
   pull request; a reviewer reviews it, and the two iterate until it is approved. See
   [developer](docs/roles.md#developer) and [reviewer](docs/roles.md#reviewer).
+- **A review on request.** Put `bees:review-requested` on any pull request the
+  factory can see, yours included, and the reviewer submits one GitHub review on
+  it. See [Asking for a review of any pull request](docs/workflow.md#asking-for-a-review-of-any-pull-request).
 - **A local mailbox, not GitHub comments.** Roles ask each other questions and
   exchange review feedback through a mailbox in the state directory; every comment a
   bee posts on GitHub is to a person, and ends with an invisible marker. See

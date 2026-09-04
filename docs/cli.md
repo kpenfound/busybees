@@ -1171,6 +1171,7 @@ hand, with the factory's rules applied.
 | `issue_edit_body` | `number`, `body` | product_manager, project_manager | Replaces an issue body. Refuses a `bees:feature` or `bees:feedback` issue for anyone but the product manager. |
 | `issue_set_state` | `number`, `state` (`ready`\|`blocked`), `size` (`xs`…`xl`, required for `ready`) | project_manager | Moves a work item out of `bees:triage` in one label edit, replacing any existing size. Refuses an issue that is in any other state, naming it. |
 | `issue_question` | `number`, `waiting` | product_manager | Adds or removes `bees:question`. Refuses anything that is not a feature or feedback issue. |
+| `submit_review` | optional `number`, `event` (`approve`\|`request-changes`\|`comment`), `body` | reviewer | Submits one GitHub review on a pull request, appending the reviewer's marker as `comment` does. For a [requested review](workflow.md#asking-for-a-review-of-any-pull-request) only: a developer's pull request gets its feedback by mail. Refuses an issue. |
 
 Every one of them refuses an issue or pull request that does not match the
 [filter](workflow.md#what-the-factory-can-see), and every write is a refusal
@@ -1205,7 +1206,8 @@ mcp__bees__pr_view          Read a pull request
 
 The tool *set* differs too: the project manager also sees `issue_edit_body`
 and `issue_set_state` (`state: ready | blocked`, `size: xs | s | m | l | xl`),
-and the product manager `issue_edit_body` and `issue_question`.
+the product manager `issue_edit_body` and `issue_question`, and the reviewer
+`submit_review` (`event: approve | request-changes | comment`).
 
 Without a role argument it uses `$BEES_ROLE`, and without that it prints the
 unconstrained tool set.

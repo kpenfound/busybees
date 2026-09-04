@@ -702,8 +702,9 @@ assistant messages instead.
   the CLI uses, so a session calls a schema instead of composing a command
   line: `mail_send`, `mail_list`, `issue_create`, `issue_link`, `issue_view`,
   `pr_view`, `comment` and `done` go to every role; `issue_edit_body` to the
-  two managers, `issue_set_state` to the project manager and `issue_question`
-  to the product manager. The schemas depend on `BEES_ROLE`: `done`'s `status`
+  two managers, `issue_set_state` to the project manager, `issue_question`
+  to the product manager and `submit_review` to the reviewer. The schemas
+  depend on `BEES_ROLE`: `done`'s `status`
   enum is the role's valid outcomes. The name `bees` is reserved in
   `bees.toml`. See [bees mcp serve](cli.md#bees-mcp-serve-sessions) and
   [MCP servers](configuration.md#mcp-servers).
