@@ -137,8 +137,8 @@ by hand still carries its state label underneath, and removing
 
 | Label | Meaning | Who sets it |
 |---|---|---|
-| `bees:triage` | Needs the project manager to make it buildable | Product manager (new work items), you |
-| `bees:ready` | Detailed enough for a developer | Project manager (with a size), orchestrator (after an answer, after your feedback on an approved pull request, or when an approved pull request conflicts with the default branch), you |
+| `bees:triage` | Needs the project manager to make it buildable | Product manager (new work items), orchestrator (after an answer, when a ready issue is sized above `roles.developer.max_size`, or on an unlabelled issue when only the project manager is enabled), you |
+| `bees:ready` | Detailed enough for a developer | Project manager (with a size), orchestrator (after an answer, after your feedback on an approved pull request, when an approved pull request conflicts with the default branch, or on an unlabelled issue when both managers are disabled), you |
 | `bees:in-progress` | A developer worker owns it and a branch exists | Orchestrator |
 | `bees:blocked` | Waiting on an answer to a question | Project manager (asking the product manager), orchestrator (the developer asking the project manager) |
 | `bees:review` | A pull request is open and in the review loop | Orchestrator |
