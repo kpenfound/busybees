@@ -261,14 +261,14 @@ A full pass is:
 
 **Local passes.** A tick that is not due for a poll, and every wake, runs a
 local pass: it classifies the issue and pull request lists cached from the
-last successful poll again (the cache reconcile's write-back keeps in step),
-then runs steps 5 and 6, dispatches developers (never a requested review) and
-starts only the singletons that have unread mail. It skips the poll, steps 2
-to 4 and the product manager's and QA's other has-work checks, all of which
-read GitHub; the label writes reconcile and dispatch make still happen,
-because what a local pass protects is the polling budget, not every API call.
-Until the first successful poll there is nothing cached and a local pass does
-nothing.
+last successful poll again (reconcile's write-back and the refresh at the end
+of every session keep that cache in step), then runs steps 5 and 6, dispatches
+developers (never a requested review) and starts only the singletons that have
+unread mail. It skips the poll, steps 2 to 4 and the product manager's and
+QA's other has-work checks, all of which read GitHub; the label writes
+reconcile and dispatch make still happen, because what a local pass protects
+is the polling budget, not every API call. Until the first successful poll
+there is nothing cached and a local pass does nothing.
 
 The one read a local pass makes is a confirmation. Its snapshot can be stale
 (an issue a worker has since finished, one a developer parked in
@@ -300,6 +300,20 @@ wrote the mail signals when it finishes, and the local pass that follows
 re-reads the mailbox from disk. Mail a person sends by hand while nothing is
 running waits for the next tick.
 
+A session's writes on GitHub cross the same boundary. The MCP server cannot
+reach the cached issue lists either, so every tool that creates an issue or
+changes one records its number in `<session>/touched-issues.txt`, and the
+scheduler reads that list back when the session ends: one `gh issue view` per
+issue on it, written into the cache before the wake is signalled. The local
+pass that follows classifies from what the session did, so an issue the
+project manager moved to `bees:ready` goes to a developer and a sub-issue it
+filed counts as triage work, without waiting for the poll after the session. A
+session that changed no issue records nothing and costs nothing, and an issue
+that has since been closed, or that the filter does not match, is dropped
+rather than cached: the cache holds what a poll would return. Pull requests
+are not read back, because the developer and reviewer loop runs inside one
+worker and finds its own pull request.
+
 **API budget.** Every poll costs two `gh` calls. Everything else is gated on
 what those lists report, so an idle factory stays at two calls per poll (and,
 with `work_hours`, at two per `off_hours_poll_interval` outside the window).
@@ -309,8 +323,10 @@ the product manager's freshness check one `issue view` per feedback or feature
 issue updated since its last run; QA's merged-PR query at most once per
 `qa_interval`; the checks stages poll `gh pr checks` every
 `roles.reviewer.checks_poll_interval` (default 2m), not every poll; the
-visibility backstop makes two list calls after each session; and worker stage
-transitions make a handful of `issue view`, `pr view` and `issue edit` calls.
+visibility backstop makes two list calls after each session; the refresh after
+each session one `issue view` per issue that session created or relabelled;
+and worker stage transitions make a handful of `issue view`, `pr view` and
+`issue edit` calls.
 Sessions call `gh` on their own on top of this, which busybees does not meter.
 See [API budget](configuration.md#api-budget).
 
@@ -819,8 +835,10 @@ sessions get `BEES_STATE_DIR`.
   notes/archive/<role>-<ts>.md   notes replaced by `bees notes reset`
   sessions/<ts>-<name>-<rand>/   system-prompt.md, prompt.md, mcp.json, transcript.jsonl,
                                  stderr.log, outcome.json, result.json, pid,
-                                 interrupted (written by `bees kill`, the live view's k key
-                                 and a hard stop)
+                                 touched-issues.txt (the issues the session changed on
+                                 GitHub, one per line, read back into the cached poll
+                                 when it ends), interrupted (written by `bees kill`,
+                                 the live view's k key and a hard stop)
   issues/<n>.json                {number, round, pr, branch, check_fix_rounds, worker_stage,
                                  after_develop, pre_review_done, session, human_seen_at,
                                  issue_human_seen_at, conflict_notified_sha, cost, sessions,

@@ -418,8 +418,9 @@ back to `bees:ready`), reconciles labels (unlabelled issues go to the product
 manager, answered questions unblock), hands ready issues to free developer
 workers and starts the product manager, project manager and QA when they have
 work. It does not wait out the interval for what happens locally: a finished
-session wakes it, so a freed developer slot and mail one role wrote to another
-are picked up at once, without polling GitHub again. Ctrl-C — or `q` in
+session wakes it, so a freed developer slot, mail one role wrote to another and
+the labels a session moved on GitHub are picked up at once, without polling
+GitHub again. Ctrl-C — or `q` in
 [the live view](#the-live-view) — stops polling, starts nothing new and waits
 for the work already in flight to finish. An issue a developer worker holds
 goes on through the stages it has left — a developer session is followed by
