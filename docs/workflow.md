@@ -154,7 +154,7 @@ or `bees:feedback` never gets a state label and is never triaged:
 | `bees:feedback` | The product manager's inbox: an idea, product feedback or a bug report from a person | You, orchestrator (an issue with no state label and neither `bees:feature` nor `bees:feedback`) |
 | `bees:question` | The product manager is waiting for you to answer on a feature or feedback issue | Product manager. The orchestrator removes it when you reply |
 | `bees:proposal` | A feature issue a bee wrote. It sits next to `bees:feature`, and you remove it to approve the feature | `bees issue create --feature`. Only you remove it |
-| `bees:review-requested` | On a pull request, not an issue: one review pass from the reviewer, whoever opened the pull request. See [Asking for a review of any pull request](#asking-for-a-review-of-any-pull-request) | You. The orchestrator removes it as the review starts |
+| `bees:review-requested` | On a pull request, not an issue: one review pass from the reviewer, whoever opened the pull request. Not needed with `scheduler.review_assigned_prs` on. See [Asking for a review of any pull request](#asking-for-a-review-of-any-pull-request) | You. The orchestrator removes it as the review starts |
 
 Three more sit next to a state label rather than replacing one.
 
@@ -643,6 +643,23 @@ issue to escalate.
 A head branch the factory's remote does not have, a pull request from a fork
 or a branch deleted since, does not stop the review: the session runs from a
 checkout of the default branch and reads the change with `gh pr diff`.
+
+With [`scheduler.review_assigned_prs`](configuration.md#scheduler) on, the
+label is not needed: every open pull request the factory can see whose head
+branch does not start with `project.branch_prefix` is reviewed on sight. The
+prefix is what says the factory did not write it, so the pull requests its own
+developers open keep going through the review loop above and are not reviewed
+twice. With `filter.assignee` set, this is every such pull request assigned to
+the factory; without it, every one carrying the `bees` label.
+
+    [scheduler]
+    review_assigned_prs = true
+
+One head commit is one review pass. The head the reviewer looked at is
+remembered, so a restart does not review it again, and a push earns another
+pass. A draft is skipped until it is marked ready. The label keeps working
+alongside it and keeps its own meaning: it asks for a pass whether or not the
+head has already been reviewed.
 
 The verdict is one GitHub review on the pull request, because there is no
 developer to mail and no issue to label: `approve` when every review stage

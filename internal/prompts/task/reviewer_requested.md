@@ -1,11 +1,12 @@
 # Task: review pull request #{{.PR.Number}} (requested by a person)
 
-A person asked for a review of this pull request by putting the
-`{{.Labels.ReviewRequested}}` label on it. It is not a pull request a developer
-session opened for an issue: there is no issue behind it and no developer to send
-changes back to, so your verdict goes on the pull request itself, as one GitHub
-review. The label has already been removed. This is one review pass; the person adds
-the label again to ask for another.
+A person asked for a review of this pull request, either by putting the
+`{{.Labels.ReviewRequested}}` label on it or by setting the factory to review the
+pull requests it did not write itself. It is not a pull request a developer session
+opened for an issue: there is no issue behind it and no developer to send changes
+back to, so your verdict goes on the pull request itself, as one GitHub review. Any
+label has already been removed. This is one review pass; another comes from the
+label going back on, or from a push to the branch.
 
 ## Pull request #{{.PR.Number}}: {{.PR.Title}}
 {{.PR.URL}} — branch `{{.PR.HeadRefName}}` → `{{.PR.BaseRefName}}` · author: {{.PR.Author.Login}}
