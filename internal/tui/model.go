@@ -818,14 +818,18 @@ func (m Model) View() string {
 }
 
 // header names the repository and the clock the view is drawing at, plus
-// (right to left) the pause notice while dispatch is paused and a status
-// error — a standing condition belongs here rather than in either screen's
-// footer, which the stopping notice already owns.
+// (right to left) the pause notice while dispatch is paused, or the daily
+// budget reading while it is not, and a status error — a standing condition
+// belongs here rather than in either screen's footer, which the stopping
+// notice already owns.
 func (m Model) header(w int) string {
 	left := titleStyle.Render("busybees") + "  " + m.deps.Repo
 	right := m.deps.Now().Format("15:04:05")
-	if notice := m.status.PauseNotice(m.deps.Now()); notice != "" {
+	switch notice := m.status.PauseNotice(m.deps.Now()); {
+	case notice != "":
 		right = warnStyle.Render("⏸ "+notice) + "   " + right
+	case m.status.BudgetNotice() != "":
+		right = headerStyle.Render(m.status.BudgetNotice()) + "   " + right
 	}
 	if m.statusErr != "" {
 		right = warnStyle.Render("status: "+oneLine(m.statusErr)) + "   " + right
