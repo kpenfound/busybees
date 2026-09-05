@@ -43,7 +43,7 @@ git_email = "penfoundapps@gmail.com"
 [scheduler]
 # How often GitHub is polled for work. Each poll costs two API calls; keep it
 # infrequent. Sessions make their own gh calls on top of this.
-poll_interval = "10m"
+poll_interval = "5m"
 # Concurrent developer workers. Each runs a sequential developer <-> reviewer
 # loop for one issue; reviewer concurrency follows developer concurrency.
 max_developers = 2
