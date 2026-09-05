@@ -11,6 +11,10 @@ GitHub repository. Read `docs/architecture.md` before changing the scheduler.
 - `dagger check` runs `go:lint-all`, `go:test-all` and `go:generate-all` (from the
   official `github.com/dagger/go` module in `dagger.toml`). Run it before committing.
 - `go build ./... && go test ./...` works locally too and is faster while iterating.
+- `dagger call qa-playground playground terminal` opens a shell with `bees` built
+  from the working tree, a test project and stubbed `gh` and `claude`: the QA
+  playground, a dang module in `.dagger/modules/qa-playground` described in
+  `CONTRIBUTING.md`. It contributes no checks.
 - Tests must never call the real `claude` or `gh`. `gh` is faked through
   `github.Client.Exec`; `claude` is faked by the test binary itself (see `TestMain` in
   `internal/scheduler/scheduler_test.go`) or a shell script (`internal/session`).

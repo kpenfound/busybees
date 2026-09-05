@@ -8,6 +8,7 @@ source = "github.com/dagger/go"
 
 [modules.go.settings]
 base = "golang:1.26-bookworm"
+
 # The built-in Go patterns mount only Go sources, so tests that read a repo
 # file need it listed here: bees.example.toml is a golden file compared against
 # internal/config's template by TestExampleTOMLInSync, CLAUDE.md's command
@@ -23,3 +24,6 @@ includeExtraFiles = [
   "install.sh",
   "internal/tui/testdata/transcript.jsonl",
 ]
+
+[modules.qa-playground]
+source = ".dagger/modules/qa-playground"

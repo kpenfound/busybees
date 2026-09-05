@@ -90,6 +90,55 @@ the checks, and `dagger check go:test-all` runs one of them.
   `go test ./internal/config -update`; `TestExampleTOMLInSync` fails when the
   two drift.
 
+### The QA playground
+
+`.dagger/modules/qa-playground` is a Dagger module, written in dang, that
+gives a shell to try `bees` in without a factory, a GitHub token or an
+Anthropic key anywhere near it:
+
+```sh
+dagger call qa-playground playground terminal
+```
+
+The shell opens in `/work/playground`, a one-commit Go module whose `origin`
+is `https://github.com/busybees-sandbox/playground.git`, a repository that
+does not exist and is never fetched. On the PATH is a `bees` built from your
+working tree, and the project already has the `bees.toml` and `.bees/` that
+`bees init --repo busybees-sandbox/playground --default-branch main` writes.
+`bees status`, `bees doctor` and the other commands run as they would
+anywhere.
+
+`gh` and `claude` on that PATH are stubs, not the real programs. Each answers
+`--version` with a plausible version, so the toolchain checks have something
+to read, and refuses everything else with one line naming the playground:
+
+```
+$ gh pr list
+gh: this is a stub in the bees QA playground, not the real gh; it reaches nothing
+```
+
+Expect `bees doctor` to report what that implies: every GitHub check fails
+against the stub, `remote reachable` fails because the remote does not
+exist, and `worktree` fails because there is no `origin/main`. `bees init`
+itself hits the stub too, at its `gh label create` step, which is why the
+playground tolerates that command's exit code and then checks that
+`bees.toml` was written.
+
+To try bees against a project of your own, pass its directory. It gets a git
+repository with one commit if it has none, and the sandbox `origin` if it has
+no remote called that:
+
+```sh
+dagger call qa-playground playground --project ../my-project terminal
+```
+
+The module contributes no checks: `dagger check` runs the three Go checks
+and nothing else. It is registered in `dagger.toml` as `qa-playground`
+without the `dang` SDK helper module (`github.com/dagger/dang-sdk`), which
+`dagger module init dang` installs for scaffolding and which would add a
+`generate` check of its own. The module runs on the engine's built-in dang
+runtime and needs no generated files.
+
 ### Go and markdown style
 
 Match the style of the surrounding code. For markdown, follow the rules in
