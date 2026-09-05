@@ -440,6 +440,25 @@ func TestPRUpdateSettings(t *testing.T) {
 	}
 }
 
+// scheduler.review_assigned_prs is off unless a person writes it, and the
+// three readings — absent, false and true — are asserted apart, because
+// absent and false must be the same thing.
+func TestReviewAssignedPRsSetting(t *testing.T) {
+	for body, want := range map[string]bool{
+		"version = 1\n[project]\nrepo = \"a/b\"\n":                                           false,
+		"version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nreview_assigned_prs = false\n": false,
+		"version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nreview_assigned_prs = true\n":  true,
+	} {
+		cfg, err := Load(writeConfig(t, body))
+		if err != nil {
+			t.Fatalf("%q: %v", body, err)
+		}
+		if got := cfg.Scheduler.ReviewAssignedPRs; got != want {
+			t.Errorf("%q: review_assigned_prs %v, want %v", body, got, want)
+		}
+	}
+}
+
 // The error a bad value produces has to say what the valid ones are.
 func TestDispatchErrorsListTheValidValues(t *testing.T) {
 	for body, want := range map[string]string{

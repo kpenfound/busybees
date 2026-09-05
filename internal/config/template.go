@@ -219,6 +219,11 @@ label = "{{.Label}}"
 #pr_fix_conflicts = true
 # Do the same when a pull request merely fell behind the default branch.
 #pr_keep_updated = false
+# Review every open pull request in the filter that the factory did not write
+# (its head branch does not start with branch_prefix), without waiting for the
+# review-requested label. With filter.assignee set, that is the pull requests
+# assigned to the factory.
+#review_assigned_prs = false
 # GitHub logins and/or org/team slugs the factory turns to when it needs a
 # person: mentioned in the needs-human comment and in the product manager's
 # questions, and asked to review an approved pull request. No leading @.
