@@ -61,7 +61,7 @@ off_hours_poll_interval = "2h"
 work_days = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 # Whole factory, rolling 24 hours. At or over it no new session starts; the
 # sessions already running finish.
-max_cost_per_day = 300.0
+max_cost_per_day = 200.0
 max_cost_per_day_resume_percent = 70.0
 # Ask for consolidation early once a notes file grows past this many bytes.
 #notes_max_bytes = 18768
