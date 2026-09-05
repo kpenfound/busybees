@@ -122,9 +122,10 @@ func NotesSkeleton(role string) string {
 // writes single fields through the owner methods on Store (SetIssueSession,
 // AddIssueCost, SetHumanSeenAt, SetIssueHumanSeenAt, SetConflictNotifiedSHA,
 // SetReviewedSHA, SetProposal, SetOpenChildren), each of which reads the file,
-// changes its own fields and writes it back. SaveIssue carries every field it does not own
-// over from the file, so a worker's copy — loaded when it started, and by then
-// stale — cannot erase what the polling path recorded while it ran.
+// changes its own fields and writes it back. SaveIssue carries every field it
+// does not own over from the file, so a worker's copy — loaded when it
+// started, and by then stale — cannot erase what the polling path recorded
+// while it ran.
 type IssueState struct {
 	// Number is the issue these fields belong to and UpdatedAt when the file
 	// was last written; every writer sets both.

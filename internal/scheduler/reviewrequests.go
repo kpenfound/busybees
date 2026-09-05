@@ -156,18 +156,22 @@ func (s *Scheduler) assignedForReview(pr github.PR) bool {
 	if strings.HasPrefix(pr.HeadRefName, s.cfg.Project.BranchPrefix) {
 		return false
 	}
-	// A head with no SHA cannot be remembered, so it would be reviewed on
-	// every poll.
+	// A head with no SHA says nothing about whether this change has been
+	// reviewed: skip it rather than record an empty head that every later
+	// empty head would match.
 	if pr.HeadSHA == "" {
 		return false
 	}
 	is, err := s.store.Issue(pr.Number)
 	if err != nil {
-		// A record that cannot be read: review it, and the record written
-		// before the session stops the next pass. A pull request with no
-		// record at all reads as an empty ReviewedSHA, which is the same
-		// answer.
-		return true
+		// A record that cannot be read cannot be written either:
+		// SetReviewedSHA reads the same file first, so reviewing anyway
+		// would pay for the same review on every poll for as long as the
+		// file stays broken. checkPRs skips the same way, for the same
+		// reason. A missing file is not an error: it reads as an empty
+		// ReviewedSHA, which asks for a review.
+		s.log.Warn("could not read the reviewed head; not reviewing", "pr", pr.Number, "err", err)
+		return false
 	}
 	return is.ReviewedSHA != pr.HeadSHA
 }

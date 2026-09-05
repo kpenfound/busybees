@@ -710,3 +710,60 @@ func TestALocalPassNeverDispatchesAnAssignedReview(t *testing.T) {
 		t.Fatalf("reviewer sessions after the local pass: %d, want 1", got)
 	}
 }
+
+// A record that cannot be read cannot be written either, so reviewing on
+// the strength of it would pay for the same review on every poll.
+func TestAnUnreadableRecordDoesNotReviewOnEveryPoll(t *testing.T) {
+	h := newHarnessAt(t, assignedReviewTOML, requestedReviewClock)
+	pushBranch(t, h.clone, "fix-widget")
+	h.gh.prs[42] = assignedPR("bees")
+	p := filepath.Join(h.store.Dir, "issues", "42.json")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		runPass(t, h)
+		h.clock.advance(time.Hour)
+		forcePoll(h)
+	}
+	if got := len(h.sessions(config.RoleReviewer)); got != 0 {
+		t.Errorf("reviewer sessions over three polls with an unreadable record: %d, want 0 — the head cannot be recorded either, so every poll pays for the same review", got)
+	}
+	// A person still gets a pass: the label short-circuits the record.
+	h.gh.mu.Lock()
+	h.gh.prs[42].Labels = []github.Label{{Name: "bees"}, {Name: "bees:review-requested"}}
+	h.gh.mu.Unlock()
+	forcePoll(h)
+	runPass(t, h)
+	if got := len(h.sessions(config.RoleReviewer)); got != 1 {
+		t.Errorf("reviewer sessions after the label: %d, want 1", got)
+	}
+}
+
+// A pull request whose head commit the API did not report is skipped: an
+// empty head says nothing about whether this change has been reviewed, and
+// recording it would make every later empty head match.
+func TestAnAssignedPullRequestWithNoHeadCommitIsSkipped(t *testing.T) {
+	h := newHarnessAt(t, assignedReviewTOML, requestedReviewClock)
+	pushBranch(t, h.clone, "fix-widget")
+	pr := assignedPR("bees")
+	pr.HeadSHA = ""
+	h.gh.prs[42] = pr
+	// A head was remembered before: without the guard the comparison with
+	// the empty head asks for one more review and then records the empty
+	// head over the real one.
+	if err := h.store.SetReviewedSHA(42, "aaa1111"); err != nil {
+		t.Fatal(err)
+	}
+	runPass(t, h)
+
+	if got := sessionCount(h); got != 0 {
+		t.Fatalf("sessions: %d, want 0", got)
+	}
+	if got := reviewedSHA(t, h, 42); got != "aaa1111" {
+		t.Errorf("recorded head: %q, want aaa1111 — an empty head overwrote a real one", got)
+	}
+}
