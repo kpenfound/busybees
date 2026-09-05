@@ -484,21 +484,48 @@ func TestHeaderShowsWhyDispatchIsPaused(t *testing.T) {
 	}
 }
 
-// With neither pause in force the header carries no trace of the notice,
-// whatever the daily budget fields say: a budget being spent is not a
-// condition that stops the factory, so it stays out of the header (the
-// unpaused "daily budget: $x / $y" clause is `bees status`'s own, not the
-// live view's).
-func TestHeaderIsUnchangedWithNoPause(t *testing.T) {
+// With no daily budget configured the header carries no trace of a reading
+// or a pause: an unset budget is not "$0.00 / $0.00".
+func TestHeaderIsUnchangedWithNoBudget(t *testing.T) {
 	deps := Deps{Repo: "acme/widgets", Now: func() time.Time { return fixed }}
 	bare := drive(t, deps)
-	withBudget := drive(t, deps, statusMsg{status: state.Status{DaySpendUSD: 42.1, DayBudgetUSD: 100}})
 	firstLine := func(v string) string { return strings.SplitN(v, "\n", 2)[0] }
-	if got, want := firstLine(withBudget), firstLine(bare); got != want {
-		t.Errorf("the header changed with no pause in force:\ngot  %q\nwant %q", got, want)
-	}
 	if strings.Contains(firstLine(bare), "⏸") {
 		t.Errorf("the header shows a pause the factory is not observing:\n%s", firstLine(bare))
+	}
+	if strings.Contains(firstLine(bare), "daily budget") {
+		t.Errorf("the header shows a budget reading with no budget configured:\n%s", firstLine(bare))
+	}
+}
+
+// With a daily budget configured and dispatch running (not paused) the
+// header carries the reading, so a person watching the live view sees the
+// spend against the budget all the time, not only once it stops the
+// factory.
+func TestHeaderShowsTheDailyBudgetWhenNotPaused(t *testing.T) {
+	deps := Deps{Repo: "acme/widgets", Now: func() time.Time { return fixed }}
+	view := drive(t, deps, statusMsg{status: state.Status{DaySpendUSD: 0.12, DayBudgetUSD: 5}})
+	firstLine := strings.SplitN(view, "\n", 2)[0]
+	if !strings.Contains(firstLine, "daily budget: $0.12 / $5.00") {
+		t.Errorf("the header does not show the daily budget reading:\n%s", firstLine)
+	}
+	if strings.Contains(firstLine, "⏸") {
+		t.Errorf("the header shows a pause the factory is not observing:\n%s", firstLine)
+	}
+}
+
+// The pause notice outranks the reading: a paused factory must not show a
+// calm reading next to the pause, and the pause notice already carries the
+// same two numbers.
+func TestHeaderShowsThePauseNotTheReadingWhilePaused(t *testing.T) {
+	deps := Deps{Repo: "acme/widgets", Now: func() time.Time { return fixed }}
+	view := drive(t, deps, statusMsg{status: state.Status{BudgetPaused: true, DaySpendUSD: 323.8, DayBudgetUSD: 300}})
+	firstLine := strings.SplitN(view, "\n", 2)[0]
+	if !strings.Contains(firstLine, "⏸ daily budget ($323.80 / $300.00)") {
+		t.Errorf("the header does not show the pause notice:\n%s", firstLine)
+	}
+	if strings.Contains(firstLine, "daily budget:") {
+		t.Errorf("the header shows the reading alongside the pause notice:\n%s", firstLine)
 	}
 }
 
