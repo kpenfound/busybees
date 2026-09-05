@@ -340,7 +340,7 @@ func TestThePollingPathsBookkeepingSurvivesASaveIssue(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Meanwhile the polling path records six things through their owners.
+	// Meanwhile the polling path records seven things through their owners.
 	seen := time.Date(2026, 8, 31, 9, 0, 0, 0, time.UTC)
 	issueSeen := time.Date(2026, 8, 31, 9, 15, 0, 0, time.UTC)
 	approved := time.Date(2026, 8, 31, 9, 30, 0, 0, time.UTC)
@@ -353,6 +353,7 @@ func TestThePollingPathsBookkeepingSurvivesASaveIssue(t *testing.T) {
 		{"SetHumanSeenAt", func() error { return s.SetHumanSeenAt(7, seen) }},
 		{"SetIssueHumanSeenAt", func() error { return s.SetIssueHumanSeenAt(7, issueSeen) }},
 		{"SetConflictNotifiedSHA", func() error { return s.SetConflictNotifiedSHA(7, "deadbee") }},
+		{"SetReviewedSHA", func() error { return s.SetReviewedSHA(7, "beadfed") }},
 		{"SetProposal", func() error { return s.SetProposal(7, false, approved) }},
 		{"SetOpenChildren", func() error { return s.SetOpenChildren(7, []int{11, 12}, reported) }},
 		{"SetEscalation", func() error { return s.SetEscalation(7, "3 review rounds and no approval", escalated) }},
@@ -380,6 +381,9 @@ func TestThePollingPathsBookkeepingSurvivesASaveIssue(t *testing.T) {
 	}
 	if got.ConflictNotifiedSHA != "deadbee" {
 		t.Errorf("conflict_notified_sha: got %q want %q — the same head would be mailed about twice", got.ConflictNotifiedSHA, "deadbee")
+	}
+	if got.ReviewedSHA != "beadfed" {
+		t.Errorf("reviewed_sha: got %q want %q — the same head would be reviewed twice", got.ReviewedSHA, "beadfed")
 	}
 	if got.Proposal {
 		t.Error("proposal: got true want false — the label observation was rolled back")
@@ -433,6 +437,15 @@ func TestTheOwnerMethodsPreserveTheWorkerFields(t *testing.T) {
 			want: func(t *testing.T, is IssueState) {
 				if is.ConflictNotifiedSHA != "cafe" {
 					t.Errorf("conflict_notified_sha: got %q", is.ConflictNotifiedSHA)
+				}
+			},
+		},
+		{
+			name: "SetReviewedSHA",
+			set:  func(s *Store) error { return s.SetReviewedSHA(7, "f00d") },
+			want: func(t *testing.T, is IssueState) {
+				if is.ReviewedSHA != "f00d" {
+					t.Errorf("reviewed_sha: got %q", is.ReviewedSHA)
 				}
 			},
 		},

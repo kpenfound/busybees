@@ -121,8 +121,8 @@ func NotesSkeleton(role string) string {
 // and writes it back with SaveIssue, while the scheduler's polling path
 // writes single fields through the owner methods on Store (SetIssueSession,
 // AddIssueCost, SetHumanSeenAt, SetIssueHumanSeenAt, SetConflictNotifiedSHA,
-// SetProposal, SetOpenChildren), each of which reads the file, changes its own
-// fields and writes it back. SaveIssue carries every field it does not own
+// SetReviewedSHA, SetProposal, SetOpenChildren), each of which reads the file,
+// changes its own fields and writes it back. SaveIssue carries every field it does not own
 // over from the file, so a worker's copy — loaded when it started, and by then
 // stale — cannot erase what the polling path recorded while it ran.
 type IssueState struct {
@@ -198,6 +198,11 @@ type IssueState struct {
 	// mailed about twice. It is owned by SetConflictNotifiedSHA
 	// (scheduler.checkPRs) and carried over by SaveIssue for the same reason.
 	ConflictNotifiedSHA string `json:"conflict_notified_sha,omitempty"`
+	// ReviewedSHA is the head commit of the pull request the last assignment-
+	// triggered review looked at; a new push earns a new review and a restart
+	// does not re-review the same head. Owned by SetReviewedSHA
+	// (scheduler.dispatchRequestedReviews) and carried over by SaveIssue.
+	ReviewedSHA string `json:"reviewed_sha,omitempty"`
 	// Cost is what every session run for this issue has cost so far, in USD,
 	// and Sessions how many sessions that was. Both are owned by
 	// AddIssueCost: SaveIssue carries them over from the file, so a caller
@@ -274,12 +279,13 @@ func (s *Store) Issue(n int) (IssueState, error) {
 // feature-completeness bookkeeping the polling path recorded in the meantime.
 // Each of those fields has an owner method that reads, changes and writes the
 // file (AddIssueCost, SetIssueSession, SetHumanSeenAt,
-// SetIssueHumanSeenAt, SetConflictNotifiedSHA, SetProposal, SetOpenChildren);
-// this is the other half of that rule.
+// SetIssueHumanSeenAt, SetConflictNotifiedSHA, SetReviewedSHA, SetProposal,
+// SetOpenChildren); this is the other half of that rule.
 func (s *Store) SaveIssue(is IssueState) error {
 	if cur, err := s.Issue(is.Number); err == nil {
 		is.Cost, is.Sessions, is.Session = cur.Cost, cur.Sessions, cur.Session
 		is.HumanSeenAt, is.ConflictNotifiedSHA = cur.HumanSeenAt, cur.ConflictNotifiedSHA
+		is.ReviewedSHA = cur.ReviewedSHA
 		is.IssueHumanSeenAt = cur.IssueHumanSeenAt
 		is.Proposal, is.ProposalApprovedAt = cur.Proposal, cur.ProposalApprovedAt
 		is.OpenChildren, is.CompleteReportedAt = cur.OpenChildren, cur.CompleteReportedAt
@@ -359,6 +365,20 @@ func (s *Store) SetConflictNotifiedSHA(n int, sha string) error {
 		return err
 	}
 	is.Number, is.ConflictNotifiedSHA = n, sha
+	is.UpdatedAt = time.Now().UTC()
+	return s.writeJSON(filepath.Join(s.Dir, "issues", strconv.Itoa(n)+".json"), is)
+}
+
+// SetReviewedSHA records the pull request head an assignment-triggered review
+// looked at. It is the only writer of IssueState.ReviewedSHA: SaveIssue
+// carries the field over from the file, so a developer worker's own saves
+// cannot forget the head and have the scheduler review the same head again.
+func (s *Store) SetReviewedSHA(n int, sha string) error {
+	is, err := s.Issue(n)
+	if err != nil {
+		return err
+	}
+	is.Number, is.ReviewedSHA = n, sha
 	is.UpdatedAt = time.Now().UTC()
 	return s.writeJSON(filepath.Join(s.Dir, "issues", strconv.Itoa(n)+".json"), is)
 }
