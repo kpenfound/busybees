@@ -55,7 +55,7 @@ change as it now stands against every stage above, the same as a first review. T
 scope stays full — do not narrow it to the commits made since last round, and do not
 widen it into extra scrutiny of them either. Read the whole diff, and raise anything
 you missed in round 1 too.
-{{end}}
+{{end -}}
 {{if ge .Round .MaxRounds}}
 This is the final review round. If the PR is still not mergeable, request changes anyway;
 the orchestrator will escalate it to a human.

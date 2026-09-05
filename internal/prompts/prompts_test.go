@@ -1727,6 +1727,12 @@ func TestReviewerFollowUpRoundAccountsForPreviousPoints(t *testing.T) {
 	if strings.Contains(round1, "follow-up review") {
 		t.Errorf("round 1 task already reads as a follow-up review:\n%s", round1)
 	}
+	// The block must add nothing at all to round 1, not even a blank line:
+	// the closing line still follows the instruction paragraph directly, as
+	// it did before the block existed.
+	if strings.Contains(round1, "\n\n\nUpdate your notes file before you finish.") {
+		t.Errorf("the round > 1 block left a blank line in the round 1 task:\n%s", round1)
+	}
 
 	d := sample()
 	d.Round = 2
