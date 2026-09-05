@@ -1782,6 +1782,11 @@ enabled = false
 [roles.qa]
 enabled = false
 `, time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC))
+	// tick dispatches singletons in goroutines and does not wait for them,
+	// so an enabled product manager would still be writing into the test's
+	// temp directory when it is removed. OnlyRoles scopes dispatch without
+	// touching the routing, which reads the configured factory.
+	h.sched.OnlyRoles = map[string]bool{}
 	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Filed from the GitHub UI", State: "OPEN", Labels: []github.Label{{Name: "bees"}}}
 	ctx := context.Background()
 
