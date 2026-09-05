@@ -1,0 +1,168 @@
+"""
+An isolated playground for testing bees by hand.
+
+`dagger call playground terminal` opens a shell with the current build of
+`bees` on the PATH, a test project to run it against, and a `bees.toml` for
+that project written by `bees init`. The `gh` and `claude` on the PATH are
+stubs: `--version` answers, anything else refuses. Nothing in the container
+holds a GitHub token or an Anthropic key, and no remote is ever reached.
+"""
+type QaPlayground {
+  """
+  The busybees source tree the playground's `bees` binary is built from.
+  """
+  pub source: Directory! @defaultPath("/") @ignorePatterns(patterns: [
+    ".bees",
+    ".dagger",
+    ".git",
+    "bin",
+    "dist",
+    "docs",
+  ])
+
+  """
+  The Go image bees is built in and the playground runs on.
+  """
+  let goImage: String! = "golang:1.26-bookworm"
+
+  """
+  Where the test project lives inside the playground.
+  """
+  let projectPath: String! = "/work/playground"
+
+  """
+  The remote the test project points at. It is never fetched.
+  """
+  let projectRemote: String! = "https://github.com/busybees-sandbox/playground.git"
+
+  """
+  The GitHub repository `bees init` records for the test project.
+  """
+  let projectRepo: String! = "busybees-sandbox/playground"
+
+  """
+  A shell with `bees` on the PATH, inside a test project that has a
+  `bees.toml`. Open it with `dagger call playground terminal`.
+  """
+  pub playground(
+    """
+    The project bees runs against. Without one, a minimal Go module with one
+    commit is generated. A project of your own gets a git repository and an
+    origin remote only where it has none.
+    """
+    project: Directory = null,
+  ): Container! {
+    let dir = if (project == null) { generatedProject } else { project }
+    base
+      .withFile("/usr/local/bin/bees", bees)
+      .withNewFile("/usr/local/bin/gh", stub("gh", "gh version 2.80.0 (2026-01-01)"), permissions: 493)
+      .withNewFile("/usr/local/bin/claude", stub("claude", "2.1.100 (Claude Code)"), permissions: 493)
+      .withDirectory(projectPath, dir)
+      .withWorkdir(projectPath)
+      .withExec(["sh", "-ec", prepareProject])
+      # The label step fails against the gh stub after bees.toml and .bees/ are
+      # written, and bees init exits non-zero for it. Tolerate that exit and
+      # check the file it must have left behind.
+      .withExec(
+        ["bees", "init", "--repo", projectRepo, "--default-branch", "main"],
+        expect: ReturnType.ANY,
+      )
+      .withExec(["test", "-f", "bees.toml"])
+      .withDefaultTerminalCmd(["bash"])
+  }
+
+  """
+  The `bees` binary built from source.
+  """
+  pub bees: File! {
+    container
+      .from(goImage)
+      .withMountedCache("/go/pkg/mod", cacheVolume("qa-playground-go-mod"))
+      .withMountedCache("/root/.cache/go-build", cacheVolume("qa-playground-go-build"))
+      .withDirectory("/src", source)
+      .withWorkdir("/src")
+      .withExec(["go", "build", "-o", "/usr/local/bin/bees", "./cmd/bees"])
+      .file("/usr/local/bin/bees")
+  }
+
+  """
+  The playground image before bees and the project are added: git configured
+  so commits work, and a bash prompt that names the playground.
+  """
+  let base: Container! {
+    container
+      .from(goImage)
+      .withExec(["git", "config", "--global", "user.name", "QA Playground"])
+      .withExec(["git", "config", "--global", "user.email", "qa@busybees-sandbox.invalid"])
+      .withExec(["git", "config", "--global", "init.defaultBranch", "main"])
+      # The remote does not exist, and a git that asks the terminal for a
+      # username on the way to finding that out hangs `bees doctor`.
+      .withEnvVariable("GIT_TERMINAL_PROMPT", "0")
+      # Debian's /etc/bash.bashrc sets PS1 for interactive shells; ~/.bashrc runs
+      # after it, so the prompt naming the playground has to live there.
+      .withNewFile("/root/.bashrc", "PS1='bees-playground:\\w$ '\n")
+  }
+
+  """
+  A minimal test project: a Go module with a README. `prepareProject` turns it
+  into a repository with one commit.
+  """
+  let generatedProject: Directory! {
+    directory
+      .withNewFile("go.mod", "module github.com/busybees-sandbox/playground\n\ngo 1.25\n")
+      .withNewFile("main.go", """
+        package main
+
+        import "fmt"
+
+        func main() {
+        	fmt.Println("hello from the bees playground")
+        }
+        """)
+      .withNewFile("README.md", [
+        "# playground",
+        "",
+        "A test project for the bees QA playground. Its origin remote,",
+        projectRemote + ", does not exist and is never fetched.",
+        "",
+      ].join("\n"))
+  }
+
+  """
+  Shell that gives the project a git repository and an origin remote where it
+  has none. Run in the project directory.
+  """
+  let prepareProject: String! {
+    [
+      "if [ ! -d .git ]; then",
+      "  git init -q",
+      "  git add -A",
+      "  git commit -q -m 'playground: initial commit'",
+      "fi",
+      "if ! git remote get-url origin >/dev/null 2>&1; then",
+      "  git remote add origin " + projectRemote,
+      "fi",
+      "",
+    ].join("\n")
+  }
+
+  """
+  A stub for a binary the playground does not ship: `--version` prints the
+  given line, anything else exits 1 naming the playground.
+  """
+  let stub(name: String!, version: String!): String! {
+    [
+      "#!/bin/sh",
+      "# " + name + " stub for the bees QA playground.",
+      "case \"$1\" in",
+      "  --version|version)",
+      "    echo '" + version + "'",
+      "    exit 0",
+      "    ;;",
+      "esac",
+      "echo '" + name + ": this is a stub in the bees QA playground, not the real " + name + "; it reaches nothing' >&2",
+      "exit 1",
+      "",
+    ].join("\n")
+  }
+}
