@@ -6,7 +6,15 @@ Because bees builds itself, look for recent error reports from the main bees pro
 from the working tree, a throwaway test project at `/work/playground` with its own
 git repository and an `origin` that is never fetched, and the `bees.toml` and
 `.bees/` that `bees init` wrote for it. `gh` and `claude` on the PATH are stubs:
-they answer `--version` and refuse everything else.
+they answer `--version` and refuse everything else. That shell is for a person at a
+keyboard; a headless session has no terminal to attach to. Drive the sandbox with
+`script` instead, which runs a shell script there and returns its combined stdout
+and stderr with the exit status appended, succeeding even when the script itself
+fails:
+
+```sh
+dagger call qa-playground script --contents 'bees status; bees doctor'
+```
 
 Run the standing plan below in the sandbox once a session. It adds to the per-PR
 verification above; it does not replace it.

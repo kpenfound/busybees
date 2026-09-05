@@ -72,6 +72,32 @@ type QaPlayground {
   }
 
   """
+  Run a script in the playground and return everything it wrote, stdout and
+  stderr combined, with its exit status appended. The call succeeds even
+  when the script's own exit status is non-zero, so a failing probe is
+  still readable.
+  """
+  pub script(
+    """
+    The project bees runs against, prepared the same way `playground`
+    prepares it.
+    """
+    project: Directory = null,
+    """
+    The script to run, as shell text. It runs in the project directory.
+    """
+    contents: String!,
+  ): String! {
+    playground(project: project)
+      .withNewFile("/tmp/script.sh", contents, permissions: 493)
+      .withExec(
+        ["sh", "-c", "/tmp/script.sh 2>&1; echo 'exit status:' $?"],
+        expect: ReturnType.ANY,
+      )
+      .stdout
+  }
+
+  """
   The `bees` binary built from source.
   """
   pub bees: File! {
