@@ -229,6 +229,24 @@ func TestSchedulerLine(t *testing.T) {
 			now:  local,
 			want: "scheduler: pid 42, last poll 0s ago   paused: daily budget ($101.20 / $100.00)",
 		},
+		{
+			// UpdatedAt and LastPoll disagree: status.json was written
+			// (UpdatedAt set) but every poll has failed since (LastPoll
+			// still zero). now.Sub(time.Time{}) saturates to
+			// math.MaxInt64 ns, which Round leaves unchanged because
+			// rounding it would overflow — this must not render that.
+			name: "no successful poll yet",
+			st:   state.Status{UpdatedAt: now, PID: 47, Version: "dev"},
+			want: "scheduler: pid 47, no successful poll yet   build dev",
+		},
+		{
+			// The pause notice still appends to the new arm: a factory
+			// whose polls fail can also be budget-paused.
+			name: "no successful poll yet, paused",
+			st: state.Status{UpdatedAt: now, PID: 47, BudgetPaused: true,
+				DaySpendUSD: 101.2, DayBudgetUSD: 100},
+			want: "scheduler: pid 47, no successful poll yet   paused: daily budget ($101.20 / $100.00)",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			at := now
