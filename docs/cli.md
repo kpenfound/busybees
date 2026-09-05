@@ -739,6 +739,13 @@ untruncated commit as `revision`):
 scheduler: pid 4711, last poll 12s ago   build dev (b24a0605c2a1 modified)
 ```
 
+Until the scheduler's first poll succeeds, the line says so instead of a poll
+age:
+
+```
+scheduler: pid 4711, no successful poll yet   build dev (b24a0605c2a1 modified)
+```
+
 The [role prompts](roles.md#customising-a-role) are compiled into the binary,
 so a running factory serves the prompts of that build: a prompt change merged
 to the default branch reaches no session until `bees` is rebuilt and
