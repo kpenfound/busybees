@@ -32,7 +32,8 @@ import (
 //
 // The flags that steer the fake (FAKE_CLAUDE, FAKE_DEV_HANG, FAKE_DEV_FAIL,
 // FAKE_DEV_MAIL_TO, FAKE_REVIEW_ALWAYS_CHANGES, FAKE_REVIEW_FAIL, FAKE_COST, FAKE_SIGNAL,
-// FAKE_WAIT_FOR, FAKE_LIMIT, FAKE_LIMIT_WITH_OUTCOME, FAKE_RESULT_TEXT, FAKE_COPY_ISSUE_STATE)
+// FAKE_WAIT_FOR, FAKE_LIMIT, FAKE_LIMIT_WITH_OUTCOME, FAKE_RESULT_TEXT, FAKE_COPY_ISSUE_STATE,
+// FAKE_TRIAGE, FAKE_FILE_ISSUE)
 // reach it through the ordinary environment, so they must NOT start with
 // BEES_: the runner strips inherited BEES_* variables from every session.
 func TestMain(m *testing.M) {
@@ -270,6 +271,39 @@ func fakeClaude() {
 		}
 	default:
 		counter(role)
+		// FAKE_TRIAGE=<n> is the project manager moving a work item out of
+		// triage with issue_set_state; FAKE_FILE_ISSUE=<n> is a manager
+		// filing one with issue_create. Each is two writes, exactly as it is
+		// in a real session: the change on GitHub, and the note the MCP
+		// server leaves behind so the scheduler can refresh its cache when
+		// the session ends (written with the function the server calls). The
+		// change travels through the state directory because this process
+		// cannot reach the harness's in-process fake gh.
+		if v := os.Getenv("FAKE_TRIAGE"); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				fail(err)
+			}
+			if err := requestGHEdit(stateDir, ghEdit{Number: n, Add: []string{"bees:ready"}, Remove: []string{"bees:triage"}}); err != nil {
+				fail(err)
+			}
+			if err := session.RecordTouched(sessionDir, n); err != nil {
+				fail(err)
+			}
+		}
+		if v := os.Getenv("FAKE_FILE_ISSUE"); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				fail(err)
+			}
+			if err := requestGHEdit(stateDir, ghEdit{Number: n, Create: true, Title: "Filed by the " + role,
+				Add: []string{"bees", "bees:triage"}}); err != nil {
+				fail(err)
+			}
+			if err := session.RecordTouched(sessionDir, n); err != nil {
+				fail(err)
+			}
+		}
 		outcome = session.Outcome{Status: OutcomeDone, Note: "ok"}
 	}
 	if err := session.WriteOutcome(sessionDir, outcome); err != nil {
@@ -300,6 +334,9 @@ type fakeGH struct {
 	issues   map[int]*github.Issue
 	prs      map[int]*github.PR
 	prMarker string
+	// stateDir is where session processes leave the writes they want this
+	// fake to make (ghEdit): they run in another process and cannot reach it.
+	stateDir string
 	// hidden lists PRs that do not exist until a developer session opened
 	// one on their head branch (bees/issue-N), like fakePR.
 	hidden   map[int]bool
@@ -361,6 +398,81 @@ func (f *fakeGH) total() int {
 	return len(f.calls)
 }
 
+// ghEdit is a write a session process asks the fake GitHub to make: the fake
+// claude runs in its own process, exactly as `bees mcp serve` does, so a
+// session-side `gh` write cannot reach the harness's in-memory fake and
+// travels through the state directory instead.
+type ghEdit struct {
+	Number int      `json:"number"`
+	Create bool     `json:"create,omitempty"`
+	Title  string   `json:"title,omitempty"`
+	Add    []string `json:"add,omitempty"`
+	Remove []string `json:"remove,omitempty"`
+}
+
+// requestGHEdit records one edit for the fake GitHub to apply. The file name
+// carries the time so edits are applied in the order they were asked for.
+func requestGHEdit(stateDir string, e ghEdit) error {
+	dir := filepath.Join(stateDir, "gh-edits")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(dir, fmt.Sprintf("%020d-*.json", time.Now().UnixNano()))
+	if err != nil {
+		return err
+	}
+	if err := json.NewEncoder(f).Encode(e); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// applyGHEdits applies every edit a session process has asked for and forgets
+// it, so the next call the scheduler makes sees what the session did. Called
+// with f.mu held.
+func (f *fakeGH) applyGHEdits() {
+	entries, err := os.ReadDir(filepath.Join(f.stateDir, "gh-edits"))
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		path := filepath.Join(f.stateDir, "gh-edits", entry.Name())
+		b, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		_ = os.Remove(path)
+		var e ghEdit
+		if err := json.Unmarshal(b, &e); err != nil {
+			continue
+		}
+		i, ok := f.issues[e.Number]
+		if !ok {
+			if !e.Create {
+				continue
+			}
+			i = &github.Issue{Number: e.Number, Title: e.Title, Body: "please", State: "OPEN"}
+			f.issues[e.Number] = i
+		}
+		for _, l := range e.Remove {
+			var kept []github.Label
+			for _, have := range i.Labels {
+				if have.Name != l {
+					kept = append(kept, have)
+				}
+			}
+			i.Labels = kept
+		}
+		for _, l := range e.Add {
+			if !github.HasLabel(i.Labels, l) {
+				i.Labels = append(i.Labels, github.Label{Name: l})
+			}
+			f.history[e.Number] = append(f.history[e.Number], l)
+		}
+	}
+}
+
 // fakeClock is a settable clock for tests that drive the scheduler loop.
 type fakeClock struct {
 	mu sync.Mutex
@@ -387,6 +499,7 @@ type checksResponse struct {
 func (f *fakeGH) exec(ctx context.Context, args ...string) ([]byte, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.applyGHEdits()
 	f.calls = append(f.calls, append([]string(nil), args...))
 	if len(args) >= 2 {
 		if err, ok := f.errFor[args[0]+" "+args[1]]; ok {
@@ -726,6 +839,7 @@ func newHarnessAt(t *testing.T, toml string, now time.Time) *harness {
 		issues:    map[int]*github.Issue{},
 		prs:       map[int]*github.PR{},
 		prMarker:  filepath.Join(store.Dir, "fake-pr-created"),
+		stateDir:  store.Dir,
 		hidden:    map[int]bool{},
 		history:   map[int][]string{},
 		comments:  map[int][]string{},

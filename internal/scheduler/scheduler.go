@@ -1262,7 +1262,11 @@ func (s *Scheduler) resumableChecks(snap *snapshot, issue github.Issue) bool {
 	return bk.WorkerStage == "checks" || postApprovalFixRound(bk)
 }
 
-// cacheIssue replaces an issue in the lists kept from the last poll.
+// cacheIssue writes an issue into the lists kept from the last poll: the
+// copy the poll took is replaced, and an issue the poll never saw is
+// appended. Appending is what puts an issue a session created — in another
+// process, through the MCP server (refreshTouched) — in front of the local
+// pass that follows, instead of leaving it for the next poll to discover.
 func (s *Scheduler) cacheIssue(live github.Issue) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1272,6 +1276,7 @@ func (s *Scheduler) cacheIssue(live github.Issue) {
 			return
 		}
 	}
+	s.lastIssues = append(s.lastIssues, live)
 }
 
 // dispatchSingletons starts the product manager, project manager and QA
