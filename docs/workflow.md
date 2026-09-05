@@ -90,11 +90,11 @@ which you add to hold an issue where it is (see
 
 Feature issues (`bees:feature`) and feedback issues (`bees:feedback`) are not
 in this diagram. They never carry a state label. They belong to the product
-manager, and work items are what it makes from them. An issue with the `bees`
-label alone becomes one of them: the orchestrator labels it `bees:feedback`
-and the product manager decides what it turns into. To have it built instead,
-label it `bees:triage` or `bees:ready` yourself (see
-[Filing work](#filing-work)).
+manager, and work items are what it makes from them. When the product manager
+is enabled, an issue with the `bees` label alone becomes one of them: the
+orchestrator labels it `bees:feedback` and the product manager decides what
+it turns into. To have it built instead, label it `bees:triage` or
+`bees:ready` yourself (see [Filing work](#filing-work)).
 
 ```mermaid
 stateDiagram-v2
@@ -297,11 +297,11 @@ turns product intent into work, and it listens on two kinds of issue.
 For a feature idea ("we should support SSO"), product feedback ("onboarding
 feels clunky"), or a bug report you would rather have weighed than fixed
 verbatim, create an issue with the `bees` label and the `bees:feedback`
-label. You can leave the second label off: an issue with `bees`, no state
-label and neither `bees:feature` nor `bees:feedback` gets `bees:feedback`
-from the orchestrator on the next poll ([Filing work](#filing-work)). Adding
-it yourself says what you meant. Either way the issue goes to the product
-manager, not to triage:
+label. You can leave the second label off: when the product manager is
+enabled, an issue with `bees`, no state label and neither `bees:feature` nor
+`bees:feedback` gets `bees:feedback` from the orchestrator on the next poll
+([Filing work](#filing-work)). Adding it yourself says what you meant. Either
+way the issue goes to the product manager, not to triage:
 
 - The orchestrator never adds a state label to it and the project manager
   never sees it. `bees status` counts it in the `feedback` queue.
@@ -440,15 +440,23 @@ down, but you can file one yourself. The labels you put on the issue decide
 what happens next, and the default is deliberately cautious.
 
 An issue with the `bees` label and nothing else is read as feedback, not as
-a spec. On the next poll the orchestrator labels it `bees:feedback` and it
-goes to the product manager, which weighs it, decides what it becomes (a
-feature, a work item, or a reasoned no) and replies on it (see
-[Feedback issues](#feedback-issues)). Nothing is specced or built until
-someone has authorised the scope. That mirrors the rule pointing the other
-way: a feature issue a bee writes is only a `bees:proposal` until you approve
-it. Between the two, new scope enters the factory only through a person or
-through the product manager. With `require_label = false` the orchestrator
-adds `bees` in the same edit, so the issue is fully tagged either way.
+a spec, when the product manager is enabled. On the next poll the
+orchestrator labels it `bees:feedback` and it goes to the product manager,
+which weighs it, decides what it becomes (a feature, a work item, or a
+reasoned no) and replies on it (see [Feedback issues](#feedback-issues)).
+Nothing is specced or built until someone has authorised the scope. That
+mirrors the rule pointing the other way: a feature issue a bee writes is only
+a `bees:proposal` until you approve it. Between the two, new scope enters the
+factory only through a person or through the product manager. With
+`require_label = false` the orchestrator adds `bees` in the same edit, so the
+issue is fully tagged either way.
+
+With the product manager disabled, nothing ever reads `bees:feedback`, so the
+orchestrator routes the same unlabelled issue further down the pipeline
+instead: to `bees:triage` when the project manager is enabled, or straight to
+`bees:ready` when both managers are disabled. The first enabled role able to
+take the issue wins; a factory running only developers builds an unlabelled
+issue as it stands, with no spec and no refinement pass.
 
 To have it built, give it a state label yourself. That is the intended fast
 path, not a workaround: the feedback rule applies only to an issue that

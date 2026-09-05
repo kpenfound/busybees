@@ -111,11 +111,11 @@ A full pass is:
    [Conflicts with the default branch](workflow.md#conflicts-with-the-default-branch).
 5. **Reconcile.** Label transitions driven by local state, in this order:
    - an issue with no state label and neither `bees:feature` nor
-     `bees:feedback` is a person handing the factory an idea, not a spec: it
-     gets `bees:feedback` (and the base label, when the filter does not
-     require it) and joins the product manager's list in the same pass. A
-     person who wants it built without that hop labels it `bees:triage` or
-     `bees:ready` themselves;
+     `bees:feedback` is a person handing the factory an idea, not a spec:
+     when the product manager is enabled it gets `bees:feedback` (and the
+     base label, when the filter does not require it) and joins the product
+     manager's list in the same pass. A person who wants it built without
+     that hop labels it `bees:triage` or `bees:ready` themselves;
    - a `bees:blocked` issue with unread developer mail about it becomes
      `bees:ready`; one with unread project manager mail about it becomes
      `bees:triage`. Mail from a person counts as an answer too;

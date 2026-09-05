@@ -411,13 +411,13 @@ bees prompts show pm --rendered | less
 
 ### `bees run`
 
-Runs the scheduler until interrupted. Every `poll_interval` (default 5m; two
-API calls per poll) it lists visible issues and PRs, delivers new human reviews
-and comments on factory PRs to the developer as mail (sending an approved issue
-back to `bees:ready`), reconciles labels (unlabelled issues go to the product
-manager, answered questions unblock), hands ready issues to free developer
-workers and starts the product manager, project manager and QA when they have
-work. It does not wait out the interval for what happens locally: a finished
+Runs the scheduler until interrupted. Every `poll_interval` (default 5m; two API calls
+per poll) it lists visible issues and PRs, delivers new human reviews and comments on
+factory PRs to the developer as mail (sending an approved issue back to `bees:ready`),
+reconciles labels (unlabelled issues go to the product manager when it is enabled,
+answered questions unblock), hands ready issues to free developer workers and starts
+the product manager, project manager and QA when they have work. It does not wait out
+the interval for what happens locally: a finished
 session wakes it, so a freed developer slot, mail one role wrote to another
 and the labels a session moved on GitHub are picked up at once, without
 polling GitHub again. Ctrl-C — or `q` in [the live view](#the-live-view) —
