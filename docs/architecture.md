@@ -617,7 +617,10 @@ assistant messages instead.
   validation: the status must be one the role may report, and `pr-opened` and
   `pr-updated` need a pull request number. The runner reads the file after
   claude exits; a missing one is reported as "no outcome" and the scheduler
-  treats the session as `failed`.
+  treats the session as `failed`. The process exits when the turn ends, so a
+  session that ends its turn waiting on a background task's completion
+  notification or a scheduled wakeup never receives one and never reports an
+  outcome.
 - **Retries.** Every session goes through the same retry loop. A failure is
   *infrastructure* (a timeout, an API error, exhausted turns, a rate limit,
   claude exiting with no result event) or *behavioural* (the session reported

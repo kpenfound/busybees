@@ -125,6 +125,11 @@ The `status` values valid for your role are the tool's enum, and are listed belo
 orchestrator uses the outcome to decide what happens next; a session that ends without
 one is treated as failed.
 
+This session is one headless turn: the process exits when the turn ends, so a
+background task's completion notification and a scheduled wakeup never arrive. Run
+builds, tests and other long commands in the foreground and wait for them. Ending the
+turn without calling `done` abandons the work and escalates the issue to a person.
+
 ### Your notes file
 
 `{{.NotesFile}}` is your personal notes file. It survives between sessions and is the only
