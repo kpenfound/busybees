@@ -185,3 +185,38 @@ func triageQueue(h *harness) int {
 	defer h.sched.mu.Unlock()
 	return h.sched.queues["triage"]
 }
+
+// The refresh replaces the cached list rather than writing into it. A pass
+// takes the list under s.mu and then classifies it without the lock, while
+// refreshTouched runs on the goroutine of the session that ended (sessions.go),
+// so writing an element in place is a write to a slice another goroutine is
+// reading. `go test -race` reports that; dagger check runs no -race, so this
+// pins it by the value a pass in flight would see.
+func TestARefreshDoesNotWriteIntoTheListAPassIsClassifying(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t, noRolesTOML)
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Spec me", State: "OPEN",
+		Labels: []github.Label{{Name: "bees"}, {Name: "bees:triage"}}, CreatedAt: time.Now()}
+	if _, err := h.sched.poll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// The header a pass in flight is holding while it classifies.
+	h.sched.mu.Lock()
+	inFlight := h.sched.lastIssues
+	h.sched.mu.Unlock()
+
+	h.gh.issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}
+	dir := t.TempDir()
+	if err := session.RecordTouched(dir, 1); err != nil {
+		t.Fatal(err)
+	}
+	h.sched.refreshTouched(ctx, dir)
+
+	if state := h.sched.stateOf(inFlight[0].Labels); state != "triage" {
+		t.Fatalf("the list a pass is classifying became %q: the refresh wrote into it from another goroutine", state)
+	}
+	got, ok := cachedIssue(t, h, 1)
+	if !ok || h.sched.stateOf(got.Labels) != "ready" {
+		t.Fatalf("the refresh did not reach the cache: %v %q", ok, h.sched.stateOf(got.Labels))
+	}
+}

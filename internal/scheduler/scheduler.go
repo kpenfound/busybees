@@ -1270,13 +1270,26 @@ func (s *Scheduler) resumableChecks(snap *snapshot, issue github.Issue) bool {
 func (s *Scheduler) cacheIssue(live github.Issue) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for i := range s.lastIssues {
-		if s.lastIssues[i].Number == live.Number {
-			s.lastIssues[i] = live
+	// The list is replaced rather than written into. A pass takes its header
+	// under this lock and then classifies it without holding the lock, and
+	// refreshTouched runs on the goroutine of the session that ended, not on
+	// the loop's: writing an element in place would be a write to a slice
+	// another goroutine is reading.
+	// The list is replaced rather than written into. A pass takes its header
+	// under this lock and then classifies it without holding the lock, and
+	// refreshTouched runs on the goroutine of the session that ended, not on
+	// the loop's: writing an element in place would be a write to a slice
+	// another goroutine is reading.
+	next := make([]github.Issue, len(s.lastIssues), len(s.lastIssues)+1)
+	copy(next, s.lastIssues)
+	for i := range next {
+		if next[i].Number == live.Number {
+			next[i] = live
+			s.lastIssues = next
 			return
 		}
 	}
-	s.lastIssues = append(s.lastIssues, live)
+	s.lastIssues = append(next, live)
 }
 
 // dispatchSingletons starts the product manager, project manager and QA
