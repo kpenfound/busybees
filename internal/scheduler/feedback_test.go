@@ -76,7 +76,7 @@ func TestUnlabelledIssueGoesToTheProductManager(t *testing.T) {
 // The same for a factory that does not require its label: an issue visible by
 // assignee alone gets the label *and* bees:feedback, in one edit.
 func TestUnlabelledIssueWithoutTheBaseLabel(t *testing.T) {
-	h := newHarness(t, noRolesTOML+`
+	h := newHarness(t, managersTOML+`
 [filter]
 assignee = "kyle"
 require_label = false
@@ -148,6 +148,127 @@ func TestBugIssueWithNoStateLabelGoesToTheProductManager(t *testing.T) {
 	}
 	if st.Queues["triage"] != 0 || st.Queues[queueNoState] != 0 {
 		t.Fatalf("queues %+v, want the issue in neither triage nor no_state", st.Queues)
+	}
+}
+
+// projectManagerOnlyTOML disables the product manager: with nobody to hand
+// feedback to, an unlabelled issue must not go quiet.
+const projectManagerOnlyTOML = baseTOML + `
+[roles.qa]
+enabled = false
+[roles.developer]
+enabled = false
+[roles.reviewer]
+enabled = false
+[roles.product_manager]
+enabled = false
+`
+
+// With the product manager disabled and the project manager enabled, a
+// person's unlabelled issue is routed to bees:triage instead of going quiet
+// on a route nothing consumes (#418).
+func TestUnlabelledIssueGoesToTheProjectManagerWhenProductManagerDisabled(t *testing.T) {
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	h := newHarnessAt(t, projectManagerOnlyTOML, now)
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Filed from the GitHub UI", Body: "exports would be nice",
+		State: "OPEN", Author: github.Author{Login: "kyle"},
+		Labels: []github.Label{{Name: "bees"}}, CreatedAt: now.Add(-time.Hour)}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if err := h.sched.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := strings.Join(h.gh.history[1], ","); got != "bees:triage" {
+		t.Fatalf("issue 1 label history: %q, want bees:triage", got)
+	}
+	if github.HasLabel(h.gh.issues[1].Labels, "bees:feedback") {
+		t.Fatalf("issue 1 got bees:feedback with the product manager disabled: %v", h.gh.issues[1].Labels)
+	}
+	// The relabel and the project manager's run happen in the same pass.
+	pjm := h.sessions(config.RoleProjectManager)
+	if len(pjm) != 1 {
+		t.Fatalf("project manager sessions: %d, want 1", len(pjm))
+	}
+	prompt, err := os.ReadFile(filepath.Join(pjm[0], "prompt.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(prompt), "## Issues to triage (1 shown)") ||
+		!strings.Contains(string(prompt), "#1: Filed from the GitHub UI") {
+		t.Fatalf("project manager prompt:\n%s", prompt)
+	}
+}
+
+// noManagersTOML disables both managers: an unlabelled issue has nobody to
+// spec it, so it must go straight to the developer queue rather than
+// silently dropping out of the factory.
+const noManagersTOML = baseTOML + `
+[roles.qa]
+enabled = false
+[roles.developer]
+enabled = false
+[roles.reviewer]
+enabled = false
+[roles.product_manager]
+enabled = false
+[roles.project_manager]
+enabled = false
+`
+
+// With both managers disabled, a person's unlabelled issue goes straight to
+// bees:ready and, in the same pass, picks up the default size from the
+// existing sizing loop (#418).
+func TestUnlabelledIssueGoesStraightToReadyWhenBothManagersDisabled(t *testing.T) {
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	h := newHarnessAt(t, noManagersTOML, now)
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Filed from the GitHub UI", Body: "exports would be nice",
+		State: "OPEN", Author: github.Author{Login: "kyle"},
+		Labels: []github.Label{{Name: "bees"}}, CreatedAt: now.Add(-time.Hour)}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if err := h.sched.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := strings.Join(h.gh.history[1], ","); got != "bees:ready,bees:size/m" {
+		t.Fatalf("issue 1 label history: %q, want bees:ready,bees:size/m", got)
+	}
+	if github.HasLabel(h.gh.issues[1].Labels, "bees:feedback") || github.HasLabel(h.gh.issues[1].Labels, "bees:triage") {
+		t.Fatalf("issue 1 was routed to a manager with both disabled: %v", h.gh.issues[1].Labels)
+	}
+	if got := h.sessions(config.RoleProjectManager); len(got) != 0 {
+		t.Fatalf("the project manager ran with both managers disabled: %v", got)
+	}
+	if got := h.sessions(config.RoleProductManager); len(got) != 0 {
+		t.Fatalf("the product manager ran with both managers disabled: %v", got)
+	}
+}
+
+// bees tick --only developer must not change where an unlabelled issue is
+// routed: OnlyRoles scopes one invocation's dispatch, not the configured
+// factory's routing decision (#418).
+func TestUnlabelledIssueRoutingIgnoresOnlyRoles(t *testing.T) {
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	h := newHarnessAt(t, managersTOML, now)
+	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true}
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Filed from the GitHub UI", Body: "exports would be nice",
+		State: "OPEN", Author: github.Author{Login: "kyle"},
+		Labels: []github.Label{{Name: "bees"}}, CreatedAt: now.Add(-time.Hour)}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if err := h.sched.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// Both managers are enabled in the config: the product manager is
+	// excluded from this one tick by OnlyRoles, but that must not make the
+	// routing fall through to the project manager or straight to ready.
+	if got := strings.Join(h.gh.history[1], ","); got != "bees:feedback" {
+		t.Fatalf("issue 1 label history: %q, want bees:feedback (OnlyRoles must not change routing)", got)
 	}
 }
 
