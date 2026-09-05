@@ -151,7 +151,7 @@ or `bees:feedback` never gets a state label and is never triaged:
 | Label | Meaning | Who sets it |
 |---|---|---|
 | `bees:feature` | A feature issue. The product manager makes it detailed enough and breaks it into work items | Product manager, you |
-| `bees:feedback` | The product manager's inbox: an idea, product feedback or a bug report from a person | You, orchestrator (an issue with no state label and neither `bees:feature` nor `bees:feedback`) |
+| `bees:feedback` | The product manager's inbox: an idea, product feedback or a bug report from a person | You, orchestrator (an issue with no state label and neither `bees:feature` nor `bees:feedback`, when the product manager is enabled) |
 | `bees:question` | The product manager is waiting for you to answer on a feature or feedback issue | Product manager. The orchestrator removes it when you reply |
 | `bees:proposal` | A feature issue a bee wrote. It sits next to `bees:feature`, and you remove it to approve the feature | `bees issue create --feature`. Only you remove it |
 | `bees:review-requested` | On a pull request, not an issue: one review pass from the reviewer, whoever opened the pull request. See [Asking for a review of any pull request](#asking-for-a-review-of-any-pull-request) | You. The orchestrator removes it as the review starts |
@@ -176,9 +176,10 @@ removes it. See [Priority](#priority-do-this-next).
 reviewer, QA or a person. It says what the issue is, not where it goes, and
 the issue moves through the state machine like any other work item. Only
 `bees:feature` and `bees:feedback` route an issue out of the state machine,
-so `bees` + `bees:bug` with no state label is feedback for the product
-manager, and `bees` + `bees:bug` + `bees:triage` is a work item for the
-project manager. You never need to add a kind label.
+so `bees` + `bees:bug` with no state label is routed like any other
+unlabelled issue (feedback for the product manager when it is enabled), and
+`bees` + `bees:bug` + `bees:triage` is a work item for the project manager.
+You never need to add a kind label.
 
 ## Sizing
 
@@ -480,9 +481,9 @@ carries no state label, so the one you set stands.
 
 Nothing else is added for you on that path, so put the `bees` label on the
 issue yourself when the filter requires it. The same rule decides where a bug
-report lands: `bees` + `bees:bug` on its own is feedback for the product
-manager, while `bees` + `bees:bug` + `bees:triage` goes straight to the
-project manager.
+report lands: `bees` + `bees:bug` on its own is routed like any other
+unlabelled issue (feedback for the product manager when it is enabled), while
+`bees` + `bees:bug` + `bees:triage` goes straight to the project manager.
 
 Steering: anything a person writes, in an issue, in a pull request or in mail
 to a role, is authoritative for every role and outranks their prompts.

@@ -411,22 +411,22 @@ bees prompts show pm --rendered | less
 
 ### `bees run`
 
-Runs the scheduler until interrupted. Every `poll_interval` (default 5m; two API calls
-per poll) it lists visible issues and PRs, delivers new human reviews and comments on
-factory PRs to the developer as mail (sending an approved issue back to `bees:ready`),
-reconciles labels (unlabelled issues go to the product manager when it is enabled,
-answered questions unblock), hands ready issues to free developer workers and starts
-the product manager, project manager and QA when they have work. It does not wait out
-the interval for what happens locally: a finished
-session wakes it, so a freed developer slot, mail one role wrote to another
-and the labels a session moved on GitHub are picked up at once, without
-polling GitHub again. Ctrl-C — or `q` in [the live view](#the-live-view) —
-stops polling, starts nothing new and waits for the work already in flight to
-finish. An issue a developer worker holds goes on through the stages it has
-left — a developer session is followed by the review that belongs with it —
-until it is approved, escalated, out of `max_review_rounds` or over
-`max_cost_per_issue`; each session is still bounded by its role's `timeout`. A
-second Ctrl-C stops them now.
+Runs the scheduler until interrupted. Every `poll_interval` (default 5m; two
+API calls per poll) it lists visible issues and PRs, delivers new human
+reviews and comments on factory PRs to the developer as mail (sending an
+approved issue back to `bees:ready`), reconciles labels (unlabelled issues go
+to the product manager when it is enabled, answered questions unblock), hands
+ready issues to free developer workers and starts the product manager, project
+manager and QA when they have work. It does not wait out the interval for what
+happens locally: a finished session wakes it, so a freed developer slot, mail
+one role wrote to another and the labels a session moved on GitHub are picked
+up at once, without polling GitHub again. Ctrl-C — or `q` in
+[the live view](#the-live-view) — stops polling, starts nothing new and waits
+for the work already in flight to finish. An issue a developer worker holds
+goes on through the stages it has left — a developer session is followed by
+the review that belongs with it — until it is approved, escalated, out of
+`max_review_rounds` or over `max_cost_per_issue`; each session is still
+bounded by its role's `timeout`. A second Ctrl-C stops them now.
 
 Before the first poll it runs the cheap half of [`bees doctor`](#bees-doctor) —
 every check except the `roles` group, which clones skills and starts MCP
