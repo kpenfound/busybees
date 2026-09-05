@@ -446,3 +446,266 @@ func TestARequestedReviewFallsBackToTheDefaultBranch(t *testing.T) {
 		t.Errorf("the label was not removed")
 	}
 }
+
+// assignedReviewTOML turns scheduler.review_assigned_prs on and restricts the
+// filter to the factory's assignee, the shape the key is meant for.
+// assignedOffTOML and assignedAbsentTOML are the other two readings of the
+// key: written out as false, and not written at all.
+var (
+	assignedReviewTOML = assignedTOML("review_assigned_prs = true")
+	assignedOffTOML    = assignedTOML("review_assigned_prs = false")
+	assignedAbsentTOML = assignedTOML("")
+)
+
+// assignedTOML is reviewOnlyTOML with filter.assignee set and one extra line
+// in the existing [scheduler] table: a second [scheduler] header would be a
+// duplicate table.
+func assignedTOML(schedulerLine string) string {
+	s := strings.Replace(reviewOnlyTOML, "max_review_rounds = 3\n", "max_review_rounds = 3\n"+schedulerLine+"\n", 1)
+	return s + "\n[filter]\nassignee = \"beebot\"\n"
+}
+
+// assignedPR is a person's pull request assigned to the factory: the same
+// fixture as personsPR with the assignee and a head commit, which is what
+// the assignment trigger reads.
+func assignedPR(labels ...string) *github.PR {
+	pr := personsPR(labels...)
+	pr.Assignees = []github.Author{{Login: "beebot"}}
+	pr.HeadSHA = "aaa1111"
+	return pr
+}
+
+// reviewedSHA is the head the scheduler recorded for a pull request.
+func reviewedSHA(t *testing.T, h *harness, n int) string {
+	t.Helper()
+	is, err := h.store.Issue(n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return is.ReviewedSHA
+}
+
+// Without the key, an assigned pull request carrying no label is not
+// reviewed: today's behaviour, unchanged.
+func TestAnAssignedPullRequestIsNotReviewedByDefault(t *testing.T) {
+	h := newHarnessAt(t, assignedAbsentTOML, requestedReviewClock)
+	pushBranch(t, h.clone, "fix-widget")
+	h.gh.prs[42] = assignedPR("bees")
+	runPass(t, h)
+
+	if got := sessionCount(h); got != 0 {
+		t.Fatalf("sessions: %d, want 0", got)
+	}
+	if got := reviewedSHA(t, h, 42); got != "" {
+		t.Errorf("a head was recorded with the key off: %q", got)
+	}
+}
+
+// review_assigned_prs = false is the default written out: it must behave
+// exactly like the key being absent.
+func TestReviewAssignedPRsExplicitlyOffDispatchesNothing(t *testing.T) {
+	h := newHarnessAt(t, assignedOffTOML, requestedReviewClock)
+	pushBranch(t, h.clone, "fix-widget")
+	h.gh.prs[42] = assignedPR("bees")
+	runPass(t, h)
+
+	if got := sessionCount(h); got != 0 {
+		t.Fatalf("sessions: %d, want 0", got)
+	}
+}
+
+// With the key on, an assigned pull request the factory did not write gets
+// one reviewer session — the same requested-review session the label
+// starts — and its head is recorded. A second pass over the same
+// unchanged pull request dispatches nothing.
+func TestAnAssignedPullRequestIsReviewedOncePerHead(t *testing.T) {
+	h := newHarnessAt(t, assignedReviewTOML, requestedReviewClock)
+	pushBranch(t, h.clone, "fix-widget")
+	h.gh.prs[42] = assignedPR("bees")
+	runPass(t, h)
+
+	dirs := h.sessions(config.RoleReviewer)
+	if len(dirs) != 1 {
+		t.Fatalf("reviewer sessions: %d, want 1", len(dirs))
+	}
+	if !strings.Contains(filepath.Base(dirs[0]), "reviewer-requested-pr-42") {
+		t.Errorf("session name: %s", filepath.Base(dirs[0]))
+	}
+	// The same session the label starts: the requested-review task, in
+	// ModeRequested.
+	prompt := promptOf(t, h, 0)
+	for _, want := range []string{"# Task: review pull request #42 (requested by a person)", "## No issue, no acceptance criteria", "`submit_review`"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("prompt lacks %q:\n%s", want, prompt)
+		}
+	}
+	if got := reviewedSHA(t, h, 42); got != "aaa1111" {
+		t.Errorf("recorded head: %q, want aaa1111", got)
+	}
+	// Nothing was labelled or unlabelled: no label was involved.
+	if got := removeLabelCalls(h, "42", "bees:review-requested"); got != 0 {
+		t.Errorf("label edits on #42: %d, want 0", got)
+	}
+
+	h.clock.advance(time.Hour)
+	forcePoll(h)
+	runPass(t, h)
+	if got := len(h.sessions(config.RoleReviewer)); got != 1 {
+		t.Fatalf("reviewer sessions after a second pass over the same head: %d, want 1", got)
+	}
+}
+
+// A push earns exactly one further review.
+func TestAPushToAnAssignedPullRequestEarnsAnotherReview(t *testing.T) {
+	h := newHarnessAt(t, assignedReviewTOML, requestedReviewClock)
+	pushBranch(t, h.clone, "fix-widget")
+	h.gh.prs[42] = assignedPR("bees")
+	runPass(t, h)
+	if got := len(h.sessions(config.RoleReviewer)); got != 1 {
+		t.Fatalf("reviewer sessions: %d, want 1", got)
+	}
+
+	h.gh.mu.Lock()
+	h.gh.prs[42].HeadSHA = "bbb2222"
+	h.gh.mu.Unlock()
+	h.clock.advance(time.Hour)
+	forcePoll(h)
+	runPass(t, h)
+	if got := len(h.sessions(config.RoleReviewer)); got != 2 {
+		t.Fatalf("reviewer sessions after a push: %d, want 2", got)
+	}
+	if got := reviewedSHA(t, h, 42); got != "bbb2222" {
+		t.Errorf("recorded head: %q, want bbb2222", got)
+	}
+
+	// And the new head is reviewed once, not on every poll after it.
+	h.clock.advance(time.Hour)
+	forcePoll(h)
+	runPass(t, h)
+	if got := len(h.sessions(config.RoleReviewer)); got != 2 {
+		t.Fatalf("reviewer sessions after a third pass: %d, want 2", got)
+	}
+}
+
+// A scheduler that comes back up with a head already recorded on disk does
+// not review it again.
+func TestARecordedHeadSurvivesARestart(t *testing.T) {
+	h := newHarnessAt(t, assignedReviewTOML, requestedReviewClock)
+	pushBranch(t, h.clone, "fix-widget")
+	h.gh.prs[42] = assignedPR("bees")
+	if err := h.store.SetReviewedSHA(42, "aaa1111"); err != nil {
+		t.Fatal(err)
+	}
+	runPass(t, h)
+
+	if got := len(h.sessions(config.RoleReviewer)); got != 0 {
+		t.Fatalf("reviewer sessions: %d, want 0", got)
+	}
+}
+
+// A pull request the factory wrote is never dispatched by the assignment
+// trigger, whatever the key says: its head branch carries the branch
+// prefix, and it goes through the developer worker's own review loop.
+func TestTheFactorysOwnPullRequestIsNotReviewedByAssignment(t *testing.T) {
+	h := newHarnessAt(t, assignedReviewTOML, requestedReviewClock)
+	pushBranch(t, h.clone, "bees/issue-7")
+	pr := assignedPR("bees")
+	pr.HeadRefName = "bees/issue-7"
+	h.gh.prs[42] = pr
+	runPass(t, h)
+
+	if got := sessionCount(h); got != 0 {
+		t.Fatalf("sessions: %d, want 0", got)
+	}
+	if got := reviewedSHA(t, h, 42); got != "" {
+		t.Errorf("a head was recorded for the factory's own pull request: %q", got)
+	}
+}
+
+// A draft is not ready for review: it is skipped, and undrafting it at the
+// same head then dispatches once.
+func TestADraftAssignedPullRequestIsNotReviewedUntilItIsReady(t *testing.T) {
+	h := newHarnessAt(t, assignedReviewTOML, requestedReviewClock)
+	pushBranch(t, h.clone, "fix-widget")
+	pr := assignedPR("bees")
+	pr.IsDraft = true
+	h.gh.prs[42] = pr
+	runPass(t, h)
+	if got := len(h.sessions(config.RoleReviewer)); got != 0 {
+		t.Fatalf("reviewer sessions on a draft: %d, want 0", got)
+	}
+
+	h.gh.mu.Lock()
+	h.gh.prs[42].IsDraft = false
+	h.gh.mu.Unlock()
+	h.clock.advance(time.Hour)
+	forcePoll(h)
+	runPass(t, h)
+	if got := len(h.sessions(config.RoleReviewer)); got != 1 {
+		t.Fatalf("reviewer sessions once it is ready: %d, want 1", got)
+	}
+}
+
+// The label trigger keeps its own semantics: it is dispatched even when the
+// head has already been reviewed, and it records the head too, so removing
+// the label and leaving the assignment does not immediately produce a
+// second review of the same head.
+func TestTheLabelIsDispatchedOverAnAlreadyReviewedHead(t *testing.T) {
+	h := newHarnessAt(t, assignedReviewTOML, requestedReviewClock)
+	pushBranch(t, h.clone, "fix-widget")
+	h.gh.prs[42] = assignedPR("bees", "bees:review-requested")
+	if err := h.store.SetReviewedSHA(42, "aaa1111"); err != nil {
+		t.Fatal(err)
+	}
+	runPass(t, h)
+
+	if got := len(h.sessions(config.RoleReviewer)); got != 1 {
+		t.Fatalf("reviewer sessions: %d, want 1", got)
+	}
+	if got := removeLabelCalls(h, "42", "bees:review-requested"); got != 1 {
+		t.Errorf("--remove-label edits on #42: %d, want 1", got)
+	}
+}
+
+// The label trigger records the head with the key off too, so turning the
+// key on later does not re-review a head the label has already had.
+func TestTheLabelTriggerRecordsTheHeadWithTheKeyOff(t *testing.T) {
+	h := newHarnessAt(t, reviewOnlyTOML, requestedReviewClock)
+	pushBranch(t, h.clone, "fix-widget")
+	h.gh.prs[42] = assignedPR("bees", "bees:review-requested")
+	runPass(t, h)
+
+	if got := len(h.sessions(config.RoleReviewer)); got != 1 {
+		t.Fatalf("reviewer sessions: %d, want 1", got)
+	}
+	if got := removeLabelCalls(h, "42", "bees:review-requested"); got != 1 {
+		t.Errorf("--remove-label edits on #42: %d, want 1", got)
+	}
+	if got := reviewedSHA(t, h, 42); got != "aaa1111" {
+		t.Errorf("recorded head: %q, want aaa1111", got)
+	}
+}
+
+// The assignment trigger runs from a full pass only, like the label one: a
+// local pass classifies pull requests cached from the last poll.
+func TestALocalPassNeverDispatchesAnAssignedReview(t *testing.T) {
+	h := newHarnessAt(t, assignedReviewTOML, requestedReviewClock)
+	pushBranch(t, h.clone, "fix-widget")
+	h.gh.prs[42] = assignedPR("bees")
+	runPass(t, h)
+	if got := len(h.sessions(config.RoleReviewer)); got != 1 {
+		t.Fatalf("reviewer sessions after the poll: %d, want 1", got)
+	}
+	// The cached list still carries the head the pass just recorded; a
+	// local pass that dispatched from it would review it twice. Forget the
+	// record, so only the full/local distinction can stop a second session.
+	if err := h.store.SetReviewedSHA(42, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	h.clock.advance(100 * time.Millisecond)
+	runPass(t, h)
+	if got := len(h.sessions(config.RoleReviewer)); got != 1 {
+		t.Fatalf("reviewer sessions after the local pass: %d, want 1", got)
+	}
+}
