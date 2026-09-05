@@ -267,9 +267,10 @@ func TestAPersonsPullRequestIsNeverHumanFeedback(t *testing.T) {
 	}
 }
 
-// A visible pull request without the label is not reviewed: the factory
-// only ever reviewed the pull requests its developers opened, and a
-// person's pull request stays invisible to the reviewer until asked.
+// Without the label, and with scheduler.review_assigned_prs off, a visible
+// pull request is not reviewed: the factory reviews the pull requests its
+// developers opened, and a person's stays invisible to the reviewer until
+// asked.
 func TestNoReviewForAPullRequestWithoutTheLabel(t *testing.T) {
 	h := newHarnessAt(t, reviewOnlyTOML, requestedReviewClock)
 	pushBranch(t, h.clone, "fix-widget")

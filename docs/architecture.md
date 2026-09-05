@@ -187,9 +187,9 @@ A full pass is:
    reviewer session in a slot from the same pool, so a review a person asked
    for never starves a ready issue. With `scheduler.review_assigned_prs` a
    pull request whose head branch does not start with
-   `project.branch_prefix` — one the factory did not write — is dispatched
-   the same way without the label, unless it is a draft or a review has
-   already looked at this head. The label is removed before the session
+   `project.branch_prefix`, one the factory did not write, is dispatched the
+   same way without the label, unless it is a draft or a review has already
+   looked at this head. The label is removed before the session
    starts, which claims the request: one label is one pass whatever the
    session does, a failure or a killed scheduler included, and the head
    commit is recorded in `issues/<pr>.json` before the session for the same

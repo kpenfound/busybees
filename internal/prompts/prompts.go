@@ -140,9 +140,10 @@ type Data struct {
 	Stages []string
 	// Mode is the variant of a role's session, empty for every session that
 	// existed before it: "requested" for a reviewer reviewing a pull request
-	// a person asked about with bees:review-requested, which has no issue
-	// and no developer behind it and puts its verdict on GitHub as a review.
-	// Set only for a requested review.
+	// the factory did not write — asked for with bees:review-requested or by
+	// scheduler.review_assigned_prs — which has no issue and no developer
+	// behind it and puts its verdict on GitHub as a review. Set only for a
+	// requested review.
 	Mode string
 	// ActsAs is the GitHub login the factory acts as ([github].login), or
 	// empty when it shares an account with the people it works for. Set

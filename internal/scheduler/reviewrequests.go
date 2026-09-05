@@ -13,8 +13,8 @@ import (
 )
 
 // requestedReviewStage is what `bees status` and the live view show for a
-// worker that is reviewing a pull request a person asked about, where a
-// developer worker would show its stage.
+// worker that is reviewing a pull request the factory did not write, where
+// a developer worker would show its stage.
 const requestedReviewStage = "requested review"
 
 // requestedReviewKey is the backoff key of a requested review, per pull
@@ -122,7 +122,8 @@ func (s *Scheduler) dispatchRequestedReviews(ctx context.Context, snap *snapshot
 				s.signal()
 			}()
 			// There is no issue to escalate: a failed review is logged and
-			// the pull request backed off, and the person asks again.
+			// the pull request backed off, and the next label or push asks
+			// again.
 			if err := s.runRequestedReview(ctx, pr, w); err != nil && s.sessionContext(ctx).Err() == nil {
 				s.log.Error("requested review failed", "pr", pr.Number, "err", err)
 				s.setBackoff(key, 5*s.cfg.Scheduler.PollInterval.Duration)
