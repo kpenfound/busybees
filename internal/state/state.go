@@ -573,6 +573,16 @@ func (s Status) PauseNotice(now time.Time) string {
 	}
 }
 
+// BudgetNotice is the rolling 24-hour spend against scheduler.max_cost_per_day,
+// or "" when no daily budget is configured. It is what a view shows while
+// dispatch is running; PauseNotice is what it shows once the budget stopped it.
+func (s Status) BudgetNotice() string {
+	if s.DayBudgetUSD > 0 {
+		return fmt.Sprintf("daily budget: $%.2f / $%.2f", s.DaySpendUSD, s.DayBudgetUSD)
+	}
+	return ""
+}
+
 // ShortDur renders a duration the way bees.toml writes one ("3h10m", "45s"):
 // time.Duration.String() keeps a trailing "0m0s" that says nothing.
 //

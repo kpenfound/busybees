@@ -155,8 +155,8 @@ func schedulerLine(st state.Status, now time.Time) string {
 	switch notice := st.PauseNotice(now); {
 	case notice != "":
 		line += "   paused: " + notice
-	case st.DayBudgetUSD > 0:
-		line += fmt.Sprintf("   daily budget: $%.2f / $%.2f", st.DaySpendUSD, st.DayBudgetUSD)
+	case st.BudgetNotice() != "":
+		line += "   " + st.BudgetNotice()
 	}
 	if st.Version != "" {
 		line += "   build " + st.Version

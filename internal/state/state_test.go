@@ -658,3 +658,36 @@ func TestPauseNotice(t *testing.T) {
 		})
 	}
 }
+
+// BudgetNotice is what a view shows while dispatch is running against a
+// configured daily budget; PauseNotice is what it shows once the budget
+// stopped it.
+func TestBudgetNotice(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		st   Status
+		want string
+	}{
+		{
+			name: "budget configured",
+			st:   Status{DaySpendUSD: 0.12, DayBudgetUSD: 5},
+			want: "daily budget: $0.12 / $5.00",
+		},
+		{
+			name: "no spend yet",
+			st:   Status{DaySpendUSD: 0, DayBudgetUSD: 5},
+			want: "daily budget: $0.00 / $5.00",
+		},
+		{
+			name: "no budget configured",
+			st:   Status{DaySpendUSD: 0, DayBudgetUSD: 0},
+			want: "",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.st.BudgetNotice(); got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
