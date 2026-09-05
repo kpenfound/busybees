@@ -14,14 +14,14 @@ labels, the queues and the review loop, is on [workflow.md](workflow.md).
 | `product_manager` | singleton | unread mail; `scheduler.product_manager_interval` (default 1h) elapsed since its last run, the first run being immediate; a person approved a proposal by removing `bees:proposal`; a feature whose recorded sub-issues have all closed; a fresh `bees:feedback` or `bees:feature` issue, one a person created or commented on since the product manager last replied (on a `bees:proposal` or `bees:planning` issue only a comment counts) |
 | `project_manager` | singleton | an issue in `bees:triage`, or unread mail |
 | `developer` | pool of `scheduler.max_developers` workers (default 1) | a `bees:ready` issue is waiting, or an issue in `bees:in-progress`, `bees:review` or `bees:approved` has a worker to resume. A ready issue that already has a pull request goes before new work |
-| `reviewer` | one per developer worker, in turn with it; one per requested review, in a developer slot | the worker's developer session opened or updated a pull request; a check on that pull request failed, before the first review or, with `auto_merge`, after approval; a person put `bees:review-requested` on a pull request |
+| `reviewer` | one per developer worker, in turn with it; one per requested review, in a developer slot | the worker's developer session opened or updated a pull request; a check on that pull request failed, before the first review or, with `auto_merge`, after approval; a person put `bees:review-requested` on a pull request; with `scheduler.review_assigned_prs`, a pull request the factory did not write is in the filter at a head no review has looked at |
 | `qa` | singleton | unread mail; or `scheduler.qa_interval` (default 30m) elapsed and something was merged since its last run, the first run being immediate |
 
 A developer worker owns one issue at a time and runs developer, reviewer,
 developer, and so on for it, one session at a time. A review a person asks for
-with `bees:review-requested` runs outside any worker and takes a slot from the
-same `scheduler.max_developers` pool, so that number bounds every reviewer
-session too.
+with `bees:review-requested`, or by `scheduler.review_assigned_prs`, runs
+outside any worker and takes a slot from the same `scheduler.max_developers`
+pool, so that number bounds every reviewer session too.
 A singleton runs one session at a time and waits at least
 `scheduler.poll_interval` (default 5m) after a session ends before starting
 the next; after a session that reported `failed` it waits five poll intervals.
@@ -346,11 +346,12 @@ owns the checks and the merge: `auto_merge` and its companions are
 `roles.reviewer` keys.
 
 A review a person asks for by putting `bees:review-requested` on any visible
-pull request is a session of the same role in a second mode, with no issue
-and no developer behind it, whose verdict is one GitHub review on the pull
-request: see [Requested reviews](#requested-reviews-beesreview-requested)
-below. The rest of this section describes the review of a developer's pull
-request.
+pull request, or that `scheduler.review_assigned_prs` asks for on a pull
+request the factory did not write, is a session of the same role in a second
+mode, with no issue and no developer behind it, whose verdict is one GitHub
+review on the pull request: see
+[Requested reviews](#requested-reviews-beesreview-requested) below. The rest
+of this section describes the review of a developer's pull request.
 
 **Reads.** The pull request (title, body, branches, author); the issue with
 its body; the [review stages](#review-stages-rolesreviewerstages) to run; the
@@ -409,10 +410,13 @@ changes honestly and lets the orchestrator escalate. The loop as a whole,
 ### Requested reviews (`bees:review-requested`)
 
 A person asks for a review of any pull request the factory can see, their
-own or anyone's, by putting `bees:review-requested` on it; how the label is
-picked up and removed is under
+own or anyone's, by putting `bees:review-requested` on it, and
+[`scheduler.review_assigned_prs`](configuration.md#scheduler) asks for the
+same review of every pull request in the filter the factory did not write,
+once per head commit and without the label; how each is picked up is under
 [Asking for a review of any pull request](workflow.md#asking-for-a-review-of-any-pull-request).
-The session is the reviewer role with its prompts switched to this mode.
+The session is the reviewer role with its prompts switched to this mode, and
+it is the same session whichever of the two asked for it.
 
 **Reads.** The pull request (title, body, branches, author); a statement that
 there is no issue and no acceptance criteria, so the description and the
@@ -442,7 +446,8 @@ mail addressed to `reviewer` about the pull request.
 `changes-requested` after a request for changes: both are logged, and
 nothing is labelled, because there is no issue. `failed`, or no outcome, is
 logged and the pull request is not tried again for five poll intervals; a
-person adds the label again to ask for another pass.
+person adds the label again to ask for another pass, and under
+`review_assigned_prs` a push does the same.
 
 ### Review stages (`roles.reviewer.stages`)
 

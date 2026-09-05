@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/github"
@@ -12,8 +13,8 @@ import (
 )
 
 // requestedReviewStage is what `bees status` and the live view show for a
-// worker that is reviewing a pull request a person asked about, where a
-// developer worker would show its stage.
+// worker that is reviewing a pull request the factory did not write, where
+// a developer worker would show its stage.
 const requestedReviewStage = "requested review"
 
 // requestedReviewKey is the backoff key of a requested review, per pull
@@ -21,10 +22,18 @@ const requestedReviewStage = "requested review"
 func requestedReviewKey(pr int) string { return fmt.Sprintf("requested-review-pr-%d", pr) }
 
 // dispatchRequestedReviews runs one reviewer session for every open pull
-// request in the poll that carries bees:review-requested: a person's way
-// to ask the factory for a review of a pull request it did not write,
-// their own or anyone's. The pull request needs the factory label (and the
-// assignee, with filter.assignee set) to be in the poll at all.
+// request in the poll that either carries bees:review-requested — a
+// person's way to ask the factory for a review of a pull request it did
+// not write, their own or anyone's — or, with
+// scheduler.review_assigned_prs on, is a pull request the factory did not
+// write that it has not already reviewed at this head. The pull request
+// needs the factory label (and the assignee, with filter.assignee set) to
+// be in the poll at all, so with filter.assignee set the second trigger is
+// every such pull request assigned to the factory.
+//
+// Both triggers run the same session: the label is the explicit ask and
+// always gets a pass, the assignment is standing and gets one pass per
+// head commit.
 //
 // Every review takes a slot from the developer pool, so
 // scheduler.max_developers stays the one number that bounds how many
@@ -41,6 +50,12 @@ func requestedReviewKey(pr int) string { return fmt.Sprintf("requested-review-pr
 // A crash between the removal and the session loses that one request, and
 // a person adds the label again; the alternative, removing it afterwards,
 // would re-run the review on every poll for as long as the crash repeats.
+// The head commit an assignment-triggered review looked at is recorded in
+// issues/<pr>.json before the session for the same reason and with the
+// same trade: it survives a restart, and a person recovers a lost review
+// with a push or the label. It is recorded whichever trigger fired, so
+// removing the label and leaving the assignment does not immediately
+// produce a second review of the same head.
 // Only a full pass calls this: a local pass classifies the pull requests
 // cached from the last poll, which still carry a label that has since
 // been removed on GitHub, and would dispatch the same review twice.
@@ -51,7 +66,8 @@ func (s *Scheduler) dispatchRequestedReviews(ctx context.Context, snap *snapshot
 	}
 	// The poll lists open pull requests only, so there is no state to check.
 	for _, pr := range snap.prs {
-		if !github.HasLabel(pr.Labels, s.labels.ReviewRequested) {
+		requested := github.HasLabel(pr.Labels, s.labels.ReviewRequested)
+		if !requested && !s.assignedForReview(pr) {
 			continue
 		}
 		s.mu.Lock()
@@ -69,14 +85,23 @@ func (s *Scheduler) dispatchRequestedReviews(ctx context.Context, snap *snapshot
 		default:
 			return // pool is full
 		}
-		if err := s.gh.EditLabels(ctx, pr.Number, nil, []string{s.labels.ReviewRequested}); err != nil {
-			// Nothing was claimed: the label is still there, and the next
-			// poll tries again.
-			s.slots <- struct{}{}
-			s.log.Warn("could not claim the review request", "pr", pr.Number, "err", err)
-			continue
+		if requested {
+			if err := s.gh.EditLabels(ctx, pr.Number, nil, []string{s.labels.ReviewRequested}); err != nil {
+				// Nothing was claimed: the label is still there, and the next
+				// poll tries again.
+				s.slots <- struct{}{}
+				s.log.Warn("could not claim the review request", "pr", pr.Number, "err", err)
+				continue
+			}
 		}
-		s.log.Info("review requested on a pull request", "pr", pr.Number, "title", pr.Title, "author", pr.Author.Login)
+		// Recorded whichever trigger fired, so the assignment does not ask
+		// for the same head again once the label is gone. A failure to
+		// record is logged and the review runs anyway: at worst the next
+		// poll reviews the same head once more.
+		if err := s.store.SetReviewedSHA(pr.Number, pr.HeadSHA); err != nil {
+			s.log.Warn("could not record the reviewed head", "pr", pr.Number, "err", err)
+		}
+		s.log.Info("review requested on a pull request", "pr", pr.Number, "title", pr.Title, "author", pr.Author.Login, "trigger", reviewTrigger(requested))
 		// Issue holds the pull request's number: see the comment above.
 		w := &state.Worker{Name: fmt.Sprintf("review-%d", pr.Number), Issue: pr.Number, Stage: requestedReviewStage, Round: 1, Since: s.now()}
 		s.mu.Lock()
@@ -97,13 +122,58 @@ func (s *Scheduler) dispatchRequestedReviews(ctx context.Context, snap *snapshot
 				s.signal()
 			}()
 			// There is no issue to escalate: a failed review is logged and
-			// the pull request backed off, and the person asks again.
+			// the pull request backed off, and the next label or push asks
+			// again.
 			if err := s.runRequestedReview(ctx, pr, w); err != nil && s.sessionContext(ctx).Err() == nil {
 				s.log.Error("requested review failed", "pr", pr.Number, "err", err)
 				s.setBackoff(key, 5*s.cfg.Scheduler.PollInterval.Duration)
 			}
 		}(pr, w)
 	}
+}
+
+// reviewTrigger names what asked for a review, for the log line.
+func reviewTrigger(requested bool) string {
+	if requested {
+		return "label"
+	}
+	return "assignment"
+}
+
+// assignedForReview reports whether scheduler.review_assigned_prs asks for a
+// review of this pull request: it is one the factory did not write and no
+// review has looked at this head yet.
+//
+// "The factory did not write it" is the branch name. A developer worker
+// works on <project.branch_prefix>issue-<n> (scheduler.developer), so a head
+// branch outside that prefix is nobody's factory branch. The author login
+// cannot answer it: bees and people share one GitHub account unless
+// [github] is set.
+func (s *Scheduler) assignedForReview(pr github.PR) bool {
+	if !s.cfg.Scheduler.ReviewAssignedPRs || pr.IsDraft {
+		return false
+	}
+	if strings.HasPrefix(pr.HeadRefName, s.cfg.Project.BranchPrefix) {
+		return false
+	}
+	// A head with no SHA says nothing about whether this change has been
+	// reviewed: skip it rather than record an empty head that every later
+	// empty head would match.
+	if pr.HeadSHA == "" {
+		return false
+	}
+	is, err := s.store.Issue(pr.Number)
+	if err != nil {
+		// A record that cannot be read cannot be written either:
+		// SetReviewedSHA reads the same file first, so reviewing anyway
+		// would pay for the same review on every poll for as long as the
+		// file stays broken. checkPRs skips the same way, for the same
+		// reason. A missing file is not an error: it reads as an empty
+		// ReviewedSHA, which asks for a review.
+		s.log.Warn("could not read the reviewed head; not reviewing", "pr", pr.Number, "err", err)
+		return false
+	}
+	return is.ReviewedSHA != pr.HeadSHA
 }
 
 // runRequestedReview runs the reviewer once on a pull request a person

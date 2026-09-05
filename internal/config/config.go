@@ -95,6 +95,10 @@ const (
 	// fallen behind, the default branch; see Scheduler.FixConflicts.
 	DefaultPRFixConflicts = true
 	DefaultPRKeepUpdated  = false
+	// DefaultReviewAssignedPRs governs whether a pull request the factory
+	// did not write, assigned to filter.assignee, is reviewed on sight; see
+	// Scheduler.ReviewAssignedPRs.
+	DefaultReviewAssignedPRs = false
 	// MaxRetries caps scheduler.retries.
 	MaxRetries = 5
 	// DefaultOffHoursPollInterval is the polling cadence outside
@@ -687,6 +691,14 @@ type Scheduler struct {
 	// PRKeepUpdated does the same when the pull request merely fell behind
 	// the default branch without conflicting. Default false.
 	PRKeepUpdated bool `toml:"pr_keep_updated" json:"pr_keep_updated"`
+	// ReviewAssignedPRs asks the reviewer for one pass over every open pull
+	// request in the poll that the factory did not write — its head branch
+	// does not start with project.branch_prefix — without waiting for
+	// bees:review-requested. With filter.assignee set, that is every such
+	// pull request assigned to the factory. A new push earns a new review.
+	// Default false: a factory that opens its own pull requests must not
+	// review them twice. See scheduler.dispatchRequestedReviews.
+	ReviewAssignedPRs bool `toml:"review_assigned_prs" json:"review_assigned_prs"`
 	// Notify lists the GitHub logins and/or org/team slugs the factory turns
 	// to when it needs a person: they are mentioned in the needs-human
 	// escalation comment and in the product manager's questions, and asked to

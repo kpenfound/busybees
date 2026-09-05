@@ -185,11 +185,17 @@ A full pass is:
    Then the requested reviews: every pull request in the poll carrying
    `bees:review-requested` that no session is already reviewing gets a
    reviewer session in a slot from the same pool, so a review a person asked
-   for never starves a ready issue. The label is removed before the session
+   for never starves a ready issue. With `scheduler.review_assigned_prs` a
+   pull request whose head branch does not start with
+   `project.branch_prefix`, one the factory did not write, is dispatched the
+   same way without the label, unless it is a draft or a review has already
+   looked at this head. The label is removed before the session
    starts, which claims the request: one label is one pass whatever the
-   session does, a failure or a killed scheduler included, and only a full
-   pass dispatches one, because a local pass classifies the cached pull
-   request list, which still carries a label removed on GitHub. The session is
+   session does, a failure or a killed scheduler included, and the head
+   commit is recorded in `issues/<pr>.json` before the session for the same
+   reason. Only a full pass dispatches one, because a local pass classifies
+   the cached pull request list, which still carries a label removed on
+   GitHub. The session is
    a detached checkout of the head branch, or of the default branch when the
    remote does not have it, and is recorded like a worker under the pull
    request's number. A failed session backs the pull request off for five poll

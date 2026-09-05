@@ -255,6 +255,14 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	s.log.Info("scheduler started", "repo", s.cfg.Project.Repo, "filter", s.describeQuery(),
 		"max_developers", s.cfg.Scheduler.MaxDevelopers, "poll", s.cfg.Scheduler.PollInterval.Duration,
 		"work_hours", s.cfg.Scheduler.WorkHours, "version", s.version)
+	// review_assigned_prs reviews what the poll finds, and without an
+	// assignee the poll finds only what carries the filter label: the
+	// setting is not wrong, it just selects nothing a person did not label.
+	// filter.assignee is optional, so this is a warning and not a refusal
+	// to load.
+	if s.cfg.Scheduler.ReviewAssignedPRs && s.cfg.Filter.Assignee == "" {
+		s.log.Warn("scheduler.review_assigned_prs is on with no filter.assignee: only pull requests carrying the filter label are reviewed")
+	}
 	for {
 		full, err := s.tick(ctx)
 		if err != nil {
