@@ -331,6 +331,7 @@ freely on top of it:
 | QA merged-PR check | 1 call | at most once per `qa_interval` |
 | Checks | 1 call per poll of a checks stage, 2 when the branch requires no check | every `roles.reviewer.checks_poll_interval` while waiting |
 | Visibility backstop | 2 list calls | after every session |
+| Refreshing what a session changed | 1 `issue view` per issue | after a session, for each issue it created or relabelled through the MCP server; none when it changed no issue |
 | Parent feature lookup | 1 GraphQL call per triage item, per open work item, per developer session, and per review round with a `product-fit` stage configured | per project manager run, product manager run, developer session, reviewer session |
 | `bees issue create --parent` | 3 calls (parent details, create, attach as sub-issue); `--related` 2; plain 1 | whenever a role files an issue |
 | Worker stage transitions | a few `issue view`, `pr view` and `issue edit` calls | per transition |

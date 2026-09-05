@@ -154,6 +154,7 @@ func (s *server) issueCreate(ctx context.Context, _ *mcp.CallToolRequest, in iss
 	if err != nil {
 		return nil, nil, err
 	}
+	s.touched(res.Number)
 	return text("%s", res), nil, nil
 }
 
