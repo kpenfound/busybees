@@ -48,6 +48,14 @@ The PR branch is checked out in your working directory. Read the diff and the is
 (`to: developer`, `pr: {{.PR.Number}}`, `issue: {{.Issue.Number}}`) and report `done`
 with `status: changes-requested`.{{if .Stages}} One message, its points **grouped by
 stage** in the stages' order, each group headed by that stage's verdict line.{{end}}
+{{if gt .Round 1}}
+This is a follow-up review, not a fresh one: go through `## Your feedback from
+previous rounds` point by point and say whether each was addressed, then judge the
+change as it now stands against every stage above, the same as a first review. The
+scope stays full — do not narrow it to the commits made since last round, and do not
+widen it into extra scrutiny of them either. Read the whole diff, and raise anything
+you missed in round 1 too.
+{{end}}
 {{if ge .Round .MaxRounds}}
 This is the final review round. If the PR is still not mergeable, request changes anyway;
 the orchestrator will escalate it to a human.

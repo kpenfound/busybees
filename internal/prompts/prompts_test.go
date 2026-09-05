@@ -1689,3 +1689,38 @@ func TestRequestedReviewTaskHasNoIssueAndSubmitsAReview(t *testing.T) {
 		}
 	}
 }
+
+// Round 2 onward is a follow-up on the reviewer's own previous round, not a
+// fresh review: it must account for every point already raised and say the
+// scope is neither widened to the new commits alone nor narrowed to them.
+// Round 1 must render exactly as it does today — the instruction is new text
+// gated on .Round, not a rewording of anything round 1 already said (#397).
+func TestReviewerFollowUpRoundAccountsForPreviousPoints(t *testing.T) {
+	round1, err := Task(config.RoleReviewer, sample())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(round1, "follow-up review") {
+		t.Errorf("round 1 task already reads as a follow-up review:\n%s", round1)
+	}
+
+	d := sample()
+	d.Round = 2
+	d.PreviousRounds = []mail.Message{{ID: "m1", From: "reviewer", To: "developer", Subject: "Review round 1", Body: "please fix", PR: 9, CreatedAt: sampleMailTime}}
+	round2, err := Task(config.RoleReviewer, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	flow := flowed(round2)
+	for _, want := range []string{
+		"This is a follow-up review, not a fresh one",
+		"go through `## Your feedback from previous rounds` point by point and say whether each was addressed",
+		"judge the change as it now stands against every stage above, the same as a first review",
+		"do not narrow it to the commits made since last round, and do not widen it into extra scrutiny of them either",
+		"Read the whole diff, and raise anything you missed in round 1 too",
+	} {
+		if !strings.Contains(flow, want) {
+			t.Errorf("round 2 task missing %q:\n%s", want, round2)
+		}
+	}
+}
