@@ -1262,16 +1262,29 @@ func (s *Scheduler) resumableChecks(snap *snapshot, issue github.Issue) bool {
 	return bk.WorkerStage == "checks" || postApprovalFixRound(bk)
 }
 
-// cacheIssue replaces an issue in the lists kept from the last poll.
+// cacheIssue writes an issue into the lists kept from the last poll: the
+// copy the poll took is replaced, and an issue the poll never saw is
+// appended. Appending is what puts an issue a session created — in another
+// process, through the MCP server (refreshTouched) — in front of the local
+// pass that follows, instead of leaving it for the next poll to discover.
 func (s *Scheduler) cacheIssue(live github.Issue) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for i := range s.lastIssues {
-		if s.lastIssues[i].Number == live.Number {
-			s.lastIssues[i] = live
+	// The list is replaced rather than written into. A pass takes its header
+	// under this lock and then classifies it without holding the lock, and
+	// refreshTouched runs on the goroutine of the session that ended, not on
+	// the loop's: writing an element in place would be a write to a slice
+	// another goroutine is reading.
+	next := make([]github.Issue, len(s.lastIssues), len(s.lastIssues)+1)
+	copy(next, s.lastIssues)
+	for i := range next {
+		if next[i].Number == live.Number {
+			next[i] = live
+			s.lastIssues = next
 			return
 		}
 	}
+	s.lastIssues = append(next, live)
 }
 
 // dispatchSingletons starts the product manager, project manager and QA

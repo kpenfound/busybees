@@ -132,6 +132,16 @@ no remote called that:
 dagger call qa-playground playground --project ../my-project terminal
 ```
 
+A headless session has no terminal to attach to. `script` runs a shell
+script in the playground instead and returns its combined stdout and
+stderr, with the exit status appended, so a failing probe is still
+readable; the call itself succeeds even when the script does not:
+
+```sh
+dagger call qa-playground script --contents "$(cat probe.sh)"
+dagger call qa-playground script --project ../my-project --contents 'bees status'
+```
+
 The module contributes no checks: `dagger check` runs the three Go checks
 and nothing else. It is registered in `dagger.toml` as `qa-playground`
 without the `dang` SDK helper module (`github.com/dagger/dang-sdk`), which

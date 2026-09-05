@@ -137,9 +137,19 @@ func workersText(st state.Status) string {
 // thing to act on. It is omitted entirely when status.json carries no
 // version — one written by a bees older than the field — so the line reads
 // exactly as it always did.
+//
+// LastPoll stays zero until the first poll succeeds, so a scheduler whose
+// polls have all failed (an expired token, a network outage at startup) has
+// UpdatedAt set but no LastPoll: that is reported plainly instead of the
+// saturated duration now.Sub(time.Time{}) would otherwise print.
 func schedulerLine(st state.Status, now time.Time) string {
 	line := "scheduler: never run"
-	if !st.UpdatedAt.IsZero() {
+	switch {
+	case st.UpdatedAt.IsZero():
+		// line stays "scheduler: never run"
+	case st.LastPoll.IsZero():
+		line = fmt.Sprintf("scheduler: pid %d, no successful poll yet", st.PID)
+	default:
 		line = fmt.Sprintf("scheduler: pid %d, last poll %s ago", st.PID, now.Sub(st.LastPoll).Round(time.Second))
 	}
 	switch notice := st.PauseNotice(now); {

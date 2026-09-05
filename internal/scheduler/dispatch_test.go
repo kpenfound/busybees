@@ -118,6 +118,18 @@ func seedIssue(h *harness, n int, state, size string, created time.Time) {
 		HeadRefName: fmt.Sprintf("bees/issue-%d", n), BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
 }
 
+// hasSessionFor reports whether one of the given session directory names
+// belongs to the given issue.
+func hasSessionFor(names []string, issue int) bool {
+	want := fmt.Sprintf("-issue-%d-", issue)
+	for _, n := range names {
+		if strings.Contains(n, want) {
+			return true
+		}
+	}
+	return false
+}
+
 // dispatched lists the issues a developer worker picked up, smallest number
 // first.
 func dispatched(h *harness) []int {
@@ -221,8 +233,10 @@ func TestReadyIssueWithAPullRequestIsDispatchedFirst(t *testing.T) {
 	for _, dir := range h.sessions(config.RoleDeveloper) {
 		got = append(got, filepath.Base(dir))
 	}
-	if len(got) != 2 || !strings.Contains(got[0], "issue-3-") || !strings.Contains(got[1], "issue-4-") {
-		t.Fatalf("developer sessions %v, want the resumptions 3 and 4 before any new work", got)
+	// Both slots went to the resumptions: the two sessions start in
+	// goroutines, so their relative order is not a property to assert.
+	if len(got) != 2 || !hasSessionFor(got, 3) || !hasSessionFor(got, 4) {
+		t.Fatalf("developer sessions %v, want the resumptions 3 and 4 and no fresh work", got)
 	}
 	if strings.Contains(h.logs.String(), "large issue waits, cap reached") {
 		t.Fatalf("the cap must not hold back an issue with an open PR:\n%s", h.logs.String())

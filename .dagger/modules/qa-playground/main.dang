@@ -1,11 +1,16 @@
 """
 An isolated playground for testing bees by hand.
 
-`dagger call playground terminal` opens a shell with the current build of
-`bees` on the PATH, a test project to run it against, and a `bees.toml` for
-that project written by `bees init`. The `gh` and `claude` on the PATH are
-stubs: `--version` answers, anything else refuses. Nothing in the container
-holds a GitHub token or an Anthropic key, and no remote is ever reached.
+`dagger call qa-playground playground terminal` opens a shell with the
+current build of `bees` on the PATH, a test project to run it against, and a
+`bees.toml` for that project written by `bees init`. The `gh` and `claude` on
+the PATH are stubs: `--version` answers, anything else refuses. Nothing in
+the container holds a GitHub token or an Anthropic key, and no remote is
+ever reached.
+
+`dagger call qa-playground script --contents '…'` runs a shell script in the
+same playground and returns its output, for a session with no terminal to
+attach to.
 """
 type QaPlayground {
   """
@@ -42,7 +47,7 @@ type QaPlayground {
 
   """
   A shell with `bees` on the PATH, inside a test project that has a
-  `bees.toml`. Open it with `dagger call playground terminal`.
+  `bees.toml`. Open it with `dagger call qa-playground playground terminal`.
   """
   pub playground(
     """
@@ -69,6 +74,32 @@ type QaPlayground {
       )
       .withExec(["test", "-f", "bees.toml"])
       .withDefaultTerminalCmd(["bash"])
+  }
+
+  """
+  Run a script in the playground and return everything it wrote, stdout and
+  stderr combined, with its exit status appended. The call succeeds even
+  when the script's own exit status is non-zero, so a failing probe is
+  still readable.
+  """
+  pub script(
+    """
+    The project bees runs against, prepared the same way `playground`
+    prepares it.
+    """
+    project: Directory = null,
+    """
+    The script to run, as shell text. It runs in the project directory.
+    """
+    contents: String!,
+  ): String! {
+    playground(project: project)
+      .withNewFile("/tmp/script.sh", contents, permissions: 493)
+      .withExec(
+        ["sh", "-c", "/tmp/script.sh 2>&1; echo 'exit status:' $?"],
+        expect: ReturnType.ANY,
+      )
+      .stdout
   }
 
   """

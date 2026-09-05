@@ -171,6 +171,12 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 		Env:          env,
 		SessionDir:   sessionDir,
 	})
+	// Whatever the session changed on GitHub through the MCP server — an
+	// issue it triaged, a sub-issue it filed — goes into the cached poll
+	// before the wake, so the local pass the wake runs classifies from the
+	// fresh labels rather than from the ones the last poll saw. A session
+	// that failed may have made its edits first, so this runs either way.
+	s.refreshTouched(ctx, sessionDir)
 	// A finished session is the factory's main local event: it may have
 	// written mail to another role, and it is one step closer to freeing the
 	// slot it holds. Wake the loop rather than let that wait for the next

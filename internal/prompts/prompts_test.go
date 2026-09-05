@@ -312,6 +312,30 @@ func TestProductManagerTakesDirectionFromHumanMail(t *testing.T) {
 	}
 }
 
+// Three archived developer sessions started a background task and ended
+// their turn to wait for a completion notification a headless session never
+// receives, abandoning the work with no outcome reported. Nothing warned
+// against it; the rule lives once in common.md so every role, not only the
+// developer, carries it.
+func TestEveryRoleIsWarnedAgainstEndingATurnOnBackgroundWork(t *testing.T) {
+	for _, role := range config.Roles {
+		sys, err := System(role, sample(), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{
+			"one headless turn",
+			"never arrive",
+			"in the foreground",
+			"abandons the work",
+		} {
+			if !strings.Contains(flowed(sys), want) {
+				t.Errorf("%s system prompt missing %q:\n%s", role, want, sys)
+			}
+		}
+	}
+}
+
 func TestRoleSpecifics(t *testing.T) {
 	dev, _ := Task(config.RoleDeveloper, sample())
 	if !strings.Contains(dev, "part of feature #12: Exports") {
