@@ -12,6 +12,7 @@ import (
 
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/github"
+	"github.com/kpenfound/busybees/internal/session"
 )
 
 // GitHub is the backend behind the GitHub tools: the `gh` calls a role used
@@ -127,6 +128,18 @@ func (s *server) addGitHubTools(srv *mcp.Server) {
 			InputSchema: schemaFor[issueQuestionInput](nil),
 		}, s.issueQuestion)
 	}
+}
+
+// touched records that this session changed an issue on GitHub, so the
+// scheduler can refresh its cached copy when the session ends instead of
+// leaving the change invisible until the next poll (internal/scheduler,
+// refreshTouched). Every tool that creates an issue or edits one calls it.
+//
+// It is best effort: the change is already made on GitHub, and a note that
+// could not be written costs a poll interval, never correctness. Failing the
+// tool over it would tell the session its edit did not happen.
+func (s *server) touched(number int) {
+	_ = session.RecordTouched(s.env.SessionDir, number)
 }
 
 // roleIs reports whether this session's role is one of want. An empty or
@@ -283,6 +296,7 @@ func (s *server) issueEditBody(ctx context.Context, _ *mcp.CallToolRequest, in i
 	if err := s.github.EditBody(ctx, in.Number, in.Body); err != nil {
 		return nil, nil, err
 	}
+	s.touched(in.Number)
 	return text("rewrote the body of #%d", in.Number), nil, nil
 }
 
@@ -341,6 +355,7 @@ func (s *server) issueSetState(ctx context.Context, _ *mcp.CallToolRequest, in i
 	if err := s.github.EditLabels(ctx, in.Number, add, remove); err != nil {
 		return nil, nil, err
 	}
+	s.touched(in.Number)
 	return text("#%d is now %s", in.Number, strings.Join(add, " + ")), nil, nil
 }
 
@@ -426,6 +441,7 @@ func (s *server) issueQuestion(ctx context.Context, _ *mcp.CallToolRequest, in i
 	if err != nil {
 		return nil, nil, err
 	}
+	s.touched(in.Number)
 	if in.Waiting {
 		return text("#%d now carries %s", in.Number, labels.Question), nil, nil
 	}
