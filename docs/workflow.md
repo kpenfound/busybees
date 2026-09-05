@@ -90,11 +90,11 @@ which you add to hold an issue where it is (see
 
 Feature issues (`bees:feature`) and feedback issues (`bees:feedback`) are not
 in this diagram. They never carry a state label. They belong to the product
-manager, and work items are what it makes from them. An issue with the `bees`
-label alone becomes one of them: the orchestrator labels it `bees:feedback`
-and the product manager decides what it turns into. To have it built instead,
-label it `bees:triage` or `bees:ready` yourself (see
-[Filing work](#filing-work)).
+manager, and work items are what it makes from them. When the product manager
+is enabled, an issue with the `bees` label alone becomes one of them: the
+orchestrator labels it `bees:feedback` and the product manager decides what
+it turns into. To have it built instead, label it `bees:triage` or
+`bees:ready` yourself (see [Filing work](#filing-work)).
 
 ```mermaid
 stateDiagram-v2
@@ -137,8 +137,8 @@ by hand still carries its state label underneath, and removing
 
 | Label | Meaning | Who sets it |
 |---|---|---|
-| `bees:triage` | Needs the project manager to make it buildable | Product manager (new work items), you |
-| `bees:ready` | Detailed enough for a developer | Project manager (with a size), orchestrator (after an answer, after your feedback on an approved pull request, or when an approved pull request conflicts with the default branch), you |
+| `bees:triage` | Needs the project manager to make it buildable | Product manager (new work items), orchestrator (after an answer, when a ready issue is sized above `roles.developer.max_size`, or on an unlabelled issue when only the project manager is enabled), you |
+| `bees:ready` | Detailed enough for a developer | Project manager (with a size), orchestrator (after an answer, after your feedback on an approved pull request, when an approved pull request conflicts with the default branch, or on an unlabelled issue when both managers are disabled), you |
 | `bees:in-progress` | A developer worker owns it and a branch exists | Orchestrator |
 | `bees:blocked` | Waiting on an answer to a question | Project manager (asking the product manager), orchestrator (the developer asking the project manager) |
 | `bees:review` | A pull request is open and in the review loop | Orchestrator |
@@ -151,7 +151,7 @@ or `bees:feedback` never gets a state label and is never triaged:
 | Label | Meaning | Who sets it |
 |---|---|---|
 | `bees:feature` | A feature issue. The product manager makes it detailed enough and breaks it into work items | Product manager, you |
-| `bees:feedback` | The product manager's inbox: an idea, product feedback or a bug report from a person | You, orchestrator (an issue with no state label and neither `bees:feature` nor `bees:feedback`) |
+| `bees:feedback` | The product manager's inbox: an idea, product feedback or a bug report from a person | You, orchestrator (an issue with no state label and neither `bees:feature` nor `bees:feedback`, when the product manager is enabled) |
 | `bees:question` | The product manager is waiting for you to answer on a feature or feedback issue | Product manager. The orchestrator removes it when you reply |
 | `bees:proposal` | A feature issue a bee wrote. It sits next to `bees:feature`, and you remove it to approve the feature | `bees issue create --feature`. Only you remove it |
 | `bees:review-requested` | On a pull request, not an issue: one review pass from the reviewer, whoever opened the pull request. See [Asking for a review of any pull request](#asking-for-a-review-of-any-pull-request) | You. The orchestrator removes it as the review starts |
@@ -176,9 +176,10 @@ removes it. See [Priority](#priority-do-this-next).
 reviewer, QA or a person. It says what the issue is, not where it goes, and
 the issue moves through the state machine like any other work item. Only
 `bees:feature` and `bees:feedback` route an issue out of the state machine,
-so `bees` + `bees:bug` with no state label is feedback for the product
-manager, and `bees` + `bees:bug` + `bees:triage` is a work item for the
-project manager. You never need to add a kind label.
+so `bees` + `bees:bug` with no state label is routed like any other
+unlabelled issue (feedback for the product manager when it is enabled), and
+`bees` + `bees:bug` + `bees:triage` is a work item for the project manager.
+You never need to add a kind label.
 
 ## Sizing
 
@@ -297,11 +298,11 @@ turns product intent into work, and it listens on two kinds of issue.
 For a feature idea ("we should support SSO"), product feedback ("onboarding
 feels clunky"), or a bug report you would rather have weighed than fixed
 verbatim, create an issue with the `bees` label and the `bees:feedback`
-label. You can leave the second label off: an issue with `bees`, no state
-label and neither `bees:feature` nor `bees:feedback` gets `bees:feedback`
-from the orchestrator on the next poll ([Filing work](#filing-work)). Adding
-it yourself says what you meant. Either way the issue goes to the product
-manager, not to triage:
+label. You can leave the second label off: when the product manager is
+enabled, an issue with `bees`, no state label and neither `bees:feature` nor
+`bees:feedback` gets `bees:feedback` from the orchestrator on the next poll
+([Filing work](#filing-work)). Adding it yourself says what you meant. Either
+way the issue goes to the product manager, not to triage:
 
 - The orchestrator never adds a state label to it and the project manager
   never sees it. `bees status` counts it in the `feedback` queue.
@@ -440,15 +441,23 @@ down, but you can file one yourself. The labels you put on the issue decide
 what happens next, and the default is deliberately cautious.
 
 An issue with the `bees` label and nothing else is read as feedback, not as
-a spec. On the next poll the orchestrator labels it `bees:feedback` and it
-goes to the product manager, which weighs it, decides what it becomes (a
-feature, a work item, or a reasoned no) and replies on it (see
-[Feedback issues](#feedback-issues)). Nothing is specced or built until
-someone has authorised the scope. That mirrors the rule pointing the other
-way: a feature issue a bee writes is only a `bees:proposal` until you approve
-it. Between the two, new scope enters the factory only through a person or
-through the product manager. With `require_label = false` the orchestrator
-adds `bees` in the same edit, so the issue is fully tagged either way.
+a spec, when the product manager is enabled. On the next poll the
+orchestrator labels it `bees:feedback` and it goes to the product manager,
+which weighs it, decides what it becomes (a feature, a work item, or a
+reasoned no) and replies on it (see [Feedback issues](#feedback-issues)).
+Nothing is specced or built until someone has authorised the scope. That
+mirrors the rule pointing the other way: a feature issue a bee writes is only
+a `bees:proposal` until you approve it. Between the two, new scope enters the
+factory only through a person or through the product manager. With
+`require_label = false` the orchestrator adds `bees` in the same edit, so the
+issue is fully tagged either way.
+
+With the product manager disabled, nothing ever reads `bees:feedback`, so the
+orchestrator routes the same unlabelled issue further down the pipeline
+instead: to `bees:triage` when the project manager is enabled, or straight to
+`bees:ready` when both managers are disabled. The first enabled role able to
+take the issue wins; a factory running only developers builds an unlabelled
+issue as it stands, with no spec and no refinement pass.
 
 To have it built, give it a state label yourself. That is the intended fast
 path, not a workaround: the feedback rule applies only to an issue that
@@ -472,9 +481,9 @@ carries no state label, so the one you set stands.
 
 Nothing else is added for you on that path, so put the `bees` label on the
 issue yourself when the filter requires it. The same rule decides where a bug
-report lands: `bees` + `bees:bug` on its own is feedback for the product
-manager, while `bees` + `bees:bug` + `bees:triage` goes straight to the
-project manager.
+report lands: `bees` + `bees:bug` on its own is routed like any other
+unlabelled issue (feedback for the product manager when it is enabled), while
+`bees` + `bees:bug` + `bees:triage` goes straight to the project manager.
 
 Steering: anything a person writes, in an issue, in a pull request or in mail
 to a role, is authoritative for every role and outranks their prompts.

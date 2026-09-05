@@ -44,15 +44,15 @@ Then open a feature issue in the repository, label it `bees` + `bees:feature`, a
 
 Have an idea, feedback, or a bug you'd rather have weighed than fixed verbatim? Open an
 issue with `bees` + `bees:feedback`: it goes to the **product manager**, which turns it
-into feature issues, replies on it, and closes it when done. An issue you label only
-`bees` goes there too; label it `bees:triage` or `bees:ready` yourself to have it built
-without that hop. A concrete bug can skip all that: `bees` + `bees:bug` + `bees:triage`
-goes straight to the project manager. For anything non-trivial, add `bees:planning`
-first: the product manager then only *discusses* the issue — questions, options, a
-draft to react to — until you swap the label for `bees:planned`, which is your
-agreement for it to break the work down. Milestones stay yours: bees never
-create or change them, but every issue they create inherits the milestone of the issue
-it grew out of.
+into feature issues, replies on it, and closes it when done. When the product manager is
+enabled, an issue you label only `bees` goes there too; label it `bees:triage` or
+`bees:ready` yourself to have it built without that hop. A concrete bug can skip all
+that: `bees` + `bees:bug` + `bees:triage` goes straight to the project manager. For
+anything non-trivial, add `bees:planning` first: the product manager then only
+*discusses* the issue — questions, options, a draft to react to — until you swap the
+label for `bees:planned`, which is your agreement for it to break the work down.
+Milestones stay yours: bees never create or change them, but every issue they create
+inherits the milestone of the issue it grew out of.
 
 `bees status` shows queues, workers and unread mail at any time, and `bees cost`
 answers what the factory spent, by role, by issue or by day. `bees tick` runs a

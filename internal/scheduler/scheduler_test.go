@@ -1765,8 +1765,28 @@ func TestLocalPassDoesNotRedispatchFinishedIssues(t *testing.T) {
 // once: the cached poll a local pass classifies from is updated with the new
 // label, so the passes in between two GitHub polls do not repeat the edit.
 func TestLocalPassDoesNotRepeatTheFeedbackLabel(t *testing.T) {
-	// Saturday: off hours, so only the first tick polls GitHub.
-	h := newHarnessAt(t, workHoursTOML, time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC))
+	// Saturday: off hours, so only the first tick polls GitHub. The product
+	// manager stays enabled: this test is about the feedback route
+	// specifically, not about staying disabled like workHoursTOML's roles.
+	h := newHarnessAt(t, baseTOML+`
+off_hours_poll_interval = "1h"
+work_hours = "09:00-18:00"
+work_days = ["mon", "tue", "wed", "thu", "fri"]
+timezone = "UTC"
+[roles.developer]
+enabled = false
+[roles.reviewer]
+enabled = false
+[roles.project_manager]
+enabled = false
+[roles.qa]
+enabled = false
+`, time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC))
+	// tick dispatches singletons in goroutines and does not wait for them,
+	// so an enabled product manager would still be writing into the test's
+	// temp directory when it is removed. OnlyRoles scopes dispatch without
+	// touching the routing, which reads the configured factory.
+	h.sched.OnlyRoles = map[string]bool{}
 	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Filed from the GitHub UI", State: "OPEN", Labels: []github.Label{{Name: "bees"}}}
 	ctx := context.Background()
 

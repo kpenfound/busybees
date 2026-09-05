@@ -924,11 +924,14 @@ func (s *Scheduler) localPass(ctx context.Context) {
 // reconcile applies label transitions that depend on local state:
 //
 //   - a visible issue with no state label and neither bees:feature nor
-//     bees:feedback is a person handing the factory an idea, not a spec: it
-//     gets bees:feedback and goes to the product manager, who decides what it
-//     becomes (and it receives the factory label if the filter does not
-//     already require it). A person who wants something built without that
-//     hop labels the issue bees:triage or bees:ready themselves;
+//     bees:feedback is a person handing the factory an idea, not a spec: with
+//     the product manager enabled it gets bees:feedback and goes to the
+//     product manager, who decides what it becomes; with the product manager
+//     disabled and the project manager enabled it gets bees:triage instead;
+//     with both disabled it goes straight to bees:ready (and it receives the
+//     factory label if the filter does not already require it). A person who
+//     wants something built without that hop labels the issue bees:triage or
+//     bees:ready themselves;
 //   - blocked issues whose question has been answered move back to the
 //     stage that asked (developer -> ready, project manager -> triage).
 //     Mail from a human about the issue counts as an answer too;
@@ -945,11 +948,20 @@ func (s *Scheduler) reconcile(ctx context.Context, snap *snapshot) error {
 	var errs []error
 	var unrouted []github.Issue
 	for _, i := range snap.byState[""] {
-		add := []string{s.labels.Feedback}
+		var label, logMsg string
+		switch {
+		case s.configuredRole(config.RoleProductManager):
+			label, logMsg = s.labels.Feedback, "new issue goes to the product manager"
+		case s.configuredRole(config.RoleProjectManager):
+			label, logMsg = s.labels.Triage, "new issue goes to the project manager"
+		default:
+			label, logMsg = s.labels.Ready, "new issue goes straight to the ready queue"
+		}
+		add := []string{label}
 		if !github.HasLabel(i.Labels, s.labels.Base) {
 			add = append(add, s.labels.Base)
 		}
-		s.log.Info("new issue goes to the product manager", "issue", i.Number, "title", i.Title)
+		s.log.Info(logMsg, "issue", i.Number, "title", i.Title)
 		if err := s.gh.EditLabels(ctx, i.Number, add, nil); err != nil {
 			errs = append(errs, err)
 			unrouted = append(unrouted, i)
@@ -958,10 +970,20 @@ func (s *Scheduler) reconcile(ctx context.Context, snap *snapshot) error {
 		for _, l := range add {
 			i.Labels = append(i.Labels, github.Label{Name: l})
 		}
-		// bees:feedback is a kind, not a state: the issue leaves the state
-		// machine altogether. Putting it in a byState bucket would hand it
-		// to the project manager, which is exactly the hop this avoids.
-		snap.feedback = append(snap.feedback, i)
+		switch label {
+		case s.labels.Feedback:
+			// bees:feedback is a kind, not a state: the issue leaves the
+			// state machine altogether. Putting it in a byState bucket
+			// would hand it to the project manager, which is exactly the
+			// hop this avoids.
+			snap.feedback = append(snap.feedback, i)
+		case s.labels.Triage:
+			snap.byState["triage"] = append(snap.byState["triage"], i)
+		default:
+			// No size label here: appending to byState["ready"] lets the
+			// sizing loop below stamp the default size in the same pass.
+			snap.byState["ready"] = append(snap.byState["ready"], i)
+		}
 		// Keep the cached poll in step, or every local pass in between two
 		// polls asks GitHub to add the label again.
 		s.cacheIssue(i)
@@ -1359,6 +1381,15 @@ func (s *Scheduler) roleEnabled(role string) bool {
 	if s.OnlyRoles != nil && !s.OnlyRoles[role] {
 		return false
 	}
+	r, err := s.cfg.Role(role)
+	return err == nil && r.Enabled
+}
+
+// configuredRole reports whether a role is enabled in bees.toml, ignoring
+// OnlyRoles: routing an unlabelled issue is a property of the configured
+// factory, not of one `bees tick --only` or `bees exec` invocation, so it
+// must not change depending on which roles that one tick scoped itself to.
+func (s *Scheduler) configuredRole(role string) bool {
 	r, err := s.cfg.Role(role)
 	return err == nil && r.Enabled
 }

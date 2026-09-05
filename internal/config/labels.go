@@ -18,7 +18,8 @@ type Labels struct {
 	// Bug marks a bug work item (filed by the developer, reviewer, QA or a
 	// human). It says what the issue is, not where it goes: only Feature and
 	// Feedback route an issue out of the state machine, so a bug with no
-	// state label is read as feedback for the product manager.
+	// state label is routed like any other unlabelled issue, and is read as
+	// feedback for the product manager when that role is enabled.
 	Bug string // bees:bug
 	// Feedback marks the product manager's inbox: feature ideas, product
 	// feedback and bug reports from humans. Exempt from the workflow state

@@ -453,7 +453,7 @@ func TestPriorityDoesNotJumpAResumedIssue(t *testing.T) {
 // The state machine must not strip bees:priority: it is neither a state nor a
 // size label, so reconcile's edits leave it alone.
 func TestReconcileKeepsThePriorityLabel(t *testing.T) {
-	h := newHarness(t, noRolesTOML)
+	h := newHarness(t, managersTOML)
 	base := time.Now().Add(-24 * time.Hour)
 	// An issue with no state label and neither bees:feature nor bees:feedback
 	// that a person marked priority: reconcile hands it to the product manager
