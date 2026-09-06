@@ -56,7 +56,7 @@ type Deps struct {
 	// request so it reaches whichever session picks the work item up next.
 	//
 	// It is a message to the *role*, never to the running session: a
-	// headless `claude -p` cannot be told anything once it has started (see
+	// headless session cannot be told anything once it has started (see
 	// the session view's own note in docs/cli.md), so the view says
 	// "queued for the next session" and means it. Nil means the view cannot
 	// send anything and does not offer to.

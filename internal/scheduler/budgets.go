@@ -13,8 +13,9 @@ import (
 // Cost budgets. All three are spent against the session ledger, are off by
 // default (0 = unlimited) and are enforced at the only two moments the
 // factory can act on them: between the stages of a developer worker, and at
-// dispatch. A running session is never interrupted on cost — `claude -p`
-// cannot be stopped that way — so the per-session budget is a post-hoc check.
+// dispatch. A running session is never interrupted on cost — a headless
+// agent cannot be stopped that way — so the per-session budget is a post-hoc
+// check.
 const (
 	// dayWindow is the rolling window scheduler.max_cost_per_day covers.
 	dayWindow = 24 * time.Hour

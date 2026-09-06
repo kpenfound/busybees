@@ -616,9 +616,9 @@ every other size as the developer's `model`. `fallback_model` is unchanged, and
 a retry that runs with it still overrides the size's choice. The reviewer is
 told the size too and always runs its own `model`.
 
-Signing (`--gpg-sign`, `-S`) happens inside a headless Claude Code session on
-the machine running `bees`, so a signing key and agent must work for that user
-without a prompt. `--signoff` needs `user.name` and `user.email`, as any
+Signing (`--gpg-sign`, `-S`) happens inside a headless session on the machine
+running `bees`, so a signing key and agent must work for that user without a
+prompt. `--signoff` needs `user.name` and `user.email`, as any
 commit does.
 
 ### Sandboxing
