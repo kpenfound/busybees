@@ -471,7 +471,7 @@ stateDiagram-v2
   anything else means it was interrupted. The first session of the role that
   was interrupted is then told, at the top of its task prompt, how far the
   previous one got (assistant messages counted in the transcript, an
-  approximation of the turn count the missing result event would have
+  approximation of the turn count the missing final event would have
   carried), where the transcript is, and whether it was stopped on purpose
   (`bees kill`, the live view's `k` key and a hard stop write an `interrupted`
   marker into the directories they stop). A developer is told the branch may

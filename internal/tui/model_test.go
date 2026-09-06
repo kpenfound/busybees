@@ -81,7 +81,7 @@ func ended(name, role string, issue, pr int, turns int, cost float64) tea.Msg {
 }
 
 // endedUnknownCost is a session-ended event for a session that ended with no
-// result event, so its cost is not a real zero but unpriced (a signalled
+// closing event, so its cost is not a real zero but unpriced (a signalled
 // process, most often — see #359).
 func endedUnknownCost(name, role string, issue, pr int, turns int) tea.Msg {
 	return eventMsg(scheduler.Event{
@@ -119,7 +119,7 @@ func TestNowPanelListsTheRunningSessions(t *testing.T) {
 
 // A session that has ended leaves the Now panel, and what it reported is
 // added to what its work item has spent: the next session of the same issue
-// shows the total. claude reports turns and cost only when a session ends,
+// shows the total. An agent reports turns and cost only when a session ends,
 // so a running session's own numbers are not in it yet.
 func TestAFinishedSessionLeavesTheNowPanelAndItsSpendStays(t *testing.T) {
 	deps := Deps{Repo: "acme/widgets"}
@@ -379,7 +379,7 @@ func recentLines(t *testing.T, view, mark string) (header, row string) {
 }
 
 // The Recent panel renders a session's cost the same way the Now panel
-// does: "-" for a cost claude never reported (a signalled process, most
+// does: "-" for a cost no agent ever reported (a signalled process, most
 // often), and "$0.00" only for a session that genuinely cost nothing.
 func TestRecentPanelRendersCostTheSameWayTheNowPanelDoes(t *testing.T) {
 	view := drive(t, Deps{Repo: "acme/widgets"},
@@ -1155,8 +1155,8 @@ func at(t *testing.T, line, want string) int {
 	return len([]rune(line[:i]))
 }
 
-// A running session's turns come from its own transcript. claude reports
-// num_turns in the result event of its stream and nothing before it, so a
+// A running session's turns come from its own transcript. An agent reports
+// its turn count in the event that ends its stream and nothing before it, so a
 // session that has not ended has no reported turn count — and 0 in that
 // column reads as "doing nothing" over a session doing real work (#313).
 // The count is taken on the refresh tick, the same one that re-reads
@@ -1187,7 +1187,7 @@ func TestTheNowPanelCountsARunningSessionsTurns(t *testing.T) {
 }
 
 // The live count is only ever a stand-in. When the session ends, the number
-// claude reports takes its place: the running entry is dropped in the same
+// the session reports takes its place: the running entry is dropped in the same
 // event that adds the real total, so the two are never added together.
 func TestALiveTurnCountIsReplacedByTheOneTheSessionReports(t *testing.T) {
 	dir := t.TempDir()
@@ -1248,7 +1248,7 @@ func TestAnUnknownCostIsNotZero(t *testing.T) {
 		t.Errorf("a work item whose session reported $0.00 shows a cost of %q:\n%s", got, view)
 	}
 
-	// A session that ended with no result event (a signalled process, most
+	// A session that ended with no closing event (a signalled process, most
 	// often) reported no cost at all: the work item's spend is still
 	// unknown, not zero, exactly like the case before any session finished.
 	view = drive(t, deps,

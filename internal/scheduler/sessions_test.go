@@ -43,7 +43,7 @@ func TestClassifyFailure(t *testing.T) {
 			want: failureInfra,
 		},
 		{
-			name: "claude crashed without a result event",
+			name: "the agent crashed without closing its stream",
 			res:  session.Result{IsError: true, ExitCode: 1, ErrorSubtype: "no_result", ResultText: "panic"},
 			want: failureInfra,
 		},

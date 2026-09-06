@@ -6,7 +6,7 @@
 //	mail/<role>/*.json   local mailbox (see package mail)
 //	notes/<role>.md      per-role notes, the roles' only long-term memory
 //	notes/archive/       notes files replaced by `bees notes reset`
-//	sessions/<id>/       one directory per claude session (prompts, transcript, result)
+//	sessions/<id>/       one directory per session (prompts, transcript, result)
 //	issues/<n>.json      per-issue bookkeeping (review round, PR number, the
 //	                     developer worker's stage, its running session and,
 //	                     once the factory gives up, why it did)

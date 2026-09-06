@@ -1,5 +1,5 @@
-// Package workspace manages the temporary git worktrees each claude session
-// runs in. Worktrees are created from the "main" checkout (the clone that
+// Package workspace manages the temporary git worktrees each session runs
+// in. Worktrees are created from the "main" checkout (the clone that
 // holds bees.toml) so they share objects and remote configuration.
 package workspace
 

@@ -511,7 +511,7 @@ func capErrors(err error) string {
 
 // rateLimitPhrases are the substrings that mark a message as "come back
 // later": GitHub's rate-limit responses as surfaced by gh, and the API
-// errors a claude session reports when it is throttled or the service is
+// errors a session's agent reports when it is throttled or the service is
 // overloaded.
 var rateLimitPhrases = []string{"rate limit", "abuse detection", "secondary rate", "overloaded", "usage limit", "session limit"}
 
