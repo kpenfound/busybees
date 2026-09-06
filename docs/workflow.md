@@ -346,6 +346,12 @@ feature back to the product manager, which breaks it down on its next run. A
 feature issue you filed never carries the label and is broken down straight
 away.
 
+With `scheduler.feature_proposals = false` there is no gate: a feature issue a
+bee writes carries no `bees:proposal` either and is broken down straight away,
+and the two tools refuse nothing for the label. An issue that still carries
+`bees:proposal` from before the key was turned off stays a proposal until you
+remove the label; turning the key off approves nothing for you.
+
 For each fresh feature issue the product manager:
 
 1. makes sure it is detailed enough to be broken down, or asks you
@@ -360,8 +366,9 @@ For each fresh feature issue the product manager:
    implementation detail during triage. An existing issue is attached with
    `issue_link` (`parent: <feature>`, `child: <item>`), which makes the
    sub-issue relationship and, when the issue is in no milestone, puts it in
-   the feature's. Both tools refuse a feature that is still a proposal, or one
-   you have put in planning;
+   the feature's. Both tools refuse a feature that is still a proposal
+   (unless `scheduler.feature_proposals = false`), or one you have put in
+   planning;
 3. comments the list of work items on the feature issue, with the marker, so
    the feature is not presented to it again until something changes;
 4. later, closes the feature issue once all its sub-issues are closed, or
@@ -447,7 +454,8 @@ which weighs it, decides what it becomes (a feature, a work item, or a
 reasoned no) and replies on it (see [Feedback issues](#feedback-issues)).
 Nothing is specced or built until someone has authorised the scope. That
 mirrors the rule pointing the other way: a feature issue a bee writes is only
-a `bees:proposal` until you approve it. Between the two, new scope enters the
+a `bees:proposal` until you approve it, unless
+`scheduler.feature_proposals = false`. Between the two, new scope enters the
 factory only through a person or through the product manager. With
 `require_label = false` the orchestrator adds `bees` in the same edit, so the
 issue is fully tagged either way.
@@ -1075,8 +1083,9 @@ writes feature issues that describe user-visible outcomes rather than
 implementation, and breaks them into work items as described above, with two
 exceptions: a feature issue it wrote itself starts as a
 [proposal](#feature-issues) (`bees:proposal`) and is only broken down once
-you remove that label, and an issue you put in planning (`bees:planning`) is
-only discussed until you swap that label for `bees:planned`. Because work
+you remove that label (unless `scheduler.feature_proposals = false`), and an
+issue you put in planning (`bees:planning`) is only discussed until you swap
+that label for `bees:planned`. Because work
 items are GitHub sub-issues of their feature, progress is visible on the
 feature issue itself, in GitHub's project views, and in the product manager's
 prompt.

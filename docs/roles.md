@@ -181,7 +181,9 @@ and
 [Features, sub-issues and milestones](workflow.md#features-sub-issues-and-milestones).
 In short: a feature it writes is a proposal it may refine but not break down
 until a person removes `bees:proposal`, and `issue_create` and `issue_link`
-refuse the breakdown while the label is there. An issue in `bees:planning` is
+refuse the breakdown while the label is there, unless
+`scheduler.feature_proposals = false`, which makes the features it writes
+approved on creation. An issue in `bees:planning` is
 a conversation it replies to on the issue and creates nothing from.
 `bees:planned` is an agreement it writes into the body as a `## Decisions`
 section and then acts on without reopening it. A feature whose work is done is

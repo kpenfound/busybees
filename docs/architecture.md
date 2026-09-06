@@ -252,9 +252,9 @@ A full pass is:
    **Planning mode.** The planning section of the prompt lists no breakdown
    step and the planned section says the scope is settled; the enforced half
    is that `bees issue create` and `issue_link` refuse a `bees:planning` issue
-   as a parent, as they refuse a proposal, so a planning issue grows no
-   sub-issues whoever asks. Neither planning label is ever written by the
-   factory.
+   as a parent, as they refuse a proposal while `scheduler.feature_proposals`
+   is on, so a planning issue grows no sub-issues whoever asks. Neither
+   planning label is ever written by the factory.
 
    **Sub-issues and milestones.** Work items are native GitHub sub-issues of
    their feature. Roles create issues through the `issue_create` tool (or
