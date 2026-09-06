@@ -803,7 +803,8 @@ func renderedPrompt(cfg *config.Config, role string) (string, []prompts.ProjectP
 	store := state.New(cfg.StateDir())
 	d := prompts.Data{
 		Project: cfg.Project, Filter: cfg.Filter, Labels: cfg.Labels(), AutoMerge: cfg.Merge().AutoMerge,
-		CommitFlags: cfg.CommitFlags(), MaxSize: cfg.MaxSize(), Notify: cfg.Mentions(),
+		FeatureProposals: cfg.Scheduler.Proposals(),
+		CommitFlags:      cfg.CommitFlags(), MaxSize: cfg.MaxSize(), Notify: cfg.Mentions(),
 		WorkDir: "<worktree>", Branch: "<branch>", StateDir: store.Dir, SessionDir: "<session dir>",
 		NotesFile: store.NotesPath(role),
 		Issue:     &github.Issue{Number: 1, Title: "<issue>"}, PR: &github.PR{Number: 2, Title: "<pr>"},

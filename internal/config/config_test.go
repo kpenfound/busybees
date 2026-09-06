@@ -459,6 +459,30 @@ func TestReviewAssignedPRsSetting(t *testing.T) {
 	}
 }
 
+// scheduler.feature_proposals is on unless a person turns it off, and the
+// three readings — absent, true and false — are asserted apart, because
+// absent and true must be the same thing and false must survive
+// applyDefaults. `bees config show` prints the key under its own name.
+func TestFeatureProposalsSetting(t *testing.T) {
+	for body, want := range map[string]bool{
+		"version = 1\n[project]\nrepo = \"a/b\"\n":                                         true,
+		"version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nfeature_proposals = true\n":  true,
+		"version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nfeature_proposals = false\n": false,
+	} {
+		cfg, err := Load(writeConfig(t, body))
+		if err != nil {
+			t.Fatalf("%q: %v", body, err)
+		}
+		if got := cfg.Scheduler.Proposals(); got != want {
+			t.Errorf("%q: feature_proposals %v, want %v", body, got, want)
+		}
+		sched, _ := viewJSON(t, body)["scheduler"].(map[string]any)
+		if got, ok := sched["feature_proposals"]; !ok || got != want {
+			t.Errorf("%q: config show prints feature_proposals %v (present %v), want %v", body, got, ok, want)
+		}
+	}
+}
+
 // The error a bad value produces has to say what the valid ones are.
 func TestDispatchErrorsListTheValidValues(t *testing.T) {
 	for body, want := range map[string]string{

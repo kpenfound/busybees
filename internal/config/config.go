@@ -99,6 +99,9 @@ const (
 	// did not write, assigned to filter.assignee, is reviewed on sight; see
 	// Scheduler.ReviewAssignedPRs.
 	DefaultReviewAssignedPRs = false
+	// DefaultFeatureProposals governs whether a feature issue a bee creates
+	// is a proposal a person has to approve; see Scheduler.FeatureProposals.
+	DefaultFeatureProposals = true
 	// MaxRetries caps scheduler.retries.
 	MaxRetries = 5
 	// DefaultOffHoursPollInterval is the polling cadence outside
@@ -597,6 +600,15 @@ func (s Scheduler) FixConflicts() bool {
 	return *s.PRFixConflicts
 }
 
+// Proposals returns scheduler.feature_proposals: whether a feature issue a
+// bee creates is a proposal a person approves by removing bees:proposal.
+func (s Scheduler) Proposals() bool {
+	if s.FeatureProposals == nil {
+		return DefaultFeatureProposals
+	}
+	return *s.FeatureProposals
+}
+
 // Merge returns the resolved merge policy from [roles.reviewer].
 func (c *Config) Merge() MergePolicy {
 	rs := c.Roles[RoleReviewer]
@@ -699,6 +711,12 @@ type Scheduler struct {
 	// Default false: a factory that opens its own pull requests must not
 	// review them twice. See scheduler.dispatchRequestedReviews.
 	ReviewAssignedPRs bool `toml:"review_assigned_prs" json:"review_assigned_prs"`
+	// FeatureProposals makes a feature issue a bee creates a proposal: it
+	// carries bees:proposal and a person approves it by removing the label,
+	// and until then issues.Create and issues.Link refuse to put a work item
+	// under it. false lets a bee break its own features down without a
+	// person's approval. Default true.
+	FeatureProposals *bool `toml:"feature_proposals" json:"feature_proposals"`
 	// Notify lists the GitHub logins and/or org/team slugs the factory turns
 	// to when it needs a person: they are mentioned in the needs-human
 	// escalation comment and in the product manager's questions, and asked to
@@ -1206,6 +1224,10 @@ func (c *Config) applyDefaults() {
 	if c.Scheduler.PRFixConflicts == nil {
 		b := DefaultPRFixConflicts
 		c.Scheduler.PRFixConflicts = &b
+	}
+	if c.Scheduler.FeatureProposals == nil {
+		b := DefaultFeatureProposals
+		c.Scheduler.FeatureProposals = &b
 	}
 	if c.Scheduler.Retries == nil {
 		n := DefaultRetries

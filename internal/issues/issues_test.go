@@ -9,6 +9,19 @@ import (
 	"github.com/kpenfound/busybees/internal/github"
 )
 
+// policy is the factory's default policy: filter, labels and the proposal
+// gate on. Tests that turn the gate off say so with gateOff.
+func policy(filter config.Filter) Policy {
+	return Policy{Filter: filter, Labels: config.LabelsFor("bees"), FeatureProposals: true}
+}
+
+// gateOff is policy with scheduler.feature_proposals = false.
+func gateOff(filter config.Filter) Policy {
+	p := policy(filter)
+	p.FeatureProposals = false
+	return p
+}
+
 func fake(t *testing.T, parentMilestone string) (*github.Client, *[]string) {
 	t.Helper()
 	return fakeWith(t, parentMilestone, "")
@@ -49,6 +62,7 @@ func fakeWith(t *testing.T, parentMilestone, childMilestone string) (*github.Cli
 		case strings.HasPrefix(call, "issue create"):
 			return []byte("https://github.com/acme/widgets/issues/77\n"), nil
 		case strings.HasPrefix(call, "api --method POST repos/acme/widgets/issues/12/sub_issues"),
+			strings.HasPrefix(call, "api --method POST repos/acme/widgets/issues/13/sub_issues"),
 			strings.HasPrefix(call, "api --method POST repos/acme/widgets/issues/14/sub_issues"):
 			return []byte(`{}`), nil
 		}
@@ -61,8 +75,7 @@ func fakeWith(t *testing.T, parentMilestone, childMilestone string) (*github.Cli
 func TestCreateChild(t *testing.T) {
 	gh, calls := fake(t, "v1")
 	filter := config.Filter{Label: "bees", Assignee: "kyle"}
-	labels := config.LabelsFor("bees")
-	res, err := Create(context.Background(), gh, filter, labels, Options{Title: "Add export", Body: "b", Kind: KindTask, Parent: 12})
+	res, err := Create(context.Background(), gh, policy(filter), Options{Title: "Add export", Body: "b", Kind: KindTask, Parent: 12})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +94,6 @@ func TestCreateChild(t *testing.T) {
 }
 
 func TestCreateKinds(t *testing.T) {
-	labels := config.LabelsFor("bees")
 	for _, c := range []struct {
 		opts Options
 		want string
@@ -92,7 +104,7 @@ func TestCreateKinds(t *testing.T) {
 		{Options{Title: "t", Kind: KindTask, ExtraLabels: []string{"docs"}}, "--label bees --label bees:triage --label docs --milestone pinned"},
 	} {
 		gh, calls := fake(t, "v1")
-		_, err := Create(context.Background(), gh, config.Filter{Label: "bees", Milestone: "pinned"}, labels, c.opts)
+		_, err := Create(context.Background(), gh, policy(config.Filter{Label: "bees", Milestone: "pinned"}), c.opts)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -105,18 +117,17 @@ func TestCreateKinds(t *testing.T) {
 		}
 	}
 	gh, _ := fake(t, "")
-	if _, err := Create(context.Background(), gh, config.Filter{Label: "bees"}, labels, Options{Title: "t", Parent: 1, Related: 2}); err == nil {
+	if _, err := Create(context.Background(), gh, policy(config.Filter{Label: "bees"}), Options{Title: "t", Parent: 1, Related: 2}); err == nil {
 		t.Fatal("parent and related together must fail")
 	}
-	if _, err := Create(context.Background(), gh, config.Filter{Label: "bees"}, labels, Options{Kind: KindTask}); err == nil {
+	if _, err := Create(context.Background(), gh, policy(config.Filter{Label: "bees"}), Options{Kind: KindTask}); err == nil {
 		t.Fatal("title required")
 	}
 }
 
 func TestCreateBlockedBy(t *testing.T) {
 	gh, calls := fake(t, "")
-	labels := config.LabelsFor("bees")
-	_, err := Create(context.Background(), gh, config.Filter{Label: "bees"}, labels,
+	_, err := Create(context.Background(), gh, policy(config.Filter{Label: "bees"}),
 		Options{Title: "t", Body: "the real body", Kind: KindTask, BlockedBy: []int{12, 15}})
 	if err != nil {
 		t.Fatal(err)
@@ -137,11 +148,10 @@ func TestCreateBlockedBy(t *testing.T) {
 // removing the label. Until then it must grow no sub-issues, through either
 // door, and the refusal must happen before anything is created.
 func TestProposalGrowsNoSubIssues(t *testing.T) {
-	labels := config.LabelsFor("bees")
 	filter := config.Filter{Label: "bees"}
 
 	gh, calls := fake(t, "v1")
-	_, err := Create(context.Background(), gh, filter, labels, Options{Title: "t", Kind: KindTask, Parent: 13})
+	_, err := Create(context.Background(), gh, policy(filter), Options{Title: "t", Kind: KindTask, Parent: 13})
 	if err == nil {
 		t.Fatal("--parent on a proposal must fail")
 	}
@@ -157,7 +167,7 @@ func TestProposalGrowsNoSubIssues(t *testing.T) {
 	// Also with an explicit milestone, which used to be the only reason the
 	// parent was looked up at all.
 	gh, calls = fake(t, "v1")
-	if _, err := Create(context.Background(), gh, filter, labels,
+	if _, err := Create(context.Background(), gh, policy(filter),
 		Options{Title: "t", Kind: KindTask, Parent: 13, Milestone: "v2"}); err == nil {
 		t.Error("--parent on a proposal must fail whatever the milestone is")
 	}
@@ -167,7 +177,7 @@ func TestProposalGrowsNoSubIssues(t *testing.T) {
 
 	// Same hole, other door.
 	gh, calls = fake(t, "v1")
-	_, err = Link(context.Background(), gh, labels, 13, 77)
+	_, err = Link(context.Background(), gh, policy(filter), 13, 77)
 	if err == nil {
 		t.Fatal("linking to a proposal must fail")
 	}
@@ -181,7 +191,7 @@ func TestProposalGrowsNoSubIssues(t *testing.T) {
 	// --related creates no relationship, so it stays allowed: it only
 	// inherits the proposal's milestone.
 	gh, calls = fake(t, "v1")
-	res, err := Create(context.Background(), gh, filter, labels, Options{Title: "t", Kind: KindTask, Related: 13})
+	res, err := Create(context.Background(), gh, policy(filter), Options{Title: "t", Kind: KindTask, Related: 13})
 	if err != nil {
 		t.Fatalf("--related on a proposal must be allowed: %v", err)
 	}
@@ -194,13 +204,13 @@ func TestProposalGrowsNoSubIssues(t *testing.T) {
 
 	// An ordinary parent is still linked.
 	gh, calls = fake(t, "v1")
-	if _, err := Create(context.Background(), gh, filter, labels, Options{Title: "t", Kind: KindTask, Parent: 12}); err != nil {
+	if _, err := Create(context.Background(), gh, policy(filter), Options{Title: "t", Kind: KindTask, Parent: 12}); err != nil {
 		t.Fatal(err)
 	}
 	if joined := strings.Join(*calls, "\n"); !strings.Contains(joined, "sub_issues") {
 		t.Errorf("an approved parent must still be linked:\n%s", joined)
 	}
-	if _, err := Link(context.Background(), gh, labels, 12, 77); err != nil {
+	if _, err := Link(context.Background(), gh, policy(filter), 12, 77); err != nil {
 		t.Fatalf("linking to an approved feature: %v", err)
 	}
 }
@@ -211,11 +221,11 @@ func TestProposalGrowsNoSubIssues(t *testing.T) {
 // the rule is that a milestone already on the child is a person's decision,
 // so a bee never overwrites or clears one.
 func TestLinkInheritsTheParentsMilestone(t *testing.T) {
-	labels := config.LabelsFor("bees")
+	filter := config.Filter{Label: "bees"}
 
 	// Parent in a milestone, child in none: the child ends up in it.
 	gh, calls := fakeWith(t, "v1", "")
-	res, err := Link(context.Background(), gh, labels, 12, 77)
+	res, err := Link(context.Background(), gh, policy(filter), 12, 77)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +247,7 @@ func TestLinkInheritsTheParentsMilestone(t *testing.T) {
 
 	// Child already in a different milestone: untouched, not even looked up.
 	gh, calls = fakeWith(t, "v1", "v2")
-	res, err = Link(context.Background(), gh, labels, 12, 77)
+	res, err = Link(context.Background(), gh, policy(filter), 12, 77)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +268,7 @@ func TestLinkInheritsTheParentsMilestone(t *testing.T) {
 	// Parent in no milestone: there is nothing to inherit, and the child
 	// keeps whatever it had.
 	gh, calls = fakeWith(t, "", "")
-	res, err = Link(context.Background(), gh, labels, 12, 77)
+	res, err = Link(context.Background(), gh, policy(filter), 12, 77)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +290,7 @@ func TestLinkInheritsTheParentsMilestone(t *testing.T) {
 func TestLinkReportsAMilestoneFailure(t *testing.T) {
 	// "v9" matches no open milestone in the fake.
 	gh, calls := fakeWith(t, "v9", "")
-	_, err := Link(context.Background(), gh, config.LabelsFor("bees"), 12, 77)
+	_, err := Link(context.Background(), gh, policy(config.Filter{Label: "bees"}), 12, 77)
 	if err == nil {
 		t.Fatal("a failed milestone call must not be swallowed")
 	}
@@ -299,11 +309,10 @@ func TestLinkReportsAMilestoneFailure(t *testing.T) {
 // swapping the label for bees:planned, and the refusal must happen before
 // anything is created.
 func TestAPlanningIssueGrowsNoSubIssues(t *testing.T) {
-	labels := config.LabelsFor("bees")
 	filter := config.Filter{Label: "bees"}
 
 	gh, calls := fake(t, "v1")
-	_, err := Create(context.Background(), gh, filter, labels, Options{Title: "t", Kind: KindTask, Parent: 14})
+	_, err := Create(context.Background(), gh, policy(filter), Options{Title: "t", Kind: KindTask, Parent: 14})
 	if err == nil {
 		t.Fatal("--parent on a planning issue must fail")
 	}
@@ -318,7 +327,7 @@ func TestAPlanningIssueGrowsNoSubIssues(t *testing.T) {
 
 	// Same hole, other door.
 	gh, calls = fake(t, "v1")
-	if _, err := Link(context.Background(), gh, labels, 14, 77); err == nil {
+	if _, err := Link(context.Background(), gh, policy(filter), 14, 77); err == nil {
 		t.Fatal("linking to a planning issue must fail")
 	}
 	if joined := strings.Join(*calls, "\n"); strings.Contains(joined, "sub_issues") {
@@ -328,7 +337,76 @@ func TestAPlanningIssueGrowsNoSubIssues(t *testing.T) {
 	// --related only inherits a milestone: it creates no sub-issue, so it is
 	// not this hole and stays allowed.
 	gh, _ = fake(t, "v1")
-	if _, err := Create(context.Background(), gh, filter, labels, Options{Title: "t", Kind: KindTask, Related: 14}); err != nil {
+	if _, err := Create(context.Background(), gh, policy(filter), Options{Title: "t", Kind: KindTask, Related: 14}); err != nil {
 		t.Errorf("--related on a planning issue: %v", err)
+	}
+}
+
+// With scheduler.feature_proposals = false there is no proposal gate: a
+// feature issue a bee creates carries no bees:proposal, and both doors into
+// a feature's sub-issues are open, even when the parent still carries the
+// label from before the key was turned off. The label on an existing issue
+// is a person's business; the refusal is keyed on the policy, not on it.
+func TestNoProposalGateWhenTurnedOff(t *testing.T) {
+	filter := config.Filter{Label: "bees"}
+
+	// A feature issue is created approved: no proposal label.
+	gh, calls := fake(t, "")
+	res, err := Create(context.Background(), gh, gateOff(filter), Options{Title: "t", Kind: KindFeature})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(res.Labels, " "), "bees bees:feature"; got != want {
+		t.Errorf("labels: got %q, want %q", got, want)
+	}
+	if joined := strings.Join(*calls, "\n"); strings.Contains(joined, "bees:proposal") {
+		t.Errorf("bees:proposal was written with the gate off:\n%s", joined)
+	}
+
+	// A parent still carrying bees:proposal grows sub-issues through both
+	// doors.
+	gh, calls = fake(t, "v1")
+	res, err = Create(context.Background(), gh, gateOff(filter), Options{Title: "t", Kind: KindTask, Parent: 13})
+	if err != nil {
+		t.Fatalf("--parent on a labelled proposal with the gate off: %v", err)
+	}
+	if res.Number != 77 || res.Parent != 13 || res.Milestone != "v1" {
+		t.Fatalf("result: %+v", res)
+	}
+	if joined := strings.Join(*calls, "\n"); !strings.Contains(joined, "issues/13/sub_issues") {
+		t.Errorf("the issue was not attached to #13:\n%s", joined)
+	}
+	gh, calls = fake(t, "v1")
+	if _, err := Link(context.Background(), gh, gateOff(filter), 13, 77); err != nil {
+		t.Fatalf("linking to a labelled proposal with the gate off: %v", err)
+	}
+	if joined := strings.Join(*calls, "\n"); !strings.Contains(joined, "issues/13/sub_issues") {
+		t.Errorf("the issue was not attached to #13:\n%s", joined)
+	}
+
+	// Planning is a person's hold, not the gate: still refused, with the
+	// same sentence as before.
+	const wantPlanning = "#14 is in planning: a person must end it (swap the bees:planning label for bees:planned) before it can be broken into work items"
+	gh, _ = fake(t, "v1")
+	if _, err := Create(context.Background(), gh, gateOff(filter), Options{Title: "t", Kind: KindTask, Parent: 14}); err == nil || err.Error() != wantPlanning {
+		t.Errorf("--parent on a planning issue with the gate off: got %v, want %q", err, wantPlanning)
+	}
+	gh, _ = fake(t, "v1")
+	if _, err := Link(context.Background(), gh, gateOff(filter), 14, 77); err == nil || err.Error() != wantPlanning {
+		t.Errorf("linking to a planning issue with the gate off: got %v, want %q", err, wantPlanning)
+	}
+}
+
+// The gate on is the default, and it is the refusal sentence people know:
+// pinned byte-for-byte so a change to it is a deliberate one.
+func TestProposalRefusalSentence(t *testing.T) {
+	const want = "#13 is a proposal: a person must approve it (remove the bees:proposal label) before it can be broken into work items"
+	gh, _ := fake(t, "v1")
+	if _, err := Create(context.Background(), gh, policy(config.Filter{Label: "bees"}), Options{Title: "t", Kind: KindTask, Parent: 13}); err == nil || err.Error() != want {
+		t.Errorf("--parent on a proposal: got %v, want %q", err, want)
+	}
+	gh, _ = fake(t, "v1")
+	if _, err := Link(context.Background(), gh, policy(config.Filter{Label: "bees"}), 13, 77); err == nil || err.Error() != want {
+		t.Errorf("linking to a proposal: got %v, want %q", err, want)
 	}
 }

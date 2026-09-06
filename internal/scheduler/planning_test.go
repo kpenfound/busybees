@@ -217,8 +217,8 @@ func TestAnAgreedIssueLeavesTheFreshLists(t *testing.T) {
 // bees:proposal — ending planning is documented as a swap of the planning
 // label and says nothing about the proposal one. The proposal label is what
 // says a person has not approved it yet, and issues.Create refuses it as a
-// parent, so it stays in the proposals section: presenting it as agreed would
-// ask for a breakdown the tools then refuse.
+// parent while the proposal gate is on, so it stays in the proposals section:
+// presenting it as agreed would ask for a breakdown the tools then refuse.
 func TestAPlannedProposalIsStillAProposal(t *testing.T) {
 	now := time.Now()
 	h := newHarnessAt(t, pmOnlyTOML, now)

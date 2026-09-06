@@ -308,3 +308,37 @@ func TestAFeatureFirstSeenApprovedApprovesNothing(t *testing.T) {
 		t.Errorf("an ordinary feature was recorded as just approved: %+v", is)
 	}
 }
+
+// scheduler.feature_proposals = false reaches the product manager session:
+// its system prompt says the features it creates are approved already, and
+// the proposal rule is gone. Gate on (the default), the rule is there. The
+// key is set inside the existing [scheduler] table, never as a second one.
+func TestTheProductManagerIsToldWhenTheProposalGateIsOff(t *testing.T) {
+	const on, off = "**A feature issue you create is a proposal.**", "**A feature issue you create is approved already.**"
+	for _, tc := range []struct {
+		name string
+		toml string
+		want string
+		gone string
+	}{
+		{"on by default", pmOnlyTOML, on, off},
+		{"off", strings.Replace(pmOnlyTOML, "max_review_rounds = 3\n", "max_review_rounds = 3\nfeature_proposals = false\n", 1), off, on},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			now := time.Now()
+			h := newHarnessAt(t, tc.toml, now)
+			seedFeature(h, 5, "Exports", now.Add(-time.Hour))
+			runPass(t, h)
+			if n := len(h.sessions(config.RoleProductManager)); n != 1 {
+				t.Fatalf("product manager sessions: %d, want 1", n)
+			}
+			sys := systemPromptOf(t, h, 0)
+			if !strings.Contains(sys, tc.want) {
+				t.Errorf("product manager system prompt missing %q:\n%s", tc.want, sys)
+			}
+			if strings.Contains(sys, tc.gone) {
+				t.Errorf("product manager system prompt still has %q:\n%s", tc.gone, sys)
+			}
+		})
+	}
+}

@@ -1087,7 +1087,7 @@ instead of `gh issue create`; it is equally handy for people.
 | `--related N` | Inherit the milestone of issue `N` without attaching (a bug found while working on `N`, a feature distilled from feedback `N`). Exclusive with `--parent`. |
 | `--milestone T` | Set the milestone explicitly (overrides inheritance). |
 | `--bug` | Bug work item (`bees:bug`). |
-| `--feature` | Feature issue for the product manager (`bees:feature` + `bees:proposal`, no state label). |
+| `--feature` | Feature issue for the product manager (`bees:feature`, plus `bees:proposal` unless `scheduler.feature_proposals = false`; no state label). |
 | `--ready` | Work item is already detailed: `bees:ready` instead of `bees:triage`. |
 | `--blocked-by N` | Repeatable. Prefixes the body with a `Blocked by #N` line, so the scheduler does not build the issue while `N` is open (see [Dependencies](workflow.md#dependencies)). No GitHub dependency relationship is created. |
 | `--label L` | Extra label (repeatable). |
@@ -1118,7 +1118,8 @@ Becoming a sub-issue carries the feature's milestone across, exactly as
 lands in the same release as one created under the feature. It only ever
 *fills in* a milestone: an issue that already has one keeps it, and the
 command says which milestone it set, if any. Refuses a parent that is still a
-proposal, or that a person has put in planning (`bees:planning`).
+proposal (unless `scheduler.feature_proposals = false`), or that a person has
+put in planning (`bees:planning`).
 
 ## Reporting outcomes
 

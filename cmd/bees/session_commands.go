@@ -213,7 +213,7 @@ managed by people; the factory only inherits them.`
 			case feature:
 				kind = issues.KindFeature
 			}
-			res, err := issues.Create(cmd.Context(), a.gh, a.cfg.Filter, a.cfg.Labels(), issues.Options{
+			res, err := issues.Create(cmd.Context(), a.gh, issuePolicy(a.cfg), issues.Options{
 				Title: title, Body: text, Kind: kind, Parent: parent, Related: related, Milestone: milestone, ExtraLabels: extra, Ready: ready, BlockedBy: blockedBy,
 			})
 			if err != nil {
@@ -245,7 +245,7 @@ managed by people; the factory only inherits them.`
 			if err != nil {
 				return err
 			}
-			res, err := issues.Link(cmd.Context(), a.gh, a.cfg.Labels(), lParent, lChild)
+			res, err := issues.Link(cmd.Context(), a.gh, issuePolicy(a.cfg), lParent, lChild)
 			if err != nil {
 				return err
 			}

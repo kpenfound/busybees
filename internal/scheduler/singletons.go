@@ -282,9 +282,11 @@ func (s *Scheduler) runProductManager(ctx context.Context, snap *snapshot) error
 			continue
 		}
 		// A proposal is agreed by a person removing bees:proposal. While it
-		// is still there the issue is not approved, and issues.Create refuses
-		// it as a parent, so presenting it as agreed would ask for a
-		// breakdown the tools go on to refuse. It stays a proposal.
+		// is still there the issue is not approved, and with the proposal
+		// gate on (scheduler.feature_proposals) issues.Create refuses it as
+		// a parent, so presenting it as agreed would ask for a breakdown the
+		// tools go on to refuse. It stays a proposal, whatever the key says:
+		// turning the gate off approves nothing.
 		if github.HasLabel(i.Labels, s.labels.Proposal) {
 			continue
 		}
