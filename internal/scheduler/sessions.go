@@ -34,7 +34,7 @@ type sessionSpec struct {
 	worker *state.Worker
 }
 
-// runSession resolves the role, renders prompts and runs claude.
+// runSession resolves the role, renders prompts and runs the session.
 func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.Result, error) {
 	role, err := s.cfg.Role(spec.role)
 	if err != nil {
@@ -475,8 +475,8 @@ const (
 	// failureNone is the zero value: the session produced a result.
 	failureNone failureKind = iota
 	// failureInfra is a failure of the machinery around the model — a
-	// timeout, an API error, exhausted turns, a crashed claude. Retrying it
-	// later is likely to work.
+	// timeout, an API error, exhausted turns, a crashed agent process.
+	// Retrying it later is likely to work.
 	failureInfra
 	// failureBehavioural is the session itself: it ran and reported (even
 	// `failed`), or chose not to report at all. Running it again would only

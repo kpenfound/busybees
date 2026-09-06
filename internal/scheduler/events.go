@@ -56,7 +56,7 @@ type Event struct {
 	Stage string
 	// Round is the review round a stage event belongs to.
 	Round int
-	// Model is the claude model the session runs with and Fallback marks a
+	// Model is the model the session runs with and Fallback marks a
 	// session running on the role's fallback model
 	// (scheduler.retry_with_fallback). Both are set on session-started
 	// only: a view renders them for a session that is still running, and
