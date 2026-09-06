@@ -113,12 +113,10 @@ type container struct {
 }
 
 // startContainer prepares a container session: it starts the built-in
-// server on the host and builds the session's environment. The container
+// server on the host and builds the session's environment. Run has already
+// asked config.CheckSandboxContainer what the box needs. The container
 // itself is started by Run, through command; close stops the server.
 func (r *Runner) startContainer(ctx context.Context, req Request, sessionDir string) (*container, error) {
-	if err := config.CheckSandboxContainer(req.Role, r.GitHub); err != nil {
-		return nil, err
-	}
 	c := &container{r: r, req: req, sessionDir: sessionDir, name: "bees-" + sanitize(req.Name) + "-" + randomHex(4)}
 	c.vars = r.containerVars(req, sessionDir)
 	if err := c.startServer(ctx); err != nil {
