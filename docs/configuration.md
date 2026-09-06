@@ -555,6 +555,25 @@ stages = ["implementation", "completeness", "cleanliness", "style", "product-fit
 See [Review stages](roles.md#review-stages-rolesreviewerstages) for what each
 stage looks at.
 
+### `[roles.product_manager]` only: minimum issue size
+
+This key describes the product manager, so it is accepted only under
+`[roles.product_manager]`.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `min_issue_size` | string | `""` | The smallest work item the product manager aims for when it breaks a feature down: `xs`, `s`, `m`, `l` or `xl`. Unset, it splits at whatever boundaries the work has. See [Sizing](workflow.md#sizing). |
+
+```toml
+[roles.product_manager]
+min_issue_size = "m"    # fewer, larger work items per feature
+```
+
+It is a hint on the split, not a rule: nothing checks the size of an issue
+that gets created, and the project manager still sizes a work item as it
+finds it during triage. Work that is genuinely smaller still gets its own
+issue, whoever files it, so a bug found mid-implementation is unaffected.
+
 ### `[roles.developer]` only: commit flags, max size and per-size models
 
 These keys describe the developer, so they are accepted only under
@@ -599,6 +618,7 @@ commit does.
 | `allowed_tools`, `disallowed_tools` | Global list followed by the role list. |
 | `enabled` | Role only. |
 | `skills_refresh` | Global only. |
+| `min_issue_size` | `roles.product_manager` only. |
 | `commit_flags`, `max_size`, `model_by_size` | `roles.developer` only. |
 | `auto_merge`, `merge_method`, `checks_wait`, `checks_poll_interval`, `checks_timeout`, `max_check_fix_rounds`, `pre_review_checks`, `pre_review_checks_timeout`, `stages` | `roles.reviewer` only. `bees config show reviewer` prints the resolved policy. |
 

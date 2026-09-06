@@ -203,6 +203,12 @@ restarts the `product_manager_interval` clock. A run woken by the clock rather
 than by an event still works the agreed section and the loose-work-item check
 before it reports `idle`.
 
+**Configuration.** `roles.product_manager` takes the common keys and one of
+its own: `min_issue_size`, the smallest work item it aims for when it breaks a
+feature down (unset, it splits at whatever boundaries the work has). Set
+anywhere else, it is a load error. See
+[configuration.md](configuration.md#rolesproduct_manager-only-minimum-issue-size).
+
 ## project_manager
 
 Turns work items into work a developer can execute without guessing, and
