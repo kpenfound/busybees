@@ -78,6 +78,7 @@ func CanonicalRole(name string) (string, error) {
 const (
 	DefaultModel         = "opus"
 	DefaultFallbackModel = "sonnet"
+	DefaultAgent         = AgentClaude
 	DefaultMaxTurns      = 200
 	DefaultTimeout       = 45 * time.Minute
 	DefaultLabel         = "bees"
@@ -147,6 +148,17 @@ const (
 
 // DispatchOrders lists the accepted scheduler.dispatch_order values.
 var DispatchOrders = []string{DispatchSmallFirst, DispatchOldest, DispatchLargeFirst}
+
+// Session backends accepted by the agent key. claude is the only one a
+// session actually runs as; codex is validated and resolved but not yet
+// wired to a runner.
+const (
+	AgentClaude = "claude"
+	AgentCodex  = "codex"
+)
+
+// Agents lists the accepted agent values.
+var Agents = []string{AgentClaude, AgentCodex}
 
 // Sizes lists the work item sizes, smallest first. They mirror the
 // bees:size/* labels (see Labels.SizeLabels).
@@ -384,6 +396,8 @@ type RoleSettings struct {
 	// when Model has reached its usage limit.
 	Model         string `toml:"model"`
 	FallbackModel string `toml:"fallback_model"`
+	// Agent is the CLI backend a session runs as: claude or codex.
+	Agent string `toml:"agent"`
 	// Effort is passed as --effort (low/medium/high/max) when set.
 	Effort string `toml:"effort"`
 	// MaxTurns caps agentic turns for a single session.
@@ -1007,6 +1021,7 @@ type ResolvedRole struct {
 	// ModelBySize overrides Model per work item size; developer only.
 	ModelBySize     map[string]string
 	FallbackModel   string
+	Agent           string
 	Effort          string
 	MaxTurns        int
 	Timeout         time.Duration
@@ -1424,6 +1439,9 @@ func (c *Config) Validate() error {
 		default:
 			errs = append(errs, fmt.Sprintf("%s.effort must be low, medium, high or max", scope))
 		}
+		if rs.Agent != "" && !slices.Contains(Agents, rs.Agent) {
+			errs = append(errs, fmt.Sprintf("%s.agent must be one of %s", scope, strings.Join(Agents, ", ")))
+		}
 		if rs.PromptFile != "" {
 			if _, err := os.Stat(c.resolvePath(rs.PromptFile)); err != nil {
 				errs = append(errs, fmt.Sprintf("%s.prompt_file: %v", scope, err))
@@ -1482,6 +1500,7 @@ func (c *Config) Role(name string) (ResolvedRole, error) {
 		Model:         firstNonEmpty(rs.Model, g.Model, DefaultModel),
 		ModelBySize:   sizeModels(rs.ModelBySize),
 		FallbackModel: firstNonEmpty(rs.FallbackModel, g.FallbackModel, DefaultFallbackModel),
+		Agent:         firstNonEmpty(rs.Agent, g.Agent, DefaultAgent),
 		Effort:        firstNonEmpty(rs.Effort, g.Effort),
 		MaxTurns:      firstPositive(rs.MaxTurns, g.MaxTurns, DefaultMaxTurns),
 		Timeout:       firstPositiveDur(rs.Timeout.Duration, g.Timeout.Duration, DefaultTimeout),

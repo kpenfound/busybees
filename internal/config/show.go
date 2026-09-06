@@ -47,6 +47,7 @@ type RoleView struct {
 	MCP             map[string]MCPServer `json:"mcp"`
 	Model           string               `json:"model"`
 	FallbackModel   string               `json:"fallback_model"`
+	Agent           string               `json:"agent"`
 	Effort          string               `json:"effort"`
 	MaxTurns        int                  `json:"max_turns"`
 	Timeout         Duration             `json:"timeout"`
@@ -109,6 +110,7 @@ func (c *Config) View(roles []string) (View, error) {
 			MCP:             rr.MCP,
 			Model:           rr.Model,
 			FallbackModel:   rr.FallbackModel,
+			Agent:           rr.Agent,
 			Effort:          rr.Effort,
 			MaxTurns:        rr.MaxTurns,
 			Timeout:         Duration{rr.Timeout},

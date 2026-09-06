@@ -456,6 +456,7 @@ The CLI accepts aliases such as `pm` and `dev`; the TOML keys do not.
 | `mcp.<name>` | table | | MCP servers keyed by name. See [MCP servers](#mcp-servers). |
 | `model` | string | `"opus"` | Claude model alias or full id, passed as `claude --model`. |
 | `fallback_model` | string | `"sonnet"` | Passed as `claude --fallback-model`, which Claude Code switches to when `model` has reached its usage limit. Not passed when it equals `model`. |
+| `agent` | string | `"claude"` | CLI backend a session runs as: `claude` or `codex`. An unknown value is a load error. Every session runs through `claude` regardless of this setting; `codex` is accepted and resolved but not yet wired to a runner. |
 | `effort` | string | `""` | Passed as `claude --effort` when set: `low`, `medium`, `high` or `max`. |
 | `max_turns` | int | `200` | Agentic turns per session (`claude --max-turns`). `0` means the default. |
 | `timeout` | duration | `"45m"` | Wall-clock limit for one session; the claude process group is killed when it expires. `"0s"` means the default. |
@@ -614,7 +615,7 @@ commit does.
 | `skills` | Union, global first, order kept, duplicates dropped. |
 | `mcp` | Union by name; a role server replaces a global one of the same name. |
 | `env` | Union by name; the role wins. |
-| `model`, `fallback_model`, `effort`, `max_turns`, `timeout`, `shell` | Role value if set, else global, else the built-in default. |
+| `model`, `fallback_model`, `agent`, `effort`, `max_turns`, `timeout`, `shell` | Role value if set, else global, else the built-in default. |
 | `allowed_tools`, `disallowed_tools` | Global list followed by the role list. |
 | `enabled` | Role only. |
 | `skills_refresh` | Global only. |
