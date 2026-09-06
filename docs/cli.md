@@ -1220,6 +1220,12 @@ as `<bees binary> mcp serve` with the session's `BEES_*`
 variables. The name `bees` is reserved — a `[global.mcp.bees]` or
 `[roles.<role>.mcp.bees]` entry in `bees.toml` fails validation.
 
+For a [container session](configuration.md#the-container-mode) the runner
+starts it on the host itself, as `bees mcp serve --listen <address>` with
+`$BEES_MCP_TOKEN` set: it prints `listening on <address>` and serves the same
+tools over HTTP to a client presenting that token, which is how a session
+without the `bees` binary reaches them.
+
 The server is backed by the same code as the commands above, so a tool and its
 command do exactly the same thing. Claude Code exposes the tools as
 `mcp__bees__<name>`:

@@ -665,13 +665,22 @@ counted from the transcript's assistant messages or completed items instead.
 
 - **Sandbox.** The role's resolved
   [`sandbox`](configuration.md#sandboxing) says how much of the machine the
-  session can reach. `none` is the command above, and the only mode
-  implemented: the runner refuses a session whose role asks for another, and
-  `bees run` refuses to start at all while a role in the rotation does.
-- **Outcome.** The session ends by calling the `done` tool (or running `bees
-  done <status>`), which writes `<session>/outcome.json` through one shared
-  validation: the status must be one the role may report, and `pr-opened` and
-  `pr-updated` need a pull request number. The runner reads the file after
+  session can reach. `none` is the command above.
+  [`container`](configuration.md#the-container-mode) is the same command
+  inside `docker run`, as the user running bees, with the worktree, the
+  repository's `.git` and the state directory bind-mounted at their host
+  paths, an environment built from the session's variables alone, and the
+  built-in MCP server started on the host as `bees mcp serve --listen` and
+  reached over HTTP with a per-session token; `<session>/container-id`
+  holds the container's id while it runs. The runner refuses a session whose
+  role asks for a mode it cannot build, or a container mode missing its
+  image or credentials, and `bees run` refuses to start at all while a role
+  in the rotation does.
+- **Outcome.** The session ends by calling the `done` tool (or, outside a
+  container, running `bees done <status>`), which writes
+  `<session>/outcome.json` through one shared validation: the status must be
+  one the role may report, and `pr-opened` and `pr-updated` need a pull
+  request number. The runner reads the file after
   claude exits; a missing one is reported as "no outcome" and the scheduler
   treats the session as `failed`. The process exits when the turn ends, so a
   session that ends its turn waiting on a background task's completion
@@ -704,7 +713,8 @@ counted from the transcript's assistant messages or completed items instead.
   and `BEES_BRANCH` when they apply and `BEES_REVIEW_MODE=checks` for the
   reviewer's checks-mode sessions; the directory holding the `bees` binary
   prepended to `PATH`, so `bees mail`, `bees issue` and `bees done` resolve
-  inside the session; the factory's own
+  inside the session (a container session gets neither `BEES_BIN` nor the
+  `PATH` entry: the binary stays on the host); the factory's own
   [GitHub identity](configuration.md#github) when `[github]` configures one:
   `GH_TOKEN`, `GIT_AUTHOR_*` and `GIT_COMMITTER_*`, plus the variable a
   `"$VAR"` `github.token` names, holding the token bees resolved (a session

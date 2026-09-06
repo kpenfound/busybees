@@ -15,9 +15,11 @@ GitHub repository. Read `docs/architecture.md` before changing the scheduler.
   from the working tree, a test project and stubbed `gh` and `claude`: the QA
   playground, a dang module in `.dagger/modules/qa-playground` described in
   `CONTRIBUTING.md`. It contributes no checks.
-- Tests must never call the real `claude`, `codex` or `gh`. `gh` is faked through
+- Tests must never call the real `claude`, `codex`, `gh` or `docker`. `gh` is faked through
   `github.Client.Exec`; `claude` and `codex` are faked by the test binary itself (see `TestMain` in
-  `internal/scheduler/scheduler_test.go`) or a shell script (`internal/session`).
+  `internal/scheduler/scheduler_test.go`) or a shell script (`internal/session`), and so is
+  `docker` (`fakeDocker` in `internal/session`). `TestContainerEndToEnd` runs a real
+  container session only when `BEES_CONTAINER_E2E=<image>` is set.
   Git is real: tests create a bare origin with `internal/testutil.SetupRepos`.
 - `.github/workflows/release.yml` is the only workflow, and its only trigger is a
   `v*` tag (see `docs/releasing.md`). There is deliberately no `push` or
@@ -37,7 +39,7 @@ GitHub repository. Read `docs/architecture.md` before changing the scheduler.
 - `internal/issues` — `bees issue create/link`: visible, labelled, sub-issue of a feature, milestone inherited.
 - `internal/procs` — pid files + `ps` scan to find and kill orphaned sessions (`bees kill`, and the live view's `k` key through `Scheduler.KillSession`).
 - `internal/testutil` — local bare git remote + clone for tests.
-- `internal/session` — runs one `claude -p` or `codex exec` session, chosen by the role's `agent` (`backend.go`); outcome file written by `bees done`; `touched-issues.txt` written by the MCP server (`RecordTouched`) and read back by the scheduler (`touched.go`: the issues a session changed, refreshed into the cached poll when it ends); `CheckInterrupted` says whether a session directory belongs to a session that is running, one that finished, or one a killed scheduler or a hard stop left unfinished.
+- `internal/session` — runs one `claude -p` or `codex exec` session, chosen by the role's `agent` (`backend.go`), inside `docker run` when the role's `sandbox` is `container` (`container.go`: worktree, `.git` and state dir bind-mounted, the built-in MCP server on the host over HTTP); outcome file written by `bees done`; `touched-issues.txt` written by the MCP server (`RecordTouched`) and read back by the scheduler (`touched.go`: the issues a session changed, refreshed into the cached poll when it ends); `CheckInterrupted` says whether a session directory belongs to a session that is running, one that finished, or one a killed scheduler or a hard stop left unfinished.
 - `internal/prompts` — role prompts embedded in the binary (`system/*.md`, `task/*.md`) rendered with `text/template`, so a prompt change reaches no session until `bees` is rebuilt and `bees run` restarted; `project.go` appends the project repository's own `bees/prompts/common.md` and `bees/prompts/<role>.md`, read from the session's worktree at session start, which need no rebuild.
 - `internal/mcpserver` — the built-in MCP server (`bees mcp serve`) added to every session as `bees`, backed by the same code as the CLI: `mail_send`, `mail_list`, `issue_create`, `issue_link`, `issue_view`, `pr_view`, `comment` and `done` go to every role; role-scoped are `issue_edit_body` (both managers), `issue_set_state` (project manager), `issue_question` (product manager) and `submit_review` (reviewer, for a requested review only). The name `bees` is reserved in bees.toml.
 - `internal/tui` — the live view `bees run` draws in a terminal (bubbletea + lipgloss): the Now, Recent, Needs human, Approved PRs and Queues panels, fed by `scheduler.Subscribe` and `status.json`, plus its keys (arrows select, `enter` watches the selected session, `o` opens on GitHub, `k` stops the selected session, `q`/ctrl-c stops the factory — the work in flight finishes, a second press stops the running sessions too) and a session view (`session.go`) that tails one session's `transcript.jsonl` and queues a message from `human` for the next session on that work item. Drawn only when stdout is a terminal and `--no-tui` was not given (`tuiMode` in `cmd/bees`), and it silences console logging while it is up. `theme.go` is the only file in the package that names a colour (rows are painted by role and by outcome class, panels by their title and border) and `TestOnlyTheThemeNamesColours` keeps it that way.
