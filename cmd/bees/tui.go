@@ -32,7 +32,7 @@ func runWithTUI(ctx context.Context, a *app, s *scheduler.Scheduler, g *globalFl
 	var once sync.Once
 	give := func() { once.Do(restore) }
 	defer give()
-	// --verbose streams claude's own events to stderr, which would scribble
+	// --verbose streams every session event to stderr, which would scribble
 	// over the view exactly as the console log would. The log file and the
 	// per-session transcripts still have everything.
 	a.runner.Stream = nil

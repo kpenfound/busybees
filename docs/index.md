@@ -1,9 +1,10 @@
 # busybees
 
 **busybees** is a lightweight software factory: a Go CLI (`bees`) that runs a
-staff of headless [Claude Code](https://claude.com/claude-code) sessions —
-product manager, project manager, developers, reviewers and QA — against a
-single GitHub repository.
+staff of headless coding-agent sessions — product manager, project manager,
+developers, reviewers and QA — against a single GitHub repository. A role runs
+as [Claude Code](https://claude.com/claude-code) or as
+[Codex](https://github.com/openai/codex).
 
 Humans steer it through GitHub. Create and label issues, comment, merge pull
 requests; the bees do the rest. Every role runs in its own temporary git
@@ -68,6 +69,7 @@ reads and edits a role's notes file — its only memory between sessions — and
 | [Roles](roles.md) | Each role's responsibilities, inputs, outcomes, and how to customise or disable it |
 | [Workflow](workflow.md) | The GitHub-centred workflow: filter, label state machine, questions, review loop, escalation, QA |
 | [Configuration](configuration.md) | Complete `bees.toml` reference |
+| [Security](security.md) | What each sandbox mode protects and what it does not: filesystem, network, credentials |
 | [Config templates](templates.md) | The named ways to run the factory: which roles run, what merges on its own, what waits for a person |
 | [CLI](cli.md) | Every `bees` command |
 | [Releasing](releasing.md) | Cutting a release: the tag, the workflow, the assets it publishes |

@@ -1,6 +1,6 @@
 # busybees — notes for Claude Code
 
-busybees (`bees`) is a Go CLI that orchestrates a staff of headless Claude Code
+busybees (`bees`) is a Go CLI that orchestrates a staff of headless coding-agent
 sessions (product manager, project manager, developers, reviewers, QA) building a
 GitHub repository. Read `docs/architecture.md` before changing the scheduler.
 

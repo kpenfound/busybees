@@ -16,7 +16,7 @@
 title: busybees
 description: >-
   A lightweight software factory: a Go CLI that runs a staff of headless
-  Claude Code sessions against a GitHub repository.
+  coding-agent sessions against a GitHub repository.
 repository: kpenfound/busybees
 
 url: https://kpenfound.github.io

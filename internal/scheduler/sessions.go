@@ -34,7 +34,7 @@ type sessionSpec struct {
 	worker *state.Worker
 }
 
-// runSession resolves the role, renders prompts and runs claude.
+// runSession resolves the role, renders prompts and runs the session.
 func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.Result, error) {
 	role, err := s.cfg.Role(spec.role)
 	if err != nil {
@@ -325,10 +325,11 @@ type summary struct {
 	note    string
 	turns   int
 	cost    float64
-	// costKnown says whether cost is what the session cost. claude reports
-	// the cost in the result event of its stream alone, so a session that
+	// costKnown says whether cost is what the session cost. A cost arrives
+	// in the event that ends a session's stream alone, so a session that
 	// died before emitting one has no cost rather than a cost of zero, and
-	// the line says so instead of printing $0.00.
+	// the line says so instead of printing $0.00. A codex session never
+	// reports one: it reports tokens rather than a price.
 	costKnown bool
 	dur       time.Duration
 }
@@ -364,8 +365,9 @@ func (s *Scheduler) summarize(spec sessionSpec, res *session.Result) {
 //
 //	<mark> <role title> <subject> <phrase>[: "<note>"] (<turns>, $<cost>, <duration>)
 //
-// A session whose cost is not known — one killed before claude reported it
-// — reads "cost unknown" where the amount goes.
+// A session whose cost is not known — one killed before its agent
+// reported it, and every codex session — reads "cost unknown" where the
+// amount goes.
 func formatSummary(sum summary) string {
 	var b strings.Builder
 	b.WriteString(summaryMark(sum.outcome))
@@ -474,8 +476,8 @@ const (
 	// failureNone is the zero value: the session produced a result.
 	failureNone failureKind = iota
 	// failureInfra is a failure of the machinery around the model — a
-	// timeout, an API error, exhausted turns, a crashed claude. Retrying it
-	// later is likely to work.
+	// timeout, an API error, exhausted turns, a crashed agent process.
+	// Retrying it later is likely to work.
 	failureInfra
 	// failureBehavioural is the session itself: it ran and reported (even
 	// `failed`), or chose not to report at all. Running it again would only
@@ -525,7 +527,7 @@ func infraReason(res *session.Result) string {
 	case res.ErrorSubtype != "":
 		return "session error (" + res.ErrorSubtype + ")"
 	case res.ExitCode != 0:
-		return fmt.Sprintf("claude exited with code %d", res.ExitCode)
+		return fmt.Sprintf("the agent exited with code %d", res.ExitCode)
 	default:
 		return "unknown"
 	}

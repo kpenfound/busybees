@@ -81,7 +81,7 @@ type sentMsg struct {
 }
 
 // tailInterval is how often the watched session's transcript is re-read.
-// The file is appended to as claude works, and this is what makes the view
+// The file is appended to as the session works, and this is what makes the view
 // follow it; it is faster than the once-a-second redraw because a
 // transcript is read rather than glanced at.
 const tailInterval = 300 * time.Millisecond

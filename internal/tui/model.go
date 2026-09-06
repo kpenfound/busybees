@@ -56,7 +56,7 @@ type Deps struct {
 	// request so it reaches whichever session picks the work item up next.
 	//
 	// It is a message to the *role*, never to the running session: a
-	// headless `claude -p` cannot be told anything once it has started (see
+	// headless session cannot be told anything once it has started (see
 	// the session view's own note in docs/cli.md), so the view says
 	// "queued for the next session" and means it. Nil means the view cannot
 	// send anything and does not offer to.
@@ -85,13 +85,13 @@ type running struct {
 	// turns is how many assistant messages the session's transcript holds
 	// right now, recounted on the refresh tick (see countTurns). It lives
 	// here rather than in spent because the session-ended event replaces it
-	// with the number claude reports: the running entry is dropped in the
+	// with the number the session reports: the running entry is dropped in the
 	// same event that adds the real total, so nothing has to be undone.
 	turns int
 }
 
-// spend is what the sessions of one work item have reported so far. claude
-// reports turns and cost in the final event of a session's stream, so these
+// spend is what the sessions of one work item have reported so far. An agent
+// reports turns and cost in the event that ends a session's stream, so these
 // are the totals of the sessions that have *finished*: the running one adds
 // its own when it ends.
 //
@@ -280,8 +280,8 @@ func (m Model) refresh() tea.Cmd {
 
 // countTurns counts the assistant messages of every running session's own
 // transcript, which is the only way to say how many turns a session that
-// has not finished has taken: claude reports num_turns in the result event
-// of its stream and nothing before it.
+// has not finished has taken: an agent reports its turn count in the event
+// that ends its stream and nothing before it.
 //
 // It re-scans each file whole, on the refresh tick rather than on every
 // redraw — a transcript runs to a couple of megabytes and the number moves
@@ -924,10 +924,10 @@ func (m Model) nowPanel(w, rows, from int) string {
 		s := m.sessions[i]
 		spent := m.spent[spendKey(s.issue, s.role)]
 		// The turns of this session, counted live, on top of what the work
-		// item's finished sessions reported. The cost has no live half —
-		// claude prices a session only in its result event — so a work item
-		// nothing has finished on says so rather than printing $0.00, which
-		// reads as "spent nothing" and means "not known yet".
+		// item's finished sessions reported. The cost has no live half — an
+		// agent prices a session only in the event that ends its stream — so
+		// a work item nothing has finished on says so rather than printing
+		// $0.00, which reads as "spent nothing" and means "not known yet".
 		cost := "-"
 		if spent.known {
 			cost = fmt.Sprintf("$%.2f", spent.cost)

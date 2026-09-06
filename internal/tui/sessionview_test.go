@@ -204,9 +204,9 @@ func TestTheSessionViewFollowsTheTailAndScrolls(t *testing.T) {
 // whichever session picks that item up next.
 //
 // The view says exactly that and never "sent": nothing reaches the running
-// session — `claude -p` cannot be told anything after it has started — and a
-// person who read it as a word in that session's ear would be wrong about
-// what the factory is doing.
+// session — a headless agent cannot be told anything after it has started —
+// and a person who read it as a word in that session's ear would be wrong
+// about what the factory is doing.
 func TestAMessageIsQueuedForTheNextSessionAndTheViewSaysSo(t *testing.T) {
 	dir := t.TempDir()
 	writeTranscript(t, dir, "reading the issue")

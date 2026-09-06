@@ -24,7 +24,7 @@ func (m Model) recentPanel(w, rows, from int) string {
 	out := []string{headerStyle.Render(clip(recentRow("  ", "role", "issue", "pr", "outcome", "took", "cost", "note"), w))}
 	out = append(out, listRows(len(m.recent), rows, func(i int) string {
 		f := m.recent[i]
-		// A session that ended with no result event never reported a cost:
+		// A session that ended with no closing event never reported a cost:
 		// "-" says so, rather than the confident-looking "$0.00" a session
 		// that genuinely cost nothing still prints.
 		cost := "-"

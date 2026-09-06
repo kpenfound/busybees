@@ -243,7 +243,7 @@ assignee = "busybees-bot"
 | `rate_limit_backoff` | duration | `"15m"` | How long to pause polling after a poll fails with a GitHub rate-limit error, instead of retrying after `poll_interval`. Also how long the whole factory pauses when a session hits the claude session limit and no usable reset time came with it; see [The claude session limit](#the-claude-session-limit). |
 | `max_developers` | int | `1` | Concurrent developer workers. Each owns one issue and runs its developer, reviewer and checks stages one after another, so reviewer concurrency follows developer concurrency. `0` means the default; a negative value is rejected. |
 | `max_review_rounds` | int | `3` | Developer and reviewer rounds before an issue is escalated with `bees:needs-human`. `0` means the default; a negative value is rejected. |
-| `retries` | int | `1` | Extra attempts a session gets after failing for infrastructure reasons: it timed out, ran out of turns, hit an API error or rate limit, or `claude` crashed. A session that ran and reported with `bees done`, `failed` included, is not retried, and neither is one that hit the claude session limit. `0` disables retrying; `0` to `5`. See [Escalation](workflow.md#escalation-beesneeds-human). |
+| `retries` | int | `1` | Extra attempts a session gets after failing for infrastructure reasons: it timed out, ran out of turns, hit an API error or rate limit, or the agent crashed. A session that ran and reported with `bees done`, `failed` included, is not retried, and neither is one that hit the claude session limit. `0` disables retrying; `0` to `5`. See [Escalation](workflow.md#escalation-beesneeds-human). |
 | `retry_delay` | duration | `"10m"` | Wait before a retry. `"0s"` retries at once; a negative value is rejected. |
 | `retry_with_fallback` | bool | `true` | Run the retry with the role's `fallback_model` as its primary model. A role without one reruns as it was. |
 | `triage_batch_size` | int | `5` | Most issues handed to the project manager in one session. `0` means the default. |
@@ -617,9 +617,9 @@ every other size as the developer's `model`. `fallback_model` is unchanged, and
 a retry that runs with it still overrides the size's choice. The reviewer is
 told the size too and always runs its own `model`.
 
-Signing (`--gpg-sign`, `-S`) happens inside a headless Claude Code session on
-the machine running `bees`, so a signing key and agent must work for that user
-without a prompt. `--signoff` needs `user.name` and `user.email`, as any
+Signing (`--gpg-sign`, `-S`) happens inside a headless session on the machine
+running `bees`, so a signing key and agent must work for that user without a
+prompt. `--signoff` needs `user.name` and `user.email`, as any
 commit does.
 
 ### Sandboxing
@@ -639,8 +639,8 @@ sandbox = "container"
 | Mode | What a session can reach |
 |---|---|
 | `none` | Everything the user running `bees` can: the home directory, credentials, the network and every other checkout on the machine. |
-| `claude` | Claude Code's own sandbox: writes to the worktree and the state directory, network to GitHub. See [The claude mode](#the-claude-mode). |
-| `container` | A container holding the worktree, the repository's `.git` and the state directory, and nothing else of the host. See [The container mode](#the-container-mode). |
+| `claude` | Claude Code's own sandbox: writes to the worktree and the state directory, network to GitHub. See [The claude mode](#the-claude-mode) and [Security](security.md#claude). |
+| `container` | A container holding the worktree, the repository's `.git` and the state directory, and nothing else of the host. See [The container mode](#the-container-mode) and [Security](security.md#container). |
 
 `none` is the default. `bees run` checks before it starts that every role in
 the rotation can have the box it asks for (the programs a `claude` box needs
@@ -653,6 +653,10 @@ exactly what it was configured to be kept away from. `bees exec` and
 `bees config show` prints the resolved mode per role, and
 [`bees status`](cli.md#bees-status---json) the mode of the session each worker
 is running right now.
+
+See [Security](security.md) for what each mode protects and what it does not,
+filesystem, network and credentials in turn, including what a sandboxed
+session's own GitHub credentials mean for it.
 
 #### The claude mode
 

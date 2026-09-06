@@ -1,7 +1,7 @@
 // Package scheduler is the busybees orchestrator loop.
 //
 // It polls GitHub for visible issues and pull requests, keeps the workflow
-// state labels consistent, and dispatches Claude Code sessions:
+// state labels consistent, and dispatches sessions:
 //
 //   - a pool of developer workers (scheduler.max_developers). Each worker
 //     owns one issue and runs a sequential developer -> reviewer -> developer
@@ -511,7 +511,7 @@ func capErrors(err error) string {
 
 // rateLimitPhrases are the substrings that mark a message as "come back
 // later": GitHub's rate-limit responses as surfaced by gh, and the API
-// errors a claude session reports when it is throttled or the service is
+// errors a session's agent reports when it is throttled or the service is
 // overloaded.
 var rateLimitPhrases = []string{"rate limit", "abuse detection", "secondary rate", "overloaded", "usage limit", "session limit"}
 

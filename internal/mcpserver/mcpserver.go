@@ -1,17 +1,17 @@
-// Package mcpserver serves the factory's own operations to a Claude Code
-// session as MCP tools, so a session calls a tool with a schema instead of
-// guessing a `bees` command line and running it through Bash.
+// Package mcpserver serves the factory's own operations to a session as MCP
+// tools, so a session calls a tool with a schema instead of guessing a
+// `bees` command line and running it through Bash.
 //
 // The server is the same code the CLI runs: mail_send/mail_list go through
 // internal/mail, issue_create/issue_link through internal/issues and done
 // through session.Report. The GitHub tools (issue_view, pr_view, comment,
 // issue_edit_body, issue_set_state, issue_question, submit_review) go through a `gh` client
 // and enforce the factory's rules — the visibility filter, the comment
-// marker, who owns which issue — instead of restating them in a prompt. It is
-// started by claude as `bees mcp serve` (or, for a container session, by the
+// marker, who owns which issue — instead of restating them in a prompt. It
+// is started as `bees mcp serve` (or, for a container session, by the
 // session runner on the host as `bees mcp serve --listen`, which serves it
-// over HTTP) and takes its context (role, state dir, session dir, issue, PR)
-// from the BEES_* environment, exactly like the session commands.
+// over HTTP) and takes its context (role, state dir, session dir, issue,
+// PR) from the BEES_* environment, exactly like the session commands.
 //
 // The tool set and the enums in the schemas depend on the role: a developer's
 // done tool offers pr-opened, pr-updated, question and failed, a reviewer's
