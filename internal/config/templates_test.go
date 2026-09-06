@@ -292,3 +292,164 @@ func TestSettingLeavesUnsetKeysCommented(t *testing.T) {
 		t.Errorf("a template with no settings renders something other than the default below its header")
 	}
 }
+
+// loadTemplate renders a template's bees.toml and loads it, which is the
+// config of a project set up with `bees templates show <name> > bees.toml`.
+func loadTemplate(t *testing.T, tpl Template) *Config {
+	t.Helper()
+	text, err := RenderTOML(RenderOptions{Repo: "acme/widgets", ExplicitRepo: true, ExplicitBranch: true, Template: &tpl})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(writeConfig(t, text))
+	if err != nil {
+		t.Fatalf("template %q does not load: %v", tpl.Name, err)
+	}
+	return cfg
+}
+
+// flip returns tpl with one setting set to the other boolean, which is the
+// config of a project that runs the template's shape apart from that setting.
+func flip(t *testing.T, tpl Template, key string) Template {
+	t.Helper()
+	value, ok := tpl.Settings[key]
+	if !ok {
+		t.Fatalf("template %q does not set %s", tpl.Name, key)
+	}
+	settings := maps.Clone(tpl.Settings)
+	if value == "true" {
+		settings[key] = "false"
+	} else {
+		settings[key] = "true"
+	}
+	return Template{Name: tpl.Name + "-" + key, When: tpl.When, Settings: settings}
+}
+
+// Every key a template may set is read by Compare. A ninth key added to
+// TemplateKeys without a resolver would be compared against nothing, and
+// every config would silently match on it.
+func TestEveryTemplateKeyResolves(t *testing.T) {
+	if got, want := slices.Sorted(maps.Keys(resolved)), slices.Sorted(slices.Values(TemplateKeys())); !slices.Equal(got, want) {
+		t.Errorf("resolved covers %v, TemplateKeys() is %v", got, want)
+	}
+}
+
+// A config rendered from a template matches that template. Table-driven over
+// Templates(), so a sixth template is covered without a new test.
+func TestCompareMatchesTheTemplateItWasRenderedFrom(t *testing.T) {
+	for _, tpl := range Templates() {
+		t.Run(tpl.Name, func(t *testing.T) {
+			if diffs := tpl.Compare(loadTemplate(t, tpl)); len(diffs) != 0 {
+				t.Errorf("a config rendered from %q differs from it: %+v", tpl.Name, diffs)
+			}
+		})
+	}
+}
+
+// The example the issue leads with: an issue-driven factory compared to
+// slop-factory reports that auto-merge is off and that a feature a bee
+// proposes waits for a person, and nothing else. The differences come out in
+// the order the file writes the keys, which is TemplateKeys order.
+func TestCompareReportsTheSettingsAndNothingElse(t *testing.T) {
+	issueDriven, err := TemplateByName("issue-driven")
+	if err != nil {
+		t.Fatal(err)
+	}
+	slop, err := TemplateByName("slop-factory")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Difference{
+		{Key: "scheduler.feature_proposals", Config: "true", Template: "false"},
+		{Key: "roles.reviewer.auto_merge", Config: "false", Template: "true"},
+	}
+	if got := slop.Compare(loadTemplate(t, issueDriven)); !slices.Equal(got, want) {
+		t.Errorf("issue-driven vs slop-factory:\ngot  %+v\nwant %+v", got, want)
+	}
+}
+
+// One setting at a time: a config that runs a template's shape apart from one
+// key is reported as differing on that key and nothing else, for all eight
+// keys of every template.
+func TestCompareReportsOneSettingAtATime(t *testing.T) {
+	for _, tpl := range Templates() {
+		for _, key := range TemplateKeys() {
+			t.Run(tpl.Name+"/"+key, func(t *testing.T) {
+				changed := flip(t, tpl, key)
+				cfg := loadTemplate(t, changed)
+				want := []Difference{{Key: key, Config: changed.Settings[key], Template: tpl.Settings[key]}}
+				if got := tpl.Compare(cfg); !slices.Equal(got, want) {
+					t.Errorf("got %+v, want %+v", got, want)
+				}
+			})
+		}
+	}
+}
+
+// Decision 2 of #423: the comparison is on the resolved values. A config that
+// sets none of the eight keys runs on their defaults, which is what
+// issue-driven writes explicitly, so the two are equal.
+func TestCompareReadsDefaultsNotFileText(t *testing.T) {
+	text := "version = 1\n\n[project]\nrepo = \"acme/widgets\"\ndefault_branch = \"main\"\n"
+	cfg, err := Load(writeConfig(t, text))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(text, "enabled") || strings.Contains(text, "auto_merge") {
+		t.Fatalf("the fixture sets a templated key, so it proves nothing:\n%s", text)
+	}
+	tpl, err := TemplateByName("issue-driven")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tpl.Settings["roles.qa.enabled"] != "true" {
+		t.Fatalf("issue-driven no longer sets roles.qa.enabled = true, so this fixture proves nothing")
+	}
+	if diffs := tpl.Compare(cfg); len(diffs) != 0 {
+		t.Errorf("a config that sets nothing differs from issue-driven: %+v", diffs)
+	}
+}
+
+// Closest picks the template a config differs from least, and reports those
+// differences.
+func TestClosest(t *testing.T) {
+	for _, tpl := range Templates() {
+		cfg := loadTemplate(t, tpl)
+		got, diffs := Closest(cfg)
+		if got.Name != tpl.Name || len(diffs) != 0 {
+			t.Errorf("a config rendered from %q is closest to %q with %d differences", tpl.Name, got.Name, len(diffs))
+		}
+	}
+	// One setting away from slop-factory and further from everything else.
+	tpl, err := TemplateByName("slop-factory")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := loadTemplate(t, flip(t, tpl, "roles.qa.enabled"))
+	got, diffs := Closest(cfg)
+	want := []Difference{{Key: "roles.qa.enabled", Config: "false", Template: "true"}}
+	if got.Name != "slop-factory" || !slices.Equal(diffs, want) {
+		t.Errorf("Closest = %q, %+v; want slop-factory, %+v", got.Name, diffs, want)
+	}
+}
+
+// Decision 4 of #423: ties go to the earlier template in Templates(). This
+// config enables the product manager (contributor does not) and disables QA
+// (issue-driven does not), and agrees with both on the other six settings.
+func TestClosestTieGoesToTheEarlierTemplate(t *testing.T) {
+	contributor, err := TemplateByName("contributor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := loadTemplate(t, flip(t, contributor, "roles.product_manager.enabled"))
+	issueDriven, err := TemplateByName("issue-driven")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a, b := len(contributor.Compare(cfg)), len(issueDriven.Compare(cfg)); a != 1 || b != 1 {
+		t.Fatalf("the fixture is %d from contributor and %d from issue-driven, not a tie", a, b)
+	}
+	if got, diffs := Closest(cfg); got.Name != "contributor" {
+		t.Errorf("Closest = %q, %+v; want contributor, the earlier of the two in Templates()", got.Name, diffs)
+	}
+}
