@@ -56,7 +56,17 @@ const beesEnvPrefix = "BEES_"
 // EnvGHToken is the variable gh reads its credentials from. It is not one of
 // bees' own BEES_* variables — it is gh's, set for a session only when
 // [github] configures a token — so it survives the BEES_ strip in env.
-const EnvGHToken = "GH_TOKEN"
+const EnvGHToken = config.EnvGHToken
+
+// EnvMCPToken carries the bearer token `bees mcp serve --listen` requires
+// of its client, for a container session's built-in server. It is set on
+// the server process alone: the session gets the token in its mcp.json
+// entry, never in its environment.
+const EnvMCPToken = "BEES_MCP_TOKEN"
+
+// MCPListening is the prefix of the line `bees mcp serve --listen` prints
+// once it listens, followed by the address.
+const MCPListening = "listening on "
 
 // Request describes one session to run.
 type Request struct {
@@ -181,6 +191,13 @@ type Runner struct {
 	// CodexBin is the codex executable, run for a role whose agent is
 	// codex. Default "codex".
 	CodexBin string
+	// DockerBin is the container engine a container session is run with.
+	// Default config.ContainerEngine.
+	DockerBin string
+	// ContainerListen is the address the built-in MCP server listens on
+	// for a container session. Empty picks the address the container
+	// reaches the host by (see containerListen).
+	ContainerListen string
 	// BeesBin is the path of the bees executable, made available on PATH so
 	// sessions can run `bees mail` and `bees done`.
 	BeesBin string
@@ -216,12 +233,22 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 		r.Logger = slog.Default()
 	}
 	// The box this session runs in is the role's resolved sandbox mode.
-	// Only config.SandboxNone is implemented, and it is what the command
-	// built below already is; a role configured for a stronger box refuses
-	// to run rather than quietly running without one. `bees run` asks the
-	// same question once at startup (config.CheckSandbox), so reaching this
-	// means a session started some other way — `bees exec`, `bees tick`.
+	// config.SandboxNone is the backend's plain command,
+	// config.SandboxClaude the claude command under Claude Code's sandbox
+	// (claudeBackend.command) and config.SandboxContainer the backend's
+	// command inside `docker run` (see container.go); a role configured for
+	// a box bees cannot build, one its agent cannot run under, or one
+	// missing what the box needs, refuses to run rather than quietly
+	// running without one. `bees run` asks the same questions once at
+	// startup (config.CheckSandbox), so reaching this means a session
+	// started some other way — `bees exec`, `bees tick`.
 	if err := config.CheckSandboxMode(req.Role.Sandbox); err != nil {
+		return nil, fmt.Errorf("%s: %w", req.Role.Name, err)
+	}
+	if err := config.CheckSandboxAgent(req.Role.Sandbox, req.Role.Agent); err != nil {
+		return nil, fmt.Errorf("%s: %w", req.Role.Name, err)
+	}
+	if err := config.CheckSandboxContainer(req.Role, r.GitHub); err != nil {
 		return nil, fmt.Errorf("%s: %w", req.Role.Name, err)
 	}
 	be, err := backendFor(req.Role.Agent)
@@ -249,9 +276,28 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 	}
 
 	paths := sessionPaths{dir: sessionDir, systemPrompt: systemPromptPath, prompt: promptPath}
+	var box *container
+	if req.Role.Sandbox == config.SandboxContainer {
+		box, err = r.startContainer(ctx, req, sessionDir)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", req.Role.Name, err)
+		}
+		defer box.close()
+		paths.mcp = mcpEntries(req, box.builtin)
+	} else {
+		paths.mcp = mcpEntries(req, r.builtinMCP(req, sessionDir))
+	}
 	bin, args, stdin, err := be.command(ctx, r, req, paths)
 	if err != nil {
 		return nil, err
+	}
+	env := r.env(req, sessionDir)
+	if box != nil {
+		bin, args, err = box.command(ctx, bin, args)
+		if err != nil {
+			return nil, err
+		}
+		env = box.clientEnv()
 	}
 
 	timeout := req.Role.Timeout
@@ -264,10 +310,14 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 	cmd := exec.CommandContext(runCtx, bin, args...)
 	cmd.Dir = req.WorkDir
 	cmd.Stdin = strings.NewReader(stdin)
-	cmd.Env = r.env(req, sessionDir)
+	cmd.Env = env
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
 		// Kill the whole process group so MCP servers die with the agent.
+		// A container outlives its engine client, so it is removed first.
+		if box != nil {
+			box.remove()
+		}
 		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	}
 	cmd.WaitDelay = 10 * time.Second
@@ -287,7 +337,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 		return nil, err
 	}
 
-	r.Logger.Info("session start", "session", req.Name, "role", req.Role.Name, "agent", req.Role.Agent, "model", req.Role.Model, "dir", req.WorkDir)
+	r.Logger.Info("session start", "session", req.Name, "role", req.Role.Name, "agent", req.Role.Agent, "model", req.Role.Model, "sandbox", req.Role.Sandbox, "dir", req.WorkDir)
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start %s: %w", filepath.Base(bin), err)
 	}
@@ -441,14 +491,7 @@ type envVar struct{ name, value string }
 // builtinMCP describes the built-in bees MCP server: this very binary, run as
 // `bees mcp serve`, with the session's context passed explicitly.
 func (r *Runner) builtinMCP(req Request, sessionDir string) MCPEntry {
-	bin := r.BeesBin
-	if bin == "" {
-		if self, err := os.Executable(); err == nil {
-			bin = self
-		} else {
-			bin = "bees"
-		}
-	}
+	bin := r.beesBin()
 	env := map[string]string{}
 	for _, v := range r.beesEnv(req, sessionDir) {
 		if v.value != "" {
@@ -458,13 +501,35 @@ func (r *Runner) builtinMCP(req Request, sessionDir string) MCPEntry {
 	return MCPEntry{Type: "stdio", Command: bin, Args: []string{"mcp", "serve"}, Env: env}
 }
 
+// env is the environment of a session on the host: the host's own, less
+// the BEES_* variables, with the session's laid over it.
 func (r *Runner) env(req Request, sessionDir string) []string {
-	// Every BEES_* variable a session sees is one bees set for it. Dropping the
-	// inherited ones keeps a session started from inside another session (a
-	// nested `bees run`, `bees exec`, or a test binary) from picking up a stale
-	// issue, PR or branch number; the ones this session has none of are then
-	// absent rather than wrong. The one exception is the variable
-	// github.token reads, put back below with the value bees resolved.
+	env := hostEnv()
+	set := func(k, v string) { env = append(env, k+"="+v) }
+	for _, v := range r.sessionVars(req, sessionDir) {
+		set(v.name, v.value)
+	}
+	if r.BeesBin != "" {
+		set("PATH", filepath.Dir(r.BeesBin)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	}
+	// Let sessions run a plain `git push` on a fresh branch without touching
+	// the user's git configuration (git >= 2.31 reads GIT_CONFIG_* vars).
+	if os.Getenv("GIT_CONFIG_COUNT") == "" {
+		for _, v := range gitConfigVars(r.gitConfig()) {
+			set(v.name, v.value)
+		}
+	}
+	return env
+}
+
+// hostEnv is the host's environment less the BEES_* variables. Every BEES_*
+// variable a session sees is one bees set for it. Dropping the inherited
+// ones keeps a session started from inside another session (a nested `bees
+// run`, `bees exec`, or a test binary) from picking up a stale issue, PR or
+// branch number; the ones this session has none of are then absent rather
+// than wrong. The one exception is the variable github.token reads, put
+// back by sessionVars with the value bees resolved.
+func hostEnv() []string {
 	envs := os.Environ()
 	env := make([]string, 0, len(envs))
 	for _, kv := range envs {
@@ -472,20 +537,23 @@ func (r *Runner) env(req Request, sessionDir string) []string {
 			env = append(env, kv)
 		}
 	}
-	set := func(k, v string) { env = append(env, k+"="+v) }
-	// Configured environment first, so bees' own variables below win.
-	for k, v := range req.Role.Env {
-		set(k, os.ExpandEnv(v))
+	return env
+}
+
+// sessionVars are the variables bees sets for a session, wherever it runs,
+// in the order they are set: the role's configured environment first, so
+// bees' own variables win, then the shell, the BEES_* variables, the
+// factory's GitHub identity and the git identity.
+func (r *Runner) sessionVars(req Request, sessionDir string) []envVar {
+	var vars []envVar
+	set := func(k, v string) { vars = append(vars, envVar{k, v}) }
+	for _, k := range slices.Sorted(maps.Keys(req.Role.Env)) {
+		set(k, os.ExpandEnv(req.Role.Env[k]))
 	}
 	if req.Role.Shell != "" {
 		set("SHELL", req.Role.Shell)
 	}
-	for _, v := range r.beesEnv(req, sessionDir) {
-		set(v.name, v.value)
-	}
-	if r.BeesBin != "" {
-		set("PATH", filepath.Dir(r.BeesBin)+string(os.PathListSeparator)+os.Getenv("PATH"))
-	}
+	vars = append(vars, r.beesEnv(req, sessionDir)...)
 	// The factory's own GitHub identity, so a session's gh, pushes and
 	// commits are the bot's rather than the machine owner's. It sits with
 	// bees' own variables, after req.Role.Env, so a role cannot configure a
@@ -508,26 +576,24 @@ func (r *Runner) env(req Request, sessionDir string) []string {
 			set(v, token)
 		}
 	}
-	for _, v := range r.gitIdentity() {
-		set(v.name, v.value)
+	vars = append(vars, r.gitIdentity()...)
+	for _, k := range slices.Sorted(maps.Keys(req.Env)) {
+		set(k, req.Env[k])
 	}
-	// Let sessions run a plain `git push` on a fresh branch without touching
-	// the user's git configuration (git >= 2.31 reads GIT_CONFIG_* vars).
-	// GIT_CONFIG_COUNT is derived from the entries and never written by hand:
-	// a count that is one short silently drops the last entry.
-	if os.Getenv("GIT_CONFIG_COUNT") == "" {
-		entries := r.gitConfig()
-		for i, e := range entries {
-			n := strconv.Itoa(i)
-			set("GIT_CONFIG_KEY_"+n, e.name)
-			set("GIT_CONFIG_VALUE_"+n, e.value)
-		}
-		set("GIT_CONFIG_COUNT", strconv.Itoa(len(entries)))
+	return vars
+}
+
+// gitConfigVars numbers git configuration entries into the GIT_CONFIG_KEY_n
+// and GIT_CONFIG_VALUE_n variables git reads. GIT_CONFIG_COUNT is derived
+// from the entries and never written by hand: a count that is one short
+// silently drops the last entry.
+func gitConfigVars(entries []envVar) []envVar {
+	var vars []envVar
+	for i, e := range entries {
+		n := strconv.Itoa(i)
+		vars = append(vars, envVar{"GIT_CONFIG_KEY_" + n, e.name}, envVar{"GIT_CONFIG_VALUE_" + n, e.value})
 	}
-	for k, v := range req.Env {
-		set(k, v)
-	}
-	return env
+	return append(vars, envVar{"GIT_CONFIG_COUNT", strconv.Itoa(len(entries))})
 }
 
 // gitIdentity is the author and committer a session's commits carry. The two

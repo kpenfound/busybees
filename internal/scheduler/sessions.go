@@ -78,6 +78,7 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 	d.StateDir = s.store.Dir
 	d.SessionDir = sessionDir
 	d.NotesFile = s.store.NotesPath(spec.role)
+	d.Sandbox = role.Sandbox
 	d.Notes = notes
 	d.ConsolidateNotes, d.ConsolidateReason = s.consolidateNotes(spec.role, len(notes))
 	if d.Issue != nil && (spec.role == config.RoleDeveloper || spec.role == config.RoleReviewer) {

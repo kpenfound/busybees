@@ -9,8 +9,66 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/logging"
 )
+
+// usesClaude gates newApp's claude version check: it must run whenever an
+// enabled role resolves to agent = "claude", including the unconfigured
+// default, and must not run when every enabled role is codex.
+func TestUsesClaude(t *testing.T) {
+	load := func(t *testing.T, body string) *config.Config {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "bees.toml")
+		full := "version = 1\n[project]\nrepo = \"a/b\"\ndefault_branch = \"main\"\n" + body
+		if err := os.WriteFile(path, []byte(full), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := config.Load(path)
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		return cfg
+	}
+
+	cases := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"default: no agent configured anywhere", "", true},
+		{"global agent = codex", "[global]\nagent = \"codex\"\n", false},
+		{
+			"mixed: one role codex, rest default",
+			"[roles.developer]\nagent = \"codex\"\n",
+			true,
+		},
+		{
+			"every role codex",
+			"[global]\nagent = \"codex\"\n" +
+				"[roles.product_manager]\nagent = \"codex\"\n" +
+				"[roles.project_manager]\nagent = \"codex\"\n" +
+				"[roles.developer]\nagent = \"codex\"\n" +
+				"[roles.reviewer]\nagent = \"codex\"\n" +
+				"[roles.qa]\nagent = \"codex\"\n",
+			false,
+		},
+		{
+			"the only claude-configured role is disabled",
+			"[global]\nagent = \"codex\"\n" +
+				"[roles.developer]\nagent = \"claude\"\nenabled = false\n",
+			false,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cfg := load(t, c.body)
+			if got := usesClaude(cfg); got != c.want {
+				t.Errorf("usesClaude() = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
 
 // A log file that cannot be opened is a warning, not a failure: the run
 // continues with console logging only.

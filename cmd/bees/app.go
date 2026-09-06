@@ -50,6 +50,21 @@ func codexBin() string {
 	return "codex"
 }
 
+// usesClaude reports whether any enabled role resolves to agent = "claude"
+// (the default), so newApp knows whether the claude binary needs to exist.
+func usesClaude(cfg *config.Config) bool {
+	for _, name := range config.Roles {
+		role, err := cfg.Role(name)
+		if err != nil || !role.Enabled {
+			continue
+		}
+		if role.Agent == config.AgentClaude {
+			return true
+		}
+	}
+	return false
+}
+
 // configPath resolves the bees.toml to use.
 func configPath(g *globalFlags) (string, error) {
 	if g.config != "" {
@@ -122,8 +137,13 @@ func newApp(ctx context.Context, g *globalFlags) (*app, error) {
 		return nil, err
 	}
 	bin := claudeBin()
-	if err := versions.CheckAll(ctx, bin); err != nil {
+	if err := versions.CheckGH(ctx); err != nil {
 		return nil, err
+	}
+	if usesClaude(cfg) {
+		if err := versions.CheckClaude(ctx, bin); err != nil {
+			return nil, err
+		}
 	}
 	skillMgr := skills.NewManager(cacheDir())
 	skillMgr.RefreshAlways, skillMgr.RefreshAfter = cfg.SkillsRefresh()

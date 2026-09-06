@@ -6,7 +6,9 @@ import (
 	"errors"
 	"io"
 	"maps"
+	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -38,6 +40,10 @@ type sessionPaths struct {
 	dir          string
 	systemPrompt string
 	prompt       string
+	// mcp are the session's MCP servers, the built-in one included: the
+	// runner decides how that one is reached (a `bees mcp serve` the agent
+	// starts, or the host's HTTP server for a container session).
+	mcp map[string]MCPEntry
 }
 
 // streamEnd is what a backend read off the end of a session's stream, in
@@ -77,16 +83,31 @@ func (claudeBackend) command(ctx context.Context, r *Runner, req Request, paths 
 	if bin == "" {
 		bin = "claude"
 	}
+	boxed := req.Role.Sandbox == config.SandboxClaude
 	args := []string{
 		"-p",
 		"--output-format", "stream-json",
 		"--verbose",
-		"--dangerously-skip-permissions",
+	}
+	if boxed {
+		// Inside the box the permission layer is what holds the built-in
+		// tools, which run in the claude process and not under the OS
+		// sandbox: acceptEdits lets Write and Edit work in the worktree
+		// and the --add-dir state dir and asks about anything else, and
+		// with nobody to ask, "none" refuses it. What the session may do
+		// without asking is the allow list of the settings block below.
+		// --dangerously-skip-permissions would answer yes to every one of
+		// those questions, and a Write anywhere on the machine with it.
+		args = append(args, "--permission-mode", "acceptEdits", "--permission-prompts", "none")
+	} else {
+		args = append(args, "--dangerously-skip-permissions")
+	}
+	args = append(args,
 		"--append-system-prompt-file", paths.systemPrompt,
 		"--model", req.Role.Model,
 		"--max-turns", strconv.Itoa(req.Role.MaxTurns),
-		"--name", "bees-" + req.Name,
-	}
+		"--name", "bees-"+req.Name,
+	)
 	if req.Role.FallbackModel != "" && req.Role.FallbackModel != req.Role.Model {
 		args = append(args, "--fallback-model", req.Role.FallbackModel)
 	}
@@ -105,10 +126,20 @@ func (claudeBackend) command(ctx context.Context, r *Runner, req Request, paths 
 	// Every session gets the built-in bees server next to whatever bees.toml
 	// configures, so mcp.json is always written.
 	mcpPath := filepath.Join(paths.dir, "mcp.json")
-	if err := WriteMCPConfig(mcpPath, r.mcpEntries(req, paths.dir)); err != nil {
+	if err := WriteMCPConfig(mcpPath, paths.mcp); err != nil {
 		return "", nil, "", err
 	}
 	args = append(args, "--mcp-config", mcpPath, "--strict-mcp-config")
+	if boxed {
+		settings, err := claudeSandboxSettings(sortedKeys(paths.mcp), runtime.GOOS)
+		if err != nil {
+			return "", nil, "", err
+		}
+		if err := os.WriteFile(filepath.Join(paths.dir, sandboxFile), settings, 0o644); err != nil {
+			return "", nil, "", err
+		}
+		args = append(args, "--settings", string(settings))
+	}
 	if len(req.Role.Skills) > 0 {
 		if r.Skills == nil {
 			return "", nil, "", errors.New("session: skills configured but no skills manager")
@@ -243,7 +274,7 @@ func (codexBackend) command(_ context.Context, r *Runner, req Request, paths ses
 	if req.Role.Effort != "" {
 		args = append(args, "-c", "model_reasoning_effort="+codexValue(codexEffort(req.Role.Effort)))
 	}
-	for _, o := range codexMCPOverrides(r.mcpEntries(req, paths.dir)) {
+	for _, o := range codexMCPOverrides(paths.mcp) {
 		args = append(args, "-c", o)
 	}
 	args = append(args, "-")
@@ -379,9 +410,10 @@ func sortedKeys[V any](m map[string]V) []string {
 }
 
 // mcpEntries is what a session's MCP servers are, whatever backend runs it:
-// the resolved role's servers and the built-in bees server.
-func (r *Runner) mcpEntries(req Request, sessionDir string) map[string]MCPEntry {
+// the resolved role's servers and the built-in bees server, as the runner
+// says it is reached.
+func mcpEntries(req Request, builtin MCPEntry) map[string]MCPEntry {
 	entries := MCPEntries(req.Role.MCP)
-	entries[config.BuiltinMCPServer] = r.builtinMCP(req, sessionDir)
+	entries[config.BuiltinMCPServer] = builtin
 	return entries
 }

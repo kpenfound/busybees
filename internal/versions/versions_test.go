@@ -65,8 +65,11 @@ func TestCheck(t *testing.T) {
 
 func TestSkip(t *testing.T) {
 	t.Setenv(EnvSkip, "1")
-	if err := CheckAll(context.Background(), filepath.Join(t.TempDir(), "missing")); err != nil {
-		t.Errorf("skip: %v", err)
+	if err := CheckGH(context.Background()); err != nil {
+		t.Errorf("skip gh: %v", err)
+	}
+	if err := CheckClaude(context.Background(), filepath.Join(t.TempDir(), "missing")); err != nil {
+		t.Errorf("skip claude: %v", err)
 	}
 }
 

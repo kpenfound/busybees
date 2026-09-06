@@ -92,7 +92,7 @@ prints what it found grouped by area:
 
 | Group | Checks |
 |---|---|
-| `toolchain` | `git` on `PATH`; `gh` on `PATH`, authenticated and holding the `repo` token scope; `claude` (or `$BEES_CLAUDE_BIN`) runnable and new enough. |
+| `toolchain` | `git` on `PATH`; `gh` on `PATH`, authenticated and holding the `repo` token scope; `claude` (or `$BEES_CLAUDE_BIN`) runnable and new enough; `codex` (or `$BEES_CODEX_BIN`) runnable, when a role is configured with `agent = "codex"`. |
 | `config` | `bees.toml` loads and validates; `project.repo` and `project.default_branch` are set or derivable; the remote answers; the state directory is ignored by git; the notes directory is writable; every configured `prompt_file` exists; the repository's `bees/prompts/` files are all readable and named after a role; a running scheduler is serving a build of the commit that is checked out. |
 | `github` | The repository is readable and writable (`viewerPermission`); with `[github]` set, that `github.token` belongs to `github.login`; every workflow label exists; with `[github]` set, that the account can actually write issues, issue comments and labels; with `[github]` set, that the account can actually push branches; the visibility filter matches at least one open issue; with `auto_merge` on, what a merge is actually gated on. |
 | `workspace` | A worktree can be created under `workspace_root` and removed again. |
@@ -1215,12 +1215,19 @@ bees done failed -m "Could not get the test-suite to run: missing DATABASE_URL"
 
 ### `bees mcp serve` *(sessions)*
 
-Runs the built-in MCP server on stdio. You never start it yourself: `bees`
+Runs the built-in MCP server on stdio (or over HTTP, below). You never start
+it yourself: `bees`
 hands it to every session as the server named `bees` (in `mcp.json` for
 claude, as `mcp_servers.bees` overrides for codex), and the agent starts it
 as `<bees binary> mcp serve` with the session's `BEES_*`
 variables. The name `bees` is reserved — a `[global.mcp.bees]` or
 `[roles.<role>.mcp.bees]` entry in `bees.toml` fails validation.
+
+For a [container session](configuration.md#the-container-mode) the runner
+starts it on the host itself, as `bees mcp serve --listen <address>` with
+`$BEES_MCP_TOKEN` set: it prints `listening on <address>` and serves the same
+tools over HTTP to a client presenting that token, which is how a session
+without the `bees` binary reaches them.
 
 The server is backed by the same code as the commands above, so a tool and its
 command do exactly the same thing. Claude Code exposes the tools as
