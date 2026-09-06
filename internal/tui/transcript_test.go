@@ -187,3 +187,61 @@ func TestAFailedSessionsResultLineSaysSo(t *testing.T) {
 		}
 	}
 }
+
+// A codex session's transcript is its event stream, and it reads the same
+// way a claude one does: what the session said, the commands and MCP tools
+// it called and how each answered, a thought as a marker, and the end of
+// the turn as the session's end — with no cost, because codex reports none.
+// Its bookkeeping lines (the thread and turn start, an item in progress) are
+// dropped.
+func TestACodexTranscriptRendersTheSameWay(t *testing.T) {
+	transcript := strings.Join([]string{
+		`{"type":"thread.started","thread_id":"0199-abc"}`,
+		`{"type":"turn.started"}`,
+		`{"type":"item.started","item":{"id":"item_0","type":"command_execution","command":"git status","status":"in_progress"}}`,
+		`{"type":"item.completed","item":{"id":"item_0","type":"command_execution","command":"git status","aggregated_output":"On branch main\nnothing to commit\n","exit_code":0,"status":"completed"}}`,
+		`{"type":"item.completed","item":{"id":"item_1","type":"reasoning","text":"I should look at the diff"}}`,
+		`{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"I'll start by reading the diff"}}`,
+		`{"type":"item.completed","item":{"id":"item_3","type":"mcp_tool_call","server":"bees","tool":"issue_view","status":"completed"}}`,
+		`{"type":"item.completed","item":{"id":"item_4","type":"command_execution","command":"go test ./...","aggregated_output":"FAIL\n","exit_code":1,"status":"failed"}}`,
+		`{"type":"item.completed","item":{"id":"item_5","type":"file_change","changes":[{"path":"a.go","kind":"update"}],"status":"completed"}}`,
+		`{"type":"turn.completed","usage":{"input_tokens":1200,"cached_input_tokens":0,"output_tokens":300}}`,
+	}, "\n") + "\n"
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, session.TranscriptFile), []byte(transcript), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lines, _, err := readTranscript(dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(lines, "\n")
+	for _, want := range []string{
+		"● Bash(git status)",
+		"  ⎿ On branch main (+1 line)",
+		"✻ thinking",
+		"● I'll start by reading the diff",
+		"● mcp__bees__issue_view()",
+		"  ⎿ error: FAIL",
+		"● file_change",
+		"● session ended: ok",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the rendered transcript does not contain %q:\n%s", want, got)
+		}
+	}
+	for _, unwanted := range []string{"0199-abc", "in_progress", "I should look at the diff", "input_tokens", "$"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("the rendered transcript still carries %q:\n%s", unwanted, got)
+		}
+	}
+	for _, l := range lines {
+		if strings.Contains(l, "\n") {
+			t.Errorf("a rendered transcript line carries a newline: %q", l)
+		}
+	}
+	// A turn that failed says so, and why.
+	if got := renderTranscriptLine([]byte(`{"type":"turn.failed","error":{"message":"stream disconnected\nbefore completion"}}`)); len(got) != 1 || got[0] != "● session ended: failed: stream disconnected before completion" {
+		t.Errorf("failed turn rendered as %q", got)
+	}
+}
