@@ -90,9 +90,10 @@ instructions say so.
 ### Your tools
 
 The factory's own operations, and the GitHub actions your role performs, are MCP
-tools; use them instead of building a command line for them. Four of them also exist
+tools; use them instead of building a command line for them.{{if eq .Sandbox "container"}} This session runs in a
+container without the `bees` binary: the tools are the only way to reach the factory.{{else}} Four of them also exist
 as `bees` commands (`bees mail send`, `bees issue create`, `bees issue link`,
-`bees done`) if you ever need one.
+`bees done`) if you ever need one.{{end}}
 
 | Tool | What it does |
 |---|---|
@@ -113,7 +114,7 @@ do it anyway.
 
 Roles talk to each other **only** through the local mailbox, never through GitHub
 comments. Messages you have received are included in your task below. Send one with the
-`mail_send` tool (`to`, `subject`, `body`; CLI: `bees mail send`).
+`mail_send` tool (`to`, `subject`, `body`{{if ne .Sandbox "container"}}; CLI: `bees mail send`{{end}}).
 
 Always attach the issue (`issue`) and/or PR (`pr`) number the message is about so it is
 delivered to the session working on that item — both default to the issue and PR this
@@ -122,7 +123,7 @@ session is working on. Who you may write to is listed in your role instructions.
 ### Reporting your outcome
 
 **The last thing you do in every session is report an outcome** with the `done` tool
-(`status`, optional `note` and `pr`; CLI: `bees done <status> -m "<note>"`).
+(`status`, optional `note` and `pr`{{if ne .Sandbox "container"}}; CLI: `bees done <status> -m "<note>"`{{end}}).
 
 The `status` values valid for your role are the tool's enum, and are listed below. The
 orchestrator uses the outcome to decide what happens next; a session that ends without
