@@ -659,8 +659,9 @@ prompt_file = "docs/qa-checklist.md"
   allowed_tools / disallowed_tools / shell / env** fall back to `[global]`,
   then to the built-in defaults. `fallback_model` is what Claude Code
   switches to when `model` has reached its usage limit. `agent` is the CLI
-  backend a session runs as, `claude` or `codex`; every session runs through
-  `claude` regardless of this setting.
+  a session runs as, `claude` or `codex`; a `codex` role has no default
+  `model` or `fallback_model` and ignores `max_turns`, `allowed_tools` and
+  `disallowed_tools` (see [Running a session](architecture.md#running-a-session)).
 - **commit_flags, max_size, model_by_size** are `roles.developer` only
   ([developer](#developer)). **auto_merge, merge_method, checks_wait,
   checks_poll_interval, checks_timeout, max_check_fix_rounds,

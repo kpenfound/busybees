@@ -623,6 +623,43 @@ func TestAgentDefaultAndMerge(t *testing.T) {
 	}
 }
 
+// The model defaults are claude's: a codex role that names no model resolves
+// to none, so codex runs with its own configured model rather than "opus",
+// and to no fallback model, because codex has no such flag and a retry with
+// the fallback is then a retry with the same model. A model the role or
+// [global] names is kept, whichever the agent.
+func TestCodexRoleHasNoDefaultModel(t *testing.T) {
+	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nagent = \"codex\"\n[roles.qa]\nagent = \"codex\"\nmodel = \"gpt-5-codex\"\nfallback_model = \"o3\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev, _ := cfg.Role(RoleDeveloper)
+	if dev.Model != "" || dev.FallbackModel != "" {
+		t.Errorf("codex role with no model: model %q fallback %q, want both empty", dev.Model, dev.FallbackModel)
+	}
+	if dev.ModelFor("s") != "" {
+		t.Errorf("ModelFor on a codex role with no model = %q, want empty", dev.ModelFor("s"))
+	}
+	qa, _ := cfg.Role(RoleQA)
+	if qa.Model != "gpt-5-codex" || qa.FallbackModel != "o3" {
+		t.Errorf("codex role with a model: %q / %q", qa.Model, qa.FallbackModel)
+	}
+	// The other roles still run claude with claude's defaults.
+	rev, _ := cfg.Role(RoleReviewer)
+	if rev.Agent != AgentClaude || rev.Model != DefaultModel || rev.FallbackModel != DefaultFallbackModel {
+		t.Errorf("claude role: %+v", rev)
+	}
+	// A global model applies to a codex role too.
+	cfg, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[global]\nagent = \"codex\"\nmodel = \"gpt-5\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev, _ = cfg.Role(RoleDeveloper)
+	if dev.Model != "gpt-5" || dev.FallbackModel != "" {
+		t.Errorf("global model on a codex role: %q / %q", dev.Model, dev.FallbackModel)
+	}
+}
+
 // An unknown agent is a load error naming the scope and the accepted values.
 func TestAgentValidation(t *testing.T) {
 	for body, want := range map[string]string{

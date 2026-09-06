@@ -1,11 +1,13 @@
-// Package session runs one headless Claude Code session for a role.
+// Package session runs one headless agent session for a role.
 //
-// A session is `claude -p` executed inside a workspace with the role's
-// resolved settings: model and fallback model, appended system prompt,
-// skills (as plugin dirs), MCP servers and tool restrictions. Every session
-// also gets the built-in bees MCP server (see internal/mcpserver). The session
-// communicates back through an outcome file — written by the `done` tool or
-// `bees done`, both through Report — and through the local mailbox.
+// A session is one non-interactive run of the role's agent — `claude -p`,
+// or `codex exec` when the role's agent setting says so (see backend.go) —
+// executed inside a workspace with the role's resolved settings: model and
+// fallback model, appended system prompt, skills (as plugin dirs), MCP
+// servers and tool restrictions. Every session also gets the built-in bees
+// MCP server (see internal/mcpserver). The session communicates back through
+// an outcome file — written by the `done` tool or `bees done`, both through
+// Report — and through the local mailbox.
 package session
 
 import (
@@ -61,7 +63,7 @@ type Request struct {
 	// Name identifies the session in logs, e.g. "developer-issue-12-r1".
 	Name string
 	Role config.ResolvedRole
-	// WorkDir is the directory claude runs in (the worktree).
+	// WorkDir is the directory the agent runs in (the worktree).
 	WorkDir string
 	// SystemPrompt is appended to claude's default system prompt.
 	SystemPrompt string
@@ -84,11 +86,14 @@ type Result struct {
 	StartedAt  time.Time     `json:"started_at"`
 	Duration   time.Duration `json:"duration"`
 	ExitCode   int           `json:"exit_code"`
-	// Signal is the signal that terminated claude, or 0 when it exited of
-	// its own accord. Go reports an ExitCode of -1 for a signalled process
-	// and the signal is the only part that says why, so both are recorded:
-	// the number here, its name in ErrorSubtype ("signal_killed").
-	Signal       int     `json:"signal,omitempty"`
+	// Signal is the signal that terminated the agent, or 0 when it exited
+	// of its own accord. Go reports an ExitCode of -1 for a signalled
+	// process and the signal is the only part that says why, so both are
+	// recorded: the number here, its name in ErrorSubtype ("signal_killed").
+	Signal int `json:"signal,omitempty"`
+	// ClaudeID is the id the agent gave the session: claude's session id,
+	// or codex's thread id. The JSON name is kept for the readers of
+	// result.json that predate codex.
 	ClaudeID     string  `json:"claude_session_id,omitempty"`
 	ResultText   string  `json:"result_text,omitempty"`
 	IsError      bool    `json:"is_error"`
@@ -98,7 +103,8 @@ type Result struct {
 	// CostKnown says whether CostUSD is what the session cost or merely
 	// what is known about it: claude reports the cost in the result event
 	// of its stream alone, so a session killed before it emitted one has
-	// no cost at all rather than a cost of zero. Nothing derives one.
+	// no cost at all rather than a cost of zero, and codex reports tokens
+	// but never a cost. Nothing derives one.
 	CostKnown  bool    `json:"cost_known"`
 	TimedOut   bool    `json:"timed_out"`
 	Outcome    Outcome `json:"outcome"`
@@ -172,6 +178,9 @@ func (r *Result) SessionLimited() (time.Time, bool) {
 type Runner struct {
 	// ClaudeBin is the claude executable. Default "claude".
 	ClaudeBin string
+	// CodexBin is the codex executable, run for a role whose agent is
+	// codex. Default "codex".
+	CodexBin string
 	// BeesBin is the path of the bees executable, made available on PATH so
 	// sessions can run `bees mail` and `bees done`.
 	BeesBin string
@@ -190,6 +199,7 @@ type Runner struct {
 	// Skills prepares skill plugin dirs. Optional.
 	Skills *skills.Manager
 	// AddDirs are extra directories claude may access (the state dir).
+	// Codex, which runs without a sandbox, needs no such list.
 	AddDirs []string
 	// Stream, when set, receives every stream-json line (debug output).
 	Stream io.Writer
@@ -205,10 +215,6 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 	if r.Logger == nil {
 		r.Logger = slog.Default()
 	}
-	claudeBin := r.ClaudeBin
-	if claudeBin == "" {
-		claudeBin = "claude"
-	}
 	// The box this session runs in is the role's resolved sandbox mode.
 	// Only config.SandboxNone is implemented, and it is what the command
 	// built below already is; a role configured for a stronger box refuses
@@ -217,6 +223,10 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 	// means a session started some other way — `bees exec`, `bees tick`.
 	if err := config.CheckSandboxMode(req.Role.Sandbox); err != nil {
 		return nil, fmt.Errorf("%s: %w", req.Role.Name, err)
+	}
+	be, err := backendFor(req.Role.Agent)
+	if err != nil {
+		return nil, err
 	}
 	started := time.Now()
 	sessionDir := req.SessionDir
@@ -233,55 +243,15 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 	if err := os.WriteFile(systemPromptPath, []byte(req.SystemPrompt), 0o644); err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(filepath.Join(sessionDir, "prompt.md"), []byte(req.Prompt), 0o644); err != nil {
+	promptPath := filepath.Join(sessionDir, "prompt.md")
+	if err := os.WriteFile(promptPath, []byte(req.Prompt), 0o644); err != nil {
 		return nil, err
 	}
 
-	args := []string{
-		"-p",
-		"--output-format", "stream-json",
-		"--verbose",
-		"--dangerously-skip-permissions",
-		"--append-system-prompt-file", systemPromptPath,
-		"--model", req.Role.Model,
-		"--max-turns", strconv.Itoa(req.Role.MaxTurns),
-		"--name", "bees-" + req.Name,
-	}
-	if req.Role.FallbackModel != "" && req.Role.FallbackModel != req.Role.Model {
-		args = append(args, "--fallback-model", req.Role.FallbackModel)
-	}
-	if req.Role.Effort != "" {
-		args = append(args, "--effort", req.Role.Effort)
-	}
-	for _, d := range r.AddDirs {
-		args = append(args, "--add-dir", d)
-	}
-	if len(req.Role.AllowedTools) > 0 {
-		args = append(args, "--allowedTools", strings.Join(req.Role.AllowedTools, ","))
-	}
-	if len(req.Role.DisallowedTools) > 0 {
-		args = append(args, "--disallowedTools", strings.Join(req.Role.DisallowedTools, ","))
-	}
-	// Every session gets the built-in bees server next to whatever bees.toml
-	// configures, so mcp.json is always written.
-	mcpPath := filepath.Join(sessionDir, "mcp.json")
-	entries := MCPEntries(req.Role.MCP)
-	entries[config.BuiltinMCPServer] = r.builtinMCP(req, sessionDir)
-	if err := WriteMCPConfig(mcpPath, entries); err != nil {
+	paths := sessionPaths{dir: sessionDir, systemPrompt: systemPromptPath, prompt: promptPath}
+	bin, args, stdin, err := be.command(ctx, r, req, paths)
+	if err != nil {
 		return nil, err
-	}
-	args = append(args, "--mcp-config", mcpPath, "--strict-mcp-config")
-	if len(req.Role.Skills) > 0 {
-		if r.Skills == nil {
-			return nil, errors.New("session: skills configured but no skills manager")
-		}
-		dirs, err := r.Skills.Prepare(ctx, req.Role.Skills)
-		if err != nil {
-			return nil, err
-		}
-		for _, d := range dirs {
-			args = append(args, "--plugin-dir", d)
-		}
 	}
 
 	timeout := req.Role.Timeout
@@ -291,13 +261,13 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(runCtx, claudeBin, args...)
+	cmd := exec.CommandContext(runCtx, bin, args...)
 	cmd.Dir = req.WorkDir
-	cmd.Stdin = strings.NewReader(req.Prompt)
+	cmd.Stdin = strings.NewReader(stdin)
 	cmd.Env = r.env(req, sessionDir)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
-		// Kill the whole process group so MCP servers die with claude.
+		// Kill the whole process group so MCP servers die with the agent.
 		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	}
 	cmd.WaitDelay = 10 * time.Second
@@ -317,9 +287,9 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 		return nil, err
 	}
 
-	r.Logger.Info("session start", "session", req.Name, "role", req.Role.Name, "model", req.Role.Model, "dir", req.WorkDir)
+	r.Logger.Info("session start", "session", req.Name, "role", req.Role.Name, "agent", req.Role.Agent, "model", req.Role.Model, "dir", req.WorkDir)
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("start claude: %w", err)
+		return nil, fmt.Errorf("start %s: %w", filepath.Base(bin), err)
 	}
 	// Record the pid so `bees kill` can find the session after a crash.
 	if err := procs.WritePID(sessionDir, cmd.Process.Pid); err != nil {
@@ -327,7 +297,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 	}
 	defer procs.RemovePID(sessionDir)
 
-	final, limit, scanErr := r.consume(stdout, transcript)
+	final, limit, scanErr := be.consume(r, stdout, transcript)
 	waitErr := cmd.Wait()
 	res.Duration = time.Since(started)
 	if scanErr != nil {
@@ -340,17 +310,17 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 		res.ResultText = final.Result
 		res.IsError = final.IsError
 		res.NumTurns = final.NumTurns
-		res.CostUSD = final.TotalCostUSD
-		res.CostKnown = true
+		res.CostUSD = final.CostUSD
+		res.CostKnown = final.CostKnown
 		if final.Subtype != "success" {
 			res.ErrorSubtype = final.Subtype
 			res.IsError = true
 		}
 	} else {
-		// No result event: claude never reported how far it had got, so the
-		// assistant messages it wrote are counted instead. A session that
-		// died after four minutes of work reported zero turns otherwise,
-		// which reads as a session that did nothing.
+		// No result event: the agent never reported how far it had got, so
+		// the turns it wrote to the transcript are counted instead. A
+		// session that died after four minutes of work reported zero turns
+		// otherwise, which reads as a session that did nothing.
 		res.NumTurns = CountTurns(transcriptPath)
 	}
 	var exitErr *exec.ExitError
@@ -386,7 +356,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 			}
 		}
 	case waitErr != nil:
-		return nil, fmt.Errorf("claude: %w", waitErr)
+		return nil, fmt.Errorf("%s: %w", filepath.Base(bin), waitErr)
 	}
 	if stderr.Len() > 0 {
 		_ = os.WriteFile(filepath.Join(sessionDir, "stderr.log"), stderr.Bytes(), 0o644)
@@ -531,7 +501,9 @@ func (r *Runner) env(req Request, sessionDir string) []string {
 		// not one of beesEnv's variables: those are written into mcp.json in
 		// the session directory, and the secret must not reach disk. claude
 		// passes its own environment on to the MCP server it starts, so the
-		// built-in one is served by this.
+		// built-in one is served by this. Codex does not (it starts a server
+		// with a fixed handful of variables plus the entry's env), so under
+		// codex the built-in server's gh runs without the factory's token.
 		if v := r.GitHub.TokenVar(); v != "" {
 			set(v, token)
 		}
@@ -605,38 +577,14 @@ func (r *Runner) NewSessionDir(name string) (string, error) {
 	return os.MkdirTemp(r.SessionsDir, prefix)
 }
 
-// streamResult is the final "result" event of claude's stream-json output.
-type streamResult struct {
-	Type         string  `json:"type"`
-	Subtype      string  `json:"subtype"`
-	IsError      bool    `json:"is_error"`
-	Result       string  `json:"result"`
-	SessionID    string  `json:"session_id"`
-	NumTurns     int     `json:"num_turns"`
-	TotalCostUSD float64 `json:"total_cost_usd"`
-	DurationMS   int64   `json:"duration_ms"`
-}
-
-// rateLimitEvent is a "rate_limit_event" of claude's stream-json output:
-// what the account's capacity looks like right now. Only the three fields
-// the factory acts on are parsed — the nested unifiedWindows are not
-// needed, and reading status as a field is what keeps the "overageStatus"
-// of the same object from being mistaken for it.
-type rateLimitEvent struct {
-	Info struct {
-		Status   string `json:"status"`
-		Type     string `json:"rateLimitType"`
-		ResetsAt int64  `json:"resetsAt"`
-	} `json:"rate_limit_info"`
-}
-
-// consume copies stream-json lines to the transcript and returns the final
-// result event and the last rate-limit event, either of which may be nil.
-func (r *Runner) consume(stdout io.Reader, transcript io.Writer) (*streamResult, *RateLimit, error) {
+// tee copies every line of a session's stdout to the transcript (and to
+// r.Stream when set), handing each one that is a JSON object with a "type"
+// to visit along with that type. It is the read loop both backends share:
+// what differs between them is what the lines mean, which is visit's
+// business. A line the scanner cannot hold is the end of the stream.
+func (r *Runner) tee(stdout io.Reader, transcript io.Writer, visit func(line []byte, typ string)) error {
 	sc := bufio.NewScanner(stdout)
 	sc.Buffer(make([]byte, 0, 1024*1024), 64*1024*1024)
-	var final *streamResult
-	var limit *RateLimit
 	for sc.Scan() {
 		line := sc.Bytes()
 		_, _ = transcript.Write(line)
@@ -651,28 +599,13 @@ func (r *Runner) consume(stdout io.Reader, transcript io.Writer) (*streamResult,
 		if err := json.Unmarshal(line, &probe); err != nil {
 			continue
 		}
-		switch probe.Type {
-		case "result":
-			var sr streamResult
-			if err := json.Unmarshal(line, &sr); err == nil {
-				final = &sr
-			}
-		case "rate_limit_event":
-			var ev rateLimitEvent
-			if err := json.Unmarshal(line, &ev); err != nil {
-				continue
-			}
-			rl := &RateLimit{Status: ev.Info.Status, Type: ev.Info.Type}
-			if ev.Info.ResetsAt > 0 {
-				rl.ResetsAt = time.Unix(ev.Info.ResetsAt, 0)
-			}
-			limit = rl
-		}
+		visit(line, probe.Type)
 	}
-	return final, limit, sc.Err()
+	return sc.Err()
 }
 
-// MCPEntry is one server in a claude --mcp-config file.
+// MCPEntry is one MCP server as a session is given it: an entry of claude's
+// --mcp-config file, or the source of codex's mcp_servers overrides.
 type MCPEntry struct {
 	Type    string            `json:"type,omitempty"`
 	Command string            `json:"command,omitempty"`

@@ -468,6 +468,279 @@ kill -9 $$
 	}
 }
 
+// fakeCodex writes a shell script standing in for the codex binary.
+func fakeCodex(t *testing.T, body string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "codex")
+	script := "#!/bin/sh\nset -e\n" + body
+	if err := os.WriteFile(p, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// codexRole is a role resolved with agent = "codex".
+func codexRole(model string) config.ResolvedRole {
+	return config.ResolvedRole{Name: "developer", Agent: config.AgentCodex, Model: model, MaxTurns: 10, Timeout: time.Minute}
+}
+
+// TestCodexRunSuccess covers a session of a role whose agent is codex: the
+// runner starts `codex exec --json` instead of `claude -p`, with codex's
+// own switch for running unattended, the system prompt ahead of the task
+// on stdin, and every MCP server — the built-in one included — passed as
+// configuration overrides; and it reads the thread id, the last agent
+// message and the turn count off codex's event stream, with no cost.
+func TestCodexRunSuccess(t *testing.T) {
+	bin := fakeCodex(t, `
+printf '%s\n' "$@" > "$BEES_SESSION_DIR/args.txt"
+cat > "$BEES_SESSION_DIR/stdin.txt"
+env > "$BEES_SESSION_DIR/env.txt"
+echo '{"type":"thread.started","thread_id":"thread-7"}'
+echo '{"type":"turn.started"}'
+echo '{"type":"item.started","item":{"id":"item_0","type":"command_execution","command":"ls","status":"in_progress"}}'
+echo '{"type":"item.completed","item":{"id":"item_0","type":"command_execution","command":"ls","aggregated_output":"a b","exit_code":0,"status":"completed"}}'
+echo '{"type":"item.completed","item":{"id":"item_1","type":"mcp_tool_call","server":"bees","tool":"done","status":"completed"}}'
+echo '{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"all done"}}'
+echo '{"type":"turn.completed","usage":{"input_tokens":120,"cached_input_tokens":0,"output_tokens":30}}'
+printf '{"status":"pr-opened","pr":12,"note":"hi"}' > "$BEES_SESSION_DIR/outcome.json"
+`)
+	r := newRunner(t, "")
+	r.CodexBin = bin
+	role := codexRole("gpt-5-codex")
+	role.FallbackModel = "sonnet"
+	role.Effort = "max"
+	role.AllowedTools = []string{"Bash"}
+	role.MCP = map[string]config.MCPServer{"x": {Command: "srv", Args: []string{"--port", "1"}, Env: map[string]string{"K": "$HOME"}}}
+	res, err := r.Run(context.Background(), Request{Name: "c1", Role: role, WorkDir: t.TempDir(), SystemPrompt: "SYS", Prompt: "TASK", Env: map[string]string{EnvIssue: "12"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError || res.ResultText != "all done" || res.NumTurns != 3 || res.ClaudeID != "thread-7" || res.ExitCode != 0 {
+		t.Fatalf("result: %+v", res)
+	}
+	if res.CostKnown || res.CostUSD != 0 {
+		t.Errorf("a codex session reported a cost: known %v, %v", res.CostKnown, res.CostUSD)
+	}
+	if !res.HasOutcome || res.Outcome.Status != "pr-opened" || res.Outcome.PR != 12 {
+		t.Fatalf("outcome: %+v", res.Outcome)
+	}
+	b, _ := os.ReadFile(filepath.Join(res.SessionDir, "args.txt"))
+	args := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
+	if head := strings.Join(args[:4], " "); head != "exec --json --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check" {
+		t.Errorf("args start %q", head)
+	}
+	if args[len(args)-1] != "-" {
+		t.Errorf("the prompt argument is %q, want - (read stdin)", args[len(args)-1])
+	}
+	for _, want := range []string{
+		"--model", "gpt-5-codex",
+		`model_reasoning_effort="high"`,
+		`mcp_servers.bees.command="/usr/local/bin/bees"`,
+		`mcp_servers.bees.args=["mcp","serve"]`,
+		`mcp_servers.bees.env.BEES_ROLE="developer"`,
+		`mcp_servers.bees.env.BEES_SESSION_DIR="` + res.SessionDir + `"`,
+		`mcp_servers.bees.env.BEES_ISSUE="12"`,
+		`mcp_servers.x.command="srv"`,
+		`mcp_servers.x.args=["--port","1"]`,
+		`mcp_servers.x.env.K="` + os.Getenv("HOME") + `"`,
+	} {
+		if !slices.Contains(args, want) {
+			t.Errorf("args missing %q:\n%s", want, b)
+		}
+	}
+	// Every -c override is its own argument, after a -c of its own.
+	for i, a := range args {
+		if strings.HasPrefix(a, "mcp_servers.") || strings.HasPrefix(a, "model_reasoning_effort=") {
+			if i == 0 || args[i-1] != "-c" {
+				t.Errorf("override %q is not preceded by -c", a)
+			}
+		}
+	}
+	// Nothing of claude's command line leaks into codex's.
+	for _, gone := range []string{"-p", "--dangerously-skip-permissions", "--append-system-prompt-file", "--max-turns", "--fallback-model", "--effort", "--allowedTools", "--mcp-config", "--strict-mcp-config", "--add-dir", "--name"} {
+		if slices.Contains(args, gone) {
+			t.Errorf("args carry claude's %s:\n%s", gone, b)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(res.SessionDir, "mcp.json")); err == nil {
+		t.Error("mcp.json written for a codex session, which never reads it")
+	}
+	stdin, _ := os.ReadFile(filepath.Join(res.SessionDir, "stdin.txt"))
+	if string(stdin) != "SYS\n\n---\n\nTASK" {
+		t.Errorf("stdin: %q", stdin)
+	}
+	// The two prompts are still written apart, for whoever reads the
+	// session directory.
+	for name, want := range map[string]string{"system-prompt.md": "SYS", "prompt.md": "TASK"} {
+		got, _ := os.ReadFile(filepath.Join(res.SessionDir, name))
+		if string(got) != want {
+			t.Errorf("%s: %q, want %q", name, got, want)
+		}
+	}
+	env, _ := os.ReadFile(filepath.Join(res.SessionDir, "env.txt"))
+	for _, want := range []string{"BEES_ROLE=developer", "BEES_STATE_DIR=/state", "BEES_ISSUE=12", "BEES_BIN=/usr/local/bin/bees"} {
+		if !strings.Contains(string(env), want) {
+			t.Errorf("env missing %s", want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(res.SessionDir, TranscriptFile)); err != nil {
+		t.Fatal("transcript missing")
+	}
+	// result.json says the cost is unknown, as it does for a signalled
+	// claude session.
+	rb, _ := os.ReadFile(filepath.Join(res.SessionDir, ResultFile))
+	var got Result
+	if err := json.Unmarshal(rb, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.CostKnown || got.ClaudeID != "thread-7" || got.NumTurns != 3 {
+		t.Errorf("result.json: %+v", got)
+	}
+}
+
+// A codex role with no model leaves the choice to codex: no --model at all,
+// rather than claude's default alias, and a plain effort level goes through
+// unchanged. The system prompt alone is stdin when the task is empty.
+func TestCodexLeavesTheModelToCodexWhenUnset(t *testing.T) {
+	bin := fakeCodex(t, `
+printf '%s\n' "$@" > "$BEES_SESSION_DIR/args.txt"
+echo '{"type":"turn.completed","usage":{}}'
+`)
+	r := newRunner(t, "")
+	r.CodexBin = bin
+	role := codexRole("")
+	role.Effort = "low"
+	res, err := r.Run(context.Background(), Request{Name: "c2", Role: role, WorkDir: t.TempDir(), Prompt: "TASK"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(res.SessionDir, "args.txt"))
+	args := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
+	if slices.Contains(args, "--model") {
+		t.Errorf("--model passed for a role with no model:\n%s", b)
+	}
+	if !slices.Contains(args, `model_reasoning_effort="low"`) {
+		t.Errorf("effort low not passed through:\n%s", b)
+	}
+	if res.IsError || res.NumTurns != 0 || res.ResultText != "" {
+		t.Errorf("result: %+v", res)
+	}
+}
+
+// TestCodexFailedTurn: codex ends a turn it could not finish with
+// "turn.failed", whose message is the result text when the session said
+// nothing else, and that is an error even when the process then exits
+// cleanly; and a message naming the usage limit reads as the account
+// limit, through the same phrase check a claude session's result text
+// goes through.
+func TestCodexFailedTurn(t *testing.T) {
+	for _, tc := range []struct {
+		name, events, subtype, text string
+		exit                        int
+		limited                     bool
+	}{
+		{
+			name: "turn.failed, clean exit",
+			events: `echo '{"type":"thread.started","thread_id":"t"}'
+echo '{"type":"item.completed","item":{"type":"agent_message","text":"trying"}}'
+echo '{"type":"turn.failed","error":{"message":"stream disconnected"}}'
+`,
+			subtype: "turn_failed", text: "stream disconnected", exit: 0,
+		},
+		{
+			name: "error event",
+			events: `echo '{"type":"error","message":"You have hit your usage limit. Try again at 3pm."}'
+`,
+			subtype: "error", text: "You have hit your usage limit. Try again at 3pm.", exit: 1, limited: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bin := fakeCodex(t, tc.events+"exit "+strconv.Itoa(tc.exit)+"\n")
+			r := newRunner(t, "")
+			r.CodexBin = bin
+			res, err := r.Run(context.Background(), Request{Name: "c3", Role: codexRole(""), WorkDir: t.TempDir(), Prompt: "TASK"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !res.IsError || res.ErrorSubtype != tc.subtype || res.ResultText != tc.text || res.ExitCode != tc.exit || res.HasOutcome {
+				t.Fatalf("result: %+v", res)
+			}
+			if res.RateLimit != nil {
+				t.Errorf("a codex session reported a rate-limit event: %+v", res.RateLimit)
+			}
+			if _, limited := res.SessionLimited(); limited != tc.limited {
+				t.Errorf("SessionLimited = %v, want %v", limited, tc.limited)
+			}
+		})
+	}
+}
+
+// A codex stream that ends with no turn end — the process was killed, or
+// it crashed — is a session that never said how it went, like a claude
+// stream with no result event: no_result, and the turns counted from the
+// transcript's completed items.
+func TestCodexStreamWithoutATurnEnd(t *testing.T) {
+	bin := fakeCodex(t, `
+echo '{"type":"thread.started","thread_id":"t"}'
+echo '{"type":"item.completed","item":{"type":"command_execution","command":"go test ./..."}}'
+echo '{"type":"item.completed","item":{"type":"agent_message","text":"half way"}}'
+`)
+	r := newRunner(t, "")
+	r.CodexBin = bin
+	res, err := r.Run(context.Background(), Request{Name: "c4", Role: codexRole(""), WorkDir: t.TempDir(), Prompt: "TASK"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError || res.ErrorSubtype != "no_result" || res.NumTurns != 2 || res.CostKnown {
+		t.Fatalf("result: %+v", res)
+	}
+}
+
+// The agent setting is validated when bees.toml loads, so a value the
+// runner does not know is a role that never went through config; it is
+// refused rather than run as claude.
+func TestUnknownAgentIsRefused(t *testing.T) {
+	bin := fakeClaude(t, `touch "$BEES_SESSION_DIR/ran"`)
+	r := newRunner(t, bin)
+	role := config.ResolvedRole{Name: "developer", Agent: "gpt", Timeout: time.Minute}
+	_, err := r.Run(context.Background(), Request{Name: "c5", Role: role, WorkDir: t.TempDir(), Prompt: "TASK"})
+	if err == nil || !strings.Contains(err.Error(), `"gpt"`) {
+		t.Fatalf("err = %v, want one naming the agent", err)
+	}
+}
+
+// TestCodexMCPOverrides pins how MCP entries become codex configuration:
+// one dotted override per key, servers in name order, a remote server by
+// its url and headers, and every value a JSON string literal — so a value
+// with a quote or a newline in it stays one argument codex can parse
+// whether it reads overrides as JSON or as TOML.
+func TestCodexMCPOverrides(t *testing.T) {
+	got := codexMCPOverrides(map[string]MCPEntry{
+		"zeta":  {Type: "stdio", Command: "/bin/z", Args: []string{"a b", `q"uote`}, Env: map[string]string{"B": "2", "A": "line\nbreak"}},
+		"alpha": {Type: "http", URL: "https://x.example/mcp", Headers: map[string]string{"Authorization": "Bearer t"}},
+		"empty": {},
+	})
+	want := []string{
+		`mcp_servers.alpha.url="https://x.example/mcp"`,
+		`mcp_servers.alpha.http_headers.Authorization="Bearer t"`,
+		`mcp_servers.zeta.command="/bin/z"`,
+		`mcp_servers.zeta.args=["a b","q\"uote"]`,
+		`mcp_servers.zeta.env.A="line\nbreak"`,
+		`mcp_servers.zeta.env.B="2"`,
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("overrides:\n got %q\nwant %q", got, want)
+	}
+	// Every value parses as the JSON it claims to be.
+	for _, o := range got {
+		_, v, _ := strings.Cut(o, "=")
+		var any any
+		if err := json.Unmarshal([]byte(v), &any); err != nil {
+			t.Errorf("%s: value is not JSON: %v", o, err)
+		}
+	}
+}
+
 // The runner reads the role's resolved sandbox mode. Only "none" is
 // implemented, and a role configured for a stronger box refuses to run: a
 // session that started anyway would run with everything bees was told to

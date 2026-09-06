@@ -163,6 +163,17 @@ func TestClaudeBin(t *testing.T) {
 	}
 }
 
+func TestCodexBin(t *testing.T) {
+	t.Setenv("BEES_CODEX_BIN", "")
+	if got := codexBin(); got != "codex" {
+		t.Errorf("default codex binary = %q", got)
+	}
+	t.Setenv("BEES_CODEX_BIN", "/opt/codex")
+	if got := codexBin(); got != "/opt/codex" {
+		t.Errorf("BEES_CODEX_BIN = %q", got)
+	}
+}
+
 // A typo in a subcommand must fail, exactly like a typo in a top-level
 // command: a group that only printed its help and exited 0 left a session
 // with no way to tell its command had not run (#83).
