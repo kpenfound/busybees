@@ -22,6 +22,9 @@ branch_prefix = "bees/"
 label = "bees"
 # Only see items in this milestone.
 #milestone = ""
+# Only see items opened by this GitHub login. What the factory opens itself
+# is visible too, whoever it acts as.
+creator = "kpenfound"
 
 #===============================================================================
 # GitHub account the factory acts as.
