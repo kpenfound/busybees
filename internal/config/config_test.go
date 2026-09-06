@@ -556,6 +556,58 @@ func TestModelBySizeErrorsNameTheBadKey(t *testing.T) {
 	}
 }
 
+// TestAgentDefaultAndMerge covers the agent key: absent it defaults to
+// claude, a role overrides global, and global still applies to a role with
+// no agent of its own.
+func TestAgentDefaultAndMerge(t *testing.T) {
+	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev, err := cfg.Role(RoleDeveloper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dev.Agent != AgentClaude {
+		t.Fatalf("agent default: got %q want %q", dev.Agent, AgentClaude)
+	}
+
+	cfg, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[global]\nagent = \"codex\"\n[roles.developer]\nagent = \"claude\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev, err = cfg.Role(RoleDeveloper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dev.Agent != "claude" {
+		t.Fatalf("role overrides global: got %q want claude", dev.Agent)
+	}
+	pm, err := cfg.Role(RoleProductManager)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pm.Agent != "codex" {
+		t.Fatalf("global fallback: got %q want codex", pm.Agent)
+	}
+}
+
+// An unknown agent is a load error naming the scope and the accepted values.
+func TestAgentValidation(t *testing.T) {
+	for body, want := range map[string]string{
+		"version = 1\n[project]\nrepo = \"a/b\"\n[global]\nagent = \"gpt\"\n":          "global.agent must be one of claude, codex",
+		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nagent = \"gpt\"\n": "roles.developer.agent must be one of claude, codex",
+	} {
+		_, err := Load(writeConfig(t, body))
+		if err == nil {
+			t.Fatalf("%q: expected an error", body)
+		}
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+}
+
 // TestTemplateUncommented makes sure every commented-out option in the
 // template is valid TOML with a value the loader accepts: a user should be
 // able to uncomment any line and have it work.
