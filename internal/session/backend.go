@@ -220,9 +220,10 @@ func (claudeBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer) 
 //   - The stream is JSON lines of events: "thread.started" names the thread
 //     (the session id), "item.completed" is one action taken — a message,
 //     a command, a file change, an MCP call — and the turn ends with
-//     "turn.completed" or "turn.failed". There is no cost in it: codex
-//     reports tokens, and turning those into dollars needs a price table,
-//     so a codex session's cost is unknown rather than zero.
+//     "turn.completed", "turn.failed" or a bare "error" event. There is no
+//     cost in it: codex reports tokens, and turning those into dollars
+//     needs a price table, so a codex session's cost is unknown rather
+//     than zero.
 type codexBackend struct{}
 
 func (codexBackend) command(_ context.Context, r *Runner, req Request, paths sessionPaths) (string, []string, string, error) {

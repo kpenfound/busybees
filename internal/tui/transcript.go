@@ -53,15 +53,17 @@ const maxTranscriptLines = 4000
 type transcriptEntry struct {
 	Type    string `json:"type"`
 	Subtype string `json:"subtype"`
-	Message struct {
-		Content json.RawMessage `json:"content"`
-	} `json:"message"`
+	// Message is claude's message object (whose content blocksOf reads),
+	// or the message string of a codex "error" event, so it is decoded by
+	// whichever reads it.
+	Message json.RawMessage `json:"message"`
 	// The fields below are the final "result" event's.
 	IsError      bool    `json:"is_error"`
 	NumTurns     int     `json:"num_turns"`
 	TotalCostUSD float64 `json:"total_cost_usd"`
 	// The fields below are codex's: the item of an "item.completed" event,
-	// and the error of a "turn.failed" one.
+	// and the error of a "turn.failed" one (an "error" event carries its
+	// message at the top level instead).
 	Item struct {
 		Type    string `json:"type"`
 		Text    string `json:"text"`
@@ -147,7 +149,7 @@ func renderTranscriptLine(line []byte) []string {
 		return []string{resultLine(e)}
 	case "item.completed":
 		return codexItemLines(e)
-	case "turn.completed", "turn.failed":
+	case "turn.completed", "turn.failed", "error":
 		return []string{codexEndLine(e)}
 	}
 	// "system" (init, thinking-token bookkeeping, task notifications) and
@@ -190,14 +192,23 @@ func rawString(s string) json.RawMessage {
 }
 
 // codexEndLine renders the end of a codex turn: the session is over, and
-// codex reports no cost, so none is shown.
+// codex reports no cost, so none is shown. A "turn.failed" event says why
+// under "error"; a bare "error" event says it at the top level, as the
+// runner's codex backend reads it too.
 func codexEndLine(e transcriptEntry) string {
 	if e.Type == "turn.completed" {
 		return sayMark + "session ended: ok"
 	}
 	how := "failed"
-	if e.Error.Message != "" {
-		how += ": " + oneLine(e.Error.Message)
+	msg := e.Error.Message
+	if msg == "" {
+		var s string
+		if json.Unmarshal(e.Message, &s) == nil {
+			msg = s
+		}
+	}
+	if msg != "" {
+		how += ": " + oneLine(msg)
 	}
 	return sayMark + "session ended: " + how
 }
@@ -205,12 +216,18 @@ func codexEndLine(e transcriptEntry) string {
 // blocksOf reads a message's content, which is an array of blocks or — for
 // a user turn typed as one string — a single string.
 func blocksOf(e transcriptEntry) []transcriptBlock {
+	var m struct {
+		Content json.RawMessage `json:"content"`
+	}
+	if json.Unmarshal(e.Message, &m) != nil {
+		return nil
+	}
 	var blocks []transcriptBlock
-	if json.Unmarshal(e.Message.Content, &blocks) == nil {
+	if json.Unmarshal(m.Content, &blocks) == nil {
 		return blocks
 	}
 	var s string
-	if json.Unmarshal(e.Message.Content, &s) == nil && s != "" {
+	if json.Unmarshal(m.Content, &s) == nil && s != "" {
 		return []transcriptBlock{{Type: "text", Text: s}}
 	}
 	return nil

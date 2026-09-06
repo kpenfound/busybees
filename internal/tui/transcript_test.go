@@ -244,4 +244,9 @@ func TestACodexTranscriptRendersTheSameWay(t *testing.T) {
 	if got := renderTranscriptLine([]byte(`{"type":"turn.failed","error":{"message":"stream disconnected\nbefore completion"}}`)); len(got) != 1 || got[0] != "● session ended: failed: stream disconnected before completion" {
 		t.Errorf("failed turn rendered as %q", got)
 	}
+	// So does a bare "error" event, codex's other way of ending a turn,
+	// whose message sits at the top level rather than under "error".
+	if got := renderTranscriptLine([]byte(`{"type":"error","message":"You have hit your usage limit. Try again at 3pm."}`)); len(got) != 1 || got[0] != "● session ended: failed: You have hit your usage limit. Try again at 3pm." {
+		t.Errorf("error event rendered as %q", got)
+	}
 }

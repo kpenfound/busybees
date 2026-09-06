@@ -650,9 +650,9 @@ limit, tool allow-list or plugin directories, so those settings are not
 passed (see [`agent`](configuration.md#global-and-rolesname)). Its stream is
 appended to `transcript.jsonl` the same way: `thread.started` supplies the
 session id, each `item.completed` is one turn, the last `agent_message` item
-is the result text, and `turn.completed` or `turn.failed` says how it ended.
-Codex reports tokens, never a cost, so a codex session's cost is unknown
-rather than zero.
+is the result text, and `turn.completed`, `turn.failed` or a bare `error`
+event says how it ended. Codex reports tokens, never a cost, so a codex
+session's cost is unknown rather than zero.
 
 For either agent, stderr is saved to `stderr.log` when non-empty, and
 `result.json` summarises the run. A session that ended without a final event
