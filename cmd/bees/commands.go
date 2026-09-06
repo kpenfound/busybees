@@ -378,10 +378,23 @@ Before the first poll it runs the cheap half of ` + "`bees doctor`" + ` (everyth
 except the per-role checks, which clone skills and start MCP servers) and
 refuses to start when one of them fails, so the factory does not discover a
 missing label or an expired token one session at a time. --skip-doctor starts
-anyway; ` + "`bees tick`" + ` and ` + "`bees exec`" + ` never run the preflight.`,
+anyway; ` + "`bees tick`" + ` and ` + "`bees exec`" + ` never run the preflight.
+
+Ahead of that, and whatever --skip-doctor says, it refuses to start while a
+role in the rotation asks for a sandbox bees cannot build here: running that
+role unboxed instead would give it what it was configured to be kept away
+from.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := newApp(cmd.Context(), g)
 			if err != nil {
+				return err
+			}
+			// Asked once here rather than per session: a sandbox mode that
+			// cannot be built on this machine cannot be built for any
+			// session, and a factory that fell back to running a role
+			// unboxed would defeat the point of configuring one. Not behind
+			// --skip-doctor for the same reason.
+			if err := a.cfg.CheckSandbox(); err != nil {
 				return err
 			}
 			if !skipDoctor {

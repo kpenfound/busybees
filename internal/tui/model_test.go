@@ -65,6 +65,14 @@ func started(name, role string, issue, pr int, at time.Time, model string, fallb
 	})
 }
 
+// startedIn is started() for a session the scheduler boxed.
+func startedIn(name, role string, issue, pr int, at time.Time, model, sandbox string) tea.Msg {
+	return eventMsg(scheduler.Event{
+		Kind: scheduler.EventSessionStarted, Time: at, Session: name, Role: role,
+		Issue: issue, PR: pr, Model: model, Sandbox: sandbox,
+	})
+}
+
 func ended(name, role string, issue, pr int, turns int, cost float64) tea.Msg {
 	return eventMsg(scheduler.Event{
 		Kind: scheduler.EventSessionEnded, Time: fixed, Session: name, Role: role,
@@ -1252,5 +1260,59 @@ func TestAnUnknownCostIsNotZero(t *testing.T) {
 	header, row = nowLines(t, view, "reviewer r1")
 	if got := column(t, header, row, "cost"); got != "-" {
 		t.Errorf("a work item whose only finished session reported no cost shows %q, want -:\n%s", got, view)
+	}
+}
+
+// The Now panel names the box each running session is in. The column costs
+// width the model name and its (fallback) marker would otherwise have, so it
+// is drawn once a session is boxed and left out while none is: a column of
+// "none" all the way down says nothing `bees config show` does not.
+func TestTheNowPanelNamesTheSandboxOfABoxedSession(t *testing.T) {
+	boxed := drive(t, Deps{Repo: "acme/widgets"},
+		startedIn("developer-issue-12-r1", config.RoleDeveloper, 12, 31, fixed, "opus", "container"),
+		startedIn("qa-1", config.RoleQA, 0, 0, fixed, "opus", "none"))
+	for _, want := range []string{"sandbox", "container", "none"} {
+		if !strings.Contains(boxed, want) {
+			t.Errorf("the Now panel does not name %q:\n%s", want, boxed)
+		}
+	}
+	for _, line := range strings.Split(boxed, "\n") {
+		if w := len([]rune(line)); w > defaultWidth {
+			t.Errorf("a %d-column line in a %d-column view: %q", w, defaultWidth, line)
+		}
+	}
+
+	// Nothing boxed: the column is not drawn, and the row is laid out as it
+	// was before there was one.
+	plain := drive(t, Deps{Repo: "acme/widgets"},
+		startedIn("developer-issue-12-r1", config.RoleDeveloper, 12, 31, fixed, "opus", "none"))
+	if strings.Contains(plain, "sandbox") {
+		t.Errorf("the sandbox column was drawn for an unboxed factory:\n%s", plain)
+	}
+	same := drive(t, Deps{Repo: "acme/widgets"},
+		started("developer-issue-12-r1", config.RoleDeveloper, 12, 31, fixed, "opus", false))
+	if plain != same {
+		t.Errorf("an unboxed session does not render as it did before the column existed:\ngot\n%s\nwant\n%s", plain, same)
+	}
+}
+
+// A session the scheduler started without recording a mode has no answer,
+// and the column says so rather than claiming the weakest mode.
+func TestTheNowPanelDoesNotInventASandbox(t *testing.T) {
+	view := drive(t, Deps{Repo: "acme/widgets"},
+		startedIn("developer-issue-12-r1", config.RoleDeveloper, 12, 31, fixed, "opus", "container"),
+		started("qa-1", config.RoleQA, 0, 0, fixed, "opus", false))
+	lines := strings.Split(view, "\n")
+	var qa string
+	for _, l := range lines {
+		if strings.Contains(l, "QA") {
+			qa = l
+		}
+	}
+	if qa == "" {
+		t.Fatalf("no QA row:\n%s", view)
+	}
+	if strings.Contains(qa, "none") {
+		t.Errorf("a session with no recorded mode was reported as unboxed: %q", qa)
 	}
 }

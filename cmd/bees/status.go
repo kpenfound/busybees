@@ -96,10 +96,14 @@ func failureCount(f state.OpFailure) string {
 
 // workersText renders the "developer workers:" section of `bees status`: one
 // line per running worker, with the issue it owns, its size, the stage it is
-// in, the round it is on and, when it took over from a session that never
-// finished — a scheduler dying while it ran, or a hard stop — that it
-// resumed rather than started fresh: the branch of a resumed worker may
-// already carry work nobody reported.
+// in, the round it is on, the sandbox its running session is boxed in and,
+// when it took over from a session that never finished — a scheduler dying
+// while it ran, or a hard stop — that it resumed rather than started fresh:
+// the branch of a resumed worker may already carry work nobody reported.
+//
+// The sandbox is the mode of the session running right now, not the worker's:
+// the stages of one worker run different roles, and a role's sandbox is its
+// own. A worker whose first session has not started yet has no answer.
 func workersText(st state.Status) string {
 	if len(st.Workers) == 0 {
 		return "  none\n"
@@ -114,7 +118,11 @@ func workersText(st state.Status) string {
 		if size == "" {
 			size = "-"
 		}
-		fmt.Fprintf(&b, "  %-12s issue #%-5d %-3s %-17s %-20s since %s", w.Name, w.Issue, size, w.Stage, round, w.Since.Format(time.Kitchen))
+		sandbox := w.Sandbox
+		if sandbox == "" {
+			sandbox = "-"
+		}
+		fmt.Fprintf(&b, "  %-12s issue #%-5d %-3s %-17s %-20s sandbox %-9s since %s", w.Name, w.Issue, size, w.Stage, round, sandbox, w.Since.Format(time.Kitchen))
 		if w.Resumed {
 			b.WriteString("   resumed")
 		}

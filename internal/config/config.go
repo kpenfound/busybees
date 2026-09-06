@@ -79,6 +79,7 @@ const (
 	DefaultModel         = "opus"
 	DefaultFallbackModel = "sonnet"
 	DefaultAgent         = AgentClaude
+	DefaultSandbox       = SandboxNone
 	DefaultMaxTurns      = 200
 	DefaultTimeout       = 45 * time.Minute
 	DefaultLabel         = "bees"
@@ -422,6 +423,10 @@ type RoleSettings struct {
 	// expanded from the bees process environment. Role entries override
 	// global ones with the same name.
 	Env map[string]string `toml:"env"`
+	// Sandbox is how much of the machine a session of this role can reach:
+	// one of SandboxModes. A role's value replaces the global one, and
+	// SandboxNone — no sandbox at all — is the default.
+	Sandbox string `toml:"sandbox"`
 
 	// The following key is only valid under [global].
 
@@ -1035,6 +1040,8 @@ type ResolvedRole struct {
 	Enabled         bool
 	Shell           string
 	Env             map[string]string
+	// Sandbox is the resolved sandbox mode, one of SandboxModes.
+	Sandbox string
 }
 
 // Load reads and validates the bees.toml at path.
@@ -1447,6 +1454,12 @@ func (c *Config) Validate() error {
 		if rs.Agent != "" && !slices.Contains(Agents, rs.Agent) {
 			errs = append(errs, fmt.Sprintf("%s.agent must be one of %s", scope, strings.Join(Agents, ", ")))
 		}
+		// Every mode of SandboxModes loads, including the ones no session
+		// can run in yet: whether a mode works on this machine is a question
+		// about the machine, and CheckSandbox asks it once at `bees run`.
+		if rs.Sandbox != "" && !slices.Contains(SandboxModes, rs.Sandbox) {
+			errs = append(errs, fmt.Sprintf("%s.sandbox must be one of %s", scope, strings.Join(SandboxModes, ", ")))
+		}
 		if rs.PromptFile != "" {
 			if _, err := os.Stat(c.resolvePath(rs.PromptFile)); err != nil {
 				errs = append(errs, fmt.Sprintf("%s.prompt_file: %v", scope, err))
@@ -1520,6 +1533,7 @@ func (c *Config) Role(name string) (ResolvedRole, error) {
 		Timeout:       firstPositiveDur(rs.Timeout.Duration, g.Timeout.Duration, DefaultTimeout),
 		Enabled:       true,
 		Shell:         firstNonEmpty(rs.Shell, g.Shell),
+		Sandbox:       firstNonEmpty(rs.Sandbox, g.Sandbox, DefaultSandbox),
 		MCP:           map[string]MCPServer{},
 		Env:           map[string]string{},
 	}

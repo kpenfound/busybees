@@ -215,6 +215,15 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 	if r.Logger == nil {
 		r.Logger = slog.Default()
 	}
+	// The box this session runs in is the role's resolved sandbox mode.
+	// Only config.SandboxNone is implemented, and it is what the command
+	// built below already is; a role configured for a stronger box refuses
+	// to run rather than quietly running without one. `bees run` asks the
+	// same question once at startup (config.CheckSandbox), so reaching this
+	// means a session started some other way — `bees exec`, `bees tick`.
+	if err := config.CheckSandboxMode(req.Role.Sandbox); err != nil {
+		return nil, fmt.Errorf("%s: %w", req.Role.Name, err)
+	}
 	be, err := backendFor(req.Role.Agent)
 	if err != nil {
 		return nil, err

@@ -740,3 +740,46 @@ func TestCodexMCPOverrides(t *testing.T) {
 		}
 	}
 }
+
+// The runner reads the role's resolved sandbox mode. Only "none" is
+// implemented, and a role configured for a stronger box refuses to run: a
+// session that started anyway would run with everything bees was told to
+// keep it away from, and nothing downstream would say so.
+func TestRunRefusesASandboxItCannotProvide(t *testing.T) {
+	bin := fakeClaude(t, `
+touch "$BEES_SESSION_DIR/ran"
+echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
+`)
+	r := newRunner(t, bin)
+	sessions := r.SessionsDir
+	role := config.ResolvedRole{Name: "developer", Model: "opus", MaxTurns: 5, Timeout: time.Minute, Sandbox: config.SandboxContainer}
+	_, err := r.Run(context.Background(), Request{Name: "boxed", Role: role, WorkDir: t.TempDir(), SystemPrompt: "SYS", Prompt: "TASK"})
+	if err == nil {
+		t.Fatal("a container session ran without a container")
+	}
+	for _, want := range []string{"developer", "container"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+	// Refused before claude was started, not after.
+	entries, _ := os.ReadDir(sessions)
+	for _, e := range entries {
+		if _, err := os.Stat(filepath.Join(sessions, e.Name(), "ran")); err == nil {
+			t.Error("claude ran for a session bees refused to box")
+		}
+	}
+}
+
+// The mode every session runs in today: "none" runs, and so does a role
+// whose mode was never set at all.
+func TestRunAcceptsNoSandbox(t *testing.T) {
+	bin := fakeClaude(t, `echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'`)
+	for _, mode := range []string{"", config.SandboxNone} {
+		r := newRunner(t, bin)
+		role := config.ResolvedRole{Name: "developer", Model: "opus", MaxTurns: 5, Timeout: time.Minute, Sandbox: mode}
+		if _, err := r.Run(context.Background(), Request{Name: "plain", Role: role, WorkDir: t.TempDir(), SystemPrompt: "SYS", Prompt: "TASK"}); err != nil {
+			t.Errorf("sandbox %q: %v", mode, err)
+		}
+	}
+}

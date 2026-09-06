@@ -660,6 +660,11 @@ For either agent, stderr is saved to `stderr.log` when non-empty, and
 view and the summary line say so rather than printing zero, and its turns are
 counted from the transcript's assistant messages or completed items instead.
 
+- **Sandbox.** The role's resolved
+  [`sandbox`](configuration.md#sandboxing) says how much of the machine the
+  session can reach. `none` is the command above, and the only mode
+  implemented: the runner refuses a session whose role asks for another, and
+  `bees run` refuses to start at all while a role in the rotation does.
 - **Outcome.** The session ends by calling the `done` tool (or running `bees
   done <status>`), which writes `<session>/outcome.json` through one shared
   validation: the status must be one the role may report, and `pr-opened` and

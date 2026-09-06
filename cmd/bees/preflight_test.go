@@ -2,6 +2,10 @@ package main
 
 import (
 	"context"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
 	"strings"
 	"testing"
 
@@ -90,4 +94,48 @@ func TestRunCommandFlags(t *testing.T) {
 			t.Errorf("bees %s must not run the preflight", name)
 		}
 	}
+}
+
+// `bees run` refuses to start while a role in the rotation asks for a sandbox
+// bees cannot build, and asks before the doctor and whatever --skip-doctor
+// says: falling back to running that role unboxed would hand it exactly what
+// it was configured to be kept away from. RunE cannot be exercised here (see
+// TestRunCommandFlags), so the guard is read out of the command's own source.
+func TestRunChecksTheSandboxAheadOfTheDoctor(t *testing.T) {
+	body := funcSource(t, "commands.go", "newRunCmd")
+	check := strings.Index(body, "cfg.CheckSandbox()")
+	if check < 0 {
+		t.Fatal("bees run does not call Config.CheckSandbox: a role configured for a sandbox bees cannot build would run unboxed")
+	}
+	skip := strings.Index(body, "if !skipDoctor")
+	if skip < 0 {
+		t.Fatal("bees run no longer guards the doctor preflight with --skip-doctor; this test reads that line to place the sandbox check")
+	}
+	if check > skip {
+		t.Error("the sandbox check runs after the doctor preflight, so --skip-doctor bypasses it too")
+	}
+}
+
+// funcSource returns the source text of the named top-level function in the
+// named file of this package.
+func funcSource(t *testing.T, file, name string) string {
+	t.Helper()
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, file, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range f.Decls {
+		fn, ok := d.(*ast.FuncDecl)
+		if !ok || fn.Name.Name != name {
+			continue
+		}
+		return string(src[fset.Position(fn.Pos()).Offset:fset.Position(fn.End()).Offset])
+	}
+	t.Fatalf("no func %s in %s", name, file)
+	return ""
 }
