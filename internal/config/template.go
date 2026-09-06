@@ -29,6 +29,10 @@ type RenderOptions struct {
 	ExplicitBranch bool
 	// Version is always CurrentVersion; set by RenderTOML.
 	Version int
+	// Template, when set, activates the settings it makes (see TemplateKeys)
+	// and writes its When paragraph as a comment block above the file. Nil
+	// renders every one of them as the commented-out default.
+	Template *Template
 }
 
 // RenderTOML renders a fully commented starter bees.toml.
@@ -60,11 +64,14 @@ func RenderTOML(d RenderOptions) (string, error) {
 	d.Assignee = escapeTOML(d.Assignee)
 	d.GitHubLogin = escapeTOML(d.GitHubLogin)
 	d.GitHubToken = escapeTOML(d.GitHubToken)
-	t, err := template.New("bees.toml").Parse(beesTOMLTemplate)
+	t, err := template.New("bees.toml").Funcs(template.FuncMap{"setting": setting}).Parse(beesTOMLTemplate)
 	if err != nil {
 		return "", err
 	}
 	var buf bytes.Buffer
+	if d.Template != nil {
+		buf.WriteString(d.Template.header())
+	}
 	if err := t.Execute(&buf, d); err != nil {
 		return "", err
 	}
@@ -223,11 +230,11 @@ label = "{{.Label}}"
 # (its head branch does not start with branch_prefix), without waiting for the
 # review-requested label. With filter.assignee set, that is the pull requests
 # assigned to the factory.
-#review_assigned_prs = false
+{{setting . "scheduler.review_assigned_prs" "#review_assigned_prs = false"}}
 # A feature issue a bee creates is a proposal: it carries bees:proposal and a
 # person approves it by removing the label. false lets a bee break its own
 # features down without a person's approval.
-#feature_proposals = true
+{{setting . "scheduler.feature_proposals" "#feature_proposals = true"}}
 # GitHub logins and/or org/team slugs the factory turns to when it needs a
 # person: mentioned in the needs-human comment and in the product manager's
 # questions, and asked to review an approved pull request. No leading @.
@@ -355,7 +362,7 @@ label = "{{.Label}}"
 #effort = "high"
 #max_turns = 200
 #timeout = "45m"
-#enabled = true
+{{setting . "roles.product_manager.enabled" "#enabled = true"}}
 #shell = "/bin/bash"
 #[roles.product_manager.env]
 #EXAMPLE = "value"
@@ -373,7 +380,7 @@ label = "{{.Label}}"
 #effort = "high"
 #max_turns = 200
 #timeout = "45m"
-#enabled = true
+{{setting . "roles.project_manager.enabled" "#enabled = true"}}
 #shell = "/bin/bash"
 #[roles.project_manager.env]
 #EXAMPLE = "value"
@@ -399,7 +406,7 @@ label = "{{.Label}}"
 #effort = "high"
 #max_turns = 200
 #timeout = "45m"
-#enabled = true
+{{setting . "roles.developer.enabled" "#enabled = true"}}
 #shell = "/bin/bash"
 #[roles.developer.env]
 #EXAMPLE = "value"
@@ -419,13 +426,13 @@ label = "{{.Label}}"
 #timeout = "45m"
 # Disabling the reviewer treats pull requests as approved as soon as the
 # developer opens them.
-#enabled = true
+{{setting . "roles.reviewer.enabled" "#enabled = true"}}
 # Merge approved pull requests automatically once its checks are green: the
 # required checks if the branch has any, otherwise every check the pull
 # request reports; with no checks at all it merges and says so. Off: humans
 # merge. When checks fail the reviewer diagnoses the main error and hands it
 # to the developer to fix (up to max_check_fix_rounds).
-#auto_merge = false
+{{setting . "roles.reviewer.auto_merge" "#auto_merge = false"}}
 # squash, merge or rebase.
 #merge_method = "squash"
 # Wait after approval before polling checks; some take a moment to start.
@@ -464,7 +471,7 @@ label = "{{.Label}}"
 #effort = "high"
 #max_turns = 200
 #timeout = "45m"
-#enabled = true
+{{setting . "roles.qa.enabled" "#enabled = true"}}
 #shell = "/bin/bash"
 #[roles.qa.env]
 #EXAMPLE = "value"
