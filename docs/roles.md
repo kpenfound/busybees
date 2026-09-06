@@ -182,8 +182,9 @@ and
 In short: a feature it writes is a proposal it may refine but not break down
 until a person removes `bees:proposal`, and `issue_create` and `issue_link`
 refuse the breakdown while the label is there, unless
-`scheduler.feature_proposals = false`, which makes the features it writes
-approved on creation. An issue in `bees:planning` is
+`scheduler.feature_proposals = false`, as the
+[slop-factory](templates.md#slop-factory) config template does, which makes the
+features it writes approved on creation. An issue in `bees:planning` is
 a conversation it replies to on the issue and creates nothing from.
 `bees:planned` is an agreement it writes into the body as a `## Decisions`
 section and then acts on without reopening it. A feature whose work is done is
