@@ -428,6 +428,12 @@ type RoleSettings struct {
 	// one of SandboxModes. A role's value replaces the global one, and
 	// SandboxNone — no sandbox at all — is the default.
 	Sandbox string `toml:"sandbox"`
+	// SandboxImage is the container image a session runs in when Sandbox
+	// is SandboxContainer: it must hold the role's agent, git and gh. A
+	// role's value replaces the global one, so a role that runs the product
+	// itself can name an image that carries the product's toolchain. There
+	// is no default: a container role without one is refused.
+	SandboxImage string `toml:"sandbox_image"`
 
 	// The following key is only valid under [global].
 
@@ -1043,6 +1049,9 @@ type ResolvedRole struct {
 	Env             map[string]string
 	// Sandbox is the resolved sandbox mode, one of SandboxModes.
 	Sandbox string
+	// SandboxImage is the image a SandboxContainer session runs in, empty
+	// when none was configured.
+	SandboxImage string
 }
 
 // Load reads and validates the bees.toml at path.
@@ -1461,6 +1470,11 @@ func (c *Config) Validate() error {
 		if rs.Sandbox != "" && !slices.Contains(SandboxModes, rs.Sandbox) {
 			errs = append(errs, fmt.Sprintf("%s.sandbox must be one of %s", scope, strings.Join(SandboxModes, ", ")))
 		}
+		// An image reference is one word: a space or a tab in it is a
+		// pasted-in command line, not an image.
+		if strings.ContainsAny(rs.SandboxImage, " \t") {
+			errs = append(errs, fmt.Sprintf("%s.sandbox_image %q must be an image reference, without spaces", scope, rs.SandboxImage))
+		}
 		if rs.PromptFile != "" {
 			if _, err := os.Stat(c.resolvePath(rs.PromptFile)); err != nil {
 				errs = append(errs, fmt.Sprintf("%s.prompt_file: %v", scope, err))
@@ -1535,6 +1549,7 @@ func (c *Config) Role(name string) (ResolvedRole, error) {
 		Enabled:       true,
 		Shell:         firstNonEmpty(rs.Shell, g.Shell),
 		Sandbox:       firstNonEmpty(rs.Sandbox, g.Sandbox, DefaultSandbox),
+		SandboxImage:  firstNonEmpty(rs.SandboxImage, g.SandboxImage),
 		MCP:           map[string]MCPServer{},
 		Env:           map[string]string{},
 	}

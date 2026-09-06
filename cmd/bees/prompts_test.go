@@ -27,6 +27,9 @@ commit_flags = "--signoff"
 
 [roles.product_manager]
 min_issue_size = "m"
+
+[roles.qa]
+sandbox = "container"
 `, t.TempDir()+"/bees.toml")
 	if err != nil {
 		t.Fatal(err)
@@ -57,6 +60,19 @@ min_issue_size = "m"
 	}
 	if !strings.Contains(product, "@kpenfound") {
 		t.Errorf("product manager prompt does not carry scheduler.notify:\n%s", product)
+	}
+
+	// The sandbox mode decides whether the prompt offers the bees commands:
+	// a container session has no bees binary.
+	qa, _, err := renderedPrompt(cfg, config.RoleQA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(qa, "without the `bees` binary") || strings.Contains(qa, "CLI: `bees done") {
+		t.Errorf("qa prompt (a container role) still offers the bees commands:\n%s", qa)
+	}
+	if strings.Contains(dev, "without the `bees` binary") || !strings.Contains(dev, "CLI: `bees done") {
+		t.Errorf("developer prompt (unboxed) lost the bees commands:\n%s", dev)
 	}
 	// scheduler.feature_proposals defaults to true, and a bool left unfilled
 	// reads as false: the default rendering has to be the proposal rule.

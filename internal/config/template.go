@@ -331,6 +331,9 @@ label = "{{.Label}}"
 # Set it per role in [roles.<name>] to box the roles that run untrusted code
 # harder than the ones that only read the repository.
 #sandbox = "none"
+# Image a container session runs in (sandbox = "container"): it must hold
+# the agent, git and gh. Name one per role for a role that runs the product.
+#sandbox_image = "ghcr.io/acme/widgets-bees:latest"
 
 # Environment variables exported into every session (claude, its Bash tool,
 # MCP servers, git). $VARS are expanded from the bees environment. Roles can

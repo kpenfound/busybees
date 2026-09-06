@@ -1213,12 +1213,19 @@ bees done failed -m "Could not get the test-suite to run: missing DATABASE_URL"
 
 ### `bees mcp serve` *(sessions)*
 
-Runs the built-in MCP server on stdio. You never start it yourself: `bees`
+Runs the built-in MCP server on stdio (or over HTTP, below). You never start
+it yourself: `bees`
 hands it to every session as the server named `bees` (in `mcp.json` for
 claude, as `mcp_servers.bees` overrides for codex), and the agent starts it
 as `<bees binary> mcp serve` with the session's `BEES_*`
 variables. The name `bees` is reserved — a `[global.mcp.bees]` or
 `[roles.<role>.mcp.bees]` entry in `bees.toml` fails validation.
+
+For a [container session](configuration.md#the-container-mode) the runner
+starts it on the host itself, as `bees mcp serve --listen <address>` with
+`$BEES_MCP_TOKEN` set: it prints `listening on <address>` and serves the same
+tools over HTTP to a client presenting that token, which is how a session
+without the `bees` binary reaches them.
 
 The server is backed by the same code as the commands above, so a tool and its
 command do exactly the same thing. Claude Code exposes the tools as

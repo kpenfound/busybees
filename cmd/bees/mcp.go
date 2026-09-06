@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"os"
 	"slices"
 	"strings"
@@ -29,8 +32,12 @@ func newMCPCmd(g *globalFlags) *cobra.Command {
 the factory's own operations — the mailbox, issue creation and the session
 outcome — as tools, so a session does not have to build a command line for
 them. bees writes the server into the session's mcp.json and claude starts it;
-you only run "bees mcp serve" yourself to debug it.`
+you only run "bees mcp serve" yourself to debug it. A container session cannot
+start it (the bees binary is not in the container), so for one the runner
+starts "bees mcp serve --listen" on the host and the session reaches it over
+HTTP.`
 	cmd.Hidden = true
+	var listen string
 	serve := &cobra.Command{
 		Use:   "serve",
 		Short: "Serve the bees tools on stdio (started by claude, not by hand)",
@@ -38,6 +45,9 @@ you only run "bees mcp serve" yourself to debug it.`
 		RunE: func(cmd *cobra.Command, args []string) error {
 			b := &backend{g: g}
 			srv := mcpserver.New(mcpserver.EnvFromOS(), mcpserver.Deps{Issues: b, GitHub: b})
+			if listen != "" {
+				return serveMCPHTTP(cmd.Context(), srv, listen, os.Getenv(session.EnvMCPToken), cmd.OutOrStdout())
+			}
 			err := srv.Run(cmd.Context(), &mcp.StdioTransport{})
 			if isCleanShutdown(err) {
 				return nil
@@ -45,6 +55,7 @@ you only run "bees mcp serve" yourself to debug it.`
 			return err
 		},
 	}
+	serve.Flags().StringVar(&listen, "listen", "", "serve over HTTP on this address instead of stdio, for a container session (needs $"+session.EnvMCPToken+")")
 	tools := &cobra.Command{
 		Use:   "tools",
 		Short: "List the tools a role's session sees",
@@ -114,6 +125,58 @@ func enums(schema any) []propEnum {
 	}
 	slices.SortFunc(out, func(a, b propEnum) int { return strings.Compare(a.prop, b.prop) })
 	return out
+}
+
+// serveMCPHTTP serves the session's tools over streamable HTTP on addr until
+// ctx ends, printing the address it is listening on — the one the runner
+// puts into the session's mcp.json — as its first line of output. It is how
+// a container session reaches the server, which runs on the host with the
+// session's environment and paths.
+//
+// The token is required: the port is reachable from every container on the
+// machine (and, on Linux, from the host's other users), and without one
+// anything that found it could report the session's outcome or write mail
+// in its name. A request that does not present it is refused before it
+// reaches the server.
+func serveMCPHTTP(ctx context.Context, srv *mcp.Server, addr, token string, out io.Writer) error {
+	if token == "" {
+		return fmt.Errorf("bees mcp serve --listen needs %s: the server does not serve a session's tools to whoever finds the port", session.EnvMCPToken)
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(out, "%s%s\n", session.MCPListening, ln.Addr()); err != nil {
+		return err
+	}
+	hs := &http.Server{Handler: mcpHTTPHandler(srv, token)}
+	go func() {
+		<-ctx.Done()
+		_ = hs.Close()
+	}()
+	if err := hs.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
+}
+
+// mcpHTTPHandler serves srv over streamable HTTP to a client presenting
+// token as its bearer credential, and answers 401 to any other request.
+// The SDK's own guard, which refuses a request to a loopback listener whose
+// Host header is not a loopback name, is switched off: it protects a local
+// server from a browser tricked into reaching it (DNS rebinding), which the
+// token does here, and the container reaches the loopback listener through
+// the host's alias, which is exactly such a Host header.
+func mcpHTTPHandler(srv *mcp.Server, token string) http.Handler {
+	h := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, &mcp.StreamableHTTPOptions{DisableLocalhostProtection: true})
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if !ok || subtle.ConstantTimeCompare([]byte(got), []byte(token)) != 1 {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
 }
 
 // codeServerClosing is the jsonrpc2 error code the SDK answers with once the

@@ -40,6 +40,10 @@ type sessionPaths struct {
 	dir          string
 	systemPrompt string
 	prompt       string
+	// mcp are the session's MCP servers, the built-in one included: the
+	// runner decides how that one is reached (a `bees mcp serve` the agent
+	// starts, or the host's HTTP server for a container session).
+	mcp map[string]MCPEntry
 }
 
 // streamEnd is what a backend read off the end of a session's stream, in
@@ -122,13 +126,12 @@ func (claudeBackend) command(ctx context.Context, r *Runner, req Request, paths 
 	// Every session gets the built-in bees server next to whatever bees.toml
 	// configures, so mcp.json is always written.
 	mcpPath := filepath.Join(paths.dir, "mcp.json")
-	entries := r.mcpEntries(req, paths.dir)
-	if err := WriteMCPConfig(mcpPath, entries); err != nil {
+	if err := WriteMCPConfig(mcpPath, paths.mcp); err != nil {
 		return "", nil, "", err
 	}
 	args = append(args, "--mcp-config", mcpPath, "--strict-mcp-config")
 	if boxed {
-		settings, err := claudeSandboxSettings(sortedKeys(entries), runtime.GOOS)
+		settings, err := claudeSandboxSettings(sortedKeys(paths.mcp), runtime.GOOS)
 		if err != nil {
 			return "", nil, "", err
 		}
@@ -271,7 +274,7 @@ func (codexBackend) command(_ context.Context, r *Runner, req Request, paths ses
 	if req.Role.Effort != "" {
 		args = append(args, "-c", "model_reasoning_effort="+codexValue(codexEffort(req.Role.Effort)))
 	}
-	for _, o := range codexMCPOverrides(r.mcpEntries(req, paths.dir)) {
+	for _, o := range codexMCPOverrides(paths.mcp) {
 		args = append(args, "-c", o)
 	}
 	args = append(args, "-")
@@ -407,9 +410,10 @@ func sortedKeys[V any](m map[string]V) []string {
 }
 
 // mcpEntries is what a session's MCP servers are, whatever backend runs it:
-// the resolved role's servers and the built-in bees server.
-func (r *Runner) mcpEntries(req Request, sessionDir string) map[string]MCPEntry {
+// the resolved role's servers and the built-in bees server, as the runner
+// says it is reached.
+func mcpEntries(req Request, builtin MCPEntry) map[string]MCPEntry {
 	entries := MCPEntries(req.Role.MCP)
-	entries[config.BuiltinMCPServer] = r.builtinMCP(req, sessionDir)
+	entries[config.BuiltinMCPServer] = builtin
 	return entries
 }

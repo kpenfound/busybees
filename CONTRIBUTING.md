@@ -75,6 +75,14 @@ the checks, and `dagger check go:test-all` runs one of them.
   `internal/testutil.SetupRepos`, and the workspace and scheduler tests
   create real worktrees, push to it, then assert the branch history and
   that no worktree is left behind.
+- Tests never call the real `docker` either. The session tests fake the
+  container engine with a shell script that records its arguments and runs
+  the command after the image on the host, and the built-in server's
+  `bees mcp serve --listen` with one that reports an address. The one real
+  container session, `TestContainerEndToEnd` in `internal/session`, is
+  skipped unless `BEES_CONTAINER_E2E=<image>` is set, and then needs
+  `docker`, `GH_TOKEN` and a claude credential in the environment; run it
+  by hand after touching `container.go`.
 - `skills.Manager.Git` is replaced with a copy of a fixture directory, so
   every supported repository layout is exercised offline.
 - `install.sh` is checked with `shellcheck -s sh install.sh`. No test runs it,

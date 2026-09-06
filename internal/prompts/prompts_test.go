@@ -1836,3 +1836,36 @@ func TestProductManagerMinIssueSize(t *testing.T) {
 		t.Errorf("the floor changes more than its own paragraph:\n%s", got)
 	}
 }
+
+// A container session has no bees binary, so its prompt offers the tools
+// alone; every other session is still told the four commands exist. The
+// unboxed render is what every role has always read.
+func TestContainerSessionIsNotOfferedTheBeesCommands(t *testing.T) {
+	for _, role := range config.Roles {
+		d := sample()
+		plain, err := System(role, d, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		d.Sandbox = config.SandboxContainer
+		boxed, err := System(role, d, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, cli := range []string{"`bees done`", "CLI: `bees mail send`", "CLI: `bees done <status>", "Four of them also exist"} {
+			if !strings.Contains(plain, cli) {
+				t.Errorf("%s: unboxed prompt lost %q", role, cli)
+			}
+			if strings.Contains(boxed, cli) {
+				t.Errorf("%s: container prompt still offers %q", role, cli)
+			}
+		}
+		if !strings.Contains(flowed(boxed), "without the `bees` binary: the tools are the only way to reach the factory") {
+			t.Errorf("%s: container prompt does not say the binary is absent", role)
+		}
+		d.Sandbox = config.SandboxNone
+		if none, _ := System(role, d, ""); none != plain {
+			t.Errorf("%s: sandbox none renders differently from an unset mode", role)
+		}
+	}
+}

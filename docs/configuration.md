@@ -477,6 +477,7 @@ The CLI accepts aliases such as `pm` and `dev`; the TOML keys do not.
 | `disallowed_tools` | string list | `[]` | Passed as `claude --disallowedTools`. A `codex` role ignores it. |
 | `shell` | string | the shell bees runs under | Exported into sessions as `$SHELL`. Claude Code discovers its Bash tool's shell from `$SHELL`, so this is the lever, without being a guarantee. Must be an existing file. |
 | `sandbox` | string | `"none"` | How much of the machine a session of this role can reach: `none`, `claude` or `container`. See [Sandboxing](#sandboxing). |
+| `sandbox_image` | string | `""` | The image a `container` session runs in: it must hold the role's agent, `git` and `gh`. A `container` role without one is refused at `bees run`. See [The container mode](#the-container-mode). |
 | `env` | table | `{}` | Environment variables exported into every session: the agent, its shell tool and git see them, and so do MCP servers under `claude` (codex starts a server with only the variables its entry names). A `$VAR` value is expanded from the bees process environment when the session starts. A name may not be empty or contain `=` or a space. See [Exported into every session](#exported-into-every-session) for how it meets the variables bees sets itself. |
 | `enabled` | bool | `true` | Roles only. `false` takes a role out of the rotation. Disabling `reviewer` makes a developer's pull request count as approved the moment it is opened, and with `auto_merge` it goes straight to the checks stage. Under `[global]` the key is an error. A named set of these decisions is a [config template](templates.md). |
 
@@ -639,13 +640,15 @@ sandbox = "container"
 |---|---|
 | `none` | Everything the user running `bees` can: the home directory, credentials, the network and every other checkout on the machine. |
 | `claude` | Claude Code's own sandbox: writes to the worktree and the state directory, network to GitHub. See [The claude mode](#the-claude-mode). |
-| `container` | A container holding the worktree and the state directory, and nothing else of the host. |
+| `container` | A container holding the worktree, the repository's `.git` and the state directory, and nothing else of the host. See [The container mode](#the-container-mode). |
 
-`none` is the default. `container` loads from `bees.toml`, so the mode is
-written down before it works, but `bees run` refuses to start while a role in
-the rotation asks for it, naming the role: a factory that fell back to running
-that role unboxed would give it exactly what it was configured to be kept away
-from. `bees exec` and `bees tick` refuse the same session for the same reason.
+`none` is the default. `bees run` checks before it starts that every role in
+the rotation can have the box it asks for (the programs a `claude` box needs
+on Linux, an agent that runs under it, and a `container` role's image,
+credentials and engine) and refuses to start while one cannot, naming the
+role: a factory that fell back to running that role unboxed would give it
+exactly what it was configured to be kept away from. `bees exec` and
+`bees tick` refuse the same session for the same reason.
 
 `bees config show` prints the resolved mode per role, and
 [`bees status`](cli.md#bees-status---json) the mode of the session each worker
@@ -706,6 +709,86 @@ The settings of the user running `bees` (`~/.claude/settings.json`) merge the
 same way, and an `excludedCommands` entry there runs that command outside the
 box.
 
+#### The container mode
+
+A `container` session is the agent's command line, unchanged, run inside
+`docker run`. It needs `docker` on `PATH` with a daemon that answers, and the
+image `sandbox_image` names on the machine: pull or build it yourself, bees
+never pulls. `bees run` checks all three ahead of the doctor, whatever
+`--skip-doctor` says, and refuses to start naming the role that fails.
+
+The container sees three things of the host, each bind-mounted at its host
+path so every path in the prompts and the environment means the same inside:
+the worktree, the repository's `.git` (a linked worktree's `.git` file points
+into it, and commits write there) and the state directory (mail, notes, the
+session directory). A role with `skills` also gets the skills cache,
+read-only. Nothing else: no home directory, no other checkout, no credential
+store. The session runs as the user running `bees` (claude refuses to skip
+permissions as root), with a `HOME` of its own on a tmpfs that is gone when
+the session ends; a settings directory baked into the image is reached by
+setting `CLAUDE_CONFIG_DIR` in the role's `env`.
+
+Its environment is built from nothing rather than from the one `bees` runs
+in, and holds, in this order: the agent's credential forwarded from the bees
+environment when it is set there (`ANTHROPIC_API_KEY` or
+`CLAUDE_CODE_OAUTH_TOKEN` for claude, `OPENAI_API_KEY` or `CODEX_API_KEY` for
+codex), the role's `env` (which may name the credential itself), `SHELL`, the
+`BEES_*` variables, the [`[github]`](#github) token and git identity, the git
+configuration every session runs with plus `safe.directory = *` and an
+`insteadOf` that pushes an ssh remote over https (the container has no ssh
+keys), and `HOME`. Values reach the engine by variable name, never on a
+command line. A `container` role therefore needs `[github]` (or `GH_TOKEN` in
+its `env`) and a credential for its agent; `bees run` refuses the role
+without them, because inside the container there is no other gh login and no
+keychain.
+
+The `bees` binary is not in the container. The built-in MCP server runs on the
+host as `bees mcp serve --listen`, with the environment a session on the host
+would have started it with, and the session reaches it over HTTP at
+`host.docker.internal` with a bearer token of its own, carried in the
+session's `mcp.json`. The tools work unchanged; the session's prompt does not
+offer the `bees` commands. A stdio MCP server configured in `bees.toml` starts
+inside the container, so its command must be in the image; a remote one is
+reached as configured (`host.docker.internal` reaches a server on the host).
+
+The image must hold the agent, `git` and `gh`. A Dockerfile that does:
+
+```dockerfile
+FROM node:22-bookworm
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git curl ca-certificates \
+    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+       -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) \
+       signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] \
+       https://cli.github.com/packages stable main" \
+       > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update && apt-get install -y --no-install-recommends gh \
+    && rm -rf /var/lib/apt/lists/*
+RUN npm install -g @anthropic-ai/claude-code
+```
+
+A role that runs the product (QA, most often) names an image carrying the
+product's toolchain too, under `[roles.qa]`.
+
+While the session runs, `<session>/container-id` holds the container's id,
+and the container is named `bees-<session>-<random>` and labelled
+`bees.session=<session directory>`, so `docker ps --filter
+label=bees.session` lists a factory's sessions. Stopping the session (its
+timeout, or `bees run` stopping) removes the container. `bees kill` does not
+find a container session: it stops the `docker run` client, which forwards
+the signal to the agent, and a container that outlives it is removed with
+`docker rm -f`.
+
+What the box holds: the session cannot read or write anything of the host
+outside the three mounts, and cannot reach the host's credentials or its
+other checkouts. What it does not: the session has the network, the bot's
+GitHub token and its agent credential, and everything in the image; and the
+mounted state directory holds every role's mail and notes, not only its own.
+On Linux the container runs as the user running bees so what it writes stays
+theirs, and reaches the host at the docker bridge gateway; the mode has been
+exercised on macOS with Docker Desktop.
+
 ### How global and role settings merge
 
 | Setting | Rule |
@@ -714,7 +797,7 @@ box.
 | `skills` | Union, global first, order kept, duplicates dropped. |
 | `mcp` | Union by name; a role server replaces a global one of the same name. |
 | `env` | Union by name; the role wins. |
-| `model`, `fallback_model`, `agent`, `effort`, `max_turns`, `timeout`, `shell`, `sandbox` | Role value if set, else global, else the built-in default. |
+| `model`, `fallback_model`, `agent`, `effort`, `max_turns`, `timeout`, `shell`, `sandbox`, `sandbox_image` | Role value if set, else global, else the built-in default. |
 | `allowed_tools`, `disallowed_tools` | Global list followed by the role list. |
 | `enabled` | Role only. |
 | `skills_refresh` | Global only. |
@@ -975,7 +1058,7 @@ variable that process inherited, plus:
 | `BEES_PR` | The pull request, when any. |
 | `BEES_BRANCH` | The checked-out branch, when any. |
 | `BEES_NOTES_FILE` | The role's notes file. |
-| `BEES_BIN` | Path of the `bees` executable. Its directory is also prepended to `PATH`, so a session can run `bees mail` and `bees done`. |
+| `BEES_BIN` | Path of the `bees` executable. Its directory is also prepended to `PATH`, so a session can run `bees mail` and `bees done`. Not set in a `container` session, which has no `bees` binary. |
 | `BEES_REVIEW_MODE` | `checks` in a reviewer session that diagnoses failed checks; unset otherwise. |
 | `SHELL` | The configured `shell`, when set. |
 | `GH_TOKEN` | [`github.token`](#github), when set, so the session's `gh` acts as the factory. |
