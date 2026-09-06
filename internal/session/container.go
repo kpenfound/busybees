@@ -361,6 +361,9 @@ func (c *container) clientEnv() []string {
 	vars := dedupe(c.vars)
 	names := map[string]bool{}
 	for _, v := range vars {
+		if v.name == "HOME" {
+			continue // the container's HOME is on the command line; the client keeps its own
+		}
 		names[v.name] = true
 	}
 	var env []string

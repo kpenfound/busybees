@@ -110,6 +110,7 @@ func lines(t *testing.T, path string) []string {
 // the session runs.
 func TestContainerSessionRunsInsideTheEngine(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "sk-host")
+	t.Setenv("HOME", "/Users/operator")
 	fakeContainerHost(t, "darwin")
 	claude := fakeClaude(t, `
 printf '%s\n' "$@" > "$BEES_SESSION_DIR/args.txt"
@@ -183,7 +184,12 @@ printf '{"status":"pr-opened","pr":7}' > "$BEES_SESSION_DIR/outcome.json"
 			t.Errorf("engine client env missing %s", want)
 		}
 	}
+	// The client keeps the host's HOME (docker reads ~/.docker/config.json
+	// for its context) and never sees the container's.
 	if slices.Contains(clientEnv, "HOME=/home/bees") {
+		t.Error("the engine client was given the container's HOME")
+	}
+	if !slices.Contains(clientEnv, "HOME=/Users/operator") {
 		t.Error("the engine client lost its own HOME")
 	}
 
