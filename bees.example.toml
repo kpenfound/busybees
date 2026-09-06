@@ -108,6 +108,10 @@ label = "bees"
 #pr_fix_conflicts = true
 # Do the same when a pull request merely fell behind the default branch.
 #pr_keep_updated = false
+# Build a blocked_by chain of work items under the same feature as a stack of
+# branches and pull requests, each depending on its predecessor's, instead of
+# independently.
+#stacked_prs = false
 # Review every open pull request in the filter that the factory did not write
 # (its head branch does not start with branch_prefix), without waiting for the
 # review-requested label. With filter.assignee set, that is the pull requests

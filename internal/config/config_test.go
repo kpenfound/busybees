@@ -458,16 +458,16 @@ func TestPRUpdateSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cfg.Scheduler.FixConflicts() || cfg.Scheduler.PRKeepUpdated {
-		t.Fatalf("defaults: fix conflicts %v, keep updated %v", cfg.Scheduler.FixConflicts(), cfg.Scheduler.PRKeepUpdated)
+	if !cfg.Scheduler.FixConflicts() || cfg.Scheduler.PRKeepUpdated || cfg.Scheduler.StackedPRs {
+		t.Fatalf("defaults: fix conflicts %v, keep updated %v, stacked prs %v", cfg.Scheduler.FixConflicts(), cfg.Scheduler.PRKeepUpdated, cfg.Scheduler.StackedPRs)
 	}
 	// false is a meaningful value for pr_fix_conflicts, so it must survive applyDefaults.
-	cfg, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\npr_fix_conflicts = false\npr_keep_updated = true\n"))
+	cfg, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\npr_fix_conflicts = false\npr_keep_updated = true\nstacked_prs = true\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Scheduler.FixConflicts() || !cfg.Scheduler.PRKeepUpdated {
-		t.Fatalf("custom: fix conflicts %v, keep updated %v", cfg.Scheduler.FixConflicts(), cfg.Scheduler.PRKeepUpdated)
+	if cfg.Scheduler.FixConflicts() || !cfg.Scheduler.PRKeepUpdated || !cfg.Scheduler.StackedPRs {
+		t.Fatalf("custom: fix conflicts %v, keep updated %v, stacked prs %v", cfg.Scheduler.FixConflicts(), cfg.Scheduler.PRKeepUpdated, cfg.Scheduler.StackedPRs)
 	}
 }
 

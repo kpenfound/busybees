@@ -747,6 +747,10 @@ type Scheduler struct {
 	// PRKeepUpdated does the same when the pull request merely fell behind
 	// the default branch without conflicting. Default false.
 	PRKeepUpdated bool `toml:"pr_keep_updated" json:"pr_keep_updated"`
+	// StackedPRs builds a blocked_by chain of work items under the same
+	// feature as a stack of branches and pull requests, each depending on
+	// its predecessor's, instead of independently. Default false.
+	StackedPRs bool `toml:"stacked_prs" json:"stacked_prs"`
 	// ReviewAssignedPRs asks the reviewer for one pass over every open pull
 	// request in the poll that the factory did not write — its head branch
 	// does not start with project.branch_prefix — without waiting for
