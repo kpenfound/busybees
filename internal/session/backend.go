@@ -350,11 +350,15 @@ func (codexBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer) (
 		case "turn.completed":
 			end = &streamEnd{Subtype: "success"}
 		case "turn.failed", "error":
+			// The subtype alone marks the failure: Run reports any end
+			// whose subtype is not "success" as an error, whatever the
+			// exit code, so a turn codex gave up on with a clean exit is
+			// still one.
 			msg := ev.Error.Message
 			if msg == "" {
 				msg = ev.Message
 			}
-			end = &streamEnd{IsError: true, Subtype: strings.ReplaceAll(typ, ".", "_"), Result: msg}
+			end = &streamEnd{Subtype: strings.ReplaceAll(typ, ".", "_"), Result: msg}
 		}
 	})
 	if end == nil {

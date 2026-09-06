@@ -629,38 +629,40 @@ echo '{"type":"turn.completed","usage":{}}'
 
 // TestCodexFailedTurn: codex ends a turn it could not finish with
 // "turn.failed", whose message is the result text when the session said
-// nothing else; and a message naming the usage limit reads as the account
+// nothing else, and that is an error even when the process then exits
+// cleanly; and a message naming the usage limit reads as the account
 // limit, through the same phrase check a claude session's result text
 // goes through.
 func TestCodexFailedTurn(t *testing.T) {
 	for _, tc := range []struct {
 		name, events, subtype, text string
+		exit                        int
 		limited                     bool
 	}{
 		{
-			name: "turn.failed",
+			name: "turn.failed, clean exit",
 			events: `echo '{"type":"thread.started","thread_id":"t"}'
 echo '{"type":"item.completed","item":{"type":"agent_message","text":"trying"}}'
 echo '{"type":"turn.failed","error":{"message":"stream disconnected"}}'
 `,
-			subtype: "turn_failed", text: "stream disconnected",
+			subtype: "turn_failed", text: "stream disconnected", exit: 0,
 		},
 		{
 			name: "error event",
 			events: `echo '{"type":"error","message":"You have hit your usage limit. Try again at 3pm."}'
 `,
-			subtype: "error", text: "You have hit your usage limit. Try again at 3pm.", limited: true,
+			subtype: "error", text: "You have hit your usage limit. Try again at 3pm.", exit: 1, limited: true,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			bin := fakeCodex(t, tc.events+"exit 1\n")
+			bin := fakeCodex(t, tc.events+"exit "+strconv.Itoa(tc.exit)+"\n")
 			r := newRunner(t, "")
 			r.CodexBin = bin
 			res, err := r.Run(context.Background(), Request{Name: "c3", Role: codexRole(""), WorkDir: t.TempDir(), Prompt: "TASK"})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !res.IsError || res.ErrorSubtype != tc.subtype || res.ResultText != tc.text || res.ExitCode != 1 || res.HasOutcome {
+			if !res.IsError || res.ErrorSubtype != tc.subtype || res.ResultText != tc.text || res.ExitCode != tc.exit || res.HasOutcome {
 				t.Fatalf("result: %+v", res)
 			}
 			if res.RateLimit != nil {
