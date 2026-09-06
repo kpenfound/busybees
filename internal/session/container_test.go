@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/procs"
 )
 
 // fakeDocker writes a shell script standing in for the docker CLI: `run`
@@ -147,8 +148,8 @@ printf '{"status":"pr-opened","pr":7}' > "$BEES_SESSION_DIR/outcome.json"
 	joined := strings.Join(args, " ")
 	for _, want := range []string{
 		"run --rm --interactive --name bees-boxed-",
-		"--cidfile " + filepath.Join(dir, ContainerIDFile),
-		"--label " + ContainerLabel + "=" + dir,
+		"--cidfile " + filepath.Join(dir, procs.ContainerIDFile),
+		"--label " + procs.ContainerLabel + "=" + dir,
 		"--workdir " + worktree,
 		"--mount type=tmpfs,destination=/home/bees,tmpfs-mode=1777",
 		"--mount type=bind,source=" + worktree + ",destination=" + worktree + " ",
@@ -237,7 +238,7 @@ printf '{"status":"pr-opened","pr":7}' > "$BEES_SESSION_DIR/outcome.json"
 	if b, err := os.ReadFile(filepath.Join(dir, "id-while-running")); err != nil || strings.TrimSpace(string(b)) != "abc123" {
 		t.Errorf("container id while running: %q, %v", b, err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ContainerIDFile)); err == nil {
+	if _, err := os.Stat(filepath.Join(dir, procs.ContainerIDFile)); err == nil {
 		t.Error("container id file left behind after the session")
 	}
 	// The command inside is the ordinary one, with the prompt on stdin.

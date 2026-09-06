@@ -636,8 +636,9 @@ still coming down with the console back.
 the session it would stop and the second stops that one, whatever the cursor
 has moved on to in between. It stops it the way
 [`bees kill`](#bees-kill---dry-run---scheduler---grace-5s) stops a leftover
-one — the process and its group, with an `interrupted` marker left in the
-session directory — and then labels its issue `bees:needs-human` with a
+one — the process and its group, and the container of a session in the
+container sandbox, with an `interrupted` marker left in the session
+directory — and then labels its issue `bees:needs-human` with a
 comment saying a person stopped it, exactly as the factory giving up would.
 The session's own worker ends without retrying it. A singleton session
 (product manager, project manager, QA) owns no issue, so stopping one stops a
@@ -1023,16 +1024,23 @@ running on the same machine is never touched, whichever config you point
 `bees kill` at. Pid files are cross-checked against that scan, so a pid reused
 by an unrelated process after a reboot is discarded, never killed.
 
-Each session it stops through a pid file is also marked as stopped, by an
-`interrupted` file in the session's directory. The next session for that issue
-is then told the session before it was stopped on purpose rather than lost
-with the machine, and — when it was a developer session — that the branch may
-carry its unreported work.
+A session in the [container sandbox](configuration.md#sandboxing) is found a
+third way, because its agent runs in the container rather than on the host:
+the engine is asked which of its running containers carry the `bees.session`
+label, whose value is the session directory, and stopping such a session
+removes its container. A container whose `docker run` client is already gone
+is stopped on its own.
+
+Each session it stops through a pid file or through its container is also
+marked as stopped, by an `interrupted` file in the session's directory. The
+next session for that issue is then told the session before it was stopped on
+purpose rather than lost with the machine, and — when it was a developer
+session — that the branch may carry its unreported work.
 
 It refuses to run while a `bees run` scheduler is alive (killing sessions
 under a running scheduler would corrupt its state); pass `--scheduler` to stop
 the scheduler too. To stop one session of a factory that is still running, use
-`k` in [the live view](#the-live-view): it stops the process the same way and
+`k` in [the live view](#the-live-view): it stops the session the same way and
 hands that session's issue to a person, which is what a running scheduler
 needs and this command does not do.
 

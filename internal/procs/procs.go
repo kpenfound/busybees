@@ -5,14 +5,21 @@
 // session directory, and a scan of the process table for claude and codex
 // processes carrying a session marker: the `--name bees-…` argument every
 // claude session is started with, or the override that hands a codex
-// session its session directory.
+// session its session directory. A session in the container sandbox has a
+// third: the agent runs in the container, so the container is what is
+// found and stopped, from the id file and the label the runner leaves
+// (see container.go); what the process table shows of it is the engine
+// client that started it.
 //
-// Both sources are scoped to one factory: a process only counts when its
+// Every source is scoped to one factory: a process only counts when its
 // command line also references this state directory's sessions directory
 // (a claude session's argv carries `--append-system-prompt-file
 // <sessions dir>/<session>/system-prompt.md`, a codex session's the
-// session directory in the same override). Another project's sessions are
-// therefore never reported, however many factories share a machine.
+// session directory in the same override, an engine client both the
+// container's label and its id file), and a container only when the
+// session directory its label carries lies under it. Another project's
+// sessions are therefore never reported, however many factories share a
+// machine.
 package procs
 
 import (
@@ -47,10 +54,16 @@ type Proc struct {
 	PID     int
 	PGID    int
 	Command string
-	// Source is "pidfile" or "ps".
+	// Source is "pidfile", "ps" or "container".
 	Source string
-	// SessionDir is set for processes found through a pid file.
+	// SessionDir is set for sessions found through a pid file or through
+	// their container, whose label carries it.
 	SessionDir string
+	// Container is the id of the container a session runs in, for a
+	// session in the container sandbox. Stopping such a session means
+	// removing the container: the agent runs inside it and outlives the
+	// engine client PID names.
+	Container string
 }
 
 // WritePID records the pid of a running session.
@@ -74,7 +87,8 @@ func Alive(pid int) bool {
 // kill` as its --grace default, and the live view's kill key.
 const DefaultGrace = 5 * time.Second
 
-// FromPIDFile returns the live session recorded in one session directory.
+// FromPIDFile returns the live session recorded in one session directory,
+// with the container it runs in when it is a container-backed session.
 // It reports false when the directory holds no pid file, when the process
 // the file names is gone — in which case the stale file is deleted — and,
 // when known is non-nil (the ps scan), when the pid is alive but is not an
@@ -97,7 +111,7 @@ func FromPIDFile(dir string, known map[int]Proc) (Proc, bool) {
 		}
 	}
 	pgid, _ := syscall.Getpgid(pid)
-	return Proc{PID: pid, PGID: pgid, Source: "pidfile", SessionDir: dir}, true
+	return Proc{PID: pid, PGID: pgid, Source: "pidfile", SessionDir: dir, Container: ContainerID(dir)}, true
 }
 
 // FromPIDFiles returns live sessions recorded under sessionsDir and deletes
@@ -160,7 +174,7 @@ func parsePS(text string, self int, scope string) []Proc {
 		// Only the agent executable itself (or an interpreter running a
 		// claude script), never a shell or editor whose command line merely
 		// mentions the marker.
-		if !isAgent(fields[2:]) || !hasMarker(command) {
+		if !isSessionProcess(fields[2:], command) || !hasMarker(command) {
 			continue
 		}
 		if !inScope(command, prefixes) {
@@ -204,12 +218,21 @@ func hasMarker(command string) bool {
 	return strings.Contains(command, " "+SessionMarker) || strings.Contains(command, " "+CodexSessionMarker)
 }
 
-// isAgent reports whether argv starts the claude or codex executable,
-// directly or through an interpreter (node/bun/sh script).
-func isAgent(argv []string) bool {
+// isSessionProcess reports whether argv starts a process that runs a
+// session: the claude or codex executable, directly or through an
+// interpreter (node/bun/sh script), or the container engine running a
+// container-backed session, whose agent is in the container and never in
+// the process table. The engine counts only when the command line carries
+// the label bees puts on a session's container, so another container of
+// the machine is never taken for one.
+func isSessionProcess(argv []string, command string) bool {
+	engine := filepath.Base(Engine)
 	for i, a := range argv[:min(2, len(argv))] {
-		if base := filepath.Base(a); base == "claude" || base == "codex" {
+		switch base := filepath.Base(a); base {
+		case "claude", "codex":
 			return true
+		case engine:
+			return strings.Contains(command, " "+containerMarker)
 		}
 		if i == 0 && strings.HasPrefix(a, "-") {
 			return false
@@ -231,6 +254,11 @@ func Find(ctx context.Context, sessionsDir string) ([]Proc, error) {
 			known[p.PID] = p
 		}
 	}
+	// The engine's containers are asked for before the pid files, because
+	// asking clears the id file of a session whose container has gone. A
+	// machine with no container engine has no container session either, so
+	// the error is the empty answer.
+	fromContainers, _ := FromContainers(ctx, sessionsDir)
 	fromFiles, err := FromPIDFiles(sessionsDir, known)
 	if err != nil {
 		return nil, err
@@ -246,17 +274,61 @@ func Find(ctx context.Context, sessionsDir string) ([]Proc, error) {
 		}
 		byPID[p.PID] = p
 	}
-	out := make([]Proc, 0, len(byPID))
+	out := make([]Proc, 0, len(byPID)+len(fromContainers))
+	// A running container belongs to the session whose directory it is
+	// labelled with; one whose engine client is gone — killed on its own,
+	// or lost with the machine — is a session of its own to stop.
+	for _, c := range fromContainers {
+		attached := false
+		for pid, p := range byPID {
+			if !sameDir(p.SessionDir, c.SessionDir) {
+				continue
+			}
+			p.Container = c.Container
+			byPID[pid] = p
+			attached = true
+		}
+		if !attached {
+			out = append(out, c)
+		}
+	}
 	for _, p := range byPID {
 		out = append(out, p)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].PID < out[j].PID })
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].PID != out[j].PID {
+			return out[i].PID < out[j].PID
+		}
+		return out[i].Container < out[j].Container
+	})
 	return out, nil
 }
 
-// Kill terminates a process and its process group: SIGTERM, then SIGKILL
-// after grace if it is still alive.
+// Kill stops a session: its container, when it runs in one, and its process
+// and process group — SIGTERM, then SIGKILL after grace if it is still
+// alive. The container is removed first, because it outlives the engine
+// client that started it and the agent is inside it; a session found
+// through its container alone has no process left to signal.
 func Kill(p Proc, grace time.Duration) error {
+	var errs []error
+	if p.Container != "" {
+		if err := removeContainer(p.Container); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if p.PID > 0 {
+		errs = append(errs, killProcess(p, grace))
+	}
+	if p.SessionDir != "" {
+		RemovePID(p.SessionDir)
+		RemoveContainerID(p.SessionDir)
+	}
+	return errors.Join(errs...)
+}
+
+// killProcess terminates a process and its process group: SIGTERM, then
+// SIGKILL after grace if it is still alive.
+func killProcess(p Proc, grace time.Duration) error {
 	if err := signal(p, syscall.SIGTERM); err != nil {
 		return err
 	}
@@ -271,9 +343,6 @@ func Kill(p Proc, grace time.Duration) error {
 		if err := signal(p, syscall.SIGKILL); err != nil {
 			return err
 		}
-	}
-	if p.SessionDir != "" {
-		RemovePID(p.SessionDir)
 	}
 	return nil
 }
