@@ -142,7 +142,9 @@ type backend struct {
 	g  *globalFlags
 	mu sync.Mutex
 	gh *github.Client
-	// policy is only valid once gh is set.
+	// self is the login the factory acts as, when filter.creator needs it
+	// (resolveFilterSelf); policy is only valid once gh is set.
+	self   string
 	policy issues.Policy
 }
 
@@ -180,6 +182,11 @@ func (b *backend) load(ctx context.Context) error {
 	if err := resolveFilterAssignee(ctx, cfg); err != nil {
 		return err
 	}
+	self, err := resolveFilterSelf(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	b.self = self
 	b.policy = issuePolicy(cfg)
 	b.gh = githubClient(cfg)
 	return nil
@@ -206,7 +213,7 @@ func (b *backend) Rules(ctx context.Context) (github.Query, config.Labels, error
 	if err := b.load(ctx); err != nil {
 		return github.Query{}, config.Labels{}, err
 	}
-	q := github.Query{Assignee: b.policy.Filter.Assignee, Milestone: b.policy.Filter.Milestone, Creator: b.policy.Filter.Creator}
+	q := github.Query{Assignee: b.policy.Filter.Assignee, Milestone: b.policy.Filter.Milestone, Creator: b.policy.Filter.Creator, Self: b.self}
 	if b.policy.Filter.LabelRequired() {
 		q.Label = b.policy.Filter.Label
 	}

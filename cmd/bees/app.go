@@ -23,6 +23,7 @@ import (
 // app wires the packages together for the scheduler commands.
 type app struct {
 	cfg    *config.Config
+	actsAs string // the login the factory acts as, when filter.creator needs it (resolveFilterSelf)
 	store  *state.Store
 	gh     *github.Client
 	mail   *mail.Box
@@ -98,6 +99,10 @@ func newApp(ctx context.Context, g *globalFlags) (*app, error) {
 	if err := resolveFilterAssignee(ctx, cfg); err != nil {
 		return nil, err
 	}
+	actsAs, err := resolveFilterSelf(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
 
 	store := state.New(cfg.StateDir())
 	if err := store.Init(); err != nil {
@@ -137,6 +142,7 @@ func newApp(ctx context.Context, g *globalFlags) (*app, error) {
 	}
 	return &app{
 		cfg:    cfg,
+		actsAs: actsAs,
 		store:  store,
 		gh:     githubClient(cfg),
 		mail:   mail.Open(store.MailDir()),
@@ -157,6 +163,7 @@ func (a *app) scheduler() (*scheduler.Scheduler, error) {
 	return scheduler.New(scheduler.Deps{
 		Config:     a.cfg,
 		GitHub:     a.gh,
+		Self:       a.actsAs,
 		Mail:       a.mail,
 		Runner:     a.runner,
 		Workspaces: a.ws,

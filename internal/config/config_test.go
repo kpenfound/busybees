@@ -351,7 +351,8 @@ func TestFilterLabelRequired(t *testing.T) {
 
 // filter.creator has no default, is not required alongside assignee or
 // milestone to satisfy require_label = false, and is not applied to what the
-// factory creates (there is no RenderOptions field for it, unlike assignee).
+// factory creates (there is no RenderOptions field for it, unlike assignee:
+// the factory's own items pass it through github.Query.Self instead).
 func TestFilterCreator(t *testing.T) {
 	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"))
 	if err != nil {

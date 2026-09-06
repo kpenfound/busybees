@@ -106,6 +106,55 @@ func TestMCPServerActsAsTheConfiguredAccount(t *testing.T) {
 	}
 }
 
+// TestFilterCreatorAllowsTheAccountTheFactoryActsAs pins what keeps the
+// factory's own issues visible under filter.creator: the visibility query
+// carries the login the factory acts as (github.login, else the machine's
+// own gh user), on both resolution paths. Without filter.creator nothing is
+// looked up, because nothing needs the answer.
+func TestFilterCreatorAllowsTheAccountTheFactoryActsAs(t *testing.T) {
+	t.Setenv(versions.EnvSkip, "1")
+	withCreator := strings.Replace(botTOML, "assignee = \"@me\"\n", "assignee = \"@me\"\ncreator = \"someone\"\n", 1)
+
+	path := setupBotFactory(t, withCreator)
+	a, err := newApp(context.Background(), &globalFlags{config: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.actsAs != "busybees-bot" {
+		t.Errorf("acting as %q, want github.login", a.actsAs)
+	}
+	b := &backend{g: &globalFlags{config: path}}
+	q, _, err := b.Rules(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if q.Creator != "someone" || q.Self != "busybees-bot" {
+		t.Errorf("tool query creator %q self %q, want someone and github.login", q.Creator, q.Self)
+	}
+
+	// Without [github] the factory acts as the person's own account.
+	path = setupBotFactory(t, strings.SplitN(withCreator, "[github]", 2)[0])
+	a, err = newApp(context.Background(), &globalFlags{config: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.actsAs != "kyle" {
+		t.Errorf("acting as %q without [github], want the machine's own gh user", a.actsAs)
+	}
+
+	// Without filter.creator the lookup is not made: "@me" is the only
+	// reason to ask gh who is running bees.
+	path = setupBotFactory(t, strings.SplitN(botTOML, "[github]", 2)[0])
+	calls := fakeMe(t, "kyle")
+	a, err = newApp(context.Background(), &globalFlags{config: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.actsAs != "" || *calls != 1 {
+		t.Errorf("without filter.creator: acting as %q after %d lookups, want none beyond the one for @me", a.actsAs, *calls)
+	}
+}
+
 // TestNoGitHubTableInjectsNoToken pins the default: a bees.toml written
 // before [github] existed produces exactly the client it always did.
 func TestNoGitHubTableInjectsNoToken(t *testing.T) {

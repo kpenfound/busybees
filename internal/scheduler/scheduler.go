@@ -54,6 +54,12 @@ type Deps struct {
 	// are empty when the caller supplies none, and then nothing is recorded.
 	Version  string
 	Revision string
+	// Self is the login the factory acts as: github.login, or the machine's
+	// own gh user when [github] is unset. It is github.Query.Self, what keeps
+	// the issues and pull requests the factory opens visible under
+	// filter.creator, and cmd/bees only resolves it when that key is set
+	// (resolveFilterSelf). Empty otherwise, and then nothing depends on it.
+	Self string
 	// Now overrides the clock (tests).
 	Now func() time.Time
 }
@@ -182,7 +188,7 @@ func New(d Deps) (*Scheduler, error) {
 		d.Now = time.Now
 	}
 	f := d.Config.Filter
-	q := github.Query{Assignee: f.Assignee, Milestone: f.Milestone, Creator: f.Creator}
+	q := github.Query{Assignee: f.Assignee, Milestone: f.Milestone, Creator: f.Creator, Self: d.Self}
 	if f.LabelRequired() {
 		q.Label = f.Label
 	}

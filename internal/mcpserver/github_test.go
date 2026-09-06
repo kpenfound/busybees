@@ -253,6 +253,22 @@ func TestIssueViewRefusesAnIssueOutsideTheFilterByCreator(t *testing.T) {
 	}
 }
 
+// An issue the factory opened itself is inside the filter whatever
+// filter.creator says: the query's Self is the account the factory acts as.
+func TestIssueViewAcceptsTheFactoryOwnIssueUnderFilterCreator(t *testing.T) {
+	f := newFakeGitHub()
+	f.q.Creator = "kyle"
+	f.q.Self = "bot"
+	f.issues[12] = github.Issue{
+		Number: 12, Title: "Opened by the factory", Labels: labelsOf("bees"),
+		Assignees: []github.Author{{Login: "kyle"}}, Author: github.Author{Login: "bot"},
+	}
+	h := newHarness(t, config.RoleDeveloper, Deps{GitHub: f})
+	if out := h.call("issue_view", map[string]any{"number": 12}); !strings.Contains(out, "Opened by the factory") {
+		t.Fatalf("issue_view: %q", out)
+	}
+}
+
 func TestPRViewRendersChecksAndHumanActivity(t *testing.T) {
 	f := newFakeGitHub()
 	f.prs[72] = github.PR{

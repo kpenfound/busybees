@@ -46,7 +46,10 @@ second interrupt stops the running sessions too. Both are described under
 A full pass is:
 
 1. **Poll.** `gh issue list` and `gh pr list` with the filter's query (label,
-   assignee, milestone): two calls. Every open issue is bucketed by its state
+   assignee, milestone, creator): two calls, or four under a `filter.creator`
+   that is not the account the factory acts as, because `--author` takes one
+   login and the factory's own items must stay visible (`github.Query.Self`).
+   Every open issue is bucketed by its state
    label (`triage`, `ready`, `in-progress`, `blocked`, `review`, `approved`,
    `needs-human`, or none), each bucket sorted oldest first. An issue carrying
    `bees:feedback` or `bees:feature` is set aside for the product manager

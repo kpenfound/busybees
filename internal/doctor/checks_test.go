@@ -771,6 +771,42 @@ func TestCheckFilter(t *testing.T) {
 	wantResult(t, f.run(t, f.checkFilter), Fail, "exit status 1")
 }
 
+// filter.creator lists the account the factory acts as too, since what the
+// factory opens is authored by it: github.login when [github] is set, else
+// the machine's own gh user, which is the one lookup that can fail.
+func TestCheckFilterCreatorListsTheAccountTheFactoryActsAs(t *testing.T) {
+	const toml = "\n[filter]\ncreator = \"kyle\"\n"
+	authors := func(f *fixture) []string {
+		var out []string
+		for _, c := range f.gh.calls {
+			for i, a := range c {
+				if a == "--author" {
+					out = append(out, c[i+1])
+				}
+			}
+		}
+		return out
+	}
+
+	f := setup(t, toml, map[string]ghReply{"issue list": {out: `[{"number":47}]`}})
+	f.GitHub.ActsAs = "bot"
+	wantResult(t, f.run(t, f.checkFilter), Pass, "creator kyle")
+	if got := fmt.Sprint(authors(f)); got != "[kyle bot]" {
+		t.Errorf("listed authors %s, want the creator and the account the factory acts as", got)
+	}
+
+	f = setup(t, toml, map[string]ghReply{"issue list": {out: `[{"number":47}]`}})
+	f.CurrentUser = func(context.Context) (string, error) { return "kyle-at-home", nil }
+	wantResult(t, f.run(t, f.checkFilter), Pass, "creator kyle")
+	if got := fmt.Sprint(authors(f)); got != "[kyle kyle-at-home]" {
+		t.Errorf("listed authors %s, want the creator and the machine's own gh user", got)
+	}
+
+	f = setup(t, toml, map[string]ghReply{"issue list": {out: `[{"number":47}]`}})
+	f.CurrentUser = func(context.Context) (string, error) { return "", errors.New("gh api user: not logged in") }
+	wantResult(t, f.run(t, f.checkFilter), Fail, "not logged in", "gh auth login", "filter.creator")
+}
+
 // A filter.assignee that is not a GitHub login makes `gh issue list --assignee X`
 // error instead of answering an empty list (it only answers empty when the query
 // also carries a label). That is a filter matching nothing, not a broken gh, and

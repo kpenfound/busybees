@@ -258,10 +258,11 @@ type Filter struct {
 	Assignee string `toml:"assignee" json:"assignee"`
 	// Milestone restricts visibility to issues/PRs in this milestone title.
 	Milestone string `toml:"milestone" json:"milestone"`
-	// Creator restricts visibility to issues/PRs opened by this GitHub login.
-	// Unlike Assignee and Milestone, nothing the factory creates is made to
-	// match it: an issue or pull request is always authored by whichever
-	// account the factory acts as, not by a configurable value.
+	// Creator restricts visibility to issues/PRs opened by this GitHub login,
+	// or by the account the factory acts as. Unlike Assignee and Milestone,
+	// nothing the factory creates can be made to match it: an issue or pull
+	// request is authored by whichever account the factory acts as, so
+	// github.Query.Self lets that account's items through instead.
 	Creator string `toml:"creator" json:"creator"`
 }
 

@@ -365,10 +365,32 @@ type Query struct {
 	Label     string // when non-empty, items must carry this label
 	Assignee  string // when non-empty, items must be assigned to this login
 	Milestone string // when non-empty, items must be in this milestone
-	Creator   string // when non-empty, items must be opened by this login
+	Creator   string // when non-empty, items must be opened by this login or by Self
+	// Self is the login the factory acts as. An item it opened is visible
+	// whatever Creator says: the factory's own issues and pull requests are
+	// authored by Self and cannot be made to match Creator the way they are
+	// assigned and milestoned to match Assignee and Milestone, so without
+	// this every one of them would vanish from the factory's view. It is
+	// ignored while Creator is empty.
+	Self string
 }
 
-func (q Query) args() []string {
+// authors are the logins an item may be opened by: Creator, and Self when
+// it is a different account. Empty when the query does not filter on it.
+func (q Query) authors() []string {
+	if q.Creator == "" {
+		return nil
+	}
+	if q.Self == "" || strings.EqualFold(q.Self, q.Creator) {
+		return []string{q.Creator}
+	}
+	return []string{q.Creator, q.Self}
+}
+
+// argSets is the gh listing flags for the query: one set, or one per author
+// when the query allows more than one, because `gh issue list --author`
+// takes a single login. Listings run every set and merge the answers.
+func (q Query) argSets() [][]string {
 	var a []string
 	if q.Label != "" {
 		a = append(a, "--label", q.Label)
@@ -379,10 +401,41 @@ func (q Query) args() []string {
 	if q.Milestone != "" {
 		a = append(a, "--milestone", q.Milestone)
 	}
-	if q.Creator != "" {
-		a = append(a, "--author", q.Creator)
+	authors := q.authors()
+	if len(authors) == 0 {
+		return [][]string{a}
 	}
-	return a
+	sets := make([][]string, 0, len(authors))
+	for _, login := range authors {
+		set := append(slices.Clone(a), "--author", login)
+		sets = append(sets, set)
+	}
+	return sets
+}
+
+// list runs one gh listing per argument set of q and merges the results,
+// keeping the first of an item that more than one listing returned. The
+// merged list is in listing order, and within one listing in gh's order.
+func list[T any](ctx context.Context, c *Client, q Query, base []string, number func(T) int) ([]T, error) {
+	var out []T
+	seen := map[int]bool{}
+	for _, set := range q.argSets() {
+		raw, err := c.Exec(ctx, append(slices.Clone(base), set...)...)
+		if err != nil {
+			return nil, err
+		}
+		var items []T
+		if err := json.Unmarshal(raw, &items); err != nil {
+			return nil, err
+		}
+		for _, item := range items {
+			if n := number(item); !seen[n] {
+				seen[n] = true
+				out = append(out, item)
+			}
+		}
+	}
+	return out, nil
 }
 
 // Matches reports whether an item with the given labels, assignees,
@@ -413,7 +466,7 @@ func (q Query) Matches(labels []Label, assignees []Author, milestone string, aut
 	if q.Milestone != "" && milestone != q.Milestone {
 		return false
 	}
-	if q.Creator != "" && !strings.EqualFold(author, q.Creator) {
+	if q.Creator != "" && !slices.ContainsFunc(q.authors(), func(login string) bool { return strings.EqualFold(author, login) }) {
 		return false
 	}
 	return true
@@ -424,13 +477,8 @@ const prFields = "number,title,body,state,url,labels,headRefName,baseRefName,isD
 
 // ListOpenIssues returns open issues matching q.
 func (c *Client) ListOpenIssues(ctx context.Context, q Query) ([]Issue, error) {
-	args := append([]string{"issue", "list", "-R", c.Repo, "--state", "open", "--limit", "500", "--json", issueFields}, q.args()...)
-	out, err := c.Exec(ctx, args...)
-	if err != nil {
-		return nil, err
-	}
-	var issues []Issue
-	return issues, json.Unmarshal(out, &issues)
+	base := []string{"issue", "list", "-R", c.Repo, "--state", "open", "--limit", "500", "--json", issueFields}
+	return list(ctx, c, q, base, func(i Issue) int { return i.Number })
 }
 
 // GetIssue returns one issue including comments.
@@ -445,25 +493,16 @@ func (c *Client) GetIssue(ctx context.Context, number int) (Issue, error) {
 
 // ListOpenPRs returns open PRs matching q.
 func (c *Client) ListOpenPRs(ctx context.Context, q Query) ([]PR, error) {
-	args := append([]string{"pr", "list", "-R", c.Repo, "--state", "open", "--limit", "200", "--json", prFields}, q.args()...)
-	out, err := c.Exec(ctx, args...)
-	if err != nil {
-		return nil, err
-	}
-	var prs []PR
-	return prs, json.Unmarshal(out, &prs)
+	base := []string{"pr", "list", "-R", c.Repo, "--state", "open", "--limit", "200", "--json", prFields}
+	return list(ctx, c, q, base, func(p PR) int { return p.Number })
 }
 
 // ListMergedPRsSince returns PRs matching q merged at or after t.
 func (c *Client) ListMergedPRsSince(ctx context.Context, q Query, t time.Time) ([]PR, error) {
 	search := fmt.Sprintf("merged:>=%s", t.UTC().Format("2006-01-02T15:04:05Z"))
-	args := append([]string{"pr", "list", "-R", c.Repo, "--state", "merged", "--search", search, "--limit", "100", "--json", prFields}, q.args()...)
-	out, err := c.Exec(ctx, args...)
+	base := []string{"pr", "list", "-R", c.Repo, "--state", "merged", "--search", search, "--limit", "100", "--json", prFields}
+	prs, err := list(ctx, c, q, base, func(p PR) int { return p.Number })
 	if err != nil {
-		return nil, err
-	}
-	var prs []PR
-	if err := json.Unmarshal(out, &prs); err != nil {
 		return nil, err
 	}
 	// The search filter is date-granular server side; enforce precisely.
