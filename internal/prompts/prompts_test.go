@@ -1794,3 +1794,45 @@ func TestReviewerFollowUpRoundAccountsForPreviousPoints(t *testing.T) {
 		}
 	}
 }
+
+// roles.product_manager.min_issue_size biases how the product manager splits a
+// feature. Unset, the prompt says nothing about a floor; set, it names the size
+// and says it governs the split only, so a genuinely smaller work item is still
+// created elsewhere.
+func TestProductManagerMinIssueSize(t *testing.T) {
+	off, err := System(config.RoleProductManager, sample(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(off, "Aim the split at work items of at least") {
+		t.Errorf("no floor configured, but the prompt names one:\n%s", off)
+	}
+
+	d := sample()
+	d.MinIssueSize = "m"
+	on, err := System(config.RoleProductManager, d, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	flow := flowed(on)
+	for _, want := range []string{
+		"Aim the split at work items of at least `m`, and never at `xl`",
+		"not a rule anything enforces",
+		"A piece that is genuinely smaller is still its own work item, as are a bug found mid-implementation and a split the project manager makes at triage",
+	} {
+		if !strings.Contains(flow, want) {
+			t.Errorf("min_issue_size set: product manager prompt missing %q:\n%s", want, on)
+		}
+	}
+
+	// The new paragraph is the only difference: cut it out of the rendered
+	// prompt and what is left is byte-for-byte the unset render.
+	start := strings.Index(on, "\n     Aim the split")
+	end := strings.Index(on, "makes at triage.")
+	if start < 0 || end < 0 {
+		t.Fatalf("cannot locate the floor paragraph in:\n%s", on)
+	}
+	if got := on[:start] + on[end+len("makes at triage."):]; got != off {
+		t.Errorf("the floor changes more than its own paragraph:\n%s", got)
+	}
+}

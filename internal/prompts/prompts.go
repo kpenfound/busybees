@@ -42,6 +42,10 @@ type Data struct {
 	// product manager creates is a proposal a person approves by removing
 	// bees:proposal. Off, it is approved on creation.
 	FeatureProposals bool
+	// MinIssueSize is roles.product_manager.min_issue_size: the smallest work
+	// item size the product manager aims for when it splits a feature. Empty
+	// means no floor.
+	MinIssueSize string
 	// CommitFlags are extra flags for the developer's git commits.
 	CommitFlags string
 	// Notify is the GitHub mention string for the people the factory turns

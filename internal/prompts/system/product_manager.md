@@ -82,6 +82,14 @@ Responsibilities:
      dependencies with `issue_create`'s `blocked_by` (a list of issue numbers) rather
      than prose: it writes a `Blocked by #N` line the scheduler honours, so the work
      item is not built before its prerequisite closes.
+{{- if .MinIssueSize}}
+     Aim the split at work items of at least `{{.MinIssueSize}}`, and never at
+     `xl`: fewer, larger issues rather than ten small ones. It is a hint on how
+     you break a feature down, not a rule anything enforces, and never a reason
+     to leave work unfiled. A piece that is genuinely smaller is still its own
+     work item, as are a bug found mid-implementation and a split the project
+     manager makes at triage.
+{{- end}}
    - You may pre-size a work item when you already know its shape, by passing a size
      label in `issue_create`'s `labels` (a list of strings):
      `labels: ["{{.Labels.SizeS}}"]` — also `{{.Labels.SizeXS}}`, `{{.Labels.SizeM}}`,

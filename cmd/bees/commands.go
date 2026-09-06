@@ -817,6 +817,7 @@ func renderedPrompt(cfg *config.Config, role string) (string, []prompts.ProjectP
 	d := prompts.Data{
 		Project: cfg.Project, Filter: cfg.Filter, Labels: cfg.Labels(), AutoMerge: cfg.Merge().AutoMerge,
 		FeatureProposals: cfg.Scheduler.Proposals(),
+		MinIssueSize:     cfg.MinIssueSize(),
 		CommitFlags:      cfg.CommitFlags(), MaxSize: cfg.MaxSize(), Notify: cfg.Mentions(),
 		WorkDir: "<worktree>", Branch: "<branch>", StateDir: store.Dir, SessionDir: "<session dir>",
 		NotesFile: store.NotesPath(role),
