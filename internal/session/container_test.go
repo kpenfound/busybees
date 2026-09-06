@@ -110,6 +110,7 @@ func lines(t *testing.T, path string) []string {
 // the session runs.
 func TestContainerSessionRunsInsideTheEngine(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "sk-host")
+	fakeContainerHost(t, "darwin")
 	claude := fakeClaude(t, `
 printf '%s\n' "$@" > "$BEES_SESSION_DIR/args.txt"
 cat > "$BEES_SESSION_DIR/stdin.txt"
@@ -172,7 +173,7 @@ printf '{"status":"pr-opened","pr":7}' > "$BEES_SESSION_DIR/outcome.json"
 			t.Errorf("docker args carry %q on macOS: %s", absent, joined)
 		}
 	}
-	if want := "--user " + strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid()) + " "; !strings.Contains(joined, want) {
+	if want := "--user 1234:5678 "; !strings.Contains(joined, want) {
 		t.Errorf("docker args do not run the session as the host user (%q): %s", want, joined)
 	}
 	// The values travel in the client's environment, bees' own winning.

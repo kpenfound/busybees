@@ -146,7 +146,9 @@ func serveMCPHTTP(ctx context.Context, srv *mcp.Server, addr, token string, out 
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "%s%s\n", session.MCPListening, ln.Addr())
+	if _, err := fmt.Fprintf(out, "%s%s\n", session.MCPListening, ln.Addr()); err != nil {
+		return err
+	}
 	hs := &http.Server{Handler: mcpHTTPHandler(srv, token)}
 	go func() {
 		<-ctx.Done()
