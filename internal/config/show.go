@@ -60,6 +60,8 @@ type RoleView struct {
 	CommitFlags *string            `json:"commit_flags,omitempty"`
 	MaxSize     *string            `json:"max_size,omitempty"`
 	ModelBySize *map[string]string `json:"model_by_size,omitempty"`
+	// MinIssueSize is only set on the product manager.
+	MinIssueSize *string `json:"min_issue_size,omitempty"`
 	// Stages is only set on the reviewer.
 	Stages *[]string `json:"stages,omitempty"`
 	// MergeView is only set on the reviewer; its keys are inlined.
@@ -133,6 +135,9 @@ func (c *Config) View(roles []string) (View, error) {
 			rv.Env = map[string]string{}
 		}
 		switch rr.Name {
+		case RoleProductManager:
+			min := c.MinIssueSize()
+			rv.MinIssueSize = &min
 		case RoleDeveloper:
 			flags := c.CommitFlags()
 			rv.CommitFlags = &flags

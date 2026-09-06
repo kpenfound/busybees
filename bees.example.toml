@@ -226,14 +226,18 @@ label = "bees"
 
 #===============================================================================
 # Per-role settings. Every key from [global] is valid here, plus enabled;
-# the developer also takes commit_flags, max_size and model_by_size, and the
-# reviewer the auto-merge keys.
+# the developer also takes commit_flags, max_size and model_by_size, the
+# product manager min_issue_size, and the reviewer the auto-merge keys.
 #===============================================================================
 
 # Owns the product vision and feature issues; breaks features into work items.
 [roles.product_manager]
 #prompt = """
 #"""
+# Smallest work item size to aim for when breaking a feature into work items:
+# xs, s, m or l. A hint on the split, not a floor: a smaller work item is still
+# created wherever the work needs one. Unset, there is no floor.
+#min_issue_size = "s"
 #prompt_file = ""
 #skills = []
 #model = "opus"

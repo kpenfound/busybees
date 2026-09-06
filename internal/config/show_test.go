@@ -51,6 +51,8 @@ checks_wait = "5s"
 commit_flags = "-S"
 max_size = "m"
 model_by_size = { xs = "haiku" }
+[roles.product_manager]
+min_issue_size = "m"
 `
 
 func TestViewIncludesRoleSpecificKeys(t *testing.T) {
@@ -83,17 +85,23 @@ func TestViewIncludesRoleSpecificKeys(t *testing.T) {
 		t.Errorf("developer model_by_size: got %#v want %v", got, map[string]any{"xs": "haiku"})
 	}
 
+	pm := roleOf(t, out, RoleProductManager)
+	if got := pm["min_issue_size"]; got != "m" {
+		t.Errorf("product manager min_issue_size: got %#v want %q", got, "m")
+	}
+
 	// Nobody else carries them.
-	devOnly := map[string]bool{"commit_flags": true, "max_size": true, "model_by_size": true}
-	own := []string{"commit_flags", "max_size", "model_by_size", "auto_merge", "merge_method", "checks_wait",
-		"checks_poll_interval", "checks_timeout", "max_check_fix_rounds", "pre_review_checks",
-		"pre_review_checks_timeout"}
+	ownedBy := map[string]string{
+		"commit_flags": RoleDeveloper, "max_size": RoleDeveloper, "model_by_size": RoleDeveloper,
+		"min_issue_size": RoleProductManager,
+		"auto_merge":     RoleReviewer, "merge_method": RoleReviewer, "checks_wait": RoleReviewer,
+		"checks_poll_interval": RoleReviewer, "checks_timeout": RoleReviewer,
+		"max_check_fix_rounds": RoleReviewer, "pre_review_checks": RoleReviewer,
+		"pre_review_checks_timeout": RoleReviewer,
+	}
 	for _, r := range Roles {
-		for _, k := range own {
-			if r == RoleReviewer && !devOnly[k] {
-				continue
-			}
-			if r == RoleDeveloper && devOnly[k] {
+		for k, owner := range ownedBy {
+			if r == owner {
 				continue
 			}
 			if _, ok := roleOf(t, out, r)[k]; ok {
