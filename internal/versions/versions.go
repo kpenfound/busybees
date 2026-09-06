@@ -101,11 +101,6 @@ func CheckClaude(ctx context.Context, bin string) error {
 	return Check(ctx, "claude", bin, MinClaude)
 }
 
-// CheckAll verifies gh and claude, reporting every problem at once.
-func CheckAll(ctx context.Context, claudeBin string) error {
-	return errors.Join(CheckGH(ctx), CheckClaude(ctx, claudeBin))
-}
-
 func skipped() bool { return os.Getenv(EnvSkip) != "" }
 
 // DevVersion is the value cmd/bees compiles in when no `-ldflags -X

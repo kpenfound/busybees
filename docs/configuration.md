@@ -871,6 +871,11 @@ missing or too old; `bees init` checks `gh`.
 | [`gh`](https://cli.github.com/) | 2.50.0 | `gh pr checks --json` (2.50.0) and `gh api --slurp` (2.49.0). |
 | Claude Code (`claude`) | 2.1.76 | `claude --name` (2.1.76); `--append-system-prompt-file`, `--effort`, `--plugin-dir`, `--strict-mcp-config` and `--fallback-model` are older. |
 
+The Claude Code check only runs when at least one enabled role resolves to
+`agent = "claude"`, the default (see
+[`agent`](#global-and-rolesname)). A factory where every enabled role is
+`agent = "codex"` never runs it, so `claude` does not need to be installed.
+
 Set `BEES_SKIP_VERSION_CHECK=1` to run with an unsupported version anyway.
 
 ## Environment variables
