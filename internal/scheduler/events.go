@@ -75,7 +75,8 @@ type Event struct {
 	// and how long it ran. An agent reports all three in the event that ends
 	// its stream, so they arrive with session-ended and never before it.
 	// CostKnown is false when a session ended without that event (a signalled
-	// process, most often), in which case CostUSD is not a real zero but an
+	// process, most often) and for every codex session, which reports tokens
+	// rather than a price; in either case CostUSD is not a real zero but an
 	// unpriced session.
 	Turns     int
 	CostUSD   float64

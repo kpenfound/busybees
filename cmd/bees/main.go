@@ -75,9 +75,9 @@ func newRootWithFlags() (*globalFlags, *cobra.Command) {
 	root := &cobra.Command{
 		Use:   "bees",
 		Short: "busybees: a software factory of coding-agent sessions driven by GitHub",
-		Long: `busybees orchestrates a staff of headless coding-agent sessions — product manager,
-project manager, developers, reviewers and QA — that build a project together
-through GitHub issues and pull requests. Configure it with bees.toml.`,
+		Long: `busybees orchestrates a staff of headless coding-agent sessions — product
+manager, project manager, developers, reviewers and QA — that build a project
+together through GitHub issues and pull requests. Configure it with bees.toml.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {

@@ -327,7 +327,8 @@ type summary struct {
 	// costKnown says whether cost is what the session cost. A cost arrives
 	// in the event that ends a session's stream alone, so a session that
 	// died before emitting one has no cost rather than a cost of zero, and
-	// the line says so instead of printing $0.00.
+	// the line says so instead of printing $0.00. A codex session never
+	// reports one: it reports tokens rather than a price.
 	costKnown bool
 	dur       time.Duration
 }
@@ -363,8 +364,9 @@ func (s *Scheduler) summarize(spec sessionSpec, res *session.Result) {
 //
 //	<mark> <role title> <subject> <phrase>[: "<note>"] (<turns>, $<cost>, <duration>)
 //
-// A session whose cost is not known — one killed before claude reported it
-// — reads "cost unknown" where the amount goes.
+// A session whose cost is not known — one killed before its agent
+// reported it, and every codex session — reads "cost unknown" where the
+// amount goes.
 func formatSummary(sum summary) string {
 	var b strings.Builder
 	b.WriteString(summaryMark(sum.outcome))
@@ -524,7 +526,7 @@ func infraReason(res *session.Result) string {
 	case res.ErrorSubtype != "":
 		return "session error (" + res.ErrorSubtype + ")"
 	case res.ExitCode != 0:
-		return fmt.Sprintf("claude exited with code %d", res.ExitCode)
+		return fmt.Sprintf("the agent exited with code %d", res.ExitCode)
 	default:
 		return "unknown"
 	}

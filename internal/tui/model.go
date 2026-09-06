@@ -924,11 +924,10 @@ func (m Model) nowPanel(w, rows, from int) string {
 		s := m.sessions[i]
 		spent := m.spent[spendKey(s.issue, s.role)]
 		// The turns of this session, counted live, on top of what the work
-		// item's finished sessions reported. The cost has no live half —
-		// an agent prices a session only in the event that ends its stream — so
-		// a work item
-		// nothing has finished on says so rather than printing $0.00, which
-		// reads as "spent nothing" and means "not known yet".
+		// item's finished sessions reported. The cost has no live half — an
+		// agent prices a session only in the event that ends its stream — so
+		// a work item nothing has finished on says so rather than printing
+		// $0.00, which reads as "spent nothing" and means "not known yet".
 		cost := "-"
 		if spent.known {
 			cost = fmt.Sprintf("$%.2f", spent.cost)

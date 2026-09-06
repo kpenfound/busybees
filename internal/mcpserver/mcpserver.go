@@ -7,9 +7,10 @@
 // through session.Report. The GitHub tools (issue_view, pr_view, comment,
 // issue_edit_body, issue_set_state, issue_question, submit_review) go through a `gh` client
 // and enforce the factory's rules — the visibility filter, the comment
-// marker, who owns which issue — instead of restating them in a prompt. It is started as `bees mcp serve` and
-// takes its context (role, state dir, session dir, issue, PR) from the BEES_*
-// environment, exactly like the session commands.
+// marker, who owns which issue — instead of restating them in a prompt. It
+// is started as `bees mcp serve` and takes its context (role, state dir,
+// session dir, issue, PR) from the BEES_* environment, exactly like the
+// session commands.
 //
 // The tool set and the enums in the schemas depend on the role: a developer's
 // done tool offers pr-opened, pr-updated, question and failed, a reviewer's

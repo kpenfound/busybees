@@ -96,7 +96,7 @@ func TestInfraReason(t *testing.T) {
 		{session.Result{IsError: true, ErrorSubtype: "error_max_turns"}, "ran out of turns"},
 		{session.Result{ResultText: "Overloaded"}, "rate limited or overloaded"},
 		{session.Result{IsError: true, ErrorSubtype: "no_result"}, "session error (no_result)"},
-		{session.Result{ExitCode: 3}, "claude exited with code 3"},
+		{session.Result{ExitCode: 3}, "the agent exited with code 3"},
 	}
 	for _, tc := range tests {
 		if got := infraReason(&tc.res); got != tc.want {
