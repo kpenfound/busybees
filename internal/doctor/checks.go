@@ -52,6 +52,8 @@ type Deps struct {
 	Skills *skills.Manager
 	// ClaudeBin is the claude executable. Default "claude".
 	ClaudeBin string
+	// CodexBin is the codex executable. Default "codex".
+	CodexBin string
 
 	// MachineGitHub runs the one gh command that is about the machine's own
 	// authentication rather than the repository: `gh auth status`. It never
@@ -70,8 +72,8 @@ type Deps struct {
 // checks run against. It never fails: a configuration that does not load or
 // does not resolve is reported by the config checks instead, so the toolchain
 // checks still run on a machine that has no bees.toml yet.
-func New(ctx context.Context, configPath, claudeBin string) *Deps {
-	d := &Deps{ConfigPath: configPath, ClaudeBin: claudeBin, MachineGitHub: github.New("")}
+func New(ctx context.Context, configPath, claudeBin, codexBin string) *Deps {
+	d := &Deps{ConfigPath: configPath, ClaudeBin: claudeBin, CodexBin: codexBin, MachineGitHub: github.New("")}
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		d.ConfigErr = err
@@ -105,6 +107,9 @@ func (d *Deps) Checks() []Check {
 	if d.Config == nil {
 		return checks
 	}
+	if d.usesCodex() {
+		checks = append(checks, Check{Run: d.checkCodex})
+	}
 	checks = append(checks, Check{Run: d.checkProject}, Check{Run: d.checkRemote},
 		Check{Run: d.checkStateDirIgnored}, Check{Run: d.checkNotesWritable}, Check{Run: d.checkPromptFiles},
 		Check{Run: d.checkProjectPrompts}, Check{Run: d.checkSchedulerBuild})
@@ -121,6 +126,22 @@ func (d *Deps) Checks() []Check {
 	// Last, because they are the slow ones: cloning skills and starting MCP
 	// servers. CheapChecks drops them for the `bees run` preflight.
 	return append(checks, d.roleChecks()...)
+}
+
+// usesCodex reports whether any enabled role resolves to agent = "codex":
+// checkCodex only runs then, the same way checkClaude runs unconditionally
+// because claude is the default agent every installation needs.
+func (d *Deps) usesCodex() bool {
+	for _, name := range config.Roles {
+		role, err := d.Config.Role(name)
+		if err != nil || !role.Enabled {
+			continue
+		}
+		if role.Agent == config.AgentCodex {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *Deps) lookPath(file string) (string, error) {
@@ -189,6 +210,13 @@ func (d *Deps) claudeBin() string {
 		return d.ClaudeBin
 	}
 	return "claude"
+}
+
+func (d *Deps) codexBin() string {
+	if d.CodexBin != "" {
+		return d.CodexBin
+	}
+	return "codex"
 }
 
 // ---- toolchain -------------------------------------------------------------
@@ -351,6 +379,30 @@ func (d *Deps) checkClaude(ctx context.Context) Result {
 			fmt.Sprintf("update Claude Code: bees needs %s or newer (run `claude update`)", MinClaudeVersion))
 	}
 	return pass(name, GroupToolchain, fmt.Sprintf("claude %s at %s", got, path))
+}
+
+// checkCodex only runs when usesCodex found a role configured for it: unlike
+// claude, codex is opt-in, and a machine that never runs a codex role should
+// not be failed over a CLI it does not need. bees pins no minimum version for
+// codex yet, so this only asks that it is installed and runs.
+func (d *Deps) checkCodex(ctx context.Context) Result {
+	const name = "codex runnable"
+	bin := d.codexBin()
+	path := bin
+	if !strings.ContainsRune(bin, filepath.Separator) {
+		p, err := d.lookPath(bin)
+		if err != nil {
+			return fail(name, GroupToolchain, fmt.Sprintf("%s not found on PATH", bin),
+				"install the Codex CLI (https://github.com/openai/codex), or set $BEES_CODEX_BIN to its path")
+		}
+		path = p
+	}
+	out, err := exec.CommandContext(ctx, path, "--version").CombinedOutput()
+	if err != nil {
+		return fail(name, GroupToolchain, fmt.Sprintf("%s --version failed: %s", path, oneLine(string(out)+" "+err.Error())),
+			"check that "+path+" is a working Codex CLI installation")
+	}
+	return pass(name, GroupToolchain, fmt.Sprintf("codex %s at %s", oneLine(string(out)), path))
 }
 
 // ---- config ----------------------------------------------------------------
