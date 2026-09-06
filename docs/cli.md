@@ -71,10 +71,11 @@ written by then, and the table is the list of what is left to set up.
 | `--assignee <login>` | Only see items assigned to this login; `@me` for yourself. |
 | `--github-login <login>` | Write `github.login`: the GitHub account the factory acts as. Needs `--github-token`. |
 | `--github-token <token>` | Write `github.token`. Pass `'$VAR'` (quoted, so the shell leaves it alone) to keep the secret out of `bees.toml` and read it from the environment instead. Needs `--github-login`. |
+| `--template <name>` | Write the `bees.toml` a named [config template](templates.md) describes instead of the default file: the eight settings that template decides are written as active lines, under a comment naming it. An unknown name is an error and nothing is written. |
 | `--print` | Print the template to stdout instead of writing it. Writes nothing, so it works outside a git clone. |
 | `--no-labels` | Skip creating GitHub labels. |
 
-The generated file lists every option; optional ones are commented out with
+The default file lists every option; optional ones are commented out with
 their default values (`#max_developers = 1`), so configuring is a matter of
 uncommenting and editing lines. See [configuration.md](configuration.md).
 
@@ -386,6 +387,53 @@ bees config show developer
     }
   }
 }
+```
+
+### `bees templates list`
+
+Prints every [config template](templates.md): the name, then a one-line summary
+of how it runs the factory. Reads no `bees.toml` and no git remote.
+
+```
+$ bees templates list
+contributor    one contributor among many: builds the issues in its filter, a person merges
+issue-driven   a person writes feature issues, the full staff builds them, a person merges
+slop-factory   the full staff with auto-merge on and no approval gate on proposed features
+reviewer       reviews pull requests other people open and builds nothing
+planner        the two managers scope and break down issues, nobody builds
+```
+
+### `bees templates show <name>`
+
+Prints the `bees.toml` the template writes, which is the file
+`bees init --template <name>` would create, headed by a comment block naming
+the template and saying who it is for. Reads nothing either, so it works
+outside a git clone and before there is anything to configure. An unknown name
+is an error listing the names that exist.
+
+### `bees templates diff [name]`
+
+Reports the settings this project's config and a template disagree on: the key,
+what the config resolves it to, and what the template sets. With no name, the
+template the config is closest to is reported, which places a project set up
+without one. Differences are reported, not gated, so the exit status is 0
+either way.
+
+```
+$ bees templates diff
+/src/widgets/bees.toml vs issue-driven (closest of 5 templates)
+
+  roles.reviewer.auto_merge   true  (issue-driven: false)
+```
+
+The comparison is on the resolved values rather than the file text, so a key
+left commented out compares equal to a template that sets it to the same
+default. Only the eight settings a template decides are compared; repo, filter,
+models, budgets and intervals are not.
+
+```
+$ bees templates diff contributor
+/src/widgets/bees.toml matches contributor.
 ```
 
 ### `bees prompts show <role> [--rendered]`

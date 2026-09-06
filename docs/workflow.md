@@ -350,7 +350,8 @@ With `scheduler.feature_proposals = false` there is no gate: a feature issue a
 bee writes carries no `bees:proposal` either and is broken down straight away,
 and the two tools refuse nothing for the label. An issue that still carries
 `bees:proposal` from before the key was turned off stays a proposal until you
-remove the label; turning the key off approves nothing for you.
+remove the label; turning the key off approves nothing for you. The
+[slop-factory](templates.md#slop-factory) config template turns it off.
 
 For each fresh feature issue the product manager:
 
@@ -455,10 +456,11 @@ reasoned no) and replies on it (see [Feedback issues](#feedback-issues)).
 Nothing is specced or built until someone has authorised the scope. That
 mirrors the rule pointing the other way: a feature issue a bee writes is only
 a `bees:proposal` until you approve it, unless
-`scheduler.feature_proposals = false`. Between the two, new scope enters the
-factory only through a person or through the product manager. With
-`require_label = false` the orchestrator adds `bees` in the same edit, so the
-issue is fully tagged either way.
+`scheduler.feature_proposals = false`, which the
+[slop-factory](templates.md#slop-factory) config template sets. Between the two,
+new scope enters the factory only through a person or through the product
+manager. With `require_label = false` the orchestrator adds `bees` in the same
+edit, so the issue is fully tagged either way.
 
 With the product manager disabled, nothing ever reads `bees:feedback`, so the
 orchestrator routes the same unlabelled issue further down the pipeline
@@ -667,7 +669,9 @@ branch does not start with `project.branch_prefix` is reviewed on sight. The
 prefix is what says the factory did not write it, so the pull requests its own
 developers open keep going through the review loop above and are not reviewed
 twice. With `filter.assignee` set, this is every such pull request assigned to
-the factory; without it, every one carrying the `bees` label.
+the factory; without it, every one carrying the `bees` label. The
+[reviewer](templates.md#reviewer) config template is that setting with nothing
+that builds enabled.
 
     [scheduler]
     review_assigned_prs = true
