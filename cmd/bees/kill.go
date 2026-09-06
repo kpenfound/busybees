@@ -23,7 +23,7 @@ func newKillCmd(g *globalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "kill",
 		Short: "Stop leftover sessions and clean up worktrees after a crash",
-		Long: `kill finds Claude Code sessions started by bees (from the pid files in the
+		Long: `kill finds the agent sessions started by bees (from the pid files in the
 state directory and from the process table, limited to sessions of this state
 directory), terminates them together with their process groups (MCP servers,
 shells), removes stale pid files, removes the temporary worktrees bees created

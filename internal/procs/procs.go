@@ -1,15 +1,18 @@
-// Package procs finds and stops Claude Code sessions started by bees, for
+// Package procs finds and stops agent sessions started by bees, for
 // `bees kill` after a crash.
 //
 // Sessions are found two ways: the pid file the runner writes in each
-// session directory, and a scan of the process table for claude processes
-// carrying the `--name bees-…` argument every session is started with.
+// session directory, and a scan of the process table for claude and codex
+// processes carrying a session marker: the `--name bees-…` argument every
+// claude session is started with, or the override that hands a codex
+// session its session directory.
 //
 // Both sources are scoped to one factory: a process only counts when its
 // command line also references this state directory's sessions directory
-// (every session's argv carries `--append-system-prompt-file
-// <sessions dir>/<session>/system-prompt.md`). Another project's sessions
-// are therefore never reported, however many factories share a machine.
+// (a claude session's argv carries `--append-system-prompt-file
+// <sessions dir>/<session>/system-prompt.md`, a codex session's the
+// session directory in the same override). Another project's sessions are
+// therefore never reported, however many factories share a machine.
 package procs
 
 import (
@@ -29,8 +32,15 @@ import (
 // PIDFile is the file a running session's pid is written to.
 const PIDFile = "pid"
 
-// SessionMarker is the argv fragment that identifies a bees session.
+// SessionMarker is the argv fragment that identifies a claude session of
+// bees: the --name every one is started with.
 const SessionMarker = "--name bees-"
+
+// CodexSessionMarker is the argv fragment that identifies a codex session
+// of bees: codex has no --name, so the override that gives the built-in
+// MCP server the session's directory is what marks one, and its value is
+// what scopes it to a factory.
+const CodexSessionMarker = "mcp_servers.bees.env.BEES_SESSION_DIR="
 
 // Proc is a process that looks like a bees session.
 type Proc struct {
@@ -67,8 +77,8 @@ const DefaultGrace = 5 * time.Second
 // FromPIDFile returns the live session recorded in one session directory.
 // It reports false when the directory holds no pid file, when the process
 // the file names is gone — in which case the stale file is deleted — and,
-// when known is non-nil (the ps scan), when the pid is alive but is not a
-// claude session: a pid reused by an unrelated process after a reboot, which
+// when known is non-nil (the ps scan), when the pid is alive but is not an
+// agent session: a pid reused by an unrelated process after a reboot, which
 // must never be killed.
 func FromPIDFile(dir string, known map[int]Proc) (Proc, bool) {
 	b, err := os.ReadFile(filepath.Join(dir, PIDFile))
@@ -82,7 +92,7 @@ func FromPIDFile(dir string, known map[int]Proc) (Proc, bool) {
 	}
 	if known != nil {
 		if _, ok := known[pid]; !ok {
-			RemovePID(dir) // alive, but not a claude session: pid reused
+			RemovePID(dir) // alive, but not an agent session: pid reused
 			return Proc{}, false
 		}
 	}
@@ -114,8 +124,8 @@ func FromPIDFiles(sessionsDir string, known map[int]Proc) ([]Proc, error) {
 }
 
 // FromPS scans the process table for bees sessions: processes whose
-// executable is claude, whose arguments carry the session marker and whose
-// command line references sessionsDir, the sessions directory of this
+// executable is claude or codex, whose arguments carry a session marker and
+// whose command line references sessionsDir, the sessions directory of this
 // factory's state directory.
 func FromPS(ctx context.Context, sessionsDir string) ([]Proc, error) {
 	cmd := exec.CommandContext(ctx, "ps", "-axo", "pid=,pgid=,command=")
@@ -127,7 +137,7 @@ func FromPS(ctx context.Context, sessionsDir string) ([]Proc, error) {
 	return parsePS(stdout.String(), os.Getpid(), sessionsDir), nil
 }
 
-// parsePS keeps the claude processes of the factory whose sessions live in
+// parsePS keeps the agent processes of the factory whose sessions live in
 // scope. scope is matched as a path prefix (with a trailing separator), so
 // a sibling directory such as `<state>/sessions-old` is not a hit. Because
 // macOS reports /private/var for /var and a state directory may be reached
@@ -147,10 +157,10 @@ func parsePS(text string, self int, scope string) []Proc {
 			continue
 		}
 		command := strings.Join(fields[2:], " ")
-		// Only the claude executable itself (or an interpreter running a
+		// Only the agent executable itself (or an interpreter running a
 		// claude script), never a shell or editor whose command line merely
 		// mentions the marker.
-		if !isClaude(fields[2:]) || !strings.Contains(command, " "+SessionMarker) {
+		if !isAgent(fields[2:]) || !hasMarker(command) {
 			continue
 		}
 		if !inScope(command, prefixes) {
@@ -188,11 +198,17 @@ func inScope(command string, prefixes []string) bool {
 	return false
 }
 
-// isClaude reports whether argv starts the claude executable, directly or
-// through an interpreter (node/bun/sh script).
-func isClaude(argv []string) bool {
+// hasMarker reports whether a command line carries one of the session
+// markers as an argument of its own.
+func hasMarker(command string) bool {
+	return strings.Contains(command, " "+SessionMarker) || strings.Contains(command, " "+CodexSessionMarker)
+}
+
+// isAgent reports whether argv starts the claude or codex executable,
+// directly or through an interpreter (node/bun/sh script).
+func isAgent(argv []string) bool {
 	for i, a := range argv[:min(2, len(argv))] {
-		if filepath.Base(a) == "claude" {
+		if base := filepath.Base(a); base == "claude" || base == "codex" {
 			return true
 		}
 		if i == 0 && strings.HasPrefix(a, "-") {

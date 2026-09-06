@@ -65,6 +65,9 @@ func (c *Config) CheckSandbox() error {
 		if err := CheckSandboxMode(r.Sandbox); err != nil {
 			return fmt.Errorf("roles.%s: %w", name, err)
 		}
+		if err := CheckSandboxAgent(r.Sandbox, r.Agent); err != nil {
+			return fmt.Errorf("roles.%s: %w", name, err)
+		}
 		if err := CheckSandboxHost(r.Sandbox); err != nil {
 			return fmt.Errorf("roles.%s: %w", name, err)
 		}
@@ -83,6 +86,19 @@ func CheckSandboxMode(mode string) error {
 		return nil
 	}
 	return fmt.Errorf("sandbox %q is not implemented (bees can run %s)", mode, strings.Join(sandboxImplemented, ", "))
+}
+
+// CheckSandboxAgent reports whether the role's agent can run under one
+// mode. SandboxClaude is Claude Code's own sandbox, so a codex role asking
+// for it would run with codex's approvals and sandbox switched off and
+// nothing boxing it; that is refused, both here and by the runner, rather
+// than run unboxed. None asks nothing of the agent, and container is refused
+// before this is asked.
+func CheckSandboxAgent(mode, agent string) error {
+	if mode == SandboxClaude && agent == AgentCodex {
+		return fmt.Errorf("sandbox %q is Claude Code's sandbox and agent %q does not run under it", mode, agent)
+	}
+	return nil
 }
 
 // CheckSandboxHost reports whether this machine can build one mode bees

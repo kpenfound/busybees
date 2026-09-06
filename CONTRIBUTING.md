@@ -14,7 +14,7 @@ internal/mcpserver/  the built-in MCP server (`bees mcp serve`): the factory's o
 internal/procs/      finding and stopping sessions: `bees kill`, and one at a time from the live view
 internal/prompts/    role prompts embedded in the binary (system/*.md, task/*.md), the project's own bees/prompts/ files, the renderer
 internal/scheduler/  the loop: poll, human feedback, merge state, reconcile, developer workers, singleton roles, the event stream
-internal/session/    one headless `claude -p` session: arguments, environment, transcript, result and outcome
+internal/session/    one headless `claude -p` or `codex exec` session: arguments, environment, transcript, result and outcome
 internal/skills/     skill repositories by git URL, exposed as claude plugin directories
 internal/state/      the state directory: notes, per-issue and per-role bookkeeping, status.json, the ledger
 internal/testutil/   test helpers: a local bare git remote and a clone

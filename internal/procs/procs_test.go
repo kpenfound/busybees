@@ -37,6 +37,13 @@ func TestParsePS(t *testing.T) {
 		psLine(900, 900, "/a/.bees/sessions-old", "developer-issue-2-r1"),
 		// This factory, but with no pid file: an orphan of a crashed run.
 		psLine(1000, 1000, scope, "developer-issue-3-r1"),
+		// A codex session: no --name, marked and scoped by the override that
+		// hands the built-in MCP server the session directory.
+		`  1100   1100 /usr/local/bin/codex exec --json -c mcp_servers.bees.env.BEES_SESSION_DIR="/a/.bees/sessions/20260829-developer-issue-4-r1" -`,
+		// The same override on another factory's codex session, and on a
+		// process that is not codex at all.
+		`  1200   1200 codex exec --json -c mcp_servers.bees.env.BEES_SESSION_DIR="/b/.bees/sessions/20260829-developer-issue-4-r1" -`,
+		`  1300   1300 grep mcp_servers.bees.env.BEES_SESSION_DIR=/a/.bees/sessions/20260829-developer-issue-4-r1`,
 	}, "\n") + "\n"
 
 	got := parsePS(text, 300, scope)
@@ -44,7 +51,7 @@ func TestParsePS(t *testing.T) {
 	for _, p := range got {
 		pids = append(pids, p.PID)
 	}
-	want := []int{100, 400, 700, 1000}
+	want := []int{100, 400, 700, 1000, 1100}
 	if !slices.Equal(pids, want) {
 		t.Fatalf("parsePS: got pids %v want %v (%+v)", pids, want, got)
 	}

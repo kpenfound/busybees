@@ -260,3 +260,37 @@ sandbox = "container"
 		t.Errorf("qa sandbox in the view: got %q, want %q", got, SandboxClaude)
 	}
 }
+
+// The claude box is Claude Code's, so a codex role cannot ask for it: `bees
+// run` refuses the configuration naming the role, and the runner refuses the
+// session, rather than run codex with its own sandbox switched off.
+func TestCheckSandboxAgent(t *testing.T) {
+	if err := CheckSandboxAgent(SandboxClaude, AgentCodex); err == nil {
+		t.Error("a codex role was given the claude sandbox")
+	} else {
+		for _, want := range []string{"claude", "codex"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not mention %q", err, want)
+			}
+		}
+	}
+	for _, tc := range []struct{ mode, agent string }{
+		{SandboxClaude, AgentClaude}, {SandboxClaude, ""}, {SandboxNone, AgentCodex}, {"", AgentCodex}, {SandboxContainer, AgentCodex},
+	} {
+		if err := CheckSandboxAgent(tc.mode, tc.agent); err != nil {
+			t.Errorf("sandbox %q with agent %q refused: %v", tc.mode, tc.agent, err)
+		}
+	}
+	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[global]\nsandbox = \"claude\"\n[roles.qa]\nagent = \"codex\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fakeHost(t, "darwin")
+	err = cfg.CheckSandbox()
+	if err == nil {
+		t.Fatal("a codex qa started in a claude box")
+	}
+	if !strings.Contains(err.Error(), "roles.qa") {
+		t.Errorf("error %q does not name the role", err)
+	}
+}

@@ -15,18 +15,21 @@ import (
 	"github.com/kpenfound/busybees/internal/text"
 )
 
-// A session's transcript is the stream-json claude writes as it works, one
-// JSON object per line, teed to transcript.jsonl by the runner. The view
-// reads that file rather than the stream: it is already on disk, one line
-// per event, and reading it needs nothing of the scheduler.
+// A session's transcript is what its agent writes as it works — claude's
+// stream-json, or codex's event stream — one JSON object per line, teed to
+// transcript.jsonl by the runner. The view reads that file rather than the
+// stream: it is already on disk, one line per event, and reading it needs
+// nothing of the scheduler.
 //
 // What a person watching wants from it is what Claude Code itself shows —
 // the assistant's own words, the tools it called and how each one answered —
 // so everything else in the stream (the thought text, the init and
 // rate-limit bookkeeping, the tool schemas) is reduced to a marker or
-// dropped. A line the view cannot parse is dropped too: half a JSON object
-// is what a transcript being written *right now* ends with, and it is worth
-// nothing to a reader.
+// dropped. A codex transcript is read to the same lines: each completed
+// item is what the session said or did, and the end of its turn is the
+// session's end. A line the view cannot parse is dropped too: half a JSON
+// object is what a transcript being written *right now* ends with, and it
+// is worth nothing to a reader.
 
 // Markers each kind of transcript line is prefixed with. They are the ones
 // Claude Code's own output uses, so a person who has watched a session in a
@@ -50,13 +53,29 @@ const maxTranscriptLines = 4000
 type transcriptEntry struct {
 	Type    string `json:"type"`
 	Subtype string `json:"subtype"`
-	Message struct {
-		Content json.RawMessage `json:"content"`
-	} `json:"message"`
+	// Message is claude's message object (whose content blocksOf reads),
+	// or the message string of a codex "error" event, so it is decoded by
+	// whichever reads it.
+	Message json.RawMessage `json:"message"`
 	// The fields below are the final "result" event's.
 	IsError      bool    `json:"is_error"`
 	NumTurns     int     `json:"num_turns"`
 	TotalCostUSD float64 `json:"total_cost_usd"`
+	// The fields below are codex's: the item of an "item.completed" event,
+	// and the error of a "turn.failed" one (an "error" event carries its
+	// message at the top level instead).
+	Item struct {
+		Type    string `json:"type"`
+		Text    string `json:"text"`
+		Command string `json:"command"`
+		Server  string `json:"server"`
+		Tool    string `json:"tool"`
+		Status  string `json:"status"`
+		Output  string `json:"aggregated_output"`
+	} `json:"item"`
+	Error struct {
+		Message string `json:"message"`
+	} `json:"error"`
 }
 
 // transcriptBlock is one item of a message's content array. An assistant
@@ -128,21 +147,87 @@ func renderTranscriptLine(line []byte) []string {
 		return userLines(blocksOf(e))
 	case "result":
 		return []string{resultLine(e)}
+	case "item.completed":
+		return codexItemLines(e)
+	case "turn.completed", "turn.failed", "error":
+		return []string{codexEndLine(e)}
 	}
 	// "system" (init, thinking-token bookkeeping, task notifications) and
-	// "rate_limit_event" are the runner's business, not a reader's.
+	// "rate_limit_event" are the runner's business, not a reader's; so are
+	// codex's "thread.started", "turn.started" and "item.started".
 	return nil
+}
+
+// codexItemLines renders one completed codex item the way an assistant
+// message and the tool result under it are rendered: what the session
+// said, the command or MCP tool it called and the first line of the answer.
+// The other item kinds (a file change, a web search, a todo list) are
+// named; reasoning is a marker, as a thought is.
+func codexItemLines(e transcriptEntry) []string {
+	it := e.Item
+	switch it.Type {
+	case "agent_message":
+		return prefixed(sayMark, it.Text, 0)
+	case "reasoning":
+		return []string{thinkMark + "thinking"}
+	case "command_execution":
+		out := []string{sayMark + "Bash(" + oneLine(it.Command) + ")"}
+		return append(out, resultMark+toolResult(transcriptBlock{Content: rawString(it.Output), IsError: it.Status == "failed"}))
+	case "mcp_tool_call":
+		name := it.Tool
+		if it.Server != "" {
+			name = "mcp__" + it.Server + "__" + it.Tool
+		}
+		return []string{sayMark + name + "()"}
+	case "":
+		return nil
+	}
+	return []string{sayMark + it.Type}
+}
+
+// rawString is a string as the JSON a tool result's content may be.
+func rawString(s string) json.RawMessage {
+	b, _ := json.Marshal(s)
+	return b
+}
+
+// codexEndLine renders the end of a codex turn: the session is over, and
+// codex reports no cost, so none is shown. A "turn.failed" event says why
+// under "error"; a bare "error" event says it at the top level, as the
+// runner's codex backend reads it too.
+func codexEndLine(e transcriptEntry) string {
+	if e.Type == "turn.completed" {
+		return sayMark + "session ended: ok"
+	}
+	how := "failed"
+	msg := e.Error.Message
+	if msg == "" {
+		var s string
+		if json.Unmarshal(e.Message, &s) == nil {
+			msg = s
+		}
+	}
+	if msg != "" {
+		how += ": " + oneLine(msg)
+	}
+	return sayMark + "session ended: " + how
 }
 
 // blocksOf reads a message's content, which is an array of blocks or — for
 // a user turn typed as one string — a single string.
 func blocksOf(e transcriptEntry) []transcriptBlock {
+	var m struct {
+		Content json.RawMessage `json:"content"`
+	}
+	if json.Unmarshal(e.Message, &m) != nil {
+		return nil
+	}
 	var blocks []transcriptBlock
-	if json.Unmarshal(e.Message.Content, &blocks) == nil {
+	if json.Unmarshal(m.Content, &blocks) == nil {
 		return blocks
 	}
 	var s string
-	if json.Unmarshal(e.Message.Content, &s) == nil && s != "" {
+	if json.Unmarshal(m.Content, &s) == nil && s != "" {
 		return []transcriptBlock{{Type: "text", Text: s}}
 	}
 	return nil
