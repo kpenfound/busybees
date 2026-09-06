@@ -344,8 +344,8 @@ same migration automatically on startup.
 Prints the resolved configuration as JSON: project, filter, github, scheduler
 and — for every role, or the one given — the effective prompt, skills, MCP
 servers, model, fallback model, limits, `sandbox` and `enabled` after merging
-`[global]` with `[roles.<name>]`. The global-only `skills_refresh` is printed under every
-role, since it governs how each role's skills are refreshed. `github.token` is
+`[global]` with `[roles.<name>]`. The global-only `skills_refresh` is printed
+under every role, since it governs how each role's skills are refreshed. `github.token` is
 never printed resolved: a `"$VAR"` value is shown as written and anything else
 as `"(set)"`.
 
