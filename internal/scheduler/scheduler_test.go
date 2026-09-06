@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -26,9 +27,11 @@ import (
 	"github.com/kpenfound/busybees/internal/workspace"
 )
 
-// TestMain lets the test binary double as a fake `claude` when
+// TestMain lets the test binary double as a fake `claude` — and a fake
+// `codex`, which it tells apart by its first argument, codex's `exec` — when
 // FAKE_CLAUDE is set: the runner executes it, it inspects its role and
-// environment, performs a scripted action and prints a stream-json result.
+// environment, performs a scripted action and prints a stream-json result,
+// or codex's event stream when it is codex.
 //
 // The flags that steer the fake (FAKE_CLAUDE, FAKE_DEV_HANG, FAKE_DEV_FAIL,
 // FAKE_DEV_MAIL_TO, FAKE_REVIEW_ALWAYS_CHANGES, FAKE_REVIEW_FAIL, FAKE_COST, FAKE_SIGNAL,
@@ -66,6 +69,15 @@ func fakeClaude() {
 	fail := func(err error) {
 		fmt.Fprintln(os.Stderr, "fake claude:", err)
 		os.Exit(2)
+	}
+	// The runner starts codex as `codex exec --json ...`; claude never gets
+	// `exec`. A codex session prints codex's events instead of claude's
+	// stream-json, and the runner reads each stream its own way.
+	codex := len(os.Args) > 1 && os.Args[1] == "exec"
+	if codex {
+		// The prompt is on stdin for codex; claude reads it there too, but
+		// only codex closes with an error when it is left unread.
+		_, _ = io.Copy(io.Discard, os.Stdin)
 	}
 	// Record the command line so tests can assert on the flags the runner
 	// built, the way internal/session's fake does.
@@ -324,6 +336,16 @@ func fakeClaude() {
 	text := "ok"
 	if v := os.Getenv("FAKE_RESULT_TEXT"); v != "" {
 		text = v
+	}
+	if codex {
+		// Two completed items are the two turns claude's result reports,
+		// so a test's turn count holds whichever agent ran; there is no
+		// cost to report.
+		fmt.Println(`{"type":"thread.started","thread_id":"fake-thread"}`)
+		fmt.Println(`{"type":"item.completed","item":{"id":"item_0","type":"mcp_tool_call","server":"bees","tool":"done","status":"completed"}}`)
+		fmt.Printf(`{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":%q}}`+"\n", text)
+		fmt.Println(`{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":2}}`)
+		return
 	}
 	fmt.Printf(`{"type":"result","subtype":"success","is_error":false,"result":%q,"session_id":"fake","num_turns":2,"total_cost_usd":%v}`+"\n", text, cost)
 }
@@ -866,6 +888,7 @@ func newHarnessAt(t *testing.T, toml string, now time.Time) *harness {
 	logger := logging.New(logging.Options{Format: logging.FormatText, Console: logs})
 	runner := &session.Runner{
 		ClaudeBin:   os.Args[0],
+		CodexBin:    os.Args[0],
 		SessionsDir: store.SessionsDir(),
 		StateDir:    store.Dir,
 		Repo:        cfg.Project.Repo,
