@@ -40,6 +40,15 @@ func claudeBin() string {
 	return "claude"
 }
 
+// codexBin is the codex executable, run for a role whose agent is codex:
+// BEES_CODEX_BIN, else codex on PATH.
+func codexBin() string {
+	if bin := os.Getenv("BEES_CODEX_BIN"); bin != "" {
+		return bin
+	}
+	return "codex"
+}
+
 // configPath resolves the bees.toml to use.
 func configPath(g *globalFlags) (string, error) {
 	if g.config != "" {
@@ -121,6 +130,7 @@ func newApp(ctx context.Context, g *globalFlags) (*app, error) {
 
 	runner := &session.Runner{
 		ClaudeBin:   bin,
+		CodexBin:    codexBin(),
 		BeesBin:     self,
 		SessionsDir: store.SessionsDir(),
 		StateDir:    store.Dir,
