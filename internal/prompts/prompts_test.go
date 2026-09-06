@@ -26,7 +26,9 @@ func sample() Data {
 		Project: config.Project{Repo: "acme/widgets", DefaultBranch: "main", Remote: "origin"},
 		Filter:  config.Filter{Label: "bees", Assignee: "kyle"},
 		Labels:  config.LabelsFor("bees"),
-		WorkDir: "/tmp/ws", Branch: "bees/issue-4", StateDir: "/s", SessionDir: "/s/sessions/1", NotesFile: "/s/notes/x.md",
+		// The proposal gate is on by default; a test that turns it off says so.
+		FeatureProposals: true,
+		WorkDir:          "/tmp/ws", Branch: "bees/issue-4", StateDir: "/s", SessionDir: "/s/sessions/1", NotesFile: "/s/notes/x.md",
 		Notes:             "remember this",
 		Inbox:             []mail.Message{{ID: "m1", From: "reviewer", To: "developer", Subject: "Review round 1", Body: "please fix", PR: 9, CreatedAt: sampleMailTime}},
 		Issue:             &github.Issue{Number: 4, Title: "Add thing", Body: "details", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:feature"}}, Author: github.Author{Login: "kyle"}},
@@ -569,6 +571,44 @@ func TestProductManagerIdleRuleCoversProposals(t *testing.T) {
 	// proposal the product manager has never answered sits there forever.
 	if !strings.Contains(idle, "that you have not answered") {
 		t.Errorf("product manager idle rule vetoes on the whole proposals section:\n%s", idle)
+	}
+}
+
+// scheduler.feature_proposals decides what the product manager is told about
+// the features it creates: with the gate on (the default, and what sample()
+// sets) they are proposals a person approves; off, they are approved on
+// creation and it may break them down at once, while one still carrying the
+// label from before stays a person's to approve. Each case names itself and
+// not the other, so a session cannot read both rules.
+func TestProductManagerPromptFollowsTheProposalGate(t *testing.T) {
+	const on, off = "**A feature issue you create is a proposal.**", "**A feature issue you create is approved already.**"
+	pm, err := System(config.RoleProductManager, sample(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(pm, on) || strings.Contains(pm, off) {
+		t.Errorf("gate on: want %q and not %q in:\n%s", on, off, pm)
+	}
+
+	d := sample()
+	d.FeatureProposals = false
+	pm, err = System(config.RoleProductManager, d, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(pm, on) {
+		t.Errorf("gate off: the proposal rule is still there:\n%s", pm)
+	}
+	for _, want := range []string{
+		off,
+		"`scheduler.feature_proposals = false`",
+		"labels it\n     `bees:feature` and no `bees:proposal`",
+		"break it into\n     work items immediately",
+		"still carries `bees:proposal` was written while the gate was\n     on: it stays a proposal until a person removes the label",
+	} {
+		if !strings.Contains(pm, want) {
+			t.Errorf("gate off: product manager prompt missing %q:\n%s", want, pm)
+		}
 	}
 }
 

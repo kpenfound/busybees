@@ -38,6 +38,10 @@ type Data struct {
 	Filter    config.Filter
 	Labels    config.Labels
 	AutoMerge bool
+	// FeatureProposals is scheduler.feature_proposals: a feature issue the
+	// product manager creates is a proposal a person approves by removing
+	// bees:proposal. Off, it is approved on creation.
+	FeatureProposals bool
 	// CommitFlags are extra flags for the developer's git commits.
 	CommitFlags string
 	// Notify is the GitHub mention string for the people the factory turns
