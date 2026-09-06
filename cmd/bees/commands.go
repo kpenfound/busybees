@@ -138,7 +138,7 @@ func runInit(ctx context.Context, o initOptions, d initDeps) error {
 				branch, _ = d.repoBranch(ctx, repo)
 			}
 		}
-		return config.Template(config.TemplateData{
+		return config.RenderTOML(config.RenderOptions{
 			Remote:         o.remote,
 			Repo:           repo,
 			DefaultBranch:  branch,

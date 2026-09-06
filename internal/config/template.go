@@ -6,12 +6,12 @@ import (
 	"text/template"
 )
 
-// TemplateData fills the bees.toml template written by `bees init`.
+// RenderOptions fills the bees.toml template written by `bees init`.
 // Repo and DefaultBranch are shown as commented placeholders (they are
 // derived from the remote at run time) unless the matching Explicit flag is
 // set. A value that was only guessed must stay a placeholder: writing a guess
 // as an active setting would make bees push to a branch nobody detected (#89).
-type TemplateData struct {
+type RenderOptions struct {
 	Remote        string
 	Repo          string
 	DefaultBranch string
@@ -27,12 +27,12 @@ type TemplateData struct {
 	// ExplicitBranch writes default_branch as an active setting. It is ignored
 	// when DefaultBranch is empty: a substituted placeholder is never active.
 	ExplicitBranch bool
-	// Version is always CurrentVersion; set by Template.
+	// Version is always CurrentVersion; set by RenderTOML.
 	Version int
 }
 
-// Template renders a fully commented starter bees.toml.
-func Template(d TemplateData) (string, error) {
+// RenderTOML renders a fully commented starter bees.toml.
+func RenderTOML(d RenderOptions) (string, error) {
 	if d.Label == "" {
 		d.Label = DefaultLabel
 	}
