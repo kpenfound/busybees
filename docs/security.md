@@ -134,9 +134,6 @@ ends.
 - The `bees` CLI is not in the container: the tools reach it over HTTP
   instead, so a session that shells out to `bees` directly has nothing to
   run.
-- `bees kill` does not find the container directly; it stops the `docker
-  run` client, which forwards the signal, and a container left behind needs
-  `docker rm -f`. See [The container mode](configuration.md#the-container-mode).
 - Linux is written for but was not run for this page.
 
 ## Choosing a mode
