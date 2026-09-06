@@ -285,21 +285,26 @@ func (f *fakeGH) client(t *testing.T) *github.Client {
 // ghIssues is the real internal/issues backend on a fake gh client.
 type ghIssues struct {
 	gh     *github.Client
-	filter config.Filter
-	labels config.Labels
+	policy issues.Policy
+}
+
+// testPolicy is the policy every mcpserver test creates issues under: the
+// factory's filter and labels, with the proposal gate on, as it is by default.
+func testPolicy() issues.Policy {
+	return issues.Policy{Filter: config.Filter{Label: "bees", Assignee: "kyle"}, Labels: config.LabelsFor("bees"), FeatureProposals: true}
 }
 
 func (g *ghIssues) Create(ctx context.Context, opts issues.Options) (issues.Result, error) {
-	return issues.Create(ctx, g.gh, g.filter, g.labels, opts)
+	return issues.Create(ctx, g.gh, g.policy, opts)
 }
 
 func (g *ghIssues) Link(ctx context.Context, parent, child int) (issues.LinkResult, error) {
-	return issues.Link(ctx, g.gh, g.labels, parent, child)
+	return issues.Link(ctx, g.gh, g.policy, parent, child)
 }
 
 func TestIssueCreateAndLink(t *testing.T) {
 	f := &fakeGH{}
-	backend := &ghIssues{gh: f.client(t), filter: config.Filter{Label: "bees", Assignee: "kyle"}, labels: config.LabelsFor("bees")}
+	backend := &ghIssues{gh: f.client(t), policy: testPolicy()}
 	h := newHarness(t, config.RoleDeveloper, Deps{Issues: backend})
 
 	got := h.call("issue_create", map[string]any{

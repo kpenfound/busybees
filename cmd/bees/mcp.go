@@ -142,9 +142,15 @@ type backend struct {
 	g  *globalFlags
 	mu sync.Mutex
 	gh *github.Client
-	// filter and labels are only valid once gh is set.
-	filter config.Filter
-	labels config.Labels
+	// policy is only valid once gh is set.
+	policy issues.Policy
+}
+
+// issuePolicy is the policy `bees issue create`, `bees issue link` and the
+// MCP tools behind them create issues under: one place, so the command and
+// the tool cannot disagree about it.
+func issuePolicy(cfg *config.Config) issues.Policy {
+	return issues.Policy{Filter: cfg.Filter, Labels: cfg.Labels(), FeatureProposals: cfg.Scheduler.Proposals()}
 }
 
 func (b *backend) load(ctx context.Context) error {
@@ -174,7 +180,8 @@ func (b *backend) load(ctx context.Context) error {
 	if err := resolveFilterAssignee(ctx, cfg); err != nil {
 		return err
 	}
-	b.filter, b.labels, b.gh = cfg.Filter, cfg.Labels(), githubClient(cfg)
+	b.policy = issuePolicy(cfg)
+	b.gh = githubClient(cfg)
 	return nil
 }
 
@@ -182,14 +189,14 @@ func (b *backend) Create(ctx context.Context, opts issues.Options) (issues.Resul
 	if err := b.load(ctx); err != nil {
 		return issues.Result{}, err
 	}
-	return issues.Create(ctx, b.gh, b.filter, b.labels, opts)
+	return issues.Create(ctx, b.gh, b.policy, opts)
 }
 
 func (b *backend) Link(ctx context.Context, parent, child int) (issues.LinkResult, error) {
 	if err := b.load(ctx); err != nil {
 		return issues.LinkResult{}, err
 	}
-	return issues.Link(ctx, b.gh, b.labels, parent, child)
+	return issues.Link(ctx, b.gh, b.policy, parent, child)
 }
 
 // Rules returns the factory's visibility filter and label set. The query is
@@ -199,11 +206,11 @@ func (b *backend) Rules(ctx context.Context) (github.Query, config.Labels, error
 	if err := b.load(ctx); err != nil {
 		return github.Query{}, config.Labels{}, err
 	}
-	q := github.Query{Assignee: b.filter.Assignee, Milestone: b.filter.Milestone}
-	if b.filter.LabelRequired() {
-		q.Label = b.filter.Label
+	q := github.Query{Assignee: b.policy.Filter.Assignee, Milestone: b.policy.Filter.Milestone}
+	if b.policy.Filter.LabelRequired() {
+		q.Label = b.policy.Filter.Label
 	}
-	return q, b.labels, nil
+	return q, b.policy.Labels, nil
 }
 
 // ActsAs returns the GitHub login the factory acts as, which is what

@@ -94,8 +94,8 @@ func TestMCPServerActsAsTheConfiguredAccount(t *testing.T) {
 	if b.gh.Token != "ghp_bot" {
 		t.Errorf("tool client token: got %q want %q", b.gh.Token, "ghp_bot")
 	}
-	if b.filter.Assignee != "kyle" {
-		t.Errorf("filter.assignee: got %q want %q (the person, not the bot)", b.filter.Assignee, "kyle")
+	if b.policy.Filter.Assignee != "kyle" {
+		t.Errorf("filter.assignee: got %q want %q (the person, not the bot)", b.policy.Filter.Assignee, "kyle")
 	}
 	q, _, err := b.Rules(context.Background())
 	if err != nil {

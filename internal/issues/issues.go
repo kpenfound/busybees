@@ -27,6 +27,21 @@ const (
 	KindFeature Kind = "feature"
 )
 
+// Policy is the configuration every issue-creating path shares: what makes
+// an issue visible, which labels the factory uses, and whether a feature
+// issue a bee creates is a proposal a person has to approve. Options is what
+// a caller asks for; Policy is what the factory has decided.
+type Policy struct {
+	Filter config.Filter
+	Labels config.Labels
+	// FeatureProposals is scheduler.feature_proposals: a feature issue is
+	// created carrying bees:proposal, and a parent still carrying it is
+	// refused by Create and Link. Off, the label is never written and a
+	// parent carrying one is not refused for it: the label on an existing
+	// issue is a person's business, not the gate's.
+	FeatureProposals bool
+}
+
 // Options for Create.
 type Options struct {
 	Title string
@@ -72,8 +87,9 @@ func (r Result) String() string {
 	return b.String()
 }
 
-// Create creates an issue according to opts.
-func Create(ctx context.Context, gh *github.Client, filter config.Filter, labels config.Labels, opts Options) (Result, error) {
+// Create creates an issue according to opts, under the factory's policy p.
+func Create(ctx context.Context, gh *github.Client, p Policy, opts Options) (Result, error) {
+	filter, labels := p.Filter, p.Labels
 	if strings.TrimSpace(opts.Title) == "" {
 		return Result{}, errors.New("title is required")
 	}
@@ -83,8 +99,11 @@ func Create(ctx context.Context, gh *github.Client, filter config.Filter, labels
 	n := github.NewIssue{Title: opts.Title, Body: blockedByBody(opts.BlockedBy, opts.Body), Labels: []string{labels.Base}}
 	switch opts.Kind {
 	case KindFeature:
-		// A bee proposes; a person approves by removing bees:proposal.
-		n.Labels = append(n.Labels, labels.Feature, labels.Proposal)
+		n.Labels = append(n.Labels, labels.Feature)
+		if p.FeatureProposals {
+			// A bee proposes; a person approves by removing bees:proposal.
+			n.Labels = append(n.Labels, labels.Proposal)
+		}
 	case KindBug:
 		n.Labels = append(n.Labels, labels.Bug, state(labels, opts.Ready))
 	case KindTask, "":
@@ -114,11 +133,8 @@ func Create(ctx context.Context, gh *github.Client, filter config.Filter, labels
 			return Result{}, fmt.Errorf("issue #%d: %w", source, err)
 		}
 		if opts.Parent > 0 {
-			if github.HasLabel(d.Labels, labels.Proposal) {
-				return Result{}, proposalError(labels, opts.Parent)
-			}
-			if github.HasLabel(d.Labels, labels.Planning) {
-				return Result{}, planningError(labels, opts.Parent)
+			if err := refuseParent(p, d.Labels, opts.Parent); err != nil {
+				return Result{}, err
 			}
 		}
 		if n.Milestone == "" {
@@ -165,20 +181,32 @@ func (r LinkResult) String() string {
 }
 
 // Link attaches child to parent as a sub-issue. It refuses a parent that is
-// still a proposal, or that a person has put in planning: attaching an
-// existing issue to one is the same hole as creating a sub-issue under it.
-func Link(ctx context.Context, gh *github.Client, labels config.Labels, parent, child int) (LinkResult, error) {
-	p, err := gh.GetIssueDetails(ctx, parent)
+// still a proposal (while p.FeatureProposals is on), or that a person has put
+// in planning: attaching an existing issue to one is the same hole as
+// creating a sub-issue under it.
+func Link(ctx context.Context, gh *github.Client, p Policy, parent, child int) (LinkResult, error) {
+	d, err := gh.GetIssueDetails(ctx, parent)
 	if err != nil {
 		return LinkResult{}, fmt.Errorf("issue #%d: %w", parent, err)
 	}
-	if github.HasLabel(p.Labels, labels.Proposal) {
-		return LinkResult{}, proposalError(labels, parent)
+	if err := refuseParent(p, d.Labels, parent); err != nil {
+		return LinkResult{}, err
 	}
-	if github.HasLabel(p.Labels, labels.Planning) {
-		return LinkResult{}, planningError(labels, parent)
+	return link(ctx, gh, parent, child, d.MilestoneTitle())
+}
+
+// refuseParent is the check both doors into a feature's sub-issues share:
+// a proposal, while the factory runs with the proposal gate on, and an issue
+// in planning, whatever the configuration says. Planning is a person's hold,
+// not the gate.
+func refuseParent(p Policy, labels []github.Label, parent int) error {
+	if p.FeatureProposals && github.HasLabel(labels, p.Labels.Proposal) {
+		return proposalError(p.Labels, parent)
 	}
-	return link(ctx, gh, parent, child, p.MilestoneTitle())
+	if github.HasLabel(labels, p.Labels.Planning) {
+		return planningError(p.Labels, parent)
+	}
+	return nil
 }
 
 // link attaches child to parent without checking the parent. Becoming a

@@ -36,7 +36,7 @@ func wantTouched(t *testing.T, got []int, want ...int) {
 func TestTheToolsThatChangeAnIssueRecordIt(t *testing.T) {
 	t.Run("issue_create", func(t *testing.T) {
 		f := &fakeGH{}
-		backend := &ghIssues{gh: f.client(t), filter: config.Filter{Label: "bees", Assignee: "kyle"}, labels: config.LabelsFor("bees")}
+		backend := &ghIssues{gh: f.client(t), policy: testPolicy()}
 		h := newHarness(t, config.RoleProjectManager, Deps{Issues: backend})
 
 		h.call("issue_create", map[string]any{"title": "Split off the parser", "body": "why", "related": 36})
