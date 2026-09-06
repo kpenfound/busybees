@@ -322,6 +322,10 @@ label = "{{.Label}}"
 #disallowed_tools = ["WebSearch"]
 # Shell for claude's Bash tool in sessions (exported as $SHELL).
 #shell = "/bin/bash"
+# How much of the machine a session can reach: none, claude or container.
+# Set it per role in [roles.<name>] to box the roles that run untrusted code
+# harder than the ones that only read the repository.
+#sandbox = "none"
 
 # Environment variables exported into every session (claude, its Bash tool,
 # MCP servers, git). $VARS are expanded from the bees environment. Roles can

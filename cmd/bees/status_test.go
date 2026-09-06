@@ -283,8 +283,27 @@ func TestWorkersTextMarksAResumedWorker(t *testing.T) {
 		t.Errorf("a resumed worker is not marked: %q", lines[1])
 	}
 	// Everything the line said before is still on it, in the same columns.
-	if !strings.HasPrefix(lines[1], "  dev-2        issue #9     s   reviewer          round 2              since ") {
+	// A worker whose session has not started yet has no sandbox to report.
+	if !strings.HasPrefix(lines[1], "  dev-2        issue #9     s   reviewer          round 2              sandbox -         since ") {
 		t.Errorf("the columns moved: %q", lines[1])
+	}
+}
+
+// The sandbox column reports the mode of the session running right now, not
+// the worker's: the stages of one worker run different roles, and a role's
+// sandbox is its own, so two workers in the same factory can read
+// differently.
+func TestWorkersTextReportsTheSandbox(t *testing.T) {
+	since := time.Date(2026, 8, 31, 8, 22, 0, 0, time.Local)
+	got := workersText(state.Status{Workers: []state.Worker{
+		{Name: "dev-1", Issue: 7, Stage: "developer", Round: 1, Since: since, Sandbox: "container"},
+		{Name: "dev-2", Issue: 9, Stage: "reviewer", Round: 1, Since: since, Sandbox: "none"},
+	}})
+	lines := strings.Split(strings.TrimSuffix(got, "\n"), "\n")
+	for i, want := range []string{"sandbox container", "sandbox none"} {
+		if !strings.Contains(lines[i], want) {
+			t.Errorf("worker %d does not report %q: %q", i, want, lines[i])
+		}
 	}
 }
 

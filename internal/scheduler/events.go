@@ -63,6 +63,10 @@ type Event struct {
 	// the model a finished session used is in the ledger.
 	Model    string
 	Fallback bool
+	// Sandbox is the mode the session is boxed in (config.SandboxModes),
+	// set on session-started only, for the same reason as Model: a view
+	// renders it for a session that is still running.
+	Sandbox string
 	// Outcome and Note are what a finished session reported, or the
 	// synthetic "failed" of a session that reported nothing.
 	Outcome string

@@ -80,6 +80,8 @@ type running struct {
 	started  time.Time
 	model    string
 	fallback bool
+	// sandbox is the mode this session is boxed in (config.SandboxModes).
+	sandbox string
 	// turns is how many assistant messages the session's transcript holds
 	// right now, recounted on the refresh tick (see countTurns). It lives
 	// here rather than in spent because the session-ended event replaces it
@@ -638,7 +640,7 @@ func (m *Model) apply(ev scheduler.Event) {
 	case scheduler.EventSessionStarted:
 		m.sessions = append(m.sessions, running{
 			name: ev.Session, role: ev.Role, dir: ev.Dir, issue: ev.Issue, pr: ev.PR,
-			started: ev.Time, model: ev.Model, fallback: ev.Fallback,
+			started: ev.Time, model: ev.Model, fallback: ev.Fallback, sandbox: ev.Sandbox,
 		})
 	case scheduler.EventSessionEnded:
 		m.drop(ev.Session)
@@ -908,14 +910,16 @@ func (m Model) panelStyleOf(i int) lipgloss.Style {
 
 // nowPanel renders every running session: who is running it, what it is
 // about, the stage its developer worker is in, how long it has been going,
-// what the work item has spent so far and the model it runs on. The cursor
+// what the work item has spent so far, the sandbox it is boxed in and the
+// model it runs on. The cursor
 // marks the one enter opens the session view on and k stops — the same ▸ the
 // other panels draw, because there is one selection over the whole view.
 func (m Model) nowPanel(w, rows, from int) string {
 	if len(m.sessions) == 0 {
 		return hintStyle.Render("no sessions running")
 	}
-	out := []string{headerStyle.Render(clip(nowRow("  ", "role", "issue", "pr", "stage", "elapsed", "turns", "cost", "model"), w))}
+	sw := sandboxColumn(m.sessions)
+	out := []string{headerStyle.Render(clip(nowRow(sw, "  ", "role", "issue", "pr", "stage", "elapsed", "turns", "cost", "sandbox", "model"), w))}
 	out = append(out, listRows(len(m.sessions), rows, func(i int) string {
 		s := m.sessions[i]
 		spent := m.spent[spendKey(s.issue, s.role)]
@@ -932,6 +936,7 @@ func (m Model) nowPanel(w, rows, from int) string {
 		// nowRow pads by byte count and clip cuts by rune, and neither can
 		// be handed a cell carrying escape sequences.
 		return roleStyle(s.role).Render(clip(nowRow(
+			sw,
 			mark(m.cursor, from+i),
 			prompts.Title(s.role),
 			number(s.issue),
@@ -940,7 +945,8 @@ func (m Model) nowPanel(w, rows, from int) string {
 			dur(m.deps.Now().Sub(s.started)),
 			strconv.Itoa(s.turns+spent.turns),
 			cost,
-			modelCell(s, w),
+			sandboxCell(s),
+			modelCell(s, w, sw),
 		), w))
 	})...)
 	return strings.Join(out, "\n")
@@ -953,9 +959,46 @@ func (m Model) nowPanel(w, rows, from int) string {
 const stageWidth = 20
 
 // nowRow lays the Now panel's columns out. The header and every row go
-// through it, so they cannot drift apart.
-func nowRow(sel, role, issue, pr, stage, elapsed, turns, cost, model string) string {
-	return fmt.Sprintf("%s%-16s %-5s %-5s %-*s %8s %6s %8s  %s", sel, role, issue, pr, stageWidth, stage, elapsed, turns, cost, model)
+// through it, so they cannot drift apart. A sandbox width of zero leaves the
+// column out altogether, separator included, so a row without it is laid out
+// exactly as a row that never had the column.
+func nowRow(sandboxW int, sel, role, issue, pr, stage, elapsed, turns, cost, sandbox, model string) string {
+	row := fmt.Sprintf("%s%-16s %-5s %-5s %-*s %8s %6s %8s ", sel, role, issue, pr, stageWidth, stage, elapsed, turns, cost)
+	if sandboxW > 0 {
+		row += fmt.Sprintf(" %-*s", sandboxW, sandbox)
+	}
+	return row + " " + model
+}
+
+// sandboxWidth is the width of the sandbox column when it is drawn: the
+// longest mode name bees has, so the column does not move as the modes of
+// the running sessions change.
+var sandboxWidth = len(slices.MaxFunc(config.SandboxModes, func(a, b string) int { return len(a) - len(b) }))
+
+// sandboxColumn is the width the sandbox column gets: sandboxWidth once one
+// running session is boxed, and zero while none is. The row is full at the
+// terminal width the view assumes — the model name and its (fallback) marker
+// take what the fixed columns leave — so a column reading "none" all the way
+// down would cost the name that is there to be read to say nothing that is
+// not already in `bees config show`. The moment a session runs in a box, the
+// column is worth its width and appears.
+func sandboxColumn(sessions []running) int {
+	for _, s := range sessions {
+		if s.sandbox != "" && s.sandbox != config.SandboxNone {
+			return sandboxWidth
+		}
+	}
+	return 0
+}
+
+// sandboxCell renders the sandbox column: the mode this session is boxed in.
+// A session the scheduler started without recording one has no answer, and
+// says so rather than claiming the weakest mode.
+func sandboxCell(s running) string {
+	if s.sandbox == "" {
+		return "-"
+	}
+	return s.sandbox
 }
 
 // modelCell renders the last column: the model the session runs on, and
@@ -963,7 +1006,7 @@ func nowRow(sel, role, issue, pr, stage, elapsed, turns, cost, model string) str
 // when the row does not fit, never the marker — a session running on the
 // fallback model is the thing a person watching wants to see, and a name
 // long enough to crowd it out is the least surprising part of the row.
-func modelCell(s running, w int) string {
+func modelCell(s running, w, sandboxW int) string {
 	name, marker := s.model, ""
 	if name == "" {
 		name = "-"
@@ -971,7 +1014,7 @@ func modelCell(s running, w int) string {
 	if s.fallback {
 		marker = " (fallback)"
 	}
-	budget := w - lipgloss.Width(nowRow("  ", "", "", "", "", "", "", "", "")) - lipgloss.Width(marker)
+	budget := w - lipgloss.Width(nowRow(sandboxW, "  ", "", "", "", "", "", "", "", "", "")) - lipgloss.Width(marker)
 	if budget < 1 {
 		// Not even room for the marker: give what room there is to it and
 		// let the row's own clip decide the rest. A cut "(fallback" still

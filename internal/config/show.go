@@ -55,6 +55,7 @@ type RoleView struct {
 	Enabled         bool                 `json:"enabled"`
 	Shell           string               `json:"shell"`
 	Env             map[string]string    `json:"env"`
+	Sandbox         string               `json:"sandbox"`
 
 	// CommitFlags, MaxSize and ModelBySize are only set on the developer.
 	CommitFlags *string            `json:"commit_flags,omitempty"`
@@ -117,6 +118,7 @@ func (c *Config) View(roles []string) (View, error) {
 			Enabled:         rr.Enabled,
 			Shell:           rr.Shell,
 			Env:             rr.Env,
+			Sandbox:         rr.Sandbox,
 		}
 		// Empty collections print as [] / {} rather than null.
 		if rv.Skills == nil {
