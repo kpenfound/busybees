@@ -78,6 +78,7 @@ func CanonicalRole(name string) (string, error) {
 const (
 	DefaultModel         = "opus"
 	DefaultFallbackModel = "sonnet"
+	DefaultAgent         = AgentClaude
 	DefaultSandbox       = SandboxNone
 	DefaultMaxTurns      = 200
 	DefaultTimeout       = 45 * time.Minute
@@ -148,6 +149,17 @@ const (
 
 // DispatchOrders lists the accepted scheduler.dispatch_order values.
 var DispatchOrders = []string{DispatchSmallFirst, DispatchOldest, DispatchLargeFirst}
+
+// Session backends accepted by the agent key. claude is the only one a
+// session actually runs as; codex is validated and resolved but not yet
+// wired to a runner.
+const (
+	AgentClaude = "claude"
+	AgentCodex  = "codex"
+)
+
+// Agents lists the accepted agent values.
+var Agents = []string{AgentClaude, AgentCodex}
 
 // Sizes lists the work item sizes, smallest first. They mirror the
 // bees:size/* labels (see Labels.SizeLabels).
@@ -236,9 +248,9 @@ type Filter struct {
 	// labels ("bees:ready", ...) and, when RequireLabel is true, the
 	// visibility gate: only issues/PRs carrying it are visible. Default "bees".
 	Label string `toml:"label" json:"label"`
-	// RequireLabel can be set to false so that Assignee and/or Milestone
-	// alone define visibility. The factory still applies Label to everything
-	// it creates. Default true.
+	// RequireLabel can be set to false so that Assignee, Milestone and/or
+	// Creator alone define visibility. The factory still applies Label to
+	// everything it creates. Default true.
 	RequireLabel *bool `toml:"require_label" json:"require_label"`
 	// Assignee restricts visibility to issues/PRs assigned to this GitHub
 	// login ("@me" resolves to the authenticated gh user). Everything the
@@ -246,6 +258,11 @@ type Filter struct {
 	Assignee string `toml:"assignee" json:"assignee"`
 	// Milestone restricts visibility to issues/PRs in this milestone title.
 	Milestone string `toml:"milestone" json:"milestone"`
+	// Creator restricts visibility to issues/PRs opened by this GitHub login.
+	// Unlike Assignee and Milestone, nothing the factory creates is made to
+	// match it: an issue or pull request is always authored by whichever
+	// account the factory acts as, not by a configurable value.
+	Creator string `toml:"creator" json:"creator"`
 }
 
 // LabelRequired reports whether the label is part of the visibility gate.
@@ -385,6 +402,8 @@ type RoleSettings struct {
 	// when Model has reached its usage limit.
 	Model         string `toml:"model"`
 	FallbackModel string `toml:"fallback_model"`
+	// Agent is the CLI backend a session runs as: claude or codex.
+	Agent string `toml:"agent"`
 	// Effort is passed as --effort (low/medium/high/max) when set.
 	Effort string `toml:"effort"`
 	// MaxTurns caps agentic turns for a single session.
@@ -1012,6 +1031,7 @@ type ResolvedRole struct {
 	// ModelBySize overrides Model per work item size; developer only.
 	ModelBySize     map[string]string
 	FallbackModel   string
+	Agent           string
 	Effort          string
 	MaxTurns        int
 	Timeout         time.Duration
@@ -1294,8 +1314,8 @@ func (c *Config) Validate() error {
 	if strings.ContainsAny(c.Filter.Label, " :") {
 		errs = append(errs, "filter.label must not contain spaces or colons")
 	}
-	if !c.Filter.LabelRequired() && c.Filter.Assignee == "" && c.Filter.Milestone == "" {
-		errs = append(errs, "filter.require_label = false needs filter.assignee or filter.milestone, otherwise every issue in the repo is visible")
+	if !c.Filter.LabelRequired() && c.Filter.Assignee == "" && c.Filter.Milestone == "" && c.Filter.Creator == "" {
+		errs = append(errs, "filter.require_label = false needs filter.assignee, filter.milestone or filter.creator, otherwise every issue in the repo is visible")
 	}
 	errs = append(errs, c.GitHub.validate()...)
 	for name := range c.Roles {
@@ -1431,6 +1451,9 @@ func (c *Config) Validate() error {
 		default:
 			errs = append(errs, fmt.Sprintf("%s.effort must be low, medium, high or max", scope))
 		}
+		if rs.Agent != "" && !slices.Contains(Agents, rs.Agent) {
+			errs = append(errs, fmt.Sprintf("%s.agent must be one of %s", scope, strings.Join(Agents, ", ")))
+		}
 		// Every mode of SandboxModes loads, including the ones no session
 		// can run in yet: whether a mode works on this machine is a question
 		// about the machine, and CheckSandbox asks it once at `bees run`.
@@ -1495,6 +1518,7 @@ func (c *Config) Role(name string) (ResolvedRole, error) {
 		Model:         firstNonEmpty(rs.Model, g.Model, DefaultModel),
 		ModelBySize:   sizeModels(rs.ModelBySize),
 		FallbackModel: firstNonEmpty(rs.FallbackModel, g.FallbackModel, DefaultFallbackModel),
+		Agent:         firstNonEmpty(rs.Agent, g.Agent, DefaultAgent),
 		Effort:        firstNonEmpty(rs.Effort, g.Effort),
 		MaxTurns:      firstPositive(rs.MaxTurns, g.MaxTurns, DefaultMaxTurns),
 		Timeout:       firstPositiveDur(rs.Timeout.Duration, g.Timeout.Duration, DefaultTimeout),

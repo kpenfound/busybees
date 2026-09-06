@@ -220,7 +220,7 @@ func (s *server) visiblePR(ctx context.Context, number int) (int, github.PR, err
 	if err != nil {
 		return 0, github.PR{}, err
 	}
-	if !q.Matches(pr.Labels, pr.Assignees, prMilestone(pr)) {
+	if !q.Matches(pr.Labels, pr.Assignees, prMilestone(pr), pr.Author.Login) {
 		return 0, github.PR{}, outsideFilter(n, q)
 	}
 	return n, pr, nil
@@ -474,7 +474,7 @@ func (s *server) visibleIssue(ctx context.Context, number int) (github.Issue, co
 	if err != nil {
 		return github.Issue{}, config.Labels{}, err
 	}
-	if !q.Matches(i.Labels, i.Assignees, i.MilestoneTitle()) {
+	if !q.Matches(i.Labels, i.Assignees, i.MilestoneTitle(), i.Author.Login) {
 		return github.Issue{}, config.Labels{}, outsideFilter(number, q)
 	}
 	return i, labels, nil
@@ -489,7 +489,7 @@ func (s *server) visibleItem(ctx context.Context, number int) error {
 		return err
 	}
 	if i, err := s.github.Issue(ctx, number); err == nil {
-		if !q.Matches(i.Labels, i.Assignees, i.MilestoneTitle()) {
+		if !q.Matches(i.Labels, i.Assignees, i.MilestoneTitle(), i.Author.Login) {
 			return outsideFilter(number, q)
 		}
 		return nil
@@ -498,7 +498,7 @@ func (s *server) visibleItem(ctx context.Context, number int) error {
 	if err != nil {
 		return err
 	}
-	if !q.Matches(p.Labels, p.Assignees, prMilestone(p)) {
+	if !q.Matches(p.Labels, p.Assignees, prMilestone(p), p.Author.Login) {
 		return outsideFilter(number, q)
 	}
 	return nil
@@ -511,7 +511,7 @@ func outsideFilter(number int, q github.Query) error {
 // describeQuery renders the visibility filter the way bees.toml states it.
 func describeQuery(q github.Query) string {
 	var parts []string
-	for _, p := range [][2]string{{"label", q.Label}, {"assignee", q.Assignee}, {"milestone", q.Milestone}} {
+	for _, p := range [][2]string{{"label", q.Label}, {"assignee", q.Assignee}, {"milestone", q.Milestone}, {"creator", q.Creator}} {
 		if p[1] != "" {
 			parts = append(parts, p[0]+"="+p[1])
 		}

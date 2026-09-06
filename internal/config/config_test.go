@@ -349,6 +349,35 @@ func TestFilterLabelRequired(t *testing.T) {
 	}
 }
 
+// filter.creator has no default, is not required alongside assignee or
+// milestone to satisfy require_label = false, and is not applied to what the
+// factory creates (there is no RenderOptions field for it, unlike assignee).
+func TestFilterCreator(t *testing.T) {
+	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Filter.Creator != "" {
+		t.Fatalf("creator: %q, want unset", cfg.Filter.Creator)
+	}
+
+	cfg, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[filter]\nrequire_label = false\ncreator = \"kyle\"\n"))
+	if err != nil {
+		t.Fatalf("require_label = false with only creator set should be valid: %v", err)
+	}
+	if cfg.Filter.Creator != "kyle" {
+		t.Fatalf("creator: %q, want %q", cfg.Filter.Creator, "kyle")
+	}
+
+	view, err := cfg.View([]string{RoleDeveloper})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Filter.Creator != "kyle" {
+		t.Fatalf("View: creator %q, want %q", view.Filter.Creator, "kyle")
+	}
+}
+
 func TestFind(t *testing.T) {
 	p := writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n")
 	nested := filepath.Join(filepath.Dir(p), "a", "b")
@@ -546,6 +575,58 @@ func TestModelBySizeErrorsNameTheBadKey(t *testing.T) {
 		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nmodel_by_size = { xs = \"  \" }\n":    "roles.developer.model_by_size.xs must name a model",
 		"version = 1\n[project]\nrepo = \"a/b\"\n[global]\nmodel_by_size = { xs = \"haiku\" }\n":          "global: commit_flags, max_size and model_by_size are only valid under roles.developer",
 		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.reviewer]\nmodel_by_size = { xs = \"haiku\" }\n":  "roles.reviewer: commit_flags, max_size and model_by_size are only valid under roles.developer",
+	} {
+		_, err := Load(writeConfig(t, body))
+		if err == nil {
+			t.Fatalf("%q: expected an error", body)
+		}
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+}
+
+// TestAgentDefaultAndMerge covers the agent key: absent it defaults to
+// claude, a role overrides global, and global still applies to a role with
+// no agent of its own.
+func TestAgentDefaultAndMerge(t *testing.T) {
+	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev, err := cfg.Role(RoleDeveloper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dev.Agent != AgentClaude {
+		t.Fatalf("agent default: got %q want %q", dev.Agent, AgentClaude)
+	}
+
+	cfg, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[global]\nagent = \"codex\"\n[roles.developer]\nagent = \"claude\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev, err = cfg.Role(RoleDeveloper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dev.Agent != "claude" {
+		t.Fatalf("role overrides global: got %q want claude", dev.Agent)
+	}
+	pm, err := cfg.Role(RoleProductManager)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pm.Agent != "codex" {
+		t.Fatalf("global fallback: got %q want codex", pm.Agent)
+	}
+}
+
+// An unknown agent is a load error naming the scope and the accepted values.
+func TestAgentValidation(t *testing.T) {
+	for body, want := range map[string]string{
+		"version = 1\n[project]\nrepo = \"a/b\"\n[global]\nagent = \"gpt\"\n":          "global.agent must be one of claude, codex",
+		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nagent = \"gpt\"\n": "roles.developer.agent must be one of claude, codex",
 	} {
 		_, err := Load(writeConfig(t, body))
 		if err == nil {

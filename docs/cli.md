@@ -366,7 +366,7 @@ bees config show developer
 {
   "path": "/src/widgets/bees.toml",
   "version": 1,
-  "filter": { "label": "bees", "require_label": true, "assignee": "@me", "milestone": "" },
+  "filter": { "label": "bees", "require_label": true, "assignee": "@me", "milestone": "", "creator": "" },
   "github": { "login": "busybees-bot", "token": "$BEES_GITHUB_TOKEN", "git_name": "", "git_email": "" },
   "scheduler": { "poll_interval": "5m0s", "max_developers": 1, "max_review_rounds": 3, "...": "" },
   "roles": {

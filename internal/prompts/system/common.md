@@ -36,6 +36,9 @@ The factory only sees issues and pull requests that match its filter:
 {{- if .Filter.Milestone}}
 - belong to milestone `{{.Filter.Milestone}}`
 {{- end}}
+{{- if .Filter.Creator}}
+- were opened by `{{.Filter.Creator}}`
+{{- end}}
 
 **Create issues with the `issue_create` tool**, never with `gh issue create`: it applies
 the filter labels and assignee, the kind and state labels, attaches work items to their

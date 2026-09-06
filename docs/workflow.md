@@ -41,6 +41,7 @@ The factory reads only the issues and pull requests that match the
 | Label | `filter.label` | `bees` | The item carries the label (skipped with `require_label = false`) |
 | Assignee | `filter.assignee` | unset | The item is assigned to this login. `@me` is your own `gh` login, never the [`[github]`](configuration.md#github) account |
 | Milestone | `filter.milestone` | unset | The item is in this milestone |
+| Creator | `filter.creator` | unset | The item was opened by this login |
 
 Everything outside the filter is invisible: the factory never reads, labels
 or comments on it. Adding a criterion to a running factory hides everything

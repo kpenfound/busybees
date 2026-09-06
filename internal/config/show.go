@@ -24,6 +24,7 @@ type FilterView struct {
 	RequireLabel bool   `json:"require_label"`
 	Assignee     string `json:"assignee"`
 	Milestone    string `json:"milestone"`
+	Creator      string `json:"creator"`
 }
 
 // GitHubView is [github] as printed. The token is redacted (see
@@ -47,6 +48,7 @@ type RoleView struct {
 	MCP             map[string]MCPServer `json:"mcp"`
 	Model           string               `json:"model"`
 	FallbackModel   string               `json:"fallback_model"`
+	Agent           string               `json:"agent"`
 	Effort          string               `json:"effort"`
 	MaxTurns        int                  `json:"max_turns"`
 	Timeout         Duration             `json:"timeout"`
@@ -88,7 +90,7 @@ func (c *Config) View(roles []string) (View, error) {
 		Path:      c.Path,
 		Version:   c.Version,
 		Project:   c.Project,
-		Filter:    FilterView{Label: c.Filter.Label, RequireLabel: c.Filter.LabelRequired(), Assignee: c.Filter.Assignee, Milestone: c.Filter.Milestone},
+		Filter:    FilterView{Label: c.Filter.Label, RequireLabel: c.Filter.LabelRequired(), Assignee: c.Filter.Assignee, Milestone: c.Filter.Milestone, Creator: c.Filter.Creator},
 		GitHub:    GitHubView{Login: c.GitHub.Login, Token: c.GitHub.RedactedToken(), GitName: c.GitHub.GitName, GitEmail: c.GitHub.GitEmail},
 		Scheduler: c.Scheduler,
 		Logging:   c.Logging,
@@ -110,6 +112,7 @@ func (c *Config) View(roles []string) (View, error) {
 			MCP:             rr.MCP,
 			Model:           rr.Model,
 			FallbackModel:   rr.FallbackModel,
+			Agent:           rr.Agent,
 			Effort:          rr.Effort,
 			MaxTurns:        rr.MaxTurns,
 			Timeout:         Duration{rr.Timeout},

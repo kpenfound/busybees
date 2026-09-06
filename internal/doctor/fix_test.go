@@ -62,7 +62,7 @@ func (g *repoGH) answer(args []string) ([]byte, error) {
 	case strings.HasPrefix(joined, "issue list"):
 		var out []github.Issue
 		for _, i := range g.issues {
-			if g.matches(args, i.Labels, i.Assignees, i.MilestoneTitle()) {
+			if g.matches(args, i.Labels, i.Assignees, i.MilestoneTitle(), i.Author.Login) {
 				out = append(out, *i)
 			}
 		}
@@ -70,7 +70,7 @@ func (g *repoGH) answer(args []string) ([]byte, error) {
 	case strings.HasPrefix(joined, "pr list"):
 		var out []github.PR
 		for _, p := range g.prs {
-			if g.matches(args, p.Labels, p.Assignees, p.MilestoneTitle()) {
+			if g.matches(args, p.Labels, p.Assignees, p.MilestoneTitle(), p.Author.Login) {
 				out = append(out, *p)
 			}
 		}
@@ -155,7 +155,7 @@ func numberIn(t *testing.T, path string) int {
 // one item, the way GitHub ANDs them. "@me" is resolved to the logged-in user
 // here, as gh does server-side - github.Query.Matches cannot, which is exactly
 // why the fix has to resolve it before it can compare anything.
-func (g *repoGH) matches(args []string, labels []github.Label, assignees []github.Author, milestone string) bool {
+func (g *repoGH) matches(args []string, labels []github.Label, assignees []github.Author, milestone string, author string) bool {
 	var q github.Query
 	for i, a := range args {
 		if i+1 >= len(args) {
@@ -168,12 +168,14 @@ func (g *repoGH) matches(args []string, labels []github.Label, assignees []githu
 			q.Assignee = args[i+1]
 		case "--milestone":
 			q.Milestone = args[i+1]
+		case "--author":
+			q.Creator = args[i+1]
 		}
 	}
 	if q.Assignee == "@me" {
 		q.Assignee = g.login
 	}
-	return q.Matches(labels, assignees, milestone)
+	return q.Matches(labels, assignees, milestone, author)
 }
 
 func mustJSON(t *testing.T, v any) []byte {

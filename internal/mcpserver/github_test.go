@@ -235,6 +235,24 @@ func TestIssueViewRefusesAnIssueOutsideTheFilter(t *testing.T) {
 	}
 }
 
+func TestIssueViewRefusesAnIssueOutsideTheFilterByCreator(t *testing.T) {
+	f := newFakeGitHub()
+	f.q.Creator = "kyle"
+	// Carries the label and assignee, but was opened by someone else.
+	f.issues[12] = github.Issue{
+		Number: 12, Title: "Not mine", Labels: labelsOf("bees"),
+		Assignees: []github.Author{{Login: "kyle"}}, Author: github.Author{Login: "someone-else"},
+	}
+	h := newHarness(t, config.RoleDeveloper, Deps{GitHub: f})
+	res := h.callRaw("issue_view", map[string]any{"number": 12})
+	if !res.IsError || !strings.Contains(resultText(res), "does not match the factory's filter") {
+		t.Fatalf("result: %v %q", res.IsError, resultText(res))
+	}
+	if !strings.Contains(resultText(res), "creator=kyle") {
+		t.Fatalf("the filter is not named: %q", resultText(res))
+	}
+}
+
 func TestPRViewRendersChecksAndHumanActivity(t *testing.T) {
 	f := newFakeGitHub()
 	f.prs[72] = github.PR{
