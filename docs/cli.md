@@ -995,16 +995,18 @@ working on the referenced issue or PR and marks them read afterwards.
 
 ### `bees kill [--dry-run] [--scheduler] [--grace 5s]`
 
-Cleans up after a crash: finds Claude Code sessions started by bees, terminates
+Cleans up after a crash: finds the agent sessions started by bees, terminates
 them together with their process groups (MCP servers, shells), removes stale
 pid files, removes the temporary worktrees bees created under the workspace
 root, and resets the worker list in `status.json`.
 
 Sessions are found two ways: from the `pid` file each running session keeps in
 its `<state_dir>/sessions/<id>/` directory, and from the process table, limited
-to sessions of this state directory — a `claude` process counts only when it
-carries the `--name bees-…` argument every session is started with *and* its
-command line references `<state_dir>/sessions/`. Another project's factory
+to sessions of this state directory — a `claude` or `codex` process counts
+only when it carries a session marker (the `--name bees-…` argument every
+claude session is started with, or the `mcp_servers.bees.env.BEES_SESSION_DIR=`
+override every codex session gets) *and* its command line references
+`<state_dir>/sessions/`. Another project's factory
 running on the same machine is never touched, whichever config you point
 `bees kill` at. Pid files are cross-checked against that scan, so a pid reused
 by an unrelated process after a reboot is discarded, never killed.
@@ -1200,8 +1202,9 @@ bees done failed -m "Could not get the test-suite to run: missing DATABASE_URL"
 ### `bees mcp serve` *(sessions)*
 
 Runs the built-in MCP server on stdio. You never start it yourself: `bees`
-writes it into every session's `mcp.json` as the server named `bees`, and
-claude starts it as `<bees binary> mcp serve` with the session's `BEES_*`
+hands it to every session as the server named `bees` (in `mcp.json` for
+claude, as `mcp_servers.bees` overrides for codex), and the agent starts it
+as `<bees binary> mcp serve` with the session's `BEES_*`
 variables. The name `bees` is reserved — a `[global.mcp.bees]` or
 `[roles.<role>.mcp.bees]` entry in `bees.toml` fails validation.
 

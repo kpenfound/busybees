@@ -610,7 +610,8 @@ for what `bees status` prints.
 
 ## Running a session
 
-A session is one `claude -p`, executed inside the worktree:
+A session is one non-interactive run of the role's `agent`, executed inside
+the worktree. With `agent = "claude"`, the default, it is one `claude -p`:
 
 ```
 claude -p \
@@ -627,12 +628,37 @@ claude -p \
 
 The task prompt is written to stdin. Each line of stream-json is appended to
 `<session>/transcript.jsonl`; the final `result` event supplies the result
-text, `is_error`, subtype, turn count, cost and claude session id. stderr is
-saved to `stderr.log` when non-empty, and `result.json` summarises the run. A
-session that ended without a `result` event (a signalled process, most often)
-has no known cost: `bees status`, the live view and the summary line say so
-rather than printing zero, and its turns are counted from the transcript's
-assistant messages instead.
+text, `is_error`, subtype, turn count, cost and claude session id.
+
+With `agent = "codex"` it is one `codex exec`:
+
+```
+codex exec --json \
+  --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check \
+  [--model <model>] \
+  [-c model_reasoning_effort="<level>"] \
+  -c mcp_servers.<name>.command="..." -c mcp_servers.<name>.args=[...] \
+  -c mcp_servers.<name>.env.<VAR>="..." ... \
+  -
+```
+
+Codex has no flag to append to its system prompt, so the system prompt is
+written to stdin ahead of the task prompt, separated by a rule; it has no
+`--mcp-config`, so every MCP server, the built-in one included, is passed as
+configuration overrides, one per key; and it has no fallback model, turn
+limit, tool allow-list or plugin directories, so those settings are not
+passed (see [`agent`](configuration.md#global-and-rolesname)). Its stream is
+appended to `transcript.jsonl` the same way: `thread.started` supplies the
+session id, each `item.completed` is one turn, the last `agent_message` item
+is the result text, and `turn.completed` or `turn.failed` says how it ended.
+Codex reports tokens, never a cost, so a codex session's cost is unknown
+rather than zero.
+
+For either agent, stderr is saved to `stderr.log` when non-empty, and
+`result.json` summarises the run. A session that ended without a final event
+(a signalled process, most often) has no known cost: `bees status`, the live
+view and the summary line say so rather than printing zero, and its turns are
+counted from the transcript's assistant messages or completed items instead.
 
 - **Outcome.** The session ends by calling the `done` tool (or running `bees
   done <status>`), which writes `<session>/outcome.json` through one shared
@@ -677,10 +703,12 @@ assistant messages instead.
   loads `bees.toml` itself, and a reference that expands to nothing is a load
   error, so that one name survives the drop); and, unless `GIT_CONFIG_COUNT`
   is already set, the `GIT_CONFIG_*` entries below. The `BEES_*` variables are
-  also written into the built-in MCP server's entry in `mcp.json` rather than
-  left to inheritance; the token variable deliberately is not, because that
-  file sits in the session directory on disk, and claude passes its own
-  environment on to the servers it starts. See
+  also written into the built-in MCP server's entry in `mcp.json` (for
+  codex, its overrides) rather than left to inheritance; the token variable
+  deliberately is not, because that file sits in the session directory on
+  disk, and claude passes its own environment on to the servers it starts.
+  Codex does not: a codex session's built-in server sees only the `BEES_*`
+  variables its entry names. See
   [Exported into every session](configuration.md#exported-into-every-session).
 - **Prompts.** The system prompt is `system/common.md` plus
   `system/<role>.md`, the role's custom `prompt` from `bees.toml`, and then
@@ -718,11 +746,13 @@ assistant messages instead.
   that already points at the right target is left alone. Clones are refreshed
   according to `global.skills_refresh`; `bees skills` inspects the cache. See
   [Skills](configuration.md#skills).
-- **MCP.** `mcp.json` is written for every session and always passed with
-  `--strict-mcp-config`, so a session sees exactly two things: the servers of
-  the resolved role (`$VAR` in `env` and `headers` expanded from the bees
+- **MCP.** A claude session gets `mcp.json`, always passed with
+  `--strict-mcp-config`, so it sees exactly two things: the servers of the
+  resolved role (`$VAR` in `env` and `headers` expanded from the bees
   process environment) and the built-in `bees` server, `<bees binary> mcp
-  serve` over stdio with the session's `BEES_*` variables in its `env`. That
+  serve` over stdio with the session's `BEES_*` variables in its `env`. A
+  codex session gets the same two things as `mcp_servers` overrides on its
+  command line, next to whatever its own configuration file names. That
   server serves the factory's own operations as tools backed by the same code
   the CLI uses, so a session calls a schema instead of composing a command
   line: `mail_send`, `mail_list`, `issue_create`, `issue_link`, `issue_view`,
@@ -733,8 +763,8 @@ assistant messages instead.
   enum is the role's valid outcomes. The name `bees` is reserved in
   `bees.toml`. See [bees mcp serve](cli.md#bees-mcp-serve-sessions) and
   [MCP servers](configuration.md#mcp-servers).
-- **Timeout.** The role's `timeout` (default 45m) bounds the command; claude
-  runs in its own process group, and on expiry the whole group is killed so
+- **Timeout.** The role's `timeout` (default 45m) bounds the command; the
+  agent runs in its own process group, and on expiry the whole group is killed so
   MCP servers die with it. The result is marked timed out.
 - **Stopping.** Sessions do not run under the loop's context: `bees run`
   derives a second one for them, so cancelling the loop (an interrupt, or the
@@ -839,7 +869,7 @@ sessions get `BEES_STATE_DIR`.
   mail/<role>/*.json             the mailbox
   notes/<role>.md                role memory (`bees notes show|edit|reset|add`)
   notes/archive/<role>-<ts>.md   notes replaced by `bees notes reset`
-  sessions/<ts>-<name>-<rand>/   system-prompt.md, prompt.md, mcp.json, transcript.jsonl,
+  sessions/<ts>-<name>-<rand>/   system-prompt.md, prompt.md, mcp.json (claude), transcript.jsonl,
                                  stderr.log, outcome.json, result.json, pid,
                                  touched-issues.txt (the issues the session changed on
                                  GitHub, one per line, read back into the cached poll
@@ -889,16 +919,20 @@ worker or singleton run; the skills cache lives outside the state directory
 ## Crash recovery (`bees kill`)
 
 The runner writes the session's pid to `<session dir>/pid` right after
-starting `claude` and removes it when the session ends. When bees dies, those
-files, and the `--name bees-<session>` argument every session is started with,
-let `bees kill` find the orphans: it merges the pid files with a `ps` scan
-restricted to processes whose executable is `claude` (directly or through an
-interpreter), cross-checking pid files against the scan so a reused pid is
-discarded rather than killed. Both sources are scoped to one factory: a
-scanned process counts only when its command line also references this state
-directory's `sessions/` (every session's argv carries
-`--append-system-prompt-file <sessions dir>/<session>/system-prompt.md`,
-matched as a path prefix and also in its symlink-resolved form). Sessions of
+starting the agent and removes it when the session ends. When bees dies,
+those files, and a marker in every session's argv (the `--name
+bees-<session>` a claude session is started with; for a codex session, the
+`mcp_servers.bees.env.BEES_SESSION_DIR=` override that hands the built-in
+MCP server its directory), let `bees kill` find the orphans: it merges the
+pid files with a `ps` scan restricted to processes whose executable is
+`claude` or `codex` (directly or through an interpreter), cross-checking pid
+files against the scan so a reused pid is discarded rather than killed. Both
+sources are scoped to one factory: a scanned process counts only when its
+command line also references this state directory's `sessions/` (a claude
+session's argv carries `--append-system-prompt-file <sessions
+dir>/<session>/system-prompt.md`, a codex session's the session directory in
+that override, matched as a path prefix and also in its symlink-resolved
+form). Sessions of
 another project's factory are never reported, so `bees kill` run with one
 project's config cannot strand another project's issues.
 
