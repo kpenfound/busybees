@@ -224,6 +224,10 @@ label = "{{.Label}}"
 # review-requested label. With filter.assignee set, that is the pull requests
 # assigned to the factory.
 #review_assigned_prs = false
+# A feature issue a bee creates is a proposal: it carries bees:proposal and a
+# person approves it by removing the label. false lets a bee break its own
+# features down without a person's approval.
+#feature_proposals = true
 # GitHub logins and/or org/team slugs the factory turns to when it needs a
 # person: mentioned in the needs-human comment and in the product manager's
 # questions, and asked to review an approved pull request. No leading @.
