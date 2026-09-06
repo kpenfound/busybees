@@ -17,7 +17,7 @@ The file starts with a `version` key, followed by these tables:
 | `[github]` | The GitHub account the factory acts as |
 | `[scheduler]` | Concurrency, polling, retries, budgets and the review loop |
 | `[logging]` | Console log format and level |
-| `[global]` | Prompt, skills, MCP servers, model and environment for every role |
+| `[global]` | Prompt, skills, MCP servers, model, sandbox and environment for every role |
 | `[roles.<name>]` | The same keys per role, plus a few that only one role takes |
 
 An unknown key anywhere in the file is a load error, so a typo cannot pass as
