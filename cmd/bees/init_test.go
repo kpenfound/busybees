@@ -351,6 +351,143 @@ func TestInitPrintsTheDoctorTable(t *testing.T) {
 
 // TestInitRunsTheDoctorWithoutLabels covers --no-labels, which used to return
 // before anything after the label sync.
+// TestInitPrintTemplateMatchesTemplatesShow: --print --template and
+// `bees templates show` share the one renderer, so they must print the same
+// bytes, and --print still writes nothing.
+func TestInitPrintTemplateMatchesTemplatesShow(t *testing.T) {
+	dir := t.TempDir()
+	deps, labels := testInitDeps()
+	o := initOptions{dir: dir, remote: config.DefaultRemote, label: config.DefaultLabel, template: "reviewer", print: true}
+	var err error
+	out := captureStdout(t, func() { err = runInit(context.Background(), o, deps) })
+	if err != nil {
+		t.Fatalf("init --print --template reviewer: %v", err)
+	}
+	tpl, terr := config.TemplateByName("reviewer")
+	if terr != nil {
+		t.Fatal(terr)
+	}
+	want, werr := config.RenderTOML(config.RenderOptions{Template: &tpl})
+	if werr != nil {
+		t.Fatal(werr)
+	}
+	if out != want {
+		t.Fatalf("init --print --template reviewer =\n%s\nwant (bees templates show reviewer):\n%s", out, want)
+	}
+	assertClean(t, dir)
+	if *labels != 0 {
+		t.Fatalf("--print synced labels")
+	}
+}
+
+// TestInitTemplateWritesResolvedSettings: --template writes a file
+// config.Load accepts and whose resolved config carries the template's
+// decisions.
+func TestInitTemplateWritesResolvedSettings(t *testing.T) {
+	_, clone := testutil.SetupRepos(t)
+	deps, labels := testInitDeps()
+	o := initOptions{dir: clone, remote: "origin", repo: "acme/widgets", label: config.DefaultLabel, template: "slop-factory"}
+	if err := runInit(context.Background(), o, deps); err != nil {
+		t.Fatalf("init --template slop-factory: %v", err)
+	}
+	cfg, err := config.Load(filepath.Join(clone, "bees.toml"))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if !cfg.Merge().AutoMerge {
+		t.Errorf("roles.reviewer.auto_merge = false, want true")
+	}
+	if cfg.Scheduler.Proposals() {
+		t.Errorf("scheduler.feature_proposals = true, want false")
+	}
+	if *labels != 1 {
+		t.Fatalf("labels synced %d times, want 1", *labels)
+	}
+}
+
+// TestInitUnknownTemplateFails: an unknown --template name fails before
+// anything is written, with the write and the --print path both left clean,
+// and the error listing the template names (the registry's own sentence,
+// not a second one).
+func TestInitUnknownTemplateFails(t *testing.T) {
+	_, clone := testutil.SetupRepos(t)
+	deps, labels := testInitDeps()
+	wantErr := func(err error) {
+		t.Helper()
+		if err == nil {
+			t.Fatal("init should fail for an unknown template")
+		}
+		if _, rerr := config.TemplateByName("nope"); rerr == nil || err.Error() != rerr.Error() {
+			t.Fatalf("error: %v, want the registry's own error", err)
+		}
+	}
+
+	o := initOptions{dir: clone, remote: "origin", repo: "acme/widgets", label: config.DefaultLabel, template: "nope"}
+	wantErr(runInit(context.Background(), o, deps))
+	assertClean(t, clone)
+	if *labels != 0 {
+		t.Fatalf("labels synced despite the failure")
+	}
+
+	o.print = true
+	wantErr(runInit(context.Background(), o, deps))
+	assertClean(t, clone)
+}
+
+// TestInitUnknownTemplateFailsWithoutGitClone: the template name is checked
+// before the git-clone guard, so it fails the same way outside a clone.
+func TestInitUnknownTemplateFailsWithoutGitClone(t *testing.T) {
+	dir := t.TempDir()
+	deps, _ := testInitDeps()
+	o := initOptions{dir: dir, remote: "origin", label: config.DefaultLabel, template: "nope"}
+	err := runInit(context.Background(), o, deps)
+	if err == nil || strings.Contains(err.Error(), "git clone") {
+		t.Fatalf("error: %v, want the unknown-template error, not the git-clone guard", err)
+	}
+	if _, rerr := config.TemplateByName("nope"); err.Error() != rerr.Error() {
+		t.Fatalf("error: %v, want %v", err, rerr)
+	}
+	assertClean(t, dir)
+}
+
+// TestInitTemplateComposesWithFlags: --template writes alongside the other
+// init flags rather than instead of them.
+func TestInitTemplateComposesWithFlags(t *testing.T) {
+	_, clone := testutil.SetupRepos(t)
+	deps, _ := testInitDeps()
+	o := initOptions{
+		dir: clone, remote: "origin", label: config.DefaultLabel,
+		template: "reviewer", assignee: "somebody", repo: "owner/name", defaultBranch: "main",
+	}
+	if err := runInit(context.Background(), o, deps); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	cfg, err := config.Load(filepath.Join(clone, "bees.toml"))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Filter.Assignee != "somebody" {
+		t.Errorf("filter.assignee = %q, want somebody", cfg.Filter.Assignee)
+	}
+	if cfg.Project.Repo != "owner/name" || cfg.Project.DefaultBranch != "main" {
+		t.Errorf("project: %+v", cfg.Project)
+	}
+	dev, err := cfg.Role(config.RoleDeveloper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dev.Enabled {
+		t.Errorf("roles.developer.enabled = true, want false (the reviewer template)")
+	}
+	rev, err := cfg.Role(config.RoleReviewer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rev.Enabled {
+		t.Errorf("roles.reviewer.enabled = false, want true (the reviewer template)")
+	}
+}
+
 func TestInitRunsTheDoctorWithoutLabels(t *testing.T) {
 	_, clone := testutil.SetupRepos(t)
 	deps, labels, doctorCalls := testInitDepsWithDoctor("toolchain\n")
