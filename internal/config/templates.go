@@ -200,3 +200,81 @@ func wrapWords(text string, width int) []string {
 	}
 	return lines
 }
+
+// Difference is one setting on which a config and a template disagree.
+type Difference struct {
+	Key      string // bees.toml key path, e.g. "roles.qa.enabled"
+	Config   string // the resolved value, as a TOML literal
+	Template string // what the template sets
+}
+
+// resolved maps each key a template may set to the value the factory runs
+// with, read through the same accessors the scheduler uses. The comparison is
+// on the resolved value, not on the file text: a key a person left commented
+// out reads as its default, which is what the factory does. A key in
+// TemplateKeys with no entry here is compared against nothing, which
+// TestEveryTemplateKeyResolves rules out.
+var resolved = map[string]func(*Config) string{
+	"scheduler.review_assigned_prs": func(c *Config) string { return tomlBool(c.Scheduler.ReviewAssignedPRs) },
+	"scheduler.feature_proposals":   func(c *Config) string { return tomlBool(c.Scheduler.Proposals()) },
+	"roles.product_manager.enabled": func(c *Config) string { return tomlBool(roleEnabled(c, RoleProductManager)) },
+	"roles.project_manager.enabled": func(c *Config) string { return tomlBool(roleEnabled(c, RoleProjectManager)) },
+	"roles.developer.enabled":       func(c *Config) string { return tomlBool(roleEnabled(c, RoleDeveloper)) },
+	"roles.reviewer.enabled":        func(c *Config) string { return tomlBool(roleEnabled(c, RoleReviewer)) },
+	"roles.reviewer.auto_merge":     func(c *Config) string { return tomlBool(c.Merge().AutoMerge) },
+	"roles.qa.enabled":              func(c *Config) string { return tomlBool(roleEnabled(c, RoleQA)) },
+}
+
+// roleEnabled resolves roles.<name>.enabled. Config.Role only fails on a name
+// that is not a role, and every name here is one of the five constants.
+func roleEnabled(c *Config, name string) bool {
+	r, err := c.Role(name)
+	if err != nil {
+		return false
+	}
+	return r.Enabled
+}
+
+func tomlBool(v bool) string {
+	if v {
+		return "true"
+	}
+	return "false"
+}
+
+// Compare returns the settings on which c differs from t, in the order the
+// template lists them. Empty means the factory runs the way the template
+// describes. Only the keys the template sets are compared, so everything a
+// template says nothing about — repo, filter, models, budgets, intervals — is
+// ignored by construction.
+func (t Template) Compare(c *Config) []Difference {
+	var diffs []Difference
+	for _, key := range templateKeys {
+		want, sets := t.Settings[key]
+		if !sets {
+			continue
+		}
+		read, ok := resolved[key]
+		if !ok {
+			continue
+		}
+		if got := read(c); got != want {
+			diffs = append(diffs, Difference{Key: key, Config: got, Template: want})
+		}
+	}
+	return diffs
+}
+
+// Closest returns the template c differs from least, and those differences.
+// Differing settings are counted, not weighted; ties go to the earlier
+// template in Templates(). Every config has a closest template: there is no
+// "matches nothing".
+func Closest(c *Config) (Template, []Difference) {
+	best, diffs := templates[0], templates[0].Compare(c)
+	for _, t := range templates[1:] {
+		if d := t.Compare(c); len(d) < len(diffs) {
+			best, diffs = t, d
+		}
+	}
+	return best, diffs
+}
