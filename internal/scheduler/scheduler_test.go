@@ -651,8 +651,11 @@ func (f *fakeGH) exec(ctx context.Context, args ...string) ([]byte, error) {
 	switch args[0] + " " + args[1] {
 	case "issue list":
 		var out []github.Issue
-		label, state := flag("--label"), flag("--state")
+		label, state, author := flag("--label"), flag("--state"), flag("--author")
 		for _, i := range f.issues {
+			if author != "" && !strings.EqualFold(i.Author.Login, author) {
+				continue
+			}
 			if (state == "all" || i.State == "OPEN") && (label == "" || github.HasLabel(i.Labels, label)) {
 				out = append(out, *i)
 			}
@@ -700,9 +703,12 @@ func (f *fakeGH) exec(ctx context.Context, args ...string) ([]byte, error) {
 		return nil, nil
 	case "pr list":
 		var out []github.PR
-		head, state := flag("--head"), flag("--state")
+		head, state, author := flag("--head"), flag("--state"), flag("--author")
 		for _, p := range f.prs {
 			if !prVisible(p) {
+				continue
+			}
+			if author != "" && !strings.EqualFold(p.Author.Login, author) {
 				continue
 			}
 			if head != "" && p.HeadRefName != head {

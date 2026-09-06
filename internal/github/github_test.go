@@ -15,12 +15,12 @@ import (
 
 func TestQueryArgs(t *testing.T) {
 	q := Query{Label: "bees", Assignee: "kyle", Milestone: "v1", Creator: "kyle"}
-	got := strings.Join(q.args(), " ")
+	got := joinSets(q.argSets())
 	if got != "--label bees --assignee kyle --milestone v1 --author kyle" {
 		t.Fatalf("args: %s", got)
 	}
-	if len((Query{}).args()) != 0 {
-		t.Fatal("empty query should produce no args")
+	if sets := (Query{}).argSets(); len(sets) != 1 || len(sets[0]) != 0 {
+		t.Fatalf("empty query should produce one empty arg set, got %v", sets)
 	}
 	labels := []Label{{Name: "bees"}}
 	if !q.Matches(labels, []Author{{Login: "Kyle"}}, "v1", "Kyle") {
@@ -34,6 +34,72 @@ func TestQueryArgs(t *testing.T) {
 	}
 	if (Query{Label: "bees"}).Matches(nil, nil, "", "") {
 		t.Fatal("should not match without label")
+	}
+}
+
+func joinSets(sets [][]string) string {
+	var out []string
+	for _, s := range sets {
+		out = append(out, strings.Join(s, " "))
+	}
+	return strings.Join(out, " | ")
+}
+
+// The factory's own account is always an allowed author: with Creator set,
+// an item Self opened matches, and the listing asks gh once per login
+// (--author takes one) and merges the answers without duplicates.
+func TestQuerySelfIsAlwaysAnAllowedCreator(t *testing.T) {
+	q := Query{Label: "bees", Creator: "kyle", Self: "bot"}
+	if got := joinSets(q.argSets()); got != "--label bees --author kyle | --label bees --author bot" {
+		t.Fatalf("arg sets: %s", got)
+	}
+	labels := []Label{{Name: "bees"}}
+	for _, author := range []string{"kyle", "Bot"} {
+		if !q.Matches(labels, nil, "", author) {
+			t.Fatalf("an item %s opened should match", author)
+		}
+	}
+	if q.Matches(labels, nil, "", "someone-else") {
+		t.Fatal("an item a third account opened should not match")
+	}
+
+	// Self is nothing without Creator, and adds no listing when it is the
+	// creator already.
+	if got := joinSets((Query{Label: "bees", Self: "bot"}).argSets()); got != "--label bees" {
+		t.Fatalf("Self without Creator changed the listing: %s", got)
+	}
+	if got := joinSets((Query{Creator: "kyle", Self: "Kyle"}).argSets()); got != "--author kyle" {
+		t.Fatalf("Self equal to Creator was listed twice: %s", got)
+	}
+
+	c := New("a/b")
+	var authors []string
+	c.Exec = func(ctx context.Context, args ...string) ([]byte, error) {
+		for i, a := range args {
+			if a == "--author" {
+				authors = append(authors, args[i+1])
+			}
+		}
+		switch authors[len(authors)-1] {
+		case "kyle":
+			return []byte(`[{"number":1},{"number":2}]`), nil
+		default:
+			return []byte(`[{"number":2},{"number":3}]`), nil
+		}
+	}
+	issues, err := c.ListOpenIssues(context.Background(), q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprint(authors); got != "[kyle bot]" {
+		t.Fatalf("listed as %s", got)
+	}
+	var numbers []int
+	for _, i := range issues {
+		numbers = append(numbers, i.Number)
+	}
+	if got := fmt.Sprint(numbers); got != "[1 2 3]" {
+		t.Fatalf("merged issues: %s", got)
 	}
 }
 

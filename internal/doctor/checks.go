@@ -981,7 +981,12 @@ func unrequiredGate(name, branch, why string) Result {
 // detail and remediation lines - do not "upgrade" this to a Fail.
 func (d *Deps) checkFilter(ctx context.Context) Result {
 	const name = "filter matches issues"
-	q := Query(d.Config)
+	q, err := d.query(ctx)
+	if err != nil {
+		return fail(name, GroupGitHub, oneLine(err.Error()),
+			"run `gh auth login`: with [github] unset the factory acts as your own gh account, and filter.creator "+
+				"needs to know it to keep the issues the factory opens visible")
+	}
 	if q.Assignee == "@me" {
 		// gh resolves "@me" against whatever token the client carries, which
 		// with [github] set is the account the factory acts as: ask who is
@@ -1054,14 +1059,35 @@ func (d *Deps) strandedByFilter(ctx context.Context, q github.Query) string {
 		d.Config.Filter.Label, describeANDed(q))
 }
 
-// Query is the visibility filter as the scheduler applies it.
-func Query(cfg *config.Config) github.Query {
+// Query is the visibility filter as the scheduler applies it, acting as
+// self (github.Query.Self).
+func Query(cfg *config.Config, self string) github.Query {
 	f := cfg.Filter
-	q := github.Query{Assignee: f.Assignee, Milestone: f.Milestone, Creator: f.Creator}
+	q := github.Query{Assignee: f.Assignee, Milestone: f.Milestone, Creator: f.Creator, Self: self}
 	if f.LabelRequired() {
 		q.Label = f.Label
 	}
 	return q
+}
+
+// query is Query for the configuration doctor was pointed at, with the
+// account the factory acts as resolved the way `bees run` resolves it: the
+// configured github.login, else the machine's own gh user. That lookup only
+// happens when filter.creator is set, because it is the one criterion the
+// account matters to.
+func (d *Deps) query(ctx context.Context) (github.Query, error) {
+	var self string
+	if d.Config.Filter.Creator != "" {
+		self = d.GitHub.ActsAs
+		if self == "" {
+			login, err := d.me(ctx)
+			if err != nil {
+				return github.Query{}, fmt.Errorf("resolve the account the factory acts as, for filter.creator: %w", err)
+			}
+			self = strings.TrimSpace(login)
+		}
+	}
+	return Query(d.Config, self), nil
 }
 
 // describeANDed spells the filter out as the conjunction it is

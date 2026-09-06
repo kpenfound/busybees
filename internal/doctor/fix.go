@@ -14,7 +14,8 @@ import (
 // the filter back into it, by adding filter.assignee and, when one is
 // configured, filter.milestone. filter.creator is never fixed this way: an
 // item's author cannot be changed, so one that fails only that criterion
-// stays outside the filter.
+// stays outside the filter. An item the factory's own account opened passes
+// it whatever filter.creator says (github.Query.Self).
 //
 // The safety rule of busybees is the whole design here: **an item that does
 // not carry the base label is never touched**. That is what makes bees safe in
@@ -40,7 +41,10 @@ func (d *Deps) fixFilter(ctx context.Context) ([]string, error) {
 		return []string{"filter.require_label is false: with no base label there is no way to tell the factory's " +
 			"items from the rest of the repository, and adopting everything is not a repair — nothing was changed"}, nil
 	}
-	q := Query(d.Config)
+	q, err := d.query(ctx)
+	if err != nil {
+		return nil, err
+	}
 	base := github.Query{Label: f.Label}
 	if base == q {
 		return []string{fmt.Sprintf("the filter is the `%s` label alone: nothing carrying it can be outside the filter", f.Label)}, nil

@@ -43,6 +43,26 @@ func resolveFilterAssignee(ctx context.Context, cfg *config.Config) error {
 	return nil
 }
 
+// resolveFilterSelf is the login the factory acts as, for github.Query.Self:
+// what keeps the issues and pull requests the factory opens visible under
+// filter.creator, which they are authored by and cannot be made to match.
+// It is configuration when [github] is set and the machine's own gh user
+// otherwise, and it is only looked up while filter.creator is set, because
+// that lookup is an API call and nothing else needs the answer.
+func resolveFilterSelf(ctx context.Context, cfg *config.Config) (string, error) {
+	if cfg.Filter.Creator == "" {
+		return "", nil
+	}
+	if cfg.GitHub.Configured() {
+		return cfg.GitHub.Login, nil
+	}
+	login, err := meLookup(ctx)
+	if err != nil {
+		return "", fmt.Errorf("resolve the account the factory acts as, for filter.creator: %w", err)
+	}
+	return login, nil
+}
+
 // verifyGitHubAccount reports the GitHub login the factory acts as, checking
 // the configured token before it is trusted with anything: that GitHub
 // accepts it, that it belongs to the login bees.toml names, and that it can

@@ -166,7 +166,8 @@ label = "{{.Label}}"
 {{if .Assignee}}assignee = "{{.Assignee}}"{{else}}#assignee = "@me"{{end}}
 # Only see items in this milestone.
 #milestone = ""
-# Only see items opened by this GitHub login.
+# Only see items opened by this GitHub login. What the factory opens itself
+# is visible too, whoever it acts as.
 #creator = ""
 
 #===============================================================================
