@@ -156,7 +156,7 @@ model = "sonnet"
 # Merge approved pull requests automatically once the required checks are
 # green. Off: humans merge. When checks fail the reviewer diagnoses the main
 # error and hands it to the developer to fix (up to max_check_fix_rounds).
-auto_merge = true
+#auto_merge = true
 # Wait after approval before polling checks; some take a moment to start.
 #checks_wait = "1m"
 # How often to poll the checks while waiting (one API call each).
