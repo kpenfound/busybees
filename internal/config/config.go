@@ -149,9 +149,8 @@ const (
 // DispatchOrders lists the accepted scheduler.dispatch_order values.
 var DispatchOrders = []string{DispatchSmallFirst, DispatchOldest, DispatchLargeFirst}
 
-// Session backends accepted by the agent key. claude is the only one a
-// session actually runs as; codex is validated and resolved but not yet
-// wired to a runner.
+// Session backends accepted by the agent key: which CLI a role's sessions
+// run as. internal/session builds the command line for each.
 const (
 	AgentClaude = "claude"
 	AgentCodex  = "codex"
@@ -403,7 +402,8 @@ type RoleSettings struct {
 	FallbackModel string `toml:"fallback_model"`
 	// Agent is the CLI backend a session runs as: claude or codex.
 	Agent string `toml:"agent"`
-	// Effort is passed as --effort (low/medium/high/max) when set.
+	// Effort is passed as claude --effort (low/medium/high/max) when set,
+	// or as codex's model_reasoning_effort setting, where max reads as high.
 	Effort string `toml:"effort"`
 	// MaxTurns caps agentic turns for a single session.
 	MaxTurns int `toml:"max_turns"`
@@ -1500,12 +1500,21 @@ func (c *Config) Role(name string) (ResolvedRole, error) {
 	rs := c.Roles[canonical]
 	g := c.Global
 
+	// The model defaults are claude's. A codex role that names no model
+	// runs with codex's own configured model rather than "opus", and has no
+	// fallback model at all: codex has no such flag, and a retry with the
+	// fallback model is then a retry with the same one.
+	agent := firstNonEmpty(rs.Agent, g.Agent, DefaultAgent)
+	defaultModel, defaultFallback := DefaultModel, DefaultFallbackModel
+	if agent == AgentCodex {
+		defaultModel, defaultFallback = "", ""
+	}
 	r := ResolvedRole{
 		Name:          canonical,
-		Model:         firstNonEmpty(rs.Model, g.Model, DefaultModel),
+		Model:         firstNonEmpty(rs.Model, g.Model, defaultModel),
 		ModelBySize:   sizeModels(rs.ModelBySize),
-		FallbackModel: firstNonEmpty(rs.FallbackModel, g.FallbackModel, DefaultFallbackModel),
-		Agent:         firstNonEmpty(rs.Agent, g.Agent, DefaultAgent),
+		FallbackModel: firstNonEmpty(rs.FallbackModel, g.FallbackModel, defaultFallback),
+		Agent:         agent,
 		Effort:        firstNonEmpty(rs.Effort, g.Effort),
 		MaxTurns:      firstPositive(rs.MaxTurns, g.MaxTurns, DefaultMaxTurns),
 		Timeout:       firstPositiveDur(rs.Timeout.Duration, g.Timeout.Duration, DefaultTimeout),
