@@ -422,6 +422,13 @@ type RoleSettings struct {
 	// A size with no entry uses Model.
 	ModelBySize map[string]string `toml:"model_by_size"`
 
+	// The following key is only valid under [roles.product_manager].
+
+	// MinIssueSize is the smallest work item size the product manager aims
+	// for when it breaks a feature into work items ("xs".."xl"), a hint on
+	// the split rather than a floor anything enforces. Empty: no floor.
+	MinIssueSize string `toml:"min_issue_size"`
+
 	// The following keys are only valid under [roles.reviewer].
 
 	// AutoMerge lets the reviewer merge a pull request it approved once the
@@ -580,6 +587,12 @@ func (c *Config) Mentions() string {
 // MaxSize returns the largest work item size the developer takes.
 func (c *Config) MaxSize() string {
 	return firstNonEmpty(strings.TrimSpace(c.Roles[RoleDeveloper].MaxSize), DefaultMaxSize)
+}
+
+// MinIssueSize returns the smallest work item size the product manager aims
+// for when it splits a feature. Empty means no floor.
+func (c *Config) MinIssueSize() string {
+	return strings.TrimSpace(c.Roles[RoleProductManager].MinIssueSize)
 }
 
 // LargeInFlight returns scheduler.max_large_in_flight (0 = no cap).
@@ -1360,6 +1373,12 @@ func (c *Config) Validate() error {
 		}
 		if scope != "roles."+RoleDeveloper && (rs.CommitFlags != "" || rs.MaxSize != "" || len(rs.ModelBySize) > 0) {
 			errs = append(errs, fmt.Sprintf("%s: commit_flags, max_size and model_by_size are only valid under roles.developer", scope))
+		}
+		if scope != "roles."+RoleProductManager && rs.MinIssueSize != "" {
+			errs = append(errs, fmt.Sprintf("%s: min_issue_size is only valid under roles.product_manager", scope))
+		}
+		if rs.MinIssueSize != "" && !slices.Contains(Sizes, rs.MinIssueSize) {
+			errs = append(errs, fmt.Sprintf("%s.min_issue_size must be one of %s", scope, strings.Join(Sizes, ", ")))
 		}
 		if rs.MaxSize != "" && !slices.Contains(Sizes, rs.MaxSize) {
 			errs = append(errs, fmt.Sprintf("%s.max_size must be one of %s", scope, strings.Join(Sizes, ", ")))

@@ -1690,3 +1690,46 @@ func TestReviewRequestedLabel(t *testing.T) {
 		t.Errorf("%s is a size label", l.ReviewRequested)
 	}
 }
+
+// roles.product_manager.min_issue_size is the floor the product manager aims
+// for when it breaks a feature into work items. It defaults to no floor, only
+// the product manager may carry it, and only a known size is a value.
+func TestMinIssueSize(t *testing.T) {
+	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.MinIssueSize(); got != "" {
+		t.Errorf("default min_issue_size: got %q, want no floor", got)
+	}
+	cfg, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[roles.product_manager]\nmin_issue_size = \"m\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.MinIssueSize(); got != "m" {
+		t.Errorf("min_issue_size: got %q, want %q", got, "m")
+	}
+}
+
+// A bad min_issue_size has to name the key and the sizes it accepts, and the
+// wrong-scope error is its own sentence: it must not be folded into the
+// developer-only one, which names keys this is not.
+func TestMinIssueSizeErrorsNameTheKey(t *testing.T) {
+	for body, want := range map[string]string{
+		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.product_manager]\nmin_issue_size = \"huge\"\n": "roles.product_manager.min_issue_size must be one of xs, s, m, l, xl",
+		"version = 1\n[project]\nrepo = \"a/b\"\n[global]\nmin_issue_size = \"m\"\n":                   "global: min_issue_size is only valid under roles.product_manager",
+		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nmin_issue_size = \"m\"\n":          "roles.developer: min_issue_size is only valid under roles.product_manager",
+		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.project_manager]\nmin_issue_size = \"m\"\n":    "roles.project_manager: min_issue_size is only valid under roles.product_manager",
+	} {
+		_, err := Load(writeConfig(t, body))
+		if err == nil {
+			t.Fatalf("%q: expected an error", body)
+		}
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+		if strings.Contains(err.Error(), "min_issue_size, commit_flags") || strings.Contains(err.Error(), "commit_flags, max_size, min_issue_size") {
+			t.Errorf("error %q folds min_issue_size into the developer-only sentence", err)
+		}
+	}
+}

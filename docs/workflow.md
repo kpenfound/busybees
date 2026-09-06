@@ -204,7 +204,11 @@ Who sets it:
   and applies both labels in one edit. A refined scope that comes out as `xl`
   is split rather than labelled.
 - The **product manager** may pre-size a work item it creates. That is a
-  hint. The project manager confirms or changes it during triage.
+  hint. The project manager confirms or changes it during triage. With
+  [`roles.product_manager.min_issue_size`](configuration.md#rolesproduct_manager-only-minimum-issue-size)
+  set, it also aims for that size as a floor when it splits a feature into
+  work items: a hint on the split rather than a limit, and never a reason to
+  leave a smaller piece of work unfiled.
 - The **orchestrator** adds `bees:size/m` to any issue that reaches
   `bees:ready` without a size, which is usually one you fast-tracked past
   triage. Label the issue yourself when `m` is not what you meant.
