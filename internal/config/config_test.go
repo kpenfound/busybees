@@ -28,7 +28,7 @@ func writeConfig(t *testing.T, body string) string {
 }
 
 func TestTemplateLoads(t *testing.T) {
-	text, err := Template(TemplateData{Repo: "acme/widgets", Assignee: "@me", ExplicitRepo: true, ExplicitBranch: true})
+	text, err := RenderTOML(RenderOptions{Repo: "acme/widgets", Assignee: "@me", ExplicitRepo: true, ExplicitBranch: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestTemplateLoads(t *testing.T) {
 		t.Fatalf("unexpected config: %+v %+v", cfg.Project, cfg.Filter)
 	}
 	// Without the Explicit flags, repo and default_branch are commented placeholders.
-	text, _ = Template(TemplateData{Repo: "acme/widgets", DefaultBranch: "trunk"})
+	text, _ = RenderTOML(RenderOptions{Repo: "acme/widgets", DefaultBranch: "trunk"})
 	cfg, err = Load(writeConfig(t, text))
 	if err != nil {
 		t.Fatal(err)
@@ -564,7 +564,7 @@ func TestTemplateUncommented(t *testing.T) {
 	// reference that expands to nothing is a load error by design, so the
 	// uncommented template only loads where the variable exists.
 	t.Setenv("BEES_GITHUB_TOKEN", "ghp_example")
-	text, err := Template(TemplateData{Repo: "acme/widgets", ExplicitRepo: true, ExplicitBranch: true})
+	text, err := RenderTOML(RenderOptions{Repo: "acme/widgets", ExplicitRepo: true, ExplicitBranch: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -603,7 +603,7 @@ const exampleTOML = "../../bees.example.toml"
 var update = flag.Bool("update", false, "rewrite bees.example.toml from the template")
 
 func TestExampleTOMLInSync(t *testing.T) {
-	want, err := Template(TemplateData{})
+	want, err := RenderTOML(RenderOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1026,7 +1026,7 @@ func TestDescribeDays(t *testing.T) {
 func TestParseWithoutFile(t *testing.T) {
 	// The template init renders before it writes anything: empty repo and
 	// branch, no file on disk.
-	text, err := Template(TemplateData{Remote: DefaultRemote, Label: DefaultLabel})
+	text, err := RenderTOML(RenderOptions{Remote: DefaultRemote, Label: DefaultLabel})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1089,15 +1089,15 @@ func uncommentTemplate(text string) string {
 func TestTemplateNeverWritesAGuessedBranch(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		data TemplateData
+		data RenderOptions
 		want string
 	}{
-		{"explicit branch without a value", TemplateData{ExplicitBranch: true}, "#default_branch = \"main\""},
-		{"explicit branch with a value", TemplateData{ExplicitBranch: true, DefaultBranch: "trunk"}, "default_branch = \"trunk\""},
-		{"explicit repo alone", TemplateData{Repo: "acme/widgets", DefaultBranch: "trunk", ExplicitRepo: true}, "#default_branch = \"trunk\""},
+		{"explicit branch without a value", RenderOptions{ExplicitBranch: true}, "#default_branch = \"main\""},
+		{"explicit branch with a value", RenderOptions{ExplicitBranch: true, DefaultBranch: "trunk"}, "default_branch = \"trunk\""},
+		{"explicit repo alone", RenderOptions{Repo: "acme/widgets", DefaultBranch: "trunk", ExplicitRepo: true}, "#default_branch = \"trunk\""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			text, err := Template(tc.data)
+			text, err := RenderTOML(tc.data)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1115,7 +1115,7 @@ func TestTemplateNeverWritesAGuessedBranch(t *testing.T) {
 		})
 	}
 	// ExplicitRepo alone still writes repo.
-	text, err := Template(TemplateData{Repo: "acme/widgets", ExplicitRepo: true})
+	text, err := RenderTOML(RenderOptions{Repo: "acme/widgets", ExplicitRepo: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1132,50 +1132,50 @@ func TestTemplateEscapesInterpolatedValues(t *testing.T) {
 	const weird = "a\"b\\c\td\ne\rf\x01g\x7fh"
 	for _, tc := range []struct {
 		name string
-		data TemplateData
+		data RenderOptions
 		got  func(*Config) string
 		want string
 	}{
 		{
 			"injection through default_branch",
-			TemplateData{DefaultBranch: injection, ExplicitBranch: true},
+			RenderOptions{DefaultBranch: injection, ExplicitBranch: true},
 			func(c *Config) string { return c.Project.DefaultBranch }, injection,
 		},
 		{
 			"quote in repo",
-			TemplateData{Repo: "acme/wid\"gets", ExplicitRepo: true},
+			RenderOptions{Repo: "acme/wid\"gets", ExplicitRepo: true},
 			func(c *Config) string { return c.Project.Repo }, "acme/wid\"gets",
 		},
 		{
 			// remote is written commented out, so a newline breaks out of the
 			// comment onto a line of its own.
 			"injection through remote",
-			TemplateData{Remote: "origin\"\nrepo = \"evil/repo"},
+			RenderOptions{Remote: "origin\"\nrepo = \"evil/repo"},
 			func(c *Config) string { return c.Project.Remote }, DefaultRemote,
 		},
 		{
 			"quote in label",
-			TemplateData{Label: "be\"es"},
+			RenderOptions{Label: "be\"es"},
 			func(c *Config) string { return c.Filter.Label }, "be\"es",
 		},
 		{
 			"quote in assignee",
-			TemplateData{Assignee: "ky\"le"},
+			RenderOptions{Assignee: "ky\"le"},
 			func(c *Config) string { return c.Filter.Assignee }, "ky\"le",
 		},
 		{
 			"control characters in default_branch",
-			TemplateData{DefaultBranch: weird, ExplicitBranch: true},
+			RenderOptions{DefaultBranch: weird, ExplicitBranch: true},
 			func(c *Config) string { return c.Project.DefaultBranch }, weird,
 		},
 		{
 			"control characters in assignee",
-			TemplateData{Assignee: weird},
+			RenderOptions{Assignee: weird},
 			func(c *Config) string { return c.Filter.Assignee }, weird,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			text, err := Template(tc.data)
+			text, err := RenderTOML(tc.data)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1405,7 +1405,7 @@ func TestLoggingSettings(t *testing.T) {
 // factory stopped seeing every issue not assigned to the gh user.
 func TestFilterAssigneeDefaultsToUnset(t *testing.T) {
 	// `bees init` with no --assignee: the key is a commented placeholder.
-	text, err := Template(TemplateData{Repo: "acme/widgets", ExplicitRepo: true, ExplicitBranch: true})
+	text, err := RenderTOML(RenderOptions{Repo: "acme/widgets", ExplicitRepo: true, ExplicitBranch: true})
 	if err != nil {
 		t.Fatal(err)
 	}

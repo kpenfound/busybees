@@ -113,6 +113,7 @@ through GitHub issues and pull requests. Configure it with bees.toml.`,
 		newSkillsCmd(g),
 		newPromptsCmd(g),
 		newLabelsCmd(g),
+		newTemplatesCmd(),
 		newVersionCmd(),
 	)
 	return g, root
