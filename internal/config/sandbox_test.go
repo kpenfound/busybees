@@ -148,19 +148,100 @@ func TestCheckSandboxPassesWithoutTheKey(t *testing.T) {
 }
 
 // A ResolvedRole built by hand — every test that runs a session makes one —
-// has no mode set, and an empty mode is none rather than a refusal.
+// has no mode set, and an empty mode is none rather than a refusal. Every
+// mode in SandboxModes is implemented; a mode bees does not know is refused
+// by name.
 func TestCheckSandboxModeTakesAnEmptyMode(t *testing.T) {
-	if err := CheckSandboxMode(""); err != nil {
-		t.Errorf("an unset mode was refused: %v", err)
+	for _, mode := range []string{"", SandboxNone, SandboxClaude, SandboxContainer} {
+		if err := CheckSandboxMode(mode); err != nil {
+			t.Errorf("mode %q was refused: %v", mode, err)
+		}
 	}
-	if err := CheckSandboxMode(SandboxNone); err != nil {
-		t.Errorf("none was refused: %v", err)
+	if err := CheckSandboxMode("firecracker"); err == nil {
+		t.Error("an unknown mode reported itself implemented")
 	}
-	if err := CheckSandboxMode(SandboxContainer); err != nil {
-		t.Errorf("container was refused: %v", err)
+}
+
+// fakeHost describes a machine to CheckSandboxHost for the rest of the test:
+// its operating system and which programs are on its PATH.
+func fakeHost(t *testing.T, goos string, onPath ...string) {
+	t.Helper()
+	oldOS, oldLook := hostOS, lookPath
+	t.Cleanup(func() { hostOS, lookPath = oldOS, oldLook })
+	hostOS = goos
+	lookPath = func(name string) (string, error) {
+		for _, p := range onPath {
+			if p == name {
+				return "/usr/bin/" + name, nil
+			}
+		}
+		return "", errors.New("not found")
 	}
-	if err := CheckSandboxMode(SandboxClaude); err == nil {
-		t.Error("claude reported itself implemented")
+}
+
+// Claude Code's sandbox is the system's own on macOS, needs bubblewrap and
+// socat on Linux, and runs nowhere else. The other modes have no host
+// question: none needs nothing, container asks the engine question instead.
+func TestCheckSandboxHost(t *testing.T) {
+	cases := []struct {
+		name    string
+		goos    string
+		onPath  []string
+		mode    string
+		wantErr []string
+	}{
+		{"macos needs nothing", "darwin", nil, SandboxClaude, nil},
+		{"linux with both tools", "linux", []string{"bwrap", "socat"}, SandboxClaude, nil},
+		{"linux without socat", "linux", []string{"bwrap"}, SandboxClaude, []string{"socat"}},
+		{"linux without either", "linux", nil, SandboxClaude, []string{"bwrap and socat"}},
+		{"windows", "windows", []string{"bwrap", "socat"}, SandboxClaude, []string{"macOS and Linux only", "windows"}},
+		{"none anywhere", "windows", nil, SandboxNone, nil},
+		{"container is not this check's", "windows", nil, SandboxContainer, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeHost(t, tc.goos, tc.onPath...)
+			err := CheckSandboxHost(tc.mode)
+			if tc.wantErr == nil {
+				if err != nil {
+					t.Fatalf("refused: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("accepted")
+			}
+			for _, want := range tc.wantErr {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not mention %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+// `bees run` asks the host question per enabled role and names the role, so
+// the error says which line of bees.toml to change or what to install. A
+// Linux machine without bubblewrap cannot run a claude-boxed developer, and
+// the same configuration starts on macOS.
+func TestCheckSandboxAsksTheHost(t *testing.T) {
+	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nsandbox = \"claude\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fakeHost(t, "linux", "socat")
+	err = cfg.CheckSandbox()
+	if err == nil {
+		t.Fatal("a claude developer started on a Linux machine without bubblewrap")
+	}
+	for _, want := range []string{"roles.developer", "bwrap"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+	fakeHost(t, "darwin")
+	if err := cfg.CheckSandbox(); err != nil {
+		t.Errorf("a claude developer did not start on macOS: %v", err)
 	}
 }
 
@@ -412,5 +493,39 @@ sandbox_image = "ghcr.io/acme/bees:1"
 	err = cfg.CheckSandbox()
 	if err == nil || !strings.Contains(err.Error(), "ANTHROPIC_API_KEY") {
 		t.Errorf("a container developer without an agent credential was not refused by name: %v", err)
+	}
+}
+
+// The claude box is Claude Code's, so a codex role cannot ask for it: `bees
+// run` refuses the configuration naming the role, and the runner refuses the
+// session, rather than run codex with its own sandbox switched off.
+func TestCheckSandboxAgent(t *testing.T) {
+	if err := CheckSandboxAgent(SandboxClaude, AgentCodex); err == nil {
+		t.Error("a codex role was given the claude sandbox")
+	} else {
+		for _, want := range []string{"claude", "codex"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not mention %q", err, want)
+			}
+		}
+	}
+	for _, tc := range []struct{ mode, agent string }{
+		{SandboxClaude, AgentClaude}, {SandboxClaude, ""}, {SandboxNone, AgentCodex}, {"", AgentCodex}, {SandboxContainer, AgentCodex},
+	} {
+		if err := CheckSandboxAgent(tc.mode, tc.agent); err != nil {
+			t.Errorf("sandbox %q with agent %q refused: %v", tc.mode, tc.agent, err)
+		}
+	}
+	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[global]\nsandbox = \"claude\"\n[roles.qa]\nagent = \"codex\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fakeHost(t, "darwin")
+	err = cfg.CheckSandbox()
+	if err == nil {
+		t.Fatal("a codex qa started in a claude box")
+	}
+	if !strings.Contains(err.Error(), "roles.qa") {
+		t.Errorf("error %q does not name the role", err)
 	}
 }

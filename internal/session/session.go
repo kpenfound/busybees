@@ -233,14 +233,19 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 		r.Logger = slog.Default()
 	}
 	// The box this session runs in is the role's resolved sandbox mode.
-	// config.SandboxNone is the backend's plain command and
-	// config.SandboxContainer that command inside `docker run` (see
-	// container.go); a role configured for a box bees cannot build, or one
+	// config.SandboxNone is the backend's plain command,
+	// config.SandboxClaude the claude command under Claude Code's sandbox
+	// (claudeBackend.command) and config.SandboxContainer the backend's
+	// command inside `docker run` (see container.go); a role configured for
+	// a box bees cannot build, one its agent cannot run under, or one
 	// missing what the box needs, refuses to run rather than quietly
 	// running without one. `bees run` asks the same questions once at
 	// startup (config.CheckSandbox), so reaching this means a session
 	// started some other way — `bees exec`, `bees tick`.
 	if err := config.CheckSandboxMode(req.Role.Sandbox); err != nil {
+		return nil, fmt.Errorf("%s: %w", req.Role.Name, err)
+	}
+	if err := config.CheckSandboxAgent(req.Role.Sandbox, req.Role.Agent); err != nil {
 		return nil, fmt.Errorf("%s: %w", req.Role.Name, err)
 	}
 	if err := config.CheckSandboxContainer(req.Role, r.GitHub); err != nil {

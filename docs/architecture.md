@@ -665,17 +665,27 @@ counted from the transcript's assistant messages or completed items instead.
 
 - **Sandbox.** The role's resolved
   [`sandbox`](configuration.md#sandboxing) says how much of the machine the
-  session can reach. `none` is the command above.
-  [`container`](configuration.md#the-container-mode) is the same command
-  inside `docker run`, as the user running bees, with the worktree, the
-  repository's `.git` and the state directory bind-mounted at their host
+  session can reach. `none` is the command above. `claude` swaps
+  `--dangerously-skip-permissions` for `--permission-mode acceptEdits
+  --permission-prompts none` and adds `--settings <json>`: Claude Code's
+  sandbox on, no retry outside it, refuse to start rather than run unboxed,
+  the network limited to GitHub, and allow rules for `Bash`, `Read`,
+  `WebFetch` on the same domains and every MCP server of the session, so the
+  box decides what a command may do and anything the permission layer would
+  ask a person about is refused. The block is passed inline rather than as a
+  file, because the session directory is writable from inside the box and
+  Claude Code applies an edit to a settings file it loaded to the running
+  session; a copy is kept as `<session>/sandbox.json` for reading afterwards.
+  [`container`](configuration.md#the-container-mode) is the same command as
+  `none` inside `docker run`, as the user running bees, with the worktree,
+  the repository's `.git` and the state directory bind-mounted at their host
   paths, an environment built from the session's variables alone, and the
   built-in MCP server started on the host as `bees mcp serve --listen` and
   reached over HTTP with a per-session token; `<session>/container-id`
   holds the container's id while it runs. The runner refuses a session whose
-  role asks for a mode it cannot build, or a container mode missing its
-  image or credentials, and `bees run` refuses to start at all while a role
-  in the rotation does.
+  role asks for a mode it cannot build, one its agent cannot run under, or a
+  container mode missing its image or credentials, and `bees run` refuses to
+  start at all while a role in the rotation does.
 - **Outcome.** The session ends by calling the `done` tool (or, outside a
   container, running `bees done <status>`), which writes
   `<session>/outcome.json` through one shared validation: the status must be

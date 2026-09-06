@@ -92,6 +92,17 @@ func fakeClaude(t *testing.T, output string) string {
 	return p
 }
 
+// fakeCodex writes a shell script standing in for the codex binary, the same
+// way fakeClaude stands in for claude.
+func fakeCodex(t *testing.T, output string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "codex")
+	if err := os.WriteFile(p, []byte("#!/bin/sh\nprintf '%s\\n' '"+output+"'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
 // fixture is a clone with a bees.toml, a fake gh and a fake claude.
 type fixture struct {
 	*Deps
@@ -115,7 +126,7 @@ func setupIn(t *testing.T, clone, extra string, replies map[string]ghReply) *fix
 	if err := os.WriteFile(path, []byte(baseTOML+extra), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	d := New(context.Background(), path, fakeClaude(t, "2.9.0 (Claude Code)"))
+	d := New(context.Background(), path, fakeClaude(t, "2.9.0 (Claude Code)"), "")
 	if d.ConfigErr != nil {
 		t.Fatalf("load bees.toml: %v", d.ConfigErr)
 	}
@@ -297,6 +308,44 @@ func TestCheckClaude(t *testing.T) {
 	})
 }
 
+func TestCheckCodex(t *testing.T) {
+	t.Run("runnable", func(t *testing.T) {
+		f := setup(t, "", nil)
+		f.CodexBin = fakeCodex(t, "codex-cli 0.1.0")
+		wantResult(t, f.run(t, f.checkCodex), Pass, "codex-cli 0.1.0")
+	})
+
+	t.Run("not on PATH", func(t *testing.T) {
+		f := setup(t, "", nil)
+		f.CodexBin = "codex"
+		wantResult(t, f.run(t, f.checkCodex), Fail, "not found on PATH", "BEES_CODEX_BIN")
+	})
+
+	t.Run("not runnable", func(t *testing.T) {
+		f := setup(t, "", nil)
+		f.CodexBin = filepath.Join(t.TempDir(), "gone")
+		wantResult(t, f.run(t, f.checkCodex), Fail, "--version failed")
+	})
+}
+
+// TestChecksIncludeCodexOnlyWhenConfigured pins usesCodex: Checks() (which
+// resolves every role but runs none of them) carries one extra check the
+// moment a role is actually configured to run codex, gated the same way the
+// disabled role check already reads roles.developer.enabled.
+func TestChecksIncludeCodexOnlyWhenConfigured(t *testing.T) {
+	base := len(setup(t, "", nil).Checks())
+
+	with := setup(t, "[roles.developer]\nagent = \"codex\"\n", nil)
+	if got := len(with.Checks()); got != base+1 {
+		t.Errorf("got %d checks with a codex role configured, want %d (base %d + the codex check)", got, base+1, base)
+	}
+
+	disabled := setup(t, "[roles.developer]\nagent = \"codex\"\nenabled = false\n", nil)
+	if got := len(disabled.Checks()); got != base {
+		t.Errorf("got %d checks with the codex role disabled, want %d", got, base)
+	}
+}
+
 // ---- config ----------------------------------------------------------------
 
 func TestCheckConfigLoads(t *testing.T) {
@@ -308,7 +357,7 @@ func TestCheckConfigLoads(t *testing.T) {
 	if err := os.WriteFile(path, []byte("version = 1\n[project]\nnonsense = true\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	d := New(context.Background(), path, "claude")
+	d := New(context.Background(), path, "claude", "codex")
 	if d.Config != nil {
 		t.Fatal("an invalid bees.toml must not load")
 	}
@@ -989,7 +1038,7 @@ func TestChecksWithoutAResolvedRepo(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A local origin: config.Resolve cannot derive a GitHub repository.
-	d := New(context.Background(), path, fakeClaude(t, "2.9.0 (Claude Code)"))
+	d := New(context.Background(), path, fakeClaude(t, "2.9.0 (Claude Code)"), "")
 	gh := &fakeGH{t: t, replies: map[string]ghReply{"auth status": {out: "- Token scopes: 'repo'"}}}
 	gh.installAll(d)
 	d.LookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }

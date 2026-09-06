@@ -92,7 +92,7 @@ prints what it found grouped by area:
 
 | Group | Checks |
 |---|---|
-| `toolchain` | `git` on `PATH`; `gh` on `PATH`, authenticated and holding the `repo` token scope; `claude` (or `$BEES_CLAUDE_BIN`) runnable and new enough. |
+| `toolchain` | `git` on `PATH`; `gh` on `PATH`, authenticated and holding the `repo` token scope; `claude` (or `$BEES_CLAUDE_BIN`) runnable and new enough; `codex` (or `$BEES_CODEX_BIN`) runnable, when a role is configured with `agent = "codex"`. |
 | `config` | `bees.toml` loads and validates; `project.repo` and `project.default_branch` are set or derivable; the remote answers; the state directory is ignored by git; the notes directory is writable; every configured `prompt_file` exists; the repository's `bees/prompts/` files are all readable and named after a role; a running scheduler is serving a build of the commit that is checked out. |
 | `github` | The repository is readable and writable (`viewerPermission`); with `[github]` set, that `github.token` belongs to `github.login`; every workflow label exists; with `[github]` set, that the account can actually write issues, issue comments and labels; with `[github]` set, that the account can actually push branches; the visibility filter matches at least one open issue; with `auto_merge` on, what a merge is actually gated on. |
 | `workspace` | A worktree can be created under `workspace_root` and removed again. |

@@ -6,7 +6,9 @@ import (
 	"errors"
 	"io"
 	"maps"
+	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -81,16 +83,31 @@ func (claudeBackend) command(ctx context.Context, r *Runner, req Request, paths 
 	if bin == "" {
 		bin = "claude"
 	}
+	boxed := req.Role.Sandbox == config.SandboxClaude
 	args := []string{
 		"-p",
 		"--output-format", "stream-json",
 		"--verbose",
-		"--dangerously-skip-permissions",
+	}
+	if boxed {
+		// Inside the box the permission layer is what holds the built-in
+		// tools, which run in the claude process and not under the OS
+		// sandbox: acceptEdits lets Write and Edit work in the worktree
+		// and the --add-dir state dir and asks about anything else, and
+		// with nobody to ask, "none" refuses it. What the session may do
+		// without asking is the allow list of the settings block below.
+		// --dangerously-skip-permissions would answer yes to every one of
+		// those questions, and a Write anywhere on the machine with it.
+		args = append(args, "--permission-mode", "acceptEdits", "--permission-prompts", "none")
+	} else {
+		args = append(args, "--dangerously-skip-permissions")
+	}
+	args = append(args,
 		"--append-system-prompt-file", paths.systemPrompt,
 		"--model", req.Role.Model,
 		"--max-turns", strconv.Itoa(req.Role.MaxTurns),
-		"--name", "bees-" + req.Name,
-	}
+		"--name", "bees-"+req.Name,
+	)
 	if req.Role.FallbackModel != "" && req.Role.FallbackModel != req.Role.Model {
 		args = append(args, "--fallback-model", req.Role.FallbackModel)
 	}
@@ -113,6 +130,16 @@ func (claudeBackend) command(ctx context.Context, r *Runner, req Request, paths 
 		return "", nil, "", err
 	}
 	args = append(args, "--mcp-config", mcpPath, "--strict-mcp-config")
+	if boxed {
+		settings, err := claudeSandboxSettings(sortedKeys(paths.mcp), runtime.GOOS)
+		if err != nil {
+			return "", nil, "", err
+		}
+		if err := os.WriteFile(filepath.Join(paths.dir, sandboxFile), settings, 0o644); err != nil {
+			return "", nil, "", err
+		}
+		args = append(args, "--settings", string(settings))
+	}
 	if len(req.Role.Skills) > 0 {
 		if r.Skills == nil {
 			return "", nil, "", errors.New("session: skills configured but no skills manager")

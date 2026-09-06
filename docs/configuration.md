@@ -639,19 +639,75 @@ sandbox = "container"
 | Mode | What a session can reach |
 |---|---|
 | `none` | Everything the user running `bees` can: the home directory, credentials, the network and every other checkout on the machine. |
-| `claude` | Claude Code's own sandbox. |
+| `claude` | Claude Code's own sandbox: writes to the worktree and the state directory, network to GitHub. See [The claude mode](#the-claude-mode). |
 | `container` | A container holding the worktree, the repository's `.git` and the state directory, and nothing else of the host. See [The container mode](#the-container-mode). |
 
-`none` is the default. `claude` loads from `bees.toml`, so the mode you want
-is written down before it works, but `bees run` refuses to start while a role
-in the rotation asks for it, naming the role: a factory that fell back to
-running that role unboxed would give it exactly what it was configured to be
-kept away from. `bees exec` and `bees tick` refuse the same session for the
-same reason.
+`none` is the default. `bees run` checks before it starts that every role in
+the rotation can have the box it asks for (the programs a `claude` box needs
+on Linux, an agent that runs under it, and a `container` role's image,
+credentials and engine) and refuses to start while one cannot, naming the
+role: a factory that fell back to running that role unboxed would give it
+exactly what it was configured to be kept away from. `bees exec` and
+`bees tick` refuse the same session for the same reason.
 
 `bees config show` prints the resolved mode per role, and
 [`bees status`](cli.md#bees-status---json) the mode of the session each worker
 is running right now.
+
+#### The claude mode
+
+A session in `claude` mode runs under
+[Claude Code's sandbox](https://code.claude.com/docs/en/sandboxing), with a
+settings block bees writes for it. Every shell command, and every process it
+starts, runs inside a box the operating system enforces: Seatbelt on macOS,
+bubblewrap on Linux. The built-in file and web tools run in the `claude`
+process itself, outside that box, so Claude Code's permission rules hold them
+to the same boundary, and anything those rules would ask a person about is
+refused instead.
+
+What the session can reach:
+
+- **Writes**: the worktree, the state directory, the session's own temporary
+  directory and the repository's shared `.git` directory, so `git commit`
+  works in a linked worktree. Anything else is refused, `~/.zshrc` and a
+  toolchain's cache under the home directory included, and Claude Code
+  protects its own configuration inside the writable directories too
+  (`.claude/`, `.mcp.json`, `.git/hooks`, `.git/config`), so a session cannot
+  loosen its own box.
+- **Reads**: everything the user running `bees` can read, credentials
+  included. The mode fences writes and the network, not reads.
+- **Network**: `github.com` and `*.github.com` only, from shell commands and
+  from the `WebFetch` tool alike, so `gh` and `git push` over https work.
+  Every other host is refused: a module proxy, a package registry, an ssh
+  remote (no host name resolves inside the box), Docker and Dagger.
+- **Tools**: the built-in `bees` MCP server and every MCP server of the role
+  run on the host, outside the box, so the mail, issue, outcome and
+  `gh`-backed tools work unchanged. The `[github]` token and the role's
+  `env` reach the shell inside the box. `WebSearch` is refused.
+
+On macOS nothing needs installing. On Linux the box needs `bubblewrap` and
+`socat` on `PATH`, which `bees run` checks before it starts. The box is
+Claude Code's, so a role whose [`agent`](#global-and-rolesname) is `codex`
+cannot use it: `bees run` refuses to start, naming the role. Commit signing
+through `gpg` does not work inside the box, because `gpg` writes under
+`~/.gnupg`.
+
+To widen the box for one project, commit a `.claude/settings.json` to the
+repository: Claude Code merges its `sandbox` lists with the ones bees writes.
+A Go project on macOS needs its build cache and module proxy, for example:
+
+```json
+{
+  "sandbox": {
+    "filesystem": { "allowWrite": ["~/Library/Caches/go-build"] },
+    "network": { "allowedDomains": ["proxy.golang.org", "sum.golang.org"] }
+  }
+}
+```
+
+The settings of the user running `bees` (`~/.claude/settings.json`) merge the
+same way, and an `excludedCommands` entry there runs that command outside the
+box.
 
 #### The container mode
 
@@ -951,6 +1007,11 @@ missing or too old; `bees init` checks `gh`.
 |---|---|---|
 | [`gh`](https://cli.github.com/) | 2.50.0 | `gh pr checks --json` (2.50.0) and `gh api --slurp` (2.49.0). |
 | Claude Code (`claude`) | 2.1.76 | `claude --name` (2.1.76); `--append-system-prompt-file`, `--effort`, `--plugin-dir`, `--strict-mcp-config` and `--fallback-model` are older. |
+
+The Claude Code check only runs when at least one enabled role resolves to
+`agent = "claude"`, the default (see
+[`agent`](#global-and-rolesname)). A factory where every enabled role is
+`agent = "codex"` never runs it, so `claude` does not need to be installed.
 
 Set `BEES_SKIP_VERSION_CHECK=1` to run with an unsupported version anyway.
 

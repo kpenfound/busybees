@@ -73,7 +73,7 @@ func defaultInitDeps() initDeps {
 // renders the table. `bees init` is the one place the wait is worth it: it is
 // where a person finds out that a skill URL or an MCP server is wrong.
 func doctorReport(ctx context.Context, cfg *config.Config) string {
-	d := doctor.New(ctx, cfg.Path, claudeBin())
+	d := doctor.New(ctx, cfg.Path, claudeBin(), codexBin())
 	return doctor.Text(doctor.Run(ctx, d.Checks()))
 }
 
@@ -398,7 +398,7 @@ from.`,
 				return err
 			}
 			if !skipDoctor {
-				d := doctor.New(cmd.Context(), a.cfg.Path, claudeBin())
+				d := doctor.New(cmd.Context(), a.cfg.Path, claudeBin(), codexBin())
 				if err := preflight(cmd.Context(), d.Checks()); err != nil {
 					return err
 				}
