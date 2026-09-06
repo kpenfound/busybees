@@ -24,6 +24,9 @@ notify = ["kpenfound"]
 [roles.developer]
 max_size = "s"
 commit_flags = "--signoff"
+
+[roles.product_manager]
+min_issue_size = "m"
 `, t.TempDir()+"/bees.toml")
 	if err != nil {
 		t.Fatal(err)
@@ -59,6 +62,9 @@ commit_flags = "--signoff"
 	// reads as false: the default rendering has to be the proposal rule.
 	if !strings.Contains(product, "**A feature issue you create is a proposal.**") {
 		t.Errorf("product manager prompt does not carry the default proposal gate:\n%s", product)
+	}
+	if !strings.Contains(product, "Aim the split at work items of at least `m`") {
+		t.Errorf("product manager prompt does not name the configured min issue size:\n%s", product)
 	}
 }
 

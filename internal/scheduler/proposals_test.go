@@ -342,3 +342,31 @@ func TestTheProductManagerIsToldWhenTheProposalGateIsOff(t *testing.T) {
 		})
 	}
 }
+
+// roles.product_manager.min_issue_size reaches the product manager session:
+// the split floor is a config value, and a Data field the scheduler forgets to
+// fill renders as no floor at all, which is a silently ignored setting.
+func TestTheProductManagerIsToldTheMinIssueSize(t *testing.T) {
+	const floor = "Aim the split at work items of at least `m`"
+	for _, tc := range []struct {
+		name string
+		toml string
+		want bool
+	}{
+		{"unset", pmOnlyTOML, false},
+		{"set", pmOnlyTOML + "[roles.product_manager]\nmin_issue_size = \"m\"\n", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			now := time.Now()
+			h := newHarnessAt(t, tc.toml, now)
+			seedFeature(h, 5, "Exports", now.Add(-time.Hour))
+			runPass(t, h)
+			if n := len(h.sessions(config.RoleProductManager)); n != 1 {
+				t.Fatalf("product manager sessions: %d, want 1", n)
+			}
+			if got := strings.Contains(systemPromptOf(t, h, 0), floor); got != tc.want {
+				t.Errorf("product manager system prompt names the floor: %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
