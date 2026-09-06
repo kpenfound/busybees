@@ -1,10 +1,12 @@
 # Configuring busybees: `bees.toml`
 
 One file configures a factory: `bees.toml`, in the root of a git clone of the
-project being built. `bees init` writes it with every option listed and the
-optional ones commented out at their default, so configuring is uncommenting
-and editing lines. `bees config validate` checks the file and `bees config
-show [role]` prints the settings each role ends up with.
+project being built. Without `--template`, `bees init` writes it with every
+option listed and the optional ones commented out at their default, so
+configuring is uncommenting and editing lines; see
+[config templates](templates.md) for the alternative. `bees config validate`
+checks the file and `bees config show [role]` prints the settings each role
+ends up with.
 
 The file starts with a `version` key, followed by these tables:
 
