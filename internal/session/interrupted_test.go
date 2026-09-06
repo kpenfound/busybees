@@ -162,3 +162,24 @@ func TestMarkInterrupted(t *testing.T) {
 		t.Fatalf("marking no directory at all: %v", err)
 	}
 }
+
+// A codex transcript is its event stream, and the completed items are its
+// turns; the bookkeeping around them (the thread and turn start, an item in
+// progress, the turn's end) is not counted.
+func TestCountTurnsReadsACodexTranscript(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, TranscriptFile)
+	codex := `{"type":"thread.started","thread_id":"t"}
+{"type":"turn.started"}
+{"type":"item.started","item":{"type":"command_execution"}}
+{"type":"item.completed","item":{"type":"command_execution"}}
+{"type":"item.completed","item":{"type":"agent_message","text":"hi"}}
+{"type":"turn.completed","usage":{}}
+`
+	if err := os.WriteFile(path, []byte(codex), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := CountTurns(path); got != 2 {
+		t.Errorf("CountTurns on a codex transcript = %d, want 2", got)
+	}
+}
