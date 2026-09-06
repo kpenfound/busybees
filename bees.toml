@@ -116,15 +116,15 @@ DAGGER_X_RELEASE = "v1.0.0-beta.11"
 
 # Owns the product vision and feature issues; breaks features into work items.
 [roles.product_manager]
-#model = "opus"
+model = "sonnet"
 #fallback_model = "sonnet"
 effort = "medium"
 
 # Triages issues into build-ready work and answers developer questions.
 [roles.project_manager]
-#model = "opus"
+model = "sonnet"
 #fallback_model = "sonnet"
-effort = "medium"
+#effort = "medium"
 
 # Implements one issue on a branch and opens a pull request.
 [roles.developer]
@@ -150,7 +150,7 @@ skills = [
 
 # Reviews pull requests and, optionally, merges them once checks are green.
 [roles.reviewer]
-#model = "opus"
+model = "sonnet"
 #fallback_model = "sonnet"
 #effort = "high"
 # Merge approved pull requests automatically once the required checks are
