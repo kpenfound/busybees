@@ -56,7 +56,7 @@ This directory is managed by ` + "`bees`" + `. It holds:
 - mail/      the local mailbox roles use to talk to each other
 - notes/     each role's notes file (their only memory between sessions),
              with archive/ holding the ones ` + "`bees notes reset`" + ` replaced
-- sessions/  prompts, transcripts and results of every Claude Code session
+- sessions/  prompts, transcripts and results of every session
 - issues/    per-issue bookkeeping (review rounds, the developer worker's stage,
              and why the factory gave an issue up)
 - status.json live scheduler status (` + "`bees status`" + `)

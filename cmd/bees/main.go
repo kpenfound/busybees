@@ -1,6 +1,6 @@
 // Command bees is the busybees software factory: a lightweight orchestrator
-// that runs a staff of Claude Code sessions (product manager, project
-// manager, developers, reviewers, QA) against one GitHub repository.
+// that runs a staff of headless coding-agent sessions (product manager,
+// project manager, developers, reviewers, QA) against one GitHub repository.
 package main
 
 import (
@@ -74,8 +74,8 @@ func newRootWithFlags() (*globalFlags, *cobra.Command) {
 	g := &globalFlags{}
 	root := &cobra.Command{
 		Use:   "bees",
-		Short: "busybees: a software factory of Claude Code sessions driven by GitHub",
-		Long: `busybees orchestrates a staff of Claude Code sessions — product manager,
+		Short: "busybees: a software factory of coding-agent sessions driven by GitHub",
+		Long: `busybees orchestrates a staff of headless coding-agent sessions — product manager,
 project manager, developers, reviewers and QA — that build a project together
 through GitHub issues and pull requests. Configure it with bees.toml.`,
 		SilenceUsage:  true,
@@ -90,7 +90,7 @@ through GitHub issues and pull requests. Configure it with bees.toml.`,
 		},
 	}
 	root.PersistentFlags().StringVarP(&g.config, "config", "c", "", "path to bees.toml (default: search upwards from cwd, or $BEES_CONFIG)")
-	root.PersistentFlags().BoolVarP(&g.verbose, "verbose", "v", false, "debug logging (same as --log-level debug), plus claude event streaming")
+	root.PersistentFlags().BoolVarP(&g.verbose, "verbose", "v", false, "debug logging (same as --log-level debug), plus session event streaming")
 	root.PersistentFlags().BoolVarP(&g.quiet, "quiet", "q", false, "console shows only session summaries, warnings and errors")
 	root.PersistentFlags().StringVar(&g.logFormat, "log-format", logging.FormatText, "console log format: text or json ($BEES_LOG_FORMAT)")
 	root.PersistentFlags().StringVar(&g.logLevel, "log-level", "info", "console log level: debug, info, warn or error ($BEES_LOG_LEVEL)")

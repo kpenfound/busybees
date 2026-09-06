@@ -1,7 +1,7 @@
 // Package scheduler is the busybees orchestrator loop.
 //
 // It polls GitHub for visible issues and pull requests, keeps the workflow
-// state labels consistent, and dispatches Claude Code sessions:
+// state labels consistent, and dispatches sessions:
 //
 //   - a pool of developer workers (scheduler.max_developers). Each worker
 //     owns one issue and runs a sequential developer -> reviewer -> developer

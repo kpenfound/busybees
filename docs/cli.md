@@ -5,9 +5,9 @@
 directory.
 
 Four commands — `bees mail send`, `bees issue create`, `bees issue link` and
-`bees done` — exist for the Claude Code sessions inside the factory, though
-people can use them too. A session normally reaches the same operations as MCP
-tools, along with the GitHub operations every role performs:
+`bees done` — exist for the sessions inside the factory, though people can use
+them too. A session normally reaches the same operations as MCP tools, along
+with the GitHub operations every role performs:
 [`bees mcp serve`](#bees-mcp-serve-sessions) serves them, and every session
 gets it automatically. Everything else is for people.
 
@@ -16,7 +16,7 @@ gets it automatically. Everything else is for people.
 | Flag | Description |
 |---|---|
 | `-c, --config <path>` | Path to `bees.toml`. Default: `$BEES_CONFIG`, else search upwards from cwd. |
-| `-v, --verbose` | Debug logging (same as `--log-level debug`). With `run`/`tick`/`exec`, also streams every claude event to stderr — except under [the live view](#the-live-view), which owns the terminal; `bees run --no-tui` streams as before. |
+| `-v, --verbose` | Debug logging (same as `--log-level debug`). With `run`/`tick`/`exec`, also streams every session event to stderr — except under [the live view](#the-live-view), which owns the terminal; `bees run --no-tui` streams as before. |
 | `-q, --quiet` | Console shows only session summaries, warnings and errors. Cannot be combined with `-v` or `--log-level debug`. |
 | `--log-format <text\|json>` | Console log format. Default `text`; `$BEES_LOG_FORMAT`, then [`logging.format`](configuration.md#logging). |
 | `--log-level <debug\|info\|warn\|error>` | Console log level. Default `info`; `$BEES_LOG_LEVEL`, then [`logging.level`](configuration.md#logging). |
@@ -576,10 +576,12 @@ cursor down the list and Enter opens
 already finished, plus the assistant messages the running session's own
 `transcript.jsonl` holds right now, recounted every few seconds. **Cost** is
 the finished sessions only, and it is `-` until one of them has ended and
-reported a cost — claude prices a session in the final event of its stream
+reported a cost — an agent prices a session in the event that ends its stream
 and says nothing before it, so a session that ended without reaching that
 event (killed by a signal, most often) leaves the cost unknown rather than a
-cost of zero. A session that really did cost nothing still prints `$0.00`.
+cost of zero. A codex session's cost is never known: codex reports tokens
+rather than a price. A session that really did cost nothing still prints
+`$0.00`.
 
 **Recent** is what just happened: the sessions that have finished, newest
 first, with how each ended, what it said about it, how long it took and what
@@ -669,7 +671,7 @@ before.
 
 Enter on a session in the Now panel opens its transcript, and the view keeps
 reading it as the session writes: the session's own words, the tools it
-called and how each one answered, the way Claude Code's own output reads. It
+called and how each one answered, the way the agent's own output reads. It
 is the session's `transcript.jsonl` under `<state_dir>/sessions/`, so
 nothing extra is asked of the scheduler and nothing is lost when the view is
 closed.
@@ -709,9 +711,9 @@ It is an ordinary mailbox message from `human` — the same channel
 authoritative — addressed to the role that session is running as and
 carrying its issue and pull request, so it reaches whichever session picks
 that work item up next. Nothing reaches the session on screen: a headless
-`claude -p` reads its prompt and works to the end of it, and a follow-up
-turn written to its stdin is read and then ignored. The view says "queued
-for the next session" because that is what happened.
+session reads its prompt and works to the end of it, and a follow-up turn
+written to its stdin is read and then ignored. The view says "queued for the
+next session" because that is what happened.
 
 While a message is being typed, `q` is a letter rather than a stop key —
 Ctrl-C still stops the factory, so nothing is lost by the exception.
@@ -1290,7 +1292,7 @@ unconstrained tool set.
 
 Reports what finished sessions cost, summed from `<state_dir>/ledger.jsonl`:
 one JSON line per session, appended when it ends, with its role, issue, PR,
-turns, cost, duration and outcome. The numbers are what `claude` reported;
+turns, cost, duration and outcome. The numbers are what the agent reported;
 nothing is reconciled against billing.
 
 ```

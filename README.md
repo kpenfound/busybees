@@ -1,8 +1,8 @@
 # 🐝 busybees
 
 **busybees** is a lightweight software factory: a Go CLI (`bees`) that runs a staff of
-headless [Claude Code](https://claude.com/claude-code) sessions — product manager,
-project manager, developers, reviewers and QA — against a single GitHub repository.
+headless coding-agent sessions — product manager, project manager, developers,
+reviewers and QA — against a single GitHub repository.
 
 Humans steer it through GitHub. Create and label issues, comment, merge pull requests;
 the bees do the rest. Every role runs in its own temporary git worktree, talks to the
@@ -63,10 +63,12 @@ ways to run the factory.
   (`bees:triage → bees:ready → bees:in-progress → bees:review → bees:approved`), and
   only items matching your configured filter are visible, so bees coexists with
   ordinary work in the same repository. See [Workflow](docs/workflow.md).
-- **A role per Claude Code session.** The product manager, project manager,
-  developers, reviewers and QA each run as a fresh `claude -p` session in its own
-  worktree, with a role-specific prompt, skills, and a model (plus a fallback for
-  when the primary hits its usage limit). See [Roles](docs/roles.md).
+- **A role per session.** The product manager, project manager, developers,
+  reviewers and QA each run as a fresh headless session in its own worktree, with a
+  role-specific prompt and its own model. A role runs as
+  [Claude Code](https://claude.com/claude-code) — with skills and a fallback model
+  for when the primary hits its usage limit — or as
+  [Codex](https://github.com/openai/codex). See [Roles](docs/roles.md).
 - **Features become GitHub sub-issues.** The product manager turns a feedback or
   feature issue into work items tracked as native sub-issues, and can discuss a
   feature with you under `bees:planning` before breaking it down. See

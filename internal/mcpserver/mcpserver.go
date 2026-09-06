@@ -1,6 +1,6 @@
-// Package mcpserver serves the factory's own operations to a Claude Code
-// session as MCP tools, so a session calls a tool with a schema instead of
-// guessing a `bees` command line and running it through Bash.
+// Package mcpserver serves the factory's own operations to a session as MCP
+// tools, so a session calls a tool with a schema instead of guessing a
+// `bees` command line and running it through Bash.
 //
 // The server is the same code the CLI runs: mail_send/mail_list go through
 // internal/mail, issue_create/issue_link through internal/issues and done

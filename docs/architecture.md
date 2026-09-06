@@ -373,7 +373,7 @@ and Queues are `status.json`, re-read when an event says it changed. Two
 things come from a session's own `transcript.jsonl`, in the directory the
 started event named, because no event carries them: the transcript the session
 view shows, and the turn count the Now panel shows for a session still running
-(claude reports `num_turns` in the final event of its stream and nothing
+(an agent reports its turn count in the event that ends its stream and nothing
 before it). Beyond stopping the factory, its `k` key is the one thing it asks
 the scheduler to do: stop one running session by the name the stream
 published, through the same path `bees kill` uses, and escalate the issue it
@@ -382,7 +382,7 @@ worker from retrying it or escalating the issue a second time. The view's one
 write is the message a person types in the session view: an ordinary mailbox
 entry from `human`, addressed to the role on screen and carrying its issue and
 pull request, which reaches the *next* session on that work item. A headless
-`claude -p` works to the end of the prompt it was started with and ignores a
+session works to the end of the prompt it was started with and ignores a
 later turn written to its stdin.
 
 ## The developer worker
@@ -672,29 +672,29 @@ counted from the transcript's assistant messages or completed items instead.
   done <status>`), which writes `<session>/outcome.json` through one shared
   validation: the status must be one the role may report, and `pr-opened` and
   `pr-updated` need a pull request number. The runner reads the file after
-  claude exits; a missing one is reported as "no outcome" and the scheduler
+  the agent exits; a missing one is reported as "no outcome" and the scheduler
   treats the session as `failed`. The process exits when the turn ends, so a
   session that ends its turn waiting on a background task's completion
   notification or a scheduled wakeup never receives one and never reports an
   outcome.
 - **Retries.** Every session goes through the same retry loop. A failure is
   *infrastructure* (a timeout, an API error, exhausted turns, a rate limit,
-  claude exiting with no result event) or *behavioural* (the session reported
-  an outcome, `failed` included, or exited cleanly without reporting). Only
-  infrastructure failures are retried, `scheduler.retries` times (default 1),
-  waiting `scheduler.retry_delay` (default 10m) between attempts and running
-  with the role's fallback model when `scheduler.retry_with_fallback` is set
-  (on by default). Each attempt has its own session directory
-  (`<name>-retry<n>`), and a retried developer session is told its previous
-  attempt was interrupted so it continues from the branch. The account-wide
-  claude session limit is neither kind and never reaches the classification: a
-  session that died on it returns to its worker at once (see step 6 of the
-  loop). A session that cost more than `scheduler.max_cost_per_session` is
-  treated as failed. One such session is retried like an infrastructure
-  failure, with the fallback model when that is configured; a second in a row
-  for the same work item (or the same singleton role) is reported as `failed`,
-  which escalates a work item and backs a singleton off. See
-  [Retries first](workflow.md#retries-first).
+  the agent exiting without a final event) or *behavioural* (the session
+  reported an outcome, `failed` included, or exited cleanly without
+  reporting). Only infrastructure failures are retried, `scheduler.retries`
+  times (default 1), waiting `scheduler.retry_delay` (default 10m) between
+  attempts and running with the role's fallback model when
+  `scheduler.retry_with_fallback` is set (on by default). Each attempt has its
+  own session directory (`<name>-retry<n>`), and a retried developer session
+  is told its previous attempt was interrupted so it continues from the
+  branch. The account-wide claude session limit is neither kind and never
+  reaches the classification: a session that died on it returns to its worker
+  at once (see step 6 of the loop). A session that cost more than
+  `scheduler.max_cost_per_session` is treated as failed. One such session is
+  retried like an infrastructure failure, with the fallback model when that is
+  configured; a second in a row for the same work item (or the same singleton
+  role) is reported as `failed`, which escalates a work item and backs a
+  singleton off. See [Retries first](workflow.md#retries-first).
 - **Environment.** Every inherited `BEES_*` variable is dropped first, so a
   session started from inside another session cannot pick up a stale issue,
   pull request or branch. Then, in order: the role's configured `env` entries
@@ -752,8 +752,9 @@ counted from the transcript's assistant messages or completed items instead.
   skills collection. The project worktree is never modified. Sessions start
   concurrently and share one cache, so preparation is serialised and a wrapper
   that already points at the right target is left alone. Clones are refreshed
-  according to `global.skills_refresh`; `bees skills` inspects the cache. See
-  [Skills](configuration.md#skills).
+  according to `global.skills_refresh`; `bees skills` inspects the cache.
+  Plugin directories are Claude Code's: a `codex` session is passed none,
+  whatever its role configures. See [Skills](configuration.md#skills).
 - **MCP.** A claude session gets `mcp.json`, always passed with
   `--strict-mcp-config`, so it sees exactly two things: the servers of the
   resolved role (`$VAR` in `env` and `headers` expanded from the bees

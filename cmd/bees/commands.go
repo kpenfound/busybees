@@ -363,9 +363,9 @@ func newRunCmd(g *globalFlags) *cobra.Command {
 		Use:   "run",
 		Short: "Run the factory until interrupted",
 		Long: `run polls GitHub, keeps the workflow labels consistent and dispatches
-Claude Code sessions: a pool of developer workers plus the product manager,
-project manager and QA singletons. Ctrl-C stops polling, starts nothing new
-and waits for the work in flight to finish: an issue a developer worker holds
+sessions: a pool of developer workers plus the product manager, project
+manager and QA singletons. Ctrl-C stops polling, starts nothing new and waits
+for the work in flight to finish: an issue a developer worker holds
 runs on through the stages it has left, until it is approved, escalated, out
 of review rounds or over its cost budget. A second Ctrl-C stops the running
 sessions now.
