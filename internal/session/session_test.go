@@ -560,8 +560,8 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
 	if !sb.Enabled || !sb.AutoAllowBashIfSandboxed || sb.AllowUnsandboxedCommands || !sb.FailIfUnavailable || !sb.Network.StrictAllowlist {
 		t.Errorf("sandbox block: %+v", sb)
 	}
-	if !slices.Equal(sb.Network.AllowedDomains, ClaudeSandboxDomains) {
-		t.Errorf("allowed domains %q, want %q", sb.Network.AllowedDomains, ClaudeSandboxDomains)
+	if want := []string{"github.com", "*.github.com"}; !slices.Equal(sb.Network.AllowedDomains, want) {
+		t.Errorf("allowed domains %q, want %q", sb.Network.AllowedDomains, want)
 	}
 	// Claude Code defaults allowUnsandboxedCommands to true, so the key
 	// must be present and false, not absent.
