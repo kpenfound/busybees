@@ -939,7 +939,7 @@ Not every dead session is a bad decision. Before escalating, the orchestrator
 classifies what went wrong:
 
 - **Infrastructure.** The session timed out, ran out of turns, hit an API
-  error or a rate limit, or `claude` exited without producing a result.
+  error or a rate limit, or the agent exited without producing a result.
   These are retried up to `scheduler.retries` times (default `1`), after
   `scheduler.retry_delay` (default 10 minutes), and with the role's
   `fallback_model` as the primary model when `scheduler.retry_with_fallback`

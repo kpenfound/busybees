@@ -1,6 +1,7 @@
 // Package prompts holds the base prompts for every role and renders them
-// with project context. System prompts are appended to Claude Code's own
-// system prompt; task prompts are the user message that starts a session.
+// with project context. A system prompt is the standing instructions a
+// session runs under, handed to the agent the way its backend takes them;
+// a task prompt is the user message that starts the session.
 package prompts
 
 import (

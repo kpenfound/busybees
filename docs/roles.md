@@ -1,11 +1,12 @@
 # Roles
 
-A busybees staff has five roles. Each session is a fresh `claude -p` run with
-a role's system prompt, so a role remembers nothing between sessions beyond
-its notes file and what is visible on GitHub. This page says what each role
-is: what it reads, what it may do, what it reports, and which `roles.<name>.*`
-keys shape it. What happens to an issue on its way through the factory, the
-labels, the queues and the review loop, is on [workflow.md](workflow.md).
+A busybees staff has five roles. Each session is a fresh non-interactive run
+of the role's [`agent`](#customising-a-role) with that role's system prompt,
+so a role remembers nothing between sessions beyond its notes file and what
+is visible on GitHub. This page says what each role is: what it reads, what
+it may do, what it reports, and which `roles.<name>.*` keys shape it. What
+happens to an issue on its way through the factory, the labels, the queues
+and the review loop, is on [workflow.md](workflow.md).
 
 ## Concurrency model
 
@@ -652,12 +653,12 @@ prompt_file = "docs/qa-checklist.md"
   running scheduler was started from, and `bees doctor` warns when it is
   behind the repository.
 - **skills** are unioned, global first, and exposed to the session as plugin
-  directories.
+  directories. They are Claude Code's: a `codex` session is passed none.
 - **mcp** servers are unioned; a role's server replaces a global one with the
   same name. The name `bees` is reserved for the built-in server.
 - **model / fallback_model / agent / effort / max_turns / timeout /
   allowed_tools / disallowed_tools / shell / env** fall back to `[global]`,
-  then to the built-in defaults. `fallback_model` is what Claude Code
+  then to the built-in defaults. `fallback_model` is what a `claude` session
   switches to when `model` has reached its usage limit. `agent` is the CLI
   a session runs as, `claude` or `codex`; a `codex` role has no default
   `model` or `fallback_model` and ignores `max_turns`, `allowed_tools` and

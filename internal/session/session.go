@@ -367,7 +367,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 			res.IsError = true
 		}
 	} else {
-		// No result event: the agent never reported how far it had got, so
+		// No closing event: the agent never reported how far it had got, so
 		// the turns it wrote to the transcript are counted instead. A
 		// session that died after four minutes of work reported zero turns
 		// otherwise, which reads as a session that did nothing.

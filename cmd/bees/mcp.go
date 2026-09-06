@@ -28,19 +28,19 @@ import (
 
 func newMCPCmd(g *globalFlags) *cobra.Command {
 	cmd := groupCmd("mcp", "The built-in MCP server every session talks to")
-	cmd.Long = `Every session claude runs gets a stdio MCP server named "bees" that exposes
-the factory's own operations — the mailbox, issue creation and the session
-outcome — as tools, so a session does not have to build a command line for
-them. bees writes the server into the session's mcp.json and claude starts it;
-you only run "bees mcp serve" yourself to debug it. A container session cannot
-start it (the bees binary is not in the container), so for one the runner
-starts "bees mcp serve --listen" on the host and the session reaches it over
-HTTP.`
+	cmd.Long = `Every session gets a stdio MCP server named "bees" that exposes the factory's
+own operations — the mailbox, issue creation and the session outcome — as
+tools, so a session does not have to build a command line for them. bees hands
+the server to the agent (in mcp.json for claude, as mcp_servers.bees overrides
+for codex) and the agent starts it; you only run "bees mcp serve" yourself to
+debug it. A container session cannot start it (the bees binary is not in the
+container), so for one the runner starts "bees mcp serve --listen" on the host
+and the session reaches it over HTTP.`
 	cmd.Hidden = true
 	var listen string
 	serve := &cobra.Command{
 		Use:   "serve",
-		Short: "Serve the bees tools on stdio (started by claude, not by hand)",
+		Short: "Serve the bees tools on stdio (started by the agent, not by hand)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			b := &backend{g: g}

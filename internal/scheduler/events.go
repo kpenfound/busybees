@@ -4,8 +4,8 @@ import "time"
 
 // Event kinds published on the scheduler's event stream.
 const (
-	// EventSessionStarted is emitted just before a claude session is
-	// executed, once per attempt (a retry is its own session).
+	// EventSessionStarted is emitted just before a session is executed,
+	// once per attempt (a retry is its own session).
 	EventSessionStarted = "session-started"
 	// EventSessionEnded is emitted when that session has finished, whether
 	// it reported an outcome, failed or could not be run at all.
@@ -56,7 +56,7 @@ type Event struct {
 	Stage string
 	// Round is the review round a stage event belongs to.
 	Round int
-	// Model is the claude model the session runs with and Fallback marks a
+	// Model is the model the session runs with and Fallback marks a
 	// session running on the role's fallback model
 	// (scheduler.retry_with_fallback). Both are set on session-started
 	// only: a view renders them for a session that is still running, and
@@ -72,11 +72,12 @@ type Event struct {
 	Outcome string
 	Note    string
 	// Turns, CostUSD and Duration are what a finished session took, cost
-	// and how long it ran. claude reports all three in the final event of
+	// and how long it ran. An agent reports all three in the event that ends
 	// its stream, so they arrive with session-ended and never before it.
-	// CostKnown is false when a session ended without that final event (a
-	// signalled process, most often), in which case CostUSD is not a real
-	// zero but an unpriced session.
+	// CostKnown is false when a session ended without that event (a signalled
+	// process, most often) and for every codex session, which reports tokens
+	// rather than a price; in either case CostUSD is not a real zero but an
+	// unpriced session.
 	Turns     int
 	CostUSD   float64
 	CostKnown bool

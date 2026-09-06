@@ -144,8 +144,8 @@ func TestSchedulerPublishesSessionStageAndPollEvents(t *testing.T) {
 	}
 }
 
-// A session that ends without claude's final result event carries no known
-// cost, and the event stream must say so rather than let the field default
+// A session that ends without the event that closes its stream carries no
+// known cost, and the stream must say so rather than let the field default
 // to a confident-looking zero (#371, the live view's half of #359).
 func TestSessionEndedEventCarriesWhetherTheCostIsKnown(t *testing.T) {
 	t.Setenv("FAKE_SIGNAL", "9")
@@ -295,8 +295,8 @@ enabled = false
 // factory is doing right now has no other way to know, because the model is
 // resolved per session (the size picks it, a retry overrides it) and a
 // running session has reported nothing yet. What the session took is on the
-// other end of the pair: turns arrive with session-ended, because claude
-// reports them in the final event of its stream.
+// other end of the pair: turns arrive with session-ended, because an agent
+// reports them in the event that ends its stream.
 func TestSessionEventsNameTheModelTheFallbackAndTheTurns(t *testing.T) {
 	t.Setenv("FAKE_DEV_HANG", "1")
 	h := newHarness(t, fallbackTOML)

@@ -243,7 +243,7 @@ assignee = "busybees-bot"
 | `rate_limit_backoff` | duration | `"15m"` | How long to pause polling after a poll fails with a GitHub rate-limit error, instead of retrying after `poll_interval`. Also how long the whole factory pauses when a session hits the claude session limit and no usable reset time came with it; see [The claude session limit](#the-claude-session-limit). |
 | `max_developers` | int | `1` | Concurrent developer workers. Each owns one issue and runs its developer, reviewer and checks stages one after another, so reviewer concurrency follows developer concurrency. `0` means the default; a negative value is rejected. |
 | `max_review_rounds` | int | `3` | Developer and reviewer rounds before an issue is escalated with `bees:needs-human`. `0` means the default; a negative value is rejected. |
-| `retries` | int | `1` | Extra attempts a session gets after failing for infrastructure reasons: it timed out, ran out of turns, hit an API error or rate limit, or `claude` crashed. A session that ran and reported with `bees done`, `failed` included, is not retried, and neither is one that hit the claude session limit. `0` disables retrying; `0` to `5`. See [Escalation](workflow.md#escalation-beesneeds-human). |
+| `retries` | int | `1` | Extra attempts a session gets after failing for infrastructure reasons: it timed out, ran out of turns, hit an API error or rate limit, or the agent crashed. A session that ran and reported with `bees done`, `failed` included, is not retried, and neither is one that hit the claude session limit. `0` disables retrying; `0` to `5`. See [Escalation](workflow.md#escalation-beesneeds-human). |
 | `retry_delay` | duration | `"10m"` | Wait before a retry. `"0s"` retries at once; a negative value is rejected. |
 | `retry_with_fallback` | bool | `true` | Run the retry with the role's `fallback_model` as its primary model. A role without one reruns as it was. |
 | `triage_batch_size` | int | `5` | Most issues handed to the project manager in one session. `0` means the default. |
@@ -617,9 +617,9 @@ every other size as the developer's `model`. `fallback_model` is unchanged, and
 a retry that runs with it still overrides the size's choice. The reviewer is
 told the size too and always runs its own `model`.
 
-Signing (`--gpg-sign`, `-S`) happens inside a headless Claude Code session on
-the machine running `bees`, so a signing key and agent must work for that user
-without a prompt. `--signoff` needs `user.name` and `user.email`, as any
+Signing (`--gpg-sign`, `-S`) happens inside a headless session on the machine
+running `bees`, so a signing key and agent must work for that user without a
+prompt. `--signoff` needs `user.name` and `user.email`, as any
 commit does.
 
 ### Sandboxing

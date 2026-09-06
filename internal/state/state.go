@@ -6,7 +6,7 @@
 //	mail/<role>/*.json   local mailbox (see package mail)
 //	notes/<role>.md      per-role notes, the roles' only long-term memory
 //	notes/archive/       notes files replaced by `bees notes reset`
-//	sessions/<id>/       one directory per claude session (prompts, transcript, result)
+//	sessions/<id>/       one directory per session (prompts, transcript, result)
 //	issues/<n>.json      per-issue bookkeeping (review round, PR number, the
 //	                     developer worker's stage, its running session and,
 //	                     once the factory gives up, why it did)
@@ -56,7 +56,7 @@ This directory is managed by ` + "`bees`" + `. It holds:
 - mail/      the local mailbox roles use to talk to each other
 - notes/     each role's notes file (their only memory between sessions),
              with archive/ holding the ones ` + "`bees notes reset`" + ` replaced
-- sessions/  prompts, transcripts and results of every Claude Code session
+- sessions/  prompts, transcripts and results of every session
 - issues/    per-issue bookkeeping (review rounds, the developer worker's stage,
              and why the factory gave an issue up)
 - status.json live scheduler status (` + "`bees status`" + `)
