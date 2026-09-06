@@ -38,6 +38,7 @@ type initOptions struct {
 	assignee      string
 	githubLogin   string
 	githubToken   string
+	template      string
 	print         bool
 	noLabels      bool
 }
@@ -103,6 +104,7 @@ the directory exactly as it found it.`,
 	cmd.Flags().StringVar(&o.assignee, "assignee", "", "only see issues assigned to this login (\"@me\" for yourself)")
 	cmd.Flags().StringVar(&o.githubLogin, "github-login", "", "GitHub login the factory acts as (default: your own gh account)")
 	cmd.Flags().StringVar(&o.githubToken, "github-token", "", "token for --github-login; pass '$VAR' to read it from the environment instead of writing it into bees.toml")
+	cmd.Flags().StringVar(&o.template, "template", "", "write a named config template instead of the default file (see bees templates list)")
 	cmd.Flags().BoolVar(&o.print, "print", false, "print the template instead of writing it")
 	cmd.Flags().BoolVar(&o.noLabels, "no-labels", false, "do not create GitHub labels")
 	return cmd
@@ -112,6 +114,16 @@ the directory exactly as it found it.`,
 // rendered template has parsed and resolved, so a failed init leaves no
 // half-initialised directory behind (#41).
 func runInit(ctx context.Context, o initOptions, d initDeps) error {
+	// Resolved before anything else init does: an unknown template name must
+	// fail with no filesystem, git or GitHub side effect at all.
+	var tpl *config.Template
+	if o.template != "" {
+		t, err := config.TemplateByName(o.template)
+		if err != nil {
+			return err
+		}
+		tpl = &t
+	}
 	if err := d.checkGH(ctx); err != nil {
 		return err
 	}
@@ -148,6 +160,7 @@ func runInit(ctx context.Context, o initOptions, d initDeps) error {
 			GitHubToken:    o.githubToken,
 			ExplicitRepo:   o.repo != "",
 			ExplicitBranch: o.defaultBranch != "" || (o.repo != "" && branch != ""),
+			Template:       tpl,
 		})
 	}
 
