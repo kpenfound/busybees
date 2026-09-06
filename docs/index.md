@@ -68,6 +68,7 @@ reads and edits a role's notes file — its only memory between sessions — and
 | [Roles](roles.md) | Each role's responsibilities, inputs, outcomes, and how to customise or disable it |
 | [Workflow](workflow.md) | The GitHub-centred workflow: filter, label state machine, questions, review loop, escalation, QA |
 | [Configuration](configuration.md) | Complete `bees.toml` reference |
+| [Security](security.md) | What each sandbox mode protects and what it does not: filesystem, network, credentials |
 | [Config templates](templates.md) | The named ways to run the factory: which roles run, what merges on its own, what waits for a person |
 | [CLI](cli.md) | Every `bees` command |
 | [Releasing](releasing.md) | Cutting a release: the tag, the workflow, the assets it publishes |
