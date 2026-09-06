@@ -206,7 +206,7 @@ func (b *backend) Rules(ctx context.Context) (github.Query, config.Labels, error
 	if err := b.load(ctx); err != nil {
 		return github.Query{}, config.Labels{}, err
 	}
-	q := github.Query{Assignee: b.policy.Filter.Assignee, Milestone: b.policy.Filter.Milestone}
+	q := github.Query{Assignee: b.policy.Filter.Assignee, Milestone: b.policy.Filter.Milestone, Creator: b.policy.Filter.Creator}
 	if b.policy.Filter.LabelRequired() {
 		q.Label = b.policy.Filter.Label
 	}

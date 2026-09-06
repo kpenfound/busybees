@@ -41,7 +41,7 @@ func (s *Scheduler) refreshTouched(ctx context.Context, sessionDir string) {
 		if live.State != "" && !strings.EqualFold(live.State, "open") {
 			continue
 		}
-		if !s.query.Matches(live.Labels, live.Assignees, live.MilestoneTitle()) {
+		if !s.query.Matches(live.Labels, live.Assignees, live.MilestoneTitle(), live.Author.Login) {
 			continue
 		}
 		s.log.Debug("refreshed an issue the session changed", "issue", n, "state", s.stateOf(live.Labels))

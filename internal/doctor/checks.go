@@ -1016,8 +1016,8 @@ func (d *Deps) checkFilter(ctx context.Context) Result {
 				"carrying `"+d.Config.Filter.Label+"` into the filter, or unset the criterion in bees.toml")
 	}
 	return warn(name, GroupGitHub, fmt.Sprintf("no open issue matches %s", describeQuery(q)),
-		"check filter.label, filter.assignee and filter.milestone in bees.toml, or file the first issue "+
-			"(the factory only sees issues that match)")
+		"check filter.label, filter.assignee, filter.milestone and filter.creator in bees.toml, or file the first "+
+			"issue (the factory only sees issues that match)")
 }
 
 // strandedByFilter asks the second question, once the filter has come back
@@ -1057,7 +1057,7 @@ func (d *Deps) strandedByFilter(ctx context.Context, q github.Query) string {
 // Query is the visibility filter as the scheduler applies it.
 func Query(cfg *config.Config) github.Query {
 	f := cfg.Filter
-	q := github.Query{Assignee: f.Assignee, Milestone: f.Milestone}
+	q := github.Query{Assignee: f.Assignee, Milestone: f.Milestone, Creator: f.Creator}
 	if f.LabelRequired() {
 		q.Label = f.Label
 	}
@@ -1078,6 +1078,9 @@ func describeANDed(q github.Query) string {
 	if q.Milestone != "" {
 		parts = append(parts, "milestone="+q.Milestone)
 	}
+	if q.Creator != "" {
+		parts = append(parts, "creator="+q.Creator)
+	}
 	if len(parts) == 0 {
 		return "no criteria"
 	}
@@ -1094,6 +1097,9 @@ func describeQuery(q github.Query) string {
 	}
 	if q.Milestone != "" {
 		parts = append(parts, "milestone "+q.Milestone)
+	}
+	if q.Creator != "" {
+		parts = append(parts, "creator "+q.Creator)
 	}
 	if len(parts) == 0 {
 		return "the empty filter (every open issue)"

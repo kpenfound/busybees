@@ -12,7 +12,9 @@ import (
 // fixFilter is the repair `bees doctor --fix` applies to checkFilter: it
 // brings the open items that carry the base label but fall outside the rest of
 // the filter back into it, by adding filter.assignee and, when one is
-// configured, filter.milestone.
+// configured, filter.milestone. filter.creator is never fixed this way: an
+// item's author cannot be changed, so one that fails only that criterion
+// stays outside the filter.
 //
 // The safety rule of busybees is the whole design here: **an item that does
 // not carry the base label is never touched**. That is what makes bees safe in
@@ -64,10 +66,10 @@ func (d *Deps) fixFilter(ctx context.Context) ([]string, error) {
 
 	a := &adopter{deps: d, query: q, label: f.Label, assignee: assignee, milestone: f.Milestone}
 	for _, i := range issues {
-		a.adopt(ctx, i.Number, "issue", i.Labels, i.Assignees, i.MilestoneTitle())
+		a.adopt(ctx, i.Number, "issue", i.Labels, i.Assignees, i.MilestoneTitle(), i.Author.Login)
 	}
 	for _, p := range prs {
-		a.adopt(ctx, p.Number, "pull request", p.Labels, p.Assignees, p.MilestoneTitle())
+		a.adopt(ctx, p.Number, "pull request", p.Labels, p.Assignees, p.MilestoneTitle(), p.Author.Login)
 	}
 	if len(a.actions) == 0 && len(a.errs) == 0 {
 		a.actions = append(a.actions,
@@ -112,13 +114,13 @@ type adopter struct {
 	errs      []error
 }
 
-func (a *adopter) adopt(ctx context.Context, number int, kind string, labels []github.Label, assignees []github.Author, milestone string) {
+func (a *adopter) adopt(ctx context.Context, number int, kind string, labels []github.Label, assignees []github.Author, milestone string, author string) {
 	// The safety rule, checked against the item itself rather than trusting
 	// that the listing honoured --label.
 	if !github.HasLabel(labels, a.label) {
 		return
 	}
-	if a.query.Matches(labels, assignees, milestone) {
+	if a.query.Matches(labels, assignees, milestone, author) {
 		return
 	}
 	if a.assignee != "" && !github.HasAssignee(assignees, a.assignee) {

@@ -348,6 +348,35 @@ func TestFilterLabelRequired(t *testing.T) {
 	}
 }
 
+// filter.creator has no default, is not required alongside assignee or
+// milestone to satisfy require_label = false, and is not applied to what the
+// factory creates (there is no RenderOptions field for it, unlike assignee).
+func TestFilterCreator(t *testing.T) {
+	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Filter.Creator != "" {
+		t.Fatalf("creator: %q, want unset", cfg.Filter.Creator)
+	}
+
+	cfg, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[filter]\nrequire_label = false\ncreator = \"kyle\"\n"))
+	if err != nil {
+		t.Fatalf("require_label = false with only creator set should be valid: %v", err)
+	}
+	if cfg.Filter.Creator != "kyle" {
+		t.Fatalf("creator: %q, want %q", cfg.Filter.Creator, "kyle")
+	}
+
+	view, err := cfg.View([]string{RoleDeveloper})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Filter.Creator != "kyle" {
+		t.Fatalf("View: creator %q, want %q", view.Filter.Creator, "kyle")
+	}
+}
+
 func TestFind(t *testing.T) {
 	p := writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n")
 	nested := filepath.Join(filepath.Dir(p), "a", "b")

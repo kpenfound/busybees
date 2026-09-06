@@ -24,6 +24,7 @@ type FilterView struct {
 	RequireLabel bool   `json:"require_label"`
 	Assignee     string `json:"assignee"`
 	Milestone    string `json:"milestone"`
+	Creator      string `json:"creator"`
 }
 
 // GitHubView is [github] as printed. The token is redacted (see
@@ -87,7 +88,7 @@ func (c *Config) View(roles []string) (View, error) {
 		Path:      c.Path,
 		Version:   c.Version,
 		Project:   c.Project,
-		Filter:    FilterView{Label: c.Filter.Label, RequireLabel: c.Filter.LabelRequired(), Assignee: c.Filter.Assignee, Milestone: c.Filter.Milestone},
+		Filter:    FilterView{Label: c.Filter.Label, RequireLabel: c.Filter.LabelRequired(), Assignee: c.Filter.Assignee, Milestone: c.Filter.Milestone, Creator: c.Filter.Creator},
 		GitHub:    GitHubView{Login: c.GitHub.Login, Token: c.GitHub.RedactedToken(), GitName: c.GitHub.GitName, GitEmail: c.GitHub.GitEmail},
 		Scheduler: c.Scheduler,
 		Logging:   c.Logging,

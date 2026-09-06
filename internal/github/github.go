@@ -365,6 +365,7 @@ type Query struct {
 	Label     string // when non-empty, items must carry this label
 	Assignee  string // when non-empty, items must be assigned to this login
 	Milestone string // when non-empty, items must be in this milestone
+	Creator   string // when non-empty, items must be opened by this login
 }
 
 func (q Query) args() []string {
@@ -378,12 +379,16 @@ func (q Query) args() []string {
 	if q.Milestone != "" {
 		a = append(a, "--milestone", q.Milestone)
 	}
+	if q.Creator != "" {
+		a = append(a, "--author", q.Creator)
+	}
 	return a
 }
 
-// Matches reports whether an item with the given labels, assignees and
-// milestone satisfies the query (used to double-check server results).
-func (q Query) Matches(labels []Label, assignees []Author, milestone string) bool {
+// Matches reports whether an item with the given labels, assignees,
+// milestone and author satisfies the query (used to double-check server
+// results).
+func (q Query) Matches(labels []Label, assignees []Author, milestone string, author string) bool {
 	if q.Label != "" && !HasLabel(labels, q.Label) {
 		return false
 	}
@@ -406,6 +411,9 @@ func (q Query) Matches(labels []Label, assignees []Author, milestone string) boo
 		}
 	}
 	if q.Milestone != "" && milestone != q.Milestone {
+		return false
+	}
+	if q.Creator != "" && !strings.EqualFold(author, q.Creator) {
 		return false
 	}
 	return true
