@@ -510,3 +510,136 @@ func TestRunAcceptsNoSandbox(t *testing.T) {
 		}
 	}
 }
+
+// A role in claude mode runs under Claude Code's sandbox: the permission
+// flags change, the settings block goes inline on the command line and a
+// copy of it is kept in the session directory.
+func TestClaudeSandboxSessionIsBoxed(t *testing.T) {
+	bin := fakeClaude(t, `
+printf '%s\n' "$@" > "$BEES_SESSION_DIR/args.txt"
+echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
+`)
+	r := newRunner(t, bin)
+	role := config.ResolvedRole{Name: "developer", Model: "opus", MaxTurns: 5, Timeout: time.Minute, Sandbox: config.SandboxClaude,
+		MCP: map[string]config.MCPServer{"x": {Command: "srv"}}}
+	res, err := r.Run(context.Background(), Request{Name: "boxed", Role: role, WorkDir: t.TempDir(), SystemPrompt: "SYS", Prompt: "TASK"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(res.SessionDir, "args.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
+	flag := func(name string) string {
+		t.Helper()
+		i := slices.Index(args, name)
+		if i < 0 || i+1 >= len(args) {
+			t.Fatalf("args lack %s: %q", name, args)
+		}
+		return args[i+1]
+	}
+	if got := flag("--permission-mode"); got != "acceptEdits" {
+		t.Errorf("--permission-mode %q, want acceptEdits", got)
+	}
+	if got := flag("--permission-prompts"); got != "none" {
+		t.Errorf("--permission-prompts %q, want none", got)
+	}
+	if slices.Contains(args, "--dangerously-skip-permissions") {
+		t.Error("a boxed session skips permissions: every question the box leaves to the permission layer is answered yes")
+	}
+	settings := flag("--settings")
+	if strings.HasPrefix(settings, "/") || strings.HasPrefix(settings, res.SessionDir) {
+		t.Errorf("--settings is a path, %q: a file in the session directory is one the session can rewrite", settings)
+	}
+	var got claudeSettings
+	if err := json.Unmarshal([]byte(settings), &got); err != nil {
+		t.Fatalf("--settings is not JSON: %v\n%s", err, settings)
+	}
+	sb := got.Sandbox
+	if !sb.Enabled || !sb.AutoAllowBashIfSandboxed || sb.AllowUnsandboxedCommands || !sb.FailIfUnavailable || !sb.Network.StrictAllowlist {
+		t.Errorf("sandbox block: %+v", sb)
+	}
+	if !slices.Equal(sb.Network.AllowedDomains, ClaudeSandboxDomains) {
+		t.Errorf("allowed domains %q, want %q", sb.Network.AllowedDomains, ClaudeSandboxDomains)
+	}
+	// Claude Code defaults allowUnsandboxedCommands to true, so the key
+	// must be present and false, not absent.
+	if !strings.Contains(settings, `"allowUnsandboxedCommands":false`) {
+		t.Errorf("allowUnsandboxedCommands is not written as false: %s", settings)
+	}
+	for _, want := range []string{"Bash", "Read", "WebFetch(domain:github.com)", "WebFetch(domain:*.github.com)", "mcp__bees", "mcp__x"} {
+		if !slices.Contains(got.Permissions.Allow, want) {
+			t.Errorf("allow rules %q lack %q", got.Permissions.Allow, want)
+		}
+	}
+	for _, rule := range got.Permissions.Allow {
+		if strings.HasPrefix(rule, "Edit") || strings.HasPrefix(rule, "Write") || rule == "WebFetch" || rule == "WebSearch" {
+			t.Errorf("allow rule %q opens what the box is meant to hold", rule)
+		}
+	}
+	copied, err := os.ReadFile(filepath.Join(res.SessionDir, sandboxFile))
+	if err != nil {
+		t.Fatalf("no copy of the settings in the session directory: %v", err)
+	}
+	if string(copied) != settings {
+		t.Errorf("the copy differs from what claude was passed:\n%s\n%s", copied, settings)
+	}
+}
+
+// A session in none mode is the command it always was: permissions skipped,
+// no settings block, nothing about a box in the session directory.
+func TestUnboxedSessionSkipsPermissions(t *testing.T) {
+	bin := fakeClaude(t, `
+printf '%s\n' "$@" > "$BEES_SESSION_DIR/args.txt"
+echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
+`)
+	for _, mode := range []string{"", config.SandboxNone} {
+		r := newRunner(t, bin)
+		role := config.ResolvedRole{Name: "developer", Model: "opus", MaxTurns: 5, Timeout: time.Minute, Sandbox: mode}
+		res, err := r.Run(context.Background(), Request{Name: "plain", Role: role, WorkDir: t.TempDir(), SystemPrompt: "SYS", Prompt: "TASK"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := os.ReadFile(filepath.Join(res.SessionDir, "args.txt"))
+		args := strings.Split(strings.TrimSpace(string(raw)), "\n")
+		if !slices.Contains(args, "--dangerously-skip-permissions") {
+			t.Errorf("sandbox %q: permissions are not skipped: %q", mode, args)
+		}
+		for _, flag := range []string{"--settings", "--permission-mode", "--permission-prompts"} {
+			if slices.Contains(args, flag) {
+				t.Errorf("sandbox %q: %s passed to an unboxed session", mode, flag)
+			}
+		}
+		if _, err := os.Stat(filepath.Join(res.SessionDir, sandboxFile)); err == nil {
+			t.Errorf("sandbox %q: %s written for an unboxed session", mode, sandboxFile)
+		}
+	}
+}
+
+// The one key that differs by operating system: macOS needs the trust
+// daemon reachable for gh to verify TLS, Linux does not have the key.
+func TestClaudeSandboxSettingsPerOS(t *testing.T) {
+	darwin, err := claudeSandboxSettings([]string{"b", "a"}, "darwin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	linux, err := claudeSandboxSettings([]string{"b", "a"}, "linux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(darwin), `"enableWeakerNetworkIsolation":true`) {
+		t.Errorf("macOS settings do not reach the trust daemon: %s", darwin)
+	}
+	if strings.Contains(string(linux), "enableWeakerNetworkIsolation") {
+		t.Errorf("Linux settings name a macOS key: %s", linux)
+	}
+	// Servers are listed in name order, so the block is the same run to run.
+	var got claudeSettings
+	if err := json.Unmarshal(linux, &got); err != nil {
+		t.Fatal(err)
+	}
+	if i, j := slices.Index(got.Permissions.Allow, "mcp__a"), slices.Index(got.Permissions.Allow, "mcp__b"); i < 0 || j < 0 || i > j {
+		t.Errorf("MCP allow rules %q are not in name order", got.Permissions.Allow)
+	}
+}

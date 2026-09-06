@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -210,14 +211,16 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 		claudeBin = "claude"
 	}
 	// The box this session runs in is the role's resolved sandbox mode.
-	// Only config.SandboxNone is implemented, and it is what the command
-	// built below already is; a role configured for a stronger box refuses
-	// to run rather than quietly running without one. `bees run` asks the
-	// same question once at startup (config.CheckSandbox), so reaching this
-	// means a session started some other way — `bees exec`, `bees tick`.
+	// config.SandboxNone is the plain command built below and
+	// config.SandboxClaude the same command under Claude Code's sandbox; a
+	// role configured for a box bees cannot build refuses to run rather
+	// than quietly running without one. `bees run` asks the same question
+	// once at startup (config.CheckSandbox), so reaching this means a
+	// session started some other way — `bees exec`, `bees tick`.
 	if err := config.CheckSandboxMode(req.Role.Sandbox); err != nil {
 		return nil, fmt.Errorf("%s: %w", req.Role.Name, err)
 	}
+	boxed := req.Role.Sandbox == config.SandboxClaude
 	started := time.Now()
 	sessionDir := req.SessionDir
 	if sessionDir == "" {
@@ -241,12 +244,26 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 		"-p",
 		"--output-format", "stream-json",
 		"--verbose",
-		"--dangerously-skip-permissions",
+	}
+	if boxed {
+		// Inside the box the permission layer is what holds the built-in
+		// tools, which run in the claude process and not under the OS
+		// sandbox: acceptEdits lets Write and Edit work in the worktree
+		// and the --add-dir state dir and asks about anything else, and
+		// with nobody to ask, "none" refuses it. What the session may do
+		// without asking is the allow list of the settings block below.
+		// --dangerously-skip-permissions would answer yes to every one of
+		// those questions, and a Write anywhere on the machine with it.
+		args = append(args, "--permission-mode", "acceptEdits", "--permission-prompts", "none")
+	} else {
+		args = append(args, "--dangerously-skip-permissions")
+	}
+	args = append(args,
 		"--append-system-prompt-file", systemPromptPath,
 		"--model", req.Role.Model,
 		"--max-turns", strconv.Itoa(req.Role.MaxTurns),
-		"--name", "bees-" + req.Name,
-	}
+		"--name", "bees-"+req.Name,
+	)
 	if req.Role.FallbackModel != "" && req.Role.FallbackModel != req.Role.Model {
 		args = append(args, "--fallback-model", req.Role.FallbackModel)
 	}
@@ -271,6 +288,16 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 		return nil, err
 	}
 	args = append(args, "--mcp-config", mcpPath, "--strict-mcp-config")
+	if boxed {
+		settings, err := claudeSandboxSettings(slices.Sorted(maps.Keys(entries)), runtime.GOOS)
+		if err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(filepath.Join(sessionDir, sandboxFile), settings, 0o644); err != nil {
+			return nil, err
+		}
+		args = append(args, "--settings", string(settings))
+	}
 	if len(req.Role.Skills) > 0 {
 		if r.Skills == nil {
 			return nil, errors.New("session: skills configured but no skills manager")
