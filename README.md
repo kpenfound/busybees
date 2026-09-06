@@ -39,6 +39,24 @@ go install github.com/kpenfound/busybees/cmd/bees@latest
 [Releasing](docs/releasing.md) describes what a release contains and how to install one
 by hand.
 
+## Quick start
+
+You need [`gh`](https://cli.github.com/) (authenticated), `git`, and Claude Code
+(`claude`), logged in. Inside a clone of the repository you want built:
+
+```sh
+bees init --template issue-driven   # writes bees.toml, creates .bees/ and the GitHub labels
+bees run                            # draws a live view; --no-tui logs instead
+```
+
+Then open an issue describing a feature, label it `bees`, and watch:
+the product manager breaks it into work items, the project manager refines them, a
+developer builds each one and opens a pull request, the reviewer approves it, and QA
+tests the default branch after every merge. Two things wait for you: a feature a bee
+proposes carries `bees:proposal` until you remove the label, and every approved pull
+request is yours to merge. [Config templates](docs/templates.md) describes the other
+ways to run the factory.
+
 ## Key features
 
 - **GitHub is the workflow.** Issues and pull requests move through labels
