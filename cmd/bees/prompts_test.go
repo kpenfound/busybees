@@ -55,6 +55,11 @@ commit_flags = "--signoff"
 	if !strings.Contains(product, "@kpenfound") {
 		t.Errorf("product manager prompt does not carry scheduler.notify:\n%s", product)
 	}
+	// scheduler.feature_proposals defaults to true, and a bool left unfilled
+	// reads as false: the default rendering has to be the proposal rule.
+	if !strings.Contains(product, "**A feature issue you create is a proposal.**") {
+		t.Errorf("product manager prompt does not carry the default proposal gate:\n%s", product)
+	}
 }
 
 // `bees prompts show --rendered` runs outside any session, so it reads the
