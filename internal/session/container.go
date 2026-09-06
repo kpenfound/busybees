@@ -30,12 +30,13 @@ import (
 //     state directory (mail, notes, the session directory). A role with
 //     skills also gets the skills cache, read-only. Nothing else: no home
 //     directory, no other checkout, no credential store.
+//   - It runs as the host's user, with a HOME of its own on a tmpfs.
 //   - Its environment is built from nothing rather than from the host's:
 //     the role's env and shell, the BEES_* variables, the [github] token
 //     and git identity, the git configuration a session runs with, the
 //     agent's own credential forwarded from the host (config.AgentCredentials)
-//     and a HOME on a tmpfs. Values are handed to the engine by name, never
-//     on its command line.
+//     and that HOME. Values are handed to the engine by name, never on its
+//     command line.
 //   - The bees binary is not in the container, so the built-in MCP server
 //     runs on the host — `bees mcp serve --listen`, with the environment a
 //     session on the host would have given it — and the session reaches it
@@ -264,16 +265,17 @@ func (c *container) command(ctx context.Context, bin string, args []string) (str
 		return "", nil, err
 	}
 	out = append(out, mounts...)
-	switch hostOS {
-	case "linux":
-		// Files the session writes into the mounts must be the host user's,
-		// or the host cannot remove the worktree afterwards; Docker Desktop
-		// maps them on macOS and needs no user. The host alias is Docker
-		// Desktop's; Linux is told to resolve it to the bridge gateway.
-		out = append(out,
-			"--user", strconv.Itoa(hostUID())+":"+strconv.Itoa(hostGID()),
-			"--add-host", containerHostAlias+":host-gateway",
-		)
+	// The session runs as the host's user, not the image's: claude refuses
+	// --dangerously-skip-permissions as root, and on Linux what the session
+	// writes into the mounts must be the host user's or the host cannot
+	// remove the worktree afterwards (Docker Desktop maps ownership on
+	// macOS, where any user would do). The user has no passwd entry in the
+	// image, which is why HOME is set explicitly.
+	out = append(out, "--user", strconv.Itoa(hostUID())+":"+strconv.Itoa(hostGID()))
+	if hostOS == "linux" {
+		// The host alias is Docker Desktop's; Linux is told to resolve it
+		// to the bridge gateway.
+		out = append(out, "--add-host", containerHostAlias+":host-gateway")
 	}
 	for _, v := range dedupe(c.vars) {
 		if v.name == "HOME" {

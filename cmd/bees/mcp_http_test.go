@@ -15,7 +15,9 @@ import (
 	"github.com/kpenfound/busybees/internal/state"
 )
 
-// bearer is an HTTP client that presents one bearer token.
+// bearer is an HTTP client that presents one bearer token, arriving the
+// way a container's client does: with the host's alias as the Host header,
+// not the loopback address it actually connects to.
 type bearer string
 
 func (b bearer) RoundTrip(r *http.Request) (*http.Response, error) {
@@ -23,6 +25,7 @@ func (b bearer) RoundTrip(r *http.Request) (*http.Response, error) {
 	if b != "" {
 		r.Header.Set("Authorization", "Bearer "+string(b))
 	}
+	r.Host = "host.docker.internal:4242"
 	return http.DefaultTransport.RoundTrip(r)
 }
 

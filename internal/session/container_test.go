@@ -167,10 +167,13 @@ printf '{"status":"pr-opened","pr":7}' > "$BEES_SESSION_DIR/outcome.json"
 			t.Errorf("docker args carry a value (%q): %s", secret, joined)
 		}
 	}
-	for _, absent := range []string{"--env BEES_BIN", "--env PATH", "--user ", "--add-host"} {
+	for _, absent := range []string{"--env BEES_BIN", "--env PATH", "--add-host"} {
 		if strings.Contains(joined, absent) {
 			t.Errorf("docker args carry %q on macOS: %s", absent, joined)
 		}
+	}
+	if want := "--user " + strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid()) + " "; !strings.Contains(joined, want) {
+		t.Errorf("docker args do not run the session as the host user (%q): %s", want, joined)
 	}
 	// The values travel in the client's environment, bees' own winning.
 	clientEnv := lines(t, filepath.Join(dir, "docker-env.txt"))
@@ -297,9 +300,9 @@ func TestContainerVarsCarryNothingOfTheHost(t *testing.T) {
 	}
 }
 
-// On Linux the container runs as the host's user, so what the session
-// writes into the mounts is the host user's, and is told how to reach the
-// host; Docker Desktop on macOS needs neither.
+// The container runs as the host's user everywhere (claude refuses to skip
+// permissions as root, and on Linux what the session writes must be the
+// host user's); only Linux is told how to reach the host.
 func TestContainerCommandPerOS(t *testing.T) {
 	r := newRunner(t, "claude")
 	role := config.ResolvedRole{Name: "developer", Sandbox: config.SandboxContainer, SandboxImage: "img"}
@@ -310,7 +313,7 @@ func TestContainerCommandPerOS(t *testing.T) {
 		present []string
 		absent  []string
 	}{
-		{"darwin", nil, []string{"--user", "--add-host"}},
+		{"darwin", []string{"--user 1234:5678"}, []string{"--add-host"}},
 		{"linux", []string{"--user 1234:5678", "--add-host host.docker.internal:host-gateway"}, nil},
 	} {
 		fakeContainerHost(t, tc.goos)

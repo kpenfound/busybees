@@ -160,8 +160,13 @@ func serveMCPHTTP(ctx context.Context, srv *mcp.Server, addr, token string, out 
 
 // mcpHTTPHandler serves srv over streamable HTTP to a client presenting
 // token as its bearer credential, and answers 401 to any other request.
+// The SDK's own guard, which refuses a request to a loopback listener whose
+// Host header is not a loopback name, is switched off: it protects a local
+// server from a browser tricked into reaching it (DNS rebinding), which the
+// token does here, and the container reaches the loopback listener through
+// the host's alias, which is exactly such a Host header.
 func mcpHTTPHandler(srv *mcp.Server, token string) http.Handler {
-	h := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil)
+	h := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, &mcp.StreamableHTTPOptions{DisableLocalhostProtection: true})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if !ok || subtle.ConstantTimeCompare([]byte(got), []byte(token)) != 1 {
