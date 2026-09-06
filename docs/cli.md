@@ -1213,7 +1213,8 @@ bees done failed -m "Could not get the test-suite to run: missing DATABASE_URL"
 
 ### `bees mcp serve` *(sessions)*
 
-Runs the built-in MCP server on stdio. You never start it yourself: `bees`
+Runs the built-in MCP server on stdio (or over HTTP, below). You never start
+it yourself: `bees`
 hands it to every session as the server named `bees` (in `mcp.json` for
 claude, as `mcp_servers.bees` overrides for codex), and the agent starts it
 as `<bees binary> mcp serve` with the session's `BEES_*`
