@@ -107,6 +107,7 @@ These pages are also published at
 | [docs/workflow.md](docs/workflow.md) | The GitHub-centred workflow: filter, label state machine, questions, review loop, escalation, QA |
 | [docs/roles.md](docs/roles.md) | Each role's responsibilities, inputs, outcomes, and how to customise or disable it |
 | [docs/configuration.md](docs/configuration.md) | Complete `bees.toml` reference |
+| [docs/security.md](docs/security.md) | What each sandbox mode protects and what it does not: filesystem, network, credentials |
 | [docs/templates.md](docs/templates.md) | The named ways to run the factory: which roles run, what merges on its own, what waits for a person |
 | [docs/cli.md](docs/cli.md) | Every `bees` command |
 | [docs/architecture.md](docs/architecture.md) | How `bees run` works: the scheduler loop, the developer worker, sessions, the mailbox, the state directory, crash recovery |

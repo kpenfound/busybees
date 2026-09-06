@@ -639,8 +639,8 @@ sandbox = "container"
 | Mode | What a session can reach |
 |---|---|
 | `none` | Everything the user running `bees` can: the home directory, credentials, the network and every other checkout on the machine. |
-| `claude` | Claude Code's own sandbox: writes to the worktree and the state directory, network to GitHub. See [The claude mode](#the-claude-mode). |
-| `container` | A container holding the worktree, the repository's `.git` and the state directory, and nothing else of the host. See [The container mode](#the-container-mode). |
+| `claude` | Claude Code's own sandbox: writes to the worktree and the state directory, network to GitHub. See [The claude mode](#the-claude-mode) and [Security](security.md#claude). |
+| `container` | A container holding the worktree, the repository's `.git` and the state directory, and nothing else of the host. See [The container mode](#the-container-mode) and [Security](security.md#container). |
 
 `none` is the default. `bees run` checks before it starts that every role in
 the rotation can have the box it asks for (the programs a `claude` box needs
@@ -653,6 +653,10 @@ exactly what it was configured to be kept away from. `bees exec` and
 `bees config show` prints the resolved mode per role, and
 [`bees status`](cli.md#bees-status---json) the mode of the session each worker
 is running right now.
+
+See [Security](security.md) for what each mode protects and what it does not,
+filesystem, network and credentials in turn, including what a sandboxed
+session's own GitHub credentials mean for it.
 
 #### The claude mode
 

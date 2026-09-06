@@ -685,7 +685,9 @@ counted from the transcript's assistant messages or completed items instead.
   holds the container's id while it runs. The runner refuses a session whose
   role asks for a mode it cannot build, one its agent cannot run under, or a
   container mode missing its image or credentials, and `bees run` refuses to
-  start at all while a role in the rotation does.
+  start at all while a role in the rotation does. See
+  [Security](security.md) for what `claude` and `container` protect and what
+  they do not.
 - **Outcome.** The session ends by calling the `done` tool (or, outside a
   container, running `bees done <status>`), which writes
   `<session>/outcome.json` through one shared validation: the status must be
