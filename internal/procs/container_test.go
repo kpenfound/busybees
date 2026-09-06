@@ -146,6 +146,9 @@ func TestFindAttachesTheContainerToItsSession(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if _, err := FromPS(context.Background(), sessions); err != nil {
+		t.Skipf("no process table to scan: %v", err)
+	}
 	found, err := Find(context.Background(), sessions)
 	if err != nil {
 		t.Fatal(err)
