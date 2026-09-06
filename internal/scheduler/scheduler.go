@@ -182,7 +182,7 @@ func New(d Deps) (*Scheduler, error) {
 		d.Now = time.Now
 	}
 	f := d.Config.Filter
-	q := github.Query{Assignee: f.Assignee, Milestone: f.Milestone}
+	q := github.Query{Assignee: f.Assignee, Milestone: f.Milestone, Creator: f.Creator}
 	if f.LabelRequired() {
 		q.Label = f.Label
 	}
@@ -534,6 +534,9 @@ func (s *Scheduler) describeQuery() string {
 	}
 	if s.query.Milestone != "" {
 		parts = append(parts, "milestone="+s.query.Milestone)
+	}
+	if s.query.Creator != "" {
+		parts = append(parts, "creator="+s.query.Creator)
 	}
 	return strings.Join(parts, ",")
 }

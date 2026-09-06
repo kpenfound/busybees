@@ -158,14 +158,16 @@ version = {{.Version}}
 # The factory's label; also the base name of the workflow labels
 # ({{.Label}}:triage, {{.Label}}:ready, {{.Label}}:in-progress, ...).
 label = "{{.Label}}"
-# Set to false to let assignee and/or milestone alone define visibility. The
-# label is still applied to everything the factory creates.
+# Set to false to let assignee, milestone and/or creator alone define
+# visibility. The label is still applied to everything the factory creates.
 #require_label = true
 # Only see items assigned to this GitHub login. "@me" means the gh user.
 # Useful when one person runs busybees for their share of a shared repo.
 {{if .Assignee}}assignee = "{{.Assignee}}"{{else}}#assignee = "@me"{{end}}
 # Only see items in this milestone.
 #milestone = ""
+# Only see items opened by this GitHub login.
+#creator = ""
 
 #===============================================================================
 # GitHub account the factory acts as. Unset (the default) means the machine

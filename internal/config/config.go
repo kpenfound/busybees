@@ -247,9 +247,9 @@ type Filter struct {
 	// labels ("bees:ready", ...) and, when RequireLabel is true, the
 	// visibility gate: only issues/PRs carrying it are visible. Default "bees".
 	Label string `toml:"label" json:"label"`
-	// RequireLabel can be set to false so that Assignee and/or Milestone
-	// alone define visibility. The factory still applies Label to everything
-	// it creates. Default true.
+	// RequireLabel can be set to false so that Assignee, Milestone and/or
+	// Creator alone define visibility. The factory still applies Label to
+	// everything it creates. Default true.
 	RequireLabel *bool `toml:"require_label" json:"require_label"`
 	// Assignee restricts visibility to issues/PRs assigned to this GitHub
 	// login ("@me" resolves to the authenticated gh user). Everything the
@@ -257,6 +257,11 @@ type Filter struct {
 	Assignee string `toml:"assignee" json:"assignee"`
 	// Milestone restricts visibility to issues/PRs in this milestone title.
 	Milestone string `toml:"milestone" json:"milestone"`
+	// Creator restricts visibility to issues/PRs opened by this GitHub login.
+	// Unlike Assignee and Milestone, nothing the factory creates is made to
+	// match it: an issue or pull request is always authored by whichever
+	// account the factory acts as, not by a configurable value.
+	Creator string `toml:"creator" json:"creator"`
 }
 
 // LabelRequired reports whether the label is part of the visibility gate.
@@ -1302,8 +1307,8 @@ func (c *Config) Validate() error {
 	if strings.ContainsAny(c.Filter.Label, " :") {
 		errs = append(errs, "filter.label must not contain spaces or colons")
 	}
-	if !c.Filter.LabelRequired() && c.Filter.Assignee == "" && c.Filter.Milestone == "" {
-		errs = append(errs, "filter.require_label = false needs filter.assignee or filter.milestone, otherwise every issue in the repo is visible")
+	if !c.Filter.LabelRequired() && c.Filter.Assignee == "" && c.Filter.Milestone == "" && c.Filter.Creator == "" {
+		errs = append(errs, "filter.require_label = false needs filter.assignee, filter.milestone or filter.creator, otherwise every issue in the repo is visible")
 	}
 	errs = append(errs, c.GitHub.validate()...)
 	for name := range c.Roles {

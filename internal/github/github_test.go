@@ -14,22 +14,25 @@ import (
 )
 
 func TestQueryArgs(t *testing.T) {
-	q := Query{Label: "bees", Assignee: "kyle", Milestone: "v1"}
+	q := Query{Label: "bees", Assignee: "kyle", Milestone: "v1", Creator: "kyle"}
 	got := strings.Join(q.args(), " ")
-	if got != "--label bees --assignee kyle --milestone v1" {
+	if got != "--label bees --assignee kyle --milestone v1 --author kyle" {
 		t.Fatalf("args: %s", got)
 	}
 	if len((Query{}).args()) != 0 {
 		t.Fatal("empty query should produce no args")
 	}
 	labels := []Label{{Name: "bees"}}
-	if !q.Matches(labels, []Author{{Login: "Kyle"}}, "v1") {
+	if !q.Matches(labels, []Author{{Login: "Kyle"}}, "v1", "Kyle") {
 		t.Fatal("should match")
 	}
-	if q.Matches(labels, nil, "v1") {
+	if q.Matches(labels, nil, "v1", "Kyle") {
 		t.Fatal("should not match without assignee")
 	}
-	if (Query{Label: "bees"}).Matches(nil, nil, "") {
+	if q.Matches(labels, []Author{{Login: "Kyle"}}, "v1", "someone-else") {
+		t.Fatal("should not match without matching creator")
+	}
+	if (Query{Label: "bees"}).Matches(nil, nil, "", "") {
 		t.Fatal("should not match without label")
 	}
 }
