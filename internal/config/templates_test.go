@@ -262,3 +262,33 @@ func TestExampleTOMLHasNoTemplateHeader(t *testing.T) {
 		t.Error("bees.example.toml was generated with a template selected")
 	}
 }
+
+// A template that sets only some of the keys (none in the registry does, but
+// the func is what `setting` promises) activates those and leaves the others
+// as the commented default.
+func TestSettingLeavesUnsetKeysCommented(t *testing.T) {
+	base, err := RenderTOML(RenderOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	partial := Template{Name: "partial", When: "Only QA is off.", Settings: map[string]string{"roles.qa.enabled": "false"}}
+	text, err := RenderTOML(RenderOptions{Template: &partial})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := strings.TrimPrefix(text, partial.header())
+	if strings.Count(body, "\n#enabled = true\n") != 4 || strings.Count(body, "\nenabled = false\n") != 1 {
+		t.Errorf("partial template did not activate exactly roles.qa.enabled:\n%s", body)
+	}
+	if strings.Count(base, "\n") != strings.Count(body, "\n") || !strings.Contains(body, "\n#auto_merge = false\n") || !strings.Contains(body, "\n#feature_proposals = true\n") {
+		t.Errorf("partial template changed a line it does not set")
+	}
+	empty := Template{Name: "empty", When: "Sets nothing."}
+	text, err = RenderTOML(RenderOptions{Template: &empty})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimPrefix(text, empty.header()) != base {
+		t.Errorf("a template with no settings renders something other than the default below its header")
+	}
+}
