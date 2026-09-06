@@ -639,9 +639,20 @@ assistant messages instead.
 
 - **Sandbox.** The role's resolved
   [`sandbox`](configuration.md#sandboxing) says how much of the machine the
-  session can reach. `none` is the command above, and the only mode
-  implemented: the runner refuses a session whose role asks for another, and
-  `bees run` refuses to start at all while a role in the rotation does.
+  session can reach. `none` is the command above. `claude` swaps
+  `--dangerously-skip-permissions` for `--permission-mode acceptEdits
+  --permission-prompts none` and adds `--settings <json>`: Claude Code's
+  sandbox on, no retry outside it, refuse to start rather than run unboxed,
+  the network limited to GitHub, and allow rules for `Bash`, `Read`,
+  `WebFetch` on the same domains and every MCP server of the session, so the
+  box decides what a command may do and anything the permission layer would
+  ask a person about is refused. The block is passed inline rather than as a
+  file, because the session directory is writable from inside the box and
+  Claude Code applies an edit to a settings file it loaded to the running
+  session; a copy is kept as `<session>/sandbox.json` for reading afterwards.
+  `container` is not implemented: the runner refuses a session whose role
+  asks for it, and `bees run` refuses to start at all while a role in the
+  rotation does.
 - **Outcome.** The session ends by calling the `done` tool (or running `bees
   done <status>`), which writes `<session>/outcome.json` through one shared
   validation: the status must be one the role may report, and `pr-opened` and
