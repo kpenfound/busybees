@@ -275,6 +275,7 @@ func TestValidation(t *testing.T) {
 		"unknown key":          "version = 1\n[project]\nrepo = \"a/b\"\nrepository = \"x\"\n",
 		"mcp no command":       "version = 1\n[project]\nrepo = \"a/b\"\n[global.mcp.x]\nargs = [\"a\"]\n",
 		"bad effort":           "version = 1\n[project]\nrepo = \"a/b\"\n[global]\neffort = \"extreme\"\n",
+		"bad sandbox":          "version = 1\n[project]\nrepo = \"a/b\"\n[global]\nsandbox = \"jail\"\n",
 		"label with colon":     "version = 1\n[project]\nrepo = \"a/b\"\n[filter]\nlabel = \"a:b\"\n",
 		"open filter":          "version = 1\n[project]\nrepo = \"a/b\"\n[filter]\nrequire_label = false\n",
 		"max devs zero":        "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nmax_developers = -1\n",

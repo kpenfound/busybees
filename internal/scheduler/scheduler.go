@@ -1522,6 +1522,20 @@ func (s *Scheduler) updateWorker(w *state.Worker, stage string, round int) {
 	s.publish(Event{Kind: EventStage, Role: config.RoleDeveloper, Issue: issue, Stage: stage, Round: round})
 }
 
+// setWorkerSandbox records the sandbox mode the worker's running session is
+// boxed in, so `bees status` reports the box of the session running right
+// now: the stages of one worker run different roles, and a role's sandbox is
+// its own.
+func (s *Scheduler) setWorkerSandbox(w *state.Worker, sandbox string) {
+	if w == nil {
+		return
+	}
+	s.mu.Lock()
+	w.Sandbox = sandbox
+	s.mu.Unlock()
+	s.writeStatus()
+}
+
 // setWorkerAttempt records which attempt of the current stage is running so
 // `bees status` shows a retry.
 func (s *Scheduler) setWorkerAttempt(w *state.Worker, attempt int) {

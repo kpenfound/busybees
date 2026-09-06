@@ -50,6 +50,7 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 	if fallback {
 		role.Model = role.FallbackModel
 	}
+	s.setWorkerSandbox(spec.worker, role.Sandbox)
 	if err := s.store.EnsureNotes(spec.role); err != nil {
 		return nil, err
 	}
@@ -153,7 +154,7 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 		}()
 	}
 	start := sessionEvent(EventSessionStarted, spec)
-	start.Model, start.Fallback = role.Model, fallback
+	start.Model, start.Fallback, start.Sandbox = role.Model, fallback, role.Sandbox
 	start.Dir = sessionDir
 	// Remembered under the same name the event carries, so a view that sees
 	// the session start can name it back to KillSession (kill.go). The event

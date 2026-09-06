@@ -508,6 +508,11 @@ type Worker struct {
 	// than starting fresh: its branch may carry work nobody reported.
 	Resumed bool      `json:"resumed,omitempty"`
 	Since   time.Time `json:"since"`
+	// Sandbox is the mode the session running right now is boxed in, set
+	// when that session starts. A worker's stages run different roles, and
+	// a role's sandbox is its own, so this follows the session rather than
+	// the worker. Empty until the worker's first session starts.
+	Sandbox string `json:"sandbox,omitempty"`
 }
 
 // Status is the live scheduler status.

@@ -17,7 +17,7 @@ The file starts with a `version` key, followed by these tables:
 | `[github]` | The GitHub account the factory acts as |
 | `[scheduler]` | Concurrency, polling, retries, budgets and the review loop |
 | `[logging]` | Console log format and level |
-| `[global]` | Prompt, skills, MCP servers, model and environment for every role |
+| `[global]` | Prompt, skills, MCP servers, model, sandbox and environment for every role |
 | `[roles.<name>]` | The same keys per role, plus a few that only one role takes |
 
 An unknown key anywhere in the file is a load error, so a typo cannot pass as
@@ -464,6 +464,7 @@ The CLI accepts aliases such as `pm` and `dev`; the TOML keys do not.
 | `allowed_tools` | string list | `[]` | Passed as `claude --allowedTools`. |
 | `disallowed_tools` | string list | `[]` | Passed as `claude --disallowedTools`. |
 | `shell` | string | the shell bees runs under | Exported into sessions as `$SHELL`. Claude Code discovers its Bash tool's shell from `$SHELL`, so this is the lever, without being a guarantee. Must be an existing file. |
+| `sandbox` | string | `"none"` | How much of the machine a session of this role can reach: `none`, `claude` or `container`. See [Sandboxing](#sandboxing). |
 | `env` | table | `{}` | Environment variables exported into every session: `claude`, its Bash tool, MCP servers and git see them. A `$VAR` value is expanded from the bees process environment when the session starts. A name may not be empty or contain `=` or a space. See [Exported into every session](#exported-into-every-session) for how it meets the variables bees sets itself. |
 | `enabled` | bool | `true` | Roles only. `false` takes a role out of the rotation. Disabling `reviewer` makes a developer's pull request count as approved the moment it is opened, and with `auto_merge` it goes straight to the checks stage. Under `[global]` the key is an error. A named set of these decisions is a [config template](templates.md). |
 
@@ -608,6 +609,37 @@ the machine running `bees`, so a signing key and agent must work for that user
 without a prompt. `--signoff` needs `user.name` and `user.email`, as any
 commit does.
 
+### Sandboxing
+
+`sandbox` says how much of the machine a session of that role can reach. It is
+a `[global]` key with a per-role override, so the roles that run untrusted code
+can be boxed harder than the ones that only read the repository:
+
+```toml
+[global]
+sandbox = "none"
+
+[roles.developer]
+sandbox = "container"
+```
+
+| Mode | What a session can reach |
+|---|---|
+| `none` | Everything the user running `bees` can: the home directory, credentials, the network and every other checkout on the machine. |
+| `claude` | Claude Code's own sandbox. |
+| `container` | A container holding the worktree and the state directory, and nothing else of the host. |
+
+`none` is the default and the only mode bees runs today. The other two load
+from `bees.toml`, so the mode you want is written down before it works, but
+`bees run` refuses to start while a role in the rotation asks for one, naming
+the role: a factory that fell back to running that role unboxed would give it
+exactly what it was configured to be kept away from. `bees exec` and
+`bees tick` refuse the same session for the same reason.
+
+`bees config show` prints the resolved mode per role, and
+[`bees status`](cli.md#bees-status---json) the mode of the session each worker
+is running right now.
+
 ### How global and role settings merge
 
 | Setting | Rule |
@@ -616,7 +648,7 @@ commit does.
 | `skills` | Union, global first, order kept, duplicates dropped. |
 | `mcp` | Union by name; a role server replaces a global one of the same name. |
 | `env` | Union by name; the role wins. |
-| `model`, `fallback_model`, `agent`, `effort`, `max_turns`, `timeout`, `shell` | Role value if set, else global, else the built-in default. |
+| `model`, `fallback_model`, `agent`, `effort`, `max_turns`, `timeout`, `shell`, `sandbox` | Role value if set, else global, else the built-in default. |
 | `allowed_tools`, `disallowed_tools` | Global list followed by the role list. |
 | `enabled` | Role only. |
 | `skills_refresh` | Global only. |

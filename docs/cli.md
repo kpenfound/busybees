@@ -343,9 +343,9 @@ same migration automatically on startup.
 
 Prints the resolved configuration as JSON: project, filter, github, scheduler
 and — for every role, or the one given — the effective prompt, skills, MCP
-servers, model, fallback model, limits and `enabled` after merging `[global]`
-with `[roles.<name>]`. The global-only `skills_refresh` is printed under every
-role, since it governs how each role's skills are refreshed. `github.token` is
+servers, model, fallback model, limits, `sandbox` and `enabled` after merging
+`[global]` with `[roles.<name>]`. The global-only `skills_refresh` is printed
+under every role, since it governs how each role's skills are refreshed. `github.token` is
 never printed resolved: a `"$VAR"` value is shown as written and anything else
 as `"(set)"`.
 
@@ -377,6 +377,7 @@ bees config show developer
       "max_turns": 200,
       "timeout": "45m0s",
       "enabled": true,
+      "sandbox": "none",
       "stages": ["implementation", "completeness", "cleanliness", "style"],
       "auto_merge": false,
       "merge_method": "squash",
@@ -484,6 +485,12 @@ and are not printed, so a start that is going to work stays quiet.
 `--skip-doctor` bypasses the preflight. `bees tick` and `bees exec` never run
 it: they are debugging commands and must stay usable on a half-configured
 machine.
+
+Ahead of the doctor, and not bypassed by `--skip-doctor`, it checks that every
+role in the rotation asks for a [sandbox](configuration.md#sandboxing) bees can
+build here, and refuses to start naming the role when one does not: falling
+back to running that role unboxed would give it what it was configured to be
+kept away from.
 
 ```
 $ bees run
@@ -816,13 +823,18 @@ starting fresh:
 
 ```
 developer workers:
-  dev-1        issue #12    m   develop           round 1              since 8:22AM
-  dev-2        issue #14    s   review            round 2              since 8:31AM   resumed
+  dev-1        issue #12    m   develop           round 1              sandbox none      since 8:22AM
+  dev-2        issue #14    s   review            round 2              sandbox none      since 8:31AM   resumed
 ```
 
 The branch of a resumed worker may already carry work nobody reported, and the
 session that took over is told so in its prompt — see
 [crash recovery](architecture.md#the-developer-worker).
+
+`sandbox` is the mode the session running right now is boxed in, not the
+worker's: the stages of one worker run different roles, and a role's
+[`sandbox`](configuration.md#global-and-rolesname) is its own. A worker whose
+first session has not started reads `-`.
 
 The `roles:` table covers all five roles with what each is doing (`running` or
 `idle`; `-` for the developer and reviewer, whose work is in the workers table
