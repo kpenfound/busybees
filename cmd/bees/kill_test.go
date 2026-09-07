@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/kpenfound/busybees/internal/procs"
 	"github.com/kpenfound/busybees/internal/testutil"
 	"github.com/kpenfound/busybees/internal/workspace"
 )
@@ -83,5 +84,25 @@ func TestIsLeftoverWorkspace(t *testing.T) {
 				t.Fatalf("isLeftoverWorkspace(%s) = %v, want %v", tt.path, got, tt.want)
 			}
 		})
+	}
+}
+
+// What `bees kill` says it is stopping. A container-backed session whose
+// engine client is gone has no process to name, and "pid 0" would name the
+// wrong thing entirely.
+func TestKillTarget(t *testing.T) {
+	long := "0123456789abcdef0123456789abcdef"
+	for _, tc := range []struct {
+		name string
+		p    procs.Proc
+		want string
+	}{
+		{"a session on the host", procs.Proc{PID: 4321}, "pid 4321"},
+		{"a container session", procs.Proc{PID: 4321, Container: long}, "pid 4321 and container 0123456789ab"},
+		{"a container whose client is gone", procs.Proc{Container: long}, "container 0123456789ab"},
+	} {
+		if got := killTarget(tc.p); got != tc.want {
+			t.Errorf("%s: killTarget = %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }

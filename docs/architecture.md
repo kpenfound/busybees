@@ -967,16 +967,32 @@ form). Sessions of
 another project's factory are never reported, so `bees kill` run with one
 project's config cannot strand another project's issues.
 
-Every session `bees kill` stops through a pid file is marked: it writes
-`<session dir>/interrupted` naming the kill, so the next session for that
-issue is told the session was stopped rather than left to guess that the
-machine crashed (see *An interrupted session* under
+A session in the container sandbox is found through its container, because
+its agent runs in the container's own pid namespace where neither source
+reaches it. The engine is asked which of its running containers carry the
+`bees.session` label (`docker ps --filter label=bees.session`), and the
+label's value, the session directory, says which session each one is and
+scopes it to this factory the same way. The container engine client the
+process table does show counts as a session too, so the pid file naming it
+is not discarded as a reused pid; a session directory recording a container
+the engine no longer lists has its stale `container-id` file removed, as a
+stale pid file is. On a machine with no engine to ask there are no container
+sessions to find.
+
+Every session `bees kill` stops through a pid file or through its container
+is marked: it writes `<session dir>/interrupted` naming the kill, so the next
+session for that issue is told the session was stopped rather than left to
+guess that the machine crashed (see *An interrupted session* under
 [The developer worker](#the-developer-worker)). A process found only in the
 process table names no directory and is killed unmarked.
 
 The kill sends SIGTERM to the process group (sessions are started in a group
 of their own, so MCP servers and shells belong to it), waits `--grace`
-(default 5s), then SIGKILL. The command then removes every worktree of the
+(default 5s), then SIGKILL. A container is removed first, with `docker rm
+--force`: it outlives the engine client that started it, and the agent is
+inside it. A container whose engine client is already gone is stopped on
+its own, the only thing there is left to stop. The command then removes
+every worktree of the
 main clone that lives under the workspace root, prunes worktree metadata,
 deletes leftover workspace directories and resets the worker list in
 `status.json`. It refuses to run while the scheduler recorded in `status.json`

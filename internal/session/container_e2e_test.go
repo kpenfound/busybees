@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/procs"
 )
 
 // TestContainerEndToEnd runs a real developer session inside a real
@@ -116,7 +117,7 @@ Your final message must list the output of every step.`
 	if _, err := os.Stat("/outside-the-box"); err == nil {
 		t.Error("the session wrote to the host's root")
 	}
-	if _, err := os.Stat(filepath.Join(res.SessionDir, ContainerIDFile)); err == nil {
+	if _, err := os.Stat(filepath.Join(res.SessionDir, procs.ContainerIDFile)); err == nil {
 		t.Error("container id left behind")
 	}
 }

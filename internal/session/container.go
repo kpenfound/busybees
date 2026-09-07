@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/procs"
 )
 
 // A container session (config.SandboxContainer) runs the backend's command
@@ -44,25 +45,14 @@ import (
 //     `bees` commands are not available inside. A configured stdio MCP
 //     server starts inside the container and must be in the image; a
 //     remote one is reached as configured.
-//   - The engine writes the container's id to ContainerIDFile in the session
-//     directory, and the container is named after the session and labelled
-//     with the session directory, so a kill can find it. Stopping the
-//     session removes the container.
+//   - The engine writes the container's id to procs.ContainerIDFile in the
+//     session directory, and the container is named after the session and
+//     labelled with procs.ContainerLabel, so `bees kill` and the live
+//     view's kill key can find it. Stopping the session removes the
+//     container.
 //
 // The image (sandbox_image) must hold the agent, git and gh; nothing of the
 // host's toolchain is available inside.
-
-// ContainerIDFile is the file in a container session's directory the engine
-// writes the container's id to when it starts the container (--cidfile).
-// It is removed when the session ends, like the pid file, so a session
-// directory holding one is a session whose container may still be running.
-const ContainerIDFile = "container-id"
-
-// ContainerLabel is the label every container session's container carries,
-// with the session directory as its value, so `docker ps --filter
-// label=ContainerLabel` lists this factory's sessions and the value says
-// which each one is.
-const ContainerLabel = "bees.session"
 
 // containerHome is the session's home directory inside the container: a
 // tmpfs, so neither the image's home directory nor anything of the host's
@@ -253,8 +243,8 @@ func (c *container) command(ctx context.Context, bin string, args []string) (str
 	out := []string{
 		"run", "--rm", "--interactive",
 		"--name", c.name,
-		"--cidfile", filepath.Join(c.sessionDir, ContainerIDFile),
-		"--label", ContainerLabel + "=" + c.sessionDir,
+		"--cidfile", filepath.Join(c.sessionDir, procs.ContainerIDFile),
+		"--label", procs.ContainerLabel + "=" + c.sessionDir,
 		"--workdir", req.WorkDir,
 		"--mount", "type=tmpfs,destination=" + containerHome + ",tmpfs-mode=1777",
 	}
@@ -414,7 +404,7 @@ func (c *container) close() {
 		_ = c.server.Wait()
 		c.server = nil
 	}
-	_ = os.Remove(filepath.Join(c.sessionDir, ContainerIDFile))
+	procs.RemoveContainerID(c.sessionDir)
 }
 
 func (r *Runner) dockerBin() string {

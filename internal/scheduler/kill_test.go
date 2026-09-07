@@ -149,6 +149,50 @@ func TestKillingASingletonSessionEscalatesNothing(t *testing.T) {
 	}
 }
 
+// Stopping a container-backed session removes its container: the agent runs
+// inside it and outlives the engine client the session's pid file names, so
+// stopping the process alone would leave the session working.
+func TestKillingAContainerSessionRemovesItsContainer(t *testing.T) {
+	h := newHarness(t, noRolesTOML)
+	seedIssue(h, 1, "bees:in-progress", "m", time.Now().Add(-time.Hour))
+
+	// A stand-in for the container engine: `rm` records what it was told to
+	// remove. No test ever runs a real one.
+	engineDir := t.TempDir()
+	engine := filepath.Join(engineDir, "docker")
+	script := "#!/bin/sh\nshift\necho \"$@\" >> \"" + filepath.Join(engineDir, "rm.txt") + "\"\n"
+	if err := os.WriteFile(engine, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldEngine := procs.Engine
+	procs.Engine = engine
+	t.Cleanup(func() { procs.Engine = oldEngine })
+
+	dir := filepath.Join(t.TempDir(), "session")
+	cmd := liveProcess(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, procs.ContainerIDFile), []byte("aaa111\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h.sched.recordLiveSession("developer-issue-1-r1", liveSession{
+		role: config.RoleDeveloper, dir: dir, issue: 1,
+	})
+
+	if err := h.sched.KillSession(context.Background(), "developer-issue-1-r1"); err != nil {
+		t.Fatalf("KillSession: %v", err)
+	}
+	wantExited(t, cmd)
+	b, err := os.ReadFile(filepath.Join(engineDir, "rm.txt"))
+	if err != nil {
+		t.Fatalf("the container was not removed: %v", err)
+	}
+	if got := strings.TrimSpace(string(b)); got != "--force aaa111" {
+		t.Errorf("the engine was told %q, want --force aaa111", got)
+	}
+	if got := h.stateOfIssue(1); got != "needs-human" {
+		t.Errorf("issue #1 is %q, want needs-human", got)
+	}
+}
+
 // commentOn returns everything the fake gh was asked to comment on an issue.
 func commentOn(h *harness, n int) string {
 	h.gh.mu.Lock()

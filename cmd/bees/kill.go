@@ -27,7 +27,9 @@ func newKillCmd(g *globalFlags) *cobra.Command {
 state directory and from the process table, limited to sessions of this state
 directory), terminates them together with their process groups (MCP servers,
 shells), removes stale pid files, removes the temporary worktrees bees created
-and resets the worker list in status.json.
+and resets the worker list in status.json. A session in the container sandbox
+is found through its container, which the engine is asked for by label, and
+stopped by removing it.
 
 Sessions of another project's factory are never touched, however many
 factories share a machine.
@@ -70,18 +72,19 @@ scheduler as well.`,
 				if desc == "" {
 					desc = filepath.Base(p.SessionDir)
 				}
-				fmt.Printf("killing pid %d (%s): %s\n", p.PID, p.Source, truncateStr(desc, 100))
+				fmt.Printf("killing %s (%s): %s\n", killTarget(p), p.Source, truncateStr(desc, 100))
 				if dryRun {
 					continue
 				}
 				if err := procs.Kill(p, grace); err != nil {
-					fmt.Fprintf(os.Stderr, "warning: pid %d: %v\n", p.PID, err)
+					fmt.Fprintf(os.Stderr, "warning: %s: %v\n", killTarget(p), err)
 				}
 				// A session stopped here wrote no result, and the next
 				// session for its issue would otherwise have to guess
 				// whether the machine crashed. Only sessions found through a
-				// pid file name their directory; a process found in the
-				// process table alone is killed just the same, unmarked.
+				// pid file or through their container name their directory;
+				// a process found in the process table alone is killed just
+				// the same, unmarked.
 				if err := session.MarkInterrupted(p.SessionDir, "stopped by bees kill"); err != nil {
 					fmt.Fprintf(os.Stderr, "warning: mark session interrupted: %v\n", err)
 				}
@@ -114,6 +117,29 @@ scheduler as well.`,
 	cmd.Flags().BoolVar(&scheduler, "scheduler", false, "also stop a running bees scheduler")
 	cmd.Flags().DurationVar(&grace, "grace", procs.DefaultGrace, "time to wait after SIGTERM before SIGKILL")
 	return cmd
+}
+
+// killTarget names what stopping a session means for it: its process, and
+// the container it runs in when it is a container-backed session — which is
+// all there is to stop when the engine client that started the container is
+// already gone.
+func killTarget(p procs.Proc) string {
+	switch {
+	case p.PID > 0 && p.Container != "":
+		return fmt.Sprintf("pid %d and container %s", p.PID, shortID(p.Container))
+	case p.Container != "":
+		return "container " + shortID(p.Container)
+	default:
+		return fmt.Sprintf("pid %d", p.PID)
+	}
+}
+
+// shortID abbreviates a container id the way the engine does.
+func shortID(id string) string {
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
 }
 
 // cleanWorktrees removes every worktree of the main clone that lives under
