@@ -489,7 +489,7 @@ func TestAStackedPullRequestWaitsForThePredecessorsApproval(t *testing.T) {
 	}
 
 	labelApproved(h, 2)
-	waitWorkers(t, h, cancel, 30*time.Second)
+	waitWorkers(t, h, cancel, 10*time.Second)
 	if got := strings.Join(h.gh.history[1], ","); got != "bees:in-progress,bees:review,bees:approved" {
 		t.Fatalf("#1 history after #2's approval: %s", got)
 	}
@@ -542,7 +542,7 @@ func TestAStackedPullRequestWhosePredecessorClosesUnapproved(t *testing.T) {
 			h.gh.issues[2].State = "CLOSED"
 			tc.closed(h)
 			h.gh.mu.Unlock()
-			waitWorkers(t, h, cancel, 30*time.Second)
+			waitWorkers(t, h, cancel, 10*time.Second)
 			if got := strings.Join(h.gh.history[1], ","); got != tc.want {
 				t.Fatalf("#1 history: %s, want %s", got, tc.want)
 			}
@@ -576,7 +576,7 @@ func TestAWorkerKilledInStackWaitResumesInIt(t *testing.T) {
 	h.gh.mu.Lock()
 	h.gh.errFor["issue view"] = fmt.Errorf("gh: could not reach github") // the poll the scheduler dies on
 	h.gh.mu.Unlock()
-	waitWorkers(t, h, cancel, 30*time.Second)
+	waitWorkers(t, h, cancel, 10*time.Second)
 	h.gh.mu.Lock()
 	delete(h.gh.errFor, "issue view")
 	h.gh.mu.Unlock()
@@ -608,7 +608,7 @@ func TestAWorkerKilledInStackWaitResumesInIt(t *testing.T) {
 	}
 
 	labelApproved(h, 2)
-	waitWorkers(t, h, cancel, 30*time.Second)
+	waitWorkers(t, h, cancel, 10*time.Second)
 	if got := strings.Join(h.gh.history[1], ","); got != "bees:in-progress,bees:review,bees:approved" {
 		t.Fatalf("#1 history after #2's approval: %s", got)
 	}
@@ -632,7 +632,7 @@ func TestAWorkerResumedIntoStackWaitAfterThePredecessorMergedApproves(t *testing
 	h.gh.mu.Lock()
 	h.gh.errFor["issue view"] = fmt.Errorf("gh: could not reach github")
 	h.gh.mu.Unlock()
-	waitWorkers(t, h, cancel, 30*time.Second)
+	waitWorkers(t, h, cancel, 10*time.Second)
 
 	// While the scheduler was down a person merged #2 by hand and its issue
 	// closed, never labelled approved; GitHub retargeted #201 at main.
