@@ -979,6 +979,14 @@ the engine no longer lists has its stale `container-id` file removed, as a
 stale pid file is. On a machine with no engine to ask there are no container
 sessions to find.
 
+The `bees` binary is not in the container either, so the built-in MCP server
+of such a session runs on the host, in a process group of its own that the
+scheduler's own shutdown does not reach. The runner records its pid in
+`<session dir>/mcp-server-pid` and removes the file when the session ends,
+so a file left behind names a server a crash orphaned: `bees kill` stops it
+along with the session's container and its engine client, and drops a file
+naming a process that has gone, as it does a stale pid file.
+
 Every session `bees kill` stops through a pid file or through its container
 is marked: it writes `<session dir>/interrupted` naming the kill, so the next
 session for that issue is told the session was stopped rather than left to
@@ -990,8 +998,9 @@ The kill sends SIGTERM to the process group (sessions are started in a group
 of their own, so MCP servers and shells belong to it), waits `--grace`
 (default 5s), then SIGKILL. A container is removed first, with `docker rm
 --force`: it outlives the engine client that started it, and the agent is
-inside it. A container whose engine client is already gone is stopped on
-its own, the only thing there is left to stop. The command then removes
+inside it. The built-in MCP server goes last, so the tools stay answerable
+until what was using them is gone. Any of the three can be all there is
+left to stop. The command then removes
 every worktree of the
 main clone that lives under the workspace root, prunes worktree metadata,
 deletes leftover workspace directories and resets the worker list in

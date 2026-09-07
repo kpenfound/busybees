@@ -1030,8 +1030,10 @@ A session in the [container sandbox](configuration.md#sandboxing) is found a
 third way, because its agent runs in the container rather than on the host:
 the engine is asked which of its running containers carry the `bees.session`
 label, whose value is the session directory, and stopping such a session
-removes its container. A container whose `docker run` client is already gone
-is stopped on its own.
+removes its container. Such a session also leaves the pid of the MCP server
+bees runs on the host for it in `mcp-server-pid`, and that server is stopped
+with it. A container, an engine client or a server whose session is
+otherwise gone is stopped on its own.
 
 Each session it stops through a pid file or through its container is also
 marked as stopped, by an `interrupted` file in the session's directory. The
