@@ -931,6 +931,52 @@ Once the reviewer approves, the developer worker enters a checks stage:
 With the reviewer role disabled and `auto_merge` on, a developer's pull
 request skips review and goes straight to the checks stage.
 
+## Stacked features
+
+A feature broken into work items linked with `Blocked by #N`
+([Dependencies](#dependencies)) is built independently by default: every
+work item's developer worker branches from the default branch and opens a
+pull request against it, whatever else in the same feature is open. With
+[`scheduler.stacked_prs`](configuration.md#scheduler) on, a work item whose
+blocker is a sub-issue of the same feature and already has an open pull
+request is built on top of that blocker's branch instead: the `blocked_by`
+chain becomes a chain of branches and pull requests, each based on its
+predecessor's, rather than every work item merging into the default branch
+on its own.
+
+Take a feature with two work items, #2 blocked by #1:
+
+- #1 is built and reviewed like any other work item: `bees/issue-1` branches
+  from the default branch, and its pull request targets it.
+- #2 stays waiting, as [Dependencies](#dependencies) describes, until #1 has
+  an open pull request. From then on `bees/issue-2` branches from
+  `bees/issue-1` instead of the default branch, and its pull request targets
+  `bees/issue-1` too.
+- If #1 merges, GitHub retargets #2's pull request at the default branch on
+  its own. A worker resuming #2 after that finds no predecessor left and
+  treats it as an ordinary work item from then on.
+
+Review stays pull request by pull request: the reviewer checks out #2's
+branch and reads its diff with `gh pr diff`, which shows only #2's own
+change against #1's branch, whether or not #1 has merged yet.
+
+Approval waits on the stack. Once #2's own review passes, its pull request
+is not labelled `bees:approved`, and with `auto_merge` on it is not merged,
+until #1's is: merging #2 into #1's branch while #1 is still under review
+would carry unreviewed content into the default branch once #1 merges in
+turn. The developer worker holds its slot rather than freeing it for other
+work: `bees status` shows it in the `stack-wait` stage while it polls #1's
+issue, at `roles.reviewer.checks_poll_interval`, until #1 reaches
+`bees:approved` or #1's pull request merges. Either clears the hold, and #2
+goes on to `bees:approved` (and, with `auto_merge`, the checks stage) as
+usual.
+
+Merging is still your call, pull request by pull request, exactly as
+[Merging](#merging) describes: stacking changes when a pull request may
+reach `bees:approved`, not who merges it or how. Merge #1 first, so #2 is
+merging reviewed content into the default branch rather than into a branch
+still under review.
+
 ## Escalation: `bees:needs-human`
 
 ### Retries first
