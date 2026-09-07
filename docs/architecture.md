@@ -463,31 +463,30 @@ stateDiagram-v2
   concurrent adds sharing one would race for it.
 - **Resume.** Before working each stage the worker records the stage it is in
   (`develop`, `prereview`, `review`, `stack-wait` or `checks`), the gate a
-  developer round
-  returns to, and whether the pre-review checks have been read, in
-  `<state_dir>/issues/<n>.json`. A worker that finds a recorded stage comes
-  back to it, so a `bees run` killed in the checks stage or in the middle of a
-  check-fix round carries on there instead of paying for a review that has
-  already happened: a workflow label says an issue is in review, never whether
-  its review has run. The labels stay the human-facing truth all the same. A
-  recorded stage they contradict is dropped with a log line and the worker
-  starts where the labels say: one of the four review-loop stages on an issue
-  with no open pull request, or on one a person put back to `bees:ready`, and
-  a stage name this build does not run. `develop` fits any label, so the loop
-  state recorded with it is dropped on the same test: an issue whose labels
-  have left the review loop starts a fresh round, whatever the last worker was
-  doing. One develop record is exempt: the round the post-approval checks send
-  back is recorded before the develop stage can relabel the issue
-  `bees:in-progress`, so it sits under `bees:approved` legitimately and keeps
-  the gate it returns to. The record also names the pull request it was
-  written for, and one written for another pull request, or before the number
-  was known, is dropped the same way: a person can close a pull request and
-  open another on the same branch while nothing is running, and neither the
-  labels nor the branch tell the two apart. With nothing recorded, the worker
-  looks for an open pull request on the branch: when one exists and the issue
-  is labelled `bees:review` it starts in prereview (in review, with
-  `pre_review_checks = false` or the reviewer disabled), otherwise in develop.
-  That is how work survives a restart of `bees run`.
+  developer round returns to, and whether the pre-review checks have been
+  read, in `<state_dir>/issues/<n>.json`. A worker that finds a recorded stage
+  comes back to it, so a `bees run` killed in the checks stage or in the
+  middle of a check-fix round carries on there instead of paying for a review
+  that has already happened: a workflow label says an issue is in review,
+  never whether its review has run. The labels stay the human-facing truth all
+  the same. A recorded stage they contradict is dropped with a log line and
+  the worker starts where the labels say: one of the four review-loop stages
+  on an issue with no open pull request, or on one a person put back to
+  `bees:ready`, and a stage name this build does not run. `develop` fits any
+  label, so the loop state recorded with it is dropped on the same test: an
+  issue whose labels have left the review loop starts a fresh round, whatever
+  the last worker was doing. One develop record is exempt: the round the
+  post-approval checks send back is recorded before the develop stage can
+  relabel the issue `bees:in-progress`, so it sits under `bees:approved`
+  legitimately and keeps the gate it returns to. The record also names the
+  pull request it was written for, and one written for another pull request,
+  or before the number was known, is dropped the same way: a person can close
+  a pull request and open another on the same branch while nothing is running,
+  and neither the labels nor the branch tell the two apart. With nothing
+  recorded, the worker looks for an open pull request on the branch: when one
+  exists and the issue is labelled `bees:review` it starts in prereview (in
+  review, with `pre_review_checks = false` or the reviewer disabled),
+  otherwise in develop. That is how work survives a restart of `bees run`.
 - **An interrupted session.** The recorded stage says where the worker was,
   not what happened to the session that was running when the scheduler died:
   it left a transcript no `result.json` closed, and a branch that may carry
