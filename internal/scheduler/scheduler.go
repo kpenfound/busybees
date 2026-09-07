@@ -582,15 +582,17 @@ func (s *Scheduler) poll(ctx context.Context) (*snapshot, error) {
 	s.lastPoll = s.now()
 	s.lastIssues, s.lastPRs, s.polled = issues, prs, true
 	s.mu.Unlock()
-	snap := s.classify(issues, prs)
+	snap := s.classify(ctx, issues, prs)
 	s.setQueues(snap)
 	return snap, nil
 }
 
-// classify buckets one poll's issues and PRs by workflow state. It does not
-// touch GitHub and never mutates its arguments, so the lists cached from the
-// last poll can be classified again on every local pass.
-func (s *Scheduler) classify(issues []github.Issue, prs []github.PR) *snapshot {
+// classify buckets one poll's issues and PRs by workflow state. It never
+// mutates its arguments, so the lists cached from the last poll can be
+// classified again on every local pass, and it touches GitHub for one thing
+// only: with scheduler.stacked_prs on, the feature parents that decide
+// whether a held ready issue can be stacked (see fillWaiting).
+func (s *Scheduler) classify(ctx context.Context, issues []github.Issue, prs []github.PR) *snapshot {
 	snap := &snapshot{issues: issues, prs: prs, byState: map[string][]github.Issue{},
 		prByBranch: map[string]github.PR{}, prByNumber: map[int]github.PR{},
 		byNumber: map[int]github.Issue{}, open: map[int]bool{}, waiting: map[int][]int{}}
@@ -621,12 +623,12 @@ func (s *Scheduler) classify(issues []github.Issue, prs []github.PR) *snapshot {
 	for st := range snap.byState {
 		sort.Slice(snap.byState[st], func(a, b int) bool { return snap.byState[st][a].CreatedAt.Before(snap.byState[st][b].CreatedAt) })
 	}
-	s.fillWaiting(snap, byNumber)
 	for _, p := range prs {
 		p.Labels = p.Labels[:len(p.Labels):len(p.Labels)]
 		snap.prByBranch[p.HeadRefName] = p
 		snap.prByNumber[p.Number] = p
 	}
+	s.fillWaiting(ctx, snap, byNumber)
 	return snap
 }
 
@@ -929,7 +931,7 @@ func (s *Scheduler) localPass(ctx context.Context) {
 	if !ok {
 		return
 	}
-	snap := s.classify(issues, prs)
+	snap := s.classify(ctx, issues, prs)
 	s.setQueues(snap)
 	err := s.reconcile(ctx, snap)
 	s.op("reconcile", err, "reconcile", "err", capErrors(err))

@@ -58,10 +58,27 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 	branch := s.BranchFor(issue.Number)
 	log := s.log.With("worker", w.Name, "issue", issue.Number, "branch", branch)
 
+	// The branch the work item is cut from and its pull request targets:
+	// the default branch, or, with scheduler.stacked_prs, the branch of the
+	// work item it is blocked by while that one's pull request is open.
+	// Resolved once per worker, before the worktree exists, and handed to
+	// every developer session of this worker: a predecessor merged between
+	// rounds is in the default branch, and GitHub retargets the stacked
+	// pull request there itself.
+	base := s.cfg.Project.DefaultBranch
+	if n := s.stackPredecessor(ctx, issue, func(n int) bool {
+		pr, err := s.gh.FindPRForBranch(ctx, s.BranchFor(n))
+		return err == nil && pr != nil
+	}); n != 0 {
+		base = s.BranchFor(n)
+		log = log.With("stacked_on", n)
+		log.Info("stacking on the predecessor's branch", "base", base)
+	}
+
 	if err := s.ws.Fetch(ctx); err != nil {
 		return fmt.Errorf("fetch: %w", err)
 	}
-	ws, err := s.ws.Branch(ctx, w.Name, branch, s.cfg.Project.DefaultBranch)
+	ws, err := s.ws.Branch(ctx, w.Name, branch, base)
 	if err != nil {
 		_ = s.escalate(ctx, issue.Number, "Could not create a worktree for branch `"+branch+"`: "+err.Error())
 		return fmt.Errorf("workspace: %w", err)
@@ -162,7 +179,7 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 			started := s.now()
 			res, err := s.runSessionWithRetry(ctx, sessionSpec{
 				role: config.RoleDeveloper, name: name, workDir: ws.RepoDir, branch: branch, worker: w,
-				data: prompts.Data{Issue: &fresh, PR: pr, Inbox: inbox, Round: bookkeeping.Round, MaxRounds: maxRounds, Parent: parent},
+				data: prompts.Data{Issue: &fresh, PR: pr, Inbox: inbox, Round: bookkeeping.Round, MaxRounds: maxRounds, Parent: parent, BaseBranch: base},
 			})
 			if err != nil {
 				return err

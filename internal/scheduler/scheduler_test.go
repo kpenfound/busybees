@@ -1707,7 +1707,7 @@ func TestLocalPassUnblocksIssueOffHours(t *testing.T) {
 	}
 	// The new state label reached the cached poll, so the local passes until
 	// the next one classify the issue as ready and do not move it again.
-	cached := h.sched.classify(h.sched.lastIssues, h.sched.lastPRs)
+	cached := h.sched.classify(context.Background(), h.sched.lastIssues, h.sched.lastPRs)
 	if len(cached.byState["blocked"]) != 0 || len(cached.byState["ready"]) != 1 {
 		t.Fatalf("cached poll still says blocked: %v", h.sched.lastIssues)
 	}
@@ -1921,7 +1921,7 @@ func TestUnblockedIssueIsSizedInTheSamePass(t *testing.T) {
 	}
 	// Both edits reached the cached poll, so the local passes until the next
 	// poll classify the issue as a sized ready one and add neither again.
-	cached := h.sched.classify(h.sched.lastIssues, h.sched.lastPRs).byState["ready"]
+	cached := h.sched.classify(context.Background(), h.sched.lastIssues, h.sched.lastPRs).byState["ready"]
 	if len(cached) != 1 || !github.HasLabel(cached[0].Labels, "bees:ready") || !github.HasLabel(cached[0].Labels, "bees:size/m") {
 		t.Fatalf("cached issue: %v", h.sched.lastIssues)
 	}

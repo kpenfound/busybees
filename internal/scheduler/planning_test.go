@@ -146,7 +146,7 @@ func TestClassifyIgnoresThePlanningLabels(t *testing.T) {
 		{Number: 3, Title: "feedback", CreatedAt: now, Labels: lbl("bees", "bees:feedback", "bees:planned")},
 		{Number: 4, Title: "no state", CreatedAt: now, Labels: lbl("bees", "bees:planned")},
 	}
-	snap := h.sched.classify(issues, nil)
+	snap := h.sched.classify(context.Background(), issues, nil)
 	if got := len(snap.byState["ready"]); got != 1 || snap.byState["ready"][0].Number != 1 {
 		t.Errorf("a planning work item left the ready bucket: %v", snap.byState["ready"])
 	}
