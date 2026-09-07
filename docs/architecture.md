@@ -448,8 +448,14 @@ stateDiagram-v2
   worker holds its `max_developers` slot for as long as that takes; there is
   no timeout. A predecessor whose issue closes without ever being approved,
   with its pull request open or closed unmerged, ends the wait with an
-  escalation. Without the key, or for a pull request built from the default
-  branch, the stage is never entered.
+  escalation. A worker that starts on an issue whose open pull request still
+  targets another work item's branch, while no open pull request under the
+  same feature is there to stack on (the predecessor's closed unmerged while
+  `bees run` was down; GitHub retargets a stacked pull request only when its
+  base branch is deleted, which a merge does and a plain close does not),
+  escalates before it runs any stage rather than building or approving
+  against a branch nobody is going to merge. Without the key, or for a pull
+  request built from the default branch, the stage is never entered.
 - **Workspace.** `git fetch`, then one worktree for the issue on
   `<branch_prefix>issue-N`: created from `<project.remote>/<default_branch>`
   when the branch is new, checked out tracking the remote when it exists there
