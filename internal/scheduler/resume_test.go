@@ -247,6 +247,12 @@ func TestResumeStage(t *testing.T) {
 			state: "ready", pr: pr, stage: "develop", after: "review"},
 		{name: "a review stage whose pull request has gone", bk: state.IssueState{PR: fakePR, WorkerStage: "prereview", PreReviewDone: true},
 			state: "review", stage: "develop", after: "review"},
+		// The wait for the stack: the label still says review, and the record
+		// is what says the review has passed.
+		{name: "remembered waiting for the stack", bk: state.IssueState{PR: fakePR, WorkerStage: "stack-wait", AfterDevelop: "review", PreReviewDone: true},
+			state: "review", pr: pr, stage: "stack-wait", after: "review", prereviewDone: true},
+		{name: "a stack-wait stage on an issue sent back to ready", bk: state.IssueState{PR: fakePR, WorkerStage: "stack-wait", AfterDevelop: "review", PreReviewDone: true},
+			state: "ready", pr: pr, stage: "develop", after: "review"},
 		{name: "a stage no version of this worker runs", bk: state.IssueState{PR: fakePR, WorkerStage: "reviewing", PreReviewDone: true},
 			state: "review", pr: pr, stage: "prereview", after: "review"},
 		// Nothing in the file can send the worker to a stage that does not

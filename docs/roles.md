@@ -408,7 +408,7 @@ alike, and a copy of any comment a person writes on the issue while it is in
 
 | Status | What the orchestrator does |
 |---|---|
-| `approved` | Every stage passed. Labels the pull request and the issue `bees:approved` and requests a review from the people in `scheduler.notify`. Without `auto_merge` the worker is freed and a person merges; with it, the worker enters the checks stage ([Checks mode](#checks-mode-a-failing-check)). |
+| `approved` | Every stage passed. Labels the pull request and the issue `bees:approved` and requests a review from the people in `scheduler.notify`. Without `auto_merge` the worker is freed and a person merges; with it, the worker enters the checks stage ([Checks mode](#checks-mode-a-failing-check)). A pull request stacked on another one (`scheduler.stacked_prs`) is labelled only once the one beneath it is approved; the worker waits for that first. |
 | `changes-requested` | Checks that feedback was mailed to the developer during the session (none: escalate). On the last round: escalate. Otherwise moves the issue back to `bees:in-progress` and runs the developer with the feedback in its mail. |
 | `failed`, or no outcome | Escalates. |
 

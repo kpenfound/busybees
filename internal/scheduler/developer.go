@@ -65,12 +65,24 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 	// every developer session of this worker: a predecessor merged between
 	// rounds is in the default branch, and GitHub retargets the stacked
 	// pull request there itself.
+	//
+	// The predecessor's pull request is kept for the stack-wait stage: once
+	// this pull request's own review has passed, its approval waits for the
+	// one beneath it (awaitStack), and that stage needs the pull request to
+	// tell a predecessor that merged from one that was abandoned.
 	base := s.cfg.Project.DefaultBranch
+	var stackedOn int
+	var stackPR *github.PR
+	found := map[int]*github.PR{}
 	if n := s.stackPredecessor(ctx, issue, func(n int) bool {
 		pr, err := s.gh.FindPRForBranch(ctx, s.BranchFor(n))
+		if err == nil && pr != nil {
+			found[n] = pr
+		}
 		return err == nil && pr != nil
 	}); n != 0 {
 		base = s.BranchFor(n)
+		stackedOn, stackPR = n, found[n]
 		log = log.With("stacked_on", n)
 		log.Info("stacking on the predecessor's branch", "base", base)
 	}
@@ -204,6 +216,10 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 				}
 				if !s.roleEnabled(config.RoleReviewer) {
 					log.Info("reviewer disabled; treating PR as approved")
+					if stackedOn != 0 {
+						stage = "stack-wait"
+						continue
+					}
 					if err := s.approve(ctx, issue.Number, pr); err != nil || !policy.AutoMerge {
 						return err
 					}
@@ -297,6 +313,10 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 			switch status {
 			case OutcomeApproved:
 				log.Info("pull request approved", "pr", pr.Number, "note", note)
+				if stackedOn != 0 {
+					stage = "stack-wait"
+					continue
+				}
 				if err := s.approve(ctx, issue.Number, pr); err != nil || !policy.AutoMerge {
 					return err
 				}
@@ -363,6 +383,35 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 				afterDevelop = "prereview"
 			}
 			stage = next
+
+		case "stack-wait":
+			// This pull request's own review has passed, but it is stacked
+			// on another one, and it is not approved until that one is:
+			// approve() is what tells a person — and the checks stage,
+			// with auto_merge — that the pull request may be merged, and
+			// merging the top of a stack whose base is still under review
+			// would merge it into that base rather than the default branch.
+			// The worker holds its slot while it waits; that is the cost of
+			// reviewing a stack pull request by pull request.
+			s.updateWorker(w, "stack-wait", bookkeeping.Round)
+			if pr == nil {
+				return s.escalate(ctx, issue.Number, "Issue is in review but no pull request exists for branch `"+branch+"`.")
+			}
+			// A resumed worker resolves its predecessor afresh, and finds
+			// none when the predecessor's pull request has closed since:
+			// merged, so the default branch has it and this pull request
+			// targets that branch, and there is nothing left to wait for.
+			if stackedOn != 0 {
+				log.Info("waiting for the predecessor's approval", "pr", pr.Number, "predecessor", stackedOn)
+				cleared, err := s.awaitStack(ctx, issue, pr, stackedOn, stackPR, policy)
+				if err != nil || !cleared {
+					return err
+				}
+			}
+			if err := s.approve(ctx, issue.Number, pr); err != nil || !policy.AutoMerge {
+				return err
+			}
+			stage = "checks"
 
 		case "checks":
 			round := bookkeeping.CheckFixRounds + 1
@@ -498,7 +547,7 @@ func firstReviewStage(policy config.MergePolicy) string {
 // workerStages are the stages workIssue runs, and the values IssueState
 // remembers. They are the developer worker's own state machine, not
 // roles.reviewer.stages, which are sections of one reviewer session's prompt.
-var workerStages = []string{"develop", "prereview", "review", "checks"}
+var workerStages = []string{"develop", "prereview", "review", "stack-wait", "checks"}
 
 // postApprovalFixRound reports whether a record is the develop round of a
 // post-approval check fix: the checks stage found a failing check, the
@@ -607,7 +656,7 @@ func (s *Scheduler) resumeStage(log *slog.Logger, bk state.IssueState, issue git
 }
 
 // stageMatchesLabels reports whether a remembered stage still agrees with what
-// the issue's labels say. Only develop needs nothing: the three stages of the
+// the issue's labels say. Only develop needs nothing: the four stages of the
 // review loop are meaningless without an open pull request, and an issue back
 // in a state that has not reached one — bees:ready after a conflict reopened
 // it, or anything a person set by hand — is one whose review is over whatever
@@ -775,6 +824,50 @@ func checkNames(checks []github.Check) string {
 		names = append(names, c.Name)
 	}
 	return strings.Join(names, ", ")
+}
+
+// awaitStack is the stack-wait stage's wait: it polls the issue this one is
+// stacked on (predecessor, with pull request predPR) every
+// roles.reviewer.checks_poll_interval, the cadence the checks stage already
+// waits at, until the hold clears or can never clear. It reports true when
+// the pull request may be approved: the predecessor is labelled
+// bees:approved, or its pull request has merged — GitHub retargets a stacked
+// pull request at the default branch when its base merges, so nothing
+// unreviewed is beneath it any more. It reports false, with the issue
+// escalated, when the predecessor's issue closed without either: its pull
+// request is still open, or was closed unmerged, and this pull request
+// targets a branch nobody approved. No timeout: a stack waits as long as the
+// review beneath it takes, and a person who wants it out of the way closes
+// or approves that review.
+//
+// A merged predecessor is normally approved too, and the label answers
+// first; the pull request is read only for a predecessor that closed
+// without the label — merged by hand, or abandoned.
+func (s *Scheduler) awaitStack(ctx context.Context, issue github.Issue, pr *github.PR, predecessor int, predPR *github.PR, policy config.MergePolicy) (bool, error) {
+	for {
+		pred, err := s.gh.GetIssue(ctx, predecessor)
+		if err != nil {
+			return false, err
+		}
+		if github.HasLabel(pred.Labels, s.labels.Approved) {
+			return true, nil
+		}
+		if pred.State != "" && !strings.EqualFold(pred.State, "open") {
+			fresh, err := s.gh.GetPR(ctx, predPR.Number)
+			if err != nil {
+				return false, err
+			}
+			if fresh.MergedAt != nil || strings.EqualFold(fresh.State, "merged") {
+				s.log.Info("the predecessor merged without being approved; nothing is beneath the stack any more", "issue", issue.Number, "pr", pr.Number, "predecessor", predecessor)
+				return true, nil
+			}
+			return false, s.escalate(ctx, issue.Number, fmt.Sprintf("Pull request #%d passed its review, but it is stacked on #%d's pull request #%d, and #%d closed without being approved. Merging #%d now would land it on a branch nobody approved. Reopen #%d, or retarget #%d at `%s` and hand it back.",
+				pr.Number, predecessor, predPR.Number, predecessor, pr.Number, predecessor, pr.Number, s.cfg.Project.DefaultBranch))
+		}
+		if err := sleepCtx(ctx, policy.ChecksPollInterval); err != nil {
+			return false, err
+		}
+	}
 }
 
 // approve labels an approved PR and its issue. Merging, when enabled,

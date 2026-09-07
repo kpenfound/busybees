@@ -395,17 +395,19 @@ later turn written to its stdin.
 
 One worker owns one issue from claim to approval (or, with
 `roles.reviewer.auto_merge`, to merge), or until the factory gives it up. It
-is a small state machine with four stages:
+is a small state machine with five stages:
 
 ```mermaid
 stateDiagram-v2
     [*] --> develop
     [*] --> prereview: resumed with nothing recorded, an open PR and label bees:review
     [*] --> review: resumed in the stage the issue's bookkeeping recorded
+    [*] --> stack_wait: resumed in the stage the issue's bookkeeping recorded
     [*] --> checks: resumed in the stage the issue's bookkeeping recorded
     develop --> prereview: pr-opened / pr-updated (PR found), before the first review
     develop --> review: a later review round, or pre_review_checks = false
     develop --> checks: pr-opened with the reviewer disabled and auto_merge on
+    develop --> stack_wait: pr-opened with the reviewer disabled, on a stacked PR
     develop --> [*]: question (issue to blocked)
     develop --> [*]: failed / no PR (escalate)
     prereview --> review: checks pass / none reported / pending at the timeout / read failed
@@ -415,6 +417,10 @@ stateDiagram-v2
     develop --> prereview: pr-updated while fixing them (returns to prereview)
     review --> [*]: approved, auto_merge off
     review --> checks: approved, auto_merge on
+    review --> stack_wait: approved, stacked on another pull request
+    stack_wait --> [*]: predecessor approved or merged, auto_merge off
+    stack_wait --> checks: predecessor approved or merged, auto_merge on
+    stack_wait --> [*]: predecessor closed unapproved (escalate)
     review --> develop: changes-requested, round under max_review_rounds
     review --> [*]: changes-requested at max_review_rounds (escalate)
     review --> [*]: failed (escalate)
@@ -426,6 +432,24 @@ stateDiagram-v2
     develop --> checks: pr-updated while fixing checks (returns to checks)
 ```
 
+- **The stack.** With `scheduler.stacked_prs`, a work item blocked by another
+  one under the same feature is cut from that one's branch while its pull
+  request is open, and its own pull request targets that branch. Its review
+  runs as any other, but approval waits for the stack: a verdict of `approved`
+  on a stacked pull request takes the worker to `stack-wait` (`stack_wait` in
+  the diagram), where it polls the predecessor's issue every
+  `roles.reviewer.checks_poll_interval` and approves its own pull request,
+  exactly as the direct path would have, once the predecessor carries
+  `bees:approved` or its pull request has merged.
+  Until then the pull request carries no approval label, is not in the
+  Approved PRs panel and is not merged by `auto_merge`: merging the top of a
+  stack merges it into its base, and a base still under review would take
+  unreviewed content into the default branch when it merges in turn. The
+  worker holds its `max_developers` slot for as long as that takes; there is
+  no timeout. A predecessor whose issue closes without ever being approved,
+  with its pull request open or closed unmerged, ends the wait with an
+  escalation. Without the key, or for a pull request built from the default
+  branch, the stage is never entered.
 - **Workspace.** `git fetch`, then one worktree for the issue on
   `<branch_prefix>issue-N`: created from `<project.remote>/<default_branch>`
   when the branch is new, checked out tracking the remote when it exists there
@@ -438,31 +462,31 @@ stateDiagram-v2
   name: `git worktree add` derives its metadata id from the leaf name, and two
   concurrent adds sharing one would race for it.
 - **Resume.** Before working each stage the worker records the stage it is in
-  (`develop`, `prereview`, `review` or `checks`), the gate a developer round
-  returns to, and whether the pre-review checks have been read, in
-  `<state_dir>/issues/<n>.json`. A worker that finds a recorded stage comes
-  back to it, so a `bees run` killed in the checks stage or in the middle of a
-  check-fix round carries on there instead of paying for a review that has
-  already happened: a workflow label says an issue is in review, never whether
-  its review has run. The labels stay the human-facing truth all the same. A
-  recorded stage they contradict is dropped with a log line and the worker
-  starts where the labels say: one of the three review-loop stages on an issue
-  with no open pull request, or on one a person put back to `bees:ready`, and
-  a stage name this build does not run. `develop` fits any label, so the loop
-  state recorded with it is dropped on the same test: an issue whose labels
-  have left the review loop starts a fresh round, whatever the last worker was
-  doing. One develop record is exempt: the round the post-approval checks send
-  back is recorded before the develop stage can relabel the issue
-  `bees:in-progress`, so it sits under `bees:approved` legitimately and keeps
-  the gate it returns to. The record also names the pull request it was
-  written for, and one written for another pull request, or before the number
-  was known, is dropped the same way: a person can close a pull request and
-  open another on the same branch while nothing is running, and neither the
-  labels nor the branch tell the two apart. With nothing recorded, the worker
-  looks for an open pull request on the branch: when one exists and the issue
-  is labelled `bees:review` it starts in prereview (in review, with
-  `pre_review_checks = false` or the reviewer disabled), otherwise in develop.
-  That is how work survives a restart of `bees run`.
+  (`develop`, `prereview`, `review`, `stack-wait` or `checks`), the gate a
+  developer round returns to, and whether the pre-review checks have been
+  read, in `<state_dir>/issues/<n>.json`. A worker that finds a recorded stage
+  comes back to it, so a `bees run` killed in the checks stage or in the
+  middle of a check-fix round carries on there instead of paying for a review
+  that has already happened: a workflow label says an issue is in review,
+  never whether its review has run. The labels stay the human-facing truth all
+  the same. A recorded stage they contradict is dropped with a log line and
+  the worker starts where the labels say: one of the four review-loop stages
+  on an issue with no open pull request, or on one a person put back to
+  `bees:ready`, and a stage name this build does not run. `develop` fits any
+  label, so the loop state recorded with it is dropped on the same test: an
+  issue whose labels have left the review loop starts a fresh round, whatever
+  the last worker was doing. One develop record is exempt: the round the
+  post-approval checks send back is recorded before the develop stage can
+  relabel the issue `bees:in-progress`, so it sits under `bees:approved`
+  legitimately and keeps the gate it returns to. The record also names the
+  pull request it was written for, and one written for another pull request,
+  or before the number was known, is dropped the same way: a person can close
+  a pull request and open another on the same branch while nothing is running,
+  and neither the labels nor the branch tell the two apart. With nothing
+  recorded, the worker looks for an open pull request on the branch: when one
+  exists and the issue is labelled `bees:review` it starts in prereview (in
+  review, with `pre_review_checks = false` or the reviewer disabled),
+  otherwise in develop. That is how work survives a restart of `bees run`.
 - **An interrupted session.** The recorded stage says where the worker was,
   not what happened to the session that was running when the scheduler died:
   it left a transcript no `result.json` closed, and a branch that may carry

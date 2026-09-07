@@ -389,3 +389,309 @@ func TestStackedPRsFallBackToTheDefaultBranchOnceThePredecessorMerged(t *testing
 		t.Fatalf("#1 should target the default branch:\n%s", sys)
 	}
 }
+
+// stackedPR is the pull request #1's developer opens on top of #2's branch
+// in the tests below.
+const stackedPR = 201
+
+// seedStack sets up a two-step stack under feature #5: #1 is blocked by #2,
+// #2's pull request (fakePR, on bees/issue-2) is open, and #2 itself is
+// blocked on a question to the project manager, so no worker takes it and
+// the test alone decides when it is approved. #1's developer opens stackedPR
+// on bees/issue-2.
+func seedStack(t *testing.T, h *harness) {
+	t.Helper()
+	h.gh.parents = map[int]int{1: 5, 2: 5}
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Second step", Body: "Blocked by #2\n\nBuild on it.", State: "OPEN",
+		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/m"}}, CreatedAt: time.Now().Add(-time.Hour)}
+	h.gh.issues[2] = &github.Issue{Number: 2, Title: "First step", State: "OPEN",
+		Labels: []github.Label{{Name: "bees"}, {Name: "bees:blocked"}, {Name: "bees:size/m"}}, CreatedAt: time.Now()}
+	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-2", BaseRefName: "main",
+		Labels: []github.Label{{Name: "bees"}}}
+	if err := os.WriteFile(h.gh.prMarker, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pushBranch(t, h.clone, "bees/issue-2") // #2's developer pushed its branch
+	h.gh.prs[stackedPR] = &github.PR{Number: stackedPR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "bees/issue-2",
+		Labels: []github.Label{{Name: "bees"}}}
+	h.gh.hidden[stackedPR] = true
+}
+
+// waitForStage waits until #1's worker has recorded the stage in the issue's
+// bookkeeping and reports it in the status file.
+func waitForStage(t *testing.T, h *harness, stage string) {
+	t.Helper()
+	waitFor(t, 10*time.Second, "the worker to reach "+stage, func() bool {
+		bk, err := h.store.Issue(1)
+		if err != nil || bk.WorkerStage != stage {
+			return false
+		}
+		st, err := h.store.LoadStatus()
+		return err == nil && len(st.Workers) == 1 && st.Workers[0].Stage == stage
+	})
+}
+
+// waitWorkers waits for every worker the pass started to finish, and fails
+// the test — cancelling the workers — when one is still running after d: a
+// stack-wait that never clears would otherwise hang the test instead of
+// failing it.
+func waitWorkers(t *testing.T, h *harness, cancel context.CancelFunc, d time.Duration) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() { h.sched.wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(d):
+		cancel()
+		<-done
+		t.Fatalf("a worker was still running after %s", d)
+	}
+}
+
+// labelApproved gives an issue the label approve() would, as the
+// predecessor's own worker does when its review passes.
+func labelApproved(h *harness, n int) {
+	h.gh.mu.Lock()
+	defer h.gh.mu.Unlock()
+	h.gh.issues[n].Labels = append(h.gh.issues[n].Labels, github.Label{Name: "bees:approved"})
+}
+
+// A stacked pull request whose own review passed is not approved — no label
+// on the pull request or the issue, nothing for the Approved PRs panel, and
+// no post-approval checks — while the pull request beneath it is not. The
+// worker holds its slot in the stack-wait stage instead, and the moment the
+// predecessor is approved it approves this one, without another review.
+func TestAStackedPullRequestWaitsForThePredecessorsApproval(t *testing.T) {
+	h := newHarnessAt(t, stackedTOML, time.Now())
+	seedStack(t, h)
+	seedCounter(t, h, "review", 1) // the reviewer approves on the first round
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if err := h.sched.pass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitForStage(t, h, "stack-wait")
+
+	h.wantOrder("developer-issue-1-r1", "reviewer-pr-201-r1")
+	if got := strings.Join(h.gh.history[1], ","); got != "bees:in-progress,bees:review" {
+		t.Fatalf("#1 must not be approved while #2 is not: %s", got)
+	}
+	h.gh.mu.Lock()
+	prLabels := append([]github.Label(nil), h.gh.prs[stackedPR].Labels...)
+	issues := []github.Issue{*h.gh.issues[1], *h.gh.issues[2]}
+	prs := []github.PR{*h.gh.prs[fakePR], *h.gh.prs[stackedPR]}
+	h.gh.mu.Unlock()
+	if github.HasLabel(prLabels, "bees:approved") {
+		t.Fatalf("the stacked pull request is labelled approved: %v", prLabels)
+	}
+	if got := h.sched.approvedPRs(h.sched.classify(ctx, issues, prs)); len(got) != 0 {
+		t.Fatalf("nothing is waiting for a person to merge it: %v", got)
+	}
+
+	labelApproved(h, 2)
+	waitWorkers(t, h, cancel, 10*time.Second)
+	if got := strings.Join(h.gh.history[1], ","); got != "bees:in-progress,bees:review,bees:approved" {
+		t.Fatalf("#1 history after #2's approval: %s", got)
+	}
+	if !github.HasLabel(h.gh.prs[stackedPR].Labels, "bees:approved") {
+		t.Fatalf("the stacked pull request was not labelled: %v", h.gh.prs[stackedPR].Labels)
+	}
+	// The wait ended in an approval, not a fresh review round.
+	h.wantOrder("developer-issue-1-r1", "reviewer-pr-201-r1")
+	if len(h.gh.merged) != 0 {
+		t.Fatalf("auto_merge is off; nothing should be merged: %v", h.gh.merged)
+	}
+}
+
+// The reviewer-disabled path, where a pull request is treated as approved
+// the moment it opens, waits for the stack the same way. And a predecessor
+// that will never be approved ends the wait: its issue closed with the pull
+// request still open, or closed unmerged, and the stacked pull request
+// targets a branch nobody approved — escalate. A predecessor a person merged
+// by hand, without the label, is beneath the stack no longer: the pull
+// request is approved.
+func TestAStackedPullRequestWhosePredecessorClosesUnapproved(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		closed func(h *harness)
+		want   string
+	}{
+		{"the predecessor's pull request is still open", func(h *harness) {}, "bees:in-progress,bees:needs-human"},
+		{"the predecessor's pull request closed unmerged", func(h *harness) { h.gh.prs[fakePR].State = "CLOSED" }, "bees:in-progress,bees:needs-human"},
+		{"the predecessor's pull request merged", func(h *harness) {
+			now := time.Now()
+			h.gh.prs[fakePR].State = "MERGED"
+			h.gh.prs[fakePR].MergedAt = &now
+		}, "bees:in-progress,bees:approved"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarnessAt(t, stackedTOML, time.Now())
+			h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true} // reviewer disabled
+			seedStack(t, h)
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			if err := h.sched.pass(ctx); err != nil {
+				t.Fatal(err)
+			}
+			waitForStage(t, h, "stack-wait")
+			if got := strings.Join(h.gh.history[1], ","); got != "bees:in-progress" {
+				t.Fatalf("#1 must not be approved while #2 is not: %s", got)
+			}
+
+			h.gh.mu.Lock()
+			h.gh.issues[2].State = "CLOSED"
+			tc.closed(h)
+			h.gh.mu.Unlock()
+			waitWorkers(t, h, cancel, 10*time.Second)
+			if got := strings.Join(h.gh.history[1], ","); got != tc.want {
+				t.Fatalf("#1 history: %s, want %s", got, tc.want)
+			}
+			if tc.want == "bees:in-progress,bees:needs-human" {
+				if c := h.gh.comments[1]; len(c) != 1 || !strings.Contains(c[0], "stacked on #2's pull request #101") || !strings.Contains(c[0], "#2 closed without being approved") {
+					t.Fatalf("escalation comment: %v", c)
+				}
+			} else if len(h.gh.comments[1]) != 0 {
+				t.Fatalf("no escalation expected: %v", h.gh.comments[1])
+			}
+			h.wantOrder("developer-issue-1-r1")
+		})
+	}
+}
+
+// A scheduler killed while a worker waits for the stack comes back into the
+// same wait: the label still says bees:review, which alone would restart the
+// review, and the recorded stage is what says the review has already passed.
+// The first run dies on a poll of the predecessor; the second polls on and
+// approves the pull request once the predecessor is, with no session at all.
+func TestAWorkerKilledInStackWaitResumesInIt(t *testing.T) {
+	h := newHarnessAt(t, stackedTOML, time.Now())
+	seedStack(t, h)
+	seedCounter(t, h, "review", 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if err := h.sched.pass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitForStage(t, h, "stack-wait")
+	h.gh.mu.Lock()
+	h.gh.errFor["issue view"] = fmt.Errorf("gh: could not reach github") // the poll the scheduler dies on
+	h.gh.mu.Unlock()
+	waitWorkers(t, h, cancel, 10*time.Second)
+	h.gh.mu.Lock()
+	delete(h.gh.errFor, "issue view")
+	h.gh.mu.Unlock()
+
+	h.wantOrder("developer-issue-1-r1", "reviewer-pr-201-r1")
+	bk, err := h.store.Issue(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bk.WorkerStage != "stack-wait" || bk.PR != stackedPR {
+		t.Fatalf("bookkeeping after the crash: %+v", bk)
+	}
+	if got := h.stateOfIssue(1); got != "review" {
+		t.Fatalf("issue state label after the crash is %q", got)
+	}
+
+	// Restart. The failed worker set a backoff on the issue; a real restart
+	// is a new process, so step over it. #2 is still not approved, so the
+	// resumed worker must wait again rather than review again.
+	h.clock.advance(6 * h.cfg.Scheduler.PollInterval.Duration)
+	forcePoll(h)
+	if err := h.sched.pass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitForStage(t, h, "stack-wait")
+	h.wantOrder("developer-issue-1-r1", "reviewer-pr-201-r1")
+	if got := strings.Join(h.gh.history[1], ","); got != "bees:in-progress,bees:review" {
+		t.Fatalf("#1 history after the restart: %s", got)
+	}
+
+	labelApproved(h, 2)
+	waitWorkers(t, h, cancel, 10*time.Second)
+	if got := strings.Join(h.gh.history[1], ","); got != "bees:in-progress,bees:review,bees:approved" {
+		t.Fatalf("#1 history after #2's approval: %s", got)
+	}
+	// Not one extra session: the review has already happened and is paid for.
+	h.wantOrder("developer-issue-1-r1", "reviewer-pr-201-r1")
+}
+
+// A worker resumed into stack-wait after the predecessor's pull request
+// merged finds nothing to stack on any more — the default branch has the
+// predecessor, and this pull request targets it — and approves at once.
+func TestAWorkerResumedIntoStackWaitAfterThePredecessorMergedApproves(t *testing.T) {
+	h := newHarnessAt(t, stackedTOML, time.Now())
+	seedStack(t, h)
+	seedCounter(t, h, "review", 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if err := h.sched.pass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitForStage(t, h, "stack-wait")
+	h.gh.mu.Lock()
+	h.gh.errFor["issue view"] = fmt.Errorf("gh: could not reach github")
+	h.gh.mu.Unlock()
+	waitWorkers(t, h, cancel, 10*time.Second)
+
+	// While the scheduler was down a person merged #2 by hand and its issue
+	// closed, never labelled approved; GitHub retargeted #201 at main.
+	h.gh.mu.Lock()
+	delete(h.gh.errFor, "issue view")
+	now := time.Now()
+	h.gh.issues[2].State = "CLOSED"
+	h.gh.prs[fakePR].State, h.gh.prs[fakePR].MergedAt = "MERGED", &now
+	h.gh.prs[stackedPR].BaseRefName = "main"
+	h.gh.mu.Unlock()
+
+	h.clock.advance(6 * h.cfg.Scheduler.PollInterval.Duration)
+	forcePoll(h)
+	runPass(t, h)
+	if got := strings.Join(h.gh.history[1], ","); got != "bees:in-progress,bees:review,bees:approved" {
+		t.Fatalf("#1 history: %s", got)
+	}
+	h.wantOrder("developer-issue-1-r1", "reviewer-pr-201-r1")
+	if len(h.gh.comments[1]) != 0 {
+		t.Fatalf("no escalation expected: %v", h.gh.comments[1])
+	}
+}
+
+// The wait polls the predecessor at roles.reviewer.checks_poll_interval, the
+// cadence the checks stage already uses, not on a loop of its own: with the
+// interval at an hour the predecessor is read once, and an approval that
+// lands afterwards goes unnoticed until the next poll.
+func TestStackWaitPollsAtTheChecksPollInterval(t *testing.T) {
+	h := newHarnessAt(t, stackedTOML+"[roles.reviewer]\nchecks_poll_interval = \"1h\"\n", time.Now())
+	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true}
+	seedStack(t, h)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := h.sched.pass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitForStage(t, h, "stack-wait")
+	polls := func() int {
+		h.gh.mu.Lock()
+		defer h.gh.mu.Unlock()
+		n := 0
+		for _, c := range h.gh.calls {
+			if len(c) >= 3 && c[0] == "issue" && c[1] == "view" && c[2] == "2" {
+				n++
+			}
+		}
+		return n
+	}
+	waitFor(t, 10*time.Second, "the first poll of #2", func() bool { return polls() >= 1 })
+	before := polls()
+	labelApproved(h, 2)
+	time.Sleep(300 * time.Millisecond)
+	if got := polls(); got != before {
+		t.Fatalf("#2 was polled %d more times inside checks_poll_interval", got-before)
+	}
+	if got := strings.Join(h.gh.history[1], ","); got != "bees:in-progress" {
+		t.Fatalf("#1 was approved between polls: %s", got)
+	}
+	// The wait ends with the context, as a hard stop ends it.
+	cancel()
+	waitWorkers(t, h, cancel, 10*time.Second)
+}
