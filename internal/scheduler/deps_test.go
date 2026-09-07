@@ -431,6 +431,23 @@ func waitForStage(t *testing.T, h *harness, stage string) {
 	})
 }
 
+// waitWorkers waits for every worker the pass started to finish, and fails
+// the test — cancelling the workers — when one is still running after d: a
+// stack-wait that never clears would otherwise hang the test instead of
+// failing it.
+func waitWorkers(t *testing.T, h *harness, cancel context.CancelFunc, d time.Duration) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() { h.sched.wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(d):
+		cancel()
+		<-done
+		t.Fatalf("a worker was still running after %s", d)
+	}
+}
+
 // labelApproved gives an issue the label approve() would, as the
 // predecessor's own worker does when its review passes.
 func labelApproved(h *harness, n int) {
@@ -472,7 +489,7 @@ func TestAStackedPullRequestWaitsForThePredecessorsApproval(t *testing.T) {
 	}
 
 	labelApproved(h, 2)
-	h.sched.wg.Wait()
+	waitWorkers(t, h, cancel, 30*time.Second)
 	if got := strings.Join(h.gh.history[1], ","); got != "bees:in-progress,bees:review,bees:approved" {
 		t.Fatalf("#1 history after #2's approval: %s", got)
 	}
@@ -525,7 +542,7 @@ func TestAStackedPullRequestWhosePredecessorClosesUnapproved(t *testing.T) {
 			h.gh.issues[2].State = "CLOSED"
 			tc.closed(h)
 			h.gh.mu.Unlock()
-			h.sched.wg.Wait()
+			waitWorkers(t, h, cancel, 30*time.Second)
 			if got := strings.Join(h.gh.history[1], ","); got != tc.want {
 				t.Fatalf("#1 history: %s, want %s", got, tc.want)
 			}
@@ -559,7 +576,7 @@ func TestAWorkerKilledInStackWaitResumesInIt(t *testing.T) {
 	h.gh.mu.Lock()
 	h.gh.errFor["issue view"] = fmt.Errorf("gh: could not reach github") // the poll the scheduler dies on
 	h.gh.mu.Unlock()
-	h.sched.wg.Wait()
+	waitWorkers(t, h, cancel, 30*time.Second)
 	h.gh.mu.Lock()
 	delete(h.gh.errFor, "issue view")
 	h.gh.mu.Unlock()
@@ -591,7 +608,7 @@ func TestAWorkerKilledInStackWaitResumesInIt(t *testing.T) {
 	}
 
 	labelApproved(h, 2)
-	h.sched.wg.Wait()
+	waitWorkers(t, h, cancel, 30*time.Second)
 	if got := strings.Join(h.gh.history[1], ","); got != "bees:in-progress,bees:review,bees:approved" {
 		t.Fatalf("#1 history after #2's approval: %s", got)
 	}
@@ -615,7 +632,7 @@ func TestAWorkerResumedIntoStackWaitAfterThePredecessorMergedApproves(t *testing
 	h.gh.mu.Lock()
 	h.gh.errFor["issue view"] = fmt.Errorf("gh: could not reach github")
 	h.gh.mu.Unlock()
-	h.sched.wg.Wait()
+	waitWorkers(t, h, cancel, 30*time.Second)
 
 	// While the scheduler was down a person merged #2 by hand and its issue
 	// closed, never labelled approved; GitHub retargeted #201 at main.
