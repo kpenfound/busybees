@@ -100,6 +100,8 @@ func TestKillTarget(t *testing.T) {
 		{"a session on the host", procs.Proc{PID: 4321}, "pid 4321"},
 		{"a container session", procs.Proc{PID: 4321, Container: long}, "pid 4321 and container 0123456789ab"},
 		{"a container whose client is gone", procs.Proc{Container: long}, "container 0123456789ab"},
+		{"a container session with its server", procs.Proc{PID: 4321, Container: long, Server: 99}, "pid 4321, container 0123456789ab and MCP server pid 99"},
+		{"a server a crash orphaned", procs.Proc{Server: 99}, "MCP server pid 99"},
 	} {
 		if got := killTarget(tc.p); got != tc.want {
 			t.Errorf("%s: killTarget = %q, want %q", tc.name, got, tc.want)

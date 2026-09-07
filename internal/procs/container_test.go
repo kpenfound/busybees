@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	ossignal "os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -314,5 +315,196 @@ func TestParsePSFindsTheEngineClient(t *testing.T) {
 	got := parsePS(text, 1, scope)
 	if len(got) != 1 || got[0].PID != 100 {
 		t.Fatalf("parsePS: %+v, want the engine client of this factory alone", got)
+	}
+}
+
+// startGroup runs a process group leader with a child, the shape of the
+// built-in MCP server, and returns both: killing the leader alone leaves
+// the child running, so the child is what says the group was signalled.
+func startGroup(t *testing.T) (leader *exec.Cmd, child int) {
+	t.Helper()
+	file := filepath.Join(t.TempDir(), "child")
+	leader = exec.Command("sh", "-c", "sleep 60 & echo $! > "+file+"; wait")
+	leader.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := leader.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = syscall.Kill(-leader.Process.Pid, syscall.SIGKILL)
+		_, _ = leader.Process.Wait()
+	})
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if b, err := os.ReadFile(file); err == nil && len(strings.TrimSpace(string(b))) > 0 {
+			child, _ = strconv.Atoi(strings.TrimSpace(string(b)))
+			return leader, child
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("the process group's child never started")
+	return nil, 0
+}
+
+// gone waits for a process to disappear.
+func gone(t *testing.T, pid int) bool {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if !Alive(pid) {
+			return true
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return !Alive(pid)
+}
+
+// The MCP server bees runs on the host for a container session outlives a
+// crash: it is in a process group of its own, so neither the scheduler's
+// own kill nor the process table scan reaches it. Its pid file is what
+// `bees kill` finds it by, and it is found even when nothing else of the
+// session is left — the crash that orphaned the server took the engine
+// client and the container with it.
+func TestFindAndKillReachTheOrphanedServer(t *testing.T) {
+	fakeEngine(t, "")
+	sessions := t.TempDir()
+	dir := filepath.Join(sessions, "20260906-developer-issue-1-r1")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	server, serverChild := startGroup(t)
+	if err := WriteServerPID(dir, server.Process.Pid); err != nil {
+		t.Fatal(err)
+	}
+	// The main command's pid file, as a crash leaves it: naming a process
+	// that has gone.
+	if err := WritePID(dir, 999999); err != nil {
+		t.Fatal(err)
+	}
+
+	found, err := Find(context.Background(), sessions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(found) != 1 {
+		t.Fatalf("Find: %+v, want the orphaned server", found)
+	}
+	if found[0].Server != server.Process.Pid || found[0].SessionDir != dir || found[0].PID != 0 {
+		t.Errorf("Find: %+v, want the server of %s with no process", found[0], dir)
+	}
+	if _, err := os.Stat(filepath.Join(dir, PIDFile)); !os.IsNotExist(err) {
+		t.Error("the stale pid file of the main command should have been removed")
+	}
+
+	done := make(chan struct{})
+	go func() { _, _ = server.Process.Wait(); close(done) }()
+	if err := Kill(found[0], 2*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Error("the built-in server is still running after the kill")
+	}
+	// The whole group, not the leader alone: the server's own children
+	// hold the port after it exits.
+	if !gone(t, serverChild) {
+		t.Errorf("the built-in server's child (pid %d) survived the kill", serverChild)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ServerPIDFile)); !os.IsNotExist(err) {
+		t.Error("the server pid file should be removed after the kill")
+	}
+}
+
+// A session whose main process is still there carries its server with it,
+// so one kill stops both, and the container as well.
+func TestFromPIDFileCarriesTheServerAndTheContainer(t *testing.T) {
+	fakeEngine(t, "")
+	dir := t.TempDir()
+	writeContainerID(t, dir, "aaa111")
+	client, _ := startGroup(t)
+	server, _ := startGroup(t)
+	if err := WritePID(dir, client.Process.Pid); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteServerPID(dir, server.Process.Pid); err != nil {
+		t.Fatal(err)
+	}
+
+	p, ok := FromPIDFile(dir, nil)
+	if !ok || p.PID != client.Process.Pid || p.Server != server.Process.Pid || p.Container != "aaa111" {
+		t.Fatalf("FromPIDFile: %+v %v, want the client, its server and its container", p, ok)
+	}
+	gone := make(chan struct{}, 2)
+	for _, c := range []*exec.Cmd{client, server} {
+		go func() { _, _ = c.Process.Wait(); gone <- struct{}{} }()
+	}
+	if err := Kill(p, 2*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		select {
+		case <-gone:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("only %d of the client and the server were stopped", i)
+		}
+	}
+	for _, f := range []string{PIDFile, ServerPIDFile, ContainerIDFile} {
+		if _, err := os.Stat(filepath.Join(dir, f)); !os.IsNotExist(err) {
+			t.Errorf("%s should be removed after the kill", f)
+		}
+	}
+}
+
+// A server pid file naming a process that has gone is stale, and is deleted
+// the way a stale pid file is rather than reported as something to stop.
+func TestAServerThatHasGoneIsForgotten(t *testing.T) {
+	dir := t.TempDir()
+	if err := WriteServerPID(dir, 999999); err != nil {
+		t.Fatal(err)
+	}
+	if p, ok := FromPIDFile(dir, nil); ok {
+		t.Errorf("FromPIDFile: %+v, want nothing for a session that is gone", p)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ServerPIDFile)); !os.IsNotExist(err) {
+		t.Error("the stale server pid file should have been removed")
+	}
+}
+
+// The crash leaves each session its own entry, whether or not its container
+// is still running: two orphaned servers are two things to stop, and a
+// container is not a third — it belongs to the session whose directory it
+// is labelled with, which is the session the server was started for.
+func TestFindGroupsEveryOrphanedServerWithItsContainer(t *testing.T) {
+	sessions := t.TempDir()
+	boxed := filepath.Join(sessions, "20260906-developer-issue-1-r1")
+	loose := filepath.Join(sessions, "20260906-reviewer-issue-2-r1")
+	writeContainerID(t, boxed, "aaa111")
+	if err := os.MkdirAll(loose, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fakeEngine(t, "aaa111\t"+boxed+"\n")
+	for _, dir := range []string{boxed, loose} {
+		server, _ := startGroup(t)
+		if err := WriteServerPID(dir, server.Process.Pid); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	found, err := Find(context.Background(), sessions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(found) != 2 {
+		t.Fatalf("Find: %+v, want one entry per session", found)
+	}
+	byDir := map[string]Proc{}
+	for _, p := range found {
+		byDir[p.SessionDir] = p
+	}
+	if p := byDir[boxed]; p.Container != "aaa111" || p.Server == 0 {
+		t.Errorf("Find %s: %+v, want the container and the server together", boxed, p)
+	}
+	if p := byDir[loose]; p.Container != "" || p.Server == 0 {
+		t.Errorf("Find %s: %+v, want the server alone", loose, p)
 	}
 }

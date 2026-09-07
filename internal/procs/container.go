@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,6 +23,10 @@ import (
 // leaves: the id file in the session directory (the pid file's counterpart)
 // and the label the container carries (the session marker's), whose value
 // is the session directory and so scopes a container to one factory.
+//
+// Such a session leaves a third record, for a third thing to stop: the
+// built-in MCP server the runner starts on the host for it, because the
+// bees binary is not in the container (see ServerPIDFile).
 
 // ContainerIDFile is the file in a session directory the engine writes the
 // container's id to (--cidfile) when a container-backed session starts. It
@@ -34,6 +39,58 @@ const ContainerIDFile = "container-id"
 // label=bees.session` lists one factory's sessions and the value says which
 // session each one is.
 const ContainerLabel = "bees.session"
+
+// ServerPIDFile is the file in a session directory the runner writes the
+// pid of the built-in MCP server it started on the host for a
+// container-backed session to. The server runs in a process group of its
+// own, outside the session's and outside the scheduler's, so nothing else
+// reaches it: a crash that takes the scheduler down without running its
+// deferred cleanup leaves the server running, holding its port and serving
+// the factory's tools, and this file is the only record of it.
+//
+// It is a file of its own rather than PIDFile, which names the session's
+// main command: a container session leaves both.
+const ServerPIDFile = "mcp-server-pid"
+
+// WriteServerPID records the pid of the host-side MCP server of a
+// container-backed session.
+func WriteServerPID(dir string, pid int) error {
+	return os.WriteFile(filepath.Join(dir, ServerPIDFile), []byte(strconv.Itoa(pid)+"\n"), 0o644)
+}
+
+// ServerPID returns the pid of the host-side MCP server a session directory
+// records, 0 when the session runs none.
+func ServerPID(dir string) int {
+	b, err := os.ReadFile(filepath.Join(dir, ServerPIDFile))
+	if err != nil {
+		return 0
+	}
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+	return pid
+}
+
+// RemoveServerPID deletes a session's server pid file.
+func RemoveServerPID(dir string) { _ = os.Remove(filepath.Join(dir, ServerPIDFile)) }
+
+// liveServer returns the pid of the host-side MCP server a session
+// directory records, when that process is still running; a file naming a
+// process that has gone is deleted, as a stale pid file is.
+//
+// Unlike the session's main pid, the server's is not cross-checked against
+// the process table: `bees mcp serve` is deliberately not one of the
+// executables the scan counts (it is no agent session), so the scan can say
+// nothing about it.
+func liveServer(dir string) int {
+	pid := ServerPID(dir)
+	if pid <= 0 {
+		return 0
+	}
+	if !Alive(pid) {
+		RemoveServerPID(dir)
+		return 0
+	}
+	return pid
+}
 
 // containerMarker is the argv fragment that identifies the engine client of
 // a container-backed session in the process table.

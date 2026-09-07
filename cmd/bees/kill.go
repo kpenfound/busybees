@@ -29,7 +29,8 @@ directory), terminates them together with their process groups (MCP servers,
 shells), removes stale pid files, removes the temporary worktrees bees created
 and resets the worker list in status.json. A session in the container sandbox
 is found through its container, which the engine is asked for by label, and
-stopped by removing it.
+stopped by removing it; the MCP server bees started on the host for it is
+stopped too, from the pid file it left in the session directory.
 
 Sessions of another project's factory are never touched, however many
 factories share a machine.
@@ -119,18 +120,28 @@ scheduler as well.`,
 	return cmd
 }
 
-// killTarget names what stopping a session means for it: its process, and
-// the container it runs in when it is a container-backed session — which is
-// all there is to stop when the engine client that started the container is
-// already gone.
+// killTarget names what stopping a session means for it: its process, the
+// container it runs in and the MCP server left on the host for it, the last
+// two for a container-backed session. Any of the three can be all there is
+// to stop, when a crash left one of them behind on its own.
 func killTarget(p procs.Proc) string {
-	switch {
-	case p.PID > 0 && p.Container != "":
-		return fmt.Sprintf("pid %d and container %s", p.PID, shortID(p.Container))
-	case p.Container != "":
-		return "container " + shortID(p.Container)
+	var parts []string
+	if p.PID > 0 {
+		parts = append(parts, fmt.Sprintf("pid %d", p.PID))
+	}
+	if p.Container != "" {
+		parts = append(parts, "container "+shortID(p.Container))
+	}
+	if p.Server > 0 {
+		parts = append(parts, fmt.Sprintf("MCP server pid %d", p.Server))
+	}
+	switch len(parts) {
+	case 0:
+		return fmt.Sprintf("pid %d", p.PID) // nothing to name: the pid as read
+	case 1:
+		return parts[0]
 	default:
-		return fmt.Sprintf("pid %d", p.PID)
+		return strings.Join(parts[:len(parts)-1], ", ") + " and " + parts[len(parts)-1]
 	}
 }
 

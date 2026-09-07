@@ -49,7 +49,10 @@ import (
 //     session directory, and the container is named after the session and
 //     labelled with procs.ContainerLabel, so `bees kill` and the live
 //     view's kill key can find it. Stopping the session removes the
-//     container.
+//     container. The server's pid goes to procs.ServerPIDFile beside it,
+//     because the server is in a process group of its own and a crash that
+//     skips close leaves it running otherwise. Both files are removed when
+//     the session ends.
 //
 // The image (sandbox_image) must hold the agent, git and gh; nothing of the
 // host's toolchain is available inside.
@@ -144,6 +147,14 @@ func (c *container) startServer(ctx context.Context) error {
 		return fmt.Errorf("start the built-in MCP server: %w", err)
 	}
 	c.server = cmd
+	// The server is in a process group of its own, outside the session's
+	// and outside this process's, so nothing finds it once this process is
+	// gone. Recording its pid is what lets `bees kill` reap it after a
+	// crash; close removes the file again.
+	if err := procs.WriteServerPID(c.sessionDir, cmd.Process.Pid); err != nil {
+		c.close()
+		return fmt.Errorf("record the built-in MCP server's pid: %w", err)
+	}
 	line := make(chan string, 1)
 	go func() {
 		sc := bufio.NewScanner(stdout)
@@ -396,14 +407,16 @@ func (c *container) remove() {
 	_ = exec.CommandContext(ctx, c.r.dockerBin(), "rm", "--force", c.name).Run()
 }
 
-// close stops the built-in server and forgets the container id: the
-// container is gone (--rm) or removed.
+// close stops the built-in server and forgets the container id and the
+// server's pid: the container is gone (--rm) or removed, and the server has
+// been killed, so neither record has anything left to point at.
 func (c *container) close() {
 	if c.server != nil && c.server.Process != nil {
 		_ = syscall.Kill(-c.server.Process.Pid, syscall.SIGKILL)
 		_ = c.server.Wait()
 		c.server = nil
 	}
+	procs.RemoveServerPID(c.sessionDir)
 	procs.RemoveContainerID(c.sessionDir)
 }
 

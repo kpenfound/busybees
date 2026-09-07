@@ -117,6 +117,7 @@ func TestContainerSessionRunsInsideTheEngine(t *testing.T) {
 printf '%s\n' "$@" > "$BEES_SESSION_DIR/args.txt"
 cat > "$BEES_SESSION_DIR/stdin.txt"
 [ -f "$BEES_SESSION_DIR/container-id" ] && cp "$BEES_SESSION_DIR/container-id" "$BEES_SESSION_DIR/id-while-running"
+[ -f "$BEES_SESSION_DIR/mcp-server-pid" ] && cp "$BEES_SESSION_DIR/mcp-server-pid" "$BEES_SESSION_DIR/server-pid-while-running"
 echo '{"type":"result","subtype":"success","is_error":false,"result":"boxed","session_id":"abc","num_turns":2,"total_cost_usd":0.1}'
 printf '{"status":"pr-opened","pr":7}' > "$BEES_SESSION_DIR/outcome.json"
 `)
@@ -226,6 +227,11 @@ printf '{"status":"pr-opened","pr":7}' > "$BEES_SESSION_DIR/outcome.json"
 	}
 	// The server is stopped with the session.
 	pid, _ := strconv.Atoi(strings.TrimSpace(lines(t, filepath.Join(dir, "server-pid.txt"))[0]))
+	// Its pid was recorded while it ran, so a crash that stops bees before
+	// it can kill the server leaves `bees kill` something to find it by.
+	if got := lines(t, filepath.Join(dir, "server-pid-while-running"))[0]; got != strconv.Itoa(pid) {
+		t.Errorf("%s while running: %q, want the server's pid %d", procs.ServerPIDFile, got, pid)
+	}
 	deadline := time.Now().Add(5 * time.Second)
 	for syscall.Kill(pid, 0) == nil && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
@@ -240,6 +246,9 @@ printf '{"status":"pr-opened","pr":7}' > "$BEES_SESSION_DIR/outcome.json"
 	}
 	if _, err := os.Stat(filepath.Join(dir, procs.ContainerIDFile)); err == nil {
 		t.Error("container id file left behind after the session")
+	}
+	if _, err := os.Stat(filepath.Join(dir, procs.ServerPIDFile)); err == nil {
+		t.Error("server pid file left behind after the session")
 	}
 	// The command inside is the ordinary one, with the prompt on stdin.
 	claudeArgs := strings.Join(lines(t, filepath.Join(dir, "args.txt")), " ")

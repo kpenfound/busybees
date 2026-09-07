@@ -9,7 +9,9 @@
 // third: the agent runs in the container, so the container is what is
 // found and stopped, from the id file and the label the runner leaves
 // (see container.go); what the process table shows of it is the engine
-// client that started it.
+// client that started it, and the built-in MCP server the runner started
+// for it on the host is a fourth thing to stop, recorded in a pid file of
+// its own.
 //
 // Every source is scoped to one factory: a process only counts when its
 // command line also references this state directory's sessions directory
@@ -64,6 +66,11 @@ type Proc struct {
 	// removing the container: the agent runs inside it and outlives the
 	// engine client PID names.
 	Container string
+	// Server is the pid of the built-in MCP server running on the host for
+	// a session in the container sandbox, which has no bees binary inside.
+	// It is a process group of its own, so stopping the session means
+	// stopping it too (see ServerPIDFile).
+	Server int
 }
 
 // WritePID records the pid of a running session.
@@ -87,31 +94,52 @@ func Alive(pid int) bool {
 // kill` as its --grace default, and the live view's kill key.
 const DefaultGrace = 5 * time.Second
 
-// FromPIDFile returns the live session recorded in one session directory,
-// with the container it runs in when it is a container-backed session.
+// FromPIDFile returns the live session recorded in one session directory:
+// the process its pid file names, the container it runs in and the
+// host-side MCP server it left, the last two for a container-backed session
+// only.
+//
+// It reports false when the directory records none of the three, so a
+// session directory whose main process is gone but whose server is still
+// running is still reported — with PID 0, because there is no process to
+// signal and the server is stopped in its own right. That is what a crash
+// leaves behind.
+func FromPIDFile(dir string, known map[int]Proc) (Proc, bool) {
+	server := liveServer(dir)
+	pid, ok := livePID(dir, known)
+	if !ok && server == 0 {
+		return Proc{}, false
+	}
+	var pgid int
+	if pid > 0 {
+		pgid, _ = syscall.Getpgid(pid)
+	}
+	return Proc{PID: pid, PGID: pgid, Source: "pidfile", SessionDir: dir, Container: ContainerID(dir), Server: server}, true
+}
+
+// livePID returns the pid of a session's main command from its pid file.
 // It reports false when the directory holds no pid file, when the process
 // the file names is gone — in which case the stale file is deleted — and,
 // when known is non-nil (the ps scan), when the pid is alive but is not an
 // agent session: a pid reused by an unrelated process after a reboot, which
 // must never be killed.
-func FromPIDFile(dir string, known map[int]Proc) (Proc, bool) {
+func livePID(dir string, known map[int]Proc) (int, bool) {
 	b, err := os.ReadFile(filepath.Join(dir, PIDFile))
 	if err != nil {
-		return Proc{}, false
+		return 0, false
 	}
 	pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
 	if !Alive(pid) {
 		RemovePID(dir)
-		return Proc{}, false
+		return 0, false
 	}
 	if known != nil {
 		if _, ok := known[pid]; !ok {
 			RemovePID(dir) // alive, but not an agent session: pid reused
-			return Proc{}, false
+			return 0, false
 		}
 	}
-	pgid, _ := syscall.Getpgid(pid)
-	return Proc{PID: pid, PGID: pgid, Source: "pidfile", SessionDir: dir, Container: ContainerID(dir)}, true
+	return pid, true
 }
 
 // FromPIDFiles returns live sessions recorded under sessionsDir and deletes
@@ -263,8 +291,16 @@ func Find(ctx context.Context, sessionsDir string) ([]Proc, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A session directory whose main process is gone but which still
+	// records a live MCP server has no pid to key on, and two of them would
+	// collide on 0: they are their own entries.
+	var serverOnly []Proc
 	for _, p := range fromFiles {
-		byPID[p.PID] = p
+		if p.PID > 0 {
+			byPID[p.PID] = p
+			continue
+		}
+		serverOnly = append(serverOnly, p)
 	}
 	for _, p := range fromPS {
 		if existing, ok := byPID[p.PID]; ok {
@@ -274,7 +310,7 @@ func Find(ctx context.Context, sessionsDir string) ([]Proc, error) {
 		}
 		byPID[p.PID] = p
 	}
-	out := make([]Proc, 0, len(byPID)+len(fromContainers))
+	out := make([]Proc, 0, len(byPID)+len(serverOnly)+len(fromContainers))
 	// A running container belongs to the session whose directory it is
 	// labelled with; one whose engine client is gone — killed on its own,
 	// or lost with the machine — is a session of its own to stop.
@@ -288,10 +324,18 @@ func Find(ctx context.Context, sessionsDir string) ([]Proc, error) {
 			byPID[pid] = p
 			attached = true
 		}
+		for i, p := range serverOnly {
+			if !sameDir(p.SessionDir, c.SessionDir) {
+				continue
+			}
+			serverOnly[i].Container = c.Container
+			attached = true
+		}
 		if !attached {
 			out = append(out, c)
 		}
 	}
+	out = append(out, serverOnly...)
 	for _, p := range byPID {
 		out = append(out, p)
 	}
@@ -299,16 +343,21 @@ func Find(ctx context.Context, sessionsDir string) ([]Proc, error) {
 		if out[i].PID != out[j].PID {
 			return out[i].PID < out[j].PID
 		}
-		return out[i].Container < out[j].Container
+		if out[i].Container != out[j].Container {
+			return out[i].Container < out[j].Container
+		}
+		return out[i].SessionDir < out[j].SessionDir
 	})
 	return out, nil
 }
 
-// Kill stops a session: its container, when it runs in one, and its process
-// and process group — SIGTERM, then SIGKILL after grace if it is still
-// alive. The container is removed first, because it outlives the engine
-// client that started it and the agent is inside it; a session found
-// through its container alone has no process left to signal.
+// Kill stops a session: its container, when it runs in one, its process and
+// process group, and the built-in MCP server on the host when it left one —
+// SIGTERM, then SIGKILL after grace if it is still alive. The container is
+// removed first, because it outlives the engine client that started it and
+// the agent is inside it; the server goes last, so the tools it serves stay
+// answerable until the session using them is gone. A session found through
+// its container alone has no process left to signal.
 func Kill(p Proc, grace time.Duration) error {
 	var errs []error
 	if p.Container != "" {
@@ -319,9 +368,16 @@ func Kill(p Proc, grace time.Duration) error {
 	if p.PID > 0 {
 		errs = append(errs, killProcess(p, grace))
 	}
+	if p.Server > 0 {
+		// Its own process group (the runner starts it with one), so the
+		// group is what is signalled, as it is for a session.
+		pgid, _ := syscall.Getpgid(p.Server)
+		errs = append(errs, killProcess(Proc{PID: p.Server, PGID: pgid}, grace))
+	}
 	if p.SessionDir != "" {
 		RemovePID(p.SessionDir)
 		RemoveContainerID(p.SessionDir)
+		RemoveServerPID(p.SessionDir)
 	}
 	return errors.Join(errs...)
 }
