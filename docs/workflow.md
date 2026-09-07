@@ -956,6 +956,15 @@ Take a feature with two work items, #2 blocked by #1:
   its own. A worker resuming #2 after that finds no predecessor left and
   treats it as an ordinary work item from then on.
 
+If #1's pull request closes unmerged instead, its branch is not retargeted:
+GitHub retargets a stacked pull request only when its base branch is
+deleted, which a merge does and a plain close does not. A worker starting
+on #2 after that finds no open pull request under the feature to stack on
+and escalates before it runs any stage, rather than building or approving
+against a branch nobody is going to merge. Reopening #1's pull request, or
+retargeting #2's at the default branch, and handing the issue back clears
+it.
+
 Review stays pull request by pull request: the reviewer checks out #2's
 branch and reads its diff with `gh pr diff`, which shows only #2's own
 change against #1's branch, whether or not #1 has merged yet.
