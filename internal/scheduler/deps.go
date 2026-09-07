@@ -2,6 +2,9 @@ package scheduler
 
 import (
 	"context"
+	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/kpenfound/busybees/internal/github"
 )
@@ -141,6 +144,25 @@ func (s *Scheduler) stackPredecessor(ctx context.Context, issue github.Issue, ha
 		}
 	}
 	return 0
+}
+
+// issueForBranch is the inverse of Scheduler.BranchFor: the issue whose
+// developer branch is branch, under prefix. It is pure so it can be tested
+// without a scheduler. false for any branch BranchFor would not have
+// produced for that issue: the default branch, a branch of another naming,
+// a malformed number. A pull request's base that parses is another work
+// item's branch, and workIssue uses that to tell, at start, a pull request
+// still stacked on a branch nothing is stacked on any more.
+func issueForBranch(prefix, branch string) (int, bool) {
+	rest, ok := strings.CutPrefix(branch, prefix+"issue-")
+	if !ok {
+		return 0, false
+	}
+	n, err := strconv.Atoi(rest)
+	if err != nil || n <= 0 || fmt.Sprintf("%sissue-%d", prefix, n) != branch {
+		return 0, false
+	}
+	return n, true
 }
 
 // parentOf is the feature issue number is a sub-issue of, or nil: for none,

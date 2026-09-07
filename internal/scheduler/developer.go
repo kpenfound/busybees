@@ -125,6 +125,23 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 	if err != nil {
 		return err
 	}
+	// The base resolved above and the base the pull request already has must
+	// agree. They part when the predecessor's pull request closed unmerged
+	// while no worker was running: GitHub retargets a stacked pull request
+	// only when its base branch is deleted, which a merge does and a plain
+	// close does not, so the pull request still targets the predecessor's
+	// branch while nothing is stacked on it any more. A live worker learns
+	// this in awaitStack; a worker starting cold cannot, whatever stage it
+	// would resume into, so it is caught here once, before the workspace is
+	// cut from the wrong branch and before anything is approved into a
+	// branch nobody is going to merge. Only the factory's own branch names
+	// are read this way: a pull request a person retargeted at some other
+	// branch is theirs.
+	if pr != nil && stackedOn == 0 {
+		if pred, ok := issueForBranch(s.cfg.Project.BranchPrefix, pr.BaseRefName); ok {
+			return s.escalate(ctx, issue.Number, s.deadStackReason(issue.Number, pr, pred))
+		}
+	}
 	maxRounds := s.cfg.Scheduler.MaxReviewRounds
 	policy := s.cfg.Merge()
 	// stage is where the worker is; afterDevelop is where a developer session
@@ -868,6 +885,22 @@ func (s *Scheduler) awaitStack(ctx context.Context, issue github.Issue, pr *gith
 			return false, err
 		}
 	}
+}
+
+// deadStackReason is the escalation for a pull request found, at worker
+// start, still targeting another work item's branch that nothing is stacked
+// on: the predecessor's pull request is closed without having merged, or
+// the two are no longer blocker and blocked under one feature. With
+// scheduler.stacked_prs off nothing is ever stacked, so the only way back is
+// the default branch.
+func (s *Scheduler) deadStackReason(issue int, pr *github.PR, pred int) string {
+	def := s.cfg.Project.DefaultBranch
+	if !s.cfg.Scheduler.StackedPRs {
+		return fmt.Sprintf("Pull request #%d targets `%s`, the branch of #%d, but `scheduler.stacked_prs` is off, so #%d is built from `%s` and nothing is going to merge that branch. Retarget #%d at `%s` and hand #%d back.",
+			pr.Number, pr.BaseRefName, pred, issue, def, pr.Number, def, issue)
+	}
+	return fmt.Sprintf("Pull request #%d targets `%s`, the branch of #%d, but #%d has no open pull request under the same feature for #%d to stack on: it closed without merging, so nothing is going to merge that branch. Building or approving #%d as it stands would land it there. Reopen #%d's pull request, or retarget #%d at `%s`, and hand #%d back.",
+		pr.Number, pr.BaseRefName, pred, pred, issue, pr.Number, pred, pr.Number, def, issue)
 }
 
 // approve labels an approved PR and its issue. Merging, when enabled,
