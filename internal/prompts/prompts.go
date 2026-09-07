@@ -61,8 +61,8 @@ type Data struct {
 	// BaseBranch is the branch the developer's pull request targets and
 	// merges into its own before pushing: Project.DefaultBranch, or, when
 	// the work item is stacked on the one it is blocked by
-	// (scheduler.stacked_prs), that work item's branch. The scheduler fills
-	// it with Project.DefaultBranch for every session that does not set it.
+	// (scheduler.stacked_prs), that work item's branch. Set by the developer
+	// worker; only the developer's prompts read it.
 	BaseBranch string
 	StateDir   string
 	SessionDir string
