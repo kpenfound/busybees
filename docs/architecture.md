@@ -682,7 +682,8 @@ counted from the transcript's assistant messages or completed items instead.
   paths, an environment built from the session's variables alone, and the
   built-in MCP server started on the host as `bees mcp serve --listen` and
   reached over HTTP with a per-session token; `<session>/container-id`
-  holds the container's id while it runs. The runner refuses a session whose
+  holds the container's id while it runs, and `<session>/mcp-server-pid`
+  that server's pid, so a crash leaves both findable. The runner refuses a session whose
   role asks for a mode it cannot build, one its agent cannot run under, or a
   container mode missing its image or credentials, and `bees run` refuses to
   start at all while a role in the rotation does. See

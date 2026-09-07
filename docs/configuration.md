@@ -776,8 +776,10 @@ RUN npm install -g @anthropic-ai/claude-code
 A role that runs the product (QA, most often) names an image carrying the
 product's toolchain too, under `[roles.qa]`.
 
-While the session runs, `<session>/container-id` holds the container's id,
-and the container is named `bees-<session>-<random>` and labelled
+While the session runs, `<session>/container-id` holds the container's id
+and `<session>/mcp-server-pid` the pid of the built-in MCP server bees
+started on the host for it, and the container is named
+`bees-<session>-<random>` and labelled
 `bees.session=<session directory>`, so `docker ps --filter
 label=bees.session` lists a factory's sessions. Stopping the session (its
 timeout, or `bees run` stopping) removes the container. So does stopping it
@@ -785,7 +787,9 @@ from outside: [`bees kill`](cli.md#bees-kill---dry-run---scheduler---grace-5s)
 and the live view's `k` key find a container session through that label and
 remove its container, which is what stops the agent: it runs in the
 container, not on the host, and killing the `docker run` client alone
-leaves it running.
+leaves it running. They stop the MCP server too, from its pid file: it runs
+on the host in a process group of its own, so a crash that takes bees down
+would otherwise leave it holding its port and serving the factory's tools.
 
 What the box holds: the session cannot read or write anything of the host
 outside the three mounts, and cannot reach the host's credentials or its
