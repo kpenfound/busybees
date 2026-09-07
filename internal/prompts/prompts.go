@@ -56,8 +56,14 @@ type Data struct {
 	// factory (label and, when configured, assignee).
 	CreateFlags string
 
-	WorkDir    string
-	Branch     string
+	WorkDir string
+	Branch  string
+	// BaseBranch is the branch the developer's pull request targets and
+	// merges into its own before pushing: Project.DefaultBranch, or, when
+	// the work item is stacked on the one it is blocked by
+	// (scheduler.stacked_prs), that work item's branch. The scheduler fills
+	// it with Project.DefaultBranch for every session that does not set it.
+	BaseBranch string
 	StateDir   string
 	SessionDir string
 	NotesFile  string

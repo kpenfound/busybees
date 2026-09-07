@@ -28,7 +28,7 @@ func sample() Data {
 		Labels:  config.LabelsFor("bees"),
 		// The proposal gate is on by default; a test that turns it off says so.
 		FeatureProposals: true,
-		WorkDir:          "/tmp/ws", Branch: "bees/issue-4", StateDir: "/s", SessionDir: "/s/sessions/1", NotesFile: "/s/notes/x.md",
+		WorkDir:          "/tmp/ws", Branch: "bees/issue-4", BaseBranch: "main", StateDir: "/s", SessionDir: "/s/sessions/1", NotesFile: "/s/notes/x.md",
 		Notes:             "remember this",
 		Inbox:             []mail.Message{{ID: "m1", From: "reviewer", To: "developer", Subject: "Review round 1", Body: "please fix", PR: 9, CreatedAt: sampleMailTime}},
 		Issue:             &github.Issue{Number: 4, Title: "Add thing", Body: "details", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:feature"}}, Author: github.Author{Login: "kyle"}},
@@ -1867,5 +1867,62 @@ func TestContainerSessionIsNotOfferedTheBeesCommands(t *testing.T) {
 		if none, _ := System(role, d, ""); none != plain {
 			t.Errorf("%s: sandbox none renders differently from an unset mode", role)
 		}
+	}
+}
+
+// A stacked work item (scheduler.stacked_prs) builds on the branch of the
+// work item it is blocked by: the pull request targets that branch and the
+// pre-push merge brings it in, not the default branch. The developer is told
+// so in both prompts, and a session that is not stacked reads exactly what
+// it always did.
+func TestDeveloperIsToldItsStackBase(t *testing.T) {
+	d := sample()
+	d.BaseBranch = "bees/issue-3"
+	sys, err := System(config.RoleDeveloper, d, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	flow := flowed(sys)
+	for _, want := range []string{
+		"--base bees/issue-3 --head bees/issue-4",
+		"git fetch origin && git merge origin/bees/issue-3",
+		"not the local `bees/issue-3` branch",
+		"Merge `bees/issue-3`, the branch of the work item yours is stacked on, into your branch",
+		"conflicts with (or fell behind) `bees/issue-3`",
+	} {
+		if !strings.Contains(flow, want) {
+			t.Errorf("stacked developer system prompt missing %q:\n%s", want, sys)
+		}
+	}
+	for _, stale := range []string{"--base main", "origin/main", "local `main`"} {
+		if strings.Contains(flow, stale) {
+			t.Errorf("stacked developer system prompt still names the default branch (%q):\n%s", stale, sys)
+		}
+	}
+	task, err := Task(config.RoleDeveloper, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	flow = flowed(task)
+	for _, want := range []string{
+		"based on `bees/issue-3`.",
+		"`bees/issue-3` is the branch of the work item yours is blocked by",
+		"stacked on it and targets that branch, not `main`",
+		"in your mail, merge `bees/issue-3`, push",
+	} {
+		if !strings.Contains(flow, want) {
+			t.Errorf("stacked developer task missing %q:\n%s", want, task)
+		}
+	}
+
+	// Not stacked: the base is the default branch and the stacking
+	// paragraph is not there at all.
+	plain, err := Task(config.RoleDeveloper, sample())
+	if err != nil {
+		t.Fatal(err)
+	}
+	flow = flowed(plain)
+	if !strings.Contains(flow, "based on `main`.") || strings.Contains(flow, "stacked") || !strings.Contains(flow, "in your mail, merge the default branch, push") {
+		t.Errorf("unstacked developer task changed:\n%s", plain)
 	}
 }

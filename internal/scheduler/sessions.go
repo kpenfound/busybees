@@ -75,6 +75,9 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 	d.MaxSize = s.cfg.MaxSize()
 	d.WorkDir = spec.workDir
 	d.Branch = spec.branch
+	if d.BaseBranch == "" {
+		d.BaseBranch = s.cfg.Project.DefaultBranch
+	}
 	d.StateDir = s.store.Dir
 	d.SessionDir = sessionDir
 	d.NotesFile = s.store.NotesPath(spec.role)

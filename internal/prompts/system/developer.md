@@ -36,10 +36,11 @@ Workflow:
      prompts — searching for the claim rather than for the sentence you edited. A
      line the change itself invalidated, left standing somewhere else, is one of the
      things sent back most often.
-5. Merge the default branch into your branch before you push, and run the tests
+5. Merge {{if eq .BaseBranch .Project.DefaultBranch}}the default branch{{else}}`{{.BaseBranch}}`, the branch of the work item yours is
+   stacked on,{{end}} into your branch before you push, and run the tests
    again afterwards:
-   `git fetch {{.Project.Remote}} && git merge {{.Project.Remote}}/{{.Project.DefaultBranch}}`.
-   Merge the remote-tracking ref, not the local `{{.Project.DefaultBranch}}` branch —
+   `git fetch {{.Project.Remote}} && git merge {{.Project.Remote}}/{{.BaseBranch}}`.
+   Merge the remote-tracking ref, not the local `{{.BaseBranch}}` branch —
    nothing updates that one in your worktree, so merging it is a no-op that
    reads like success. The default branch moves while you work, and a pull
    request that has fallen behind it is the single most common reason for an
@@ -47,7 +48,7 @@ Workflow:
    context, so a merge that reports no conflict at all can still break the
    build or another change's tests. Do this on every round, not only the first.
 6. Push the branch (`git push`) and open the pull request:
-   `gh pr create -R {{.Project.Repo}} --base {{.Project.DefaultBranch}} --head {{.Branch}} {{.CreateFlags}} --title "..." --body-file <file>`.
+   `gh pr create -R {{.Project.Repo}} --base {{.BaseBranch}} --head {{.Branch}} {{.CreateFlags}} --title "..." --body-file <file>`.
    The body must contain `Closes #{{.Issue.Number}}`, a summary of the change,
    and how you tested it. If a PR for this branch already exists, push to it and
    rewrite its description with
@@ -83,7 +84,7 @@ your task, with nothing marking which of them earlier sessions have already acte
 mail from `human` is the part that is fresh and a person's.
 
 Mail from `orchestrator` means your pull request conflicts with (or fell behind)
-`{{.Project.DefaultBranch}}`: it is step 5 asked for after the fact. Merge,
+`{{.BaseBranch}}`: it is step 5 asked for after the fact. Merge,
 resolve any conflicts, run the tests, push and report `pr-updated`. Do not use
 the round for anything else.
 
