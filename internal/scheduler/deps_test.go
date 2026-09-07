@@ -695,3 +695,167 @@ func TestStackWaitPollsAtTheChecksPollInterval(t *testing.T) {
 	cancel()
 	waitWorkers(t, h, cancel, 10*time.Second)
 }
+
+// issueForBranch parses a developer branch back to its issue, and nothing
+// else: the default branch, another naming, a malformed or padded number,
+// and a branch under another prefix all fail to parse.
+func TestIssueForBranch(t *testing.T) {
+	for _, tc := range []struct {
+		prefix, branch string
+		want           int
+		ok             bool
+	}{
+		{"bees/", "bees/issue-42", 42, true},
+		{"bees/", "bees/issue-1", 1, true},
+		{"", "issue-7", 7, true},
+		{"team-a/", "team-a/issue-3", 3, true},
+		{"bees/", "main", 0, false},
+		{"bees/", "bees/issue-", 0, false},
+		{"bees/", "bees/issue-0", 0, false},
+		{"bees/", "bees/issue--1", 0, false},
+		{"bees/", "bees/issue-01", 0, false},
+		{"bees/", "bees/issue-1x", 0, false},
+		{"bees/", "bees/issue-1/fix", 0, false},
+		{"bees/", "bees/issue 1", 0, false},
+		{"bees/", "release/issue-1", 0, false},
+		{"bees/", "issue-1", 0, false},
+		{"bees/", "bees/feature-1", 0, false},
+		{"bees/", "", 0, false},
+	} {
+		got, ok := issueForBranch(tc.prefix, tc.branch)
+		if got != tc.want || ok != tc.ok {
+			t.Errorf("issueForBranch(%q, %q) = %d, %v; want %d, %v", tc.prefix, tc.branch, got, ok, tc.want, tc.ok)
+		}
+	}
+}
+
+// A predecessor's pull request that closed unmerged while no worker was
+// running leaves the stacked pull request targeting a branch nobody is going
+// to merge: GitHub retargets a pull request's base only when that branch is
+// deleted, which a merge does and a plain close does not. The worker that
+// starts on the issue afterwards — resuming into stack-wait, into a review,
+// or dispatched fresh once the predecessor's issue closed too — finds no open
+// predecessor to stack on, and escalates before it runs a stage: no session,
+// no approval, no merge, and the recorded stage is left as it was.
+func TestAStackedPullRequestWhosePredecessorClosedUnmergedWhileNoWorkerRan(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		label string // #1's state label when the worker starts
+		stage string // the stage #1's bookkeeping recorded, "" for none
+		pred  string // #2's issue state
+	}{
+		{"resumed into stack-wait", "bees:review", "stack-wait", "OPEN"},
+		{"resumed into the review with nothing recorded", "bees:review", "", "OPEN"},
+		{"resumed in progress", "bees:in-progress", "develop", "OPEN"},
+		{"dispatched once the predecessor's issue closed too", "bees:ready", "", "CLOSED"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarnessAt(t, stackedTOML+"[roles.reviewer]\nauto_merge = true\n", time.Now())
+			h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true} // reviewer disabled: a review would approve at once
+			seedStack(t, h)
+			delete(h.gh.hidden, stackedPR) // opened before the restart
+			h.gh.issues[1].Labels = []github.Label{{Name: "bees"}, {Name: tc.label}, {Name: "bees:size/m"}}
+			h.gh.issues[2].State = tc.pred
+			h.gh.prs[fakePR].State = "CLOSED" // #2's pull request closed unmerged
+			if tc.stage != "" {
+				bk, err := h.store.Issue(1)
+				if err != nil {
+					t.Fatal(err)
+				}
+				bk.WorkerStage, bk.PR, bk.Branch, bk.Round = tc.stage, stackedPR, "bees/issue-1", 1
+				if err := h.store.SaveIssue(bk); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			runPass(t, h)
+			if got := strings.Join(h.gh.history[1], ","); got != "bees:needs-human" {
+				t.Fatalf("#1 history: %s, want bees:needs-human", got)
+			}
+			c := h.gh.comments[1]
+			if len(c) != 1 {
+				t.Fatalf("escalation comments: %v", c)
+			}
+			for _, want := range []string{"Pull request #201 targets `bees/issue-2`, the branch of #2", "#2 has no open pull request", "Reopen #2's pull request, or retarget #201 at `main`, and hand #1 back"} {
+				if !strings.Contains(c[0], want) {
+					t.Errorf("escalation comment missing %q:\n%s", want, c[0])
+				}
+			}
+			if n := len(h.sessions(config.RoleDeveloper)); n != 0 {
+				t.Fatalf("developer sessions: %d, want none", n)
+			}
+			if github.HasLabel(h.gh.prs[stackedPR].Labels, "bees:approved") || len(h.gh.merged) != 0 {
+				t.Fatalf("the stacked pull request was approved or merged: %v %v", h.gh.prs[stackedPR].Labels, h.gh.merged)
+			}
+			bk, err := h.store.Issue(1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if bk.WorkerStage != tc.stage {
+				t.Fatalf("the worker reached a stage: %q, want %q", bk.WorkerStage, tc.stage)
+			}
+		})
+	}
+}
+
+// The check reads the factory's own branch names only. A pull request a
+// person retargeted at a branch of another naming is theirs and the worker
+// proceeds; a predecessor whose pull request is still open is a stack, and
+// the worker waits for it as before; a pull request on the default branch
+// is the plain case.
+func TestAWorkerStartsOnAPullRequestTargetingSomeOtherBranch(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		base string
+		want string
+	}{
+		{"a branch of another naming", "release/2", "bees:in-progress,bees:review"},
+		{"the default branch", "main", "bees:in-progress,bees:review"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarnessAt(t, stackedTOML, time.Now())
+			seedStack(t, h)
+			delete(h.gh.hidden, stackedPR)
+			seedCounter(t, h, "review", 1)
+			h.gh.issues[2].State = "CLOSED"
+			h.gh.prs[fakePR].State = "CLOSED"
+			h.gh.prs[stackedPR].BaseRefName = tc.base
+
+			runPass(t, h)
+			// The developer round ran and the pull request went to review: the
+			// worker did not escalate at start.
+			if got := strings.Join(h.gh.history[1], ","); !strings.HasPrefix(got, tc.want) {
+				t.Fatalf("#1 history: %s, want a prefix of %s", got, tc.want)
+			}
+			if len(h.gh.comments[1]) != 0 {
+				t.Fatalf("no escalation expected: %v", h.gh.comments[1])
+			}
+			if n := len(h.sessions(config.RoleDeveloper)); n != 1 {
+				t.Fatalf("developer sessions: %d, want 1", n)
+			}
+		})
+	}
+}
+
+// With scheduler.stacked_prs off nothing is ever stacked, so a pull request
+// found targeting another work item's branch has no stack to wait for and
+// the escalation asks for the default branch alone.
+func TestAPullRequestTargetingAWorkItemBranchWithStackingOff(t *testing.T) {
+	h := newHarnessAt(t, devOnlyTOML, time.Now())
+	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true}
+	seedStack(t, h)
+	delete(h.gh.hidden, stackedPR)
+	h.gh.issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:review"}, {Name: "bees:size/m"}}
+
+	runPass(t, h)
+	if got := strings.Join(h.gh.history[1], ","); got != "bees:needs-human" {
+		t.Fatalf("#1 history: %s", got)
+	}
+	c := h.gh.comments[1]
+	if len(c) != 1 || !strings.Contains(c[0], "`scheduler.stacked_prs` is off") || !strings.Contains(c[0], "Retarget #201 at `main` and hand #1 back") || strings.Contains(c[0], "Reopen") {
+		t.Fatalf("escalation comment: %v", c)
+	}
+	if n := len(h.sessions(config.RoleDeveloper)); n != 0 {
+		t.Fatalf("developer sessions: %d, want none", n)
+	}
+}
