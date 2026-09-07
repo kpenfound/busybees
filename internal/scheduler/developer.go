@@ -656,7 +656,7 @@ func (s *Scheduler) resumeStage(log *slog.Logger, bk state.IssueState, issue git
 }
 
 // stageMatchesLabels reports whether a remembered stage still agrees with what
-// the issue's labels say. Only develop needs nothing: the three stages of the
+// the issue's labels say. Only develop needs nothing: the four stages of the
 // review loop are meaningless without an open pull request, and an issue back
 // in a state that has not reached one — bees:ready after a conflict reopened
 // it, or anything a person set by hand — is one whose review is over whatever
