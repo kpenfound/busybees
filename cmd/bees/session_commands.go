@@ -194,7 +194,7 @@ managed by people; the factory only inherits them.`
 		Example: `  bees issue create --parent 12 --title "Export as CSV" --body-file body.md   # work item, child of feature #12
   bees issue create --bug --related $BEES_ISSUE --title "Crash on empty input" --body "..."
   bees issue create --feature --related 40 --title "Search" --body-file body.md   # feature from feedback #40
-  bees issue create --parent 12 --blocked-by 37 --title "Order the queue" --body-file body.md  # not built before #37 closes`,
+  bees issue create --parent 12 --blocked-by 37 --title "Order the queue" --body-file body.md  # built after #37`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := newApp(cmd.Context(), g)
 			if err != nil {

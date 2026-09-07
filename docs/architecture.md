@@ -57,7 +57,9 @@ A full pass is:
    plus `feedback`, `features`, `proposals` and `open_prs`) go into
    `status.json`. A ready issue that declares a blocker still open is listed
    there as waiting on it and is not dispatched (see
-   [Dependencies](workflow.md#dependencies)).
+   [Dependencies](workflow.md#dependencies)), unless `scheduler.stacked_prs`
+   lets it build on the blocker: a blocker under the same feature whose pull
+   request is open holds nothing back.
 2. **Comments on an in-flight issue.** For every issue in `in-progress`,
    `review`, `approved` or `blocked` whose `updatedAt` moved past the issue's
    `issue_human_seen_at` clock, the comments written since that clock are
@@ -173,7 +175,11 @@ A full pass is:
    then the rest of `ready`: `bees:priority` first, then
    `scheduler.dispatch_order` (smallest size first by default), ties by age.
    Priority reorders the queue and lifts no cap. A ready issue whose declared
-   blockers are still open is skipped without taking a slot. A `bees:size/l`
+   blockers are still open is skipped without taking a slot. With
+   `scheduler.stacked_prs`, a blocker that is a sub-issue of the same feature
+   and has an open pull request is not waited for: the worker cuts the
+   issue's branch from the blocker's branch instead of the default branch,
+   and the developer's pull request targets that branch. A `bees:size/l`
    issue that is new work waits while `scheduler.max_large_in_flight` of them
    are owned; the check runs before a slot is taken, so a held issue does not
    keep a free developer idle. Each remaining candidate takes a slot from a
@@ -865,7 +871,7 @@ Messages are addressed to a **role**, not a session. Delivery rules:
   can also send mail by hand with `bees mail send --from human`, or by typing
   one in the live view's session view, which writes the same thing. The
   scheduler's own requests, to bring a pull request up to date with the
-  default branch, come from `orchestrator`.
+  branch it targets, come from `orchestrator`.
 
 **Visibility backstop.** After every session the scheduler lists the issues
 and pull requests created since the session started (`gh issue list` and `gh

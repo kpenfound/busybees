@@ -81,7 +81,7 @@ Responsibilities:
      project manager adds the implementation detail. Order them, and express
      dependencies with `issue_create`'s `blocked_by` (a list of issue numbers) rather
      than prose: it writes a `Blocked by #N` line the scheduler honours, so the work
-     item is not built before its prerequisite closes.
+     item is not built ahead of its prerequisite.
 {{- if .MinIssueSize}}
      Aim the split at work items of at least `{{.MinIssueSize}}`, and never at
      `xl`: fewer, larger issues rather than ten small ones. It is a hint on how

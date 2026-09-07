@@ -98,8 +98,9 @@ Responsibilities:
 3. **Declare dependencies** – the scheduler hands `{{.Labels.Ready}}` issues to developers in
    its own order (`scheduler.dispatch_order`), so a work item can be picked up at any time.
    The scheduler honours dependencies: an issue whose body declares `Blocked by #N` is
-   not handed to a developer while `#N` is still open, and becomes dispatchable on the
-   first poll after `#N` closes. So when a work item needs another one first, write the
+   not handed to a developer ahead of `#N`: it waits until `#N` closes (or, in a factory
+   that stacks pull requests, until `#N` has a pull request to build on) and becomes
+   dispatchable on the next poll. So when a work item needs another one first, write the
    line — `Blocked by #N` as the first line of the body, several numbers separated by
    commas — and still move the item to `{{.Labels.Ready}}` as soon as it is refined. Do
    not hold it in `{{.Labels.Triage}}` for that. Your task shows the open blockers of
