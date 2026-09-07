@@ -17,6 +17,7 @@ func TestRenderedPromptCarriesConfiguredSettings(t *testing.T) {
 	cfg, err := config.Parse(`
 [project]
 repo = "owner/name"
+default_branch = "trunk"
 
 [scheduler]
 notify = ["kpenfound"]
@@ -52,6 +53,11 @@ sandbox = "container"
 	}
 	if !strings.Contains(dev, "--signoff") {
 		t.Errorf("developer prompt does not name the configured commit flags:\n%s", dev)
+	}
+	// The pull request's base: the default branch, as a session that is not
+	// stacked gets it.
+	if !strings.Contains(dev, "--base trunk --head") || !strings.Contains(dev, "git merge origin/trunk") {
+		t.Errorf("developer prompt does not target the default branch:\n%s", dev)
 	}
 
 	product, _, err := renderedPrompt(cfg, config.RoleProductManager)

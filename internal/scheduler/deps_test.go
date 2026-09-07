@@ -363,3 +363,29 @@ func TestStackedPRsBuildOnThePredecessorBranch(t *testing.T) {
 		t.Fatalf("nothing is waiting any more: %v", st.WaitingOnDeps)
 	}
 }
+
+// A predecessor whose pull request merged is not stacked on, even with its
+// issue still declared as a blocker: its branch is in the default branch and
+// may be gone from the remote, so the work item is cut from the default
+// branch, as it would be without stacking.
+func TestStackedPRsFallBackToTheDefaultBranchOnceThePredecessorMerged(t *testing.T) {
+	h := newHarnessAt(t, stackedTOML, time.Now())
+	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true}
+	h.gh.parents = map[int]int{1: 5, 2: 5}
+	// #2 is closed: not in the poll, so it holds #1 back no longer; its
+	// branch was deleted on merge, and no open pull request names it.
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Second step", Body: "Blocked by #2\n\nBuild on it.", State: "OPEN",
+		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/m"}}, CreatedAt: time.Now()}
+	h.gh.issues[2] = &github.Issue{Number: 2, Title: "First step", State: "CLOSED",
+		Labels: []github.Label{{Name: "bees"}, {Name: "bees:approved"}, {Name: "bees:size/m"}}, CreatedAt: time.Now()}
+	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main",
+		Labels: []github.Label{{Name: "bees"}}}
+
+	runPass(t, h)
+	if got := strings.Join(h.gh.history[1], ","); got != "bees:in-progress,bees:approved" {
+		t.Fatalf("#1 history: %s", got)
+	}
+	if sys := systemPromptOf(t, h, 0); !strings.Contains(sys, "--base main --head bees/issue-1") {
+		t.Fatalf("#1 should target the default branch:\n%s", sys)
+	}
+}
