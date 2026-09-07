@@ -469,3 +469,42 @@ func TestAServerThatHasGoneIsForgotten(t *testing.T) {
 		t.Error("the stale server pid file should have been removed")
 	}
 }
+
+// The crash leaves each session its own entry, whether or not its container
+// is still running: two orphaned servers are two things to stop, and a
+// container is not a third — it belongs to the session whose directory it
+// is labelled with, which is the session the server was started for.
+func TestFindGroupsEveryOrphanedServerWithItsContainer(t *testing.T) {
+	sessions := t.TempDir()
+	boxed := filepath.Join(sessions, "20260906-developer-issue-1-r1")
+	loose := filepath.Join(sessions, "20260906-reviewer-issue-2-r1")
+	writeContainerID(t, boxed, "aaa111")
+	if err := os.MkdirAll(loose, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fakeEngine(t, "aaa111\t"+boxed+"\n")
+	for _, dir := range []string{boxed, loose} {
+		server, _ := startGroup(t)
+		if err := WriteServerPID(dir, server.Process.Pid); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	found, err := Find(context.Background(), sessions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(found) != 2 {
+		t.Fatalf("Find: %+v, want one entry per session", found)
+	}
+	byDir := map[string]Proc{}
+	for _, p := range found {
+		byDir[p.SessionDir] = p
+	}
+	if p := byDir[boxed]; p.Container != "aaa111" || p.Server == 0 {
+		t.Errorf("Find %s: %+v, want the container and the server together", boxed, p)
+	}
+	if p := byDir[loose]; p.Container != "" || p.Server == 0 {
+		t.Errorf("Find %s: %+v, want the server alone", loose, p)
+	}
+}
