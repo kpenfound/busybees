@@ -832,7 +832,7 @@ func renderedPrompt(cfg *config.Config, role string) (string, []prompts.ProjectP
 		FeatureProposals: cfg.Scheduler.Proposals(),
 		MinIssueSize:     cfg.MinIssueSize(),
 		CommitFlags:      cfg.CommitFlags(), MaxSize: cfg.MaxSize(), Notify: cfg.Mentions(),
-		WorkDir: "<worktree>", Branch: "<branch>", StateDir: store.Dir, SessionDir: "<session dir>",
+		WorkDir: "<worktree>", Branch: "<branch>", BaseBranch: cfg.Project.DefaultBranch, StateDir: store.Dir, SessionDir: "<session dir>",
 		NotesFile: store.NotesPath(role), Sandbox: rr.Sandbox,
 		Issue: &github.Issue{Number: 1, Title: "<issue>"}, PR: &github.PR{Number: 2, Title: "<pr>"},
 		Round: 1, MaxRounds: cfg.Scheduler.MaxReviewRounds,

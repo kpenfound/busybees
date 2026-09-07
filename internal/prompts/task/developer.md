@@ -42,10 +42,17 @@ _No new mail._
 {{template "consolidate" .}}
 ## Instructions
 
-You are on branch `{{.Branch}}`, based on `{{.Project.DefaultBranch}}`.
+You are on branch `{{.Branch}}`, based on `{{.BaseBranch}}`.
+{{- if ne .BaseBranch .Project.DefaultBranch}}
+`{{.BaseBranch}}` is the branch of the work item yours is blocked by, whose pull
+request is still open: your pull request is stacked on it and targets that branch,
+not `{{.Project.DefaultBranch}}`, so its diff shows your work alone. Merge
+`{{.BaseBranch}}` into your branch, never `{{.Project.DefaultBranch}}` directly: what
+the default branch has that your branch lacks arrives through the branch below you.
+{{- end}}
 {{if .PR -}}
-A pull request already exists. Address the review feedback in your mail, merge the
-default branch, push, update the PR description if needed, then `done`
+A pull request already exists. Address the review feedback in your mail, merge {{if eq .BaseBranch .Project.DefaultBranch}}the
+default branch{{else}}`{{.BaseBranch}}`{{end}}, push, update the PR description if needed, then `done`
 (`status: pr-updated`, `pr: {{.PR.Number}}`).
 {{- else -}}
 Implement the issue, push, open the pull request (body must include

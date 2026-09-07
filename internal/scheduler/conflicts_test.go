@@ -237,3 +237,24 @@ func TestConflictMailUsesTheConfiguredRemote(t *testing.T) {
 		t.Errorf("mail body still names origin:\n%s", msgs[0].Body)
 	}
 }
+
+// A stacked pull request (scheduler.stacked_prs) targets its predecessor's
+// branch, and GitHub judges its merge state against that branch: the mail
+// names the branch the pull request targets, not the default branch.
+func TestConflictMailNamesTheBranchThePRTargets(t *testing.T) {
+	h := newHarness(t, devOnlyTOML)
+	seedApprovedPR(t, h, github.MergeableConflicting, "DIRTY", "abc123def456")
+	h.gh.prs[fakePR].BaseRefName = "bees/issue-2"
+
+	checkOnce(t, h)
+	msgs := developerMail(t, h)
+	if len(msgs) != 1 {
+		t.Fatalf("want one mail, got %+v", msgs)
+	}
+	if msgs[0].Subject != "PR #101 conflicts with bees/issue-2" {
+		t.Fatalf("subject: %s", msgs[0].Subject)
+	}
+	if !strings.Contains(msgs[0].Body, "git fetch origin && git merge origin/bees/issue-2") || strings.Contains(msgs[0].Body, "origin/main") {
+		t.Fatalf("body names the wrong branch:\n%s", msgs[0].Body)
+	}
+}

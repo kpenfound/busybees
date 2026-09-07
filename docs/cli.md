@@ -1163,7 +1163,7 @@ instead of `gh issue create`; it is equally handy for people.
 | `--bug` | Bug work item (`bees:bug`). |
 | `--feature` | Feature issue for the product manager (`bees:feature`, plus `bees:proposal` unless `scheduler.feature_proposals = false`; no state label). |
 | `--ready` | Work item is already detailed: `bees:ready` instead of `bees:triage`. |
-| `--blocked-by N` | Repeatable. Prefixes the body with a `Blocked by #N` line, so the scheduler does not build the issue while `N` is open (see [Dependencies](workflow.md#dependencies)). No GitHub dependency relationship is created. |
+| `--blocked-by N` | Repeatable. Prefixes the body with a `Blocked by #N` line, so the scheduler does not build the issue ahead of `N` (see [Dependencies](workflow.md#dependencies)). No GitHub dependency relationship is created. |
 | `--label L` | Extra label (repeatable). |
 
 What it always does: adds the visibility label and, when `filter.assignee` is

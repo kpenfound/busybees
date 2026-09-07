@@ -61,7 +61,13 @@ func (s *Scheduler) checkPRs(ctx context.Context, snap *snapshot) error {
 		if bk.ConflictNotifiedSHA == pr.HeadSHA {
 			continue // already told the developer about this head
 		}
-		base := s.cfg.Project.DefaultBranch
+		// The branch GitHub judged the merge against: the pull request's
+		// own base, which is the predecessor's branch for a stacked one
+		// (scheduler.stacked_prs), and the default branch otherwise.
+		base := pr.BaseRefName
+		if base == "" {
+			base = s.cfg.Project.DefaultBranch
+		}
 		m := mail.Message{
 			From:    OrchestratorSender,
 			To:      config.RoleDeveloper,
