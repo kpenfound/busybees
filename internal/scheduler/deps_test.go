@@ -655,3 +655,43 @@ func TestAWorkerResumedIntoStackWaitAfterThePredecessorMergedApproves(t *testing
 		t.Fatalf("no escalation expected: %v", h.gh.comments[1])
 	}
 }
+
+// The wait polls the predecessor at roles.reviewer.checks_poll_interval, the
+// cadence the checks stage already uses, not on a loop of its own: with the
+// interval at an hour the predecessor is read once, and an approval that
+// lands afterwards goes unnoticed until the next poll.
+func TestStackWaitPollsAtTheChecksPollInterval(t *testing.T) {
+	h := newHarnessAt(t, stackedTOML+"[roles.reviewer]\nchecks_poll_interval = \"1h\"\n", time.Now())
+	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true}
+	seedStack(t, h)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := h.sched.pass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitForStage(t, h, "stack-wait")
+	polls := func() int {
+		h.gh.mu.Lock()
+		defer h.gh.mu.Unlock()
+		n := 0
+		for _, c := range h.gh.calls {
+			if len(c) >= 3 && c[0] == "issue" && c[1] == "view" && c[2] == "2" {
+				n++
+			}
+		}
+		return n
+	}
+	waitFor(t, 10*time.Second, "the first poll of #2", func() bool { return polls() >= 1 })
+	before := polls()
+	labelApproved(h, 2)
+	time.Sleep(300 * time.Millisecond)
+	if got := polls(); got != before {
+		t.Fatalf("#2 was polled %d more times inside checks_poll_interval", got-before)
+	}
+	if got := strings.Join(h.gh.history[1], ","); got != "bees:in-progress" {
+		t.Fatalf("#1 was approved between polls: %s", got)
+	}
+	// The wait ends with the context, as a hard stop ends it.
+	cancel()
+	waitWorkers(t, h, cancel, 10*time.Second)
+}
