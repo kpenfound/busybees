@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	ossignal "os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -318,16 +319,43 @@ func TestParsePSFindsTheEngineClient(t *testing.T) {
 }
 
 // startGroup runs a process group leader with a child, the shape of the
-// built-in MCP server: killing the leader alone would leave the child.
-func startGroup(t *testing.T) *exec.Cmd {
+// built-in MCP server, and returns both: killing the leader alone leaves
+// the child running, so the child is what says the group was signalled.
+func startGroup(t *testing.T) (leader *exec.Cmd, child int) {
 	t.Helper()
-	cmd := exec.Command("sh", "-c", "sleep 60 & wait")
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if err := cmd.Start(); err != nil {
+	file := filepath.Join(t.TempDir(), "child")
+	leader = exec.Command("sh", "-c", "sleep 60 & echo $! > "+file+"; wait")
+	leader.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := leader.Start(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = cmd.Process.Kill(); _, _ = cmd.Process.Wait() })
-	return cmd
+	t.Cleanup(func() {
+		_ = syscall.Kill(-leader.Process.Pid, syscall.SIGKILL)
+		_, _ = leader.Process.Wait()
+	})
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if b, err := os.ReadFile(file); err == nil && len(strings.TrimSpace(string(b))) > 0 {
+			child, _ = strconv.Atoi(strings.TrimSpace(string(b)))
+			return leader, child
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("the process group's child never started")
+	return nil, 0
+}
+
+// gone waits for a process to disappear.
+func gone(t *testing.T, pid int) bool {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if !Alive(pid) {
+			return true
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return !Alive(pid)
 }
 
 // The MCP server bees runs on the host for a container session outlives a
@@ -343,7 +371,7 @@ func TestFindAndKillReachTheOrphanedServer(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	server := startGroup(t)
+	server, serverChild := startGroup(t)
 	if err := WriteServerPID(dir, server.Process.Pid); err != nil {
 		t.Fatal(err)
 	}
@@ -377,6 +405,11 @@ func TestFindAndKillReachTheOrphanedServer(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Error("the built-in server is still running after the kill")
 	}
+	// The whole group, not the leader alone: the server's own children
+	// hold the port after it exits.
+	if !gone(t, serverChild) {
+		t.Errorf("the built-in server's child (pid %d) survived the kill", serverChild)
+	}
 	if _, err := os.Stat(filepath.Join(dir, ServerPIDFile)); !os.IsNotExist(err) {
 		t.Error("the server pid file should be removed after the kill")
 	}
@@ -388,7 +421,8 @@ func TestFromPIDFileCarriesTheServerAndTheContainer(t *testing.T) {
 	fakeEngine(t, "")
 	dir := t.TempDir()
 	writeContainerID(t, dir, "aaa111")
-	client, server := startGroup(t), startGroup(t)
+	client, _ := startGroup(t)
+	server, _ := startGroup(t)
 	if err := WritePID(dir, client.Process.Pid); err != nil {
 		t.Fatal(err)
 	}
