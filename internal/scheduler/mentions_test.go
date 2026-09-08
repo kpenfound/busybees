@@ -45,7 +45,10 @@ func TestAMentionOnAPreFlightIssueReachesTheProjectManager(t *testing.T) {
 	seedMentionIssue(h, 2, now, "bees:ready", "bees:size/s")
 	seedMentionIssue(h, 3, now, "bees:ready", "bees:size/s")
 
-	// Pass 1 seeds the clocks and delivers nothing.
+	// Pass 1 seeds the clocks and delivers nothing, not even the mention
+	// written before the factory ever saw the issue: a zero clock must not
+	// mean "replay every mention this issue ever collected".
+	seedIssueComments(h, 1, issueComment(900, "kyle", "@busybees-bot from before the factory looked", now.Add(-90*time.Minute)))
 	deliverIssueCommentsOnce(t, h)
 	if msgs := roleMail(t, h, config.RoleProjectManager); len(msgs) != 0 {
 		t.Fatalf("the seeding pass delivered %d messages, want none: %+v", len(msgs), msgs)
@@ -56,7 +59,9 @@ func TestAMentionOnAPreFlightIssueReachesTheProjectManager(t *testing.T) {
 	for _, n := range []int{1, 2, 3} {
 		h.gh.issues[n].UpdatedAt = said
 	}
-	seedIssueComments(h, 1, issueComment(901, "kyle", "@busybees-bot this one is urgent", said))
+	seedIssueComments(h, 1,
+		issueComment(900, "kyle", "@busybees-bot from before the factory looked", now.Add(-90*time.Minute)),
+		issueComment(901, "kyle", "@busybees-bot this one is urgent", said))
 	seedIssueComments(h, 2, issueComment(902, "robin", "hey @BusyBees-Bot, split this in two", said))
 	seedIssueComments(h, 3, issueComment(903, "kyle", "while you are in there, rename the flag", said))
 
@@ -73,6 +78,9 @@ func TestAMentionOnAPreFlightIssueReachesTheProjectManager(t *testing.T) {
 		if m.From != HumanSender {
 			t.Errorf("mail about issue #%d is from %q, want %q", m.Issue, m.From, HumanSender)
 		}
+	}
+	if strings.Contains(msgs[0].Body, "from before the factory looked") {
+		t.Errorf("a mention older than the clock was replayed:\n%s", msgs[0].Body)
 	}
 	if !strings.Contains(msgs[0].Body, "this one is urgent") {
 		t.Errorf("the triage mention's body is missing the comment:\n%s", msgs[0].Body)
