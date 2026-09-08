@@ -37,6 +37,12 @@ type sessionSpec struct {
 	// worker, when set, is updated with the attempt number so `bees status`
 	// shows that a session is being retried.
 	worker *state.Worker
+	// attempt numbers a best-of-N attempt, 1 to N (bestofn.go); 0 is any
+	// other session. An attempt runs roles.developer.best_of_n_model and
+	// best_of_n_prompt where they are set, and is told of no interrupted
+	// session: that report is about one branch, and the attempts each work
+	// on their own.
+	attempt int
 }
 
 // runSession resolves the role, renders prompts and runs the session.
@@ -50,6 +56,14 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 	// overrides whatever the size picked.
 	if spec.role == config.RoleDeveloper && spec.data.Issue != nil {
 		role.Model = role.ModelFor(s.sizeOf(spec.data.Issue.Labels))
+	}
+	if spec.attempt > 0 {
+		if role.BestOfNModel != "" {
+			role.Model = role.BestOfNModel
+		}
+		if role.BestOfNPrompt != "" {
+			role.Prompt = role.BestOfNPrompt
+		}
 	}
 	fallback := spec.useFallback && role.FallbackModel != ""
 	if fallback {
@@ -92,7 +106,7 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 	if d.MaxRounds == 0 {
 		d.MaxRounds = s.cfg.Scheduler.MaxReviewRounds
 	}
-	if d.Issue != nil {
+	if d.Issue != nil && spec.attempt == 0 {
 		// What a session that never finished on this issue left behind — a
 		// scheduler dying while it worked, or a hard stop — for the first
 		// session of the role it was interrupted in.

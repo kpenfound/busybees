@@ -1193,15 +1193,17 @@ func (s *Scheduler) dispatchDevelopers(ctx context.Context, snap *snapshot, loca
 			s.log.Info("large issue waits, cap reached", "issue", issue.Number, "max_large_in_flight", largeLimit)
 			continue
 		}
-		select {
-		case <-s.slots:
-		default:
+		// One slot per session the worker's first round runs: one, or,
+		// for a size best_of_n_by_size fans out, one per attempt, claimed
+		// together or not at all (bestofn.go).
+		attempts := s.attemptsFor(issue, snap)
+		if !s.claimSlots(attempts) {
 			return // pool is full
 		}
 		if local {
 			live, ok := s.liveCandidate(ctx, issue, snap)
 			if !ok {
-				s.slots <- struct{}{}
+				s.releaseSlots(attempts)
 				continue
 			}
 			issue = live
@@ -1213,12 +1215,14 @@ func (s *Scheduler) dispatchDevelopers(ctx context.Context, snap *snapshot, loca
 		s.mu.Unlock()
 		s.writeStatus()
 		s.wg.Add(1)
-		go func(issue github.Issue, w *state.Worker) {
+		go func(issue github.Issue, w *state.Worker, attempts int) {
 			defer s.wg.Done()
 			defer func() {
 				s.mu.Lock()
 				delete(s.owned, issue.Number)
 				s.mu.Unlock()
+				// The worker's own slot; the extra ones a fan-out held
+				// went back when its attempts finished (workIssue).
 				s.slots <- struct{}{}
 				s.writeStatus()
 				// The session that finished last signalled while this
@@ -1231,11 +1235,11 @@ func (s *Scheduler) dispatchDevelopers(ctx context.Context, snap *snapshot, loca
 			// through a cool-down (workIssue), so a failure during one is a
 			// real failure and earns its log line and its backoff. Only the
 			// hard stop that cancels that context makes them noise.
-			if err := s.workIssue(ctx, issue, w); err != nil && s.sessionContext(ctx).Err() == nil {
+			if err := s.workIssue(ctx, issue, w, attempts-1); err != nil && s.sessionContext(ctx).Err() == nil {
 				s.log.Error("developer worker failed", "issue", issue.Number, "err", err)
 				s.setBackoff(fmt.Sprintf("issue-%d", issue.Number), 5*s.cfg.Scheduler.PollInterval.Duration)
 			}
-		}(issue, w)
+		}(issue, w, attempts)
 	}
 }
 

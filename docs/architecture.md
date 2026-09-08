@@ -190,8 +190,9 @@ A full pass is:
    issue that is new work waits while `scheduler.max_large_in_flight` of them
    are owned; the check runs before a slot is taken, so a held issue does not
    keep a free developer idle. Each remaining candidate takes a slot from a
-   pool of `max_developers` (default 1); when none is free the pass stops
-   dispatching. A goroutine runs the worker
+   pool of `max_developers` (default 1), or one slot per attempt, all of them
+   or none, when its size fans out under `best_of_n_by_size`; when the pool
+   cannot supply it the pass stops dispatching. A goroutine runs the worker
    ([The developer worker](#the-developer-worker)) and returns the slot when
    done, and the worker records the issue's size, which is what the cap counts
    and what `bees status` shows. A worker that fails with an error, rather

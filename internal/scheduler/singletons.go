@@ -587,7 +587,9 @@ func (s *Scheduler) RunRole(ctx context.Context, role string, issue, pr int) err
 			delete(s.owned, issue)
 			s.mu.Unlock()
 		}()
-		return s.workIssue(ctx, i, w)
+		// No extra slots: `bees exec developer` runs outside the pool and
+		// never fans out.
+		return s.workIssue(ctx, i, w, 0)
 	case config.RoleProjectManager, config.RoleProductManager, config.RoleQA:
 		snap, err := s.poll(ctx)
 		if err != nil {

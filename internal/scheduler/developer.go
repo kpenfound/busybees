@@ -38,7 +38,18 @@ func (s *Scheduler) BranchFor(issue int) string {
 // resumed in-progress/review state, or an approved one whose post-approval
 // checks were interrupted) until the reviewer approves it, the developer asks
 // a question, or the factory gives up.
-func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.Worker) error {
+//
+// extra is how many max_developers slots the worker holds beyond its own:
+// dispatch claims one per best-of-N attempt (bestofn.go), and the worker
+// runs extra+1 attempts in its first develop round and gives the extra
+// slots back when they have finished, or at once when that round turns out
+// not to be a first one after all.
+func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.Worker, extra int) error {
+	releaseExtra := func() {
+		s.releaseSlots(extra)
+		extra = 0
+	}
+	defer releaseExtra()
 	// One work item's develop -> review -> checks loop is one piece of work
 	// in progress, even though several roles take part in it, so a worker
 	// that already holds an issue runs under the sessions' own context: a
@@ -189,7 +200,21 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 		}
 		switch stage {
 		case "develop":
-			s.updateWorker(w, "developer", bookkeeping.Round)
+			// A best-of-N fan-out is a first develop round and nothing
+			// else: a round with a pull request to update is one session
+			// however the size is configured. Dispatch predicted this from
+			// the poll and the bookkeeping; the worker decides from the
+			// pull request it found, and gives the slots back when the two
+			// disagree.
+			fanout := extra > 0 && pr == nil
+			if !fanout {
+				releaseExtra()
+			}
+			if fanout {
+				s.updateWorker(w, "fan-out", bookkeeping.Round)
+			} else {
+				s.updateWorker(w, "developer", bookkeeping.Round)
+			}
 			if err := s.setState(ctx, issue.Number, s.labels.InProgress); err != nil {
 				return err
 			}
@@ -206,6 +231,27 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 				return err
 			}
 			parent, _ := s.gh.ParentIssue(ctx, issue.Number)
+			if fanout {
+				attempts, wss, err := s.runAttempts(ctx, fanOut{
+					issue: fresh, worker: w, attempts: extra + 1, base: base, inbox: inbox, maxRounds: maxRounds, parent: parent, log: log,
+				})
+				// The attempts are over, whatever they came to: the pool
+				// gets its slots back before the issue is handed on.
+				releaseExtra()
+				if err == nil {
+					readErr := s.mail.MarkRead(inbox...)
+					s.opAs(log, slog.LevelWarn, "mail", readErr, "mark mail read", "err", readErr)
+					// Nothing compares the attempts yet: the branches are
+					// the result, and a person picks from them.
+					err = s.escalate(ctx, issue.Number, attemptsReason(attempts))
+				}
+				for _, aws := range wss {
+					if rmErr := s.ws.Remove(context.WithoutCancel(ctx), aws); rmErr != nil {
+						log.Warn("workspace cleanup failed", "branch", aws.Branch, "err", rmErr)
+					}
+				}
+				return err
+			}
 			name := fmt.Sprintf("developer-issue-%d-r%d", issue.Number, bookkeeping.Round)
 			if afterDevelop == "checks" || afterDevelop == "prereview" {
 				name += fmt.Sprintf("-checkfix%d", bookkeeping.CheckFixRounds)
