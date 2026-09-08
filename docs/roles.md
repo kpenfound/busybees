@@ -352,11 +352,13 @@ With the reviewer [disabled](#disabling-a-role), `pr-opened` and `pr-updated`
 approve the pull request at once, and with `auto_merge` the worker goes on to
 the checks stage.
 
-**Configuration.** `roles.developer` takes the common keys and three of its
+**Configuration.** `roles.developer` takes the common keys and a few of its
 own: `commit_flags`, `max_size` (default `l`, the largest work item a
-developer takes) and `model_by_size` (a model per size label). Set anywhere
-else, they are a load error. See
-[configuration.md](configuration.md#rolesdeveloper-only-commit-flags-max-size-and-per-size-models).
+developer takes), `model_by_size` (a model per size label) and the best-of-N
+keys (`best_of_n_by_size` and the model and prompt overrides for the attempts
+and the assembler). Set anywhere else, they are a load error. See
+[configuration.md](configuration.md#rolesdeveloper-only-commit-flags-max-size-and-per-size-models)
+and [best of N](configuration.md#rolesdeveloper-only-best-of-n).
 
 ## reviewer
 
@@ -678,8 +680,9 @@ prompt_file = "docs/qa-checklist.md"
   a session runs as, `claude` or `codex`; a `codex` role has no default
   `model` or `fallback_model` and ignores `max_turns`, `allowed_tools` and
   `disallowed_tools` (see [Running a session](architecture.md#running-a-session)).
-- **commit_flags, max_size, model_by_size** are `roles.developer` only
-  ([developer](#developer)). **auto_merge, merge_method, checks_wait,
+- **commit_flags, max_size, model_by_size, best_of_n_by_size,
+  best_of_n_model, best_of_n_prompt, assembler_model, assembler_prompt** are
+  `roles.developer` only ([developer](#developer)). **auto_merge, merge_method, checks_wait,
   checks_poll_interval, checks_timeout, max_check_fix_rounds,
   pre_review_checks, pre_review_checks_timeout, stages** are `roles.reviewer`
   only ([reviewer](#reviewer)). Set anywhere else, each is a load error.

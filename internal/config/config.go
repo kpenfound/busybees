@@ -452,6 +452,20 @@ type RoleSettings struct {
 	// ModelBySize picks the model per work item size, keyed by "xs".."xl".
 	// A size with no entry uses Model.
 	ModelBySize map[string]string `toml:"model_by_size"`
+	// BestOfNBySize is how many developer attempts one work item of that
+	// size gets, keyed by "xs".."xl". A size with no entry, and an entry of
+	// 1, is one attempt: the empty table means best-of-N is off.
+	BestOfNBySize map[string]int `toml:"best_of_n_by_size"`
+	// BestOfNModel and BestOfNPrompt override the model and the prompt of
+	// every attempt of a size that fans out. Empty: the size resolves its
+	// model and prompt as any single attempt does.
+	BestOfNModel  string `toml:"best_of_n_model"`
+	BestOfNPrompt string `toml:"best_of_n_prompt"`
+	// AssemblerModel and AssemblerPrompt override the model and the prompt
+	// of the session that picks the result from the attempts. Empty: the
+	// developer role's own model and prompt.
+	AssemblerModel  string `toml:"assembler_model"`
+	AssemblerPrompt string `toml:"assembler_prompt"`
 
 	// The following key is only valid under [roles.product_manager].
 
@@ -1040,7 +1054,15 @@ type ResolvedRole struct {
 	MCP    map[string]MCPServer
 	Model  string
 	// ModelBySize overrides Model per work item size; developer only.
-	ModelBySize     map[string]string
+	ModelBySize map[string]string
+	// BestOfNBySize, the best-of-N attempt count per work item size, and the
+	// model and prompt overrides for the attempts and for the assembler;
+	// developer only. Read through BestOfN.
+	BestOfNBySize   map[string]int
+	BestOfNModel    string
+	BestOfNPrompt   string
+	AssemblerModel  string
+	AssemblerPrompt string
 	FallbackModel   string
 	Agent           string
 	Effort          string
@@ -1412,8 +1434,8 @@ func (c *Config) Validate() error {
 		if scope == "global" && rs.Enabled != nil {
 			errs = append(errs, fmt.Sprintf("%s: enabled is only valid under roles.<name>", scope))
 		}
-		if scope != "roles."+RoleDeveloper && (rs.CommitFlags != "" || rs.MaxSize != "" || len(rs.ModelBySize) > 0) {
-			errs = append(errs, fmt.Sprintf("%s: commit_flags, max_size and model_by_size are only valid under roles.developer", scope))
+		if scope != "roles."+RoleDeveloper && (rs.CommitFlags != "" || rs.MaxSize != "" || len(rs.ModelBySize) > 0 || len(rs.BestOfNBySize) > 0 || rs.BestOfNModel != "" || rs.BestOfNPrompt != "" || rs.AssemblerModel != "" || rs.AssemblerPrompt != "") {
+			errs = append(errs, fmt.Sprintf("%s: commit_flags, max_size, model_by_size, best_of_n_by_size, best_of_n_model, best_of_n_prompt, assembler_model and assembler_prompt are only valid under roles.developer", scope))
 		}
 		if scope != "roles."+RoleProductManager && rs.MinIssueSize != "" {
 			errs = append(errs, fmt.Sprintf("%s: min_issue_size is only valid under roles.product_manager", scope))
@@ -1430,6 +1452,15 @@ func (c *Config) Validate() error {
 				errs = append(errs, fmt.Sprintf("%s.model_by_size: unknown size %q (want one of %s)", scope, size, strings.Join(Sizes, ", ")))
 			case strings.TrimSpace(rs.ModelBySize[size]) == "":
 				errs = append(errs, fmt.Sprintf("%s.model_by_size.%s must name a model", scope, size))
+			}
+		}
+		// Off for a size is the absent key, so 0 is a value nothing reads.
+		for _, size := range slices.Sorted(maps.Keys(rs.BestOfNBySize)) {
+			switch {
+			case !slices.Contains(Sizes, size):
+				errs = append(errs, fmt.Sprintf("%s.best_of_n_by_size: unknown size %q (want one of %s)", scope, size, strings.Join(Sizes, ", ")))
+			case rs.BestOfNBySize[size] < 1:
+				errs = append(errs, fmt.Sprintf("%s.best_of_n_by_size.%s must be at least 1", scope, size))
 			}
 		}
 		// An unset list means the default; an explicit empty one is a
@@ -1542,20 +1573,25 @@ func (c *Config) Role(name string) (ResolvedRole, error) {
 		defaultModel, defaultFallback = "", ""
 	}
 	r := ResolvedRole{
-		Name:          canonical,
-		Model:         firstNonEmpty(rs.Model, g.Model, defaultModel),
-		ModelBySize:   sizeModels(rs.ModelBySize),
-		FallbackModel: firstNonEmpty(rs.FallbackModel, g.FallbackModel, defaultFallback),
-		Agent:         agent,
-		Effort:        firstNonEmpty(rs.Effort, g.Effort),
-		MaxTurns:      firstPositive(rs.MaxTurns, g.MaxTurns, DefaultMaxTurns),
-		Timeout:       firstPositiveDur(rs.Timeout.Duration, g.Timeout.Duration, DefaultTimeout),
-		Enabled:       true,
-		Shell:         firstNonEmpty(rs.Shell, g.Shell),
-		Sandbox:       firstNonEmpty(rs.Sandbox, g.Sandbox, DefaultSandbox),
-		SandboxImage:  firstNonEmpty(rs.SandboxImage, g.SandboxImage),
-		MCP:           map[string]MCPServer{},
-		Env:           map[string]string{},
+		Name:            canonical,
+		Model:           firstNonEmpty(rs.Model, g.Model, defaultModel),
+		ModelBySize:     sizeModels(rs.ModelBySize),
+		BestOfNBySize:   sizeInts(rs.BestOfNBySize),
+		BestOfNModel:    strings.TrimSpace(rs.BestOfNModel),
+		BestOfNPrompt:   strings.TrimSpace(rs.BestOfNPrompt),
+		AssemblerModel:  strings.TrimSpace(rs.AssemblerModel),
+		AssemblerPrompt: strings.TrimSpace(rs.AssemblerPrompt),
+		FallbackModel:   firstNonEmpty(rs.FallbackModel, g.FallbackModel, defaultFallback),
+		Agent:           agent,
+		Effort:          firstNonEmpty(rs.Effort, g.Effort),
+		MaxTurns:        firstPositive(rs.MaxTurns, g.MaxTurns, DefaultMaxTurns),
+		Timeout:         firstPositiveDur(rs.Timeout.Duration, g.Timeout.Duration, DefaultTimeout),
+		Enabled:         true,
+		Shell:           firstNonEmpty(rs.Shell, g.Shell),
+		Sandbox:         firstNonEmpty(rs.Sandbox, g.Sandbox, DefaultSandbox),
+		SandboxImage:    firstNonEmpty(rs.SandboxImage, g.SandboxImage),
+		MCP:             map[string]MCPServer{},
+		Env:             map[string]string{},
 	}
 	for k, v := range g.Env {
 		r.Env[k] = v
@@ -1625,6 +1661,33 @@ func (r ResolvedRole) MCPNames() []string {
 // unknown size falls back to Model.
 func (r ResolvedRole) ModelFor(size string) string {
 	return firstNonEmpty(r.ModelBySize[size], r.Model)
+}
+
+// BestOfN returns how many developer attempts a work item of the given size
+// gets: the best_of_n_by_size entry when there is one, else 1. An empty or
+// unknown size, and a role that carries no table, is one attempt.
+func (r ResolvedRole) BestOfN(size string) int {
+	if n := r.BestOfNBySize[size]; n > 1 {
+		return n
+	}
+	return 1
+}
+
+// sizeInts copies a best_of_n_by_size table, dropping entries at or below 1:
+// one attempt is what an absent entry already means. It returns nil for an
+// empty table.
+func sizeInts(m map[string]int) map[string]int {
+	var out map[string]int
+	for size, n := range m {
+		if n <= 1 {
+			continue
+		}
+		if out == nil {
+			out = make(map[string]int, len(m))
+		}
+		out[size] = n
+	}
+	return out
 }
 
 // sizeModels copies a model_by_size table, trimming the model names and
