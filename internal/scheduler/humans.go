@@ -94,19 +94,22 @@ func (s *Scheduler) deliverHumanFeedback(ctx context.Context, snap *snapshot) er
 }
 
 // inFlightStates are the issue states in which the factory is working on an
-// issue, and so the states in which a person's comment on the issue itself
-// has somebody to reach. An issue in ready has no session to steer — the next
-// one to run reads the comment out of the issue body's comment history — and
-// a feature or feedback issue is the product manager's, not this delivery's.
+// issue, and so the states in which every comment a person writes on the
+// issue itself is delivered. An issue in ready has no session to steer — the
+// next one to run reads the comment out of the issue body's comment history —
+// and a feature or feedback issue is the product manager's, on its own
+// schedule.
 //
-// The states in preFlightStates are deliberately not here: they carry a clock
-// but never deliver. In both, the session that acts on the issue next renders
-// its whole comment history in its own prompt, so mail would be a second copy
-// of what that session is about to read anyway.
+// The states in preFlightStates are deliberately not here: the session that
+// acts on the issue next renders its whole comment history in its own prompt,
+// so mail would be a second copy of what that session is about to read
+// anyway. They carry a clock, and deliver one thing only — a comment that
+// @-mentions the login the factory acts as. See deliverMention.
 var inFlightStates = []string{"in-progress", "review", "approved", "blocked"}
 
 // preFlightStates are the states an issue passes through before the factory
-// works on it. They deliver nothing, but they record the poll time, so that
+// works on it. They deliver only mentions (deliverMention), and record the
+// poll time on every pass, so that
 // an issue reaching a flight state arrives with its clock at the last poll
 // before the state changed rather than at zero.
 //
@@ -149,7 +152,7 @@ var preFlightStates = []string{"triage", "ready"}
 // Nothing is lost — those comments are in the prompt's comment history.
 //
 // That seed is why the states in preFlightStates carry a clock too, though
-// they never deliver. An issue is always observed in triage before anything
+// they deliver only mentions. An issue is always observed in triage before anything
 // can block it — the pass that dispatches the project manager has already
 // polled it — so recording the poll time there is what makes the answer to a
 // triage question arrive: without it the first pass that sees the issue
@@ -163,7 +166,14 @@ func (s *Scheduler) deliverHumanIssueComments(ctx context.Context, snap *snapsho
 	var errs []string
 	for _, st := range preFlightStates {
 		for _, issue := range snap.byState[st] {
-			if err := s.store.SetIssueHumanSeenAt(issue.Number, s.now()); err != nil {
+			if err := s.deliverMention(ctx, issue, config.RoleProjectManager); err != nil {
+				errs = append(errs, err.Error())
+			}
+		}
+	}
+	for _, list := range [][]github.Issue{snap.features, snap.feedback} {
+		for _, issue := range list {
+			if err := s.deliverMention(ctx, issue, config.RoleProductManager); err != nil {
 				errs = append(errs, err.Error())
 			}
 		}
@@ -246,6 +256,101 @@ func (s *Scheduler) issueCommentRecipient(st string, bk state.IssueState) string
 		return config.RoleProjectManager
 	}
 	return config.RoleDeveloper
+}
+
+// deliverMention delivers a person's comment on an issue nothing is
+// delivered from otherwise — one in triage or ready, and the product
+// manager's feature and feedback issues — to the role that owns it:
+// the project manager for triage and ready, the product manager for a
+// feature or a feedback issue. Unlike the in-flight delivery above it is
+// gated: only a comment that @-mentions the login the factory acts as is
+// mailed, and only that comment, not the rest of the window.
+//
+// The gate is the whole difference. The session that picks such an issue up
+// renders its comment history in its own prompt, so mailing every comment
+// would be a second copy of what that session is about to read anyway. A
+// mention is the one thing that rendering cannot carry: a person asking for
+// the role now rather than on its own schedule.
+//
+// With [github] unset the factory shares its GitHub account with the people
+// it works for (github.Client.ActsAs), so there is no name to mention that
+// is the factory's and not a person's, and this delivers nothing at all.
+//
+// The issue's clock is refreshed on every pass either way, mentioned or not,
+// which is what preFlightStates needs it for.
+func (s *Scheduler) deliverMention(ctx context.Context, issue github.Issue, to string) error {
+	n := issue.Number
+	seen := func() error { return s.store.SetIssueHumanSeenAt(n, s.now()) }
+	if s.gh.ActsAs == "" {
+		return seen()
+	}
+	bk, err := s.store.Issue(n)
+	if err != nil {
+		return err
+	}
+	// A zero clock is the first observation: seed it and deliver nothing,
+	// exactly as the in-flight loop does, so that an upgrade does not replay
+	// every mention an issue ever collected.
+	if bk.IssueHumanSeenAt.IsZero() || !issue.UpdatedAt.After(bk.IssueHumanSeenAt) {
+		return seen()
+	}
+	activity, err := s.gh.IssueActivity(ctx, n, bk.IssueHumanSeenAt)
+	if err != nil {
+		return fmt.Errorf("issue #%d activity: %v", n, err)
+	}
+	var mentions []github.Activity
+	for _, a := range activity {
+		if mentionsLogin(a.Body, s.gh.ActsAs) {
+			mentions = append(mentions, a)
+		}
+	}
+	if len(mentions) == 0 {
+		return seen()
+	}
+	m := mail.Message{
+		From:    HumanSender,
+		To:      to,
+		Subject: fmt.Sprintf("Mention on issue #%d from %s", n, strings.Join(activityAuthors(mentions), ", ")),
+		Body:    formatIssueComments(n, mentions),
+		Issue:   n,
+	}
+	if _, err := s.mail.Send(m); err != nil {
+		return err
+	}
+	// The mentioned role has work now, whatever its interval says: wake the
+	// loop.
+	s.signal()
+	s.log.Info("human mention delivered", "issue", n, "to", to, "items", len(mentions))
+	return seen()
+}
+
+// mentionsLogin reports whether body @-mentions login, the way GitHub reads
+// one: case is ignored, since logins are, and the name has to stand alone —
+// @busybees-bot is not mentioned by @busybees-bot-2, and an address like
+// bees@busybees-bot mentions nobody. An empty login is mentioned by nothing.
+func mentionsLogin(body, login string) bool {
+	if login == "" {
+		return false
+	}
+	body, login = strings.ToLower(body), "@"+strings.ToLower(login)
+	for i := 0; ; {
+		j := strings.Index(body[i:], login)
+		if j < 0 {
+			return false
+		}
+		at := i + j
+		end := at + len(login)
+		if (at == 0 || !loginByte(body[at-1])) && (end == len(body) || !loginByte(body[end])) {
+			return true
+		}
+		i = at + 1
+	}
+}
+
+// loginByte reports whether b can be part of a GitHub login, which is what
+// decides where one ends: letters, digits and the hyphen.
+func loginByte(b byte) bool {
+	return b == '-' || (b >= '0' && b <= '9') || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
 }
 
 // activityAuthors lists the distinct authors of activity, in the order they

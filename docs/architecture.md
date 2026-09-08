@@ -78,8 +78,15 @@ A full pass is:
    issue in one of those four states with no clock records the poll time and
    delivers nothing: a zero clock must not mean "replay every comment this
    issue ever received". An issue in `triage` or `ready` has its clock
-   refreshed on every pass and never delivers, because the session that acts
-   on it next renders the whole comment history in its prompt. That refresh is
+   refreshed on every pass and delivers one thing only: a comment that
+   `@`-mentions the login `[github]` gives the factory, which goes to the
+   project manager. A `bees:feature` or `bees:feedback` issue is read the
+   same way, and a mention on one goes to the product manager. Everything
+   else people write on those issues stays where it is, because the session
+   that acts on the issue next renders the whole comment history in its
+   prompt; a mention is a person asking for the role now instead. With
+   `[github]` unset the factory has no name of its own to mention, and none
+   of them deliver anything. That refresh is
    what makes an answer to a blocking triage question arrive: the issue was
    observed in triage before it could be blocked, so it has a clock by the
    time it is blocked. What the mail adds over the comment history in a prompt
@@ -332,8 +339,10 @@ worker and finds its own pull request.
 **API budget.** Every poll costs two `gh` calls. Everything else is gated on
 what those lists report, so an idle factory stays at two calls per poll (and,
 with `work_hours`, at two per `off_hours_poll_interval` outside the window).
-Comments on an in-flight issue cost one call per issue whose `updatedAt`
-moved; pull request feedback three per pull request whose `updatedAt` moved;
+Comments cost one call per issue whose `updatedAt` moved past its clock: the
+four in-flight states, plus, once `[github]` names an account to mention,
+`triage`, `ready` and the product manager's issues. Pull request feedback
+costs three calls per pull request whose `updatedAt` moved;
 the product manager's freshness check one `issue view` per feedback or feature
 issue updated since its last run; QA's merged-PR query at most once per
 `qa_interval`; the checks stages poll `gh pr checks` every
@@ -920,8 +929,10 @@ Messages are addressed to a **role**, not a session. Delivery rules:
   finishes, so a session that crashed sees it again.
 - Reconcile uses *unread* mail to relabel blocked issues; the verification of
   a session's claim to have sent mail uses creation time.
-- Feedback on a pull request, and a person's comments on an in-flight issue,
-  enter the mailbox as messages from `human` (see the scheduler loop). People
+- Feedback on a pull request, a person's comments on an in-flight issue, and
+  an `@`-mention of the factory's login on any other issue the filter
+  reaches, enter the mailbox as messages from `human` (see the scheduler
+  loop). People
   can also send mail by hand with `bees mail send --from human`, or by typing
   one in the live view's session view, which writes the same thing. The
   scheduler's own requests, to bring a pull request up to date with the
