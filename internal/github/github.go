@@ -1003,6 +1003,27 @@ func (c *Client) IssueActivity(ctx context.Context, number int, since time.Time)
 	return c.freshHumanActivity(comments, since), nil
 }
 
+// CommentsSince returns the conversation comments on an issue or pull request
+// created after since, oldest first, by everybody.
+//
+// It is IssueActivity without the filter: the caller is looking for the
+// factory's own comments rather than for a person's, so neither the marker
+// nor the login the factory acts as excludes anything here.
+func (c *Client) CommentsSince(ctx context.Context, number int, since time.Time) ([]Activity, error) {
+	comments, err := c.issueComments(ctx, number)
+	if err != nil {
+		return nil, err
+	}
+	var out []Activity
+	for _, a := range comments {
+		if a.CreatedAt.After(since) {
+			out = append(out, a)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
+	return out, nil
+}
+
 // issueComments reads the conversation comments on an issue or pull request,
 // unfiltered and in the order GitHub returns them.
 func (c *Client) issueComments(ctx context.Context, number int) ([]Activity, error) {

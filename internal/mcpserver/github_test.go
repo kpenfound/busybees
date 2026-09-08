@@ -375,8 +375,13 @@ func TestCommentOnAPullRequest(t *testing.T) {
 	f.prs[72] = github.PR{Number: 72, Labels: labelsOf("bees"), Assignees: []github.Author{{Login: "kyle"}}}
 	h := newHarness(t, config.RoleDeveloper, Deps{GitHub: f})
 	h.call("comment", map[string]any{"number": 72, "body": "Addressed in the last push."})
-	if len(f.comments) != 1 || !strings.HasSuffix(f.comments[0].body, "<!-- bees:developer -->") {
+	if len(f.comments) != 1 {
 		t.Fatalf("comments: %v", f.comments)
+	}
+	// The tool's own marker is what the scheduler's post-session audit reads
+	// back (internal/scheduler, auditMarkers), so read it back the same way.
+	if role, ok := github.BeeRole(f.comments[0].body); !ok || role != config.RoleDeveloper {
+		t.Fatalf("the comment does not read back as the developer's: %q", f.comments[0].body)
 	}
 }
 

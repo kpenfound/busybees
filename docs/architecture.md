@@ -329,6 +329,21 @@ rather than cached: the cache holds what a poll would return. Pull requests
 are not read back, because the developer and reviewer loop runs inside one
 worker and finds its own pull request.
 
+**The marker audit.** A comment posted through the `comment` tool always
+carries the role's `<!-- bees:<role> -->` marker: the tool appends it. A
+comment a session posts from its own shell with `gh` does not, unless the
+session wrote the marker itself, and that path is outside the orchestrator
+entirely. So the orchestrator looks afterwards: when a session ends it reads
+the comments left since it started on its issue, on the pull request it was
+given or reported opening, and on every issue it touched, and logs a warning
+naming the item, the role and the comment for each one made by the factory's
+login without a marker. It reports
+and does not rewrite: the login already identifies the comment as the
+factory's, and editing a comment after the fact would surprise more than the
+missing marker costs. With `[github]` unset there is no login to go by, a
+comment without a marker is indistinguishable from a person's, and the audit
+reads nothing.
+
 **API budget.** Every poll costs two `gh` calls. Everything else is gated on
 what those lists report, so an idle factory stays at two calls per poll (and,
 with `work_hours`, at two per `off_hours_poll_interval` outside the window).
@@ -340,6 +355,8 @@ issue updated since its last run; QA's merged-PR query at most once per
 `roles.reviewer.checks_poll_interval` (default 2m), not every poll; the
 visibility backstop makes two list calls after each session; the refresh after
 each session one `issue view` per issue that session created or relabelled;
+the marker audit, with `[github]` set, one comment read per issue and pull
+request that session could have commented on, the one it opened included;
 and worker stage transitions make a handful of `issue view`, `pr view` and
 `issue edit` calls.
 Sessions call `gh` on their own on top of this, which busybees does not meter.
