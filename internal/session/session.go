@@ -85,6 +85,14 @@ type Request struct {
 	// callers that want to reference it in prompts create it first with
 	// Runner.NewSessionDir.
 	SessionDir string
+	// ResumeID, when set, is the agent's own id of an earlier session
+	// (Result.ClaudeID) whose conversation this one continues, so a later
+	// round of the same role starts with the previous round's context
+	// instead of relearning the codebase. Only claude can: codex has no
+	// resume, and ignores it. The caller owns the id's lifetime; one that
+	// the agent no longer knows makes the launch fail before it says
+	// anything, which the caller's retry runs fresh.
+	ResumeID string
 }
 
 // Result is what a finished session produced.
