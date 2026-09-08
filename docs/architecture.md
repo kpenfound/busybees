@@ -689,7 +689,7 @@ Checked, in Go, when the session ends:
   could not test at all, which is the `failed` outcome. A missing report fails
   the run and backs QA off for five poll intervals.
 - every session's comments: the marker audit, under
-  [Running a session](#running-a-session).
+  [The scheduler loop](#the-scheduler-loop).
 
 A reviewer's `approved` in the review loop has nothing to check, because the
 orchestrator performs the approval itself: it labels the pull request and the
@@ -697,10 +697,11 @@ issue, and requests a review from `scheduler.notify`.
 
 Not checked, because there is nothing to look at afterwards:
 
-- the tools a session writes GitHub with (`issue_create`, `issue_link`,
-  `comment`, `mail_send`, `issue_set_state`, `issue_question`,
-  `submit_review`). Each does its work inside the call and returns its error to
-  the session there, so the call is the ground truth at the moment it runs.
+- a tool call itself. Each of `issue_create`, `issue_link`, `comment`,
+  `issue_edit_body`, `issue_set_state`, `issue_question`, `submit_review` and
+  `mail_send` does its work inside the call and returns its error to the
+  session there, so the call is the ground truth at the moment it runs. What
+  is checked above is the outcome claiming one was made, not the call.
 - the product manager's and the project manager's outcomes. No particular write
   is owed: their work is issues that may or may not need writing, and `done`
   and `idle` are both honest with nothing changed on GitHub.
