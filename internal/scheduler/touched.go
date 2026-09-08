@@ -28,10 +28,15 @@ import (
 // An issue that has been closed, or that does not match the factory's
 // filter, is dropped rather than cached: the cached list is what the poll
 // would have returned, and the poll returns neither.
-func (s *Scheduler) refreshTouched(ctx context.Context, sessionDir string) {
+//
+// The list it read is returned, for the checks that run on the same session's
+// issues once it has ended (auditMarkers): the file is the record of what one
+// session changed, and reading it twice would count one failure to read it
+// twice in the degraded-operations streak.
+func (s *Scheduler) refreshTouched(ctx context.Context, sessionDir string) []int {
 	touched, err := session.TouchedIssues(sessionDir)
 	if s.op("touched-issues", err, "reading the issues a session changed", "session", sessionDir, "err", err) {
-		return
+		return touched
 	}
 	for _, n := range touched {
 		live, err := s.gh.GetIssue(ctx, n)
@@ -47,4 +52,5 @@ func (s *Scheduler) refreshTouched(ctx context.Context, sessionDir string) {
 		s.log.Debug("refreshed an issue the session changed", "issue", n, "state", s.stateOf(live.Labels))
 		s.cacheIssue(live)
 	}
+	return touched
 }
