@@ -36,7 +36,7 @@ import (
 // The flags that steer the fake (FAKE_CLAUDE, FAKE_DEV_HANG, FAKE_DEV_FAIL,
 // FAKE_DEV_MAIL_TO, FAKE_REVIEW_ALWAYS_CHANGES, FAKE_REVIEW_FAIL, FAKE_COST, FAKE_SIGNAL,
 // FAKE_WAIT_FOR, FAKE_LIMIT, FAKE_LIMIT_WITH_OUTCOME, FAKE_RESULT_TEXT, FAKE_COPY_ISSUE_STATE,
-// FAKE_TRIAGE, FAKE_FILE_ISSUE)
+// FAKE_TRIAGE, FAKE_FILE_ISSUE, FAKE_RESUME_FAIL)
 // reach it through the ordinary environment, so they must NOT start with
 // BEES_: the runner strips inherited BEES_* variables from every session.
 func TestMain(m *testing.M) {
@@ -96,6 +96,21 @@ func fakeClaude() {
 		_, _ = fmt.Fprintln(f, filepath.Base(sessionDir))
 		_ = f.Close()
 	}
+	// The session id claude reports is derived from the --name the runner
+	// passed ("bees-developer-issue-1-r1" -> "sid-developer-issue-1-r1"), so
+	// a test can predict the id a later round must resume with.
+	sessionID := "fake"
+	if i := slices.Index(os.Args, "--name"); i >= 0 && i+1 < len(os.Args) {
+		sessionID = "sid-" + strings.TrimPrefix(os.Args[i+1], "bees-")
+	}
+	// FAKE_RESUME_FAIL makes a resumed launch die the way real claude does
+	// with a session id it no longer has: before any result event, with a
+	// non-zero exit. A launch with no --resume runs normally, so the retry
+	// the runner makes without the flag is the one that does the work.
+	if os.Getenv("FAKE_RESUME_FAIL") == "1" && slices.Contains(os.Args, "--resume") {
+		fmt.Fprintln(os.Stderr, "No conversation found with session ID:", os.Args[slices.Index(os.Args, "--resume")+1])
+		os.Exit(1)
+	}
 	// FAKE_WAIT_FOR holds the session "running" until the named file exists:
 	// how a test acts on a session that is observably in flight — cancelling
 	// the loop, hard-stopping the factory — with no timing window, because
@@ -123,7 +138,7 @@ func fakeClaude() {
 		}
 		fmt.Printf(`{"type":"rate_limit_event","rate_limit_info":{"status":"blocked","rateLimitType":"five_hour","overageStatus":"allowed"%s}}`+"\n", resets)
 		if os.Getenv("FAKE_LIMIT_WITH_OUTCOME") == "" {
-			fmt.Println(`{"type":"result","subtype":"success","is_error":false,"result":"You've hit your session limit","session_id":"fake","num_turns":1,"total_cost_usd":0.01}`)
+			fmt.Printf(`{"type":"result","subtype":"success","is_error":false,"result":"You've hit your session limit","session_id":%q,"num_turns":1,"total_cost_usd":0.01}`+"\n", sessionID)
 			return
 		}
 	}
@@ -347,7 +362,7 @@ func fakeClaude() {
 		fmt.Println(`{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":2}}`)
 		return
 	}
-	fmt.Printf(`{"type":"result","subtype":"success","is_error":false,"result":%q,"session_id":"fake","num_turns":2,"total_cost_usd":%v}`+"\n", text, cost)
+	fmt.Printf(`{"type":"result","subtype":"success","is_error":false,"result":%q,"session_id":%q,"num_turns":2,"total_cost_usd":%v}`+"\n", text, sessionID, cost)
 }
 
 // fakeGH is an in-memory GitHub backing the gh wrapper.

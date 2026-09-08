@@ -533,6 +533,23 @@ stateDiagram-v2
   worker `resumed`. The record is not consumed by the worker that reads it,
   only overwritten by the next session as it starts, so a worker that returns
   before starting a session leaves it for the next one.
+- **Later rounds.** Within one worker's loop, a role's second and later
+  sessions continue the conversation of its previous one: the developer
+  handed review feedback and the reviewer looking at the fix keep what they
+  learned in round 1 instead of relearning the codebase. The id is the one
+  claude reports in `result.json` (`claude_session_id`); the next session of
+  the same role in the develop or review stage is launched with
+  `--resume <id>` and `--system-prompt-snapshot off`, because claude
+  otherwise reuses the system prompt it recorded on the conversation's first
+  request and the round's own system prompt would go unread. The task
+  prompt is rebuilt for every round either way, from the issue, the pull
+  request and the mailbox as they are then. The id lives in the worker and
+  nowhere else: a worker started after a restart has a new worktree, whose
+  paths the old conversation does not know, so its first session of each
+  role starts fresh. A resumed launch that fails, as one with an id claude
+  no longer has does, is retried like any infrastructure failure, without
+  the id. Checks-mode reviewer sessions and requested reviews start fresh.
+  Codex has no resume: every round of a codex role is a new thread.
 - **Bookkeeping.** `<state_dir>/issues/<n>.json` records the review round,
   pull request number, branch, `check_fix_rounds` and the three resume fields,
   plus the running session, the two human-comment clocks,
@@ -675,6 +692,7 @@ claude -p \
   --append-system-prompt-file <session>/system-prompt.md \
   --model <model> --max-turns <n> --name bees-<session name> \
   [--fallback-model <fallback>] [--effort <level>] \
+  [--resume <session id> --system-prompt-snapshot off] \
   --add-dir <state_dir> \
   [--allowedTools ...] [--disallowedTools ...] \
   --mcp-config <session>/mcp.json --strict-mcp-config \
@@ -683,7 +701,10 @@ claude -p \
 
 The task prompt is written to stdin. Each line of stream-json is appended to
 `<session>/transcript.jsonl`; the final `result` event supplies the result
-text, `is_error`, subtype, turn count, cost and claude session id.
+text, `is_error`, subtype, turn count, cost and claude session id. The
+`--resume` pair is passed when the session continues an earlier one's
+conversation, a later round of the developer or the reviewer
+(see [Later rounds](#the-developer-worker)).
 
 With `agent = "codex"` it is one `codex exec`:
 
@@ -759,9 +780,11 @@ counted from the transcript's assistant messages or completed items instead.
   times (default 1), waiting `scheduler.retry_delay` (default 10m) between
   attempts and running with the role's fallback model when
   `scheduler.retry_with_fallback` is set (on by default). Each attempt has its
-  own session directory (`<name>-retry<n>`), and a retried developer session
+  own session directory (`<name>-retry<n>`), a retried developer session
   is told its previous attempt was interrupted so it continues from the
-  branch. The account-wide claude session limit is neither kind and never
+  branch, and a retry of a session that was launched resuming an earlier one
+  runs fresh, without the id. The account-wide claude session limit is
+  neither kind and never
   reaches the classification: a session that died on it returns to its worker
   at once (see step 6 of the loop). A session that cost more than
   `scheduler.max_cost_per_session` is treated as failed. One such session is

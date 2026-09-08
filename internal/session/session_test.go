@@ -944,3 +944,67 @@ echo '{"type":"turn.completed"}'
 		}
 	}
 }
+
+// TestClaudeCommandResumes: a request naming a session to resume launches
+// claude with --resume and the system-prompt snapshot off, so the system
+// prompt rendered for this round is the one it reads rather than the
+// recording of round 1's; a request without one passes neither flag.
+func TestClaudeCommandResumes(t *testing.T) {
+	r := newRunner(t, "claude")
+	role := config.ResolvedRole{Name: "developer", Model: "opus", MaxTurns: 5, Timeout: time.Minute}
+	for _, id := range []string{"", "abc-123"} {
+		dir := t.TempDir()
+		paths := sessionPaths{dir: dir, systemPrompt: filepath.Join(dir, "system-prompt.md"), prompt: filepath.Join(dir, "prompt.md"),
+			mcp: map[string]MCPEntry{config.BuiltinMCPServer: {Command: "bees", Args: []string{"mcp", "serve"}}}}
+		_, args, _, err := claudeBackend{}.command(context.Background(), r, Request{Name: "n", Role: role, Prompt: "TASK", ResumeID: id}, paths)
+		if err != nil {
+			t.Fatal(err)
+		}
+		i := slices.Index(args, "--resume")
+		j := slices.Index(args, "--system-prompt-snapshot")
+		if id == "" {
+			if i >= 0 || j >= 0 {
+				t.Errorf("no resume id, but the flags were passed: %q", args)
+			}
+			continue
+		}
+		if i < 0 || i+1 >= len(args) || args[i+1] != id {
+			t.Errorf("resume id %q not passed: %q", id, args)
+		}
+		if j < 0 || j+1 >= len(args) || args[j+1] != "off" {
+			t.Errorf("resumed launch keeps the system-prompt snapshot: %q", args)
+		}
+		// The round's own system prompt still goes along: the snapshot flag
+		// is what makes claude read it.
+		if k := slices.Index(args, "--append-system-prompt-file"); k < 0 || args[k+1] != paths.systemPrompt {
+			t.Errorf("system prompt file not passed on the resumed launch: %q", args)
+		}
+	}
+}
+
+// TestCodexCommandIgnoresResume: codex exec has no resume, so a request
+// naming a session to resume builds the same codex command line as one
+// that does not.
+func TestCodexCommandIgnoresResume(t *testing.T) {
+	r := newRunner(t, "")
+	paths := sessionPaths{dir: t.TempDir(), mcp: map[string]MCPEntry{config.BuiltinMCPServer: {Command: "bees", Args: []string{"mcp", "serve"}}}}
+	var got [][]string
+	for _, id := range []string{"", "abc-123"} {
+		_, args, stdin, err := codexBackend{}.command(context.Background(), r, Request{Name: "n", Role: codexRole("gpt-5"), SystemPrompt: "SYS", Prompt: "TASK", ResumeID: id}, paths)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stdin != "SYS\n\n---\n\nTASK" {
+			t.Errorf("stdin: %q", stdin)
+		}
+		for _, a := range args {
+			if a == "--resume" || strings.Contains(a, "resume") || a == "--system-prompt-snapshot" || a == id {
+				t.Errorf("resume id %q reached codex as %q: %q", id, a, args)
+			}
+		}
+		got = append(got, args)
+	}
+	if !slices.Equal(got[0], got[1]) {
+		t.Errorf("the resume id changed codex's command line:\n%q\n%q", got[0], got[1])
+	}
+}
