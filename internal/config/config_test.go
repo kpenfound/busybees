@@ -1866,7 +1866,11 @@ func TestBestOfN(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// s = 1 is single-attempt, so it is dropped rather than stored.
+	// s = 1 is single-attempt, so the resolved table does not carry it: what it
+	// holds is the sizes that fan out, which is what a caller iterates.
+	if want := map[string]int{"l": 3, "xl": 5}; !reflect.DeepEqual(dev.BestOfNBySize, want) {
+		t.Errorf("best_of_n_by_size: got %v want %v", dev.BestOfNBySize, want)
+	}
 	for size, want := range map[string]int{"l": 3, "xl": 5, "s": 1, "m": 1, "xs": 1, "": 1, "nonsense": 1} {
 		if got := dev.BestOfN(size); got != want {
 			t.Errorf("BestOfN(%q): got %d want %d", size, got, want)
