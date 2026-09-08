@@ -29,6 +29,11 @@ type sessionSpec struct {
 	// useFallback runs this attempt with the role's fallback model as its
 	// primary model (scheduler.retry_with_fallback).
 	useFallback bool
+	// resumeID continues the conversation of this role's previous session
+	// on the same work item (its Result.ClaudeID), so the model keeps the
+	// context it built there. A retry never carries it: an id the agent no
+	// longer knows is the one way a resumed launch fails.
+	resumeID string
 	// worker, when set, is updated with the attempt number so `bees status`
 	// shows that a session is being retried.
 	worker *state.Worker
@@ -174,6 +179,7 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 		Prompt:       task,
 		Env:          env,
 		SessionDir:   sessionDir,
+		ResumeID:     spec.resumeID,
 	})
 	// Whatever the session changed on GitHub through the MCP server — an
 	// issue it triaged, a sub-issue it filed — goes into the cached poll
@@ -549,6 +555,9 @@ func (s *Scheduler) runSessionWithRetry(ctx context.Context, spec sessionSpec) (
 			try.name = fmt.Sprintf("%s-retry%d", spec.name, attempt-1)
 			try.data.Retry = attempt - 1
 			try.useFallback = policy.WithFallback
+			// A resumed launch that failed may have failed on the resume
+			// itself (an id claude no longer has): the retry starts fresh.
+			try.resumeID = ""
 		}
 		s.setWorkerAttempt(spec.worker, attempt)
 		res, err := s.runSession(ctx, try)
