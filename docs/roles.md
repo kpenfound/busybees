@@ -66,7 +66,8 @@ rendered. The `comment` tool appends it; a role posting through `gh` (the
 product manager closing an issue, the developer replying to an inline review
 comment) writes it itself. The orchestrator reads the marker to tell a bee's
 comment from a person's, and with `[github]` set it also counts a comment by
-the configured login as a bee's. The marker is required either way.
+the configured login as a bee's, and warns in the log about a comment of its
+own that ends a session without one. The marker is required either way.
 
 **Ground rules.** Stay in your role. Do not merge pull requests. Do not push
 to the default branch. Do not remove the `bees` label from anything. Write for

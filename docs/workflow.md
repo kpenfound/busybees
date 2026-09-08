@@ -769,6 +769,11 @@ either one on its own makes a comment a bee's:
   with its own `gh` is made by that login too. This says nothing about
   anybody else's comment: yours is yours even when it quotes a marker.
 
+With `[github]` set, the orchestrator checks the two against each other: when
+a session ends, a comment by the factory's login that carries no marker is
+logged as a warning naming the issue or pull request, the role and the
+comment. It is a report, not a repair: the comment is left as it is.
+
 The same two mechanisms decide whether a person had the last word on a
 feedback or feature issue, which is what wakes the product manager.
 
