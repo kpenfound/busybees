@@ -767,3 +767,58 @@ func TestAnAssignedPullRequestWithNoHeadCommitIsSkipped(t *testing.T) {
 		t.Errorf("recorded head: %q, want aaa1111 — an empty head overwrote a real one", got)
 	}
 }
+
+// The reviewer's whole output on a requested review is one GitHub review, so
+// the verdict it reports is a claim about GitHub. A session that reports
+// `approved` or `changes-requested` with no review to show for it — a
+// hallucinated status, or `done` called before `submit_review` — is a failure,
+// not the silent success it used to be.
+func TestARequestedReviewWithoutTheReviewFails(t *testing.T) {
+	for name, changes := range map[string]bool{"approved": false, "changes-requested": true} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarnessAt(t, reviewOnlyTOML, requestedReviewClock)
+			pushBranch(t, h.clone, "fix-widget")
+			t.Setenv("FAKE_REVIEW_NO_SUBMIT", "1")
+			if changes {
+				t.Setenv("FAKE_REVIEW_ALWAYS_CHANGES", "1")
+			}
+			h.gh.prs[42] = personsPR("bees", "bees:review-requested")
+			runPass(t, h)
+
+			if got := len(h.sessions(config.RoleReviewer)); got != 1 {
+				t.Fatalf("reviewer sessions: %d, want 1", got)
+			}
+			logs := h.logs.String()
+			if !strings.Contains(logs, "requested review failed") || !strings.Contains(logs, "GitHub shows no matching review") {
+				t.Errorf("a verdict with no review behind it was not treated as a failure:\n%s", logs)
+			}
+			if strings.Contains(logs, "requested review finished") {
+				t.Errorf("the session was logged as a finished review:\n%s", logs)
+			}
+			if until, ok := h.sched.backoffUntil(requestedReviewKey(42)); !ok || !until.After(h.clock.now()) {
+				t.Errorf("no backoff recorded for the unverified review: %v %v", until, ok)
+			}
+		})
+	}
+}
+
+// A review that was already on the pull request when the session started does
+// not confirm that session's verdict: a person's earlier approval, or the
+// factory's own from a previous pass, would otherwise pass off every later
+// hallucinated status as a real review.
+func TestAReviewOlderThanTheSessionDoesNotConfirmIt(t *testing.T) {
+	h := newHarnessAt(t, reviewOnlyTOML, requestedReviewClock)
+	pushBranch(t, h.clone, "fix-widget")
+	t.Setenv("FAKE_REVIEW_NO_SUBMIT", "1")
+	h.gh.prs[42] = personsPR("bees", "bees:review-requested")
+	h.gh.activity["repos/acme/widgets/pulls/42/reviews"] = `[{"id":1,"user":{"login":"kyle"},"body":"looks fine to me",` +
+		`"state":"APPROVED","submitted_at":"` + requestedReviewClock.Add(-time.Hour).Format(time.RFC3339) + `"}]`
+	runPass(t, h)
+
+	if got := len(h.sessions(config.RoleReviewer)); got != 1 {
+		t.Fatalf("reviewer sessions: %d, want 1", got)
+	}
+	if logs := h.logs.String(); !strings.Contains(logs, "GitHub shows no matching review") {
+		t.Errorf("an approval older than the session confirmed its verdict:\n%s", logs)
+	}
+}

@@ -931,6 +931,41 @@ func TestIssueActivity(t *testing.T) {
 	}
 }
 
+// ReviewsSince is PRActivity's reviews without its filters: its caller looks
+// for the review the factory itself submitted, so the marker it carries, the
+// login it acts as and an empty body must none of them drop it. A PENDING
+// review is still nobody's submitted verdict.
+func TestReviewsSince(t *testing.T) {
+	const bot = "busybees-bot"
+	base := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	ts := func(m int) string { return base.Add(time.Duration(m) * time.Minute).Format(time.RFC3339) }
+	c := NewAs("a/b", bot, "")
+	c.Exec = func(ctx context.Context, args ...string) ([]byte, error) {
+		if path := args[len(args)-1]; !strings.HasSuffix(path, "/pulls/9/reviews") {
+			t.Fatalf("ReviewsSince read %q", path)
+		}
+		return []byte(`[[{"id":1,"user":{"login":"kyle"},"body":"an older pass","state":"APPROVED","submitted_at":"` + ts(-5) + `"},
+			{"id":2,"user":{"login":"` + bot + `"},"body":"stage: pass\n\n<!-- bees:reviewer -->","state":"COMMENTED","submitted_at":"` + ts(4) + `"},
+			{"id":3,"user":{"login":"` + bot + `"},"body":"","state":"APPROVED","submitted_at":"` + ts(2) + `"},
+			{"id":4,"user":{"login":"kyle"},"body":"a draft","state":"PENDING","submitted_at":"` + ts(3) + `"}]]`), nil
+	}
+
+	got, err := c.ReviewsSince(context.Background(), 9, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, a := range got {
+		if a.Kind != "review" {
+			t.Errorf("kind %q, want review: %+v", a.Kind, a)
+		}
+		ids = append(ids, strconv.FormatInt(a.ID, 10)+":"+a.State)
+	}
+	if want := "3:APPROVED,2:COMMENTED"; strings.Join(ids, ",") != want {
+		t.Fatalf("got %v, want %s (oldest first, everybody's, no draft, nothing older than since)", ids, want)
+	}
+}
+
 // CommentsSince is IssueActivity without the filter: its caller looks for the
 // factory's own comments, so a bee's comment is exactly what it must keep.
 func TestCommentsSince(t *testing.T) {
