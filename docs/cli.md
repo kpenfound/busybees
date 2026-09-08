@@ -354,8 +354,8 @@ against what you wrote, and durations print as duration strings (`"45m0s"`).
 The role-specific keys appear on the role that owns them: the reviewer carries
 its merge policy (`auto_merge`, `merge_method`, `checks_wait`,
 `checks_poll_interval`, `checks_timeout`, `max_check_fix_rounds`) and its
-resolved `stages`, and the developer its `commit_flags`, `max_size` and
-`model_by_size`.
+resolved `stages`, and the developer its `commit_flags`, `max_size`,
+`model_by_size` and the best-of-N keys.
 
 ```sh
 bees config show

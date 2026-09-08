@@ -623,6 +623,34 @@ running `bees`, so a signing key and agent must work for that user without a
 prompt. `--signoff` needs `user.name` and `user.email`, as any
 commit does.
 
+### `[roles.developer]` only: best of N
+
+Best of N runs several developer sessions on the same issue, each on its own
+branch, and has an assembler session pick the pull request that goes to review.
+It is off until a size names a count.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `best_of_n_by_size` | table | `{}` | Attempts per work item size, keyed by `xs`, `s`, `m`, `l`, `xl`. An unknown key, or a value below `1`, is a load error. A size with no entry, and an issue with no size label, gets one attempt. |
+| `best_of_n_model` | string | `""` | The model every attempt runs when a size fans out. Empty: an attempt resolves its model the way a single session does, through `model_by_size` and `model`. |
+| `best_of_n_prompt` | string | `""` | The prompt every attempt runs with. Empty: the developer's own `prompt`. |
+| `assembler_model` | string | `""` | The model the assembler session runs. Empty: the developer's `model`. |
+| `assembler_prompt` | string | `""` | The prompt the assembler session runs with. Empty: the developer's own `prompt`. |
+
+```toml
+[roles.developer]
+best_of_n_by_size = { l = 3 }   # three attempts on a large issue
+
+best_of_n_prompt = """
+Do not read the other attempts. Solve the issue your own way.
+"""
+```
+
+An entry of `1` is one attempt, the same as leaving the size out, so a table
+that names no size above `1` is best of N off. Nothing reads these keys yet: a
+configuration that sets them loads and validates, and every issue still gets
+one developer session.
+
 ### Sandboxing
 
 `sandbox` says how much of the machine a session of that role can reach. It is
@@ -813,7 +841,7 @@ exercised on macOS with Docker Desktop.
 | `enabled` | Role only. |
 | `skills_refresh` | Global only. |
 | `min_issue_size` | `roles.product_manager` only. |
-| `commit_flags`, `max_size`, `model_by_size` | `roles.developer` only. |
+| `commit_flags`, `max_size`, `model_by_size`, `best_of_n_by_size`, `best_of_n_model`, `best_of_n_prompt`, `assembler_model`, `assembler_prompt` | `roles.developer` only. |
 | `auto_merge`, `merge_method`, `checks_wait`, `checks_poll_interval`, `checks_timeout`, `max_check_fix_rounds`, `pre_review_checks`, `pre_review_checks_timeout`, `stages` | `roles.reviewer` only. `bees config show reviewer` prints the resolved policy. |
 
 `bees config show <role>` prints the result.
