@@ -188,12 +188,14 @@ type IssueState struct {
 	// request's: one stream's clock must not suppress the other's. It is
 	// owned by SetIssueHumanSeenAt (scheduler.deliverHumanIssueComments) and
 	// carried over by SaveIssue for the same reason HumanSeenAt is. A zero
-	// value means the issue has not yet been seen in triage, in ready or in
-	// a flight state; the first pass that sees it in one records the poll
-	// time and delivers nothing, so an upgrade does not replay the whole
-	// comment history. Triage and ready record the time on every pass and
-	// never deliver, which is what leaves a clock behind for an issue
-	// blocked out of triage or waiting in the ready queue.
+	// value means the factory has not seen the issue at all yet; the first
+	// pass that sees it records the poll time and delivers nothing, so an
+	// upgrade does not replay the whole comment history. Triage, ready and
+	// the product manager's feature and feedback issues record the time on
+	// every pass and deliver one thing only, a comment that @-mentions the
+	// login the factory acts as (scheduler.deliverMention). That refresh is
+	// also what leaves a clock behind for an issue blocked out of triage or
+	// waiting in the ready queue.
 	IssueHumanSeenAt time.Time `json:"issue_human_seen_at,omitempty"`
 	// ConflictNotifiedSHA is the PR head commit the developer was last told
 	// to bring up to date with the default branch; the same head is never

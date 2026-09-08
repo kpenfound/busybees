@@ -78,13 +78,20 @@ A full pass is:
    issue in one of those four states with no clock records the poll time and
    delivers nothing: a zero clock must not mean "replay every comment this
    issue ever received". An issue in `triage` or `ready` has its clock
-   refreshed on every pass and never delivers, because the session that acts
-   on it next renders the whole comment history in its prompt. That refresh is
-   what makes an answer to a blocking triage question arrive: the issue was
-   observed in triage before it could be blocked, so it has a clock by the
-   time it is blocked. What the mail adds over the comment history in a prompt
-   is that the comment is fresh, that it is a person's, that it reaches the
-   reviewer, that it unblocks a blocked issue, and that it wakes the loop. See
+   refreshed on every pass and delivers one thing only: a comment that
+   `@`-mentions the login `[github]` gives the factory, which goes to the
+   project manager. A `bees:feature` or `bees:feedback` issue is read the same
+   way, and a mention on one goes to the product manager. Everything else
+   people write on those issues stays where it is, because the session that
+   acts on the issue next renders the whole comment history in its prompt; a
+   mention is a person asking for the role now instead. With `[github]` unset
+   the factory has no name of its own to mention, and none of them deliver
+   anything. That refresh is what makes an answer to a blocking triage
+   question arrive: the issue was observed in triage before it could be
+   blocked, so it has a clock by the time it is blocked. What the mail adds
+   over the comment history in a prompt is that the comment is fresh, that it
+   is a person's, that it reaches the reviewer, that it unblocks a blocked
+   issue, and that it wakes the loop. See
    [Commenting on the issue](workflow.md#commenting-on-the-issue).
 3. **Feedback on a pull request.** For every open pull request whose closing
    issue is visible, when its `updatedAt` is later than the issue's
@@ -329,21 +336,39 @@ rather than cached: the cache holds what a poll would return. Pull requests
 are not read back, because the developer and reviewer loop runs inside one
 worker and finds its own pull request.
 
+**The marker audit.** A comment posted through the `comment` tool always
+carries the role's `<!-- bees:<role> -->` marker: the tool appends it. A
+comment a session posts from its own shell with `gh` does not, unless the
+session wrote the marker itself, and that path is outside the orchestrator
+entirely. So the orchestrator looks afterwards: when a session ends it reads
+the comments left since it started on its issue, on the pull request it was
+given or reported opening, and on every issue it touched, and logs a warning
+naming the item, the role and the comment for each one made by the factory's
+login without a marker. It reports
+and does not rewrite: the login already identifies the comment as the
+factory's, and editing a comment after the fact would surprise more than the
+missing marker costs. With `[github]` unset there is no login to go by, a
+comment without a marker is indistinguishable from a person's, and the audit
+reads nothing.
+
 **API budget.** Every poll costs two `gh` calls. Everything else is gated on
 what those lists report, so an idle factory stays at two calls per poll (and,
 with `work_hours`, at two per `off_hours_poll_interval` outside the window).
-Comments on an in-flight issue cost one call per issue whose `updatedAt`
-moved; pull request feedback three per pull request whose `updatedAt` moved;
-the product manager's freshness check one `issue view` per feedback or feature
-issue updated since its last run; QA's merged-PR query at most once per
+Comments cost one call per issue whose `updatedAt` moved past its clock: the
+four in-flight states, plus, once `[github]` names an account to mention,
+`triage`, `ready` and the product manager's issues. Pull request feedback
+costs three calls per pull request whose `updatedAt` moved; the product
+manager's freshness check one `issue view` per feedback or feature issue
+updated since its last run; QA's merged-PR query at most once per
 `qa_interval`; the checks stages poll `gh pr checks` every
 `roles.reviewer.checks_poll_interval` (default 2m), not every poll; the
 visibility backstop makes two list calls after each session; the refresh after
 each session one `issue view` per issue that session created or relabelled;
+the marker audit, with `[github]` set, one comment read per issue and pull
+request that session could have commented on, the one it opened included;
 and worker stage transitions make a handful of `issue view`, `pr view` and
-`issue edit` calls.
-Sessions call `gh` on their own on top of this, which busybees does not meter.
-See [API budget](configuration.md#api-budget).
+`issue edit` calls. Sessions call `gh` on their own on top of this, which
+busybees does not meter. See [API budget](configuration.md#api-budget).
 
 **Once mode.** `bees tick` and `bees run --once` perform a single pass and
 then wait for everything it started. `--roles` restricts dispatch to the named
@@ -920,12 +945,13 @@ Messages are addressed to a **role**, not a session. Delivery rules:
   finishes, so a session that crashed sees it again.
 - Reconcile uses *unread* mail to relabel blocked issues; the verification of
   a session's claim to have sent mail uses creation time.
-- Feedback on a pull request, and a person's comments on an in-flight issue,
+- Feedback on a pull request, a person's comments on an in-flight issue, and
+  an `@`-mention of the factory's login on any other issue the filter reaches,
   enter the mailbox as messages from `human` (see the scheduler loop). People
   can also send mail by hand with `bees mail send --from human`, or by typing
   one in the live view's session view, which writes the same thing. The
-  scheduler's own requests, to bring a pull request up to date with the
-  branch it targets, come from `orchestrator`.
+  scheduler's own requests, to bring a pull request up to date with the branch
+  it targets, come from `orchestrator`.
 
 **Visibility backstop.** After every session the scheduler lists the issues
 and pull requests created since the session started (`gh issue list` and `gh

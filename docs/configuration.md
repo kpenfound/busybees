@@ -342,7 +342,7 @@ freely on top of it:
 |---|---|---|
 | A poll | 2 calls (`gh issue list`, `gh pr list`) | every `poll_interval`, or every `off_hours_poll_interval` outside `work_hours` |
 | Human PR feedback | 3 calls per PR (reviews, review comments, comments) | only for PRs whose `updatedAt` moved since the last look |
-| Human issue comments | 1 call per issue | only for issues in `bees:in-progress`, `bees:review`, `bees:approved` or `bees:blocked` whose `updatedAt` moved since the last look. A pass that sees an issue in `bees:triage` or `bees:ready` records the time and fetches nothing, and so does the first pass that sees an issue with no recorded time in one of the four states |
+| Human issue comments | 1 call per issue | only for issues whose `updatedAt` moved since the last look: `bees:in-progress`, `bees:review`, `bees:approved` and `bees:blocked` unconditionally, and, once `[github]` names an account to mention, `bees:triage`, `bees:ready`, `bees:feature` and `bees:feedback` too, to look for an `@`-mention. A pass with no `[github]` login configured, or one that sees an issue with no recorded time, records the time and fetches nothing |
 | Product-manager has-work check | 1 `issue view` per feedback or feature issue | only for issues whose `updatedAt` is newer than the last product manager run. Noticing that a feature's sub-issues have all closed costs nothing: it compares the numbers recorded on the last run with what the poll found open |
 | Product-manager run | 1 `issue view` per open feedback or feature issue, 1 REST call per open feature (sub-issue progress) and 1 GraphQL call per open work item (parent feature) | every run |
 | Planning mode | 1 extra `issue view` per `bees:planned` issue the has-work check did not already fetch | every product manager run while an issue is agreed and not yet acted on |
@@ -350,6 +350,7 @@ freely on top of it:
 | Checks | 1 call per poll of a checks stage, 2 when the branch requires no check | every `roles.reviewer.checks_poll_interval` while waiting |
 | Visibility backstop | 2 list calls | after every session |
 | Refreshing what a session changed | 1 `issue view` per issue | after a session, for each issue it created or relabelled through the MCP server; none when it changed no issue |
+| The marker audit | 1 comment read per issue or pull request | after a session, for its issue, the pull request it was given or opened, and each issue it changed, only with `[github]` set, and nothing at all without it |
 | Parent feature lookup | 1 GraphQL call per triage item, per open work item, per developer session, and per review round with a `product-fit` stage configured | per project manager run, product manager run, developer session, reviewer session |
 | `bees issue create --parent` | 3 calls (parent details, create, attach as sub-issue); `--related` 2; plain 1 | whenever a role files an issue |
 | Worker stage transitions | a few `issue view`, `pr view` and `issue edit` calls | per transition |

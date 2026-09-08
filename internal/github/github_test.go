@@ -930,3 +930,30 @@ func TestIssueActivity(t *testing.T) {
 		t.Fatalf("on a shared account: got %v, want %s", ids, want)
 	}
 }
+
+// CommentsSince is IssueActivity without the filter: its caller looks for the
+// factory's own comments, so a bee's comment is exactly what it must keep.
+func TestCommentsSince(t *testing.T) {
+	const bot = "busybees-bot"
+	base := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	ts := func(m int) string { return base.Add(time.Duration(m) * time.Minute).Format(time.RFC3339) }
+	c := NewAs("a/b", bot, "")
+	c.Exec = func(ctx context.Context, args ...string) ([]byte, error) {
+		return []byte(`[[{"id":1,"user":{"login":"kyle"},"body":"too old","created_at":"` + ts(-5) + `"},
+			{"id":2,"user":{"login":"` + bot + `"},"body":"no marker here","created_at":"` + ts(4) + `"},
+			{"id":3,"user":{"login":"` + bot + `"},"body":"on it\n\n<!-- bees:developer -->","created_at":"` + ts(2) + `"},
+			{"id":4,"user":{"login":"kyle"},"body":"and rename the flag","created_at":"` + ts(3) + `"}]]`), nil
+	}
+
+	got, err := c.CommentsSince(context.Background(), 9, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, a := range got {
+		ids = append(ids, strconv.FormatInt(a.ID, 10))
+	}
+	if want := "3,4,2"; strings.Join(ids, ",") != want {
+		t.Fatalf("got %v, want %s (oldest first, everybody's, nothing older than since)", ids, want)
+	}
+}
