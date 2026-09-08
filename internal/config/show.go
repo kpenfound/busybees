@@ -60,10 +60,16 @@ type RoleView struct {
 	Sandbox         string               `json:"sandbox"`
 	SandboxImage    string               `json:"sandbox_image"`
 
-	// CommitFlags, MaxSize and ModelBySize are only set on the developer.
-	CommitFlags *string            `json:"commit_flags,omitempty"`
-	MaxSize     *string            `json:"max_size,omitempty"`
-	ModelBySize *map[string]string `json:"model_by_size,omitempty"`
+	// CommitFlags, MaxSize, ModelBySize and the best-of-N keys are only set
+	// on the developer.
+	CommitFlags     *string            `json:"commit_flags,omitempty"`
+	MaxSize         *string            `json:"max_size,omitempty"`
+	ModelBySize     *map[string]string `json:"model_by_size,omitempty"`
+	BestOfNBySize   *map[string]int    `json:"best_of_n_by_size,omitempty"`
+	BestOfNModel    *string            `json:"best_of_n_model,omitempty"`
+	BestOfNPrompt   *string            `json:"best_of_n_prompt,omitempty"`
+	AssemblerModel  *string            `json:"assembler_model,omitempty"`
+	AssemblerPrompt *string            `json:"assembler_prompt,omitempty"`
 	// MinIssueSize is only set on the product manager.
 	MinIssueSize *string `json:"min_issue_size,omitempty"`
 	// Stages is only set on the reviewer.
@@ -153,6 +159,13 @@ func (c *Config) View(roles []string) (View, error) {
 			bySize := map[string]string{}
 			maps.Copy(bySize, rr.ModelBySize)
 			rv.ModelBySize = &bySize
+			nBySize := map[string]int{}
+			maps.Copy(nBySize, rr.BestOfNBySize)
+			rv.BestOfNBySize = &nBySize
+			rv.BestOfNModel = &rr.BestOfNModel
+			rv.BestOfNPrompt = &rr.BestOfNPrompt
+			rv.AssemblerModel = &rr.AssemblerModel
+			rv.AssemblerPrompt = &rr.AssemblerPrompt
 		case RoleReviewer:
 			stages := c.ReviewStages()
 			rv.Stages = &stages

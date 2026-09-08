@@ -51,6 +51,11 @@ checks_wait = "5s"
 commit_flags = "-S"
 max_size = "m"
 model_by_size = { xs = "haiku" }
+best_of_n_by_size = { l = 3 }
+best_of_n_model = "opus"
+best_of_n_prompt = "attempt"
+assembler_model = "sonnet"
+assembler_prompt = "assemble"
 [roles.product_manager]
 min_issue_size = "m"
 `
@@ -84,6 +89,14 @@ func TestViewIncludesRoleSpecificKeys(t *testing.T) {
 	if got := dev["model_by_size"]; !reflect.DeepEqual(got, map[string]any{"xs": "haiku"}) {
 		t.Errorf("developer model_by_size: got %#v want %v", got, map[string]any{"xs": "haiku"})
 	}
+	if got := dev["best_of_n_by_size"]; !reflect.DeepEqual(got, map[string]any{"l": float64(3)}) {
+		t.Errorf("developer best_of_n_by_size: got %#v want %v", got, map[string]any{"l": float64(3)})
+	}
+	for k, want := range map[string]string{"best_of_n_model": "opus", "best_of_n_prompt": "attempt", "assembler_model": "sonnet", "assembler_prompt": "assemble"} {
+		if got := dev[k]; got != want {
+			t.Errorf("developer %s: got %#v want %q", k, got, want)
+		}
+	}
 
 	pm := roleOf(t, out, RoleProductManager)
 	if got := pm["min_issue_size"]; got != "m" {
@@ -93,8 +106,11 @@ func TestViewIncludesRoleSpecificKeys(t *testing.T) {
 	// Nobody else carries them.
 	ownedBy := map[string]string{
 		"commit_flags": RoleDeveloper, "max_size": RoleDeveloper, "model_by_size": RoleDeveloper,
-		"min_issue_size": RoleProductManager,
-		"auto_merge":     RoleReviewer, "merge_method": RoleReviewer, "checks_wait": RoleReviewer,
+		"best_of_n_by_size": RoleDeveloper, "best_of_n_model": RoleDeveloper,
+		"best_of_n_prompt": RoleDeveloper, "assembler_model": RoleDeveloper,
+		"assembler_prompt": RoleDeveloper,
+		"min_issue_size":   RoleProductManager,
+		"auto_merge":       RoleReviewer, "merge_method": RoleReviewer, "checks_wait": RoleReviewer,
 		"checks_poll_interval": RoleReviewer, "checks_timeout": RoleReviewer,
 		"max_check_fix_rounds": RoleReviewer, "pre_review_checks": RoleReviewer,
 		"pre_review_checks_timeout": RoleReviewer,

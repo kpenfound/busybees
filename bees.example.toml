@@ -242,8 +242,9 @@ label = "bees"
 
 #===============================================================================
 # Per-role settings. Every key from [global] is valid here, plus enabled;
-# the developer also takes commit_flags, max_size and model_by_size, the
-# product manager min_issue_size, and the reviewer the auto-merge keys.
+# the developer also takes commit_flags, max_size, model_by_size and the
+# best-of-N keys, the product manager min_issue_size, and the reviewer the
+# auto-merge keys.
 #===============================================================================
 
 # Owns the product vision and feature issues; breaks features into work items.
@@ -300,6 +301,19 @@ label = "bees"
 # Run a cheaper (or stronger) model for some work item sizes. Keys are the
 # sizes xs, s, m, l and xl; a size with no entry uses model above.
 #model_by_size = { xs = "sonnet", s = "sonnet" }
+# Best of N: how many developer attempts one work item gets, keyed by size. An
+# assembler session then picks the pull request from the attempts. A size with
+# no entry gets one attempt, and an empty table is best-of-N off.
+#best_of_n_by_size = { l = 3 }
+# Model and prompt for each attempt, and for the assembler that picks between
+# them. Unset, an attempt runs the model and prompt above and so does the
+# assembler.
+#best_of_n_model = "opus"
+#best_of_n_prompt = """
+#"""
+#assembler_model = "opus"
+#assembler_prompt = """
+#"""
 #prompt_file = ""
 #skills = []
 #model = "opus"
