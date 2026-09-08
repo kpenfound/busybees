@@ -574,8 +574,8 @@ func TestModelBySizeErrorsNameTheBadKey(t *testing.T) {
 	for body, want := range map[string]string{
 		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nmodel_by_size = { xxl = \"opus\" }\n": "model_by_size: unknown size \"xxl\" (want one of xs, s, m, l, xl)",
 		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nmodel_by_size = { xs = \"  \" }\n":    "roles.developer.model_by_size.xs must name a model",
-		"version = 1\n[project]\nrepo = \"a/b\"\n[global]\nmodel_by_size = { xs = \"haiku\" }\n":          "global: commit_flags, max_size and model_by_size are only valid under roles.developer",
-		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.reviewer]\nmodel_by_size = { xs = \"haiku\" }\n":  "roles.reviewer: commit_flags, max_size and model_by_size are only valid under roles.developer",
+		"version = 1\n[project]\nrepo = \"a/b\"\n[global]\nmodel_by_size = { xs = \"haiku\" }\n":          "global: commit_flags, max_size, model_by_size, best_of_n_by_size, best_of_n_model, best_of_n_prompt, assembler_model and assembler_prompt are only valid under roles.developer",
+		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.reviewer]\nmodel_by_size = { xs = \"haiku\" }\n":  "roles.reviewer: commit_flags, max_size, model_by_size, best_of_n_by_size, best_of_n_model, best_of_n_prompt, assembler_model and assembler_prompt are only valid under roles.developer",
 	} {
 		_, err := Load(writeConfig(t, body))
 		if err == nil {
@@ -1850,6 +1850,91 @@ func TestMinIssueSizeErrorsNameTheKey(t *testing.T) {
 		}
 		if strings.Contains(err.Error(), "min_issue_size, commit_flags") || strings.Contains(err.Error(), "commit_flags, max_size, min_issue_size") {
 			t.Errorf("error %q folds min_issue_size into the developer-only sentence", err)
+		}
+	}
+}
+
+// TestBestOfN covers the developer's per-size attempt count: the resolved role
+// answers with the configured N for a size that has one and with 1 for
+// everything else, so a configuration with no best-of-N keys fans out nowhere.
+func TestBestOfN(t *testing.T) {
+	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nbest_of_n_by_size = { l = 3, xl = 5, s = 1 }\nbest_of_n_model = \"opus\"\nbest_of_n_prompt = \"try something different\"\nassembler_model = \"sonnet\"\nassembler_prompt = \"pick the best one\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev, err := cfg.Role(RoleDeveloper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// s = 1 is single-attempt, so the resolved table does not carry it: what it
+	// holds is the sizes that fan out, which is what a caller iterates.
+	if want := map[string]int{"l": 3, "xl": 5}; !reflect.DeepEqual(dev.BestOfNBySize, want) {
+		t.Errorf("best_of_n_by_size: got %v want %v", dev.BestOfNBySize, want)
+	}
+	for size, want := range map[string]int{"l": 3, "xl": 5, "s": 1, "m": 1, "xs": 1, "": 1, "nonsense": 1} {
+		if got := dev.BestOfN(size); got != want {
+			t.Errorf("BestOfN(%q): got %d want %d", size, got, want)
+		}
+	}
+	for _, k := range []struct{ name, got, want string }{
+		{"best_of_n_model", dev.BestOfNModel, "opus"},
+		{"best_of_n_prompt", dev.BestOfNPrompt, "try something different"},
+		{"assembler_model", dev.AssemblerModel, "sonnet"},
+		{"assembler_prompt", dev.AssemblerPrompt, "pick the best one"},
+	} {
+		if k.got != k.want {
+			t.Errorf("%s: got %q want %q", k.name, k.got, k.want)
+		}
+	}
+	// Nobody else carries the table, so every size is one attempt.
+	rev, err := cfg.Role(RoleReviewer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rev.BestOfN("l"); got != 1 {
+		t.Errorf("reviewer BestOfN(%q): got %d want 1", "l", got)
+	}
+	// Unset: the table is nil, every size is one attempt and the overrides are
+	// empty, which is today's behaviour with no best-of-N keys at all.
+	cfg, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dev, err = cfg.Role(RoleDeveloper); err != nil {
+		t.Fatal(err)
+	}
+	if dev.BestOfNBySize != nil {
+		t.Errorf("unset best_of_n_by_size: got %v want nil", dev.BestOfNBySize)
+	}
+	for _, size := range Sizes {
+		if got := dev.BestOfN(size); got != 1 {
+			t.Errorf("unset best_of_n_by_size: BestOfN(%q) = %d want 1", size, got)
+		}
+	}
+	if dev.BestOfNModel != "" || dev.BestOfNPrompt != "" || dev.AssemblerModel != "" || dev.AssemblerPrompt != "" {
+		t.Errorf("unset overrides: model %q, prompt %q, assembler model %q, assembler prompt %q", dev.BestOfNModel, dev.BestOfNPrompt, dev.AssemblerModel, dev.AssemblerPrompt)
+	}
+}
+
+// A bad best_of_n_by_size has to say which key or role is wrong, and every
+// best-of-N key belongs to the developer alone.
+func TestBestOfNErrorsNameTheBadKey(t *testing.T) {
+	for body, want := range map[string]string{
+		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nbest_of_n_by_size = { xxl = 3 }\n": "best_of_n_by_size: unknown size \"xxl\" (want one of xs, s, m, l, xl)",
+		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nbest_of_n_by_size = { l = 0 }\n":   "roles.developer.best_of_n_by_size.l must be at least 1",
+		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nbest_of_n_by_size = { m = -2 }\n":  "roles.developer.best_of_n_by_size.m must be at least 1",
+		"version = 1\n[project]\nrepo = \"a/b\"\n[global]\nbest_of_n_by_size = { l = 3 }\n":            "global: commit_flags, max_size, model_by_size, best_of_n_by_size, best_of_n_model, best_of_n_prompt, assembler_model and assembler_prompt are only valid under roles.developer",
+		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.reviewer]\nbest_of_n_model = \"opus\"\n":       "roles.reviewer: commit_flags, max_size, model_by_size, best_of_n_by_size, best_of_n_model, best_of_n_prompt, assembler_model and assembler_prompt are only valid under roles.developer",
+		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.qa]\nbest_of_n_prompt = \"x\"\n":               "roles.qa: commit_flags, max_size, model_by_size, best_of_n_by_size, best_of_n_model, best_of_n_prompt, assembler_model and assembler_prompt are only valid under roles.developer",
+		"version = 1\n[project]\nrepo = \"a/b\"\n[global]\nassembler_model = \"opus\"\n":               "global: commit_flags, max_size, model_by_size, best_of_n_by_size, best_of_n_model, best_of_n_prompt, assembler_model and assembler_prompt are only valid under roles.developer",
+		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.reviewer]\nassembler_prompt = \"x\"\n":         "roles.reviewer: commit_flags, max_size, model_by_size, best_of_n_by_size, best_of_n_model, best_of_n_prompt, assembler_model and assembler_prompt are only valid under roles.developer",
+	} {
+		_, err := Load(writeConfig(t, body))
+		if err == nil {
+			t.Fatalf("%q: expected an error", body)
+		}
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
 		}
 	}
 }
