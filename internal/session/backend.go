@@ -114,6 +114,15 @@ func (claudeBackend) command(ctx context.Context, r *Runner, req Request, paths 
 	if req.Role.Effort != "" {
 		args = append(args, "--effort", req.Role.Effort)
 	}
+	if req.ResumeID != "" {
+		// Claude renders the system prompt once, on a conversation's first
+		// request, and by default every later request reuses that recording
+		// verbatim (--system-prompt-snapshot on): the system prompt written
+		// for this round would be ignored, and what it says about the round
+		// would stay what round 1 said. Turning the snapshot off for the
+		// resumed launch makes claude read this round's file.
+		args = append(args, "--resume", req.ResumeID, "--system-prompt-snapshot", "off")
+	}
 	for _, d := range r.AddDirs {
 		args = append(args, "--add-dir", d)
 	}
@@ -248,6 +257,9 @@ func (claudeBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer) 
 //     levels stop at high, so "max" is passed as "high".
 //   - max_turns, allowed_tools, disallowed_tools, skills and the --add-dir
 //     list have no counterpart and are not passed.
+//   - Request.ResumeID is ignored: `codex exec` has no resume subcommand or
+//     flag (codex-cli 0.0.2506052246), so a later round of a codex role is
+//     a new thread whatever id the caller knows.
 //   - The stream is JSON lines of events: "thread.started" names the thread
 //     (the session id), "item.completed" is one action taken — a message,
 //     a command, a file change, an MCP call — and the turn ends with
