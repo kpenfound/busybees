@@ -36,7 +36,8 @@ import (
 // The flags that steer the fake (FAKE_CLAUDE, FAKE_DEV_HANG, FAKE_DEV_FAIL,
 // FAKE_DEV_MAIL_TO, FAKE_REVIEW_ALWAYS_CHANGES, FAKE_REVIEW_FAIL, FAKE_COST, FAKE_SIGNAL,
 // FAKE_WAIT_FOR, FAKE_LIMIT, FAKE_LIMIT_WITH_OUTCOME, FAKE_RESULT_TEXT, FAKE_COPY_ISSUE_STATE,
-// FAKE_TRIAGE, FAKE_FILE_ISSUE, FAKE_RESUME_FAIL)
+// FAKE_TRIAGE, FAKE_FILE_ISSUE, FAKE_RESUME_FAIL, FAKE_REVIEW_NO_SUBMIT,
+// FAKE_REVIEW_MISMATCH, FAKE_QA_NO_REPORT, FAKE_QA_OTHER_MAIL)
 // reach it through the ordinary environment, so they must NOT start with
 // BEES_: the runner strips inherited BEES_* variables from every session.
 func TestMain(m *testing.M) {
@@ -263,6 +264,15 @@ func fakeClaude() {
 			case strings.Contains(string(prompt), "That is this pull request's author"):
 				event = "comment"
 			}
+			// FAKE_REVIEW_MISMATCH submits the other verdict and reports this
+			// one: a session whose status does not match what it did.
+			if os.Getenv("FAKE_REVIEW_MISMATCH") == "1" {
+				if event == "request-changes" {
+					event = "approve"
+				} else {
+					event = "request-changes"
+				}
+			}
 			body := "implementation: pass — does what the description says\n\n<!-- bees:reviewer -->"
 			c := github.New(os.Getenv(session.EnvRepo))
 			c.ExecStdin = func(_ context.Context, stdin string, args ...string) ([]byte, error) {
@@ -347,6 +357,14 @@ func fakeClaude() {
 		// nothing backs, which is what FAKE_QA_NO_REPORT produces.
 		if role == config.RoleQA && os.Getenv("FAKE_QA_NO_REPORT") != "1" {
 			if _, err := box.Send(mail.Message{From: role, To: config.RoleProductManager, Subject: "QA report", Body: "tested the merged pull requests; nothing broken"}); err != nil {
+				fail(err)
+			}
+		}
+		// FAKE_QA_OTHER_MAIL writes to the product manager as another role
+		// while QA runs, the way a project manager session running alongside
+		// it does: mail QA's report cannot be confused with.
+		if role == config.RoleQA && os.Getenv("FAKE_QA_OTHER_MAIL") == "1" {
+			if _, err := box.Send(mail.Message{From: config.RoleProjectManager, To: config.RoleProductManager, Subject: "A question about #4", Body: "which milestone?"}); err != nil {
 				fail(err)
 			}
 		}

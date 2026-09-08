@@ -822,3 +822,29 @@ func TestAReviewOlderThanTheSessionDoesNotConfirmIt(t *testing.T) {
 		t.Errorf("an approval older than the session confirmed its verdict:\n%s", logs)
 	}
 }
+
+// The review has to match the verdict, not merely exist: a session that
+// submitted an approval and reported `changes-requested`, or the other way
+// round, said one thing on GitHub and another to the orchestrator, and the
+// orchestrator believes GitHub.
+func TestARequestedReviewWhoseReviewContradictsItFails(t *testing.T) {
+	for name, changes := range map[string]bool{"reported approved, requested changes": false, "reported changes, approved": true} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarnessAt(t, reviewOnlyTOML, requestedReviewClock)
+			pushBranch(t, h.clone, "fix-widget")
+			t.Setenv("FAKE_REVIEW_MISMATCH", "1")
+			if changes {
+				t.Setenv("FAKE_REVIEW_ALWAYS_CHANGES", "1")
+			}
+			h.gh.prs[42] = personsPR("bees", "bees:review-requested")
+			runPass(t, h)
+
+			if got := len(h.sessions(config.RoleReviewer)); got != 1 {
+				t.Fatalf("reviewer sessions: %d, want 1", got)
+			}
+			if logs := h.logs.String(); !strings.Contains(logs, "GitHub shows no matching review") {
+				t.Errorf("a review contradicting the verdict confirmed it:\n%s", logs)
+			}
+		})
+	}
+}

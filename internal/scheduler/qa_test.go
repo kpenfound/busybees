@@ -112,6 +112,9 @@ func TestAQASessionWithoutItsReportFails(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			if !report {
 				t.Setenv("FAKE_QA_NO_REPORT", "1")
+				// Another role writing to the product manager while QA runs is
+				// not QA's report: only mail QA sent itself settles the claim.
+				t.Setenv("FAKE_QA_OTHER_MAIL", "1")
 			}
 			h := newHarnessAt(t, qaMailTOML, time.Now())
 			merged := h.clock.now().Add(-time.Minute)
@@ -125,6 +128,9 @@ func TestAQASessionWithoutItsReportFails(t *testing.T) {
 			sent, _ := h.box.List(mail.Filter{To: config.RoleProductManager, From: config.RoleQA})
 			if got := len(sent) > 0; got != report {
 				t.Fatalf("the session sent a report: %v, want %v", got, report)
+			}
+			if all, _ := h.box.List(mail.Filter{To: config.RoleProductManager}); len(all) != 1 {
+				t.Fatalf("the product manager received %d messages, want 1", len(all))
 			}
 			logs := h.logs.String()
 			failed := strings.Contains(logs, "singleton role failed") && strings.Contains(logs, "sent the product manager no report")
