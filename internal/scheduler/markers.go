@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/github"
+	"github.com/kpenfound/busybees/internal/session"
 )
 
 // commentTarget is one issue or pull request a finished session may have
@@ -43,11 +44,11 @@ type commentTarget struct {
 // session from the live view escalates the issue while the session is still
 // running, and the orchestrator's escalation comment deliberately carries no
 // marker.
-func (s *Scheduler) auditMarkers(ctx context.Context, spec sessionSpec, touched []int, since time.Time) {
+func (s *Scheduler) auditMarkers(ctx context.Context, spec sessionSpec, touched []int, opened int, since time.Time) {
 	if s.gh.ActsAs == "" {
 		return
 	}
-	for _, t := range commentTargets(spec, touched) {
+	for _, t := range commentTargets(spec, touched, opened) {
 		comments, err := s.gh.CommentsSince(ctx, t.number, since)
 		if s.op("marker-audit", err, "could not check the comments a session left", "item", t.number, "err", err) {
 			continue
@@ -77,10 +78,17 @@ func (s *Scheduler) auditMarkers(ctx context.Context, spec sessionSpec, touched 
 // it, not the comment tool, so the session's own work item is the half of
 // this that matters: it is what a session comments on with `gh`.
 //
+// The pull request the session *opened* is a target of its own: the spec
+// carries the pull request the session was given, which is nil for the round
+// that creates one, so a comment the developer posts with `gh` on the pull
+// request it has just opened would be audited by nobody. This session's
+// targets do not include it, and the next round's window opens after this
+// session ended, so the comment falls between the two.
+//
 // One `gh` call each, once per session — the same budget refreshTouched
 // spends, and nothing at all for a singleton session with no work item that
 // touched no issue.
-func commentTargets(spec sessionSpec, touched []int) []commentTarget {
+func commentTargets(spec sessionSpec, touched []int, opened int) []commentTarget {
 	var out []commentTarget
 	seen := map[int]bool{}
 	add := func(n int, pr bool) {
@@ -96,8 +104,25 @@ func commentTargets(spec sessionSpec, touched []int) []commentTarget {
 	if spec.data.PR != nil {
 		add(spec.data.PR.Number, true)
 	}
+	add(opened, true)
 	for _, n := range touched {
 		add(n, false)
 	}
 	return out
+}
+
+// openedPR is the pull request a finished session reported for itself, read
+// back from the outcome file `bees done` wrote in its directory.
+//
+// The outcome file rather than the session's Result, because Runner.Run
+// returns a nil Result on every path that ends in an error, and a session
+// that opened a pull request and then crashed wrote its outcome before it
+// did. A session that never got as far as `bees done` leaves no file and
+// nothing to audit.
+func openedPR(sessionDir string) int {
+	o, ok, err := session.ReadOutcome(sessionDir)
+	if !ok || err != nil {
+		return 0
+	}
+	return o.PR
 }

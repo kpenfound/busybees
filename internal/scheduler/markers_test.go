@@ -53,7 +53,7 @@ func TestAMarkerlessCommentIsReportedOnce(t *testing.T) {
 		commentJSON(44, "busybees-bot", "An older one of mine.", before),
 	)
 
-	h.sched.auditMarkers(context.Background(), devSpec(1), nil, started)
+	h.sched.auditMarkers(context.Background(), devSpec(1), nil, 0, started)
 
 	logs := h.logs.String()
 	if got := strings.Count(logs, markerWarning); got != 1 {
@@ -93,7 +93,7 @@ func TestASharedAccountIsNotAudited(t *testing.T) {
 	seedComments(h, 1, commentJSON(42, "kyle", "Closing this.", time.Now().Add(time.Minute)))
 	before := h.gh.total()
 
-	h.sched.auditMarkers(context.Background(), devSpec(1), nil, time.Now())
+	h.sched.auditMarkers(context.Background(), devSpec(1), nil, 0, time.Now())
 
 	if got := h.gh.total(); got != before {
 		t.Errorf("the audit made %d gh calls without a [github] login, want 0", got-before)
@@ -113,7 +113,7 @@ func TestAMarkerlessCommentOnAPullRequestIsReported(t *testing.T) {
 
 	spec := devSpec(1)
 	spec.data.PR = &github.PR{Number: 201}
-	h.sched.auditMarkers(context.Background(), spec, nil, started)
+	h.sched.auditMarkers(context.Background(), spec, nil, 0, started)
 
 	logs := h.logs.String()
 	if !strings.Contains(logs, markerWarning) || !strings.Contains(logs, "pr=201") {
@@ -121,17 +121,53 @@ func TestAMarkerlessCommentOnAPullRequestIsReported(t *testing.T) {
 	}
 }
 
-// Where a session could have commented: the work item it was given and every
-// issue it changed through the MCP server, each one once.
+// Where a session could have commented: the work item it was given, the pull
+// request it reported opening, and every issue it changed through the MCP
+// server, each one once.
 func TestCommentTargetsAreTheWorkItemAndTheIssuesTouched(t *testing.T) {
 	spec := devSpec(1)
 	spec.data.PR = &github.PR{Number: 201}
 
-	got := commentTargets(spec, []int{7, 1})
+	got := commentTargets(spec, []int{7, 1}, 202)
 
-	want := []commentTarget{{number: 1}, {number: 201, pr: true}, {number: 7}}
+	want := []commentTarget{{number: 1}, {number: 201, pr: true}, {number: 202, pr: true}, {number: 7}}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("targets %v, want %v", got, want)
+	}
+}
+
+// The round that opens a pull request is handed none: the spec carries the
+// pull request the session was given, and there was not one yet. What the
+// session reported opening is audited instead, so a comment it leaves on its
+// own new pull request is covered by the session that made it.
+func TestThePullRequestASessionOpensIsAudited(t *testing.T) {
+	h := newHarness(t, noRolesTOML)
+	h.sched.gh.ActsAs = "busybees-bot"
+	seedComments(h, fakePR, commentJSON(42, "busybees-bot", "Opened.", time.Now().Add(time.Minute)))
+
+	spec := devSpec(1)
+	spec.workDir = h.cfg.Dir()
+	if spec.data.PR != nil {
+		t.Fatal("the first round is dispatched with a pull request")
+	}
+	if _, err := h.sched.runSession(context.Background(), spec); err != nil {
+		t.Fatal(err)
+	}
+
+	logs := h.logs.String()
+	if !strings.Contains(logs, markerWarning) || !strings.Contains(logs, fmt.Sprintf("pr=%d", fakePR)) {
+		t.Fatalf("a markerless comment on the pull request the session opened was not reported:\n%s", logs)
+	}
+}
+
+// A session that reported no pull request adds no target, so nothing is read
+// for it.
+func TestASessionThatOpensNoPullRequestAddsNoTarget(t *testing.T) {
+	if got := commentTargets(sessionSpec{}, nil, 0); len(got) != 0 {
+		t.Fatalf("targets %v, want none", got)
+	}
+	if got := openedPR(t.TempDir()); got != 0 {
+		t.Fatalf("openedPR of a session with no outcome file = %d, want 0", got)
 	}
 }
 
@@ -150,7 +186,7 @@ func TestTheTouchedIssuesAreAuditedToo(t *testing.T) {
 	}
 
 	touched := h.sched.refreshTouched(ctx, dir)
-	h.sched.auditMarkers(ctx, sessionSpec{role: config.RoleProjectManager, name: "project_manager-1"}, touched, time.Now().Add(-time.Minute))
+	h.sched.auditMarkers(ctx, sessionSpec{role: config.RoleProjectManager, name: "project_manager-1"}, touched, 0, time.Now().Add(-time.Minute))
 
 	logs := h.logs.String()
 	if !strings.Contains(logs, markerWarning) || !strings.Contains(logs, "issue=9") {

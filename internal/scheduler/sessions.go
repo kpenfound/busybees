@@ -188,8 +188,9 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 	// that failed may have made its edits first, so this runs either way.
 	touched := s.refreshTouched(ctx, sessionDir)
 	// And whatever it posted on GitHub with `gh`, outside the tool that
-	// appends the marker for it, is checked for one (markers.go).
-	s.auditMarkers(ctx, spec, touched, started)
+	// appends the marker for it, is checked for one — on the pull request the
+	// session reported opening as well as the ones it was given (markers.go).
+	s.auditMarkers(ctx, spec, touched, openedPR(sessionDir), started)
 	// A finished session is the factory's main local event: it may have
 	// written mail to another role, and it is one step closer to freeing the
 	// slot it holds. Wake the loop rather than let that wait for the next
