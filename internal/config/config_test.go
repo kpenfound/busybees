@@ -1193,6 +1193,8 @@ func uncommentTemplate(text string) string {
 			continue // prose comment or separator
 		case strings.HasPrefix(line, "#prompt_file"):
 			continue // placeholder file does not exist
+		case strings.HasPrefix(line, "#container_use_environment"):
+			continue // conflicts with the also-commented sandbox_image example
 		case strings.HasPrefix(line, "#"):
 			lines = append(lines, strings.TrimPrefix(line, "#"))
 		default:

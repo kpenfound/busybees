@@ -434,6 +434,13 @@ type RoleSettings struct {
 	// itself can name an image that carries the product's toolchain. There
 	// is no default: a container role without one is refused.
 	SandboxImage string `toml:"sandbox_image"`
+	// ContainerUseEnvironment is the path, relative to the project repo
+	// root, to a dagger/container-use environment definition the container
+	// sandbox builds and runs instead of SandboxImage. A role's value
+	// replaces the global one. Empty (the default) leaves the sandbox
+	// unchanged; only valid when Sandbox is SandboxContainer, and mutually
+	// exclusive with SandboxImage.
+	ContainerUseEnvironment string `toml:"container_use_environment"`
 
 	// The following key is only valid under [global].
 
@@ -1078,6 +1085,10 @@ type ResolvedRole struct {
 	// SandboxImage is the image a SandboxContainer session runs in, empty
 	// when none was configured.
 	SandboxImage string
+	// ContainerUseEnvironment is the path to a dagger/container-use
+	// environment definition a SandboxContainer session builds and runs
+	// instead of SandboxImage, empty when none was configured.
+	ContainerUseEnvironment string
 }
 
 // Load reads and validates the bees.toml at path.
@@ -1510,6 +1521,14 @@ func (c *Config) Validate() error {
 		if strings.ContainsAny(rs.SandboxImage, " \t") {
 			errs = append(errs, fmt.Sprintf("%s.sandbox_image %q must be an image reference, without spaces", scope, rs.SandboxImage))
 		}
+		// A path in a pasted-in command line, not a path; and it names
+		// something inside the project repository, checked out fresh on
+		// every machine that runs it, so an absolute path is never right.
+		if strings.ContainsAny(rs.ContainerUseEnvironment, " \t") {
+			errs = append(errs, fmt.Sprintf("%s.container_use_environment %q must be a path, without spaces", scope, rs.ContainerUseEnvironment))
+		} else if filepath.IsAbs(rs.ContainerUseEnvironment) {
+			errs = append(errs, fmt.Sprintf("%s.container_use_environment %q must be relative to the project repository root", scope, rs.ContainerUseEnvironment))
+		}
 		if rs.PromptFile != "" {
 			if _, err := os.Stat(c.resolvePath(rs.PromptFile)); err != nil {
 				errs = append(errs, fmt.Sprintf("%s.prompt_file: %v", scope, err))
@@ -1529,6 +1548,24 @@ func (c *Config) Validate() error {
 	check("global", c.Global)
 	for name, rs := range c.Roles {
 		check("roles."+name, rs)
+	}
+	// container_use_environment only means anything alongside sandbox =
+	// "container", and is instead of sandbox_image, not alongside it; both
+	// can be set on different scopes (global vs. role), so the check needs
+	// the resolved role rather than one scope's raw settings. A Role error
+	// here is already reported by the scope-level check above (prompt_file),
+	// so it is skipped rather than duplicated.
+	for _, name := range Roles {
+		r, err := c.Role(name)
+		if err != nil || r.ContainerUseEnvironment == "" {
+			continue
+		}
+		if r.Sandbox != SandboxContainer {
+			errs = append(errs, fmt.Sprintf("roles.%s: container_use_environment is only valid when sandbox is \"container\"", name))
+		}
+		if r.SandboxImage != "" {
+			errs = append(errs, fmt.Sprintf("roles.%s: container_use_environment and sandbox_image are mutually exclusive", name))
+		}
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("invalid bees.toml:\n  - %s", strings.Join(errs, "\n  - "))
@@ -1573,25 +1610,26 @@ func (c *Config) Role(name string) (ResolvedRole, error) {
 		defaultModel, defaultFallback = "", ""
 	}
 	r := ResolvedRole{
-		Name:            canonical,
-		Model:           firstNonEmpty(rs.Model, g.Model, defaultModel),
-		ModelBySize:     sizeModels(rs.ModelBySize),
-		BestOfNBySize:   sizeInts(rs.BestOfNBySize),
-		BestOfNModel:    strings.TrimSpace(rs.BestOfNModel),
-		BestOfNPrompt:   strings.TrimSpace(rs.BestOfNPrompt),
-		AssemblerModel:  strings.TrimSpace(rs.AssemblerModel),
-		AssemblerPrompt: strings.TrimSpace(rs.AssemblerPrompt),
-		FallbackModel:   firstNonEmpty(rs.FallbackModel, g.FallbackModel, defaultFallback),
-		Agent:           agent,
-		Effort:          firstNonEmpty(rs.Effort, g.Effort),
-		MaxTurns:        firstPositive(rs.MaxTurns, g.MaxTurns, DefaultMaxTurns),
-		Timeout:         firstPositiveDur(rs.Timeout.Duration, g.Timeout.Duration, DefaultTimeout),
-		Enabled:         true,
-		Shell:           firstNonEmpty(rs.Shell, g.Shell),
-		Sandbox:         firstNonEmpty(rs.Sandbox, g.Sandbox, DefaultSandbox),
-		SandboxImage:    firstNonEmpty(rs.SandboxImage, g.SandboxImage),
-		MCP:             map[string]MCPServer{},
-		Env:             map[string]string{},
+		Name:                    canonical,
+		Model:                   firstNonEmpty(rs.Model, g.Model, defaultModel),
+		ModelBySize:             sizeModels(rs.ModelBySize),
+		BestOfNBySize:           sizeInts(rs.BestOfNBySize),
+		BestOfNModel:            strings.TrimSpace(rs.BestOfNModel),
+		BestOfNPrompt:           strings.TrimSpace(rs.BestOfNPrompt),
+		AssemblerModel:          strings.TrimSpace(rs.AssemblerModel),
+		AssemblerPrompt:         strings.TrimSpace(rs.AssemblerPrompt),
+		FallbackModel:           firstNonEmpty(rs.FallbackModel, g.FallbackModel, defaultFallback),
+		Agent:                   agent,
+		Effort:                  firstNonEmpty(rs.Effort, g.Effort),
+		MaxTurns:                firstPositive(rs.MaxTurns, g.MaxTurns, DefaultMaxTurns),
+		Timeout:                 firstPositiveDur(rs.Timeout.Duration, g.Timeout.Duration, DefaultTimeout),
+		Enabled:                 true,
+		Shell:                   firstNonEmpty(rs.Shell, g.Shell),
+		Sandbox:                 firstNonEmpty(rs.Sandbox, g.Sandbox, DefaultSandbox),
+		SandboxImage:            firstNonEmpty(rs.SandboxImage, g.SandboxImage),
+		ContainerUseEnvironment: firstNonEmpty(rs.ContainerUseEnvironment, g.ContainerUseEnvironment),
+		MCP:                     map[string]MCPServer{},
+		Env:                     map[string]string{},
 	}
 	for k, v := range g.Env {
 		r.Env[k] = v

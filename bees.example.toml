@@ -217,6 +217,9 @@ label = "bees"
 # Image a container session runs in (sandbox = "container"): it must hold
 # the agent, git and gh. Name one per role for a role that runs the product.
 #sandbox_image = "ghcr.io/acme/widgets-bees:latest"
+# Path, relative to this file, to a dagger/container-use environment
+# definition the container sandbox builds and runs instead of sandbox_image.
+#container_use_environment = "dagger/container-use"
 
 # Environment variables exported into every session (claude, its Bash tool,
 # MCP servers, git). $VARS are expanded from the bees environment. Roles can
