@@ -117,12 +117,10 @@ func commentTargets(spec sessionSpec, touched []int, opened int) []commentTarget
 // The outcome file rather than the session's Result, because Runner.Run
 // returns a nil Result on every path that ends in an error, and a session
 // that opened a pull request and then crashed wrote its outcome before it
-// did. A session that never got as far as `bees done` leaves no file and
-// nothing to audit.
+// did. A session that never got as far as `bees done`, or whose file cannot
+// be read, leaves a zero outcome and so no pull request to audit; the runner
+// has already warned about an unreadable one.
 func openedPR(sessionDir string) int {
-	o, ok, err := session.ReadOutcome(sessionDir)
-	if !ok || err != nil {
-		return 0
-	}
+	o, _, _ := session.ReadOutcome(sessionDir)
 	return o.PR
 }
