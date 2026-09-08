@@ -1001,8 +1001,10 @@ classifies what went wrong:
   is on. Each attempt gets its own directory under `<state_dir>/sessions/`,
   the retry suffixed `-retry1`, and a retried developer session is told its
   previous attempt was interrupted, so it continues from whatever is on the
-  branch instead of starting over. `bees status` shows the attempt number
-  next to the round.
+  branch instead of starting over. A second or later round's session resumes
+  the previous round's conversation; its retry runs fresh, since an id the
+  agent no longer has is one way a resumed launch fails. `bees status` shows
+  the attempt number next to the round.
 - **Behavioural.** The session ran and reported an outcome with the `done`
   tool, `failed` included, or ended cleanly without reporting at all.
   Running it again would repeat the same decision, so it escalates at once.
