@@ -649,9 +649,12 @@ Do not read the other attempts. Solve the issue your own way.
 ```
 
 An entry of `1` is one attempt, the same as leaving the size out, so a table
-that names no size above `1` is best of N off. Nothing reads these keys yet: a
-configuration that sets them loads and validates, and every issue still gets
-one developer session.
+that names no size above `1` is best of N off. A size above `1` runs that many
+developer sessions at once for the issue's first round, each on the branch
+`<branch_prefix>issue-<n>-attempt-<i>` and each in a `max_developers` slot of
+its own, so the count is clamped to `max_developers`. Nothing picks between
+the attempts yet: the issue is handed to a person, `bees:needs-human`, with
+the attempt branches listed, and the assembler keys are read by nothing.
 
 ### Sandboxing
 
