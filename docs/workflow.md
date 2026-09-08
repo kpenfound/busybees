@@ -792,10 +792,7 @@ write when there is no pull request yet, or when the direction is about the
 work rather than the diff. On every poll the orchestrator also looks at each
 issue in the four in-flight states `bees:in-progress`, `bees:review`,
 `bees:approved` and `bees:blocked` whose `updatedAt` moved since it last
-checked, and collects the issue's own comments written since then.
-`bees:triage` is deliberately not on that list: the orchestrator records the
-time on a triage issue but never mails a comment on one, because the project
-manager reads the issue's whole comment history in its own prompt. Bee
+checked, and collects the issue's own comments written since then. Bee
 comments are dropped by the same two mechanisms. What is left is sent as one
 message from `human`, and who it reaches depends on the state:
 
@@ -808,6 +805,25 @@ message from `human`, and who it reaches depends on the state:
   goes to the developer and becomes `bees:ready` on the same poll. One
   blocked out of triage goes to the project manager and becomes
   `bees:triage`.
+
+An issue outside those four states delivers only a comment that `@`-mentions
+the login the factory acts as ([`[github].login`](configuration.md#github)),
+and only that comment, not the rest of the window. The session that will
+next act on `bees:triage`, `bees:ready`, `bees:feature` or `bees:feedback`
+already renders the issue's whole comment history in its own prompt, so
+mailing every comment would be a second copy of what it is about to read
+anyway. A mention is the one thing that rendering cannot carry: a person
+asking for the role now rather than on its own schedule. Who a mention
+reaches:
+
+| State | Goes to |
+|---|---|
+| `bees:triage`, `bees:ready` | Project manager |
+| `bees:feature`, `bees:feedback` | Product manager |
+
+With no [`[github]`](configuration.md#github) login configured, the factory
+shares one GitHub account with the people it works for, so there is no name
+of its own to mention, and none of these four states deliver anything.
 
 The developer replies on the issue with its `comment` tool, and treats your
 comment as it treats a comment on the pull request: a direction that
@@ -824,20 +840,21 @@ Until the orchestrator has recorded a time for an issue it delivers nothing.
 The first pass that sees the issue, in `bees:triage`, in `bees:ready` or in
 one of the in-flight states, records the time instead, because a fresh state
 directory, or the first poll after an upgrade, must not replay every comment
-an issue has ever received. Delivery starts from what is written after that.
-Nothing is lost: a developer session's prompt renders the issue's whole
-comment history anyway, so an earlier comment is context it already reads.
-What the mail adds is that the comment is fresh, that it is a person's, and
-that it reaches a reviewer or unblocks a blocked issue.
+an issue has ever received, or every mention either. Delivery starts from
+what is written after that. Nothing is lost: a developer session's prompt
+renders the issue's whole comment history anyway, so an earlier comment is
+context it already reads. What the mail adds is that the comment is fresh,
+that it is a person's, and that it reaches a reviewer, unblocks a blocked
+issue, or reaches the project or product manager as a mention.
 
-`bees:triage` and `bees:ready` make the rest work. Neither is delivered from,
-but the orchestrator records the time on an issue in either, on every poll it
-is still there. An issue is always seen in triage before anything can block
-it, so a question the project manager blocks on already has a clock, and your
-answer reaches it on the next poll however quickly you write it. Recording
-the time in `bees:ready` too keeps an issue that waited days for a developer
-from handing its whole wait's worth of comments to the first session that
-picks it up.
+`bees:triage` and `bees:ready` carry a clock too, refreshed on every poll
+whether or not a comment on them mentions anyone, which is what makes the
+rest work. An issue is always seen in triage before anything can block it,
+so a question the project manager blocks on already has a clock, and your
+answer reaches it on the next poll however quickly you write it. Refreshing
+the clock in `bees:ready` too keeps an issue that waited days for a developer
+from handing its whole wait's worth of comments, mentions included, to the
+first session that picks it up.
 
 You can also mail a developer directly, with or without a pull request:
 
