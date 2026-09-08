@@ -12,6 +12,7 @@ import (
 
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/github"
+	"github.com/kpenfound/busybees/internal/session"
 	"github.com/kpenfound/busybees/internal/state"
 	"github.com/kpenfound/busybees/internal/workspace"
 )
@@ -383,4 +384,103 @@ func TestClaimSlotsIsAllOrNothing(t *testing.T) {
 			t.Errorf("clampAttempts(%d, %d) = %d", n, max, got)
 		}
 	}
+}
+
+// An interrupted session is reported to the next session of its role, and
+// the attempts of a fan-out are not that session: the report is about one
+// branch, and each attempt works on its own. None of them is told, and the
+// record does not outlive them.
+func TestBestOfNAttemptsAreNotToldOfAnInterruptedSession(t *testing.T) {
+	h := newHarness(t, bestOfNTOML)
+	seedSized(h, 1, "l")
+	killedSession(t, h, 1, config.RoleDeveloper, "developer-issue-1-attempt-2", map[string]string{
+		session.TranscriptFile:  twoTurns,
+		session.InterruptedFile: "stopped by bees kill\n",
+	})
+	h.sched.alive = func(int) bool { return false }
+	runPass(t, h)
+	h.sched.wg.Wait()
+
+	// The sessions that ran, which the killed one's directory is not.
+	ran := h.sessionOrder()
+	if len(ran) != 3 {
+		t.Fatalf("sessions: %v", ran)
+	}
+	for _, name := range ran {
+		b, err := os.ReadFile(filepath.Join(h.store.SessionsDir(), name, "prompt.md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(flowedPrompt(string(b)), "ran for this issue before you was stopped") {
+			t.Errorf("%s was told about the interrupted session", name)
+		}
+	}
+	bk, err := h.store.Issue(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bk.Session != nil {
+		t.Errorf("the record of the interrupted session outlived the attempts: %+v", bk.Session)
+	}
+}
+
+// A local pass claims the attempts' slots from a cached snapshot and reads
+// the issue live before starting anything; an issue that has gone gives
+// every slot it claimed back, not just one.
+func TestBestOfNReleasesTheSlotsOfAVanishedCandidate(t *testing.T) {
+	h := newHarnessAt(t, bestOfNTOML, time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC))
+	seedSized(h, 1, "l")
+	// The first pass polls but dispatches nothing: the pool is held.
+	if !h.sched.claimSlots(3) {
+		t.Fatal("could not hold the pool")
+	}
+	runPass(t, h)
+	h.gh.mu.Lock()
+	h.gh.issues[1].State = "CLOSED"
+	h.gh.mu.Unlock()
+	h.sched.releaseSlots(3)
+	// The second, inside poll_interval, is a local pass over the cached
+	// snapshot, in which #1 is still ready.
+	runPass(t, h)
+	h.sched.wg.Wait()
+
+	if got := len(h.sessions(config.RoleDeveloper)); got != 0 {
+		t.Errorf("%d developer sessions ran for a closed issue", got)
+	}
+	if got := freeSlots(h); got != 3 {
+		t.Errorf("free slots after the vanished candidate: got %d want 3", got)
+	}
+}
+
+// A worker whose round turns out not to be a fan-out gives the extra slots
+// back before its one session runs, not when the worker ends: the pool
+// serves the next issue while that session runs.
+func TestBestOfNGivesTheSlotsBackBeforeASingleSession(t *testing.T) {
+	h := newHarness(t, bestOfNTOML)
+	release := filepath.Join(t.TempDir(), "release")
+	t.Setenv("FAKE_WAIT_FOR", release)
+	seedReady(h, 1, "l", time.Now().Add(-time.Hour))
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	snap, err := h.sched.poll(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The pull request appears after the poll: dispatch claims three slots,
+	// the worker finds one round to run.
+	if err := os.WriteFile(h.gh.prMarker+"-issue-1", nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h.sched.dispatchDevelopers(ctx, snap, false)
+	waitFor(t, 30*time.Second, "the developer session to start", func() bool {
+		return len(h.sessions(config.RoleDeveloper)) == 1
+	})
+	if got := freeSlots(h); got != 2 {
+		t.Errorf("free slots during the single session: got %d want 2", got)
+	}
+	if err := os.WriteFile(release, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitWorkers(t, h, cancel, time.Minute)
+	h.wantOrder("developer-issue-1-r1")
 }
