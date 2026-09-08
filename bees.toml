@@ -67,7 +67,11 @@ work_days = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 max_cost_per_day = 400.0
 max_cost_per_day_resume_percent = 70.0
 # Ask for consolidation early once a notes file grows past this many bytes.
-#notes_max_bytes = 18768
+notes_max_bytes = 18768
+# Build a blocked_by chain of work items under the same feature as a stack of
+# branches and pull requests, each depending on its predecessor's, instead of
+# independently.
+stacked_prs = true
 
 #===============================================================================
 # Global role settings
@@ -112,6 +116,10 @@ DAGGER_X_RELEASE = "v1.0.0-beta.11"
 #args = ["-y", "@modelcontextprotocol/server-github"]
 #env = { GITHUB_PERSONAL_ACCESS_TOKEN = "$GITHUB_TOKEN" }
 
+# How much of the machine a session can reach: none, claude or container.
+# Set it per role in [roles.<name>] to box the roles that run untrusted code
+# harder than the ones that only read the repository.
+sandbox = "claude"
 
 #===============================================================================
 # Per-role settings.
