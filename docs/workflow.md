@@ -662,7 +662,8 @@ poll after it. The session takes a developer slot, so
 workers, and it starts only after every ready issue that can be dispatched has
 been, so a request never starves the queue. A session that fails is logged,
 and the pull request is not tried again for five poll intervals: there is no
-issue to escalate.
+issue to escalate. A session that reports a verdict GitHub holds no matching
+review for counts as one of those failures, whatever it reported.
 
 A head branch the factory's remote does not have, a pull request from a fork
 or a branch deleted since, does not stop the review: the session runs from a
@@ -1119,7 +1120,8 @@ then:
   reproduced again. A clean batch is a good result: QA files nothing and says
   so;
 - sends the product manager one report by mail: what was tested, what works,
-  the bugs filed, and product-level observations, even when it found nothing.
+  the bugs filed, and product-level observations, even when it found nothing. A
+  run that reports success without the report is treated as a failed run.
 
 QA looks for product defects, not for critique of how the code is written.
 That is the reviewer's job, on the pull request. It never starts anything
