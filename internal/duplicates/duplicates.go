@@ -4,10 +4,10 @@
 // in the repository, open and closed, scores each against the title and body
 // about to be filed, and returns the ones that clear a fixed threshold, best
 // first. The caller decides what a match means — comment on it, refuse to
-// file, or hand the candidates to the agent. Its caller is QA's file_bug
+// file, or hand the candidates to the agent. Its callers are QA's file_bug
 // tool (internal/mcpserver), which refuses a bug the repository already
-// reports; the feedback loop into the upstream repository is the other
-// caller this exists for, and is not built yet (#510). Issue creation itself
+// reports, and the scheduler's factory-error loop (drainFeedbackQueue),
+// which files reports into the busybees repository. Issue creation itself
 // (internal/issues.Create, the issue_create tool) does not go through it: the
 // roles that split one issue into several similar ones — a triage split, a
 // feature broken into work items — would trip it on purpose.

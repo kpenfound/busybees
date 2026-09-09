@@ -187,7 +187,11 @@ The token is a fine-grained personal access token belonging to a user account,
 a bot account or your own, scoped to the one repository: read and write on
 Issues, Pull requests and Contents, read on Metadata. Issues and pull requests
 cover labels, comments, milestones and reviews; contents covers the pushes
-developer sessions make. A classic token with the `repo` scope also works. The
+developer sessions make. A classic token with the `repo` scope also works.
+With [`scheduler.report_factory_errors`](#scheduler) on, the same token files
+the factory-error reports against `kpenfound/busybees`, so a fine-grained
+token scoped to your repository alone leaves them in the queue: give it issue
+write on `kpenfound/busybees` too, or leave the key off. The
 token has to authenticate as a user, because `login` is compared with the
 account GitHub says the token belongs to.
 
@@ -255,7 +259,7 @@ assignee = "busybees-bot"
 | `pr_keep_updated` | bool | `false` | Do the same when a pull request is merely behind the default branch. |
 | `stacked_prs` | bool | `false` | Build a `blocked_by` chain of work items under the same feature as a stack of branches and pull requests, each depending on its predecessor's, instead of independently. `false` keeps every work item branching from the default branch on its own, as it does today. See [Stacked features](workflow.md#stacked-features). |
 | `review_assigned_prs` | bool | `false` | Ask the reviewer for one pass over every open pull request in the filter whose head branch does not start with `project.branch_prefix`, without waiting for `bees:review-requested`. With `filter.assignee` set, that is the pull requests assigned to the factory. A new push to one earns another review. See [Asking for a review of any pull request](workflow.md#asking-for-a-review-of-any-pull-request). |
-| `report_factory_errors` | bool | `false` | Let a role record a draft issue about an error the factory itself caused: a tool that misbehaved, a prompt that contradicted the code, an orchestrator mislabel it had to work around. The `report_factory_error` tool writes the draft, scrubbed by the role of repository names, tokens, paths and people, to `<state_dir>/feedback/<id>.json`. Off, the tool records nothing and says so. |
+| `report_factory_errors` | bool | `false` | Let a role record a draft issue about an error the factory itself caused: a tool that misbehaved, a prompt that contradicted the code, an orchestrator mislabel it had to work around. The `report_factory_error` tool writes the draft, scrubbed by the role of repository names, tokens, paths and people, to `<state_dir>/feedback/<id>.json`, and every full pass files the queue against the busybees repository: a report that looks like an issue already there is a comment on it, one that looks like nothing is a new issue with no label and no assignee. Off, the tool records nothing, says so, and nothing is filed. |
 | `feature_proposals` | bool | `true` | A feature issue a bee creates is a proposal: it carries `bees:proposal` and a person approves it by removing the label. `false` lets a bee break its own features down without a person's approval: `bees issue create --feature` writes no `bees:proposal`, and `--parent` and `bees issue link` do not refuse a parent for carrying one. See [Feature issues](workflow.md#feature-issues). |
 | `notify` | string list | `[]` | GitHub logins and `org/team` slugs the factory turns to when it needs a person. No leading `@`, at most one `/`. See [Notifying a person](#notifying-a-person). |
 | `product_manager_interval` | duration | `"1h"` | Minimum time between product manager runs. Unread mail in its inbox starts one earlier. |

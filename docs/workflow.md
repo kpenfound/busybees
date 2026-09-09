@@ -49,7 +49,10 @@ backstop below, which lists what was created since each session to repair a
 missing label, and the duplicate check behind QA's bug reports, which scores
 a new report against every issue in the repository, whatever labels it
 carries and whether it is open or closed, so that a bug a person filed by
-hand is not filed again ([QA](#qa)).
+hand is not filed again ([QA](#qa)). A factory-error report is a third
+exception, though not a read: it is filed against the busybees repository,
+not this one (see
+[`scheduler.report_factory_errors`](configuration.md#scheduler)).
 Adding a criterion to a running factory hides everything that does not
 already satisfy it. Set `assignee` in a repository full of unassigned `bees`
 issues and every one of them disappears in one commit.
@@ -1138,10 +1141,14 @@ label `bees:needs-human` by hand has no such record, and the view says so
 rather than inventing one. The comment mentions everyone in
 [`scheduler.notify`](configuration.md#notifying-a-person), since a comment
 posted under your own account notifies nobody by itself. This is the only
-comment the orchestrator itself writes. Roles do comment on GitHub, but only
-to people: the developer replying to your feedback, the product manager
-replying to feedback and feature issues or asking a `bees:question`, always
-tagged `<!-- bees:<role> -->`. Everything between roles stays in the mailbox.
+comment the orchestrator itself writes in this repository: the other one it
+writes goes to the busybees repository, on a factory-error report that
+duplicates an issue already there (see
+[`scheduler.report_factory_errors`](configuration.md#scheduler)). Roles do
+comment on GitHub, but only to people: the developer replying to your
+feedback, the product manager replying to feedback and feature issues or
+asking a `bees:question`, always tagged `<!-- bees:<role> -->`. Everything
+between roles stays in the mailbox.
 The reviewer's last feedback, if any, is there (`bees mail list --issue N`),
 and the full transcripts are under `<state_dir>/sessions/`.
 

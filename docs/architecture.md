@@ -282,13 +282,28 @@ A full pass is:
    milestones; people do, and the bees inherit. See
    [Features, sub-issues and milestones](workflow.md#features-sub-issues-and-milestones).
 
+9. **File the factory errors.** With
+   [`scheduler.report_factory_errors`](configuration.md#scheduler) on, the
+   drafts sessions recorded with `report_factory_error`
+   (`<state_dir>/feedback/`) are filed against `kpenfound/busybees`, the
+   busybees project itself, whatever repository this factory builds. A draft
+   is scored against every issue there, open and closed, by a local
+   word-overlap check that needs no session and no search API: the best match
+   gets a comment saying the problem was seen again, and a draft that matches
+   nothing opens an issue. That issue carries no label and no assignee, so a
+   factory building busybees does not pick its own bug report up as a work
+   item; a person reads and labels it, as with any issue somebody files by
+   hand. A draft is removed from the queue once its call succeeded, and one
+   whose call failed stays for the next pass without holding up the drafts
+   behind it. Off, the queue is not even read.
+
 **Local passes.** A tick that is not due for a poll, and every wake, runs a
 local pass: it classifies the issue and pull request lists cached from the
 last successful poll again (reconcile's write-back and the refresh at the end
 of every session keep that cache in step), then runs steps 5 and 6, dispatches
 developers (never a requested review) and starts only the singletons that have
-unread mail. It skips the poll, steps 2 to 4 and the product manager's and
-QA's other has-work checks, all of which read GitHub; the label writes
+unread mail. It skips the poll, steps 2 to 4, step 9 and the product
+manager's and QA's other has-work checks, all of which read GitHub; the label writes
 reconcile and dispatch make still happen, because what a local pass protects
 is the polling budget, not every API call. Until the first successful poll
 there is nothing cached and a local pass does nothing.
@@ -367,9 +382,11 @@ visibility backstop makes two list calls after each session; the refresh after
 each session one `issue view` per issue that session created or relabelled;
 the marker audit, with `[github]` set, one comment read per issue and pull
 request that session could have commented on, the one it opened included;
-and worker stage transitions make a handful of `issue view`, `pr view` and
-`issue edit` calls. Sessions call `gh` on their own on top of this, which
-busybees does not meter. See [API budget](configuration.md#api-budget).
+each queued factory-error report two calls, one to list the busybees
+repository's issues and one to file or comment; and worker stage transitions
+make a handful of `issue view`, `pr view` and `issue edit` calls. Sessions
+call `gh` on their own on top of this, which busybees does not meter. See
+[API budget](configuration.md#api-budget).
 
 **Once mode.** `bees tick` and `bees run --once` perform a single pass and
 then wait for everything it started. `--roles` restricts dispatch to the named
@@ -652,8 +669,10 @@ stateDiagram-v2
 - **Escalation** sets `bees:needs-human`, posts a comment (mentioning
   `scheduler.notify` when it is set) and records the reason in the issue's
   bookkeeping, which is how `bees status` and the live view say what the
-  factory is stuck on without asking GitHub. That comment is the only GitHub
-  comment the orchestrator itself writes. Roles comment on GitHub to people (a
+  factory is stuck on without asking GitHub. It is the only comment the
+  orchestrator writes in this repository: the other one it writes goes to the
+  busybees repository, on a factory-error report that duplicates an issue
+  already there (step 9). Roles comment on GitHub to people (a
   developer replying on its pull request, the product manager on a feedback or
   feature issue), always ending with the `<!-- bees:<role> -->` marker. See
   [Escalation](workflow.md#escalation-beesneeds-human).

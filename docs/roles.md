@@ -99,9 +99,11 @@ and the matching `bees` commands are under
 is for an error the factory itself caused, not the product: with
 [`scheduler.report_factory_errors`](configuration.md#scheduler) on, the
 prompt tells every role to strip repository names, tokens, paths and people
-from the report and the tool queues it under `<state_dir>/feedback/` for
-filing against busybees; off, the tool records nothing and says so, and the
-prompt does not mention it.
+from the report and the tool queues it under `<state_dir>/feedback/`. Every
+full pass files the queue against the busybees repository, commenting on the
+issue a report duplicates instead of opening a second one (see
+[the scheduler loop](architecture.md#the-scheduler-loop)); off, the tool
+records nothing and says so, and the prompt does not mention it.
 
 **Mail.** Roles talk to each other only through the local mailbox, never
 through GitHub comments. Every message carries the issue and/or pull request
