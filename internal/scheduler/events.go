@@ -11,8 +11,8 @@ const (
 	// it reported an outcome, failed or could not be run at all.
 	EventSessionEnded = "session-ended"
 	// EventStage is emitted when a developer worker moves an issue to
-	// another stage of the develop -> prereview -> review -> stack-wait -> checks
-	// loop.
+	// another stage of the develop -> fan-out -> assembler -> prereview ->
+	// review -> stack-wait -> checks loop.
 	EventStage = "stage"
 	// EventPoll is emitted at the end of every full pass, after status.json
 	// has been rewritten, so a view may re-read it when one arrives.
