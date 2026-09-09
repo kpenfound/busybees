@@ -44,7 +44,7 @@ and the session reaches it over HTTP.`
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			b := &backend{g: g}
-			srv := mcpserver.New(mcpserver.EnvFromOS(), mcpserver.Deps{Issues: b, GitHub: b})
+			srv := mcpserver.New(mcpserver.EnvFromOS(), mcpserver.Deps{Issues: b, GitHub: b, Feedback: b})
 			if listen != "" {
 				return serveMCPHTTP(cmd.Context(), srv, listen, os.Getenv(session.EnvMCPToken), cmd.OutOrStdout())
 			}
@@ -196,9 +196,10 @@ func isCleanShutdown(err error) bool {
 		errors.Is(err, &jsonrpc.Error{Code: codeServerClosing})
 }
 
-// backend is the production implementation of the server's Issues and
-// GitHub interfaces: internal/issues for creation, a gh client for
-// everything else, with bees.toml loaded on first use. The MCP server must
+// backend is the production implementation of the server's Issues, GitHub
+// and Feedback interfaces: internal/issues for creation, a gh client for
+// everything else, the scheduler.report_factory_errors switch for the
+// factory-error drafts, with bees.toml loaded on first use. The MCP server must
 // start even when the configuration cannot be read, so the failure surfaces
 // from the tool that needs it.
 type backend struct {
@@ -209,6 +210,9 @@ type backend struct {
 	// (resolveFilterSelf); policy is only valid once gh is set.
 	self   string
 	policy issues.Policy
+	// reportFactoryErrors is scheduler.report_factory_errors, read with the
+	// policy.
+	reportFactoryErrors bool
 }
 
 // issuePolicy is the policy `bees issue create`, `bees issue link` and the
@@ -251,8 +255,18 @@ func (b *backend) load(ctx context.Context) error {
 	}
 	b.self = self
 	b.policy = issuePolicy(cfg)
+	b.reportFactoryErrors = cfg.Scheduler.ReportFactoryErrors
 	b.gh = githubClient(cfg)
 	return nil
+}
+
+// ReportFactoryErrors says whether report_factory_error records a draft:
+// scheduler.report_factory_errors in the loaded bees.toml.
+func (b *backend) ReportFactoryErrors(ctx context.Context) (bool, error) {
+	if err := b.load(ctx); err != nil {
+		return false, err
+	}
+	return b.reportFactoryErrors, nil
 }
 
 func (b *backend) Create(ctx context.Context, opts issues.Options) (issues.Result, error) {

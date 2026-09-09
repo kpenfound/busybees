@@ -28,3 +28,23 @@ func TestIssuePolicyFollowsTheConfig(t *testing.T) {
 		}
 	}
 }
+
+// TestBackendReadsReportFactoryErrors: the backend a session's
+// report_factory_error goes through answers with scheduler.report_factory_errors,
+// off unless a person writes it.
+func TestBackendReadsReportFactoryErrors(t *testing.T) {
+	for toml, want := range map[string]bool{
+		botTOML: false,
+		botTOML + "[scheduler]\nreport_factory_errors = true\n": true,
+	} {
+		path := setupBotFactory(t, toml)
+		b := &backend{g: &globalFlags{config: path}}
+		got, err := b.ReportFactoryErrors(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Errorf("%q: ReportFactoryErrors %v, want %v", strings.TrimPrefix(toml, botTOML), got, want)
+		}
+	}
+}

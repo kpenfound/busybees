@@ -105,7 +105,7 @@ func TestSessionToolsAreOfferedToEveryRole(t *testing.T) {
 		for _, tool := range h.tools() {
 			names = append(names, tool.Name)
 		}
-		for _, want := range []string{"done", "issue_create", "issue_link", "mail_list", "mail_send"} {
+		for _, want := range []string{"done", "issue_create", "issue_link", "mail_list", "mail_send", "report_factory_error"} {
 			if !slices.Contains(names, want) {
 				t.Errorf("role %q: tools = %s, want %s", role, strings.Join(names, ", "), want)
 			}
