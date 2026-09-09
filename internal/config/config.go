@@ -8,6 +8,7 @@
 //	[global]    – prompt/skills/mcp/model settings applied to every role
 //	[scheduler] – concurrency, polling and review-loop limits
 //	[logging]   – console log format and level
+//	[notes]     – the backend that stores role notes files
 //	[roles.*]   – per-role overrides (product_manager, project_manager,
 //	              developer, reviewer, qa)
 //
@@ -138,6 +139,9 @@ const (
 	// absent [logging] table logs exactly as bees always did.
 	DefaultLogFormat = logging.FormatText
 	DefaultLogLevel  = "info"
+	// DefaultNotesBackend is the notes.backend a factory gets with no [notes]
+	// table: notes files on disk, as bees has always stored them.
+	DefaultNotesBackend = NotesBackendFile
 )
 
 // Dispatch orders accepted by scheduler.dispatch_order.
@@ -159,6 +163,15 @@ const (
 
 // Agents lists the accepted agent values.
 var Agents = []string{AgentClaude, AgentCodex}
+
+// Notes backends accepted by notes.backend: where role notes files live.
+const (
+	NotesBackendFile  = "file"
+	NotesBackendNeo4j = "neo4j"
+)
+
+// NotesBackends lists the accepted notes.backend values.
+var NotesBackends = []string{NotesBackendFile, NotesBackendNeo4j}
 
 // Sizes lists the work item sizes, smallest first. They mirror the
 // bees:size/* labels (see Labels.SizeLabels).
@@ -212,6 +225,7 @@ type Config struct {
 	Global    RoleSettings            `toml:"global"`
 	Scheduler Scheduler               `toml:"scheduler"`
 	Logging   Logging                 `toml:"logging"`
+	Notes     Notes                   `toml:"notes"`
 	Roles     map[string]RoleSettings `toml:"roles"`
 
 	// Path is the absolute path of the loaded bees.toml (not part of the file).
@@ -868,6 +882,19 @@ type Logging struct {
 	Level string `toml:"level" json:"level"`
 }
 
+// Notes selects where role notes files live. It is a top-level table, like
+// [logging], because the backend is a factory-wide choice, not a per-role
+// setting.
+//
+// Backend accepts "neo4j" today with no behavior attached: nothing in the
+// codebase reads Notes.Backend yet. internal/state's notes files and every
+// role's notes prompt are unaffected until a later change gives the value a
+// consumer.
+type Notes struct {
+	// Backend is "file" or "neo4j". Default "file".
+	Backend string `toml:"backend" json:"backend"`
+}
+
 // weekdayNames maps the accepted work_days values to weekdays, in the order
 // they are printed.
 var weekdayNames = []struct {
@@ -1349,6 +1376,9 @@ func (c *Config) applyDefaults() {
 	if c.Logging.Level == "" {
 		c.Logging.Level = DefaultLogLevel
 	}
+	if c.Notes.Backend == "" {
+		c.Notes.Backend = DefaultNotesBackend
+	}
 	if c.Roles == nil {
 		c.Roles = map[string]RoleSettings{}
 	}
@@ -1435,6 +1465,9 @@ func (c *Config) Validate() error {
 	}
 	if _, err := logging.ParseLevel(c.Logging.Level); err != nil {
 		errs = append(errs, "logging.level: "+err.Error())
+	}
+	if c.Notes.Backend != "" && !slices.Contains(NotesBackends, c.Notes.Backend) {
+		errs = append(errs, fmt.Sprintf("notes.backend must be one of %s", strings.Join(NotesBackends, ", ")))
 	}
 	check := func(scope string, rs RoleSettings) {
 		if scope != "roles."+RoleReviewer {

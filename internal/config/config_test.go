@@ -1538,6 +1538,39 @@ func TestLoggingSettings(t *testing.T) {
 	}
 }
 
+// [notes] defaults to "file" when absent, accepts "neo4j", rejects anything
+// else, and survives a Rewrite (see docs/configuration.md#notes).
+func TestNotesSettings(t *testing.T) {
+	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Notes.Backend != NotesBackendFile {
+		t.Fatalf("default: %q, want %q", cfg.Notes.Backend, NotesBackendFile)
+	}
+
+	path := writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[notes]\nbackend = \"neo4j\"\n")
+	cfg, err = Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Notes.Backend != NotesBackendNeo4j {
+		t.Fatalf("configured: %q, want %q", cfg.Notes.Backend, NotesBackendNeo4j)
+	}
+	if b, err := cfg.Rewrite(); err != nil || b != "" {
+		t.Fatalf("rewrite of current file should be a no-op: %q %v", b, err)
+	}
+	again, err := Load(path)
+	if err != nil || again.Notes.Backend != NotesBackendNeo4j {
+		t.Fatalf("reload after rewrite: %+v %v", again, err)
+	}
+
+	_, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[notes]\nbackend = \"postgres\"\n"))
+	if err == nil || !strings.Contains(err.Error(), "notes.backend must be one of file, neo4j") {
+		t.Fatalf("invalid backend: %v", err)
+	}
+}
+
 // The assignee filter has no default. `bees init` without --assignee leaves the
 // key commented out, and an unset assignee means no assignee filter at all —
 // not "@me". Nothing else pins that: every other template test passes
