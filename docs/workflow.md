@@ -44,8 +44,11 @@ The factory reads only the issues and pull requests that match the
 | Creator | `filter.creator` | unset | The item was opened by this login, or by the account the factory acts as |
 
 Everything outside the filter is invisible: the factory never reads, labels
-or comments on it. Adding a criterion to a running factory hides everything
-that does not already satisfy it. Set `assignee` in a repository full of
+or comments on it. A factory-error report is no exception to that: it is
+filed against the busybees repository, not this one (see
+[`scheduler.report_factory_errors`](configuration.md#scheduler)). Adding a
+criterion to a running factory hides everything that does not already satisfy
+it. Set `assignee` in a repository full of
 unassigned `bees` issues and every one of them disappears in one commit.
 `bees doctor` reports that case with both counts:
 
