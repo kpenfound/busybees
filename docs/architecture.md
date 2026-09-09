@@ -494,15 +494,16 @@ stateDiagram-v2
   name: `git worktree add` derives its metadata id from the leaf name, and two
   concurrent adds sharing one would race for it.
 - **Resume.** Before working each stage the worker records the stage it is in
-  (`develop`, `prereview`, `review`, `stack-wait` or `checks`), the gate a
-  developer round returns to, and whether the pre-review checks have been
-  read, in `<state_dir>/issues/<n>.json`. A worker that finds a recorded stage
-  comes back to it, so a `bees run` killed in the checks stage or in the
-  middle of a check-fix round carries on there instead of paying for a review
-  that has already happened: a workflow label says an issue is in review,
-  never whether its review has run. The labels stay the human-facing truth all
-  the same. A recorded stage they contradict is dropped with a log line and
-  the worker starts where the labels say: one of the four review-loop stages
+  (`develop`, `fan-out`, `assembler`, `prereview`, `review`, `stack-wait` or
+  `checks`), the gate a developer round returns to, and whether the
+  pre-review checks have been read, in `<state_dir>/issues/<n>.json`. A
+  worker that finds a recorded stage comes back to it, so a `bees run`
+  killed in the checks stage or in the middle of a check-fix round carries
+  on there instead of paying for a review that has already happened: a
+  workflow label says an issue is in review, never whether its review has
+  run. The labels stay the human-facing truth all the same. A recorded
+  stage they contradict is dropped with a log line and the worker starts
+  where the labels say: one of the four review-loop stages
   on an issue with no open pull request, or on one a person put back to
   `bees:ready`, and a stage name this build does not run. `develop` fits any
   label, so the loop state recorded with it is dropped on the same test: an

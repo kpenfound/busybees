@@ -812,12 +812,12 @@ to the default branch reaches no session until `bees` is rebuilt and
 the repository and warns when the running scheduler is behind it. The segment
 is absent when `status.json` records no build.
 
-A worker's stage is `develop`, `pre-review checks`, `review`, `stack-wait` or
-`checks`. Once the checks stage knows what it is waiting for, the stage names
-the gate — `checks (required)`, `checks (reported)` or `checks (none)` — so a
-worker sitting in a 30-minute wait says whether it is waiting on the branch's
-required checks, on the checks the pull request happens to report, or on
-nothing at all. See
+A worker's stage is `develop`, `fan-out`, `assembler`, `pre-review checks`,
+`review`, `stack-wait` or `checks`. Once the checks stage knows what it is
+waiting for, the stage names the gate — `checks (required)`, `checks
+(reported)` or `checks (none)` — so a worker sitting in a 30-minute wait says
+whether it is waiting on the branch's required checks, on the checks the
+pull request happens to report, or on nothing at all. See
 [auto-merge](configuration.md#rolesreviewer-only-checks-and-auto-merge).
 
 A worker line ends with `resumed` when the worker took over from a session

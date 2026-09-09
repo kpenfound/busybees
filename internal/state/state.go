@@ -148,9 +148,9 @@ type IssueState struct {
 	Branch         string `json:"branch,omitempty"`
 	CheckFixRounds int    `json:"check_fix_rounds,omitempty"`
 	// WorkerStage is the stage the developer worker (scheduler.workIssue) was
-	// in — "develop", "prereview", "review", "stack-wait" or "checks" —
-	// AfterDevelop the
-	// stage its next developer session leads back to, and PreReviewDone
+	// in — "develop", "fan-out", "assembler", "prereview", "review",
+	// "stack-wait" or "checks" — AfterDevelop the stage its next developer
+	// session leads back to, and PreReviewDone
 	// whether the pre-review checks have already been read for this pull
 	// request. They are the worker's loop state, written on every transition,
 	// so a scheduler killed mid-flight comes back to the stage it was in
