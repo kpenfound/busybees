@@ -992,3 +992,38 @@ func TestCommentsSince(t *testing.T) {
 		t.Fatalf("got %v, want %s (oldest first, everybody's, nothing older than since)", ids, want)
 	}
 }
+
+// TestListAllIssues pins that the duplicate check's listing asks for open and
+// closed issues alike and applies none of the factory's filters: no label, no
+// assignee, no author, no milestone.
+func TestListAllIssues(t *testing.T) {
+	var calls [][]string
+	c := New("a/b")
+	c.Exec = func(ctx context.Context, args ...string) ([]byte, error) {
+		calls = append(calls, args)
+		return json.Marshal([]Issue{
+			{Number: 9, Title: "open one", State: "OPEN"},
+			{Number: 3, Title: "closed one", State: "CLOSED", Labels: []Label{{Name: "bees"}}},
+		})
+	}
+	issues, err := c.ListAllIssues(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("one listing expected, got %d: %v", len(calls), calls)
+	}
+	got := strings.Join(calls[0], " ")
+	want := "issue list -R a/b --state all --limit 500 --json " + issueFields
+	if got != want {
+		t.Fatalf("got %q\nwant %q", got, want)
+	}
+	for _, flag := range []string{"--label", "--assignee", "--author", "--milestone", "--search"} {
+		if slices.Contains(calls[0], flag) {
+			t.Errorf("the listing filters with %s; it must see every issue", flag)
+		}
+	}
+	if len(issues) != 2 || issues[0].State != "OPEN" || issues[1].State != "CLOSED" {
+		t.Fatalf("issues: %+v", issues)
+	}
+}

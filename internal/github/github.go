@@ -481,6 +481,20 @@ func (c *Client) ListOpenIssues(ctx context.Context, q Query) ([]Issue, error) {
 	return list(ctx, c, q, base, func(i Issue) int { return i.Number })
 }
 
+// ListAllIssues returns every issue in the repository, open and closed, the
+// most recently created first. It takes no Query and applies no filter on
+// purpose: it exists for the duplicate check (internal/duplicates), and a
+// duplicate can be an issue a person filed without the factory's label, or a
+// labelled one already closed as fixed. Do not make it respect [filter].
+//
+// gh caps the listing (its default is 30), so this asks for 500, the same as
+// ListOpenIssues. A repository with more issues than that is checked against
+// the most recent 500 only.
+func (c *Client) ListAllIssues(ctx context.Context) ([]Issue, error) {
+	base := []string{"issue", "list", "-R", c.Repo, "--state", "all", "--limit", "500", "--json", issueFields}
+	return list(ctx, c, Query{}, base, func(i Issue) int { return i.Number })
+}
+
 // GetIssue returns one issue including comments.
 func (c *Client) GetIssue(ctx context.Context, number int) (Issue, error) {
 	out, err := c.Exec(ctx, "issue", "view", strconv.Itoa(number), "-R", c.Repo, "--json", issueFields+",comments")
