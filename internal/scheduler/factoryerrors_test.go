@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -288,5 +290,26 @@ func TestTheUpstreamClientIsBusybeesWithTheFactorysIdentity(t *testing.T) {
 	}
 	if len(calls) != 1 || argValue(calls[0], "-R") != "kpenfound/busybees" {
 		t.Fatalf("upstream call %v, want one through the factory's gh hook against busybees", calls)
+	}
+}
+
+// A queue that cannot be read is a warning and nothing else: the pass carries
+// on and writes nothing upstream on a guess.
+func TestAnUnreadableFeedbackQueueFilesNothing(t *testing.T) {
+	h := newHarnessAt(t, factoryErrorsTOML, time.Now())
+	up := &upstreamStub{}
+	up.install(h)
+	queueDraft(t, h, "a draft that is fine", "detail", time.Now())
+	if err := os.WriteFile(filepath.Join(h.store.FeedbackDir(), "corrupt.json"), []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	h.sched.drainFeedbackQueue(context.Background())
+
+	if len(up.calls) != 0 {
+		t.Errorf("a corrupt queue was filed anyway: %v", up.calls)
+	}
+	if !strings.Contains(h.logs.String(), "could not read the factory-error queue") {
+		t.Errorf("the unreadable queue was not reported:\n%s", h.logs.String())
 	}
 }

@@ -47,9 +47,6 @@ func (s *Scheduler) drainFeedbackQueue(ctx context.Context) {
 	if s.op("feedback-queue", err, "could not read the factory-error queue", "err", err) {
 		return
 	}
-	if len(drafts) == 0 {
-		return
-	}
 	var errs []error
 	for _, d := range drafts {
 		if err := s.fileDraft(ctx, d); err != nil {
