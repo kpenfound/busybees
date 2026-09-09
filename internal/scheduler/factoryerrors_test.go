@@ -14,6 +14,8 @@ import (
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/feedback"
 	"github.com/kpenfound/busybees/internal/github"
+	"github.com/kpenfound/busybees/internal/session"
+	"github.com/kpenfound/busybees/internal/workspace"
 )
 
 // scheduler.report_factory_errors reaches a session through its system
@@ -251,5 +253,40 @@ func TestFactoryErrorsAreNotFiledWhenTheKeyIsOff(t *testing.T) {
 	got := queuedDrafts(t, h)
 	if len(got) != 1 || got[0].ID != d.ID {
 		t.Errorf("queue = %+v, want the draft left alone", got)
+	}
+}
+
+// The client the factory-error reports go through is the scheduler's own with
+// the repository swapped: it writes to busybees rather than to the repository
+// this factory builds, acts as the same [github] account, and inherits the
+// gh hook — so a test's fake covers it and no factory-error path can reach
+// the real GitHub.
+func TestTheUpstreamClientIsBusybeesWithTheFactorysIdentity(t *testing.T) {
+	h := newHarness(t, factoryErrorsTOML)
+	gh := github.NewAs(h.cfg.Project.Repo, "beebot", "t0ken")
+	var calls [][]string
+	gh.Exec = func(_ context.Context, args ...string) ([]byte, error) {
+		calls = append(calls, args)
+		return []byte("https://github.com/kpenfound/busybees/issues/900\n"), nil
+	}
+	s, err := New(Deps{Config: h.cfg, GitHub: gh, Mail: h.box, Runner: &session.Runner{},
+		Workspaces: workspace.NewManager(h.clone, t.TempDir()), Store: h.store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.upstream.Repo != "kpenfound/busybees" {
+		t.Errorf("upstream repo %q, want kpenfound/busybees", s.upstream.Repo)
+	}
+	if s.gh.Repo != h.cfg.Project.Repo {
+		t.Errorf("the factory's own client moved to %q", s.gh.Repo)
+	}
+	if s.upstream.ActsAs != "beebot" || s.upstream.Token != "t0ken" {
+		t.Errorf("upstream identity %q/%q, want the factory's own", s.upstream.ActsAs, s.upstream.Token)
+	}
+	if _, err := s.upstream.CreateIssue(context.Background(), github.NewIssue{Title: "t", Body: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 1 || argValue(calls[0], "-R") != "kpenfound/busybees" {
+		t.Fatalf("upstream call %v, want one through the factory's gh hook against busybees", calls)
 	}
 }
