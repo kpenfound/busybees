@@ -432,7 +432,8 @@ type RoleSettings struct {
 	// is SandboxContainer: it must hold the role's agent, git and gh. A
 	// role's value replaces the global one, so a role that runs the product
 	// itself can name an image that carries the product's toolchain. There
-	// is no default: a container role without one is refused.
+	// is no default: a container role without one, or a
+	// ContainerUseEnvironment to build one from, is refused.
 	SandboxImage string `toml:"sandbox_image"`
 	// ContainerUseEnvironment is the path, relative to the project repo
 	// root, to a dagger/container-use environment definition the container
