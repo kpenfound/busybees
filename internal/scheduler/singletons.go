@@ -515,6 +515,19 @@ func (s *Scheduler) runSingleton(ctx context.Context, role string, data prompts.
 	if status == OutcomeFailed {
 		return errors.New(s.sessionFailure(role, res, status, note))
 	}
+	// QA's session has one required side effect: its prompt tells it to send
+	// the product manager a report every session, a clean pass included, and
+	// to skip it only when it could not test at all — which is `failed`,
+	// already handled above. So anything else without that mail is a claim
+	// nothing backs, the way a developer's `question` without mail is, and
+	// sentSince is the same check.
+	//
+	// QA only. The product manager and the project manager owe no particular
+	// message: their work is issues they may or may not have to write, and
+	// there is nothing to look for.
+	if role == config.RoleQA && !s.sentSinceFrom(config.RoleQA, config.RoleProductManager, 0, 0, started) {
+		return fmt.Errorf("QA reported `%s` but sent the product manager no report: %s", status, note)
+	}
 	return nil
 }
 

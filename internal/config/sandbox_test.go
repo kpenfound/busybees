@@ -324,6 +324,107 @@ func TestSandboxImageWithSpacesIsALoadError(t *testing.T) {
 	}
 }
 
+// container_use_environment resolves like sandbox_image, and defaults to
+// empty (today's behaviour, unchanged); `bees config show` prints it per
+// role.
+func TestContainerUseEnvironmentMerges(t *testing.T) {
+	cfg, err := Load(writeConfig(t, `
+version = 1
+[project]
+repo = "a/b"
+
+[global]
+sandbox = "container"
+container_use_environment = "dagger/container-use"
+
+[roles.qa]
+container_use_environment = "dagger/qa-env"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := cfg.View([]string{RoleDeveloper, RoleQA})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for role, want := range map[string]string{RoleDeveloper: "dagger/container-use", RoleQA: "dagger/qa-env"} {
+		r, err := cfg.Role(role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.ContainerUseEnvironment != want {
+			t.Errorf("roles.%s container_use_environment: got %q, want %q", role, r.ContainerUseEnvironment, want)
+		}
+		if got := v.Roles[role].ContainerUseEnvironment; got != want {
+			t.Errorf("roles.%s container_use_environment in the view: got %q, want %q", role, got, want)
+		}
+	}
+	plain, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev, _ := plain.Role(RoleDeveloper)
+	if dev.ContainerUseEnvironment != "" {
+		t.Errorf("an unset container_use_environment resolved to %q", dev.ContainerUseEnvironment)
+	}
+}
+
+// A path with a space in it is a pasted-in command line, not a path; an
+// absolute one cannot mean the same thing on every machine that checks the
+// project out.
+func TestContainerUseEnvironmentShapeIsALoadError(t *testing.T) {
+	cases := map[string]string{
+		"spaces":   "version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nsandbox = \"container\"\ncontainer_use_environment = \"dagger env\"\n",
+		"absolute": "version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nsandbox = \"container\"\ncontainer_use_environment = \"/dagger/env\"\n",
+	}
+	for name, body := range cases {
+		_, err := Load(writeConfig(t, body))
+		if err == nil || !strings.Contains(err.Error(), "roles.developer.container_use_environment") {
+			t.Errorf("%s: expected a load error naming the key, got %v", name, err)
+		}
+	}
+}
+
+// container_use_environment only means anything alongside sandbox =
+// "container", and is instead of sandbox_image, not alongside it.
+func TestContainerUseEnvironmentRequiresContainerSandboxAndExcludesImage(t *testing.T) {
+	cases := map[string]struct {
+		body string
+		want string
+	}{
+		"without container sandbox": {
+			body: "version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\ncontainer_use_environment = \"dagger/env\"\n",
+			want: "roles.developer: container_use_environment is only valid when sandbox is \"container\"",
+		},
+		"with sandbox_image": {
+			body: "version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nsandbox = \"container\"\nsandbox_image = \"img\"\ncontainer_use_environment = \"dagger/env\"\n",
+			want: "roles.developer: container_use_environment and sandbox_image are mutually exclusive",
+		},
+	}
+	for name, c := range cases {
+		_, err := Load(writeConfig(t, c.body))
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: error = %v, want it to contain %q", name, err, c.want)
+		}
+	}
+}
+
+// Accepted alone, with sandbox = "container" and no sandbox_image on the
+// same resolved role.
+func TestContainerUseEnvironmentAcceptedAlone(t *testing.T) {
+	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nsandbox = \"container\"\ncontainer_use_environment = \"dagger/env\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := cfg.Role(RoleDeveloper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.ContainerUseEnvironment != "dagger/env" {
+		t.Errorf("container_use_environment = %q, want %q", r.ContainerUseEnvironment, "dagger/env")
+	}
+}
+
 // fakeMachine describes a machine to the container checks for the rest of
 // the test: which programs are on its PATH, its environment, and what the
 // engine answers. Every engine call is recorded.

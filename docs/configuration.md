@@ -480,6 +480,7 @@ The CLI accepts aliases such as `pm` and `dev`; the TOML keys do not.
 | `shell` | string | the shell bees runs under | Exported into sessions as `$SHELL`. Claude Code discovers its Bash tool's shell from `$SHELL`, so this is the lever, without being a guarantee. Must be an existing file. |
 | `sandbox` | string | `"none"` | How much of the machine a session of this role can reach: `none`, `claude` or `container`. See [Sandboxing](#sandboxing). |
 | `sandbox_image` | string | `""` | The image a `container` session runs in: it must hold the role's agent, `git` and `gh`. A `container` role without one is refused at `bees run`. See [The container mode](#the-container-mode). |
+| `container_use_environment` | string | `""` | Path, relative to the project repository root, to a `dagger/container-use` environment definition for the `container` sandbox, instead of `sandbox_image`. Requires `sandbox = "container"` and is a load error together with `sandbox_image` on the same resolved role. |
 | `env` | table | `{}` | Environment variables exported into every session: the agent, its shell tool and git see them, and so do MCP servers under `claude` (codex starts a server with only the variables its entry names). A `$VAR` value is expanded from the bees process environment when the session starts. A name may not be empty or contain `=` or a space. See [Exported into every session](#exported-into-every-session) for how it meets the variables bees sets itself. |
 | `enabled` | bool | `true` | Roles only. `false` takes a role out of the rotation. Disabling `reviewer` makes a developer's pull request count as approved the moment it is opened, and with `auto_merge` it goes straight to the checks stage. Under `[global]` the key is an error. A named set of these decisions is a [config template](templates.md). |
 
@@ -844,7 +845,7 @@ exercised on macOS with Docker Desktop.
 | `skills` | Union, global first, order kept, duplicates dropped. |
 | `mcp` | Union by name; a role server replaces a global one of the same name. |
 | `env` | Union by name; the role wins. |
-| `model`, `fallback_model`, `agent`, `effort`, `max_turns`, `timeout`, `shell`, `sandbox`, `sandbox_image` | Role value if set, else global, else the built-in default. |
+| `model`, `fallback_model`, `agent`, `effort`, `max_turns`, `timeout`, `shell`, `sandbox`, `sandbox_image`, `container_use_environment` | Role value if set, else global, else the built-in default. |
 | `allowed_tools`, `disallowed_tools` | Global list followed by the role list. |
 | `enabled` | Role only. |
 | `skills_refresh` | Global only. |

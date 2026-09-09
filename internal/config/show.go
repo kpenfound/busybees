@@ -41,24 +41,25 @@ type GitHubView struct {
 // keys are only present on the role that owns them; skills_refresh is global
 // only, so it reads the same under every role.
 type RoleView struct {
-	Name            string               `json:"name"`
-	Prompt          string               `json:"prompt"`
-	Skills          []string             `json:"skills"`
-	SkillsRefresh   string               `json:"skills_refresh"`
-	MCP             map[string]MCPServer `json:"mcp"`
-	Model           string               `json:"model"`
-	FallbackModel   string               `json:"fallback_model"`
-	Agent           string               `json:"agent"`
-	Effort          string               `json:"effort"`
-	MaxTurns        int                  `json:"max_turns"`
-	Timeout         Duration             `json:"timeout"`
-	AllowedTools    []string             `json:"allowed_tools"`
-	DisallowedTools []string             `json:"disallowed_tools"`
-	Enabled         bool                 `json:"enabled"`
-	Shell           string               `json:"shell"`
-	Env             map[string]string    `json:"env"`
-	Sandbox         string               `json:"sandbox"`
-	SandboxImage    string               `json:"sandbox_image"`
+	Name                    string               `json:"name"`
+	Prompt                  string               `json:"prompt"`
+	Skills                  []string             `json:"skills"`
+	SkillsRefresh           string               `json:"skills_refresh"`
+	MCP                     map[string]MCPServer `json:"mcp"`
+	Model                   string               `json:"model"`
+	FallbackModel           string               `json:"fallback_model"`
+	Agent                   string               `json:"agent"`
+	Effort                  string               `json:"effort"`
+	MaxTurns                int                  `json:"max_turns"`
+	Timeout                 Duration             `json:"timeout"`
+	AllowedTools            []string             `json:"allowed_tools"`
+	DisallowedTools         []string             `json:"disallowed_tools"`
+	Enabled                 bool                 `json:"enabled"`
+	Shell                   string               `json:"shell"`
+	Env                     map[string]string    `json:"env"`
+	Sandbox                 string               `json:"sandbox"`
+	SandboxImage            string               `json:"sandbox_image"`
+	ContainerUseEnvironment string               `json:"container_use_environment"`
 
 	// CommitFlags, MaxSize, ModelBySize and the best-of-N keys are only set
 	// on the developer.
@@ -112,24 +113,25 @@ func (c *Config) View(roles []string) (View, error) {
 			return View{}, err
 		}
 		rv := RoleView{
-			Name:            rr.Name,
-			Prompt:          rr.Prompt,
-			Skills:          rr.Skills,
-			SkillsRefresh:   c.SkillsRefreshPolicy(),
-			MCP:             rr.MCP,
-			Model:           rr.Model,
-			FallbackModel:   rr.FallbackModel,
-			Agent:           rr.Agent,
-			Effort:          rr.Effort,
-			MaxTurns:        rr.MaxTurns,
-			Timeout:         Duration{rr.Timeout},
-			AllowedTools:    rr.AllowedTools,
-			DisallowedTools: rr.DisallowedTools,
-			Enabled:         rr.Enabled,
-			Shell:           rr.Shell,
-			Env:             rr.Env,
-			Sandbox:         rr.Sandbox,
-			SandboxImage:    rr.SandboxImage,
+			Name:                    rr.Name,
+			Prompt:                  rr.Prompt,
+			Skills:                  rr.Skills,
+			SkillsRefresh:           c.SkillsRefreshPolicy(),
+			MCP:                     rr.MCP,
+			Model:                   rr.Model,
+			FallbackModel:           rr.FallbackModel,
+			Agent:                   rr.Agent,
+			Effort:                  rr.Effort,
+			MaxTurns:                rr.MaxTurns,
+			Timeout:                 Duration{rr.Timeout},
+			AllowedTools:            rr.AllowedTools,
+			DisallowedTools:         rr.DisallowedTools,
+			Enabled:                 rr.Enabled,
+			Shell:                   rr.Shell,
+			Env:                     rr.Env,
+			Sandbox:                 rr.Sandbox,
+			SandboxImage:            rr.SandboxImage,
+			ContainerUseEnvironment: rr.ContainerUseEnvironment,
 		}
 		// Empty collections print as [] / {} rather than null.
 		if rv.Skills == nil {
