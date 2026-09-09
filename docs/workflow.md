@@ -1216,7 +1216,10 @@ The developer, the reviewer and QA all file bugs. They always go in as
 `bees` + `bees:bug` + `bees:triage`, in the milestone of the issue they were
 found on, so they flow through the project manager like any other work item.
 Developers and reviewers only file bugs they notice outside the scope of what
-they are working on. They do not fix them in passing.
+they are working on. They do not fix them in passing. QA files through
+`file_bug`, which refuses a bug the repository already reports; the developer
+and the reviewer file with `issue_create`, which checks nothing, because they
+are reporting what they ran into in code they were already reading.
 
 ## Features, sub-issues and milestones
 

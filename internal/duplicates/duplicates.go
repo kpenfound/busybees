@@ -4,11 +4,13 @@
 // in the repository, open and closed, scores each against the title and body
 // about to be filed, and returns the ones that clear a fixed threshold, best
 // first. The caller decides what a match means — comment on it, refuse to
-// file, or hand the candidates to the agent. Nothing in the factory calls it
-// by default: the roles that split one issue into several similar ones (a
-// triage split, a feature broken into work items) would trip it on purpose,
-// so it is for the callers that file bugs into a repository they did not
-// read first (QA, and the feedback loop into the upstream repository).
+// file, or hand the candidates to the agent. It is called by the paths that
+// file bugs into a repository nobody read first: QA's file_bug tool
+// (internal/mcpserver), which refuses a bug the repository already reports,
+// and the feedback loop into the upstream repository. Issue creation itself
+// (internal/issues.Create, the issue_create tool) does not go through it: the
+// roles that split one issue into several similar ones — a triage split, a
+// feature broken into work items — would trip it on purpose.
 //
 // The scoring is local so that it is the same in a test as in production and
 // owes nothing to gh's search ranking. Titles and bodies are lowercased,
