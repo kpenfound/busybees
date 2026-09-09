@@ -484,7 +484,7 @@ The CLI accepts aliases such as `pm` and `dev`; the TOML keys do not.
 | `disallowed_tools` | string list | `[]` | Passed as `claude --disallowedTools`. A `codex` role ignores it. |
 | `shell` | string | the shell bees runs under | Exported into sessions as `$SHELL`. Claude Code discovers its Bash tool's shell from `$SHELL`, so this is the lever, without being a guarantee. Must be an existing file. |
 | `sandbox` | string | `"none"` | How much of the machine a session of this role can reach: `none`, `claude` or `container`. See [Sandboxing](#sandboxing). |
-| `sandbox_image` | string | `""` | The image a `container` session runs in: it must hold the role's agent, `git` and `gh`. A `container` role without one is refused at `bees run`. See [The container mode](#the-container-mode). |
+| `sandbox_image` | string | `""` | The image a `container` session runs in: it must hold the role's agent, `git` and `gh`. A `container` role without one or `container_use_environment` is refused at `bees run`. See [The container mode](#the-container-mode). |
 | `container_use_environment` | string | `""` | Path, relative to the project repository root, to a `dagger/container-use` environment definition for the `container` sandbox, instead of `sandbox_image`. Requires `sandbox = "container"` and is a load error together with `sandbox_image` on the same resolved role. |
 | `env` | table | `{}` | Environment variables exported into every session: the agent, its shell tool and git see them, and so do MCP servers under `claude` (codex starts a server with only the variables its entry names). A `$VAR` value is expanded from the bees process environment when the session starts. A name may not be empty or contain `=` or a space. See [Exported into every session](#exported-into-every-session) for how it meets the variables bees sets itself. |
 | `enabled` | bool | `true` | Roles only. `false` takes a role out of the rotation. Disabling `reviewer` makes a developer's pull request count as approved the moment it is opened, and with `auto_merge` it goes straight to the checks stage. Under `[global]` the key is an error. A named set of these decisions is a [config template](templates.md). |
@@ -762,7 +762,10 @@ A `container` session is the agent's command line, unchanged, run inside
 `docker run`. It needs `docker` on `PATH` with a daemon that answers, and the
 image `sandbox_image` names on the machine: pull or build it yourself, bees
 never pulls. `bees run` checks all three ahead of the doctor, whatever
-`--skip-doctor` says, and refuses to start naming the role that fails.
+`--skip-doctor` says, and refuses to start naming the role that fails. A role
+with `container_use_environment` instead of `sandbox_image` has its image
+built at session start, and `docker build` pulls the definition's
+`base_image` then.
 
 The container sees three things of the host, each bind-mounted at its host
 path so every path in the prompts and the environment means the same inside:
