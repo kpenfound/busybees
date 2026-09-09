@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/prompts"
 	"github.com/kpenfound/busybees/internal/session"
 	"github.com/kpenfound/busybees/internal/state"
 	"github.com/kpenfound/busybees/internal/workspace"
@@ -683,4 +685,45 @@ func TestBestOfNGivesTheSlotsBackBeforeASingleSession(t *testing.T) {
 	}
 	waitWorkers(t, h, cancel, time.Minute)
 	h.wantOrder("developer-issue-1-r1")
+}
+
+// An attempt whose session could not be run at all — no outcome, an error
+// from the runner — is listed to the assembler as `failed` with the error
+// as its note and is no candidate, whatever its branch holds; the count of
+// commits still comes from the remote.
+func TestAttemptDataReportsAnAttemptThatCouldNotRun(t *testing.T) {
+	h := newHarness(t, bestOfNTOML)
+	pushCommit(t, h.clone, "bees/issue-1-attempt-1")
+	data, err := h.sched.attemptData(context.Background(), []attempt{
+		{branch: "bees/issue-1-attempt-1", status: "pr-opened", pr: fakePR},
+		{branch: "bees/issue-1-attempt-2", err: errors.New("claude: no such agent")},
+	}, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []prompts.Attempt{
+		{Branch: "bees/issue-1-attempt-1", Commits: 1, Outcome: "pr-opened", PR: fakePR, Candidate: true},
+		{Branch: "bees/issue-1-attempt-2", Outcome: "failed", Note: "the session could not be run: claude: no such agent"},
+	}
+	if !slices.Equal(data, want) {
+		t.Errorf("attemptData:\n got %+v\nwant %+v", data, want)
+	}
+}
+
+// pushCommit creates branch on the remote with one empty commit on top of
+// main, without checking anything out in the clone.
+func pushCommit(t *testing.T, clone, branch string) {
+	t.Helper()
+	ctx := context.Background()
+	tree, err := workspace.Git(ctx, clone, "rev-parse", "main^{tree}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit, err := workspace.Git(ctx, clone, "-c", "user.email=t@e", "-c", "user.name=t", "commit-tree", tree, "-p", "main", "-m", "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := workspace.Git(ctx, clone, "push", "-q", "origin", commit+":refs/heads/"+branch); err != nil {
+		t.Fatal(err)
+	}
 }
