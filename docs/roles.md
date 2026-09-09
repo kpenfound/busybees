@@ -77,21 +77,24 @@ you could not finish.
 **Tools.** The factory's own operations and the GitHub actions a role performs
 are MCP tools, served to every session by the built-in `bees` server. Nine go
 to every role: `mail_send`, `mail_list`, `issue_create`, `issue_link`,
-`issue_view`, `pr_view`, `comment`, `report_factory_error` and `done`. Four
+`issue_view`, `pr_view`, `comment`, `report_factory_error` and `done`. Five
 are role-scoped: `issue_edit_body` (both managers), `issue_set_state`
-(project manager),
-`issue_question` (product manager) and `submit_review` (reviewer, for a
-requested review only). The tools enforce the factory's rules: nothing
-outside the filter can be read or written, `comment` and `submit_review`
-append the marker, `issue_edit_body` refuses a feature or feedback issue for
-anyone but the product manager, and `issue_set_state` only moves an issue
-out of `bees:triage`. A tool a role is not offered is one it may not use, and the
-prompt tells it not to reach for `gh` instead. `gh`, already authenticated, is
-for everything without a tool: `gh pr create`, `gh pr diff`, `gh issue close`,
-`gh api`. Issues are always created with `issue_create`, which applies the
-filter labels and assignee, and pull requests with the `gh pr create` flags
-the prompt spells out. `bees mcp tools <role>` prints a role's tool set; the
-arguments and the matching `bees` commands are under
+(project manager), `issue_question` (product manager), `submit_review`
+(reviewer, for a requested review only) and `file_bug` (QA). The tools
+enforce the factory's rules: no issue or pull request outside the filter can
+be read or written, `comment` and `submit_review` append the marker,
+`issue_edit_body` refuses a feature or feedback issue for anyone but the
+product manager, `issue_set_state` only moves an issue out of `bees:triage`,
+and `file_bug` refuses a bug the repository already reports. Its duplicate
+check reads past the filter, because a duplicate can be an issue a person
+filed without the factory's label. A tool a role is not offered is one it may
+not use, and the prompt tells it not to reach for `gh` instead. `gh`, already
+authenticated, is for everything without a tool: `gh pr create`, `gh pr
+diff`, `gh issue close`, `gh api`. Issues are always created with
+`issue_create` (QA's bugs with `file_bug`), which applies the filter labels
+and assignee, and pull requests with the `gh pr create` flags the prompt
+spells out. `bees mcp tools <role>` prints a role's tool set; the arguments
+and the matching `bees` commands are under
 [`bees mcp serve`](cli.md#bees-mcp-serve-sessions). `report_factory_error`
 is for an error the factory itself caused, not the product: with
 [`scheduler.report_factory_errors`](configuration.md#scheduler) on, the
@@ -615,13 +618,16 @@ its report which entries it only skimmed.
 QA judges what the product does, not how the code is written; that is the
 reviewer's job. A clean batch is a good result: QA files nothing and says so.
 It files only what it saw the product do wrong itself, with the command it ran
-and the output it got, as `issue_create` (`bug: true`, `related: <issue the
+and the output it got, as `file_bug` (`title`, `body`, `related: <issue the
 merged pull request closed>`, omitted when the bug is not tied to a recent
 change), with reproduction steps, expected against actual behaviour, and
-severity. Before filing it searches the existing issues, closed as well as
-open: it comments on an open duplicate with `comment`, opens a new bug linking
-to a closed one it has reproduced again, and files a broken environment once
-however many merged pull requests it spoils. What it may file directly is a
+severity. `file_bug` scores the report against every issue in the repository,
+closed as well as open, and files nothing when one of them already looks like
+it: the candidates come back ranked instead. QA comments on an open duplicate
+with `comment`, and files with `override: true`, saying in the body why, when
+the match is a closed issue it has reproduced again or none of the candidates
+is the same defect. A broken environment is filed once however many
+merged pull requests it spoils. What it may file directly is a
 bug report or a small work item within the existing design. Anything asking
 for new scope goes to the product manager by mail, and QA never opens a
 feature issue itself.

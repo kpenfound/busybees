@@ -1264,10 +1264,14 @@ hand, with the factory's rules applied.
 | `issue_set_state` | `number`, `state` (`ready`\|`blocked`), `size` (`xs`…`xl`, required for `ready`) | project_manager | Moves a work item out of `bees:triage` in one label edit, replacing any existing size. Refuses an issue that is in any other state, naming it. |
 | `issue_question` | `number`, `waiting` | product_manager | Adds or removes `bees:question`. Refuses anything that is not a feature or feedback issue. |
 | `submit_review` | optional `number`, `event` (`approve`\|`request-changes`\|`comment`), `body` | reviewer | Submits one GitHub review on a pull request, appending the reviewer's marker as `comment` does. For a [requested review](workflow.md#asking-for-a-review-of-any-pull-request) only: a developer's pull request gets its feedback by mail. Refuses an issue. |
+| `file_bug` | `title`, `body`, optional `related`, `override` | qa | Files a `bees:bug` work item as `issue_create` would, after scoring it against every issue in the repository, open and closed. When any of them scores high enough nothing is filed and the ranked candidates come back instead; `override: true` files without asking again. |
 
-Every one of them refuses an issue or pull request that does not match the
-[filter](workflow.md#what-the-factory-can-see), and every write is a refusal
-or a single `gh` call — there is no partial state to clean up.
+Every one of them refuses the issue or pull request it acts on when it does
+not match the [filter](workflow.md#what-the-factory-can-see), and every write
+is a refusal or a single `gh` call — there is no partial state to clean up.
+`file_bug` creates an issue rather than acting on one: its optional `related`
+only supplies a milestone, and is not checked against the filter, exactly as
+`issue_create`'s is not.
 
 `issue` and `pr` default to `$BEES_ISSUE`/`$BEES_PR`, so a session rarely
 passes them (`issue_view` and `pr_view` default their `number` the same way).
@@ -1299,8 +1303,9 @@ mcp__bees__report_factory_error Report an error the factory caused
 
 The tool *set* differs too: the project manager also sees `issue_edit_body`
 and `issue_set_state` (`state: ready | blocked`, `size: xs | s | m | l | xl`),
-the product manager `issue_edit_body` and `issue_question`, and the reviewer
-`submit_review` (`event: approve | request-changes | comment`).
+the product manager `issue_edit_body` and `issue_question`, the reviewer
+`submit_review` (`event: approve | request-changes | comment`), and QA
+`file_bug`.
 
 Without a role argument it uses `$BEES_ROLE`, and without that it prints the
 unconstrained tool set.
