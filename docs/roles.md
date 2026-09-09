@@ -75,10 +75,11 @@ a person who has not seen the conversation. Say so in the outcome note when
 you could not finish.
 
 **Tools.** The factory's own operations and the GitHub actions a role performs
-are MCP tools, served to every session by the built-in `bees` server. Eight go
+are MCP tools, served to every session by the built-in `bees` server. Nine go
 to every role: `mail_send`, `mail_list`, `issue_create`, `issue_link`,
-`issue_view`, `pr_view`, `comment` and `done`. Four are role-scoped:
-`issue_edit_body` (both managers), `issue_set_state` (project manager),
+`issue_view`, `pr_view`, `comment`, `report_factory_error` and `done`. Four
+are role-scoped: `issue_edit_body` (both managers), `issue_set_state`
+(project manager),
 `issue_question` (product manager) and `submit_review` (reviewer, for a
 requested review only). The tools enforce the factory's rules: nothing
 outside the filter can be read or written, `comment` and `submit_review`
@@ -91,7 +92,13 @@ for everything without a tool: `gh pr create`, `gh pr diff`, `gh issue close`,
 filter labels and assignee, and pull requests with the `gh pr create` flags
 the prompt spells out. `bees mcp tools <role>` prints a role's tool set; the
 arguments and the matching `bees` commands are under
-[`bees mcp serve`](cli.md#bees-mcp-serve-sessions).
+[`bees mcp serve`](cli.md#bees-mcp-serve-sessions). `report_factory_error`
+is for an error the factory itself caused, not the product: with
+[`scheduler.report_factory_errors`](configuration.md#scheduler) on, the
+prompt tells every role to strip repository names, tokens, paths and people
+from the report and the tool queues it under `<state_dir>/feedback/` for
+filing against busybees; off, the tool records nothing and says so, and the
+prompt does not mention it.
 
 **Mail.** Roles talk to each other only through the local mailbox, never
 through GitHub comments. Every message carries the issue and/or pull request

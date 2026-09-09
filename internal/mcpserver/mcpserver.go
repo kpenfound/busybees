@@ -7,7 +7,10 @@
 // through session.Report. The GitHub tools (issue_view, pr_view, comment,
 // issue_edit_body, issue_set_state, issue_question, submit_review) go through a `gh` client
 // and enforce the factory's rules — the visibility filter, the comment
-// marker, who owns which issue — instead of restating them in a prompt. It
+// marker, who owns which issue — instead of restating them in a prompt.
+// report_factory_error queues a draft through internal/feedback when
+// scheduler.report_factory_errors is on, and says that it recorded nothing
+// when it is off. It
 // is started as `bees mcp serve` (or, for a container session, by the
 // session runner on the host as `bees mcp serve --listen`, which serves it
 // over HTTP) and takes its context (role, state dir, session dir, issue,
@@ -30,6 +33,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/feedback"
 	"github.com/kpenfound/busybees/internal/issues"
 	"github.com/kpenfound/busybees/internal/mail"
 	"github.com/kpenfound/busybees/internal/session"
@@ -81,23 +85,35 @@ type Deps struct {
 	// GitHub reads and writes issues and pull requests. When nil the GitHub
 	// tools report that they are unavailable, exactly like Issues.
 	GitHub GitHub
+	// Feedback says whether report_factory_error records anything
+	// (scheduler.report_factory_errors). When nil the tool reports that it
+	// is unavailable, exactly like Issues.
+	Feedback Feedback
+	// Drafts is the queue report_factory_error writes to. When nil it is
+	// opened under Env.StateDir.
+	Drafts *feedback.Queue
 }
 
 // server holds the state shared by the tool handlers.
 type server struct {
-	env    Env
-	mail   *mail.Box
-	issues Issues
-	github GitHub
+	env      Env
+	mail     *mail.Box
+	issues   Issues
+	github   GitHub
+	feedback Feedback
+	drafts   *feedback.Queue
 }
 
 // New builds the MCP server for env. It never fails: a missing collaborator
 // turns into an error from the tool that needs it, not a server that will
 // not start, so a session always sees the tools it was told about.
 func New(env Env, deps Deps) *mcp.Server {
-	s := &server{env: env, mail: deps.Mail, issues: deps.Issues, github: deps.GitHub}
+	s := &server{env: env, mail: deps.Mail, issues: deps.Issues, github: deps.GitHub, feedback: deps.Feedback, drafts: deps.Drafts}
 	if s.mail == nil && env.StateDir != "" {
 		s.mail = mail.Open(state.New(env.StateDir).MailDir())
+	}
+	if s.drafts == nil && env.StateDir != "" {
+		s.drafts = feedback.Open(state.New(env.StateDir).FeedbackDir())
 	}
 	srv := mcp.NewServer(&mcp.Implementation{
 		Name:    config.BuiltinMCPServer,
@@ -107,6 +123,7 @@ func New(env Env, deps Deps) *mcp.Server {
 	s.addMailTools(srv)
 	s.addIssueTools(srv)
 	s.addGitHubTools(srv)
+	s.addFeedbackTools(srv)
 	s.addDoneTool(srv)
 	return srv
 }

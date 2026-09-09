@@ -117,6 +117,10 @@ label = "bees"
 # review-requested label. With filter.assignee set, that is the pull requests
 # assigned to the factory.
 #review_assigned_prs = false
+# Let a role record a draft issue about an error the factory itself caused (a
+# tool, a prompt, the orchestrator), scrubbed of repository names, tokens, paths
+# and people, under <state_dir>/feedback/ for filing upstream.
+#report_factory_errors = false
 # A feature issue a bee creates is a proposal: it carries bees:proposal and a
 # person approves it by removing the label. false lets a bee break its own
 # features down without a person's approval.

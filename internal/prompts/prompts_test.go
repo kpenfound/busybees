@@ -2029,3 +2029,54 @@ func TestAssemblerTaskFollowsTheBaseBranch(t *testing.T) {
 		}
 	}
 }
+
+// scheduler.report_factory_errors puts the report_factory_error tool and its
+// scrubbing rule into the common prompt of every role. Off — the default, and
+// what sample() renders — the tool records nothing, so the prompt never names
+// it, and the on render differs from the off one by exactly the table row and
+// the section: nothing else moves.
+func TestReportFactoryErrorGuidanceIsConditional(t *testing.T) {
+	const row = "\n| `report_factory_error` | record a scrubbed draft about an error the factory itself caused |"
+	const heading = "\n\n### Reporting an error the factory caused\n"
+	const next = "\n\n### Reporting your outcome\n"
+	for _, role := range config.Roles {
+		off, err := System(role, sample(), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(off, "report_factory_error") || strings.Contains(off, "factory caused") {
+			t.Errorf("%s: the key is off, but the prompt names the tool:\n%s", role, off)
+		}
+
+		d := sample()
+		d.ReportFactoryErrors = true
+		on, err := System(role, d, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		flow := flowed(on)
+		for _, want := range []string{
+			"Record it with the `report_factory_error` tool (`title`, `detail`)",
+			"a bug in busybees, not in `acme/widgets`",
+			"strip repository and organisation names, tokens and secrets, file paths, branch names, and people's logins and names",
+			"Nothing scrubs after you",
+			"A failure in the product you are building, or in your own work, is not a factory error",
+		} {
+			if !strings.Contains(flow, want) {
+				t.Errorf("%s: on, prompt lacks %q:\n%s", role, want, on)
+			}
+		}
+		if strings.Count(on, row) != 1 {
+			t.Errorf("%s: on, the tools table has %d report_factory_error rows:\n%s", role, strings.Count(on, row), on)
+		}
+
+		start, end := strings.Index(on, heading), strings.Index(on, next)
+		if start < 0 || end < 0 || end < start {
+			t.Fatalf("%s: cannot locate the section (%d, %d) in:\n%s", role, start, end, on)
+		}
+		cut := strings.Replace(on[:start]+on[end:], row, "", 1)
+		if cut != off {
+			t.Errorf("%s: the key changes more than its row and its section:\n%s", role, cut)
+		}
+	}
+}

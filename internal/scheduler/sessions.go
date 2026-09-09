@@ -99,6 +99,7 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 	d.Filter = s.cfg.Filter
 	d.Labels = s.labels
 	d.AutoMerge = s.cfg.Merge().AutoMerge
+	d.ReportFactoryErrors = s.cfg.Scheduler.ReportFactoryErrors
 	d.FeatureProposals = s.cfg.Scheduler.Proposals()
 	d.MinIssueSize = s.cfg.MinIssueSize()
 	d.CommitFlags = s.cfg.CommitFlags()

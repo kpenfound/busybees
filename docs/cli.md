@@ -1250,6 +1250,7 @@ command do exactly the same thing. Claude Code exposes the tools as
 | `issue_create` | `title`, `body`, optional `parent`, `related`, `milestone`, `bug`, `feature`, `ready`, `labels`, `blocked_by` | `bees issue create` |
 | `issue_link` | `parent`, `child` | `bees issue link` |
 | `done` | `status`, optional `note`, `pr`, `issue` | `bees done` |
+| `report_factory_error` | `title`, `detail` | no command: writes a draft to `<state_dir>/feedback/<id>.json` when [`scheduler.report_factory_errors`](configuration.md#scheduler) is on, and answers that nothing was recorded when it is off |
 
 The rest are GitHub operations: the same `gh` calls a role would build by
 hand, with the factory's rules applied.
@@ -1293,6 +1294,7 @@ mcp__bees__mail_list        Read the mailbox
 mcp__bees__mail_send        Send mail to another role
     to: product_manager | project_manager | developer | reviewer | qa
 mcp__bees__pr_view          Read a pull request
+mcp__bees__report_factory_error Report an error the factory caused
 ```
 
 The tool *set* differs too: the project manager also sees `issue_edit_body`

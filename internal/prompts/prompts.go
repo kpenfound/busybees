@@ -39,6 +39,11 @@ type Data struct {
 	Filter    config.Filter
 	Labels    config.Labels
 	AutoMerge bool
+	// ReportFactoryErrors is scheduler.report_factory_errors: the common
+	// prompt describes the report_factory_error tool and its scrubbing rule
+	// only when it is on; off, the tool records nothing, so the prompt does
+	// not mention it.
+	ReportFactoryErrors bool
 	// FeatureProposals is scheduler.feature_proposals: a feature issue the
 	// product manager creates is a proposal a person approves by removing
 	// bees:proposal. Off, it is approved on creation.
