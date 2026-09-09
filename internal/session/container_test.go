@@ -19,20 +19,49 @@ import (
 // fakeDocker writes a shell script standing in for the docker CLI: `run`
 // records its arguments and the client's environment in the session
 // directory, writes the cidfile the way docker does, and runs the command
-// after the image on the host; `network inspect` answers with a gateway;
-// `rm` records the call.
+// after the image (a shell pattern) on the host; `network inspect` answers
+// with a gateway; `rm` records the call. The engine's images are the lines
+// of images.txt beside the script: `image inspect` records the tag it was
+// asked about in docker-inspect.txt and succeeds when the tag is listed;
+// `build` records its arguments in docker-build.txt, keeps the Dockerfile it
+// was given as Dockerfile.built, fails when a file named fail-build is
+// beside the script, and lists the tag otherwise.
 func fakeDocker(t *testing.T, image string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "docker")
 	script := `#!/bin/sh
 set -e
+here="$(dirname "$0")"
 case "$1" in
 network)
   echo 172.17.0.1
   exit 0
   ;;
 rm)
-  echo "$@" >> "$(dirname "$0")/docker-rm.txt"
+  echo "$@" >> "$here/docker-rm.txt"
+  exit 0
+  ;;
+image)
+  tag="$5"
+  echo "$tag" >> "$here/docker-inspect.txt"
+  [ -f "$here/images.txt" ] && grep -qx "$tag" "$here/images.txt"
+  exit $?
+  ;;
+build)
+  printf '%s\n' "$@" > "$here/docker-build.txt"
+  tag=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --tag) tag="$2"; shift 2 ;;
+    --file) cp "$2" "$here/Dockerfile.built"; shift 2 ;;
+    *) shift ;;
+    esac
+  done
+  if [ -f "$here/fail-build" ]; then
+    echo "ERROR: process \"/bin/sh -c false\" did not complete successfully: exit code: 1" >&2
+    exit 1
+  fi
+  echo "$tag" >> "$here/images.txt"
   exit 0
   ;;
 esac
@@ -323,7 +352,7 @@ func TestContainerVarsCarryNothingOfTheHost(t *testing.T) {
 func TestContainerCommandPerOS(t *testing.T) {
 	r := newRunner(t, "claude")
 	role := config.ResolvedRole{Name: "developer", Sandbox: config.SandboxContainer, SandboxImage: "img"}
-	c := &container{r: r, req: Request{Name: "d", Role: role, WorkDir: t.TempDir()}, sessionDir: t.TempDir(), name: "bees-d-1"}
+	c := &container{r: r, req: Request{Name: "d", Role: role, WorkDir: t.TempDir()}, sessionDir: t.TempDir(), name: "bees-d-1", image: role.SandboxImage}
 	c.vars = r.containerVars(c.req, c.sessionDir)
 	for _, tc := range []struct {
 		goos    string
