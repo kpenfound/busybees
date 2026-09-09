@@ -34,8 +34,9 @@ import (
 // or codex's event stream when it is codex.
 //
 // The flags that steer the fake (FAKE_CLAUDE, FAKE_DEV_HANG, FAKE_DEV_FAIL,
-// FAKE_DEV_MAIL_TO, FAKE_REVIEW_ALWAYS_CHANGES, FAKE_REVIEW_FAIL, FAKE_COST, FAKE_SIGNAL,
-// FAKE_WAIT_FOR, FAKE_LIMIT, FAKE_LIMIT_WITH_OUTCOME, FAKE_RESULT_TEXT, FAKE_COPY_ISSUE_STATE,
+// FAKE_DEV_MAIL_TO, FAKE_ATTEMPT_FAIL, FAKE_ASSEMBLE_FAIL, FAKE_REVIEW_ALWAYS_CHANGES,
+// FAKE_REVIEW_FAIL, FAKE_COST, FAKE_SIGNAL,
+// FAKE_WAIT_FOR, FAKE_LIMIT, FAKE_ASSEMBLE_LIMIT, FAKE_LIMIT_WITH_OUTCOME, FAKE_RESULT_TEXT, FAKE_COPY_ISSUE_STATE,
 // FAKE_TRIAGE, FAKE_FILE_ISSUE, FAKE_RESUME_FAIL, FAKE_REVIEW_NO_SUBMIT,
 // FAKE_REVIEW_MISMATCH, FAKE_QA_NO_REPORT, FAKE_QA_OTHER_MAIL)
 // reach it through the ordinary environment, so they must NOT start with
@@ -61,6 +62,46 @@ func TestMain(m *testing.M) {
 }
 
 const fakePR = 101
+
+// fakeAssemble is the fake assembler session. Under FAKE_ASSEMBLE_FAIL it
+// reports `failed`; otherwise it reads the attempts off its task, resets
+// the issue's branch to the first candidate's remote branch, pushes it and
+// reports `pr-opened`, recording the branch it took in the session
+// directory as assembled.txt for tests to read.
+func fakeAssemble(sessionDir, stateDir string, git func(args ...string), fail func(error)) session.Outcome {
+	if os.Getenv("FAKE_ASSEMBLE_FAIL") == "1" {
+		return session.Outcome{Status: OutcomeFailed, Note: "no attempt builds"}
+	}
+	prompt, err := os.ReadFile(filepath.Join(sessionDir, "prompt.md"))
+	if err != nil {
+		fail(err)
+	}
+	var pick string
+	for _, line := range strings.Split(string(prompt), "\n") {
+		if !strings.HasPrefix(line, "- `") || strings.Contains(line, "not a candidate") {
+			continue
+		}
+		if branch, _, ok := strings.Cut(strings.TrimPrefix(line, "- `"), "`"); ok {
+			pick = branch
+			break
+		}
+	}
+	if pick == "" {
+		fail(fmt.Errorf("the assembler's task lists no candidate:\n%s", prompt))
+	}
+	git("fetch", "-q", "origin")
+	git("reset", "-q", "--hard", "origin/"+pick)
+	git("push", "-q")
+	if err := os.WriteFile(filepath.Join(sessionDir, "assembled.txt"), []byte(pick), 0o644); err != nil {
+		fail(err)
+	}
+	for _, marker := range []string{"fake-pr-created", "fake-pr-created-issue-" + os.Getenv(session.EnvIssue)} {
+		if err := os.WriteFile(filepath.Join(stateDir, marker), nil, 0o644); err != nil {
+			fail(err)
+		}
+	}
+	return session.Outcome{Status: OutcomePROpened, PR: fakePR}
+}
 
 func fakeClaude() {
 	role := os.Getenv(session.EnvRole)
@@ -132,7 +173,16 @@ func fakeClaude() {
 	// that could not start does — unless FAKE_LIMIT_WITH_OUTCOME is set, in
 	// which case the role does its work and reports it, which is a session
 	// that finished just as the account ran out of capacity.
-	if v := os.Getenv("FAKE_LIMIT"); v != "" {
+	//
+	// FAKE_ASSEMBLE_LIMIT is the same, but only for the best-of-N assembler
+	// session (told apart by "-assemble" in its name): every attempt runs
+	// and pushes normally, and only the session that would compare them
+	// hits the limit — the one case bestofn.go treats differently from an
+	// ordinary developer session hitting it.
+	if v := os.Getenv("FAKE_LIMIT"); v != "" || (strings.Contains(sessionID, "-assemble") && os.Getenv("FAKE_ASSEMBLE_LIMIT") != "") {
+		if v == "" {
+			v = os.Getenv("FAKE_ASSEMBLE_LIMIT")
+		}
 		resets := ""
 		if v != "none" {
 			resets = `,"resetsAt":` + v
@@ -187,6 +237,14 @@ func fakeClaude() {
 	var outcome session.Outcome
 	switch role {
 	case config.RoleDeveloper:
+		// The assembler of a best-of-N fan-out (bestofn.go), told apart by
+		// its session name: it takes the first candidate branch its task
+		// lists whole, the way the prompt's "one attempt as it stands"
+		// path does, and opens the pull request from the issue's branch.
+		if strings.Contains(sessionID, "-assemble") {
+			outcome = fakeAssemble(sessionDir, stateDir, git, fail)
+			break
+		}
 		n := counter("dev")
 		// Infrastructure failures, on the first attempt only: hang until the
 		// role timeout kills the session, or report `failed` outright.
@@ -196,6 +254,16 @@ func fakeClaude() {
 		if os.Getenv("FAKE_DEV_FAIL") == "1" {
 			outcome = session.Outcome{Status: OutcomeFailed, Note: "cannot build"}
 			break
+		}
+		// FAKE_ATTEMPT_FAIL makes best-of-N attempt <i> ("all": every
+		// attempt) report `failed` without committing or pushing anything:
+		// an attempt with nothing on its branch for the assembler to read.
+		if v := os.Getenv("FAKE_ATTEMPT_FAIL"); v != "" {
+			_, i, isAttempt := strings.Cut(sessionID, "-attempt-")
+			if isAttempt && (v == "all" || v == i) {
+				outcome = session.Outcome{Status: OutcomeFailed, Note: "attempt " + i + " could not build"}
+				break
+			}
 		}
 		// FAKE_DEV_MAIL_TO makes the session write to another role before it
 		// finishes, the way a real one does with `bees mail send`: a

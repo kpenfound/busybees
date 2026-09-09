@@ -7,11 +7,13 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/mail"
 	"github.com/kpenfound/busybees/internal/prompts"
+	"github.com/kpenfound/busybees/internal/session"
 	"github.com/kpenfound/busybees/internal/state"
 	"github.com/kpenfound/busybees/internal/workspace"
 )
@@ -34,10 +36,28 @@ import (
 // finished, and runs the rest of the issue's life on the one slot every
 // other worker has.
 //
-// What comes after the attempts — comparing them, putting the result on
-// the issue's own branch and opening its pull request — is not built yet:
-// the worker escalates the issue with the attempt branches listed, and a
-// person picks.
+// The assembler. Once every attempt has ended, one more developer-role
+// session runs on the issue's own branch (BranchFor) with the attempts
+// listed in its task (task/developer_assemble.md): it reads them, decides
+// what the result is — one attempt as it stands or a synthesis of several;
+// the judgment is the session's, as a reviewer's verdict is — puts it on
+// that branch and opens the pull request from it, exactly as a single
+// developer session does. From the review stage on, nothing downstream can
+// tell the two apart. An attempt whose session could not be run, or that
+// pushed no commits, is listed as not a candidate, so an empty branch is
+// never taken for a solution; when no attempt is a candidate there is
+// nothing to assemble, and the issue is handed to a person instead.
+//
+// Cleanup is mechanical and lives here, not in the assembler's prompt: the
+// attempt worktrees go when the attempts end, and every attempt branch is
+// deleted, on the remote and in the main clone, once the fan-out is over —
+// whatever the assembler came to, and when there was nothing to assemble —
+// so a branch nobody will read again does not outlive the pull request.
+// Deleting the head branch of a pull request an attempt opened closes it.
+// The branches stay when the fan-out is going to be retried: on the
+// account-wide session limit, which pauses the factory, and when reading
+// what the attempts came to fails before the assembler runs, which fails
+// the worker. A retry's attempts resume on their branches.
 
 // attemptBranch is the branch attempt i (1-based) of a fan-out works on:
 // the issue's branch with "-attempt-<i>" appended. An issue that does not
@@ -112,6 +132,10 @@ type fanOut struct {
 	maxRounds int
 	parent    *github.Parent
 	log       *slog.Logger
+	// ws is the worker's own worktree on the issue's branch, where the
+	// assembler runs; release gives the extra slots back to the pool.
+	ws      *workspace.Workspace
+	release func()
 }
 
 // attempt is what one attempt of a fan-out came to.
@@ -128,13 +152,12 @@ type attempt struct {
 
 // runAttempts creates one worktree per attempt, runs the attempts at once
 // and waits for all of them. It returns what each attempt came to, and the
-// worktrees, which the caller removes: they are the attempts' work, and
-// what compares the attempts reads them. A worktree that cannot be created
+// worktrees, which the caller removes. A worktree that cannot be created
 // escalates the issue and returns an error, like the worker's own.
 //
 // One attempt failing to run does not stop the others: the error is
 // reported once every attempt has ended, so the branches the rest pushed
-// are complete when the issue is handed on. The one exception is the
+// are complete when the assembler reads them. The one exception is the
 // account-wide session limit (errSessionLimited), which every attempt
 // would hit alike and which is returned as it is, so the caller pauses the
 // factory rather than giving the issue up.
@@ -205,23 +228,111 @@ func (s *Scheduler) configuredAttempts(issue github.Issue) int {
 	return role.BestOfN(s.sizeOf(issue.Labels))
 }
 
-// attemptsReason is the escalation that hands the finished attempts to a
-// person: which branch each one is on and what its session reported.
-func attemptsReason(attempts []attempt) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "Best of N ran %d developer attempts on this issue, each on its own branch. Picking the result from them is not implemented yet, so that is yours: choose one, or combine them, and open the pull request from it.\n", len(attempts))
-	for _, a := range attempts {
-		fmt.Fprintf(&b, "\n- `%s`: ", a.branch)
-		switch {
-		case a.err != nil:
-			fmt.Fprintf(&b, "the session could not be run: %s", oneLine(a.err.Error(), noteLimit))
-		case a.pr > 0:
-			fmt.Fprintf(&b, "`%s`, pull request #%d", a.status, a.pr)
-		default:
-			fmt.Fprintf(&b, "`%s`", a.status)
+// assemble is the fan-out from start to finish: the attempts, then the
+// assembler session on the worker's own worktree, then the cleanup. It
+// returns the assembler's result and the time it started, for the worker to
+// read exactly as it reads a single developer session's; a nil result with a
+// nil error means the issue was handed to a person here and the worker is
+// done. An attempt that could not be run stops nothing while another
+// attempt is a candidate: it is logged, and the assembler is told.
+func (s *Scheduler) assemble(ctx context.Context, f fanOut) (*session.Result, time.Time, error) {
+	attempts, wss, err := s.runAttempts(ctx, f)
+	// The attempts are over, whatever they came to: the pool gets its
+	// slots back before anything else runs, and the worktrees go — the
+	// branches are the attempts' work now.
+	f.release()
+	for _, aws := range wss {
+		if rmErr := s.ws.Remove(context.WithoutCancel(ctx), aws); rmErr != nil {
+			f.log.Warn("workspace cleanup failed", "branch", aws.Branch, "err", rmErr)
 		}
-		if a.note != "" {
-			fmt.Fprintf(&b, ": %s", oneLine(a.note, noteLimit))
+	}
+	if errors.Is(err, errSessionLimited) {
+		return nil, time.Time{}, err
+	}
+	deleteBranches := func() {
+		for _, a := range attempts {
+			if delErr := s.ws.DeleteBranch(context.WithoutCancel(ctx), a.branch); delErr != nil {
+				f.log.Warn("could not delete the attempt branch", "branch", a.branch, "err", delErr)
+			}
+		}
+	}
+	// Reading the attempts can fail for reasons that are none of theirs (a
+	// fetch that hits the network, a lock). What they pushed is the
+	// fan-out's work so far, and the worker's retry starts from it: the
+	// branches stay, as they do for the session limit.
+	data, dataErr := s.attemptData(ctx, attempts, f.base)
+	if dataErr != nil {
+		return nil, time.Time{}, dataErr
+	}
+	candidates := 0
+	for _, a := range data {
+		if a.Candidate {
+			candidates++
+		}
+	}
+	if candidates == 0 {
+		deleteBranches()
+		if err != nil {
+			return nil, time.Time{}, err
+		}
+		return nil, time.Time{}, s.escalate(ctx, f.issue.Number, nothingToAssembleReason(data))
+	}
+	if err != nil {
+		f.log.Warn("an attempt could not be run; assembling from the rest", "candidates", candidates, "err", err)
+	}
+	s.updateWorker(f.worker, "assembler", 1)
+	f.log.Info("best-of-N: running the assembler", "candidates", candidates, "attempts", len(attempts))
+	started := s.now()
+	res, err := s.runSessionWithRetry(ctx, sessionSpec{
+		role: config.RoleDeveloper, name: fmt.Sprintf("developer-issue-%d-assemble", f.issue.Number),
+		workDir: f.ws.RepoDir, branch: f.ws.Branch, worker: f.worker, assembler: true, task: "developer_assemble",
+		data: prompts.Data{Issue: &f.issue, Inbox: f.inbox, Round: 1, MaxRounds: f.maxRounds, Parent: f.parent, BaseBranch: f.base, Attempts: data},
+	})
+	// The assembler has ended, whatever it came to: what it pushed is on
+	// the issue's branch, and the attempt branches have nothing left to
+	// say. A session the limit stopped is the one that keeps them.
+	if !errors.Is(err, errSessionLimited) {
+		deleteBranches()
+	}
+	return res, started, err
+}
+
+// attemptData is what the assembler is told about each attempt: its branch,
+// how many commits that branch carries beyond the base, and what its
+// session reported. The main clone is fetched first, so the counts are the
+// remote's and the assembler's worktree sees the same refs.
+func (s *Scheduler) attemptData(ctx context.Context, attempts []attempt, base string) ([]prompts.Attempt, error) {
+	if err := s.ws.Fetch(ctx); err != nil {
+		return nil, fmt.Errorf("fetch: %w", err)
+	}
+	data := make([]prompts.Attempt, 0, len(attempts))
+	for _, a := range attempts {
+		n, err := s.ws.CommitsAhead(ctx, a.branch, base)
+		if err != nil {
+			return nil, fmt.Errorf("attempt %s: %w", a.branch, err)
+		}
+		d := prompts.Attempt{Branch: a.branch, Commits: n, Outcome: a.status, Note: a.note, PR: a.pr, Candidate: n > 0}
+		if a.err != nil {
+			d.Outcome, d.Note = OutcomeFailed, "the session could not be run: "+a.err.Error()
+		}
+		data = append(data, d)
+	}
+	return data, nil
+}
+
+// nothingToAssembleReason is the escalation for a fan-out none of whose
+// attempts pushed a commit: what each session reported, so a person can see
+// why. The branches are deleted by then, and named for the session log.
+func nothingToAssembleReason(attempts []prompts.Attempt) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Best of N ran %d developer attempts on this issue and none of them pushed a commit, so there was nothing to assemble a pull request from.\n", len(attempts))
+	for _, a := range attempts {
+		fmt.Fprintf(&b, "\n- `%s`: `%s`", a.Branch, a.Outcome)
+		if a.PR > 0 {
+			fmt.Fprintf(&b, ", pull request #%d", a.PR)
+		}
+		if a.Note != "" {
+			fmt.Fprintf(&b, ": %s", oneLine(a.Note, noteLimit))
 		}
 	}
 	return b.String()

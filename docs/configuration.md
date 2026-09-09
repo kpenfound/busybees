@@ -652,9 +652,13 @@ An entry of `1` is one attempt, the same as leaving the size out, so a table
 that names no size above `1` is best of N off. A size above `1` runs that many
 developer sessions at once for the issue's first round, each on the branch
 `<branch_prefix>issue-<n>-attempt-<i>` and each in a `max_developers` slot of
-its own, so the count is clamped to `max_developers`. Nothing picks between
-the attempts yet: the issue is handed to a person, `bees:needs-human`, with
-the attempt branches listed, and the assembler keys are read by nothing.
+its own, so the count is clamped to `max_developers`. When every attempt has
+ended, one assembler session runs on the issue's own branch with the attempt
+branches listed in its task, puts the result there (one attempt as it stands,
+or a synthesis) and opens the pull request from it, which goes to review as
+any developer's does; the attempt branches are then deleted. An attempt that
+pushed no commits is listed as not a candidate; when none did, the issue is
+handed to a person, `bees:needs-human`.
 
 ### Sandboxing
 

@@ -297,3 +297,71 @@ func TestFetchDoesNotRaceWorktreeOperations(t *testing.T) {
 		t.Fatalf("after the run: got %d worktrees, want 1 (the clone)", got)
 	}
 }
+
+// CommitsAhead counts a branch's commits beyond the base from the remote's
+// refs, and zero for a branch the remote does not have; DeleteBranch removes
+// a branch from the remote and the clone, and is a no-op for one already
+// gone.
+func TestCommitsAheadAndDeleteBranch(t *testing.T) {
+	ctx := context.Background()
+	_, clone := testutil.SetupRepos(t)
+	m := workspace.NewManager(clone, filepath.Join(t.TempDir(), "ws"))
+	if err := m.Fetch(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ws, err := m.Branch(ctx, "dev", "bees/issue-1-attempt-1", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 2; i++ {
+		if err := os.WriteFile(filepath.Join(ws.RepoDir, fmt.Sprintf("a%d.txt", i)), []byte("a"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for _, args := range [][]string{{"add", "."}, {"-c", "user.email=t@e", "-c", "user.name=t", "commit", "-q", "-m", "a"}} {
+			if _, err := workspace.Git(ctx, ws.RepoDir, args...); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	// Not pushed yet: the remote has no such branch.
+	if err := m.Fetch(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := m.CommitsAhead(ctx, "bees/issue-1-attempt-1", "main"); err != nil || n != 0 {
+		t.Fatalf("CommitsAhead before the push: %d, %v", n, err)
+	}
+	if _, err := workspace.Git(ctx, ws.RepoDir, "push", "-q", "-u", "origin", "HEAD"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Fetch(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := m.CommitsAhead(ctx, "bees/issue-1-attempt-1", "main"); err != nil || n != 2 {
+		t.Fatalf("CommitsAhead after the push: %d, %v", n, err)
+	}
+	// Checked out in a worktree, the branch cannot go.
+	if err := m.DeleteBranch(ctx, "bees/issue-1-attempt-1"); err == nil {
+		t.Fatal("deleted a branch a worktree has checked out")
+	}
+	if err := m.Remove(ctx, ws); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.DeleteBranch(ctx, "bees/issue-1-attempt-1"); err != nil {
+		t.Fatal(err)
+	}
+	if out, _ := workspace.Git(ctx, clone, "ls-remote", "--heads", "origin", "bees/issue-1-attempt-1"); out != "" {
+		t.Errorf("the branch is still on the remote: %s", out)
+	}
+	for _, ref := range []string{"refs/heads/bees/issue-1-attempt-1", "refs/remotes/origin/bees/issue-1-attempt-1"} {
+		if _, err := workspace.Git(ctx, clone, "rev-parse", "--verify", "--quiet", ref); err == nil {
+			t.Errorf("%s is still in the clone", ref)
+		}
+	}
+	if n, err := m.CommitsAhead(ctx, "bees/issue-1-attempt-1", "main"); err != nil || n != 0 {
+		t.Errorf("CommitsAhead of a deleted branch: %d, %v", n, err)
+	}
+	// Gone already: nothing to do, no error.
+	if err := m.DeleteBranch(ctx, "bees/issue-1-attempt-1"); err != nil {
+		t.Errorf("deleting a deleted branch: %v", err)
+	}
+}

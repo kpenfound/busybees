@@ -43,6 +43,10 @@ type sessionSpec struct {
 	// session: that report is about one branch, and the attempts each work
 	// on their own.
 	attempt int
+	// assembler marks the session that picks the result of a best-of-N
+	// fan-out (bestofn.go): it runs roles.developer.assembler_model and
+	// assembler_prompt where they are set.
+	assembler bool
 }
 
 // runSession resolves the role, renders prompts and runs the session.
@@ -63,6 +67,14 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 		}
 		if role.BestOfNPrompt != "" {
 			role.Prompt = role.BestOfNPrompt
+		}
+	}
+	if spec.assembler {
+		if role.AssemblerModel != "" {
+			role.Model = role.AssemblerModel
+		}
+		if role.AssemblerPrompt != "" {
+			role.Prompt = role.AssemblerPrompt
 		}
 	}
 	fallback := spec.useFallback && role.FallbackModel != ""
