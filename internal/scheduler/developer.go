@@ -13,6 +13,7 @@ import (
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/mail"
 	"github.com/kpenfound/busybees/internal/prompts"
+	"github.com/kpenfound/busybees/internal/session"
 	"github.com/kpenfound/busybees/internal/state"
 	"github.com/kpenfound/busybees/internal/text"
 )
@@ -231,39 +232,36 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 				return err
 			}
 			parent, _ := s.gh.ParentIssue(ctx, issue.Number)
+			// The session whose outcome this round reads: the assembler's,
+			// after the attempts, or the one developer session's. From
+			// here on the two are the same round.
+			var res *session.Result
+			var started time.Time
 			if fanout {
-				attempts, wss, err := s.runAttempts(ctx, fanOut{
+				res, started, err = s.assemble(ctx, fanOut{
 					issue: fresh, worker: w, attempts: extra + 1, base: base, inbox: inbox, maxRounds: maxRounds, parent: parent, log: log,
+					ws: ws, release: releaseExtra,
 				})
-				// The attempts are over, whatever they came to: the pool
-				// gets its slots back before the issue is handed on.
-				releaseExtra()
-				if err == nil {
-					readErr := s.mail.MarkRead(inbox...)
-					s.opAs(log, slog.LevelWarn, "mail", readErr, "mark mail read", "err", readErr)
-					// Nothing compares the attempts yet: the branches are
-					// the result, and a person picks from them.
-					err = s.escalate(ctx, issue.Number, attemptsReason(attempts))
+				if err != nil || res == nil {
+					// Failed, or handed to a person with nothing to
+					// assemble: the mail the attempts were shown stays
+					// unread for the round that retries.
+					return err
 				}
-				for _, aws := range wss {
-					if rmErr := s.ws.Remove(context.WithoutCancel(ctx), aws); rmErr != nil {
-						log.Warn("workspace cleanup failed", "branch", aws.Branch, "err", rmErr)
-					}
+			} else {
+				name := fmt.Sprintf("developer-issue-%d-r%d", issue.Number, bookkeeping.Round)
+				if afterDevelop == "checks" || afterDevelop == "prereview" {
+					name += fmt.Sprintf("-checkfix%d", bookkeeping.CheckFixRounds)
 				}
-				return err
-			}
-			name := fmt.Sprintf("developer-issue-%d-r%d", issue.Number, bookkeeping.Round)
-			if afterDevelop == "checks" || afterDevelop == "prereview" {
-				name += fmt.Sprintf("-checkfix%d", bookkeeping.CheckFixRounds)
-			}
-			log.Info("developer session", "round", bookkeeping.Round, "mail", len(inbox))
-			started := s.now()
-			res, err := s.runSessionWithRetry(ctx, sessionSpec{
-				role: config.RoleDeveloper, name: name, workDir: ws.RepoDir, branch: branch, worker: w, resumeID: developerSessionID,
-				data: prompts.Data{Issue: &fresh, PR: pr, Inbox: inbox, Round: bookkeeping.Round, MaxRounds: maxRounds, Parent: parent, BaseBranch: base},
-			})
-			if err != nil {
-				return err
+				log.Info("developer session", "round", bookkeeping.Round, "mail", len(inbox))
+				started = s.now()
+				res, err = s.runSessionWithRetry(ctx, sessionSpec{
+					role: config.RoleDeveloper, name: name, workDir: ws.RepoDir, branch: branch, worker: w, resumeID: developerSessionID,
+					data: prompts.Data{Issue: &fresh, PR: pr, Inbox: inbox, Round: bookkeeping.Round, MaxRounds: maxRounds, Parent: parent, BaseBranch: base},
+				})
+				if err != nil {
+					return err
+				}
 			}
 			if res.ClaudeID != "" {
 				developerSessionID = res.ClaudeID
