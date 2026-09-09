@@ -54,8 +54,10 @@ import (
 // whatever the assembler came to, and when there was nothing to assemble —
 // so a branch nobody will read again does not outlive the pull request.
 // Deleting the head branch of a pull request an attempt opened closes it.
-// The one exception is the account-wide session limit: the factory pauses,
-// the fan-out is retried later, and the branches stay for it.
+// The branches stay when the fan-out is going to be retried: on the
+// account-wide session limit, which pauses the factory, and when reading
+// what the attempts came to fails before the assembler runs, which fails
+// the worker. A retry's attempts resume on their branches.
 
 // attemptBranch is the branch attempt i (1-based) of a fan-out works on:
 // the issue's branch with "-attempt-<i>" appended. An issue that does not
@@ -254,9 +256,12 @@ func (s *Scheduler) assemble(ctx context.Context, f fanOut) (*session.Result, ti
 			}
 		}
 	}
+	// Reading the attempts can fail for reasons that are none of theirs (a
+	// fetch that hits the network, a lock). What they pushed is the
+	// fan-out's work so far, and the worker's retry starts from it: the
+	// branches stay, as they do for the session limit.
 	data, dataErr := s.attemptData(ctx, attempts, f.base)
 	if dataErr != nil {
-		deleteBranches()
 		return nil, time.Time{}, dataErr
 	}
 	candidates := 0

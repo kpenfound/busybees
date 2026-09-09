@@ -753,3 +753,60 @@ func pushCommit(t *testing.T, clone, branch string) {
 		t.Fatal(err)
 	}
 }
+
+// Reading what the attempts came to can fail for reasons that are none of
+// theirs — the fetch that precedes the commit counts hits a network blip,
+// a lock, a full disk. The attempts' pushed work is the fan-out's result
+// so far, and a retry of the worker starts from it: the branches stay,
+// exactly as they do when the assembler hits the session limit. The
+// clone's fetch URL is broken while the attempts are held, with pushes
+// still routed to the real origin, so the fetch is the only thing that
+// fails and a deletion would go through.
+func TestBestOfNKeepsAttemptBranchesWhenReadingThemFails(t *testing.T) {
+	h := newHarness(t, bestOfNTOML)
+	release := filepath.Join(t.TempDir(), "release")
+	t.Setenv("FAKE_WAIT_FOR", release)
+	seedSized(h, 1, "l")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if err := h.sched.pass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 30*time.Second, "the three attempts to start", func() bool {
+		return len(h.sessions(config.RoleDeveloper)) == 3
+	})
+	origin, err := workspace.Git(ctx, h.clone, "remote", "get-url", "origin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"remote", "set-url", "--push", "origin", origin},
+		{"remote", "set-url", "origin", filepath.Join(t.TempDir(), "gone.git")},
+	} {
+		if _, err := workspace.Git(ctx, h.clone, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(release, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitWorkers(t, h, cancel, time.Minute)
+	if _, err := workspace.Git(ctx, h.clone, "remote", "set-url", "origin", origin); err != nil {
+		t.Fatal(err)
+	}
+
+	// The attempts pushed; no assembler ran on data that could not be read.
+	if n := len(h.sessions(config.RoleDeveloper)); n != 3 {
+		t.Fatalf("developer sessions: %v", h.sessionNames())
+	}
+	if !strings.Contains(h.logs.String(), "developer worker failed") {
+		t.Errorf("the worker did not fail:\n%s", h.logs.String())
+	}
+	if got := h.stateOfIssue(1); got == "needs-human" {
+		t.Error("issue #1 was escalated for a fetch that failed")
+	}
+	if got, want := remoteBranches(t, h), []string{"bees/issue-1-attempt-1", "bees/issue-1-attempt-2", "bees/issue-1-attempt-3", "main"}; !slices.Equal(got, want) {
+		t.Errorf("remote branches: got %v want %v", got, want)
+	}
+}
