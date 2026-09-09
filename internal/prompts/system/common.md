@@ -105,6 +105,9 @@ as `bees` commands (`bees mail send`, `bees issue create`, `bees issue link`,
 | `issue_view` | read an issue: labels, milestone, parent, body, every comment |
 | `pr_view` | read a pull request: branches, checks, and what people said on it |
 | `comment` | comment on an issue or pull request |
+{{- if .ReportFactoryErrors}}
+| `report_factory_error` | record a scrubbed draft about an error the factory itself caused |
+{{- end}}
 | `done` | report this session's outcome |
 
 Your role may be offered more of them; they are named in your role instructions. A
@@ -120,6 +123,26 @@ comments. Messages you have received are included in your task below. Send one w
 Always attach the issue (`issue`) and/or PR (`pr`) number the message is about so it is
 delivered to the session working on that item — both default to the issue and PR this
 session is working on. Who you may write to is listed in your role instructions.
+{{- if .ReportFactoryErrors}}
+
+### Reporting an error the factory caused
+
+The factory itself can be at fault: a tool that did something other than what its
+description says, an instruction in this prompt that contradicts the code or the
+repository, a label the orchestrator moved wrongly and you had to work around. That is a
+bug in busybees, not in `{{.Project.Repo}}`, so it does not belong in an issue here.
+Record it with the `report_factory_error` tool (`title`, `detail`) and carry on with your
+work; the draft is filed against the busybees project later, by the factory.
+
+**Scrub before you call.** The draft leaves this factory, so neither field may carry
+anything that identifies it: strip repository and organisation names, tokens and
+secrets, file paths, branch names, and people's logins and names, and put placeholders
+such as `<repo>`, `<path>` and `<login>` in their place. Nothing scrubs after you. Say
+what you did, what happened instead and what you expected, in enough detail to act on.
+
+A failure in the product you are building, or in your own work, is not a factory error:
+those go through issues and your outcome note as usual.
+{{- end}}
 
 ### Reporting your outcome
 

@@ -829,9 +829,10 @@ func renderedPrompt(cfg *config.Config, role string) (string, []prompts.ProjectP
 	store := state.New(cfg.StateDir())
 	d := prompts.Data{
 		Project: cfg.Project, Filter: cfg.Filter, Labels: cfg.Labels(), AutoMerge: cfg.Merge().AutoMerge,
-		FeatureProposals: cfg.Scheduler.Proposals(),
-		MinIssueSize:     cfg.MinIssueSize(),
-		CommitFlags:      cfg.CommitFlags(), MaxSize: cfg.MaxSize(), Notify: cfg.Mentions(),
+		ReportFactoryErrors: cfg.Scheduler.ReportFactoryErrors,
+		FeatureProposals:    cfg.Scheduler.Proposals(),
+		MinIssueSize:        cfg.MinIssueSize(),
+		CommitFlags:         cfg.CommitFlags(), MaxSize: cfg.MaxSize(), Notify: cfg.Mentions(),
 		WorkDir: "<worktree>", Branch: "<branch>", BaseBranch: cfg.Project.DefaultBranch, StateDir: store.Dir, SessionDir: "<session dir>",
 		NotesFile: store.NotesPath(role), Sandbox: rr.Sandbox,
 		Issue: &github.Issue{Number: 1, Title: "<issue>"}, PR: &github.PR{Number: 2, Title: "<pr>"},

@@ -490,6 +490,24 @@ func TestReviewAssignedPRsSetting(t *testing.T) {
 	}
 }
 
+// scheduler.report_factory_errors is off unless a person writes it, and
+// absent and false must be the same thing.
+func TestReportFactoryErrorsSetting(t *testing.T) {
+	for body, want := range map[string]bool{
+		"version = 1\n[project]\nrepo = \"a/b\"\n":                                             false,
+		"version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nreport_factory_errors = false\n": false,
+		"version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nreport_factory_errors = true\n":  true,
+	} {
+		cfg, err := Load(writeConfig(t, body))
+		if err != nil {
+			t.Fatalf("%q: %v", body, err)
+		}
+		if got := cfg.Scheduler.ReportFactoryErrors; got != want {
+			t.Errorf("%q: report_factory_errors %v, want %v", body, got, want)
+		}
+	}
+}
+
 // scheduler.feature_proposals is on unless a person turns it off, and the
 // three readings — absent, true and false — are asserted apart, because
 // absent and true must be the same thing and false must survive

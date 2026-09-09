@@ -148,18 +148,19 @@ func (f *fakeGitHub) wrote() bool {
 // TestGitHubToolsPerRole is the enforcement a role cannot argue with: a
 // developer is never offered the project manager's state moves.
 func TestGitHubToolsPerRole(t *testing.T) {
-	base := "comment, done, issue_create, issue_link, issue_view, mail_list, mail_send, pr_view"
+	base := "comment, done, issue_create, issue_link, issue_view, mail_list, mail_send, pr_view, report_factory_error"
 	for role, want := range map[string]string{
 		config.RoleDeveloper: base,
-		config.RoleReviewer:  "comment, done, issue_create, issue_link, issue_view, mail_list, mail_send, pr_view, submit_review",
-		config.RoleQA:        "comment, done, file_bug, issue_create, issue_link, issue_view, mail_list, mail_send, pr_view",
+		config.RoleReviewer:  "comment, done, issue_create, issue_link, issue_view, mail_list, mail_send, pr_view, report_factory_error, submit_review",
+		config.RoleQA: "comment, done, file_bug, issue_create, issue_link, issue_view, mail_list, " +
+			"mail_send, pr_view, report_factory_error",
 		config.RoleProjectManager: "comment, done, issue_create, issue_edit_body, issue_link, " +
-			"issue_set_state, issue_view, mail_list, mail_send, pr_view",
+			"issue_set_state, issue_view, mail_list, mail_send, pr_view, report_factory_error",
 		config.RoleProductManager: "comment, done, issue_create, issue_edit_body, issue_link, " +
-			"issue_question, issue_view, mail_list, mail_send, pr_view",
+			"issue_question, issue_view, mail_list, mail_send, pr_view, report_factory_error",
 		// Hand use through `bees mcp serve`: everything.
 		"": "comment, done, file_bug, issue_create, issue_edit_body, issue_link, issue_question, " +
-			"issue_set_state, issue_view, mail_list, mail_send, pr_view, submit_review",
+			"issue_set_state, issue_view, mail_list, mail_send, pr_view, report_factory_error, submit_review",
 	} {
 		list, err := Tools(context.Background(), Env{Role: role})
 		if err != nil {

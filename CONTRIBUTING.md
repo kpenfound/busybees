@@ -7,6 +7,7 @@ cmd/bees/            the cobra CLI: every `bees` command
 internal/config/     bees.toml: schema, defaults, validation, global/role merging, labels, the init template
 internal/doctor/     the checks `bees doctor` runs
 internal/duplicates/ the existing issues a new title and body would duplicate: a local word-overlap score over every issue, open and closed
+internal/feedback/   the queue of factory-error drafts report_factory_error writes: JSON under <state_dir>/feedback/
 internal/github/     thin wrapper around the gh CLI: issues, PRs, labels, milestones, sub-issues, checks, merge, activity
 internal/issues/     `bees issue create/link`: filter labels, kind and state labels, sub-issue of --parent, inherited milestone
 internal/logging/    console and file logging; bees.log rotation
