@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -150,6 +151,46 @@ func (m *Manager) Remove(ctx context.Context, ws *Workspace) error {
 	_ = os.RemoveAll(ws.Root)
 	_, _ = Git(ctx, m.MainRepo, "worktree", "prune")
 	return err
+}
+
+// CommitsAhead counts the commits on remote/<branch> that remote/<base>
+// does not have, from the main clone's remote-tracking refs (Fetch first).
+// A branch the remote does not have counts as zero: it has nothing to read.
+func (m *Manager) CommitsAhead(ctx context.Context, branch, base string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.refExists(ctx, "refs/remotes/"+m.Remote+"/"+branch) {
+		return 0, nil
+	}
+	out, err := Git(ctx, m.MainRepo, "rev-list", "--count", m.Remote+"/"+base+".."+m.Remote+"/"+branch)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(out)
+}
+
+// DeleteBranch deletes branch on the remote and in the main clone, where
+// Branch created it. A branch that is already gone from either is not an
+// error; one still checked out in a worktree is (Remove the worktree first).
+func (m *Manager) DeleteBranch(ctx context.Context, branch string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.refExists(ctx, "refs/remotes/"+m.Remote+"/"+branch) {
+		_, err := Git(ctx, m.MainRepo, "push", m.Remote, "--delete", branch)
+		if err != nil && !strings.Contains(err.Error(), "remote ref does not exist") {
+			return err
+		}
+		if err != nil {
+			// Deleted on the remote already: only the tracking ref is stale.
+			_, _ = Git(ctx, m.MainRepo, "update-ref", "-d", "refs/remotes/"+m.Remote+"/"+branch)
+		}
+	}
+	if m.refExists(ctx, "refs/heads/"+branch) {
+		if _, err := Git(ctx, m.MainRepo, "branch", "-D", branch); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Prune removes stale worktree metadata (e.g. after a crash).
