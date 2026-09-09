@@ -118,8 +118,8 @@ func TestContainerUseEnvironmentBuildsTheImage(t *testing.T) {
 	if got := lines(t, filepath.Join(fakeDir, "docker-inspect.txt")); len(got) != 1 || got[0] != want {
 		t.Errorf("the engine was asked about %v before the build, want [%s]", got, want)
 	}
-	if _, err := os.Stat(filepath.Join(res.SessionDir, containerUseBuildLog)); err != nil {
-		t.Errorf("build log: %v", err)
+	if log, err := os.ReadFile(filepath.Join(res.SessionDir, containerUseBuildLog)); err != nil || !strings.Contains(string(log), "load build definition") {
+		t.Errorf("build log does not hold the build's output: %q, %v", log, err)
 	}
 	run := strings.Join(lines(t, filepath.Join(res.SessionDir, "docker-args.txt")), " ")
 	if !strings.Contains(run, " "+want+" "+r.ClaudeBin+" -p ") {

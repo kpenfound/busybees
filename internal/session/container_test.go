@@ -24,8 +24,8 @@ import (
 // of images.txt beside the script: `image inspect` records the tag it was
 // asked about in docker-inspect.txt and succeeds when the tag is listed;
 // `build` records its arguments in docker-build.txt, keeps the Dockerfile it
-// was given as Dockerfile.built, fails when a file named fail-build is
-// beside the script, and lists the tag otherwise.
+// was given as Dockerfile.built, prints a progress line, fails when a file
+// named fail-build is beside the script, and lists the tag otherwise.
 func fakeDocker(t *testing.T, image string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "docker")
@@ -57,6 +57,7 @@ build)
     *) shift ;;
     esac
   done
+  echo "#1 [internal] load build definition"
   if [ -f "$here/fail-build" ]; then
     echo "ERROR: process \"/bin/sh -c false\" did not complete successfully: exit code: 1" >&2
     exit 1
