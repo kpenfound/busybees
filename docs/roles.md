@@ -358,7 +358,9 @@ developer takes), `model_by_size` (a model per size label) and the best-of-N
 keys (`best_of_n_by_size` and the model and prompt overrides for the attempts
 and the assembler). Set anywhere else, they are a load error. See
 [configuration.md](configuration.md#rolesdeveloper-only-commit-flags-max-size-and-per-size-models)
-and [best of N](configuration.md#rolesdeveloper-only-best-of-n).
+and [best of N](configuration.md#rolesdeveloper-only-best-of-n). How a
+fan-out and its assembler session run is on
+[workflow.md](workflow.md#best-of-n).
 
 ## reviewer
 
