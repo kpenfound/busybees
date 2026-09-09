@@ -699,7 +699,8 @@ issue, and requests a review from `scheduler.notify`.
 Not checked, because there is nothing to look at afterwards:
 
 - a tool call itself. Each of `issue_create`, `issue_link`, `comment`,
-  `issue_edit_body`, `issue_set_state`, `issue_question`, `submit_review` and
+  `issue_edit_body`, `issue_set_state`, `issue_question`, `submit_review`,
+  `report_factory_error` and
   `mail_send` does its work inside the call and returns its error to the
   session there, so the call is the ground truth at the moment it runs. What
   is checked above is the outcome claiming one was made, not the call.
@@ -923,7 +924,8 @@ counted from the transcript's assistant messages or completed items instead.
   server serves the factory's own operations as tools backed by the same code
   the CLI uses, so a session calls a schema instead of composing a command
   line: `mail_send`, `mail_list`, `issue_create`, `issue_link`, `issue_view`,
-  `pr_view`, `comment` and `done` go to every role; `issue_edit_body` to the
+  `pr_view`, `comment`, `report_factory_error` and `done` go to every role;
+  `issue_edit_body` to the
   two managers, `issue_set_state` to the project manager, `issue_question`
   to the product manager and `submit_review` to the reviewer. The schemas
   depend on `BEES_ROLE`: `done`'s `status`
@@ -1035,6 +1037,10 @@ sessions get `BEES_STATE_DIR`.
 <state_dir>/                     default .bees/ next to bees.toml
   README.md
   mail/<role>/*.json             the mailbox
+  feedback/<id>.json             {id, role, session_dir, title, detail, created_at}: a
+                                 draft report of an error the factory caused, written by
+                                 report_factory_error with scheduler.report_factory_errors
+                                 on, waiting to be filed against busybees
   notes/<role>.md                role memory (`bees notes show|edit|reset|add`)
   notes/archive/<role>-<ts>.md   notes replaced by `bees notes reset`
   sessions/<ts>-<name>-<rand>/   system-prompt.md, prompt.md, mcp.json (claude), transcript.jsonl,
