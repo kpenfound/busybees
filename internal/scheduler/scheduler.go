@@ -70,12 +70,18 @@ type Scheduler struct {
 	labels config.Labels
 	query  github.Query
 	gh     *github.Client
-	mail   *mail.Box
-	runner *session.Runner
-	ws     *workspace.Manager
-	store  *state.Store
-	log    *slog.Logger
-	now    func() time.Time
+	// upstream is a client for the busybees repository itself, where the
+	// factory-error drafts are filed (factoryerrors.go). It is gh with the
+	// repository swapped, so the calls act as the same account the factory
+	// acts as everywhere else ([github]) and there is no second identity to
+	// resolve.
+	upstream *github.Client
+	mail     *mail.Box
+	runner   *session.Runner
+	ws       *workspace.Manager
+	store    *state.Store
+	log      *slog.Logger
+	now      func() time.Time
 	// version and revision describe the build this scheduler is running as
 	// (Deps.Version, Deps.Revision).
 	version  string
@@ -192,11 +198,14 @@ func New(d Deps) (*Scheduler, error) {
 	if f.LabelRequired() {
 		q.Label = f.Label
 	}
+	upstream := *d.GitHub
+	upstream.Repo = upstreamRepo
 	s := &Scheduler{
 		cfg:          d.Config,
 		labels:       d.Config.Labels(),
 		query:        q,
 		gh:           d.GitHub,
+		upstream:     &upstream,
 		mail:         d.Mail,
 		runner:       d.Runner,
 		ws:           d.Workspaces,
@@ -913,6 +922,9 @@ func (s *Scheduler) pass(ctx context.Context) error {
 	// pull request list that still carries a label removed on GitHub.
 	s.dispatchRequestedReviews(ctx, snap)
 	s.dispatchSingletons(ctx, snap, false)
+	// Last, and on a full pass only: filing a factory-error report costs
+	// GitHub calls of its own and nothing waits on it.
+	s.drainFeedbackQueue(ctx)
 	return nil
 }
 
