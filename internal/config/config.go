@@ -780,6 +780,11 @@ type Scheduler struct {
 	// Default false: a factory that opens its own pull requests must not
 	// review them twice. See scheduler.dispatchRequestedReviews.
 	ReviewAssignedPRs bool `toml:"review_assigned_prs" json:"review_assigned_prs"`
+	// ReportFactoryErrors offers every role the report_factory_error tool
+	// for real: a role that hits an error the factory itself caused records
+	// a scrubbed draft under <state_dir>/feedback/ for filing upstream. Off
+	// (the default), the tool records nothing and says so.
+	ReportFactoryErrors bool `toml:"report_factory_errors" json:"report_factory_errors"`
 	// FeatureProposals makes a feature issue a bee creates a proposal: it
 	// carries bees:proposal and a person approves it by removing the label,
 	// and until then issues.Create and issues.Link refuse to put a work item
