@@ -44,10 +44,12 @@ The factory reads only the issues and pull requests that match the
 | Creator | `filter.creator` | unset | The item was opened by this login, or by the account the factory acts as |
 
 Everything outside the filter is invisible: the factory never labels or
-comments on it, and reads it in one place only. That place is the duplicate
-check behind QA's bug reports, which scores a new report against every issue
-in the repository, whatever labels it carries and whether it is open or
-closed, so that a bug a person filed by hand is not filed again ([QA](#qa)).
+comments on it. It reads outside the filter in two places: the visibility
+backstop below, which lists what was created since each session to repair a
+missing label, and the duplicate check behind QA's bug reports, which scores
+a new report against every issue in the repository, whatever labels it
+carries and whether it is open or closed, so that a bug a person filed by
+hand is not filed again ([QA](#qa)).
 Adding a criterion to a running factory hides everything that does not
 already satisfy it. Set `assignee` in a repository full of unassigned `bees`
 issues and every one of them disappears in one commit.
