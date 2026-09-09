@@ -36,7 +36,7 @@ import (
 // The flags that steer the fake (FAKE_CLAUDE, FAKE_DEV_HANG, FAKE_DEV_FAIL,
 // FAKE_DEV_MAIL_TO, FAKE_ATTEMPT_FAIL, FAKE_ASSEMBLE_FAIL, FAKE_REVIEW_ALWAYS_CHANGES,
 // FAKE_REVIEW_FAIL, FAKE_COST, FAKE_SIGNAL,
-// FAKE_WAIT_FOR, FAKE_LIMIT, FAKE_LIMIT_WITH_OUTCOME, FAKE_RESULT_TEXT, FAKE_COPY_ISSUE_STATE,
+// FAKE_WAIT_FOR, FAKE_LIMIT, FAKE_ASSEMBLE_LIMIT, FAKE_LIMIT_WITH_OUTCOME, FAKE_RESULT_TEXT, FAKE_COPY_ISSUE_STATE,
 // FAKE_TRIAGE, FAKE_FILE_ISSUE, FAKE_RESUME_FAIL, FAKE_REVIEW_NO_SUBMIT,
 // FAKE_REVIEW_MISMATCH, FAKE_QA_NO_REPORT, FAKE_QA_OTHER_MAIL)
 // reach it through the ordinary environment, so they must NOT start with
@@ -173,7 +173,16 @@ func fakeClaude() {
 	// that could not start does — unless FAKE_LIMIT_WITH_OUTCOME is set, in
 	// which case the role does its work and reports it, which is a session
 	// that finished just as the account ran out of capacity.
-	if v := os.Getenv("FAKE_LIMIT"); v != "" {
+	//
+	// FAKE_ASSEMBLE_LIMIT is the same, but only for the best-of-N assembler
+	// session (told apart by "-assemble" in its name): every attempt runs
+	// and pushes normally, and only the session that would compare them
+	// hits the limit — the one case bestofn.go treats differently from an
+	// ordinary developer session hitting it.
+	if v := os.Getenv("FAKE_LIMIT"); v != "" || (strings.Contains(sessionID, "-assemble") && os.Getenv("FAKE_ASSEMBLE_LIMIT") != "") {
+		if v == "" {
+			v = os.Getenv("FAKE_ASSEMBLE_LIMIT")
+		}
 		resets := ""
 		if v != "none" {
 			resets = `,"resetsAt":` + v

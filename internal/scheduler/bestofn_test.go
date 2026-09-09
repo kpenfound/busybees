@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -707,6 +708,31 @@ func TestAttemptDataReportsAnAttemptThatCouldNotRun(t *testing.T) {
 	}
 	if !slices.Equal(data, want) {
 		t.Errorf("attemptData:\n got %+v\nwant %+v", data, want)
+	}
+}
+
+// The account-wide session limit stopping the assembler itself, after every
+// attempt already pushed, is not "nothing to assemble": the attempt
+// branches are exactly what the retry the factory pauses for needs to read,
+// so cleanup leaves them, and the issue is not escalated for it.
+func TestBestOfNKeepsAttemptBranchesWhenTheAssemblerHitsTheLimit(t *testing.T) {
+	h := newHarness(t, bestOfNTOML)
+	t.Setenv("FAKE_ASSEMBLE_LIMIT", strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10))
+	seedSized(h, 1, "l")
+	runPass(t, h)
+	h.sched.wg.Wait()
+
+	if n := len(h.sessions(config.RoleDeveloper)); n != 4 {
+		t.Fatalf("developer sessions: %v", h.sessionNames())
+	}
+	if got := h.stateOfIssue(1); got == "needs-human" {
+		t.Error("issue #1 was escalated for the account's limit")
+	}
+	if comments := strings.Join(h.gh.comments[1], "\n"); comments != "" {
+		t.Errorf("issue #1 was commented on for the account's limit:\n%s", comments)
+	}
+	if got, want := remoteBranches(t, h), []string{"bees/issue-1-attempt-1", "bees/issue-1-attempt-2", "bees/issue-1-attempt-3", "main"}; !slices.Equal(got, want) {
+		t.Errorf("remote branches: got %v want %v", got, want)
 	}
 }
 
