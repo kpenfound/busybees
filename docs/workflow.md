@@ -43,10 +43,14 @@ The factory reads only the issues and pull requests that match the
 | Milestone | `filter.milestone` | unset | The item is in this milestone |
 | Creator | `filter.creator` | unset | The item was opened by this login, or by the account the factory acts as |
 
-Everything outside the filter is invisible: the factory never reads, labels
-or comments on it. Adding a criterion to a running factory hides everything
-that does not already satisfy it. Set `assignee` in a repository full of
-unassigned `bees` issues and every one of them disappears in one commit.
+Everything outside the filter is invisible: the factory never labels or
+comments on it, and reads it in one place only. That place is the duplicate
+check behind QA's bug reports, which scores a new report against every issue
+in the repository, whatever labels it carries and whether it is open or
+closed, so that a bug a person filed by hand is not filed again ([QA](#qa)).
+Adding a criterion to a running factory hides everything that does not
+already satisfy it. Set `assignee` in a repository full of unassigned `bees`
+issues and every one of them disappears in one commit.
 `bees doctor` reports that case with both counts:
 
 ```
@@ -1182,11 +1186,14 @@ then:
 
 - files a `bees:bug` issue in triage for every defect it reproduced itself,
   with reproduction steps, expected against actual behaviour, severity, and
-  the command it ran with the output it got, after searching the existing
-  issues, closed as well as open. It comments on an open duplicate instead of
-  filing another, and opens a new bug linking to a closed one it has
-  reproduced again. A clean batch is a good result: QA files nothing and says
-  so;
+  the command it ran with the output it got. It files with `file_bug`, which
+  scores the report against every issue in the repository, open and closed,
+  and refuses it when one of them already looks like the same bug: QA gets the
+  ranked candidates back and comments on an open duplicate instead of filing
+  another. It files anyway, with `override` and its reasons in the body, when
+  the match is a closed issue it has reproduced again or none of the
+  candidates is the same defect. A clean batch is a good result: QA files
+  nothing and says so;
 - sends the product manager one report by mail: what was tested, what works,
   the bugs filed, and product-level observations, even when it found nothing. A
   run that reports success without the report is treated as a failed run.

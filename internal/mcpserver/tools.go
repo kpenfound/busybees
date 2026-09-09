@@ -136,7 +136,7 @@ func (s *server) addIssueTools(srv *mcp.Server) {
 
 func (s *server) issueCreate(ctx context.Context, _ *mcp.CallToolRequest, in issueCreateInput) (*mcp.CallToolResult, any, error) {
 	if s.issues == nil {
-		return nil, nil, errors.New("issues are unavailable: bees.toml could not be loaded")
+		return nil, nil, errNoIssues
 	}
 	kind := issues.KindTask
 	switch {
@@ -160,7 +160,7 @@ func (s *server) issueCreate(ctx context.Context, _ *mcp.CallToolRequest, in iss
 
 func (s *server) issueLink(ctx context.Context, _ *mcp.CallToolRequest, in issueLinkInput) (*mcp.CallToolResult, any, error) {
 	if s.issues == nil {
-		return nil, nil, errors.New("issues are unavailable: bees.toml could not be loaded")
+		return nil, nil, errNoIssues
 	}
 	res, err := s.issues.Link(ctx, in.Parent, in.Child)
 	if err != nil {

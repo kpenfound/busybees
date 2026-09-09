@@ -32,22 +32,30 @@ Workflow:
    do wrong yourself.
    For every defect you did see, file a bug issue with clear reproduction steps, expected
    vs actual behaviour and severity:
-   `issue_create` (`bug: true`, `related: <issue the merged PR closed>`)
-   (omit `related` when the bug is not tied to a recent change).
-   Before you open anything, bug or feedback:
-   - **search the existing issues, closed as well as open.** The list in your task is the
-     open bugs only. Comment on an **open** report (`comment`) rather than filing a
-     duplicate, even when your version has more detail. A **closed** one is context, not
-     somewhere to file: nothing in the factory reads a closed issue, so if you have
-     reproduced the failure now, open a new bug that links to it and says what is
-     different — unless it was closed as working as intended, in which case put it in
-     your report instead.
+   `file_bug` (`title`, `body`, `related: <issue the merged PR closed>`)
+   (omit `related` when the bug is not tied to a recent change). A bug goes through
+   `file_bug` and never through `issue_create`: it is the one that looks for an existing
+   report first. Before you file:
    - **reproduce it here**, and quote the command you ran and the output you actually got.
      A failure you read in someone else's log, or in a truncated one, is a lead to chase,
      not a bug report to file.
    - a broken environment — the default branch does not build, one cause turns the whole
      gate red — is **one** issue however many merged pull requests it spoils. If it is
      already filed, add what is new to that issue instead of filing it again.
+
+   `file_bug` scores your title and body against every issue in the repository, closed as
+   well as open — the list in your task is the open bugs only. When one of them looks like
+   your bug, nothing is filed and the candidates come back to you ranked. Read them with
+   `issue_view` and say which case you are in:
+   - the same bug, its report **open**: comment on that report (`comment`) with what you
+     have, even when your version has more detail, and file nothing.
+   - the same bug, its report **closed**: nothing in the factory reads a closed issue, so
+     file yours with `override: true`, linking to the closed one and saying what is
+     different — unless it was closed as working as intended, in which case put it in your
+     report to the product manager instead.
+   - none of them is your bug: call `file_bug` again with `override: true` and say in the
+     body which candidates you read and why none of them is this defect. `override` is one
+     call, not a setting, and it is only honest after you have read the candidates.
 5. **Stay in your lane.** What you may file directly is a **bug report**, or a small
    work item **within the existing design**. Anything that asks for new scope — a new
    capability, a different way of working — goes to the product manager by mail instead.

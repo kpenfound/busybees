@@ -1028,13 +1028,16 @@ func TestQAReproducesBeforeFilingAndStartsNothingLive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	flow := flowed(sys)
 	for _, want := range []string{
-		"search the existing issues, closed as well as open",
+		// The search is `file_bug`'s job now, but QA is still told what it
+		// covers and what to do with what it finds.
+		"against every issue in the repository, closed as well as open",
 		"nothing in the factory reads a closed issue",
 		"**reproduce it here**",
 		"that acts on the real world for you",
 	} {
-		if !strings.Contains(sys, want) {
+		if !strings.Contains(flow, want) {
 			t.Errorf("qa system prompt missing %q:\n%s", want, sys)
 		}
 	}
@@ -1043,9 +1046,34 @@ func TestQAReproducesBeforeFilingAndStartsNothingLive(t *testing.T) {
 		"Comment on the report you find",
 		"exercise it as a user would",
 	} {
-		if strings.Contains(sys, gone) {
+		if strings.Contains(flow, gone) {
 			t.Errorf("qa system prompt still carries the old wording %q:\n%s", gone, sys)
 		}
+	}
+}
+
+// QA files a bug with file_bug, the tool that scores it against every issue
+// in the repository first, and never with issue_create, which files whatever
+// it is given. The prompt has to carry what a refused call hands back, since
+// that is the only place QA learns what to do with the candidates.
+func TestQAFilesBugsThroughFileBug(t *testing.T) {
+	sys, err := System(config.RoleQA, sample(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	flow := flowed(sys)
+	for _, want := range []string{
+		"`file_bug` (`title`, `body`, `related: <issue the merged PR closed>`)",
+		"never through `issue_create`",
+		"call `file_bug` again with `override: true`",
+	} {
+		if !strings.Contains(flow, want) {
+			t.Errorf("qa system prompt missing %q:\n%s", want, sys)
+		}
+	}
+	// The old route: issue_create with the bug flag, which checks nothing.
+	if strings.Contains(flow, "`issue_create` (`bug: true`") {
+		t.Errorf("qa system prompt still files bugs with issue_create:\n%s", sys)
 	}
 }
 

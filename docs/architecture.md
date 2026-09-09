@@ -699,7 +699,8 @@ issue, and requests a review from `scheduler.notify`.
 Not checked, because there is nothing to look at afterwards:
 
 - a tool call itself. Each of `issue_create`, `issue_link`, `comment`,
-  `issue_edit_body`, `issue_set_state`, `issue_question`, `submit_review` and
+  `issue_edit_body`, `issue_set_state`, `issue_question`, `submit_review`,
+  `file_bug` and
   `mail_send` does its work inside the call and returns its error to the
   session there, so the call is the ground truth at the moment it runs. What
   is checked above is the outcome claiming one was made, not the call.
@@ -925,7 +926,8 @@ counted from the transcript's assistant messages or completed items instead.
   line: `mail_send`, `mail_list`, `issue_create`, `issue_link`, `issue_view`,
   `pr_view`, `comment` and `done` go to every role; `issue_edit_body` to the
   two managers, `issue_set_state` to the project manager, `issue_question`
-  to the product manager and `submit_review` to the reviewer. The schemas
+  to the product manager, `submit_review` to the reviewer and `file_bug`,
+  which refuses a bug the repository already reports, to QA. The schemas
   depend on `BEES_ROLE`: `done`'s `status`
   enum is the role's valid outcomes. The name `bees` is reserved in
   `bees.toml`. See [bees mcp serve](cli.md#bees-mcp-serve-sessions) and

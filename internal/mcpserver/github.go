@@ -11,7 +11,9 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/duplicates"
 	"github.com/kpenfound/busybees/internal/github"
+	"github.com/kpenfound/busybees/internal/issues"
 	"github.com/kpenfound/busybees/internal/session"
 )
 
@@ -39,12 +41,20 @@ type GitHub interface {
 	// SubmitReview submits one review on a pull request: event is one of
 	// github.ReviewEvents.
 	SubmitReview(ctx context.Context, number int, event, body string) error
+	// DuplicateCandidates returns the existing issues a new one with this
+	// title and body would duplicate, best match first, or nothing when none
+	// of them is close enough. It reads the whole repository, open and closed
+	// issues alike: see internal/duplicates.
+	DuplicateCandidates(ctx context.Context, title, body string) ([]duplicates.Match, error)
 }
 
 // errNoGitHub is what every GitHub tool reports when there is no backend,
 // the same shape the issue tools use: the server still starts, and the
 // failure surfaces from the tool that needs it.
 var errNoGitHub = errors.New("GitHub is unavailable: bees.toml could not be loaded")
+
+// errNoIssues is the same for the tools that create an issue.
+var errNoIssues = errors.New("issues are unavailable: bees.toml could not be loaded")
 
 // states are the moves issue_set_state offers, as short names. They are the
 // only two transitions a role makes itself; the orchestrator owns the rest.
@@ -127,6 +137,18 @@ func (s *server) addGitHubTools(srv *mcp.Server) {
 				"or clear that once they have. Post the question itself as a comment first.",
 			InputSchema: schemaFor[issueQuestionInput](nil),
 		}, s.issueQuestion)
+	}
+
+	if s.roleIs(config.RoleQA) {
+		mcp.AddTool(srv, &mcp.Tool{
+			Name:  "file_bug",
+			Title: "File a bug report",
+			Description: "File a bug you reproduced yourself, checked against every issue in the " +
+				"repository first: when one of them already reports it, nothing is filed and the " +
+				"candidates come back for you to comment on instead. This is how QA opens a bug; " +
+				"`issue_create` does not check for duplicates.",
+			InputSchema: schemaFor[fileBugInput](nil),
+		}, s.fileBug)
 	}
 }
 
@@ -446,6 +468,71 @@ func (s *server) issueQuestion(ctx context.Context, _ *mcp.CallToolRequest, in i
 		return text("#%d now carries %s", in.Number, labels.Question), nil, nil
 	}
 	return text("removed %s from #%d", labels.Question, in.Number), nil, nil
+}
+
+// ---- file_bug --------------------------------------------------------------
+
+type fileBugInput struct {
+	Title   string `json:"title" jsonschema:"issue title: what the product does wrong, in one line"`
+	Body    string `json:"body" jsonschema:"issue body, markdown: reproduction steps, expected against actual behaviour, severity"`
+	Related int    `json:"related,omitempty" jsonschema:"issue whose milestone to inherit without attaching (the issue the merged pull request closed); leave it out when the bug is not tied to a recent change"`
+	// Override is per call, and only honest after a refusal: it says the
+	// candidates were read and none of them is this bug.
+	Override bool `json:"override,omitempty" jsonschema:"file anyway, after reading the candidates a refused call returned and judging that none of them reports this bug; say in the body which ones you looked at and why"`
+}
+
+// fileBug is QA's only way to open a bug: it refuses one that looks like an
+// issue already in the repository, and hands the candidates back instead.
+// The check lives here rather than in issue_create because the roles that
+// use that tool split one issue into deliberately similar siblings (see
+// internal/duplicates).
+func (s *server) fileBug(ctx context.Context, _ *mcp.CallToolRequest, in fileBugInput) (*mcp.CallToolResult, any, error) {
+	if s.github == nil {
+		return nil, nil, errNoGitHub
+	}
+	if s.issues == nil {
+		return nil, nil, errNoIssues
+	}
+	if strings.TrimSpace(in.Title) == "" || strings.TrimSpace(in.Body) == "" {
+		return nil, nil, errors.New("a bug report needs a title and a body")
+	}
+	// An override has already been through the check and disagreed with it,
+	// so running it again would list the repository for an answer nobody
+	// reads.
+	if !in.Override {
+		candidates, err := s.github.DuplicateCandidates(ctx, in.Title, in.Body)
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(candidates) > 0 {
+			return text("%s", duplicateRefusal(candidates)), nil, nil
+		}
+	}
+	res, err := s.issues.Create(ctx, issues.Options{
+		Title: in.Title, Body: in.Body, Kind: issues.KindBug, Related: in.Related,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	s.touched(res.Number)
+	return text("%s", res), nil, nil
+}
+
+// duplicateRefusal is what a refused file_bug says: the candidates, and the
+// two things to do about them. It is written to the session, so it names the
+// tools rather than describing them.
+func duplicateRefusal(candidates []duplicates.Match) string {
+	var b strings.Builder
+	b.WriteString("nothing was filed: the repository already has an issue that looks like this one.\n\n")
+	for _, c := range candidates {
+		fmt.Fprintf(&b, "#%d %s (%s, %.2f)\n", c.Number, c.Title, strings.ToLower(c.State), c.Score)
+	}
+	b.WriteString("\nRead them with `issue_view`. If one of them is this bug, comment on it with " +
+		"`comment` instead of filing: an open report is where the work happens, and a closed one " +
+		"you have reproduced again is context to link to. If none of them is this bug, call " +
+		"`file_bug` again with `override: true` and say in the body which you read and why they " +
+		"are not the same defect.\n")
+	return b.String()
 }
 
 // ---- shared rules ----------------------------------------------------------

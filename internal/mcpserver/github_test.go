@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/duplicates"
 	"github.com/kpenfound/busybees/internal/github"
 )
 
@@ -29,6 +30,12 @@ type fakeGitHub struct {
 	bodies   []numberedBody
 	edits    []labelEdit
 	reviews  []review
+
+	// dupes is what DuplicateCandidates answers, dupErr instead of it, and
+	// dupCalls what it was asked about.
+	dupes    []duplicates.Match
+	dupErr   error
+	dupCalls []numberedBody
 }
 
 type numberedBody struct {
@@ -126,6 +133,11 @@ func (f *fakeGitHub) SubmitReview(_ context.Context, number int, event, body str
 	return nil
 }
 
+func (f *fakeGitHub) DuplicateCandidates(_ context.Context, title, body string) ([]duplicates.Match, error) {
+	f.dupCalls = append(f.dupCalls, numberedBody{body: title + "|" + body})
+	return f.dupes, f.dupErr
+}
+
 // wrote reports whether the backend was asked to change anything.
 func (f *fakeGitHub) wrote() bool {
 	return len(f.comments)+len(f.bodies)+len(f.edits)+len(f.reviews) > 0
@@ -140,13 +152,13 @@ func TestGitHubToolsPerRole(t *testing.T) {
 	for role, want := range map[string]string{
 		config.RoleDeveloper: base,
 		config.RoleReviewer:  "comment, done, issue_create, issue_link, issue_view, mail_list, mail_send, pr_view, submit_review",
-		config.RoleQA:        base,
+		config.RoleQA:        "comment, done, file_bug, issue_create, issue_link, issue_view, mail_list, mail_send, pr_view",
 		config.RoleProjectManager: "comment, done, issue_create, issue_edit_body, issue_link, " +
 			"issue_set_state, issue_view, mail_list, mail_send, pr_view",
 		config.RoleProductManager: "comment, done, issue_create, issue_edit_body, issue_link, " +
 			"issue_question, issue_view, mail_list, mail_send, pr_view",
 		// Hand use through `bees mcp serve`: everything.
-		"": "comment, done, issue_create, issue_edit_body, issue_link, issue_question, " +
+		"": "comment, done, file_bug, issue_create, issue_edit_body, issue_link, issue_question, " +
 			"issue_set_state, issue_view, mail_list, mail_send, pr_view, submit_review",
 	} {
 		list, err := Tools(context.Background(), Env{Role: role})
@@ -173,6 +185,7 @@ func TestGitHubToolsWithoutABackend(t *testing.T) {
 		"issue_set_state": {"number": 12, "state": "blocked"},
 		"issue_question":  {"number": 12, "waiting": true},
 		"submit_review":   {"number": 12, "event": "approve", "body": "fine"},
+		"file_bug":        {"title": "Crash on empty input", "body": "steps"},
 	} {
 		res := h.callRaw(name, args)
 		if !res.IsError || !strings.Contains(resultText(res), "bees.toml") {
@@ -724,5 +737,127 @@ func TestIssueViewSurvivesAFailingLoginLookup(t *testing.T) {
 	got := h.call("issue_view", map[string]any{"number": 36})
 	if !strings.Contains(got, "busybees-bot (human) · 2026-08-31 09:00") {
 		t.Fatalf("issue_view did not fall back to the marker rule:\n%s", got)
+	}
+}
+
+// ---- file_bug --------------------------------------------------------------
+
+// qaHarness is a QA session with both backends behind file_bug: the fake
+// GitHub answering the duplicate check, and the real internal/issues on a
+// fake gh client, so a filed bug is asserted through the `gh` calls it makes.
+func qaHarness(t *testing.T, f *fakeGitHub) (*harness, *fakeGH) {
+	t.Helper()
+	gh := &fakeGH{}
+	h := newHarness(t, config.RoleQA, Deps{
+		GitHub: f,
+		Issues: &ghIssues{gh: gh.client(t), policy: testPolicy()},
+	})
+	return h, gh
+}
+
+func TestFileBugFilesWhatNothingElseReports(t *testing.T) {
+	f := newFakeGitHub()
+	h, gh := qaHarness(t, f)
+
+	got := h.call("file_bug", map[string]any{
+		"title": "Crash on empty input", "body": "steps", "related": 36,
+	})
+	if got != `created #90 milestone "v0.1.0"` {
+		t.Fatalf("result: %q", got)
+	}
+	// The same issue issue_create would have made: bug kind, triage, the
+	// factory's assignee, the related issue's milestone.
+	joined := strings.Join(gh.calls, "\n")
+	for _, want := range []string{"--label bees:bug", "--label bees:triage", "--assignee kyle", "--milestone v0.1.0"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("missing %q in:\n%s", want, joined)
+		}
+	}
+	// The check saw exactly what was about to be filed.
+	if len(f.dupCalls) != 1 || f.dupCalls[0].body != "Crash on empty input|steps" {
+		t.Fatalf("duplicate check: %+v", f.dupCalls)
+	}
+	wantTouched(t, h.touched(), 90)
+}
+
+func TestFileBugRefusesADuplicateAndHandsBackTheCandidates(t *testing.T) {
+	f := newFakeGitHub()
+	f.dupes = []duplicates.Match{
+		{Number: 412, Title: "Crash on empty input", State: "OPEN", Score: 0.81},
+		{Number: 377, Title: "Empty input crashes the parser", State: "CLOSED", Score: 0.62},
+	}
+	h, gh := qaHarness(t, f)
+
+	got := h.call("file_bug", map[string]any{"title": "Crash on empty input", "body": "steps"})
+	for _, want := range []string{
+		"nothing was filed",
+		"#412 Crash on empty input (open, 0.81)",
+		"#377 Empty input crashes the parser (closed, 0.62)",
+		"`comment`",
+		"`override: true`",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("refusal does not mention %q:\n%s", want, got)
+		}
+	}
+	if len(gh.calls) != 0 {
+		t.Fatalf("an issue was filed anyway: %v", gh.calls)
+	}
+	wantTouched(t, h.touched())
+}
+
+// An override is QA's judgement after reading the candidates, so it files
+// without asking the check again.
+func TestFileBugOverrideFilesAnyway(t *testing.T) {
+	f := newFakeGitHub()
+	f.dupes = []duplicates.Match{{Number: 412, Title: "Crash on empty input", State: "OPEN", Score: 0.81}}
+	h, gh := qaHarness(t, f)
+
+	if got := h.call("file_bug", map[string]any{
+		"title": "Crash on empty input", "body": "not #412: that one is about flags", "override": true,
+	}); got != "created #90" {
+		t.Fatalf("result: %q", got)
+	}
+	if !strings.Contains(strings.Join(gh.calls, "\n"), "--label bees:bug") {
+		t.Fatalf("calls: %v", gh.calls)
+	}
+	if len(f.dupCalls) != 0 {
+		t.Fatalf("the check ran for an answer nobody reads: %+v", f.dupCalls)
+	}
+	wantTouched(t, h.touched(), 90)
+}
+
+// A check that could not run is not a clean bill of health: filing anyway
+// would make a failing `gh` the way to slip a duplicate in.
+func TestFileBugFilesNothingWhenTheCheckFails(t *testing.T) {
+	f := newFakeGitHub()
+	f.dupErr = errors.New("gh: could not list issues")
+	h, gh := qaHarness(t, f)
+
+	res := h.callRaw("file_bug", map[string]any{"title": "Crash on empty input", "body": "steps"})
+	if !res.IsError || !strings.Contains(resultText(res), "could not list issues") {
+		t.Fatalf("result: %v %q", res.IsError, resultText(res))
+	}
+	if len(gh.calls) != 0 {
+		t.Fatalf("an issue was filed anyway: %v", gh.calls)
+	}
+	wantTouched(t, h.touched())
+}
+
+func TestFileBugNeedsATitleAndABody(t *testing.T) {
+	f := newFakeGitHub()
+	h, gh := qaHarness(t, f)
+
+	for _, args := range []map[string]any{
+		{"title": "Crash on empty input", "body": "  "},
+		{"title": "", "body": "steps"},
+	} {
+		res := h.callRaw("file_bug", args)
+		if !res.IsError || !strings.Contains(resultText(res), "needs a title and a body") {
+			t.Errorf("%v: %v %q", args, res.IsError, resultText(res))
+		}
+	}
+	if len(gh.calls) != 0 {
+		t.Fatalf("an issue was filed anyway: %v", gh.calls)
 	}
 }
