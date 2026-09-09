@@ -43,13 +43,19 @@ The factory reads only the issues and pull requests that match the
 | Milestone | `filter.milestone` | unset | The item is in this milestone |
 | Creator | `filter.creator` | unset | The item was opened by this login, or by the account the factory acts as |
 
-Everything outside the filter is invisible: the factory never reads, labels
-or comments on it. A factory-error report is no exception to that: it is
-filed against the busybees repository, not this one (see
-[`scheduler.report_factory_errors`](configuration.md#scheduler)). Adding a
-criterion to a running factory hides everything that does not already satisfy
-it. Set `assignee` in a repository full of
-unassigned `bees` issues and every one of them disappears in one commit.
+Everything outside the filter is invisible: the factory never labels or
+comments on it. It reads outside the filter in two places: the visibility
+backstop below, which lists what was created since each session to repair a
+missing label, and the duplicate check behind QA's bug reports, which scores
+a new report against every issue in the repository, whatever labels it
+carries and whether it is open or closed, so that a bug a person filed by
+hand is not filed again ([QA](#qa)). A factory-error report is a third
+exception, though not a read: it is filed against the busybees repository,
+not this one (see
+[`scheduler.report_factory_errors`](configuration.md#scheduler)).
+Adding a criterion to a running factory hides everything that does not
+already satisfy it. Set `assignee` in a repository full of unassigned `bees`
+issues and every one of them disappears in one commit.
 `bees doctor` reports that case with both counts:
 
 ```
@@ -1135,10 +1141,14 @@ label `bees:needs-human` by hand has no such record, and the view says so
 rather than inventing one. The comment mentions everyone in
 [`scheduler.notify`](configuration.md#notifying-a-person), since a comment
 posted under your own account notifies nobody by itself. This is the only
-comment the orchestrator itself writes. Roles do comment on GitHub, but only
-to people: the developer replying to your feedback, the product manager
-replying to feedback and feature issues or asking a `bees:question`, always
-tagged `<!-- bees:<role> -->`. Everything between roles stays in the mailbox.
+comment the orchestrator itself writes in this repository: the other one it
+writes goes to the busybees repository, on a factory-error report that
+duplicates an issue already there (see
+[`scheduler.report_factory_errors`](configuration.md#scheduler)). Roles do
+comment on GitHub, but only to people: the developer replying to your
+feedback, the product manager replying to feedback and feature issues or
+asking a `bees:question`, always tagged `<!-- bees:<role> -->`. Everything
+between roles stays in the mailbox.
 The reviewer's last feedback, if any, is there (`bees mail list --issue N`),
 and the full transcripts are under `<state_dir>/sessions/`.
 
@@ -1185,11 +1195,14 @@ then:
 
 - files a `bees:bug` issue in triage for every defect it reproduced itself,
   with reproduction steps, expected against actual behaviour, severity, and
-  the command it ran with the output it got, after searching the existing
-  issues, closed as well as open. It comments on an open duplicate instead of
-  filing another, and opens a new bug linking to a closed one it has
-  reproduced again. A clean batch is a good result: QA files nothing and says
-  so;
+  the command it ran with the output it got. It files with `file_bug`, which
+  scores the report against every issue in the repository, open and closed,
+  and refuses it when one of them already looks like the same bug: QA gets the
+  ranked candidates back and comments on an open duplicate instead of filing
+  another. It files anyway, with `override` and its reasons in the body, when
+  the match is a closed issue it has reproduced again or none of the
+  candidates is the same defect. A clean batch is a good result: QA files
+  nothing and says so;
 - sends the product manager one report by mail: what was tested, what works,
   the bugs filed, and product-level observations, even when it found nothing. A
   run that reports success without the report is treated as a failed run.
@@ -1212,7 +1225,10 @@ The developer, the reviewer and QA all file bugs. They always go in as
 `bees` + `bees:bug` + `bees:triage`, in the milestone of the issue they were
 found on, so they flow through the project manager like any other work item.
 Developers and reviewers only file bugs they notice outside the scope of what
-they are working on. They do not fix them in passing.
+they are working on. They do not fix them in passing. QA files through
+`file_bug`, which refuses a bug the repository already reports; the developer
+and the reviewer file with `issue_create`, which checks nothing, because they
+are reporting what they ran into in code they were already reading.
 
 ## Features, sub-issues and milestones
 

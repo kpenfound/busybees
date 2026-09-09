@@ -5,9 +5,10 @@
 // The server is the same code the CLI runs: mail_send/mail_list go through
 // internal/mail, issue_create/issue_link through internal/issues and done
 // through session.Report. The GitHub tools (issue_view, pr_view, comment,
-// issue_edit_body, issue_set_state, issue_question, submit_review) go through a `gh` client
-// and enforce the factory's rules — the visibility filter, the comment
-// marker, who owns which issue — instead of restating them in a prompt.
+// issue_edit_body, issue_set_state, issue_question, submit_review, file_bug)
+// go through a `gh` client and enforce the factory's rules — the visibility
+// filter, the comment marker, who owns which issue, the duplicate check
+// behind a bug report — instead of restating them in a prompt.
 // report_factory_error queues a draft through internal/feedback when
 // scheduler.report_factory_errors is on, and says that it recorded nothing
 // when it is off. It

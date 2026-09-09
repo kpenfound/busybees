@@ -191,7 +191,7 @@ developer sessions make. A classic token with the `repo` scope also works.
 With [`scheduler.report_factory_errors`](#scheduler) on, the same token files
 the factory-error reports against `kpenfound/busybees`, so a fine-grained
 token scoped to your repository alone leaves them in the queue: give it issue
-write on that repository too, or leave the key off. The
+write on `kpenfound/busybees` too, or leave the key off. The
 token has to authenticate as a user, because `login` is compared with the
 account GitHub says the token belongs to.
 

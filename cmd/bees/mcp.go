@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/duplicates"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/issues"
 	"github.com/kpenfound/busybees/internal/mcpserver"
@@ -369,4 +370,13 @@ func (b *backend) SubmitReview(ctx context.Context, number int, event, body stri
 		return err
 	}
 	return b.gh.SubmitReview(ctx, number, event, body)
+}
+
+// DuplicateCandidates is the duplicate check behind file_bug: every issue in
+// the repository, open and closed, scored against the one about to be filed.
+func (b *backend) DuplicateCandidates(ctx context.Context, title, body string) ([]duplicates.Match, error) {
+	if err := b.load(ctx); err != nil {
+		return nil, err
+	}
+	return duplicates.Find(ctx, b.gh, title, body)
 }
