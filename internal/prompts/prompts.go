@@ -181,6 +181,31 @@ type Data struct {
 	// Blockers maps an issue number to the prerequisites it declares that
 	// are still open (project manager).
 	Blockers map[int][]int
+	// Attempts are the best-of-N attempts an assembler session picks the
+	// result from, one per attempt branch, in attempt order. Set only for
+	// the developer's assembler task (developer_assemble).
+	Attempts []Attempt
+}
+
+// Attempt is what one best-of-N attempt came to, as the assembler is told
+// it: the branch it worked on, how many commits that branch carries beyond
+// the base branch, and what its session reported. Candidate is false for an
+// attempt with nothing to read — a session that could not be run, or one
+// that pushed no commits — so the assembler never mistakes an empty branch
+// for a solution.
+type Attempt struct {
+	Branch string
+	// Commits is how many commits the branch carries that the base branch
+	// does not.
+	Commits int
+	// Outcome is the status the session reported, or "failed" with Note
+	// saying why, when it reported nothing or could not be run.
+	Outcome string
+	Note    string
+	// PR is the pull request the attempt opened on its own branch, if it
+	// opened one; deleting the branch closes it.
+	PR        int
+	Candidate bool
 }
 
 // ModeRequested is Data.Mode for a reviewer session on a pull request a

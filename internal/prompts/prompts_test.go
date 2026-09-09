@@ -85,7 +85,7 @@ func TestConsolidateNotesParagraph(t *testing.T) {
 		"decisions, commands and gotchas. Do it before you report your outcome, in addition to\n" +
 		"your normal work.\n"
 
-	for _, name := range append(append([]string{}, config.Roles...), "reviewer_checks") {
+	for _, name := range append(append([]string{}, config.Roles...), "reviewer_checks", "developer_assemble") {
 		off, err := TaskNamed(config.RoleDeveloper, name, sample())
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
@@ -1481,6 +1481,12 @@ func TestAnInterruptedSessionIsReportedAtTheTopOfTheTask(t *testing.T) {
 			want:    []string{"It reported no verdict, so this round starts over"},
 			unwant:  []string{"The branch may carry work it never reported"},
 		},
+		{
+			name: "developer_assemble", role: config.RoleDeveloper,
+			summary: "developer session that ran for this issue before you was stopped after 3 turns",
+			want:    []string{"The branch may carry work it never reported"},
+			unwant:  []string{"this round starts over"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1924,5 +1930,102 @@ func TestDeveloperIsToldItsStackBase(t *testing.T) {
 	flow = flowed(plain)
 	if !strings.Contains(flow, "based on `main`.") || strings.Contains(flow, "stacked") || !strings.Contains(flow, "in your mail, merge the default branch, push") {
 		t.Errorf("unstacked developer task changed:\n%s", plain)
+	}
+}
+
+// assembling is sample() for the developer's assembler task: three
+// best-of-N attempts, one of which pushed nothing.
+func assembling() Data {
+	d := sample()
+	d.PR = nil
+	d.Attempts = []Attempt{
+		{Branch: "bees/issue-4-attempt-1", Commits: 3, Outcome: "pr-opened", PR: 41, Candidate: true},
+		{Branch: "bees/issue-4-attempt-2", Commits: 0, Outcome: "failed", Note: "session timed out", Candidate: false},
+		{Branch: "bees/issue-4-attempt-3", Commits: 1, Outcome: "failed", Note: "tests fail\non main", Candidate: true},
+	}
+	return d
+}
+
+// The assembler's task lists every attempt with what it came to, marks the
+// ones with nothing to read as not candidates, and sends the result to the
+// issue's own branch and pull request the way the developer's task does:
+// the review that follows must not be able to tell the two apart.
+func TestAssemblerTaskListsTheAttempts(t *testing.T) {
+	task, err := TaskNamed(config.RoleDeveloper, "developer_assemble", assembling())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"# Task: assemble the result for issue #4 from 3 attempts",
+		"3 developer sessions implemented this issue independently",
+		"## Issue #4: Add thing",
+		"part of feature #12: Exports",
+		"- `bees/issue-4-attempt-1`: 3 commits on top of `main`, reported `pr-opened` (pull request #41)",
+		"- `bees/issue-4-attempt-2`: **not a candidate** — pushed no commits, reported `failed`: session timed out",
+		"- `bees/issue-4-attempt-3`: 1 commit on top of `main`, reported `failed`: tests fail on main",
+		"git log --stat origin/main..origin/<branch>",
+		"git reset --hard origin/<branch>",
+		"You are on branch `bees/issue-4`, based on `main`.",
+		"merge `origin/main`",
+		"gh pr create -R acme/widgets --base main --head bees/issue-4 --label \"bees\" --assignee \"kyle\"",
+		"`Closes #4`",
+		"## Assembled from",
+		"`done` (`status: pr-opened`, `pr: <number>`)",
+		"`status: question`",
+		"remember this",
+	} {
+		if !strings.Contains(flowed(task), want) {
+			t.Errorf("assembler task missing %q:\n%s", want, task)
+		}
+	}
+	for _, unwant := range []string{"<no value>", "Implement the issue", "Existing pull request"} {
+		if strings.Contains(task, unwant) {
+			t.Errorf("assembler task contains %q:\n%s", unwant, task)
+		}
+	}
+	// A candidate line never says "not a candidate", and the line for an
+	// attempt that pushed nothing never offers a commit count.
+	for _, line := range strings.Split(task, "\n") {
+		switch {
+		case strings.HasPrefix(line, "- `bees/issue-4-attempt-1`"), strings.HasPrefix(line, "- `bees/issue-4-attempt-3`"):
+			if strings.Contains(line, "not a candidate") {
+				t.Errorf("a candidate is marked as none: %s", line)
+			}
+		case strings.HasPrefix(line, "- `bees/issue-4-attempt-2`"):
+			if strings.Contains(line, "commit") && !strings.Contains(line, "pushed no commits") {
+				t.Errorf("an empty attempt is offered with commits: %s", line)
+			}
+		}
+	}
+}
+
+// A stacked work item's assembler merges and targets the predecessor's
+// branch, as the developer's task does; an unstacked one never mentions
+// stacking.
+func TestAssemblerTaskFollowsTheBaseBranch(t *testing.T) {
+	plain, err := TaskNamed(config.RoleDeveloper, "developer_assemble", assembling())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(plain, "stacked") {
+		t.Errorf("an unstacked assembler is told about stacking:\n%s", plain)
+	}
+	d := assembling()
+	d.BaseBranch = "bees/issue-3"
+	stacked, err := TaskNamed(config.RoleDeveloper, "developer_assemble", d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"based on `bees/issue-3`",
+		"the pull request is stacked on it and targets that branch",
+		"Merge `bees/issue-3` into this branch, never `main` directly",
+		"origin/bees/issue-3..origin/<branch>",
+		"merge `origin/bees/issue-3`",
+		"--base bees/issue-3 --head bees/issue-4",
+	} {
+		if !strings.Contains(flowed(stacked), want) {
+			t.Errorf("stacked assembler task missing %q:\n%s", want, stacked)
+		}
 	}
 }
