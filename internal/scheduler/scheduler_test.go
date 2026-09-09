@@ -36,7 +36,8 @@ import (
 // The flags that steer the fake (FAKE_CLAUDE, FAKE_DEV_HANG, FAKE_DEV_FAIL,
 // FAKE_DEV_MAIL_TO, FAKE_REVIEW_ALWAYS_CHANGES, FAKE_REVIEW_FAIL, FAKE_COST, FAKE_SIGNAL,
 // FAKE_WAIT_FOR, FAKE_LIMIT, FAKE_LIMIT_WITH_OUTCOME, FAKE_RESULT_TEXT, FAKE_COPY_ISSUE_STATE,
-// FAKE_TRIAGE, FAKE_FILE_ISSUE, FAKE_RESUME_FAIL)
+// FAKE_TRIAGE, FAKE_FILE_ISSUE, FAKE_RESUME_FAIL, FAKE_REVIEW_NO_SUBMIT,
+// FAKE_REVIEW_MISMATCH, FAKE_QA_NO_REPORT, FAKE_QA_OTHER_MAIL)
 // reach it through the ordinary environment, so they must NOT start with
 // BEES_: the runner strips inherited BEES_* variables from every session.
 func TestMain(m *testing.M) {
@@ -263,6 +264,15 @@ func fakeClaude() {
 			case strings.Contains(string(prompt), "That is this pull request's author"):
 				event = "comment"
 			}
+			// FAKE_REVIEW_MISMATCH submits the other verdict and reports this
+			// one: a session whose status does not match what it did.
+			if os.Getenv("FAKE_REVIEW_MISMATCH") == "1" {
+				if event == "request-changes" {
+					event = "approve"
+				} else {
+					event = "request-changes"
+				}
+			}
 			body := "implementation: pass — does what the description says\n\n<!-- bees:reviewer -->"
 			c := github.New(os.Getenv(session.EnvRepo))
 			c.ExecStdin = func(_ context.Context, stdin string, args ...string) ([]byte, error) {
@@ -272,8 +282,18 @@ func fakeClaude() {
 				}
 				return nil, os.WriteFile(filepath.Join(sessionDir, "review.json"), rec, 0o644)
 			}
-			if err := c.SubmitReview(context.Background(), pr, event, body); err != nil {
-				fail(err)
+			// FAKE_REVIEW_NO_SUBMIT reports the verdict without submitting
+			// anything, the way a session that hallucinated its status does.
+			if os.Getenv("FAKE_REVIEW_NO_SUBMIT") != "1" {
+				if err := c.SubmitReview(context.Background(), pr, event, body); err != nil {
+					fail(err)
+				}
+				// The scheduler reads the review back off GitHub when the
+				// session ends, and the override above never reached the
+				// harness's fake: record the state GitHub would hold.
+				if err := requestGHEdit(stateDir, ghEdit{Number: pr, Review: reviewStates[event]}); err != nil {
+					fail(err)
+				}
 			}
 			outcome = session.Outcome{Status: status, Note: "one review submitted"}
 			break
@@ -331,6 +351,23 @@ func fakeClaude() {
 				fail(err)
 			}
 		}
+		// QA's prompt requires one report to the product manager every
+		// session, and the scheduler checks for it when the session ends: a
+		// QA session that reports `done` without sending it is a claim
+		// nothing backs, which is what FAKE_QA_NO_REPORT produces.
+		if role == config.RoleQA && os.Getenv("FAKE_QA_NO_REPORT") != "1" {
+			if _, err := box.Send(mail.Message{From: role, To: config.RoleProductManager, Subject: "QA report", Body: "tested the merged pull requests; nothing broken"}); err != nil {
+				fail(err)
+			}
+		}
+		// FAKE_QA_OTHER_MAIL writes to the product manager as another role
+		// while QA runs, the way a project manager session running alongside
+		// it does: mail QA's report cannot be confused with.
+		if role == config.RoleQA && os.Getenv("FAKE_QA_OTHER_MAIL") == "1" {
+			if _, err := box.Send(mail.Message{From: config.RoleProjectManager, To: config.RoleProductManager, Subject: "A question about #4", Body: "which milestone?"}); err != nil {
+				fail(err)
+			}
+		}
 		outcome = session.Outcome{Status: OutcomeDone, Note: "ok"}
 	}
 	if err := session.WriteOutcome(sessionDir, outcome); err != nil {
@@ -382,6 +419,9 @@ type fakeGH struct {
 	merged   []int
 	// activity is raw JSON served for api pulls/N/reviews, pulls/N/comments, issues/N/comments
 	activity map[string]string
+	// reviews are the reviews sessions submitted, per pull request, served
+	// from the reviews endpoint alongside any activity fixture for it.
+	reviews map[int][]submittedReview
 	// checks is a queue of responses for `pr checks --required`; the last one
 	// repeats. checksAll is the same for the unrequired call, which the
 	// scheduler only makes when the required list came back empty.
@@ -445,7 +485,31 @@ type ghEdit struct {
 	Title  string   `json:"title,omitempty"`
 	Add    []string `json:"add,omitempty"`
 	Remove []string `json:"remove,omitempty"`
+	// Review is the state of a review the session submitted on the pull
+	// request — APPROVED, CHANGES_REQUESTED or COMMENTED — which the fake
+	// serves from the reviews endpoint. A review edit changes no labels.
+	Review string `json:"review,omitempty"`
 }
+
+// submittedReview is one review the fake GitHub holds on a pull request: the
+// state and when it was submitted, which is all the scheduler reads.
+type submittedReview struct {
+	State string
+	At    time.Time
+}
+
+// reviewsPath matches the reviews endpoint of a pull request and returns its
+// number.
+func reviewsPath(path string) (int, bool) {
+	var n int
+	if _, err := fmt.Sscanf(path, "repos/acme/widgets/pulls/%d/reviews", &n); err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+// reviewStates maps a gh review event to the state GitHub records for it.
+var reviewStates = map[string]string{"approve": "APPROVED", "request-changes": "CHANGES_REQUESTED", "comment": "COMMENTED"}
 
 // requestGHEdit records one edit for the fake GitHub to apply. The file name
 // carries the time so edits are applied in the order they were asked for.
@@ -482,6 +546,12 @@ func (f *fakeGH) applyGHEdits() {
 		_ = os.Remove(path)
 		var e ghEdit
 		if err := json.Unmarshal(b, &e); err != nil {
+			continue
+		}
+		if e.Review != "" {
+			// Stamped as it is applied, which is after the session submitted
+			// it and before the scheduler reads it back.
+			f.reviews[e.Number] = append(f.reviews[e.Number], submittedReview{State: e.Review, At: time.Now()})
 			continue
 		}
 		i, ok := f.issues[e.Number]
@@ -669,6 +739,21 @@ func (f *fakeGH) exec(ctx context.Context, args ...string) ([]byte, error) {
 			return []byte(`{"data":{"repository":{"issue":{"parent":null}}}}`), nil
 		}
 		path := args[len(args)-1]
+		if n, ok := reviewsPath(path); ok && len(f.reviews[n]) > 0 {
+			// One page per source, which --slurp flattens: the fixture, if the
+			// test wrote one, and the reviews sessions have submitted.
+			pages := []string{}
+			if body, ok := f.activity[path]; ok {
+				pages = append(pages, body)
+			}
+			var out []string
+			for i, r := range f.reviews[n] {
+				out = append(out, fmt.Sprintf(`{"id":%d,"user":{"login":"kyle"},"body":"reviewed\n\n<!-- bees:reviewer -->","state":%q,"submitted_at":%q}`,
+					9000+i, r.State, r.At.Format(time.RFC3339)))
+			}
+			pages = append(pages, "["+strings.Join(out, ",")+"]")
+			return []byte("[" + strings.Join(pages, ",") + "]"), nil
+		}
 		if body, ok := f.activity[path]; ok {
 			return []byte("[" + body + "]"), nil // --slurp wraps pages in an array
 		}
@@ -887,6 +972,7 @@ func newHarnessAt(t *testing.T, toml string, now time.Time) *harness {
 		history:   map[int][]string{},
 		comments:  map[int][]string{},
 		activity:  map[string]string{},
+		reviews:   map[int][]submittedReview{},
 		subIssues: map[int]github.SubIssueSummary{},
 		errFor:    map[string]error{},
 	}
@@ -1101,9 +1187,11 @@ func TestFullDeveloperReviewLoop(t *testing.T) {
 	if !strings.Contains(string(prompt), "#2: Human filed this") {
 		t.Fatalf("product manager prompt:\n%s", prompt)
 	}
-	// Mail was delivered (marked read) and bookkeeping recorded round 2.
+	// Mail was delivered (marked read) and bookkeeping recorded round 2. The
+	// QA session's report to the product manager is the exception: QA ran
+	// after it, and the next product manager session is what reads it.
 	unread, _ := h.box.List(mail.Filter{UnreadOnly: true})
-	if len(unread) != 0 {
+	if len(unread) != 1 || unread[0].From != config.RoleQA || unread[0].To != config.RoleProductManager {
 		t.Fatalf("unread mail left: %+v", unread)
 	}
 	if is, _ := h.store.Issue(1); is.Round != 2 || is.PR != fakePR {

@@ -641,12 +641,10 @@ stateDiagram-v2
   as approved, and with `auto_merge` the worker goes straight from develop to
   checks. See [Checks mode](roles.md#checks-mode-a-failing-check) and
   [Merging](workflow.md#merging).
-- **Verification.** An outcome that implies a side effect is checked:
-  `pr-opened` and `pr-updated` must correspond to an open pull request on the
-  branch (looked up by the reported number, else by branch), `question` must
-  have produced mail to the project manager during the session, and
-  `changes-requested` mail to the developer. A claim without its side effect
-  is escalated rather than trusted.
+- **Verification.** Every outcome that implies a side effect is checked before
+  the worker acts on it, and a claim without its side effect is escalated
+  rather than trusted. See
+  [What the orchestrator checks](#what-the-orchestrator-checks).
 - **Cost.** Between stages the worker compares what the issue has cost, every
   session included, with `scheduler.max_cost_per_issue`, and escalates when it
   is over. A running session is never interrupted on cost.
@@ -662,6 +660,58 @@ stateDiagram-v2
 Singleton roles share one path: a detached worktree on the default branch, one
 session, delivered mail marked read, `last_run` recorded in
 `<state_dir>/<role>.json`.
+
+## What the orchestrator checks
+
+Every session ends by reporting an outcome, and an outcome is a claim: the
+session says what it did. Where the claim implies a side effect somebody else
+can look at, the orchestrator looks, and a claim it cannot see counts as a
+failure rather than as work done. Where the claim is a judgment, it is the
+session's to make and nothing re-derives it.
+
+Checked, in Go, when the session ends:
+
+- a developer's `pr-opened` or `pr-updated`: an open pull request exists on the
+  issue's branch, looked up by the number the session reported, else by the
+  branch. None escalates the issue.
+- a developer's `question`: mail reached the project manager while the session
+  ran. None escalates the issue.
+- a reviewer's `changes-requested` in the review loop: mail reached the
+  developer while the session ran. None escalates the issue.
+- a requested review's `approved` or `changes-requested`: GitHub holds a review
+  on the pull request, submitted since the session started, whose state matches
+  the verdict. `approved` accepts an approval or a comment review, because
+  GitHub refuses an approval from a pull request's own author and the reviewer
+  is told to comment in its place. No matching review fails the review and
+  backs the pull request off for five poll intervals; there is no issue to
+  escalate.
+- QA's outcome: mail reached the product manager while the session ran. QA owes
+  a report every session, a clean pass included, and skips it only when it
+  could not test at all, which is the `failed` outcome. A missing report fails
+  the run and backs QA off for five poll intervals.
+- every session's comments: the marker audit, under
+  [The scheduler loop](#the-scheduler-loop).
+
+A reviewer's `approved` in the review loop has nothing to check, because the
+orchestrator performs the approval itself: it labels the pull request and the
+issue, and requests a review from `scheduler.notify`.
+
+Not checked, because there is nothing to look at afterwards:
+
+- a tool call itself. Each of `issue_create`, `issue_link`, `comment`,
+  `issue_edit_body`, `issue_set_state`, `issue_question`, `submit_review` and
+  `mail_send` does its work inside the call and returns its error to the
+  session there, so the call is the ground truth at the moment it runs. What
+  is checked above is the outcome claiming one was made, not the call.
+- the product manager's and the project manager's outcomes. No particular write
+  is owed: their work is issues that may or may not need writing, and `done`
+  and `idle` are both honest with nothing changed on GitHub.
+- what any role decided. Whether an issue is detailed enough to build, how big
+  it is, what a feature breaks into, whether a diff passes a review stage:
+  these are the judgment the session exists to make, and the label a prompt
+  moves is that decision rather than a claim about one. The mechanical half of
+  such a move is scheduler-owned where one exists: `bees:question` is removed
+  by the pass that sees a person answer, not by the role that asked.
 
 ## Degraded operations
 

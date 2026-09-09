@@ -946,22 +946,15 @@ func (a Activity) IsBee() bool { _, ok := BeeRole(a.Body); return ok }
 func (c *Client) PRActivity(ctx context.Context, number int, since time.Time) ([]Activity, error) {
 	var out []Activity
 
-	var reviews []struct {
-		ID          int64     `json:"id"`
-		User        Author    `json:"user"`
-		Body        string    `json:"body"`
-		State       string    `json:"state"`
-		HTMLURL     string    `json:"html_url"`
-		SubmittedAt time.Time `json:"submitted_at"`
-	}
-	if err := c.apiList(ctx, fmt.Sprintf("repos/%s/pulls/%d/reviews", c.Repo, number), &reviews); err != nil {
+	reviews, err := c.prReviews(ctx, number)
+	if err != nil {
 		return nil, err
 	}
 	for _, r := range reviews {
 		if r.State == "PENDING" || (r.State == "APPROVED" && strings.TrimSpace(r.Body) == "") || (r.State == "COMMENTED" && strings.TrimSpace(r.Body) == "") {
 			continue
 		}
-		out = append(out, Activity{Kind: "review", ID: r.ID, Author: r.User.Login, Body: r.Body, State: r.State, URL: r.HTMLURL, CreatedAt: r.SubmittedAt})
+		out = append(out, r)
 	}
 
 	var reviewComments []struct {
@@ -1021,6 +1014,51 @@ func (c *Client) CommentsSince(ctx context.Context, number int, since time.Time)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
+	return out, nil
+}
+
+// ReviewsSince returns the reviews submitted on a pull request after since,
+// oldest first, by everybody and whatever they say.
+//
+// It is PRActivity's reviews without its filters, as CommentsSince is
+// IssueActivity without its filter: the caller is looking for the factory's
+// own review rather than for a person's, so neither the marker, nor the login
+// the factory acts as, nor an empty body excludes anything here. A PENDING
+// review is still dropped: it is a draft nobody has submitted.
+func (c *Client) ReviewsSince(ctx context.Context, number int, since time.Time) ([]Activity, error) {
+	reviews, err := c.prReviews(ctx, number)
+	if err != nil {
+		return nil, err
+	}
+	var out []Activity
+	for _, r := range reviews {
+		if r.State == "PENDING" || !r.CreatedAt.After(since) {
+			continue
+		}
+		out = append(out, r)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
+	return out, nil
+}
+
+// prReviews reads the reviews on a pull request, unfiltered and in the order
+// GitHub returns them.
+func (c *Client) prReviews(ctx context.Context, number int) ([]Activity, error) {
+	var reviews []struct {
+		ID          int64     `json:"id"`
+		User        Author    `json:"user"`
+		Body        string    `json:"body"`
+		State       string    `json:"state"`
+		HTMLURL     string    `json:"html_url"`
+		SubmittedAt time.Time `json:"submitted_at"`
+	}
+	if err := c.apiList(ctx, fmt.Sprintf("repos/%s/pulls/%d/reviews", c.Repo, number), &reviews); err != nil {
+		return nil, err
+	}
+	out := make([]Activity, 0, len(reviews))
+	for _, r := range reviews {
+		out = append(out, Activity{Kind: "review", ID: r.ID, Author: r.User.Login, Body: r.Body, State: r.State, URL: r.HTMLURL, CreatedAt: r.SubmittedAt})
+	}
 	return out, nil
 }
 

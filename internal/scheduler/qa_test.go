@@ -101,3 +101,49 @@ func TestQAIntervalStillBoundsUnpromptedRuns(t *testing.T) {
 		t.Fatalf("qa sessions once qa_interval has elapsed: %d, want 2", got)
 	}
 }
+
+// QA's report to the product manager is the one side effect its prompt
+// requires of every session, a clean pass included: it skips the report only
+// when it could not test at all, which is `failed`. So `done` without the
+// report is a claim nothing backs, the way a developer's `question` with no
+// mail behind it is, and the run fails rather than counting as a QA pass.
+func TestAQASessionWithoutItsReportFails(t *testing.T) {
+	for name, report := range map[string]bool{"with its report": true, "without its report": false} {
+		t.Run(name, func(t *testing.T) {
+			if !report {
+				t.Setenv("FAKE_QA_NO_REPORT", "1")
+				// Another role writing to the product manager while QA runs is
+				// not QA's report: only mail QA sent itself settles the claim.
+				t.Setenv("FAKE_QA_OTHER_MAIL", "1")
+			}
+			h := newHarnessAt(t, qaMailTOML, time.Now())
+			merged := h.clock.now().Add(-time.Minute)
+			h.gh.prs[300] = &github.PR{Number: 300, Title: "Merged", State: "MERGED", HeadRefName: "bees/issue-9",
+				Labels: []github.Label{{Name: "bees"}}, MergedAt: &merged}
+			runPass(t, h)
+
+			if got := len(h.sessions(config.RoleQA)); got != 1 {
+				t.Fatalf("qa sessions: %d, want 1", got)
+			}
+			sent, _ := h.box.List(mail.Filter{To: config.RoleProductManager, From: config.RoleQA})
+			if got := len(sent) > 0; got != report {
+				t.Fatalf("the session sent a report: %v, want %v", got, report)
+			}
+			if all, _ := h.box.List(mail.Filter{To: config.RoleProductManager}); len(all) != 1 {
+				t.Fatalf("the product manager received %d messages, want 1", len(all))
+			}
+			logs := h.logs.String()
+			failed := strings.Contains(logs, "singleton role failed") && strings.Contains(logs, "sent the product manager no report")
+			if failed == report {
+				t.Errorf("the run failed: %v, want %v:\n%s", failed, !report, logs)
+			}
+			// A failed singleton is backed off five poll intervals rather than
+			// one, so an unverified QA run is not retried on the next pass.
+			until, ok := h.sched.backoffUntil(config.RoleQA)
+			want := h.clock.now().Add(h.cfg.Scheduler.PollInterval.Duration)
+			if !ok || until.After(want) == report {
+				t.Errorf("backoff until %v (one interval ends %v), report=%v", until, want, report)
+			}
+		})
+	}
+}

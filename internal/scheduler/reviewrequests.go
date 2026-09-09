@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/github"
@@ -217,6 +218,7 @@ func (s *Scheduler) runRequestedReview(ctx context.Context, pr github.PR, w *sta
 	stages := s.cfg.ReviewStages()
 	name := fmt.Sprintf("reviewer-requested-pr-%d", pr.Number)
 	log.Info("requested review session", "mail", len(inbox))
+	started := s.now()
 	res, err := s.runSessionWithRetry(ctx, sessionSpec{
 		role: config.RoleReviewer, name: name, task: "reviewer_requested", workDir: ws.RepoDir, worker: w,
 		// Mode switches the reviewer's prompts to the requested review; ActsAs
@@ -231,9 +233,57 @@ func (s *Scheduler) runRequestedReview(ctx context.Context, pr github.PR, w *sta
 	status, note := outcomeOf(res)
 	switch status {
 	case OutcomeApproved, OutcomeChangesRequested:
+		found, err := s.reviewSince(ctx, pr.Number, status, started)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return fmt.Errorf("the reviewer reported `%s` on pull request #%d but GitHub shows no matching review since the session started: %s", status, pr.Number, note)
+		}
 		log.Info("requested review finished", "outcome", status, "note", oneLine(note, 200))
 		return nil
 	default:
 		return errors.New(s.sessionFailure(config.RoleReviewer, res, status, note))
 	}
+}
+
+// reviewSince reports whether GitHub records a review matching the verdict a
+// requested-review session claims it submitted, since that session started.
+//
+// It is sentSince for a GitHub review: the normal review loop confirms a
+// changes-requested claim by finding the mail the reviewer says it sent, and a
+// requested review has no developer to mail — its whole output is one review
+// on the pull request, so the review itself is what there is to confirm.
+//
+// Which states count:
+//
+//   - changes-requested is CHANGES_REQUESTED, and nothing else.
+//   - approved is APPROVED or COMMENTED. GitHub refuses an approval from a
+//     pull request's own author, and the reviewer's task tells it to submit a
+//     comment review in its place and still report `approved` — which is the
+//     common case on a shared account, where the factory is every author.
+//
+// The review is matched on its state and its time alone, not on the marker or
+// the login that submitted it: a review a person submitted during the session's
+// window would satisfy the check, which costs nothing, while a review the
+// reviewer submitted with `gh` rather than `submit_review` carries no marker
+// and would otherwise fail a real review. A read that fails is a failure, as
+// locatePR's is: an unverified claim is not a verified one.
+func (s *Scheduler) reviewSince(ctx context.Context, pr int, status string, started time.Time) (bool, error) {
+	// GitHub records submitted_at to the second, so a review submitted in the
+	// same second the session started reads as older than it. sentSince gives
+	// the mailbox the same second of slack, for the same reason.
+	reviews, err := s.gh.ReviewsSince(ctx, pr, started.Add(-time.Second))
+	if err != nil {
+		return false, err
+	}
+	for _, r := range reviews {
+		switch {
+		case status == OutcomeChangesRequested && r.State == "CHANGES_REQUESTED":
+			return true, nil
+		case status == OutcomeApproved && (r.State == "APPROVED" || r.State == "COMMENTED"):
+			return true, nil
+		}
+	}
+	return false, nil
 }

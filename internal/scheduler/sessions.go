@@ -475,10 +475,17 @@ func (s *Scheduler) hasUnreadMail(role string, issue, pr int) bool {
 }
 
 // sentSince reports whether role received a message about issue/pr created
-// at or after t. Used to verify that a session which claims to have asked a
-// question or requested changes actually sent the mail.
+// at or after t, from anybody. Used to verify that a session which claims to
+// have asked a question or requested changes actually sent the mail.
 func (s *Scheduler) sentSince(role string, issue, pr int, t time.Time) bool {
-	msgs, err := s.mail.List(mail.Filter{To: role})
+	return s.sentSinceFrom("", role, issue, pr, t)
+}
+
+// sentSinceFrom is sentSince restricted to one sender, for a claim only that
+// role's own mail can settle: a role two others write to would otherwise be
+// verified by somebody else's message.
+func (s *Scheduler) sentSinceFrom(from, role string, issue, pr int, t time.Time) bool {
+	msgs, err := s.mail.List(mail.Filter{To: role, From: from})
 	if err != nil {
 		return false
 	}

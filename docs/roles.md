@@ -470,10 +470,13 @@ request, pushes nothing and changes no label.
 mail addressed to `reviewer` about the pull request.
 
 **Outcomes.** `approved` after an approval or a comment in its place,
-`changes-requested` after a request for changes: both are logged, and
-nothing is labelled, because there is no issue. `failed`, or no outcome, is
-logged and the pull request is not tried again for five poll intervals; a
-person adds the label again to ask for another pass, and under
+`changes-requested` after a request for changes. Both are checked against the
+pull request's reviews before they count as a pass: a verdict GitHub holds no
+matching review for is a failure (see
+[What the orchestrator checks](architecture.md#what-the-orchestrator-checks)).
+Nothing is labelled either way, because there is no issue. `failed`, or no
+outcome, is logged and the pull request is not tried again for five poll
+intervals; a person adds the label again to ask for another pass, and under
 `review_assigned_prs` a push does the same.
 
 ### Review stages (`roles.reviewer.stages`)
@@ -622,8 +625,10 @@ Receives mail addressed to `qa`, in practice from a person (`bees mail send
 `qa_interval` says.
 
 **Outcomes.** `done` with a one-line summary, `failed` when it could not test,
-with why. The orchestrator records the run time either way. When QA runs and
-what it looks at is under [QA](workflow.md#qa).
+with why. The orchestrator records the run time either way, and checks that
+`done` has the report behind it: a session that sent none is a failure (see
+[What the orchestrator checks](architecture.md#what-the-orchestrator-checks)).
+When QA runs and what it looks at is under [QA](workflow.md#qa).
 
 ## Customising a role
 
