@@ -4,6 +4,8 @@
 // Layout of <state_dir>:
 //
 //	mail/<role>/*.json   local mailbox (see package mail)
+//	feedback/<id>.json   drafts of factory-error reports written by
+//	                     report_factory_error (see package feedback)
 //	notes/<role>.md      per-role notes, the roles' only long-term memory
 //	notes/archive/       notes files replaced by `bees notes reset`
 //	sessions/<id>/       one directory per session (prompts, transcript, result)
@@ -54,6 +56,8 @@ const readmeText = `# busybees state directory
 This directory is managed by ` + "`bees`" + `. It holds:
 
 - mail/      the local mailbox roles use to talk to each other
+- feedback/  drafts of factory-error reports a role recorded with
+             report_factory_error, waiting to be filed upstream
 - notes/     each role's notes file (their only memory between sessions),
              with archive/ holding the ones ` + "`bees notes reset`" + ` replaced
 - sessions/  prompts, transcripts and results of every session
@@ -69,6 +73,10 @@ of editing its notes file: ` + "`bees notes edit <role>`" + `, or by hand.
 
 // MailDir returns the mailbox directory.
 func (s *Store) MailDir() string { return filepath.Join(s.Dir, "mail") }
+
+// FeedbackDir returns the directory holding factory-error drafts (see
+// package feedback).
+func (s *Store) FeedbackDir() string { return filepath.Join(s.Dir, "feedback") }
 
 // SessionsDir returns the sessions directory.
 func (s *Store) SessionsDir() string { return filepath.Join(s.Dir, "sessions") }
