@@ -21,6 +21,7 @@ default_branch = "trunk"
 
 [scheduler]
 notify = ["kpenfound"]
+report_factory_errors = true
 
 [roles.developer]
 max_size = "s"
@@ -87,6 +88,11 @@ sandbox = "container"
 	}
 	if !strings.Contains(product, "Aim the split at work items of at least `m`") {
 		t.Errorf("product manager prompt does not name the configured min issue size:\n%s", product)
+	}
+	// scheduler.report_factory_errors = true: the common prompt offers the
+	// tool and its scrubbing rule.
+	if !strings.Contains(dev, "### Reporting an error the factory caused") || !strings.Contains(dev, "| `report_factory_error` |") {
+		t.Errorf("developer prompt does not carry scheduler.report_factory_errors:\n%s", dev)
 	}
 }
 
