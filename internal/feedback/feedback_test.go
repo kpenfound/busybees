@@ -100,3 +100,59 @@ func TestListSkipsNonDraftsAndReportsCorruption(t *testing.T) {
 		t.Errorf("List over a corrupt file: %v, want a corrupt draft error", err)
 	}
 }
+
+func TestRemoveDeletesOneDraftAndLeavesTheRest(t *testing.T) {
+	q := Open(filepath.Join(t.TempDir(), "feedback"))
+	kept, err := q.Add(Draft{Role: "developer", Title: "kept", Detail: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	filed, err := q.Add(Draft{Role: "qa", Title: "filed", Detail: "b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := q.Remove(filed.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(q.Root(), filed.ID+".json")); !os.IsNotExist(err) {
+		t.Errorf("the filed draft is still on disk: %v", err)
+	}
+	got, err := q.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != kept.ID {
+		t.Fatalf("List = %+v, want only %s", got, kept.ID)
+	}
+}
+
+// Removing a draft that is not there is how a consumer that filed one and
+// crashed before removing it recovers, so it is not an error. An id that is
+// not a file name is: a corrupt draft must not delete something else.
+func TestRemoveIsIdempotentAndRefusesAPath(t *testing.T) {
+	dir := t.TempDir()
+	q := Open(filepath.Join(dir, "feedback"))
+	d, err := q.Add(Draft{Role: "developer", Title: "t", Detail: "d"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := q.Remove(d.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.Remove(d.ID); err != nil {
+		t.Errorf("removing a draft twice: %v", err)
+	}
+	if err := q.Remove(""); err == nil {
+		t.Error("Remove(\"\") was accepted")
+	}
+	outside := filepath.Join(dir, "secret.json")
+	if err := os.WriteFile(outside, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.Remove("../secret"); err == nil {
+		t.Error("Remove accepted a path")
+	}
+	if _, err := os.Stat(outside); err != nil {
+		t.Errorf("Remove deleted a file outside the queue: %v", err)
+	}
+}

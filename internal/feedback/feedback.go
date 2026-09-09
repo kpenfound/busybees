@@ -7,9 +7,9 @@
 // Drafts are JSON files under <state_dir>/feedback/<id>.json, one per draft,
 // the same shape as the mailbox (package mail). Nothing here reads GitHub or
 // files anything: a draft's title and detail are scrubbed by the role that
-// wrote it, and the queue only keeps them. Removing a draft, once it has
-// been filed upstream or found to duplicate an existing issue, belongs to
-// the consumer of the queue, which is why the package has no Remove.
+// wrote it, and the queue only keeps them. Filing them upstream belongs to
+// the consumer of the queue, the scheduler's drainFeedbackQueue, which calls
+// Remove once a draft has been filed or added to the issue it duplicates.
 package feedback
 
 import (
@@ -100,6 +100,26 @@ func (q *Queue) List() ([]Draft, error) {
 		return out[i].CreatedAt.Before(out[j].CreatedAt)
 	})
 	return out, nil
+}
+
+// Remove deletes a draft by the ID Add returned. A draft that is not there
+// is not an error: the queue is a directory, and a consumer that filed a
+// draft and crashed before removing it must be able to remove it again.
+func (q *Queue) Remove(id string) error {
+	if id == "" {
+		return errors.New("feedback: a draft id is required")
+	}
+	// An ID is a file name, not a path: Add builds one and List reads it
+	// back from a file it found in the queue directory. Anything else is a
+	// corrupt draft, and deleting whatever it points at is not this
+	// package's job.
+	if strings.ContainsAny(id, `/\`) {
+		return fmt.Errorf("feedback: %q is not a draft id", id)
+	}
+	if err := os.Remove(filepath.Join(q.root, id+".json")); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 func writeDraft(path string, d Draft) error {
