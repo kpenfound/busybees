@@ -574,6 +574,57 @@ issue is being worked, and a pull request that has fallen behind it costs a
 review round. What the session is given and what it reports is on
 [roles.md](roles.md#developer).
 
+## Best of N
+
+With [`best_of_n_by_size`](configuration.md#rolesdeveloper-only-best-of-n) set
+for a work item's size, its first develop round runs as several developer
+attempts instead of one, and an assembler session picks the result that goes
+to review. A size with no entry, or an issue already resuming a review round
+or one whose branch already carries a pull request, gets the single-session
+round [Development](#development) describes: fanning out only ever happens
+on a first round.
+
+The attempts run at once, each in its own worktree and branch,
+`bees/issue-N-attempt-i`, based on whatever branch the round would otherwise
+start from. Each runs the same developer task as an ordinary round, on the
+same issue and the same mail, so all of them are recorded against the issue
+and spend one `max_cost_per_issue` budget together. Because each runs the
+ordinary developer task, an attempt may open its own pull request the way a
+single session would: seeing more than one open pull request for the same
+issue while a fan-out runs is expected, and they close once the fan-out
+cleans up.
+
+Dispatch claims every attempt's slot of `scheduler.max_developers` at once,
+before any of them starts, never one at a time: a worker holding its own
+slot while it waits for the rest could wait forever on another fan-out doing
+the same, so the count is capped to `max_developers` first, and a fan-out
+that cannot claim all its slots at once waits for a later pass instead.
+`bees status` shows the worker's stage as `fan-out` while the attempts run.
+
+Once every attempt has ended, the extra slots go back to the pool before
+anything else happens, and the attempt worktrees are removed. A branch with
+no commits ahead of its base is not a candidate for the result; when none of
+them are, every attempt branch is deleted (closing any pull request an
+attempt opened) and the issue goes to `bees:needs-human`, with what each
+attempt reported.
+
+With at least one candidate, one more developer session runs: the assembler,
+in the worktree on the issue's own branch, stage `assembler`. It is told
+each candidate's branch, how many commits it carries and what its session
+reported, reads the candidates from their branches, and decides what the
+result is, one attempt as it stands or a synthesis built from several. It
+puts that on the issue's own branch and opens the pull request from it
+itself, exactly as a single developer session does. From here the pull
+request goes to review and the checks like any other; nothing downstream can
+tell a fan-out from a single session.
+
+When the assembler finishes, whatever it reported, every attempt branch is
+deleted, on the remote and in the local clone, closing any pull request an
+attempt opened along the way. The one exception is the account-wide session
+limit stopping an attempt or the assembler itself: the factory pauses and
+retries the fan-out later, and the branches stay for that retry instead of
+being deleted mid-pause.
+
 ## Questions
 
 Roles never talk to each other on GitHub. They use a local mailbox in the
