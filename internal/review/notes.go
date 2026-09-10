@@ -295,18 +295,6 @@ func (n *Notes) block() string {
 	return out.String()
 }
 
-// RulesFor lists the rules that apply to findings from one angle of a review
-// of repo, in the order the file writes them.
-func (n *Notes) RulesFor(repo, angle string) []Rule {
-	var out []Rule
-	for _, r := range n.Rules {
-		if matchesPattern(r.Repo, repo) && matchesPattern(r.Angle, angle) {
-			out = append(out, r)
-		}
-	}
-	return out
-}
-
 // Consolidate turns the dismissals that repeat into rules: dismissals of the
 // same repository, angle and category whose reasons read alike are one
 // pattern, and a pattern dismissed MinDismissals times or more is a rule,

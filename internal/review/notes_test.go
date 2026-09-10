@@ -354,19 +354,6 @@ func TestNotesWithNoBlockGetOne(t *testing.T) {
 	}
 }
 
-func TestRulesForAreTheOnesThatNameTheReviewAndTheAngle(t *testing.T) {
-	n := &Notes{Rules: []Rule{
-		{Repo: testRepo, Angle: AngleStyle, Category: "naming", Action: RuleDrop, Text: "here"},
-		{Repo: "acme/gadgets", Angle: AngleStyle, Action: RuleDrop, Text: "another repository"},
-		{Repo: anyValue, Angle: AngleTests, Action: RuleDrop, Text: "another angle"},
-		{Angle: anyValue, Action: RuleDownrank, Text: "every repository, every angle"},
-	}}
-	got := n.RulesFor(testRepo, AngleStyle)
-	if want := []string{"here", "every repository, every angle"}; len(got) != 2 || got[0].Text != want[0] || got[1].Text != want[1] {
-		t.Errorf("RulesFor(%s, %s) = %+v, want the rules saying %q", testRepo, AngleStyle, got, want)
-	}
-}
-
 func TestDismissalsThatReadNothingAlikeAreNotOnePattern(t *testing.T) {
 	path := notesAt(t)
 	// One heading, three dismissals, no two of them about the same thing.
