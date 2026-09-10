@@ -224,6 +224,7 @@ func TestContainerUseEnvironmentRefusedWhenUnusable(t *testing.T) {
 		{"no base image", `{"setup_commands": ["true"]}`, []string{filepath.Join("envs/dev", containerUseDir, containerUseFile), "base_image"}},
 		{"env without a key", `{"base_image": "img", "env": ["=x"]}`, []string{filepath.Join("envs/dev", containerUseDir, containerUseFile), "KEY=VALUE"}},
 		{"env over two lines", `{"base_image": "img", "env": ["A=1\nFROM evil"]}`, []string{filepath.Join("envs/dev", containerUseDir, containerUseFile), "more than one line"}},
+		{"base image over two lines", `{"base_image": "img\nFROM evil"}`, []string{filepath.Join("envs/dev", containerUseDir, containerUseFile), "more than one line"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r, role := containerUseRunner(t, `touch "$BEES_SESSION_DIR/ran"`)
