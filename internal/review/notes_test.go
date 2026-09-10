@@ -366,3 +366,18 @@ func TestRulesForAreTheOnesThatNameTheReviewAndTheAngle(t *testing.T) {
 		t.Errorf("RulesFor(%s, %s) = %+v, want the rules saying %q", testRepo, AngleStyle, got, want)
 	}
 }
+
+func TestDismissalsThatReadNothingAlikeAreNotOnePattern(t *testing.T) {
+	path := notesAt(t)
+	// One heading, three dismissals, no two of them about the same thing.
+	dismiss(t, path, AngleStyle, "naming", "receiver names are short here")
+	dismiss(t, path, AngleStyle, "naming", "the migration guide covers it")
+	dismiss(t, path, AngleStyle, "naming", "nobody reads that log line")
+	n, err := ReadNotes(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if added, _ := n.Consolidate(); len(added) != 0 {
+		t.Errorf("added %+v, want none: three reasons that read nothing alike are three patterns", added)
+	}
+}
