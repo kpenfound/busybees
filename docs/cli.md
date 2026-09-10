@@ -1171,8 +1171,10 @@ set, the assignee; adds the kind label; adds `bees:triage` (or `bees:ready`) to
 work items — feature issues get no state label; resolves the milestone as
 *explicit → parent/related issue's milestone → `filter.milestone`*; and, with
 `--parent`, attaches the issue as a sub-issue (three API calls: parent details,
-create, attach). Bees never create, edit or close milestones themselves;
-inheritance is the only way a milestone gets set by the factory.
+create, attach). Bees never create, edit or close milestones themselves.
+`--milestone` only picks among the ones people made, and the one role that
+passes it is the product manager, for a feature spawned from an agreed design
+([From an agreed design to several features](workflow.md#from-an-agreed-design-to-several-features)).
 
 ```sh
 bees issue create --parent 12 --title "Export as CSV" --body-file body.md      # work item under feature #12

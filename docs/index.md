@@ -52,8 +52,9 @@ that: `bees` + `bees:bug` + `bees:triage` goes straight to the project manager. 
 anything non-trivial, add `bees:planning` first: the product manager then only
 *discusses* the issue — questions, options, a draft to react to — until you swap the
 label for `bees:planned`, which is your agreement for it to break the work down.
-Milestones stay yours: bees never create or change them, but every issue they create
-inherits the milestone of the issue it grew out of.
+Milestones stay yours: bees never create or change them. Every issue they create
+inherits the milestone of the issue it grew out of, and a design that spans several
+milestones is mapped onto the ones you made.
 
 `bees status` shows queues, workers and unread mail at any time, and `bees cost`
 answers what the factory spent, by role, by issue or by day. `bees tick` runs a

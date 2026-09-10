@@ -86,7 +86,7 @@ account the factory acts as always passes `creator`.
 | `label` | string | `"bees"` | The factory's label. It is the base name of every workflow label (`bees:triage`, `bees:ready`, ...) and, while `require_label` is true, the visibility gate. Spaces and colons are rejected. |
 | `require_label` | bool | `true` | With `false`, `assignee`, `milestone` and/or `creator` alone decide visibility. The factory still puts `label` on everything it creates. |
 | `assignee` | string | `""` | Only see items assigned to this GitHub login. `"@me"` is resolved to the machine's own `gh` login at startup, even with [`[github]`](#github) set. Everything the factory creates is assigned to this login so it stays visible. |
-| `milestone` | string | `""` | Only see items in this milestone, by title. Also the milestone for issues the factory creates when neither `--parent` nor `--related` gives one, and the one put on the pull requests it opens. People manage milestones; bees only inherits them. |
+| `milestone` | string | `""` | Only see items in this milestone, by title. Also the milestone for issues the factory creates when neither `--parent` nor `--related` gives one, and the one put on the pull requests it opens. People manage milestones; bees inherit them, or pick among them for the features of an agreed design. |
 | `creator` | string | `""` | Only see items opened by this GitHub login or by the account the factory acts as ([`github.login`](#github), else your own `gh` login). An issue or pull request the factory opens is authored by that account, so it is visible whatever `creator` says. |
 
 `require_label = false` without `assignee`, `milestone` or `creator` is
