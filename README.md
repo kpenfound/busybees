@@ -8,6 +8,9 @@ Humans steer it through GitHub. Create and label issues, comment, merge pull req
 the bees do the rest. Every role runs in its own temporary git worktree, talks to the
 other roles through a local mailbox, and is configured by one file: `bees.toml`.
 
+<img width="964" height="575" alt="image" src="https://github.com/user-attachments/assets/599cba11-910a-4f22-8ec3-c78272417c35" />
+
+
 Contributing to busybees itself? See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Install
