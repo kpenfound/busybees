@@ -187,8 +187,8 @@ type Data struct {
 	Blockers map[int][]int
 	// Attempts are the best-of-N or mixture-of-experts attempts an
 	// assembler session picks the result from, one per attempt branch, in
-	// attempt order. Set only for the developer's assembler task
-	// (developer_assemble).
+	// attempt order. Set only for the developer's assembler tasks
+	// (developer_assemble, developer_moe_assemble).
 	Attempts []Attempt
 }
 
