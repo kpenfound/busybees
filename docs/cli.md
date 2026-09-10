@@ -355,7 +355,7 @@ The role-specific keys appear on the role that owns them: the reviewer carries
 its merge policy (`auto_merge`, `merge_method`, `checks_wait`,
 `checks_poll_interval`, `checks_timeout`, `max_check_fix_rounds`) and its
 resolved `stages`, and the developer its `commit_flags`, `max_size`,
-`model_by_size` and the best-of-N keys.
+`model_by_size` and the best-of-N and mixture-of-experts keys.
 
 ```sh
 bees config show

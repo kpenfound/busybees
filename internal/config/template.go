@@ -454,6 +454,16 @@ label = "{{.Label}}"
 #assembler_model = "opus"
 #assembler_prompt = """
 #"""
+# Mixture of experts: one session per named expert instead of one plain
+# developer round, keyed by size. The experts are the moe_experts tables at
+# the end of this section. A size with no entry runs a plain round, and a size
+# cannot be listed here and in best_of_n_by_size both.
+#moe_experts_by_size = { xl = ["backend", "frontend"] }
+# Model and prompt for the session that merges the experts' work and opens the
+# pull request. Unset, it runs the model and prompt above.
+#moe_assembler_model = "opus"
+#moe_assembler_prompt = """
+#"""
 #prompt_file = ""
 #skills = []
 #model = "opus"
@@ -464,6 +474,18 @@ label = "{{.Label}}"
 #timeout = "45m"
 {{setting . "roles.developer.enabled" "#enabled = true"}}
 #shell = "/bin/bash"
+# One table per expert moe_experts_by_size can name: the prompt its session
+# runs with and, optionally, the model it runs. An expert that names neither
+# runs the developer's own prompt and model.
+#[roles.developer.moe_experts.backend]
+#prompt = """
+#Solve it in the server code.
+#"""
+#model = "opus"
+#[roles.developer.moe_experts.frontend]
+#prompt = """
+#Solve it in the interface.
+#"""
 #[roles.developer.env]
 #EXAMPLE = "value"
 #[roles.developer.mcp.example]

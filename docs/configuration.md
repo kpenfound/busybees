@@ -930,7 +930,7 @@ session with an error naming the path or the build command, not a
 | `enabled` | Role only. |
 | `skills_refresh` | Global only. |
 | `min_issue_size` | `roles.product_manager` only. |
-| `commit_flags`, `max_size`, `model_by_size`, `best_of_n_by_size`, `best_of_n_model`, `best_of_n_prompt`, `assembler_model`, `assembler_prompt` | `roles.developer` only. |
+| `commit_flags`, `max_size`, `model_by_size`, `best_of_n_by_size`, `best_of_n_model`, `best_of_n_prompt`, `assembler_model`, `assembler_prompt`, `moe_experts_by_size`, `moe_experts`, `moe_assembler_model`, `moe_assembler_prompt` | `roles.developer` only. |
 | `auto_merge`, `merge_method`, `checks_wait`, `checks_poll_interval`, `checks_timeout`, `max_check_fix_rounds`, `pre_review_checks`, `pre_review_checks_timeout`, `stages` | `roles.reviewer` only. `bees config show reviewer` prints the resolved policy. |
 
 `bees config show <role>` prints the result.
