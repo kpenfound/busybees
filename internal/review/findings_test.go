@@ -135,7 +135,7 @@ func sessionAnswer(findings ...string) string {
 
 const (
 	rawMissingTest = `{"category": "Missing test", "severity": "high", "file": "internal/review/gather.go", "lines": [12, 14], "side": "new",
-		"title": " Gather has no test for a source that cannot read ", "body": "nothing exercises Skipped", "evidence": "gather_test.go has no test naming Skipped", "sources": ["#566"]}`
+		"title": " Gather has no test for a source that cannot read ", "body": "nothing exercises Skipped", "evidence": "gather_test.go has no test naming Skipped", "sources": ["#566", " CONTRIBUTING.md ", ""]}`
 	rawWholeChange = `{"category": "scope", "severity": "low", "title": "the change does more than the issue asked", "body": "it also renames Gather", "evidence": "the diff", "lines": [3, 4], "side": "old"}`
 )
 
@@ -146,7 +146,7 @@ func TestFindingsAreReadOutOfASessionsAnswer(t *testing.T) {
 	}
 	want := []Finding{
 		{Angle: AngleTests, SessionID: "sess-1", Category: "missing test", Severity: "high", File: "internal/review/gather.go", Lines: LineRange{12, 14}, Side: SideNew,
-			Title: "Gather has no test for a source that cannot read", Body: "nothing exercises Skipped", Evidence: "gather_test.go has no test naming Skipped", Sources: []string{"#566"}},
+			Title: "Gather has no test for a source that cannot read", Body: "nothing exercises Skipped", Evidence: "gather_test.go has no test naming Skipped", Sources: []string{"#566", "CONTRIBUTING.md"}},
 		// A finding with no file has no lines and no side either, whatever
 		// the session wrote.
 		{Angle: AngleTests, SessionID: "sess-1", Category: "scope", Severity: "low", Title: "the change does more than the issue asked", Body: "it also renames Gather", Evidence: "the diff"},
@@ -160,7 +160,7 @@ func TestAFindingsAnchorIsMadeConsistent(t *testing.T) {
 	got, err := ParseFindings(AngleStyle, "s", sessionAnswer(
 		`{"title": "no side", "file": "a.go", "lines": [1, 2]}`,
 		`{"title": "right is new", "file": "a.go", "lines": [1, 2], "side": "RIGHT"}`,
-		`{"title": "old is old", "file": "a.go", "lines": [1, 2], "side": "old"}`,
+		`{"title": "old is old", "file": "a.go", "lines": [1, 2], "side": "Old"}`,
 		`{"title": "a bad side is new", "file": "a.go", "side": "sideways"}`,
 	))
 	if err != nil {
@@ -248,6 +248,13 @@ func TestNoFindingsIsAnEmptyListNotANull(t *testing.T) {
 	}
 	if got.Items == nil || len(got.Items) != 0 {
 		t.Errorf("read back %#v, want an empty list", got.Items)
+	}
+	// A file with no list at all reads as an empty one too.
+	if err := os.WriteFile(filepath.Join(dir, FindingsFile), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = ReadFindings(dir); err != nil || got.Items == nil || len(got.Items) != 0 {
+		t.Errorf("{} read back as %#v (%v), want an empty list", got, err)
 	}
 }
 

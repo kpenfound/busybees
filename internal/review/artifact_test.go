@@ -200,6 +200,13 @@ func TestTheTriageStateStartsEmpty(t *testing.T) {
 	if !reflect.DeepEqual(got, &Triage{Decisions: []Decision{}}) {
 		t.Errorf("read back %+v", got)
 	}
+	// A file with no list at all reads as an empty one too.
+	if err := os.WriteFile(filepath.Join(dir, TriageFile), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = ReadTriage(dir); err != nil || !reflect.DeepEqual(got, &Triage{Decisions: []Decision{}}) {
+		t.Errorf("{} read back as %+v (%v)", got, err)
+	}
 	// A decision round-trips, so the triage queue can keep its state here.
 	want := &Triage{Decisions: []Decision{{Finding: "1a2b3c4d", Action: "dismiss", Reason: "the test exists under another name"}, {Finding: "5e6f7a8b", Action: "select", Comment: "edited"}}}
 	if err := WriteTriage(dir, want); err != nil {
