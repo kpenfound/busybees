@@ -8,7 +8,7 @@
 //	~/.config/bees/config.toml   the person's own settings (this file):
 //	                             provider and model, where reviewer notes and
 //	                             review artifacts live, the default output
-//	                             mode, GitHub authentication, TUI preferences
+//	                             mode, GitHub authentication
 //	context.toml                 the project's settings (project.go): which
 //	                             angles run, extra style sources, category
 //	                             overrides, which context sources are gathered
@@ -89,9 +89,6 @@ const (
 	DefaultNotesPath   = "reviewer-notes.md"
 	DefaultStoragePath = "reviews"
 	DefaultOutput      = OutputAsk
-	// DefaultColor and DefaultDiffContext are the TUI preferences.
-	DefaultColor       = true
-	DefaultDiffContext = 3
 )
 
 // Config is the global configuration, `~/.config/bees/config.toml`.
@@ -120,7 +117,6 @@ type Config struct {
 	Output string `toml:"output"`
 
 	GitHub GitHub `toml:"github"`
-	TUI    TUI    `toml:"tui"`
 }
 
 // GitHub is where `bees review` gets its GitHub credentials from. An empty
@@ -156,19 +152,6 @@ func (g GitHub) RedactedToken() string {
 	}
 	return "(set)"
 }
-
-// TUI holds the preferences for the triage interface.
-type TUI struct {
-	// Color turns colour off for a terminal or a pipe that does not want
-	// it. It defaults to true, so read it through ColorEnabled.
-	Color *bool `toml:"color"`
-	// DiffContext is how many lines of the diff are shown around a
-	// finding. 0 means DefaultDiffContext.
-	DiffContext int `toml:"diff_context"`
-}
-
-// ColorEnabled reports whether the triage interface uses colour.
-func (t TUI) ColorEnabled() bool { return t.Color == nil || *t.Color }
 
 // DefaultConfigDir is the directory `bees review` keeps a person's own
 // configuration, notes and review artifacts in: $XDG_CONFIG_HOME/bees, or
@@ -250,9 +233,6 @@ func (c *Config) applyDefaults() {
 	if c.Output == "" {
 		c.Output = DefaultOutput
 	}
-	if c.TUI.DiffContext == 0 {
-		c.TUI.DiffContext = DefaultDiffContext
-	}
 }
 
 // Validate checks the global configuration, reporting every problem it finds
@@ -264,9 +244,6 @@ func (c *Config) Validate() error {
 	}
 	if !slices.Contains(OutputModes, c.Output) {
 		errs = append(errs, fmt.Sprintf("output %q must be one of %s", c.Output, strings.Join(OutputModes, ", ")))
-	}
-	if c.TUI.DiffContext < 0 {
-		errs = append(errs, "tui.diff_context must be >= 0 (0 means the default)")
 	}
 	if c.GitHub.Token != "" && c.GitHub.ResolvedToken() == "" {
 		where := fmt.Sprintf("github.token %q expands to nothing", c.GitHub.Token)
