@@ -852,8 +852,9 @@ would otherwise leave it holding its port and serving the factory's tools.
 What the box holds: the session cannot read or write anything of the host
 outside the three mounts, and cannot reach the host's credentials or its
 other checkouts. What it does not: the session has the network, the bot's
-GitHub token and its agent credential, and everything in the image; and the
-mounted state directory holds every role's mail and notes, not only its own.
+GitHub token, the Neo4j Agent Memory API key with the `neo4j` notes backend,
+its agent credential, and everything in the image; and the mounted state
+directory holds every role's mail and notes, not only its own.
 On Linux the container runs as the user running bees so what it writes stays
 theirs, and reaches the host at the docker bridge gateway; the mode has been
 exercised on macOS with Docker Desktop.
