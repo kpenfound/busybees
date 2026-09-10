@@ -1321,6 +1321,48 @@ the product manager `issue_edit_body` and `issue_question`, the reviewer
 Without a role argument it uses `$BEES_ROLE`, and without that it prints the
 unconstrained tool set.
 
+## Reviewing a pull request
+
+### `bees review consolidate [--notes path] [--dry-run]`
+
+`bees review` reviews a GitHub pull request from several angles at once. Its
+settings are `~/.config/bees/config.toml`: the agent it runs as, and where
+your reviewer notes and review artifacts live. The repository's own
+`context.toml` says which angles run there.
+
+Every finding you dismiss during triage is appended to your reviewer notes,
+one line per dismissal:
+
+```
+- [acme/widgets] [style] [naming] receiver names are short here
+```
+
+`consolidate` reads those lines and writes the patterns that repeat into
+rules. Dismissals of the same repository, angle and category whose reasons
+read alike are one pattern: dismissed twice, it becomes a rule that ranks its
+findings down; three times or more, one that drops them.
+
+```
+$ bees review consolidate
+/Users/me/.config/bees/reviewer-notes.md: 7 dismissals, 2 rules
+
+added:
+- [acme/widgets] [style] [naming] drop: receiver names are short here (3 dismissals)
+```
+
+A review joins its findings against the rules before triage sees them. A
+finding a rule is about is dropped, or ranked down one severity, and the
+angle sessions of the next review are told what has been dismissed from their
+angle before. A rule with no text after the action is about every finding in
+its repository, angle and category, and `*` in any of those three matches
+whatever it is.
+
+The rules live between two markers in the notes file, and that block is the
+only part of it bees writes. Nothing in the block is deleted or reworded: a
+rule you rewrote, or whose action you changed, stays as you wrote it and only
+its count moves. `--notes` works on a file other than the configured one, and
+`--dry-run` prints what consolidation would write without writing it.
+
 ## Misc
 
 ### `bees cost [--since 24h] [--by role|issue|day] [--json]`

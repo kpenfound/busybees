@@ -28,6 +28,10 @@ import (
 // the directory it ran in. That is an AngleRun, one file per angle in the
 // artifact directory (WriteAngleRun, ReadAngleRuns), and Resume is what
 // reads one back into a session.
+//
+// A session is also told what the reviewer notes say has been dismissed from
+// its angle before (Angles.Rules, notes.go), so that a review does not report
+// what its reviewer has already said no to twice.
 
 // angleFrame is what every angle session is told: how a review session
 // behaves and what to answer with. The angle's own instructions, the brief
@@ -108,6 +112,12 @@ type Angles struct {
 	// whichever repository the command happened to be run in, and the
 	// directory has to outlive the run for the sessions to be reopened.
 	Dir string
+	// Rules are the reviewer notes' rules (notes.go), read by whoever runs
+	// the review: the ones that name the repository under review and the
+	// angle become the part of that angle's prompt saying what has been
+	// dismissed from it before. A person who has dismissed nothing has
+	// none, and their sessions are told nothing extra.
+	Rules []Rule
 }
 
 // NewAngles is the angle runner of a review, as the global configuration
@@ -147,7 +157,7 @@ func (a *Angles) Run(ctx context.Context, artifact string, project *Project, bri
 	}
 	prompts := make([]string, len(angles))
 	for i, angle := range angles {
-		prompt, err := anglePrompt(angle, brief, diff)
+		prompt, err := anglePrompt(angle, brief, diff, a.Rules)
 		if err != nil {
 			return nil, err
 		}
@@ -201,11 +211,12 @@ func (a *Angles) Resume(ctx context.Context, run AngleRun, question string) (*Ag
 }
 
 // anglePrompt is the whole of what an angle session is told: how a review
-// session behaves, what this angle looks for, the brief, the diff when
-// there is one, and what to answer with, in that order. The brief and the
-// diff can be long, so the instruction they follow is repeated in one line
-// at the end.
-func anglePrompt(angle string, brief *Brief, diff string) (string, error) {
+// session behaves, what this angle looks for, what the reviewer notes say
+// has been dismissed from this angle before, the brief, the diff when there
+// is one, and what to answer with, in that order. The brief and the diff can
+// be long, so the instruction they follow is repeated in one line at the
+// end.
+func anglePrompt(angle string, brief *Brief, diff string, rules []Rule) (string, error) {
 	instructions, err := angleInstructions(angle)
 	if err != nil {
 		return "", err
@@ -214,6 +225,10 @@ func anglePrompt(angle string, brief *Brief, diff string) (string, error) {
 	out.WriteString(angleFrame)
 	out.WriteString("\n---\n\n")
 	out.WriteString(instructions)
+	if dismissed := noiseSection(rules, brief.Ref.Repo, angle); dismissed != "" {
+		out.WriteString("\n---\n\n")
+		out.WriteString(dismissed)
+	}
 	out.WriteString("\n---\n\n")
 	out.WriteString(brief.Text())
 	out.WriteString("\n---\n\n")

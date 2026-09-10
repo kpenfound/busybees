@@ -14,6 +14,7 @@ import (
 // shape prompts/angle.md asks for; ParseFindings reads one session's answer
 // into Finding values, and the judge (judge.go) merges every angle's into
 // the one list a review triages, findings.json in the artifact directory.
+// What the reviewer notes hid from that list is in it too (noise.go).
 //
 // Every field a session may answer with is here under the same name, so
 // what a session said and what the review keeps are the same shape, with
@@ -173,6 +174,11 @@ type Findings struct {
 	// list in it. A review with a skipped angle is a review nobody looked
 	// at from that angle, which is worth saying when the findings are.
 	Skipped []string `json:"skipped,omitempty"`
+	// Silenced are the findings the reviewer notes acted on (noise.go): the
+	// ones a rule kept out of Items, and the ones it let through one
+	// severity lower. It is what a review answers "what did my notes hide"
+	// with, and empty for a review nothing was hidden from.
+	Silenced []Silenced `json:"silenced,omitempty"`
 }
 
 // findingDraft is a finding as a session answers with one: the fields

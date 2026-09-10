@@ -31,7 +31,10 @@ import (
 //	  scratch/                                     where the angles ran when
 //	                                               there was no checkout
 //	  findings.json                                the judge's list
-//	                                               (findings.go, judge.go)
+//	                                               (findings.go, judge.go),
+//	                                               with what the reviewer
+//	                                               notes hid from it
+//	                                               (noise.go)
 //	  triage.json                                  what triage decided about
 //	                                               each finding, empty until
 //	                                               it has
