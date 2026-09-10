@@ -323,3 +323,56 @@ func TestTheConsoleStopsWhenADecisionCannotBeWritten(t *testing.T) {
 		t.Errorf("the console went on after an ask that was not written:\n%s", out.String())
 	}
 }
+
+func TestChooseReadsTheEndOfTheReview(t *testing.T) {
+	for input, want := range map[string]string{
+		"a\n": OutputApprove, "c\n": OutputComment, "r\n": OutputReject, "o\n": OutputReport, "d\n": OutputDiscard,
+		"approve\n": OutputApprove, "REPORT\n": OutputReport, "discard\n": OutputDiscard,
+		// A key that is none of them is asked again; an input that ends
+		// discards.
+		"x\nr\n": OutputReject, "": OutputDiscard, "x\n": OutputDiscard,
+	} {
+		a := judged(t)
+		q := queueOf(t, a)
+		if err := q.Select(a.Findings.Items[0].ID, ""); err != nil {
+			t.Fatal(err)
+		}
+		var out bytes.Buffer
+		c := &Console{In: strings.NewReader(input), Out: &out}
+		if got := c.Choose(q); got != want {
+			t.Errorf("%q chose %q, want %q", input, got, want)
+		}
+		if !strings.HasPrefix(out.String(), "\n1 finding selected. a approve and comment · c comment only · r reject and comment · o output the report · d discard\n> ") {
+			t.Errorf("%q: the prompt was:\n%s", input, out.String())
+		}
+		if strings.HasPrefix(input, "x") && !strings.Contains(out.String(), `"x" is not a key. a approve`) {
+			t.Errorf("an unknown key was not asked again:\n%s", out.String())
+		}
+		if want == OutputDiscard && input != "d\n" && input != "discard\n" && !strings.Contains(out.String(), "discarded: nothing posted\n") {
+			t.Errorf("an ended input did not say it discarded:\n%s", out.String())
+		}
+	}
+}
+
+func TestChooseReadsFromWhereTriageStopped(t *testing.T) {
+	// One reader over the input: what Run read ahead is what Choose reads.
+	a := judged(t)
+	q := queueOf(t, a)
+	var out bytes.Buffer
+	c := &Console{In: strings.NewReader("s\nq\no\n"), Out: &out}
+	if err := c.Run(context.Background(), q); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Choose(q); got != OutputReport {
+		t.Errorf("chose %q, want the key after quit", got)
+	}
+	if !strings.Contains(out.String(), "1 selected, 0 dismissed, 0 deferred, 2 undecided of 3 findings\n\n1 finding selected. ") {
+		t.Errorf("the prompt does not follow the summary:\n%s", out.String())
+	}
+	// An output that cannot be written discards: nothing is posted on a
+	// person's behalf without their say.
+	c = &Console{In: strings.NewReader("a\n"), Out: brokenPipe{}}
+	if got := c.Choose(q); got != OutputDiscard {
+		t.Errorf("chose %q with no output, want discard", got)
+	}
+}

@@ -37,6 +37,19 @@ const (
 	keyHelp    = "?"
 )
 
+// The keys that choose the end of the review (output.go), each followed by
+// return. The mode's own name is taken too.
+var endKeys = map[string]string{
+	"a": OutputApprove, OutputApprove: OutputApprove,
+	"c": OutputComment, OutputComment: OutputComment,
+	"r": OutputReject, OutputReject: OutputReject,
+	"o": OutputReport, OutputReport: OutputReport,
+	"d": OutputDiscard, OutputDiscard: OutputDiscard,
+}
+
+// endPrompt is what Choose asks.
+const endPrompt = "a approve and comment · c comment only · r reject and comment · o output the report · d discard\n> "
+
 // Console drives a Queue from an input and an output.
 type Console struct {
 	// In is where the keys and the lines they ask for are read from, and
@@ -48,8 +61,11 @@ type Console struct {
 	// it. With no editor that key is not offered.
 	Editor func(text string) (string, error)
 
-	// out is Out for one Run, remembering the first write that failed.
+	// out is Out for one Run, remembering the first write that failed,
+	// and in is In, read by Run and Choose in turn: one reader over In,
+	// because a second would lose what the first read ahead.
 	out *output
+	in  *bufio.Scanner
 }
 
 // output is the console's writer for one run: it remembers the first error
@@ -85,9 +101,7 @@ func (c *Console) printf(format string, args ...any) {
 // session that could not be reopened, a dismissal with no reason) is
 // printed instead, and the finding is shown again.
 func (c *Console) Run(ctx context.Context, q *Queue) error {
-	c.out = &output{w: c.Out}
-	in := bufio.NewScanner(c.In)
-	in.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	in := c.open()
 	skipped := map[string]bool{}
 	for c.out.err == nil {
 		f, ok := c.next(q, skipped)
@@ -109,6 +123,41 @@ func (c *Console) Run(ctx context.Context, q *Queue) error {
 	}
 	c.summary(q)
 	return errors.Join(in.Err(), c.out.err)
+}
+
+// open is the console's reader and writer, made on the first call and kept
+// for the calls after it.
+func (c *Console) open() *bufio.Scanner {
+	if c.out == nil {
+		c.out = &output{w: c.Out}
+	}
+	if c.in == nil {
+		c.in = bufio.NewScanner(c.In)
+		c.in.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	}
+	return c.in
+}
+
+// Choose asks what the review ends with, once triage is over, and reads
+// the answer: one of the five output modes (output.go), by key or by
+// name, asked again after a key that is neither. It says first how many
+// findings are selected, which is what a review posts. An input that has
+// ended, and an output that cannot be written, choose to discard: nothing
+// is posted on a person's behalf without their say.
+func (c *Console) Choose(q *Queue) string {
+	in := c.open()
+	c.printf("\n%s selected. ", text.Count(len(q.Selected()), "finding"))
+	for {
+		key, ok := c.read(in, endPrompt)
+		if !ok || c.out.err != nil {
+			c.printf("%s\n", "discarded: nothing posted")
+			return OutputDiscard
+		}
+		if mode, ok := endKeys[strings.ToLower(key)]; ok {
+			return mode
+		}
+		c.printf("%q is not a key. ", key)
+	}
 }
 
 // next is the first pending finding not passed over this run, and false
