@@ -86,8 +86,10 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 		return nil, err
 	}
 	// The notes reach the session through notes_read, not the prompt; only
-	// their size is needed here, for the consolidation decision.
-	notesSize, err := s.store.NotesSize(spec.role)
+	// their size is needed here, for the consolidation decision. It is
+	// measured through the configured backend, which is where the session
+	// will read them from.
+	notesSize, err := s.notes.Size(ctx, spec.role)
 	if err != nil {
 		return nil, err
 	}

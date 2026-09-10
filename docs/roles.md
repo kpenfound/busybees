@@ -133,9 +133,9 @@ are larger than `scheduler.notes_max_bytes` (default 32768), the task prompt
 asks the session to rewrite them into those sections on top of its normal
 work: merge duplicates, drop what is stale or contradicted, keep decisions,
 commands and gotchas. The counters live in `<state_dir>/<role>.json`; the size
-`bees status` shows and this trigger reads is always that of
-`<state_dir>/notes/<role>.md`, whatever
-[`notes.backend`](configuration.md#notes) is.
+`bees status` shows and this trigger reads is the size of the notes the
+backend [`notes.backend`](configuration.md#notes) names holds, so it is the
+size of what `notes_read` returns.
 
 With the default `notes.backend = "file"`, `notes_read` and `notes_write` act
 on that same file, and editing it directly is the most direct way to steer a

@@ -20,6 +20,11 @@ import (
 type Notes interface {
 	ReadNotes(ctx context.Context, role string) (string, error)
 	WriteNotes(ctx context.Context, role string, text string) error
+	// Size is how many bytes ReadNotes would return, which is what the
+	// scheduler's notes_max_bytes consolidation trigger and `bees status`
+	// measure. It goes through the backend rather than the notes file so
+	// that they measure whatever notes_read and notes_write actually used.
+	Size(ctx context.Context, role string) (int64, error)
 }
 
 // FileNotes is the Notes backend over internal/state's notes files: the
@@ -39,6 +44,11 @@ func (f fileNotes) ReadNotes(_ context.Context, role string) (string, error) {
 
 func (f fileNotes) WriteNotes(_ context.Context, role, text string) error {
 	return f.store.WriteNotes(role, text)
+}
+
+// Size is a stat of the notes file, so measuring it costs no read.
+func (f fileNotes) Size(_ context.Context, role string) (int64, error) {
+	return f.store.NotesSize(role)
 }
 
 var errNoNotes = errors.New("notes are unavailable: bees.toml could not be loaded")

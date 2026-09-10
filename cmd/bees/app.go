@@ -12,6 +12,7 @@ import (
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/logging"
 	"github.com/kpenfound/busybees/internal/mail"
+	"github.com/kpenfound/busybees/internal/mcpserver"
 	"github.com/kpenfound/busybees/internal/scheduler"
 	"github.com/kpenfound/busybees/internal/session"
 	"github.com/kpenfound/busybees/internal/skills"
@@ -25,6 +26,10 @@ type app struct {
 	cfg    *config.Config
 	actsAs string // the login the factory acts as, when filter.creator needs it (resolveFilterSelf)
 	store  *state.Store
+	// notes is the backend a role's notes live in (notes.backend), built
+	// once here so the scheduler's consolidation check and `bees status`
+	// measure them where the sessions read and write them.
+	notes  mcpserver.Notes
 	gh     *github.Client
 	mail   *mail.Box
 	runner *session.Runner
@@ -175,6 +180,7 @@ func newApp(ctx context.Context, g *globalFlags) (*app, error) {
 		cfg:    cfg,
 		actsAs: actsAs,
 		store:  store,
+		notes:  notesBackendFor(cfg.Notes, store),
 		gh:     githubClient(cfg),
 		mail:   mail.Open(store.MailDir()),
 		runner: runner,
@@ -199,6 +205,7 @@ func (a *app) scheduler() (*scheduler.Scheduler, error) {
 		Runner:     a.runner,
 		Workspaces: a.ws,
 		Store:      a.store,
+		Notes:      a.notes,
 		Logger:     a.log,
 		Version:    buildVersion,
 		Revision:   buildRevision,

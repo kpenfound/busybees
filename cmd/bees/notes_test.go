@@ -1,6 +1,11 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +13,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/mcpserver"
 	"github.com/kpenfound/busybees/internal/session"
 	"github.com/kpenfound/busybees/internal/state"
 )
@@ -53,7 +59,7 @@ func TestRoleRowsCoverEveryRole(t *testing.T) {
 	}
 	st := state.Status{Singletons: map[string]string{config.RoleQA: "running"}}
 
-	rows := roleRows(store, st)
+	rows := roleRows(context.Background(), store, mcpserver.FileNotes(store), st)
 	if len(rows) != len(config.Roles) {
 		t.Fatalf("got %d rows, want one per role (%d)", len(rows), len(config.Roles))
 	}
@@ -165,5 +171,110 @@ func TestNotesEditRefusesInsideASession(t *testing.T) {
 	err := runRoot(t, "notes", "edit", "developer")
 	if err == nil || !strings.Contains(err.Error(), "cannot run inside a session") {
 		t.Errorf("notes edit inside a session = %v, want an error", err)
+	}
+}
+
+// sizedNotes is a Notes backend holding the notes away from the state
+// directory — what notes.backend = "neo4j" is — reporting sizes of its own.
+type sizedNotes struct {
+	sizes map[string]int64
+	err   error
+}
+
+func (n sizedNotes) ReadNotes(context.Context, string) (string, error) { return "", n.err }
+func (n sizedNotes) WriteNotes(context.Context, string, string) error  { return n.err }
+
+func (n sizedNotes) Size(_ context.Context, role string) (int64, error) {
+	if n.err != nil {
+		return 0, n.err
+	}
+	return n.sizes[role], nil
+}
+
+// The roles table measures the notes through the configured backend, so
+// `bees status` and its --json notes_bytes report what the sessions read
+// and write, not the size of a notes file the backend may never touch.
+func TestRoleRowsMeasureTheNotesBackend(t *testing.T) {
+	store := state.New(t.TempDir())
+	if err := store.AppendNotes(config.RoleDeveloper, "always run dagger check"); err != nil {
+		t.Fatal(err)
+	}
+	onDisk, err := store.NotesSize(config.RoleDeveloper)
+	if err != nil || onDisk == 0 {
+		t.Fatalf("notes file size = %d, %v", onDisk, err)
+	}
+	notes := sizedNotes{sizes: map[string]int64{config.RoleDeveloper: 40960, config.RoleQA: 12}}
+
+	rows := roleRows(context.Background(), store, notes, state.Status{})
+	byRole := map[string]int64{}
+	for _, r := range rows {
+		byRole[r.Role] = r.Notes
+	}
+	if got := byRole[config.RoleDeveloper]; got != 40960 {
+		t.Errorf("developer notes = %d, want the backend's 40960 (the file holds %d)", got, onDisk)
+	}
+	if got := byRole[config.RoleQA]; got != 12 {
+		t.Errorf("qa notes = %d, want the backend's 12", got)
+	}
+	if got := notesBytes(rows)[config.RoleDeveloper]; got != 40960 {
+		t.Errorf("notes_bytes[developer] = %d, want 40960", got)
+	}
+	// A backend that cannot answer leaves the column empty rather than
+	// failing the command.
+	rows = roleRows(context.Background(), store, sizedNotes{err: errors.New("neo4j: connection refused")}, state.Status{})
+	for _, r := range rows {
+		if r.Notes != 0 {
+			t.Errorf("%s notes = %d after a failing backend, want 0", r.Role, r.Notes)
+		}
+	}
+}
+
+// notesBackendFor is the one place notes.backend is turned into a backend,
+// and `bees run` and `bees status` call it with the config they already
+// loaded: "file" reads and writes the state directory's notes files,
+// "neo4j" the service at notes.neo4j_url with the configured key.
+func TestNotesBackendForFollowsTheSetting(t *testing.T) {
+	var reads int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer nams_test" {
+			http.Error(w, `{"error":"invalid API key"}`, http.StatusUnauthorized)
+			return
+		}
+		switch r.URL.Path {
+		case "/v1/conversations":
+			_, _ = fmt.Fprint(w, `{"conversations":[{"id":"c1","userId":"bees-notes-qa","createdAt":"2026-09-09T00:00:00Z"}]}`)
+		case "/v1/conversations/c1/messages":
+			reads++
+			_, _ = fmt.Fprint(w, `{"messages":[{"id":"m1","role":"assistant","content":"# qa notes\n","createdAt":"2026-09-09T00:01:00Z"}]}`)
+		default:
+			http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	stateDir := t.TempDir()
+	store := state.New(stateDir)
+	ctx := context.Background()
+
+	file := notesBackendFor(config.Notes{Backend: config.NotesBackendFile}, store)
+	if err := file.WriteNotes(ctx, config.RoleQA, "# on disk\n"); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := file.Size(ctx, config.RoleQA); err != nil || n != int64(len("# on disk\n")) {
+		t.Errorf("file backend size = %d, %v; want %d", n, err, len("# on disk\n"))
+	}
+
+	neo4j := notesBackendFor(config.Notes{Backend: config.NotesBackendNeo4j, Neo4jURL: srv.URL + "/v1", Neo4jAPIKey: "nams_test"}, store)
+	if got, err := neo4j.ReadNotes(ctx, config.RoleQA); err != nil || got != "# qa notes\n" {
+		t.Fatalf("neo4j read = %q, %v", got, err)
+	}
+	if n, err := neo4j.Size(ctx, config.RoleQA); err != nil || n != int64(len("# qa notes\n")) {
+		t.Errorf("neo4j size = %d, %v; want the service's %d", n, err, len("# qa notes\n"))
+	}
+	if reads != 2 {
+		t.Errorf("%d service reads, want 2 (the read and the size)", reads)
+	}
+	if onDisk, _ := store.ReadNotes(config.RoleQA); onDisk != "# on disk\n" {
+		t.Errorf("the neo4j backend touched the notes file: %q", onDisk)
 	}
 }

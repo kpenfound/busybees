@@ -26,6 +26,7 @@ import (
 	"github.com/kpenfound/busybees/internal/mcpserver"
 	"github.com/kpenfound/busybees/internal/nams"
 	"github.com/kpenfound/busybees/internal/session"
+	"github.com/kpenfound/busybees/internal/state"
 )
 
 func newMCPCmd(g *globalFlags) *cobra.Command {
@@ -307,13 +308,25 @@ func newNotesBackend(g *globalFlags) (mcpserver.Notes, error) {
 		}
 	}
 	if settings.Backend == config.NotesBackendNeo4j {
-		return nams.NewNotes(settings.Neo4jURL, settings.ResolvedNeo4jAPIKey()), nil
+		return notesBackendFor(settings, nil), nil
 	}
 	store, err := notesStore(g)
 	if err != nil {
 		return nil, err
 	}
-	return mcpserver.FileNotes(store), nil
+	return notesBackendFor(settings, store), nil
+}
+
+// notesBackendFor builds the backend notes.backend names: the notes files
+// under store, or the Neo4j Agent Memory REST API at notes.neo4j_url, which
+// needs no store and is given a nil one. It is the one place that branch
+// lives, so the tools a session calls, the scheduler's consolidation check
+// and `bees status` all read and measure a role's notes the same way.
+func notesBackendFor(settings config.Notes, store *state.Store) mcpserver.Notes {
+	if settings.Backend == config.NotesBackendNeo4j {
+		return nams.NewNotes(settings.Neo4jURL, settings.ResolvedNeo4jAPIKey())
+	}
+	return mcpserver.FileNotes(store)
 }
 
 func (b *backend) ReadNotes(ctx context.Context, role string) (string, error) {
@@ -330,6 +343,14 @@ func (b *backend) WriteNotes(ctx context.Context, role, text string) error {
 		return err
 	}
 	return n.WriteNotes(ctx, role, text)
+}
+
+func (b *backend) Size(ctx context.Context, role string) (int64, error) {
+	n, err := b.notes()
+	if err != nil {
+		return 0, err
+	}
+	return n.Size(ctx, role)
 }
 
 func (b *backend) Create(ctx context.Context, opts issues.Options) (issues.Result, error) {

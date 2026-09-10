@@ -125,7 +125,7 @@ const (
 	// DefaultMaxSize is the largest size a developer takes by default.
 	DefaultMaxSize = "l"
 	// DefaultNotesConsolidateEvery is how many sessions a role runs between
-	// two consolidation passes over its notes file.
+	// two consolidation passes over its notes.
 	DefaultNotesConsolidateEvery = 10
 	// DefaultNotesMaxBytes is the notes size above which consolidation is
 	// asked for early, without waiting for the session count.
@@ -765,11 +765,12 @@ type Scheduler struct {
 	// manager in one session.
 	TriageBatchSize int `toml:"triage_batch_size" json:"triage_batch_size"`
 	// NotesConsolidateEvery is how many sessions a role runs between two
-	// passes in which it is also asked to consolidate its notes file.
+	// passes in which it is also asked to consolidate its notes.
 	// Default 10.
 	NotesConsolidateEvery int `toml:"notes_consolidate_every" json:"notes_consolidate_every"`
 	// NotesMaxBytes asks for consolidation early, whatever the session
-	// count, once a notes file grows past this size. Default 32768.
+	// count, once a role's notes grow past this size, measured in the
+	// backend notes.backend names. Default 32768.
 	NotesMaxBytes int `toml:"notes_max_bytes" json:"notes_max_bytes"`
 	// DispatchOrder decides which ready issue a free developer worker takes
 	// next: small-first (default), oldest or large-first.

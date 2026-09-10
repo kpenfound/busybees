@@ -18,6 +18,7 @@ type fakeNotes struct{ err error }
 
 func (f fakeNotes) ReadNotes(context.Context, string) (string, error) { return "", f.err }
 func (f fakeNotes) WriteNotes(context.Context, string, string) error  { return f.err }
+func (f fakeNotes) Size(context.Context, string) (int64, error)       { return 0, f.err }
 
 // fileNotesHarness is a harness whose notes tools are backed by the notes
 // files under its own state dir, wired the way `bees mcp serve` wires them.
@@ -153,5 +154,42 @@ func TestNotesToolDescriptionsCarryTheRules(t *testing.T) {
 	}
 	for name := range want {
 		t.Errorf("no %s tool", name)
+	}
+}
+
+// The file backend measures the notes with a stat of the file it reads and
+// writes, so what the scheduler's consolidation trigger and `bees status`
+// see is the size of what notes_read would return.
+func TestFileNotesSizeIsTheFileSize(t *testing.T) {
+	st := state.New(t.TempDir())
+	if err := st.Init(); err != nil {
+		t.Fatal(err)
+	}
+	n := FileNotes(st)
+	ctx := context.Background()
+	if got, err := n.Size(ctx, config.RoleDeveloper); err != nil || got != 0 {
+		t.Errorf("size before the first write = %d, %v; want 0, nil", got, err)
+	}
+	const notes = "# developer notes\n\n## Project facts\n\n- run `dagger check`\n"
+	if err := n.WriteNotes(ctx, config.RoleDeveloper, notes); err != nil {
+		t.Fatal(err)
+	}
+	stat, err := st.NotesSize(config.RoleDeveloper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := n.Size(ctx, config.RoleDeveloper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != stat || got != int64(len(notes)) {
+		t.Errorf("Size = %d; want the file size %d and the text's %d", got, stat, len(notes))
+	}
+	// A person editing the file behind the tools changes the size too.
+	if err := st.AppendNotes(config.RoleDeveloper, "and gofmt"); err != nil {
+		t.Fatal(err)
+	}
+	if grown, _ := n.Size(ctx, config.RoleDeveloper); grown <= got {
+		t.Errorf("size after an append = %d, want more than %d", grown, got)
 	}
 }

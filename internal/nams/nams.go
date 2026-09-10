@@ -112,6 +112,17 @@ func (n *Notes) WriteNotes(ctx context.Context, role, text string) error {
 	return n.do(ctx, http.MethodPost, "/conversations/"+url.PathEscape(conv)+"/messages", nil, body, nil)
 }
 
+// Size is the byte length of the newest version of the role's notes. The
+// REST API has no size query, so this reads the notes and measures them:
+// one round trip, the same a notes_read costs.
+func (n *Notes) Size(ctx context.Context, role string) (int64, error) {
+	notes, err := n.ReadNotes(ctx, role)
+	if err != nil {
+		return 0, err
+	}
+	return int64(len(notes)), nil
+}
+
 // conversation is the shape of a conversation the service lists, and of a
 // created one; the fields not read here are dropped.
 type conversation struct {

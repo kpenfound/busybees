@@ -841,8 +841,8 @@ first session has not started reads `-`.
 
 The `roles:` table covers all five roles with what each is doing (`running` or
 `idle`; `-` for the developer and reviewer, whose work is in the workers table
-above), when it last ran, and how big its [notes file](roles.md#notes-files)
-has grown — a role whose notes are getting long is a candidate for
+above), when it last ran, and how big its [notes](roles.md#notes-files) have
+grown — a role whose notes are getting long is a candidate for
 `bees notes reset`:
 
 ```
@@ -854,9 +854,11 @@ roles:
   qa               idle     last run 2h0m0s ago   notes -
 ```
 
-Notes sizes are read from the files when the command runs, not from
-`status.json`, so they are right even when the scheduler has never run;
-`--json` carries them as `notes_bytes` (role → bytes).
+Notes sizes are measured when the command runs, not read from `status.json`,
+so they are right even when the scheduler has never run. They come from the
+backend [`notes.backend`](configuration.md#notes) names, so with
+`backend = "neo4j"` they are the sizes the service holds. `--json` carries
+them as `notes_bytes` (role → bytes).
 
 A `no_state` queue counts issues that are visible to the factory but carry no
 workflow state label yet — usually ones a person just filed from the GitHub

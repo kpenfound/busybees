@@ -29,6 +29,7 @@ import (
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/logging"
 	"github.com/kpenfound/busybees/internal/mail"
+	"github.com/kpenfound/busybees/internal/mcpserver"
 	"github.com/kpenfound/busybees/internal/session"
 	"github.com/kpenfound/busybees/internal/state"
 	"github.com/kpenfound/busybees/internal/text"
@@ -44,6 +45,12 @@ type Deps struct {
 	Workspaces *workspace.Manager
 	Store      *state.Store
 	Logger     *slog.Logger
+	// Notes is the backend a role's notes live in (notes.backend), the one
+	// the session's notes_read and notes_write use. The scheduler only
+	// measures them with it, for the notes_max_bytes consolidation
+	// trigger, so that the trigger fires on whatever backend holds them.
+	// nil is the notes files under Store.
+	Notes mcpserver.Notes
 	// Version and Revision are the build the binary was started from:
 	// what `bees version` prints, and the untruncated commit behind it.
 	// cmd/bees resolves them (the `-ldflags -X main.version` override lives
@@ -80,6 +87,7 @@ type Scheduler struct {
 	runner   *session.Runner
 	ws       *workspace.Manager
 	store    *state.Store
+	notes    mcpserver.Notes
 	log      *slog.Logger
 	now      func() time.Time
 	// version and revision describe the build this scheduler is running as
@@ -193,6 +201,9 @@ func New(d Deps) (*Scheduler, error) {
 	if d.Now == nil {
 		d.Now = time.Now
 	}
+	if d.Notes == nil {
+		d.Notes = mcpserver.FileNotes(d.Store)
+	}
 	f := d.Config.Filter
 	q := github.Query{Assignee: f.Assignee, Milestone: f.Milestone, Creator: f.Creator, Self: d.Self}
 	if f.LabelRequired() {
@@ -210,6 +221,7 @@ func New(d Deps) (*Scheduler, error) {
 		runner:       d.Runner,
 		ws:           d.Workspaces,
 		store:        d.Store,
+		notes:        d.Notes,
 		log:          d.Logger,
 		now:          d.Now,
 		version:      d.Version,
