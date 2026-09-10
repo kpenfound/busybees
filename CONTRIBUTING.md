@@ -13,6 +13,7 @@ internal/issues/     `bees issue create/link`: filter labels, kind and state lab
 internal/logging/    console and file logging; bees.log rotation
 internal/mail/       the local mailbox: JSON messages under <state_dir>/mail/<role>/
 internal/mcpserver/  the built-in MCP server (`bees mcp serve`): the factory's operations as tools, filtered by role
+internal/nams/       the Neo4j Agent Memory REST client behind notes_read and notes_write with notes.backend = "neo4j"
 internal/procs/      finding and stopping sessions (processes and containers): `bees kill`, and one at a time from the live view
 internal/prompts/    role prompts embedded in the binary (system/*.md, task/*.md), the project's own bees/prompts/ files, the renderer
 internal/scheduler/  the loop: poll, human feedback, merge state, reconcile, developer workers, singleton roles, the event stream
