@@ -135,3 +135,44 @@ func TestAppendNotesLeavesBlankLinesEmpty(t *testing.T) {
 		t.Errorf("notes = %q, want the blank line kept empty and the next line indented", got)
 	}
 }
+
+// WriteNotes replaces the whole text: what a session reads back is exactly
+// what it wrote, byte for byte, and the file is the one a person's editor
+// and `bees notes show` see.
+func TestWriteNotesReplacesTheWholeText(t *testing.T) {
+	s := New(t.TempDir())
+	// No notes directory yet: the first write creates it.
+	if err := s.WriteNotes("developer", "# developer notes\n\n## Project facts\n\n- run dagger check\n"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadNotes("developer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "# developer notes\n\n## Project facts\n\n- run dagger check\n"; got != want {
+		t.Errorf("notes = %q, want %q", got, want)
+	}
+	// A second write keeps nothing of the first: no append, no merge.
+	if err := s.WriteNotes("developer", "rewritten"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = s.ReadNotes("developer"); err != nil || got != "rewritten" {
+		t.Errorf("notes after the second write = %q, %v; want %q", got, err, "rewritten")
+	}
+	b, err := os.ReadFile(s.NotesPath("developer"))
+	if err != nil || string(b) != "rewritten" {
+		t.Errorf("file on disk = %q, %v", b, err)
+	}
+	// Nothing is left behind next to the file.
+	entries, err := os.ReadDir(filepath.Dir(s.NotesPath("developer")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "developer.md" {
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("notes dir holds %v, want only developer.md", names)
+	}
+}
