@@ -1218,8 +1218,8 @@ func (s *Scheduler) dispatchDevelopers(ctx context.Context, snap *snapshot, loca
 			continue
 		}
 		// One slot per session the worker's first round runs: one, or,
-		// for a size best_of_n_by_size fans out, one per attempt, claimed
-		// together or not at all (bestofn.go).
+		// for a size best_of_n_by_size or moe_experts_by_size fans out,
+		// one per attempt, claimed together or not at all (bestofn.go).
 		attempts := s.attemptsFor(issue, snap)
 		if !s.claimSlots(attempts) {
 			return // pool is full

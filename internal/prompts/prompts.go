@@ -185,14 +185,15 @@ type Data struct {
 	// Blockers maps an issue number to the prerequisites it declares that
 	// are still open (project manager).
 	Blockers map[int][]int
-	// Attempts are the best-of-N attempts an assembler session picks the
-	// result from, one per attempt branch, in attempt order. Set only for
-	// the developer's assembler task (developer_assemble).
+	// Attempts are the best-of-N or mixture-of-experts attempts an
+	// assembler session picks the result from, one per attempt branch, in
+	// attempt order. Set only for the developer's assembler task
+	// (developer_assemble).
 	Attempts []Attempt
 }
 
-// Attempt is what one best-of-N attempt came to, as the assembler is told
-// it: the branch it worked on, how many commits that branch carries beyond
+// Attempt is what one attempt of a fan-out came to, as the assembler is
+// told it: the branch it worked on, how many commits that branch carries beyond
 // the base branch, and what its session reported. Candidate is false for an
 // attempt with nothing to read — a session that could not be run, or one
 // that pushed no commits — so the assembler never mistakes an empty branch
@@ -210,6 +211,10 @@ type Attempt struct {
 	// opened one; deleting the branch closes it.
 	PR        int
 	Candidate bool
+	// Expert names the mixture-of-experts expert whose prompt and model
+	// the attempt ran (roles.developer.moe_experts); empty for a
+	// best-of-N attempt, which is one of N alike.
+	Expert string
 }
 
 // ModeRequested is Data.Mode for a reviewer session on a pull request a

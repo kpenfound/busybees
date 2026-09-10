@@ -41,7 +41,8 @@ func (s *Scheduler) BranchFor(issue int) string {
 // a question, or the factory gives up.
 //
 // extra is how many max_developers slots the worker holds beyond its own:
-// dispatch claims one per best-of-N attempt (bestofn.go), and the worker
+// dispatch claims one per best-of-N or mixture-of-experts attempt
+// (bestofn.go), and the worker
 // runs extra+1 attempts in its first develop round and gives the extra
 // slots back when they have finished, or at once when that round turns out
 // not to be a first one after all.
@@ -201,8 +202,8 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 		}
 		switch stage {
 		case "develop":
-			// A best-of-N fan-out is a first develop round and nothing
-			// else: a round with a pull request to update is one session
+			// A best-of-N or mixture-of-experts fan-out is a first develop
+			// round and nothing else: a round with a pull request to update is one session
 			// however the size is configured. Dispatch predicted this from
 			// the poll and the bookkeeping; the worker decides from the
 			// pull request it found, and gives the slots back when the two
@@ -239,7 +240,7 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 			var started time.Time
 			if fanout {
 				res, started, err = s.assemble(ctx, fanOut{
-					issue: fresh, worker: w, attempts: extra + 1, base: base, inbox: inbox, maxRounds: maxRounds, parent: parent, log: log,
+					issue: fresh, worker: w, attempts: extra + 1, experts: s.expertsFor(issue), base: base, inbox: inbox, maxRounds: maxRounds, parent: parent, log: log,
 					ws: ws, release: releaseExtra,
 				})
 				if err != nil || res == nil {
