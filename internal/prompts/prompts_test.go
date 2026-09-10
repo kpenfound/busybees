@@ -1807,7 +1807,11 @@ func TestReviewerFollowUpRoundAccountsForPreviousPoints(t *testing.T) {
 	// The block must add nothing at all to round 1, not even a blank line:
 	// the closing line still follows the instruction paragraph directly, as
 	// it did before the block existed.
-	if strings.Contains(round1, "\n\n\nUpdate your notes file before you finish.") {
+	const closing = "Update your notes (`notes_write`) before you finish."
+	if !strings.Contains(round1, closing) {
+		t.Fatalf("the round 1 task has no closing line %q:\n%s", closing, round1)
+	}
+	if strings.Contains(round1, "\n\n\n"+closing) {
 		t.Errorf("the round > 1 block left a blank line in the round 1 task:\n%s", round1)
 	}
 
