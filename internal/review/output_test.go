@@ -316,6 +316,12 @@ func TestPostSubmitsOneReviewAgainstTheHeadItRead(t *testing.T) {
 			t.Errorf("%s: a review was posted", c.name)
 		}
 	}
+	// An approval with nothing selected is posted, with nothing in it.
+	gh = &reviewGH{pr: github.PR{HeadSHA: "abc123"}, diff: sampleDiff}
+	posted, err = Post(context.Background(), gh.client(t), ref, OutputApprove, nil)
+	if err != nil || len(gh.posted) != 1 || posted.Event != "APPROVE" || posted.Body != "" || len(posted.Comments) != 0 {
+		t.Errorf("an empty approval: %+v, %v, posted %d", posted, err, len(gh.posted))
+	}
 	// A post GitHub refused is the error, with nothing returned.
 	gh = &reviewGH{diff: sampleDiff, errs: map[string]bool{"post": true}}
 	if posted, err := Post(context.Background(), gh.client(t), ref, OutputComment, selections("")); err == nil || posted != nil {

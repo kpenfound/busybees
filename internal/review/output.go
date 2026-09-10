@@ -56,11 +56,13 @@ var diffFileStart = regexp.MustCompile(`^diff --git a/(.*) b/(.*)$`)
 var hunkStart = regexp.MustCompile(`^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@`)
 
 // Anchors is the set of lines a review comment can be anchored to: every
-// line of every hunk in a pull request's diff, on both sides, each with the
-// hunk it is in. GitHub takes a comment on any of them and refuses one on
-// any other line, and takes a range only inside one hunk.
+// line of every hunk in a pull request's diff, on both sides. GitHub takes
+// a comment on any of them and refuses one on any other line, and takes a
+// range only inside one hunk, which a range of lines all in the set is:
+// git leaves at least one line between two hunks, so a range across two
+// has a line the set lacks.
 type Anchors struct {
-	hunks map[anchor]int
+	lines map[anchor]bool
 }
 
 // anchor is one line of one side of one file in the diff.
@@ -74,9 +76,9 @@ type anchor struct {
 // prints it. A file's lines are under its new path, or its old one when
 // the change deleted it, which is where GitHub shows them.
 func ParseAnchors(diff string) *Anchors {
-	a := &Anchors{hunks: map[anchor]int{}}
+	a := &Anchors{lines: map[anchor]bool{}}
 	var path string
-	var oldLine, newLine, hunk int
+	var oldLine, newLine int
 	inHunk := false
 	for _, line := range strings.Split(diff, "\n") {
 		if m := diffFileStart.FindStringSubmatch(line); m != nil {
@@ -86,7 +88,6 @@ func ParseAnchors(diff string) *Anchors {
 		if m := hunkStart.FindStringSubmatch(line); m != nil {
 			oldLine, _ = strconv.Atoi(m[1])
 			newLine, _ = strconv.Atoi(m[2])
-			hunk++
 			inHunk = true
 			continue
 		}
@@ -99,14 +100,14 @@ func ParseAnchors(diff string) *Anchors {
 		// added line whose text starts with two dashes or two pluses.
 		switch {
 		case strings.HasPrefix(line, "+"):
-			a.hunks[anchor{path, SideNew, newLine}] = hunk
+			a.lines[anchor{path, SideNew, newLine}] = true
 			newLine++
 		case strings.HasPrefix(line, "-"):
-			a.hunks[anchor{path, SideOld, oldLine}] = hunk
+			a.lines[anchor{path, SideOld, oldLine}] = true
 			oldLine++
 		case strings.HasPrefix(line, " "):
-			a.hunks[anchor{path, SideNew, newLine}] = hunk
-			a.hunks[anchor{path, SideOld, oldLine}] = hunk
+			a.lines[anchor{path, SideNew, newLine}] = true
+			a.lines[anchor{path, SideOld, oldLine}] = true
 			newLine++
 			oldLine++
 		}
@@ -115,18 +116,14 @@ func ParseAnchors(diff string) *Anchors {
 }
 
 // Has reports whether a comment can be anchored where the finding points:
-// a file, lines, and every one of the lines in one hunk of the diff on the
-// finding's side. A finding with no lines has line 0, which no hunk has.
+// a file, lines, and every one of the lines in the diff on the finding's
+// side. A finding with no lines has line 0, which no hunk has.
 func (a *Anchors) Has(f *Finding) bool {
 	if a == nil || !f.Anchored() {
 		return false
 	}
-	want, ok := a.hunks[anchor{f.File, f.Side, f.Lines.Start}]
-	if !ok {
-		return false
-	}
-	for line := f.Lines.Start + 1; line <= f.Lines.End; line++ {
-		if hunk, ok := a.hunks[anchor{f.File, f.Side, line}]; !ok || hunk != want {
+	for line := f.Lines.Start; line <= f.Lines.End; line++ {
+		if !a.lines[anchor{f.File, f.Side, line}] {
 			return false
 		}
 	}
