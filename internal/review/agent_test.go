@@ -92,11 +92,19 @@ func TestAClaudeSessionsAnswerIsRead(t *testing.T) {
 }
 
 func TestAFailedClaudeSessionIsAnError(t *testing.T) {
-	bin, _ := fakeCLI(t, `echo '{"type":"result","subtype":"error_max_turns","is_error":true,"result":"gave up"}'`)
-	agent := &CLIAgent{ClaudeBin: bin}
-	_, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Dir: t.TempDir()})
-	if err == nil || !strings.Contains(err.Error(), "error_max_turns: gave up") {
-		t.Fatalf("err = %v, want the failure the session reported", err)
+	for _, tc := range []struct{ name, answer, want string }{
+		{"with a subtype", `{"type":"result","subtype":"error_max_turns","is_error":true,"result":"gave up"}`, "error_max_turns: gave up"},
+		{"without one", `{"type":"result","is_error":true,"result":"gave up"}`, "failed: gave up"},
+		{"without a word about it", `{"type":"result","subtype":"error_max_turns","is_error":true}`, "session: error_max_turns"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bin, _ := fakeCLI(t, "echo '"+tc.answer+"'")
+			agent := &CLIAgent{ClaudeBin: bin}
+			_, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Dir: t.TempDir()})
+			if err == nil || !strings.HasSuffix(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want the failure the session reported (%s)", err, tc.want)
+			}
+		})
 	}
 }
 
@@ -161,19 +169,35 @@ func TestTheSessionRunsInTheDirectoryItWasGiven(t *testing.T) {
 }
 
 func TestAModelTheConfigurationLeavesOutIsTheCLIsOwn(t *testing.T) {
-	bin, record := fakeCLI(t, claudeAnswer)
-	agent := &CLIAgent{ClaudeBin: bin}
-	if _, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Dir: t.TempDir()}); err != nil {
-		t.Fatal(err)
+	for _, tc := range []struct{ provider, answer string }{
+		{config.AgentClaude, claudeAnswer},
+		{config.AgentCodex, codexAnswer},
+	} {
+		t.Run(tc.provider, func(t *testing.T) {
+			bin, record := fakeCLI(t, tc.answer)
+			agent := &CLIAgent{Provider: tc.provider, ClaudeBin: bin, CodexBin: bin}
+			if _, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Dir: t.TempDir()}); err != nil {
+				t.Fatal(err)
+			}
+			if got := args(t, record); strings.Contains(got, "--model") {
+				t.Errorf("a model was chosen:\n%s", got)
+			}
+		})
 	}
-	if got := args(t, record); strings.Contains(got, "--model") {
-		t.Errorf("a model was chosen:\n%s", got)
+}
+
+func TestACLIThatCouldNotBeRunIsAnError(t *testing.T) {
+	agent := &CLIAgent{ClaudeBin: filepath.Join(t.TempDir(), "no-such-claude")}
+	_, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Dir: t.TempDir()})
+	if err == nil || !strings.Contains(err.Error(), "no-such-claude") {
+		t.Fatalf("err = %v, want the executable that could not be run", err)
 	}
 }
 
 const codexAnswer = `echo '{"type":"thread.started","thread_id":"thread-9"}'
 echo '{"type":"item.completed","item":{"type":"reasoning","text":"thinking"}}'
 echo '{"type":"item.completed","item":{"type":"agent_message","text":"the brief"}}'
+echo '{"type":"item.completed","item":{"type":"reasoning","text":"that will do"}}'
 echo '{"type":"turn.completed"}'`
 
 func TestACodexReviewSessionRunsInItsReadOnlySandbox(t *testing.T) {
@@ -194,18 +218,26 @@ func TestACodexReviewSessionRunsInItsReadOnlySandbox(t *testing.T) {
 	if strings.Contains(got, "--resume") {
 		t.Errorf("codex was asked to resume:\n%s", got)
 	}
-	if res.Text != "the brief" || res.ID != "thread-9" || res.Turns != 2 || res.CostUSD != 0 {
+	if res.Text != "the brief" || res.ID != "thread-9" || res.Turns != 3 || res.CostUSD != 0 {
 		t.Errorf("result = %+v", res)
 	}
 }
 
 func TestAFailedCodexTurnIsAnError(t *testing.T) {
-	bin, _ := fakeCLI(t, `echo '{"type":"thread.started","thread_id":"t"}'
-echo '{"type":"turn.failed","error":{"message":"context window"}}'`)
-	agent := &CLIAgent{Provider: config.AgentCodex, CodexBin: bin}
-	_, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Dir: t.TempDir()})
-	if err == nil || !strings.Contains(err.Error(), "turn_failed: context window") {
-		t.Fatalf("err = %v, want the failed turn", err)
+	// A failed turn says why under "error", a codex that gave up on the
+	// session says it in the event itself.
+	for _, tc := range []struct{ name, event, want string }{
+		{"a failed turn", `{"type":"turn.failed","error":{"message":"context window"}}`, "turn_failed: context window"},
+		{"an error", `{"type":"error","message":"no capacity"}`, "error: no capacity"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bin, _ := fakeCLI(t, "echo '{\"type\":\"thread.started\",\"thread_id\":\"t\"}'\necho '"+tc.event+"'")
+			agent := &CLIAgent{Provider: config.AgentCodex, CodexBin: bin}
+			_, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Dir: t.TempDir()})
+			if err == nil || !strings.HasSuffix(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 
