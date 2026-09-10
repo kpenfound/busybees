@@ -555,15 +555,17 @@ func TestARefusalIsToldApartFromAFailure(t *testing.T) {
 			t.Errorf("%s: err = %v, want a refusal", name, err)
 		}
 	}
-	q.Angles = &Angles{Agent: &fakeAgent{err: errors.New("no capacity")}, Provider: config.AgentClaude}
+	cause := errors.New("no capacity")
+	q.Angles = &Angles{Agent: &fakeAgent{err: cause}, Provider: config.AgentClaude}
 	for name, id := range map[string]string{"an angle with no session": scope, "a session that failed": tests} {
 		_, err := q.Ask(context.Background(), id, "Sure?")
 		if !isRefusal(err) {
 			t.Errorf("%s: err = %v, want a refusal", name, err)
 		}
 	}
-	// Refusals leave the queue as it was, and the message is the cause's.
-	if _, err := q.Ask(context.Background(), tests, "Sure?"); err == nil || err.Error() != "no capacity" || !strings.Contains(errors.Unwrap(err).Error(), "no capacity") {
+	// Refusals leave the queue as it was, and a refusal made of a session's
+	// failure reads as that failure and unwraps to it.
+	if _, err := q.Ask(context.Background(), tests, "Sure?"); err == nil || err.Error() != "no capacity" || !errors.Is(err, cause) {
 		t.Errorf("err = %v, want the session's own failure wrapped", err)
 	}
 	if got := written(t, q).Decisions; len(got) != 0 || len(q.Pending()) != 3 {
