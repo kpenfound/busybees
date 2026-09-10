@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -808,5 +809,323 @@ func TestBestOfNKeepsAttemptBranchesWhenReadingThemFails(t *testing.T) {
 	}
 	if got, want := remoteBranches(t, h), []string{"bees/issue-1-attempt-1", "bees/issue-1-attempt-2", "bees/issue-1-attempt-3", "main"}; !slices.Equal(got, want) {
 		t.Errorf("remote branches: got %v want %v", got, want)
+	}
+}
+
+// moeTOML fans a large issue out to three experts on a pool of three
+// developers: one with a prompt and a model of its own, one with a prompt
+// only, and one with neither. The developer is the only role that runs, and
+// the large issue is first in the queue.
+const moeTOML = `
+version = 1
+[project]
+repo = "acme/widgets"
+[scheduler]
+poll_interval = "1s"
+max_developers = 3
+dispatch_order = "large-first"
+[roles.developer]
+model = "opus"
+model_by_size = { s = "haiku" }
+prompt = "the developer's own prompt"
+best_of_n_model = "sonnet-4"
+best_of_n_prompt = "solve it your own way"
+moe_experts_by_size = { l = ["backend", "frontend", "tests"] }
+[roles.developer.moe_experts.backend]
+prompt = "solve it in the server code"
+model = "sonnet"
+[roles.developer.moe_experts.frontend]
+prompt = "solve it in the interface"
+[roles.developer.moe_experts.tests]
+[roles.reviewer]
+enabled = false
+[roles.product_manager]
+enabled = false
+[roles.project_manager]
+enabled = false
+[roles.qa]
+enabled = false
+`
+
+// attemptSession is the directory of the session that ran attempt i of
+// issue 1, or the assembler's for i == 0.
+func attemptSession(t *testing.T, h *harness, i int) string {
+	t.Helper()
+	suffix := "-assemble"
+	if i > 0 {
+		suffix = fmt.Sprintf("-attempt-%d", i)
+	}
+	for _, dir := range h.sessions(config.RoleDeveloper) {
+		if strings.Contains(filepath.Base(dir), "developer-issue-1"+suffix+"-") {
+			return dir
+		}
+	}
+	t.Fatalf("no session for developer-issue-1%s among %v", suffix, h.sessionNames())
+	return ""
+}
+
+// wantExpertSession asserts attempt i ran on the given model with the
+// given prompt replacing the developer's, and none of the other experts'.
+func wantExpertSession(t *testing.T, h *harness, i int, model, prompt string) {
+	t.Helper()
+	dir := attemptSession(t, h, i)
+	name := filepath.Base(dir)
+	if got := argValue(argsOf(t, dir), "--model"); got != model {
+		t.Errorf("%s --model: got %q want %q", name, got, model)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "system-prompt.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	system := string(b)
+	if !strings.Contains(system, prompt) {
+		t.Errorf("%s: the prompt %q is missing from the system prompt", name, prompt)
+	}
+	for _, other := range []string{"solve it in the server code", "solve it in the interface", "the developer's own prompt", "solve it your own way"} {
+		if other != prompt && strings.Contains(system, other) {
+			t.Errorf("%s: the system prompt carries %q as well as %q", name, other, prompt)
+		}
+	}
+}
+
+// A size moe_experts_by_size names experts for runs one developer session
+// per expert at once, on the numbered attempt branches and worktrees and in
+// the slots best-of-N uses, so the fan-out holds one slot per expert and a
+// ready issue behind it waits. Attempt i runs expert i's own model and
+// prompt; an expert with no model runs the size's, and one with neither
+// runs the developer's own prompt. Their cost lands in the issue's one
+// running total, the assembler runs after them on the issue's own branch,
+// and every attempt branch and worktree is gone by the time the pull
+// request goes to review.
+func TestMoERunsOneSessionPerExpert(t *testing.T) {
+	h := newHarness(t, moeTOML)
+	release := filepath.Join(t.TempDir(), "release")
+	t.Setenv("FAKE_WAIT_FOR", release)
+	t.Setenv("FAKE_COST", "1.0")
+	seedSized(h, 1, "l")
+	seedSized(h, 2, "s") // behind #1 in the queue: large-first
+	events := h.sched.Subscribe()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if err := h.sched.pass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 30*time.Second, "the three experts to start", func() bool {
+		return len(h.sessions(config.RoleDeveloper)) == 3
+	})
+	// All three slots are the fan-out's while the experts run: #2 got none.
+	if got := freeSlots(h); got != 0 {
+		t.Errorf("free slots during the fan-out: got %d want 0", got)
+	}
+	if err := h.sched.pass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(h.sessions(config.RoleDeveloper)); n != 3 {
+		t.Errorf("a second pass dispatched into a full pool: %d developer sessions", n)
+	}
+	st, err := h.store.LoadStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Workers) != 1 || st.Workers[0].Issue != 1 || st.Workers[0].Stage != "fan-out" {
+		t.Errorf("workers during the fan-out: %+v", st.Workers)
+	}
+	if err := os.WriteFile(release, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitWorkers(t, h, cancel, time.Minute)
+
+	// One session per expert, numbered by its place in the list, and the
+	// assembler after all of them.
+	got := h.sessionNames()
+	slices.Sort(got)
+	want := []string{"developer-issue-1-assemble", "developer-issue-1-attempt-1", "developer-issue-1-attempt-2", "developer-issue-1-attempt-3"}
+	if !slices.Equal(got, want) {
+		t.Errorf("sessions: got %v want %v", got, want)
+	}
+	if order := h.sessionOrder(); !strings.Contains(order[len(order)-1], "-assemble") {
+		t.Errorf("the assembler did not run last: %v", order)
+	}
+	if stages := stagesOf(events, 1); !slices.Equal(stages, []string{"fan-out", "assembler"}) {
+		t.Errorf("worker stages: got %v want [fan-out assembler]", stages)
+	}
+	// Each attempt is its expert: backend names both, frontend a prompt
+	// only, tests neither. best_of_n_model and best_of_n_prompt are
+	// best-of-N's and reach no expert.
+	wantExpertSession(t, h, 1, "sonnet", "solve it in the server code")
+	wantExpertSession(t, h, 2, "opus", "solve it in the interface")
+	wantExpertSession(t, h, 3, "opus", "the developer's own prompt")
+	// The assembler is the same session best-of-N runs, told every branch.
+	prompt := assemblerPrompt(t, h)
+	for i := 1; i <= 3; i++ {
+		if !strings.Contains(prompt, fmt.Sprintf("`bees/issue-1-attempt-%d`", i)) {
+			t.Errorf("the assembler was not told of attempt %d:\n%s", i, prompt)
+		}
+	}
+	if got, want := remoteBranches(t, h), []string{"bees/issue-1", "main"}; !slices.Equal(got, want) {
+		t.Errorf("remote branches: got %v want %v", got, want)
+	}
+	if got := localBranches(t, h, "bees/issue-1-attempt-*"); len(got) != 0 {
+		t.Errorf("attempt branches left in the clone: %v", got)
+	}
+	if out, _ := workspace.Git(ctx, h.clone, "worktree", "list"); strings.Count(out, "\n") != 0 {
+		t.Errorf("worktrees left behind:\n%s", out)
+	}
+	if got := freeSlots(h); got != 3 {
+		t.Errorf("free slots after the fan-out: got %d want 3", got)
+	}
+	// Every expert and the assembler were recorded against the issue: one
+	// budget for the round.
+	bk, err := h.store.Issue(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bk.Cost != 4.0 || bk.Sessions != 4 {
+		t.Errorf("issue spend: $%.2f over %d sessions, want $4.00 over 4", bk.Cost, bk.Sessions)
+	}
+	if bk.PR != 201 {
+		t.Errorf("issue #1 pull request: got %d want 201", bk.PR)
+	}
+	if got := h.stateOfIssue(1); got != "approved" {
+		t.Errorf("issue #1 state: got %q want approved (comments: %v)", got, h.gh.comments[1])
+	}
+	logs := h.logs.String()
+	if !strings.Contains(logs, "mixture of experts: running the attempts") || strings.Contains(logs, "best-of-N: running the attempts") {
+		t.Errorf("the round is not logged as a mixture of experts:\n%s", logs)
+	}
+}
+
+// More experts than max_developers run as many as the pool holds, the first
+// ones in the list: the clamp is best-of-N's, and it keeps the list's order
+// so attempt i is still expert i.
+func TestMoEClampsToMaxDevelopers(t *testing.T) {
+	toml := strings.Replace(moeTOML, "max_developers = 3\n", "max_developers = 2\n", 1)
+	h := newHarness(t, toml)
+	seedSized(h, 1, "l")
+	runPass(t, h)
+	h.sched.wg.Wait()
+
+	got := h.sessionNames()
+	slices.Sort(got)
+	want := []string{"developer-issue-1-assemble", "developer-issue-1-attempt-1", "developer-issue-1-attempt-2"}
+	if !slices.Equal(got, want) {
+		t.Errorf("sessions: got %v want %v", got, want)
+	}
+	wantExpertSession(t, h, 1, "sonnet", "solve it in the server code")
+	wantExpertSession(t, h, 2, "opus", "solve it in the interface")
+	if !strings.Contains(h.logs.String(), "mixture of experts clamped to max_developers") {
+		t.Errorf("the clamp is not logged:\n%s", h.logs.String())
+	}
+	if got := freeSlots(h); got != 2 {
+		t.Errorf("free slots after the fan-out: got %d want 2", got)
+	}
+}
+
+// The attempts a mixture-of-experts round runs carry the expert each ran
+// as, and attemptData hands that name to the assembler with the branch; a
+// best-of-N attempt names none. Run directly, on a fan-out built by hand,
+// so the wiring from the expert list to the assembler's data is what is
+// under test.
+func TestMoEAttemptsCarryTheirExpert(t *testing.T) {
+	h := newHarness(t, moeTOML)
+	seedSized(h, 1, "l")
+	ctx := context.Background()
+	f := fanOut{
+		issue: *h.gh.issues[1], worker: &state.Worker{Name: "dev-1", Issue: 1}, attempts: 2,
+		experts: []string{"backend", "frontend", "tests"}, base: "main", log: h.sched.log,
+	}
+	attempts, wss, err := h.sched.runAttempts(ctx, f)
+	for _, ws := range wss {
+		if rmErr := h.sched.ws.Remove(ctx, ws); rmErr != nil {
+			t.Error(rmErr)
+		}
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(attempts) != 2 || attempts[0].expert != "backend" || attempts[1].expert != "frontend" {
+		t.Errorf("attempts: got %+v want backend, frontend", attempts)
+	}
+	data, err := h.sched.attemptData(ctx, attempts, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []prompts.Attempt{
+		{Branch: "bees/issue-1-attempt-1", Commits: 1, Outcome: "pr-opened", PR: fakePR, Candidate: true, Expert: "backend"},
+		{Branch: "bees/issue-1-attempt-2", Commits: 1, Outcome: "pr-opened", PR: fakePR, Candidate: true, Expert: "frontend"},
+	}
+	if !slices.Equal(data, want) {
+		t.Errorf("attemptData:\n got %+v\nwant %+v", data, want)
+	}
+	// An attempt past the end of the list, and a best-of-N round, name no
+	// expert.
+	if got := f.expert(3); got != "tests" {
+		t.Errorf("expert(3): got %q want tests", got)
+	}
+	if got := f.expert(4); got != "" {
+		t.Errorf("expert(4): got %q want none", got)
+	}
+	if got := (fanOut{attempts: 3}).expert(1); got != "" {
+		t.Errorf("a best-of-N round's expert(1): got %q want none", got)
+	}
+}
+
+// A size best_of_n_by_size fans out, and a size neither table names, are
+// untouched by the expert path: the best-of-N attempts run the best-of-N
+// model and prompt with no expert named, the single session runs the
+// developer's own, and dispatch claims the same slots it always has. The
+// expert table is set for another size so the path is reachable.
+func TestMoELeavesBestOfNAndSingleSessionsAlone(t *testing.T) {
+	toml := strings.Replace(moeTOML, "moe_experts_by_size = { l = [\"backend\", \"frontend\", \"tests\"] }\n",
+		"best_of_n_by_size = { l = 3 }\nmoe_experts_by_size = { m = [\"backend\", \"frontend\", \"tests\"] }\n", 1)
+	h := newHarness(t, toml)
+	seedSized(h, 1, "l")
+	seedReady(h, 2, "s", time.Now())
+	snap, err := h.sched.poll(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		issue    int
+		attempts int
+	}{{1, 3}, {2, 1}} {
+		issue := *h.gh.issues[tc.issue]
+		if got := h.sched.expertsFor(issue); got != nil {
+			t.Errorf("expertsFor(#%d): got %v want none", tc.issue, got)
+		}
+		if got := h.sched.attemptsFor(issue, snap); got != tc.attempts {
+			t.Errorf("attemptsFor(#%d): got %d want %d", tc.issue, got, tc.attempts)
+		}
+	}
+	// #1 takes the whole pool; #2 runs in the pass after it.
+	runPass(t, h)
+	h.sched.wg.Wait()
+	forcePoll(h)
+	runPass(t, h)
+	h.sched.wg.Wait()
+	got := h.sessionNames()
+	slices.Sort(got)
+	want := []string{"developer-issue-1-assemble", "developer-issue-1-attempt-1", "developer-issue-1-attempt-2", "developer-issue-1-attempt-3", "developer-issue-2-r1"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("sessions: got %v want %v", got, want)
+	}
+	for i := 1; i <= 3; i++ {
+		wantExpertSession(t, h, i, "sonnet-4", "solve it your own way")
+	}
+	for _, dir := range h.sessions(config.RoleDeveloper) {
+		if !strings.Contains(filepath.Base(dir), "developer-issue-2-r1") {
+			continue
+		}
+		if got := argValue(argsOf(t, dir), "--model"); got != "haiku" {
+			t.Errorf("#2 --model: got %q want haiku", got)
+		}
+		b, _ := os.ReadFile(filepath.Join(dir, "system-prompt.md"))
+		if system := string(b); !strings.Contains(system, "the developer's own prompt") || strings.Contains(system, "solve it in the") || strings.Contains(system, "solve it your own way") {
+			t.Errorf("#2 must run the developer's own prompt:\n%s", system)
+		}
+	}
+	if logs := h.logs.String(); strings.Contains(logs, "mixture of experts") || !strings.Contains(logs, "best-of-N: running the attempts") {
+		t.Errorf("the best-of-N round is not logged as one:\n%s", logs)
 	}
 }

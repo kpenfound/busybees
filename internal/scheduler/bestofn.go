@@ -58,6 +58,15 @@ import (
 // account-wide session limit, which pauses the factory, and when reading
 // what the attempts came to fails before the assembler runs, which fails
 // the worker. A retry's attempts resume on their branches.
+//
+// Mixture of experts. An issue whose size roles.developer.moe_experts_by_size
+// names experts for fans out the same way, with one attempt per expert in
+// the list's order instead of N alike: attempt i runs expert i's prompt and
+// model (sessionSpec.moeExpert), on the same numbered branch, in the same
+// slot, against the same budget, and is cleaned up on the same terms. The
+// assembler is told which expert each attempt was (prompts.Attempt.Expert).
+// A size fans out one way or the other, never both: config refuses a size
+// in both tables.
 
 // attemptBranch is the branch attempt i (1-based) of a fan-out works on:
 // the issue's branch with "-attempt-<i>" appended. An issue that does not
@@ -68,20 +77,17 @@ func (s *Scheduler) attemptBranch(issue, i int) string {
 
 // attemptsFor is how many developer sessions the issue's next develop round
 // runs, which is how many slots dispatch claims for it: best_of_n_by_size
-// for the issue's size, clamped to max_developers, when that round is the
-// first one; 1 for everything else. An issue whose branch already has an
-// open pull request, or whose bookkeeping records a pull request or a
-// later round, is a review loop being resumed, and a review round is one
-// session however the size is configured.
+// for the issue's size, or one per expert moe_experts_by_size names for it,
+// clamped to max_developers, when that round is the first one; 1 for
+// everything else. An issue whose branch already has an open pull request,
+// or whose bookkeeping records a pull request or a later round, is a review
+// loop being resumed, and a review round is one session however the size
+// is configured.
 //
 // The clamp is applied silently here, where it is read on every dispatch of
 // the issue; the worker logs it once, when the attempts start.
 func (s *Scheduler) attemptsFor(issue github.Issue, snap *snapshot) int {
-	role, err := s.cfg.Role(config.RoleDeveloper)
-	if err != nil {
-		return 1
-	}
-	n := role.BestOfN(s.sizeOf(issue.Labels))
+	n := s.configuredAttempts(issue)
 	if n <= 1 || s.hasOpenPR(snap, issue) {
 		return 1
 	}
@@ -124,9 +130,14 @@ func (s *Scheduler) releaseSlots(n int) {
 
 // fanOut is one first develop round run as N attempts.
 type fanOut struct {
-	issue     github.Issue
-	worker    *state.Worker
-	attempts  int
+	issue    github.Issue
+	worker   *state.Worker
+	attempts int
+	// experts, when set, makes the round a mixture-of-experts one: attempt
+	// i runs as experts[i-1] (expertsFor). A best-of-N round carries none.
+	// The list may be longer than attempts, which is clamped to the pool:
+	// the experts past it do not run.
+	experts   []string
 	base      string
 	inbox     []mail.Message
 	maxRounds int
@@ -141,6 +152,9 @@ type fanOut struct {
 // attempt is what one attempt of a fan-out came to.
 type attempt struct {
 	branch string
+	// expert is the expert a mixture-of-experts attempt ran as; empty for
+	// a best-of-N attempt.
+	expert string
 	// status and note are the session's outcome (outcomeOf); pr the pull
 	// request it reported, if any.
 	status, note string
@@ -163,9 +177,17 @@ type attempt struct {
 // factory rather than giving the issue up.
 func (s *Scheduler) runAttempts(ctx context.Context, f fanOut) ([]attempt, []*workspace.Workspace, error) {
 	if configured := s.configuredAttempts(f.issue); configured > f.attempts {
-		f.log.Warn("best-of-N clamped to max_developers", "issue", f.issue.Number, "size", s.sizeOf(f.issue.Labels), "best_of_n", configured, "max_developers", s.cfg.Scheduler.MaxDevelopers, "attempts", f.attempts)
+		if f.experts != nil {
+			f.log.Warn("mixture of experts clamped to max_developers", "issue", f.issue.Number, "size", s.sizeOf(f.issue.Labels), "experts", configured, "max_developers", s.cfg.Scheduler.MaxDevelopers, "attempts", f.attempts)
+		} else {
+			f.log.Warn("best-of-N clamped to max_developers", "issue", f.issue.Number, "size", s.sizeOf(f.issue.Labels), "best_of_n", configured, "max_developers", s.cfg.Scheduler.MaxDevelopers, "attempts", f.attempts)
+		}
 	}
-	f.log.Info("best-of-N: running the attempts", "attempts", f.attempts, "mail", len(f.inbox))
+	if f.experts != nil {
+		f.log.Info("mixture of experts: running the attempts", "attempts", f.attempts, "experts", f.experts, "mail", len(f.inbox))
+	} else {
+		f.log.Info("best-of-N: running the attempts", "attempts", f.attempts, "mail", len(f.inbox))
+	}
 	var wss []*workspace.Workspace
 	for i := 1; i <= f.attempts; i++ {
 		branch := s.attemptBranch(f.issue.Number, i)
@@ -182,13 +204,13 @@ func (s *Scheduler) runAttempts(ctx context.Context, f fanOut) ([]attempt, []*wo
 		wg.Add(1)
 		go func(i int, ws *workspace.Workspace) {
 			defer wg.Done()
-			a := attempt{branch: ws.Branch}
+			a := attempt{branch: ws.Branch, expert: f.expert(i)}
 			// No worker: the attempts share one, and the retry and sandbox
 			// marks N sessions would write on it would only overwrite each
 			// other. The worker's stage names the fan-out instead.
 			res, err := s.runSessionWithRetry(ctx, sessionSpec{
 				role: config.RoleDeveloper, name: fmt.Sprintf("developer-issue-%d-attempt-%d", f.issue.Number, i),
-				workDir: ws.RepoDir, branch: ws.Branch, attempt: i,
+				workDir: ws.RepoDir, branch: ws.Branch, attempt: i, moeExpert: a.expert,
 				data: prompts.Data{Issue: &f.issue, Inbox: f.inbox, Round: 1, MaxRounds: f.maxRounds, Parent: f.parent, BaseBranch: f.base},
 			})
 			if err != nil {
@@ -218,14 +240,57 @@ func (s *Scheduler) runAttempts(ctx context.Context, f fanOut) ([]attempt, []*wo
 	return results, wss, nil
 }
 
-// configuredAttempts is best_of_n_by_size for the issue's size, before the
-// clamp; 1 when the developer role cannot be resolved.
+// expert is the expert attempt i (1-based) runs as, or "" for a best-of-N
+// round and for an attempt past the end of the list.
+func (f fanOut) expert(i int) string {
+	if i < 1 || i > len(f.experts) {
+		return ""
+	}
+	return f.experts[i-1]
+}
+
+// configuredAttempts is how many attempts the issue's size is configured
+// for, before the clamp: one per expert when moe_experts_by_size names any,
+// else best_of_n_by_size; 1 when the developer role cannot be resolved.
 func (s *Scheduler) configuredAttempts(issue github.Issue) int {
+	if experts := s.expertsFor(issue); experts != nil {
+		return len(experts)
+	}
 	role, err := s.cfg.Role(config.RoleDeveloper)
 	if err != nil {
 		return 1
 	}
 	return role.BestOfN(s.sizeOf(issue.Labels))
+}
+
+// expertsFor is the experts the issue's size fans out to, in attempt order
+// (fanOut.experts); nil for a size moe_experts_by_size does not name, which
+// is a best-of-N or single-session round.
+func (s *Scheduler) expertsFor(issue github.Issue) []string {
+	role, err := s.cfg.Role(config.RoleDeveloper)
+	if err != nil {
+		return nil
+	}
+	experts := role.MoEExperts(s.sizeOf(issue.Labels))
+	if len(experts) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(experts))
+	for _, e := range experts {
+		names = append(names, e.Name)
+	}
+	return names
+}
+
+// expertNamed is the expert of that name among the ones the size fans out
+// to, resolved to the model and prompt its session runs.
+func expertNamed(role config.ResolvedRole, size, name string) (config.ResolvedMoEExpert, bool) {
+	for _, e := range role.MoEExperts(size) {
+		if e.Name == name {
+			return e, true
+		}
+	}
+	return config.ResolvedMoEExpert{}, false
 }
 
 // assemble is the fan-out from start to finish: the attempts, then the
@@ -298,8 +363,9 @@ func (s *Scheduler) assemble(ctx context.Context, f fanOut) (*session.Result, ti
 }
 
 // attemptData is what the assembler is told about each attempt: its branch,
-// how many commits that branch carries beyond the base, and what its
-// session reported. The main clone is fetched first, so the counts are the
+// the expert it ran as when the round is a mixture of experts, how many
+// commits that branch carries beyond the base, and what its session
+// reported. The main clone is fetched first, so the counts are the
 // remote's and the assembler's worktree sees the same refs.
 func (s *Scheduler) attemptData(ctx context.Context, attempts []attempt, base string) ([]prompts.Attempt, error) {
 	if err := s.ws.Fetch(ctx); err != nil {
@@ -311,7 +377,7 @@ func (s *Scheduler) attemptData(ctx context.Context, attempts []attempt, base st
 		if err != nil {
 			return nil, fmt.Errorf("attempt %s: %w", a.branch, err)
 		}
-		d := prompts.Attempt{Branch: a.branch, Commits: n, Outcome: a.status, Note: a.note, PR: a.pr, Candidate: n > 0}
+		d := prompts.Attempt{Branch: a.branch, Commits: n, Outcome: a.status, Note: a.note, PR: a.pr, Candidate: n > 0, Expert: a.expert}
 		if a.err != nil {
 			d.Outcome, d.Note = OutcomeFailed, "the session could not be run: "+a.err.Error()
 		}

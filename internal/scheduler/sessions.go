@@ -37,12 +37,17 @@ type sessionSpec struct {
 	// worker, when set, is updated with the attempt number so `bees status`
 	// shows that a session is being retried.
 	worker *state.Worker
-	// attempt numbers a best-of-N attempt, 1 to N (bestofn.go); 0 is any
-	// other session. An attempt runs roles.developer.best_of_n_model and
-	// best_of_n_prompt where they are set, and is told of no interrupted
-	// session: that report is about one branch, and the attempts each work
-	// on their own.
+	// attempt numbers a best-of-N or mixture-of-experts attempt, 1 to N
+	// (bestofn.go); 0 is any other session. An attempt runs
+	// roles.developer.best_of_n_model and best_of_n_prompt where they are
+	// set, and is told of no interrupted session: that report is about one
+	// branch, and the attempts each work on their own.
 	attempt int
+	// moeExpert names the expert a mixture-of-experts attempt runs as, one
+	// of roles.developer.moe_experts_by_size for the issue's size: the
+	// attempt runs that expert's model and prompt instead of the best-of-N
+	// ones. Empty for every other session, best-of-N attempts included.
+	moeExpert string
 	// assembler marks the session that picks the result of a best-of-N
 	// fan-out (bestofn.go): it runs roles.developer.assembler_model and
 	// assembler_prompt where they are set.
@@ -61,7 +66,14 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 	if spec.role == config.RoleDeveloper && spec.data.Issue != nil {
 		role.Model = role.ModelFor(s.sizeOf(spec.data.Issue.Labels))
 	}
-	if spec.attempt > 0 {
+	switch {
+	case spec.moeExpert != "":
+		// The expert is already resolved against the size's model and the
+		// developer's prompt (config.ResolvedRole.MoEExperts).
+		if e, ok := expertNamed(role, s.sizeOf(spec.data.Issue.Labels), spec.moeExpert); ok {
+			role.Model, role.Prompt = e.Model, e.Prompt
+		}
+	case spec.attempt > 0:
 		if role.BestOfNModel != "" {
 			role.Model = role.BestOfNModel
 		}
