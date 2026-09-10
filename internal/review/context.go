@@ -120,7 +120,10 @@ type Input struct {
 	Client *github.Client
 	// Dir is the checkout of the repository under review, and "" on a
 	// machine that has none: the sources that read files then gather
-	// nothing. Paths resolve against Root, not against this.
+	// nothing. It need not be the top of that checkout, only somewhere
+	// inside it. A source reading the files context.toml names resolves
+	// them against Root; the callers source searches the whole repository,
+	// starting from here.
 	Dir string
 	// Project is the repository's context.toml, never nil.
 	Project *Project
@@ -131,10 +134,11 @@ type Input struct {
 	skipped []string
 }
 
-// Root is the directory the sources that read files read from: the one
-// context.toml lives in, which its paths are relative to, and the checkout
-// when the project has no context.toml. It is "" when there is no checkout,
-// which is what those sources check.
+// Root is the directory the files named in context.toml are read from: the
+// one context.toml lives in, which its paths are relative to, and the
+// checkout when the project has no context.toml. It is "" when there is no
+// checkout, which is what those sources check. The callers source does not
+// use it: a repository-wide search is not relative to anything.
 func (in *Input) Root() string {
 	if in.Project != nil && in.Project.Loaded {
 		return in.Project.Dir()
@@ -174,9 +178,9 @@ type Pipeline struct {
 	// Project is the repository's context.toml, which says which sources
 	// are gathered. Nil is a repository that has none: every built-in.
 	Project *Project
-	// Dir is the checkout of the repository under review, which style
-	// sources and callers are read from. "" is a machine with no checkout,
-	// and CheckoutOf is how a caller gets one or the other.
+	// Dir is the checkout of the repository under review, anywhere inside
+	// it: the sources that read files read from there. "" is a machine with
+	// no checkout, and CheckoutOf is how a caller gets one or the other.
 	Dir string
 	// Collectors are the collectors the names in context.toml bind to,
 	// Builtins when it is nil. Replacing one changes what that built-in

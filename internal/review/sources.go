@@ -256,15 +256,22 @@ type callersSource struct{}
 func (callersSource) Name() string { return SourceCallers }
 
 func (callersSource) Collect(ctx context.Context, in *Input) ([]Item, error) {
-	root := in.Root()
-	if root == "" {
+	if in.Dir == "" {
 		in.Skip("no checkout of %s: callers of the changed symbols were not looked for", in.Ref.Repo)
 		return nil, nil
 	}
-	if _, _, err := gitRun(ctx, root, "rev-parse", "--git-dir"); err != nil {
-		in.Skip("%s is not a git checkout: callers of the changed symbols were not looked for", root)
+	// `git grep` searches the directory it runs in and below, and names the
+	// files it found relative to it. Who calls a changed symbol is a
+	// question about the whole repository, and the answers have to line up
+	// with the diff's paths, which are relative to the repository root: so
+	// search from the top of the checkout, wherever the review was run from
+	// and wherever context.toml sits.
+	top, _, err := gitRun(ctx, in.Dir, "rev-parse", "--show-toplevel")
+	if err != nil {
+		in.Skip("%s is not a git checkout: callers of the changed symbols were not looked for", in.Dir)
 		return nil, nil
 	}
+	top = strings.TrimSpace(top)
 	diff, err := in.Diff(ctx)
 	if err != nil {
 		return nil, err
@@ -277,7 +284,7 @@ func (callersSource) Collect(ctx context.Context, in *Input) ([]Item, error) {
 	changed := changedFiles(diff)
 	var items []Item
 	for _, symbol := range symbols {
-		out, code, err := gitRun(ctx, root, "grep", "-n", "--fixed-strings", "--word-regexp", "--", symbol)
+		out, code, err := gitRun(ctx, top, "grep", "-n", "--fixed-strings", "--word-regexp", "--", symbol)
 		if code == 1 {
 			continue // git grep says "no match" with a status, not an error
 		}

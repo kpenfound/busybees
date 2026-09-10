@@ -162,6 +162,46 @@ func TestCallersFindsTheChangedSymbolElsewhere(t *testing.T) {
 	}
 }
 
+// git grep searches the directory it runs in and below, and names what it
+// found relative to it. A review run from a subdirectory, or a context.toml
+// that lives in one, must still find the callers in the rest of the
+// repository, and still line them up with the diff's paths.
+func TestCallersSearchTheWholeCheckoutNotJustWhereTheReviewRan(t *testing.T) {
+	repo := gitRepo(t, "https://github.com/"+testRepo)
+	for _, pkg := range []string{"pkgA", "pkgB"} {
+		if err := os.MkdirAll(filepath.Join(repo, pkg), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFile(t, repo, filepath.Join("pkgA", "widget.go"), "package a\n\nfunc Widget() {}\n")
+	writeFile(t, repo, filepath.Join("pkgB", "user.go"), "package b\n\nfunc use() { a.Widget() }\n")
+	writeFile(t, repo, filepath.Join("pkgA", ProjectFile), "")
+	runGit(t, repo, "add", ".")
+
+	sub := filepath.Join(repo, "pkgA")
+	project, err := LoadProject(filepath.Join(sub, ProjectFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := sampleGH()
+	f.diff = "diff --git a/pkgA/widget.go b/pkgA/widget.go\n--- a/pkgA/widget.go\n+++ b/pkgA/widget.go\n@@ -1 +1,2 @@\n+func Widget() {}\n"
+	bundle := gatherTest(t, f, project, sub)
+
+	items := bundle.Of(SourceCallers)
+	if len(items) != 1 || items[0].Name != "Widget" {
+		t.Fatalf("callers %+v, want the changed symbol", items)
+	}
+	if !strings.Contains(items[0].Content, "pkgB/user.go:3:") {
+		t.Fatalf("callers content %q, want the caller outside the directory the review ran in", items[0].Content)
+	}
+	// The paths git grep reports have to be the diff's, or the file the
+	// diff changed is not recognised as one and comes back as its own
+	// caller.
+	if strings.Contains(items[0].Content, "widget.go") {
+		t.Fatalf("callers content %q, want the changed file left out", items[0].Content)
+	}
+}
+
 func TestCallersOutsideAGitCheckoutGathersNothing(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "spin.go", "package a\n\nfunc spin() { Widget() }\n")
