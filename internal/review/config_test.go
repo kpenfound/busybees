@@ -34,9 +34,6 @@ func TestConfigDefaults(t *testing.T) {
 	if got, want := cfg.ResolvedStoragePath(), filepath.Join(dir, "reviews"); got != want {
 		t.Fatalf("storage path %q, want %q", got, want)
 	}
-	if !cfg.TUI.ColorEnabled() || cfg.TUI.DiffContext != DefaultDiffContext {
-		t.Fatalf("tui defaults: %+v", cfg.TUI)
-	}
 	if cfg.GitHub.ResolvedToken() != "" || cfg.GitHub.RedactedToken() != "" {
 		t.Fatalf("no token configured, got %q", cfg.GitHub.RedactedToken())
 	}
@@ -73,10 +70,6 @@ output = "comment"
 
 [github]
 token = "$REVIEW_TOKEN"
-
-[tui]
-color = false
-diff_context = 8
 `))
 	if err != nil {
 		t.Fatal(err)
@@ -89,18 +82,6 @@ diff_context = 8
 	}
 	if got := cfg.ResolvedStoragePath(); got != "/var/lib/bees/reviews" {
 		t.Fatalf("absolute storage path %q", got)
-	}
-	if cfg.TUI.ColorEnabled() || cfg.TUI.DiffContext != 8 {
-		t.Fatalf("tui: %+v", cfg.TUI)
-	}
-	// color = true is not the same as an absent color: both are colour on,
-	// and the pointer says which of them the file wrote.
-	on, err := ParseConfig("[tui]\ncolor = true\n", filepath.Join(dir, ConfigFile))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !on.TUI.ColorEnabled() || on.TUI.Color == nil || !*on.TUI.Color {
-		t.Fatalf("color = true: %+v", on.TUI)
 	}
 	if got := cfg.GitHub.ResolvedToken(); got != "ghp_secret" {
 		t.Fatalf("token %q, want the expanded variable", got)
@@ -119,18 +100,6 @@ diff_context = 8
 	}
 }
 
-// diff_context = 0 is a legal value that means the default, the way every
-// numeric bees.toml key with a default does.
-func TestConfigDiffContextZeroIsTheDefault(t *testing.T) {
-	cfg, err := ParseConfig("[tui]\ndiff_context = 0\n", filepath.Join(t.TempDir(), ConfigFile))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.TUI.DiffContext != DefaultDiffContext {
-		t.Fatalf("diff_context %d, want the default %d", cfg.TUI.DiffContext, DefaultDiffContext)
-	}
-}
-
 func TestConfigInvalid(t *testing.T) {
 	// A literal token spelled with no $ still has to be there, so the empty
 	// case is only reachable through a variable that is not set.
@@ -141,11 +110,10 @@ func TestConfigInvalid(t *testing.T) {
 		want []string
 	}{
 		{"unknown key", "provder = \"claude\"\n", []string{"unknown keys", "provder"}},
-		{"unknown key in a table", "[tui]\ncolour = true\n", []string{"unknown keys", "tui.colour"}},
-		{"wrong type", "[tui]\ndiff_context = \"three\"\n", []string{"diff_context"}},
+		{"unknown key in a table", "[github]\ntokn = \"x\"\n", []string{"unknown keys", "github.tokn"}},
+		{"tui table is gone", "[tui]\ncolor = false\n", []string{"unknown keys", "tui"}},
 		{"provider", "provider = \"gemini\"\n", []string{"provider \"gemini\" must be one of claude, codex"}},
 		{"output", "output = \"merge\"\n", []string{"output \"merge\" must be one of ask, approve, comment, reject, report, discard"}},
-		{"diff_context", "[tui]\ndiff_context = -1\n", []string{"tui.diff_context must be >= 0"}},
 		{"token variable", "[github]\ntoken = \"$REVIEW_UNSET_TOKEN\"\n", []string{"github.token reads $REVIEW_UNSET_TOKEN, which is not set"}},
 		{"token expands to nothing", "[github]\ntoken = \"$REVIEW_UNSET_TOKEN$REVIEW_UNSET_TOKEN\"\n", []string{"expands to nothing"}},
 	} {
