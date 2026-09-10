@@ -270,3 +270,22 @@ func TestTheConsoleShowsWhatTheFindingIsAnchoredTo(t *testing.T) {
 		t.Errorf("an exchange was printed for a finding never asked about:\n%s", out)
 	}
 }
+
+// brokenPipe is an output nothing can be written to.
+type brokenPipe struct{}
+
+func (brokenPipe) Write([]byte) (int, error) { return 0, errors.New("write: broken pipe") }
+
+func TestTheConsoleStopsWhenItsOutputCannotBeWritten(t *testing.T) {
+	a := judged(t)
+	q := queueOf(t, a)
+	c := &Console{In: strings.NewReader("s\ns\ns\n"), Out: brokenPipe{}}
+	err := c.Run(context.Background(), q)
+	if err == nil || !strings.Contains(err.Error(), "broken pipe") {
+		t.Errorf("err = %v, want the write that failed", err)
+	}
+	// Nothing was asked of an input whose output went nowhere.
+	if len(q.Pending()) != 3 {
+		t.Errorf("%d findings pending, want every one: no key was taken", len(q.Pending()))
+	}
+}

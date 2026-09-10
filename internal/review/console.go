@@ -3,6 +3,7 @@ package review
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -46,26 +47,54 @@ type Console struct {
 	// edited to, for the key that edits a finding's text before selecting
 	// it. With no editor that key is not offered.
 	Editor func(text string) (string, error)
+
+	// out is Out for one Run, remembering the first write that failed.
+	out *output
+}
+
+// output is the console's writer for one run: it remembers the first error
+// writing to it and drops what comes after, so that a terminal that went
+// away stops triage instead of being asked for more keys.
+type output struct {
+	w   io.Writer
+	err error
+}
+
+func (o *output) Write(p []byte) (int, error) {
+	if o.err != nil {
+		return len(p), nil
+	}
+	n, err := o.w.Write(p)
+	if err != nil {
+		o.err = err
+	}
+	return n, err
+}
+
+// printf writes to the console's output. What failed is out.err.
+func (c *Console) printf(format string, args ...any) {
+	_, _ = fmt.Fprintf(c.out, format, args...)
 }
 
 // Run triages q until nothing is left undecided, the input ends, or the
 // quit key is pressed, and prints where triage stands. An error is one that
-// stopped triage: an action that could not be written, or an input that
-// could not be read. What a single action failed with (a session that could
-// not be reopened, a dismissal with no reason) is printed, and the finding
-// is shown again.
+// stopped triage: an action that could not be written, an input that could
+// not be read, an output that could not be written. What a single action
+// failed with (a session that could not be reopened, a dismissal with no
+// reason) is printed, and the finding is shown again.
 func (c *Console) Run(ctx context.Context, q *Queue) error {
+	c.out = &output{w: c.Out}
 	in := bufio.NewScanner(c.In)
 	in.Buffer(make([]byte, 0, 64*1024), 1<<20)
 	skipped := map[string]bool{}
-	for {
+	for c.out.err == nil {
 		f, ok := c.next(q, skipped)
 		if !ok {
 			break
 		}
 		c.show(q, f)
 		key, ok := c.read(in, c.keys())
-		if !ok {
+		if !ok || c.out.err != nil {
 			break
 		}
 		stop, err := c.act(ctx, q, in, f, key, skipped)
@@ -77,7 +106,7 @@ func (c *Console) Run(ctx context.Context, q *Queue) error {
 		}
 	}
 	c.summary(q)
-	return in.Err()
+	return errors.Join(in.Err(), c.out.err)
 }
 
 // next is the first pending finding not passed over this run, and false
@@ -98,16 +127,16 @@ func (c *Console) act(ctx context.Context, q *Queue, in *bufio.Scanner, f Findin
 		return false, c.report(q.Select(f.ID, ""))
 	case keyEdit, "edit":
 		if c.Editor == nil {
-			fmt.Fprintln(c.Out, "no editor: set $VISUAL or $EDITOR to edit the comment text")
+			c.printf("%s\n", "no editor: set $VISUAL or $EDITOR to edit the comment text")
 			return false, nil
 		}
 		edited, err := c.Editor(f.Comment())
 		if err != nil {
-			fmt.Fprintf(c.Out, "the editor failed: %v\n", err)
+			c.printf("the editor failed: %v\n", err)
 			return false, nil
 		}
 		if strings.TrimSpace(edited) == "" {
-			fmt.Fprintln(c.Out, "the comment text is empty, so the finding stays undecided")
+			c.printf("%s\n", "the comment text is empty, so the finding stays undecided")
 			return false, nil
 		}
 		return false, c.report(q.Select(f.ID, edited))
@@ -126,25 +155,25 @@ func (c *Console) act(ctx context.Context, q *Queue, in *bufio.Scanner, f Findin
 		}
 		answer, err := q.Ask(ctx, f.ID, question)
 		if err != nil {
-			fmt.Fprintf(c.Out, "ask failed: %v\n", err)
+			c.printf("ask failed: %v\n", err)
 			return false, nil
 		}
-		fmt.Fprintf(c.Out, "\n%s\n", answer.Text)
+		c.printf("\n%s\n", answer.Text)
 		if len(answer.Added) > 0 {
-			fmt.Fprintf(c.Out, "\nthe answer added %s to the queue:\n", text.Count(len(answer.Added), "finding"))
+			c.printf("\nthe answer added %s to the queue:\n", text.Count(len(answer.Added), "finding"))
 			for _, a := range answer.Added {
-				fmt.Fprintf(c.Out, "  %s  %s  %s\n", a.ID, a.Severity, a.Title)
+				c.printf("  %s  %s  %s\n", a.ID, a.Severity, a.Title)
 			}
 		}
-		fmt.Fprintln(c.Out)
+		c.printf("\n")
 	case keyNext, "next":
 		skipped[f.ID] = true
 	case keyQuit, "quit":
 		return true, nil
 	case keyHelp, "help":
-		fmt.Fprintln(c.Out, c.help())
+		c.printf("%s\n", c.help())
 	default:
-		fmt.Fprintf(c.Out, "%q is not a key\n%s\n", key, c.help())
+		c.printf("%q is not a key\n%s\n", key, c.help())
 	}
 	return false, nil
 }
@@ -155,16 +184,16 @@ func (c *Console) report(err error) error {
 	if err == nil {
 		return nil
 	}
-	fmt.Fprintf(c.Out, "%v\n", err)
+	c.printf("%v\n", err)
 	return nil
 }
 
 // read prints a prompt and reads one line, trimmed. It reports false when
 // the input has ended.
 func (c *Console) read(in *bufio.Scanner, prompt string) (string, bool) {
-	fmt.Fprint(c.Out, prompt)
+	c.printf("%s", prompt)
 	if !in.Scan() {
-		fmt.Fprintln(c.Out)
+		c.printf("\n")
 		return "", false
 	}
 	return strings.TrimSpace(in.Text()), true
@@ -200,7 +229,7 @@ func (c *Console) help() string {
 func (c *Console) show(q *Queue, f Finding) {
 	pending := q.Pending()
 	at := slices.IndexFunc(pending, func(p Finding) bool { return p.ID == f.ID })
-	fmt.Fprintf(c.Out, "\n[%d of %s undecided] %s · %s · %s · %s\n", at+1, text.Count(len(pending), "finding"), f.ID, f.Severity, f.Angle, f.Category)
+	c.printf("\n[%d of %s undecided] %s · %s · %s · %s\n", at+1, text.Count(len(pending), "finding"), f.ID, f.Severity, f.Angle, f.Category)
 	if f.Anchored() {
 		where := f.File
 		if !f.Lines.IsZero() {
@@ -209,25 +238,25 @@ func (c *Console) show(q *Queue, f Finding) {
 		if f.Side == SideOld {
 			where += " (removed)"
 		}
-		fmt.Fprintln(c.Out, where)
+		c.printf("%s\n", where)
 	}
-	fmt.Fprintf(c.Out, "\n%s\n", f.Comment())
+	c.printf("\n%s\n", f.Comment())
 	if f.Suggestion != "" {
-		fmt.Fprintf(c.Out, "\nSuggestion:\n%s\n", indent(f.Suggestion))
+		c.printf("\nSuggestion:\n%s\n", indent(f.Suggestion))
 	}
 	if f.Evidence != "" {
-		fmt.Fprintf(c.Out, "\nEvidence: %s\n", f.Evidence)
+		c.printf("\nEvidence: %s\n", f.Evidence)
 	}
 	if len(f.Sources) > 0 {
-		fmt.Fprintf(c.Out, "Sources: %s\n", strings.Join(f.Sources, ", "))
+		c.printf("Sources: %s\n", strings.Join(f.Sources, ", "))
 	}
 	if len(f.AlsoFrom) > 0 {
-		fmt.Fprintf(c.Out, "Also from: %s\n", strings.Join(f.AlsoFrom, ", "))
+		c.printf("Also from: %s\n", strings.Join(f.AlsoFrom, ", "))
 	}
 	for _, d := range q.Asked(f.ID) {
-		fmt.Fprintf(c.Out, "\nQ: %s\nA: %s\n", d.Question, d.Answer)
+		c.printf("\nQ: %s\nA: %s\n", d.Question, d.Answer)
 	}
-	fmt.Fprintln(c.Out)
+	c.printf("\n")
 }
 
 // summary prints where triage stands: how many findings each decision in
@@ -245,7 +274,7 @@ func (c *Console) summary(q *Queue) {
 	for _, k := range []struct{ action, past string }{{ActionSelect, "selected"}, {ActionDismiss, "dismissed"}, {ActionDefer, "deferred"}, {"undecided", "undecided"}} {
 		parts = append(parts, fmt.Sprintf("%d %s", counts[k.action], k.past))
 	}
-	fmt.Fprintf(c.Out, "%s of %s\n", strings.Join(parts, ", "), text.Count(len(q.Findings()), "finding"))
+	c.printf("%s of %s\n", strings.Join(parts, ", "), text.Count(len(q.Findings()), "finding"))
 }
 
 // indent puts two spaces before every line of s.

@@ -71,9 +71,9 @@ type Artifact struct {
 }
 
 // Triage is the triage state of a review: what a person, or in factory
-// mode an agent, decided about its findings. It is written empty when the
-// findings are, so every judged review has one, and the triage queue fills
-// it in.
+// mode an agent, decided about its findings. The triage queue (triage.go)
+// writes it with every decision, and reads a judged review that has none as
+// one never triaged.
 type Triage struct {
 	// Decisions are the decisions taken, in the order they were taken.
 	Decisions []Decision `json:"decisions"`
