@@ -91,6 +91,28 @@ func TestReviewConsolidateWritesTheRulesIntoTheNotes(t *testing.T) {
 	if after, err := os.ReadFile(notes); err != nil || string(after) != before {
 		t.Errorf("a second consolidation rewrote the notes:\n%s", after)
 	}
+
+	// One more dismissal of the pattern already ruled on: the rule is the
+	// same rule, and its count moves.
+	if err := review.AppendDismissal(notes, review.Dismissal{
+		Repo: "acme/widgets", Angle: "style", Category: "naming", Reason: "here receiver names are short",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, err = runReview(t, "consolidate", "--notes", notes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(stdout, "added:") {
+		t.Errorf("a dismissal of a pattern already ruled on added a rule:\n%s", stdout)
+	}
+	refreshed := "- [acme/widgets] [style] [naming] drop: receiver names are short here (4 dismissals)"
+	if !strings.Contains(stdout, "refreshed:") || !strings.Contains(stdout, refreshed) {
+		t.Errorf("consolidate did not report %q as refreshed:\n%s", refreshed, stdout)
+	}
+	if body, err := os.ReadFile(notes); err != nil || !strings.Contains(string(body), refreshed+"\n") || strings.Contains(string(body), rule+"\n") {
+		t.Errorf("the refreshed rule was not written into the notes:\n%s", body)
+	}
 }
 
 func TestReviewConsolidateDryRunWritesNothing(t *testing.T) {
