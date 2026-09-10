@@ -699,7 +699,7 @@ experts.
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `moe_experts_by_size` | table | `{}` | The experts a work item of that size fans out to, keyed by `xs`, `s`, `m`, `l`, `xl`, each an ordered list of names from `moe_experts`. An unknown size, an empty list, a name `moe_experts` does not define, or a size that is also in `best_of_n_by_size`, is a load error. A size with no entry, and an issue with no size label, runs a plain developer round. |
-| `moe_experts` | table | `{}` | The experts themselves, one sub-table per name. `prompt` is what that expert's session runs with in place of the developer's own `prompt`, `model` the model it runs. Both are optional: an expert that names neither runs the developer's prompt and model. |
+| `moe_experts` | table | `{}` | The experts themselves, one sub-table per name. `prompt` is what that expert's session runs with in place of the developer's own `prompt`, `model` the model it runs. Both are optional: an expert that names neither runs the developer's prompt and resolves its model the way a single session does, through `model_by_size` and `model`. |
 | `moe_assembler_model` | string | `""` | The model the assembler session runs. Empty: the developer's `model`. |
 | `moe_assembler_prompt` | string | `""` | The prompt the assembler session runs with. Empty: the developer's own `prompt`. |
 
@@ -726,8 +726,8 @@ list gives them: expert `i` works on the branch
 `<branch_prefix>issue-<n>-attempt-<i>`, with that expert's prompt and model,
 in a `max_developers` slot of its own, so the count is clamped to
 `max_developers` and the experts past the clamp do not run. A size that names
-a single expert runs one plain developer session, on the developer's own
-prompt and model, the same as leaving the size out.
+a single expert runs the plain developer session that leaving the size out
+would run, so that expert's prompt and model go unused.
 
 When every expert has ended, one assembler session runs on the issue's own
 branch. Its task lists each expert branch and the expert it came from; it

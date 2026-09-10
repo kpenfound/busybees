@@ -704,7 +704,7 @@ while a fan-out runs is expected, and they close once the fan-out cleans up.
 
 Dispatch claims a slot of `scheduler.max_developers` for every expert at
 once, before any of them starts, never one at a time: the count is capped to
-`max_developers` first — the experts past the cap do not run — and a fan-out
+`max_developers` first, so the experts past the cap do not run, and a fan-out
 that cannot claim all its slots at once waits for a later pass instead.
 `bees status` shows the worker's stage as `fan-out` while the experts run.
 
@@ -719,13 +719,13 @@ With at least one candidate, one more developer session runs: the assembler,
 in the worktree on the issue's own branch, stage `assembler`. It is told each
 candidate's branch, which expert worked it, how many commits it carries and
 what its session reported. It reads the candidates from their branches and
-builds one implementation out of them — each expert's work in the part of the
-issue it took, and one reading kept where two of them solved the same thing
-in different ways. It puts that on the issue's own branch and opens the pull
-request from it itself, exactly as a single developer session does, naming in
-the body which expert branch each part of the result came from. From here the
-pull request goes to review and the checks like any other; nothing downstream
-can tell a fan-out from a single session.
+builds one implementation out of them, taking each expert's work in the part
+of the issue it took and keeping one reading where two of them solved the
+same thing in different ways. It puts that on the issue's own branch and
+opens the pull request from it itself, exactly as a single developer session
+does, naming in the body which expert branch each part of the result came
+from. From here the pull request goes to review and the checks like any
+other; nothing downstream can tell a fan-out from a single session.
 
 When the assembler finishes, whatever it reported, every expert branch is
 deleted, on the remote and in the local clone, closing any pull request an
