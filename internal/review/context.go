@@ -22,9 +22,9 @@ type Item struct {
 }
 
 // Bundle is the context a review gathered about one pull request, and the
-// whole of what the distiller session reads. It is raw: an item holds the
-// text its source produced, neither summarised nor truncated, in the order
-// Project.EnabledSources gathers them.
+// starting context of the distiller session that reads it (distill.go). It
+// is raw: an item holds the text its source produced, neither summarised nor
+// truncated, in the order Project.EnabledSources gathers them.
 type Bundle struct {
 	// Ref is the pull request the context is about, and PR what gh returned
 	// for it.
