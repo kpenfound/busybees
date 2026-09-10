@@ -8,9 +8,11 @@ and credentials, so choosing a mode is an informed choice rather than a name.
 ## Credentials reach every session, in every mode
 
 A session carries the bot's own GitHub credentials
-([`[github]`](configuration.md#github) login and token) and its role's
-configured [`env`](configuration.md#global-and-rolesname) and `shell`,
-whatever `sandbox` says. Sandboxing keeps the host's filesystem, network and
+([`[github]`](configuration.md#github) login and token), the Neo4j Agent
+Memory API key ([`notes.neo4j_api_key`](configuration.md#notes)) when the
+notes backend is `neo4j`, and its role's configured
+[`env`](configuration.md#global-and-rolesname) and `shell`, whatever
+`sandbox` says. Sandboxing keeps the host's filesystem, network and
 *other* checkouts and credentials out of reach; it does not withhold the
 bot's own, already-scoped credentials from the session acting on their
 behalf. A session that can push to the repository and comment as the bot in
@@ -64,11 +66,13 @@ hole this mode accepts, on macOS only.
 
 MCP servers, including the built-in one, run on the host rather than inside
 the box, so `mail_send`, `pr_view` and the rest work unchanged and are not
-limited by the network rule above; only the tools each role's prompt
-actually offers limit what they are used for.
+limited by the network rule above; with the `neo4j` notes backend that is
+also how `notes_read` and `notes_write` reach `notes.neo4j_url`. Only the
+tools each role's prompt actually offers limit what they are used for.
 
-**Credentials.** The `[github]` token and the role's `env` reach the shell
-inside the box, per the shared rule above. `gpg` commit signing does not
+**Credentials.** The `[github]` token, the Neo4j Agent Memory API key with
+the `neo4j` notes backend, and the role's `env` reach the shell inside the
+box, per the shared rule above. `gpg` commit signing does not
 work (`~/.gnupg` is not writable), and neither does ssh (no host resolves)
 or a toolchain's own credential store outside the writable directories.
 
@@ -109,15 +113,17 @@ every role's mail and notes, not only this session's, and the mounted
 as it can in every mode.
 
 **Network.** Open: the session reaches any host the container's network
-allows, the same as `none`, but with only the bot's GitHub token and its own
-agent credential in hand rather than the host's other secrets. Nothing
-filters outbound connections inside the container.
+allows, the same as `none`, but with only the bot's GitHub token, the Neo4j
+Agent Memory API key with the `neo4j` notes backend, and its own agent
+credential in hand rather than the host's other secrets. Nothing filters
+outbound connections inside the container.
 
 **Credentials.** The container's environment is built from nothing rather
 than inherited from the host process: the agent's credential
 (`ANTHROPIC_API_KEY`/`CLAUDE_CODE_OAUTH_TOKEN` or the codex equivalents) when
 the bees environment or the role's `env` has one, the `[github]` token and
-git identity, and the role's own `env`. Values reach the engine by variable
+git identity, the Neo4j Agent Memory API key with the `neo4j` notes backend,
+and the role's own `env`. Values reach the engine by variable
 name, never on a command line that a process listing could read. The
 session runs unprivileged (the host's uid:gid, or on Linux whatever
 `--user` names), with a `HOME` on a tmpfs that is gone when the session
@@ -145,7 +151,7 @@ ends.
 |---|---|---|
 | `none` | nothing | reading or writing anywhere the user can, reaching any host, using any credential on the machine |
 | `claude` | writing outside the worktree, state directory and shared `.git`; reaching a host other than GitHub | reading anything the user can read; reaching GitHub with whatever it read; `gh` on macOS reopening the trust daemon |
-| `container` | reading or writing anything of the host outside the worktree, `.git` and the state directory; using a credential other than the bot's own and its agent's | reaching any host; another role reading the shared state directory |
+| `container` | reading or writing anything of the host outside the worktree, `.git` and the state directory; using a credential other than the bot's own (GitHub, and Neo4j Agent Memory with the `neo4j` notes backend) and its agent's | reaching any host; another role reading the shared state directory |
 
 A role that only reads the repository and calls the factory's own tools is
 no safer in `claude` or `container` than in `none`: the risk sandboxing
