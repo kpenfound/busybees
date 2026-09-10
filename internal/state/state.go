@@ -58,8 +58,9 @@ This directory is managed by ` + "`bees`" + `. It holds:
 - mail/      the local mailbox roles use to talk to each other
 - feedback/  drafts of factory-error reports a role recorded with
              report_factory_error, waiting to be filed upstream
-- notes/     each role's notes file (their only memory between sessions),
-             with archive/ holding the ones ` + "`bees notes reset`" + ` replaced
+- notes/     each role's notes file (their only memory between sessions, unless
+             bees.toml's notes.backend says otherwise), with archive/ holding
+             the ones ` + "`bees notes reset`" + ` replaced
 - sessions/  prompts, transcripts and results of every session
 - issues/    per-issue bookkeeping (review rounds, the developer worker's stage,
              and why the factory gave an issue up)

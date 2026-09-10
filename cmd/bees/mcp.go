@@ -24,6 +24,7 @@ import (
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/issues"
 	"github.com/kpenfound/busybees/internal/mcpserver"
+	"github.com/kpenfound/busybees/internal/nams"
 	"github.com/kpenfound/busybees/internal/session"
 )
 
@@ -200,14 +201,16 @@ func isCleanShutdown(err error) bool {
 // backend is the production implementation of the server's Issues, GitHub,
 // Feedback and Notes interfaces: internal/issues for creation, a gh client
 // for everything else, the scheduler.report_factory_errors switch for the
-// factory-error drafts, the notes files under the state directory for the
-// notes, with bees.toml loaded on first use. The MCP server must start even
-// when the configuration cannot be read, so the failure surfaces from the
-// tool that needs it.
+// factory-error drafts, and for the notes the backend [notes] in bees.toml
+// selects, with bees.toml loaded on first use. The MCP server must start
+// even when the configuration cannot be read, so the failure surfaces from
+// the tool that needs it.
 type backend struct {
 	g  *globalFlags
 	mu sync.Mutex
 	gh *github.Client
+	// notesBackend is the Notes backend, built by notes on first use.
+	notesBackend mcpserver.Notes
 	// self is the login the factory acts as, when filter.creator needs it
 	// (resolveFilterSelf); policy is only valid once gh is set.
 	self   string
@@ -271,13 +274,42 @@ func (b *backend) ReportFactoryErrors(ctx context.Context) (bool, error) {
 	return b.reportFactoryErrors, nil
 }
 
-// notes is the Notes backend: the role's notes file under the state
-// directory, resolved the way `bees notes` resolves it ($BEES_STATE_DIR in a
-// session, bees.toml otherwise), so the tool and the command read one file.
-// bees.toml is not needed inside a session, so a configuration that cannot
-// be read does not take a role's memory with it.
+// notes is the Notes backend behind notes_read and notes_write, built once
+// from notes.backend in bees.toml — read through config.LoadNotes, which
+// takes the [notes] table alone, so a "$VAR" another table reads that a
+// session's environment lacks does not take a role's memory with it. "file"
+// is the role's notes file under the state directory, resolved the way
+// `bees notes` resolves it ($BEES_STATE_DIR in a session, bees.toml
+// otherwise), so the tool and the command read one file; "neo4j" is the
+// Neo4j Agent Memory REST API at notes.neo4j_url. Without a bees.toml
+// anywhere (`bees mcp serve` by hand, outside a factory) the notes are the
+// files under $BEES_STATE_DIR.
 func (b *backend) notes() (mcpserver.Notes, error) {
-	store, err := notesStore(b.g)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.notesBackend != nil {
+		return b.notesBackend, nil
+	}
+	n, err := newNotesBackend(b.g)
+	if err != nil {
+		return nil, err
+	}
+	b.notesBackend = n
+	return n, nil
+}
+
+// newNotesBackend picks and builds the Notes backend for notes (see there).
+func newNotesBackend(g *globalFlags) (mcpserver.Notes, error) {
+	settings := config.Notes{Backend: config.DefaultNotesBackend}
+	if p, err := configPath(g); err == nil {
+		if settings, err = config.LoadNotes(p); err != nil {
+			return nil, err
+		}
+	}
+	if settings.Backend == config.NotesBackendNeo4j {
+		return nams.NewNotes(settings.Neo4jURL, settings.ResolvedNeo4jAPIKey()), nil
+	}
+	store, err := notesStore(g)
 	if err != nil {
 		return nil, err
 	}
