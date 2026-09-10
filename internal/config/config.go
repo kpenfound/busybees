@@ -888,9 +888,10 @@ type Logging struct {
 // Notes selects where role notes live. It is a top-level table, like
 // [logging], because the backend is a factory-wide choice, not a per-role
 // setting. The built-in MCP server reads Backend when it builds the backend
-// behind notes_read and notes_write (`bees mcp serve`, through LoadNotes);
-// `bees notes show|edit|reset|add` and the notes sizes `bees status` and the
-// scheduler's consolidation trigger read are the state directory's files
+// behind notes_read and notes_write (`bees mcp serve`, through LoadNotes),
+// and cmd/bees builds the same backend for `bees status`'s notes sizes and
+// the scheduler's consolidation trigger. `bees notes show|edit|reset|add`
+// are the exception: they always act on the state directory's files,
 // whatever the backend.
 type Notes struct {
 	// Backend is "file" or "neo4j". Default "file".

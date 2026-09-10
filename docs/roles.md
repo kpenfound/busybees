@@ -133,15 +133,16 @@ are larger than `scheduler.notes_max_bytes` (default 32768), the task prompt
 asks the session to rewrite them into those sections on top of its normal
 work: merge duplicates, drop what is stale or contradicted, keep decisions,
 commands and gotchas. The counters live in `<state_dir>/<role>.json`; the size
-`bees status` shows and this trigger reads is the size of the notes the
-backend [`notes.backend`](configuration.md#notes) names holds, so it is the
-size of what `notes_read` returns.
+`bees status` shows and this trigger reads is measured in the backend
+[`notes.backend`](configuration.md#notes) selects, so it is the size of what
+`notes_read` returns.
 
 With the default `notes.backend = "file"`, `notes_read` and `notes_write` act
-on that same file, and editing it directly is the most direct way to steer a
-role: write the product vision into `notes/product_manager.md`, coding
-conventions into `notes/developer.md`, or "always run the e2e suite" into
-`notes/reviewer.md`, and the next session reads it through `notes_read`.
+on `<state_dir>/notes/<role>.md`, and editing that file directly is the most
+direct way to steer a role: write the product vision into
+`notes/product_manager.md`, coding conventions into `notes/developer.md`, or
+"always run the e2e suite" into `notes/reviewer.md`, and the next session
+reads it through `notes_read`.
 [`bees notes`](cli.md#notes) does it without hunting for the file. With
 [`notes.backend = "neo4j"`](configuration.md#notes), `notes_read` and
 `notes_write` act on Neo4j Agent Memory instead, and `bees notes

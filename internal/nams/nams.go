@@ -1,10 +1,12 @@
 // Package nams is bees' client for the Neo4j Agent Memory REST API — the
 // contract Neo4j's own SDKs speak to the hosted service
 // (https://memory.neo4jlabs.com/v1) and to a self-hosted deployment of it —
-// narrowed to what a role's notes need: read one text, write one text back.
-// It is the backend behind notes_read and notes_write with
-// notes.backend = "neo4j"; nothing else in bees talks to the service, and
-// bees neither runs it nor embeds a Neo4j driver.
+// narrowed to what a role's notes need: read one text, write one text back,
+// and measure how long it is. It is the backend behind notes_read and
+// notes_write with notes.backend = "neo4j", and behind the notes sizes
+// `bees status` and the scheduler's consolidation trigger read; nothing else
+// in bees talks to the service, and bees neither runs it nor embeds a Neo4j
+// driver.
 //
 // A role's notes are one conversation per role, found by its userId
 // ("bees-notes-<role>"), whose messages are the successive versions of the

@@ -478,12 +478,12 @@ backend = "file"   # file | neo4j
 | `neo4j_api_key` | string | `""` | An API key for `neo4j_url`, written as a `"$VAR"` reference so the secret is not in this file. Required with `backend = "neo4j"`; a reference that expands to nothing fails to load, naming the variable. Redacted as written in `bees config show`. |
 
 `bees` neither runs nor embeds Neo4j Agent Memory; with `backend = "neo4j"`
-the tools talk to the REST API at `neo4j_url` and nothing else in bees does.
-`neo4j_url` and `neo4j_api_key` are ignored with `backend = "file"`, so they
-can stay in the file across a switch. `bees notes show|edit|reset|add`, and
-the notes size `bees status` and the [`scheduler`](#scheduler) consolidation
-triggers read, always act on the state directory's file, whatever `backend`
-is.
+the notes tools talk to the REST API at `neo4j_url`, and so do `bees status`
+and the [`scheduler`](#scheduler) consolidation trigger when they measure a
+role's notes. `neo4j_url` and `neo4j_api_key` are ignored with
+`backend = "file"`, so they can stay in the file across a switch.
+`bees notes show|edit|reset|add` are the exception: they always act on the
+state directory's file, whatever `backend` is.
 
 ## `[global]` and `[roles.<name>]`
 
