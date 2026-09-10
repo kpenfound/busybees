@@ -422,3 +422,141 @@ func TestReviewConsolidateReportsWhatItDidNotReadAsARule(t *testing.T) {
 		t.Errorf("the line consolidation could not read is gone:\n%s", after)
 	}
 }
+
+func TestReviewRunsThePipelineFromTheContextGather(t *testing.T) {
+	home := reviewHome(t)
+	// No gh on the PATH: the review fails at the first thing the pipeline
+	// does, reading the pull request, and nothing is written.
+	t.Setenv("PATH", t.TempDir())
+	stdout, _, err := runReview(t, "acme/widgets#7")
+	if err == nil || !strings.Contains(err.Error(), "read acme/widgets#7") || !strings.Contains(err.Error(), "gh") {
+		t.Errorf("err = %v, want the gather that could not read the pull request through gh", err)
+	}
+	if !strings.Contains(stdout, "gathering the context of acme/widgets#7\n") {
+		t.Errorf("the review did not say what it was doing:\n%s", stdout)
+	}
+	if _, err := os.Stat(filepath.Join(home, review.DefaultStoragePath)); !os.IsNotExist(err) {
+		t.Errorf("something was written under the storage path: %v", err)
+	}
+	// A bare number outside a checkout has no repository, as for triage.
+	if _, _, err := runReview(t, "7"); err == nil || !strings.Contains(err.Error(), "owner/name#7") {
+		t.Errorf("err = %v, want the form to give", err)
+	}
+}
+
+func TestReviewEndFlagsAreCheckedBeforeAnythingRuns(t *testing.T) {
+	reviewHome(t)
+	t.Setenv("PATH", t.TempDir())
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"acme/widgets#7", "--post", "approved"}, `--post "approved": want one of approve, comment, reject`},
+		{[]string{"acme/widgets#7", "--post", "approve", "--report"}, "--post and --report choose different ends"},
+		{[]string{"triage", "acme/widgets#7", "--post", "report"}, `--post "report": want one of approve, comment, reject`},
+		{[]string{"triage", "acme/widgets#7", "--report", "--post", "comment"}, "--post and --report choose different ends"},
+	} {
+		stdout, _, err := runReview(t, c.args...)
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%v: err = %v, want %q", c.args, err, c.want)
+		}
+		if stdout != "" {
+			t.Errorf("%v ran something first:\n%s", c.args, stdout)
+		}
+	}
+}
+
+func TestReviewTriageEndsWithTheReport(t *testing.T) {
+	home := reviewHome(t)
+	dir := storedReview(t, home)
+	// --report: the selected finding is printed as markdown, and no gh is
+	// needed for it.
+	t.Setenv("PATH", t.TempDir())
+	stdout, _, err := runReviewWith(t, "s\nf\n", "triage", "acme/widgets#7", "--report")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"1 selected, 0 dismissed, 1 deferred, 0 undecided of 2 findings\n",
+		"# Review of acme/widgets#7\n\nhttps://github.com/acme/widgets/pull/7\n\n",
+		"`widget.go:3` · medium · naming\n\nThe receiver is named after its type\n\nw, not widget\n",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("the report lacks %q:\n%s", want, stdout)
+		}
+	}
+	_, report, _ := strings.Cut(stdout, "# Review of")
+	if strings.Contains(report, "The package has no doc comment") || strings.Contains(stdout, "selected. a approve") {
+		t.Errorf("the report holds the deferred finding, or the end was asked for:\n%s", stdout)
+	}
+	// The output key of the configuration chooses when no flag does.
+	if err := os.WriteFile(filepath.Join(home, review.ConfigFile), []byte("output = \"report\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, err = runReviewWith(t, "", "triage", "acme/widgets#7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout, "# Review of acme/widgets#7\n") || strings.Contains(stdout, "selected. a approve") {
+		t.Errorf("output = \"report\" did not print the report unasked:\n%s", stdout)
+	}
+	// The decisions are what the artifact holds, whatever the end.
+	tr, err := review.ReadTriage(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tr.Decisions) != 2 {
+		t.Errorf("triage.json holds %+v", tr.Decisions)
+	}
+}
+
+func TestReviewTriageAsksHowToEndAndPostsThroughGh(t *testing.T) {
+	home := reviewHome(t)
+	dir := storedReview(t, home)
+	t.Setenv("PATH", t.TempDir())
+	// With nothing chosen, the console asks at the end. A comment-only
+	// review with nothing selected is refused, with no gh call, and asked
+	// again; d discards, and says so.
+	stdout, _, err := runReviewWith(t, "q\nc\nd\n", "triage", "acme/widgets#7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"\n0 findings selected. a approve and comment · c comment only · r reject and comment · o output the report · d discard\n> ",
+		"nothing was selected, and a comment-only review with nothing in it cannot be posted\n",
+		"acme/widgets#7: nothing posted\n",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout lacks %q:\n%s", want, stdout)
+		}
+	}
+	if strings.Count(stdout, "selected. a approve") != 2 {
+		t.Errorf("the end was asked %d times, want twice:\n%s", strings.Count(stdout, "selected. a approve"), stdout)
+	}
+	// o prints the report.
+	stdout, _, err = runReviewWith(t, "s\nq\no\n", "triage", "acme/widgets#7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout, "\n1 finding selected. a approve") || !strings.Contains(stdout, "# Review of acme/widgets#7\n") {
+		t.Errorf("the end was not asked, or the report not printed:\n%s", stdout)
+	}
+	// An end that posts goes through gh, which is not here: the command
+	// fails naming it, and the selection made before is still in the
+	// artifact.
+	_, _, err = runReviewWith(t, "q\na\n", "triage", "acme/widgets#7")
+	if err == nil || !strings.Contains(err.Error(), "gh") {
+		t.Errorf("err = %v, want the gh call that could not run", err)
+	}
+	_, _, err = runReviewWith(t, "", "triage", "acme/widgets#7", "--post", "reject")
+	if err == nil || !strings.Contains(err.Error(), "gh") {
+		t.Errorf("--post reject: err = %v, want the gh call that could not run", err)
+	}
+	tr, err := review.ReadTriage(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tr.Decisions) != 1 || tr.Decisions[0].Action != review.ActionSelect {
+		t.Errorf("triage.json holds %+v, want the one selection", tr.Decisions)
+	}
+}
