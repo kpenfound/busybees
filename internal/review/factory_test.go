@@ -267,7 +267,7 @@ func TestWhatAnAgentsAnswerCouldNotDoIsToldToTheNextRound(t *testing.T) {
 func TestTheEndIsTheCommandsWhenItChoseOne(t *testing.T) {
 	a := judged(t)
 	f := a.Findings.Items
-	agent := &triageAgent{rounds: []string{fmt.Sprintf(`{"decisions": [{"finding": "%s", "action": "defer"}, {"finding": "%s", "action": "defer"}, {"finding": "%s", "action": "defer"}], "end": "approve"}`, f[0].ID, f[1].ID, f[2].ID)}}
+	agent := &triageAgent{rounds: []string{fmt.Sprintf(`{"decisions": [{"finding": "%s", "action": "defer"}, {"finding": "%s", "action": "defer"}, {"finding": "%s", "action": "defer"}], "end": "merge"}`, f[0].ID, f[1].ID, f[2].ID)}}
 	q := askingQueue(t, a, agent)
 	// Nothing selected for a comment-only review: the command refuses it
 	// when it posts, as it does whoever triaged. It is not the agent's to
@@ -302,13 +302,14 @@ func TestAnEndTheAgentCannotTakeIsRefusedUntilItCan(t *testing.T) {
 	agent := &triageAgent{rounds: []string{
 		fmt.Sprintf(`{"decisions": [{"finding": "%s", "action": "select"}], "end": "comment"}`, f[0].ID),
 		fmt.Sprintf(`{"decisions": [{"finding": "%s", "action": "dismiss", "reason": "covered by the table test"}, {"finding": "%s", "action": "defer"}, {"finding": "%s", "action": "defer"}]}`, f[0].ID, f[1].ID, f[2].ID),
+		`{"decisions": [], "end": "ask"}`,
 		`{"decisions": [], "end": " Report "}`,
 	}}
 	q := askingQueue(t, a, agent)
 	end, log := triageRun(t, q, &AgentTriage{Agent: agent, Dir: t.TempDir(), Mode: OutputAsk})
 	prompts := agent.prompts()
-	if len(prompts) != 3 {
-		t.Fatalf("%d triage rounds, want 3", len(prompts))
+	if len(prompts) != 4 {
+		t.Fatalf("%d triage rounds, want 4", len(prompts))
 	}
 	// Round one's comment-only end held while a finding was selected;
 	// round two dismissed it, which left the end with nothing to post.
@@ -324,8 +325,13 @@ func TestAnEndTheAgentCannotTakeIsRefusedUntilItCan(t *testing.T) {
 			t.Errorf("round three lacks %q:\n%s", w, prompts[2])
 		}
 	}
+	// Asking is not an end: somebody has to take one. A round that took
+	// nothing and had its end refused is followed by another.
+	if !strings.Contains(prompts[3], "- end ask: not an end: give one of approve, comment, reject, report, discard\n") {
+		t.Errorf("round four was not told ask is not an end:\n%s", prompts[3])
+	}
 	if end != OutputReport {
-		t.Errorf("end = %q, want the report round three chose", end)
+		t.Errorf("end = %q, want the report round four chose", end)
 	}
 	if !strings.Contains(log, "  refused: end comment: nothing was selected") || !strings.Contains(log, "the agent chose to end the review: report\n") {
 		t.Errorf("the log does not say what became of the end:\n%s", log)
