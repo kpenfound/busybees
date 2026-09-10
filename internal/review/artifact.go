@@ -36,8 +36,8 @@ import (
 //	                                               notes hid from it
 //	                                               (noise.go)
 //	  triage.json                                  what triage decided about
-//	                                               each finding, empty until
-//	                                               it has
+//	                                               each finding (triage.go),
+//	                                               empty until it has
 //
 // The files are written one at a time as the review goes, by WriteBrief,
 // Angles.Run, WriteFindings and WriteTriage, so a review that stopped after
@@ -71,9 +71,9 @@ type Artifact struct {
 }
 
 // Triage is the triage state of a review: what a person, or in factory
-// mode an agent, decided about its findings. It is written empty when the
-// findings are, so every judged review has one, and the triage queue fills
-// it in.
+// mode an agent, decided about its findings. The triage queue (triage.go)
+// writes it with every decision, and reads a judged review that has none as
+// one never triaged.
 type Triage struct {
 	// Decisions are the decisions taken, in the order they were taken.
 	Decisions []Decision `json:"decisions"`
@@ -81,7 +81,10 @@ type Triage struct {
 
 // Decision is what triage decided about one finding: the action taken on
 // it, and what went with the action. The actions are the triage queue's
-// (select, dismiss, defer, ask), and what each records here is its own.
+// (triage.go: ActionSelect, ActionDismiss, ActionDefer, ActionAsk), and what
+// each records here is its own: a dismissal its reason, a selection the
+// comment text when it was edited, an ask its question, the answer and the
+// findings the answer added.
 type Decision struct {
 	// Finding is the id of the finding (Finding.ID).
 	Finding string `json:"finding"`
@@ -91,6 +94,12 @@ type Decision struct {
 	Reason string `json:"reason,omitempty"`
 	// Comment is the text the finding is posted as, when triage edited it.
 	Comment string `json:"comment,omitempty"`
+	// Question and Answer are what an ask asked the angle and what the
+	// angle answered, and Added the ids of the findings the answer turned
+	// up that the review did not have.
+	Question string   `json:"question,omitempty"`
+	Answer   string   `json:"answer,omitempty"`
+	Added    []string `json:"added,omitempty"`
 }
 
 // ArtifactDir is the directory of a review of ref started at started,
