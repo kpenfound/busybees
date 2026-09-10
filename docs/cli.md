@@ -1323,12 +1323,59 @@ unconstrained tool set.
 
 ## Reviewing a pull request
 
-### `bees review consolidate [--notes path] [--dry-run]`
-
 `bees review` reviews a GitHub pull request from several angles at once. Its
 settings are `~/.config/bees/config.toml`: the agent it runs as, and where
 your reviewer notes and review artifacts live. The repository's own
 `context.toml` says which angles run there.
+
+### `bees review triage <pr> [--config path]`
+
+Opens the latest review of a pull request and triages what is still
+undecided. The pull request is a github.com URL, `owner/name#123`, or a bare
+number when the current directory is a checkout of the repository.
+
+Each undecided finding is shown in turn, most severe first: its id, severity,
+angle and category, the file and lines it is about, its text, its suggestion
+and evidence, and any question already asked about it with the answer. One
+key followed by return decides it:
+
+| Key | What it does |
+|---|---|
+| `s` | select: the finding goes into the review's output as written |
+| `e` | open the comment text in `$VISUAL` or `$EDITOR`, then select it |
+| `d` | dismiss: leave it out, and record why in your reviewer notes |
+| `f` | defer: leave it out of this review, and record nothing |
+| `a` | ask the angle that found it a question; a finding the answer turns up joins the queue |
+| `n` | leave it undecided for now |
+| `q` | stop |
+
+```
+$ bees review triage acme/widgets#7
+acme/widgets#7: the review started 20260910-150405
+
+[1 of 3 findings undecided] 1a2b3c4d · high · test_coverage · missing test
+internal/review/gather.go:12-14
+
+Gather has no test for a source that cannot read
+
+the acceptance criterion says a source that cannot read something does not
+fail the review, and nothing exercises it
+
+s select · e edit and select · d dismiss · f defer · a ask · n next · q quit · ? help
+> d
+reason (recorded in your reviewer notes): covered by the table test in gather_test.go
+```
+
+Every decision is written into the review's artifact directory as it is
+taken, so stopping loses nothing: run the command again and it offers what is
+still undecided. The latest select, dismiss or defer on a finding is the one
+that counts. An ask decides nothing; the finding is shown again with the
+answer under it. A dismissal needs a reason: it is the line your reviewer
+notes are made of.
+
+`--config` reads a global configuration other than `~/.config/bees/config.toml`.
+
+### `bees review consolidate [--notes path] [--dry-run]`
 
 Every finding you dismiss during triage is appended to your reviewer notes,
 one line per dismissal:

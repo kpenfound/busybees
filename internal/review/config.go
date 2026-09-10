@@ -28,7 +28,10 @@
 // review triages; notes.go is the reviewer notes, the file outside every
 // review that holds what this reviewer has dismissed before, and noise.go
 // keeps what they dismissed out of the list before triage reads it.
-// artifact.go is the directory the whole review is kept in.
+// triage.go is the triage queue over that list, the four actions it takes on
+// a finding and what each writes back, and console.go drives it from a
+// terminal one line at a time. artifact.go is the directory the whole review
+// is kept in.
 package review
 
 import (
