@@ -186,6 +186,7 @@ func TestTheBriefIsReadOutOfWhateverTheSessionWrappedItIn(t *testing.T) {
 		{"prose around it", "Here is the brief:\n\n" + `{"summary": "the one"}` + "\n\nHope it helps."},
 		{"a fenced block", "Here it is:\n\n```json\n" + `{"summary": "the one"}` + "\n```\n"},
 		{"the last of two blocks", "The shape:\n```json\n{\"summary\": \"an example\"}\n```\nThe brief:\n```\n{\"summary\": \"the one\"}\n```\n"},
+		{"a block that is not the brief after it", "```json\n{\"summary\": \"the one\"}\n```\nThe line it came from:\n```\ndiff --git a/x b/x\n```\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			agent := &fakeAgent{answer: tc.answer}

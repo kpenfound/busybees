@@ -41,6 +41,17 @@ func TestTheBriefIsWhatTheNextSessionReads(t *testing.T) {
 	}
 }
 
+func TestABriefWithNothingInItIsTwoLines(t *testing.T) {
+	// Text renders what the brief holds and nothing else: a heading with
+	// nothing under it reads as a distiller that had something to say and
+	// did not.
+	got := (&Brief{Ref: Ref{Repo: testRepo, Number: 7}}).Text()
+	want := "# Review brief: acme/widgets#7\n\nhttps://github.com/acme/widgets/pull/7\n"
+	if got != want {
+		t.Errorf("brief =\n%q\nwant\n%q", got, want)
+	}
+}
+
 func TestABriefWithNothingInASectionHasNoSuchHeading(t *testing.T) {
 	brief := &Brief{Ref: Ref{Repo: testRepo, Number: 7}, Summary: "a small change"}
 	got := brief.Text()
@@ -51,6 +62,18 @@ func TestABriefWithNothingInASectionHasNoSuchHeading(t *testing.T) {
 	}
 	if !strings.Contains(got, "a small change") {
 		t.Errorf("the summary is missing:\n%s", got)
+	}
+}
+
+func TestABriefWithoutASummaryIsNotABrief(t *testing.T) {
+	for _, summary := range []string{"", " \n\t"} {
+		brief := &Brief{Ref: Ref{Repo: testRepo, Number: 7}, Summary: summary, StyleRules: []Point{{Text: "a rule"}}}
+		if err := brief.Validate(); err == nil {
+			t.Errorf("a brief summarised %q is a brief", summary)
+		}
+	}
+	if err := testBrief().Validate(); err != nil {
+		t.Errorf("a brief is not one: %v", err)
 	}
 }
 
