@@ -121,22 +121,15 @@ func TestStyleFilesReadsTheBuiltInsAndTheProjectsOwn(t *testing.T) {
 
 func TestAStyleSourceCannotLeaveTheCheckout(t *testing.T) {
 	dir := gitRepo(t, "https://github.com/"+testRepo)
-	outside := filepath.Join(filepath.Dir(dir), "secrets.md")
-	if err := os.WriteFile(outside, []byte("the passphrase"), 0o600); err != nil {
-		t.Fatal(err)
+	// A pattern that lexically escapes the project directory is refused by
+	// Project.Validate before it ever reaches a source: see
+	// TestProjectInvalid's "escaping style source" case.
+	_, err := ParseProject("style_sources = [\"../secrets.md\"]\n", filepath.Join(dir, ProjectFile))
+	if err == nil {
+		t.Fatal("loaded without an error")
 	}
-	p, err := ParseProject("style_sources = [\"../secrets.md\"]\n", filepath.Join(dir, ProjectFile))
-	if err != nil {
-		t.Fatal(err)
-	}
-	bundle := gatherTest(t, sampleGH(), p, dir)
-	for _, it := range bundle.Of(SourceStyleFiles) {
-		if strings.Contains(it.Content, "the passphrase") {
-			t.Fatalf("a style source read %q, outside the checkout", it.Name)
-		}
-	}
-	if !strings.Contains(strings.Join(bundle.Skipped, "\n"), "leaves the checkout") {
-		t.Fatalf("skipped %v, want the pattern that leaves the checkout", bundle.Skipped)
+	if !strings.Contains(err.Error(), "must stay inside the project directory") {
+		t.Fatalf("error = %q, want a pattern that leaves the project directory", err)
 	}
 }
 
