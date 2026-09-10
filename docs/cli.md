@@ -1324,11 +1324,75 @@ unconstrained tool set.
 ## Reviewing a pull request
 
 `bees review` reviews a GitHub pull request from several angles at once. Its
-settings are `~/.config/bees/config.toml`: the agent it runs as, and where
-your reviewer notes and review artifacts live. The repository's own
-`context.toml` says which angles run there.
+settings are `~/.config/bees/config.toml`: the agent it runs as, where your
+reviewer notes and review artifacts live, and how a review ends when the
+command line does not say. The repository's own `context.toml` says which
+angles run there.
 
-### `bees review triage <pr> [--config path]`
+### `bees review <pr> [--post mode | --report] [--config path]`
+
+Reviews a pull request: a github.com URL, `owner/name#123`, or a bare number
+when the current directory is a checkout of the repository. The review
+gathers the pull request's context, runs the distiller session that briefs
+it, runs one read-only session per angle `context.toml` enables, merges what
+they found into one list, most severe first, and joins the list against the
+rules in your reviewer notes. Each step prints a line as it goes. The review
+is written into its artifact directory as it goes too, so a review that
+stopped after the angles has its brief and their sessions; one angle failing
+is printed and skipped, and every angle failing stops the review.
+
+```
+$ bees review acme/widgets#7
+gathering the context of acme/widgets#7
+gathered 6 items from diff, pr_body, linked_issues, style_files
+distilling the brief
+the review is /Users/me/.config/bees/reviews/acme/widgets/7/20260910-150405
+reviewing from 4 angles: acceptance_criteria, test_coverage, style, side_effects
+3 findings
+  1 finding hidden by your reviewer notes
+```
+
+Triage follows, as `triage` below describes it, and then the review ends one
+of five ways with what you selected:
+
+| End | What happens |
+|---|---|
+| `approve` | the selected findings are posted as review comments, and the pull request is approved |
+| `comment` | the same comments, as a comment-only review |
+| `reject` | the same comments, as a review that requests changes |
+| `report` | the selected findings are printed as a markdown report, and nothing is posted |
+| `discard` | nothing is posted and nothing is printed |
+
+`--post approve`, `--post comment`, `--post reject` or `--report` chooses;
+with neither, the `output` key of `~/.config/bees/config.toml` does, and its
+default, `ask`, asks at the end:
+
+```
+1 selected, 1 dismissed, 1 deferred, 0 undecided of 3 findings
+
+1 finding selected. a approve and comment · c comment only · r reject and comment · o output the report · d discard
+> a
+acme/widgets#7: approved with 1 comment
+```
+
+The three that post submit one review in one call, never one comment at a
+time. A finding is posted as a comment on its lines when the pull request's
+diff has them, on the side of the diff it is about, with its suggestion as a
+suggestion block when GitHub can apply one there (the new side). A finding
+on lines the diff does not have, and one about the change as a whole, goes
+into the review's summary instead, with where it points. A comment-only or
+request-changes review needs something in it: with nothing selected it is
+refused, and at the prompt you are asked again. An approval with nothing
+selected approves and says nothing. The review is posted with the
+authentication `github.token` names, or your own `gh` login without it.
+
+The report is the same selections as markdown, for pasting wherever you
+like: the pull request, then each finding with where it points, its
+severity and category, its text and its suggestion as a code block.
+
+`--config` reads a global configuration other than `~/.config/bees/config.toml`.
+
+### `bees review triage <pr> [--post mode | --report] [--config path]`
 
 Opens the latest review of a pull request and triages what is still
 undecided. The pull request is a github.com URL, `owner/name#123`, or a bare
@@ -1374,6 +1438,11 @@ answer under it. A dismissal needs a reason: it is the line your reviewer
 notes are made of. A decision that cannot be written into the artifact
 directory stops the command with the error, and the finding is still
 undecided the next time.
+
+The review then ends the way `bees review`'s does, with everything selected
+so far, in this run or an earlier one: posted, printed as a report, or
+discarded, as `--post`, `--report`, the `output` key or the prompt at the
+end says.
 
 `--config` reads a global configuration other than `~/.config/bees/config.toml`.
 
