@@ -19,7 +19,10 @@
 //
 // The review itself starts in ref.go, which turns what a person typed into
 // the pull request under review, and context.go, which gathers the sources
-// context.toml enables into the bundle a review reads.
+// context.toml enables into the bundle a review reads. distill.go runs the
+// first session over that bundle and brief.go is what it produces, the
+// starting context of every session after it; agent.go runs those sessions,
+// read-only.
 package review
 
 import (
