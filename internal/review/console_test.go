@@ -289,3 +289,37 @@ func TestTheConsoleStopsWhenItsOutputCannotBeWritten(t *testing.T) {
 		t.Errorf("%d findings pending, want every one: no key was taken", len(q.Pending()))
 	}
 }
+
+func TestTheConsoleStopsWhenADecisionCannotBeWritten(t *testing.T) {
+	for key, keys := range map[string]string{"select": "s\ns\n", "dismiss": "d\nnot now\ns\n", "defer": "f\ns\n"} {
+		a := judged(t)
+		q := queueOf(t, a)
+		unwritable(q)
+		var out bytes.Buffer
+		err := (&Console{In: strings.NewReader(keys), Out: &out}).Run(context.Background(), q)
+		if err == nil || !strings.Contains(err.Error(), BriefFile) {
+			t.Errorf("%s: err = %v, want the write that failed", key, err)
+		}
+		// Triage stopped at the failure: the finding is not decided, the
+		// next key was not read, and no summary claims otherwise.
+		if got := order(out.String(), a.Findings.Items); len(got) != 1 {
+			t.Errorf("%s: shown %v, want the one finding before the failure:\n%s", key, got, out.String())
+		}
+		if len(q.Pending()) != 3 || strings.Contains(out.String(), "undecided of 3 findings") {
+			t.Errorf("%s: the console went on after a decision that was not written:\n%s", key, out.String())
+		}
+	}
+	// An ask whose answer cannot be recorded stops triage the same way.
+	a := judged(t)
+	q := queueOf(t, a)
+	q.Angles = &Angles{Agent: &fakeAgent{answer: "Yes.", id: "sess-tests"}, Provider: config.AgentClaude}
+	unwritable(q)
+	var out bytes.Buffer
+	err := (&Console{In: strings.NewReader("a\nSure?\ns\n"), Out: &out}).Run(context.Background(), q)
+	if err == nil || !strings.Contains(err.Error(), "ask failed") || !strings.Contains(err.Error(), BriefFile) {
+		t.Errorf("err = %v, want the ask's write failure", err)
+	}
+	if len(q.Pending()) != 3 || strings.Contains(out.String(), "undecided of 3 findings") {
+		t.Errorf("the console went on after an ask that was not written:\n%s", out.String())
+	}
+}

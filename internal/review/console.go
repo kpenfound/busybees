@@ -78,10 +78,12 @@ func (c *Console) printf(format string, args ...any) {
 
 // Run triages q until nothing is left undecided, the input ends, or the
 // quit key is pressed, and prints where triage stands. An error is one that
-// stopped triage: an action that could not be written, an input that could
-// not be read, an output that could not be written. What a single action
-// failed with (a session that could not be reopened, a dismissal with no
-// reason) is printed, and the finding is shown again.
+// stopped triage: a decision that could not be written into the artifact,
+// an input that could not be read, an output that could not be written.
+// Nothing is printed after it, and the exit is the person's signal that the
+// last decision was not kept. An action the queue refused (Refusal: a
+// session that could not be reopened, a dismissal with no reason) is
+// printed instead, and the finding is shown again.
 func (c *Console) Run(ctx context.Context, q *Queue) error {
 	c.out = &output{w: c.Out}
 	in := bufio.NewScanner(c.In)
@@ -155,8 +157,7 @@ func (c *Console) act(ctx context.Context, q *Queue, in *bufio.Scanner, f Findin
 		}
 		answer, err := q.Ask(ctx, f.ID, question)
 		if err != nil {
-			c.printf("ask failed: %v\n", err)
-			return false, nil
+			return false, c.report(fmt.Errorf("ask failed: %w", err))
 		}
 		c.printf("\n%s\n", answer.Text)
 		if len(answer.Added) > 0 {
@@ -178,11 +179,12 @@ func (c *Console) act(ctx context.Context, q *Queue, in *bufio.Scanner, f Findin
 	return false, nil
 }
 
-// report prints what an action failed with, and returns the errors that
-// stop triage: everything but a refusal the person can answer.
+// report prints what an action was refused for, and returns the errors that
+// stop triage: everything but a Refusal, which the person can answer.
 func (c *Console) report(err error) error {
-	if err == nil {
-		return nil
+	var refusal *Refusal
+	if err == nil || !errors.As(err, &refusal) {
+		return err
 	}
 	c.printf("%v\n", err)
 	return nil

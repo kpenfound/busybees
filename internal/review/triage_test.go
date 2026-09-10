@@ -459,3 +459,114 @@ func TestAFindingsCommentIsItsTitleThenItsBody(t *testing.T) {
 		t.Errorf("comment of a finding with no body %q", got)
 	}
 }
+
+// unwritable moves the queue's artifact to a path nothing can be written
+// under: a directory inside a file the fixture really wrote.
+func unwritable(q *Queue) {
+	q.Artifact.Dir = filepath.Join(q.Artifact.Dir, BriefFile, "review")
+}
+
+func isRefusal(err error) bool {
+	var r *Refusal
+	return errors.As(err, &r)
+}
+
+func TestADecisionThatCannotBeWrittenIsNotKept(t *testing.T) {
+	a := judged(t)
+	q := askingQueue(t, a, &fakeAgent{answer: "Reading sources.go again, there is one more.\n\n```json\n" + sessionAnswer(rawFromAsk) + "\n```\n", id: "sess-tests-2"})
+	unwritable(q)
+	f := a.Findings.Items[0]
+	for name, act := range map[string]func() error{
+		"select":  func() error { return q.Select(f.ID, "shorter") },
+		"dismiss": func() error { return q.Dismiss(f.ID, "not this review") },
+		"defer":   func() error { return q.Defer(f.ID) },
+		"ask":     func() error { _, err := q.Ask(context.Background(), f.ID, "Anything else?"); return err },
+	} {
+		err := act()
+		if err == nil || isRefusal(err) {
+			t.Errorf("%s under an unwritable artifact: err = %v, want a failure that is not a refusal", name, err)
+		}
+	}
+	// Nothing an action would have recorded is in memory: no decision, no
+	// answer, no finding the answer added, no new session id.
+	if got := q.Artifact.Triage.Decisions; len(got) != 0 {
+		t.Errorf("decisions %+v, want none kept", got)
+	}
+	if len(q.Pending()) != 3 || len(q.Findings()) != 3 || len(q.Asked(f.ID)) != 0 {
+		t.Errorf("pending %d, findings %d, asked %d: want the queue as it was", len(q.Pending()), len(q.Findings()), len(q.Asked(f.ID)))
+	}
+	if a.Runs[0].SessionID != "sess-tests" {
+		t.Errorf("the run's session is %s, want the one it had", a.Runs[0].SessionID)
+	}
+	// The one thing that was written before the failure: the dismissal's
+	// line in the notes, which is the notes' record and not the review's.
+	if _, err := os.Stat(q.Notes.Path); err != nil {
+		t.Errorf("the dismissal's line was not appended to the notes: %v", err)
+	}
+}
+
+func TestAnAskWhoseFindingsCannotBeWrittenAddsNothing(t *testing.T) {
+	// The run file is written before the findings, and the findings before
+	// the decision: a findings write that fails leaves the list and the
+	// decisions as they were, whatever the run file now says.
+	a := judged(t)
+	q := askingQueue(t, a, &fakeAgent{answer: "One more.\n\n```json\n" + sessionAnswer(rawFromAsk) + "\n```\n", id: "sess-tests-2"})
+	if err := os.Remove(filepath.Join(a.Dir, FindingsFile)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(a.Dir, FindingsFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := q.Ask(context.Background(), a.Findings.Items[0].ID, "Sure?")
+	if err == nil || isRefusal(err) || !strings.Contains(err.Error(), FindingsFile) {
+		t.Fatalf("err = %v, want the findings write that failed", err)
+	}
+	if len(q.Findings()) != 3 || len(q.Artifact.Findings.Silenced) != 0 || len(q.Artifact.Triage.Decisions) != 0 {
+		t.Errorf("findings %d, silenced %d, decisions %d: want the queue as it was", len(q.Findings()), len(q.Artifact.Findings.Silenced), len(q.Artifact.Triage.Decisions))
+	}
+	// The session did hear the question, so the run file names the
+	// session it answered as: the next ask resumes the one that knows.
+	runs, err := ReadAngleRuns(a.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runs[0].SessionID != "sess-tests-2" || a.Runs[0].SessionID != "sess-tests-2" {
+		t.Errorf("run session %s (file %s), want the id the session answered with", a.Runs[0].SessionID, runs[0].SessionID)
+	}
+}
+
+func TestARefusalIsToldApartFromAFailure(t *testing.T) {
+	a := judged(t)
+	q := queueOf(t, a)
+	tests, scope := a.Findings.Items[0].ID, a.Findings.Items[2].ID
+	for name, err := range map[string]error{
+		"an unknown finding":         q.Defer("00000000"),
+		"a dismissal with no reason": q.Dismiss(tests, ""),
+		"a dismissal with no notes": func() error {
+			n := q.Notes
+			q.Notes = nil
+			defer func() { q.Notes = n }()
+			return q.Dismiss(tests, "fine")
+		}(),
+		"an empty question":     func() error { _, err := q.Ask(context.Background(), tests, ""); return err }(),
+		"a queue with no agent": func() error { _, err := q.Ask(context.Background(), tests, "Sure?"); return err }(),
+	} {
+		if !isRefusal(err) {
+			t.Errorf("%s: err = %v, want a refusal", name, err)
+		}
+	}
+	q.Angles = &Angles{Agent: &fakeAgent{err: errors.New("no capacity")}, Provider: config.AgentClaude}
+	for name, id := range map[string]string{"an angle with no session": scope, "a session that failed": tests} {
+		_, err := q.Ask(context.Background(), id, "Sure?")
+		if !isRefusal(err) {
+			t.Errorf("%s: err = %v, want a refusal", name, err)
+		}
+	}
+	// Refusals leave the queue as it was, and the message is the cause's.
+	if _, err := q.Ask(context.Background(), tests, "Sure?"); err == nil || err.Error() != "no capacity" || !strings.Contains(errors.Unwrap(err).Error(), "no capacity") {
+		t.Errorf("err = %v, want the session's own failure wrapped", err)
+	}
+	if got := written(t, q).Decisions; len(got) != 0 || len(q.Pending()) != 3 {
+		t.Errorf("a refusal decided something: %+v", got)
+	}
+}

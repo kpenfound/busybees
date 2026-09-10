@@ -35,6 +35,29 @@ import (
 // select, dismiss or defer on a finding is the one in force: a finding
 // deferred and then selected is selected. An ask settles nothing; the
 // finding stays in the queue with its answer beside it.
+//
+// An action fails in one of two ways, and whoever drives the queue tells
+// them apart with errors.As: a Refusal is an action the queue would not take
+// as asked, which the person can answer (a dismissal with no reason, a
+// finding the review does not have, an angle that cannot be reopened); any
+// other error is something that could not be written, and nothing the
+// action would have recorded is kept in memory either, so what the queue
+// says and what the artifact holds never disagree.
+
+// Refusal is an error for an action the queue would not take as asked. It
+// leaves the queue as it was, and the person can ask again differently.
+type Refusal struct {
+	// Err says what was refused.
+	Err error
+}
+
+func (r *Refusal) Error() string { return r.Err.Error() }
+func (r *Refusal) Unwrap() error { return r.Err }
+
+// refuse is a Refusal from a message.
+func refuse(format string, args ...any) error {
+	return &Refusal{Err: fmt.Errorf(format, args...)}
+}
 
 // The triage actions, as Decision.Action records them.
 const (
@@ -154,7 +177,7 @@ func (q *Queue) Find(id string) (*Finding, error) {
 			return &items[i], nil
 		}
 	}
-	return nil, fmt.Errorf("no finding %s in this review", id)
+	return nil, refuse("no finding %s in this review", id)
 }
 
 // Select puts a finding into the review's output. comment is the text it is
@@ -183,10 +206,10 @@ func (q *Queue) Dismiss(id, reason string) error {
 	}
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
-		return errors.New("a dismissal needs a reason: it is what your reviewer notes are made of")
+		return refuse("a dismissal needs a reason: it is what your reviewer notes are made of")
 	}
 	if q.Notes == nil {
-		return errors.New("no reviewer notes to record the dismissal in")
+		return refuse("no reviewer notes to record the dismissal in")
 	}
 	d := DismissalOf(q.repo(), f, reason)
 	if err := AppendDismissal(q.Notes.Path, d); err != nil {
@@ -228,33 +251,42 @@ func (q *Queue) Ask(ctx context.Context, id, question string) (*Answer, error) {
 	}
 	question = strings.TrimSpace(question)
 	if question == "" {
-		return nil, errors.New("nothing to ask: give the question")
+		return nil, refuse("nothing to ask: give the question")
 	}
 	if q.Angles == nil {
-		return nil, errors.New("no agent to ask: the queue was opened without one")
+		return nil, refuse("no agent to ask: the queue was opened without one")
 	}
 	run := q.runOf(f.Angle)
 	if run == nil {
-		return nil, fmt.Errorf("the %s angle has no session in this review, so there is nothing to ask", f.Angle)
+		return nil, refuse("the %s angle has no session in this review, so there is nothing to ask", f.Angle)
 	}
 	res, err := q.Angles.Resume(ctx, *run, question)
 	if err != nil {
-		return nil, err
+		// A session that could not be reopened, or that failed, lost
+		// nothing: the finding is as it was, and the person can ask
+		// again or decide without an answer.
+		return nil, &Refusal{Err: err}
 	}
+	// Everything below is written before it is kept: a run file, then the
+	// findings, then the decision, and an error at any of them leaves the
+	// queue as it was.
 	if res.ID != "" && res.ID != run.SessionID {
 		// A reopened session that answers under another id is resumed
 		// under that one next time: the old one has not heard the
 		// question.
-		run.SessionID = res.ID
-		if err := WriteAngleRun(q.Artifact.Dir, run); err != nil {
+		reopened := *run
+		reopened.SessionID = res.ID
+		if err := WriteAngleRun(q.Artifact.Dir, &reopened); err != nil {
 			return nil, err
 		}
+		*run = reopened
 	}
-	text, added := q.requeue(f.Angle, run.SessionID, res.Text)
-	if len(added) > 0 || len(q.Artifact.Findings.Silenced) > 0 {
-		if err := WriteFindings(q.Artifact.Dir, q.Artifact.Findings); err != nil {
+	text, findings, added := q.requeue(f.Angle, run.SessionID, res.Text)
+	if findings != nil {
+		if err := WriteFindings(q.Artifact.Dir, findings); err != nil {
 			return nil, err
 		}
+		q.Artifact.Findings = findings
 	}
 	d := Decision{Finding: id, Action: ActionAsk, Question: question, Answer: text}
 	for _, a := range added {
@@ -271,22 +303,28 @@ func (q *Queue) Ask(ctx context.Context, id, question string) (*Answer, error) {
 var emptyFence = regexp.MustCompile("(?m)^[ \t]*```[a-zA-Z]*[ \t]*\n\\s*```[ \t]*$\n?")
 
 // requeue reads the findings a reopened angle session may have ended its
-// answer with, and puts the ones the review did not have into the queue:
-// merged and pinned as the judge would (Merge), the reviewer notes acting on
-// them (Filter), the ones already in the list dropped, and the list
-// re-sorted. It returns the answer without the findings, and what it added.
-// An answer with no findings object in it, which is most answers, adds
-// nothing.
-func (q *Queue) requeue(angle, sessionID, text string) (string, []Finding) {
+// answer with, and works out the review's findings with the ones it did not
+// have added: merged and pinned as the judge would (Merge), the reviewer
+// notes acting on them (Filter), the ones already in the list dropped, and
+// the list re-sorted. It returns the answer without the findings, the new
+// findings list, and what was added; the queue's own list is not touched,
+// so the caller can write the new one before keeping it. An answer with no
+// findings object in it, which is most answers, changes nothing and the
+// list comes back nil.
+func (q *Queue) requeue(angle, sessionID, text string) (string, *Findings, []Finding) {
 	fresh, err := ParseFindings(angle, sessionID, text)
 	if err != nil || len(fresh) == 0 {
-		return strings.TrimSpace(text), nil
+		return strings.TrimSpace(text), nil, nil
 	}
 	obj, _ := jsonObject(text)
 	text = strings.TrimSpace(emptyFence.ReplaceAllString(strings.Replace(text, obj, "", 1), ""))
 	fresh, silenced := Filter(Merge(fresh, q.Project), q.rules(), q.repo())
-	findings := q.Artifact.Findings
-	findings.Silenced = append(findings.Silenced, silenced...)
+	have := q.Artifact.Findings
+	findings := &Findings{
+		Items:    slices.Clone(have.Items),
+		Skipped:  have.Skipped,
+		Silenced: append(slices.Clone(have.Silenced), silenced...),
+	}
 	var added []Finding
 	for _, f := range fresh {
 		if q.has(&f) {
@@ -295,8 +333,11 @@ func (q *Queue) requeue(angle, sessionID, text string) (string, []Finding) {
 		findings.Items = append(findings.Items, f)
 		added = append(added, f)
 	}
+	if len(added) == 0 && len(silenced) == 0 {
+		return text, nil, nil
+	}
 	slices.SortStableFunc(findings.Items, compareFindings)
-	return text, added
+	return text, findings, added
 }
 
 // has reports whether the review already has a finding: one the judge
@@ -310,10 +351,16 @@ func (q *Queue) has(f *Finding) bool {
 	return false
 }
 
-// record appends a decision and writes the triage state.
+// record writes the triage state with a decision appended, and keeps the
+// decision only once it is written: a decision that did not reach the
+// artifact is not one the queue took.
 func (q *Queue) record(d Decision) error {
-	q.Artifact.Triage.Decisions = append(q.Artifact.Triage.Decisions, d)
-	return WriteTriage(q.Artifact.Dir, q.Artifact.Triage)
+	next := &Triage{Decisions: append(slices.Clone(q.Artifact.Triage.Decisions), d)}
+	if err := WriteTriage(q.Artifact.Dir, next); err != nil {
+		return err
+	}
+	q.Artifact.Triage.Decisions = next.Decisions
+	return nil
 }
 
 // runOf is the run of the angle that found a finding, and nil when the
