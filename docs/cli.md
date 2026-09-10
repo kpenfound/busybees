@@ -1371,7 +1371,9 @@ taken, so stopping loses nothing: run the command again and it offers what is
 still undecided. The latest select, dismiss or defer on a finding is the one
 that counts. An ask decides nothing; the finding is shown again with the
 answer under it. A dismissal needs a reason: it is the line your reviewer
-notes are made of.
+notes are made of. A decision that cannot be written into the artifact
+directory stops the command with the error, and the finding is still
+undecided the next time.
 
 `--config` reads a global configuration other than `~/.config/bees/config.toml`.
 
