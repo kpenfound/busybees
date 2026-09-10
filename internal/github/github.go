@@ -795,6 +795,56 @@ func (c *Client) SubmitReview(ctx context.Context, number int, event, body strin
 	return err
 }
 
+// ReviewComment is one comment of a review PostReview submits, anchored to a
+// line of the pull request's diff: the file, the line (the last one of a
+// range, with StartLine the first) and the side of the diff each is on,
+// "RIGHT" for the file as the change leaves it and "LEFT" for a line it
+// removed. GitHub refuses a line that is not in the diff, and refuses the
+// whole review with it.
+type ReviewComment struct {
+	Path      string `json:"path"`
+	Line      int    `json:"line"`
+	Side      string `json:"side"`
+	StartLine int    `json:"start_line,omitempty"`
+	StartSide string `json:"start_side,omitempty"`
+	Body      string `json:"body"`
+}
+
+// ReviewRequest is one review with its comments, as the REST endpoint takes
+// it: the event is one of ReviewRequestEvents, the body the review's
+// summary, and CommitID the commit the comments' lines are read against,
+// the pull request's head when empty.
+type ReviewRequest struct {
+	CommitID string          `json:"commit_id,omitempty"`
+	Event    string          `json:"event"`
+	Body     string          `json:"body,omitempty"`
+	Comments []ReviewComment `json:"comments,omitempty"`
+}
+
+// ReviewRequestEvents are the verdicts PostReview accepts, as the REST API
+// spells them: APPROVE, REQUEST_CHANGES or COMMENT.
+var ReviewRequestEvents = []string{"APPROVE", "REQUEST_CHANGES", "COMMENT"}
+
+// PostReview submits one review with its comments in one call: the review
+// and every comment anchored to a line are created together, or not at all.
+// The request travels on standard input as JSON, for the same reason
+// SubmitReview's body does. Like SubmitReview it submits what it is given
+// and decides nothing.
+func (c *Client) PostReview(ctx context.Context, number int, r ReviewRequest) error {
+	if !slices.Contains(ReviewRequestEvents, r.Event) {
+		return fmt.Errorf("github: unknown review event %q (want %s)", r.Event, strings.Join(ReviewRequestEvents, ", "))
+	}
+	if c.ExecStdin == nil {
+		return errors.New("github: no ExecStdin")
+	}
+	body, err := json.Marshal(r)
+	if err != nil {
+		return err
+	}
+	_, err = c.ExecStdin(ctx, string(body), "api", "--method", "POST", fmt.Sprintf("repos/%s/pulls/%d/reviews", c.Repo, number), "--input", "-")
+	return err
+}
+
 // Check is one required status check on a pull request.
 type Check struct {
 	Name        string `json:"name"`

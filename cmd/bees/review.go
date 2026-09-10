@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -16,27 +17,152 @@ import (
 
 // ---- review ----------------------------------------------------------------
 
-// newReviewCmd holds the parts of `bees review`, the pull request review
-// tool, that a person runs on their own. It reads no bees.toml and no factory
-// state: its configuration is ~/.config/bees/config.toml (internal/review).
+// newReviewCmd holds `bees review`, the pull request review tool, which a
+// person runs on their own. It reads no bees.toml and no factory state: its
+// configuration is ~/.config/bees/config.toml (internal/review).
 func newReviewCmd() *cobra.Command {
-	cmd := groupCmd("review", "The pull request review tool")
-	cmd.Long = `bees review reviews a GitHub pull request from several angles at once and
+	var configPath string
+	var end endFlags
+	cmd := &cobra.Command{
+		Use:   "review <pr>",
+		Short: "The pull request review tool",
+		Long: `bees review reviews a GitHub pull request from several angles at once and
 hands you what they found.
+
+The pull request is a github.com URL, owner/name#123, or a number when the
+current directory is a checkout of the repository. The review gathers the
+pull request's context, briefs it, reviews it from every angle the
+repository's context.toml enables, merges what the angles found, and shows
+you each finding in turn to select, dismiss, defer or ask about (see
+triage). What you selected then ends the review one of five ways: posted as
+review comments with an approval, as a comment-only review or with changes
+requested, printed as a markdown report, or discarded. --post and --report
+choose; with neither, the output key of ~/.config/bees/config.toml does, and
+its default asks you at the end.
 
 Its settings are ~/.config/bees/config.toml, and the repository's own
 context.toml says which angles run there. Every finding you dismiss is
 recorded in your reviewer notes, and consolidate turns the dismissals that
 repeat into rules: what a review drops, or ranks down, before it reaches you
-again.`
+again.`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return cmd.Help()
+			}
+			ctx := cmd.Context()
+			cfg, err := review.LoadConfig(configPath)
+			if err != nil {
+				return err
+			}
+			mode, err := end.mode(cfg)
+			if err != nil {
+				return err
+			}
+			cwd, err := os.Getwd()
+			if err != nil {
+				return err
+			}
+			ref, err := review.ResolveRef(ctx, args[0], cwd)
+			if err != nil {
+				return err
+			}
+			runner, err := review.NewRunner(ctx, ref, cfg, cwd)
+			if err != nil {
+				return err
+			}
+			runner.Log = os.Stdout
+			artifact, err := runner.Run(ctx, ref)
+			if err != nil {
+				return err
+			}
+			queue, err := runner.Queue(artifact)
+			if err != nil {
+				return err
+			}
+			console := &review.Console{In: cmd.InOrStdin(), Out: os.Stdout, Editor: editComment}
+			if err := console.Run(ctx, queue); err != nil {
+				return err
+			}
+			return endReview(ctx, cfg, ref, artifact.Brief, queue, console, mode)
+		},
+	}
+	cmd.Flags().StringVar(&configPath, "config", "", "path to the global configuration (default: ~/.config/bees/config.toml)")
+	end.add(cmd)
 	cmd.AddCommand(newReviewTriageCmd())
 	cmd.AddCommand(newReviewConsolidateCmd())
 	return cmd
 }
 
+// endFlags are the flags that choose how a review ends: --post with one of
+// the three modes that submit a review, or --report.
+type endFlags struct {
+	post   string
+	report bool
+}
+
+// postModes are the values --post takes.
+var postModes = []string{review.OutputApprove, review.OutputComment, review.OutputReject}
+
+func (e *endFlags) add(cmd *cobra.Command) {
+	cmd.Flags().StringVar(&e.post, "post", "", "submit the selected findings as one review: "+strings.Join(postModes, ", "))
+	cmd.Flags().BoolVar(&e.report, "report", false, "print the selected findings as a markdown report and post nothing")
+}
+
+// mode is the output mode the flags chose, and cfg's when they chose none.
+// Both flags at once, and a --post value that is not a posting mode, are
+// errors.
+func (e *endFlags) mode(cfg *review.Config) (string, error) {
+	switch {
+	case e.post != "" && e.report:
+		return "", errors.New("--post and --report choose different ends: give one of them")
+	case e.report:
+		return review.OutputReport, nil
+	case e.post == "":
+		return cfg.Output, nil
+	case !review.Posts(e.post):
+		return "", fmt.Errorf("--post %q: want one of %s", e.post, strings.Join(postModes, ", "))
+	}
+	return e.post, nil
+}
+
+// endReview ends a review the way mode says, once triage is over: it asks
+// at the console when the mode is to ask, prints the report, posts the
+// review, or discards. A review that could not be posted as asked at the
+// console (nothing selected for a comment-only review) is asked again;
+// asked for by a flag or the configuration, it is the command's error.
+func endReview(ctx context.Context, cfg *review.Config, ref review.Ref, brief *review.Brief, queue *review.Queue, console *review.Console, mode string) error {
+	ask := mode == review.OutputAsk
+	for {
+		if ask {
+			mode = console.Choose(queue)
+		}
+		switch mode {
+		case review.OutputDiscard:
+			fmt.Printf("%s: nothing posted\n", ref)
+			return nil
+		case review.OutputReport:
+			fmt.Print(review.Report(brief, queue.Selected()))
+			return nil
+		}
+		posted, err := review.Post(ctx, review.NewClient(ref, cfg), ref, mode, queue.Selected())
+		var refusal *review.Refusal
+		if ask && errors.As(err, &refusal) {
+			fmt.Printf("%v\n", err)
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%s: %s with %s\n", ref, review.Verb(mode), text.Count(len(posted.Comments), "comment"))
+		return nil
+	}
+}
+
 // newReviewTriageCmd builds `bees review triage`.
 func newReviewTriageCmd() *cobra.Command {
 	var configPath string
+	var end endFlags
 	cmd := &cobra.Command{
 		Use:   "triage <pr>",
 		Short: "Pick up the triage of a pull request's latest review",
@@ -49,11 +175,17 @@ its comment text in $VISUAL or $EDITOR and selects it, d dismisses it with a
 reason that is appended to your reviewer notes, f defers it, a asks the angle
 that found it a question, n leaves it for now and q stops. Every decision is
 written into the review's artifact directory as it is taken, so stopping
-loses nothing.`,
+loses nothing. The review then ends the way bees review's does: what is
+selected is posted, printed as a report, or discarded, as --post, --report,
+the output key of ~/.config/bees/config.toml or the prompt at the end says.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			cfg, err := review.LoadConfig(configPath)
+			if err != nil {
+				return err
+			}
+			mode, err := end.mode(cfg)
 			if err != nil {
 				return err
 			}
@@ -93,10 +225,14 @@ loses nothing.`,
 			}
 			fmt.Printf("%s: the review started %s\n", ref, filepath.Base(dir))
 			console := &review.Console{In: cmd.InOrStdin(), Out: os.Stdout, Editor: editComment}
-			return console.Run(ctx, queue)
+			if err := console.Run(ctx, queue); err != nil {
+				return err
+			}
+			return endReview(ctx, cfg, ref, artifact.Brief, queue, console, mode)
 		},
 	}
 	cmd.Flags().StringVar(&configPath, "config", "", "path to the global configuration (default: ~/.config/bees/config.toml)")
+	end.add(cmd)
 	return cmd
 }
 
