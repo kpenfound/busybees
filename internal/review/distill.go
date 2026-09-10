@@ -17,8 +17,7 @@ import (
 //go:embed prompts/distiller.md
 var distillerInstructions string
 
-// DistillerName is the name of the distiller session, in an error and in the
-// artifact directory.
+// DistillerName is the name of the distiller session, in an error message.
 const DistillerName = "distiller"
 
 // Distiller runs the first session of a review: it reads the context bundle

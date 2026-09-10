@@ -10,7 +10,9 @@
 // which files reports into the busybees repository. Issue creation itself
 // (internal/issues.Create, the issue_create tool) does not go through it: the
 // roles that split one issue into several similar ones — a triage split, a
-// feature broken into work items — would trip it on purpose.
+// feature broken into work items — would trip it on purpose. Score, the
+// comparison on its own, is also how the judge of `bees review`
+// (internal/review) tells one finding reported by two angles from two.
 //
 // The scoring is local so that it is the same in a test as in production and
 // owes nothing to gh's search ranking. Titles and bodies are lowercased,
