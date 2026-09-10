@@ -171,7 +171,7 @@ func (styleFilesSource) Collect(ctx context.Context, in *Input) ([]Item, error) 
 	}
 	// A built-in name that no repository has is not worth reporting; a
 	// style source the project asked for and that matches nothing is.
-	g := &fileGatherer{in: in, source: SourceStyleFiles, root: root, read: map[string]bool{}}
+	g := newFileGatherer(in, SourceStyleFiles, root)
 	g.add(StyleFiles, false)
 	g.add(in.Project.StyleSources, true)
 	return g.items, nil
@@ -191,7 +191,7 @@ func (f fileSource) Collect(ctx context.Context, in *Input) ([]Item, error) {
 		in.Skip("no checkout of %s: the files of context source %q were not read", in.Ref.Repo, f.name)
 		return nil, nil
 	}
-	g := &fileGatherer{in: in, source: f.name, root: root, read: map[string]bool{}}
+	g := newFileGatherer(in, f.name, root)
 	g.add(f.files, true)
 	return g.items, nil
 }
@@ -203,8 +203,25 @@ type fileGatherer struct {
 	in     *Input
 	source string
 	root   string
-	read   map[string]bool
-	items  []Item
+	// resolvedRoot is root with every symlink in it resolved, computed once
+	// so a match can be checked against the real directory it has to stay
+	// under rather than root's own spelling, which a symlinked intermediate
+	// directory can make lie.
+	resolvedRoot string
+	read         map[string]bool
+	items        []Item
+}
+
+// newFileGatherer resolves root's symlinks once for the lifetime of the
+// gatherer. An unresolvable root (removed under us, a permission error)
+// gathers as if it had no symlinks in it: every match still passes the
+// lexical checkout check in add.
+func newFileGatherer(in *Input, source, root string) *fileGatherer {
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		resolvedRoot = root
+	}
+	return &fileGatherer{in: in, source: source, root: root, resolvedRoot: resolvedRoot, read: map[string]bool{}}
 }
 
 // add gathers the files patterns match. With report set, a pattern that
@@ -231,6 +248,19 @@ func (g *fileGatherer) add(patterns []string, report bool) {
 			if g.read[rel] {
 				found++ // read for an earlier pattern, so this one matched
 				continue
+			}
+			// The lexical check above only sees the pattern's own spelling.
+			// A symlink, or a symlinked directory on the way to it, can
+			// still lead outside the checkout with no ".." ever appearing
+			// in path: resolve it and check the real destination too.
+			resolved, err := filepath.EvalSymlinks(path)
+			if err != nil {
+				continue // a broken symlink is unreadable, not an escape
+			}
+			relResolved, err := filepath.Rel(g.resolvedRoot, resolved)
+			if err != nil || relResolved == ".." || strings.HasPrefix(relResolved, ".."+string(filepath.Separator)) {
+				g.in.Skip("%s: %q leaves the checkout and was not read", g.source, pattern)
+				break
 			}
 			data, err := os.ReadFile(path)
 			if err != nil {
