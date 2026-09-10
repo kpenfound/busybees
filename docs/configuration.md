@@ -689,6 +689,54 @@ any developer's does; the attempt branches are then deleted. An attempt that
 pushed no commits is listed as not a candidate; when none did, the issue is
 handed to a person, `bees:needs-human`.
 
+### `[roles.developer]` only: mixture of experts
+
+A mixture of experts runs several developer sessions on the same issue, each
+one to a brief of its own, and has an assembler session combine their work
+into the pull request that goes to review. It is off until a size names its
+experts.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `moe_experts_by_size` | table | `{}` | The experts a work item of that size fans out to, keyed by `xs`, `s`, `m`, `l`, `xl`, each an ordered list of names from `moe_experts`. An unknown size, an empty list, a name `moe_experts` does not define, or a size that is also in `best_of_n_by_size`, is a load error. A size with no entry, and an issue with no size label, runs a plain developer round. |
+| `moe_experts` | table | `{}` | The experts themselves, one sub-table per name. `prompt` is what that expert's session runs with in place of the developer's own `prompt`, `model` the model it runs. Both are optional: an expert that names neither runs the developer's prompt and resolves its model the way a single session does, through `model_by_size` and `model`. |
+| `moe_assembler_model` | string | `""` | The model the assembler session runs. Empty: the developer's `model`. |
+| `moe_assembler_prompt` | string | `""` | The prompt the assembler session runs with. Empty: the developer's own `prompt`. |
+
+```toml
+[roles.developer]
+moe_experts_by_size = { xl = ["backend", "frontend"] }
+moe_assembler_model = "opus"
+
+[roles.developer.moe_experts.backend]
+prompt = """
+Solve it in the server code.
+"""
+model = "opus"
+
+[roles.developer.moe_experts.frontend]
+prompt = """
+Solve it in the interface.
+"""
+```
+
+A size that names two or more experts runs that many developer sessions at
+once for the issue's first develop round, one per name and in the order the
+list gives them: expert `i` works on the branch
+`<branch_prefix>issue-<n>-attempt-<i>`, with that expert's prompt and model,
+in a `max_developers` slot of its own, so the count is clamped to
+`max_developers` and the experts past the clamp do not run. A size that names
+a single expert runs the plain developer session that leaving the size out
+would run, so that expert's prompt and model go unused.
+
+When every expert has ended, one assembler session runs on the issue's own
+branch. Its task lists each expert branch and the expert it came from; it
+combines their work into one implementation on that branch and opens the pull
+request from it, which goes to review as any developer's does. The expert
+branches are then deleted. An expert that pushed no commits is listed as not
+a candidate; when none did, the issue is handed to a person,
+`bees:needs-human`.
+
 ### Sandboxing
 
 `sandbox` says how much of the machine a session of that role can reach. It is

@@ -383,13 +383,22 @@ the checks stage.
 
 **Configuration.** `roles.developer` takes the common keys and a few of its
 own: `commit_flags`, `max_size` (default `l`, the largest work item a
-developer takes), `model_by_size` (a model per size label) and the best-of-N
+developer takes), `model_by_size` (a model per size label), the best-of-N
 keys (`best_of_n_by_size` and the model and prompt overrides for the attempts
-and the assembler). Set anywhere else, they are a load error. See
-[configuration.md](configuration.md#rolesdeveloper-only-commit-flags-max-size-and-per-size-models)
-and [best of N](configuration.md#rolesdeveloper-only-best-of-n). How a
-fan-out and its assembler session run is on
-[workflow.md](workflow.md#best-of-n).
+and the assembler) and the mixture-of-experts keys (`moe_experts_by_size`,
+`moe_experts`, `moe_assembler_model` and `moe_assembler_prompt`). Set
+anywhere else, they are a load error. See
+[configuration.md](configuration.md#rolesdeveloper-only-commit-flags-max-size-and-per-size-models),
+[best of N](configuration.md#rolesdeveloper-only-best-of-n) and
+[mixture of experts](configuration.md#rolesdeveloper-only-mixture-of-experts).
+How a fan-out and its assembler session run is on
+[workflow.md](workflow.md#best-of-n) and
+[workflow.md](workflow.md#mixture-of-experts).
+
+An expert is not a role of its own: it is a developer session running one
+expert's prompt and model, with the developer's task, tools and outcomes, and
+so is the assembler that combines what the experts did. `bees config show
+developer` prints the keys that pick them.
 
 ## reviewer
 
@@ -720,11 +729,13 @@ prompt_file = "docs/qa-checklist.md"
   `model` or `fallback_model` and ignores `max_turns`, `allowed_tools` and
   `disallowed_tools` (see [Running a session](architecture.md#running-a-session)).
 - **commit_flags, max_size, model_by_size, best_of_n_by_size,
-  best_of_n_model, best_of_n_prompt, assembler_model, assembler_prompt** are
-  `roles.developer` only ([developer](#developer)). **auto_merge, merge_method, checks_wait,
-  checks_poll_interval, checks_timeout, max_check_fix_rounds,
-  pre_review_checks, pre_review_checks_timeout, stages** are `roles.reviewer`
-  only ([reviewer](#reviewer)). Set anywhere else, each is a load error.
+  best_of_n_model, best_of_n_prompt, assembler_model, assembler_prompt,
+  moe_experts_by_size, moe_experts, moe_assembler_model, moe_assembler_prompt**
+  are `roles.developer` only ([developer](#developer)). **auto_merge,
+  merge_method, checks_wait, checks_poll_interval, checks_timeout,
+  max_check_fix_rounds, pre_review_checks, pre_review_checks_timeout,
+  stages** are `roles.reviewer` only ([reviewer](#reviewer)). Set anywhere
+  else, each is a load error.
 
 `bees config show <role>` prints the result of the merge. See
 [configuration.md](configuration.md#global-and-rolesname) for every key.
