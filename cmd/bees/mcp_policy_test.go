@@ -108,10 +108,10 @@ func TestBackendNotesFollowNotesBackend(t *testing.T) {
 		}
 		switch r.URL.Path {
 		case "/v1/conversations":
-			fmt.Fprint(w, `{"conversations":[{"id":"c1","userId":"bees-notes-reviewer","createdAt":"2026-09-09T00:00:00Z"}]}`)
+			_, _ = fmt.Fprint(w, `{"conversations":[{"id":"c1","userId":"bees-notes-reviewer","createdAt":"2026-09-09T00:00:00Z"}]}`)
 		case "/v1/conversations/c1/messages":
 			reads++
-			fmt.Fprint(w, `{"messages":[{"id":"m1","role":"assistant","content":"# reviewer notes\n\n- from neo4j\n","createdAt":"2026-09-09T00:01:00Z"}]}`)
+			_, _ = fmt.Fprint(w, `{"messages":[{"id":"m1","role":"assistant","content":"# reviewer notes\n\n- from neo4j\n","createdAt":"2026-09-09T00:01:00Z"}]}`)
 		default:
 			http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
 		}

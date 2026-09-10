@@ -69,7 +69,7 @@ func (f *fakeNAMS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if f.failWith != 0 {
 		w.WriteHeader(f.failWith)
-		fmt.Fprintf(w, `{"error":"injected failure %d"}`, f.failWith)
+		_, _ = fmt.Fprintf(w, `{"error":"injected failure %d"}`, f.failWith)
 		return
 	}
 	switch {
@@ -80,12 +80,12 @@ func (f *fakeNAMS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	case f.failAfter < 0:
 		w.WriteHeader(http.StatusServiceUnavailable)
-		fmt.Fprint(w, `{"error":"injected failure 503"}`)
+		_, _ = fmt.Fprint(w, `{"error":"injected failure 503"}`)
 		return
 	}
 	if r.Header.Get("Authorization") != "Bearer "+f.key {
 		w.WriteHeader(http.StatusUnauthorized)
-		fmt.Fprint(w, `{"error":"invalid API key"}`)
+		_, _ = fmt.Fprint(w, `{"error":"invalid API key"}`)
 		return
 	}
 	limit, offset := defaultPage, 0
@@ -112,7 +112,7 @@ func (f *fakeNAMS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
-			fmt.Fprintf(w, `{"error":%q}`, err.Error())
+			_, _ = fmt.Fprintf(w, `{"error":%q}`, err.Error())
 			return
 		}
 		c := conversation{ID: "conv-" + strconv.Itoa(len(f.conversations)+1), UserID: in.UserID, CreatedAt: f.now()}
@@ -133,7 +133,7 @@ func (f *fakeNAMS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimSuffix(strings.TrimPrefix(path, "/conversations/"), "/messages")
 		if !f.has(id) {
 			w.WriteHeader(http.StatusNotFound)
-			fmt.Fprint(w, `{"error":"conversation not found"}`)
+			_, _ = fmt.Fprint(w, `{"error":"conversation not found"}`)
 			return
 		}
 		var in struct {
@@ -142,7 +142,7 @@ func (f *fakeNAMS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.Role == "" || in.Content == "" {
 			w.WriteHeader(http.StatusBadRequest)
-			fmt.Fprint(w, `{"error":"content and role are required"}`)
+			_, _ = fmt.Fprint(w, `{"error":"content and role are required"}`)
 			return
 		}
 		m := message{ID: fmt.Sprintf("%s-m%d", id, len(f.messages[id])+1), Role: in.Role, Content: in.Content, CreatedAt: f.now()}
@@ -151,7 +151,7 @@ func (f *fakeNAMS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"id": m.ID, "conversationId": id, "role": m.Role, "content": m.Content})
 	default:
 		w.WriteHeader(http.StatusNotFound)
-		fmt.Fprint(w, `{"error":"not found"}`)
+		_, _ = fmt.Fprint(w, `{"error":"not found"}`)
 	}
 }
 
