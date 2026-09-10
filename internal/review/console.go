@@ -281,51 +281,12 @@ func (c *Console) show(q *Queue, f Finding) {
 	pending := q.Pending()
 	at := slices.IndexFunc(pending, func(p Finding) bool { return p.ID == f.ID })
 	c.printf("\n[%d of %s undecided] %s · %s · %s · %s\n", at+1, text.Count(len(pending), "finding"), f.ID, f.Severity, f.Angle, f.Category)
-	if f.Anchored() {
-		where := f.File
-		if !f.Lines.IsZero() {
-			where += ":" + f.Lines.String()
-		}
-		if f.Side == SideOld {
-			where += " (removed)"
-		}
-		c.printf("%s\n", where)
-	}
-	c.printf("\n%s\n", f.Comment())
-	if f.Suggestion != "" {
-		c.printf("\nSuggestion:\n%s\n", indent(f.Suggestion))
-	}
-	if f.Evidence != "" {
-		c.printf("\nEvidence: %s\n", f.Evidence)
-	}
-	if len(f.Sources) > 0 {
-		c.printf("Sources: %s\n", strings.Join(f.Sources, ", "))
-	}
-	if len(f.AlsoFrom) > 0 {
-		c.printf("Also from: %s\n", strings.Join(f.AlsoFrom, ", "))
-	}
-	for _, d := range q.Asked(f.ID) {
-		c.printf("\nQ: %s\nA: %s\n", d.Question, d.Answer)
-	}
-	c.printf("\n")
+	c.printf("%s\n", q.Describe(f))
 }
 
-// summary prints where triage stands: how many findings each decision in
-// force covers, and how many are still undecided.
+// summary prints where triage stands (Queue.Summary).
 func (c *Console) summary(q *Queue) {
-	counts := map[string]int{}
-	for _, f := range q.Findings() {
-		if d, ok := q.DecisionOn(f.ID); ok {
-			counts[d.Action]++
-		} else {
-			counts["undecided"]++
-		}
-	}
-	var parts []string
-	for _, k := range []struct{ action, past string }{{ActionSelect, "selected"}, {ActionDismiss, "dismissed"}, {ActionDefer, "deferred"}, {"undecided", "undecided"}} {
-		parts = append(parts, fmt.Sprintf("%d %s", counts[k.action], k.past))
-	}
-	c.printf("%s of %s\n", strings.Join(parts, ", "), text.Count(len(q.Findings()), "finding"))
+	c.printf("%s\n", q.Summary())
 }
 
 // indent puts two spaces before every line of s.
