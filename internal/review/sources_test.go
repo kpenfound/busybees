@@ -140,6 +140,75 @@ func TestAStyleSourceCannotLeaveTheCheckout(t *testing.T) {
 	}
 }
 
+func TestAStyleSourceSymlinkCannotLeaveTheCheckout(t *testing.T) {
+	dir := gitRepo(t, "https://github.com/"+testRepo)
+	outside := filepath.Join(filepath.Dir(dir), "secrets.md")
+	if err := os.WriteFile(outside, []byte("the passphrase"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The pattern's own spelling never leaves the checkout: the escape is
+	// only in the symlink's target.
+	if err := os.Symlink(outside, filepath.Join(dir, "secrets.md")); err != nil {
+		t.Fatal(err)
+	}
+	p, err := ParseProject("style_sources = [\"secrets.md\"]\n", filepath.Join(dir, ProjectFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle := gatherTest(t, sampleGH(), p, dir)
+	for _, it := range bundle.Of(SourceStyleFiles) {
+		if strings.Contains(it.Content, "the passphrase") {
+			t.Fatalf("a style source read %q, outside the checkout via a symlink", it.Name)
+		}
+	}
+	if !strings.Contains(strings.Join(bundle.Skipped, "\n"), "leaves the checkout") {
+		t.Fatalf("skipped %v, want the pattern whose symlink leaves the checkout", bundle.Skipped)
+	}
+}
+
+func TestAStyleSourceSymlinkInsideTheCheckoutIsRead(t *testing.T) {
+	dir := gitRepo(t, "https://github.com/"+testRepo)
+	writeFile(t, dir, "style.md", "Short sentences.")
+	if err := os.Symlink(filepath.Join(dir, "style.md"), filepath.Join(dir, "style-link.md")); err != nil {
+		t.Fatal(err)
+	}
+	p, err := ParseProject("style_sources = [\"style-link.md\"]\n", filepath.Join(dir, ProjectFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle := gatherTest(t, sampleGH(), p, dir)
+	var found bool
+	for _, it := range bundle.Of(SourceStyleFiles) {
+		if it.Name == "style-link.md" {
+			found = true
+			if it.Content != "Short sentences." {
+				t.Fatalf("content %q, want the target's content", it.Content)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("style files %+v, want the symlink whose target stays inside the checkout", bundle.Of(SourceStyleFiles))
+	}
+	if strings.Contains(strings.Join(bundle.Skipped, "\n"), "leaves the checkout") {
+		t.Fatalf("skipped %v: a symlink resolving inside the checkout is not an escape", bundle.Skipped)
+	}
+}
+
+func TestAStyleSourceBrokenSymlinkIsSkippedNotFailed(t *testing.T) {
+	dir := gitRepo(t, "https://github.com/"+testRepo)
+	if err := os.Symlink(filepath.Join(dir, "does-not-exist.md"), filepath.Join(dir, "broken.md")); err != nil {
+		t.Fatal(err)
+	}
+	p, err := ParseProject("style_sources = [\"broken.md\"]\n", filepath.Join(dir, ProjectFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle := gatherTest(t, sampleGH(), p, dir)
+	if got := bundle.Of(SourceStyleFiles); len(got) != 0 {
+		t.Fatalf("style files %+v, want the broken symlink to gather nothing", got)
+	}
+}
+
 func TestCallersFindsTheChangedSymbolElsewhere(t *testing.T) {
 	dir := gitRepo(t, "https://github.com/"+testRepo)
 	writeFile(t, dir, "widget.go", "package a\n\nfunc Widget() {}\n")
