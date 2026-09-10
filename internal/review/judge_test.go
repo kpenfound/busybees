@@ -123,6 +123,14 @@ func TestTheSameFindingFromTwoAnglesIsKeptOnce(t *testing.T) {
 	if !reflect.DeepEqual(got[0], want) {
 		t.Errorf("merged\n%+v\nwant\n%+v", got[0], want)
 	}
+	// Merged again behind a fresh report of it, the finding keeps the
+	// angles it already named.
+	fresh := a
+	fresh.Severity = "high"
+	again := Merge([]Finding{fresh, got[0]}, nil)
+	if wantAlso := []string{AngleSideEffects, AngleTests}; len(again) != 1 || !reflect.DeepEqual(again[0].AlsoFrom, wantAlso) {
+		t.Errorf("re-merged: %+v, want also_from %v", again, wantAlso)
+	}
 }
 
 func TestTwoFindingsOnTheSameLinesAreTwoWhenTheyReadUnalike(t *testing.T) {
