@@ -2,7 +2,9 @@ package scheduler
 
 import (
 	"context"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -166,6 +168,55 @@ func TestNotesAreNotRenderedIntoThePrompts(t *testing.T) {
 		t.Errorf("a prompt names the notes file:\n%s\n%s", sys, task)
 	}
 	if ask := "Also consolidate your notes this session (notes are " + byteSize(len(notes)) + ")"; !strings.Contains(task, ask) {
+		t.Errorf("the task does not ask %q:\n%s", ask, task)
+	}
+}
+
+// offFileNotes is a Notes backend holding a role's notes somewhere other
+// than the notes file — what notes.backend = "neo4j" is — reporting a size
+// the file under the state directory does not have.
+type offFileNotes struct {
+	size int64
+
+	mu    sync.Mutex
+	sized []string // the roles Size was asked about, in order
+}
+
+func (n *offFileNotes) ReadNotes(context.Context, string) (string, error) { return "", nil }
+func (n *offFileNotes) WriteNotes(context.Context, string, string) error  { return nil }
+
+func (n *offFileNotes) Size(_ context.Context, role string) (int64, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.sized = append(n.sized, role)
+	return n.size, nil
+}
+
+// The notes_max_bytes trigger measures the notes through the configured
+// backend, not the notes file: with the notes off the file system, a role
+// whose backend reports 40 KB is asked to consolidate them even though the
+// file under the state directory is a few dozen bytes.
+func TestConsolidationMeasuresTheNotesBackend(t *testing.T) {
+	notes := &offFileNotes{size: 40960}
+	toml := strings.Replace(devOnlyTOML, "max_review_rounds = 3\n", "max_review_rounds = 3\nnotes_max_bytes = 1024\nnotes_consolidate_every = 0\n", 1)
+	h := newHarnessAt(t, toml, time.Now(), func(d *Deps) { d.Notes = notes })
+	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true}
+	seedReady(h, 1, "m", time.Now().Add(-time.Hour))
+
+	if err := h.sched.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(h.sessions(config.RoleDeveloper)); n != 1 {
+		t.Fatalf("developer sessions: %d, want 1", n)
+	}
+	if onDisk, err := h.store.NotesSize(config.RoleDeveloper); err != nil || onDisk >= 1024 {
+		t.Fatalf("the notes file is %d bytes, %v; the file trigger must not be the one that fired", onDisk, err)
+	}
+	if !slices.Contains(notes.sized, config.RoleDeveloper) {
+		t.Errorf("the backend was not asked for the developer's notes size: %v", notes.sized)
+	}
+	const ask = "Also consolidate your notes this session (notes are 40 KB)"
+	if task := promptOf(t, h, 0); !strings.Contains(task, ask) {
 		t.Errorf("the task does not ask %q:\n%s", ask, task)
 	}
 }

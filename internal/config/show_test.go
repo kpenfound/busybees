@@ -56,6 +56,10 @@ best_of_n_model = "opus"
 best_of_n_prompt = "attempt"
 assembler_model = "sonnet"
 assembler_prompt = "assemble"
+moe_experts_by_size = { xl = ["backend"] }
+moe_experts = { backend = { prompt = "server side", model = "haiku" } }
+moe_assembler_model = "opus"
+moe_assembler_prompt = "merge"
 [roles.product_manager]
 min_issue_size = "m"
 `
@@ -92,10 +96,16 @@ func TestViewIncludesRoleSpecificKeys(t *testing.T) {
 	if got := dev["best_of_n_by_size"]; !reflect.DeepEqual(got, map[string]any{"l": float64(3)}) {
 		t.Errorf("developer best_of_n_by_size: got %#v want %v", got, map[string]any{"l": float64(3)})
 	}
-	for k, want := range map[string]string{"best_of_n_model": "opus", "best_of_n_prompt": "attempt", "assembler_model": "sonnet", "assembler_prompt": "assemble"} {
+	for k, want := range map[string]string{"best_of_n_model": "opus", "best_of_n_prompt": "attempt", "assembler_model": "sonnet", "assembler_prompt": "assemble", "moe_assembler_model": "opus", "moe_assembler_prompt": "merge"} {
 		if got := dev[k]; got != want {
 			t.Errorf("developer %s: got %#v want %q", k, got, want)
 		}
+	}
+	if want := (map[string]any{"xl": []any{"backend"}}); !reflect.DeepEqual(dev["moe_experts_by_size"], want) {
+		t.Errorf("developer moe_experts_by_size: got %#v want %v", dev["moe_experts_by_size"], want)
+	}
+	if want := (map[string]any{"backend": map[string]any{"prompt": "server side", "model": "haiku"}}); !reflect.DeepEqual(dev["moe_experts"], want) {
+		t.Errorf("developer moe_experts: got %#v want %v", dev["moe_experts"], want)
 	}
 
 	pm := roleOf(t, out, RoleProductManager)
@@ -108,9 +118,11 @@ func TestViewIncludesRoleSpecificKeys(t *testing.T) {
 		"commit_flags": RoleDeveloper, "max_size": RoleDeveloper, "model_by_size": RoleDeveloper,
 		"best_of_n_by_size": RoleDeveloper, "best_of_n_model": RoleDeveloper,
 		"best_of_n_prompt": RoleDeveloper, "assembler_model": RoleDeveloper,
-		"assembler_prompt": RoleDeveloper,
-		"min_issue_size":   RoleProductManager,
-		"auto_merge":       RoleReviewer, "merge_method": RoleReviewer, "checks_wait": RoleReviewer,
+		"assembler_prompt":    RoleDeveloper,
+		"moe_experts_by_size": RoleDeveloper, "moe_experts": RoleDeveloper,
+		"moe_assembler_model": RoleDeveloper, "moe_assembler_prompt": RoleDeveloper,
+		"min_issue_size": RoleProductManager,
+		"auto_merge":     RoleReviewer, "merge_method": RoleReviewer, "checks_wait": RoleReviewer,
 		"checks_poll_interval": RoleReviewer, "checks_timeout": RoleReviewer,
 		"max_check_fix_rounds": RoleReviewer, "pre_review_checks": RoleReviewer,
 		"pre_review_checks_timeout": RoleReviewer,
@@ -242,13 +254,15 @@ func TestViewCoversTemplateKeys(t *testing.T) {
 			continue
 		}
 		key = strings.TrimSpace(key)
-		// Keys inside a [x.env] / [x.mcp.name] sub-table are values of the
-		// env / mcp key itself.
+		// Keys inside a [x.env] / [x.mcp.name] / [x.moe_experts.name]
+		// sub-table are values of the env / mcp / moe_experts key itself.
 		sec := section
 		if i := strings.LastIndex(sec, ".env"); i >= 0 && strings.HasSuffix(sec, ".env") {
 			sec, key = sec[:i], "env"
 		} else if i := strings.Index(sec, ".mcp."); i >= 0 {
 			sec, key = sec[:i], "mcp"
+		} else if i := strings.Index(sec, ".moe_experts."); i >= 0 {
+			sec, key = sec[:i], "moe_experts"
 		}
 		if skip[key] {
 			continue

@@ -150,6 +150,11 @@ func TestBackendNotesFollowNotesBackend(t *testing.T) {
 	if entries, _ := os.ReadDir(filepath.Join(stateDir, "notes")); len(entries) != 0 {
 		t.Errorf("the neo4j backend wrote %d notes files", len(entries))
 	}
+	// A size is measured through the same backend: what the service holds,
+	// not a notes file it never wrote.
+	if n, err := b.Size(ctx, config.RoleReviewer); err != nil || n != int64(len("# reviewer notes\n\n- from neo4j\n")) {
+		t.Errorf("neo4j size = %d, %v; want the length of the notes the service holds", n, err)
+	}
 	// Picked once: a later edit of bees.toml does not move a running server.
 	write(botTOML + "[notes]\nbackend = \"file\"\n")
 	if got, _ = b.ReadNotes(ctx, config.RoleReviewer); got != "# reviewer notes\n\n- from neo4j\n" {
@@ -165,6 +170,9 @@ func TestBackendNotesFollowNotesBackend(t *testing.T) {
 	}
 	if onDisk, _ := state.New(stateDir).ReadNotes(config.RoleReviewer); onDisk != "# on disk\n" {
 		t.Errorf("file write left %q", onDisk)
+	}
+	if n, err := b.Size(ctx, config.RoleReviewer); err != nil || n != int64(len("# on disk\n")) {
+		t.Errorf("file size = %d, %v; want the file's %d", n, err, len("# on disk\n"))
 	}
 
 	write(botTOML + "[notes]\nbackend = \"neo4j\"\nneo4j_url = \"" + srv.URL + "/v1\"\n")

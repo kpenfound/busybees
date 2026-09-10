@@ -17,6 +17,7 @@ import (
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/doctor"
 	"github.com/kpenfound/busybees/internal/github"
+	"github.com/kpenfound/busybees/internal/mcpserver"
 	"github.com/kpenfound/busybees/internal/prompts"
 	"github.com/kpenfound/busybees/internal/state"
 	"github.com/kpenfound/busybees/internal/text"
@@ -517,7 +518,7 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 			counts, _ := a.mail.Counts()
 			now := time.Now()
 			today := todayTotal(store, now)
-			rows := roleRows(store, st)
+			rows := roleRows(cmd.Context(), store, notesBackendFor(cfg.Notes, store), st)
 			if asJSON {
 				return json.NewEncoder(os.Stdout).Encode(statusJSON(cfg, st, counts, today, rows, now))
 			}
@@ -603,12 +604,12 @@ func queuesText(st state.Status) string {
 }
 
 // roleRow is one line of the roles table `bees status` prints: what the role
-// is doing, when it last ran, and how big its notes file has grown.
+// is doing, when it last ran, and how big its notes have grown.
 type roleRow struct {
 	Role    string
 	State   string    // "running"/"idle"; "-" for the pooled roles
 	LastRun time.Time // zero when the role has never run
-	Notes   int64     // size of notes/<role>.md in bytes
+	Notes   int64     // size of the role's notes in bytes
 }
 
 // statusJSON is the object `bees status --json` prints. It is a function so a
@@ -621,14 +622,16 @@ func statusJSON(cfg *config.Config, st state.Status, counts map[string]int, toda
 	}
 }
 
-// roleRows collects a row for every role. Notes sizes are read from the files
-// as the command runs, not from status.json, so they are right even when the
-// scheduler is stopped.
-func roleRows(store *state.Store, st state.Status) []roleRow {
+// roleRows collects a row for every role. Notes sizes are measured through
+// the configured notes backend as the command runs, not read from
+// status.json, so they are right even when the scheduler is stopped, and
+// they are the size of the notes the sessions read whichever backend holds
+// them.
+func roleRows(ctx context.Context, store *state.Store, notes mcpserver.Notes, st state.Status) []roleRow {
 	rows := make([]roleRow, 0, len(config.Roles))
 	for _, r := range config.Roles {
 		rs, _ := store.Role(r)
-		n, _ := store.NotesSize(r)
+		n, _ := notes.Size(ctx, r)
 		row := roleRow{Role: r, State: st.Singletons[r], LastRun: rs.LastRun, Notes: n}
 		switch r {
 		case config.RoleDeveloper, config.RoleReviewer:

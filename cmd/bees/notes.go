@@ -39,8 +39,8 @@ func editorArgv(visual, editor string) []string {
 	return []string{"vi"}
 }
 
-// notesSizeText renders a notes file size for `bees status`; an empty file
-// (i.e. a role with no notes file yet) reads as "-".
+// notesSizeText renders a role's notes size for `bees status`; zero (a role
+// that has no notes yet) reads as "-".
 func notesSizeText(n int64) string {
 	switch {
 	case n <= 0:

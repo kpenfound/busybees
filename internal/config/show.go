@@ -62,8 +62,8 @@ type RoleView struct {
 	SandboxImage            string               `json:"sandbox_image"`
 	ContainerUseEnvironment string               `json:"container_use_environment"`
 
-	// CommitFlags, MaxSize, ModelBySize and the best-of-N keys are only set
-	// on the developer.
+	// CommitFlags, MaxSize, ModelBySize and the best-of-N and
+	// mixture-of-experts keys are only set on the developer.
 	CommitFlags     *string            `json:"commit_flags,omitempty"`
 	MaxSize         *string            `json:"max_size,omitempty"`
 	ModelBySize     *map[string]string `json:"model_by_size,omitempty"`
@@ -72,6 +72,11 @@ type RoleView struct {
 	BestOfNPrompt   *string            `json:"best_of_n_prompt,omitempty"`
 	AssemblerModel  *string            `json:"assembler_model,omitempty"`
 	AssemblerPrompt *string            `json:"assembler_prompt,omitempty"`
+
+	MoEExpertsBySize   *map[string][]string  `json:"moe_experts_by_size,omitempty"`
+	MoEExperts         *map[string]MoEExpert `json:"moe_experts,omitempty"`
+	MoEAssemblerModel  *string               `json:"moe_assembler_model,omitempty"`
+	MoEAssemblerPrompt *string               `json:"moe_assembler_prompt,omitempty"`
 	// MinIssueSize is only set on the product manager.
 	MinIssueSize *string `json:"min_issue_size,omitempty"`
 	// Stages is only set on the reviewer.
@@ -170,6 +175,14 @@ func (c *Config) View(roles []string) (View, error) {
 			rv.BestOfNPrompt = &rr.BestOfNPrompt
 			rv.AssemblerModel = &rr.AssemblerModel
 			rv.AssemblerPrompt = &rr.AssemblerPrompt
+			expertsBySize := map[string][]string{}
+			maps.Copy(expertsBySize, rr.MoEExpertsBySize)
+			rv.MoEExpertsBySize = &expertsBySize
+			experts := map[string]MoEExpert{}
+			maps.Copy(experts, rr.MoEExpertsByName)
+			rv.MoEExperts = &experts
+			rv.MoEAssemblerModel = &rr.MoEAssemblerModel
+			rv.MoEAssemblerPrompt = &rr.MoEAssemblerPrompt
 		case RoleReviewer:
 			stages := c.ReviewStages()
 			rv.Stages = &stages
