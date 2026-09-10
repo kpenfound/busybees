@@ -24,7 +24,12 @@ func runReview(t *testing.T, args ...string) (stdout, cobraOut string, err error
 // runReviewWith is runReview with input typed at the command.
 func runReviewWith(t *testing.T, input string, args ...string) (stdout, cobraOut string, err error) {
 	t.Helper()
-	dir := t.TempDir()
+	return runReviewIn(t, t.TempDir(), input, args...)
+}
+
+// runReviewIn is runReviewWith run from dir.
+func runReviewIn(t *testing.T, dir, input string, args ...string) (stdout, cobraOut string, err error) {
+	t.Helper()
 	t.Chdir(dir)
 	t.Setenv("BEES_CONFIG", filepath.Join(dir, "missing.toml"))
 	var out bytes.Buffer
@@ -128,8 +133,9 @@ func TestReviewTriageEditsTheCommentInTheEditor(t *testing.T) {
 	if err := os.WriteFile(editor, []byte("#!/bin/sh\nprintf '\\nEdited by the script.\\n' >> \"$1\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("VISUAL", "")
-	t.Setenv("EDITOR", editor)
+	// $VISUAL before $EDITOR, as everywhere.
+	t.Setenv("VISUAL", editor)
+	t.Setenv("EDITOR", "false")
 	if _, _, err := runReviewWith(t, "e\nq\n", "triage", "acme/widgets#7"); err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +148,7 @@ func TestReviewTriageEditsTheCommentInTheEditor(t *testing.T) {
 		t.Errorf("triage.json holds %+v, want the selection with the edited text %q", tr.Decisions, want)
 	}
 	// An editor that fails selects nothing.
-	t.Setenv("EDITOR", "false")
+	t.Setenv("VISUAL", "")
 	stdout, _, err := runReviewWith(t, "e\nq\n", "triage", "acme/widgets#7")
 	if err != nil {
 		t.Fatal(err)
@@ -180,6 +186,24 @@ func TestReviewTriageWithoutAReviewSaysSo(t *testing.T) {
 	}
 	if _, _, err := runReview(t, "triage"); err == nil {
 		t.Error("triage ran without a pull request")
+	}
+}
+
+func TestReviewTriageReadsNoContextTomlOutsideACheckoutOfTheRepository(t *testing.T) {
+	home := reviewHome(t)
+	storedReview(t, home)
+	// A context.toml that would not load, in a directory that is not a
+	// checkout of acme/widgets: not this review's, and not read.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, review.ProjectFile), []byte("bogus = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, err := runReviewIn(t, dir, "q\n", "triage", "acme/widgets#7")
+	if err != nil {
+		t.Fatalf("the context.toml of an unrelated directory was read: %v", err)
+	}
+	if !strings.Contains(stdout, "2 undecided of 2 findings") {
+		t.Errorf("triage did not run:\n%s", stdout)
 	}
 }
 

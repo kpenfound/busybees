@@ -84,12 +84,12 @@ func TestTheConsoleShowsEachUndecidedFindingAndTakesOneKeyForIt(t *testing.T) {
 }
 
 func TestTheConsoleStopsAtQuitAndWhenTheInputEnds(t *testing.T) {
-	for _, input := range []string{"q\n", "quit\n", "", "s\n"} {
+	for input, shown := range map[string]int{"q\n": 1, "quit\n": 1, "": 1, "s\n": 2} {
 		a := judged(t)
 		q := queueOf(t, a)
 		out := drive(t, q, input, nil)
-		if got := order(out, a.Findings.Items); len(got) < 1 || len(got) > 2 {
-			t.Errorf("input %q: shown %v, want triage stopped after the first key:\n%s", input, got, out)
+		if got := order(out, a.Findings.Items); len(got) != shown {
+			t.Errorf("input %q: shown %v, want %d findings shown before triage stopped:\n%s", input, got, shown, out)
 		}
 		want := "0 selected, 0 dismissed, 0 deferred, 3 undecided of 3 findings\n"
 		if input == "s\n" {

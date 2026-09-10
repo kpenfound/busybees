@@ -178,12 +178,20 @@ func TestADismissalWithoutAReasonOrNotesIsRefused(t *testing.T) {
 	if got := written(t, q).Decisions; len(got) != 0 {
 		t.Errorf("triage.json holds %+v, want nothing", got)
 	}
+	// Notes that cannot be written: under a path that is a file.
+	q.Notes.Path = filepath.Join(q.Artifact.Dir, BriefFile, "reviewer-notes.md")
+	if err := q.Dismiss(f.ID, "fine"); err == nil {
+		t.Error("a dismissal whose notes could not be written went through")
+	}
 	q.Notes = nil
 	if err := q.Dismiss(f.ID, "fine"); err == nil || !strings.Contains(err.Error(), "no reviewer notes") {
 		t.Errorf("a dismissal with nowhere to record it went through: %v", err)
 	}
 	if len(q.Pending()) != 3 {
 		t.Error("a refused dismissal decided the finding")
+	}
+	if got := written(t, q).Decisions; len(got) != 0 {
+		t.Errorf("triage.json holds %+v, want nothing", got)
 	}
 }
 
@@ -226,6 +234,9 @@ func TestTheLatestDecisionOnAFindingIsTheOneInForce(t *testing.T) {
 	// Both are kept: the state is a log.
 	if got := written(t, q).Decisions; len(got) != 2 || got[0].Action != ActionDefer || got[1].Action != ActionSelect {
 		t.Errorf("triage.json holds %+v, want the deferral and the selection in order", got)
+	}
+	if got := q.Asked(f.ID); len(got) != 0 {
+		t.Errorf("asked %+v, want nothing: neither decision was a question", got)
 	}
 }
 
