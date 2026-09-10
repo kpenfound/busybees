@@ -680,6 +680,60 @@ limit stopping an attempt or the assembler itself: the factory pauses and
 retries the fan-out later, and the branches stay for that retry instead of
 being deleted mid-pause.
 
+## Mixture of experts
+
+With [`moe_experts_by_size`](configuration.md#rolesdeveloper-only-mixture-of-experts)
+naming experts for a work item's size, its first develop round runs one
+developer session per expert, and an assembler session combines their work
+into the pull request that goes to review. A size with no entry, a size that
+names a single expert, an issue already resuming a review round, and one
+whose branch already carries a pull request, get the single-session round
+[Development](#development) describes: fanning out only ever happens on a
+first round.
+
+The experts run at once, each in its own worktree and branch,
+`bees/issue-N-attempt-i` numbered in the order the size lists them, based on
+whatever branch the round would otherwise start from. Each runs the ordinary
+developer task, on the same issue and the same mail, with the expert's own
+prompt in place of the developer's and the expert's own model where it names
+one, so all of them are recorded against the issue and spend one
+`max_cost_per_issue` budget together. Because each runs the ordinary
+developer task, an expert may open its own pull request the way a single
+session would: seeing more than one open pull request for the same issue
+while a fan-out runs is expected, and they close once the fan-out cleans up.
+
+Dispatch claims a slot of `scheduler.max_developers` for every expert at
+once, before any of them starts, never one at a time: the count is capped to
+`max_developers` first, so the experts past the cap do not run, and a fan-out
+that cannot claim all its slots at once waits for a later pass instead.
+`bees status` shows the worker's stage as `fan-out` while the experts run.
+
+Once every expert has ended, the extra slots go back to the pool before
+anything else happens, and the expert worktrees are removed. A branch with no
+commits ahead of its base is not a candidate for the result; when none of
+them are, every expert branch is deleted (closing any pull request an expert
+opened) and the issue goes to `bees:needs-human`, with what each session
+reported.
+
+With at least one candidate, one more developer session runs: the assembler,
+in the worktree on the issue's own branch, stage `assembler`. It is told each
+candidate's branch, which expert worked it, how many commits it carries and
+what its session reported. It reads the candidates from their branches and
+builds one implementation out of them, taking each expert's work in the part
+of the issue it took and keeping one reading where two of them solved the
+same thing in different ways. It puts that on the issue's own branch and
+opens the pull request from it itself, exactly as a single developer session
+does, naming in the body which expert branch each part of the result came
+from. From here the pull request goes to review and the checks like any
+other; nothing downstream can tell a fan-out from a single session.
+
+When the assembler finishes, whatever it reported, every expert branch is
+deleted, on the remote and in the local clone, closing any pull request an
+expert opened along the way. The one exception is the account-wide session
+limit stopping an expert or the assembler itself: the factory pauses and
+retries the fan-out later, and the branches stay for that retry instead of
+being deleted mid-pause.
+
 ## Questions
 
 Roles never talk to each other on GitHub. They use a local mailbox in the

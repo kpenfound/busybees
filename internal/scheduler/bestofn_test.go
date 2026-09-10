@@ -1129,3 +1129,93 @@ func TestMoELeavesBestOfNAndSingleSessionsAlone(t *testing.T) {
 		t.Errorf("the best-of-N round is not logged as one:\n%s", logs)
 	}
 }
+
+// assemblerSession is the model, system prompt and task of the session that
+// assembled issue 1's fan-out.
+func assemblerSession(t *testing.T, h *harness) (model, system, task string) {
+	t.Helper()
+	dir := attemptSession(t, h, 0)
+	b, err := os.ReadFile(filepath.Join(dir, "system-prompt.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return argValue(argsOf(t, dir), "--model"), string(b), assemblerPrompt(t, h)
+}
+
+// The session that assembles a mixture-of-experts round is a job of its
+// own: it runs task/developer_moe_assemble.md, which names the expert
+// behind each branch and asks for the experts' work combined, and it takes
+// moe_assembler_model and moe_assembler_prompt, never best-of-N's
+// assembler_model and assembler_prompt. A best-of-N round configured with
+// both pairs runs best-of-N's assembler task and best-of-N's overrides.
+func TestMoEAssemblerRunsItsOwnTask(t *testing.T) {
+	const overrides = `assembler_model = "sonnet-4"
+assembler_prompt = "take the best of them"
+moe_assembler_model = "haiku"
+moe_assembler_prompt = "combine what the experts wrote"
+`
+	t.Run("mixture of experts", func(t *testing.T) {
+		toml := strings.Replace(moeTOML, "moe_experts_by_size = { l = [\"backend\", \"frontend\", \"tests\"] }\n",
+			"moe_experts_by_size = { l = [\"backend\", \"frontend\", \"tests\"] }\n"+overrides, 1)
+		h := newHarness(t, toml)
+		seedSized(h, 1, "l")
+		runPass(t, h)
+		h.sched.wg.Wait()
+
+		model, system, task := assemblerSession(t, h)
+		if model != "haiku" {
+			t.Errorf("the assembler's --model: got %q want haiku", model)
+		}
+		if !strings.Contains(system, "combine what the experts wrote") {
+			t.Errorf("the assembler does not run moe_assembler_prompt:\n%s", system)
+		}
+		for _, other := range []string{"take the best of them", "the developer's own prompt", "solve it your own way"} {
+			if strings.Contains(system, other) {
+				t.Errorf("the assembler's system prompt carries %q:\n%s", other, system)
+			}
+		}
+		for _, want := range []string{
+			"# Task: combine the work of 3 experts into the result for issue #1",
+			"`bees/issue-1-attempt-1` (**backend**)",
+			"`bees/issue-1-attempt-2` (**frontend**)",
+			"`bees/issue-1-attempt-3` (**tests**)",
+			"--base main --head bees/issue-1",
+		} {
+			if !strings.Contains(task, want) {
+				t.Errorf("the assembler's task lacks %q:\n%s", want, task)
+			}
+		}
+		if strings.Contains(task, "assemble the result for issue #1 from 3 attempts") {
+			t.Errorf("the assembler runs best-of-N's task:\n%s", task)
+		}
+		if !strings.Contains(h.logs.String(), "mixture of experts: running the assembler") {
+			t.Errorf("the assembler is not logged as a mixture of experts':\n%s", h.logs.String())
+		}
+	})
+	t.Run("best of N", func(t *testing.T) {
+		toml := strings.Replace(bestOfNTOML, "best_of_n_by_size = { l = 3 }\n", "best_of_n_by_size = { l = 3 }\n"+overrides, 1)
+		h := newHarness(t, toml)
+		seedSized(h, 1, "l")
+		runPass(t, h)
+		h.sched.wg.Wait()
+
+		model, system, task := assemblerSession(t, h)
+		if model != "sonnet-4" {
+			t.Errorf("the assembler's --model: got %q want sonnet-4", model)
+		}
+		if !strings.Contains(system, "take the best of them") || strings.Contains(system, "combine what the experts wrote") {
+			t.Errorf("a best-of-N assembler must run assembler_prompt:\n%s", system)
+		}
+		if !strings.Contains(task, "assemble the result for issue #1 from 3 attempts") {
+			t.Errorf("the assembler does not run best-of-N's task:\n%s", task)
+		}
+		for _, unwant := range []string{"(**", "combine the work of"} {
+			if strings.Contains(task, unwant) {
+				t.Errorf("a best-of-N assembler's task carries %q:\n%s", unwant, task)
+			}
+		}
+		if logs := h.logs.String(); !strings.Contains(logs, "best-of-N: running the assembler") || strings.Contains(logs, "mixture of experts") {
+			t.Errorf("the assembler is not logged as best-of-N's:\n%s", logs)
+		}
+	})
+}

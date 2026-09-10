@@ -63,10 +63,15 @@ import (
 // names experts for fans out the same way, with one attempt per expert in
 // the list's order instead of N alike: attempt i runs expert i's prompt and
 // model (sessionSpec.moeExpert), on the same numbered branch, in the same
-// slot, against the same budget, and is cleaned up on the same terms. The
-// assembler is told which expert each attempt was (prompts.Attempt.Expert).
-// A size fans out one way or the other, never both: config refuses a size
-// in both tables.
+// slot, against the same budget, and is cleaned up on the same terms. Its
+// assembler is a different job — combining solutions that deliberately
+// differ, rather than picking among retries of one — so it runs a task of
+// its own (task/developer_moe_assemble.md), which names the expert each
+// branch came from (prompts.Attempt.Expert), and takes its model and prompt
+// from moe_assembler_model and moe_assembler_prompt (sessionSpec.moeAssembler).
+// Everything else about it, from the branch it lands on to the cleanup that
+// follows, is best-of-N's assembler. A size fans out one way or the other,
+// never both: config refuses a size in both tables.
 
 // attemptBranch is the branch attempt i (1-based) of a fan-out works on:
 // the issue's branch with "-attempt-<i>" appended. An issue that does not
@@ -346,11 +351,21 @@ func (s *Scheduler) assemble(ctx context.Context, f fanOut) (*session.Result, ti
 		f.log.Warn("an attempt could not be run; assembling from the rest", "candidates", candidates, "err", err)
 	}
 	s.updateWorker(f.worker, "assembler", 1)
-	f.log.Info("best-of-N: running the assembler", "candidates", candidates, "attempts", len(attempts))
+	// A mixture of experts is assembled by a session of its own: another
+	// task template, and the moe_assembler_* overrides rather than the
+	// best-of-N ones. Everything else about the two is the same session.
+	moe := f.experts != nil
+	task := "developer_assemble"
+	if moe {
+		task = "developer_moe_assemble"
+		f.log.Info("mixture of experts: running the assembler", "candidates", candidates, "attempts", len(attempts))
+	} else {
+		f.log.Info("best-of-N: running the assembler", "candidates", candidates, "attempts", len(attempts))
+	}
 	started := s.now()
 	res, err := s.runSessionWithRetry(ctx, sessionSpec{
 		role: config.RoleDeveloper, name: fmt.Sprintf("developer-issue-%d-assemble", f.issue.Number),
-		workDir: f.ws.RepoDir, branch: f.ws.Branch, worker: f.worker, assembler: true, task: "developer_assemble",
+		workDir: f.ws.RepoDir, branch: f.ws.Branch, worker: f.worker, assembler: true, moeAssembler: moe, task: task,
 		data: prompts.Data{Issue: &f.issue, Inbox: f.inbox, Round: 1, MaxRounds: f.maxRounds, Parent: f.parent, BaseBranch: f.base, Attempts: data},
 	})
 	// The assembler has ended, whatever it came to: what it pushed is on
