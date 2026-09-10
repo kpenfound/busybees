@@ -135,12 +135,14 @@ func TestTheConsoleEditsTheCommentTextBeforeSelecting(t *testing.T) {
 		given = text
 		return "Shorter.\n", nil
 	}
-	out := drive(t, q, "e\nq\n", editor)
+	out := drive(t, q, "?\ne\nq\n", editor)
 	if given != a.Findings.Items[0].Comment() {
 		t.Errorf("the editor was given %q, want the finding's own text", given)
 	}
-	if !strings.Contains(out, "e edit and select") {
-		t.Errorf("the edit key is not offered with an editor:\n%s", out)
+	for _, want := range []string{"e edit and select", "  e  edit the comment text in your editor, then select\n"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the edit key is not offered with an editor, %q is missing:\n%s", want, out)
+		}
 	}
 	if got := q.Selected(); len(got) != 1 || got[0].Comment != "Shorter." {
 		t.Errorf("selected %+v, want the finding with the edited text", got)
@@ -198,6 +200,14 @@ func TestTheConsoleAsksTheAngleAndShowsTheAnswerWithTheFinding(t *testing.T) {
 	}
 	if got := order(out, a.Findings.Items); len(got) != 3 || got[0] != 0 || got[1] != 0 || got[2] != 1 {
 		t.Errorf("shown in order %v, want the asked finding again and then the one the answer added:\n%s", got, out)
+	}
+	// An ask alone decides nothing, and the summary says so.
+	a = judged(t)
+	q = queueOf(t, a)
+	q.Angles = &Angles{Agent: &fakeAgent{answer: "Yes.", id: "sess-tests"}, Provider: config.AgentClaude}
+	out = drive(t, q, "a\nSure?\nq\n", nil)
+	if !strings.Contains(out, "0 selected, 0 dismissed, 0 deferred, 3 undecided of 3 findings\n") {
+		t.Errorf("the summary after an ask alone is wrong:\n%s", out)
 	}
 	// An ask that fails is said, and the finding is shown again.
 	a = judged(t)
