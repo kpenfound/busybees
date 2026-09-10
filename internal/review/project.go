@@ -225,6 +225,8 @@ func patternErrs(key string, patterns []string) []string {
 			errs = append(errs, fmt.Sprintf("%s[%d] is empty: give it a path or a glob, or drop the entry", key, i))
 		case filepath.IsAbs(pattern):
 			errs = append(errs, fmt.Sprintf("%s[%d] %q must be relative to the project directory", key, i, pattern))
+		case !filepath.IsLocal(pattern):
+			errs = append(errs, fmt.Sprintf("%s[%d] %q must stay inside the project directory", key, i, pattern))
 		}
 	}
 	return errs

@@ -132,12 +132,14 @@ func TestProjectInvalid(t *testing.T) {
 		{"unknown angle", "[angles]\nsecurity = false\n", []string{"angles.security: unknown angle (want one of acceptance_criteria, test_coverage, style, side_effects)"}},
 		{"category severity", "[categories]\nnaming = \"nit\"\n", []string{"categories.naming \"nit\" must be one of off, info, low, medium, high"}},
 		{"absolute style source", "style_sources = [\"/etc/style.md\"]\n", []string{"style_sources[0] \"/etc/style.md\" must be relative to the project directory"}},
+		{"escaping style source", "style_sources = [\"../../etc/passwd\"]\n", []string{"style_sources[0] \"../../etc/passwd\" must stay inside the project directory"}},
 		{"empty style source", "style_sources = [\"docs/style.md\", \"  \"]\n", []string{"style_sources[1] is empty"}},
 		{"nameless source", "[[context_sources]]\nenabled = false\n", []string{"context_sources[0].name is required"}},
 		{"unknown source", "[[context_sources]]\nname = \"dif\"\n", []string{"context_sources[0]: \"dif\" is not a built-in source (diff, pr_body, linked_issues, style_files, callers): give it files to gather, or fix the name"}},
 		{"built-in with files", "[[context_sources]]\nname = \"diff\"\nfiles = [\"x.md\"]\n", []string{"\"diff\" is a built-in source and gathers no files"}},
 		{"source twice", "[[context_sources]]\nname = \"diff\"\n\n[[context_sources]]\nname = \"diff\"\nenabled = false\n", []string{"context source \"diff\" is configured twice"}},
 		{"absolute source file", "[[context_sources]]\nname = \"adr\"\nfiles = [\"/etc/adr.md\"]\n", []string{"context_sources[0].files[0] \"/etc/adr.md\" must be relative"}},
+		{"escaping source file", "[[context_sources]]\nname = \"adr\"\nfiles = [\"../../../etc/passwd\"]\n", []string{"context_sources[0].files[0] \"../../../etc/passwd\" must stay inside the project directory"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
