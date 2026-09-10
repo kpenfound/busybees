@@ -230,16 +230,24 @@ func (p *Pipeline) Gather(ctx context.Context, number int) (*Bundle, error) {
 	return bundle, nil
 }
 
+// NewClient is the gh client a review reads ref's repository through, and
+// posts to: authenticated the way cfg says, which with no token is the
+// machine's own gh authentication.
+func NewClient(ref Ref, cfg *Config) *github.Client {
+	client := github.New(ref.Repo)
+	if cfg != nil {
+		client.Token = cfg.GitHub.ResolvedToken()
+	}
+	return client
+}
+
 // Open is the pipeline that gathers context for ref: gh authenticated the
 // way cfg says, the context.toml found from dir, and dir itself as the
 // checkout — but only when dir is a checkout of ref's own repository, so a
 // review run from an unrelated clone reads no style rules rather than the
 // wrong ones.
 func Open(ctx context.Context, ref Ref, cfg *Config, dir string) (*Pipeline, error) {
-	client := github.New(ref.Repo)
-	if cfg != nil {
-		client.Token = cfg.GitHub.ResolvedToken()
-	}
+	client := NewClient(ref, cfg)
 	// With no checkout there is no context.toml to look for either: the
 	// directory the command happens to have been run in is another
 	// repository, and its configuration is not this review's.
