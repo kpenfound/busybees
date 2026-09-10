@@ -35,9 +35,6 @@ change on the code, and say so in your note.
 _No new mail._
 {{end}}
 
-## Your notes
-
-{{if .Notes}}{{.Notes}}{{else}}_Empty._{{end}}
 {{template "consolidate" .}}
 {{template "stages" .}}
 ## Instructions
@@ -60,4 +57,4 @@ you missed in round 1 too.
 This is the final review round. If the PR is still not mergeable, request changes anyway;
 the orchestrator will escalate it to a human.
 {{end}}
-Update your notes file before you finish.
+Update your notes (`notes_write`) before you finish.

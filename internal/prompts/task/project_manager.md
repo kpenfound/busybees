@@ -57,9 +57,6 @@ _None._
 _None._
 {{end}}
 
-## Your notes
-
-{{if .Notes}}{{.Notes}}{{else}}_Empty._{{end}}
 {{template "consolidate" .}}
 ## Instructions
 
@@ -68,5 +65,5 @@ _None._
    product manager (and move to `{{.Labels.Blocked}}`), or close.{{if $overflow}} The queue is
    larger than this pass's batch: take from the `{{.Labels.Triage}}` table too if you have
    room.{{end}}
-3. Update your notes file.
+3. Update your notes with `notes_write`.
 4. `done` with `status: done` and a note, or `status: idle`.

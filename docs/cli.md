@@ -1250,6 +1250,8 @@ command do exactly the same thing. Claude Code exposes the tools as
 | `issue_create` | `title`, `body`, optional `parent`, `related`, `milestone`, `bug`, `feature`, `ready`, `labels`, `blocked_by` | `bees issue create` |
 | `issue_link` | `parent`, `child` | `bees issue link` |
 | `done` | `status`, optional `note`, `pr`, `issue` | `bees done` |
+| `notes_read` | none | `bees notes show <role>` for the session's own role; the notes are not in the prompt, so a session reads them first |
+| `notes_write` | `text` | no command: replaces the role's notes with the whole text (`bees notes add` appends one bullet instead); an empty text is refused |
 | `report_factory_error` | `title`, `detail` | no command: writes a draft to `<state_dir>/feedback/<id>.json` when [`scheduler.report_factory_errors`](configuration.md#scheduler) is on, and answers that nothing was recorded when it is off |
 
 The rest are GitHub operations: the same `gh` calls a role would build by
@@ -1297,6 +1299,8 @@ mcp__bees__issue_view       Read an issue
 mcp__bees__mail_list        Read the mailbox
 mcp__bees__mail_send        Send mail to another role
     to: product_manager | project_manager | developer | reviewer | qa
+mcp__bees__notes_read       Read your notes
+mcp__bees__notes_write      Replace your notes
 mcp__bees__pr_view          Read a pull request
 mcp__bees__report_factory_error Report an error the factory caused
 ```

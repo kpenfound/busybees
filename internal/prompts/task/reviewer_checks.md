@@ -25,9 +25,6 @@ review: find out why the check failed and hand the developer a precise fix reque
 _No new mail._
 {{end}}
 
-## Your notes
-
-{{if .Notes}}{{.Notes}}{{else}}_Empty._{{end}}
 {{template "consolidate" .}}
 ## Instructions
 
@@ -59,4 +56,4 @@ _No new mail._
 {{if ge .Round .MaxRounds}}
 This is the last fix round; if the checks fail again the orchestrator escalates to a human.
 {{end}}
-Update your notes file before you finish.
+Update your notes (`notes_write`) before you finish.

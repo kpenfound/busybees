@@ -198,9 +198,6 @@ _None waiting._
 _No new mail._
 {{end}}
 
-## Your notes
-
-{{if .Notes}}{{.Notes}}{{else}}_Empty. Start by writing down the product vision as you understand it from the repository._{{end}}
 {{template "consolidate" .}}
 ## Instructions
 
@@ -224,7 +221,7 @@ _No new mail._
 7. Review the backlog against the vision and the milestones people have set, and create
    or adjust feature issues where the roadmap has a real gap. Keep the backlog healthy
    but small.
-8. Update your notes file. Record what a planning conversation settled and *why*, so
+8. Update your notes with `notes_write`. Record what a planning conversation settled and *why*, so
    a later session does not re-open a question a person has already answered.
 9. `done` with `status: done` and a note, or `status: idle` when steps 1-7 found nothing
    to do (`failed`, with a note, if you could not run the pass at all).

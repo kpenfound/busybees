@@ -85,7 +85,9 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 	if err := s.store.EnsureNotes(spec.role); err != nil {
 		return nil, err
 	}
-	notes, err := s.store.ReadNotes(spec.role)
+	// The notes reach the session through notes_read, not the prompt; only
+	// their size is needed here, for the consolidation decision.
+	notesSize, err := s.store.NotesSize(spec.role)
 	if err != nil {
 		return nil, err
 	}
@@ -109,10 +111,8 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 	d.Branch = spec.branch
 	d.StateDir = s.store.Dir
 	d.SessionDir = sessionDir
-	d.NotesFile = s.store.NotesPath(spec.role)
 	d.Sandbox = role.Sandbox
-	d.Notes = notes
-	d.ConsolidateNotes, d.ConsolidateReason = s.consolidateNotes(spec.role, len(notes))
+	d.ConsolidateNotes, d.ConsolidateReason = s.consolidateNotes(spec.role, int(notesSize))
 	if d.Issue != nil && (spec.role == config.RoleDeveloper || spec.role == config.RoleReviewer) {
 		d.Size = s.sizeOf(d.Issue.Labels)
 	}
@@ -149,7 +149,7 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 		return nil, err
 	}
 
-	env := map[string]string{session.EnvNotesFile: d.NotesFile}
+	env := map[string]string{}
 	if d.Issue != nil {
 		env[session.EnvIssue] = strconv.Itoa(d.Issue.Number)
 	}
@@ -254,7 +254,7 @@ func endEvent(spec sessionSpec, res *session.Result) Event {
 }
 
 // consolidateNotes decides whether the session about to run is also asked
-// to consolidate its notes file, and why. Developer workers run
+// to consolidate its notes, and why. Developer workers run
 // concurrently and share one role state file, so the read is locked.
 func (s *Scheduler) consolidateNotes(role string, notesLen int) (bool, string) {
 	every, maxBytes := s.cfg.Scheduler.NotesConsolidateEvery, s.cfg.Scheduler.NotesMaxBytes
@@ -273,9 +273,9 @@ func (s *Scheduler) consolidateNotes(role string, notesLen int) (bool, string) {
 }
 
 // needsConsolidation reports whether the session starting now (the
-// notesLen-byte notes file is the one it will be shown) should also
-// consolidate its notes: either enough sessions have run since the last
-// pass, or the file has grown past maxBytes.
+// notesLen-byte notes are the ones it will read) should also consolidate
+// its notes: either enough sessions have run since the last pass, or the
+// notes have grown past maxBytes.
 func needsConsolidation(rs state.RoleState, notesLen, every, maxBytes int) bool {
 	if maxBytes > 0 && notesLen > maxBytes {
 		return true
@@ -289,7 +289,7 @@ func needsConsolidation(rs state.RoleState, notesLen, every, maxBytes int) bool 
 // consolidateReason names the trigger, for the prompt.
 func consolidateReason(notesLen, every, maxBytes int) string {
 	if maxBytes > 0 && notesLen > maxBytes {
-		return fmt.Sprintf("file is %s", byteSize(notesLen))
+		return fmt.Sprintf("notes are %s", byteSize(notesLen))
 	}
 	return "every " + text.Count(every, "session")
 }

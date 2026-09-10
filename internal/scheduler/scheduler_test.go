@@ -51,7 +51,7 @@ func TestMain(m *testing.M) {
 	// ones a bees session would have exported: `go test` run from inside a
 	// session must behave like one run from a plain shell.
 	for _, k := range []string{session.EnvRole, session.EnvSessionDir, session.EnvStateDir, session.EnvRepo,
-		session.EnvLabel, session.EnvIssue, session.EnvPR, session.EnvBranch, session.EnvNotesFile,
+		session.EnvLabel, session.EnvIssue, session.EnvPR, session.EnvBranch,
 		session.EnvConfig, session.EnvBin} {
 		if err := os.Unsetenv(k); err != nil {
 			fmt.Fprintln(os.Stderr, "unset:", err)

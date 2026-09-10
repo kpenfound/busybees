@@ -44,7 +44,6 @@ const (
 	EnvIssue      = "BEES_ISSUE"
 	EnvPR         = "BEES_PR"
 	EnvBranch     = "BEES_BRANCH"
-	EnvNotesFile  = "BEES_NOTES_FILE"
 	EnvConfig     = "BEES_CONFIG"
 	EnvBin        = "BEES_BIN"
 )
@@ -483,7 +482,7 @@ func (r *Runner) beesEnv(req Request, sessionDir string) []envVar {
 	if r.BeesBin != "" {
 		vars = append(vars, envVar{EnvBin, r.BeesBin})
 	}
-	// The per-request variables (issue, PR, branch, notes file) are set by
+	// The per-request variables (issue, PR, branch) are set by
 	// the scheduler; only the BEES_* ones describe the session.
 	for _, k := range slices.Sorted(maps.Keys(req.Env)) {
 		if strings.HasPrefix(k, beesEnvPrefix) {

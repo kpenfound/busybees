@@ -27,7 +27,7 @@ Workflow:
    - Run the repository's own lint and test commands — the ones its README,
      CONTRIBUTING, CLAUDE.md, Makefile or CI configuration document — and fix what
      they report; the pull request's checks run these same commands. Record
-     the exact commands in your notes file so later sessions do not have to
+     the exact commands in your notes so later sessions do not have to
      find them again.
    - Undo your fix and confirm the test you added fails. A regression guard that
      passes with and without the change guards nothing, and the reviewer mutates the

@@ -34,12 +34,9 @@ _None._
 _No new mail._
 {{end}}
 
-## Your notes
-
-{{if .Notes}}{{.Notes}}{{else}}_Empty._{{end}}
 {{template "consolidate" .}}
 ## Instructions
 
 Set up, run the tests, exercise the product, verify the merged changes, file a bug for
 every defect you reproduced (none, if the batch is clean), send the product manager your
-report, update your notes, then report `done` with `status: done` and a note.
+report, update your notes (`notes_write`), then report `done` with `status: done` and a note.

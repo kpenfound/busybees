@@ -71,15 +71,14 @@ type Data struct {
 	BaseBranch string
 	StateDir   string
 	SessionDir string
-	NotesFile  string
 	// Sandbox is the mode the session is boxed in (config.SandboxModes).
 	// A container session has no bees binary, so the prompt does not
 	// offer the bees commands to one.
 	Sandbox string
-	Notes   string
-	// ConsolidateNotes asks the session to rewrite its notes file into the
+	// ConsolidateNotes asks the session to rewrite its notes (read and
+	// written through the notes tools, never rendered here) into the
 	// standard sections on top of its normal work; ConsolidateReason says
-	// why it is being asked now ("every 10 sessions", "file is 40 KB").
+	// why it is being asked now ("every 10 sessions", "notes are 40 KB").
 	ConsolidateNotes  bool
 	ConsolidateReason string
 

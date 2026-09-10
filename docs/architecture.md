@@ -878,8 +878,8 @@ counted from the transcript's assistant messages or completed items instead.
   pull request or branch. Then, in order: the role's configured `env` entries
   (`$VAR`-expanded) and `SHELL` when `shell` is set; `BEES_ROLE`,
   `BEES_SESSION_DIR`, `BEES_STATE_DIR`, `BEES_CONFIG`, `BEES_REPO`,
-  `BEES_LABEL` and `BEES_BIN`, plus `BEES_NOTES_FILE`, `BEES_ISSUE`, `BEES_PR`
-  and `BEES_BRANCH` when they apply and `BEES_REVIEW_MODE=checks` for the
+  `BEES_LABEL` and `BEES_BIN`, plus `BEES_ISSUE`, `BEES_PR` and `BEES_BRANCH`
+  when they apply and `BEES_REVIEW_MODE=checks` for the
   reviewer's checks-mode sessions; the directory holding the `bees` binary
   prepended to `PATH`, so `bees mail`, `bees issue` and `bees done` resolve
   inside the session (a container session gets neither `BEES_BIN` nor the
@@ -901,8 +901,8 @@ counted from the transcript's assistant messages or completed items instead.
   `system/<role>.md`, the role's custom `prompt` from `bees.toml`, and then
   the project's own prompt files; the task prompt is `task/<role>.md`
   (`task/reviewer_checks.md` for a checks-mode reviewer). Both are rendered
-  from one data structure (project, filter, labels, workspace, notes, inbox,
-  issue, pull request, lists, round). The base prompts are compiled into the
+  from one data structure (project, filter, labels, workspace, inbox, issue,
+  pull request, lists, round). The base prompts are compiled into the
   binary, so a running scheduler serves the prompts of the build it was
   started from: a prompt change merged to the default branch reaches no
   session until `bees` is rebuilt and `bees run` restarted. The scheduler
