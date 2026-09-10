@@ -57,8 +57,8 @@ func notesSizeText(n int64) string {
 func newNotesCmd(g *globalFlags) *cobra.Command {
 	cmd := groupCmd("notes", "Read, steer and reset a role's notes file")
 	cmd.Long = `<state_dir>/notes/<role>.md is a role's only memory between
-sessions: its contents go into every task prompt and the role updates it before
-it finishes. Editing it is the most direct way to steer a role.`
+sessions: a session reads it with the notes_read tool and replaces it with
+notes_write before it finishes. Editing it is the most direct way to steer a role.`
 
 	show := &cobra.Command{
 		Use:   "show <role>",
