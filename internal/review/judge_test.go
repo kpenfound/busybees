@@ -103,15 +103,21 @@ func TestTheSameFindingFromTwoAnglesIsKeptOnce(t *testing.T) {
 	a.Suggestion = "if project == nil {"
 	b := Finding{Angle: AngleSideEffects, Category: "nil", Severity: "high", File: "run.go", Lines: LineRange{41, 41}, Side: SideNew,
 		Title: "nil project dereferenced in Run", Body: "callers pass nil for a repository with no context.toml", Sources: []string{"angles.go"}}
-	got := Merge([]Finding{a, b}, nil)
+	// Two more reports of it: one from a third angle, one from the angle
+	// whose report is kept.
+	c, d := a, b
+	c.Angle, c.Severity = AngleTests, "low"
+	d.Severity = "low"
+	got := Merge([]Finding{a, b, c, d}, nil)
 	if len(got) != 1 {
 		t.Fatalf("got %d findings, want one:\n%+v", len(got), got)
 	}
-	// The more severe report is the one kept, with the other's angle and
-	// sources on it, and its suggestion since the kept one had none.
+	// The more severe report is the one kept, with each other angle that
+	// reported it named once and its own angle not named, the others'
+	// sources on it, and a suggestion since the kept one had none.
 	want := b
 	want.ID = got[0].ID
-	want.AlsoFrom = []string{AngleAcceptance}
+	want.AlsoFrom = []string{AngleAcceptance, AngleTests}
 	want.Sources = []string{"angles.go", "#568"}
 	want.Suggestion = a.Suggestion
 	if !reflect.DeepEqual(got[0], want) {

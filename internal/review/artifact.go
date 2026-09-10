@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"time"
 )
@@ -115,7 +114,7 @@ func LatestArtifactDir(storage string, ref Ref) (string, error) {
 	if len(names) == 0 {
 		return "", fmt.Errorf("no review of %s under %s", ref, storage)
 	}
-	sort.Strings(names)
+	// ReadDir lists by name, and the names are timestamps.
 	return filepath.Join(dir, names[len(names)-1]), nil
 }
 
