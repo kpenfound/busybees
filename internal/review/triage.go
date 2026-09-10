@@ -7,13 +7,15 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/kpenfound/busybees/internal/text"
 )
 
 // The triage queue. Once the judge has written the findings and the noise
 // filter has acted on them, somebody decides what to do with each one: a
-// person at a terminal (console.go), or in factory mode an agent. Queue is
-// what either of them drives. It holds one review's artifact and the four
-// actions triage can take on a finding:
+// person at a terminal (console.go), or in factory mode an agent
+// (factory.go). Queue is what either of them drives. It holds one review's
+// artifact and the four actions triage can take on a finding:
 //
 //	select   the finding goes into the review's output, as it is written or
 //	         with the comment text edited
@@ -384,6 +386,60 @@ func (q *Queue) rules() []Rule {
 		return nil
 	}
 	return q.Notes.Rules
+}
+
+// Describe is a finding whole, as whoever triages reads it: the file and
+// lines it points at, its text, its suggestion, evidence and sources, the
+// other angles that found it, and every question asked about it with the
+// answer. Its id, severity, angle and category are left to the heading the
+// caller puts above it. Each line ends with a newline.
+func (q *Queue) Describe(f Finding) string {
+	var out strings.Builder
+	if f.Anchored() {
+		where := f.File
+		if !f.Lines.IsZero() {
+			where += ":" + f.Lines.String()
+		}
+		if f.Side == SideOld {
+			where += " (removed)"
+		}
+		fmt.Fprintf(&out, "%s\n", where)
+	}
+	fmt.Fprintf(&out, "\n%s\n", f.Comment())
+	if f.Suggestion != "" {
+		fmt.Fprintf(&out, "\nSuggestion:\n%s\n", indent(f.Suggestion))
+	}
+	if f.Evidence != "" {
+		fmt.Fprintf(&out, "\nEvidence: %s\n", f.Evidence)
+	}
+	if len(f.Sources) > 0 {
+		fmt.Fprintf(&out, "Sources: %s\n", strings.Join(f.Sources, ", "))
+	}
+	if len(f.AlsoFrom) > 0 {
+		fmt.Fprintf(&out, "Also from: %s\n", strings.Join(f.AlsoFrom, ", "))
+	}
+	for _, d := range q.Asked(f.ID) {
+		fmt.Fprintf(&out, "\nQ: %s\nA: %s\n", d.Question, d.Answer)
+	}
+	return out.String()
+}
+
+// Summary says where triage stands: how many findings each decision in
+// force covers, and how many are still undecided, of how many.
+func (q *Queue) Summary() string {
+	counts := map[string]int{}
+	for _, f := range q.Findings() {
+		if d, ok := q.DecisionOn(f.ID); ok {
+			counts[d.Action]++
+		} else {
+			counts["undecided"]++
+		}
+	}
+	var parts []string
+	for _, k := range []struct{ action, past string }{{ActionSelect, "selected"}, {ActionDismiss, "dismissed"}, {ActionDefer, "deferred"}, {"undecided", "undecided"}} {
+		parts = append(parts, fmt.Sprintf("%d %s", counts[k.action], k.past))
+	}
+	return fmt.Sprintf("%s of %s", strings.Join(parts, ", "), text.Count(len(q.Findings()), "finding"))
 }
 
 // Comment is the text a finding is posted as when triage does not edit it:

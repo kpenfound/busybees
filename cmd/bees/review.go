@@ -23,6 +23,7 @@ import (
 func newReviewCmd() *cobra.Command {
 	var configPath string
 	var end endFlags
+	var who triageFlags
 	cmd := &cobra.Command{
 		Use:   "review <pr>",
 		Short: "The pull request review tool",
@@ -40,6 +41,11 @@ requested, printed as a markdown report, or discarded. --post and --report
 choose; with neither, the output key of ~/.config/bees/config.toml does, and
 its default asks you at the end.
 
+With --agent an agent session triages instead of you, with the same four
+actions: what it dismisses goes into your reviewer notes, and --instructions
+tells it what you want from the review. It chooses how the review ends where
+you would have been asked.
+
 Its settings are ~/.config/bees/config.toml, and the repository's own
 context.toml says which angles run there. Every finding you dismiss is
 recorded in your reviewer notes, and consolidate turns the dismissals that
@@ -51,6 +57,9 @@ again.`,
 				return cmd.Help()
 			}
 			ctx := cmd.Context()
+			if err := who.check(); err != nil {
+				return err
+			}
 			cfg, err := review.LoadConfig(configPath)
 			if err != nil {
 				return err
@@ -80,15 +89,12 @@ again.`,
 			if err != nil {
 				return err
 			}
-			console := &review.Console{In: cmd.InOrStdin(), Out: os.Stdout, Editor: editComment}
-			if err := console.Run(ctx, queue); err != nil {
-				return err
-			}
-			return endReview(ctx, cfg, ref, artifact.Brief, queue, console, mode)
+			return who.triage(ctx, cmd, cfg, ref, artifact.Brief, queue, runner.Pipeline.Dir, mode)
 		},
 	}
 	cmd.Flags().StringVar(&configPath, "config", "", "path to the global configuration (default: ~/.config/bees/config.toml)")
 	end.add(cmd)
+	who.add(cmd)
 	cmd.AddCommand(newReviewTriageCmd())
 	cmd.AddCommand(newReviewConsolidateCmd())
 	return cmd
@@ -128,7 +134,8 @@ func (e *endFlags) mode(cfg *review.Config) (string, error) {
 
 // endReview ends a review the way mode says, once triage is over: it asks
 // at the console when the mode is to ask, prints the report, posts the
-// review, or discards. A review that could not be posted as asked at the
+// review, or discards. console is nil when an agent triaged, which never
+// leaves the mode to ask. A review that could not be posted as asked at the
 // console (nothing selected for a comment-only review) is asked again;
 // asked for by a flag or the configuration, it is the command's error.
 func endReview(ctx context.Context, cfg *review.Config, ref review.Ref, brief *review.Brief, queue *review.Queue, console *review.Console, mode string) error {
@@ -163,6 +170,7 @@ func endReview(ctx context.Context, cfg *review.Config, ref review.Ref, brief *r
 func newReviewTriageCmd() *cobra.Command {
 	var configPath string
 	var end endFlags
+	var who triageFlags
 	cmd := &cobra.Command{
 		Use:   "triage <pr>",
 		Short: "Pick up the triage of a pull request's latest review",
@@ -177,10 +185,16 @@ that found it a question, n leaves it for now and q stops. Every decision is
 written into the review's artifact directory as it is taken, so stopping
 loses nothing. The review then ends the way bees review's does: what is
 selected is posted, printed as a report, or discarded, as --post, --report,
-the output key of ~/.config/bees/config.toml or the prompt at the end says.`,
+the output key of ~/.config/bees/config.toml or the prompt at the end says.
+
+With --agent an agent session triages what is undecided instead of you, as
+bees review --agent does, told what --instructions says.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
+			if err := who.check(); err != nil {
+				return err
+			}
 			cfg, err := review.LoadConfig(configPath)
 			if err != nil {
 				return err
@@ -224,16 +238,53 @@ the output key of ~/.config/bees/config.toml or the prompt at the end says.`,
 				return err
 			}
 			fmt.Printf("%s: the review started %s\n", ref, filepath.Base(dir))
-			console := &review.Console{In: cmd.InOrStdin(), Out: os.Stdout, Editor: editComment}
-			if err := console.Run(ctx, queue); err != nil {
-				return err
-			}
-			return endReview(ctx, cfg, ref, artifact.Brief, queue, console, mode)
+			return who.triage(ctx, cmd, cfg, ref, artifact.Brief, queue, checkout, mode)
 		},
 	}
 	cmd.Flags().StringVar(&configPath, "config", "", "path to the global configuration (default: ~/.config/bees/config.toml)")
 	end.add(cmd)
+	who.add(cmd)
 	return cmd
+}
+
+// triageFlags choose who triages: you at the console, or with --agent an
+// agent session (review.AgentTriage) told what --instructions says.
+type triageFlags struct {
+	agent        bool
+	instructions string
+}
+
+func (w *triageFlags) add(cmd *cobra.Command) {
+	cmd.Flags().BoolVar(&w.agent, "agent", false, "let an agent session triage the findings instead of you (factory mode)")
+	cmd.Flags().StringVar(&w.instructions, "instructions", "", "what the agent triaging with --agent is told you want, in your words")
+}
+
+// check refuses --instructions without --agent, which nobody would read.
+func (w *triageFlags) check() error {
+	if w.instructions != "" && !w.agent {
+		return errors.New("--instructions are for the agent that triages: give --agent too")
+	}
+	return nil
+}
+
+// triage triages queue, at the console or with --agent by an agent session
+// run in dir, and then ends the review the way mode says. The agent
+// chooses the end when mode is to ask.
+func (w *triageFlags) triage(ctx context.Context, cmd *cobra.Command, cfg *review.Config, ref review.Ref, brief *review.Brief, queue *review.Queue, dir, mode string) error {
+	if !w.agent {
+		console := &review.Console{In: cmd.InOrStdin(), Out: os.Stdout, Editor: editComment}
+		if err := console.Run(ctx, queue); err != nil {
+			return err
+		}
+		return endReview(ctx, cfg, ref, brief, queue, console, mode)
+	}
+	agent := review.NewAgentTriage(cfg, dir)
+	agent.Instructions, agent.Mode, agent.Log = w.instructions, mode, os.Stdout
+	mode, err := agent.Run(ctx, queue)
+	if err != nil {
+		return err
+	}
+	return endReview(ctx, cfg, ref, brief, queue, nil, mode)
 }
 
 // editComment opens a finding's comment text in $VISUAL, $EDITOR or vi and
