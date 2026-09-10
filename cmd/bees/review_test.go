@@ -161,3 +161,40 @@ func TestReviewIsAGroupOfSubcommands(t *testing.T) {
 		t.Error("an unknown review subcommand is not an error")
 	}
 }
+
+func TestReviewConsolidateReportsWhatItDidNotReadAsARule(t *testing.T) {
+	notes := dismissals(t, "receiver names are short here", "receiver names here are short")
+	// The markers are the notes file's format (internal/review): what is
+	// between them is rules, and a line there that is not one is a person's
+	// to fix, so consolidation says it saw it and leaves it alone.
+	const typo = "- [acme/widgets] [style] [naming] dropp: a misspelt action"
+	body, err := os.ReadFile(notes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const end = "<!-- /bees:review:rules -->"
+	if !strings.Contains(string(body), end) {
+		t.Fatalf("the notes hold no rules block:\n%s", body)
+	}
+	patched := strings.Replace(string(body), end, typo+"\n"+end, 1)
+	if err := os.WriteFile(notes, []byte(patched), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, _, err := runReview(t, "consolidate", "--notes", notes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"1 line in the rules block did not read as a rule", typo} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("consolidate did not report %q:\n%s", want, stdout)
+		}
+	}
+	after, err := os.ReadFile(notes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(after), typo+"\n") {
+		t.Errorf("the line consolidation could not read is gone:\n%s", after)
+	}
+}
