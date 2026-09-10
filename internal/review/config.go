@@ -21,8 +21,9 @@
 // the pull request under review, and context.go, which gathers the sources
 // context.toml enables into the bundle a review reads. distill.go runs the
 // first session over that bundle and brief.go is what it produces, the
-// starting context of every session after it; agent.go runs those sessions,
-// read-only.
+// starting context of every session after it; angles.go fans those sessions
+// out, one per angle the project enables, and keeps enough of each to reopen
+// it; agent.go runs every one of them, read-only.
 package review
 
 import (

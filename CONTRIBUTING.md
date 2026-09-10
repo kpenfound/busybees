@@ -16,7 +16,7 @@ internal/mcpserver/  the built-in MCP server (`bees mcp serve`): the factory's o
 internal/nams/       the Neo4j Agent Memory REST client behind notes_read and notes_write with notes.backend = "neo4j"
 internal/procs/      finding and stopping sessions (processes and containers): `bees kill`, and one at a time from the live view
 internal/prompts/    role prompts embedded in the binary (system/*.md, task/*.md), the project's own bees/prompts/ files, the renderer
-internal/review/     bees review: two configuration files, the context gathered for a pull request, the distiller session that briefs the review
+internal/review/     bees review: two configuration files, the context gathered for a pull request, the distiller session that briefs the review, the angle sessions that review from it
 internal/scheduler/  the loop: poll, human feedback, merge state, reconcile, developer workers, singleton roles, the event stream
 internal/session/    one headless `claude -p` or `codex exec` session: arguments, environment, transcript, result and outcome
 internal/skills/     skill repositories by git URL, exposed as claude plugin directories

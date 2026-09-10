@@ -78,7 +78,7 @@ type TouchedArea struct {
 }
 
 // Text renders the brief as the markdown a session reads. It is what an
-// angle session is given instead of the raw bundle.
+// angle session is given, with the diff, instead of the raw bundle.
 func (b *Brief) Text() string {
 	var out strings.Builder
 	fmt.Fprintf(&out, "# Review brief: %s\n\n", b.Ref)
@@ -195,9 +195,9 @@ func trimAll(list []string) []string {
 }
 
 // WriteBrief writes the brief into a review's artifact directory, creating
-// the directory when it is not there. The artifact directory itself is one
-// file at this point; what else it holds, and how a review finds it again,
-// is the artifact format.
+// the directory when it is not there. The directory holds the brief and the
+// angle runs (angles.go); how a review finds it again is the artifact
+// format.
 func WriteBrief(dir string, b *Brief) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
