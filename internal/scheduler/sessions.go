@@ -48,10 +48,15 @@ type sessionSpec struct {
 	// attempt runs that expert's model and prompt instead of the best-of-N
 	// ones. Empty for every other session, best-of-N attempts included.
 	moeExpert string
-	// assembler marks the session that picks the result of a best-of-N
-	// fan-out (bestofn.go): it runs roles.developer.assembler_model and
+	// assembler marks the session that makes the result of a fan-out
+	// (bestofn.go): it runs roles.developer.assembler_model and
 	// assembler_prompt where they are set.
 	assembler bool
+	// moeAssembler narrows assembler to the session that combines the work
+	// of a mixture-of-experts fan-out, a different job from picking among
+	// best-of-N's retries: it runs roles.developer.moe_assembler_model and
+	// moe_assembler_prompt instead. Never set without assembler.
+	moeAssembler bool
 }
 
 // runSession resolves the role, renders prompts and runs the session.
@@ -82,11 +87,15 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 		}
 	}
 	if spec.assembler {
-		if role.AssemblerModel != "" {
-			role.Model = role.AssemblerModel
+		model, prompt := role.AssemblerModel, role.AssemblerPrompt
+		if spec.moeAssembler {
+			model, prompt = role.MoEAssemblerModel, role.MoEAssemblerPrompt
 		}
-		if role.AssemblerPrompt != "" {
-			role.Prompt = role.AssemblerPrompt
+		if model != "" {
+			role.Model = model
+		}
+		if prompt != "" {
+			role.Prompt = prompt
 		}
 	}
 	fallback := spec.useFallback && role.FallbackModel != ""
