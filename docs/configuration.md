@@ -485,7 +485,7 @@ The CLI accepts aliases such as `pm` and `dev`; the TOML keys do not.
 | `shell` | string | the shell bees runs under | Exported into sessions as `$SHELL`. Claude Code discovers its Bash tool's shell from `$SHELL`, so this is the lever, without being a guarantee. Must be an existing file. |
 | `sandbox` | string | `"none"` | How much of the machine a session of this role can reach: `none`, `claude` or `container`. See [Sandboxing](#sandboxing). |
 | `sandbox_image` | string | `""` | The image a `container` session runs in: it must hold the role's agent, `git` and `gh`. A `container` role without one or `container_use_environment` is refused at `bees run`. See [The container mode](#the-container-mode). |
-| `container_use_environment` | string | `""` | Path, relative to the project repository root, to a `dagger/container-use` environment definition for the `container` sandbox, instead of `sandbox_image`. Requires `sandbox = "container"` and is a load error together with `sandbox_image` on the same resolved role. |
+| `container_use_environment` | string | `""` | Path, relative to the project repository root, to a `dagger/container-use` environment definition to build the `container` sandbox's image from, instead of `sandbox_image`. Requires `sandbox = "container"` and is a load error together with `sandbox_image` on the same resolved role. See [Building from container-use](#building-from-container-use). |
 | `env` | table | `{}` | Environment variables exported into every session: the agent, its shell tool and git see them, and so do MCP servers under `claude` (codex starts a server with only the variables its entry names). A `$VAR` value is expanded from the bees process environment when the session starts. A name may not be empty or contain `=` or a space. See [Exported into every session](#exported-into-every-session) for how it meets the variables bees sets itself. |
 | `enabled` | bool | `true` | Roles only. `false` takes a role out of the rotation. Disabling `reviewer` makes a developer's pull request count as approved the moment it is opened, and with `auto_merge` it goes straight to the checks stage. Under `[global]` the key is an error. A named set of these decisions is a [config template](templates.md). |
 
@@ -765,7 +765,8 @@ never pulls. `bees run` checks all three ahead of the doctor, whatever
 `--skip-doctor` says, and refuses to start naming the role that fails. A role
 with `container_use_environment` instead of `sandbox_image` has its image
 built at session start, and `docker build` pulls the definition's
-`base_image` then.
+`base_image` then; see
+[Building from container-use](#building-from-container-use).
 
 The container sees three things of the host, each bind-mounted at its host
 path so every path in the prompts and the environment means the same inside:
@@ -844,6 +845,52 @@ mounted state directory holds every role's mail and notes, not only its own.
 On Linux the container runs as the user running bees so what it writes stays
 theirs, and reaches the host at the docker bridge gateway; the mode has been
 exercised on macOS with Docker Desktop.
+
+#### Building from container-use
+
+`sandbox_image` is the way to run a `container` session: point it at an
+image you built and published yourself, and bees runs it unchanged. This is
+a niche opt-in for a project that already keeps a declarative, buildable
+environment definition in the
+[`dagger/container-use` format](https://github.com/dagger/container-use), and
+would rather bees build from that than from a hand-built image. Most
+projects should keep using `sandbox_image` instead.
+
+Setting `container_use_environment` to a path builds the image from
+`<path>/.container-use/environment.json` in the project repository, at
+session start, instead of requiring `sandbox_image`. bees reads only that
+file's format: it does not depend on `container-use`'s Go package, the
+Dagger SDK, or a running Dagger engine. Of the definition's fields, bees
+uses:
+
+- `base_image`: the image the build starts `FROM`.
+- `env`: `KEY=VALUE` entries, set before any command runs.
+- `setup_commands`, then `install_commands`: one `RUN` each, in that order.
+  `container-use` itself runs `setup_commands`, copies its environment's
+  source tree in, then runs `install_commands`, so an install command there
+  can see a checked-in file such as `package.json`. bees has no such copy
+  step. The worktree is bind-mounted when the container runs, not baked into
+  the image, so the two lists run back to back. An install command that
+  depends on source files being present must tolerate their absence, or move
+  to a role's own session-start mechanism instead.
+
+`workdir`, `secrets` and `services` are read and ignored, without an error.
+The container always runs at the worktree's host path regardless of
+`workdir`. `secrets` names Dagger secret-provider URIs bees has no pipeline
+to resolve, and `services` describes more than one container, which the
+sandbox does not support.
+
+The built image must still hold the agent, `git` and `gh`, the same
+requirement a hand-built `sandbox_image` has. Providing them is the
+definition's `setup_commands`/`install_commands` job. The image is tagged
+after a hash of the resolved build inputs (`base_image`, `env`,
+`setup_commands`, `install_commands`, in that order), so a definition whose
+formatting changes but whose build inputs do not reuses the image already
+built for it, and a change to any of those inputs builds a new one.
+`docker build` runs once per definition, the first time a session needs it.
+A missing or malformed `environment.json`, or a failing build, fails that
+session with an error naming the path or the build command, not a
+`bees.toml` load error.
 
 ### How global and role settings merge
 
