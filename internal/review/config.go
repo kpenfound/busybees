@@ -30,8 +30,11 @@
 // keeps what they dismissed out of the list before triage reads it.
 // triage.go is the triage queue over that list, the four actions it takes on
 // a finding and what each writes back, and console.go drives it from a
-// terminal one line at a time. artifact.go is the directory the whole review
-// is kept in.
+// terminal one line at a time. run.go strings all of that together for one
+// pull request, from the gather to the judged list, and output.go is the
+// end of the review: what triage selected posted as one review, printed as
+// a report, or discarded. artifact.go is the directory the whole review is
+// kept in.
 package review
 
 import (

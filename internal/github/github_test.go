@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -411,6 +412,67 @@ func TestSubmitReview(t *testing.T) {
 	}
 	if err := c.SubmitReview(context.Background(), 42, "approved", body); err == nil || !strings.Contains(err.Error(), `"approved"`) {
 		t.Errorf("unknown event: err = %v, want one naming it", err)
+	}
+}
+
+// TestPostReview pins that a review and its comments go up in one call, as
+// JSON on standard input, and that an event the REST API does not spell is
+// refused before anything runs.
+func TestPostReview(t *testing.T) {
+	var args []string
+	var stdin string
+	calls := 0
+	c := New("a/b")
+	c.Exec = func(ctx context.Context, a ...string) ([]byte, error) {
+		t.Fatalf("PostReview used Exec, which cannot carry the request: %v", a)
+		return nil, nil
+	}
+	c.ExecStdin = func(ctx context.Context, in string, a ...string) ([]byte, error) {
+		calls++
+		args, stdin = a, in
+		return nil, nil
+	}
+	req := ReviewRequest{CommitID: "abc123", Event: "REQUEST_CHANGES", Body: "Two things.\n", Comments: []ReviewComment{
+		{Path: "widget.go", Line: 14, Side: "RIGHT", StartLine: 12, StartSide: "RIGHT", Body: "A range."},
+		{Path: "old.go", Line: 3, Side: "LEFT", Body: "One line, removed."},
+	}}
+	if err := c.PostReview(context.Background(), 42, req); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("calls: %d, want one review", calls)
+	}
+	if got, want := strings.Join(args, " "), "api --method POST repos/a/b/pulls/42/reviews --input -"; got != want {
+		t.Errorf("args = %q, want %q", got, want)
+	}
+	var got ReviewRequest
+	if err := json.Unmarshal([]byte(stdin), &got); err != nil {
+		t.Fatalf("stdin is not the request: %v\n%s", err, stdin)
+	}
+	if !reflect.DeepEqual(got, req) {
+		t.Errorf("stdin = %+v, want %+v", got, req)
+	}
+	// A one-line comment carries no start, and an approval with nothing
+	// else carries no body and no comments: GitHub reads each as absent.
+	for _, absent := range []string{"start_line", "start_side"} {
+		if strings.Count(stdin, absent) != 1 {
+			t.Errorf("%q appears %d times in the request, want once, for the range:\n%s", absent, strings.Count(stdin, absent), stdin)
+		}
+	}
+	if err := c.PostReview(context.Background(), 42, ReviewRequest{Event: "APPROVE"}); err != nil {
+		t.Fatal(err)
+	}
+	if stdin != `{"event":"APPROVE"}` {
+		t.Errorf("an approval alone is sent as %s", stdin)
+	}
+	for _, event := range []string{"approve", "COMMENTED", ""} {
+		calls = 0
+		if err := c.PostReview(context.Background(), 42, ReviewRequest{Event: event}); err == nil || !strings.Contains(err.Error(), strconv.Quote(event)) {
+			t.Errorf("event %q: err = %v, want one naming it", event, err)
+		}
+		if calls != 0 {
+			t.Errorf("event %q reached gh", event)
+		}
 	}
 }
 
