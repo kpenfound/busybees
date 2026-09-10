@@ -41,7 +41,10 @@ func (s *Scheduler) takeInterrupted(log *slog.Logger, bk *state.IssueState) *ses
 		// It finished after the record was written: nothing to report, and
 		// the record is stale.
 		bk.Session = nil
-		if err := s.store.SetIssueSession(bk.Number, nil); err != nil {
+		s.mu.Lock()
+		err := s.store.SetIssueSession(bk.Number, nil)
+		s.mu.Unlock()
+		if err != nil {
 			log.Warn("could not clear the recorded session", "session", rec.Name, "err", err)
 		}
 		return nil
@@ -108,7 +111,10 @@ func (s *Scheduler) markResumed(w *state.Worker) {
 // record it costs a crash report, never the session.
 func (s *Scheduler) recordRunningSession(spec sessionSpec, issue int, dir string) {
 	run := &state.SessionRun{Role: spec.role, Name: spec.name, Dir: dir, StartedAt: s.now()}
-	if err := s.store.SetIssueSession(issue, run); err != nil {
+	s.mu.Lock()
+	err := s.store.SetIssueSession(issue, run)
+	s.mu.Unlock()
+	if err != nil {
 		s.log.Warn("could not record the running session", "issue", issue, "session", spec.name, "err", err)
 	}
 }
@@ -116,7 +122,10 @@ func (s *Scheduler) recordRunningSession(spec sessionSpec, issue int, dir string
 // clearRunningSession removes that record: the session ended, whatever it
 // ended with, so nothing was interrupted.
 func (s *Scheduler) clearRunningSession(issue int) {
-	if err := s.store.SetIssueSession(issue, nil); err != nil {
+	s.mu.Lock()
+	err := s.store.SetIssueSession(issue, nil)
+	s.mu.Unlock()
+	if err != nil {
 		s.log.Warn("could not clear the recorded session", "issue", issue, "err", err)
 	}
 }
