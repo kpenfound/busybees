@@ -74,9 +74,11 @@ configured, so it stays visible. The orchestrator backstops the roles: after
 every session it lists the issues and pull requests created since the session
 started, whoever opened them, and adds the label and assignee to anything
 carrying `bees` or a `bees:*` label without them. On a pull request it adds
-the configured milestone too. An issue never gets a milestone from a bee. That
-is a person's decision, and an issue `bees issue create` makes inherits one
-from the issue it relates to.
+the configured milestone too. The backstop never sets a milestone on an
+issue: that is a person's decision. An issue `bees issue create` makes
+inherits one from the issue it relates to, or, for a feature spawned from an
+[agreed design](#from-an-agreed-design-to-several-features), is put in the
+existing one that fits the design's phasing.
 
 Two setups cover most repositories. Alone, keep the defaults and put `bees`
 on an issue. In a shared repository where busybees handles your share of the
@@ -435,6 +437,50 @@ for you.
 
 Leave `bees:planned` on the issue or take it off. The factory neither reads
 it again nor removes it.
+
+### From an agreed design to several features
+
+An agreed design can cover more than one coherent outcome: a design
+document, wherever it lives, that plans several milestones of work. Then the
+product manager does not refine the one issue it planned on. It spawns a
+feature issue per outcome, each describing that outcome the way any feature
+issue does, and writes the list into the agreed issue's `## Decisions`
+section: which features, in which milestone, in what order.
+
+- When the agreed issue is a feature, it is the first of them: the product
+  manager rewrites its body to the first outcome and breaks it down as
+  usual. It keeps the milestone you gave it. Every further outcome is a new
+  feature issue, created with `issue_create` (`feature: true`,
+  `related: <the agreed issue>`).
+- When the agreed issue is feedback, every outcome is a new feature issue,
+  and the feedback issue is closed with a reply naming them.
+
+With `scheduler.feature_proposals` on, each new feature is a
+[proposal](#feature-issues) like any other the product manager writes:
+remove `bees:proposal` on each to let it be broken down. The design is
+agreed, so that is a quick check rather than a second conversation.
+
+**Milestones.** Each resulting feature goes into whichever existing open
+milestone best fits the design's own phasing: nearer-term work into the
+nearer milestone. A feature that belongs in the agreed issue's milestone
+inherits it through `related`. One the phasing puts in a later milestone is
+created with `issue_create`'s `milestone` set to that milestone's title, as
+listed in the product manager's task. That is the only time a bee names a
+milestone rather than inheriting one, and it only ever picks among the ones
+you created: the product manager never creates, edits or closes a
+milestone. When the phasing implies a milestone that does not exist yet, the
+product manager says so in a comment on the agreed issue and leaves that
+feature in the nearest existing milestone, until you create the milestone
+and move the feature.
+
+**Order.** Ordering between the features uses `blocked_by`, the same
+mechanism that orders work items within one feature
+([Dependencies](#dependencies)): a feature that builds on another is
+created with `blocked_by` naming the earlier feature. The scheduler holds
+back work items, not features, so the line on the feature records the order
+for the breakdown: when that feature is broken down, the work items that
+cannot start before the earlier feature ships carry `blocked_by` naming
+that feature, and a feature issue counts as a blocker until it closes.
 
 ### Questions for you: `bees:question`
 
@@ -1271,7 +1317,11 @@ reason instead.
 **Milestones are managed by people, never by bees.** No role creates, edits
 or closes a milestone. The product manager sees the open milestones read-only
 and treats them as a priority signal. What the bees do is inherit: every
-issue they create takes the milestone of the issue it relates to. A work item
+issue they create takes the milestone of the issue it relates to, with one
+exception, a feature spawned from an agreed design that the design's phasing
+puts in a later existing milestone
+([From an agreed design to several features](#from-an-agreed-design-to-several-features)).
+A work item
 gets its parent feature's milestone, a bug found while working on an issue
 gets that issue's milestone (`related`), and a feature distilled from a
 feedback issue gets the feedback issue's milestone, falling back to

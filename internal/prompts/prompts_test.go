@@ -1439,6 +1439,7 @@ func TestProductManagerTaskRendersPlanningMode(t *testing.T) {
 		"#51: Exports",
 		"It is **settled**. Do not re-open the scope",
 		"`## Decisions` section",
+		"spawn a feature issue per outcome instead of refining this one alone",
 		"break none of them down twice",
 	} {
 		if !strings.Contains(flowed(planned), flowed(want)) {
@@ -2108,5 +2109,46 @@ func TestReportFactoryErrorGuidanceIsConditional(t *testing.T) {
 		if cut != off {
 			t.Errorf("%s: the key changes more than its row and its section:\n%s", role, cut)
 		}
+	}
+}
+
+// An agreed design that covers several coherent outcomes spawns a feature
+// issue per outcome (docs/workflow.md, "From an agreed design to several
+// features"). The system prompt carries the rules the docs state, whatever
+// the proposal gate says: existing milestones only, chosen by the design's
+// phasing; a comment when the phasing needs a milestone nobody has created;
+// and blocked_by for the order. The task's instructions point at the same
+// flow.
+func TestProductManagerSpawnsFeaturesFromAnAgreedDesign(t *testing.T) {
+	for _, gate := range []bool{true, false} {
+		d := sample()
+		d.FeatureProposals = gate
+		pm, err := System(config.RoleProductManager, d, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{
+			"spawn a feature issue per outcome",
+			"Put each feature in whichever **existing** open milestone best fits the design's own phasing",
+			"gets `milestone: <its title>`, from the milestones listed in your task",
+			"Never create a milestone",
+			"say so in a `comment` on the agreed issue and leave that feature in the nearest existing milestone",
+			"Order the features with `blocked_by`",
+			"a feature issue counts as a blocker until it closes",
+		} {
+			if !strings.Contains(flowed(pm), flowed(want)) {
+				t.Errorf("gate %v: product manager system prompt missing %q:\n%s", gate, want, pm)
+			}
+		}
+	}
+
+	task, err := Task(config.RoleProductManager, sample())
+	if err != nil {
+		t.Fatal(err)
+	}
+	instructions := taskSection(t, task, "## Instructions")
+	want := "a design covering several outcomes spawns a feature per outcome, in existing milestones"
+	if !strings.Contains(flowed(instructions), flowed(want)) {
+		t.Errorf("instructions are missing %q:\n%s", want, instructions)
 	}
 }

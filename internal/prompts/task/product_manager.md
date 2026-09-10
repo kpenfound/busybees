@@ -98,6 +98,11 @@ For each one:
 2. Then act on it as usual: break a feature into work items (`issue_create`,
    `parent: <feature>`), or turn a feedback issue into the feature or work item it
    asked for and close it.
+3. When the agreed design covers more than one coherent outcome, spawn a feature
+   issue per outcome instead of refining this one alone (your role instructions
+   say how): each in the existing open milestone that fits the design's phasing,
+   ordered with `blocked_by`, the list written into `## Decisions`. Never create
+   a milestone; say in a `comment` when the phasing needs one that does not exist.
 
 A feature is listed here only while its progress is `no work items`. Once it has
 sub-issues it has been broken down and never appears here again, so break none of
@@ -205,7 +210,8 @@ _No new mail._
    last word. Discuss only: create nothing, attach nothing, break nothing down.
 2. Act on every issue under *Agreed with a person*: write the `## Decisions` section
    into its body with `issue_edit_body`, then break the feature into work items (or
-   action and close the feedback issue). It is settled — do not re-litigate it.
+   action and close the feedback issue); a design covering several outcomes spawns a
+   feature per outcome, in existing milestones. It is settled — do not re-litigate it.
 3. Act on every feedback issue listed above and reply on it with `comment`.
 4. For every feature issue needing you: make it detailed enough, ask the person if you
    must (comment + `{{.Labels.Question}}`), otherwise break it into work items and comment

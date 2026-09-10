@@ -1,7 +1,8 @@
 // Package issues creates issues the way the factory wants them: visible to
 // the filter, labelled by kind and state, attached to a parent feature as a
 // GitHub sub-issue, and in the milestone of the issue they relate to.
-// Milestones themselves are managed by people; the factory only inherits.
+// Milestones themselves are managed by people; the factory inherits them,
+// or, for a feature spawned from an agreed design, picks among the existing ones.
 package issues
 
 import (

@@ -182,7 +182,8 @@ func newIssueCmd(g *globalFlags) *cobra.Command {
 visibility label and assignee, the kind label (--bug, --feature) and the
 state label (triage, or --ready), attached as a GitHub sub-issue of --parent,
 and in the milestone of the --parent or --related issue. Milestones are
-managed by people; the factory only inherits them.`
+managed by people; the factory inherits them, or with --milestone picks an
+existing one.`
 	var title, body, bodyFile, milestone string
 	var parent, related int
 	var blockedBy []int

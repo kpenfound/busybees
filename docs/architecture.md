@@ -279,7 +279,8 @@ A full pass is:
    resolves the milestone as the explicit one, else the parent or related
    issue's, else `filter.milestone`, creates the issue, and attaches it to its
    parent as a sub-issue. The factory never creates, edits or closes
-   milestones; people do, and the bees inherit. See
+   milestones; people do, and the bees inherit, or pick among them for the
+   features of an agreed design. See
    [Features, sub-issues and milestones](workflow.md#features-sub-issues-and-milestones).
 
 9. **File the factory errors.** With
@@ -1044,9 +1045,9 @@ alone, and one that cannot be repaired is logged and skipped rather than
 stopping the others.
 
 A milestone is set on pull requests and never on issues: a milestone on an
-issue is a person's decision, and an issue the factory creates inherits one
-through `bees issue create`, while a milestone on a pull request is pure
-filter bookkeeping.
+issue is a person's decision, and an issue the factory creates gets one
+through `bees issue create`, inherited or chosen among the existing ones,
+while a milestone on a pull request is pure filter bookkeeping.
 
 Writes are atomic (a temporary file, then a rename), ids embed a timestamp so
 a listing sorts oldest first, and `bees mail` works from any directory because

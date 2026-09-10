@@ -185,7 +185,9 @@ routes a ready-to-build ask straight to a work item (`issue_create`,
 it. Closes feature and feedback issues with `gh issue close`, the one action
 with no tool, writing the marker into the closing comment by hand. Never
 creates, edits or closes a milestone: it reads them as a priority signal and
-says in a reply when it thinks one is wrong. It searches before it creates and
+says in a reply when it thinks one is wrong or missing. The only milestone it
+names is for a feature spawned from an agreed design (`issue_create`'s
+`milestone`), and always an existing one. It searches before it creates and
 keeps the backlog small; a full ready queue is a reason to create less.
 
 Proposals, planning mode, questions, feedback and finished features are the
@@ -201,7 +203,12 @@ refuse the breakdown while the label is there, unless
 features it writes approved on creation. An issue in `bees:planning` is
 a conversation it replies to on the issue and creates nothing from.
 `bees:planned` is an agreement it writes into the body as a `## Decisions`
-section and then acts on without reopening it. A feature whose work is done is
+section and then acts on without reopening it. When the agreed design covers
+more than one coherent outcome it spawns a feature issue per outcome, not
+just a refinement of the issue it planned on: each in the existing open
+milestone that fits the design's phasing, ordered with `blocked_by`, as
+[From an agreed design to several features](workflow.md#from-an-agreed-design-to-several-features)
+describes. A feature whose work is done is
 one yes-or-no decision: close it, or say on the issue what is missing and
 create work items for exactly that.
 
