@@ -539,6 +539,16 @@ func (c *Client) GetPR(ctx context.Context, number int) (PR, error) {
 	return pr, json.Unmarshal(out, &pr)
 }
 
+// PRDiff returns the pull request's diff, as `gh pr diff` prints it: the
+// unified diff of its head against the base it would merge into.
+func (c *Client) PRDiff(ctx context.Context, number int) (string, error) {
+	out, err := c.Exec(ctx, "pr", "diff", strconv.Itoa(number), "-R", c.Repo)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
 // FindPRForBranch returns the open PR whose head is branch, if any.
 func (c *Client) FindPRForBranch(ctx context.Context, branch string) (*PR, error) {
 	out, err := c.Exec(ctx, "pr", "list", "-R", c.Repo, "--head", branch, "--state", "open", "--json", prFields)

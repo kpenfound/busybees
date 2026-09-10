@@ -16,6 +16,13 @@
 // Both are optional: a missing file loads as defaults. A file that is
 // present is held to the same standard as bees.toml, an unknown key and an
 // invalid value are load errors naming the key.
+//
+// The review itself starts in ref.go, which turns what a person typed into
+// the pull request under review, and context.go, which gathers the sources
+// context.toml enables into the bundle a review reads. distill.go runs the
+// first session over that bundle and brief.go is what it produces, the
+// starting context of every session after it; agent.go runs those sessions,
+// read-only.
 package review
 
 import (
