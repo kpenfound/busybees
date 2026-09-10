@@ -189,6 +189,32 @@ func TestReviewTriageWithoutAReviewSaysSo(t *testing.T) {
 	}
 }
 
+func TestReviewTriageReadsTheConfigurationGiven(t *testing.T) {
+	reviewHome(t)
+	// A configuration elsewhere, whose storage path is where the review is.
+	elsewhere := t.TempDir()
+	config := filepath.Join(elsewhere, review.ConfigFile)
+	if err := os.WriteFile(config, []byte("storage_path = \"kept\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ref := review.Ref{Repo: "acme/widgets", Number: 7}
+	a := &review.Artifact{
+		Dir:      review.ArtifactDir(filepath.Join(elsewhere, "kept"), ref, time.Date(2026, 9, 10, 15, 4, 5, 0, time.UTC)),
+		Brief:    &review.Brief{Ref: ref, Summary: "gathers the context"},
+		Findings: &review.Findings{Items: []review.Finding{{ID: "aaaa0003", Angle: review.AngleStyle, Category: "docs", Severity: review.SeverityLow, Title: "The package has no doc comment", Body: "every package here has one"}}},
+	}
+	if err := a.Write(); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, err := runReviewWith(t, "q\n", "triage", "acme/widgets#7", "--config", config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout, "aaaa0003 ·") {
+		t.Errorf("the review under the given configuration's storage path was not opened:\n%s", stdout)
+	}
+}
+
 func TestReviewTriageReadsNoContextTomlOutsideACheckoutOfTheRepository(t *testing.T) {
 	home := reviewHome(t)
 	storedReview(t, home)
