@@ -335,6 +335,13 @@ func (g GitHub) ResolvedToken() string {
 // variable under the name bees.toml names.
 func (g GitHub) TokenVar() string { return tokenVar(g.Token) }
 
+// TokenVar is tokenVar for a secret held outside this package: the name of
+// the environment variable a "$VAR" or "${VAR}" value reads, and "" for a
+// value that is not a bare reference. Every configuration file bees reads
+// spells a secret the same way, so they all name the missing variable the
+// same way too.
+func TokenVar(value string) string { return tokenVar(value) }
+
 // tokenVar names the environment variable a token consisting of a single $VAR
 // or ${VAR} reference reads, so an error can say which variable to set. It
 // returns "" for a token that is not a bare reference.
