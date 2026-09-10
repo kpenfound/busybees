@@ -514,10 +514,19 @@ func TestReviewTriageAsksHowToEndAndPostsThroughGh(t *testing.T) {
 	home := reviewHome(t)
 	dir := storedReview(t, home)
 	t.Setenv("PATH", t.TempDir())
+	// A comment-only review with nothing selected, asked for by a flag, is
+	// the command's error: nothing to ask again at, and no gh call.
+	stdout, _, err := runReviewWith(t, "q\n", "triage", "acme/widgets#7", "--post", "comment")
+	if err == nil || !strings.Contains(err.Error(), "nothing was selected") {
+		t.Errorf("--post comment with nothing selected: err = %v", err)
+	}
+	if strings.Contains(stdout, "selected. a approve") {
+		t.Errorf("a flag's refusal was asked about:\n%s", stdout)
+	}
 	// With nothing chosen, the console asks at the end. A comment-only
 	// review with nothing selected is refused, with no gh call, and asked
 	// again; d discards, and says so.
-	stdout, _, err := runReviewWith(t, "q\nc\nd\n", "triage", "acme/widgets#7")
+	stdout, _, err = runReviewWith(t, "q\nc\nd\n", "triage", "acme/widgets#7")
 	if err != nil {
 		t.Fatal(err)
 	}

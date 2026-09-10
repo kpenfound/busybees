@@ -93,9 +93,11 @@ func ParseAnchors(diff string) *Anchors {
 		if !inHunk || path == "" {
 			continue
 		}
+		// A file's header lines (--- and +++) come before its first
+		// hunk, after the diff --git line that ends the hunk before, so
+		// inside a hunk a line starting with --- or +++ is a removed or
+		// added line whose text starts with two dashes or two pluses.
 		switch {
-		case strings.HasPrefix(line, "+++ ") || strings.HasPrefix(line, "--- "):
-			inHunk = false
 		case strings.HasPrefix(line, "+"):
 			a.hunks[anchor{path, SideNew, newLine}] = hunk
 			newLine++
@@ -114,9 +116,9 @@ func ParseAnchors(diff string) *Anchors {
 
 // Has reports whether a comment can be anchored where the finding points:
 // a file, lines, and every one of the lines in one hunk of the diff on the
-// finding's side.
+// finding's side. A finding with no lines has line 0, which no hunk has.
 func (a *Anchors) Has(f *Finding) bool {
-	if a == nil || !f.Anchored() || f.Lines.IsZero() {
+	if a == nil || !f.Anchored() {
 		return false
 	}
 	want, ok := a.hunks[anchor{f.File, f.Side, f.Lines.Start}]
@@ -281,7 +283,7 @@ func renderSelection(s Selection, applicable, located bool) string {
 		}
 		fmt.Fprintf(&out, "%s · %s\n\n", f.Severity, f.Category)
 	}
-	out.WriteString(strings.TrimSpace(s.Comment))
+	out.WriteString(s.Comment)
 	if f.Suggestion != "" {
 		lang := ""
 		if applicable {

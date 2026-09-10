@@ -49,6 +49,14 @@ rename to after.go
 -// before
 +// after
 \ No newline at end of file
+diff --git a/schema.sql b/schema.sql
+--- a/schema.sql
++++ b/schema.sql
+@@ -1,3 +1,3 @@
+ create table widgets (id int);
+--- the old comment
++++ the new comment, which starts with two pluses
+ create table gadgets (id int);
 `
 
 func TestAnchorsAreEveryLineOfEveryHunkOnBothSides(t *testing.T) {
@@ -83,6 +91,9 @@ func TestAnchorsAreEveryLineOfEveryHunkOnBothSides(t *testing.T) {
 		{"before.go", SideNew, 2, 2, false, "not under its old path"},
 		{"after.go", SideNew, 3, 3, false, "the no-newline marker is not a line"},
 		{"nowhere.go", SideNew, 1, 1, false, "a file the diff does not touch"},
+		{"schema.sql", SideOld, 2, 2, true, "a removed line starting with two dashes is a line, not a header"},
+		{"schema.sql", SideNew, 2, 2, true, "an added line starting with two pluses is a line, not a header"},
+		{"schema.sql", SideNew, 3, 3, true, "and the hunk goes on after them"},
 	} {
 		if got := has(c.file, c.side, c.start, c.end); got != c.want {
 			t.Errorf("%s:%d-%d (%s): anchored %v, want %v: %s", c.file, c.start, c.end, c.side, got, c.want, c.why)
@@ -292,7 +303,9 @@ func TestPostSubmitsOneReviewAgainstTheHeadItRead(t *testing.T) {
 	}{
 		{"pr view", &reviewGH{errs: map[string]bool{"pr view": true}}, OutputComment, selections(""), "read acme/widgets#7"},
 		{"pr diff", &reviewGH{errs: map[string]bool{"pr diff": true}}, OutputComment, selections(""), "read the diff of acme/widgets#7"},
-		{"empty", &reviewGH{diff: sampleDiff}, OutputComment, nil, "nothing was selected"},
+		// Refused before the pull request is read: a gh that cannot read
+		// it is not what the error names.
+		{"empty", &reviewGH{errs: map[string]bool{"pr view": true}}, OutputComment, nil, "nothing was selected"},
 		{"report", &reviewGH{diff: sampleDiff}, OutputReport, selections(""), "posts nothing"},
 	} {
 		_, err := Post(context.Background(), c.gh.client(t), ref, c.mode, c.sel)
