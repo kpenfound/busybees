@@ -73,4 +73,5 @@ reads and edits a role's notes — its only memory between sessions — and
 | [Security](security.md) | What each sandbox mode protects and what it does not: filesystem, network, credentials |
 | [Config templates](templates.md) | The named ways to run the factory: which roles run, what merges on its own, what waits for a person |
 | [CLI](cli.md) | Every `bees` command |
+| [Reviewing a pull request](review.md) | `bees review`: how a review runs, its findings, reviewer notes, and its two configuration files |
 | [Releasing](releasing.md) | Cutting a release: the tag, the workflow, the assets it publishes |

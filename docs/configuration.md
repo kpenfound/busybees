@@ -26,6 +26,10 @@ a default. Every validation error names the key and what to change.
 
 Durations are written the way Go reads them: `"30s"`, `"5m"`, `"1h30m"`.
 
+`bees review` reads none of this file. Its settings are
+`~/.config/bees/config.toml` and the project's `context.toml`, both described
+in [Reviewing a pull request](review.md#configuration).
+
 ## `version`
 
 ```toml
