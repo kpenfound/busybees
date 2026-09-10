@@ -150,6 +150,9 @@ func loadContainerUseEnvironment(path string) (containerUseEnvironment, error) {
 	if env.BaseImage == "" {
 		return env, fmt.Errorf("%s names no base_image: the image the definition builds on, which must hold the agent, git and gh", path)
 	}
+	if strings.ContainsAny(env.BaseImage, "\n\r") {
+		return env, fmt.Errorf("%s names a base_image that spans more than one line", path)
+	}
 	return env, nil
 }
 
