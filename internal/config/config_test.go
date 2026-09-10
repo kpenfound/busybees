@@ -1538,8 +1538,9 @@ func TestLoggingSettings(t *testing.T) {
 	}
 }
 
-// [notes] defaults to "file" when absent, accepts "neo4j", rejects anything
-// else, and survives a Rewrite (see docs/configuration.md#notes).
+// [notes] defaults to "file" when absent, accepts "neo4j" with its
+// connection keys, rejects anything else, and survives a Rewrite (see
+// docs/configuration.md#notes).
 func TestNotesSettings(t *testing.T) {
 	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"))
 	if err != nil {
@@ -1549,13 +1550,13 @@ func TestNotesSettings(t *testing.T) {
 		t.Fatalf("default: %q, want %q", cfg.Notes.Backend, NotesBackendFile)
 	}
 
-	path := writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[notes]\nbackend = \"neo4j\"\n")
+	path := writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"+neo4jNotesTOML)
 	cfg, err = Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Notes.Backend != NotesBackendNeo4j {
-		t.Fatalf("configured: %q, want %q", cfg.Notes.Backend, NotesBackendNeo4j)
+	if cfg.Notes.Backend != NotesBackendNeo4j || cfg.Notes.Neo4jURL != "https://nams.example.com/v1" || cfg.Notes.ResolvedNeo4jAPIKey() != "nams_literal" {
+		t.Fatalf("configured: %+v", cfg.Notes)
 	}
 	if b, err := cfg.Rewrite(); err != nil || b != "" {
 		t.Fatalf("rewrite of current file should be a no-op: %q %v", b, err)
@@ -1568,6 +1569,120 @@ func TestNotesSettings(t *testing.T) {
 	_, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[notes]\nbackend = \"postgres\"\n"))
 	if err == nil || !strings.Contains(err.Error(), "notes.backend must be one of file, neo4j") {
 		t.Fatalf("invalid backend: %v", err)
+	}
+}
+
+// neo4jNotesTOML is a complete [notes] table on the neo4j backend.
+const neo4jNotesTOML = "[notes]\nbackend = \"neo4j\"\nneo4j_url = \"https://nams.example.com/v1\"\nneo4j_api_key = \"nams_literal\"\n"
+
+// TestNotesNeo4jKeysAreRequiredWithTheBackend: with notes.backend = "neo4j"
+// a missing URL, a missing key, a URL that is not http(s) and a "$VAR" key
+// that expands to nothing each fail the load, naming the key to set, so the
+// factory refuses to start rather than a session's first notes_read failing.
+// On the file backend the same keys are accepted and ignored: a factory may
+// keep them written down for the switch.
+func TestNotesNeo4jKeysAreRequiredWithTheBackend(t *testing.T) {
+	const head = "version = 1\n[project]\nrepo = \"a/b\"\n[notes]\nbackend = \"neo4j\"\n"
+	t.Setenv("BEES_TEST_NAMS_KEY", "")
+	for name, c := range map[string]struct{ body, want string }{
+		"no url":   {"neo4j_api_key = \"k\"\n", "needs notes.neo4j_url"},
+		"no key":   {"neo4j_url = \"https://nams.example.com/v1\"\n", "needs notes.neo4j_api_key"},
+		"neither":  {"", "needs notes.neo4j_url"},
+		"bad url":  {"neo4j_url = \"nams.example.com/v1\"\nneo4j_api_key = \"k\"\n", `notes.neo4j_url "nams.example.com/v1" is not an http(s) URL`},
+		"bolt url": {"neo4j_url = \"bolt://localhost:7687\"\nneo4j_api_key = \"k\"\n", "is not an http(s) URL"},
+		"unset var": {"neo4j_url = \"https://nams.example.com/v1\"\nneo4j_api_key = \"$BEES_TEST_NAMS_KEY\"\n",
+			"notes.neo4j_api_key reads $BEES_TEST_NAMS_KEY, which is not set"},
+	} {
+		_, err := Load(writeConfig(t, head+c.body))
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: err = %v, want it to contain %q", name, err, c.want)
+		}
+		// A missing or empty key names the way out; a malformed URL is
+		// its own message.
+		if err != nil && !strings.Contains(c.want, "not an http(s) URL") && !strings.Contains(err.Error(), `notes.backend = "file"`) {
+			t.Errorf("%s: %v does not name the way out", name, err)
+		}
+	}
+	// "neither" reports both keys at once, not the first it finds.
+	if _, err := Load(writeConfig(t, head)); err == nil || !strings.Contains(err.Error(), "needs notes.neo4j_api_key") {
+		t.Errorf("both missing: %v", err)
+	}
+
+	// The variable set, the reference resolves and names its variable.
+	t.Setenv("BEES_TEST_NAMS_KEY", "nams_from_env")
+	cfg, err := Load(writeConfig(t, head+"neo4j_url = \"https://nams.example.com/v1\"\nneo4j_api_key = \"$BEES_TEST_NAMS_KEY\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Notes.ResolvedNeo4jAPIKey() != "nams_from_env" || cfg.Notes.Neo4jAPIKeyVar() != "BEES_TEST_NAMS_KEY" {
+		t.Errorf("resolved %q from $%q", cfg.Notes.ResolvedNeo4jAPIKey(), cfg.Notes.Neo4jAPIKeyVar())
+	}
+	if (Notes{Neo4jAPIKey: "nams_literal"}).Neo4jAPIKeyVar() != "" {
+		t.Error("a literal key names a variable")
+	}
+
+	// The file backend ignores the keys, dangling reference included.
+	t.Setenv("BEES_TEST_NAMS_KEY", "")
+	cfg, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[notes]\nbackend = \"file\"\nneo4j_url = \"nonsense\"\nneo4j_api_key = \"$BEES_TEST_NAMS_KEY\"\n"))
+	if err != nil {
+		t.Fatalf("file backend with neo4j keys: %v", err)
+	}
+	if cfg.Notes.Backend != NotesBackendFile || cfg.Notes.Neo4jURL != "nonsense" {
+		t.Errorf("file backend kept %+v", cfg.Notes)
+	}
+}
+
+// TestNotesAPIKeyIsRedactedInTheView: `bees config show` prints a "$VAR"
+// key as written and a literal one as "(set)", never the value, exactly like
+// github.token.
+func TestNotesAPIKeyIsRedactedInTheView(t *testing.T) {
+	t.Setenv("BEES_TEST_NAMS_KEY", "nams_secret")
+	for body, want := range map[string]string{
+		neo4jNotesTOML: "(set)",
+		"[notes]\nbackend = \"neo4j\"\nneo4j_url = \"https://nams.example.com/v1\"\nneo4j_api_key = \"$BEES_TEST_NAMS_KEY\"\n": "$BEES_TEST_NAMS_KEY",
+		"": "",
+	} {
+		out := viewJSON(t, "version = 1\n[project]\nrepo = \"a/b\"\n"+body)
+		notes := out["notes"].(map[string]any)
+		if got := notes["neo4j_api_key"]; got != want {
+			t.Errorf("%q: neo4j_api_key printed as %#v, want %q", body, got, want)
+		}
+		if strings.Contains(fmt.Sprint(out), "nams_secret") || strings.Contains(fmt.Sprint(out), "nams_literal") {
+			t.Errorf("%q: the view carries the key: %v", body, out)
+		}
+	}
+}
+
+// TestLoadNotes: the [notes] table alone, defaulted and validated as Load
+// would validate it, whatever the rest of the file says — a broken [github]
+// or a "$VAR" another table reads that is absent from a session's
+// environment does not take the notes backend with it — while a missing
+// file, a file that does not parse and an incomplete [notes] are errors.
+func TestLoadNotes(t *testing.T) {
+	t.Setenv("BEES_TEST_TOKEN", "")
+	const broken = "version = 1\n[project]\nrepo = \"a/b\"\n[github]\nlogin = \"bot\"\ntoken = \"$BEES_TEST_TOKEN\"\n"
+	if _, err := Load(writeConfig(t, broken)); err == nil {
+		t.Fatal("the fixture loads whole: the assertions below prove nothing")
+	}
+	n, err := LoadNotes(writeConfig(t, broken))
+	if err != nil || n.Backend != NotesBackendFile {
+		t.Errorf("no [notes]: %+v, %v; want the file default", n, err)
+	}
+	n, err = LoadNotes(writeConfig(t, broken+neo4jNotesTOML))
+	if err != nil || n.Backend != NotesBackendNeo4j || n.Neo4jURL != "https://nams.example.com/v1" || n.ResolvedNeo4jAPIKey() != "nams_literal" {
+		t.Errorf("neo4j: %+v, %v", n, err)
+	}
+	for name, body := range map[string]string{
+		"incomplete": "[notes]\nbackend = \"neo4j\"\n",
+		"unknown":    "[notes]\nbackend = \"postgres\"\n",
+		"unparsable": "[notes\n",
+	} {
+		if _, err := LoadNotes(writeConfig(t, body)); err == nil {
+			t.Errorf("%s: loaded", name)
+		}
+	}
+	if _, err := LoadNotes(filepath.Join(t.TempDir(), "bees.toml")); err == nil {
+		t.Error("a missing file loaded")
 	}
 }
 
