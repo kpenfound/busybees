@@ -1352,8 +1352,9 @@ reviewing from 4 angles: acceptance_criteria, test_coverage, style, side_effects
   1 finding hidden by your reviewer notes
 ```
 
-Triage follows, as `triage` below describes it, and then the review ends one
-of five ways with what you selected:
+Triage follows, as `triage` below describes it, or by an agent with `--agent`
+(see [factory mode](#factory-mode)), and then the review ends one of five ways
+with what you selected:
 
 | End | What happens |
 |---|---|
@@ -1445,6 +1446,51 @@ discarded, as `--post`, `--report`, the `output` key or the prompt at the
 end says.
 
 `--config` reads a global configuration other than `~/.config/bees/config.toml`.
+
+### Factory mode
+
+`--agent` on `bees review <pr>` and on `bees review triage <pr>` hands triage
+to an agent session instead of you, for a review nobody sits at a terminal
+for. The agent takes the same four actions on the same findings: what it
+selects goes into the review's output, what it dismisses is appended to your
+reviewer notes with its reason, and every decision is written into the
+review's artifact directory as it is taken. `--instructions` tells it what
+you want from the review.
+
+```
+$ bees review acme/widgets#7 --agent --instructions "Hold the change to its issue. Never approve."
+gathering the context of acme/widgets#7
+...
+3 findings
+triage round 1: 3 findings undecided
+  select 1a2b3c4d: Gather has no test for a source that cannot read
+  dismiss 5e6f7a8b: the README is rewritten by the docs change that follows
+  ask 9c0d1e2f: Does the rename reach a caller outside the package?
+    No: every caller of Gather is in internal/review.
+triage round 2: 1 finding undecided
+  defer 9c0d1e2f: The change renames Gather, which the issue did not ask for
+1 selected, 1 dismissed, 1 deferred, 0 undecided of 3 findings
+the agent chose to end the review: comment
+acme/widgets#7: commented with 1 comment
+```
+
+The agent triages in rounds. Each round is a new read-only session, run as
+the provider and model of `~/.config/bees/config.toml` and told the brief,
+the findings still undecided with the answers to what it asked, the rules in
+your reviewer notes about the repository, and what its last answer could not
+do: a dismissal without a reason, a finding the review does not have.
+Another round follows one that asked a question, had something refused, or
+left findings undecided. Triage stops when nothing is undecided, when a
+round takes nothing, or after five rounds, and what is still undecided is
+there for `bees review triage` to offer.
+
+The review ends as `--post`, `--report` or the `output` key says. Where they
+leave it to `ask`, the agent chooses one of the five ends, as the
+instructions say. Without instructions about it, the agent is told to
+request changes when a selected finding must be fixed before the change
+merges, to comment when anything else is selected and to discard when
+nothing is, and to approve only when the instructions allow it. An agent
+that chooses no end it can take discards: nothing is posted.
 
 ### `bees review consolidate [--notes path] [--dry-run]`
 
