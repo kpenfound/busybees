@@ -8,7 +8,7 @@
 //	[global]    – prompt/skills/mcp/model settings applied to every role
 //	[scheduler] – concurrency, polling and review-loop limits
 //	[logging]   – console log format and level
-//	[notes]     – the backend that stores role notes files
+//	[notes]     – where role notes live: files, or Neo4j Agent Memory
 //	[roles.*]   – per-role overrides (product_manager, project_manager,
 //	              developer, reviewer, qa)
 //
@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -164,7 +165,7 @@ const (
 // Agents lists the accepted agent values.
 var Agents = []string{AgentClaude, AgentCodex}
 
-// Notes backends accepted by notes.backend: where role notes files live.
+// Notes backends accepted by notes.backend: where role notes live.
 const (
 	NotesBackendFile  = "file"
 	NotesBackendNeo4j = "neo4j"
@@ -883,17 +884,121 @@ type Logging struct {
 	Level string `toml:"level" json:"level"`
 }
 
-// Notes selects where role notes files live. It is a top-level table, like
+// Notes selects where role notes live. It is a top-level table, like
 // [logging], because the backend is a factory-wide choice, not a per-role
-// setting.
-//
-// Backend accepts "neo4j" today with no behavior attached: nothing in the
-// codebase reads Notes.Backend yet. internal/state's notes files and every
-// role's notes prompt are unaffected until a later change gives the value a
-// consumer.
+// setting. The built-in MCP server reads Backend when it builds the backend
+// behind notes_read and notes_write (`bees mcp serve`, through LoadNotes);
+// `bees notes show|edit|reset|add` and the notes sizes `bees status` and the
+// scheduler's consolidation trigger read are the state directory's files
+// whatever the backend.
 type Notes struct {
 	// Backend is "file" or "neo4j". Default "file".
 	Backend string `toml:"backend" json:"backend"`
+	// Neo4jURL is the base URL of the Neo4j Agent Memory REST API bees talks
+	// to with Backend "neo4j" — the hosted service's or a self-hosted
+	// deployment's, ending in its version segment ("/v1"). bees does not run
+	// or embed the service.
+	Neo4jURL string `toml:"neo4j_url" json:"neo4j_url"`
+	// Neo4jAPIKey authenticates against Neo4jURL. A "$VAR" or "${VAR}"
+	// reference is expanded from the environment bees runs in, so the secret
+	// need not be written into bees.toml. Read it through
+	// ResolvedNeo4jAPIKey, never directly.
+	Neo4jAPIKey string `toml:"neo4j_api_key" json:"neo4j_api_key"`
+}
+
+// ResolvedNeo4jAPIKey is the API key with $VAR references expanded, or ""
+// when none is configured. With Backend "neo4j" Validate has already rejected
+// a reference that expands to nothing.
+func (n Notes) ResolvedNeo4jAPIKey() string {
+	if n.Neo4jAPIKey == "" {
+		return ""
+	}
+	return strings.TrimSpace(os.ExpandEnv(n.Neo4jAPIKey))
+}
+
+// Neo4jAPIKeyVar names the environment variable notes.neo4j_api_key reads,
+// for a key that is a single $VAR or ${VAR} reference, and "" for anything
+// else. A session's own `bees` loads bees.toml again with every inherited
+// BEES_* variable stripped, so the session runner sets this name back,
+// exactly as it does for github.token.
+func (n Notes) Neo4jAPIKeyVar() string { return tokenVar(n.Neo4jAPIKey) }
+
+// RedactedNeo4jAPIKey is what `bees config show` prints for the key: a $VAR
+// reference as written, anything else as a placeholder, never the value.
+func (n Notes) RedactedNeo4jAPIKey() string {
+	if n.Neo4jAPIKey == "" {
+		return ""
+	}
+	if tokenVar(n.Neo4jAPIKey) != "" {
+		return n.Neo4jAPIKey
+	}
+	return "(set)"
+}
+
+// redacted is the table as `bees config show` prints it.
+func (n Notes) redacted() Notes {
+	n.Neo4jAPIKey = n.RedactedNeo4jAPIKey()
+	return n
+}
+
+// validate checks [notes] as a whole. The Neo4j keys are only required, and
+// only checked, with backend "neo4j": a factory on the file backend may keep
+// them written down for the switch. A missing key fails the load, naming
+// what to set, rather than the first notes_read of a session.
+func (n Notes) validate() []string {
+	var errs []string
+	if n.Backend != "" && !slices.Contains(NotesBackends, n.Backend) {
+		errs = append(errs, fmt.Sprintf("notes.backend must be one of %s", strings.Join(NotesBackends, ", ")))
+	}
+	if n.Backend != NotesBackendNeo4j {
+		return errs
+	}
+	const fix = ", or set notes.backend = \"file\" to keep notes in the state directory"
+	switch u, err := url.Parse(n.Neo4jURL); {
+	case n.Neo4jURL == "":
+		errs = append(errs, "notes.backend = \"neo4j\" needs notes.neo4j_url: the base URL of the Neo4j Agent Memory REST API (for the hosted service, https://memory.neo4jlabs.com/v1)"+fix)
+	case err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "":
+		errs = append(errs, fmt.Sprintf("notes.neo4j_url %q is not an http(s) URL", n.Neo4jURL))
+	}
+	switch {
+	case n.Neo4jAPIKey == "":
+		errs = append(errs, "notes.backend = \"neo4j\" needs notes.neo4j_api_key: an API key for notes.neo4j_url, written as a \"$VAR\" reference to keep it out of this file"+fix)
+	case n.ResolvedNeo4jAPIKey() == "":
+		where := fmt.Sprintf("notes.neo4j_api_key %q expands to nothing", n.Neo4jAPIKey)
+		if v := tokenVar(n.Neo4jAPIKey); v != "" {
+			where = fmt.Sprintf("notes.neo4j_api_key reads $%s, which is not set", v)
+		}
+		errs = append(errs, where+": set it in the environment bees runs in"+fix)
+	}
+	return errs
+}
+
+// LoadNotes reads the [notes] table alone out of a bees.toml, defaulted and
+// validated the way Load would, and ignores the rest of the file. It is how
+// the built-in MCP server picks the backend behind a session's notes tools:
+// a session's own `bees` runs with an environment of its own, in which a
+// "$VAR" some other table reads may be absent, and a role's memory should
+// not depend on tables it does not use. A file that does not exist or does
+// not parse is still an error.
+func LoadNotes(path string) (Notes, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Notes{}, err
+	}
+	var file struct {
+		Notes Notes `toml:"notes"`
+	}
+	if _, err := toml.Decode(string(data), &file); err != nil {
+		return Notes{}, fmt.Errorf("parse %s: %w", path, err)
+	}
+	n := file.Notes
+	if n.Backend == "" {
+		n.Backend = DefaultNotesBackend
+	}
+	if errs := n.validate(); len(errs) > 0 {
+		return Notes{}, fmt.Errorf("%s: %s", path, strings.Join(errs, "; "))
+	}
+	return n, nil
 }
 
 // weekdayNames maps the accepted work_days values to weekdays, in the order
@@ -1467,9 +1572,7 @@ func (c *Config) Validate() error {
 	if _, err := logging.ParseLevel(c.Logging.Level); err != nil {
 		errs = append(errs, "logging.level: "+err.Error())
 	}
-	if c.Notes.Backend != "" && !slices.Contains(NotesBackends, c.Notes.Backend) {
-		errs = append(errs, fmt.Sprintf("notes.backend must be one of %s", strings.Join(NotesBackends, ", ")))
-	}
+	errs = append(errs, c.Notes.validate()...)
 	check := func(scope string, rs RoleSettings) {
 		if scope != "roles."+RoleReviewer {
 			if rs.AutoMerge != nil || rs.MergeMethod != "" || rs.ChecksWait.Duration != 0 || rs.ChecksPollInterval.Duration != 0 || rs.ChecksTimeout.Duration != 0 || rs.MaxCheckFixRounds != 0 || rs.PreReviewChecks != nil || rs.PreReviewChecksTimeout.Duration != 0 || rs.Stages != nil {

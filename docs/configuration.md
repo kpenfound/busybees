@@ -17,7 +17,7 @@ The file starts with a `version` key, followed by these tables:
 | `[github]` | The GitHub account the factory acts as |
 | `[scheduler]` | Concurrency, polling, retries, budgets and the review loop |
 | `[logging]` | Console log format and level |
-| `[notes]` | The backend that stores role notes files |
+| `[notes]` | Where a role's notes live: files, or Neo4j Agent Memory |
 | `[global]` | Prompt, skills, MCP servers, model, sandbox and environment for every role |
 | `[roles.<name>]` | The same keys per role, plus a few that only one role takes |
 
@@ -467,11 +467,23 @@ See [`bees run`](cli.md#bees-run).
 ```toml
 [notes]
 backend = "file"   # file | neo4j
+# neo4j_url = "https://memory.neo4jlabs.com/v1"
+# neo4j_api_key = "$BEES_NEO4J_API_KEY"
 ```
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `backend` | string | `"file"` | Where role notes files live: `file` or `neo4j`. |
+| `backend` | string | `"file"` | Where the `notes_read` and `notes_write` tools keep a role's notes: `file` (the state directory) or `neo4j` (Neo4j Agent Memory). |
+| `neo4j_url` | string | `""` | The base URL of the Neo4j Agent Memory REST API, including its version segment: the hosted service's (`https://memory.neo4jlabs.com/v1`) or a self-hosted deployment's. Required, and must be an `http(s)` URL, with `backend = "neo4j"`. |
+| `neo4j_api_key` | string | `""` | An API key for `neo4j_url`, written as a `"$VAR"` reference so the secret is not in this file. Required with `backend = "neo4j"`; a reference that expands to nothing fails to load, naming the variable. Redacted as written in `bees config show`. |
+
+`bees` neither runs nor embeds Neo4j Agent Memory; with `backend = "neo4j"`
+the tools talk to the REST API at `neo4j_url` and nothing else in bees does.
+`neo4j_url` and `neo4j_api_key` are ignored with `backend = "file"`, so they
+can stay in the file across a switch. `bees notes show|edit|reset|add`, and
+the notes size `bees status` and the [`scheduler`](#scheduler) consolidation
+triggers read, always act on the state directory's file, whatever `backend`
+is.
 
 ## `[global]` and `[roles.<name>]`
 
@@ -852,8 +864,9 @@ would otherwise leave it holding its port and serving the factory's tools.
 What the box holds: the session cannot read or write anything of the host
 outside the three mounts, and cannot reach the host's credentials or its
 other checkouts. What it does not: the session has the network, the bot's
-GitHub token and its agent credential, and everything in the image; and the
-mounted state directory holds every role's mail and notes, not only its own.
+GitHub token, the Neo4j Agent Memory API key with the `neo4j` notes backend,
+its agent credential, and everything in the image; and the mounted state
+directory holds every role's mail and notes, not only its own.
 On Linux the container runs as the user running bees so what it writes stays
 theirs, and reaches the host at the docker bridge gateway; the mode has been
 exercised on macOS with Docker Desktop.
@@ -1177,10 +1190,12 @@ variable that process inherited, plus:
 | `SHELL` | The configured `shell`, when set. |
 | `GH_TOKEN` | [`github.token`](#github), when set, so the session's `gh` acts as the factory. |
 | *the variable `github.token` names* | When `github.token` is a `"$VAR"` reference, that variable, holding the resolved token. The `bees` commands a session runs load `bees.toml` themselves, and a reference that expands to nothing is a load error, so the name has to survive the `BEES_*` strip. It is set in the environment only; nothing writes it into the session directory. |
+| *the variable `notes.neo4j_api_key` names* | The same, for a `"$VAR"` `notes.neo4j_api_key`, with `notes.backend = "neo4j"`: the value the scheduler resolved, so the session's own `notes_read` and `notes_write` can load `[notes]`. |
 | `GIT_AUTHOR_NAME`, `GIT_COMMITTER_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_EMAIL` | `github.git_name` and `github.git_email`, when set. |
 | `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_n`, `GIT_CONFIG_VALUE_n` | `push.autoSetupRemote=true` and `push.default=current`, so a plain `git push` works on a fresh branch without touching the clone's git config; with `github.token` set, also an empty `credential.helper` followed by `credential.helper=!gh auth git-credential`, so an https push authenticates as the factory rather than through your stored credentials. Left alone when `GIT_CONFIG_COUNT` is already in the bees environment. |
 
 `BEES_*` variables are always set by bees for each session and never inherited,
 so a session started from inside another one, by a nested `bees run` or `bees
-exec`, never sees a stale issue, PR or branch. The one `BEES_*` name bees puts
-back after the strip is the one a `"$VAR"` `github.token` reads.
+exec`, never sees a stale issue, PR or branch. The `BEES_*` names bees puts
+back after the strip are the ones a `"$VAR"` `github.token` and a `"$VAR"`
+`notes.neo4j_api_key` read.

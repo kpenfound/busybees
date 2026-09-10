@@ -103,7 +103,7 @@ func (c *Config) View(roles []string) (View, error) {
 		GitHub:    GitHubView{Login: c.GitHub.Login, Token: c.GitHub.RedactedToken(), GitName: c.GitHub.GitName, GitEmail: c.GitHub.GitEmail},
 		Scheduler: c.Scheduler,
 		Logging:   c.Logging,
-		Notes:     c.Notes,
+		Notes:     c.Notes.redacted(),
 		Roles:     map[string]RoleView{},
 	}
 	if v.Scheduler.WorkDays == nil {

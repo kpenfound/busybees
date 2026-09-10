@@ -1107,9 +1107,12 @@ Prints one message.
 
 ## Notes
 
-`<state_dir>/notes/<role>.md` is a role's only memory between sessions: a
-session reads it with the `notes_read` tool and replaces it with `notes_write`
-before it finishes. These commands are how a person reads and steers it; see
+`<state_dir>/notes/<role>.md` is a role's memory between sessions with the
+default `notes.backend = "file"`: a session reads it with the `notes_read`
+tool and replaces it with `notes_write` before it finishes, and these
+commands are how a person reads and steers it. With `notes.backend =
+"neo4j"`, `notes_read` and `notes_write` act on Neo4j Agent Memory instead;
+these commands still act on the file, which no session then reads. See
 [Notes files](roles.md#notes-files). Roles accept the usual aliases (`pm`,
 `pjm`, `dev`, `review`, `qa`).
 

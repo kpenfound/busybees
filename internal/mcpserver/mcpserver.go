@@ -13,8 +13,9 @@
 // scheduler.report_factory_errors is on, and says that it recorded nothing
 // when it is off. notes_read and notes_write are a role's notes — its only
 // memory between sessions — as one text, read whole and replaced whole,
-// through the Notes backend the caller wires in (the file under
-// <state_dir>/notes/ in `bees mcp serve`); the prompt does not carry them. It
+// through the Notes backend the caller wires in (`bees mcp serve` picks it
+// from notes.backend: the file under <state_dir>/notes/, or Neo4j Agent
+// Memory through internal/nams); the prompt does not carry them. It
 // is started as `bees mcp serve` (or, for a container session, by the
 // session runner on the host as `bees mcp serve --listen`, which serves it
 // over HTTP) and takes its context (role, state dir, session dir, issue,

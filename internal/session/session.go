@@ -220,6 +220,10 @@ type Runner struct {
 	// value means the machine's own gh authentication and git identity,
 	// which is what every configuration without [github] gets.
 	GitHub config.GitHub
+	// Notes is [notes] from bees.toml: with the neo4j backend the variable
+	// notes.neo4j_api_key reads has to reach the session, as github.token's
+	// does (see sessionVars).
+	Notes config.Notes
 	// Skills prepares skill plugin dirs. Optional.
 	Skills *skills.Manager
 	// AddDirs are extra directories claude may access (the state dir).
@@ -581,6 +585,15 @@ func (r *Runner) sessionVars(req Request, sessionDir string) []envVar {
 		// codex the built-in server's gh runs without the factory's token.
 		if v := r.GitHub.TokenVar(); v != "" {
 			set(v, token)
+		}
+	}
+	// notes.neo4j_api_key may be a $VAR reference too, and the same strip
+	// would leave a session whose notes_read and notes_write cannot load
+	// [notes]: put the name back the same way, with the value the scheduler
+	// resolved, and only when the backend reads it.
+	if r.Notes.Backend == config.NotesBackendNeo4j {
+		if v, key := r.Notes.Neo4jAPIKeyVar(), r.Notes.ResolvedNeo4jAPIKey(); v != "" && key != "" {
+			set(v, key)
 		}
 	}
 	vars = append(vars, r.gitIdentity()...)

@@ -75,11 +75,12 @@ a person who has not seen the conversation. Say so in the outcome note when
 you could not finish.
 
 **Tools.** The factory's own operations and the GitHub actions a role performs
-are MCP tools, served to every session by the built-in `bees` server. Nine go
+are MCP tools, served to every session by the built-in `bees` server. Eleven go
 to every role: `mail_send`, `mail_list`, `issue_create`, `issue_link`,
-`issue_view`, `pr_view`, `comment`, `report_factory_error` and `done`. Five
-are role-scoped: `issue_edit_body` (both managers), `issue_set_state`
-(project manager), `issue_question` (product manager), `submit_review`
+`issue_view`, `pr_view`, `comment`, `report_factory_error`, `notes_read`,
+`notes_write` and `done`. Five are role-scoped: `issue_edit_body` (both
+managers), `issue_set_state` (project manager), `issue_question` (product
+manager), `submit_review`
 (reviewer, for a requested review only) and `file_bug` (QA). The tools
 enforce the factory's rules: no issue or pull request outside the filter can
 be read or written, `comment` and `submit_review` append the marker,
@@ -115,28 +116,36 @@ role below.
 
 ### Notes files
 
-`<state_dir>/notes/<role>.md` is a role's only long-term memory. Its contents
-are rendered into every task prompt, and the role is told to update it before
-finishing: decisions, conventions, gotchas, what it tested. The file is
-created on the role's first run with a `# <role> notes` heading and the four
-sections roles keep their notes under: **Project facts** (how to build, test
-and run the project), **Conventions**, **Decisions** and **Open questions**.
-Anything else goes under a heading of the role's choosing. Developer workers
-share one `notes/developer.md`.
+A role's only long-term memory is what the `notes_read` tool returns and what
+`notes_write` replaces it with: nothing renders notes into the prompt, so the
+role is told to call `notes_read` at the start of a session, before anything
+else, and `notes_write` before it finishes, with the complete text, headings
+included: decisions, conventions, gotchas, what it tested. A first read
+creates the notes with a `# <role> notes` heading and the four sections roles
+keep their notes under: **Project facts** (how to build, test and run the
+project), **Conventions**, **Decisions** and **Open questions**. Anything
+else goes under a heading of the role's choosing. Developer workers share one
+set of notes.
 
-Nothing curates the file behind the role's back. Every
-`scheduler.notes_consolidate_every` sessions (default 10), or sooner once the
-file is larger than `scheduler.notes_max_bytes` (default 32768), the task
-prompt asks the session to rewrite its notes into those sections on top of its
-normal work: merge duplicates, drop what is stale or contradicted, keep
-decisions, commands and gotchas. The counters live in
-`<state_dir>/<role>.json`.
+Nothing curates the notes behind a role's back. Every
+`scheduler.notes_consolidate_every` sessions (default 10), or sooner once they
+are larger than `scheduler.notes_max_bytes` (default 32768), the task prompt
+asks the session to rewrite them into those sections on top of its normal
+work: merge duplicates, drop what is stale or contradicted, keep decisions,
+commands and gotchas. The counters live in `<state_dir>/<role>.json`; the size
+`bees status` shows and this trigger reads is always that of
+`<state_dir>/notes/<role>.md`, whatever
+[`notes.backend`](configuration.md#notes) is.
 
-Editing a notes file is the most direct way to steer a role. Write the product
-vision into `notes/product_manager.md`, coding conventions into
-`notes/developer.md`, or "always run the e2e suite" into `notes/reviewer.md`,
-and the next session reads it. [`bees notes`](cli.md#notes) does it without
-hunting for the file, and `bees status` shows how big each file is:
+With the default `notes.backend = "file"`, `notes_read` and `notes_write` act
+on that same file, and editing it directly is the most direct way to steer a
+role: write the product vision into `notes/product_manager.md`, coding
+conventions into `notes/developer.md`, or "always run the e2e suite" into
+`notes/reviewer.md`, and the next session reads it through `notes_read`.
+[`bees notes`](cli.md#notes) does it without hunting for the file. With
+[`notes.backend = "neo4j"`](configuration.md#notes), `notes_read` and
+`notes_write` act on Neo4j Agent Memory instead, and `bees notes
+show|edit|reset|add` keep acting on the file, which no session then reads.
 
 ```sh
 bees notes show reviewer

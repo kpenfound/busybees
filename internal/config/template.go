@@ -301,10 +301,16 @@ label = "{{.Label}}"
 #level = "info"
 
 #===============================================================================
-# Where role notes files live.
+# Where role notes live: files under state_dir, or Neo4j Agent Memory.
 #===============================================================================
 [notes]
 #backend = "file"        # file | neo4j
+# With backend = "neo4j": the base URL of the Neo4j Agent Memory REST API,
+# ending in its version segment, and an API key for it. A "$VAR" reference is
+# expanded from the environment bees runs in, so the secret itself stays out
+# of this file.
+#neo4j_url = "https://memory.neo4jlabs.com/v1"
+#neo4j_api_key = "$BEES_NEO4J_API_KEY"
 
 #===============================================================================
 # Global role settings — apply to every role, merged with [roles.<name>]:
