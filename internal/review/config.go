@@ -29,8 +29,9 @@
 // review that holds what this reviewer has dismissed before, and noise.go
 // keeps what they dismissed out of the list before triage reads it.
 // triage.go is the triage queue over that list, the four actions it takes on
-// a finding and what each writes back, and console.go drives it from a
-// terminal one line at a time. run.go strings all of that together for one
+// a finding and what each writes back; console.go drives it from a
+// terminal one line at a time, and factory.go from the answers of an agent
+// session instead, factory mode. run.go strings all of that together for one
 // pull request, from the gather to the judged list, and output.go is the
 // end of the review: what triage selected posted as one review, printed as
 // a report, or discarded. artifact.go is the directory the whole review is
@@ -56,10 +57,11 @@ const (
 	ProjectFile = "context.toml"
 )
 
-// Output modes: what happens to the findings a person selected during
-// triage. One of them is the end of every review.
+// Output modes: what happens to the findings triage selected, a person's
+// or an agent's. One of them is the end of every review.
 const (
-	// OutputAsk asks which of the other five to take.
+	// OutputAsk asks which of the other five to take: the person at the
+	// console, or in factory mode the agent that triaged (factory.go).
 	OutputAsk = "ask"
 	// OutputApprove submits the selected findings as review comments and
 	// approves the pull request.

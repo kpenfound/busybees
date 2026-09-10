@@ -82,6 +82,10 @@ ways to run the factory.
 - **A review on request.** Put `bees:review-requested` on any pull request the
   factory can see, yours included, and the reviewer submits one GitHub review on
   it. See [Asking for a review of any pull request](docs/workflow.md#asking-for-a-review-of-any-pull-request).
+- **A review of any pull request, without a factory.** `bees review <pr>`
+  reviews a pull request from four angles in read-only sessions, lets you
+  select, dismiss, defer or ask about each finding, and posts what you
+  selected as one GitHub review. See [Reviewing a pull request](docs/review.md).
 - **A local mailbox, not GitHub comments.** Roles ask each other questions and
   exchange review feedback through a mailbox in the state directory; every comment a
   bee posts on GitHub is to a person, and ends with an invisible marker. See
@@ -113,6 +117,7 @@ These pages are also published at
 | [docs/security.md](docs/security.md) | What each sandbox mode protects and what it does not: filesystem, network, credentials |
 | [docs/templates.md](docs/templates.md) | The named ways to run the factory: which roles run, what merges on its own, what waits for a person |
 | [docs/cli.md](docs/cli.md) | Every `bees` command |
+| [docs/review.md](docs/review.md) | `bees review`: how a review runs, its findings, reviewer notes, and its two configuration files |
 | [docs/architecture.md](docs/architecture.md) | How `bees run` works: the scheduler loop, the developer worker, sessions, the mailbox, the state directory, crash recovery |
 | [docs/releasing.md](docs/releasing.md) | Cutting a release: the tag, the workflow, the assets it publishes |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Building, testing and the contributor workflow |
