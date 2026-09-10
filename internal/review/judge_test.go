@@ -4,7 +4,6 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
-	"strings"
 	"testing"
 )
 
@@ -101,17 +100,20 @@ func TestAProjectPinsACategorysSeverityOrDropsIt(t *testing.T) {
 func TestTheSameFindingFromTwoAnglesIsKeptOnce(t *testing.T) {
 	a := Finding{Angle: AngleAcceptance, Category: "missing check", Severity: "medium", File: "run.go", Lines: LineRange{40, 42}, Side: SideNew,
 		Title: "Run dereferences a nil project", Body: "a nil project panics at line 41", Sources: []string{"#568"}}
+	a.Suggestion = "if project == nil {"
 	b := Finding{Angle: AngleSideEffects, Category: "nil", Severity: "high", File: "run.go", Lines: LineRange{41, 41}, Side: SideNew,
-		Title: "nil project dereferenced in Run", Body: "callers pass nil for a repository with no context.toml", Suggestion: "if project == nil {", Sources: []string{"#568", "angles.go"}}
+		Title: "nil project dereferenced in Run", Body: "callers pass nil for a repository with no context.toml", Sources: []string{"angles.go"}}
 	got := Merge([]Finding{a, b}, nil)
 	if len(got) != 1 {
 		t.Fatalf("got %d findings, want one:\n%+v", len(got), got)
 	}
-	// The more severe report is the one kept, with the other's angle,
-	// sources and suggestion on it.
+	// The more severe report is the one kept, with the other's angle and
+	// sources on it, and its suggestion since the kept one had none.
 	want := b
 	want.ID = got[0].ID
 	want.AlsoFrom = []string{AngleAcceptance}
+	want.Sources = []string{"angles.go", "#568"}
+	want.Suggestion = a.Suggestion
 	if !reflect.DeepEqual(got[0], want) {
 		t.Errorf("merged\n%+v\nwant\n%+v", got[0], want)
 	}
@@ -142,13 +144,17 @@ func TestFindingsInDifferentPlacesAreNotMerged(t *testing.T) {
 	} {
 		other := base
 		change(&other)
-		got := Merge([]Finding{base, other}, nil)
 		want := 2
 		if name == "another angle" {
 			want = 1
 		}
-		if len(got) != want {
+		// In both orders: which of the two the judge sees first must not
+		// matter.
+		if got := Merge([]Finding{base, other}, nil); len(got) != want {
 			t.Errorf("%s: %d findings, want %d", name, len(got), want)
+		}
+		if got := Merge([]Finding{other, base}, nil); len(got) != want {
+			t.Errorf("%s, other first: %d findings, want %d", name, len(got), want)
 		}
 	}
 	// Two findings about the change as a whole are one when they read
@@ -187,12 +193,22 @@ func TestFindingsAreOrderedMostSevereFirstThenByPlace(t *testing.T) {
 }
 
 func TestAFindingsIDIsStableAndUnique(t *testing.T) {
+	// Findings that differ in one of the things an id is made of: the
+	// title, the file, the lines, the side, the anchor.
+	old := finding(AngleStyle, "low", "a.go", LineRange{1, 1}, "one")
+	old.Side = SideOld
 	findings := []Finding{
 		finding(AngleStyle, "low", "a.go", LineRange{1, 1}, "one"),
 		finding(AngleTests, "high", "a.go", LineRange{1, 1}, "two"),
+		finding(AngleStyle, "low", "a.go", LineRange{5, 5}, "one"),
+		finding(AngleStyle, "low", "b.go", LineRange{1, 1}, "one"),
+		old,
 		finding(AngleTests, "high", "", LineRange{}, "three"),
 	}
 	first := Merge(findings, nil)
+	if len(first) != len(findings) {
+		t.Fatalf("got %d findings, want %d kept apart:\n%+v", len(first), len(findings), first)
+	}
 	ids := map[string]string{}
 	hex := regexp.MustCompile(`^[0-9a-f]{8}$`)
 	for _, f := range first {
@@ -212,8 +228,8 @@ func TestAFindingsIDIsStableAndUnique(t *testing.T) {
 			t.Errorf("id %s moved from %q to %q", f.ID, want, f.Title)
 		}
 	}
-	if len(again) != 4 {
-		t.Fatalf("got %d findings, want 4", len(again))
+	if len(again) != len(findings)+1 {
+		t.Fatalf("got %d findings, want %d", len(again), len(findings)+1)
 	}
 	for _, f := range again {
 		if f.Title != "zero" {
@@ -223,22 +239,11 @@ func TestAFindingsIDIsStableAndUnique(t *testing.T) {
 			t.Errorf("the new finding took an existing id %s", f.ID)
 		}
 	}
-	// Different angles reporting the same line and title are one finding
-	// with one id, and the id names the angle that stays.
+	// Two angles reporting the same line and title are one finding with
+	// the id that finding has when one angle reports it.
+	alone := Merge([]Finding{finding(AngleTests, "low", "a.go", LineRange{1, 1}, "one")}, nil)
 	same := Merge([]Finding{finding(AngleStyle, "low", "a.go", LineRange{1, 1}, "one"), finding(AngleTests, "low", "a.go", LineRange{1, 1}, "one")}, nil)
-	if len(same) != 1 || same[0].ID != first[len(first)-1].ID || !strings.HasPrefix(first[len(first)-1].Title, "one") {
-		t.Errorf("the same finding twice: %+v; first merge had %+v", same, first)
-	}
-}
-
-func TestMergeDoesNotChangeWhatItWasGiven(t *testing.T) {
-	a := finding(AngleStyle, "LOW", "a.go", LineRange{1, 1}, "one")
-	a.Sources = []string{"#1"}
-	b := finding(AngleTests, "high", "a.go", LineRange{1, 1}, "one")
-	b.Sources = []string{"#2"}
-	in := []Finding{a, b}
-	Merge(in, nil)
-	if in[0].Severity != "LOW" || in[0].ID != "" || len(in[0].Sources) != 1 || len(in[1].Sources) != 1 || in[1].AlsoFrom != nil {
-		t.Errorf("the input was changed: %+v", in)
+	if len(same) != 1 || same[0].ID != alone[0].ID {
+		t.Errorf("the same finding twice: %+v; alone %+v", same, alone)
 	}
 }

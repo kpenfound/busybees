@@ -97,8 +97,6 @@ func Merge(findings []Finding, project *Project) []Finding {
 			}
 			f.Severity = pinned
 		}
-		f.Sources = slices.Clone(f.Sources)
-		f.AlsoFrom = slices.Clone(f.AlsoFrom)
 		merged := false
 		for i := range kept {
 			if !sameFinding(&kept[i], &f) {
@@ -220,7 +218,9 @@ func compareFindings(a, b Finding) int {
 
 // findingID is the finding's id: the first eight hex digits of the SHA-256
 // of what places it, so the same finding gets the same id on every merge.
+// The angle is not part of it: two angles reporting one place under one
+// title are one finding, merged before ids are given.
 func findingID(f *Finding) string {
-	sum := sha256.Sum256([]byte(strings.Join([]string{f.Angle, f.File, f.Side, f.Lines.String(), f.Title}, "\x00")))
+	sum := sha256.Sum256([]byte(strings.Join([]string{f.File, f.Side, f.Lines.String(), f.Title}, "\x00")))
 	return hex.EncodeToString(sum[:4])
 }

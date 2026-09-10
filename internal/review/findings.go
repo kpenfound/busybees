@@ -35,9 +35,9 @@ const (
 // Finding is one problem a review found.
 type Finding struct {
 	// ID names the finding in triage. It is the first eight hex digits of
-	// the SHA-256 of the angle, file, side, lines and title, so it is the
-	// same on every merge of the same findings and never repeats across
-	// the findings one session adds after another.
+	// the SHA-256 of the file, side, lines and title, so it is the same on
+	// every merge of the same findings and never repeats across the
+	// findings one session adds after another.
 	ID string `json:"id"`
 	// Angle is the angle that found it, a name in BuiltinAngles, and
 	// SessionID that angle's session (AngleRun.SessionID), which is what
