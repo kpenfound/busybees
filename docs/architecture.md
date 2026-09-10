@@ -945,8 +945,8 @@ counted from the transcript's assistant messages or completed items instead.
   server serves the factory's own operations as tools backed by the same code
   the CLI uses, so a session calls a schema instead of composing a command
   line: `mail_send`, `mail_list`, `issue_create`, `issue_link`, `issue_view`,
-  `pr_view`, `comment`, `report_factory_error` and `done` go to every role;
-  `issue_edit_body` to the
+  `pr_view`, `comment`, `report_factory_error`, `notes_read`, `notes_write`
+  and `done` go to every role; `issue_edit_body` to the
   two managers, `issue_set_state` to the project manager, `issue_question`
   to the product manager, `submit_review` to the reviewer and `file_bug`,
   which refuses a bug the repository already reports, to QA. The schemas
