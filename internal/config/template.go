@@ -301,6 +301,12 @@ label = "{{.Label}}"
 #level = "info"
 
 #===============================================================================
+# Where role notes files live.
+#===============================================================================
+[notes]
+#backend = "file"        # file | neo4j
+
+#===============================================================================
 # Global role settings — apply to every role, merged with [roles.<name>]:
 # prompts concatenate (global first), skills union, env and mcp servers union
 # (the role wins on a name conflict), scalars fall back to global then defaults.

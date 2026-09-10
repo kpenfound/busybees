@@ -128,7 +128,10 @@ ends.
 - The network is open: nothing about `container` mode limits which hosts a
   session reaches, unlike `claude`'s allowlist.
 - Everything baked into the image is the session's to use; the image is the
-  operator's responsibility; bees never pulls or verifies it.
+  operator's responsibility; bees never pulls or verifies a `sandbox_image`.
+  A `container_use_environment` is built from the worktree's copy of the
+  definition, so a branch can change what its own sessions run in, and
+  `docker build` pulls its `base_image`.
 - The mounted state directory is shared across roles, so a container
   session can read another role's mail and notes.
 - The `bees` CLI is not in the container: the tools reach it over HTTP

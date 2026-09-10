@@ -459,9 +459,10 @@ func machine(t *testing.T, m *fakeMachine) *fakeMachine {
 }
 
 // A container role needs three things from its configuration, and each
-// refusal names the one that is missing and where to set it: the image, a
-// GitHub credential for gh and pushes inside the container, and a credential
-// for the agent. Each can come from more than one place.
+// refusal names the one that is missing and where to set it: the image (or
+// a container_use_environment to build one from), a GitHub credential for
+// gh and pushes inside the container, and a credential for the agent. Each
+// can come from more than one place.
 func TestCheckSandboxContainer(t *testing.T) {
 	bot := GitHub{Login: "bot", Token: "ghp_x"}
 	cases := []struct {
@@ -475,6 +476,9 @@ func TestCheckSandboxContainer(t *testing.T) {
 		{"unset asks nothing", ResolvedRole{}, GitHub{}, nil, ""},
 		{"claude asks nothing", ResolvedRole{Sandbox: SandboxClaude}, GitHub{}, nil, ""},
 		{"no image", ResolvedRole{Sandbox: SandboxContainer}, bot, map[string]string{"ANTHROPIC_API_KEY": "k"}, "sandbox_image"},
+		{"no image names the alternative", ResolvedRole{Sandbox: SandboxContainer}, bot, map[string]string{"ANTHROPIC_API_KEY": "k"}, "container_use_environment"},
+		{"a definition instead of an image", ResolvedRole{Sandbox: SandboxContainer, ContainerUseEnvironment: "envs/dev"}, bot, map[string]string{"ANTHROPIC_API_KEY": "k"}, ""},
+		{"a definition still needs github", ResolvedRole{Sandbox: SandboxContainer, ContainerUseEnvironment: "envs/dev"}, GitHub{}, map[string]string{"ANTHROPIC_API_KEY": "k"}, "[github]"},
 		{"no github", ResolvedRole{Sandbox: SandboxContainer, SandboxImage: "img"}, GitHub{}, map[string]string{"ANTHROPIC_API_KEY": "k"}, "[github]"},
 		{"GH_TOKEN in the role env instead", ResolvedRole{Sandbox: SandboxContainer, SandboxImage: "img", Env: map[string]string{"GH_TOKEN": "t"}}, GitHub{}, map[string]string{"ANTHROPIC_API_KEY": "k"}, ""},
 		{"no agent credential", ResolvedRole{Sandbox: SandboxContainer, SandboxImage: "img"}, bot, nil, "ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN"},
@@ -505,7 +509,9 @@ func TestCheckSandboxContainer(t *testing.T) {
 
 // The engine question is asked of the machine: docker on PATH, a daemon
 // that answers, the image present. Each refusal names what to do, and the
-// image is never pulled by bees. No other mode touches the engine.
+// image is never pulled by bees. A role whose image is built at session
+// start (container_use_environment, an empty image here) is asked about
+// the engine alone. No other mode touches the engine.
 func TestCheckSandboxEngine(t *testing.T) {
 	failing := func(sub string) func(args ...string) ([]byte, error) {
 		return func(args ...string) ([]byte, error) {
@@ -518,22 +524,29 @@ func TestCheckSandboxEngine(t *testing.T) {
 	cases := []struct {
 		name    string
 		mode    string
+		built   bool // the image is built at session start: none to ask about
 		onPath  []string
 		engine  func(args ...string) ([]byte, error)
 		wantErr []string
 		calls   int
 	}{
-		{"all present", SandboxContainer, []string{"docker"}, nil, nil, 2},
-		{"no docker", SandboxContainer, nil, nil, []string{"docker on PATH"}, 0},
-		{"daemon down", SandboxContainer, []string{"docker"}, failing("info"), []string{"daemon does not answer", "Cannot connect to the daemon"}, 1},
-		{"image missing", SandboxContainer, []string{"docker"}, failing("image"), []string{"ghcr.io/acme/bees:1", "docker pull ghcr.io/acme/bees:1"}, 2},
-		{"none asks nothing", SandboxNone, nil, nil, nil, 0},
-		{"claude asks nothing", SandboxClaude, nil, nil, nil, 0},
+		{"all present", SandboxContainer, false, []string{"docker"}, nil, nil, 2},
+		{"no docker", SandboxContainer, false, nil, nil, []string{"docker on PATH"}, 0},
+		{"daemon down", SandboxContainer, false, []string{"docker"}, failing("info"), []string{"daemon does not answer", "Cannot connect to the daemon"}, 1},
+		{"image missing", SandboxContainer, false, []string{"docker"}, failing("image"), []string{"ghcr.io/acme/bees:1", "docker pull ghcr.io/acme/bees:1"}, 2},
+		{"built at session start", SandboxContainer, true, []string{"docker"}, failing("image"), nil, 1},
+		{"built at session start, daemon down", SandboxContainer, true, []string{"docker"}, failing("info"), []string{"daemon does not answer"}, 1},
+		{"none asks nothing", SandboxNone, false, nil, nil, nil, 0},
+		{"claude asks nothing", SandboxClaude, false, nil, nil, nil, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			m := machine(t, &fakeMachine{onPath: tc.onPath, engine: tc.engine})
-			err := CheckSandboxEngine(tc.mode, "ghcr.io/acme/bees:1")
+			image := "ghcr.io/acme/bees:1"
+			if tc.built {
+				image = ""
+			}
+			err := CheckSandboxEngine(tc.mode, image)
 			if len(m.calls) != tc.calls {
 				t.Errorf("engine calls: got %v, want %d", m.calls, tc.calls)
 			}
@@ -594,6 +607,38 @@ sandbox_image = "ghcr.io/acme/bees:1"
 	err = cfg.CheckSandbox()
 	if err == nil || !strings.Contains(err.Error(), "ANTHROPIC_API_KEY") {
 		t.Errorf("a container developer without an agent credential was not refused by name: %v", err)
+	}
+}
+
+// A container role with container_use_environment and no sandbox_image
+// starts at `bees run` on a machine with docker and the credentials: the
+// engine is asked whether it answers and about no image, since the session
+// builds its own.
+func TestCheckSandboxRunsAContainerUseRole(t *testing.T) {
+	cfg, err := Load(writeConfig(t, `
+version = 1
+[project]
+repo = "a/b"
+[github]
+login = "bot"
+token = "ghp_x"
+[roles.developer]
+sandbox = "container"
+container_use_environment = "envs/dev"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := machine(t, &fakeMachine{onPath: []string{"docker"}, env: map[string]string{"ANTHROPIC_API_KEY": "k"}})
+	if err := cfg.CheckSandbox(); err != nil {
+		t.Fatalf("a container-use developer did not start: %v", err)
+	}
+	if want := "info --format {{.ServerVersion}}"; strings.Join(m.calls, "|") != want {
+		t.Errorf("engine calls: got %v, want [%s]", m.calls, want)
+	}
+	m.engine = func(args ...string) ([]byte, error) { return nil, errors.New("exit status 1") }
+	if err := cfg.CheckSandbox(); err == nil || !strings.Contains(err.Error(), "roles.developer") {
+		t.Errorf("a container-use developer started with the daemon down, or the refusal does not name the role: %v", err)
 	}
 }
 

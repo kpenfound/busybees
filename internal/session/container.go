@@ -54,8 +54,9 @@ import (
 //     skips close leaves it running otherwise. Both files are removed when
 //     the session ends.
 //
-// The image (sandbox_image) must hold the agent, git and gh; nothing of the
-// host's toolchain is available inside.
+// The image — sandbox_image, or the one built from the role's
+// container_use_environment (containeruse.go) — must hold the agent, git
+// and gh; nothing of the host's toolchain is available inside.
 
 // containerHome is the session's home directory inside the container: a
 // tmpfs, so neither the image's home directory nor anything of the host's
@@ -97,6 +98,9 @@ type container struct {
 	sessionDir string
 	// name is the container's name (bees-<session name>-<random>).
 	name string
+	// image is what the container runs: the role's sandbox_image, or the
+	// image built from its container_use_environment.
+	image string
 	// server is the built-in MCP server on the host, and builtin the entry
 	// the session reaches it through.
 	server  *exec.Cmd
@@ -105,12 +109,22 @@ type container struct {
 	vars []envVar
 }
 
-// startContainer prepares a container session: it starts the built-in
-// server on the host and builds the session's environment. Run has already
-// asked config.CheckSandboxContainer what the box needs. The container
-// itself is started by Run, through command; close stops the server.
+// startContainer prepares a container session: it settles the image
+// (building it from the role's container_use_environment when that is set,
+// before anything else starts, so a failed build leaves nothing to stop),
+// starts the built-in server on the host and builds the session's
+// environment. Run has already asked config.CheckSandboxContainer what the
+// box needs. The container itself is started by Run, through command;
+// close stops the server.
 func (r *Runner) startContainer(ctx context.Context, req Request, sessionDir string) (*container, error) {
-	c := &container{r: r, req: req, sessionDir: sessionDir, name: "bees-" + sanitize(req.Name) + "-" + randomHex(4)}
+	c := &container{r: r, req: req, sessionDir: sessionDir, name: "bees-" + sanitize(req.Name) + "-" + randomHex(4), image: req.Role.SandboxImage}
+	if req.Role.ContainerUseEnvironment != "" {
+		image, err := r.containerUseImage(ctx, req, sessionDir)
+		if err != nil {
+			return nil, err
+		}
+		c.image = image
+	}
 	c.vars = r.containerVars(req, sessionDir)
 	if err := c.startServer(ctx); err != nil {
 		return nil, err
@@ -285,7 +299,7 @@ func (c *container) command(ctx context.Context, bin string, args []string) (str
 		}
 		out = append(out, "--env", v.name)
 	}
-	out = append(out, req.Role.SandboxImage, bin)
+	out = append(out, c.image, bin)
 	out = append(out, args...)
 	return r.dockerBin(), out, nil
 }
