@@ -1827,6 +1827,11 @@ func TestGitHubTokenVar(t *testing.T) {
 		if got := (GitHub{Token: c.token}).TokenVar(); got != c.want {
 			t.Errorf("TokenVar(%q) = %q, want %q", c.token, got, c.want)
 		}
+		// The package-level TokenVar answers for a secret in another of
+		// bees' configuration files, and answers it the same way.
+		if got := TokenVar(c.token); got != c.want {
+			t.Errorf("config.TokenVar(%q) = %q, want %q", c.token, got, c.want)
+		}
 	}
 
 	// The name and the value are two halves of one answer: bees resolves the
