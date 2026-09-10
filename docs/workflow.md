@@ -1332,8 +1332,9 @@ a bee never overwrites or clears it. So if you put a feature into a
 milestone, everything that grows out of it lands there too.
 
 You shape the roadmap by creating or editing milestones and moving issues
-between them, editing the product manager's notes file
-(`<state_dir>/notes/product_manager.md`), filing feature or feedback issues,
+between them, editing the product manager's notes (with the default
+`notes.backend = "file"`, `<state_dir>/notes/product_manager.md`; see
+[Notes files](roles.md#notes-files)), filing feature or feedback issues,
 or answering the product manager's questions.
 
 ## One issue, end to end
