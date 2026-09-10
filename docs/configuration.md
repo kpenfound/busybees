@@ -17,6 +17,7 @@ The file starts with a `version` key, followed by these tables:
 | `[github]` | The GitHub account the factory acts as |
 | `[scheduler]` | Concurrency, polling, retries, budgets and the review loop |
 | `[logging]` | Console log format and level |
+| `[notes]` | The backend that stores role notes files |
 | `[global]` | Prompt, skills, MCP servers, model, sandbox and environment for every role |
 | `[roles.<name>]` | The same keys per role, plus a few that only one role takes |
 
@@ -460,6 +461,17 @@ console logging while it is up; `--no-tui`, a redirected stdout and every
 other command log as this table says. The `bees.log` file in the state
 directory is not configurable: it gets every record at debug level, in JSON.
 See [`bees run`](cli.md#bees-run).
+
+## `[notes]`
+
+```toml
+[notes]
+backend = "file"   # file | neo4j
+```
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `backend` | string | `"file"` | Where role notes files live: `file` or `neo4j`. |
 
 ## `[global]` and `[roles.<name>]`
 

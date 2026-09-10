@@ -14,6 +14,7 @@ type View struct {
 	GitHub    GitHubView          `json:"github"`
 	Scheduler Scheduler           `json:"scheduler"`
 	Logging   Logging             `json:"logging"`
+	Notes     Notes               `json:"notes"`
 	Roles     map[string]RoleView `json:"roles"`
 }
 
@@ -102,6 +103,7 @@ func (c *Config) View(roles []string) (View, error) {
 		GitHub:    GitHubView{Login: c.GitHub.Login, Token: c.GitHub.RedactedToken(), GitName: c.GitHub.GitName, GitEmail: c.GitHub.GitEmail},
 		Scheduler: c.Scheduler,
 		Logging:   c.Logging,
+		Notes:     c.Notes,
 		Roles:     map[string]RoleView{},
 	}
 	if v.Scheduler.WorkDays == nil {
