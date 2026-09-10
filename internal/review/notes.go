@@ -245,11 +245,11 @@ func AppendDismissal(path string, d Dismissal) error {
 	if err != nil {
 		return err
 	}
-	if _, err := f.WriteString(head + d.Line() + "\n"); err != nil {
-		f.Close()
-		return err
+	_, err = f.WriteString(head + d.Line() + "\n")
+	if cerr := f.Close(); err == nil {
+		err = cerr
 	}
-	return f.Close()
+	return err
 }
 
 // Write writes the rules back into the file, replacing what is between the
