@@ -23,7 +23,10 @@
 // first session over that bundle and brief.go is what it produces, the
 // starting context of every session after it; angles.go fans those sessions
 // out, one per angle the project enables, and keeps enough of each to reopen
-// it; agent.go runs every one of them, read-only.
+// it; agent.go runs every one of them, read-only. findings.go is what an
+// angle answers with, judge.go merges every angle's into the one list a
+// review triages, and artifact.go is the directory the whole review is kept
+// in.
 package review
 
 import (

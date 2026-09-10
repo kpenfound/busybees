@@ -77,7 +77,7 @@ type AngleRun struct {
 	SessionID string `json:"session_id,omitempty"`
 	// Answer is what the session said last, as it said it: the findings it
 	// was asked for, in the JSON shape the prompt describes. Reading them
-	// into findings is the judge's job, not this file's.
+	// into findings is the judge's job (judge.go), not this file's.
 	Answer string `json:"answer,omitempty"`
 	// Turns is how many turns the session took and CostUSD what it cost,
 	// when the CLI reported one.

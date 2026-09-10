@@ -195,9 +195,8 @@ func trimAll(list []string) []string {
 }
 
 // WriteBrief writes the brief into a review's artifact directory, creating
-// the directory when it is not there. The directory holds the brief and the
-// angle runs (angles.go); how a review finds it again is the artifact
-// format.
+// the directory when it is not there. What else the directory holds, and
+// how a review finds it again, is artifact.go.
 func WriteBrief(dir string, b *Brief) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
