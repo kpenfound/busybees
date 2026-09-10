@@ -28,8 +28,7 @@ func sample() Data {
 		Labels:  config.LabelsFor("bees"),
 		// The proposal gate is on by default; a test that turns it off says so.
 		FeatureProposals: true,
-		WorkDir:          "/tmp/ws", Branch: "bees/issue-4", BaseBranch: "main", StateDir: "/s", SessionDir: "/s/sessions/1", NotesFile: "/s/notes/x.md",
-		Notes:             "remember this",
+		WorkDir:          "/tmp/ws", Branch: "bees/issue-4", BaseBranch: "main", StateDir: "/s", SessionDir: "/s/sessions/1",
 		Inbox:             []mail.Message{{ID: "m1", From: "reviewer", To: "developer", Subject: "Review round 1", Body: "please fix", PR: 9, CreatedAt: sampleMailTime}},
 		Issue:             &github.Issue{Number: 4, Title: "Add thing", Body: "details", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:feature"}}, Author: github.Author{Login: "kyle"}},
 		PR:                &github.PR{Number: 9, Title: "Add thing", HeadRefName: "bees/issue-4", BaseRefName: "main", Author: github.Author{Login: "bot"}},
@@ -57,7 +56,7 @@ func TestRenderAllRoles(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s system: %v", role, err)
 		}
-		for _, want := range []string{"busybees", Title(role), "`mail_send`", "`done`", "`issue_create`", "custom instructions here", "--label \"bees\" --assignee \"kyle\"", "/s/notes/x.md"} {
+		for _, want := range []string{"busybees", Title(role), "`mail_send`", "`done`", "`issue_create`", "custom instructions here", "--label \"bees\" --assignee \"kyle\"", "`notes_read`", "`notes_write`"} {
 			if !strings.Contains(sys, want) {
 				t.Errorf("%s system prompt missing %q", role, want)
 			}
@@ -66,8 +65,13 @@ func TestRenderAllRoles(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s task: %v", role, err)
 		}
-		if !strings.Contains(task, "remember this") {
-			t.Errorf("%s task prompt missing notes", role)
+		// The notes reach a session through notes_read, never the prompt:
+		// nothing tells a role to edit a file, and no prompt has a notes
+		// section to render them into.
+		for _, unwant := range []string{"notes file", "\n## Your notes\n", "/s/notes/"} {
+			if strings.Contains(sys+task, unwant) {
+				t.Errorf("%s prompt contains %q", role, unwant)
+			}
 		}
 		if strings.Contains(sys+task, "<no value>") {
 			t.Errorf("%s prompt contains <no value>", role)
@@ -80,8 +84,9 @@ func TestRenderAllRoles(t *testing.T) {
 func TestConsolidateNotesParagraph(t *testing.T) {
 	// The exact text the partial renders, so that removing it from the
 	// prompt has to give back the prompt as it is rendered today.
-	const para = "\nAlso consolidate your notes this session (every 10 sessions): rewrite `/s/notes/x.md`\n" +
-		"into the sections above — merge duplicates, drop what is stale or contradicted, keep\n" +
+	const para = "\nAlso consolidate your notes this session (every 10 sessions): read them with\n" +
+		"`notes_read` and write back a consolidated version with `notes_write`, organised under\n" +
+		"the standard sections — merge duplicates, drop what is stale or contradicted, keep\n" +
 		"decisions, commands and gotchas. Do it before you report your outcome, in addition to\n" +
 		"your normal work.\n"
 
@@ -105,9 +110,6 @@ func TestConsolidateNotesParagraph(t *testing.T) {
 		}
 		if got := strings.Replace(on, para, "", 1); got != off {
 			t.Errorf("%s changed beyond the paragraph:\n%s", name, got)
-		}
-		if i := strings.Index(on, para); i < strings.Index(on, "remember this") {
-			t.Errorf("%s asks before showing the notes:\n%s", name, on)
 		}
 	}
 }
@@ -887,7 +889,7 @@ func TestDeveloperRunsTheRepositoryChecksBeforePushing(t *testing.T) {
 	if !strings.Contains(flow, "the repository's own lint and test commands") {
 		t.Fatalf("developer system prompt has no self-check step:\n%s", sys)
 	}
-	if !strings.Contains(flow, "Record the exact commands in your notes file") {
+	if !strings.Contains(flow, "Record the exact commands in your notes so later sessions") {
 		t.Fatalf("developer system prompt does not ask for the commands in the notes:\n%s", sys)
 	}
 	// Lint is the cheapest of the three self-checks but not the one review
@@ -1625,7 +1627,7 @@ func TestRequestedReviewRendersWithoutAnIssue(t *testing.T) {
 	}
 	for _, want := range []string{"# Task: review pull request #42 (requested by a person)", "`bees:review-requested`",
 		"## Pull request #42: Fix the widget", "https://github.com/acme/widgets/pull/42", "branch `fix-widget` → `main`", "author: kyle", "It was broken.",
-		"## Mail for you (1)", "please fix", "## Your notes", "remember this", "gh pr diff 42 -R acme/widgets", "`pr_view`", "`status: approved`", "`status: changes-requested`"} {
+		"## Mail for you (1)", "please fix", "`notes_write`", "gh pr diff 42 -R acme/widgets", "`pr_view`", "`status: approved`", "`status: changes-requested`"} {
 		if !strings.Contains(task, want) {
 			t.Errorf("requested-review task lacks %q:\n%s", want, task)
 		}
@@ -1805,7 +1807,11 @@ func TestReviewerFollowUpRoundAccountsForPreviousPoints(t *testing.T) {
 	// The block must add nothing at all to round 1, not even a blank line:
 	// the closing line still follows the instruction paragraph directly, as
 	// it did before the block existed.
-	if strings.Contains(round1, "\n\n\nUpdate your notes file before you finish.") {
+	const closing = "Update your notes (`notes_write`) before you finish."
+	if !strings.Contains(round1, closing) {
+		t.Fatalf("the round 1 task has no closing line %q:\n%s", closing, round1)
+	}
+	if strings.Contains(round1, "\n\n\n"+closing) {
 		t.Errorf("the round > 1 block left a blank line in the round 1 task:\n%s", round1)
 	}
 
@@ -2001,7 +2007,7 @@ func TestAssemblerTaskListsTheAttempts(t *testing.T) {
 		"## Assembled from",
 		"`done` (`status: pr-opened`, `pr: <number>`)",
 		"`status: question`",
-		"remember this",
+		"`notes_write`",
 	} {
 		if !strings.Contains(flowed(task), want) {
 			t.Errorf("assembler task missing %q:\n%s", want, task)

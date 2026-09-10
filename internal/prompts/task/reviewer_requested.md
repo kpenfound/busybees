@@ -46,9 +46,6 @@ say in it that every stage passed and why it is not an approval.
 _No new mail._
 {{end}}
 
-## Your notes
-
-{{if .Notes}}{{.Notes}}{{else}}_Empty._{{end}}
 {{template "consolidate" .}}
 {{template "stages" .}}
 ## Instructions
@@ -69,4 +66,4 @@ verdict line in the stages' order, each followed by its points{{end}}. The
 One review, nothing else on the pull request: do not comment on it as well, and send no
 mail — there is no developer on this pull request.
 
-Update your notes file before you finish.
+Update your notes (`notes_write`) before you finish.

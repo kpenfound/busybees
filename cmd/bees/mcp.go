@@ -30,8 +30,8 @@ import (
 func newMCPCmd(g *globalFlags) *cobra.Command {
 	cmd := groupCmd("mcp", "The built-in MCP server every session talks to")
 	cmd.Long = `Every session gets a stdio MCP server named "bees" that exposes the factory's
-own operations — the mailbox, issue creation and the session outcome — as
-tools, so a session does not have to build a command line for them. bees hands
+own operations — the mailbox, issue creation, the role's notes and the session
+outcome — as tools, so a session does not have to build a command line for them. bees hands
 the server to the agent (in mcp.json for claude, as mcp_servers.bees overrides
 for codex) and the agent starts it; you only run "bees mcp serve" yourself to
 debug it. A container session cannot start it (the bees binary is not in the
@@ -45,7 +45,7 @@ and the session reaches it over HTTP.`
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			b := &backend{g: g}
-			srv := mcpserver.New(mcpserver.EnvFromOS(), mcpserver.Deps{Issues: b, GitHub: b, Feedback: b})
+			srv := mcpserver.New(mcpserver.EnvFromOS(), mcpserver.Deps{Issues: b, GitHub: b, Feedback: b, Notes: b})
 			if listen != "" {
 				return serveMCPHTTP(cmd.Context(), srv, listen, os.Getenv(session.EnvMCPToken), cmd.OutOrStdout())
 			}
@@ -197,12 +197,13 @@ func isCleanShutdown(err error) bool {
 		errors.Is(err, &jsonrpc.Error{Code: codeServerClosing})
 }
 
-// backend is the production implementation of the server's Issues, GitHub
-// and Feedback interfaces: internal/issues for creation, a gh client for
-// everything else, the scheduler.report_factory_errors switch for the
-// factory-error drafts, with bees.toml loaded on first use. The MCP server must
-// start even when the configuration cannot be read, so the failure surfaces
-// from the tool that needs it.
+// backend is the production implementation of the server's Issues, GitHub,
+// Feedback and Notes interfaces: internal/issues for creation, a gh client
+// for everything else, the scheduler.report_factory_errors switch for the
+// factory-error drafts, the notes files under the state directory for the
+// notes, with bees.toml loaded on first use. The MCP server must start even
+// when the configuration cannot be read, so the failure surfaces from the
+// tool that needs it.
 type backend struct {
 	g  *globalFlags
 	mu sync.Mutex
@@ -268,6 +269,35 @@ func (b *backend) ReportFactoryErrors(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	return b.reportFactoryErrors, nil
+}
+
+// notes is the Notes backend: the role's notes file under the state
+// directory, resolved the way `bees notes` resolves it ($BEES_STATE_DIR in a
+// session, bees.toml otherwise), so the tool and the command read one file.
+// bees.toml is not needed inside a session, so a configuration that cannot
+// be read does not take a role's memory with it.
+func (b *backend) notes() (mcpserver.Notes, error) {
+	store, err := notesStore(b.g)
+	if err != nil {
+		return nil, err
+	}
+	return mcpserver.FileNotes(store), nil
+}
+
+func (b *backend) ReadNotes(ctx context.Context, role string) (string, error) {
+	n, err := b.notes()
+	if err != nil {
+		return "", err
+	}
+	return n.ReadNotes(ctx, role)
+}
+
+func (b *backend) WriteNotes(ctx context.Context, role, text string) error {
+	n, err := b.notes()
+	if err != nil {
+		return err
+	}
+	return n.WriteNotes(ctx, role, text)
 }
 
 func (b *backend) Create(ctx context.Context, opts issues.Options) (issues.Result, error) {

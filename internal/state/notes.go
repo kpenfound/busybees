@@ -89,3 +89,39 @@ func (s *Store) AppendNotes(role, text string) error {
 	}
 	return f.Close()
 }
+
+// WriteNotes replaces a role's notes with text, creating the file and its
+// directory when they do not exist yet. It is the whole-text write behind
+// the notes_write tool: a session reads its notes, reworks them (merges,
+// prunes, restructures) and writes the result back. The text is written to
+// a temporary file and renamed into place, so a concurrent read (developer
+// workers share one file) sees the old text or the new one, never half of
+// either.
+func (s *Store) WriteNotes(role, text string) error {
+	p := s.NotesPath(role)
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(p), "."+role+"-*.md")
+	if err != nil {
+		return err
+	}
+	if _, err := tmp.WriteString(text); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmp.Name())
+		return err
+	}
+	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
+		_ = os.Remove(tmp.Name())
+		return err
+	}
+	if err := os.Rename(tmp.Name(), p); err != nil {
+		_ = os.Remove(tmp.Name())
+		return err
+	}
+	return nil
+}

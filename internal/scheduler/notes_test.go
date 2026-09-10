@@ -43,7 +43,7 @@ func TestConsolidateReason(t *testing.T) {
 	if got := consolidateReason(200, 1, 32768); got != "every 1 session" {
 		t.Errorf("singular count reason: %q", got)
 	}
-	if got := consolidateReason(40960, 10, 32768); got != "file is 40 KB" {
+	if got := consolidateReason(40960, 10, 32768); got != "notes are 40 KB" {
 		t.Errorf("size reason: %q", got)
 	}
 }
@@ -77,8 +77,13 @@ func TestNotesConsolidationIsAskedForOnSchedule(t *testing.T) {
 	if !strings.Contains(second, "Also consolidate your notes this session (every 2 sessions)") {
 		t.Errorf("second developer session was not asked to consolidate:\n%s", second)
 	}
-	if !strings.Contains(second, h.store.NotesPath(config.RoleDeveloper)) {
-		t.Errorf("the ask does not name the notes file:\n%s", second)
+	for _, want := range []string{"`notes_read`", "`notes_write`"} {
+		if !strings.Contains(second, want) {
+			t.Errorf("the ask does not name %s:\n%s", want, second)
+		}
+	}
+	if strings.Contains(second, h.store.NotesPath(config.RoleDeveloper)) {
+		t.Errorf("the ask names the notes file, which the session cannot be told to edit:\n%s", second)
 	}
 
 	rs, err := h.store.Role(config.RoleDeveloper)
@@ -121,5 +126,46 @@ func TestSingletonRunKeepsSessionCounters(t *testing.T) {
 	}
 	if rs.Sessions != 1 {
 		t.Errorf("product manager sessions recorded: %d, want 1", rs.Sessions)
+	}
+}
+
+// A session's notes reach it through notes_read, not the prompt: what is
+// in the notes file when a session starts is in neither of its prompts, and
+// the system prompt names the tools it reads and writes them with instead.
+// Their size still drives the consolidation ask: with notes_max_bytes below
+// the file's size the session is asked, and the reason carries that size.
+func TestNotesAreNotRenderedIntoThePrompts(t *testing.T) {
+	h := newHarnessAt(t, strings.Replace(devOnlyTOML, "max_review_rounds = 3\n", "max_review_rounds = 3\nnotes_max_bytes = 64\n", 1), time.Now())
+	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true}
+	const sentinel = "THE NOTES SAY: run the e2e suite twice, and then a third time for luck"
+	notes := "# developer notes\n\n- " + sentinel + "\n"
+	if len(notes) <= 64 {
+		t.Fatalf("fixture notes are %d bytes, want more than notes_max_bytes", len(notes))
+	}
+	if err := h.store.WriteNotes(config.RoleDeveloper, notes); err != nil {
+		t.Fatal(err)
+	}
+	seedReady(h, 1, "m", time.Now().Add(-time.Hour))
+
+	if err := h.sched.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(h.sessions(config.RoleDeveloper)); n != 1 {
+		t.Fatalf("developer sessions: %d, want 1", n)
+	}
+	sys, task := systemPromptOf(t, h, 0), promptOf(t, h, 0)
+	if strings.Contains(sys+task, sentinel) {
+		t.Errorf("the notes were rendered into a prompt:\n%s\n%s", sys, task)
+	}
+	for _, want := range []string{"`notes_read`", "`notes_write`"} {
+		if !strings.Contains(sys, want) {
+			t.Errorf("the system prompt does not name %s:\n%s", want, sys)
+		}
+	}
+	if strings.Contains(sys+task, h.store.NotesPath(config.RoleDeveloper)) {
+		t.Errorf("a prompt names the notes file:\n%s\n%s", sys, task)
+	}
+	if ask := "Also consolidate your notes this session (notes are " + byteSize(len(notes)) + ")"; !strings.Contains(task, ask) {
+		t.Errorf("the task does not ask %q:\n%s", ask, task)
 	}
 }

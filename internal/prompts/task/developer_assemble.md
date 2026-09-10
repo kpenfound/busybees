@@ -49,9 +49,6 @@ hold work worth taking.
 _No new mail._
 {{end}}
 
-## Your notes
-
-{{if .Notes}}{{.Notes}}{{else}}_Empty._{{end}}
 {{template "consolidate" .}}
 ## Instructions
 
@@ -93,4 +90,4 @@ If the issue turns out to need an answer no attempt could settle, send one
 message with `mail_send` (`to: project_manager`, `issue: {{.Issue.Number}}`) and
 report `done` with `status: question`; report `failed` only when nothing on any
 attempt can move the issue forward, and say why in the note.
-Update your notes file before you finish.
+Update your notes (`notes_write`) before you finish.

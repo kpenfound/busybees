@@ -1172,7 +1172,6 @@ variable that process inherited, plus:
 | `BEES_ISSUE` | The issue the session works on, when any. |
 | `BEES_PR` | The pull request, when any. |
 | `BEES_BRANCH` | The checked-out branch, when any. |
-| `BEES_NOTES_FILE` | The role's notes file. |
 | `BEES_BIN` | Path of the `bees` executable. Its directory is also prepended to `PATH`, so a session can run `bees mail` and `bees done`. Not set in a `container` session, which has no `bees` binary. |
 | `BEES_REVIEW_MODE` | `checks` in a reviewer session that diagnoses failed checks; unset otherwise. |
 | `SHELL` | The configured `shell`, when set. |

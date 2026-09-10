@@ -36,9 +36,6 @@ over.
 _No new mail._
 {{end}}
 
-## Your notes
-
-{{if .Notes}}{{.Notes}}{{else}}_Empty._{{end}}
 {{template "consolidate" .}}
 ## Instructions
 
@@ -60,4 +57,4 @@ Implement the issue, push, open the pull request (body must include
 {{- end}}
 If you must ask the project manager something first, send the mail and report `done`
 with `status: question`.
-Update your notes file before you finish.
+Update your notes (`notes_write`) before you finish.

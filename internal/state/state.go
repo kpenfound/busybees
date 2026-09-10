@@ -95,9 +95,9 @@ func (s *Store) ReadNotes(role string) (string, error) {
 	return string(b), err
 }
 
-// EnsureNotes creates the notes file so sessions can edit it in place. A
-// fresh file already carries the section headings roles are asked to
-// consolidate their notes into, so the structure exists from the first run.
+// EnsureNotes creates the notes file when there is none, so a role's first
+// notes_read returns the section headings roles are asked to consolidate
+// their notes into, and the structure exists from the first run.
 func (s *Store) EnsureNotes(role string) error {
 	p := s.NotesPath(role)
 	if _, err := os.Stat(p); err == nil {

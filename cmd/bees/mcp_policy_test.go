@@ -4,6 +4,10 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/session"
+	"github.com/kpenfound/busybees/internal/state"
 )
 
 // TestIssuePolicyFollowsTheConfig covers the one place the CLI and the MCP
@@ -46,5 +50,36 @@ func TestBackendReadsReportFactoryErrors(t *testing.T) {
 		if got != want {
 			t.Errorf("%q: ReportFactoryErrors %v, want %v", strings.TrimPrefix(toml, botTOML), got, want)
 		}
+	}
+}
+
+// TestBackendNotesAreTheStateDirsFiles: the backend a session's notes_read
+// and notes_write go through reads and replaces the role's notes file under
+// $BEES_STATE_DIR — the file `bees notes show` prints — without loading
+// bees.toml, which a session does not need for its own memory.
+func TestBackendNotesAreTheStateDirsFiles(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(session.EnvStateDir, dir)
+	b := &backend{g: &globalFlags{}}
+	ctx := context.Background()
+	got, err := b.ReadNotes(ctx, config.RoleReviewer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != state.NotesSkeleton(config.RoleReviewer) {
+		t.Errorf("first read = %q, want the skeleton", got)
+	}
+	if err := b.WriteNotes(ctx, config.RoleReviewer, "# reviewer notes\n\n- always run the e2e suite\n"); err != nil {
+		t.Fatal(err)
+	}
+	onDisk, err := state.New(dir).ReadNotes(config.RoleReviewer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if onDisk != "# reviewer notes\n\n- always run the e2e suite\n" {
+		t.Errorf("notes file = %q", onDisk)
+	}
+	if got, err = b.ReadNotes(ctx, config.RoleReviewer); err != nil || got != onDisk {
+		t.Errorf("read back %q, %v", got, err)
 	}
 }
