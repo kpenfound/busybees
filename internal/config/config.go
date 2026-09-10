@@ -402,6 +402,14 @@ type MCPServer struct {
 	Headers map[string]string `toml:"headers" json:"headers"`
 }
 
+// MoEExpert is one named developer variant in a mixture-of-experts fan-out:
+// the prompt its session runs with and, optionally, the model it runs. Both
+// empty means the expert runs the developer role's own prompt and model.
+type MoEExpert struct {
+	Prompt string `toml:"prompt" json:"prompt"`
+	Model  string `toml:"model" json:"model"`
+}
+
 // RoleSettings are the settings that can be given globally or per role.
 type RoleSettings struct {
 	// Prompt is appended to the role's base prompt.
@@ -489,6 +497,20 @@ type RoleSettings struct {
 	// developer role's own model and prompt.
 	AssemblerModel  string `toml:"assembler_model"`
 	AssemblerPrompt string `toml:"assembler_prompt"`
+	// MoEExpertsBySize names the experts one work item of that size fans
+	// out to, keyed by "xs".."xl": a mixture of experts, one session per
+	// name, instead of one plain developer round. A size with no entry runs
+	// a plain round, and the empty table means mixture of experts is off.
+	// A size cannot be in this table and in BestOfNBySize both.
+	MoEExpertsBySize map[string][]string `toml:"moe_experts_by_size"`
+	// MoEExperts is the table of named experts a MoEExpertsBySize entry
+	// lists from.
+	MoEExperts map[string]MoEExpert `toml:"moe_experts"`
+	// MoEAssemblerModel and MoEAssemblerPrompt override the model and the
+	// prompt of the session that merges the experts' work and opens the
+	// pull request. Empty: the developer role's own model and prompt.
+	MoEAssemblerModel  string `toml:"moe_assembler_model"`
+	MoEAssemblerPrompt string `toml:"moe_assembler_prompt"`
 
 	// The following key is only valid under [roles.product_manager].
 
@@ -1208,16 +1230,24 @@ type ResolvedRole struct {
 	BestOfNPrompt   string
 	AssemblerModel  string
 	AssemblerPrompt string
-	FallbackModel   string
-	Agent           string
-	Effort          string
-	MaxTurns        int
-	Timeout         time.Duration
-	AllowedTools    []string
-	DisallowedTools []string
-	Enabled         bool
-	Shell           string
-	Env             map[string]string
+	// MoEExpertsBySize, the experts a work item of that size fans out to,
+	// MoEExpertsByName, the table they are named from, and the model and
+	// prompt overrides for the session that merges their work; developer
+	// only. Read the experts through MoEExperts.
+	MoEExpertsBySize   map[string][]string
+	MoEExpertsByName   map[string]MoEExpert
+	MoEAssemblerModel  string
+	MoEAssemblerPrompt string
+	FallbackModel      string
+	Agent              string
+	Effort             string
+	MaxTurns           int
+	Timeout            time.Duration
+	AllowedTools       []string
+	DisallowedTools    []string
+	Enabled            bool
+	Shell              string
+	Env                map[string]string
 	// Sandbox is the resolved sandbox mode, one of SandboxModes.
 	Sandbox string
 	// SandboxImage is the image a SandboxContainer session runs in, empty
@@ -1587,8 +1617,8 @@ func (c *Config) Validate() error {
 		if scope == "global" && rs.Enabled != nil {
 			errs = append(errs, fmt.Sprintf("%s: enabled is only valid under roles.<name>", scope))
 		}
-		if scope != "roles."+RoleDeveloper && (rs.CommitFlags != "" || rs.MaxSize != "" || len(rs.ModelBySize) > 0 || len(rs.BestOfNBySize) > 0 || rs.BestOfNModel != "" || rs.BestOfNPrompt != "" || rs.AssemblerModel != "" || rs.AssemblerPrompt != "") {
-			errs = append(errs, fmt.Sprintf("%s: commit_flags, max_size, model_by_size, best_of_n_by_size, best_of_n_model, best_of_n_prompt, assembler_model and assembler_prompt are only valid under roles.developer", scope))
+		if scope != "roles."+RoleDeveloper && (rs.CommitFlags != "" || rs.MaxSize != "" || len(rs.ModelBySize) > 0 || len(rs.BestOfNBySize) > 0 || rs.BestOfNModel != "" || rs.BestOfNPrompt != "" || rs.AssemblerModel != "" || rs.AssemblerPrompt != "" || len(rs.MoEExpertsBySize) > 0 || len(rs.MoEExperts) > 0 || rs.MoEAssemblerModel != "" || rs.MoEAssemblerPrompt != "") {
+			errs = append(errs, fmt.Sprintf("%s: commit_flags, max_size, model_by_size, best_of_n_by_size, best_of_n_model, best_of_n_prompt, assembler_model, assembler_prompt, moe_experts_by_size, moe_experts, moe_assembler_model and moe_assembler_prompt are only valid under roles.developer", scope))
 		}
 		if scope != "roles."+RoleProductManager && rs.MinIssueSize != "" {
 			errs = append(errs, fmt.Sprintf("%s: min_issue_size is only valid under roles.product_manager", scope))
@@ -1614,6 +1644,29 @@ func (c *Config) Validate() error {
 				errs = append(errs, fmt.Sprintf("%s.best_of_n_by_size: unknown size %q (want one of %s)", scope, size, strings.Join(Sizes, ", ")))
 			case rs.BestOfNBySize[size] < 1:
 				errs = append(errs, fmt.Sprintf("%s.best_of_n_by_size.%s must be at least 1", scope, size))
+			}
+		}
+		// The two fan-out modes are mutually exclusive per size: a size in
+		// both tables would have two attempt counts and two sets of prompts.
+		// A best_of_n_by_size entry of 1 is best-of-N off, and still counts
+		// as configured, so the load error names it rather than silently
+		// preferring one table over the other.
+		for _, size := range slices.Sorted(maps.Keys(rs.MoEExpertsBySize)) {
+			names := rs.MoEExpertsBySize[size]
+			if !slices.Contains(Sizes, size) {
+				errs = append(errs, fmt.Sprintf("%s.moe_experts_by_size: unknown size %q (want one of %s)", scope, size, strings.Join(Sizes, ", ")))
+				continue
+			}
+			if len(names) == 0 {
+				errs = append(errs, fmt.Sprintf("%s.moe_experts_by_size.%s must name at least one expert", scope, size))
+			}
+			for _, name := range names {
+				if _, ok := rs.MoEExperts[name]; !ok {
+					errs = append(errs, fmt.Sprintf("%s.moe_experts_by_size: unknown expert %q for size %q (want one of the keys of moe_experts)", scope, name, size))
+				}
+			}
+			if _, ok := rs.BestOfNBySize[size]; ok {
+				errs = append(errs, fmt.Sprintf("%s: size %q is in both best_of_n_by_size and moe_experts_by_size, and a size fans out one way or the other", scope, size))
 			}
 		}
 		// An unset list means the default; an explicit empty one is a
@@ -1760,6 +1813,10 @@ func (c *Config) Role(name string) (ResolvedRole, error) {
 		BestOfNPrompt:           strings.TrimSpace(rs.BestOfNPrompt),
 		AssemblerModel:          strings.TrimSpace(rs.AssemblerModel),
 		AssemblerPrompt:         strings.TrimSpace(rs.AssemblerPrompt),
+		MoEExpertsBySize:        expertsBySize(rs.MoEExpertsBySize),
+		MoEExpertsByName:        expertTable(rs.MoEExperts),
+		MoEAssemblerModel:       strings.TrimSpace(rs.MoEAssemblerModel),
+		MoEAssemblerPrompt:      strings.TrimSpace(rs.MoEAssemblerPrompt),
 		FallbackModel:           firstNonEmpty(rs.FallbackModel, g.FallbackModel, defaultFallback),
 		Agent:                   agent,
 		Effort:                  firstNonEmpty(rs.Effort, g.Effort),
@@ -1851,6 +1908,66 @@ func (r ResolvedRole) BestOfN(size string) int {
 		return n
 	}
 	return 1
+}
+
+// ResolvedMoEExpert is one expert of a mixture-of-experts round, with the
+// model and prompt its session runs: the expert's own where it names one,
+// else the developer role's.
+type ResolvedMoEExpert struct {
+	Name   string
+	Model  string
+	Prompt string
+}
+
+// MoEExperts returns the experts a work item of the given size fans out to,
+// in the order moe_experts_by_size lists them, so an attempt's position in
+// the list is its number. An empty or unknown size, and a role that carries
+// no table, fans out to no experts at all.
+func (r ResolvedRole) MoEExperts(size string) []ResolvedMoEExpert {
+	names := r.MoEExpertsBySize[size]
+	if len(names) == 0 {
+		return nil
+	}
+	experts := make([]ResolvedMoEExpert, 0, len(names))
+	for _, name := range names {
+		e := r.MoEExpertsByName[name]
+		experts = append(experts, ResolvedMoEExpert{
+			Name:   name,
+			Model:  firstNonEmpty(e.Model, r.ModelFor(size)),
+			Prompt: firstNonEmpty(e.Prompt, r.Prompt),
+		})
+	}
+	return experts
+}
+
+// expertsBySize copies a moe_experts_by_size table, dropping sizes that name
+// no expert. It returns nil for an empty table. Names are copied as written:
+// validation has already matched them against the keys of moe_experts.
+func expertsBySize(m map[string][]string) map[string][]string {
+	var out map[string][]string
+	for size, names := range m {
+		if len(names) == 0 {
+			continue
+		}
+		if out == nil {
+			out = make(map[string][]string, len(m))
+		}
+		out[size] = append([]string{}, names...)
+	}
+	return out
+}
+
+// expertTable copies a moe_experts table, trimming each expert's prompt and
+// model. It returns nil for an empty table.
+func expertTable(m map[string]MoEExpert) map[string]MoEExpert {
+	var out map[string]MoEExpert
+	for name, e := range m {
+		if out == nil {
+			out = make(map[string]MoEExpert, len(m))
+		}
+		out[name] = MoEExpert{Prompt: strings.TrimSpace(e.Prompt), Model: strings.TrimSpace(e.Model)}
+	}
+	return out
 }
 
 // sizeInts copies a best_of_n_by_size table, dropping entries at or below 1:
