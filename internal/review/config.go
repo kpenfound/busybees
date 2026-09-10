@@ -24,9 +24,11 @@
 // starting context of every session after it; angles.go fans those sessions
 // out, one per angle the project enables, and keeps enough of each to reopen
 // it; agent.go runs every one of them, read-only. findings.go is what an
-// angle answers with, judge.go merges every angle's into the one list a
-// review triages, and artifact.go is the directory the whole review is kept
-// in.
+// angle answers with and judge.go merges every angle's into the one list a
+// review triages; notes.go is the reviewer notes, the file outside every
+// review that holds what this reviewer has dismissed before, and noise.go
+// keeps what they dismissed out of the list before triage reads it.
+// artifact.go is the directory the whole review is kept in.
 package review
 
 import (

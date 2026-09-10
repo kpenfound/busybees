@@ -15,7 +15,9 @@ import (
 // triages: each finding's severity normalised to the four the schema knows
 // and pinned where the project pins its category, a category the project
 // turned off dropped, the same problem reported by two angles kept once,
-// the list ordered most severe first, and every finding given its id.
+// the list ordered most severe first, and every finding given its id. What
+// the person reviewing has said no to before is not the judge's to weigh:
+// their reviewer notes act on the list it made, after it (noise.go).
 //
 // It is deterministic code, not a session. The factory's own merge step,
 // the mixture-of-experts assembler (internal/scheduler/bestofn.go with

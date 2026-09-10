@@ -413,3 +413,33 @@ func TestTheAnglesRunTheConfiguredAgent(t *testing.T) {
 		t.Errorf("angles = %+v, %+v, want the configured provider and model and the checkout", agent, a)
 	}
 }
+
+func TestAnAngleSessionIsToldWhatItsReviewerDismissedBefore(t *testing.T) {
+	agent := newFakeAngleAgent(len(BuiltinAngles))
+	angles := &Angles{Agent: agent, Dir: t.TempDir(), Rules: []Rule{
+		{Repo: testRepo, Angle: AngleStyle, Category: "naming", Action: RuleDrop, Text: "receiver names are short here"},
+		{Repo: "acme/gadgets", Angle: AngleStyle, Action: RuleDrop, Text: "another repository's notes"},
+	}}
+	if _, err := angles.Run(context.Background(), t.TempDir(), &Project{}, testBrief(), testDiff); err != nil {
+		t.Fatal(err)
+	}
+	prompt := agent.reqs[AngleStyle].Prompt
+	for _, want := range []string{"## Dismissed before", "- receiver names are short here"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("the style session was not told %q:\n%s", want, prompt)
+		}
+	}
+	if strings.Contains(prompt, "another repository's notes") {
+		t.Errorf("the style session was told a rule about another repository:\n%s", prompt)
+	}
+	// After what the angle looks for, before the brief: the session is told
+	// what was dismissed from its angle, not from the change.
+	if at := strings.Index(prompt, "## Dismissed before"); at < strings.Index(prompt, "## Your angle: style") || at > strings.Index(prompt, "# Review brief") {
+		t.Errorf("the dismissals are out of order in the style session's prompt:\n%s", prompt)
+	}
+	for _, angle := range []string{AngleAcceptance, AngleTests, AngleSideEffects} {
+		if strings.Contains(agent.reqs[angle].Prompt, "## Dismissed before") {
+			t.Errorf("the %s session was told what the style angle's reviewer dismissed", angle)
+		}
+	}
+}
