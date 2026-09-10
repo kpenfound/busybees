@@ -123,7 +123,8 @@ func CheckSandboxMode(mode string) error {
 }
 
 // CheckSandboxContainer reports whether one resolved role has what a
-// container session needs from its configuration: an image to run in, a
+// container session needs from its configuration: an image to run in (or
+// a container_use_environment to build one from at session start), a
 // GitHub credential the session's gh and pushes can use inside it, and a
 // credential for its agent. Inside the container there is no keychain, no
 // home directory and no gh login of the machine owner, so each of these
@@ -135,8 +136,8 @@ func CheckSandboxContainer(r ResolvedRole, gh GitHub) error {
 	if r.Sandbox != SandboxContainer {
 		return nil
 	}
-	if r.SandboxImage == "" {
-		return fmt.Errorf("sandbox %q needs sandbox_image: the image the session runs in, holding the agent, git and gh", r.Sandbox)
+	if r.SandboxImage == "" && r.ContainerUseEnvironment == "" {
+		return fmt.Errorf("sandbox %q needs sandbox_image (the image the session runs in, holding the agent, git and gh) or container_use_environment (a definition to build one from)", r.Sandbox)
 	}
 	if gh.ResolvedToken() == "" && r.Env[EnvGHToken] == "" {
 		return fmt.Errorf("sandbox %q needs [github] (login and token) or %s in the role's env: inside the container gh and git push have no other credentials", r.Sandbox, EnvGHToken)
@@ -161,9 +162,11 @@ const EnvGHToken = "GH_TOKEN"
 // session: the engine is on PATH, its daemon answers, and the image is
 // present. It is a question about the machine, so `bees run` asks it once,
 // ahead of the doctor, and the runner does not: a missing engine fails every
-// session the same way, and an image is pulled by a person, deliberately,
-// not by the factory at the first session. A mode other than container asks
-// nothing.
+// session the same way, and a sandbox_image is pulled by a person,
+// deliberately, not by the factory at the first session. An empty image is
+// a role with container_use_environment instead: the session runner builds
+// that image at session start, and the engine pulls its base image then, so
+// only the engine is asked about. A mode other than container asks nothing.
 func CheckSandboxEngine(mode, image string) error {
 	if mode != SandboxContainer {
 		return nil
@@ -173,6 +176,9 @@ func CheckSandboxEngine(mode, image string) error {
 	}
 	if out, err := engineCommand("info", "--format", "{{.ServerVersion}}"); err != nil {
 		return fmt.Errorf("sandbox %q: %s is installed but its daemon does not answer: %s", mode, ContainerEngine, oneLine(out, err))
+	}
+	if image == "" {
+		return nil
 	}
 	if out, err := engineCommand("image", "inspect", "--format", "{{.Id}}", image); err != nil {
 		return fmt.Errorf("sandbox %q: image %q is not on this machine (%s); pull or build it first: %s pull %s", mode, image, oneLine(out, err), ContainerEngine, image)
