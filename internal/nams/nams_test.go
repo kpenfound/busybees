@@ -434,3 +434,37 @@ func TestUnwrapAcceptsEnvelopeAndBareArray(t *testing.T) {
 		t.Error("an envelope under another key was accepted")
 	}
 }
+
+// Size is the byte length of the notes a read would return — the newest
+// version, or the skeleton for a role that never wrote — measured by
+// reading them, since the service has no size query. It creates nothing.
+func TestSizeIsTheLengthOfTheNewestVersion(t *testing.T) {
+	f, n := newFake(t)
+	ctx := context.Background()
+	got, err := n.Size(ctx, "developer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := int64(len(state.NotesSkeleton("developer"))); got != want {
+		t.Errorf("size before the first write = %d, want the skeleton's %d", got, want)
+	}
+	if posts := f.posts(); len(posts) != 0 {
+		t.Errorf("measuring wrote: %v", posts)
+	}
+	const v1 = "# developer notes\n\n## Project facts\n\n- run dagger check\n"
+	const v2 = v1 + "- and gofmt\n- and go mod tidy — ünicode counts as its bytes\n"
+	f.seed("developer", v1, v2)
+	if got, err = n.Size(ctx, "developer"); err != nil || got != int64(len(v2)) {
+		t.Errorf("size = %d, %v; want the newest version's %d", got, err, len(v2))
+	}
+	// A role with a conversation of its own is measured on its own.
+	f.seed("qa", "# qa notes\n")
+	if got, _ = n.Size(ctx, "qa"); got != int64(len("# qa notes\n")) {
+		t.Errorf("qa size = %d", got)
+	}
+
+	f.failWith = http.StatusInternalServerError
+	if _, err = n.Size(ctx, "developer"); err == nil {
+		t.Error("a failing service was measured as a size")
+	}
+}

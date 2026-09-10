@@ -252,8 +252,8 @@ assignee = "busybees-bot"
 | `retry_delay` | duration | `"10m"` | Wait before a retry. `"0s"` retries at once; a negative value is rejected. |
 | `retry_with_fallback` | bool | `true` | Run the retry with the role's `fallback_model` as its primary model. A role without one reruns as it was. |
 | `triage_batch_size` | int | `5` | Most issues handed to the project manager in one session. `0` means the default. |
-| `notes_consolidate_every` | int | `10` | Sessions a role runs between two in which it is also asked to consolidate its [notes file](roles.md#notes-files). `0` means the default; a negative value is rejected. |
-| `notes_max_bytes` | int | `32768` | Ask for consolidation early, whatever the session count, once a notes file is larger than this. `0` means the default; a negative value is rejected. |
+| `notes_consolidate_every` | int | `10` | Sessions a role runs between two in which it is also asked to consolidate its [notes](roles.md#notes-files). `0` means the default; a negative value is rejected. |
+| `notes_max_bytes` | int | `32768` | Ask for consolidation early, whatever the session count, once a role's notes are larger than this. Measured in the backend [`notes.backend`](#notes) names. `0` means the default; a negative value is rejected. |
 | `dispatch_order` | string | `"small-first"` | Which `bees:ready` issue a free developer takes next: `small-first`, `oldest` or `large-first`. Ties go to the older issue, and an issue without a size ranks as `m`. Issues carrying `bees:priority` come first whatever this says, and issues already in flight (`bees:in-progress`, `bees:review`, a `bees:ready` issue with an open pull request, a `bees:approved` issue whose checks were interrupted) are resumed before new work. See [Sizing](workflow.md#size-decides-what-gets-built-next). |
 | `max_large_in_flight` | int | `1` | How many `bees:size/l` issues developer workers may hold at once. A large issue over the cap is skipped and the worker takes the next issue that fits. `0` means no cap; a negative value is rejected. |
 | `pr_fix_conflicts` | bool | `true` | Hand an open pull request that conflicts with the default branch back to its developer: the developer is mailed from `orchestrator` to merge, resolve, test and push, and an approved issue goes back to `bees:ready` ahead of new work. See [Conflicts with the default branch](workflow.md#conflicts-with-the-default-branch). |
@@ -478,12 +478,12 @@ backend = "file"   # file | neo4j
 | `neo4j_api_key` | string | `""` | An API key for `neo4j_url`, written as a `"$VAR"` reference so the secret is not in this file. Required with `backend = "neo4j"`; a reference that expands to nothing fails to load, naming the variable. Redacted as written in `bees config show`. |
 
 `bees` neither runs nor embeds Neo4j Agent Memory; with `backend = "neo4j"`
-the tools talk to the REST API at `neo4j_url` and nothing else in bees does.
-`neo4j_url` and `neo4j_api_key` are ignored with `backend = "file"`, so they
-can stay in the file across a switch. `bees notes show|edit|reset|add`, and
-the notes size `bees status` and the [`scheduler`](#scheduler) consolidation
-triggers read, always act on the state directory's file, whatever `backend`
-is.
+the notes tools talk to the REST API at `neo4j_url`, and so do `bees status`
+and the [`scheduler`](#scheduler) consolidation trigger when they measure a
+role's notes. `neo4j_url` and `neo4j_api_key` are ignored with
+`backend = "file"`, so they can stay in the file across a switch.
+`bees notes show|edit|reset|add` are the exception: they always act on the
+state directory's file, whatever `backend` is.
 
 ## `[global]` and `[roles.<name>]`
 

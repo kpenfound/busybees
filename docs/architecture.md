@@ -394,8 +394,10 @@ then wait for everything it started. `--roles` restricts dispatch to the named
 roles; a role with `enabled = false` in `bees.toml` is skipped regardless.
 
 **`status.json`** is rewritten after every pass and whenever a worker or
-singleton starts or stops; `bees status` reads it, the mailbox and the notes
-files, and asks GitHub nothing. Two of its queue counts carry their detail:
+singleton starts or stops; `bees status` reads it, the mailbox and the size of
+each role's notes (from the backend [`notes.backend`](configuration.md#notes)
+names, so with `backend = "neo4j"` it asks that service), and asks GitHub
+nothing. Two of its queue counts carry their detail:
 `needs_human` names each escalated issue and why, from the reason the
 escalation recorded, and `approved` names each pull request waiting for a
 person to merge, oldest first. Both are built from the snapshot the counts

@@ -992,8 +992,10 @@ func newHarness(t *testing.T, toml string) *harness {
 }
 
 // newHarnessAt builds a harness whose scheduler reads the clock from
-// harness.clock, starting at now. A zero now uses the real clock.
-func newHarnessAt(t *testing.T, toml string, now time.Time) *harness {
+// harness.clock, starting at now. A zero now uses the real clock. Each opt
+// is given the Deps the scheduler is built from, for a test that replaces
+// one of them.
+func newHarnessAt(t *testing.T, toml string, now time.Time, opts ...func(*Deps)) *harness {
 	t.Helper()
 	_, clone := testutil.SetupRepos(t)
 	cfgPath := filepath.Join(clone, "bees.toml")
@@ -1077,6 +1079,9 @@ func newHarnessAt(t *testing.T, toml string, now time.Time) *harness {
 	if !now.IsZero() {
 		clock = &fakeClock{t: now}
 		deps.Now = clock.now
+	}
+	for _, opt := range opts {
+		opt(&deps)
 	}
 	sched, err := New(deps)
 	if err != nil {
