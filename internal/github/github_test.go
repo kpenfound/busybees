@@ -152,6 +152,31 @@ func TestListParsing(t *testing.T) {
 	}
 }
 
+func TestPRDiff(t *testing.T) {
+	c := New("a/b")
+	var got []string
+	c.Exec = func(ctx context.Context, args ...string) ([]byte, error) {
+		got = args
+		return []byte("diff --git a/x b/x\n+one\n"), nil
+	}
+	diff, err := c.PRDiff(context.Background(), 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff != "diff --git a/x b/x\n+one\n" {
+		t.Fatalf("diff %q", diff)
+	}
+	if strings.Join(got, " ") != "pr diff 9 -R a/b" {
+		t.Fatalf("args %v", got)
+	}
+	c.Exec = func(ctx context.Context, args ...string) ([]byte, error) {
+		return []byte("half a diff"), fmt.Errorf("gh: no such pull request")
+	}
+	if diff, err := c.PRDiff(context.Background(), 9); err == nil || diff != "" {
+		t.Fatalf("a failed call returned %q, %v", diff, err)
+	}
+}
+
 func TestPRActivity(t *testing.T) {
 	c := New("a/b")
 	base := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
