@@ -11,7 +11,10 @@
 // behind a bug report — instead of restating them in a prompt.
 // report_factory_error queues a draft through internal/feedback when
 // scheduler.report_factory_errors is on, and says that it recorded nothing
-// when it is off. It
+// when it is off. notes_read and notes_write are a role's notes — its only
+// memory between sessions — as one text, read whole and replaced whole,
+// through the Notes backend the caller wires in (the file under
+// <state_dir>/notes/ in `bees mcp serve`); the prompt does not carry them. It
 // is started as `bees mcp serve` (or, for a container session, by the
 // session runner on the host as `bees mcp serve --listen`, which serves it
 // over HTTP) and takes its context (role, state dir, session dir, issue,
@@ -93,6 +96,9 @@ type Deps struct {
 	// Drafts is the queue report_factory_error writes to. When nil it is
 	// opened under Env.StateDir.
 	Drafts *feedback.Queue
+	// Notes reads and replaces a role's notes. When nil the notes tools
+	// report that they are unavailable, exactly like Issues.
+	Notes Notes
 }
 
 // server holds the state shared by the tool handlers.
@@ -103,13 +109,14 @@ type server struct {
 	github   GitHub
 	feedback Feedback
 	drafts   *feedback.Queue
+	notes    Notes
 }
 
 // New builds the MCP server for env. It never fails: a missing collaborator
 // turns into an error from the tool that needs it, not a server that will
 // not start, so a session always sees the tools it was told about.
 func New(env Env, deps Deps) *mcp.Server {
-	s := &server{env: env, mail: deps.Mail, issues: deps.Issues, github: deps.GitHub, feedback: deps.Feedback, drafts: deps.Drafts}
+	s := &server{env: env, mail: deps.Mail, issues: deps.Issues, github: deps.GitHub, feedback: deps.Feedback, drafts: deps.Drafts, notes: deps.Notes}
 	if s.mail == nil && env.StateDir != "" {
 		s.mail = mail.Open(state.New(env.StateDir).MailDir())
 	}
@@ -125,6 +132,7 @@ func New(env Env, deps Deps) *mcp.Server {
 	s.addIssueTools(srv)
 	s.addGitHubTools(srv)
 	s.addFeedbackTools(srv)
+	s.addNotesTools(srv)
 	s.addDoneTool(srv)
 	return srv
 }
