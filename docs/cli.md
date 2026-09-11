@@ -1348,7 +1348,7 @@ gathering the context of acme/widgets#7
 gathered 6 items from diff, pr_body, linked_issues, style_files
 distilling the brief
 the review is /Users/me/.config/bees/reviews/acme/widgets/7/20260910-150405
-reviewing from 4 angles: acceptance_criteria, test_coverage, style, side_effects
+reviewing from 6 angles: quick_general, general, docs, test_coverage, acceptance_criteria, side_effects
 3 findings
   1 finding hidden by your reviewer notes
 ```
@@ -1503,7 +1503,7 @@ Every finding you dismiss during triage is appended to your reviewer notes,
 one line per dismissal:
 
 ```
-- [acme/widgets] [style] [naming] receiver names are short here
+- [acme/widgets] [general] [naming] receiver names are short here
 ```
 
 `consolidate` reads those lines and writes the patterns that repeat into
@@ -1516,7 +1516,7 @@ $ bees review consolidate
 /Users/me/.config/bees/reviewer-notes.md: 7 dismissals, 2 rules
 
 added:
-- [acme/widgets] [style] [naming] drop: receiver names are short here (3 dismissals)
+- [acme/widgets] [general] [naming] drop: receiver names are short here (3 dismissals)
 ```
 
 A review joins its findings against the rules before triage sees them. A

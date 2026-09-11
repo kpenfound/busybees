@@ -83,7 +83,7 @@ ways to run the factory.
   factory can see, yours included, and the reviewer submits one GitHub review on
   it. See [Asking for a review of any pull request](docs/workflow.md#asking-for-a-review-of-any-pull-request).
 - **A review of any pull request, without a factory.** `bees review <pr>`
-  reviews a pull request from four angles in read-only sessions, lets you
+  reviews a pull request from six angles in read-only sessions, lets you
   select, dismiss, defer or ask about each finding, and posts what you
   selected as one GitHub review. See [Reviewing a pull request](docs/review.md).
 - **A local mailbox, not GitHub comments.** Roles ask each other questions and
