@@ -36,8 +36,10 @@
 // session instead, factory mode. run.go strings all of that together for one
 // pull request, from the gather to the judged list, and output.go is the
 // end of the review: what triage selected posted as one review, printed as
-// a report, or discarded. artifact.go is the directory the whole review is
-// kept in.
+// a report, or discarded. diffview.go reads the pull request's diff, with
+// the same walk output.go anchors comments by, into the files, hunks and
+// lines a screen shows beside a finding, the finding's lines marked.
+// artifact.go is the directory the whole review is kept in.
 package review
 
 import (

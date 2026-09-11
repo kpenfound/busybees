@@ -3,8 +3,6 @@ package review
 import (
 	"context"
 	"fmt"
-	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/kpenfound/busybees/internal/github"
@@ -49,12 +47,6 @@ func Posts(mode string) bool {
 	return ok
 }
 
-// diffFileStart matches the line that starts one file in a unified diff.
-var diffFileStart = regexp.MustCompile(`^diff --git a/(.*) b/(.*)$`)
-
-// hunkStart matches a hunk header and captures the first line of each side.
-var hunkStart = regexp.MustCompile(`^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@`)
-
 // Anchors is the set of lines a review comment can be anchored to: every
 // line of every hunk in a pull request's diff, on both sides. GitHub takes
 // a comment on any of them and refuses one on any other line, and takes a
@@ -77,41 +69,13 @@ type anchor struct {
 // the change deleted it, which is where GitHub shows them.
 func ParseAnchors(diff string) *Anchors {
 	a := &Anchors{lines: map[anchor]bool{}}
-	var path string
-	var oldLine, newLine int
-	inHunk := false
-	for _, line := range strings.Split(diff, "\n") {
-		if m := diffFileStart.FindStringSubmatch(line); m != nil {
-			path, inHunk = m[2], false
-			continue
+	walkDiff(diff, diffWalker{line: func(path string, l DiffLine) {
+		for _, side := range []string{SideNew, SideOld} {
+			if n := l.On(side); n > 0 {
+				a.lines[anchor{path, side, n}] = true
+			}
 		}
-		if m := hunkStart.FindStringSubmatch(line); m != nil {
-			oldLine, _ = strconv.Atoi(m[1])
-			newLine, _ = strconv.Atoi(m[2])
-			inHunk = true
-			continue
-		}
-		if !inHunk || path == "" {
-			continue
-		}
-		// A file's header lines (--- and +++) come before its first
-		// hunk, after the diff --git line that ends the hunk before, so
-		// inside a hunk a line starting with --- or +++ is a removed or
-		// added line whose text starts with two dashes or two pluses.
-		switch {
-		case strings.HasPrefix(line, "+"):
-			a.lines[anchor{path, SideNew, newLine}] = true
-			newLine++
-		case strings.HasPrefix(line, "-"):
-			a.lines[anchor{path, SideOld, oldLine}] = true
-			oldLine++
-		case strings.HasPrefix(line, " "):
-			a.lines[anchor{path, SideNew, newLine}] = true
-			a.lines[anchor{path, SideOld, oldLine}] = true
-			newLine++
-			oldLine++
-		}
-	}
+	}})
 	return a
 }
 
