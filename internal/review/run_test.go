@@ -43,7 +43,7 @@ func (f *reviewAgent) Run(_ context.Context, req AgentRequest) (*AgentResult, er
 }
 
 // testRunner is a runner over sampleGH with every session faked: the
-// distiller briefs, the general angle finds a naming problem the notes may
+// distiller briefs and sizes the change m, the general angle finds a naming problem the notes may
 // rank down and a docs one, the test angle a missing test. The checkout is
 // a git repository so the callers source runs, and the project's
 // context.toml turns the quick general, docs and side effects angles off.
@@ -105,12 +105,13 @@ func TestARunGathersBriefsReviewsJudgesFiltersAndWritesTheArtifact(t *testing.T)
 	if read.Brief.Summary != "gathers the context sources a project declares" || read.Brief.Title != "Add the widget" || read.Brief.SessionID != "sess-distiller" {
 		t.Errorf("the brief written is %+v", read.Brief)
 	}
-	var ran []string
-	for _, run := range read.Runs {
-		ran = append(ran, run.Angle)
+	// What the artifact says of the angles: the size the change was given,
+	// and the angles of that size the project enables, one run each.
+	if read.Brief.Size != "m" {
+		t.Errorf("the brief sizes the change %q, want m", read.Brief.Size)
 	}
-	if got := strings.Join(ran, ","); got != "general,test_coverage,acceptance_criteria" {
-		t.Errorf("angles run: %s, want the three the project enables", got)
+	if got := strings.Join(ranAngles(read.Runs), ","); got != "general,test_coverage,acceptance_criteria" {
+		t.Errorf("angles run: %s, want the three of size m the project enables", got)
 	}
 	if read.Findings == nil || read.Triage != nil {
 		t.Fatalf("findings %v, triage %v: want judged and not triaged", read.Findings, read.Triage)
@@ -144,7 +145,7 @@ func TestARunGathersBriefsReviewsJudgesFiltersAndWritesTheArtifact(t *testing.T)
 		"gathered 5 items from diff, pr_body, linked_issues\n",
 		"distilling the brief\n",
 		"the review is " + a.Dir + "\n",
-		"reviewing from 3 angles: general, test_coverage, acceptance_criteria\n",
+		"reviewing a size m change from 3 angles: general, test_coverage, acceptance_criteria\n",
 		"3 findings\n",
 		"  1 finding hidden by your reviewer notes\n",
 	} {

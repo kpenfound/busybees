@@ -45,7 +45,7 @@ func testBundle() *Bundle {
 
 const answeredBrief = `{
   "summary": "gathers the context sources a project declares",
-  "size": "s",
+  "size": "m",
   "acceptance_criteria": [{"text": "a source that cannot read something does not fail the review", "source": "#566"}],
   "style_rules": [{"text": "every new key needs a test", "source": "CLAUDE.md"}],
   "touched_areas": [{"name": "internal/review", "paths": ["gather.go"], "summary": "the pipeline and its sources"}]
@@ -61,7 +61,7 @@ func TestTheDistillerReadsTheBundleAndWritesTheBrief(t *testing.T) {
 		Ref:                Ref{Repo: testRepo, Number: 7},
 		Title:              "widgets: gather the context",
 		Summary:            "gathers the context sources a project declares",
-		Size:               "s",
+		Size:               "m",
 		AcceptanceCriteria: []Point{{Text: "a source that cannot read something does not fail the review", Source: "#566"}},
 		StyleRules:         []Point{{Text: "every new key needs a test", Source: "CLAUDE.md"}},
 		TouchedAreas:       []TouchedArea{{Name: "internal/review", Paths: []string{"gather.go"}, Summary: "the pipeline and its sources"}},
