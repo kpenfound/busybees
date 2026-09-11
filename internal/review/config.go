@@ -32,8 +32,9 @@
 // keeps what they dismissed out of the list before triage reads it.
 // triage.go is the triage queue over that list, the four actions it takes on
 // a finding and what each writes back; console.go drives it from a
-// terminal one line at a time, and factory.go from the answers of an agent
-// session instead, factory mode. run.go strings all of that together for one
+// terminal one line at a time (the screen that drives it on single keys is
+// internal/reviewtui), and factory.go from the answers of an agent session
+// instead, factory mode. run.go strings all of that together for one
 // pull request, from the gather to the judged list, and output.go is the
 // end of the review: what triage selected posted as one review, printed as
 // a report, or discarded. diffview.go reads the pull request's diff, with

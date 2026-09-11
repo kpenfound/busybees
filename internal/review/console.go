@@ -22,7 +22,9 @@ import (
 //
 // It reads lines and writes lines, and nothing else: no screen, no colour,
 // no key that is not followed by return. That is what makes it drivable from
-// a pipe, in a test, and by anything that is not a person.
+// a pipe, in a test, and by anything that is not a person. The screen a
+// person gets instead is internal/reviewtui, which takes the same keys on a
+// single press and drives the queue the same way.
 
 // The keys the console takes, each followed by return. A whole word is taken
 // too.

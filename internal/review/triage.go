@@ -13,9 +13,10 @@ import (
 
 // The triage queue. Once the judge has written the findings and the noise
 // filter has acted on them, somebody decides what to do with each one: a
-// person at a terminal (console.go), or in factory mode an agent
-// (factory.go). Queue is what either of them drives. It holds one review's
-// artifact and the four actions triage can take on a finding:
+// person at a terminal, a line at a time (console.go) or on the screen
+// internal/reviewtui draws, or in factory mode an agent (factory.go). Queue
+// is what each of them drives. It holds one review's artifact and the four
+// actions triage can take on a finding:
 //
 //	select   the finding goes into the review's output, as it is written or
 //	         with the comment text edited
