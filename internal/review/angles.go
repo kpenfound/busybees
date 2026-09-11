@@ -140,7 +140,26 @@ type Angles struct {
 	// dismissed from it before. A person who has dismissed nothing has
 	// none, and their sessions are told nothing extra.
 	Rules []Rule
+	// Progress is told how each angle's session is going, for a display to
+	// draw while the angles run: AngleStarted the moment before the
+	// session starts, and AngleFinished or AngleFailed the moment it ends.
+	// It is called from the goroutine of the angle it is about, so calls
+	// arrive at once from several angles and it has to be safe to call
+	// concurrently. Nil is told nothing, and costs nothing.
+	Progress func(angle string, event AngleEvent)
 }
+
+// AngleEvent is what Angles.Progress is told about an angle's session.
+type AngleEvent string
+
+const (
+	// AngleStarted is told as the session starts.
+	AngleStarted AngleEvent = "started"
+	// AngleFinished is told as the session ends with an answer.
+	AngleFinished AngleEvent = "finished"
+	// AngleFailed is told as the session ends with an error instead.
+	AngleFailed AngleEvent = "failed"
+)
 
 // NewAngles is the angle runner of a review, as the global configuration
 // says: cfg's provider and model, a checkout of the pull request's head
@@ -179,7 +198,8 @@ func NewAngles(cfg *Config, dir string) *Angles {
 // path outside it could not be read. It is not written, and the prompt
 // falls back to the same message it gets when there was no diff at all,
 // when dir is Dir, the checkout the machine already had: a review does not
-// write into a working tree it did not make.
+// write into a working tree it did not make. Progress, when set, is told as
+// each session starts and ends.
 func (a *Angles) Run(ctx context.Context, artifact string, project *Project, brief *Brief, diff string) ([]AngleRun, error) {
 	if brief == nil {
 		return nil, errors.New("angles: no brief to review from")
@@ -217,11 +237,14 @@ func (a *Angles) Run(ctx context.Context, artifact string, project *Project, bri
 		go func(i int, angle string) {
 			defer wg.Done()
 			run := AngleRun{Angle: angle, Provider: a.Provider, Model: a.Model, Dir: dir}
+			a.progress(angle, AngleStarted)
 			res, err := a.Agent.Run(ctx, AgentRequest{Name: angle, Prompt: prompts[i], Dir: dir})
 			if err != nil {
 				run.Error = err.Error()
+				a.progress(angle, AngleFailed)
 			} else {
 				run.SessionID, run.Answer, run.Turns, run.CostUSD = res.ID, res.Text, res.Turns, res.CostUSD
+				a.progress(angle, AngleFinished)
 			}
 			runs[i] = run
 		}(i, angle)
@@ -304,6 +327,14 @@ func (a *Angles) dir(ctx context.Context, artifact string, ref Ref) (string, err
 		return "", err
 	}
 	return dir, nil
+}
+
+// progress tells Progress about an angle's session, and nobody when it is
+// nil.
+func (a *Angles) progress(angle string, event AngleEvent) {
+	if a.Progress != nil {
+		a.Progress(angle, event)
+	}
 }
 
 // logf writes one line to Log.

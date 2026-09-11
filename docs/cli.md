@@ -1338,7 +1338,9 @@ gathers the pull request's context, runs the distiller session that briefs
 it, runs one read-only session per angle the brief's size calls for and
 `context.toml` enables, merges what they found into one list, most severe
 first, and joins the list against the rules in your reviewer notes. Each
-step prints a line as it goes. The review
+step prints a line as it goes, and while the angles run, at a terminal, one
+row per angle under it shows a spinner until that angle's session ends,
+then a mark saying it finished or failed and how long it took. The review
 is written into its artifact directory as it goes too, so a review that
 stopped after the angles has its brief and their sessions; one angle failing
 is printed and skipped, and every angle failing stops the review.
@@ -1350,9 +1352,18 @@ gathered 6 items from diff, pr_body, linked_issues, style_files
 distilling the brief
 the review is /Users/me/.config/bees/reviews/acme/widgets/7/20260910-150405
 reviewing a size m change from 4 angles: general, docs, test_coverage, acceptance_criteria
+  ✓ general               2m14s
+  ✓ docs                  1m02s
+  ✓ test_coverage         1m51s
+  ✓ acceptance_criteria   1m37s
 3 findings
   1 finding hidden by your reviewer notes
 ```
+
+`--no-tui`, or a stdout that is not a terminal, draws nothing: each angle
+prints a line as it starts and one as it ends instead, which is what a
+script or a CI log gets. Ctrl-C at the terminal stops the sessions and
+waits for them to end.
 
 Triage follows, as `triage` below describes it, or by an agent with `--agent`
 (see [factory mode](#factory-mode)), and then the review ends one of five ways
