@@ -271,7 +271,7 @@ func TestOpenTakesTheTokenAndRefusesAnotherRepositorysCheckout(t *testing.T) {
 	}
 	ref := Ref{testRepo, 7}
 	dir := gitRepo(t, "https://github.com/"+testRepo)
-	writeFile(t, dir, ProjectFile, "[angles]\nstyle = false\n")
+	writeFile(t, dir, ProjectFile, "[angles]\ngeneral = false\n")
 
 	p, err := Open(context.Background(), ref, cfg, dir)
 	if err != nil {
@@ -290,7 +290,7 @@ func TestOpenTakesTheTokenAndRefusesAnotherRepositorysCheckout(t *testing.T) {
 	// Run from a checkout of something else, the review reads neither its
 	// files nor its context.toml.
 	other := gitRepo(t, "https://github.com/other/thing")
-	writeFile(t, other, ProjectFile, "[angles]\nstyle = false\n")
+	writeFile(t, other, ProjectFile, "[angles]\ngeneral = false\n")
 	t.Chdir(other)
 	p, err = Open(context.Background(), ref, cfg, other)
 	if err != nil {

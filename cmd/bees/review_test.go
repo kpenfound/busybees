@@ -57,7 +57,7 @@ func reviewHome(t *testing.T) string {
 }
 
 // storedReview writes a judged review of acme/widgets#7 under home, with two
-// findings and a style session to reopen, and returns its directory.
+// findings and a general session to reopen, and returns its directory.
 func storedReview(t *testing.T, home string) string {
 	t.Helper()
 	ref := review.Ref{Repo: "acme/widgets", Number: 7}
@@ -65,10 +65,10 @@ func storedReview(t *testing.T, home string) string {
 	a := &review.Artifact{
 		Dir:   dir,
 		Brief: &review.Brief{Ref: ref, Summary: "gathers the context"},
-		Runs:  []review.AngleRun{{Angle: review.AngleStyle, Provider: "claude", Dir: t.TempDir(), SessionID: "sess-style"}},
+		Runs:  []review.AngleRun{{Angle: review.AngleGeneral, Provider: "claude", Dir: t.TempDir(), SessionID: "sess-general"}},
 		Findings: &review.Findings{Items: []review.Finding{
-			{ID: "aaaa0001", Angle: review.AngleStyle, Category: "naming", Severity: review.SeverityMedium, File: "widget.go", Lines: review.LineRange{Start: 3, End: 3}, Side: review.SideNew, Title: "The receiver is named after its type", Body: "w, not widget"},
-			{ID: "aaaa0002", Angle: review.AngleStyle, Category: "docs", Severity: review.SeverityLow, Title: "The package has no doc comment", Body: "every package here has one"},
+			{ID: "aaaa0001", Angle: review.AngleGeneral, Category: "naming", Severity: review.SeverityMedium, File: "widget.go", Lines: review.LineRange{Start: 3, End: 3}, Side: review.SideNew, Title: "The receiver is named after its type", Body: "w, not widget"},
+			{ID: "aaaa0002", Angle: review.AngleGeneral, Category: "docs", Severity: review.SeverityLow, Title: "The package has no doc comment", Body: "every package here has one"},
 		}},
 	}
 	if err := a.Write(); err != nil {
@@ -86,7 +86,7 @@ func TestReviewTriageOpensTheLatestReviewAndPicksUpWhereItStopped(t *testing.T) 
 	}
 	for _, want := range []string{
 		"acme/widgets#7: the review started 20260910-150405\n",
-		"[1 of 2 findings undecided] aaaa0001 · medium · style · naming\n",
+		"[1 of 2 findings undecided] aaaa0001 · medium · general · naming\n",
 		"1 selected, 0 dismissed, 0 deferred, 1 undecided of 2 findings\n",
 	} {
 		if !strings.Contains(stdout, want) {
@@ -123,7 +123,7 @@ func TestReviewTriageRecordsADismissalInTheConfiguredNotes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(notes), "- [acme/widgets] [style] [naming] the type is one letter here\n") {
+	if !strings.Contains(string(notes), "- [acme/widgets] [general] [naming] the type is one letter here\n") {
 		t.Errorf("the notes do not hold the dismissal:\n%s", notes)
 	}
 }
@@ -203,7 +203,7 @@ func TestReviewTriageReadsTheConfigurationGiven(t *testing.T) {
 	a := &review.Artifact{
 		Dir:      review.ArtifactDir(filepath.Join(elsewhere, "kept"), ref, time.Date(2026, 9, 10, 15, 4, 5, 0, time.UTC)),
 		Brief:    &review.Brief{Ref: ref, Summary: "gathers the context"},
-		Findings: &review.Findings{Items: []review.Finding{{ID: "aaaa0003", Angle: review.AngleStyle, Category: "docs", Severity: review.SeverityLow, Title: "The package has no doc comment", Body: "every package here has one"}}},
+		Findings: &review.Findings{Items: []review.Finding{{ID: "aaaa0003", Angle: review.AngleGeneral, Category: "docs", Severity: review.SeverityLow, Title: "The package has no doc comment", Body: "every package here has one"}}},
 	}
 	if err := a.Write(); err != nil {
 		t.Fatal(err)
@@ -236,12 +236,12 @@ func TestReviewTriageReadsNoContextTomlOutsideACheckoutOfTheRepository(t *testin
 }
 
 // dismissals is a reviewer notes file holding one dismissal per reason, all
-// of them from the style angle of one repository.
+// of them from the general angle of one repository.
 func dismissals(t *testing.T, reasons ...string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "reviewer-notes.md")
 	for _, reason := range reasons {
-		d := review.Dismissal{Repo: "acme/widgets", Angle: "style", Category: "naming", Reason: reason}
+		d := review.Dismissal{Repo: "acme/widgets", Angle: "general", Category: "naming", Reason: reason}
 		if err := review.AppendDismissal(path, d); err != nil {
 			t.Fatal(err)
 		}
@@ -260,7 +260,7 @@ func TestReviewConsolidateWritesTheRulesIntoTheNotes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rule := "- [acme/widgets] [style] [naming] drop: receiver names are short here (3 dismissals)"
+	rule := "- [acme/widgets] [general] [naming] drop: receiver names are short here (3 dismissals)"
 	for _, want := range []string{notes, "4 dismissals", "added:", rule} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("consolidate did not report %q:\n%s", want, stdout)
@@ -299,7 +299,7 @@ func TestReviewConsolidateWritesTheRulesIntoTheNotes(t *testing.T) {
 	// One more dismissal of the pattern already ruled on: the rule is the
 	// same rule, and its count moves.
 	if err := review.AppendDismissal(notes, review.Dismissal{
-		Repo: "acme/widgets", Angle: "style", Category: "naming", Reason: "here receiver names are short",
+		Repo: "acme/widgets", Angle: "general", Category: "naming", Reason: "here receiver names are short",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -310,7 +310,7 @@ func TestReviewConsolidateWritesTheRulesIntoTheNotes(t *testing.T) {
 	if strings.Contains(stdout, "added:") {
 		t.Errorf("a dismissal of a pattern already ruled on added a rule:\n%s", stdout)
 	}
-	refreshed := "- [acme/widgets] [style] [naming] drop: receiver names are short here (4 dismissals)"
+	refreshed := "- [acme/widgets] [general] [naming] drop: receiver names are short here (4 dismissals)"
 	if !strings.Contains(stdout, "refreshed:") || !strings.Contains(stdout, refreshed) {
 		t.Errorf("consolidate did not report %q as refreshed:\n%s", refreshed, stdout)
 	}
@@ -393,7 +393,7 @@ func TestReviewConsolidateReportsWhatItDidNotReadAsARule(t *testing.T) {
 	// The markers are the notes file's format (internal/review): what is
 	// between them is rules, and a line there that is not one is a person's
 	// to fix, so consolidation says it saw it and leaves it alone.
-	const typo = "- [acme/widgets] [style] [naming] dropp: a misspelt action"
+	const typo = "- [acme/widgets] [general] [naming] dropp: a misspelt action"
 	body, err := os.ReadFile(notes)
 	if err != nil {
 		t.Fatal(err)
@@ -623,7 +623,7 @@ func TestReviewTriageWithAnAgentTakesItsDecisionsAndItsEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(prompt), "Only what a user would notice.") || !strings.Contains(string(prompt), "### aaaa0001 · medium · style · naming") {
+	if !strings.Contains(string(prompt), "Only what a user would notice.") || !strings.Contains(string(prompt), "### aaaa0001 · medium · general · naming") {
 		t.Errorf("the agent was not told the instructions and the findings:\n%s", prompt)
 	}
 	// Outside a checkout of acme/widgets the session runs in the review's
@@ -640,7 +640,7 @@ func TestReviewTriageWithAnAgentTakesItsDecisionsAndItsEnd(t *testing.T) {
 		t.Errorf("the session ran in %s, want %s", ran, scratch)
 	}
 	notes, err := os.ReadFile(filepath.Join(home, review.DefaultNotesPath))
-	if err != nil || !strings.Contains(string(notes), "- [acme/widgets] [style] [docs] doc comments are optional here\n") {
+	if err != nil || !strings.Contains(string(notes), "- [acme/widgets] [general] [docs] doc comments are optional here\n") {
 		t.Errorf("the dismissal is not in the reviewer notes (%v):\n%s", err, notes)
 	}
 }

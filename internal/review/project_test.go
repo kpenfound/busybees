@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -67,7 +68,8 @@ func TestProjectOverrides(t *testing.T) {
 style_sources = ["docs/style.md", "CONTRIBUTING.md"]
 
 [angles]
-style = false
+general = false
+docs = false
 side_effects = true
 
 [categories]
@@ -88,7 +90,7 @@ files = ["docs/adr/*.md"]
 	if !p.Loaded {
 		t.Fatal("Loaded is false for a file that is there")
 	}
-	want := []string{AngleAcceptance, AngleTests, AngleSideEffects}
+	want := []string{AngleQuickGeneral, AngleTests, AngleAcceptance, AngleSideEffects}
 	if got := p.EnabledAngles(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("angles %v, want %v", got, want)
 	}
@@ -105,6 +107,32 @@ files = ["docs/adr/*.md"]
 	}
 	if !reflect.DeepEqual(p.StyleSources, []string{"docs/style.md", "CONTRIBUTING.md"}) {
 		t.Fatalf("style sources: %v", p.StyleSources)
+	}
+}
+
+// The catalog is six angles, each a key of its own under [angles]: turned
+// off, that angle alone does not run; turned on, every angle does.
+func TestEachAngleIsSwitchedOnItsOwn(t *testing.T) {
+	want := []string{"quick_general", "general", "docs", "test_coverage", "acceptance_criteria", "side_effects"}
+	if !reflect.DeepEqual(BuiltinAngles, want) {
+		t.Fatalf("the angles are %v, want %v", BuiltinAngles, want)
+	}
+	for _, angle := range want {
+		off, err := ParseProject("[angles]\n"+angle+" = false\n", filepath.Join(t.TempDir(), ProjectFile))
+		if err != nil {
+			t.Fatal(err)
+		}
+		rest := slices.DeleteFunc(slices.Clone(want), func(a string) bool { return a == angle })
+		if got := off.EnabledAngles(); !reflect.DeepEqual(got, rest) {
+			t.Errorf("%s = false: angles %v, want %v", angle, got, rest)
+		}
+		on, err := ParseProject("[angles]\n"+angle+" = true\n", filepath.Join(t.TempDir(), ProjectFile))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := on.EnabledAngles(); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s = true: angles %v, want every one", angle, got)
+		}
 	}
 }
 
@@ -128,8 +156,9 @@ func TestProjectInvalid(t *testing.T) {
 	}{
 		{"unknown key", "angels = []\n", []string{"unknown keys", "angels"}},
 		{"unknown key in an entry", "[[context_sources]]\nname = \"diff\"\nenable = false\n", []string{"unknown keys", "context_sources.enable"}},
-		{"wrong type", "[angles]\nstyle = \"off\"\n", []string{"style"}},
-		{"unknown angle", "[angles]\nsecurity = false\n", []string{"angles.security: unknown angle (want one of acceptance_criteria, test_coverage, style, side_effects)"}},
+		{"wrong type", "[angles]\ngeneral = \"off\"\n", []string{"general"}},
+		{"unknown angle", "[angles]\nsecurity = false\n", []string{"angles.security: unknown angle (want one of quick_general, general, docs, test_coverage, acceptance_criteria, side_effects)"}},
+		{"the retired style angle", "[angles]\nstyle = false\n", []string{"angles.style: unknown angle"}},
 		{"category severity", "[categories]\nnaming = \"nit\"\n", []string{"categories.naming \"nit\" must be one of off, info, low, medium, high"}},
 		{"absolute style source", "style_sources = [\"/etc/style.md\"]\n", []string{"style_sources[0] \"/etc/style.md\" must be relative to the project directory"}},
 		{"escaping style source", "style_sources = [\"../../etc/passwd\"]\n", []string{"style_sources[0] \"../../etc/passwd\" must stay inside the project directory"}},
