@@ -141,6 +141,7 @@ func TestEditTakesTheCommentTextOnScreen(t *testing.T) {
 		if got := decisions(t, q); len(got) != 1 || got[0].Comment != f.Comment()+"\nmore" {
 			t.Errorf("the artifact holds %+v, want a comment with a new line", got)
 		}
+		has(t, view(m), "[1 of 2 findings undecided]")
 	})
 	t.Run("esc cancels", func(t *testing.T) {
 		a := judged(t)
