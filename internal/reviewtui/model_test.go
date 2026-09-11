@@ -334,6 +334,17 @@ func TestNothingUndecidedClosesTheScreenAtOnce(t *testing.T) {
 	if !quits(m.Init()) {
 		t.Error("the screen opened on a queue with nothing to decide")
 	}
+	// Bubble Tea draws the model once before it runs the command Init
+	// returned, so the screen is drawn over a queue with nothing pending.
+	var drawn tea.Model = m
+	drawn, _ = drawn.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	has(t, view(drawn), "nothing left undecided")
+	lacks(t, view(drawn), "Diff", "Finding", "s select")
+	// The same draw happens after the last decision, before the quit.
+	last := screen(t, queueOf(t, judged(t)))
+	last, _ = press(last, "f", "f", "f")
+	has(t, view(last), "nothing left undecided: 0 selected, 0 dismissed, 3 deferred, 0 undecided of 3 findings")
+	lacks(t, view(last), "s select")
 	m2 := New(t.Context(), sampleDiff, queueOf(t, judged(t)))
 	if quits(m2.Init()) {
 		t.Error("the screen closed on a queue with findings to decide")

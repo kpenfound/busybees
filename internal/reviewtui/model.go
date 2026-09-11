@@ -108,6 +108,9 @@ type Model struct {
 	diffScroll    int
 	findingScroll int
 
+	// summary is where triage stands (Queue.Summary), copied in when
+	// nothing is left undecided: the one thing the screen draws then.
+	summary string
 	// notice is what the last action came to, when it is something the
 	// person has to read before the next key: an action the queue refused,
 	// an empty comment text, what an ask added. It is cleared by the next
@@ -314,7 +317,7 @@ func (m Model) show(i int) (tea.Model, tea.Cmd) {
 	pending := m.q.Pending()
 	n := len(pending)
 	if n == 0 {
-		m.total = 0
+		m.total, m.summary = 0, m.q.Summary()
 		return m, tea.Quit
 	}
 	i = ((i % n) + n) % n

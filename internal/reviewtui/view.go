@@ -141,9 +141,15 @@ func expand(s string) string { return strings.ReplaceAll(s, "\t", "    ") }
 
 // ---- drawing ---------------------------------------------------------------
 
-// View draws the screen.
+// View draws the screen. With nothing left undecided there is no finding
+// to draw and no diff view built for one, and Bubble Tea draws the model
+// once before it runs the quit Init or the last decision returned, so the
+// screen then says where triage stands and nothing more.
 func (m Model) View() string {
 	w := m.width
+	if m.total == 0 {
+		return hintStyle.Render(clip("nothing left undecided: "+m.summary, w))
+	}
 	var panes string
 	if w >= sideBySide {
 		lw := w * 3 / 5
@@ -160,9 +166,6 @@ func (m Model) View() string {
 // header names the finding and where it stands in the queue, the way the
 // console's heading does, with the severity painted.
 func (m Model) header(w int) string {
-	if m.total == 0 {
-		return hintStyle.Render(clip("nothing left undecided", w))
-	}
 	f := m.finding
 	where := fmt.Sprintf("[%d of %s undecided] ", m.pos+1, text.Count(m.total, "finding"))
 	rest := fmt.Sprintf(" · %s · %s", f.Angle, f.Category)
