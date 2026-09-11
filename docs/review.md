@@ -34,8 +34,9 @@ context  ->  brief  ->  angles  ->  findings  ->  triage  ->  end
    each came from, the style rules that apply to it with the file each is
    written in, the parts of the project it touches, and what the sources
    could not read.
-3. **Angles.** One session per [angle](#angles) reads the brief and the diff,
-   and answers with findings. The angles run at the same time. An angle that
+3. **Angles.** One session per [angle](#angles) the brief's size calls for
+   and `context.toml` enables reads the brief and the diff, and answers with
+   findings. The angles run at the same time. An angle that
    fails is skipped; the review stops only when every angle fails.
 4. **Findings.** bees merges the angles' answers into one list, in code and
    not in a session (see [Findings](#findings)), then applies the rules in
@@ -282,8 +283,8 @@ that is not set fails the command.
 The project's settings, committed to the repository under review. bees
 looks for it in the current directory and then each parent, and only when
 the current directory is a checkout of the pull request's repository.
-Without one, a review runs every angle and every built-in source, and pins
-no category.
+Without one, a review runs every angle its size calls for and every
+built-in source, and pins no category.
 
 ```toml
 style_sources = ["docs/style/*.md"]

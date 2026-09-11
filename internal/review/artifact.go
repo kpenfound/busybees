@@ -67,7 +67,10 @@ type Artifact struct {
 	// is not a review.
 	Brief *Brief
 	// Runs are the angle runs, in BuiltinAngles order, and none for a
-	// review whose angles have not run.
+	// review whose angles have not run. They are the angles Brief.Size
+	// called for that the project enabled (anglesFor), each one run whether
+	// it finished or failed: an angle with no run is one the size did not
+	// call for, or one the project turned off.
 	Runs []AngleRun
 	// Findings is the judge's list, and nil for a review not judged yet.
 	Findings *Findings

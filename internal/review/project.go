@@ -10,8 +10,9 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// The angles a review runs, each one a session of its own reading the
-// review brief. A project turns one off, or back on, under [angles].
+// The angles a review runs from, each one a session of its own reading the
+// review brief, as many of them as the change's size calls for (sizeAngles
+// in angles.go). A project turns one off, or back on, under [angles].
 const (
 	// AngleQuickGeneral gives a small change one light pass for whatever is
 	// wrong with it.
@@ -31,8 +32,9 @@ const (
 	AngleSideEffects = "side_effects"
 )
 
-// BuiltinAngles lists the angles every review runs, in the order they are
-// fanned out.
+// BuiltinAngles lists the angles a review can run, in the order they are
+// fanned out. A review runs the ones its change's size calls for that the
+// project enables (anglesFor in angles.go).
 var BuiltinAngles = []string{AngleQuickGeneral, AngleGeneral, AngleDocs, AngleTests, AngleAcceptance, AngleSideEffects}
 
 // The context sources a review gathers for the distiller. A project turns
@@ -71,8 +73,8 @@ var Severities = []string{SeverityOff, SeverityInfo, SeverityLow, SeverityMedium
 
 // Project is the per-project configuration, context.toml, read from the
 // repository under review. Every table is an override: a project that has no
-// context.toml gets every angle, every built-in context source and no
-// category rules.
+// context.toml gets every angle its change's size calls for, every built-in
+// context source and no category rules.
 type Project struct {
 	// Path is the file this configuration was read from, absolute, and set
 	// even when that file does not exist (Loaded says which). Style sources
@@ -82,7 +84,7 @@ type Project struct {
 	Loaded bool `toml:"-"`
 
 	// Angles turns an angle off (`side_effects = false`) or back on. A key must
-	// name one of BuiltinAngles; an angle the file does not mention runs.
+	// name one of BuiltinAngles; an angle the file does not mention is on.
 	Angles map[string]bool `toml:"angles"`
 	// StyleSources are the project's own style documents, as paths or globs
 	// relative to Path's directory, gathered on top of the ones the style
@@ -248,7 +250,9 @@ func (p *Project) Dir() string {
 	return filepath.Dir(p.Path)
 }
 
-// EnabledAngles lists the angles this project runs, in BuiltinAngles order.
+// EnabledAngles lists the angles this project enables, in BuiltinAngles
+// order. A review runs the ones among them its change's size calls for
+// (anglesFor in angles.go).
 func (p *Project) EnabledAngles() []string {
 	angles := make([]string, 0, len(BuiltinAngles))
 	for _, a := range BuiltinAngles {
