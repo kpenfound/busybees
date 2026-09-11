@@ -28,11 +28,6 @@ import (
 //	                                               id, the directory it ran
 //	                                               in and its raw answer,
 //	                                               enough to resume it
-//	  diff.patch                                   the pull request's diff,
-//	                                               written once (angles.go's
-//	                                               writeDiff) for every
-//	                                               angle's prompt to point
-//	                                               at, when it was gathered
 //	  checkout/                                    the pull request's head,
 //	                                               cloned by a container
 //	                                               (checkout.go) for the
@@ -48,6 +43,15 @@ import (
 //	  triage.json                                  what triage decided about
 //	                                               each finding (triage.go),
 //	                                               empty until it has
+//
+// Whichever of checkout/ or scratch/ the angles ran in also holds
+// diff.patch, the pull request's diff, when it was gathered: angles.go's
+// writeDiff writes it once there, inside what the angle sessions' read-only
+// tools can reach, so every angle's prompt can point at the one file
+// instead of repeating the diff's text. It is not written, and the prompt
+// falls back to the same message it gets when there was no diff at all,
+// when the angles ran in the machine's own checkout instead (Angles.Dir): a
+// review does not write into a working tree it did not make.
 //
 // The files are written one at a time as the review goes, by WriteBrief,
 // Angles.Run, WriteFindings and WriteTriage, so a review that stopped after

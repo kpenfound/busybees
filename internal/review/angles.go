@@ -70,10 +70,9 @@ const (
 	AnglesDir   = "angles"
 	CheckoutDir = "checkout"
 	ScratchDir  = "scratch"
-	// DiffFile is the pull request's diff, written once per review run
-	// under the artifact directory (not the checkout or scratch directory
-	// the sessions run in, which a review does not own) so every angle's
-	// prompt can point at it instead of repeating it inline.
+	// DiffFile is the pull request's diff, the name it is written under
+	// inside CheckoutDir or ScratchDir, whichever the angles ran in, so
+	// every angle's prompt can point at it instead of repeating it inline.
 	DiffFile = "diff.patch"
 )
 
@@ -174,9 +173,13 @@ func NewAngles(cfg *Config, dir string) *Angles {
 // answer, and err says so once every angle has ended. An error before any
 // session ran (no brief, a directory that could not be made) returns no
 // runs. diff is the pull request's diff, and "" when it was not gathered; it
-// is written once to DiffFile under artifact (writeDiff), not once per
-// angle, so every angle's prompt can point at the one file instead of
-// repeating the diff's text.
+// is written once to DiffFile inside dir (writeDiff), not once per angle,
+// so every angle's prompt can point at the one file instead of repeating
+// the diff's text: dir is what an angle's read-only tools can reach, and a
+// path outside it could not be read. It is not written, and the prompt
+// falls back to the same message it gets when there was no diff at all,
+// when dir is Dir, the checkout the machine already had: a review does not
+// write into a working tree it did not make.
 func (a *Angles) Run(ctx context.Context, artifact string, project *Project, brief *Brief, diff string) ([]AngleRun, error) {
 	if brief == nil {
 		return nil, errors.New("angles: no brief to review from")
@@ -195,7 +198,7 @@ func (a *Angles) Run(ctx context.Context, artifact string, project *Project, bri
 	if err != nil {
 		return nil, err
 	}
-	diffPath, err := writeDiff(artifact, diff)
+	diffPath, err := writeDiff(dir, a.Dir, diff)
 	if err != nil {
 		return nil, err
 	}
@@ -329,19 +332,23 @@ func (a *Angles) Resume(ctx context.Context, run AngleRun, question string) (*Ag
 	return a.Agent.Run(ctx, AgentRequest{Name: run.Angle, Prompt: resumePrompt(run, question), Dir: run.Dir, ResumeID: run.SessionID})
 }
 
-// writeDiff writes the pull request's diff once per review run to
-// DiffFile under artifact, and returns the path an angle prompt points at,
-// "" when there was no diff to write. Writing it once here, rather than
-// once per angle inline in the prompt, is what keeps a change reviewed by
-// several angles from carrying the same diff text in as many prompts.
-func writeDiff(artifact, diff string) (string, error) {
-	if strings.TrimSpace(diff) == "" {
+// writeDiff writes the pull request's diff once per review run to DiffFile
+// inside dir, the directory the angle sessions run in (Angles.dir) and the
+// only one their read-only tools can reach: a path outside it, such as the
+// artifact directory dir sits under, could not be read back. It returns the
+// path an angle prompt points at, and "" without writing anything when
+// there was no diff to write, or when dir is hostDir, the checkout of the
+// repository under review the machine already had (Angles.Dir): a review
+// does not write a stray file into a working tree it did not make, so the
+// angle prompts fall back to the same message they get when no diff was
+// gathered at all. Writing it once here, rather than once per angle inline
+// in the prompt, is what keeps a change reviewed by several angles from
+// carrying the same diff text in as many prompts.
+func writeDiff(dir, hostDir, diff string) (string, error) {
+	if strings.TrimSpace(diff) == "" || (hostDir != "" && dir == hostDir) {
 		return "", nil
 	}
-	if err := os.MkdirAll(artifact, 0o755); err != nil {
-		return "", err
-	}
-	path := filepath.Join(artifact, DiffFile)
+	path := filepath.Join(dir, DiffFile)
 	if err := os.WriteFile(path, []byte(diff), 0o644); err != nil {
 		return "", err
 	}

@@ -241,9 +241,10 @@ goes:
 ~/.config/bees/reviews/acme/widgets/7/20260910-150405/
   brief.json            the brief, and the distiller's session id
   angles/<angle>.json   each angle's session id, directory and answer
-  diff.patch            the diff, written once for every angle to read
-  checkout/             the pull request's head, cloned for the angles
-  scratch/              where the angles and triage ran without a checkout
+  checkout/             the pull request's head, cloned for the angles;
+                        also holds diff.patch, for every angle to read
+  scratch/              where the angles and triage ran without a checkout;
+                        also holds diff.patch, on the same terms
   findings.json         the merged list, and what your notes hid from it
   triage.json           every triage decision, in order
 ```
@@ -251,7 +252,9 @@ goes:
 The directory name is when the review started, in UTC. A review that stopped
 partway keeps what it reached. `bees review triage` reopens the newest
 directory of the pull request, and an ask resumes the angle's session from
-its file under `angles/`.
+its file under `angles/`. When the angles ran in your machine's own
+checkout instead of one made for the review, diff.patch is not written
+there; an angle reads the code as the change leaves it in that case.
 
 ## Configuration
 

@@ -272,18 +272,24 @@ func TestEverySizeHasItsAngles(t *testing.T) {
 }
 
 func TestAnAngleSessionIsToldItsAngleTheBriefAndTheDiff(t *testing.T) {
-	// No one size runs every angle: xs and xl between them do.
+	// No one size runs every angle: xs and xl between them do. A checkout
+	// (fakeDocker) is what makes diff.patch's directory one the angles'
+	// read-only tools can reach: without one the angles fall back to the
+	// machine's own checkout, which diff.patch is not written into
+	// (TestTheDiffIsNotWrittenIntoTheMachinesCheckout).
 	reqs := map[string]AgentRequest{}
 	diffPaths := map[string]string{}
 	for _, size := range []string{"xs", "xl"} {
+		docker := fakeDocker(t)
 		agent := newFakeAngleAgent(len(sizeAngles[size]))
 		artifact := t.TempDir()
-		if _, err := (&Angles{Agent: agent, Dir: t.TempDir()}).Run(context.Background(), artifact, &Project{}, sized(size), testDiff); err != nil {
+		angles := &Angles{Agent: agent, Dir: t.TempDir(), Checkout: &Checkout{DockerBin: docker}}
+		if _, err := angles.Run(context.Background(), artifact, &Project{}, sized(size), testDiff); err != nil {
 			t.Fatal(err)
 		}
 		maps.Copy(reqs, agent.reqs)
 		for _, angle := range sizeAngles[size] {
-			diffPaths[angle] = filepath.Join(artifact, DiffFile)
+			diffPaths[angle] = filepath.Join(artifact, CheckoutDir, DiffFile)
 		}
 	}
 	if len(reqs) != len(BuiltinAngles) {
@@ -335,6 +341,27 @@ func TestAnAngleSessionIsToldItsAngleTheBriefAndTheDiff(t *testing.T) {
 				t.Errorf("the %s session was also told the %s angle's instructions", angle, other)
 			}
 		}
+	}
+}
+
+// Angles.Dir (the machine's own checkout of the repository under review,
+// used when Checkout is nil or fails) is a working tree the review did not
+// make, so a gathered diff is not written into it: an angle's read-only
+// tools can reach nothing outside the directory it runs in, and the review
+// must not leave a stray file behind in a tree it does not own either.
+func TestTheDiffIsNotWrittenIntoTheMachinesCheckout(t *testing.T) {
+	agent := newFakeAngleAgent(1)
+	project := onlyAngle(t, AngleGeneral)
+	host := t.TempDir()
+	if _, err := (&Angles{Agent: agent, Dir: host}).Run(context.Background(), t.TempDir(), project, testBrief(), testDiff); err != nil {
+		t.Fatal(err)
+	}
+	prompt := agent.reqs[AngleGeneral].Prompt
+	if !strings.Contains(prompt, "The diff was not gathered") || strings.Contains(prompt, "The diff is at") {
+		t.Errorf("a session run in the machine's checkout was not given the no-diff fallback:\n%s", prompt)
+	}
+	if _, err := os.Stat(filepath.Join(host, DiffFile)); !os.IsNotExist(err) {
+		t.Errorf("diff.patch written into the machine's own checkout (stat err: %v)", err)
 	}
 }
 
