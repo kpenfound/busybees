@@ -45,6 +45,7 @@ func testBundle() *Bundle {
 
 const answeredBrief = `{
   "summary": "gathers the context sources a project declares",
+  "size": "s",
   "acceptance_criteria": [{"text": "a source that cannot read something does not fail the review", "source": "#566"}],
   "style_rules": [{"text": "every new key needs a test", "source": "CLAUDE.md"}],
   "touched_areas": [{"name": "internal/review", "paths": ["gather.go"], "summary": "the pipeline and its sources"}]
@@ -60,6 +61,7 @@ func TestTheDistillerReadsTheBundleAndWritesTheBrief(t *testing.T) {
 		Ref:                Ref{Repo: testRepo, Number: 7},
 		Title:              "widgets: gather the context",
 		Summary:            "gathers the context sources a project declares",
+		Size:               "s",
 		AcceptanceCriteria: []Point{{Text: "a source that cannot read something does not fail the review", Source: "#566"}},
 		StyleRules:         []Point{{Text: "every new key needs a test", Source: "CLAUDE.md"}},
 		TouchedAreas:       []TouchedArea{{Name: "internal/review", Paths: []string{"gather.go"}, Summary: "the pipeline and its sources"}},
@@ -76,7 +78,7 @@ func TestTheFactsInTheBriefComeFromTheBundle(t *testing.T) {
 	// A session that answered with a pull request, a title or a session id
 	// of its own is answering something it was not asked: bees knows those,
 	// and takes them from the gather.
-	agent := &fakeAgent{answer: `{"summary": "s", "ref": {"repo": "evil/repo", "number": 1},
+	agent := &fakeAgent{answer: `{"summary": "s", "size": "xs", "ref": {"repo": "evil/repo", "number": 1},
 		"title": "a title of its own", "session_id": "made up",
 		"sources": ["invented"], "not_gathered": ["nothing at all"]}`, id: "sess-1"}
 	brief, err := (&Distiller{Agent: agent, Dir: t.TempDir()}).Distill(context.Background(), testBundle())
@@ -109,6 +111,10 @@ func TestTheDistillerSessionIsToldWhatToDoAndGivenTheBundle(t *testing.T) {
 	for _, want := range []string{
 		"You are the distiller of a pull request review.",
 		"acceptance_criteria",
+		"5. **Size**",
+		"`xs`, `s`, `m`, `l` or `xl`",
+		"from the change's scope and its risk",
+		`"size": "m",`,
 		"# Context for acme/widgets#7",
 		"diff --git a/gather.go b/gather.go",
 		"Every new key needs a test.",
@@ -165,7 +171,11 @@ func TestAnAnswerThatIsNotABriefIsAnError(t *testing.T) {
 		{"prose", "I could not read the diff, sorry.", "no JSON object"},
 		{"a summary that is not text", `{"summary": ["s"]}`, "is not a brief"},
 		{"no summary", `{"acceptance_criteria": [{"text": "a"}]}`, "no summary"},
-		{"an empty summary", `{"summary": "   "}`, "no summary"},
+		{"an empty summary", `{"summary": "   ", "size": "m"}`, "no summary"},
+		{"no size", `{"summary": "s"}`, "no size"},
+		{"an empty size", `{"summary": "s", "size": "  "}`, "no size"},
+		{"a size that is not one", `{"summary": "s", "size": "huge"}`, `"huge", which is not one of xs, s, m, l, xl`},
+		{"a size that is not text", `{"summary": "s", "size": 3}`, "is not a brief"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			agent := &fakeAgent{answer: tc.answer}
@@ -182,11 +192,11 @@ func TestAnAnswerThatIsNotABriefIsAnError(t *testing.T) {
 
 func TestTheBriefIsReadOutOfWhateverTheSessionWrappedItIn(t *testing.T) {
 	for _, tc := range []struct{ name, answer string }{
-		{"the object alone", `{"summary": "the one"}`},
-		{"prose around it", "Here is the brief:\n\n" + `{"summary": "the one"}` + "\n\nHope it helps."},
-		{"a fenced block", "Here it is:\n\n```json\n" + `{"summary": "the one"}` + "\n```\n"},
-		{"the last of two blocks", "The shape:\n```json\n{\"summary\": \"an example\"}\n```\nThe brief:\n```\n{\"summary\": \"the one\"}\n```\n"},
-		{"a block that is not the brief after it", "```json\n{\"summary\": \"the one\"}\n```\nThe line it came from:\n```\ndiff --git a/x b/x\n```\n"},
+		{"the object alone", `{"summary": "the one", "size": "xs"}`},
+		{"prose around it", "Here is the brief:\n\n" + `{"summary": "the one", "size": "xs"}` + "\n\nHope it helps."},
+		{"a fenced block", "Here it is:\n\n```json\n" + `{"summary": "the one", "size": "xs"}` + "\n```\n"},
+		{"the last of two blocks", "The shape:\n```json\n{\"summary\": \"an example\", \"size\": \"m\"}\n```\nThe brief:\n```\n{\"summary\": \"the one\", \"size\": \"xs\"}\n```\n"},
+		{"a block that is not the brief after it", "```json\n{\"summary\": \"the one\", \"size\": \"xs\"}\n```\nThe line it came from:\n```\ndiff --git a/x b/x\n```\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			agent := &fakeAgent{answer: tc.answer}
@@ -202,7 +212,7 @@ func TestTheBriefIsReadOutOfWhateverTheSessionWrappedItIn(t *testing.T) {
 }
 
 func TestAStatementWithNothingInItIsNotInTheBrief(t *testing.T) {
-	agent := &fakeAgent{answer: `{"summary": " s ",
+	agent := &fakeAgent{answer: `{"summary": " s ", "size": " XL ",
 		"acceptance_criteria": [{"text": " keeps the criterion ", "source": " #12 "}, {"text": "  "}],
 		"style_rules": [{"text": ""}],
 		"touched_areas": [{"name": ""}, {"name": " internal/review ", "paths": ["a.go", " "]}]}`}
@@ -212,6 +222,9 @@ func TestAStatementWithNothingInItIsNotInTheBrief(t *testing.T) {
 	}
 	if brief.Summary != "s" {
 		t.Errorf("summary = %q, want it trimmed", brief.Summary)
+	}
+	if brief.Size != "xl" {
+		t.Errorf("size = %q, want it trimmed and lowercased", brief.Size)
 	}
 	want := []Point{{Text: "keeps the criterion", Source: "#12"}}
 	if !reflect.DeepEqual(brief.AcceptanceCriteria, want) {
@@ -252,10 +265,10 @@ func TestTheDistillerRunsTheConfiguredAgent(t *testing.T) {
 }
 
 func TestASessionCannotAnswerWithWhatItWasNotAsked(t *testing.T) {
-	// parseBrief takes the four things the session was asked for and
+	// parseBrief takes the five things the session was asked for and
 	// nothing else, so a brief carries no fact a session made up even
 	// before Distill fills the facts in from the bundle.
-	brief, err := parseBrief(`{"summary": "s", "ref": {"repo": "evil/repo", "number": 1},
+	brief, err := parseBrief(`{"summary": "s", "size": "xs", "ref": {"repo": "evil/repo", "number": 1},
 		"title": "a title of its own", "session_id": "made up",
 		"sources": ["invented"], "not_gathered": ["nothing at all"]}`)
 	if err != nil {

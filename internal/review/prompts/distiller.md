@@ -13,7 +13,7 @@ are running in; you may not write a file, run a command or fetch a URL. The
 context below is what was gathered for you: read a file only to understand
 something it left open.
 
-Write four things.
+Write five things.
 
 1. **Summary** — what this change does, in a few sentences. What a reviewer
    needs to know before reading a line of the diff.
@@ -27,6 +27,11 @@ Write four things.
    one comes from.
 4. **Touched areas** — the parts of the project the change touched, in the
    project's own terms, with the files in each and what the change did there.
+5. **Size** — how large the change is: `xs`, `s`, `m`, `l` or `xl`. Judge it
+   from the change's scope and its risk. Scope is how many files and lines it
+   touches. Risk is which parts of the project those are: a few lines in
+   authentication or in locking code can break more than the same number of
+   lines in a document, and size the change up for it.
 
 Say what the context says and no more. A criterion nobody wrote down, a style
 rule no file states, an area no file in the diff belongs to: leave it out. If
@@ -38,6 +43,7 @@ after it:
 ```json
 {
   "summary": "what the change does",
+  "size": "m",
   "acceptance_criteria": [
     {"text": "a statement that can be checked against the diff", "source": "#12"}
   ],
@@ -52,4 +58,5 @@ after it:
 }
 ```
 
-Every list may be empty. `summary` may not: a brief without it is no brief.
+Every list may be empty. `summary` and `size` may not: a brief without them is
+no brief.
