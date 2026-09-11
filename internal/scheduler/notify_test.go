@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -66,6 +67,45 @@ func TestEscalationWithoutNotify(t *testing.T) {
 	}
 	if strings.Contains(h.gh.comments[12][0], "@") {
 		t.Errorf("notify is unset but the comment mentions somebody:\n%s", h.gh.comments[12][0])
+	}
+}
+
+// escalate's SetEscalation write must hold s.mu like every other writer of
+// issue bookkeeping (recordIssueCost): otherwise it races a fan-out
+// attempt's concurrent, locked AddIssueCost calls for the same issue and
+// loses its own write to the unsynchronized read-modify-write of the issue's
+// state file.
+func TestEscalationDoesNotRaceRecordIssueCost(t *testing.T) {
+	h := newHarness(t, baseTOML)
+	h.gh.issues[12] = &github.Issue{Number: 12, Title: "Build the thing", State: "OPEN",
+		Labels: []github.Label{{Name: "bees"}, {Name: "bees:in-progress"}}}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			h.sched.recordIssueCost(12, 1.0)
+		}()
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := h.sched.escalate(context.Background(), 12, "qa probe kill"); err != nil {
+			t.Error(err)
+		}
+	}()
+	wg.Wait()
+
+	is, err := h.store.Issue(12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if is.Sessions != 20 || is.Cost != 20.0 {
+		t.Errorf("lost update: got sessions=%d cost=%.2f, want sessions=20 cost=20.00", is.Sessions, is.Cost)
+	}
+	if is.Escalation == "" {
+		t.Errorf("escalation was not recorded at all")
 	}
 }
 
