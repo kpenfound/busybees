@@ -164,6 +164,35 @@ func TestARunGathersBriefsReviewsJudgesFiltersAndWritesTheArtifact(t *testing.T)
 	}
 }
 
+// A run reviews from the angles of the brief's size that the project
+// enables, and says so, not from every angle the project enables: a small
+// change from this project, which turned off both angles a small change
+// gets, is reviewed from none, and that is not an error.
+func TestARunReviewsFromTheAnglesOfTheBriefsSize(t *testing.T) {
+	agent := &reviewAgent{}
+	r, log := testRunner(t, agent, nil)
+	small := strings.Replace(answeredBrief, `"size": "m"`, `"size": "xs"`, 1)
+	if small == answeredBrief {
+		t.Fatal("answeredBrief is not size m")
+	}
+	agent.answers[DistillerName] = small
+	a, err := r.Run(context.Background(), Ref{Repo: testRepo, Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Brief.Size != "xs" || len(a.Runs) != 0 {
+		t.Errorf("size %q, runs %+v: want xs and none", a.Brief.Size, a.Runs)
+	}
+	for _, angle := range BuiltinAngles {
+		if _, ran := agent.reqs[angle]; ran {
+			t.Errorf("the %s angle ran", angle)
+		}
+	}
+	if want := "reviewing a size xs change from 0 angles: \n"; !strings.Contains(log.String(), want) {
+		t.Errorf("the log lacks %q:\n%s", want, log.String())
+	}
+}
+
 func TestARunGoesOnWithoutAnAngleThatFailedAndStopsWhenEveryOneDid(t *testing.T) {
 	agent := &reviewAgent{fail: map[string]error{AngleGeneral: errors.New("general session: exit status 1")}}
 	r, log := testRunner(t, agent, nil)
