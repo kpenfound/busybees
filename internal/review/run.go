@@ -30,7 +30,8 @@ type Runner struct {
 	// Pipeline gathers the context: the gh client, the project's
 	// context.toml and the checkout, as Open builds them.
 	Pipeline *Pipeline
-	// Distiller and Angles run the sessions.
+	// Distiller and Angles run the sessions. Angles reports on Log when
+	// it is given none of its own.
 	Distiller *Distiller
 	Angles    *Angles
 	// Notes are the reviewer notes, whose rules the angles are told and the
@@ -110,6 +111,9 @@ func (r *Runner) Run(ctx context.Context, ref Ref) (*Artifact, error) {
 	var diff string
 	if items := bundle.Of(SourceDiff); len(items) > 0 {
 		diff = items[0].Content
+	}
+	if r.Angles.Log == nil {
+		r.Angles.Log = r.Log
 	}
 	runs, err := r.Angles.Run(ctx, a.Dir, project, brief, diff)
 	if runs == nil && err != nil {

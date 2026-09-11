@@ -283,3 +283,27 @@ func TestNewRunnerWiresTheConfiguredAgentNotesAndStorage(t *testing.T) {
 		t.Errorf("an unrelated directory was taken as the checkout: %q %q %q", r.Pipeline.Dir, r.Angles.Dir, r.Distiller.Dir)
 	}
 }
+
+func TestARunReportsACheckoutItCouldNotMakeOnItsLog(t *testing.T) {
+	agent := &reviewAgent{}
+	r, log := testRunner(t, agent, nil)
+	missing := filepath.Join(t.TempDir(), "docker")
+	r.Angles.Checkout = &Checkout{DockerBin: missing}
+	a, err := r.Run(context.Background(), Ref{Repo: testRepo, Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The angles report on the runner's log, and ran in the checkout the
+	// machine has.
+	if !strings.Contains(log.String(), "could not check out acme/widgets#7 in a container: "+missing+" is not installed; the angles run in "+r.Angles.Dir) {
+		t.Errorf("log:\n%s\nwant the checkout that could not be made", log.String())
+	}
+	for _, run := range a.Runs {
+		if run.Dir != r.Angles.Dir {
+			t.Errorf("the %s angle ran in %q, want the machine's checkout %s", run.Angle, run.Dir, r.Angles.Dir)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(a.Dir, CheckoutDir)); !os.IsNotExist(err) {
+		t.Errorf("a checkout directory was left in the artifact: %v", err)
+	}
+}

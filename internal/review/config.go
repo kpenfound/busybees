@@ -21,9 +21,11 @@
 // the pull request under review, and context.go, which gathers the sources
 // context.toml enables into the bundle a review reads. distill.go runs the
 // first session over that bundle and brief.go is what it produces, the
-// starting context of every session after it; angles.go fans those sessions
-// out, one per angle the project enables, and keeps enough of each to reopen
-// it; agent.go runs every one of them, read-only. findings.go is what an
+// starting context of every session after it; checkout.go clones the pull
+// request's head, in a container, for the sessions to read; angles.go fans
+// those sessions out, one per angle the project enables, in that checkout,
+// and keeps enough of each to reopen it; agent.go runs every one of them,
+// read-only. findings.go is what an
 // angle answers with and judge.go merges every angle's into the one list a
 // review triages; notes.go is the reviewer notes, the file outside every
 // review that holds what this reviewer has dismissed before, and noise.go
