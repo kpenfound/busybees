@@ -70,6 +70,11 @@ const (
 	AnglesDir   = "angles"
 	CheckoutDir = "checkout"
 	ScratchDir  = "scratch"
+	// DiffFile is the pull request's diff, written once per review run
+	// under the artifact directory (not the checkout or scratch directory
+	// the sessions run in, which a review does not own) so every angle's
+	// prompt can point at it instead of repeating it inline.
+	DiffFile = "diff.patch"
 )
 
 // AngleRun is one angle's session: what it came to, and what reopens it.
@@ -152,11 +157,11 @@ func NewAngles(cfg *Config, dir string) *Angles {
 }
 
 // Run fans out one session per angle the brief's size calls for and project
-// enables (anglesFor), all at once, each given the brief and the diff, and
-// waits for every one of them. The runs come back in BuiltinAngles order and
-// are written into artifact, one file per angle, before Run returns. A brief
-// whose size is not one of Sizes is reported on Log and gets the angles of
-// the largest.
+// enables (anglesFor), all at once, each given the brief and told where to
+// read the diff, and waits for every one of them. The runs come back in
+// BuiltinAngles order and are written into artifact, one file per angle,
+// before Run returns. A brief whose size is not one of Sizes is reported on
+// Log and gets the angles of the largest.
 //
 // The sessions run in a checkout of the pull request's head, cloned into
 // artifact by Checkout first; when that cannot be made they run in Dir,
@@ -168,7 +173,10 @@ func NewAngles(cfg *Config, dir string) *Angles {
 // or not err is nil, a failed angle is among them with Error set and no
 // answer, and err says so once every angle has ended. An error before any
 // session ran (no brief, a directory that could not be made) returns no
-// runs. diff is the pull request's diff, and "" when it was not gathered.
+// runs. diff is the pull request's diff, and "" when it was not gathered; it
+// is written once to DiffFile under artifact (writeDiff), not once per
+// angle, so every angle's prompt can point at the one file instead of
+// repeating the diff's text.
 func (a *Angles) Run(ctx context.Context, artifact string, project *Project, brief *Brief, diff string) ([]AngleRun, error) {
 	if brief == nil {
 		return nil, errors.New("angles: no brief to review from")
@@ -187,9 +195,13 @@ func (a *Angles) Run(ctx context.Context, artifact string, project *Project, bri
 	if err != nil {
 		return nil, err
 	}
+	diffPath, err := writeDiff(artifact, diff)
+	if err != nil {
+		return nil, err
+	}
 	prompts := make([]string, len(angles))
 	for i, angle := range angles {
-		prompt, err := anglePrompt(angle, brief, diff, a.Rules)
+		prompt, err := anglePrompt(angle, brief, diffPath, a.Rules)
 		if err != nil {
 			return nil, err
 		}
@@ -317,13 +329,32 @@ func (a *Angles) Resume(ctx context.Context, run AngleRun, question string) (*Ag
 	return a.Agent.Run(ctx, AgentRequest{Name: run.Angle, Prompt: resumePrompt(run, question), Dir: run.Dir, ResumeID: run.SessionID})
 }
 
+// writeDiff writes the pull request's diff once per review run to
+// DiffFile under artifact, and returns the path an angle prompt points at,
+// "" when there was no diff to write. Writing it once here, rather than
+// once per angle inline in the prompt, is what keeps a change reviewed by
+// several angles from carrying the same diff text in as many prompts.
+func writeDiff(artifact, diff string) (string, error) {
+	if strings.TrimSpace(diff) == "" {
+		return "", nil
+	}
+	if err := os.MkdirAll(artifact, 0o755); err != nil {
+		return "", err
+	}
+	path := filepath.Join(artifact, DiffFile)
+	if err := os.WriteFile(path, []byte(diff), 0o644); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
 // anglePrompt is the whole of what an angle session is told: how a review
 // session behaves, what this angle looks for, what the reviewer notes say
-// has been dismissed from this angle before, the brief, the diff when there
-// is one, and what to answer with, in that order. The brief and the diff can
-// be long, so the instruction they follow is repeated in one line at the
-// end.
-func anglePrompt(angle string, brief *Brief, diff string, rules []Rule) (string, error) {
+// has been dismissed from this angle before, the brief, where to read the
+// diff when there is one, and what to answer with, in that order. The brief
+// can be long, so the instruction it is followed by is repeated in one line
+// at the end.
+func anglePrompt(angle string, brief *Brief, diffPath string, rules []Rule) (string, error) {
 	instructions, err := angleInstructions(angle)
 	if err != nil {
 		return "", err
@@ -339,10 +370,10 @@ func anglePrompt(angle string, brief *Brief, diff string, rules []Rule) (string,
 	out.WriteString("\n---\n\n")
 	out.WriteString(brief.Text())
 	out.WriteString("\n---\n\n")
-	if strings.TrimSpace(diff) == "" {
+	if diffPath == "" {
 		out.WriteString("The diff was not gathered: read the files the brief's touched areas name.\n")
 	} else {
-		fmt.Fprintf(&out, "## Diff\n\n%s\n", fenced(diff))
+		fmt.Fprintf(&out, "The diff is at %s: read it there.\n", diffPath)
 	}
 	fmt.Fprintf(&out, "\n---\n\nReview %s from the %s angle. Answer with the JSON object alone.\n", brief.Ref, angleTitles[angle])
 	return out.String(), nil

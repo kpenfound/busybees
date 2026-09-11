@@ -28,6 +28,11 @@ import (
 //	                                               id, the directory it ran
 //	                                               in and its raw answer,
 //	                                               enough to resume it
+//	  diff.patch                                   the pull request's diff,
+//	                                               written once (angles.go's
+//	                                               writeDiff) for every
+//	                                               angle's prompt to point
+//	                                               at, when it was gathered
 //	  checkout/                                    the pull request's head,
 //	                                               cloned by a container
 //	                                               (checkout.go) for the

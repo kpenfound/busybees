@@ -241,6 +241,7 @@ goes:
 ~/.config/bees/reviews/acme/widgets/7/20260910-150405/
   brief.json            the brief, and the distiller's session id
   angles/<angle>.json   each angle's session id, directory and answer
+  diff.patch            the diff, written once for every angle to read
   checkout/             the pull request's head, cloned for the angles
   scratch/              where the angles and triage ran without a checkout
   findings.json         the merged list, and what your notes hid from it

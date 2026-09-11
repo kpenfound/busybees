@@ -13,4 +13,6 @@ breaks one of the brief's style rules. Name the lines.
 Leave out what would take a long look to establish, such as an invariant
 across the package or a caller three files away, and leave comments and
 documents to the documentation angle. A nitpick is not worth anyone's time
-on a small change, and an empty list is a common answer.
+on a small change: weigh whether it is worth a reviewer's attention before
+you report it. A change with nothing wrong on a light pass gets an empty
+list, the normal answer for a small change, not a shortfall to make up for.
