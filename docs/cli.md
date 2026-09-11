@@ -1432,6 +1432,10 @@ s select · e edit and select · d dismiss · f defer · a ask · n next · q qu
 reason (recorded in your reviewer notes): covered by the table test in gather_test.go
 ```
 
+At a terminal, triage opens as a full-screen view beside the diff instead of
+the prompts above, the same keys pressed without return. `--no-tui`, or a
+stdout that is not a terminal, keeps the console shown above.
+
 Every decision is written into the review's artifact directory as it is
 taken, so stopping loses nothing: run the command again and it offers what is
 still undecided. The latest select, dismiss or defer on a finding is the one

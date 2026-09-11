@@ -189,6 +189,10 @@ offers what is still undecided. See
 for the keys, and [factory mode](cli.md#factory-mode) for triage by an agent
 (`--agent`, `--instructions`).
 
+At a terminal, triage opens as a full-screen view beside the diff, the same
+keys pressed without return. `--no-tui`, or a stdout that is not a terminal,
+keeps the console described there instead.
+
 ## How a review ends
 
 | End | What happens |
