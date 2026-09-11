@@ -153,14 +153,30 @@ func (m Model) View() string {
 	var panes string
 	if w >= sideBySide {
 		lw := w * 3 / 5
-		h := max(1, m.height-5)
+		h := max(1, m.height-6)
 		panes = lipgloss.JoinHorizontal(lipgloss.Top, m.diffPanel(lw-4, h), m.findingPanel(w-lw-4, h))
 	} else {
-		rows := m.height - 2
+		rows := m.height - 3
 		h := max(1, rows/2-3)
 		panes = lipgloss.JoinVertical(lipgloss.Left, m.diffPanel(w-4, h), m.findingPanel(w-4, rows-h-6))
 	}
-	return m.header(w) + "\n" + panes + "\n" + m.footer(w)
+	return m.prHeader(w) + "\n" + m.header(w) + "\n" + panes + "\n" + m.footer(w)
+}
+
+// prHeader names the pull request under review: its title and who opened
+// it, above the finding the header names within it. It is blank, not
+// omitted, so the screen's line count does not depend on the brief having
+// them.
+func (m Model) prHeader(w int) string {
+	b := m.q.Artifact.Brief
+	var parts []string
+	if b.Title != "" {
+		parts = append(parts, b.Title)
+	}
+	if b.Author != "" {
+		parts = append(parts, "opened by "+b.Author)
+	}
+	return hintStyle.Render(clip(strings.Join(parts, " · "), w))
 }
 
 // header names the finding and where it stands in the queue, the way the
@@ -279,9 +295,9 @@ const help = `  s  select: the finding goes into the review's output as written
 // pageHeight is how many lines a page key moves: the height of a pane.
 func (m Model) pageHeight() int {
 	if m.width >= sideBySide {
-		return max(1, m.height-5)
+		return max(1, m.height-6)
 	}
-	return max(1, (m.height-2)/2-3)
+	return max(1, (m.height-3)/2-3)
 }
 
 // wrap breaks every line of s that is wider than w at the last space that
