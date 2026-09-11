@@ -42,6 +42,11 @@ requested, printed as a markdown report, or discarded. --post and --report
 choose; with neither, the output key of ~/.config/bees/config.toml does, and
 its default asks you at the end.
 
+Each step prints a line as it goes, and at a terminal one row per angle
+shows a spinner while its session runs and a mark when it ends; --no-tui,
+or a stdout that is not a terminal, prints a line per angle as it starts and
+ends instead.
+
 With --agent an agent session triages instead of you, with the same four
 actions: what it dismisses goes into your reviewer notes, and --instructions
 tells it what you want from the review. It chooses how the review ends where
@@ -81,8 +86,7 @@ again.`,
 			if err != nil {
 				return err
 			}
-			runner.Log = os.Stdout
-			artifact, err := runner.Run(ctx, ref)
+			artifact, err := runReviewShowingProgress(ctx, runner, ref, who.noTUI)
 			if err != nil {
 				return err
 			}
@@ -258,7 +262,8 @@ var runReviewTUI = reviewtui.Run
 
 // triageFlags choose who triages: you, at the terminal UI or the console, or
 // with --agent an agent session (review.AgentTriage) told what
-// --instructions says.
+// --instructions says. --no-tui also keeps the review's progress to plain
+// lines (runReviewShowingProgress).
 type triageFlags struct {
 	agent        bool
 	instructions string
@@ -268,7 +273,7 @@ type triageFlags struct {
 func (w *triageFlags) add(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&w.agent, "agent", false, "let an agent session triage the findings instead of you (factory mode)")
 	cmd.Flags().StringVar(&w.instructions, "instructions", "", "what the agent triaging with --agent is told you want, in your words")
-	cmd.Flags().BoolVar(&w.noTUI, "no-tui", false, "triage at the console instead of the terminal UI")
+	cmd.Flags().BoolVar(&w.noTUI, "no-tui", false, "print the review's progress as plain lines and triage at the console instead of the terminal UI")
 }
 
 // check refuses --instructions without --agent, which nobody would read.
