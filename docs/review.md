@@ -103,6 +103,20 @@ sources of its own that gather the files they name. See
 | `acceptance_criteria` | A criterion from the brief the change does not meet, or meets only in part, and a behaviour change nothing asked for |
 | `side_effects` | A caller the change did not update, an invariant it no longer keeps, and a claim elsewhere in the repository it made false |
 
+The brief assigns the size automatically, from the scope and the risk of the
+diff, and a review runs the angles that size calls for:
+
+| Size | Angles |
+|---|---|
+| `xs`, `s` | `quick_general`, `docs` |
+| `m`, `l` | `general`, `docs`, `test_coverage`, `acceptance_criteria` |
+| `xl` | `general`, `docs`, `test_coverage`, `acceptance_criteria`, `side_effects` |
+
+A project's `angles.<angle>` entry in
+[`context.toml`](#contexttoml) still turns an angle off entirely; the size
+only narrows what is left on, and never re-enables an angle the project
+turned off.
+
 An angle session is also told the rules in your reviewer notes about its
 angle, so it reports less of what you have dismissed before.
 
