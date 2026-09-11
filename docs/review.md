@@ -28,10 +28,12 @@ context  ->  brief  ->  angles  ->  findings  ->  triage  ->  end
    changed. A source that cannot read something records what it missed, and
    the review goes on.
 2. **Brief.** One session, the distiller, reads everything gathered and
-   writes the brief: what the change does, its acceptance criteria with the
-   issue or text each came from, the style rules that apply to it with the
-   file each is written in, the parts of the project it touches, and what the
-   sources could not read.
+   writes the brief: what the change does, its size (`xs`, `s`, `m`, `l` or
+   `xl`, judged from how many files and lines it touches and which parts of
+   the project those are), its acceptance criteria with the issue or text
+   each came from, the style rules that apply to it with the file each is
+   written in, the parts of the project it touches, and what the sources
+   could not read.
 3. **Angles.** One session per [angle](#angles) reads the brief and the diff,
    and answers with findings. The angles run at the same time. An angle that
    fails is skipped; the review stops only when every angle fails.

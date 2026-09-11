@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -23,7 +24,7 @@ const BriefFile = "brief.json"
 // areas are what it changed. What each angle makes of that is the angle's
 // own business.
 //
-// Half of it is the distiller's reading of the bundle (Summary,
+// Half of it is the distiller's reading of the bundle (Summary, Size,
 // AcceptanceCriteria, StyleRules, TouchedAreas) and half is what bees
 // already knew (Ref, Title, Sources, NotGathered, SessionID): the session is
 // not asked for a fact the gather has, so it cannot get one wrong.
@@ -35,6 +36,10 @@ type Brief struct {
 
 	// Summary is what the change does, in the distiller's words.
 	Summary string `json:"summary"`
+	// Size is how large the change is, one of Sizes, as the distiller
+	// judged it from the change's scope (the files and lines it touches)
+	// and its risk (which parts of the project those are).
+	Size string `json:"size"`
 	// AcceptanceCriteria are what the change says it does: the criteria of
 	// the issues it closes, the promises of its own description.
 	AcceptanceCriteria []Point `json:"acceptance_criteria,omitempty"`
@@ -54,6 +59,9 @@ type Brief struct {
 	// session would be resumed from.
 	SessionID string `json:"session_id,omitempty"`
 }
+
+// Sizes are the sizes a brief can give a change, smallest first.
+var Sizes = []string{"xs", "s", "m", "l", "xl"}
 
 // Point is one statement in the brief and where it came from: a criterion
 // and the issue that asked for it, a style rule and the file it is written
@@ -134,19 +142,29 @@ func points(out *strings.Builder, heading string, list []Point) {
 
 // Validate checks that the distiller produced a brief at all. A session that
 // answered with an empty object parses and is worth nothing, so the summary
-// is required: it is the one part every reader of the brief uses.
+// is required: it is the one part every reader of the brief uses. So is the
+// size, one of Sizes: it is what decides how much of a review the change
+// gets.
 func (b *Brief) Validate() error {
 	if strings.TrimSpace(b.Summary) == "" {
 		return errors.New("the brief has no summary of the change")
+	}
+	if b.Size == "" {
+		return errors.New("the brief has no size of the change")
+	}
+	if !slices.Contains(Sizes, b.Size) {
+		return fmt.Errorf("the brief sizes the change %q, which is not one of %s", b.Size, strings.Join(Sizes, ", "))
 	}
 	return nil
 }
 
 // normalise trims the distiller's text and drops the statements that carry
 // none, so an empty entry in the list it answered with does not reach a
-// session as a bullet with nothing on it.
+// session as a bullet with nothing on it. The size is lowercased too: "M" is
+// the size m, answered in capitals.
 func (b *Brief) normalise() {
 	b.Summary = strings.TrimSpace(b.Summary)
+	b.Size = strings.ToLower(strings.TrimSpace(b.Size))
 	b.AcceptanceCriteria = trimPoints(b.AcceptanceCriteria)
 	b.StyleRules = trimPoints(b.StyleRules)
 	areas := b.TouchedAreas[:0]

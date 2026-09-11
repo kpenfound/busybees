@@ -96,6 +96,7 @@ func distillPrompt(b *Bundle) string {
 // session id of its own is answering something it was not asked.
 type briefDraft struct {
 	Summary            string        `json:"summary"`
+	Size               string        `json:"size"`
 	AcceptanceCriteria []Point       `json:"acceptance_criteria"`
 	StyleRules         []Point       `json:"style_rules"`
 	TouchedAreas       []TouchedArea `json:"touched_areas"`
@@ -113,6 +114,7 @@ func parseBrief(text string) (*Brief, error) {
 	}
 	brief := &Brief{
 		Summary:            draft.Summary,
+		Size:               draft.Size,
 		AcceptanceCriteria: draft.AcceptanceCriteria,
 		StyleRules:         draft.StyleRules,
 		TouchedAreas:       draft.TouchedAreas,

@@ -13,6 +13,7 @@ func testBrief() *Brief {
 		Ref:                Ref{Repo: testRepo, Number: 7},
 		Title:              "widgets: gather the context",
 		Summary:            "gathers the context sources a project declares",
+		Size:               "m",
 		AcceptanceCriteria: []Point{{Text: "a source that cannot read something does not fail the review", Source: "#566"}, {Text: "nothing is truncated"}},
 		StyleRules:         []Point{{Text: "every new key needs a test", Source: "CLAUDE.md"}},
 		TouchedAreas:       []TouchedArea{{Name: "internal/review", Paths: []string{"gather.go", "sources.go"}, Summary: "the pipeline and its sources"}},
@@ -77,6 +78,34 @@ func TestABriefWithoutASummaryIsNotABrief(t *testing.T) {
 	}
 }
 
+func TestABriefWithoutASizeIsNotABrief(t *testing.T) {
+	// Validate takes the size as the distiller normalised it: "M" is
+	// lowercased before it gets here, so here it is not a size.
+	for _, tc := range []struct{ size, want string }{
+		{"", "the brief has no size of the change"},
+		{"medium", `the brief sizes the change "medium", which is not one of xs, s, m, l, xl`},
+		{"xxl", `"xxl", which is not one of`},
+		{"M", `"M", which is not one of`},
+	} {
+		brief := testBrief()
+		brief.Size = tc.size
+		err := brief.Validate()
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("a brief sized %q: err = %v, want %q", tc.size, err, tc.want)
+		}
+	}
+	for _, size := range []string{"xs", "s", "m", "l", "xl"} {
+		brief := testBrief()
+		brief.Size = size
+		if err := brief.Validate(); err != nil {
+			t.Errorf("a brief sized %q is not one: %v", size, err)
+		}
+	}
+	if len(Sizes) != 5 {
+		t.Errorf("sizes = %q, want the five", Sizes)
+	}
+}
+
 func TestABriefIsWrittenIntoTheArtifactDirectoryAndReadBack(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "review-7")
 	want := testBrief()
@@ -85,6 +114,13 @@ func TestABriefIsWrittenIntoTheArtifactDirectoryAndReadBack(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, BriefFile)); err != nil {
 		t.Fatalf("the brief is not at %s: %v", BriefFile, err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, BriefFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"size": "m"`) {
+		t.Errorf("%s does not record the size:\n%s", BriefFile, data)
 	}
 	got, err := ReadBrief(dir)
 	if err != nil {
