@@ -13,4 +13,6 @@ the change owes and does not make. Name the file that depends on the change
 and the lines that do.
 
 The change itself is not your subject: what is wrong inside the diff is
-another angle's. What is wrong outside it because of the diff is yours.
+another angle's. What is wrong outside it because of the diff is yours. A
+change with nothing broken elsewhere is a normal, empty list, not a sign
+you did not look far enough.

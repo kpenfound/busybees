@@ -12,15 +12,16 @@ says.
 
 The brief below is what the distiller made of the context that was gathered:
 what the change does, what it says it does, the style rules that apply to it
-and the areas it touched. The diff follows the brief when it was gathered.
-Read the files the brief names when the diff leaves a question open; a
-finding about a line you did not read is a guess.
+and the areas it touched. After the brief you are told where to read the
+diff, when it was gathered. Read the files the brief names when the diff
+leaves a question open; a finding about a line you did not read is a guess.
 
 Report a finding only when you can point at what shows it: the file and the
 lines, and what you read there. Say what is wrong and why it matters, in the
-project's own terms, and give the replacement when you can write it. No
-finding is a fine answer: a change with nothing wrong from your angle gets an
-empty list, not a finding invented to fill it.
+project's own terms, and give the replacement when you can write it. An
+empty list is a normal answer, not a fallback: judge severity before you
+report, and let a change with nothing wrong from your angle get nothing
+back rather than a finding invented to fill the list.
 
 Answer with one JSON object and nothing else. No prose before it, no prose
 after it:

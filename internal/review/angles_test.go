@@ -272,14 +272,25 @@ func TestEverySizeHasItsAngles(t *testing.T) {
 }
 
 func TestAnAngleSessionIsToldItsAngleTheBriefAndTheDiff(t *testing.T) {
-	// No one size runs every angle: xs and xl between them do.
+	// No one size runs every angle: xs and xl between them do. A checkout
+	// (fakeDocker) is what makes diff.patch's directory one the angles'
+	// read-only tools can reach: without one the angles fall back to the
+	// machine's own checkout, which diff.patch is not written into
+	// (TestTheDiffIsNotWrittenIntoTheMachinesCheckout).
 	reqs := map[string]AgentRequest{}
+	diffPaths := map[string]string{}
 	for _, size := range []string{"xs", "xl"} {
+		docker := fakeDocker(t)
 		agent := newFakeAngleAgent(len(sizeAngles[size]))
-		if _, err := (&Angles{Agent: agent, Dir: t.TempDir()}).Run(context.Background(), t.TempDir(), &Project{}, sized(size), testDiff); err != nil {
+		artifact := t.TempDir()
+		angles := &Angles{Agent: agent, Dir: t.TempDir(), Checkout: &Checkout{DockerBin: docker}}
+		if _, err := angles.Run(context.Background(), artifact, &Project{}, sized(size), testDiff); err != nil {
 			t.Fatal(err)
 		}
 		maps.Copy(reqs, agent.reqs)
+		for _, angle := range sizeAngles[size] {
+			diffPaths[angle] = filepath.Join(artifact, CheckoutDir, DiffFile)
+		}
 	}
 	if len(reqs) != len(BuiltinAngles) {
 		t.Fatalf("%d angles ran, want all %d", len(reqs), len(BuiltinAngles))
@@ -293,23 +304,32 @@ func TestAnAngleSessionIsToldItsAngleTheBriefAndTheDiff(t *testing.T) {
 		AngleSideEffects:  "## Your angle: side effects",
 	} {
 		prompt := reqs[angle].Prompt
+		diffPath := diffPaths[angle]
+		if data, err := os.ReadFile(diffPath); err != nil {
+			t.Errorf("the %s angle's diff was not written to %s: %v", angle, diffPath, err)
+		} else if string(data) != testDiff {
+			t.Errorf("%s: %s = %q, want %q", angle, diffPath, data, testDiff)
+		}
 		for _, want := range []string{
 			"You are one session of a pull request review",
 			"Your session is read-only.",
 			heading,
 			"# Review brief: acme/widgets#7",
 			"- every new key needs a test (CLAUDE.md)",
-			"## Diff\n\n```\n" + strings.TrimRight(testDiff, "\n") + "\n```",
+			"The diff is at " + diffPath + ": read it there.",
 			"Review acme/widgets#7 from the " + angleTitles[angle] + " angle. Answer with the JSON object alone.\n",
 		} {
 			if !strings.Contains(prompt, want) {
 				t.Errorf("the %s session was not told %q:\n%s", angle, want, prompt)
 			}
 		}
+		if strings.Contains(prompt, testDiff) {
+			t.Errorf("the %s session's prompt still has the diff inline:\n%s", angle, prompt)
+		}
 		// The frame, the angle, the brief, the diff, the closing line: in
 		// that order, so the instructions come before what can be long.
 		last := -1
-		for _, mark := range []string{"You are one session", heading, "# Review brief", "## Diff", "Answer with the JSON object alone"} {
+		for _, mark := range []string{"You are one session", heading, "# Review brief", "The diff is at", "Answer with the JSON object alone"} {
 			at := strings.Index(prompt, mark)
 			if at <= last {
 				t.Errorf("the %s session's prompt has %q out of order:\n%s", angle, mark, prompt)
@@ -324,15 +344,40 @@ func TestAnAngleSessionIsToldItsAngleTheBriefAndTheDiff(t *testing.T) {
 	}
 }
 
-func TestWithoutADiffTheSessionIsToldSo(t *testing.T) {
+// Angles.Dir (the machine's own checkout of the repository under review,
+// used when Checkout is nil or fails) is a working tree the review did not
+// make, so a gathered diff is not written into it: an angle's read-only
+// tools can reach nothing outside the directory it runs in, and the review
+// must not leave a stray file behind in a tree it does not own either.
+func TestTheDiffIsNotWrittenIntoTheMachinesCheckout(t *testing.T) {
 	agent := newFakeAngleAgent(1)
 	project := onlyAngle(t, AngleGeneral)
-	if _, err := (&Angles{Agent: agent, Dir: t.TempDir()}).Run(context.Background(), t.TempDir(), project, testBrief(), " \n"); err != nil {
+	host := t.TempDir()
+	if _, err := (&Angles{Agent: agent, Dir: host}).Run(context.Background(), t.TempDir(), project, testBrief(), testDiff); err != nil {
 		t.Fatal(err)
 	}
 	prompt := agent.reqs[AngleGeneral].Prompt
-	if !strings.Contains(prompt, "The diff was not gathered") || strings.Contains(prompt, "## Diff") {
+	if !strings.Contains(prompt, "The diff was not gathered") || strings.Contains(prompt, "The diff is at") {
+		t.Errorf("a session run in the machine's checkout was not given the no-diff fallback:\n%s", prompt)
+	}
+	if _, err := os.Stat(filepath.Join(host, DiffFile)); !os.IsNotExist(err) {
+		t.Errorf("diff.patch written into the machine's own checkout (stat err: %v)", err)
+	}
+}
+
+func TestWithoutADiffTheSessionIsToldSo(t *testing.T) {
+	agent := newFakeAngleAgent(1)
+	project := onlyAngle(t, AngleGeneral)
+	artifact := t.TempDir()
+	if _, err := (&Angles{Agent: agent, Dir: t.TempDir()}).Run(context.Background(), artifact, project, testBrief(), " \n"); err != nil {
+		t.Fatal(err)
+	}
+	prompt := agent.reqs[AngleGeneral].Prompt
+	if !strings.Contains(prompt, "The diff was not gathered") || strings.Contains(prompt, "The diff is at") {
 		t.Errorf("a session with no diff was not told so:\n%s", prompt)
+	}
+	if _, err := os.Stat(filepath.Join(artifact, DiffFile)); !os.IsNotExist(err) {
+		t.Errorf("diff.patch written for a review with no diff (stat err: %v)", err)
 	}
 }
 

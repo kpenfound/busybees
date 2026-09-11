@@ -135,8 +135,17 @@ func TestARunGathersBriefsReviewsJudgesFiltersAndWritesTheArtifact(t *testing.T)
 	if !strings.Contains(agent.reqs[DistillerName].Prompt, "Closes #12") || !strings.Contains(agent.reqs[DistillerName].Prompt, "func Widget() {}") {
 		t.Errorf("the distiller was not given the gathered context")
 	}
-	if p := agent.reqs[AngleGeneral].Prompt; !strings.Contains(p, "gathers the context sources a project declares") || !strings.Contains(p, "## Diff") || !strings.Contains(p, "receiver names are short here") {
-		t.Errorf("the general angle was not given the brief, the diff and the rules:\n%s", p)
+	// testRunner's Angles has no Checkout, so the angles run in the
+	// machine's own checkout (Angles.Dir): a working tree the review does
+	// not own, and diff.patch is not written into it (angles_test.go's
+	// TestTheDiffIsNotWrittenIntoTheMachinesCheckout covers that
+	// directly). The prompt falls back to the same message a session with
+	// no diff at all gets.
+	if p := agent.reqs[AngleGeneral].Prompt; !strings.Contains(p, "gathers the context sources a project declares") || !strings.Contains(p, "The diff was not gathered") || !strings.Contains(p, "receiver names are short here") {
+		t.Errorf("the general angle was not given the brief, the rules and the diff fallback:\n%s", p)
+	}
+	if _, err := os.Stat(filepath.Join(a.Dir, DiffFile)); !os.IsNotExist(err) {
+		t.Errorf("diff.patch written under the artifact directory (stat err: %v)", err)
 	}
 	if _, ok := agent.reqs[AngleSideEffects]; ok {
 		t.Error("the angle the project turned off ran")
