@@ -6,8 +6,7 @@ GitHub repository. Read `docs/architecture.md` before changing the scheduler.
 
 ## Build and test
 
-- Everything builds and tests through Dagger. Always export
-  `DAGGER_X_RELEASE=v1.0.0-beta.11` before running `dagger`.
+- Everything builds and tests through Dagger.
 - `dagger check` runs `go:lint-all`, `go:test-all` and `go:generate-all` (from the
   official `github.com/dagger/go` module in `dagger.toml`). Run it before committing.
 - `go build ./... && go test ./...` works locally too and is faster while iterating.

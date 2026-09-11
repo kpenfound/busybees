@@ -106,7 +106,7 @@ disallowed_tools = ["Artifact"]
 # MCP servers, git). $VARS are expanded from the bees environment. Roles can
 # add or override entries in [roles.<name>.env].
 [global.env]
-DAGGER_X_RELEASE = "v1.0.0-beta.11"
+DAGGER_X_RELEASE = "v1.0.0-beta.12"
 
 # MCP servers available to every role, one table per server. stdio servers
 # use command/args/env; remote servers use url (+ type = "http" | "sse",

@@ -52,10 +52,7 @@ dagger check
 ```
 
 `dagger check` runs `go:lint-all`, `go:test-all` and `go:generate-all` from the
-`github.com/dagger/go` module installed by `dagger.toml`. The repository pins
-the Dagger release with `DAGGER_X_RELEASE=v1.0.0-beta.11`; set it in your
-shell. Without the export there are no checks to run: `dagger check` prints a
-few green lines and exits 0, having checked nothing. `dagger check -l` lists
+`github.com/dagger/go` module installed by `dagger.toml`. `dagger check -l` lists
 the checks, and `dagger check go:test-all` runs one of them.
 
 ### Testing rules

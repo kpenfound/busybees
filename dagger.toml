@@ -9,6 +9,15 @@ source = "github.com/dagger/go"
 [modules.go.settings]
 base = "golang:1.26-bookworm"
 
+# The module treats every go.mod in the workspace as a Go module to check, and
+# the workspace does not read .gitignore. A session may leave a copy of go.mod
+# in its own directory under .bees/ (factory state, never source), where
+# `otelgotest ./...` finds no packages and fails the check. Keep state out of
+# the module selection.
+lint = ["**", "!.bees/**"]
+test = ["**", "!.bees/**"]
+generate = ["**", "!.bees/**"]
+
 # The built-in Go patterns mount only Go sources, so tests that read a repo
 # file need it listed here: bees.example.toml is a golden file compared against
 # internal/config's template by TestExampleTOMLInSync, CLAUDE.md's command
