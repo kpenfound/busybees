@@ -18,4 +18,6 @@ change in behaviour is documented. You ask whether the prose next to the
 code, and the prose the change wrote, describes the code; do not report a
 line for the reason that angle would. A claim far from the diff that the
 change made false is the side effects angle's. A comment that is true but
-could be worded better is not a finding.
+could be worded better is not a finding. Comments that still hold are a
+normal outcome, not a shortfall: an empty list is the right answer for a
+change that leaves them accurate.

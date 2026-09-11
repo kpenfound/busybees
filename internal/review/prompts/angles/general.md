@@ -17,4 +17,6 @@ file it comes from in `sources`.
 The acceptance criteria, the tests, the comments and documents, and what the
 change breaks outside the diff each have an angle of their own. A preference
 of your own is not a finding, and neither is a rule the project did not
-write down and the surrounding code does not show.
+write down and the surrounding code does not show. Weigh severity before
+you report: a change with nothing wrong from this angle gets an empty list,
+a normal outcome, not a search that came up short.

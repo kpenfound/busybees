@@ -12,4 +12,5 @@ have to know about. Name the criterion and where you read it in `sources`.
 
 A criterion that is met is not a finding. A criterion you cannot check
 without running something is one you report as unchecked, with what would
-have to run, not as failed.
+have to run, not as failed. A change that meets everything it claims is a
+normal, empty list, not a search that came up short.

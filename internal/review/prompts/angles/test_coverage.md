@@ -14,4 +14,6 @@ where the project documents that behaviour. Name the test file, or the
 document, and the lines.
 
 Do not run the tests, and do not guess whether they pass: CI says. Do not
-ask for a test the project's own conventions do not ask for.
+ask for a test the project's own conventions do not ask for. A change whose
+tests and documentation already hold is a normal, empty list, not a search
+that came up short.
