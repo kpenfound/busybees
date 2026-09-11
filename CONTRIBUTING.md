@@ -16,7 +16,7 @@ internal/mcpserver/  the built-in MCP server (`bees mcp serve`): the factory's o
 internal/nams/       the Neo4j Agent Memory REST client behind notes_read and notes_write with notes.backend = "neo4j"
 internal/procs/      finding and stopping sessions (processes and containers): `bees kill`, and one at a time from the live view
 internal/prompts/    role prompts embedded in the binary (system/*.md, task/*.md), the project's own bees/prompts/ files, the renderer
-internal/review/     bees review: two configuration files, the context gathered for a pull request, the distiller session that briefs the review, the angle sessions that review from it, the judge that merges their findings, the reviewer notes and the noise filter made of them, the triage queue and the console that drives it, the runner that strings the pipeline together, the end that posts or prints what triage selected, the artifact directory a review is kept in
+internal/review/     bees review: two configuration files, the context gathered for a pull request, the distiller session that briefs the review, the container checkout of the pull request's head and the angle sessions that review from it there, the judge that merges their findings, the reviewer notes and the noise filter made of them, the triage queue and the console that drives it, the runner that strings the pipeline together, the end that posts or prints what triage selected, the artifact directory a review is kept in
 internal/scheduler/  the loop: poll, human feedback, merge state, reconcile, developer workers, singleton roles, the event stream
 internal/session/    one headless `claude -p` or `codex exec` session: arguments, environment, transcript, result and outcome
 internal/skills/     skill repositories by git URL, exposed as claude plugin directories
@@ -82,7 +82,10 @@ the checks, and `dagger check go:test-all` runs one of them.
 - Tests never call the real `docker` either. The session tests fake the
   container engine with a shell script that records its arguments and runs
   the command after the image on the host, and the built-in server's
-  `bees mcp serve --listen` with one that reports an address. The one real
+  `bees mcp serve --listen` with one that reports an address. The review
+  tests fake it with a script of their own that records the build and the
+  run and writes a file into the mounted directory in place of the clone;
+  `internal/review` imports nothing of `internal/session`. The one real
   container session, `TestContainerEndToEnd` in `internal/session`, is
   skipped unless `BEES_CONTAINER_E2E=<image>` is set, and then needs
   `docker`, `GH_TOKEN` and a claude credential in the environment; run it

@@ -28,8 +28,13 @@ import (
 //	                                               id, the directory it ran
 //	                                               in and its raw answer,
 //	                                               enough to resume it
+//	  checkout/                                    the pull request's head,
+//	                                               cloned by a container
+//	                                               (checkout.go) for the
+//	                                               angles to run in
 //	  scratch/                                     where the angles ran when
-//	                                               there was no checkout
+//	                                               there was no checkout,
+//	                                               that one included
 //	  findings.json                                the judge's list
 //	                                               (findings.go, judge.go),
 //	                                               with what the reviewer
