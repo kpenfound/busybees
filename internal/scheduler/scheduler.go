@@ -1489,7 +1489,10 @@ func (s *Scheduler) escalate(ctx context.Context, number int, reason string) err
 	// an escalation that then failed to happen would be presented as the
 	// factory's the next time anybody labelled that issue by hand. Best
 	// effort — the escalation must not fail over its own bookkeeping.
-	if err := s.store.SetEscalation(number, oneLine(reason, escalationNoteLimit), s.now()); err != nil {
+	s.mu.Lock()
+	err := s.store.SetEscalation(number, oneLine(reason, escalationNoteLimit), s.now())
+	s.mu.Unlock()
+	if err != nil {
 		s.log.Warn("could not record the escalation reason", "issue", number, "err", err)
 	}
 	body := fmt.Sprintf("🐝 **busybees needs a human.**\n\n%s\n\nRemove the `%s` label and add `%s` (or `%s`) to hand it back to the factory.",
