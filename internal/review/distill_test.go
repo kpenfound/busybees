@@ -34,7 +34,7 @@ func (f *fakeAgent) Run(_ context.Context, req AgentRequest) (*AgentResult, erro
 func testBundle() *Bundle {
 	return &Bundle{
 		Ref: Ref{Repo: testRepo, Number: 7},
-		PR:  github.PR{Number: 7, Title: "widgets: gather the context"},
+		PR:  github.PR{Number: 7, Title: "widgets: gather the context", Author: github.Author{Login: "octocat"}},
 		Items: []Item{
 			{Source: SourceDiff, Name: "acme/widgets#7", Content: "diff --git a/gather.go b/gather.go"},
 			{Source: SourceStyleFiles, Name: "CLAUDE.md", Content: "Every new key needs a test."},
@@ -60,6 +60,7 @@ func TestTheDistillerReadsTheBundleAndWritesTheBrief(t *testing.T) {
 	want := &Brief{
 		Ref:                Ref{Repo: testRepo, Number: 7},
 		Title:              "widgets: gather the context",
+		Author:             "octocat",
 		Summary:            "gathers the context sources a project declares",
 		Size:               "m",
 		AcceptanceCriteria: []Point{{Text: "a source that cannot read something does not fail the review", Source: "#566"}},
@@ -90,6 +91,9 @@ func TestTheFactsInTheBriefComeFromTheBundle(t *testing.T) {
 	}
 	if brief.Title != "widgets: gather the context" {
 		t.Errorf("title = %q, want the pull request's", brief.Title)
+	}
+	if brief.Author != "octocat" {
+		t.Errorf("author = %q, want the pull request's", brief.Author)
 	}
 	if brief.SessionID != "sess-1" {
 		t.Errorf("session id = %q, want the session's own", brief.SessionID)
@@ -269,12 +273,12 @@ func TestASessionCannotAnswerWithWhatItWasNotAsked(t *testing.T) {
 	// nothing else, so a brief carries no fact a session made up even
 	// before Distill fills the facts in from the bundle.
 	brief, err := parseBrief(`{"summary": "s", "size": "xs", "ref": {"repo": "evil/repo", "number": 1},
-		"title": "a title of its own", "session_id": "made up",
+		"title": "a title of its own", "author": "someone else", "session_id": "made up",
 		"sources": ["invented"], "not_gathered": ["nothing at all"]}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if brief.Ref != (Ref{}) || brief.Title != "" || brief.SessionID != "" || brief.Sources != nil || brief.NotGathered != nil {
+	if brief.Ref != (Ref{}) || brief.Title != "" || brief.Author != "" || brief.SessionID != "" || brief.Sources != nil || brief.NotGathered != nil {
 		t.Errorf("brief = %+v, want only what the session was asked for", brief)
 	}
 }
