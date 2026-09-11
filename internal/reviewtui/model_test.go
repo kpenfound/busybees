@@ -20,6 +20,8 @@ func TestTheScreenShowsTheFirstUndecidedFindingBesideTheDiff(t *testing.T) {
 	f := a.Findings.Items[0]
 	v := view(m)
 	has(t, v,
+		"widgets: gather the context",
+		"opened by octocat",
 		"[1 of 3 findings undecided] "+f.ID+" · high · test_coverage · missing test",
 		"acme/widgets#7",
 		// The diff pane, named after the finding's file, with the finding's
@@ -45,13 +47,31 @@ func TestTheScreenShowsTheFirstUndecidedFindingBesideTheDiff(t *testing.T) {
 	lacks(t, v, "▌  11", "▌  12     -", "not in the diff")
 }
 
+func TestTheScreenNamesThePullRequestThroughoutTriage(t *testing.T) {
+	m := screen(t, queueOf(t, judged(t)))
+	has(t, view(m), "widgets: gather the context", "opened by octocat")
+	// Still there beside the next finding, and the finding-count and
+	// angle/category context the header already renders are still there
+	// too: neither dropped nor duplicated.
+	m, _ = press(m, "n")
+	v := view(m)
+	has(t, v, "widgets: gather the context", "opened by octocat",
+		"[2 of 3 findings undecided]", "· test_coverage · docs")
+	if n := strings.Count(v, "widgets: gather the context"); n != 1 {
+		t.Errorf("the pull request's title appears %d times, want once:\n%s", n, v)
+	}
+	if n := strings.Count(v, "octocat"); n != 1 {
+		t.Errorf("the pull request's author appears %d times, want once:\n%s", n, v)
+	}
+}
+
 func TestTheDiffOpensOnTheFindingsLines(t *testing.T) {
 	m := screen(t, queueOf(t, judged(t)))
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 12})
 	v := view(m)
-	// Seven rows of diff: the hunk's header and the marked lines, not the
+	// Six rows of diff: the hunk's header and the marked lines, not the
 	// file name above them.
-	has(t, v, "@@ -10,6 +10,7 @@ func Gather() {", "▌     12 +    c(1)", "▌ 13  14      e()")
+	has(t, v, "@@ -10,6 +10,7 @@ func Gather() {", "▌     12 +    c(1)", "▌     13 +    d()")
 	lacks(t, v, "─ gather.go")
 }
 
@@ -375,23 +395,23 @@ func TestHelpListsEveryKeyAndAnyKeyClosesIt(t *testing.T) {
 func TestTheScrollKeysMoveTheFocusedPane(t *testing.T) {
 	m := screen(t, queueOf(t, judged(t)))
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 12})
-	has(t, view(m), "▸ Diff · gather.go · 2-8 of 28", "Finding · 1-7 of")
+	has(t, view(m), "▸ Diff · gather.go · 2-7 of 28", "Finding · 1-6 of")
 	m, _ = press(m, "down")
-	has(t, view(m), "▸ Diff · gather.go · 3-9 of 28", "Finding · 1-7 of")
+	has(t, view(m), "▸ Diff · gather.go · 3-8 of 28", "Finding · 1-6 of")
 	m, _ = press(m, "end")
-	has(t, view(m), "▸ Diff · gather.go · 22-28 of 28")
+	has(t, view(m), "▸ Diff · gather.go · 23-28 of 28")
 	m, _ = press(m, "home")
-	has(t, view(m), "▸ Diff · gather.go · 1-7 of 28")
+	has(t, view(m), "▸ Diff · gather.go · 1-6 of 28")
 	m, _ = press(m, "tab", "down")
-	has(t, view(m), "Diff · gather.go · 1-7 of 28", "▸ Finding · 2-8 of")
+	has(t, view(m), "Diff · gather.go · 1-6 of 28", "▸ Finding · 2-7 of")
 	m, _ = press(m, "up", "up")
-	has(t, view(m), "▸ Finding · 1-7 of")
+	has(t, view(m), "▸ Finding · 1-6 of")
 	m, _ = press(m, "pgdown")
-	lacks(t, view(m), "▸ Finding · 1-7 of")
+	lacks(t, view(m), "▸ Finding · 1-6 of")
 	// A new finding starts at the top of both panes, the diff on the
 	// finding's lines.
 	m, _ = press(m, "n", "n", "n")
-	has(t, view(m), "▸ Diff · gather.go · 2-8 of 28")
+	has(t, view(m), "▸ Diff · gather.go · 2-7 of 28")
 }
 
 func TestTheScreenFitsTheTerminalItIsDrawnIn(t *testing.T) {

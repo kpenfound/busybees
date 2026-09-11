@@ -12,6 +12,7 @@ func testBrief() *Brief {
 	return &Brief{
 		Ref:                Ref{Repo: testRepo, Number: 7},
 		Title:              "widgets: gather the context",
+		Author:             "octocat",
 		Summary:            "gathers the context sources a project declares",
 		Size:               "m",
 		AcceptanceCriteria: []Point{{Text: "a source that cannot read something does not fail the review", Source: "#566"}, {Text: "nothing is truncated"}},

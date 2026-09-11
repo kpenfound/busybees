@@ -73,7 +73,7 @@ func judged(t *testing.T) *review.Artifact {
 	}, nil)
 	a := &review.Artifact{
 		Dir:   filepath.Join(t.TempDir(), "review"),
-		Brief: &review.Brief{Ref: review.Ref{Repo: "acme/widgets", Number: 7}, Title: "widgets: gather the context", Summary: "gathers the context sources"},
+		Brief: &review.Brief{Ref: review.Ref{Repo: "acme/widgets", Number: 7}, Title: "widgets: gather the context", Author: "octocat", Summary: "gathers the context sources"},
 		Runs: []review.AngleRun{
 			{Angle: review.AngleTests, Provider: config.AgentClaude, Model: "opus", Dir: t.TempDir(), SessionID: "sess-tests", Answer: `{"findings": []}`},
 		},

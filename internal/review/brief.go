@@ -27,13 +27,15 @@ const BriefFile = "brief.json"
 //
 // Half of it is the distiller's reading of the bundle (Summary, Size,
 // AcceptanceCriteria, StyleRules, TouchedAreas) and half is what bees
-// already knew (Ref, Title, Sources, NotGathered, SessionID): the session is
-// not asked for a fact the gather has, so it cannot get one wrong.
+// already knew (Ref, Title, Author, Sources, NotGathered, SessionID): the
+// session is not asked for a fact the gather has, so it cannot get one
+// wrong.
 type Brief struct {
-	// Ref is the pull request under review and Title its title, both from
-	// the bundle.
-	Ref   Ref    `json:"ref"`
-	Title string `json:"title,omitempty"`
+	// Ref is the pull request under review, Title its title and Author who
+	// opened it, all three from the bundle.
+	Ref    Ref    `json:"ref"`
+	Title  string `json:"title,omitempty"`
+	Author string `json:"author,omitempty"`
 
 	// Summary is what the change does, in the distiller's words.
 	Summary string `json:"summary"`
