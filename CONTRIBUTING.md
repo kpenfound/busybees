@@ -17,6 +17,7 @@ internal/nams/       the Neo4j Agent Memory REST client behind notes_read and no
 internal/procs/      finding and stopping sessions (processes and containers): `bees kill`, and one at a time from the live view
 internal/prompts/    role prompts embedded in the binary (system/*.md, task/*.md), the project's own bees/prompts/ files, the renderer
 internal/review/     bees review: two configuration files, the context gathered for a pull request, the distiller session that briefs the review, the angle sessions that review from it, the judge that merges their findings, the reviewer notes and the noise filter made of them, the triage queue and the console that drives it, the runner that strings the pipeline together, the end that posts or prints what triage selected, the artifact directory a review is kept in
+internal/reviewtui/  the triage screen: the diff beside the finding, the console's keys each acting on one press, driving the same triage queue
 internal/scheduler/  the loop: poll, human feedback, merge state, reconcile, developer workers, singleton roles, the event stream
 internal/session/    one headless `claude -p` or `codex exec` session: arguments, environment, transcript, result and outcome
 internal/skills/     skill repositories by git URL, exposed as claude plugin directories
