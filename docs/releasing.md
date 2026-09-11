@@ -12,7 +12,7 @@ workflow: the project's own gate is `dagger check`, run by hand (see
 
    ```sh
    git checkout main && git pull
-   DAGGER_X_RELEASE=v1.0.0-beta.11 dagger check
+   dagger check
    ```
 
 2. Tag it and push the tag. The tag name is the version — it is what the
