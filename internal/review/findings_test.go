@@ -157,7 +157,7 @@ func TestFindingsAreReadOutOfASessionsAnswer(t *testing.T) {
 }
 
 func TestAFindingsAnchorIsMadeConsistent(t *testing.T) {
-	got, err := ParseFindings(AngleStyle, "s", sessionAnswer(
+	got, err := ParseFindings(AngleGeneral, "s", sessionAnswer(
 		`{"title": "no side", "file": "a.go", "lines": [1, 2]}`,
 		`{"title": "right is new", "file": "a.go", "lines": [1, 2], "side": "RIGHT"}`,
 		`{"title": "old is old", "file": "a.go", "lines": [1, 2], "side": "Old"}`,
@@ -177,7 +177,7 @@ func TestAFindingsAnchorIsMadeConsistent(t *testing.T) {
 }
 
 func TestAFindingWithNothingToShowIsDropped(t *testing.T) {
-	got, err := ParseFindings(AngleStyle, "s", sessionAnswer(
+	got, err := ParseFindings(AngleGeneral, "s", sessionAnswer(
 		`{"title": "", "body": "", "evidence": "x", "file": "a.go"}`,
 		`{"title": "  ", "body": "the first line becomes the title\nand the rest stays", "file": "a.go"}`,
 	))
@@ -194,14 +194,14 @@ func TestAFindingWithNothingToShowIsDropped(t *testing.T) {
 
 func TestAnAnswerThatIsNotAFindingsListIsAnError(t *testing.T) {
 	for _, answer := range []string{"", "I found nothing worth reporting.", `{"findings": "none"}`, `{"findings": [1, 2]}`} {
-		if _, err := ParseFindings(AngleStyle, "s", answer); err == nil {
+		if _, err := ParseFindings(AngleGeneral, "s", answer); err == nil {
 			t.Errorf("%q read as findings", answer)
 		}
 	}
 	// An empty list, and an object with no list, are a session that found
 	// nothing.
 	for _, answer := range []string{`{"findings": []}`, `{}`, `{"findings": null}`} {
-		got, err := ParseFindings(AngleStyle, "s", answer)
+		got, err := ParseFindings(AngleGeneral, "s", answer)
 		if err != nil || len(got) != 0 {
 			t.Errorf("%q: %v, %+v; want no findings and no error", answer, err, got)
 		}
@@ -210,7 +210,7 @@ func TestAnAnswerThatIsNotAFindingsListIsAnError(t *testing.T) {
 
 func TestFindingsAreWrittenIntoTheArtifactDirectoryAndReadBack(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "review")
-	want := &Findings{Items: []Finding{testFinding()}, Skipped: []string{"style: the session failed: boom"}}
+	want := &Findings{Items: []Finding{testFinding()}, Skipped: []string{"general: the session failed: boom"}}
 	if err := WriteFindings(dir, want); err != nil {
 		t.Fatal(err)
 	}

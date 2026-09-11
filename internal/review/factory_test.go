@@ -432,15 +432,15 @@ func TestAnAgentIsToldWhatTheReviewerDismissedInThisRepository(t *testing.T) {
 	agent := &triageAgent{}
 	q := askingQueue(t, a, agent)
 	q.Notes.Rules = []Rule{
-		{Repo: testRepo, Angle: AngleStyle, Category: "naming", Action: RuleDrop, Text: " receiver names are short here "},
+		{Repo: testRepo, Angle: AngleGeneral, Category: "naming", Action: RuleDrop, Text: " receiver names are short here "},
 		{Repo: anyValue, Action: RuleDownrank, Text: "generated files are not reviewed"},
-		{Repo: "other/repo", Angle: AngleStyle, Action: RuleDrop, Text: "not about this repository"},
+		{Repo: "other/repo", Angle: AngleGeneral, Action: RuleDrop, Text: "not about this repository"},
 		{Repo: testRepo, Category: "docs", Action: RuleDrop},
 	}
 	triageRun(t, q, &AgentTriage{Agent: agent, Dir: t.TempDir()})
 	prompt := agent.reqs[0].Prompt
 	want := "## Dismissed before\n\nThe reviewer of this repository has dismissed findings like these in earlier reviews, from the angle and in the category named:\n\n" +
-		"- [style] [naming] receiver names are short here\n- [*] [*] generated files are not reviewed\n\n" +
+		"- [general] [naming] receiver names are short here\n- [*] [*] generated files are not reviewed\n\n" +
 		"Dismiss a finding that reads like one of them, unless this change makes it newly wrong.\n"
 	if !strings.Contains(prompt, want) {
 		t.Errorf("the prompt lacks the rules:\n%s", prompt)

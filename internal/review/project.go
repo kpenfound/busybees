@@ -13,20 +13,27 @@ import (
 // The angles a review runs, each one a session of its own reading the
 // review brief. A project turns one off, or back on, under [angles].
 const (
+	// AngleQuickGeneral gives a small change one light pass for whatever is
+	// wrong with it.
+	AngleQuickGeneral = "quick_general"
+	// AngleGeneral reviews the change as a whole, thoroughly, not narrowed
+	// to one concern.
+	AngleGeneral = "general"
+	// AngleDocs checks the comments and the prose that describe the code
+	// against the code as the change leaves it.
+	AngleDocs = "docs"
+	// AngleTests checks the tests and the documentation the change owes.
+	AngleTests = "test_coverage"
 	// AngleAcceptance checks the change against the acceptance criteria of
 	// what it says it does.
 	AngleAcceptance = "acceptance_criteria"
-	// AngleTests checks the tests and the documentation the change owes.
-	AngleTests = "test_coverage"
-	// AngleStyle checks the change against the project's own style sources.
-	AngleStyle = "style"
 	// AngleSideEffects checks what the change breaks elsewhere.
 	AngleSideEffects = "side_effects"
 )
 
 // BuiltinAngles lists the angles every review runs, in the order they are
 // fanned out.
-var BuiltinAngles = []string{AngleAcceptance, AngleTests, AngleStyle, AngleSideEffects}
+var BuiltinAngles = []string{AngleQuickGeneral, AngleGeneral, AngleDocs, AngleTests, AngleAcceptance, AngleSideEffects}
 
 // The context sources a review gathers for the distiller. A project turns
 // one off, or adds one of its own, under [[context_sources]].
@@ -74,7 +81,7 @@ type Project struct {
 	// Loaded reports whether Path existed.
 	Loaded bool `toml:"-"`
 
-	// Angles turns an angle off (`style = false`) or back on. A key must
+	// Angles turns an angle off (`side_effects = false`) or back on. A key must
 	// name one of BuiltinAngles; an angle the file does not mention runs.
 	Angles map[string]bool `toml:"angles"`
 	// StyleSources are the project's own style documents, as paths or globs

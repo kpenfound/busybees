@@ -43,18 +43,18 @@ func (f *reviewAgent) Run(_ context.Context, req AgentRequest) (*AgentResult, er
 }
 
 // testRunner is a runner over sampleGH with every session faked: the
-// distiller briefs, the style angle finds a naming problem the notes may
+// distiller briefs, the general angle finds a naming problem the notes may
 // rank down and a docs one, the test angle a missing test. The checkout is
 // a git repository so the callers source runs, and the project's
-// context.toml turns the side effects angle off.
+// context.toml turns the quick general, docs and side effects angles off.
 func testRunner(t *testing.T, agent *reviewAgent, notes *Notes) (*Runner, *bytes.Buffer) {
 	t.Helper()
 	if agent.answers == nil {
 		agent.answers = map[string]string{}
 	}
 	agent.answers[DistillerName] = answeredBrief
-	if _, ok := agent.answers[AngleStyle]; !ok {
-		agent.answers[AngleStyle] = sessionAnswer(
+	if _, ok := agent.answers[AngleGeneral]; !ok {
+		agent.answers[AngleGeneral] = sessionAnswer(
 			`{"category": "naming", "severity": "medium", "file": "widget.go", "lines": [1, 1], "side": "new", "title": "Receiver names here are short", "body": "w"}`,
 			`{"category": "docs", "severity": "low", "title": "The package has no doc comment", "body": "every package here has one"}`,
 		)
@@ -63,7 +63,7 @@ func testRunner(t *testing.T, agent *reviewAgent, notes *Notes) (*Runner, *bytes
 		agent.answers[AngleTests] = sessionAnswer(`{"category": "missing test", "severity": "high", "file": "widget.go", "lines": [1, 1], "side": "new", "title": "Widget has no test", "body": "nothing calls it"}`)
 	}
 	dir := gitRepo(t, "https://github.com/"+testRepo)
-	writeFile(t, dir, ProjectFile, "[angles]\nside_effects = false\n")
+	writeFile(t, dir, ProjectFile, "[angles]\nquick_general = false\ndocs = false\nside_effects = false\n")
 	project, err := LoadProject(FindProject(dir))
 	if err != nil {
 		t.Fatal(err)
@@ -109,7 +109,7 @@ func TestARunGathersBriefsReviewsJudgesFiltersAndWritesTheArtifact(t *testing.T)
 	for _, run := range read.Runs {
 		ran = append(ran, run.Angle)
 	}
-	if got := strings.Join(ran, ","); got != "acceptance_criteria,test_coverage,style" {
+	if got := strings.Join(ran, ","); got != "general,test_coverage,acceptance_criteria" {
 		t.Errorf("angles run: %s, want the three the project enables", got)
 	}
 	if read.Findings == nil || read.Triage != nil {
@@ -133,8 +133,8 @@ func TestARunGathersBriefsReviewsJudgesFiltersAndWritesTheArtifact(t *testing.T)
 	if !strings.Contains(agent.reqs[DistillerName].Prompt, "Closes #12") || !strings.Contains(agent.reqs[DistillerName].Prompt, "func Widget() {}") {
 		t.Errorf("the distiller was not given the gathered context")
 	}
-	if p := agent.reqs[AngleStyle].Prompt; !strings.Contains(p, "gathers the context sources a project declares") || !strings.Contains(p, "## Diff") || !strings.Contains(p, "receiver names are short here") {
-		t.Errorf("the style angle was not given the brief, the diff and the rules:\n%s", p)
+	if p := agent.reqs[AngleGeneral].Prompt; !strings.Contains(p, "gathers the context sources a project declares") || !strings.Contains(p, "## Diff") || !strings.Contains(p, "receiver names are short here") {
+		t.Errorf("the general angle was not given the brief, the diff and the rules:\n%s", p)
 	}
 	if _, ok := agent.reqs[AngleSideEffects]; ok {
 		t.Error("the angle the project turned off ran")
@@ -144,7 +144,7 @@ func TestARunGathersBriefsReviewsJudgesFiltersAndWritesTheArtifact(t *testing.T)
 		"gathered 5 items from diff, pr_body, linked_issues\n",
 		"distilling the brief\n",
 		"the review is " + a.Dir + "\n",
-		"reviewing from 3 angles: acceptance_criteria, test_coverage, style\n",
+		"reviewing from 3 angles: general, test_coverage, acceptance_criteria\n",
 		"3 findings\n",
 		"  1 finding hidden by your reviewer notes\n",
 	} {
@@ -164,22 +164,22 @@ func TestARunGathersBriefsReviewsJudgesFiltersAndWritesTheArtifact(t *testing.T)
 }
 
 func TestARunGoesOnWithoutAnAngleThatFailedAndStopsWhenEveryOneDid(t *testing.T) {
-	agent := &reviewAgent{fail: map[string]error{AngleStyle: errors.New("style session: exit status 1")}}
+	agent := &reviewAgent{fail: map[string]error{AngleGeneral: errors.New("general session: exit status 1")}}
 	r, log := testRunner(t, agent, nil)
 	a, err := r.Run(context.Background(), Ref{Repo: testRepo, Number: 7})
 	if err != nil {
 		t.Fatalf("one angle failing stopped the review: %v", err)
 	}
-	if len(a.Runs) != 3 || !a.Runs[2].Failed() {
-		t.Errorf("runs %+v, want the failed style run kept", a.Runs)
+	if len(a.Runs) != 3 || !a.Runs[0].Failed() {
+		t.Errorf("runs %+v, want the failed general run kept", a.Runs)
 	}
 	if got := titles(a.Findings.Items); len(got) != 1 || got[0] != "Widget has no test" {
 		t.Errorf("findings %v, want the test angle's alone", got)
 	}
-	if len(a.Findings.Skipped) != 1 || !strings.Contains(a.Findings.Skipped[0], "style") {
-		t.Errorf("skipped %v, want the style angle named", a.Findings.Skipped)
+	if len(a.Findings.Skipped) != 1 || !strings.Contains(a.Findings.Skipped[0], "general") {
+		t.Errorf("skipped %v, want the general angle named", a.Findings.Skipped)
 	}
-	for _, want := range []string{"  the style angle failed: style session: exit status 1\n", "  not reviewed: style: the session failed"} {
+	for _, want := range []string{"  the general angle failed: general session: exit status 1\n", "  not reviewed: general: the session failed"} {
 		if !strings.Contains(log.String(), want) {
 			t.Errorf("the log lacks %q:\n%s", want, log.String())
 		}
@@ -190,11 +190,11 @@ func TestARunGoesOnWithoutAnAngleThatFailedAndStopsWhenEveryOneDid(t *testing.T)
 	agent = &reviewAgent{fail: map[string]error{
 		AngleAcceptance: errors.New("acceptance_criteria session: no"),
 		AngleTests:      errors.New("test_coverage session: no"),
-		AngleStyle:      errors.New("style session: no"),
+		AngleGeneral:    errors.New("general session: no"),
 	}}
 	r, _ = testRunner(t, agent, nil)
 	a, err = r.Run(context.Background(), Ref{Repo: testRepo, Number: 7})
-	if err == nil || !strings.Contains(err.Error(), "every angle failed") || !strings.Contains(err.Error(), "style session: no") {
+	if err == nil || !strings.Contains(err.Error(), "every angle failed") || !strings.Contains(err.Error(), "general session: no") {
 		t.Fatalf("err = %v, want every angle's failure", err)
 	}
 	if a != nil {
@@ -222,7 +222,7 @@ func TestARunThatStopsBeforeTheBriefWritesNothing(t *testing.T) {
 	if _, err := os.Stat(r.Storage); !os.IsNotExist(err) {
 		t.Errorf("something was written under the storage path: %v", err)
 	}
-	if _, ok := agent.reqs[AngleStyle]; ok {
+	if _, ok := agent.reqs[AngleGeneral]; ok {
 		t.Error("an angle ran without a brief")
 	}
 	// The context could not be gathered: no session ran.
@@ -245,8 +245,8 @@ func TestNewRunnerWiresTheConfiguredAgentNotesAndStorage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dismiss(t, filepath.Join(home, "notes.md"), AngleStyle, "naming", "receiver names are short here")
-	dismiss(t, filepath.Join(home, "notes.md"), AngleStyle, "naming", "receiver names here are short")
+	dismiss(t, filepath.Join(home, "notes.md"), AngleGeneral, "naming", "receiver names are short here")
+	dismiss(t, filepath.Join(home, "notes.md"), AngleGeneral, "naming", "receiver names here are short")
 	notes, err := ReadNotes(filepath.Join(home, "notes.md"))
 	if err != nil {
 		t.Fatal(err)

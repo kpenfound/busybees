@@ -17,7 +17,8 @@ const BriefFile = "brief.json"
 // context of every session after it.
 //
 // It is angle-agnostic. An angle session reads the same brief whether it
-// checks acceptance criteria, tests, style or side effects, so nothing here
+// reviews the change as a whole or checks its documentation, tests,
+// acceptance criteria or side effects, so nothing here
 // is written for one of them: the criteria are what the change says it does,
 // the style rules are what this project asks of any change, and the touched
 // areas are what it changed. What each angle makes of that is the angle's
