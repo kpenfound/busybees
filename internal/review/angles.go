@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -55,12 +56,16 @@ var angleTitles = map[string]string{
 }
 
 // Names inside a review's artifact directory: AnglesDir is the directory
-// the angle runs are written in, one JSON file per angle named after it,
-// and ScratchDir is the empty directory the sessions run in when there is
-// no checkout of the repository under review.
+// the angle runs are written in, one JSON file per angle named after it;
+// CheckoutDir is the checkout of the pull request's head the sessions run
+// in, made by a container before they start (checkout.go); and ScratchDir
+// is the empty directory they run in when there is no checkout of the
+// repository under review at all. Both directories outlive the run: a
+// session is reopened where it ran.
 const (
-	AnglesDir  = "angles"
-	ScratchDir = "scratch"
+	AnglesDir   = "angles"
+	CheckoutDir = "checkout"
+	ScratchDir  = "scratch"
 )
 
 // AngleRun is one angle's session: what it came to, and what reopens it.
@@ -105,13 +110,22 @@ type Angles struct {
 	Agent    Agent
 	Provider string
 	Model    string
-	// Dir is the checkout of the repository under review, which the
-	// sessions' read-only tools can reach. It is "" on a machine that has
-	// none (see CheckoutOf), and the sessions then run in an empty
-	// directory inside the artifact directory: a review must not read
-	// whichever repository the command happened to be run in, and the
-	// directory has to outlive the run for the sessions to be reopened.
+	// Checkout clones the pull request's head into the artifact directory
+	// for the sessions to run in (checkout.go), which is where they run
+	// whenever it succeeds. It is nil to attempt none.
+	Checkout *Checkout
+	// Dir is the checkout of the repository under review the machine has,
+	// which the sessions run in when Checkout is nil or could not make
+	// one: whatever branch it has checked out, which need not be the pull
+	// request's. It is "" on a machine that has none (see CheckoutOf), and
+	// the sessions then run in an empty directory inside the artifact
+	// directory: a review must not read whichever repository the command
+	// happened to be run in, and the directory has to outlive the run for
+	// the sessions to be reopened.
 	Dir string
+	// Log is where a checkout that could not be made is reported, with
+	// where the sessions run instead, and nowhere when nil.
+	Log io.Writer
 	// Rules are the reviewer notes' rules (notes.go), read by whoever runs
 	// the review: the ones that name the repository under review and the
 	// angle become the part of that angle's prompt saying what has been
@@ -121,16 +135,28 @@ type Angles struct {
 }
 
 // NewAngles is the angle runner of a review, as the global configuration
-// says: cfg's provider and model, and dir the checkout Open was given.
+// says: cfg's provider and model, a checkout of the pull request's head
+// authenticated by cfg's github.token, and dir the checkout Open was given
+// for when that one cannot be made.
 func NewAngles(cfg *Config, dir string) *Angles {
 	agent := NewAgent(cfg)
-	return &Angles{Agent: agent, Provider: agent.Provider, Model: agent.Model, Dir: dir}
+	checkout := &Checkout{}
+	if cfg != nil {
+		checkout.Token = cfg.GitHub.ResolvedToken()
+	}
+	return &Angles{Agent: agent, Provider: agent.Provider, Model: agent.Model, Checkout: checkout, Dir: dir}
 }
 
 // Run fans out one session per angle project enables, all at once, each
 // given the brief and the diff, and waits for every one of them. The runs
 // come back in BuiltinAngles order and are written into artifact, one file
 // per angle, before Run returns.
+//
+// The sessions run in a checkout of the pull request's head, cloned into
+// artifact by Checkout first; when that cannot be made they run in Dir,
+// and without one in the empty ScratchDir. A checkout that could not be
+// made is reported on Log and is not an error: the review goes on with
+// what the machine has.
 //
 // One angle failing stops none of the others: the runs are complete whether
 // or not err is nil, a failed angle is among them with Error set and no
@@ -148,12 +174,9 @@ func (a *Angles) Run(ctx context.Context, artifact string, project *Project, bri
 	if len(angles) == 0 {
 		return nil, nil
 	}
-	dir := a.Dir
-	if dir == "" {
-		dir = filepath.Join(artifact, ScratchDir)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return nil, err
-		}
+	dir, err := a.dir(ctx, artifact, brief.Ref)
+	if err != nil {
+		return nil, err
 	}
 	prompts := make([]string, len(angles))
 	for i, angle := range angles {
@@ -190,6 +213,41 @@ func (a *Angles) Run(ctx context.Context, artifact string, project *Project, bri
 		}
 	}
 	return runs, errors.Join(errs...)
+}
+
+// dir is the directory the sessions run in: the checkout of ref's head
+// when Checkout makes one under artifact, else Dir, else the scratch
+// directory under artifact, made if it is not there.
+func (a *Angles) dir(ctx context.Context, artifact string, ref Ref) (string, error) {
+	if a.Checkout != nil {
+		dir := filepath.Join(artifact, CheckoutDir)
+		err := a.Checkout.Run(ctx, ref, dir)
+		if err == nil {
+			a.logf("checked out %s under %s", ref, dir)
+			return dir, nil
+		}
+		where := "an empty directory"
+		if a.Dir != "" {
+			where = a.Dir
+		}
+		a.logf("could not check out %s in a container: %v; the angles run in %s", ref, err, where)
+	}
+	if a.Dir != "" {
+		return a.Dir, nil
+	}
+	dir := filepath.Join(artifact, ScratchDir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+// logf writes one line to Log.
+func (a *Angles) logf(format string, args ...any) {
+	if a.Log == nil {
+		return
+	}
+	_, _ = fmt.Fprintf(a.Log, format+"\n", args...)
 }
 
 // Resume reopens an angle's session with a follow-up question, for the

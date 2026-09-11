@@ -8,7 +8,6 @@ decide about each finding before the review ends.
 
 ```sh
 cd ~/src/widgets
-gh pr checkout 7      # the sessions read the working tree as it is
 bees review 7
 ```
 
@@ -51,14 +50,30 @@ Every session is read-only. A `claude` session may use `Read`, `Grep`,
 Codex's read-only sandbox. No session runs the tests, builds the change or
 writes to the repository.
 
-The sessions run in the current directory when it is a checkout of the pull
-request's repository (its `origin` remote points at it). Anywhere else the
-distiller runs in an empty temporary directory, the angle and triage
-sessions in the empty `scratch/` directory of the review, and the sources
-that read files (`style_files`, `callers` and the project's own) gather
-nothing. bees does not check out the pull request's branch itself: check it
-out first if you want the sessions to read the change's files rather than the
-ones your working tree has.
+Before the angles run, bees checks out the pull request's head for them to
+read, in a container: an Alpine image with git, built the first time and
+kept, clones `refs/pull/<number>/head` of the pull request's repository over
+HTTPS into the review's `checkout/` directory and exits. That is the head as
+it is on GitHub, whatever your working tree has checked out, and a fork's
+pull request as much as one from a branch of the repository. The angle
+sessions run in that directory, on your machine, with the same read-only
+tools; nothing runs in the container after the clone. `github.token`
+authenticates the clone when it is set, handed to the container as an
+environment variable; without it the clone is anonymous, which a private
+repository refuses.
+
+The checkout needs `docker`. Without it, or when the image does not build
+or the clone fails, the review says so and goes on: the angles then run in
+the current directory when it is a checkout of the pull request's repository
+(its `origin` remote points at it), and in the empty `scratch/` directory of
+the review anywhere else.
+
+The other sessions run where the angles would without that checkout: the
+distiller in the current directory when it is a checkout of the repository
+and in an empty temporary directory anywhere else, and the triage sessions
+of factory mode in the current directory or in `scratch/`. The sources that
+read files (`style_files`, `callers` and the project's own) read the current
+directory when it is that checkout and gather nothing anywhere else.
 
 ### Context sources
 
@@ -203,6 +218,7 @@ goes:
 ~/.config/bees/reviews/acme/widgets/7/20260910-150405/
   brief.json            the brief, and the distiller's session id
   angles/<angle>.json   each angle's session id, directory and answer
+  checkout/             the pull request's head, cloned for the angles
   scratch/              where the angles and triage ran without a checkout
   findings.json         the merged list, and what your notes hid from it
   triage.json           every triage decision, in order
@@ -234,10 +250,6 @@ output = "ask"
 
 [github]
 token = "$REVIEW_GH_TOKEN"
-
-[tui]
-color = true
-diff_context = 3
 ```
 
 | Key | Type | Default | Meaning |
@@ -248,8 +260,6 @@ diff_context = 3
 | `storage_path` | path | `"reviews"` | The directory review directories are created in |
 | `output` | string | `"ask"` | How a review ends without `--post` or `--report`: `ask`, `approve`, `comment`, `reject`, `report` or `discard` |
 | `github.token` | string | none | The token the review's `gh` calls use; without it, your own `gh` login |
-| `tui.color` | bool | `true` | Accepted and validated; the triage console does not read it |
-| `tui.diff_context` | int | `3` | Accepted and validated (`0` means `3`, negative is an error); the triage console does not read it |
 
 A path is absolute, starts with `~`, or is relative to the directory
 `config.toml` is in, which puts the defaults at
