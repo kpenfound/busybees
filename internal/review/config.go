@@ -23,8 +23,8 @@
 // first session over that bundle and brief.go is what it produces, the
 // starting context of every session after it; checkout.go clones the pull
 // request's head, in a container, for the sessions to read; angles.go fans
-// those sessions out, one per angle the project enables, in that checkout,
-// and keeps enough of each to reopen it; agent.go runs every one of them,
+// those sessions out, one per angle the change's size calls for and the
+// project enables, in that checkout, and keeps enough of each to reopen it; agent.go runs every one of them,
 // read-only. findings.go is what an
 // angle answers with and judge.go merges every angle's into the one list a
 // review triages; notes.go is the reviewer notes, the file outside every

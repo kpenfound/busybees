@@ -33,10 +33,10 @@ hands you what they found.
 
 The pull request is a github.com URL, owner/name#123, or a number when the
 current directory is a checkout of the repository. The review gathers the
-pull request's context, briefs it, reviews it from every angle the
-repository's context.toml enables, merges what the angles found, and shows
-you each finding in turn to select, dismiss, defer or ask about (see
-triage). What you selected then ends the review one of five ways: posted as
+pull request's context, briefs it, reviews it from the angles its size
+calls for that the repository's context.toml enables, merges what the
+angles found, and shows you each finding in turn to select, dismiss, defer
+or ask about (see triage). What you selected then ends the review one of five ways: posted as
 review comments with an approval, as a comment-only review or with changes
 requested, printed as a markdown report, or discarded. --post and --report
 choose; with neither, the output key of ~/.config/bees/config.toml does, and

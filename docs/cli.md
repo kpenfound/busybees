@@ -1335,9 +1335,10 @@ review runs, what it keeps, and every key of both files.
 Reviews a pull request: a github.com URL, `owner/name#123`, or a bare number
 when the current directory is a checkout of the repository. The review
 gathers the pull request's context, runs the distiller session that briefs
-it, runs one read-only session per angle `context.toml` enables, merges what
-they found into one list, most severe first, and joins the list against the
-rules in your reviewer notes. Each step prints a line as it goes. The review
+it, runs one read-only session per angle the brief's size calls for and
+`context.toml` enables, merges what they found into one list, most severe
+first, and joins the list against the rules in your reviewer notes. Each
+step prints a line as it goes. The review
 is written into its artifact directory as it goes too, so a review that
 stopped after the angles has its brief and their sessions; one angle failing
 is printed and skipped, and every angle failing stops the review.
@@ -1348,7 +1349,7 @@ gathering the context of acme/widgets#7
 gathered 6 items from diff, pr_body, linked_issues, style_files
 distilling the brief
 the review is /Users/me/.config/bees/reviews/acme/widgets/7/20260910-150405
-reviewing from 6 angles: quick_general, general, docs, test_coverage, acceptance_criteria, side_effects
+reviewing a size m change from 4 angles: general, docs, test_coverage, acceptance_criteria
 3 findings
   1 finding hidden by your reviewer notes
 ```

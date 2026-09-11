@@ -1,8 +1,10 @@
 package review
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -79,26 +81,43 @@ func onlyAngle(t *testing.T, angle string) *Project {
 
 const testDiff = "diff --git a/gather.go b/gather.go\n+func Gather() {}\n"
 
+// briefAngles are the angles testBrief's size, m, is reviewed from by a
+// project that turns none of them off.
+var briefAngles = []string{AngleGeneral, AngleDocs, AngleTests, AngleAcceptance}
+
+// sized is testBrief with another size.
+func sized(size string) *Brief {
+	b := testBrief()
+	b.Size = size
+	return b
+}
+
+// ranAngles are the angles runs are of, in the order they came back.
+func ranAngles(runs []AngleRun) []string {
+	var got []string
+	for _, r := range runs {
+		got = append(got, r.Angle)
+	}
+	return got
+}
+
 func TestOneSessionPerEnabledAngleRunsAtOnce(t *testing.T) {
 	project := projectWith(t, "[angles]\ngeneral = false\n")
-	agent := newFakeAngleAgent(5)
+	agent := newFakeAngleAgent(3)
 	angles := &Angles{Agent: agent, Provider: config.AgentClaude, Model: "opus", Dir: t.TempDir()}
 	runs, err := angles.Run(context.Background(), t.TempDir(), project, testBrief(), testDiff)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// One session per enabled angle, in BuiltinAngles order, and not one
-	// for the angle the project turned off.
-	var got []string
-	for _, r := range runs {
-		got = append(got, r.Angle)
-	}
-	want := []string{AngleQuickGeneral, AngleDocs, AngleTests, AngleAcceptance, AngleSideEffects}
-	if !reflect.DeepEqual(got, want) {
+	// One session per angle the size calls for that the project enables,
+	// in BuiltinAngles order, and not one for the angle the project turned
+	// off.
+	want := []string{AngleDocs, AngleTests, AngleAcceptance}
+	if got := ranAngles(runs); !reflect.DeepEqual(got, want) {
 		t.Fatalf("angles run = %v, want %v", got, want)
 	}
-	if len(agent.reqs) != 5 {
-		t.Fatalf("%d sessions ran (%v), want 5", len(agent.reqs), agent.order)
+	if len(agent.reqs) != 3 {
+		t.Fatalf("%d sessions ran (%v), want 3", len(agent.reqs), agent.order)
 	}
 	if _, ran := agent.reqs[AngleGeneral]; ran {
 		t.Errorf("the general angle ran with general = false")
@@ -128,23 +147,142 @@ func TestEveryAngleOffRunsNothing(t *testing.T) {
 	}
 }
 
-func TestAProjectWithNoConfigurationRunsEveryAngle(t *testing.T) {
-	agent := newFakeAngleAgent(len(BuiltinAngles))
+func TestAProjectWithNoConfigurationRunsEveryAngleOfTheSize(t *testing.T) {
+	agent := newFakeAngleAgent(len(briefAngles))
 	for _, project := range []*Project{nil, {}} {
 		runs, err := (&Angles{Agent: agent, Dir: t.TempDir()}).Run(context.Background(), t.TempDir(), project, testBrief(), testDiff)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(runs) != len(BuiltinAngles) {
-			t.Errorf("%d angles ran for project %+v, want all %d", len(runs), project, len(BuiltinAngles))
+		if got := ranAngles(runs); !reflect.DeepEqual(got, briefAngles) {
+			t.Errorf("angles run for project %+v = %v, want every one of size m's %v", project, got, briefAngles)
+		}
+	}
+}
+
+// Each size is reviewed from its own angles and from no other: the agent is
+// asked for exactly those sessions.
+func TestEachSizeRunsItsOwnAngles(t *testing.T) {
+	for _, tc := range []struct {
+		size string
+		want []string
+	}{
+		{"xs", []string{AngleQuickGeneral, AngleDocs}},
+		{"s", []string{AngleQuickGeneral, AngleDocs}},
+		{"m", []string{AngleGeneral, AngleDocs, AngleTests, AngleAcceptance}},
+		{"l", []string{AngleGeneral, AngleDocs, AngleTests, AngleAcceptance}},
+		{"xl", []string{AngleGeneral, AngleDocs, AngleTests, AngleAcceptance, AngleSideEffects}},
+	} {
+		t.Run(tc.size, func(t *testing.T) {
+			agent := newFakeAngleAgent(len(tc.want))
+			runs, err := (&Angles{Agent: agent, Dir: t.TempDir()}).Run(context.Background(), t.TempDir(), &Project{}, sized(tc.size), testDiff)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := ranAngles(runs); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("angles run = %v, want %v", got, tc.want)
+			}
+			if got := slices.Sorted(maps.Keys(agent.reqs)); !reflect.DeepEqual(got, slices.Sorted(slices.Values(tc.want))) {
+				t.Errorf("sessions asked for = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// The size narrows what the project enables and nothing else: an angle the
+// project turned off stays off whatever the size calls for, and one it
+// turned on explicitly runs only when the size calls for it too.
+func TestASizeNeverRunsAnAngleTheProjectTurnedOff(t *testing.T) {
+	project := projectWith(t, "[angles]\ndocs = false\nside_effects = false\nquick_general = true\n")
+	agent := newFakeAngleAgent(3)
+	runs, err := (&Angles{Agent: agent, Dir: t.TempDir()}).Run(context.Background(), t.TempDir(), project, sized("xl"), testDiff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := ranAngles(runs), []string{AngleGeneral, AngleTests, AngleAcceptance}; !reflect.DeepEqual(got, want) {
+		t.Errorf("angles run = %v, want %v", got, want)
+	}
+	for _, angle := range []string{AngleDocs, AngleSideEffects, AngleQuickGeneral} {
+		if _, ran := agent.reqs[angle]; ran {
+			t.Errorf("the %s angle ran", angle)
+		}
+	}
+}
+
+// A small change from a project that turned the docs angle off gets the
+// quick general pass alone, which is a review and not an error.
+func TestASmallChangeWithDocsOffRunsTheQuickPassAlone(t *testing.T) {
+	project := projectWith(t, "[angles]\ndocs = false\n")
+	for _, size := range []string{"xs", "s"} {
+		t.Run(size, func(t *testing.T) {
+			agent := newFakeAngleAgent(1)
+			runs, err := (&Angles{Agent: agent, Dir: t.TempDir()}).Run(context.Background(), t.TempDir(), project, sized(size), testDiff)
+			if err != nil {
+				t.Fatalf("one angle left is an error: %v", err)
+			}
+			if got := ranAngles(runs); !reflect.DeepEqual(got, []string{AngleQuickGeneral}) || len(agent.reqs) != 1 {
+				t.Errorf("angles run = %v, sessions %v, want the quick general angle alone", got, agent.order)
+			}
+		})
+	}
+}
+
+// A brief that never went through Brief.Validate can have no size of Sizes:
+// it gets the largest size's angles, and the log says so.
+func TestABriefWithoutASizeGetsTheLargestSizesAngles(t *testing.T) {
+	for _, size := range []string{"", "huge"} {
+		t.Run(size, func(t *testing.T) {
+			agent := newFakeAngleAgent(5)
+			var log bytes.Buffer
+			runs, err := (&Angles{Agent: agent, Dir: t.TempDir(), Log: &log}).Run(context.Background(), t.TempDir(), &Project{}, sized(size), testDiff)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, want := ranAngles(runs), []string{AngleGeneral, AngleDocs, AngleTests, AngleAcceptance, AngleSideEffects}; !reflect.DeepEqual(got, want) {
+				t.Errorf("angles run = %v, want xl's %v", got, want)
+			}
+			if want := `the brief sizes the change "` + size + `", which is not one of xs, s, m, l, xl: the angles of xl run`; !strings.Contains(log.String(), want) {
+				t.Errorf("log = %q, want %q", log.String(), want)
+			}
+		})
+	}
+	// A size that is one of Sizes is not reported.
+	var log bytes.Buffer
+	if _, err := (&Angles{Agent: newFakeAngleAgent(len(briefAngles)), Dir: t.TempDir(), Log: &log}).Run(context.Background(), t.TempDir(), &Project{}, testBrief(), testDiff); err != nil {
+		t.Fatal(err)
+	}
+	if log.Len() != 0 {
+		t.Errorf("log = %q, want nothing said about a size that is one", log.String())
+	}
+}
+
+// Every size has its angles, every one of them an angle, and nothing else
+// has any: a size added to Sizes without angles would get the largest's.
+func TestEverySizeHasItsAngles(t *testing.T) {
+	if got, want := slices.Sorted(maps.Keys(sizeAngles)), slices.Sorted(slices.Values(Sizes)); !reflect.DeepEqual(got, want) {
+		t.Errorf("angles for sizes %v, want for each of %v", got, want)
+	}
+	for size, angles := range sizeAngles {
+		for _, angle := range angles {
+			if !slices.Contains(BuiltinAngles, angle) {
+				t.Errorf("size %s names %q, which is not an angle", size, angle)
+			}
 		}
 	}
 }
 
 func TestAnAngleSessionIsToldItsAngleTheBriefAndTheDiff(t *testing.T) {
-	agent := newFakeAngleAgent(len(BuiltinAngles))
-	if _, err := (&Angles{Agent: agent, Dir: t.TempDir()}).Run(context.Background(), t.TempDir(), &Project{}, testBrief(), testDiff); err != nil {
-		t.Fatal(err)
+	// No one size runs every angle: xs and xl between them do.
+	reqs := map[string]AgentRequest{}
+	for _, size := range []string{"xs", "xl"} {
+		agent := newFakeAngleAgent(len(sizeAngles[size]))
+		if _, err := (&Angles{Agent: agent, Dir: t.TempDir()}).Run(context.Background(), t.TempDir(), &Project{}, sized(size), testDiff); err != nil {
+			t.Fatal(err)
+		}
+		maps.Copy(reqs, agent.reqs)
+	}
+	if len(reqs) != len(BuiltinAngles) {
+		t.Fatalf("%d angles ran, want all %d", len(reqs), len(BuiltinAngles))
 	}
 	for angle, heading := range map[string]string{
 		AngleQuickGeneral: "## Your angle: quick general",
@@ -154,7 +292,7 @@ func TestAnAngleSessionIsToldItsAngleTheBriefAndTheDiff(t *testing.T) {
 		AngleTests:        "## Your angle: test coverage and documentation",
 		AngleSideEffects:  "## Your angle: side effects",
 	} {
-		prompt := agent.reqs[angle].Prompt
+		prompt := reqs[angle].Prompt
 		for _, want := range []string{
 			"You are one session of a pull request review",
 			"Your session is read-only.",
@@ -240,14 +378,14 @@ func TestTheInstructionFilesAreTheCatalog(t *testing.T) {
 }
 
 func TestAnAngleThatFailedDoesNotStopTheOthers(t *testing.T) {
-	agent := newFakeAngleAgent(len(BuiltinAngles))
+	agent := newFakeAngleAgent(len(briefAngles))
 	agent.fail = map[string]error{AngleGeneral: errors.New("general session: no capacity")}
 	artifact := t.TempDir()
 	runs, err := (&Angles{Agent: agent, Dir: t.TempDir()}).Run(context.Background(), artifact, &Project{}, testBrief(), testDiff)
 	if err == nil || !strings.Contains(err.Error(), "general session: no capacity") {
 		t.Fatalf("err = %v, want the failed angle's error", err)
 	}
-	if len(runs) != len(BuiltinAngles) {
+	if len(runs) != len(briefAngles) {
 		t.Fatalf("%d runs came back, want every angle whether or not it failed", len(runs))
 	}
 	for _, r := range runs {
@@ -264,7 +402,7 @@ func TestAnAngleThatFailedDoesNotStopTheOthers(t *testing.T) {
 }
 
 func TestAngleRunsArePersistedAndReadBack(t *testing.T) {
-	agent := newFakeAngleAgent(len(BuiltinAngles))
+	agent := newFakeAngleAgent(len(briefAngles))
 	artifact := filepath.Join(t.TempDir(), "review-7")
 	want, err := (&Angles{Agent: agent, Provider: config.AgentClaude, Dir: t.TempDir()}).Run(context.Background(), artifact, &Project{}, testBrief(), testDiff)
 	if err != nil {
@@ -308,7 +446,7 @@ func TestReadingAngleRunsThatAreNotThere(t *testing.T) {
 }
 
 func TestWithoutACheckoutTheAnglesRunInAScratchDirectoryThatStays(t *testing.T) {
-	agent := newFakeAngleAgent(len(BuiltinAngles))
+	agent := newFakeAngleAgent(len(briefAngles))
 	artifact := filepath.Join(t.TempDir(), "review-7")
 	runs, err := (&Angles{Agent: agent}).Run(context.Background(), artifact, &Project{}, testBrief(), testDiff)
 	if err != nil {
@@ -329,7 +467,7 @@ func TestWithoutACheckoutTheAnglesRunInAScratchDirectoryThatStays(t *testing.T) 
 
 func TestTheAnglesRunInTheCheckout(t *testing.T) {
 	dir := t.TempDir()
-	agent := newFakeAngleAgent(len(BuiltinAngles))
+	agent := newFakeAngleAgent(len(briefAngles))
 	runs, err := (&Angles{Agent: agent, Dir: dir}).Run(context.Background(), t.TempDir(), &Project{}, testBrief(), testDiff)
 	if err != nil {
 		t.Fatal(err)
@@ -455,7 +593,7 @@ func TestTheAnglesRunTheConfiguredAgent(t *testing.T) {
 }
 
 func TestAnAngleSessionIsToldWhatItsReviewerDismissedBefore(t *testing.T) {
-	agent := newFakeAngleAgent(len(BuiltinAngles))
+	agent := newFakeAngleAgent(len(briefAngles))
 	angles := &Angles{Agent: agent, Dir: t.TempDir(), Rules: []Rule{
 		{Repo: testRepo, Angle: AngleGeneral, Category: "naming", Action: RuleDrop, Text: "receiver names are short here"},
 		{Repo: "acme/gadgets", Angle: AngleGeneral, Action: RuleDrop, Text: "another repository's notes"},

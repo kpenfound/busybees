@@ -104,7 +104,7 @@ func TestTheAnglesRunInACheckoutOfThePullRequestHead(t *testing.T) {
 	docker := fakeDocker(t)
 	local := t.TempDir()
 	artifact := filepath.Join(t.TempDir(), "review-7")
-	agent := newFakeAngleAgent(len(BuiltinAngles))
+	agent := newFakeAngleAgent(len(briefAngles))
 	var log bytes.Buffer
 	angles := &Angles{Agent: agent, Provider: config.AgentClaude, Dir: local, Checkout: &Checkout{DockerBin: docker, Token: "ghp_secret"}, Log: &log}
 	runs, err := angles.Run(context.Background(), artifact, &Project{}, testBrief(), testDiff)
@@ -213,7 +213,7 @@ func TestTheCheckoutImageIsBuiltOnce(t *testing.T) {
 func TestWithoutDockerTheAnglesRunInTheMachinesCheckout(t *testing.T) {
 	local := t.TempDir()
 	artifact := filepath.Join(t.TempDir(), "review-7")
-	agent := newFakeAngleAgent(len(BuiltinAngles))
+	agent := newFakeAngleAgent(len(briefAngles))
 	var log bytes.Buffer
 	missing := filepath.Join(t.TempDir(), "docker")
 	angles := &Angles{Agent: agent, Dir: local, Checkout: &Checkout{DockerBin: missing}, Log: &log}
@@ -243,7 +243,7 @@ func TestACheckoutThatFailsLeavesNothingAndTheAnglesRunElsewhere(t *testing.T) {
 			touch(t, docker, marker)
 			local := t.TempDir()
 			artifact := filepath.Join(t.TempDir(), "review-7")
-			agent := newFakeAngleAgent(len(BuiltinAngles))
+			agent := newFakeAngleAgent(len(briefAngles))
 			var log bytes.Buffer
 			angles := &Angles{Agent: agent, Dir: local, Checkout: &Checkout{DockerBin: docker}, Log: &log}
 			runs, err := angles.Run(context.Background(), artifact, &Project{}, testBrief(), testDiff)
@@ -272,7 +272,7 @@ func TestACheckoutThatFailsLeavesNothingAndTheAnglesRunElsewhere(t *testing.T) {
 
 func TestWithoutDockerOrACheckoutTheAnglesRunInTheScratchDirectory(t *testing.T) {
 	artifact := filepath.Join(t.TempDir(), "review-7")
-	agent := newFakeAngleAgent(len(BuiltinAngles))
+	agent := newFakeAngleAgent(len(briefAngles))
 	var log bytes.Buffer
 	angles := &Angles{Agent: agent, Checkout: &Checkout{DockerBin: filepath.Join(t.TempDir(), "docker")}, Log: &log}
 	runs, err := angles.Run(context.Background(), artifact, &Project{}, testBrief(), testDiff)
@@ -339,7 +339,7 @@ func TestNewAnglesAttemptsTheCheckoutWithTheConfiguredToken(t *testing.T) {
 func TestWithoutACheckoutRunnerTheAnglesRunWhereTheyDid(t *testing.T) {
 	// Checkout nil attempts nothing: no docker is looked for.
 	local := t.TempDir()
-	agent := newFakeAngleAgent(len(BuiltinAngles))
+	agent := newFakeAngleAgent(len(briefAngles))
 	var log bytes.Buffer
 	runs, err := (&Angles{Agent: agent, Dir: local, Log: &log}).Run(context.Background(), t.TempDir(), &Project{}, testBrief(), testDiff)
 	if err != nil {

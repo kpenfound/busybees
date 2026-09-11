@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
@@ -16,10 +17,10 @@ import (
 )
 
 // The angle sessions. Once the distiller has written the brief, one session
-// per angle the project enables (Project.EnabledAngles) reads it and looks
-// for problems from that angle alone: a quick general pass or a thorough one,
-// the comments and documents, the tests, the acceptance criteria, the side
-// effects. They all run at once,
+// per angle the change's size calls for (sizeAngles) and the project enables
+// (Project.EnabledAngles) reads it and looks for problems from that angle
+// alone: a quick general pass or a thorough one, the comments and documents,
+// the tests, the acceptance criteria, the side effects. They all run at once,
 // and every one of them is a read-only session through Agent, held to the
 // restriction agent.go sets: it can read and search the checkout and can do
 // nothing else.
@@ -150,10 +151,12 @@ func NewAngles(cfg *Config, dir string) *Angles {
 	return &Angles{Agent: agent, Provider: agent.Provider, Model: agent.Model, Checkout: checkout, Dir: dir}
 }
 
-// Run fans out one session per angle project enables, all at once, each
-// given the brief and the diff, and waits for every one of them. The runs
-// come back in BuiltinAngles order and are written into artifact, one file
-// per angle, before Run returns.
+// Run fans out one session per angle the brief's size calls for and project
+// enables (anglesFor), all at once, each given the brief and the diff, and
+// waits for every one of them. The runs come back in BuiltinAngles order and
+// are written into artifact, one file per angle, before Run returns. A brief
+// whose size is not one of Sizes is reported on Log and gets the angles of
+// the largest.
 //
 // The sessions run in a checkout of the pull request's head, cloned into
 // artifact by Checkout first; when that cannot be made they run in Dir,
@@ -173,7 +176,10 @@ func (a *Angles) Run(ctx context.Context, artifact string, project *Project, bri
 	if project == nil {
 		project = &Project{}
 	}
-	angles := project.EnabledAngles()
+	if !slices.Contains(Sizes, brief.Size) {
+		a.logf("the brief sizes the change %q, which is not one of %s: the angles of %s run", brief.Size, strings.Join(Sizes, ", "), largestSize())
+	}
+	angles := anglesFor(project, brief.Size)
 	if len(angles) == 0 {
 		return nil, nil
 	}
@@ -216,6 +222,46 @@ func (a *Angles) Run(ctx context.Context, artifact string, project *Project, bri
 		}
 	}
 	return runs, errors.Join(errs...)
+}
+
+// sizeAngles are the angles a change of each of Sizes is reviewed from,
+// before the project's own [angles] switches: a small change gets the quick
+// general pass and its documentation read; a larger one the thorough general
+// pass instead, its tests and its acceptance criteria; and only the largest
+// its side effects, which are what a change breaks far from its diff.
+var sizeAngles = map[string][]string{
+	"xs": {AngleQuickGeneral, AngleDocs},
+	"s":  {AngleQuickGeneral, AngleDocs},
+	"m":  {AngleGeneral, AngleDocs, AngleTests, AngleAcceptance},
+	"l":  {AngleGeneral, AngleDocs, AngleTests, AngleAcceptance},
+	"xl": {AngleGeneral, AngleDocs, AngleTests, AngleAcceptance, AngleSideEffects},
+}
+
+// largestSize is the last of Sizes, whose angles a size that is not one of
+// them gets.
+func largestSize() string { return Sizes[len(Sizes)-1] }
+
+// anglesFor lists the angles a review of a change of size runs: the ones
+// sizeAngles gives the size that project enables, in BuiltinAngles order.
+// The size only narrows what the project enables, and never runs an angle
+// the project turned off; what is left can be one angle, or none.
+//
+// A size that is not one of Sizes gets the angles of the largest. Distill
+// refuses such a brief (Brief.Validate), but a brief read back from an
+// artifact, or made by any other caller, has not been through it, and a
+// change nobody sized is better reviewed too thoroughly than not at all.
+func anglesFor(project *Project, size string) []string {
+	sized, ok := sizeAngles[size]
+	if !ok {
+		sized = sizeAngles[largestSize()]
+	}
+	var angles []string
+	for _, angle := range project.EnabledAngles() {
+		if slices.Contains(sized, angle) {
+			angles = append(angles, angle)
+		}
+	}
+	return angles
 }
 
 // dir is the directory the sessions run in: the checkout of ref's head
