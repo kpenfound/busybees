@@ -234,10 +234,6 @@ output = "ask"
 
 [github]
 token = "$REVIEW_GH_TOKEN"
-
-[tui]
-color = true
-diff_context = 3
 ```
 
 | Key | Type | Default | Meaning |
@@ -248,8 +244,6 @@ diff_context = 3
 | `storage_path` | path | `"reviews"` | The directory review directories are created in |
 | `output` | string | `"ask"` | How a review ends without `--post` or `--report`: `ask`, `approve`, `comment`, `reject`, `report` or `discard` |
 | `github.token` | string | none | The token the review's `gh` calls use; without it, your own `gh` login |
-| `tui.color` | bool | `true` | Accepted and validated; the triage console does not read it |
-| `tui.diff_context` | int | `3` | Accepted and validated (`0` means `3`, negative is an error); the triage console does not read it |
 
 A path is absolute, starts with `~`, or is relative to the directory
 `config.toml` is in, which puts the defaults at
