@@ -147,7 +147,8 @@ func TestLogProgressPrintsOneLinePerEvent(t *testing.T) {
 		t.Fatalf("%d lines, want %d:\n%s", len(lines), want, buf.String())
 	}
 	for _, line := range lines {
-		if !strings.HasPrefix(line, "  the ") || !(strings.HasSuffix(line, " angle started") || strings.HasSuffix(line, " angle finished") || strings.HasSuffix(line, " angle failed")) {
+		event := strings.HasSuffix(line, " angle started") || strings.HasSuffix(line, " angle finished") || strings.HasSuffix(line, " angle failed")
+		if !strings.HasPrefix(line, "  the ") || !event {
 			t.Errorf("line %q is not one event", line)
 		}
 	}
