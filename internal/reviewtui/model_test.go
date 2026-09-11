@@ -42,7 +42,7 @@ func TestTheScreenShowsTheFirstUndecidedFindingBesideTheDiff(t *testing.T) {
 	// A line the finding is not about is not marked, and the removed line
 	// inside its range on the other side is not either.
 	has(t, v, "  11  11      b()", "  12     -    c()")
-	lacks(t, v, "▌  11", "▌  12     -")
+	lacks(t, v, "▌  11", "▌  12     -", "not in the diff")
 }
 
 func TestTheDiffOpensOnTheFindingsLines(t *testing.T) {
