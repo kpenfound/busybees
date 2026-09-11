@@ -36,7 +36,8 @@ context  ->  brief  ->  angles  ->  findings  ->  triage  ->  end
    could not read.
 3. **Angles.** One session per [angle](#angles) the brief's size calls for
    and `context.toml` enables reads the brief and the diff, and answers with
-   findings. The angles run at the same time. An angle that
+   findings. The angles run at the same time, and at a terminal the
+   command shows each one's progress while they do. An angle that
    fails is skipped; the review stops only when every angle fails.
 4. **Findings.** bees merges the angles' answers into one list, in code and
    not in a session (see [Findings](#findings)), then applies the rules in
