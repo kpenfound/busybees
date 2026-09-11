@@ -14,8 +14,8 @@ import (
 
 // judged is a review as the judge left it, written into a directory of its
 // own: three findings, most severe first, from two angles of which one has a
-// session to reopen (test_coverage), one failed (style) and one never ran
-// (acceptance_criteria, whose finding is in the list all the same).
+// session to reopen (test_coverage), one failed (side_effects) and one never
+// ran (acceptance_criteria, whose finding is in the list all the same).
 func judged(t *testing.T) *Artifact {
 	t.Helper()
 	items := Merge([]Finding{
@@ -31,7 +31,7 @@ func judged(t *testing.T) *Artifact {
 		Brief: testBrief(),
 		Runs: []AngleRun{
 			{Angle: AngleTests, Provider: config.AgentClaude, Model: "opus", Dir: t.TempDir(), SessionID: "sess-tests", Answer: `{"findings": []}`},
-			{Angle: AngleStyle, Provider: config.AgentClaude, Model: "opus", Dir: "/tmp/checkout", Error: "exit status 1"},
+			{Angle: AngleSideEffects, Provider: config.AgentClaude, Model: "opus", Dir: "/tmp/checkout", Error: "exit status 1"},
 		},
 		Findings: &Findings{Items: items},
 	}

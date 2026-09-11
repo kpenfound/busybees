@@ -27,13 +27,13 @@ import (
 //	## Rules
 //
 //	<!-- bees:review:rules -->
-//	- [acme/widgets] [style] [naming] drop: receiver names are short here (3 dismissals)
+//	- [acme/widgets] [general] [naming] drop: receiver names are short here (3 dismissals)
 //	- [*] [test_coverage] [*] downrank: generated files carry no tests (2 dismissals)
 //	<!-- /bees:review:rules -->
 //
 //	## Dismissals
 //
-//	- [acme/widgets] [style] [naming] receiver names are short here
+//	- [acme/widgets] [general] [naming] receiver names are short here
 //
 // A dismissal is `[repo] [angle] [category] reason` and is read wherever it
 // is in the file. A rule is `[repo] [angle] [category] action: text` and is

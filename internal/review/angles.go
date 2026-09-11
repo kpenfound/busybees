@@ -17,8 +17,9 @@ import (
 
 // The angle sessions. Once the distiller has written the brief, one session
 // per angle the project enables (Project.EnabledAngles) reads it and looks
-// for problems from that angle alone: the acceptance criteria, the tests and
-// documentation, the style rules, the side effects. They all run at once,
+// for problems from that angle alone: a quick general pass or a thorough one,
+// the comments and documents, the tests, the acceptance criteria, the side
+// effects. They all run at once,
 // and every one of them is a read-only session through Agent, held to the
 // restriction agent.go sets: it can read and search the checkout and can do
 // nothing else.
@@ -49,10 +50,12 @@ var angleInstructionFiles embed.FS
 
 // angleTitles name the angles in a sentence.
 var angleTitles = map[string]string{
-	AngleAcceptance:  "acceptance criteria",
-	AngleTests:       "test coverage and documentation",
-	AngleStyle:       "style",
-	AngleSideEffects: "side effects",
+	AngleQuickGeneral: "quick general",
+	AngleGeneral:      "general",
+	AngleDocs:         "documentation accuracy",
+	AngleTests:        "test coverage and documentation",
+	AngleAcceptance:   "acceptance criteria",
+	AngleSideEffects:  "side effects",
 }
 
 // Names inside a review's artifact directory: AnglesDir is the directory

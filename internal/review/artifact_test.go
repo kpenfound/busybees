@@ -17,9 +17,9 @@ func testArtifact(dir string) *Artifact {
 		Brief: testBrief(),
 		Runs: []AngleRun{
 			{Angle: AngleAcceptance, Provider: config.AgentClaude, Model: "opus", Dir: "/tmp/checkout", SessionID: "sess-a", Answer: `{"findings": []}`, Turns: 2, CostUSD: 0.25},
-			{Angle: AngleStyle, Provider: config.AgentClaude, Model: "opus", Dir: "/tmp/checkout", Error: "exit status 1"},
+			{Angle: AngleSideEffects, Provider: config.AgentClaude, Model: "opus", Dir: "/tmp/checkout", Error: "exit status 1"},
 		},
-		Findings: &Findings{Items: []Finding{testFinding()}, Skipped: []string{"style: the session failed: exit status 1"}},
+		Findings: &Findings{Items: []Finding{testFinding()}, Skipped: []string{"side_effects: the session failed: exit status 1"}},
 		Triage:   &Triage{Decisions: []Decision{}},
 	}
 }
@@ -86,7 +86,7 @@ func TestAnArtifactIsWrittenAndReadBackIntoTheSameStructs(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The layout the package comment documents.
-	for _, name := range []string{BriefFile, filepath.Join(AnglesDir, AngleAcceptance+".json"), filepath.Join(AnglesDir, AngleStyle+".json"), FindingsFile, TriageFile} {
+	for _, name := range []string{BriefFile, filepath.Join(AnglesDir, AngleAcceptance+".json"), filepath.Join(AnglesDir, AngleSideEffects+".json"), FindingsFile, TriageFile} {
 		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
 			t.Errorf("%s is not in the artifact: %v", name, err)
 		}
@@ -163,7 +163,7 @@ func TestAnArtifactWithoutABriefIsNotWritten(t *testing.T) {
 }
 
 func TestAPartOfAnArtifactThatDoesNotReadIsAnErrorNamingIt(t *testing.T) {
-	for _, name := range []string{FindingsFile, TriageFile, filepath.Join(AnglesDir, AngleStyle+".json")} {
+	for _, name := range []string{FindingsFile, TriageFile, filepath.Join(AnglesDir, AngleSideEffects+".json")} {
 		dir := filepath.Join(t.TempDir(), "review")
 		if err := WriteBrief(dir, testBrief()); err != nil {
 			t.Fatal(err)

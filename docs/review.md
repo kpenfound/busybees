@@ -95,9 +95,11 @@ sources of its own that gather the files they name. See
 
 | Angle | What it looks for |
 |---|---|
-| `acceptance_criteria` | A criterion from the brief the change does not meet, or meets only in part, and a behaviour change nothing asked for |
+| `quick_general` | One light pass over the change as a whole, for what a careful reader catches on one read |
+| `general` | A thorough pass over the change as a whole: wrong logic, a dropped error, duplicated code, and a line that breaks a rule the project wrote down |
+| `docs` | A comment or doc comment the change made false, and prose the change wrote that the code does not bear out |
 | `test_coverage` | Behaviour with no test on it, a test that would pass with the change undone, and a document the change made false |
-| `style` | A line that breaks a rule the project wrote down, or does what the surrounding code does another way |
+| `acceptance_criteria` | A criterion from the brief the change does not meet, or meets only in part, and a behaviour change nothing asked for |
 | `side_effects` | A caller the change did not update, an invariant it no longer keeps, and a claim elsewhere in the repository it made false |
 
 An angle session is also told the rules in your reviewer notes about its
@@ -151,7 +153,7 @@ Your reviewer notes are one markdown file, `reviewer-notes.md` next to your
 during triage appends a line to it, with the reason you gave:
 
 ```
-- [acme/widgets] [style] [naming] receiver names are short here
+- [acme/widgets] [general] [naming] receiver names are short here
 ```
 
 `bees review consolidate` turns the dismissals that repeat into rules,
@@ -159,7 +161,7 @@ written between two markers:
 
 ```
 <!-- bees:review:rules -->
-- [acme/widgets] [style] [naming] drop: receiver names are short here (3 dismissals)
+- [acme/widgets] [general] [naming] drop: receiver names are short here (3 dismissals)
 - [*] [test_coverage] [*] downrank: generated files carry no tests (2 dismissals)
 <!-- /bees:review:rules -->
 ```
@@ -305,7 +307,7 @@ files = ["docs/architecture.md", "docs/adr/*.md"]
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `angles.<angle>` | bool | `true` | `false` turns the angle off. `<angle>` is `acceptance_criteria`, `test_coverage`, `style` or `side_effects` |
+| `angles.<angle>` | bool | `true` | `false` turns the angle off. `<angle>` is `quick_general`, `general`, `docs`, `test_coverage`, `acceptance_criteria` or `side_effects` |
 | `style_sources` | list of paths or globs | `[]` | Style documents the `style_files` source gathers on top of the built-in names |
 | `categories.<category>` | string | none | Pins every finding in the category to `info`, `low`, `medium` or `high`, or drops them with `off` |
 | `context_sources` | list of tables | none | Turns a built-in source off, or adds a source of the project's own |

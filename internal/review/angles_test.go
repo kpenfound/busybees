@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -64,11 +65,23 @@ func projectWith(t *testing.T, text string) *Project {
 	return p
 }
 
+// onlyAngle is a project that turns off every angle but one.
+func onlyAngle(t *testing.T, angle string) *Project {
+	t.Helper()
+	toml := "[angles]\n"
+	for _, a := range BuiltinAngles {
+		if a != angle {
+			toml += a + " = false\n"
+		}
+	}
+	return projectWith(t, toml)
+}
+
 const testDiff = "diff --git a/gather.go b/gather.go\n+func Gather() {}\n"
 
 func TestOneSessionPerEnabledAngleRunsAtOnce(t *testing.T) {
-	project := projectWith(t, "[angles]\nstyle = false\n")
-	agent := newFakeAngleAgent(3)
+	project := projectWith(t, "[angles]\ngeneral = false\n")
+	agent := newFakeAngleAgent(5)
 	angles := &Angles{Agent: agent, Provider: config.AgentClaude, Model: "opus", Dir: t.TempDir()}
 	runs, err := angles.Run(context.Background(), t.TempDir(), project, testBrief(), testDiff)
 	if err != nil {
@@ -80,15 +93,15 @@ func TestOneSessionPerEnabledAngleRunsAtOnce(t *testing.T) {
 	for _, r := range runs {
 		got = append(got, r.Angle)
 	}
-	want := []string{AngleAcceptance, AngleTests, AngleSideEffects}
+	want := []string{AngleQuickGeneral, AngleDocs, AngleTests, AngleAcceptance, AngleSideEffects}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("angles run = %v, want %v", got, want)
 	}
-	if len(agent.reqs) != 3 {
-		t.Fatalf("%d sessions ran (%v), want 3", len(agent.reqs), agent.order)
+	if len(agent.reqs) != 5 {
+		t.Fatalf("%d sessions ran (%v), want 5", len(agent.reqs), agent.order)
 	}
-	if _, ran := agent.reqs[AngleStyle]; ran {
-		t.Errorf("the style angle ran with style = false")
+	if _, ran := agent.reqs[AngleGeneral]; ran {
+		t.Errorf("the general angle ran with general = false")
 	}
 	for _, r := range runs {
 		if r.SessionID != "sess-"+r.Angle || r.Answer != `{"findings": []}` || r.Turns != 2 || r.CostUSD != 0.25 {
@@ -104,7 +117,7 @@ func TestOneSessionPerEnabledAngleRunsAtOnce(t *testing.T) {
 }
 
 func TestEveryAngleOffRunsNothing(t *testing.T) {
-	project := projectWith(t, "[angles]\nacceptance_criteria = false\ntest_coverage = false\nstyle = false\nside_effects = false\n")
+	project := projectWith(t, "[angles]\nquick_general = false\ngeneral = false\ndocs = false\ntest_coverage = false\nacceptance_criteria = false\nside_effects = false\n")
 	agent := newFakeAngleAgent(0)
 	runs, err := (&Angles{Agent: agent, Dir: t.TempDir()}).Run(context.Background(), t.TempDir(), project, testBrief(), testDiff)
 	if err != nil || runs != nil {
@@ -134,10 +147,12 @@ func TestAnAngleSessionIsToldItsAngleTheBriefAndTheDiff(t *testing.T) {
 		t.Fatal(err)
 	}
 	for angle, heading := range map[string]string{
-		AngleAcceptance:  "## Your angle: acceptance criteria",
-		AngleTests:       "## Your angle: test coverage and documentation",
-		AngleStyle:       "## Your angle: style",
-		AngleSideEffects: "## Your angle: side effects",
+		AngleQuickGeneral: "## Your angle: quick general",
+		AngleGeneral:      "## Your angle: general",
+		AngleDocs:         "## Your angle: documentation accuracy",
+		AngleAcceptance:   "## Your angle: acceptance criteria",
+		AngleTests:        "## Your angle: test coverage and documentation",
+		AngleSideEffects:  "## Your angle: side effects",
 	} {
 		prompt := agent.reqs[angle].Prompt
 		for _, want := range []string{
@@ -173,11 +188,11 @@ func TestAnAngleSessionIsToldItsAngleTheBriefAndTheDiff(t *testing.T) {
 
 func TestWithoutADiffTheSessionIsToldSo(t *testing.T) {
 	agent := newFakeAngleAgent(1)
-	project := projectWith(t, "[angles]\nacceptance_criteria = false\ntest_coverage = false\nside_effects = false\n")
+	project := onlyAngle(t, AngleGeneral)
 	if _, err := (&Angles{Agent: agent, Dir: t.TempDir()}).Run(context.Background(), t.TempDir(), project, testBrief(), " \n"); err != nil {
 		t.Fatal(err)
 	}
-	prompt := agent.reqs[AngleStyle].Prompt
+	prompt := agent.reqs[AngleGeneral].Prompt
 	if !strings.Contains(prompt, "The diff was not gathered") || strings.Contains(prompt, "## Diff") {
 		t.Errorf("a session with no diff was not told so:\n%s", prompt)
 	}
@@ -199,12 +214,37 @@ func TestEveryBuiltinAngleHasInstructions(t *testing.T) {
 	}
 }
 
+// The instruction files and the titles are the catalog: one of each per
+// angle in BuiltinAngles, and none for an angle that is not in it, such as
+// the style angle the catalog no longer has.
+func TestTheInstructionFilesAreTheCatalog(t *testing.T) {
+	entries, err := angleInstructionFiles.ReadDir("prompts/angles")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, e := range entries {
+		got = append(got, strings.TrimSuffix(e.Name(), ".md"))
+	}
+	if want := slices.Sorted(slices.Values(BuiltinAngles)); !reflect.DeepEqual(got, want) {
+		t.Errorf("instruction files for %v, want one for each of %v", got, want)
+	}
+	for angle := range angleTitles {
+		if !slices.Contains(BuiltinAngles, angle) {
+			t.Errorf("a title for %q, which is not an angle", angle)
+		}
+	}
+	if len(angleTitles) != len(BuiltinAngles) {
+		t.Errorf("%d titles for %d angles", len(angleTitles), len(BuiltinAngles))
+	}
+}
+
 func TestAnAngleThatFailedDoesNotStopTheOthers(t *testing.T) {
 	agent := newFakeAngleAgent(len(BuiltinAngles))
-	agent.fail = map[string]error{AngleStyle: errors.New("style session: no capacity")}
+	agent.fail = map[string]error{AngleGeneral: errors.New("general session: no capacity")}
 	artifact := t.TempDir()
 	runs, err := (&Angles{Agent: agent, Dir: t.TempDir()}).Run(context.Background(), artifact, &Project{}, testBrief(), testDiff)
-	if err == nil || !strings.Contains(err.Error(), "style session: no capacity") {
+	if err == nil || !strings.Contains(err.Error(), "general session: no capacity") {
 		t.Fatalf("err = %v, want the failed angle's error", err)
 	}
 	if len(runs) != len(BuiltinAngles) {
@@ -212,9 +252,9 @@ func TestAnAngleThatFailedDoesNotStopTheOthers(t *testing.T) {
 	}
 	for _, r := range runs {
 		switch {
-		case r.Angle == AngleStyle && (!r.Failed() || r.Error != "style session: no capacity" || r.SessionID != "" || r.Answer != ""):
-			t.Errorf("style run = %+v, want the failure and nothing else", r)
-		case r.Angle != AngleStyle && (r.Failed() || r.Answer == ""):
+		case r.Angle == AngleGeneral && (!r.Failed() || r.Error != "general session: no capacity" || r.SessionID != "" || r.Answer != ""):
+			t.Errorf("general run = %+v, want the failure and nothing else", r)
+		case r.Angle != AngleGeneral && (r.Failed() || r.Answer == ""):
 			t.Errorf("%s run = %+v, want it to have finished", r.Angle, r)
 		}
 		if _, err := os.Stat(filepath.Join(artifact, AnglesDir, r.Angle+".json")); err != nil {
@@ -258,7 +298,7 @@ func TestReadingAngleRunsThatAreNotThere(t *testing.T) {
 	if err != nil || len(runs) != 1 || runs[0].Angle != AngleTests {
 		t.Fatalf("runs, err = %+v, %v, want the one angle that ran", runs, err)
 	}
-	bad := filepath.Join(artifact, AnglesDir, AngleStyle+".json")
+	bad := filepath.Join(artifact, AnglesDir, AngleGeneral+".json")
 	if err := os.WriteFile(bad, []byte("not json"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -348,15 +388,15 @@ func TestAnAngleThatCannotBeResumedSaysWhy(t *testing.T) {
 		run      AngleRun
 		want     string
 	}{
-		{"a failed angle", config.AgentClaude, AngleRun{Angle: AngleStyle, Provider: config.AgentClaude, Dir: "/d", Error: "style session: no capacity"}, "did not finish"},
-		{"no session id", config.AgentClaude, AngleRun{Angle: AngleStyle, Provider: config.AgentClaude, Dir: "/d"}, "did not finish"},
-		{"a codex session", config.AgentCodex, AngleRun{Angle: AngleStyle, Provider: config.AgentCodex, Dir: "/d", SessionID: "thread-1"}, "codex, which cannot resume"},
-		{"another agent's session", config.AgentCodex, AngleRun{Angle: AngleStyle, Provider: config.AgentClaude, Dir: "/d", SessionID: "sess-1"}, "ran as claude and the configured provider is codex"},
+		{"a failed angle", config.AgentClaude, AngleRun{Angle: AngleGeneral, Provider: config.AgentClaude, Dir: "/d", Error: "general session: no capacity"}, "did not finish"},
+		{"no session id", config.AgentClaude, AngleRun{Angle: AngleGeneral, Provider: config.AgentClaude, Dir: "/d"}, "did not finish"},
+		{"a codex session", config.AgentCodex, AngleRun{Angle: AngleGeneral, Provider: config.AgentCodex, Dir: "/d", SessionID: "thread-1"}, "codex, which cannot resume"},
+		{"another agent's session", config.AgentCodex, AngleRun{Angle: AngleGeneral, Provider: config.AgentClaude, Dir: "/d", SessionID: "sess-1"}, "ran as claude and the configured provider is codex"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			agent := newFakeAngleAgent(0)
 			_, err := (&Angles{Agent: agent, Provider: tc.provider}).Resume(context.Background(), tc.run, "why?")
-			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), AngleStyle) {
+			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), AngleGeneral) {
 				t.Fatalf("err = %v, want %q and the angle named", err, tc.want)
 			}
 			if len(agent.reqs) != 0 {
@@ -371,7 +411,7 @@ func TestAnAngleSessionIsReadOnly(t *testing.T) {
 	// running through the agent: this is the fan-out driving the real CLI
 	// command line, not a fake agent.
 	bin, record := fakeCLI(t, claudeAnswer)
-	project := projectWith(t, "[angles]\nacceptance_criteria = false\ntest_coverage = false\nside_effects = false\n")
+	project := onlyAngle(t, AngleGeneral)
 	angles := &Angles{Agent: &CLIAgent{ClaudeBin: bin}, Provider: config.AgentClaude, Dir: t.TempDir()}
 	runs, err := angles.Run(context.Background(), t.TempDir(), project, testBrief(), testDiff)
 	if err != nil {
@@ -394,7 +434,7 @@ func TestAnAngleSessionIsReadOnly(t *testing.T) {
 	if strings.Contains(got, "--dangerously-skip-permissions") {
 		t.Errorf("an angle session skipped permissions:\n%s", got)
 	}
-	if prompt := recorded(t, record, "stdin"); !strings.Contains(prompt, "## Your angle: style") {
+	if prompt := recorded(t, record, "stdin"); !strings.Contains(prompt, "## Your angle: general") {
 		t.Errorf("the CLI was not given the angle's prompt:\n%s", prompt)
 	}
 }
@@ -417,29 +457,29 @@ func TestTheAnglesRunTheConfiguredAgent(t *testing.T) {
 func TestAnAngleSessionIsToldWhatItsReviewerDismissedBefore(t *testing.T) {
 	agent := newFakeAngleAgent(len(BuiltinAngles))
 	angles := &Angles{Agent: agent, Dir: t.TempDir(), Rules: []Rule{
-		{Repo: testRepo, Angle: AngleStyle, Category: "naming", Action: RuleDrop, Text: "receiver names are short here"},
-		{Repo: "acme/gadgets", Angle: AngleStyle, Action: RuleDrop, Text: "another repository's notes"},
+		{Repo: testRepo, Angle: AngleGeneral, Category: "naming", Action: RuleDrop, Text: "receiver names are short here"},
+		{Repo: "acme/gadgets", Angle: AngleGeneral, Action: RuleDrop, Text: "another repository's notes"},
 	}}
 	if _, err := angles.Run(context.Background(), t.TempDir(), &Project{}, testBrief(), testDiff); err != nil {
 		t.Fatal(err)
 	}
-	prompt := agent.reqs[AngleStyle].Prompt
+	prompt := agent.reqs[AngleGeneral].Prompt
 	for _, want := range []string{"## Dismissed before", "- receiver names are short here"} {
 		if !strings.Contains(prompt, want) {
-			t.Errorf("the style session was not told %q:\n%s", want, prompt)
+			t.Errorf("the general session was not told %q:\n%s", want, prompt)
 		}
 	}
 	if strings.Contains(prompt, "another repository's notes") {
-		t.Errorf("the style session was told a rule about another repository:\n%s", prompt)
+		t.Errorf("the general session was told a rule about another repository:\n%s", prompt)
 	}
 	// After what the angle looks for, before the brief: the session is told
 	// what was dismissed from its angle, not from the change.
-	if at := strings.Index(prompt, "## Dismissed before"); at < strings.Index(prompt, "## Your angle: style") || at > strings.Index(prompt, "# Review brief") {
-		t.Errorf("the dismissals are out of order in the style session's prompt:\n%s", prompt)
+	if at := strings.Index(prompt, "## Dismissed before"); at < strings.Index(prompt, "## Your angle: general") || at > strings.Index(prompt, "# Review brief") {
+		t.Errorf("the dismissals are out of order in the general session's prompt:\n%s", prompt)
 	}
-	for _, angle := range []string{AngleAcceptance, AngleTests, AngleSideEffects} {
-		if strings.Contains(agent.reqs[angle].Prompt, "## Dismissed before") {
-			t.Errorf("the %s session was told what the style angle's reviewer dismissed", angle)
+	for _, angle := range BuiltinAngles {
+		if angle != AngleGeneral && strings.Contains(agent.reqs[angle].Prompt, "## Dismissed before") {
+			t.Errorf("the %s session was told what the general angle's reviewer dismissed", angle)
 		}
 	}
 }

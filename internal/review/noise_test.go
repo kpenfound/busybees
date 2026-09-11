@@ -25,13 +25,13 @@ func noisy(angle, category, severity, file, title string) Finding {
 
 // shortNames is the pattern a reviewer of testRepo has said no to before.
 func shortNames(action string) Rule {
-	return Rule{Repo: testRepo, Angle: AngleStyle, Category: "naming", Action: action, Text: "receiver names are short here", Count: 3}
+	return Rule{Repo: testRepo, Angle: AngleGeneral, Category: "naming", Action: action, Text: "receiver names are short here", Count: 3}
 }
 
 func TestARuleDropsTheFindingsItIsAbout(t *testing.T) {
 	findings := []Finding{
-		noisy(AngleStyle, "naming", SeverityMedium, "widget.go", "Receiver names here are short"),
-		noisy(AngleStyle, "naming", SeverityMedium, "gadget.go", "The package name says nothing"),
+		noisy(AngleGeneral, "naming", SeverityMedium, "widget.go", "Receiver names here are short"),
+		noisy(AngleGeneral, "naming", SeverityMedium, "gadget.go", "The package name says nothing"),
 		noisy(AngleTests, "naming", SeverityMedium, "widget.go", "Receiver names here are short"),
 	}
 	kept, silenced := Filter(findings, []Rule{shortNames(RuleDrop)}, testRepo)
@@ -47,7 +47,7 @@ func TestARuleDropsTheFindingsItIsAbout(t *testing.T) {
 	want := Silenced{
 		ID:       findings[0].ID,
 		Title:    "Receiver names here are short",
-		Angle:    AngleStyle,
+		Angle:    AngleGeneral,
 		Category: "naming",
 		Action:   RuleDrop,
 		Severity: SeverityMedium,
@@ -60,8 +60,8 @@ func TestARuleDropsTheFindingsItIsAbout(t *testing.T) {
 
 func TestADownrankRuleLetsTheFindingThroughOneSeverityLower(t *testing.T) {
 	findings := []Finding{
-		noisy(AngleStyle, "naming", SeverityHigh, "widget.go", "Receiver names here are short"),
-		noisy(AngleStyle, "wording", SeverityMedium, "gadget.go", "The comment repeats the code"),
+		noisy(AngleGeneral, "naming", SeverityHigh, "widget.go", "Receiver names here are short"),
+		noisy(AngleGeneral, "wording", SeverityMedium, "gadget.go", "The comment repeats the code"),
 	}
 	kept, silenced := Filter(findings, []Rule{shortNames(RuleDownrank)}, testRepo)
 	if len(kept) != 2 {
@@ -78,7 +78,7 @@ func TestADownrankRuleLetsTheFindingThroughOneSeverityLower(t *testing.T) {
 }
 
 func TestAFindingAlreadyAtInfoIsNotRankedBelowIt(t *testing.T) {
-	findings := []Finding{noisy(AngleStyle, "naming", SeverityInfo, "widget.go", "Receiver names here are short")}
+	findings := []Finding{noisy(AngleGeneral, "naming", SeverityInfo, "widget.go", "Receiver names here are short")}
 	kept, silenced := Filter(findings, []Rule{shortNames(RuleDownrank)}, testRepo)
 	if len(kept) != 1 || kept[0].Severity != SeverityInfo {
 		t.Errorf("kept = %+v, want the finding still there, at info", kept)
@@ -90,11 +90,11 @@ func TestAFindingAlreadyAtInfoIsNotRankedBelowIt(t *testing.T) {
 
 func TestARuleWithNoTextSilencesItsWholeCategory(t *testing.T) {
 	findings := []Finding{
-		noisy(AngleStyle, "naming", SeverityHigh, "widget.go", "Receiver names here are short"),
-		noisy(AngleStyle, "naming", SeverityHigh, "gadget.go", "The package name says nothing"),
-		noisy(AngleStyle, "wording", SeverityHigh, "gadget.go", "The comment repeats the code"),
+		noisy(AngleGeneral, "naming", SeverityHigh, "widget.go", "Receiver names here are short"),
+		noisy(AngleGeneral, "naming", SeverityHigh, "gadget.go", "The package name says nothing"),
+		noisy(AngleGeneral, "wording", SeverityHigh, "gadget.go", "The comment repeats the code"),
 	}
-	rule := Rule{Repo: anyValue, Angle: AngleStyle, Category: "naming", Action: RuleDrop}
+	rule := Rule{Repo: anyValue, Angle: AngleGeneral, Category: "naming", Action: RuleDrop}
 	kept, silenced := Filter(findings, []Rule{rule}, testRepo)
 	if want := []string{"The comment repeats the code"}; !reflect.DeepEqual(titles(kept), want) {
 		t.Errorf("kept %q, want %q: a rule with no text is about every finding in its category", titles(kept), want)
@@ -105,12 +105,12 @@ func TestARuleWithNoTextSilencesItsWholeCategory(t *testing.T) {
 }
 
 func TestARuleOfAnotherRepositoryOrAngleIsNotAboutThisFinding(t *testing.T) {
-	findings := []Finding{noisy(AngleStyle, "naming", SeverityHigh, "widget.go", "Receiver names here are short")}
+	findings := []Finding{noisy(AngleGeneral, "naming", SeverityHigh, "widget.go", "Receiver names here are short")}
 	for _, rule := range []Rule{
-		{Repo: "acme/gadgets", Angle: AngleStyle, Category: "naming", Action: RuleDrop, Text: "receiver names are short here"},
+		{Repo: "acme/gadgets", Angle: AngleGeneral, Category: "naming", Action: RuleDrop, Text: "receiver names are short here"},
 		{Repo: testRepo, Angle: AngleTests, Category: "naming", Action: RuleDrop, Text: "receiver names are short here"},
-		{Repo: testRepo, Angle: AngleStyle, Category: "wording", Action: RuleDrop, Text: "receiver names are short here"},
-		{Repo: testRepo, Angle: AngleStyle, Category: "naming", Action: RuleDrop, Text: "the package name says nothing"},
+		{Repo: testRepo, Angle: AngleGeneral, Category: "wording", Action: RuleDrop, Text: "receiver names are short here"},
+		{Repo: testRepo, Angle: AngleGeneral, Category: "naming", Action: RuleDrop, Text: "the package name says nothing"},
 	} {
 		kept, silenced := Filter(findings, []Rule{rule}, testRepo)
 		if len(kept) != 1 || len(silenced) != 0 {
@@ -118,14 +118,14 @@ func TestARuleOfAnotherRepositoryOrAngleIsNotAboutThisFinding(t *testing.T) {
 		}
 	}
 	// The one that is about it, whatever case its fields are written in.
-	rule := Rule{Repo: "ACME/Widgets", Angle: AngleStyle, Category: "Naming", Action: RuleDrop, Text: "receiver names are short here"}
+	rule := Rule{Repo: "ACME/Widgets", Angle: AngleGeneral, Category: "Naming", Action: RuleDrop, Text: "receiver names are short here"}
 	if kept, silenced := Filter(findings, []Rule{rule}, testRepo); len(kept) != 0 || len(silenced) != 1 {
 		t.Errorf("rule %q is about the finding: kept %+v, silenced %+v", rule.Line(), kept, silenced)
 	}
 }
 
 func TestADropRuleActsWhereverItIsWritten(t *testing.T) {
-	findings := []Finding{noisy(AngleStyle, "naming", SeverityHigh, "widget.go", "Receiver names here are short")}
+	findings := []Finding{noisy(AngleGeneral, "naming", SeverityHigh, "widget.go", "Receiver names here are short")}
 	drop := shortNames(RuleDrop)
 	downrank := Rule{Repo: anyValue, Angle: anyValue, Category: anyValue, Action: RuleDownrank}
 	for _, rules := range [][]Rule{{drop, downrank}, {downrank, drop}} {
@@ -139,7 +139,7 @@ func TestADropRuleActsWhereverItIsWritten(t *testing.T) {
 
 func TestFindingsAreWhatTheyWereWithoutARuleAboutThem(t *testing.T) {
 	findings := []Finding{
-		noisy(AngleStyle, "naming", SeverityHigh, "widget.go", "Receiver names here are short"),
+		noisy(AngleGeneral, "naming", SeverityHigh, "widget.go", "Receiver names here are short"),
 		noisy(AngleTests, "missing test", SeverityLow, "gadget.go", "Gather has no test"),
 	}
 	for _, rules := range [][]Rule{nil, {{Repo: "acme/gadgets", Angle: anyValue, Category: anyValue, Action: RuleDrop}}} {
@@ -154,11 +154,11 @@ func TestAnAngleIsToldTheRulesThatNameIt(t *testing.T) {
 	rules := []Rule{
 		shortNames(RuleDrop),
 		{Repo: anyValue, Angle: anyValue, Category: anyValue, Action: RuleDownrank, Text: "every angle hears this one"},
-		{Repo: "acme/gadgets", Angle: AngleStyle, Action: RuleDrop, Text: "another repository"},
+		{Repo: "acme/gadgets", Angle: AngleGeneral, Action: RuleDrop, Text: "another repository"},
 		{Repo: testRepo, Angle: AngleTests, Action: RuleDrop, Text: "another angle"},
-		{Repo: testRepo, Angle: AngleStyle, Category: "naming", Action: RuleDrop},
+		{Repo: testRepo, Angle: AngleGeneral, Category: "naming", Action: RuleDrop},
 	}
-	got := noiseSection(rules, testRepo, AngleStyle)
+	got := noiseSection(rules, testRepo, AngleGeneral)
 	for _, want := range []string{
 		"## Dismissed before\n",
 		"- receiver names are short here\n",
@@ -166,24 +166,24 @@ func TestAnAngleIsToldTheRulesThatNameIt(t *testing.T) {
 		"Do not report one of them again unless this change makes it newly wrong",
 	} {
 		if !strings.Contains(got, want) {
-			t.Errorf("the style angle is not told %q:\n%s", want, got)
+			t.Errorf("the general angle is not told %q:\n%s", want, got)
 		}
 	}
 	// The rules reach the session as what was dismissed, not as the lines
 	// the notes file writes them as.
 	for _, notWant := range []string{"another repository", "another angle", "[" + testRepo + "]", "drop:"} {
 		if strings.Contains(got, notWant) {
-			t.Errorf("the style angle is told %q, which is not its business:\n%s", notWant, got)
+			t.Errorf("the general angle is told %q, which is not its business:\n%s", notWant, got)
 		}
 	}
 	// Nothing to say is nothing said, not an empty heading.
 	if got := noiseSection(rules, testRepo, AngleSideEffects); !strings.Contains(got, "every angle hears this one") {
 		t.Errorf("side effects: %q", got)
 	}
-	if got := noiseSection(rules[3:], testRepo, AngleStyle); got != "" {
+	if got := noiseSection(rules[3:], testRepo, AngleGeneral); got != "" {
 		t.Errorf("with no rule for the angle the section is %q, want nothing", got)
 	}
-	if got := noiseSection(nil, testRepo, AngleStyle); got != "" {
+	if got := noiseSection(nil, testRepo, AngleGeneral); got != "" {
 		t.Errorf("with no rules at all the section is %q, want nothing", got)
 	}
 }

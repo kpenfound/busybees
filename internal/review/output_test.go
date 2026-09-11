@@ -118,9 +118,9 @@ func selections(edited string) []Selection {
 	a := &Artifact{Findings: &Findings{Items: Merge([]Finding{
 		{Angle: AngleTests, Category: "missing test", Severity: SeverityHigh, File: "gather.go", Lines: LineRange{12, 13}, Side: SideNew,
 			Title: "c has no test for its argument", Body: "nothing exercises c(1)", Suggestion: "\tc(1) // tested\n\td()"},
-		{Angle: AngleStyle, Category: "naming", Severity: SeverityMedium, File: "old.go", Lines: LineRange{1, 1}, Side: SideOld,
+		{Angle: AngleGeneral, Category: "naming", Severity: SeverityMedium, File: "old.go", Lines: LineRange{1, 1}, Side: SideOld,
 			Title: "The package was the last of its name", Body: "nothing else was called old", Suggestion: "package older"},
-		{Angle: AngleStyle, Category: "docs", Severity: SeverityLow, File: "README.md", Lines: LineRange{3, 3}, Side: SideNew,
+		{Angle: AngleGeneral, Category: "docs", Severity: SeverityLow, File: "README.md", Lines: LineRange{3, 3}, Side: SideNew,
 			Title: "The README still names c()", Body: "the sentence the change made false is still there"},
 		{Angle: AngleAcceptance, Category: "scope", Severity: SeverityLow,
 			Title: "The change renames Gather, which the issue did not ask for", Body: "every caller moves"},
