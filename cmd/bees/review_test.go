@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -665,5 +666,130 @@ func TestReviewTriageWithAnAgentEndsAsTheFlagSays(t *testing.T) {
 	// An end that posts goes through gh, which is not on the PATH.
 	if _, _, err := runReviewWith(t, "", "triage", "acme/widgets#7", "--agent", "--post", "approve"); err == nil || !strings.Contains(err.Error(), "gh") {
 		t.Errorf("err = %v, want the gh call that could not run", err)
+	}
+}
+
+// fakeGhPRDiff puts a gh on PATH that answers `gh pr diff ...` with diff and
+// fails any other call, so a test can tell a diff fetch from anything else
+// gh might have been asked. PATH is set to the fake's own directory alone,
+// so the script prints diff with the printf builtin rather than external
+// cat, which that PATH would not find.
+func fakeGhPRDiff(t *testing.T, diff string) {
+	t.Helper()
+	bin := t.TempDir()
+	script := "#!/bin/sh\nif [ \"$1\" = pr ] && [ \"$2\" = diff ]; then printf '%s' '" + strings.ReplaceAll(diff, "'", `'\''`) + "'; exit 0; fi\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+}
+
+// withTerminal forces isTerminal to want for the test's duration: the seam
+// tuiMode reads to tell a real terminal from a test's redirected stdout.
+func withTerminal(t *testing.T, want bool) {
+	t.Helper()
+	real := isTerminal
+	t.Cleanup(func() { isTerminal = real })
+	isTerminal = func(*os.File) bool { return want }
+}
+
+// withReviewTUI swaps runReviewTUI for a fake that records the diff and
+// queue it was given and returns err without drawing anything, so a test can
+// tell the terminal UI was chosen without a terminal to draw it on.
+func withReviewTUI(t *testing.T, err error) *bool {
+	t.Helper()
+	real := runReviewTUI
+	t.Cleanup(func() { runReviewTUI = real })
+	called := false
+	runReviewTUI = func(ctx context.Context, diff string, q *review.Queue) error {
+		called = true
+		if diff != "the diff" {
+			t.Errorf("the terminal UI was given diff %q, want %q", diff, "the diff")
+		}
+		return err
+	}
+	return &called
+}
+
+// At a terminal, without --no-tui, triage fetches the diff through gh and
+// hands it, with the queue, to the terminal UI instead of the console.
+func TestReviewTriageOpensTheTerminalUIAtATerminal(t *testing.T) {
+	home := reviewHome(t)
+	storedReview(t, home)
+	withTerminal(t, true)
+	fakeGhPRDiff(t, "the diff")
+	called := withReviewTUI(t, nil)
+	// Nothing decided by the fake UI: the end is still asked, at the
+	// console, the way it is after a console-driven triage.
+	stdout, _, err := runReviewWith(t, "d\n", "triage", "acme/widgets#7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !*called {
+		t.Error("the terminal UI was not run")
+	}
+	if !strings.Contains(stdout, "0 findings selected. a approve") {
+		t.Errorf("the end was not asked after the terminal UI closed:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "acme/widgets#7: nothing posted") {
+		t.Errorf("d did not discard:\n%s", stdout)
+	}
+}
+
+// --no-tui falls back to the console even at a terminal.
+func TestReviewTriageNoTUIFallsBackToTheConsole(t *testing.T) {
+	home := reviewHome(t)
+	storedReview(t, home)
+	withTerminal(t, true)
+	called := withReviewTUI(t, nil)
+	stdout, _, err := runReviewWith(t, "s\nf\n", "triage", "acme/widgets#7", "--no-tui", "--report")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *called {
+		t.Error("--no-tui ran the terminal UI")
+	}
+	if !strings.Contains(stdout, "1 selected, 0 dismissed, 1 deferred, 0 undecided of 2 findings\n") {
+		t.Errorf("the console did not triage:\n%s", stdout)
+	}
+}
+
+// A stdout that is not a terminal falls back to the console too, without the
+// flag: this is the harness's own default (isTerminal is not faked), pinned
+// so a change to that default is caught here.
+func TestReviewTriageWithoutATerminalFallsBackToTheConsole(t *testing.T) {
+	home := reviewHome(t)
+	storedReview(t, home)
+	called := withReviewTUI(t, nil)
+	stdout, _, err := runReviewWith(t, "s\nf\n", "triage", "acme/widgets#7", "--report")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *called {
+		t.Error("a non-terminal stdout ran the terminal UI")
+	}
+	if !strings.Contains(stdout, "1 selected, 0 dismissed, 1 deferred, 0 undecided of 2 findings\n") {
+		t.Errorf("the console did not triage:\n%s", stdout)
+	}
+}
+
+// A diff-fetch failure when the terminal UI would otherwise run is the
+// command's error: the TUI/console choice does not fall back to the console
+// on an error, and the terminal UI is never reached.
+func TestReviewTriageADiffFetchFailureIsNotASilentFallback(t *testing.T) {
+	home := reviewHome(t)
+	storedReview(t, home)
+	withTerminal(t, true)
+	t.Setenv("PATH", t.TempDir())
+	called := withReviewTUI(t, nil)
+	stdout, _, err := runReviewWith(t, "", "triage", "acme/widgets#7")
+	if err == nil || !strings.Contains(err.Error(), "gh") {
+		t.Errorf("err = %v, want the gh call that could not run", err)
+	}
+	if *called {
+		t.Error("the terminal UI ran despite the diff fetch failing")
+	}
+	if strings.Contains(stdout, "select") {
+		t.Errorf("the console ran as a fallback:\n%s", stdout)
 	}
 }

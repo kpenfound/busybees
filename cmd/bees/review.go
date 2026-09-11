@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/kpenfound/busybees/internal/review"
+	"github.com/kpenfound/busybees/internal/reviewtui"
 	"github.com/kpenfound/busybees/internal/text"
 )
 
@@ -178,14 +179,18 @@ func newReviewTriageCmd() *cobra.Command {
 
 The pull request is a github.com URL, owner/name#123, or a number when the
 current directory is a checkout of the repository. Each undecided finding is
-shown in turn, and a key followed by return decides it: s selects it, e opens
-its comment text in $VISUAL or $EDITOR and selects it, d dismisses it with a
-reason that is appended to your reviewer notes, f defers it, a asks the angle
-that found it a question, n leaves it for now and q stops. Every decision is
-written into the review's artifact directory as it is taken, so stopping
-loses nothing. The review then ends the way bees review's does: what is
-selected is posted, printed as a report, or discarded, as --post, --report,
-the output key of ~/.config/bees/config.toml or the prompt at the end says.
+shown in turn, and a key decides it: s selects it, e opens its comment text
+in $VISUAL or $EDITOR and selects it, d dismisses it with a reason that is
+appended to your reviewer notes, f defers it, a asks the angle that found it
+a question, n leaves it for now and q stops. Every decision is written into
+the review's artifact directory as it is taken, so stopping loses nothing.
+The review then ends the way bees review's does: what is selected is
+posted, printed as a report, or discarded, as --post, --report, the output
+key of ~/.config/bees/config.toml or the prompt at the end says.
+
+At a terminal, the same keys drive a full-screen view beside the diff,
+pressed without return; --no-tui, or a stdout that is not a terminal, is a
+console where a key needs return.
 
 With --agent an agent session triages what is undecided instead of you, as
 bees review --agent does, told what --instructions says.`,
@@ -247,16 +252,23 @@ bees review --agent does, told what --instructions says.`,
 	return cmd
 }
 
-// triageFlags choose who triages: you at the console, or with --agent an
-// agent session (review.AgentTriage) told what --instructions says.
+// runReviewTUI draws the terminal triage screen: a variable so a test can
+// swap it for one that needs no terminal, the way isTerminal is.
+var runReviewTUI = reviewtui.Run
+
+// triageFlags choose who triages: you, at the terminal UI or the console, or
+// with --agent an agent session (review.AgentTriage) told what
+// --instructions says.
 type triageFlags struct {
 	agent        bool
 	instructions string
+	noTUI        bool
 }
 
 func (w *triageFlags) add(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&w.agent, "agent", false, "let an agent session triage the findings instead of you (factory mode)")
 	cmd.Flags().StringVar(&w.instructions, "instructions", "", "what the agent triaging with --agent is told you want, in your words")
+	cmd.Flags().BoolVar(&w.noTUI, "no-tui", false, "triage at the console instead of the terminal UI")
 }
 
 // check refuses --instructions without --agent, which nobody would read.
@@ -267,13 +279,23 @@ func (w *triageFlags) check() error {
 	return nil
 }
 
-// triage triages queue, at the console or with --agent by an agent session
-// run in dir, and then ends the review the way mode says. The agent
-// chooses the end when mode is to ask.
+// triage triages queue: at a terminal, in the internal/reviewtui screen,
+// unless --no-tui was given or stdout is not a terminal, when it falls back
+// to the console; or with --agent by an agent session run in dir. It then
+// ends the review the way mode says. The agent chooses the end when mode is
+// to ask.
 func (w *triageFlags) triage(ctx context.Context, cmd *cobra.Command, cfg *review.Config, ref review.Ref, brief *review.Brief, queue *review.Queue, dir, mode string) error {
 	if !w.agent {
 		console := &review.Console{In: cmd.InOrStdin(), Out: os.Stdout, Editor: editComment}
-		if err := console.Run(ctx, queue); err != nil {
+		if tuiMode(w.noTUI, os.Stdout) {
+			diff, err := review.NewClient(ref, cfg).PRDiff(ctx, ref.Number)
+			if err != nil {
+				return fmt.Errorf("read the diff of %s: %w", ref, err)
+			}
+			if err := runReviewTUI(ctx, diff, queue); err != nil {
+				return err
+			}
+		} else if err := console.Run(ctx, queue); err != nil {
 			return err
 		}
 		return endReview(ctx, cfg, ref, brief, queue, console, mode)
