@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -335,5 +336,25 @@ func TestARunReportsACheckoutItCouldNotMakeOnItsLog(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(a.Dir, CheckoutDir)); !os.IsNotExist(err) {
 		t.Errorf("a checkout directory was left in the artifact: %v", err)
+	}
+}
+
+// The runner hands its Progress to the angles, so what `bees review`
+// draws while they run is told from the fan-out itself.
+func TestARunTellsItsProgressWhatTheAnglesAreDoing(t *testing.T) {
+	agent := &reviewAgent{}
+	r, _ := testRunner(t, agent, nil)
+	progress := newProgressRecorder()
+	r.Progress = progress.record
+	if _, err := r.Run(context.Background(), Ref{Repo: testRepo, Number: 7}); err != nil {
+		t.Fatal(err)
+	}
+	for _, angle := range []string{AngleGeneral, AngleTests, AngleAcceptance} {
+		if got, want := progress.events[angle], []AngleEvent{AngleStarted, AngleFinished}; !reflect.DeepEqual(got, want) {
+			t.Errorf("the %s angle's progress = %v, want %v", angle, got, want)
+		}
+	}
+	if len(progress.events) != 3 {
+		t.Errorf("progress was told about %d angles, want the 3 that ran: %v", len(progress.events), progress.events)
 	}
 }

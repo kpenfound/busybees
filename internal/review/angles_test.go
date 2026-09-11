@@ -621,3 +621,66 @@ func TestAnAngleSessionIsToldWhatItsReviewerDismissedBefore(t *testing.T) {
 		}
 	}
 }
+
+// progressRecorder records what Angles.Progress was told, from every
+// angle's goroutine at once.
+type progressRecorder struct {
+	mu     sync.Mutex
+	events map[string][]AngleEvent
+}
+
+func newProgressRecorder() *progressRecorder {
+	return &progressRecorder{events: map[string][]AngleEvent{}}
+}
+
+func (p *progressRecorder) record(angle string, event AngleEvent) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.events[angle] = append(p.events[angle], event)
+}
+
+// Progress is told once as each angle's session starts and once as it
+// ends, with how it ended, and about no other angle. The angles run at
+// once, so nothing is asserted about the order across angles.
+func TestProgressIsToldAsEachAngleStartsAndEnds(t *testing.T) {
+	agent := newFakeAngleAgent(len(briefAngles))
+	agent.fail = map[string]error{AngleDocs: errors.New("docs session: exit status 1")}
+	progress := newProgressRecorder()
+	angles := &Angles{Agent: agent, Dir: t.TempDir(), Progress: progress.record}
+	runs, err := angles.Run(context.Background(), t.TempDir(), &Project{}, testBrief(), testDiff)
+	if err == nil {
+		t.Fatal("the failed angle was not reported")
+	}
+	if got := ranAngles(runs); !reflect.DeepEqual(got, briefAngles) {
+		t.Fatalf("angles run = %v, want %v", got, briefAngles)
+	}
+	if len(progress.events) != len(briefAngles) {
+		t.Errorf("progress was told about %v, want %v", slices.Sorted(maps.Keys(progress.events)), briefAngles)
+	}
+	for _, angle := range briefAngles {
+		want := []AngleEvent{AngleStarted, AngleFinished}
+		if angle == AngleDocs {
+			want = []AngleEvent{AngleStarted, AngleFailed}
+		}
+		if got := progress.events[angle]; !reflect.DeepEqual(got, want) {
+			t.Errorf("the %s angle's progress = %v, want %v", angle, got, want)
+		}
+	}
+}
+
+// A run that starts no session tells Progress nothing: one refused before
+// any session ran, and one whose project turned every angle off.
+func TestProgressIsToldNothingWhenNoSessionRuns(t *testing.T) {
+	progress := newProgressRecorder()
+	agent := newFakeAngleAgent(0)
+	if _, err := (&Angles{Agent: agent, Dir: t.TempDir(), Progress: progress.record}).Run(context.Background(), t.TempDir(), &Project{}, nil, testDiff); err == nil {
+		t.Fatal("a run without a brief is an error")
+	}
+	off := projectWith(t, "[angles]\nquick_general = false\ngeneral = false\ndocs = false\ntest_coverage = false\nacceptance_criteria = false\nside_effects = false\n")
+	if _, err := (&Angles{Agent: agent, Dir: t.TempDir(), Progress: progress.record}).Run(context.Background(), t.TempDir(), off, testBrief(), testDiff); err != nil {
+		t.Fatal(err)
+	}
+	if len(progress.events) != 0 {
+		t.Errorf("progress was told %v, want nothing", progress.events)
+	}
+}

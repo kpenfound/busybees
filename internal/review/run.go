@@ -30,8 +30,8 @@ type Runner struct {
 	// Pipeline gathers the context: the gh client, the project's
 	// context.toml and the checkout, as Open builds them.
 	Pipeline *Pipeline
-	// Distiller and Angles run the sessions. Angles reports on Log when
-	// it is given none of its own.
+	// Distiller and Angles run the sessions. Angles reports on Log, and
+	// to Progress, when it is given none of its own.
 	Distiller *Distiller
 	Angles    *Angles
 	// Notes are the reviewer notes, whose rules the angles are told and the
@@ -46,6 +46,11 @@ type Runner struct {
 	// Log is where progress is written, one line per step, and nowhere
 	// when nil.
 	Log io.Writer
+	// Progress is told as each angle's session starts and ends
+	// (Angles.Progress), for a display that draws the fan-out while it
+	// runs. It is nil to be told nothing. Angles gets it when it is given
+	// none of its own, as with Log.
+	Progress func(angle string, event AngleEvent)
 }
 
 // NewRunner is the runner of a review of ref as the global configuration
@@ -114,6 +119,9 @@ func (r *Runner) Run(ctx context.Context, ref Ref) (*Artifact, error) {
 	}
 	if r.Angles.Log == nil {
 		r.Angles.Log = r.Log
+	}
+	if r.Angles.Progress == nil {
+		r.Angles.Progress = r.Progress
 	}
 	runs, err := r.Angles.Run(ctx, a.Dir, project, brief, diff)
 	if runs == nil && err != nil {
