@@ -16,10 +16,10 @@ import (
 )
 
 // A session's transcript is what its agent writes as it works — claude's
-// stream-json, or codex's event stream — one JSON object per line, teed to
-// transcript.jsonl by the runner. The view reads that file rather than the
-// stream: it is already on disk, one line per event, and reading it needs
-// nothing of the scheduler.
+// stream-json, codex's event stream, or opencode's — one JSON object per
+// line, teed to transcript.jsonl by the runner. The view reads that file
+// rather than the stream: it is already on disk, one line per event, and
+// reading it needs nothing of the scheduler.
 //
 // What a person watching wants from it is what Claude Code itself shows —
 // the assistant's own words, the tools it called and how each one answered —
@@ -27,9 +27,13 @@ import (
 // rate-limit bookkeeping, the tool schemas) is reduced to a marker or
 // dropped. A codex transcript is read to the same lines: each completed
 // item is what the session said or did, and the end of its turn is the
-// session's end. A line the view cannot parse is dropped too: half a JSON
-// object is what a transcript being written *right now* ends with, and it
-// is worth nothing to a reader.
+// session's end. An opencode transcript is read the same way too: its
+// "text" events are what the session said, and a "step_finish" whose
+// reason is "stop" is the session's end, with the cost opencode reports per
+// step summed into a running total — unlike codex, which never reports
+// one. A line the view cannot parse is dropped too: half a JSON object is
+// what a transcript being written *right now* ends with, and it is worth
+// nothing to a reader.
 
 // Markers each kind of transcript line is prefixed with. They are the ones
 // Claude Code's own output uses, so a person who has watched a session in a
@@ -73,9 +77,24 @@ type transcriptEntry struct {
 		Status  string `json:"status"`
 		Output  string `json:"aggregated_output"`
 	} `json:"item"`
+	// Error is codex's ("turn.failed"'s Message) and opencode's ("error"'s
+	// Name and nested Data.Message) at once: the two never collide, since
+	// each backend's stream sets only its own fields.
 	Error struct {
 		Message string `json:"message"`
+		Name    string `json:"name"`
+		Data    struct {
+			Message string `json:"message"`
+		} `json:"data"`
 	} `json:"error"`
+	// Part is opencode's: the part of a "text" or "step_finish" event,
+	// mirroring opencodeEvent in internal/session.
+	Part struct {
+		Type   string  `json:"type"`
+		Text   string  `json:"text"`
+		Reason string  `json:"reason"`
+		Cost   float64 `json:"cost"`
+	} `json:"part"`
 }
 
 // transcriptBlock is one item of a message's content array. An assistant
@@ -92,30 +111,32 @@ type transcriptBlock struct {
 }
 
 // readTranscript reads whatever has been appended to a session's transcript
-// since byte offset off, and returns the lines to show for it and the
-// offset to continue from.
+// since byte offset off, and returns the lines to show for it, the offset
+// to continue from and the running cost to carry into the next read — an
+// opencode transcript reports cost per step rather than once at the end, so
+// it is threaded through the same way off is.
 //
 // Only whole lines are consumed: the runner is writing this file as the
 // view reads it, so the last line is regularly half an object. Leaving it
 // behind — rather than parsing what is there — is what makes the next read
 // see it complete. A transcript that does not exist yet is not an error:
 // the session directory is created before claude is started.
-func readTranscript(dir string, off int64) (lines []string, next int64, err error) {
+func readTranscript(dir string, off int64, cost float64) (lines []string, next int64, nextCost float64, err error) {
 	if dir == "" {
-		return nil, off, nil
+		return nil, off, cost, nil
 	}
 	f, err := os.Open(filepath.Join(dir, session.TranscriptFile))
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, off, nil
+			return nil, off, cost, nil
 		}
-		return nil, off, err
+		return nil, off, cost, err
 	}
 	defer func() { _ = f.Close() }()
 	if _, err := f.Seek(off, io.SeekStart); err != nil {
-		return nil, off, err
+		return nil, off, cost, err
 	}
-	next = off
+	next, nextCost = off, cost
 	r := bufio.NewReader(f)
 	for {
 		line, err := r.ReadBytes('\n')
@@ -124,38 +145,68 @@ func readTranscript(dir string, off int64) (lines []string, next int64, err erro
 			break
 		}
 		next += int64(len(line))
-		lines = append(lines, renderTranscriptLine(line)...)
+		var rendered []string
+		rendered, nextCost = renderTranscriptLine(line, nextCost)
+		lines = append(lines, rendered...)
 	}
-	return lines, next, nil
+	return lines, next, nextCost, nil
 }
 
 // renderTranscriptLine turns one stream-json line into the lines the view
-// shows for it, or none at all.
-func renderTranscriptLine(line []byte) []string {
+// shows for it, or none at all, and the running cost to carry forward — an
+// opencode "step_finish" event adds to it, everything else passes it
+// through unchanged.
+func renderTranscriptLine(line []byte, cost float64) ([]string, float64) {
 	line = bytes.TrimSpace(line)
 	if len(line) == 0 {
-		return nil
+		return nil, cost
 	}
 	var e transcriptEntry
 	if json.Unmarshal(line, &e) != nil {
-		return nil
+		return nil, cost
 	}
 	switch e.Type {
 	case "assistant":
-		return assistantLines(blocksOf(e))
+		return assistantLines(blocksOf(e)), cost
 	case "user":
-		return userLines(blocksOf(e))
+		return userLines(blocksOf(e)), cost
 	case "result":
-		return []string{resultLine(e)}
+		return []string{resultLine(e)}, cost
 	case "item.completed":
-		return codexItemLines(e)
+		return codexItemLines(e), cost
 	case "turn.completed", "turn.failed", "error":
-		return []string{codexEndLine(e)}
+		return []string{codexEndLine(e)}, cost
+	case "text":
+		return prefixed(sayMark, e.Part.Text, 0), cost
+	case "step_finish":
+		return stepFinishLines(e, cost)
 	}
 	// "system" (init, thinking-token bookkeeping, task notifications) and
 	// "rate_limit_event" are the runner's business, not a reader's; so are
-	// codex's "thread.started", "turn.started" and "item.started".
-	return nil
+	// codex's "thread.started", "turn.started" and "item.started". So is
+	// opencode's "tool_use": internal/session.opencodeBackend.consume does
+	// not decode a tool call either, and there is no verified field shape
+	// to render one from yet.
+	return nil, cost
+}
+
+// stepFinishLines renders one opencode step's end, the same event
+// internal/session.opencodeBackend.consume reads its cost and outcome
+// from: the step's cost is added to the running total, reported so far by
+// every step that has finished; a reason of "stop" ends the session well,
+// "" and "tool-calls" mean the run goes on and render nothing, and any
+// other reason ends it as a failure named after the reason, the same name
+// consume gives it.
+func stepFinishLines(e transcriptEntry, cost float64) ([]string, float64) {
+	cost += e.Part.Cost
+	switch e.Part.Reason {
+	case "stop":
+		return []string{fmt.Sprintf("%ssession ended: ok, $%.2f", sayMark, cost)}, cost
+	case "", "tool-calls":
+		return nil, cost
+	default:
+		return []string{sayMark + "session ended: step_" + strings.ReplaceAll(e.Part.Reason, "-", "_")}, cost
+	}
 }
 
 // codexItemLines renders one completed codex item the way an assistant
@@ -194,13 +245,22 @@ func rawString(s string) json.RawMessage {
 // codexEndLine renders the end of a codex turn: the session is over, and
 // codex reports no cost, so none is shown. A "turn.failed" event says why
 // under "error"; a bare "error" event says it at the top level, as the
-// runner's codex backend reads it too.
+// runner's codex backend reads it too — the same bare "error" type
+// opencode's backend ends a session with, whose message is nested under
+// "error" instead (Data.Message, falling back to Name), so that is tried
+// first.
 func codexEndLine(e transcriptEntry) string {
 	if e.Type == "turn.completed" {
 		return sayMark + "session ended: ok"
 	}
 	how := "failed"
-	msg := e.Error.Message
+	msg := e.Error.Data.Message
+	if msg == "" {
+		msg = e.Error.Name
+	}
+	if msg == "" {
+		msg = e.Error.Message
+	}
 	if msg == "" {
 		var s string
 		if json.Unmarshal(e.Message, &s) == nil {
