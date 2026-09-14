@@ -775,20 +775,26 @@ Each developer worker runs a strictly sequential loop for its issue:
 developer → reviewer → developer → reviewer → … → approved
 ```
 
-The reviewer checks out the pull request branch, reads the diff and the
-issue, and works through the review stages
-[`roles.reviewer.stages`](roles.md#review-stages-rolesreviewerstages)
-configures, by default correctness, completeness against the acceptance
-criteria, cleanliness and style, giving each its own verdict. It then either
-approves, which needs every stage to pass, or sends the developer one
-consolidated message through the mailbox, its points grouped by stage.
-Verifying that the change builds and passes is CI's job: the reviewer judges
-the change from the code and does not re-run the repository's test-suite. On
-a developer's pull request it does not submit a GitHub review, comment on the
-pull request, or push to the branch. On changes requested the orchestrator
-moves the issue back to
-`bees:in-progress` and runs the developer again with the feedback in its
-prompt. The developer pushes and reports `pr-updated`.
+The review is the one `bees review` runs ([Reviewing a pull
+request](review.md)), run on the worker's checkout of the pull request
+branch: a brief of the change is distilled from its context and sized, one
+read-only session per angle `roles.reviewer.angles` gives that size looks
+for problems from that angle alone, and the judge merges what they found
+into one list, most severe first. Every session of it runs the reviewer's
+`agent` and `model`, with `brief_model`, `angle_models` and `judge_model`
+replacing the model for one step each. The reviewer session then posts that
+list on the pull request as one `comment` review, every finding and nothing
+else, for the person who merges to read, and decides: it approves when
+nothing in the list needs fixing before the merge, or sends the developer
+one message through the mailbox with the verdict and every finding. It
+posts no approval or request for changes on GitHub, which refuses both from
+a pull request's own author, and pushes nothing to the branch. Verifying
+that the change builds and passes is CI's job: nothing in the review re-runs
+the repository's test-suite. On changes requested the orchestrator moves the
+issue back to `bees:in-progress` and runs the developer again with the
+feedback in its prompt. The developer pushes and reports `pr-updated`. A
+review that could not run, because its brief or every one of its angles
+failed, is escalated with the reason.
 
 `scheduler.max_review_rounds` (default `3`) caps the number of reviewer
 passes. When the last round still requests changes the issue is escalated
@@ -848,17 +854,19 @@ pass. A draft is skipped until it is marked ready. The label keeps working
 alongside it and keeps its own meaning: it asks for a pass whether or not the
 head has already been reviewed.
 
-The verdict is one GitHub review on the pull request, because there is no
-developer to mail and no issue to label: `approve` when every review stage
-passed, `request-changes` when any failed, each stage's verdict line and its
-points in the body, ending with the `<!-- bees:reviewer -->` marker. There is
-no issue, so the reviewer judges the change against the pull request's
-description and the repository's conventions, not against acceptance
-criteria. GitHub refuses an approval from a pull request's own author: when
-the author is the login the factory acts as, the reviewer submits a `comment`
-review in place of the approval and says so in it. With no `[github]` table
-the factory acts as the account `gh` is signed in with, so a review of that
-person's own pull request is a comment too. The review never comes back in
+The review is the same brief, angles and judge as in the loop above, and the
+verdict is one GitHub review on the pull request, because there is no
+developer to mail and no issue to label: `approve` when nothing the review
+found needs fixing before the merge, `request-changes` when something does,
+the verdict line and every finding in the body, ending with the
+`<!-- bees:reviewer -->` marker. There is no issue, so the review judges the
+change against the pull request's description and the repository's
+conventions, not against acceptance criteria. GitHub refuses an approval
+from a pull request's own author: when the author is the login the factory
+acts as, the reviewer submits a `comment` review in place of the approval
+and says so in it. With no `[github]` table the factory acts as the account
+`gh` is signed in with, so a review of that person's own pull request is a
+comment too. The review never comes back in
 as feedback: the orchestrator reads reviews and comments only on a pull
 request that closes a visible factory issue, and this one closes none. What
 the reviewer reads and does in this mode is under
