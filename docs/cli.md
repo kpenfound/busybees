@@ -15,7 +15,7 @@ gets it automatically. Everything else is for people.
 
 | Flag | Description |
 |---|---|
-| `-c, --config <path>` | Path to `bees.toml`. Default: `$BEES_CONFIG`, else search upwards from cwd. |
+| `-c, --config <path>` | Path to `bees.toml` or a [machine config](configuration.md#machine-config-several-projects). Default: `$BEES_CONFIG`, else search upwards from cwd. |
 | `-v, --verbose` | Debug logging (same as `--log-level debug`). With `run`/`tick`/`exec`, also streams every session event to stderr — except under [the live view](#the-live-view), which owns the terminal; `bees run --no-tui` streams as before. |
 | `-q, --quiet` | Console shows only session summaries, warnings and errors. Cannot be combined with `-v` or `--log-level debug`. |
 | `--log-format <text\|json>` | Console log format. Default `text`; `$BEES_LOG_FORMAT`, then [`logging.format`](configuration.md#logging). |
@@ -330,6 +330,11 @@ checkouts and cannot be pulled; that failure is expected.
 
 Loads `bees.toml` and reports errors (missing or unsupported `version`, unknown
 keys, bad repo, invalid MCP server, ...).
+
+When the file is a
+[machine config](configuration.md#machine-config-several-projects), it loads
+every project listed and reports the first entry that fails, or prints how
+many projects the file lists.
 
 ### `bees config migrate`
 

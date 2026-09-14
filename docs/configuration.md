@@ -31,6 +31,44 @@ Durations are written the way Go reads them: `"30s"`, `"5m"`, `"1h30m"`.
 `~/.config/bees/config.toml` and the project's `context.toml`, both described
 in [Reviewing a pull request](review.md#configuration).
 
+One bees process managing several projects reads a
+[machine config](#machine-config-several-projects) instead, which lists the
+`bees.toml` of each project.
+
+## Machine config: several projects
+
+A machine config is a separate file that lists the `bees.toml` files of the
+projects one bees process manages. It holds one key, `projects`, and nothing
+else:
+
+```toml
+projects = [
+  "~/src/foo/bees.toml",
+  "../bar/bees.toml",
+  "/srv/factories/baz.toml",
+]
+```
+
+- A relative path is relative to the directory of the machine config. A
+  leading `~/` is your home directory.
+- Every entry must name an existing file that loads as a valid `bees.toml`. A
+  missing file, a directory, an empty entry, a project listed twice, or a
+  project file that fails to load is an error naming the entry, for example
+  `projects[1] = "../bar/bees.toml": ...`.
+- The list must not be empty, and any key besides `projects` is a load error.
+  Project settings stay in each project's `bees.toml`, so each project keeps
+  its own state directory, mailbox and notes.
+- The file has no `version` key.
+
+bees finds a machine config the same way it finds `bees.toml`: `--config`,
+then `$BEES_CONFIG`, then a file named `bees.toml` in the working directory
+or a parent. It reads the file's keys to tell the two kinds apart: a file with
+a top-level `projects` key is a machine config. `bees config validate` checks
+either kind. A command that works on one project refuses a machine config
+with an error saying which kind of file it found.
+
+You edit the file by hand.
+
 ## `version`
 
 ```toml
