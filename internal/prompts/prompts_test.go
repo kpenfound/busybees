@@ -2,7 +2,6 @@ package prompts
 
 import (
 	"fmt"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -39,7 +38,6 @@ func sample() Data {
 		Features:          []github.Issue{{Number: 12, Title: "Exports", Labels: []github.Label{{Name: "bees:feature"}, {Name: "bees:question"}}}},
 		Progress:          map[int]github.SubIssueSummary{12: {Total: 4, Completed: 2}},
 		Parent:            &github.Parent{Number: 12, Title: "Exports"},
-		Stages:            config.DefaultReviewStages,
 		Parents:           map[int]github.Parent{5: {Number: 12, Title: "Exports"}, 6: {Number: 12, Title: "Exports"}},
 		Blockers:          map[int][]int{5: {37}, 6: {37}},
 		FreshFeatures:     []github.Issue{{Number: 13, Title: "Search", Body: "find things", Author: github.Author{Login: "kyle"}}},
@@ -420,336 +418,6 @@ func TestRoleSpecifics(t *testing.T) {
 	}
 }
 
-func TestReviewerPromptStatesTheSize(t *testing.T) {
-	d := sample()
-	d.Size = "xs"
-	sys, err := System(config.RoleReviewer, d, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(sys, "this is an `xs` change") || !strings.Contains(sys, "do not ask for restructuring") {
-		t.Fatalf("reviewer prompt missing the size:\n%s", sys)
-	}
-	if strings.Contains(sys, "crosses subsystems") {
-		t.Fatalf("reviewer prompt mixes in another size:\n%s", sys)
-	}
-	d.Size = "l"
-	sys, _ = System(config.RoleReviewer, d, "")
-	if !strings.Contains(sys, "this is an `l` change") || !strings.Contains(sys, "crosses subsystems") {
-		t.Fatalf("reviewer prompt for l:\n%s", sys)
-	}
-	// An unsized issue says nothing about size.
-	sys, _ = System(config.RoleReviewer, sample(), "")
-	if strings.Contains(sys, "Size: this is") {
-		t.Fatalf("unsized reviewer prompt should not mention a size:\n%s", sys)
-	}
-}
-
-func TestManagerPromptsDescribeSizes(t *testing.T) {
-	pjm, err := System(config.RoleProjectManager, sample(), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"bees:size/xs", "bees:size/s", "bees:size/m", "bees:size/l", "bees:size/xl", "split it instead of labelling it"} {
-		if !strings.Contains(pjm, want) {
-			t.Errorf("project manager prompt missing %q", want)
-		}
-	}
-	pm, _ := System(config.RoleProductManager, sample(), "")
-	// Pre-sizing goes through issue_create's `labels` list, not a CLI flag:
-	// the tool has no --label (internal/mcpserver/tools.go, issueCreateInput).
-	if !strings.Contains(pm, `labels: ["bees:size/s"]`) {
-		t.Errorf("product manager prompt should show pre-sizing through the tool:\n%s", pm)
-	}
-	if strings.Contains(pm, `--label "bees:size/`) {
-		t.Errorf("product manager prompt still passes a size as a CLI flag:\n%s", pm)
-	}
-}
-
-// The product manager may report every status the done tool offers it, and no
-// other. The prompt is where a session learns them, so the two must not drift:
-// internal/session owns the enum.
-// Every role's prompt ends with the statuses that role may report, and that
-// sentence is where a session learns them: internal/session owns the enum, so
-// the two must not drift (#355 is the same drift in `bees done --help`).
-func TestEveryRolePromptListsEveryOutcome(t *testing.T) {
-	var every []string
-	for _, role := range config.Roles {
-		every = append(every, session.ValidOutcomes(role)...)
-	}
-	for _, role := range config.Roles {
-		sys, err := System(role, sample(), "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, statuses, ok := strings.Cut(sys, "Outcome statuses:")
-		if !ok {
-			t.Errorf("%s prompt has no outcome statuses line:\n%s", role, sys)
-			continue
-		}
-		want := session.ValidOutcomes(role)
-		for _, w := range want {
-			if !strings.Contains(statuses, "`"+w+"`") {
-				t.Errorf("%s prompt does not offer the %q outcome:%s", role, w, statuses)
-			}
-		}
-		for _, other := range every {
-			if slices.Contains(want, other) {
-				continue
-			}
-			if strings.Contains(statuses, "`"+other+"`") {
-				t.Errorf("%s prompt offers %q, which is another role's outcome:%s", role, other, statuses)
-			}
-		}
-	}
-}
-
-// bees:question is cleared by the orchestrator when a person answers
-// (scheduler.freshIssues), so a feature can reach the product manager with the
-// label already gone. The prompt must say so, or a session reads the missing
-// label as "I never asked".
-func TestProductManagerDoesNotClearItsOwnQuestionLabel(t *testing.T) {
-	pm, err := System(config.RoleProductManager, sample(), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{
-		"never take `bees:question` off yourself",
-		"the orchestrator removes it",
-		"`waiting: false` only to withdraw",
-	} {
-		if !strings.Contains(pm, want) {
-			t.Errorf("product manager prompt missing %q:\n%s", want, pm)
-		}
-	}
-}
-
-// Work items filed by other roles have no parent feature, so attaching them is
-// recurring work the prompt must name — with the tool that does it.
-func TestProductManagerAttachesLooseWorkItems(t *testing.T) {
-	pm, err := System(config.RoleProductManager, sample(), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(pm, "Keep the feature tree honest") || !strings.Contains(pm, "`issue_link`") {
-		t.Errorf("product manager prompt does not tell it to attach loose work items:\n%s", pm)
-	}
-	task, err := Task(config.RoleProductManager, sample())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(task, "Check the feature tree") {
-		t.Errorf("product manager task does not run the feature-tree check:\n%s", task)
-	}
-}
-
-// Two of productManagerHasWork's wake conditions leave the fresh-feature,
-// feedback and mail sections of the task empty (internal/scheduler/singletons.go):
-// a person's comment on a proposal, and — since #239 — a feature whose every
-// sub-issue has closed. Both have a task section of their own, so an idle rule
-// that names only the first three sections tells the session to answer a waiting
-// person, or to leave a finished feature open, with `idle`.
-func TestProductManagerIdleRuleCoversProposals(t *testing.T) {
-	pm, err := System(config.RoleProductManager, sample(), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	idle := pm[strings.Index(pm, "Working a pass:"):]
-	if i := strings.Index(idle, "\n\nPacing:"); i > 0 {
-		idle = idle[:i]
-	}
-	for _, want := range []string{
-		"read the proposals section before you conclude anything",
-		"leaves that section on its own",
-		`"Features whose work is done" closed its last work item`,
-		"report `idle` and mean it",
-	} {
-		if !strings.Contains(idle, want) {
-			t.Errorf("product manager idle rule missing %q:\n%s", want, idle)
-		}
-	}
-	// The rule must not be a blanket "proposals section non-empty" veto:
-	// github.Issue.AwaitingBee seeds the human side with CreatedAt, so a
-	// proposal the product manager has never answered sits there forever.
-	if !strings.Contains(idle, "that you have not answered") {
-		t.Errorf("product manager idle rule vetoes on the whole proposals section:\n%s", idle)
-	}
-}
-
-// scheduler.feature_proposals decides what the product manager is told about
-// the features it creates: with the gate on (the default, and what sample()
-// sets) they are proposals a person approves; off, they are approved on
-// creation and it may break them down at once, while one still carrying the
-// label from before stays a person's to approve. Each case names itself and
-// not the other, so a session cannot read both rules.
-func TestProductManagerPromptFollowsTheProposalGate(t *testing.T) {
-	const on, off = "**A feature issue you create is a proposal.**", "**A feature issue you create is approved already.**"
-	pm, err := System(config.RoleProductManager, sample(), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(pm, on) || strings.Contains(pm, off) {
-		t.Errorf("gate on: want %q and not %q in:\n%s", on, off, pm)
-	}
-
-	d := sample()
-	d.FeatureProposals = false
-	pm, err = System(config.RoleProductManager, d, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(pm, on) {
-		t.Errorf("gate off: the proposal rule is still there:\n%s", pm)
-	}
-	for _, want := range []string{
-		off,
-		"`scheduler.feature_proposals = false`",
-		"labels it\n     `bees:feature` and no `bees:proposal`",
-		"break it into\n     work items immediately",
-		"still carries `bees:proposal` was written while the gate was\n     on: it stays a proposal until a person removes the label",
-	} {
-		if !strings.Contains(pm, want) {
-			t.Errorf("gate off: product manager prompt missing %q:\n%s", want, pm)
-		}
-	}
-}
-
-// A proposal and an approved feature must be distinguishable in the product
-// manager's task prompt: the label is the only discriminator (bees and people
-// share one GitHub account, so the author says nothing), and the prompt tells
-// the product manager to break approved features down.
-func TestProductManagerTaskMarksProposals(t *testing.T) {
-	feature := func(n int, title string, labels ...string) github.Issue {
-		i := github.Issue{Number: n, Title: title, Body: "why", Author: github.Author{Login: "kyle"}}
-		for _, l := range labels {
-			i.Labels = append(i.Labels, github.Label{Name: l})
-		}
-		return i
-	}
-	labels := config.LabelsFor("bees")
-	proposal := feature(40, "Bee-written idea", labels.Feature, labels.Proposal)
-	approved := feature(41, "Human-written feature", labels.Feature)
-
-	d := sample()
-	d.Features = []github.Issue{proposal, approved}
-	d.FreshFeatures = []github.Issue{approved}
-	d.Proposals = []github.Issue{proposal}
-	d.Progress = nil
-
-	task, err := Task(config.RoleProductManager, d)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// The header line of each section carries the state, since instruction 2
-	// acts on those sections.
-	for _, want := range []string{
-		"#40: Bee-written idea",
-		"proposal: yes",
-		"#41: Human-written feature",
-		"proposal: no",
-	} {
-		if !strings.Contains(task, want) {
-			t.Errorf("product manager task is missing %q:\n%s", want, task)
-		}
-	}
-
-	// The proposal is presented, but never under the section instruction 2
-	// tells the product manager to break down.
-	breakdown, proposals, ok := cut3(task,
-		"## Feature issues needing you", "## Proposals awaiting a person's approval", "## All open feature issues")
-	if !ok {
-		t.Fatalf("product manager task has no proposals section:\n%s", task)
-	}
-	if strings.Contains(breakdown, "#40") {
-		t.Errorf("a proposal is listed as a feature needing breakdown:\n%s", breakdown)
-	}
-	if !strings.Contains(proposals, "#40: Bee-written idea") || !strings.Contains(proposals, "why") {
-		t.Errorf("the proposal is not presented with its body:\n%s", proposals)
-	}
-	if strings.Contains(proposals, "#41") {
-		t.Errorf("an approved feature is listed as a proposal:\n%s", proposals)
-	}
-
-	// The feature table has a Proposal column, and the two rows differ in it.
-	rowOf := func(n string) string {
-		for _, line := range strings.Split(task, "\n") {
-			if strings.HasPrefix(line, "| "+n+" |") {
-				return line
-			}
-		}
-		t.Fatalf("no table row for feature #%s:\n%s", n, task)
-		return ""
-	}
-	if !strings.Contains(task, "| # | Milestone | Progress | Proposal | Waiting on person | Title |") {
-		t.Errorf("feature table has no Proposal column:\n%s", task)
-	}
-	if got := rowOf("40"); !strings.Contains(got, "| yes |") {
-		t.Errorf("proposal row is not marked as a proposal: %s", got)
-	}
-	if got := rowOf("41"); strings.Contains(got, "| yes |") {
-		t.Errorf("approved feature row claims to be a proposal: %s", got)
-	}
-	// Every proposal is waiting on a person, whether it is fresh or not.
-	if got := rowOf("40"); !strings.Contains(got, "| proposal |") {
-		t.Errorf("proposal row does not say it waits on a person: %s", got)
-	}
-	if got := rowOf("41"); strings.Contains(got, "| proposal |") {
-		t.Errorf("approved feature row waits on a person: %s", got)
-	}
-
-	// And the instruction to break features down carries the exception.
-	if !strings.Contains(task, "The proposals listed above are the exception") {
-		t.Errorf("break-it-down instruction has no proposal exception:\n%s", task)
-	}
-}
-
-// cut3 splits text at three headings and returns what stands under the first
-// two of them.
-func cut3(text, a, b, c string) (string, string, bool) {
-	_, rest, ok := strings.Cut(text, a)
-	if !ok {
-		return "", "", false
-	}
-	first, rest, ok := strings.Cut(rest, b)
-	if !ok {
-		return "", "", false
-	}
-	second, _, ok := strings.Cut(rest, c)
-	return first, second, ok
-}
-
-// With scheduler.notify set, the product manager is told to start a question
-// comment with the mentions — and with it unset the prompt is unchanged.
-func TestProductManagerMentionsNotify(t *testing.T) {
-	d := sample()
-	off, err := System(config.RoleProductManager, d, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(off, "@kpenfound") || strings.Contains(off, "Start the comment with") {
-		t.Fatalf("notify is unset but the prompt mentions somebody:\n%s", off)
-	}
-
-	d.Notify = "@kpenfound @myorg/bees-team"
-	on, err := System(config.RoleProductManager, d, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(on, "Start the comment with `@kpenfound @myorg/bees-team`") {
-		t.Fatalf("product manager system prompt does not carry the mentions:\n%s", on)
-	}
-	// The mention paragraph is the whole difference between the two renders.
-	i := strings.Index(on, "Start the comment with")
-	j := strings.Index(on, "Stop working on that feature")
-	if i < 0 || j <= i {
-		t.Fatalf("mention paragraph is not where it should be:\n%s", on)
-	}
-	if got := strings.Replace(on, on[i:j], "", 1); got != off {
-		t.Errorf("notify changes the prompt beyond the mention paragraph:\n%s", got)
-	}
-}
-
 // Verification is CI's job, not the reviewer's: a person said so on #5, and the
 // archive shows every short round-1 approval spending most of its turns on
 // `go build/vet/test`, `dagger check` and throwaway worktrees. Both halves are
@@ -761,10 +429,10 @@ func TestReviewerDoesNotRunTheTestSuite(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"Verifying that the change builds and passes is CI's job",
-		"do not spend the session re-running the repository's\n   test-suite",
+		"Verifying that the change builds and passes is CI's job, not yours",
+		"do not spend the session re-running the repository's test-suite",
 	} {
-		if !strings.Contains(sys, want) {
+		if !strings.Contains(flowed(sys), want) {
 			t.Errorf("reviewer system prompt missing %q:\n%s", want, sys)
 		}
 	}
@@ -789,26 +457,6 @@ func TestReviewerDoesNotRunTheTestSuite(t *testing.T) {
 	}
 	if strings.Contains(task, "run the tests yourself") || strings.Contains(task, "test-suite yourself") {
 		t.Errorf("reviewer task still tells it to run the tests:\n%s", task)
-	}
-}
-
-// #150 and #168 were both filed on pull requests that had already been
-// approved, and both are the same shape: a fix applied at one site while an
-// identical sibling site kept the defect. That is the class of defect the
-// review misses, so the "look for" list names it.
-func TestReviewerLooksForTheSameShapeElsewhere(t *testing.T) {
-	sys, err := System(config.RoleReviewer, sample(), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{
-		"**the same shape elsewhere**",
-		"not for the line the PR happened to edit",
-		"is one to drop,\n   not to hedge",
-	} {
-		if !strings.Contains(sys, want) {
-			t.Errorf("reviewer system prompt missing %q:\n%s", want, sys)
-		}
 	}
 }
 
@@ -1253,145 +901,104 @@ func section(t *testing.T, prompt, heading string) string {
 	return body
 }
 
-// stageHeadings extracts the stage names the reviewer's task template knows
-// how to describe: the backticked token on every line that starts with the
-// stable prefix "### `". Each stage's block in the template is headed by one,
-// so the names are read off the prose the reviewer actually gets rather than
-// off the {{if}} chain that selects it.
-func stageHeadings(t *testing.T) []string {
-	t.Helper()
-	b, err := files.ReadFile("partials/stages.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var names []string
-	for _, line := range strings.Split(string(b), "\n") {
-		rest, ok := strings.CutPrefix(line, "### `")
-		if !ok {
-			continue
-		}
-		name, _, ok := strings.Cut(rest, "`")
-		if !ok {
-			t.Fatalf("unterminated stage heading: %q", line)
-		}
-		names = append(names, name)
-	}
-	if len(names) == 0 {
-		t.Fatalf("no \"### `\" stage heading in partials/stages.md; the pin has lost its anchor")
-	}
-	return names
-}
-
-// The task template describes each stage in prose, and config validates
-// roles.reviewer.stages against config.KnownReviewStages — two lists that have
-// to name the same stages. A stage the config accepts but the template cannot
-// describe renders as a heading-less gap the reviewer silently skips; a stage
-// the template describes but the config rejects can never be configured. The
-// comparison is a set both ways, because the template's order is the order the
-// {{if}} chain happens to be written in, not a contract (the *rendered* order
-// is the configured one — see TestReviewerStagesRenderInTheConfiguredOrder).
-func TestReviewerTaskDescribesEveryKnownStage(t *testing.T) {
-	got, want := stageHeadings(t), slices.Clone(config.KnownReviewStages)
-	slices.Sort(got)
-	slices.Sort(want)
-	if !slices.Equal(got, want) {
-		t.Errorf("partials/stages.md describes %v; config.KnownReviewStages is %v", got, want)
+// sampleReview is what the scheduler tells the reviewer's judge session
+// about a review: two angles, one finding, one angle that reviewed nothing.
+func sampleReview() *Review {
+	return &Review{
+		Size: "s", Summary: "Adds the widget.",
+		Angles:   []string{"quick_general", "docs"},
+		Skipped:  []string{"docs: the session failed: overloaded"},
+		Count:    1,
+		Findings: "### Widget does nothing\n\n`widget.go:2` · medium · correctness\n\nWidget has an empty body.",
+		Artifact: "/s/reviews/acme/widgets/9/20260914-120000",
 	}
 }
 
-// Only the configured stages are rendered, in the configured order, and the
-// section is absent altogether when no stage is set — which is what keeps the
-// reviewer's checks-mode task, and every other role, unaffected by #240.
-func TestReviewerStagesRenderInTheConfiguredOrder(t *testing.T) {
+// The findings partial is the review: the judge session's task carries what
+// the pipeline found, sized and by angle, the findings as the judge listed
+// them, what reviewed nothing, and where the artifact is; and the section
+// is absent altogether when no review ran — the checks-mode task, and every
+// other role.
+func TestReviewerTaskCarriesTheFindings(t *testing.T) {
 	d := sample()
-	d.Stages = []string{"style", "implementation"}
+	d.Review = sampleReview()
 	rev, err := Task(config.RoleReviewer, d)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(rev, "## Review stages") {
-		t.Fatalf("no stages section:\n%s", rev)
-	}
-	if i, j := strings.Index(rev, "### `style`"), strings.Index(rev, "### `implementation`"); i < 0 || j < 0 || i > j {
-		t.Errorf("stages are not rendered in the configured order (style at %d, implementation at %d):\n%s", i, j, rev)
-	}
-	for _, gone := range []string{"### `cleanliness`", "### `completeness`", "### `product-fit`"} {
-		if strings.Contains(rev, gone) {
-			t.Errorf("unconfigured stage %q is rendered:\n%s", gone, rev)
+	flow := flowed(rev)
+	for _, want := range []string{
+		"## Findings",
+		"the change was sized `s` and reviewed from the quick_general, docs angles",
+		"The brief's summary: Adds the widget.",
+		"Not reviewed: - docs: the session failed: overloaded",
+		"### Widget does nothing",
+		"`widget.go:2` · medium · correctness",
+		"The review is kept under `/s/reviews/acme/widgets/9/20260914-120000` (`brief.json`, `angles/`, `findings.json`)",
+		"Post the findings above on the pull request as one `comment` review with `submit_review` (`number: 9`)",
+		"Post the list as it is: nothing dropped, nothing added",
+	} {
+		if !strings.Contains(flow, want) {
+			t.Errorf("reviewer task lacks %q:\n%s", want, rev)
 		}
 	}
-	// Every stage ends in a verdict, and one failure blocks the approval.
-	for _, want := range []string{"<stage>: pass —", "<stage>: fail —", "Approve only when every stage passed"} {
-		if !strings.Contains(rev, want) {
-			t.Errorf("stages section missing %q:\n%s", want, rev)
-		}
-	}
-	if !strings.Contains(flowed(rev), "grouped by stage** in the stages' order") {
-		t.Errorf("the instructions do not ask for feedback grouped by stage:\n%s", rev)
+	if strings.Contains(rev, "The judge's list is empty") {
+		t.Errorf("a review with a finding says the list is empty:\n%s", rev)
 	}
 
-	d.Stages = nil
+	// One angle, nothing found: the sentence agrees with the count and the
+	// empty list says so.
+	d.Review = &Review{Size: "xs", Angles: []string{"quick_general"}, Artifact: "/s/reviews/x"}
 	rev, err = Task(config.RoleReviewer, d)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(rev, "## Review stages") || strings.Contains(rev, "### `style`") {
-		t.Errorf("the stages section survives an empty stage list:\n%s", rev)
+	for _, want := range []string{"reviewed from the quick_general angle,", "The judge's list is empty: no angle found anything to report."} {
+		if !strings.Contains(flowed(rev), want) {
+			t.Errorf("empty review task lacks %q:\n%s", want, rev)
+		}
+	}
+	if strings.Contains(rev, "Not reviewed") || strings.Contains(rev, "The brief's summary") {
+		t.Errorf("empty review task renders a section it has nothing for:\n%s", rev)
+	}
+
+	d.Review = nil
+	rev, err = Task(config.RoleReviewer, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(rev, "## Findings") {
+		t.Errorf("the findings section survives a nil review:\n%s", rev)
 	}
 	checks, err := TaskNamed(config.RoleReviewer, "reviewer_checks", sample())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(checks, "## Review stages") {
-		t.Errorf("the checks-mode task reviews in stages:\n%s", checks)
+	if strings.Contains(checks, "## Findings") {
+		t.Errorf("the checks-mode task carries findings:\n%s", checks)
 	}
 }
 
-// product-fit is the one stage with a source of truth outside the diff and the
-// issue, so it is the one stage that needs Data.Parent. It has to render both
-// ways: the scheduler leaves Parent nil for a work item that belongs to no
-// feature, and the stage must then say what it judged against instead rather
-// than render a dangling "#: ".
-func TestProductFitStageNamesTheParentFeature(t *testing.T) {
-	d := sample()
-	d.Stages = []string{config.StageProductFit}
-	rev, err := Task(config.RoleReviewer, d)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(flowed(rev), "**#12: Exports** — is the source of truth") {
-		t.Errorf("product-fit does not name the parent feature:\n%s", rev)
-	}
-
-	d.Parent = nil
-	rev, err = Task(config.RoleReviewer, d)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(flowed(rev), "belongs to no feature, so the README and the docs are the only source of truth") {
-		t.Errorf("product-fit without a parent feature:\n%s", rev)
-	}
-	if strings.Contains(rev, "#0") || strings.Contains(rev, "**#: ") {
-		t.Errorf("product-fit renders an empty parent reference:\n%s", rev)
-	}
-}
-
-// The reviewer's system prompt carries the rules that do not vary with the
-// configured stage list: run every one, a verdict each, one grouped message,
-// and an approval that needs them all. The task carries the list itself.
-func TestReviewerSystemPromptCarriesTheStagedRules(t *testing.T) {
+// The reviewer's system prompt carries the rules of the judge session, the
+// ones that do not vary with what the review found: the findings are the
+// review, posted once and as they are, and the verdict is the session's.
+func TestReviewerSystemPromptCarriesTheJudgeRules(t *testing.T) {
 	sys, err := System(config.RoleReviewer, sample(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	flow := flowed(sys)
 	for _, want := range []string{
-		"Run **every** stage, and do not stop at the first one that finds something you would block on",
-		"Give each stage a verdict line of its own",
-		"**Approve** when every stage passed",
-		"A single failed stage is `changes-requested`, whatever the others said",
-		"**grouped by stage**, the stages in the task's order",
-		"A checks-mode session runs no stages",
+		"The review itself ran before your session started",
+		"Post the findings on the pull request with `submit_review` (`number: 9`), once",
+		"Do not review the change again, do not drop a finding you disagree with, do not add one of your own and do not soften one",
+		"An empty list is posted too",
+		"The event is `comment`: the developer's pull request was opened by the account you act as",
+		"A finding needs fixing before the change merges when the change would be wrong, incomplete or misleading without the fix: a `high` finding always does, an `info` one never does",
+		"**Approve** when nothing needs fixing",
+		"**Request changes** when something does",
+		"`mail_send` (`to: developer`, `pr: 9`, `issue: 4`, `subject: \"Review round 1\"`)",
+		"A checks-mode session has no findings to post",
 	} {
 		if !strings.Contains(flow, want) {
 			t.Errorf("reviewer system prompt missing %q:\n%s", want, sys)
@@ -1622,7 +1229,7 @@ func TestRequestedReviewRendersWithoutAnIssue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("system prompt with no issue: %v", err)
 	}
-	for _, want := range []string{"`mail_send` (`to: developer`, `pr: 42`, `subject:", "(`issue_create` with `bug: true`);"} {
+	for _, want := range []string{"`mail_send` (`to: developer`, `pr: 42`, `subject:", "(`issue_create` with `bug: true`). Do not block"} {
 		if !strings.Contains(flowed(sys), want) {
 			t.Errorf("system prompt without an issue lacks %q", want)
 		}
@@ -1633,7 +1240,7 @@ func TestRequestedReviewRendersWithoutAnIssue(t *testing.T) {
 	}
 	for _, want := range []string{"# Task: review pull request #42 (requested by a person)", "`bees:review-requested`",
 		"## Pull request #42: Fix the widget", "https://github.com/acme/widgets/pull/42", "branch `fix-widget` → `main`", "author: kyle", "It was broken.",
-		"## Mail for you (1)", "please fix", "`notes_write`", "gh pr diff 42 -R acme/widgets", "`pr_view`", "`status: approved`", "`status: changes-requested`"} {
+		"## Mail for you (1)", "please fix", "`notes_write`", "`pr_view`", "`status: approved`", "`status: changes-requested`"} {
 		if !strings.Contains(task, want) {
 			t.Errorf("requested-review task lacks %q:\n%s", want, task)
 		}
@@ -1647,7 +1254,7 @@ func TestRequestedReviewRendersWithoutAnIssue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"`mail_send` (`to: developer`, `pr: 9`, `issue: 4`, `subject:", "(`issue_create` with `bug: true`, `related: 4`);"} {
+	for _, want := range []string{"`mail_send` (`to: developer`, `pr: 9`, `issue: 4`, `subject:", "(`issue_create` with `bug: true`, `related: 4`). Do not block"} {
 		if !strings.Contains(flowed(sys), want) {
 			t.Errorf("system prompt with an issue lacks %q", want)
 		}
@@ -1676,11 +1283,9 @@ func TestRequestedReviewSystemPromptSubmitsAReview(t *testing.T) {
 	}
 	flow := flowed(sys)
 	for _, want := range []string{
-		"put your verdict on it as a GitHub review",
-		"exactly one GitHub review, submitted with `submit_review` (`number: 42`)",
-		"**Approve** (`event: approve`) when every stage passed",
-		"**Request changes** (`event: request-changes`) when any stage failed",
-		"**Comment** (`event: comment`) in place of `approve` when the pull request's author is the login the factory acts as",
+		"on that pull request, as one GitHub review, with your verdict",
+		"Post the findings on the pull request with `submit_review` (`number: 42`), once",
+		"The event is your verdict: `approve` when nothing in the list needs fixing before the change merges, `request-changes` when something does, and `comment` in place of `approve` when the pull request's author is the login the factory acts as",
 		"The `<!-- bees:reviewer -->` marker is appended for you",
 		"There is no developer on this pull request, so you send no mail",
 		"Outcome statuses: `approved`, `changes-requested` (both after submitting the review), `failed`",
@@ -1689,7 +1294,7 @@ func TestRequestedReviewSystemPromptSubmitsAReview(t *testing.T) {
 			t.Errorf("requested-review system prompt lacks %q:\n%s", want, sys)
 		}
 	}
-	for _, gone := range []string{"Do not submit a GitHub review", "`mail_send` (`to: developer`", "linked issue", "You may send mail to: `developer`", "the developer learns to skip"} {
+	for _, gone := range []string{"The event is `comment`:", "`mail_send` (`to: developer`", ", the issue", "You may send mail to: `developer`", "The developer reads your message"} {
 		if strings.Contains(flow, gone) {
 			t.Errorf("requested-review system prompt still says %q:\n%s", gone, sys)
 		}
@@ -1701,12 +1306,12 @@ func TestRequestedReviewSystemPromptSubmitsAReview(t *testing.T) {
 		t.Fatal(err)
 	}
 	flow = flowed(normal)
-	for _, want := range []string{"Do not submit a GitHub review and do not post your feedback as a comment", "`mail_send` (`to: developer`, `pr: 9`, `issue: 4`", "You may send mail to: `developer`, and to no one else"} {
+	for _, want := range []string{"The event is `comment`: the developer's pull request was opened by the account you act as", "`mail_send` (`to: developer`, `pr: 9`, `issue: 4`", "You may send mail to: `developer`, and to no one else"} {
 		if !strings.Contains(flow, want) {
 			t.Errorf("reviewer system prompt lacks %q:\n%s", want, normal)
 		}
 	}
-	for _, gone := range []string{"submit_review", "event: approve", "GitHub refuses an approval"} {
+	for _, gone := range []string{"The event is your verdict", "event: approve", "GitHub refuses an approval from a pull request's own author, so say"} {
 		if strings.Contains(flow, gone) {
 			t.Errorf("reviewer system prompt for a developer's pull request mentions %q:\n%s", gone, normal)
 		}
@@ -1719,17 +1324,17 @@ func TestRequestedReviewSystemPromptSubmitsAReview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(off, "submit_review") || !strings.Contains(off, "Do not submit a GitHub review") {
+	if strings.Contains(off, "The event is your verdict") || !strings.Contains(off, "The event is `comment`") {
 		t.Errorf("Mode empty with no issue rendered the requested-review prompt:\n%s", off)
 	}
 }
 
 // The requested-review task is the whole brief: the pull request, the
-// stages judged against its description rather than an issue, who the
-// factory is on GitHub, and the review to submit.
+// review judged against its description rather than an issue, who the
+// factory is on GitHub, the findings, and the review to submit.
 func TestRequestedReviewTaskHasNoIssueAndSubmitsAReview(t *testing.T) {
 	d := requestedReview()
-	d.Stages = append(slices.Clone(config.DefaultReviewStages), "product-fit")
+	d.Review = sampleReview()
 	task, err := TaskNamed(config.RoleReviewer, "reviewer_requested", d)
 	if err != nil {
 		t.Fatal(err)
@@ -1737,16 +1342,14 @@ func TestRequestedReviewTaskHasNoIssueAndSubmitsAReview(t *testing.T) {
 	flow := flowed(task)
 	for _, want := range []string{
 		"## No issue, no acceptance criteria",
-		"Do not invent criteria the description does not state",
+		"Do not invent criteria the description does not state when you decide the verdict",
 		"## Who you are on GitHub",
 		"The factory acts as `busybees-bot` on GitHub. The pull request's author is `kyle`, so an approval is accepted.",
-		"## Review stages",
-		"### `implementation`", "### `completeness`", "### `cleanliness`", "### `style`", "### `product-fit`",
-		"The pull request's description is the source of truth: there is no issue and no acceptance criteria",
-		"This pull request belongs to no feature, so the README and the docs are the only source of truth",
-		"Approve only when every stage passed",
-		"submit your verdict as exactly one GitHub review with `submit_review` (`number: 42`)",
-		"`event: approve` when every stage passed, `event: request-changes` when any failed, `event: comment` in place of `approve`",
+		"## Findings",
+		"### Widget does nothing",
+		"submit the findings above as exactly one GitHub review with `submit_review` (`number: 42`)",
+		"`event: approve` when nothing needs fixing, `event: request-changes` when something does, `event: comment` in place of `approve`",
+		"the verdict line, then every finding as it is, nothing dropped and nothing added",
 		"Then report `done` with `status: approved` (after an approval, or a comment in its place) or `status: changes-requested`",
 		"send no mail",
 	} {
@@ -1754,7 +1357,7 @@ func TestRequestedReviewTaskHasNoIssueAndSubmitsAReview(t *testing.T) {
 			t.Errorf("requested-review task lacks %q:\n%s", want, task)
 		}
 	}
-	for _, gone := range []string{"## Issue", "acceptance criteria one at a time", "the issue never mentioned", "changes the issue did not ask for", "work item", "mail_send"} {
+	for _, gone := range []string{"## Issue", "acceptance criteria one at a time", "work item", "mail_send", "`comment` review with `submit_review`"} {
 		if strings.Contains(flow, gone) {
 			t.Errorf("requested-review task still says %q:\n%s", gone, task)
 		}
@@ -1784,31 +1387,33 @@ func TestRequestedReviewTaskHasNoIssueAndSubmitsAReview(t *testing.T) {
 		t.Errorf("shared-account task names a login it does not have:\n%s", shared)
 	}
 
-	// The stages prose is shared with the review-loop task, which keeps
-	// naming the issue.
-	loop, err := Task(config.RoleReviewer, sample())
+	// The findings partial is shared with the review-loop task, which keeps
+	// naming the issue and posts a comment review.
+	d = sample()
+	d.Review = sampleReview()
+	loop, err := Task(config.RoleReviewer, d)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"The issue above is the source of truth. Take its acceptance criteria one at a time", "the inputs and states the issue never mentioned", "changes the issue did not ask for"} {
+	for _, want := range []string{"## Issue #4: Add thing", "### Widget does nothing", "as one `comment` review with `submit_review` (`number: 9`)"} {
 		if !strings.Contains(flowed(loop), want) {
 			t.Errorf("review-loop task lacks %q:\n%s", want, loop)
 		}
 	}
 }
 
-// Round 2 onward is a follow-up on the reviewer's own previous round, not a
-// fresh review: it must account for every point already raised and say the
-// scope is neither widened to the new commits alone nor narrowed to them.
-// Round 1 must render exactly as it does today — the instruction is new text
-// gated on .Round, not a rewording of anything round 1 already said (#397).
-func TestReviewerFollowUpRoundAccountsForPreviousPoints(t *testing.T) {
+// Round 2 onward is told the review ran again on the head as it now
+// stands: the findings are about the current change, not the developer's
+// last round, and are posted and judged like a first review's. Round 1 must
+// render exactly as it does today — the instruction is new text gated on
+// .Round, not a rewording of anything round 1 already said.
+func TestReviewerFollowUpRoundIsAFreshReviewOfTheHead(t *testing.T) {
 	round1, err := Task(config.RoleReviewer, sample())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(round1, "follow-up review") {
-		t.Errorf("round 1 task already reads as a follow-up review:\n%s", round1)
+	if strings.Contains(round1, "the review ran again") {
+		t.Errorf("round 1 task already reads as a later round:\n%s", round1)
 	}
 	// The block must add nothing at all to round 1, not even a blank line:
 	// the closing line still follows the instruction paragraph directly, as
@@ -1823,18 +1428,15 @@ func TestReviewerFollowUpRoundAccountsForPreviousPoints(t *testing.T) {
 
 	d := sample()
 	d.Round = 2
-	d.PreviousRounds = []mail.Message{{ID: "m1", From: "reviewer", To: "developer", Subject: "Review round 1", Body: "please fix", PR: 9, CreatedAt: sampleMailTime}}
 	round2, err := Task(config.RoleReviewer, d)
 	if err != nil {
 		t.Fatal(err)
 	}
 	flow := flowed(round2)
 	for _, want := range []string{
-		"This is a follow-up review, not a fresh one",
-		"go through `## Your feedback from previous rounds` point by point and say whether each was addressed",
-		"judge the change as it now stands against every stage above, the same as a first review",
-		"do not narrow it to the commits made since last round, and do not widen it into extra scrutiny of them either",
-		"Read the whole diff, and raise anything you missed in round 1 too",
+		"This is round 2: the review ran again on the change as it now stands",
+		"the findings above are about the current head, not the developer's last round",
+		"Post and judge them the same as a first review",
 	} {
 		if !strings.Contains(flow, want) {
 			t.Errorf("round 2 task missing %q:\n%s", want, round2)

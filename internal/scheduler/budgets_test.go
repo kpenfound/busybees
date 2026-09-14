@@ -67,8 +67,10 @@ func TestIssueOverItsCostBudgetIsEscalated(t *testing.T) {
 
 	runPass(t, h)
 
-	// One developer and one reviewer session ran; the check between stages
-	// stopped the worker before it started a third.
+	// One developer and one reviewer session ran, and the review's own
+	// sessions — the brief and two angles at $0.25 each — are charged to
+	// the issue as one more; the check between stages stopped the worker
+	// before it started a further session.
 	for role, want := range map[string]int{config.RoleDeveloper: 1, config.RoleReviewer: 1} {
 		if got := len(h.sessions(role)); got != want {
 			t.Errorf("%s sessions: got %d want %d", role, got, want)
@@ -82,14 +84,14 @@ func TestIssueOverItsCostBudgetIsEscalated(t *testing.T) {
 	if len(comments) != 1 {
 		t.Fatalf("want one escalation comment, got %v", comments)
 	}
-	for _, part := range []string{"has cost $2.00 across 2 sessions", "`max_cost_per_issue` budget of $1.50"} {
+	for _, part := range []string{"has cost $2.75 across 3 sessions", "`max_cost_per_issue` budget of $1.50"} {
 		if !strings.Contains(comments[0], part) {
 			t.Errorf("escalation comment does not name %q:\n%s", part, comments[0])
 		}
 	}
 	// The running total survived the worker's own bookkeeping writes.
-	if is, _ := h.store.Issue(1); is.Cost != 2 || is.Sessions != 2 {
-		t.Errorf("issue bookkeeping: cost %v over %d sessions, want 2 over 2", is.Cost, is.Sessions)
+	if is, _ := h.store.Issue(1); is.Cost != 2.75 || is.Sessions != 3 {
+		t.Errorf("issue bookkeeping: cost %v over %d sessions, want 2.75 over 3", is.Cost, is.Sessions)
 	}
 }
 
@@ -314,8 +316,10 @@ func TestDailyBudgetDoesNotInterruptARunningWorker(t *testing.T) {
 	if got := h.gh.history[2]; len(got) != 0 {
 		t.Errorf("issue 2 was picked up: %v", got)
 	}
+	// The day's spend counts the review's sessions ($0.75) with the two
+	// factory sessions.
 	st, _ := h.store.LoadStatus()
-	if !st.BudgetPaused || st.DaySpendUSD != 2 {
+	if !st.BudgetPaused || st.DaySpendUSD != 2.75 {
 		t.Errorf("status: paused %v, spent %v", st.BudgetPaused, st.DaySpendUSD)
 	}
 }

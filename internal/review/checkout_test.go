@@ -3,6 +3,7 @@ package review
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -352,5 +353,63 @@ func TestWithoutACheckoutRunnerTheAnglesRunWhereTheyDid(t *testing.T) {
 	}
 	if log.Len() != 0 {
 		t.Errorf("log = %q, want nothing said about a checkout nobody attempted", log.String())
+	}
+}
+
+// A caller with the head at hand — the factory, whose reviewer worker has
+// the pull request's branch checked out — makes the checkout with a Clone
+// of its own, and docker is not looked for: the clone fills the directory
+// the angles then run in, and one that fails leaves nothing behind and
+// sends the angles where they would run without it.
+func TestACloneOfTheCallersOwnMakesTheCheckout(t *testing.T) {
+	docker := fakeDocker(t)
+	var cloned []string
+	clone := func(_ context.Context, ref Ref, dir string) error {
+		cloned = append(cloned, ref.String()+" -> "+dir)
+		return os.WriteFile(filepath.Join(dir, "widget.go"), []byte("package widgets\n"), 0o644)
+	}
+	artifact := t.TempDir()
+	agent := newFakeAngleAgent(len(briefAngles))
+	a := &Angles{Agent: agent, Checkout: &Checkout{Clone: clone, DockerBin: docker}, Dir: t.TempDir()}
+	runs, err := a.Run(context.Background(), artifact, &Project{}, testBrief(), testDiff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(artifact, CheckoutDir)
+	if len(cloned) != 1 || cloned[0] != "acme/widgets#7 -> "+want {
+		t.Errorf("clone calls = %v, want one into %s", cloned, want)
+	}
+	for _, r := range runs {
+		if r.Dir != want {
+			t.Errorf("%s ran in %q, want the clone %s", r.Angle, r.Dir, want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(want, DiffFile)); err != nil {
+		t.Errorf("the diff was not written beside the clone's files: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(docker), "calls.txt")); !os.IsNotExist(err) {
+		t.Errorf("docker was run for a checkout the caller's own clone made")
+	}
+
+	// A clone that fails: nothing is left of the directory, and the angles
+	// run in the machine's checkout as they do when the container fails.
+	local := t.TempDir()
+	failing := &Checkout{Clone: func(context.Context, Ref, string) error { return errors.New("no such commit") }}
+	var log bytes.Buffer
+	agent = newFakeAngleAgent(len(briefAngles))
+	runs, err = (&Angles{Agent: agent, Checkout: failing, Dir: local, Log: &log}).Run(context.Background(), artifact, &Project{}, testBrief(), testDiff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(want); !os.IsNotExist(err) {
+		t.Errorf("a failed clone left %s behind", want)
+	}
+	for _, r := range runs {
+		if r.Dir != local {
+			t.Errorf("%s ran in %q after a failed clone, want %s", r.Angle, r.Dir, local)
+		}
+	}
+	if !strings.Contains(log.String(), "no such commit") || !strings.Contains(log.String(), "the angles run in "+local) {
+		t.Errorf("log = %q, want the failed clone and where the angles ran", log.String())
 	}
 }

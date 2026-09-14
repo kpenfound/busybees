@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -215,15 +216,19 @@ func (s *Scheduler) runRequestedReview(ctx context.Context, pr github.PR, w *sta
 	if err != nil {
 		return err
 	}
-	stages := s.cfg.ReviewStages()
 	name := fmt.Sprintf("reviewer-requested-pr-%d", pr.Number)
-	log.Info("requested review session", "mail", len(inbox))
+	// The review itself (review.go), then the session that posts it.
+	found, _, err := s.runReview(ctx, log, freshPR, ws.RepoDir, name, 0)
+	if err != nil {
+		return err
+	}
+	log.Info("requested review session", "mail", len(inbox), "size", found.Size, "angles", strings.Join(found.Angles, ","), "findings", found.Count)
 	started := s.now()
 	res, err := s.runSessionWithRetry(ctx, sessionSpec{
-		role: config.RoleReviewer, name: name, task: "reviewer_requested", workDir: ws.RepoDir, worker: w,
+		role: config.RoleReviewer, name: name, task: "reviewer_requested", workDir: ws.RepoDir, worker: w, judge: true,
 		// Mode switches the reviewer's prompts to the requested review; ActsAs
 		// tells it whose approval GitHub would refuse (its own author's).
-		data: prompts.Data{PR: &freshPR, Inbox: inbox, Stages: stages, Round: 1, Mode: prompts.ModeRequested, ActsAs: s.gh.ActsAs},
+		data: prompts.Data{PR: &freshPR, Inbox: inbox, Review: found, Round: 1, Mode: prompts.ModeRequested, ActsAs: s.gh.ActsAs},
 	})
 	if err != nil {
 		return err
@@ -248,20 +253,15 @@ func (s *Scheduler) runRequestedReview(ctx context.Context, pr github.PR, w *sta
 }
 
 // reviewSince reports whether GitHub records a review matching the verdict a
-// requested-review session claims it submitted, since that session started.
+// reviewer session claims it submitted, since that session started: one in
+// a state reviewStatesFor gives for status.
 //
-// It is sentSince for a GitHub review: the normal review loop confirms a
+// It is sentSince for a GitHub review: the review loop confirms a
 // changes-requested claim by finding the mail the reviewer says it sent, and a
 // requested review has no developer to mail — its whole output is one review
-// on the pull request, so the review itself is what there is to confirm.
-//
-// Which states count:
-//
-//   - changes-requested is CHANGES_REQUESTED, and nothing else.
-//   - approved is APPROVED or COMMENTED. GitHub refuses an approval from a
-//     pull request's own author, and the reviewer's task tells it to submit a
-//     comment review in its place and still report `approved` — which is the
-//     common case on a shared account, where the factory is every author.
+// on the pull request, so the review itself is what there is to confirm. The
+// review loop asks it too, with no status, for whether the findings were
+// posted at all.
 //
 // The review is matched on its state and its time alone, not on the marker or
 // the login that submitted it: a review a person submitted during the session's
@@ -277,11 +277,9 @@ func (s *Scheduler) reviewSince(ctx context.Context, pr int, status string, star
 	if err != nil {
 		return false, err
 	}
+	states := reviewStatesFor(status)
 	for _, r := range reviews {
-		switch {
-		case status == OutcomeChangesRequested && r.State == "CHANGES_REQUESTED":
-			return true, nil
-		case status == OutcomeApproved && (r.State == "APPROVED" || r.State == "COMMENTED"):
+		if slices.Contains(states, r.State) {
 			return true, nil
 		}
 	}
