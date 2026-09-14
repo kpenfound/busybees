@@ -3,6 +3,7 @@ package review
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -192,5 +193,17 @@ func TestConfigPathExpandsHome(t *testing.T) {
 	}
 	if got := cfg.ResolvedStoragePath(); got != home {
 		t.Fatalf("storage path %q, want %q", got, home)
+	}
+}
+
+// TestSupportedProvidersMatchesWhatCommandImplements pins the provider list
+// Config.Validate() and CLIAgent.command()'s error both read from. Widening
+// config.Agents (a factory session backend) must not, by itself, widen this
+// list: that only happens when someone adds the matching case to command()
+// in agent.go.
+func TestSupportedProvidersMatchesWhatCommandImplements(t *testing.T) {
+	want := []string{"claude", "codex"}
+	if !slices.Equal(SupportedProviders, want) {
+		t.Fatalf("SupportedProviders = %v, want %v", SupportedProviders, want)
 	}
 }
