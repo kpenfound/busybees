@@ -956,7 +956,7 @@ func TestClaudeCommandResumes(t *testing.T) {
 		dir := t.TempDir()
 		paths := sessionPaths{dir: dir, systemPrompt: filepath.Join(dir, "system-prompt.md"), prompt: filepath.Join(dir, "prompt.md"),
 			mcp: map[string]MCPEntry{config.BuiltinMCPServer: {Command: "bees", Args: []string{"mcp", "serve"}}}}
-		_, args, _, err := claudeBackend{}.command(context.Background(), r, Request{Name: "n", Role: role, Prompt: "TASK", ResumeID: id}, paths)
+		_, args, _, _, err := claudeBackend{}.command(context.Background(), r, Request{Name: "n", Role: role, Prompt: "TASK", ResumeID: id}, paths)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -990,7 +990,7 @@ func TestCodexCommandIgnoresResume(t *testing.T) {
 	paths := sessionPaths{dir: t.TempDir(), mcp: map[string]MCPEntry{config.BuiltinMCPServer: {Command: "bees", Args: []string{"mcp", "serve"}}}}
 	var got [][]string
 	for _, id := range []string{"", "abc-123"} {
-		_, args, stdin, err := codexBackend{}.command(context.Background(), r, Request{Name: "n", Role: codexRole("gpt-5"), SystemPrompt: "SYS", Prompt: "TASK", ResumeID: id}, paths)
+		_, args, stdin, _, err := codexBackend{}.command(context.Background(), r, Request{Name: "n", Role: codexRole("gpt-5"), SystemPrompt: "SYS", Prompt: "TASK", ResumeID: id}, paths)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -718,7 +718,8 @@ prompt_file = "docs/qa-checklist.md"
   running scheduler was started from, and `bees doctor` warns when it is
   behind the repository.
 - **skills** are unioned, global first, and exposed to the session as plugin
-  directories. They are Claude Code's: a `codex` session is passed none.
+  directories. They are Claude Code's: a `codex` or `opencode` session is
+  passed none.
 - **mcp** servers are unioned; a role's server replaces a global one with the
   same name. The name `bees` is reserved for the built-in server.
 - **model / fallback_model / agent / effort / max_turns / timeout /
@@ -726,8 +727,9 @@ prompt_file = "docs/qa-checklist.md"
   then to the built-in defaults. `fallback_model` is what a `claude` session
   switches to when `model` has reached its usage limit. `agent` is the CLI
   a session runs as, `claude`, `codex` or `opencode`; a `codex` or `opencode`
-  role has no default `model` or `fallback_model`, and a `codex` role ignores
-  `max_turns`, `allowed_tools` and `disallowed_tools` (see [Running a
+  role has no default `model` or `fallback_model`, and ignores `max_turns`,
+  `allowed_tools` and `disallowed_tools`; an `opencode` role ignores
+  `effort` too (see [Running a
   session](architecture.md#running-a-session)).
 - **commit_flags, max_size, model_by_size, best_of_n_by_size,
   best_of_n_model, best_of_n_prompt, assembler_model, assembler_prompt,

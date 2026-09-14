@@ -502,19 +502,19 @@ The CLI accepts aliases such as `pm` and `dev`; the TOML keys do not.
 | `skills` | string list | `[]` | Skills by git URL. See [Skills](#skills). |
 | `skills_refresh` | string | `"24h"` | `[global]` only. How stale a skill clone may get before it is pulled when a session needs it: `never`, `always` or a duration. |
 | `mcp.<name>` | table | | MCP servers keyed by name. See [MCP servers](#mcp-servers). |
-| `model` | string | `"opus"` | Model alias or full id, passed as `claude --model` or `codex --model`. The default is claude's: a `codex` or `opencode` role with no `model` passes none and runs with the model its own configuration names. |
+| `model` | string | `"opus"` | Model alias or full id, passed as `claude --model`, `codex --model` or `opencode --model` (`provider/model` for opencode). The default is claude's: a `codex` or `opencode` role with no `model` passes none and runs with the model its own configuration names. |
 | `fallback_model` | string | `"sonnet"` | Passed as `claude --fallback-model`, which Claude Code switches to when `model` has reached its usage limit. Not passed when it equals `model`. A `codex` or `opencode` role has none by default, and one it names is not passed: neither has such a flag, so a retry with the fallback model runs the same model again. |
 | `agent` | string | `"claude"` | CLI a session runs as: `claude` (`claude -p`), `codex` (`codex exec`) or `opencode`. An unknown value is a load error. See [Running a session](architecture.md#running-a-session) for what each is started with. |
-| `effort` | string | `""` | Passed as `claude --effort` when set: `low`, `medium`, `high` or `max`. A `codex` role gets it as its `model_reasoning_effort` setting; codex's levels stop at `high`, so `max` is passed as `high`. |
-| `max_turns` | int | `200` | Agentic turns per session (`claude --max-turns`). `0` means the default. Codex has no such limit and a `codex` role ignores it. |
+| `effort` | string | `""` | Passed as `claude --effort` when set: `low`, `medium`, `high` or `max`. A `codex` role gets it as its `model_reasoning_effort` setting; codex's levels stop at `high`, so `max` is passed as `high`. An `opencode` role ignores it: opencode's variants are names the model defines, not levels. |
+| `max_turns` | int | `200` | Agentic turns per session (`claude --max-turns`). `0` means the default. Codex and opencode have no such limit and a `codex` or `opencode` role ignores it. |
 | `timeout` | duration | `"45m"` | Wall-clock limit for one session; the session's process group is killed when it expires. `"0s"` means the default. |
-| `allowed_tools` | string list | `[]` | Passed as `claude --allowedTools`. A `codex` role ignores it. |
-| `disallowed_tools` | string list | `[]` | Passed as `claude --disallowedTools`. A `codex` role ignores it. |
+| `allowed_tools` | string list | `[]` | Passed as `claude --allowedTools`. A `codex` or `opencode` role ignores it. |
+| `disallowed_tools` | string list | `[]` | Passed as `claude --disallowedTools`. A `codex` or `opencode` role ignores it. |
 | `shell` | string | the shell bees runs under | Exported into sessions as `$SHELL`. Claude Code discovers its Bash tool's shell from `$SHELL`, so this is the lever, without being a guarantee. Must be an existing file. |
 | `sandbox` | string | `"none"` | How much of the machine a session of this role can reach: `none`, `claude` or `container`. See [Sandboxing](#sandboxing). |
 | `sandbox_image` | string | `""` | The image a `container` session runs in: it must hold the role's agent, `git` and `gh`. A `container` role without one or `container_use_environment` is refused at `bees run`. See [The container mode](#the-container-mode). |
 | `container_use_environment` | string | `""` | Path, relative to the project repository root, to a `dagger/container-use` environment definition to build the `container` sandbox's image from, instead of `sandbox_image`. Requires `sandbox = "container"` and is a load error together with `sandbox_image` on the same resolved role. See [Building from container-use](#building-from-container-use). |
-| `env` | table | `{}` | Environment variables exported into every session: the agent, its shell tool and git see them, and so do MCP servers under `claude` (codex starts a server with only the variables its entry names). A `$VAR` value is expanded from the bees process environment when the session starts. A name may not be empty or contain `=` or a space. See [Exported into every session](#exported-into-every-session) for how it meets the variables bees sets itself. |
+| `env` | table | `{}` | Environment variables exported into every session: the agent, its shell tool and git see them, and so do MCP servers under `claude` and `opencode` (codex starts a server with only the variables its entry names). A `$VAR` value is expanded from the bees process environment when the session starts. A name may not be empty or contain `=` or a space. See [Exported into every session](#exported-into-every-session) for how it meets the variables bees sets itself. |
 | `enabled` | bool | `true` | Roles only. `false` takes a role out of the rotation. Disabling `reviewer` makes a developer's pull request count as approved the moment it is opened, and with `auto_merge` it goes straight to the checks stage. Under `[global]` the key is an error. A named set of these decisions is a [config template](templates.md). |
 
 ### `[roles.reviewer]` only: checks and auto-merge
@@ -1087,7 +1087,10 @@ the built-in one, and none of your own. A `codex` session is given the same
 servers as `-c mcp_servers.<name>.<key>=<value>` overrides on its command
 line, next to whatever `~/.codex/config.toml` configures. Codex starts a
 stdio server with a fixed handful of variables plus the entry's own `env`,
-not with the session's environment.
+not with the session's environment. An `opencode` session is given the same
+servers as the `mcp` table of a per-session `opencode.json`, handed to it
+through `OPENCODE_CONFIG`, next to whatever its global configuration and
+the project's own `opencode.json` name.
 
 `bees` is reserved. Every session gets a server called `bees` carrying the
 factory's own tools; see [`bees mcp serve`](cli.md#bees-mcp-serve-sessions).
@@ -1192,7 +1195,8 @@ missing or too old; `bees init` checks `gh`.
 The Claude Code check only runs when at least one enabled role resolves to
 `agent = "claude"`, the default (see
 [`agent`](#global-and-rolesname)). A factory where every enabled role is
-`agent = "codex"` never runs it, so `claude` does not need to be installed.
+`agent = "codex"` or `agent = "opencode"` never runs it, so `claude` does
+not need to be installed.
 
 Set `BEES_SKIP_VERSION_CHECK=1` to run with an unsupported version anyway.
 
@@ -1205,6 +1209,7 @@ Set `BEES_SKIP_VERSION_CHECK=1` to run with an unsupported version anyway.
 | `BEES_CONFIG` | Path of `bees.toml` when `--config` is not given. Set inside sessions. |
 | `BEES_CLAUDE_BIN` | The `claude` executable to run. Default `claude` on `PATH`. |
 | `BEES_CODEX_BIN` | The `codex` executable to run for a role whose `agent` is `codex`. Default `codex` on `PATH`. |
+| `BEES_OPENCODE_BIN` | The `opencode` executable to run for a role whose `agent` is `opencode`. Default `opencode` on `PATH`. |
 | `BEES_CACHE_DIR` | Cache directory for skill clones and generated plugins. Default `~/.cache/bees` on Linux, `~/Library/Caches/bees` on macOS. |
 | `BEES_SKIP_VERSION_CHECK` | When non-empty, skip the `gh` and `claude` version checks. |
 | `BEES_STATE_DIR` | `bees mail` and `bees notes` use this state directory without loading `bees.toml`, unless `--config` is given, in which case that file's state directory wins. Set inside sessions. |
@@ -1214,8 +1219,9 @@ Set `BEES_SKIP_VERSION_CHECK=1` to run with an unsupported version anyway.
 | `BEES_LOG_FORMAT`, `BEES_LOG_LEVEL` | Fallbacks for `--log-format` and `--log-level`. A flag beats them, and they beat [`[logging]`](#logging). |
 
 The variables marked *set inside sessions* are the only ones a session
-inherits. `BEES_CLAUDE_BIN`, `BEES_CODEX_BIN`, `BEES_CACHE_DIR`,
-`BEES_SKIP_VERSION_CHECK`, `BEES_LOG_FORMAT` and `BEES_LOG_LEVEL` configure
+inherits. `BEES_CLAUDE_BIN`, `BEES_CODEX_BIN`, `BEES_OPENCODE_BIN`,
+`BEES_CACHE_DIR`, `BEES_SKIP_VERSION_CHECK`, `BEES_LOG_FORMAT` and
+`BEES_LOG_LEVEL` configure
 the `bees` process you start
 and are not passed on, so a `bees` command a session runs itself sees their
 defaults. To give sessions one of them, put it in

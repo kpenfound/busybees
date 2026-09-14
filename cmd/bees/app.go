@@ -55,6 +55,15 @@ func codexBin() string {
 	return "codex"
 }
 
+// opencodeBin is the opencode executable, run for a role whose agent is
+// opencode: BEES_OPENCODE_BIN, else opencode on PATH.
+func opencodeBin() string {
+	if bin := os.Getenv("BEES_OPENCODE_BIN"); bin != "" {
+		return bin
+	}
+	return "opencode"
+}
+
 // usesClaude reports whether any enabled role resolves to agent = "claude"
 // (the default), so newApp knows whether the claude binary needs to exist.
 func usesClaude(cfg *config.Config) bool {
@@ -161,6 +170,7 @@ func newApp(ctx context.Context, g *globalFlags) (*app, error) {
 	runner := &session.Runner{
 		ClaudeBin:   bin,
 		CodexBin:    codexBin(),
+		OpenCodeBin: opencodeBin(),
 		BeesBin:     self,
 		SessionsDir: store.SessionsDir(),
 		StateDir:    store.Dir,
