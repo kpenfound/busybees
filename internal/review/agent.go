@@ -88,8 +88,8 @@ type Agent interface {
 // server and the BEES_* environment of the factory it belongs to, and
 // `bees review` reviews any pull request on GitHub without one.
 type CLIAgent struct {
-	// Provider is the CLI to run, one of config.Agents, and Model the model
-	// it runs. An empty model leaves the choice to the CLI.
+	// Provider is the CLI to run, one of SupportedProviders, and Model the
+	// model it runs. An empty model leaves the choice to the CLI.
 	Provider string
 	Model    string
 	// ClaudeBin and CodexBin are the executables, "claude" and "codex" when
@@ -208,7 +208,7 @@ func (a *CLIAgent) command(req AgentRequest) (string, []string, error) {
 		args = append(args, "-")
 		return bin, args, nil
 	}
-	return "", nil, fmt.Errorf("review: unknown provider %s (want one of %s)", strconv.Quote(a.Provider), strings.Join(config.Agents, ", "))
+	return "", nil, fmt.Errorf("review: unknown provider %s (want one of %s)", strconv.Quote(a.Provider), strings.Join(SupportedProviders, ", "))
 }
 
 // sessionEnd is what a CLI said at the end of a session, in the terms both

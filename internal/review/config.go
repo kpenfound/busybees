@@ -86,6 +86,16 @@ const (
 // printed.
 var OutputModes = []string{OutputAsk, OutputApprove, OutputComment, OutputReject, OutputReport, OutputDiscard}
 
+// SupportedProviders lists the providers CLIAgent.command() (agent.go)
+// implements. Config.Validate() checks Provider against this list rather
+// than against config.Agents, the factory's own shared agent-name enum: the
+// two happen to agree today, but config.Agents can grow a value (a new
+// factory session backend) before internal/review implements it, and
+// validating against it would then accept a provider Run cannot start.
+// Widening this list is a deliberate step taken together with adding that
+// provider's case to command().
+var SupportedProviders = []string{config.AgentClaude, config.AgentCodex}
+
 // Defaults used for every key the global file leaves out.
 const (
 	// DefaultProvider and DefaultModel are the agent the review sessions
@@ -112,7 +122,7 @@ type Config struct {
 	Loaded bool `toml:"-"`
 
 	// Provider is the agent the review sessions run as, one of
-	// config.Agents, and Model the model they use.
+	// SupportedProviders, and Model the model they use.
 	Provider string `toml:"provider"`
 	Model    string `toml:"model"`
 	// NotesPath is where the reviewer notes a dismissal appends to live,
@@ -249,8 +259,8 @@ func (c *Config) applyDefaults() {
 // rather than the first.
 func (c *Config) Validate() error {
 	var errs []string
-	if !slices.Contains(config.Agents, c.Provider) {
-		errs = append(errs, fmt.Sprintf("provider %q must be one of %s", c.Provider, strings.Join(config.Agents, ", ")))
+	if !slices.Contains(SupportedProviders, c.Provider) {
+		errs = append(errs, fmt.Sprintf("provider %q must be one of %s", c.Provider, strings.Join(SupportedProviders, ", ")))
 	}
 	if !slices.Contains(OutputModes, c.Output) {
 		errs = append(errs, fmt.Sprintf("output %q must be one of %s", c.Output, strings.Join(OutputModes, ", ")))
