@@ -1,6 +1,7 @@
 package state
 
 import (
+	"errors"
 	"os"
 	"strings"
 	"sync"
@@ -105,5 +106,140 @@ func TestAppendLedgerConcurrent(t *testing.T) {
 		if len(e.Session) != 200 {
 			t.Fatalf("torn line: %+v", e)
 		}
+	}
+}
+
+func TestTrimLedger(t *testing.T) {
+	s := New(t.TempDir())
+	base := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
+	for _, e := range []LedgerEntry{
+		{Time: base.Add(-72 * time.Hour), Role: "developer", Session: "ancient"},
+		{Time: base.Add(-25 * time.Hour), Role: "reviewer", Session: "old"},
+		{Time: base.Add(-24 * time.Hour), Role: "qa", Session: "edge"},
+		{Time: base.Add(-time.Hour), Role: "developer", Session: "recent"},
+	} {
+		if err := s.AppendLedger(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A line with no parseable time is kept: its age is unknown.
+	f, err := os.OpenFile(s.LedgerPath(), os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("{\"time\":\"not a\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, err := s.TrimLedger(base.Add(-24 * time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 2 {
+		t.Errorf("removed %d entries, want 2", removed)
+	}
+	got, err := s.ReadLedger(time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sessions []string
+	for _, e := range got {
+		sessions = append(sessions, e.Session)
+	}
+	if strings.Join(sessions, ",") != "edge,recent" {
+		t.Errorf("kept %v, want [edge recent] (the cutoff is inclusive)", sessions)
+	}
+	b, err := os.ReadFile(s.LedgerPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(string(b), "{\"time\":\"not a\n") {
+		t.Errorf("unparseable line dropped:\n%s", b)
+	}
+	if info, err := os.Stat(s.LedgerPath()); err != nil || info.Mode().Perm() != 0o644 {
+		t.Errorf("ledger mode after trim: %v, %v", info, err)
+	}
+	entries, err := os.ReadDir(s.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Errorf("state dir holds %d files after the trim, want only the ledger: %v", len(entries), entries)
+	}
+
+	// Nothing older than the cutoff: the file is left alone.
+	before, err := os.Stat(s.LedgerPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed, err := s.TrimLedger(base.Add(-24 * time.Hour)); err != nil || removed != 0 {
+		t.Errorf("second trim: removed %d, %v", removed, err)
+	}
+	after, err := os.Stat(s.LedgerPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) {
+		t.Error("a trim with nothing to remove rewrote the ledger")
+	}
+}
+
+func TestTrimLedgerMissingFile(t *testing.T) {
+	s := New(t.TempDir())
+	if removed, err := s.TrimLedger(time.Now()); err != nil || removed != 0 {
+		t.Fatalf("got %d, %v; want 0, nil", removed, err)
+	}
+	if _, err := os.Stat(s.LedgerPath()); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("trim created the ledger: %v", err)
+	}
+}
+
+// TestTrimLedgerKeepsConcurrentAppends trims while workers append: every line
+// appended must survive, since each is newer than the cutoff.
+func TestTrimLedgerKeepsConcurrentAppends(t *testing.T) {
+	s := New(t.TempDir())
+	now := time.Now()
+	for i := 0; i < 50; i++ {
+		if err := s.AppendLedger(LedgerEntry{Time: now.Add(-48 * time.Hour), Session: "old"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const workers, each = 8, 50
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < each; i++ {
+				if err := s.AppendLedger(LedgerEntry{Time: now, Session: "new"}); err != nil {
+					t.Error(err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 50; i++ {
+			if _, err := s.TrimLedger(now.Add(-24 * time.Hour)); err != nil {
+				t.Error(err)
+				return
+			}
+		}
+	}()
+	wg.Wait()
+	if _, err := s.TrimLedger(now.Add(-24 * time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadLedger(time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != workers*each {
+		t.Fatalf("%d entries after trimming, want %d", len(got), workers*each)
 	}
 }

@@ -44,7 +44,8 @@ func (s *Scheduler) recordIssueCost(issue int, cost float64) {
 // sessions. The stored total is authoritative; an issue that has none (its
 // bookkeeping was written before budgets existed, or deleted) is seeded from
 // the ledger once, which is also what makes the total survive a state file
-// that was thrown away but not the ledger.
+// that was thrown away but not the ledger, as far as the ledger still reaches
+// back: trimLedger keeps only scheduler.retention_period of it.
 func (s *Scheduler) issueSpend(issue int) (float64, int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
