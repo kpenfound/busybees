@@ -25,11 +25,12 @@
 // per-session transcript.jsonl. Beyond the two stop keys (q and Ctrl-C,
 // which cancel the factory's context and, pressed again, call HardStop), it
 // asks the factory to *do* only two things: stop a session, on the k key,
-// through Deps.Kill; and queue a message for the next one, on m, through
-// Deps.Send. It is drawn only when `bees run`
-// owns a terminal — `bees run --no-tui`, a redirected stdout and `bees tick`
-// log instead, and their output is exactly what it was before there was a
-// view.
+// and queue a message for the next one, on m — through the row's own
+// project's Kill and Send (Deps.Kill and Deps.Send for a single-project
+// view, Project.Kill and Project.Send for a daemon's). It is drawn only when
+// `bees run` owns a terminal — `bees run --no-tui`, a redirected stdout and
+// `bees tick` log instead, and their output is exactly what it was before
+// there was a view.
 package tui
 
 import (
