@@ -725,9 +725,10 @@ prompt_file = "docs/qa-checklist.md"
   allowed_tools / disallowed_tools / shell / env** fall back to `[global]`,
   then to the built-in defaults. `fallback_model` is what a `claude` session
   switches to when `model` has reached its usage limit. `agent` is the CLI
-  a session runs as, `claude` or `codex`; a `codex` role has no default
-  `model` or `fallback_model` and ignores `max_turns`, `allowed_tools` and
-  `disallowed_tools` (see [Running a session](architecture.md#running-a-session)).
+  a session runs as, `claude`, `codex` or `opencode`; a `codex` or `opencode`
+  role has no default `model` or `fallback_model`, and a `codex` role ignores
+  `max_turns`, `allowed_tools` and `disallowed_tools` (see [Running a
+  session](architecture.md#running-a-session)).
 - **commit_flags, max_size, model_by_size, best_of_n_by_size,
   best_of_n_model, best_of_n_prompt, assembler_model, assembler_prompt,
   moe_experts_by_size, moe_experts, moe_assembler_model, moe_assembler_prompt**

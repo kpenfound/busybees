@@ -502,9 +502,9 @@ The CLI accepts aliases such as `pm` and `dev`; the TOML keys do not.
 | `skills` | string list | `[]` | Skills by git URL. See [Skills](#skills). |
 | `skills_refresh` | string | `"24h"` | `[global]` only. How stale a skill clone may get before it is pulled when a session needs it: `never`, `always` or a duration. |
 | `mcp.<name>` | table | | MCP servers keyed by name. See [MCP servers](#mcp-servers). |
-| `model` | string | `"opus"` | Model alias or full id, passed as `claude --model` or `codex --model`. The default is claude's: a `codex` role with no `model` passes none and runs with the model codex's own configuration names. |
-| `fallback_model` | string | `"sonnet"` | Passed as `claude --fallback-model`, which Claude Code switches to when `model` has reached its usage limit. Not passed when it equals `model`. A `codex` role has none by default, and one it names is not passed: codex has no such flag, so a retry with the fallback model runs the same model again. |
-| `agent` | string | `"claude"` | CLI a session runs as: `claude` (`claude -p`) or `codex` (`codex exec`). An unknown value is a load error. See [Running a session](architecture.md#running-a-session) for what each is started with. |
+| `model` | string | `"opus"` | Model alias or full id, passed as `claude --model` or `codex --model`. The default is claude's: a `codex` or `opencode` role with no `model` passes none and runs with the model its own configuration names. |
+| `fallback_model` | string | `"sonnet"` | Passed as `claude --fallback-model`, which Claude Code switches to when `model` has reached its usage limit. Not passed when it equals `model`. A `codex` or `opencode` role has none by default, and one it names is not passed: neither has such a flag, so a retry with the fallback model runs the same model again. |
+| `agent` | string | `"claude"` | CLI a session runs as: `claude` (`claude -p`), `codex` (`codex exec`) or `opencode`. An unknown value is a load error. See [Running a session](architecture.md#running-a-session) for what each is started with. |
 | `effort` | string | `""` | Passed as `claude --effort` when set: `low`, `medium`, `high` or `max`. A `codex` role gets it as its `model_reasoning_effort` setting; codex's levels stop at `high`, so `max` is passed as `high`. |
 | `max_turns` | int | `200` | Agentic turns per session (`claude --max-turns`). `0` means the default. Codex has no such limit and a `codex` role ignores it. |
 | `timeout` | duration | `"45m"` | Wall-clock limit for one session; the session's process group is killed when it expires. `"0s"` means the default. |
@@ -811,7 +811,8 @@ What the session can reach:
 On macOS nothing needs installing. On Linux the box needs `bubblewrap` and
 `socat` on `PATH`, which `bees run` checks before it starts. The box is
 Claude Code's, so a role whose [`agent`](#global-and-rolesname) is `codex`
-cannot use it: `bees run` refuses to start, naming the role. Commit signing
+or `opencode` cannot use it: `bees run` refuses to start, naming the role.
+Commit signing
 through `gpg` does not work inside the box, because `gpg` writes under
 `~/.gnupg`.
 
