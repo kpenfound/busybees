@@ -4,17 +4,21 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/kpenfound/busybees/internal/daemon"
 	"github.com/kpenfound/busybees/internal/logging"
 	"github.com/kpenfound/busybees/internal/mail"
 	"github.com/kpenfound/busybees/internal/scheduler"
 	"github.com/kpenfound/busybees/internal/state"
 	"github.com/kpenfound/busybees/internal/testutil"
+	"github.com/kpenfound/busybees/internal/tui"
 	"github.com/kpenfound/busybees/internal/versions"
 )
 
@@ -185,5 +189,55 @@ func TestForwardCopiesEventsUntilStopped(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("forward did not stop")
+	}
+}
+
+// runMachineWithTUI wires the view over the daemon — one project per entry
+// of the machine config, the console silenced while the view is up and
+// given back once it is down — and returns what the daemon returned. The
+// screen itself needs a terminal, so a stand-in takes its place here and
+// runs the daemon the way the view does; a project that cannot start ends
+// the daemon at once, so no scheduler polls anything.
+func TestRunMachineWithTUIWiresTheViewOverTheDaemon(t *testing.T) {
+	t.Setenv(versions.EnvSkip, "1")
+	notAClone := t.TempDir()
+	broken := writeProject(t, "acme/broken", "dir = \""+filepath.ToSlash(notAClone)+"\"\n")
+	m := loadMachine(t, broken)
+	var console bytes.Buffer
+	g := &globalFlags{logger: logging.New(logging.Options{Format: logging.FormatText, Level: slog.LevelInfo, Console: &console})}
+	t.Cleanup(func() { _ = g.logger.Close() })
+
+	real := runMachineView
+	t.Cleanup(func() { runMachineView = real })
+	var names []string
+	var silenced bool
+	runMachineView = func(ctx context.Context, d tui.Deps, machine tui.Machine, down func()) error {
+		for _, p := range d.Projects {
+			names = append(names, p.Name)
+		}
+		if d.Open == nil || d.Now == nil {
+			t.Error("the view was given no browser opener or clock")
+		}
+		g.logger.Info("under the view")
+		silenced = !strings.Contains(console.String(), "under the view")
+		err := machine.Run(ctx)
+		down()
+		return err
+	}
+
+	err := runMachineWithTUI(context.Background(), g, m, &console)
+	var pe *daemon.ProjectError
+	if !errors.As(err, &pe) || !strings.Contains(err.Error(), "project.dir") {
+		t.Fatalf("got %v, want the broken project's ProjectError naming project.dir", err)
+	}
+	if strings.Join(names, ",") != "broken" {
+		t.Errorf("the view was given projects %v, want the machine config's", names)
+	}
+	if !silenced {
+		t.Errorf("the console was not silenced under the view: %q", console.String())
+	}
+	g.logger.Info("after the view")
+	if !strings.Contains(console.String(), "after the view") {
+		t.Errorf("the console was not given back: %q", console.String())
 	}
 }

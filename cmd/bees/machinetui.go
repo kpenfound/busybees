@@ -33,8 +33,13 @@ func runMachineWithTUI(ctx context.Context, g *globalFlags, m *config.Machine, c
 	var once sync.Once
 	give := func() { once.Do(restore) }
 	defer give()
-	return tui.RunMachine(ctx, tui.Deps{Projects: projects, Now: time.Now, Open: openInBrowser}, d, give)
+	return runMachineView(ctx, tui.Deps{Projects: projects, Now: time.Now, Open: openInBrowser}, d, give)
 }
+
+// runMachineView draws the view over the daemon: a variable so a test can
+// stand in for the screen, which needs a terminal to open, and check what
+// runMachineWithTUI wired up around it.
+var runMachineView = tui.RunMachine
 
 // machineView is what the live view is given for the daemon's projects: one
 // tui.Project each, wired before any project's scheduler exists. The daemon
