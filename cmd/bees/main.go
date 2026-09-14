@@ -89,7 +89,7 @@ together through GitHub issues and pull requests. Configure it with bees.toml.`,
 			}
 		},
 	}
-	root.PersistentFlags().StringVarP(&g.config, "config", "c", "", "path to bees.toml (default: search upwards from cwd, or $BEES_CONFIG)")
+	root.PersistentFlags().StringVarP(&g.config, "config", "c", "", "path to bees.toml or a machine config (default: search upwards from cwd, or $BEES_CONFIG)")
 	root.PersistentFlags().BoolVarP(&g.verbose, "verbose", "v", false, "debug logging (same as --log-level debug), plus session event streaming")
 	root.PersistentFlags().BoolVarP(&g.quiet, "quiet", "q", false, "console shows only session summaries, warnings and errors")
 	root.PersistentFlags().StringVar(&g.logFormat, "log-format", logging.FormatText, "console log format: text or json ($BEES_LOG_FORMAT)")
