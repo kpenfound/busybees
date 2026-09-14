@@ -38,8 +38,7 @@ One bees process managing several projects reads a
 ## Machine config: several projects
 
 A machine config is a separate file that lists the `bees.toml` files of the
-projects one bees process manages, and holds the one setting that spans
-them:
+projects one bees process manages, and holds the settings that span them:
 
 ```toml
 projects = [
@@ -48,6 +47,7 @@ projects = [
   "/srv/factories/baz.toml",
 ]
 max_developers = 3
+retention_period = "72h"
 ```
 
 - A relative path is relative to the directory of the machine config. A
@@ -56,8 +56,8 @@ max_developers = 3
   missing file, a directory, an empty entry, a project listed twice, or a
   project file that fails to load is an error naming the entry, for example
   `projects[1] = "../bar/bees.toml": ...`.
-- The list must not be empty, and any key besides `projects` and
-  `max_developers` is a load error. Project settings stay in each project's
+- The list must not be empty, and any key besides `projects`,
+  `max_developers` and `retention_period` is a load error. Project settings stay in each project's
   `bees.toml`, so each project keeps its own state directory, mailbox and
   notes.
 - `max_developers` caps the developer slots in use across every project
@@ -70,6 +70,10 @@ max_developers = 3
   that has waited longest for one, not to the project that just gave it up,
   so a busy project cannot starve the others. See
   [Several projects in one process](architecture.md#several-projects-in-one-process).
+- `retention_period` is [`scheduler.retention_period`](#scheduler) for every
+  listed project whose `bees.toml` does not set it. A project that sets its
+  own keeps it. Unset leaves those projects on `"24h"`; zero, a negative
+  value or a string that is not a duration is an error.
 - The file has no `version` key.
 
 bees finds a machine config the same way it finds `bees.toml`: `--config`,
@@ -329,6 +333,7 @@ assignee = "busybees-bot"
 | `max_cost_per_session` | float | `0` | USD one session may cost. `0` is unlimited; a negative value is rejected. |
 | `keep_workspaces` | bool | `false` | Leave temporary worktrees on disk after a session, for debugging. |
 | `workspace_root` | string | `""` | Directory temporary worktrees are created under. Empty means `bees` under the system temp directory. |
+| `retention_period` | duration | `"24h"` | How long the state directory keeps data after it goes stale: the session directories and `issues/<n>.json` of a closed issue, counted from its pull request merging or, without one, the issue closing, and `ledger.jsonl` lines older than this. Retention is always on: zero or a negative value is rejected. Unset, the [machine config](#machine-config-several-projects)'s `retention_period` applies when there is one. |
 | `work_hours` | string | `""` | Daily window during which GitHub is polled every `poll_interval`, as `"HH:MM-HH:MM"` on a 24-hour clock. Empty polls around the clock, and the three keys below are ignored. See [Work hours](#work-hours). |
 | `off_hours_poll_interval` | duration | `"1h"`, or `poll_interval` when that is longer | How often GitHub is polled outside `work_hours`. Must be at least `poll_interval`. |
 | `work_days` | string list | `["mon","tue","wed","thu","fri"]` | Days the window applies to, as lowercase three-letter names from `mon` to `sun`. At least one, and each must be a known day. |

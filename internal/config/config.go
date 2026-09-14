@@ -94,6 +94,9 @@ const (
 	DefaultRetries           = 1
 	DefaultRetryDelay        = 10 * time.Minute
 	DefaultRetryWithFallback = true
+	// DefaultRetentionPeriod is how long the state directory keeps data that
+	// has gone stale; see Scheduler.RetentionPeriod.
+	DefaultRetentionPeriod = 24 * time.Hour
 	// DefaultPRFixConflicts and DefaultPRKeepUpdated govern what the
 	// scheduler does with an open pull request that conflicts with, or has
 	// fallen behind, the default branch; see Scheduler.FixConflicts.
@@ -238,6 +241,10 @@ type Config struct {
 	MigratedFrom int `toml:"-"`
 	// migrated is the file text after migrations, written by Rewrite.
 	migrated string
+	// retentionPeriodDefaulted is true when the file did not set
+	// scheduler.retention_period, so a machine config's value may replace
+	// the default.
+	retentionPeriodDefaulted bool
 }
 
 // Project holds settings that describe the software being built.
@@ -878,6 +885,11 @@ type Scheduler struct {
 	KeepWorkspaces bool `toml:"keep_workspaces" json:"keep_workspaces"`
 	// WorkspaceRoot overrides the temp dir used for worktrees.
 	WorkspaceRoot string `toml:"workspace_root" json:"workspace_root"`
+	// RetentionPeriod is how long the state directory keeps data after it
+	// went stale: a closed issue's session directories and bookkeeping, and
+	// ledger lines older than it. Always on; it must be positive. Unset in
+	// bees.toml, a machine config's retention_period applies, then 24h.
+	RetentionPeriod *Duration `toml:"retention_period" json:"retention_period"`
 	// WorkHours is the daily window during which GitHub is polled every
 	// PollInterval, as "HH:MM-HH:MM" on a 24-hour clock ("09:00-18:00").
 	// Empty (the default) disables the feature: GitHub is polled every
@@ -1550,6 +1562,10 @@ func (c *Config) applyDefaults() {
 		b := DefaultRetryWithFallback
 		c.Scheduler.RetryWithFallback = &b
 	}
+	if c.Scheduler.RetentionPeriod == nil {
+		c.Scheduler.RetentionPeriod = &Duration{DefaultRetentionPeriod}
+		c.retentionPeriodDefaulted = true
+	}
 	if c.Scheduler.WorkHours != "" {
 		if c.Scheduler.OffHoursPollInterval.Duration == 0 {
 			// The default must never be shorter than poll_interval (already
@@ -1607,6 +1623,9 @@ func (c *Config) Validate() error {
 	}
 	if d := c.Scheduler.RetryDelay; d != nil && d.Duration < 0 {
 		errs = append(errs, "scheduler.retry_delay must be >= 0")
+	}
+	if d := c.Scheduler.RetentionPeriod; d != nil && d.Duration <= 0 {
+		errs = append(errs, fmt.Sprintf("scheduler.retention_period %q must be a positive duration such as \"24h\" (retention cannot be turned off)", d.String()))
 	}
 	switch c.Scheduler.DispatchOrder {
 	case "", DispatchSmallFirst, DispatchOldest, DispatchLargeFirst:

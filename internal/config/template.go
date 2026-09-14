@@ -292,6 +292,10 @@ label = "{{.Label}}"
 #keep_workspaces = false
 # Where temp worktrees are created (default: the system temp dir).
 #workspace_root = ""
+# How long the state directory keeps data after it goes stale: a closed issue's
+# session directories and bookkeeping, and ledger lines older than this. Always
+# on; must be a positive duration. Unset, a machine config's value applies.
+#retention_period = "24h"
 
 #===============================================================================
 # Console logging. The --log-format / --log-level flags and the
