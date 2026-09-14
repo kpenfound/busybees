@@ -177,12 +177,24 @@ func TestTheSameSessionNameInTwoProjectsIsTwoSessions(t *testing.T) {
 	if strings.Contains(view, "bar     developer        #12   -  ") {
 		t.Errorf("bar's ended session is still in the Now panel:\n%s", view)
 	}
-	if !strings.Contains(view, "bar     reviewer         #12   #31   reviewer r1") || !strings.Contains(view, "$2.41") {
-		t.Errorf("bar's next session on the issue does not carry bar's spend and stage:\n%s", view)
+	if !strings.Contains(view, "bar     reviewer         #12   #31   reviewer r1") {
+		t.Errorf("bar's next session on the issue does not carry bar's stage:\n%s", view)
 	}
-	if strings.Count(view, "$2.41") != 2 { // bar's reviewer row and the Recent row
+	// The spend is bar's issue 12's, not foo's: foo's row still says it has
+	// no known cost.
+	if !strings.Contains(row(view, "bar     reviewer"), "$2.41") || strings.Contains(row(view, "foo     developer"), "$2.41") {
 		t.Errorf("the spend is not bar's alone:\n%s", view)
 	}
+}
+
+// row is the line of a rendered view that contains s, or "".
+func row(view, s string) string {
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, s) {
+			return line
+		}
+	}
+	return ""
 }
 
 // k stops the selected session through its own project's Kill, o opens the
