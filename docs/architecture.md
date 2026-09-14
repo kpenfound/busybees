@@ -158,7 +158,10 @@ A full pass is:
      oscillating on the edge. The sum is recomputed from the ledger on every
      pass; a restart loses only the hysteresis. The other two budgets are
      enforced elsewhere: `max_cost_per_issue` between a developer worker's
-     stages, `max_cost_per_session` after a session ends. See
+     stages, `max_cost_per_session` after a session ends. A full pass trims
+     the ledger to `scheduler.retention_period` first, and never inside the
+     last 24 hours; a local pass does not trim (see
+     [State directory](#state-directory)). See
      [Cost budgets](configuration.md#cost-budgets).
    - **Claude session limit.** Recorded from a finished session rather than
      computed here: a session whose last `rate_limit_event` was blocking, or
