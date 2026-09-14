@@ -133,12 +133,13 @@ func TestNotesToolsWithoutABackend(t *testing.T) {
 }
 
 // The descriptions carry the rule the prompt no longer states in full: the
-// notes are not in the prompt, so read first, and a write is the whole text.
+// notes are not in the prompt, so read first, a write is the whole text, and
+// the notes keep what cannot be worked out again rather than a log.
 func TestNotesToolDescriptionsCarryTheRules(t *testing.T) {
 	h := newHarness(t, "", Deps{})
 	want := map[string][]string{
-		"notes_read":  {"only memory", "Nothing renders them into the prompt", "start of a session"},
-		"notes_write": {"whole text", "notes_read", "before you report your outcome", "empty text is refused"},
+		"notes_read":  {"only memory", "Nothing renders them into the prompt", "start of a session", "could not work out again", "not a log"},
+		"notes_write": {"whole text", "notes_read", "before you report your outcome", "empty text is refused", "Leave out what is already recorded", "git history"},
 	}
 	for _, tool := range h.tools() {
 		phrases, ok := want[tool.Name]
