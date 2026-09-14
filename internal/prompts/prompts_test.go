@@ -1402,45 +1402,68 @@ func TestRequestedReviewTaskHasNoIssueAndSubmitsAReview(t *testing.T) {
 	}
 }
 
-// Round 2 onward is told the review ran again on the head as it now
-// stands: the findings are about the current change, not the developer's
-// last round, and are posted and judged like a first review's. Round 1 must
-// render exactly as it does today — the instruction is new text gated on
-// .Round, not a rewording of anything round 1 already said.
-func TestReviewerFollowUpRoundIsAFreshReviewOfTheHead(t *testing.T) {
-	round1, err := Task(config.RoleReviewer, sample())
+// A later round of the review loop runs no review: its task carries the
+// findings the first review posted and the commit that review read, and tells
+// the session to verify each one rather than post a list. A round with a
+// review of its own renders the full review's instructions whatever its
+// number.
+func TestReviewerLaterRoundVerifiesThePreviousFindings(t *testing.T) {
+	d := sample()
+	d.Review = sampleReview()
+	d.Round = 2
+	full, err := Task(config.RoleReviewer, d)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(round1, "the review ran again") {
-		t.Errorf("round 1 task already reads as a later round:\n%s", round1)
+	if strings.Contains(full, "verify, do not review") || strings.Contains(full, "No review ran for this round") {
+		t.Errorf("a round with a review of its own reads as a verify round:\n%s", full)
 	}
-	// The block must add nothing at all to round 1, not even a blank line:
-	// the closing line still follows the instruction paragraph directly, as
-	// it did before the block existed.
-	const closing = "Update your notes (`notes_write`) before you finish."
-	if !strings.Contains(round1, closing) {
-		t.Fatalf("the round 1 task has no closing line %q:\n%s", closing, round1)
-	}
-	if strings.Contains(round1, "\n\n\n"+closing) {
-		t.Errorf("the round > 1 block left a blank line in the round 1 task:\n%s", round1)
+	if !strings.Contains(flowed(full), "Post the list as it is: nothing dropped, nothing added.") {
+		t.Errorf("a round with a review of its own lacks the posting instructions:\n%s", full)
 	}
 
-	d := sample()
-	d.Round = 2
-	round2, err := Task(config.RoleReviewer, d)
+	v := *d.Review
+	v.Verify, v.ReviewedHead = true, "abc1234"
+	d.Review = &v
+	verify, err := Task(config.RoleReviewer, d)
 	if err != nil {
 		t.Fatal(err)
 	}
-	flow := flowed(round2)
+	flow := flowed(verify)
 	for _, want := range []string{
-		"This is round 2: the review ran again on the change as it now stands",
-		"the findings above are about the current head, not the developer's last round",
-		"Post and judge them the same as a first review",
+		"No review ran for this round.",
+		"when its head was `abc1234`",
+		"`git diff abc1234..HEAD` shows what changed since.",
+		"### Widget does nothing",
+		"This is round 2: verify, do not review again.",
+		"addressed, partly addressed or not addressed",
+		"raise no new finding, and drop none",
+		"send the developer the findings still open",
 	} {
 		if !strings.Contains(flow, want) {
-			t.Errorf("round 2 task missing %q:\n%s", want, round2)
+			t.Errorf("verify task missing %q:\n%s", want, verify)
 		}
+	}
+	for _, unwanted := range []string{"The review ran before this session", "Post the list as it is"} {
+		if strings.Contains(flow, unwanted) {
+			t.Errorf("verify task still says %q:\n%s", unwanted, verify)
+		}
+	}
+	const closing = "Update your notes (`notes_write`) before you finish."
+	if strings.Contains(verify, "\n\n\n"+closing) || strings.Contains(full, "\n\n\n"+closing) {
+		t.Errorf("a blank line too many before the closing line:\n%s", verify)
+	}
+
+	sys, err := System(config.RoleReviewer, d, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(flowed(sys), "A later round of the review loop, after the developer has answered a request for changes, runs no review.") {
+		t.Errorf("the reviewer's system prompt does not say a later round verifies:\n%s", sys)
+	}
+	d.Mode = "requested"
+	if req, _ := System(config.RoleReviewer, d, ""); strings.Contains(req, "A later round of the review loop") {
+		t.Errorf("a requested review is told about later rounds:\n%s", req)
 	}
 }
 

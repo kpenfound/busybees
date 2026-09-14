@@ -34,6 +34,12 @@ import (
 // submit_review, every finding and untriaged, and decides the verdict. It
 // is the only session of a review that has a tool at all.
 //
+// That is the first round of the review loop. A later round, after the
+// developer answered a request for changes, runs no pipeline: the judge
+// session is told the findings the first round's artifact holds and the
+// commit that round read (verifyReview), and verifies them against the head
+// as it stands. A requested review is always a full one.
+//
 // The pipeline is configured by roles.reviewer (config.ResolvedRole): its
 // agent and model run every session, angles says which angles each size
 // runs, and brief_model, judge_model and angle_models replace the model for
@@ -162,6 +168,30 @@ func reviewData(a *review.Artifact) *prompts.Review {
 		r.Findings = review.RenderFindings(a.Findings.Items)
 	}
 	return r
+}
+
+// verifyReview is what a later round of the review loop tells the judge
+// session in place of a new review: the findings of the full review recorded
+// in the issue's bookkeeping, to be checked against the head as it stands,
+// and the commit that review read. ok is false when there is nothing to
+// verify — no review recorded, one recorded for another pull request, or an
+// artifact that can no longer be read — and the round runs the full review.
+func (s *Scheduler) verifyReview(log *slog.Logger, bk state.IssueState, pr int) (*prompts.Review, bool) {
+	if bk.ReviewArtifact == "" {
+		return nil, false
+	}
+	ref := review.Ref{Repo: s.cfg.Project.Repo, Number: pr}
+	if filepath.Dir(bk.ReviewArtifact) != filepath.Dir(review.ArtifactDir(s.store.ReviewsDir(), ref, time.Time{})) {
+		return nil, false
+	}
+	a, err := review.ReadArtifact(bk.ReviewArtifact)
+	if err != nil || a.Findings == nil {
+		log.Warn("the previous review cannot be read; reviewing the change again", "artifact", bk.ReviewArtifact, "err", err)
+		return nil, false
+	}
+	r := reviewData(a)
+	r.Verify, r.ReviewedHead = true, bk.ReviewedHead
+	return r, true
 }
 
 // recordReview enters what the review's sessions cost in the ledger, as one

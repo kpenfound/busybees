@@ -796,6 +796,15 @@ feedback in its prompt. The developer pushes and reports `pr-updated`. A
 review that could not run, because its brief or every one of its angles
 failed, is escalated with the reason.
 
+A later round verifies rather than reviews again. It runs no brief and no
+angle: the reviewer session is given the findings the first round posted
+and the commit that round read, checks each finding against the new
+commits, and posts one `comment` review saying which are addressed and
+which are not, with no new finding. It approves when every finding that
+needed fixing is addressed, and otherwise mails the developer the ones
+still open. A round with no first review to verify, such as a worker whose
+recorded review is gone, runs the full review.
+
 `scheduler.max_review_rounds` (default `3`) caps the number of reviewer
 passes. When the last round still requests changes the issue is escalated
 ([below](#escalation-beesneeds-human)). The reviewer is told when it is on
@@ -1195,8 +1204,8 @@ classifies what went wrong:
   branch instead of starting over. A developer's second or later round
   resumes the previous round's conversation; its retry runs fresh, since an
   id the agent no longer has is one way a resumed launch fails. A reviewer's
-  judge session never resumes one: every round reruns the review on the head
-  as it stands. `bees status` shows the attempt number next to the round.
+  judge session never resumes one: a later round is told the first review's
+  findings instead. `bees status` shows the attempt number next to the round.
 - **Behavioural.** The session ran and reported an outcome with the `done`
   tool, `failed` included, or ended cleanly without reporting at all.
   Running it again would repeat the same decision, so it escalates at once.

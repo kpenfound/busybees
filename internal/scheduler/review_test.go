@@ -3,6 +3,8 @@ package scheduler
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -392,6 +394,120 @@ func TestAReviewLeavesNoFileInTheWorkersWorktree(t *testing.T) {
 	}
 	if strings.Contains(files, review.DiffFile) || !strings.Contains(files, "work-2.txt") {
 		t.Errorf("the branch's files:\n%s", files)
+	}
+}
+
+// A second review round verifies instead of reviewing again: round 1 runs
+// the brief and the angles and posts their findings; round 2, after the
+// developer pushed, runs no brief and no angle, and its judge session is told
+// round 1's findings and the commit round 1 read, and posts what it made of
+// those findings.
+func TestALaterReviewRoundVerifiesTheFirstRoundsFindings(t *testing.T) {
+	logPath := reviewLogPath(t)
+	h := newHarness(t, devOnlyTOML)
+	seedReady(h, 1, "s", time.Now().Add(-time.Hour))
+	// The fake reviewer requests changes on round 1 and approves round 2.
+	runPass(t, h)
+
+	h.wantOrder("developer-issue-1-r1", "reviewer-pr-201-r1", "developer-issue-1-r2", "reviewer-pr-201-r2")
+	kinds := map[string]int{}
+	for _, s := range reviewSessions(t, logPath) {
+		kinds[s.Kind]++
+	}
+	if want := map[string]int{"brief": 1, "quick general": 1, "documentation accuracy": 1}; !maps.Equal(kinds, want) {
+		t.Fatalf("review sessions: %v, want round 1's brief and two angles once each", kinds)
+	}
+
+	round1, round2 := promptOf(t, h, 1), flowedPrompt(promptOf(t, h, 3))
+	if strings.Contains(round1, "No review ran for this round") {
+		t.Errorf("round 1 was told to verify:\n%s", round1)
+	}
+	bk, err := h.store.Issue(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Round 1 read the branch's first commit; round 2's head is the one the
+	// developer pushed on top of it.
+	first, err := workspace.Git(context.Background(), h.clone, "rev-parse", "origin/bees/issue-1^")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first = strings.TrimSpace(first)
+	if bk.ReviewedHead != first {
+		t.Errorf("the bookkeeping records reviewed head %q, want round 1's %q", bk.ReviewedHead, first)
+	}
+	for _, want := range []string{"No review ran for this round.", "when its head was `" + first + "`", "`git diff " + first + "..HEAD`",
+		"### quick general: Widget does nothing", "### documentation accuracy: Widget does nothing", "This is round 2: verify, do not review again."} {
+		if !strings.Contains(round2, want) {
+			t.Errorf("round 2's task lacks %q:\n%s", want, round2)
+		}
+	}
+	if !strings.Contains(round2, "The review is kept under `"+bk.ReviewArtifact+"`") {
+		t.Errorf("round 2 was not pointed at round 1's artifact %s:\n%s", bk.ReviewArtifact, round2)
+	}
+	dirs := h.sessions(config.RoleReviewer)
+	if len(dirs) != 2 {
+		t.Fatalf("reviewer sessions: %d, want 2", len(dirs))
+	}
+	if rev := reviewOf(t, dirs[1]); !strings.Contains(rev.body, "### quick general: Widget does nothing") {
+		t.Errorf("round 2 posted:\n%s", rev.body)
+	}
+	// One review artifact for the pull request, and one review in the ledger.
+	entries, err := os.ReadDir(filepath.Dir(bk.ReviewArtifact))
+	if err != nil || len(entries) != 1 {
+		t.Errorf("artifacts for the pull request: %v (%v), want round 1's alone", entries, err)
+	}
+	ledger, err := h.store.ReadLedger(time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reviewed []string
+	for _, e := range ledger {
+		if e.Outcome == "reviewed" {
+			reviewed = append(reviewed, e.Session)
+		}
+	}
+	if !slices.Equal(reviewed, []string{"reviewer-pr-201-r1"}) {
+		t.Errorf("reviews in the ledger: %v, want round 1's alone", reviewed)
+	}
+	if last := h.gh.history[1][len(h.gh.history[1])-1]; last != "bees:approved" {
+		t.Errorf("history: %v", h.gh.history[1])
+	}
+}
+
+// A later round verifies only a review it can read of the pull request it is
+// on: no review recorded, one recorded for another pull request, and one whose
+// artifact is gone each send the round to a full review.
+func TestVerifyReviewNeedsTheReviewOfThisPullRequest(t *testing.T) {
+	h := newHarness(t, devOnlyTOML)
+	log := slog.New(slog.DiscardHandler)
+	ref := review.Ref{Repo: "acme/widgets", Number: 201}
+	dir := review.ArtifactDir(h.store.ReviewsDir(), ref, time.Now())
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := review.WriteBrief(dir, &review.Brief{Size: "s", Summary: "Adds the widget."}); err != nil {
+		t.Fatal(err)
+	}
+	if err := review.WriteFindings(dir, &review.Findings{Items: []review.Finding{{ID: "f1", Angle: "general", Category: "correctness", Severity: "high", File: "widget.go", Title: "Widget does nothing", Body: "empty"}}}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok := h.sched.verifyReview(log, state.IssueState{ReviewArtifact: dir, ReviewedHead: "abc"}, 201)
+	if !ok || !got.Verify || got.ReviewedHead != "abc" || got.Count != 1 || !strings.Contains(got.Findings, "Widget does nothing") || got.Artifact != dir {
+		t.Fatalf("verifyReview of this pull request's review = %+v, %v", got, ok)
+	}
+	for name, c := range map[string]struct {
+		artifact string
+		pr       int
+	}{
+		"nothing recorded":     {"", 201},
+		"another pull request": {dir, 202},
+		"an artifact gone":     {filepath.Join(filepath.Dir(dir), "gone"), 201},
+	} {
+		if got, ok := h.sched.verifyReview(log, state.IssueState{ReviewArtifact: c.artifact}, c.pr); ok || got != nil {
+			t.Errorf("%s: verifyReview = %+v, %v, want a full review", name, got, ok)
+		}
 	}
 }
 
