@@ -421,7 +421,9 @@ already produced for it, most severe first, with the size it judged the
 change and the angles that size ran; the pull request's checks as read just
 before the first review, or a line saying nothing was verified; unread mail
 addressed to `reviewer` about the issue or the pull request; the round number
-and `scheduler.max_review_rounds`; its notes. It runs in the developer's
+and `scheduler.max_review_rounds`; its notes. On a later round no review
+runs: it is given the findings the first round posted and the commit that
+round read instead of a new list. It runs in the developer's
 worktree for that issue, brought up to the latest push, so `pr_view` reads
 the change in context.
 
@@ -440,6 +442,10 @@ not introduce goes in the review like the rest and is also worth an issue
 request on it. On a developer's pull request it does not submit an approval
 or a request for changes on GitHub, which refuses both from a pull request's
 own author, push to the branch or change labels.
+On a later round it verifies instead: it checks each of the first round's
+findings against the change as it now stands and posts one `comment` review
+saying, finding by finding, whether it is addressed, raising no new finding.
+It approves when every finding that needed fixing is addressed.
 Nothing it writes reaches the person who merges except its outcome note, so
 the note carries how many findings there were, what it chose not to block
 on, and, when no check was reported, that nothing was verified for it.

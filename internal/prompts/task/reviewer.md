@@ -33,17 +33,24 @@ _No new mail._
 {{template "findings" .}}
 ## Instructions
 
-The PR branch is checked out in your working directory. Post the findings above on the
+The PR branch is checked out in your working directory.
+{{- if and .Review .Review.Verify}} This is round {{.Round}}: verify, do not review
+again. For each finding above, read the code as it now stands and decide whether it is
+addressed, partly addressed or not addressed. Post the result on the pull request as one
+`comment` review with `submit_review` (`number: {{.PR.Number}}`): the verdict line first,
+then every finding in the list's order, each with its title, file and lines, what you
+decided and one line saying why. Report on those findings and nothing else: raise no new
+finding, and drop none. Then either report `done` with `status: approved` and a note,
+when every finding that needed fixing is addressed, or send the developer the findings
+still open with `mail_send` (`to: developer`, `pr: {{.PR.Number}}`,
+`issue: {{.Issue.Number}}`) and report `done` with `status: changes-requested`.
+{{- else}} Post the findings above on the
 pull request as one `comment` review with `submit_review` (`number: {{.PR.Number}}`), the
 verdict line first and every finding after it, then either report `done` with
 `status: approved` and a note, or send the findings to the developer with `mail_send`
 (`to: developer`, `pr: {{.PR.Number}}`, `issue: {{.Issue.Number}}`) and report `done`
 with `status: changes-requested`. Post the list as it is: nothing dropped, nothing added.
-{{if gt .Round 1}}
-This is round {{.Round}}: the review ran again on the change as it now stands, so the
-findings above are about the current head, not the developer's last round. Post and
-judge them the same as a first review.
-{{end -}}
+{{- end}}
 {{if ge .Round .MaxRounds}}
 This is the final review round. If a finding still needs fixing, request changes anyway;
 the orchestrator will escalate it to a human.

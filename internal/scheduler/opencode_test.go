@@ -108,13 +108,14 @@ func TestAnOpenCodeDeveloperWalksTheWholeLoop(t *testing.T) {
 		t.Errorf("the branch's files:\n%s", files)
 	}
 	// The ledger carries the opencode sessions with the cost their steps
-	// added up to, and each review's pipeline once.
+	// added up to, and the first round's review pipeline once:
+	// the second round verifies and runs none.
 	ledger, err := h.store.ReadLedger(time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ledger) != 6 {
-		t.Fatalf("ledger has %d entries, want 4 sessions and 2 reviews:\n%+v", len(ledger), ledger)
+	if len(ledger) != 5 {
+		t.Fatalf("ledger has %d entries, want 4 sessions and 1 review:\n%+v", len(ledger), ledger)
 	}
 	for _, e := range ledger {
 		if e.Outcome == "reviewed" {

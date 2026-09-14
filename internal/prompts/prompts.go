@@ -212,6 +212,12 @@ type Review struct {
 	// Artifact is the directory the review is kept in (review.ArtifactDir
 	// under the state directory's reviews/), for a person to read.
 	Artifact string
+	// Verify is set on a later round of the review loop, which runs no
+	// review: Findings are the ones the round's first review posted, and
+	// the session checks each against the head as it stands. ReviewedHead
+	// is the commit that first review read, "" when it is not known.
+	Verify       bool
+	ReviewedHead string
 }
 
 // Attempt is what one attempt of a fan-out came to, as the assembler is

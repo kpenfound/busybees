@@ -580,12 +580,15 @@ stateDiagram-v2
   role starts fresh. A resumed launch that fails, as one with an id claude
   no longer has does, is retried like any infrastructure failure, without
   the id. Reviewer sessions of every kind start fresh: the judge session,
-  because every round's review runs again on the head as it stands and the
-  session posts that round's list; checks mode; a requested review.
+  because a later round is told the first review's findings and the commit
+  that review read, which is all it verifies; checks mode; a requested
+  review.
   Codex has no resume: every round of a codex role is a new thread. An
   opencode role's later round continues the session with `--session`.
 - **Bookkeeping.** `<state_dir>/issues/<n>.json` records the review round,
-  pull request number, branch, `check_fix_rounds` and the three resume fields,
+  pull request number, branch, `check_fix_rounds`, the three resume fields,
+  and the full review's artifact directory and the head commit it read
+  (`review_artifact`, `reviewed_head`),
   plus the running session, the two human-comment clocks,
   `conflict_notified_sha`, the cost totals, the proposal observation, a
   feature's open children and, once the factory has given the issue up,
@@ -1064,8 +1067,8 @@ Messages are addressed to a **role**, not a session. Delivery rules:
   developer mail where `issue == N` or `pr == M`.
 - A reviewer session receives the unread reviewer mail where `issue == N` or
   `pr == M`, in review mode and in checks mode alike, read afresh before each
-  of those sessions. Its earlier feedback is not replayed: each round's
-  review runs again on the head as it stands.
+  of those sessions. Its earlier feedback is not replayed: a later round is
+  given the first review's findings to verify.
 - A singleton session receives all unread mail addressed to its role.
 - Mail is marked read (`read_at` set) after the session that received it
   finishes, so a session that crashed sees it again.
