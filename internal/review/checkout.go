@@ -15,21 +15,25 @@ import (
 	"time"
 )
 
-// The checkout the angle sessions read. Before the angles run, the pull
-// request's head is cloned into the review's artifact directory
-// (CheckoutDir, angles.go) by a container: an Alpine image with git,
-// built here the first time and kept, runs `git fetch` of
-// refs/pull/<number>/head from the pull request's own repository over
-// HTTPS into a bind-mounted host directory and exits. That reference
-// resolves a fork's pull request as well as one from a branch of the
-// repository, which the head branch's name would not, and it is the head
-// as it is when the review runs: a pull request that gains a commit
-// during the review is the race every freshly gathered source has.
+// The checkout the diff is read from and the angle sessions read. As the
+// context is gathered (Pipeline.Gather, context.go), the pull request's
+// head is cloned into the review's artifact directory (CheckoutDir,
+// angles.go) by a container: an Alpine image with git, built here the
+// first time and kept, runs `git fetch` of refs/pull/<number>/head from
+// the pull request's own repository over HTTPS into a bind-mounted host
+// directory, then of the base branch's tip beside it (CheckoutBaseRef),
+// and exits. The head reference resolves a fork's pull request as well as
+// one from a branch of the repository, which the head branch's name would
+// not, and it is the head as it is when the review runs: a pull request
+// that gains a commit during the review is the race every freshly
+// gathered source has. The base is what the diff source diffs the head
+// against (checkoutDiff): read here, the diff has no limit on the number
+// of files a pull request changes, which GitHub's own diff has.
 //
-// Nothing runs inside the container after the clone: the angle sessions
-// run on the host (agent.go), under their read-only restriction, in the
-// directory the container filled. The image needs git alone, not the
-// agent.
+// Nothing runs inside the container after the clone: the diff is read on
+// the host with the host's git, and the angle sessions run on the host
+// (agent.go), under their read-only restriction, in the directory the
+// container filled. The image needs git alone, not the agent.
 //
 // A configured github.token authenticates the clone. It reaches the
 // container as an environment variable named on `docker run`'s command
@@ -39,9 +43,10 @@ import (
 //
 // The container engine is optional. A machine without docker, an image
 // that does not build, a clone that fails (no network, no token for a
-// private repository) all leave the review where it was: Angles.Run says
-// so and runs the angles in the checkout it was given or in the empty
-// scratch directory, as it would without this file. Nothing configures
+// private repository) all leave the review where it was: the diff source
+// reads the diff through gh instead, and Angles.Run runs the angles in
+// the checkout it was given or in the empty scratch directory, as it
+// would without this file, and the review says so. Nothing configures
 // that; there is no key to turn the checkout on or off.
 
 // checkoutDockerfile builds the image the checkout runs in: Alpine with git,
@@ -64,18 +69,37 @@ const CheckoutTokenVar = "GIT_TOKEN"
 // take before the review goes on without the checkout.
 const DefaultCheckoutTimeout = 5 * time.Minute
 
+// CheckoutBaseRef is the reference inside a checkout that points at the
+// tip of the pull request's base branch, fetched beside the head, and
+// what checkoutDiff diffs the checked-out head against. A Clone of the
+// caller's own that sets it lets the diff be read from its checkout too;
+// one that does not leaves the diff to gh.
+const CheckoutBaseRef = "refs/review/base"
+
+// checkoutHeadRef is the reference the pull request's head is fetched
+// into before it is checked out, detached.
+const checkoutHeadRef = "refs/review/head"
+
 // checkoutScript is what the container runs, through `sh -c`, with the
-// repository's URL as $1 and the reference to fetch as $2. The clone is
-// shallow: the sessions read files and never run git, so the history is
-// nothing they could reach. The token is read from the environment by a
-// credential helper, so it is on no command line inside the container
-// either; with no token the helper answers an empty password and a
-// repository that wants one refuses the fetch.
+// repository's URL as $1, the head reference to fetch as $2 and the base
+// branch's name as $3, or "" for none. The clone is shallow, each tip on
+// its own: the sessions read files and never run git, so the history is
+// nothing they could reach, and the diff is a plain diff of the two trees
+// (checkoutDiff). A base that cannot be fetched costs the diff its read
+// from the checkout, not the angles their checkout: the head is checked
+// out first, and the base fetch is allowed to fail. The token is read
+// from the environment by a credential helper, so it is on no command
+// line inside the container either; with no token the helper answers an
+// empty password and a repository that wants one refuses the fetch.
 const checkoutScript = `set -e
 git init -q .
 git remote add origin "$1"
-git -c credential.helper='!f() { echo username=x-access-token; echo "password=$GIT_TOKEN"; }; f' fetch -q --depth 1 origin "$2"
-git checkout -q --detach FETCH_HEAD
+helper='!f() { echo username=x-access-token; echo "password=$GIT_TOKEN"; }; f'
+git -c credential.helper="$helper" fetch -q --depth 1 origin "$2:` + checkoutHeadRef + `"
+git checkout -q --detach ` + checkoutHeadRef + `
+if [ -n "$3" ]; then
+  git -c credential.helper="$helper" fetch -q --depth 1 origin "refs/heads/$3:` + CheckoutBaseRef + `" || true
+fi
 `
 
 // Checkout clones a pull request's head into a directory, in a container
@@ -83,12 +107,15 @@ git checkout -q --detach FETCH_HEAD
 // own.
 type Checkout struct {
 	// Clone, when set, makes the checkout instead of the container: it
-	// fills dir, which exists and is empty, with ref's head, and an error
-	// is a checkout that could not be made. The factory sets it (its
-	// reviewer worker has the pull request's branch checked out already,
-	// and clones that rather than fetching the head over the network);
-	// `bees review` leaves it nil and clones in the container.
-	Clone func(ctx context.Context, ref Ref, dir string) error
+	// fills dir, which exists and is empty, with ref's head checked out,
+	// and an error is a checkout that could not be made. base is the base
+	// branch's name, or "" when the caller wants the head alone; a Clone
+	// that can point CheckoutBaseRef at what the head is to be diffed
+	// against does so, and the diff is read from its checkout. The factory
+	// sets it (its reviewer worker has the pull request's branch checked
+	// out already, and clones that rather than fetching the head over the
+	// network); `bees review` leaves it nil and clones in the container.
+	Clone func(ctx context.Context, ref Ref, base, dir string) error
 	// DockerBin is the container engine's client, "docker" when it is
 	// empty.
 	DockerBin string
@@ -99,16 +126,18 @@ type Checkout struct {
 	Timeout time.Duration
 }
 
-// Run clones ref's head into dir, creating it. An error is a checkout
-// that could not be made: no docker, an image that did not build, a clone
-// that failed; dir is removed again, so nothing is left of a checkout that
-// is not one, and the caller runs the sessions elsewhere.
-func (c *Checkout) Run(ctx context.Context, ref Ref, dir string) error {
+// Run clones ref's head into dir, creating it, with the tip of the base
+// branch named base fetched beside it as CheckoutBaseRef, or the head
+// alone when base is "". An error is a checkout that could not be made:
+// no docker, an image that did not build, a clone that failed; dir is
+// removed again, so nothing is left of a checkout that is not one, and
+// the caller reads the diff and runs the sessions elsewhere.
+func (c *Checkout) Run(ctx context.Context, ref Ref, base, dir string) error {
 	if c.Clone != nil {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
 		}
-		if err := c.Clone(ctx, ref, dir); err != nil {
+		if err := c.Clone(ctx, ref, base, dir); err != nil {
 			_ = os.RemoveAll(dir)
 			return err
 		}
@@ -134,7 +163,7 @@ func (c *Checkout) Run(ctx context.Context, ref Ref, dir string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	if err := c.clone(ctx, docker, image, ref, dir); err != nil {
+	if err := c.clone(ctx, docker, image, ref, base, dir); err != nil {
 		_ = os.RemoveAll(dir)
 		return err
 	}
@@ -182,7 +211,7 @@ func checkoutTag() string {
 // name is dropped first, so the container gets the configured token and
 // only that. Git is told not to prompt, so a refused clone fails instead
 // of waiting for a terminal there is none of.
-func (c *Checkout) clone(ctx context.Context, docker, image string, ref Ref, dir string) error {
+func (c *Checkout) clone(ctx context.Context, docker, image string, ref Ref, base, dir string) error {
 	source := dir
 	if real, err := filepath.EvalSymlinks(dir); err == nil {
 		source = real
@@ -208,7 +237,7 @@ func (c *Checkout) clone(ctx context.Context, docker, image string, ref Ref, dir
 		args = append(args, "--env", CheckoutTokenVar)
 		env = append(env, CheckoutTokenVar+"="+c.Token)
 	}
-	args = append(args, image, "sh", "-c", checkoutScript, "sh", "https://github.com/"+ref.Repo+".git", fmt.Sprintf("refs/pull/%d/head", ref.Number))
+	args = append(args, image, "sh", "-c", checkoutScript, "sh", "https://github.com/"+ref.Repo+".git", fmt.Sprintf("refs/pull/%d/head", ref.Number), base)
 	var out bytes.Buffer
 	cmd := exec.CommandContext(ctx, docker, args...)
 	cmd.Env = env
@@ -226,4 +255,22 @@ func (c *Checkout) clone(ctx context.Context, docker, image string, ref Ref, dir
 		return fmt.Errorf("clone %s: %w%s", ref, err, tail(out.String()))
 	}
 	return nil
+}
+
+// checkoutDiff is the pull request's diff as the checkout in dir has it:
+// what changed between the base branch's tip, CheckoutBaseRef, and the
+// head that is checked out, as a plain diff of the two trees. Read here,
+// on the host and with the host's git, the diff has no limit on the number
+// of files it may touch, which the one gh reads from GitHub has.
+//
+// It is an approximation of the diff GitHub shows, which is the head
+// against the merge base of the two: the checkout is two shallow tips
+// with no history between them to find a merge base in, so a base branch
+// that has moved on since the pull request forked from it shows its own
+// later changes here, reversed, as if the pull request undid them. That
+// is the best-effort reading every source's gathering makes, and a
+// pull request kept up with its base has no such difference.
+func checkoutDiff(ctx context.Context, dir string) (string, error) {
+	out, _, err := gitRun(ctx, dir, "diff", "--no-color", "--no-ext-diff", CheckoutBaseRef, "HEAD")
+	return out, err
 }

@@ -33,7 +33,10 @@ const (
 	maxCallerLines   = 40
 )
 
-// diffSource gathers the pull request's diff.
+// diffSource gathers the pull request's diff: from the checkout made for
+// the review when there is one, else through gh (Input.Diff). A diff that
+// could be read neither way is context the review goes on without, not a
+// failure, the way every other source treats what it could not read.
 type diffSource struct{}
 
 func (diffSource) Name() string { return SourceDiff }
@@ -41,7 +44,8 @@ func (diffSource) Name() string { return SourceDiff }
 func (diffSource) Collect(ctx context.Context, in *Input) ([]Item, error) {
 	diff, err := in.Diff(ctx)
 	if err != nil {
-		return nil, err
+		in.Skip("%s: %v", SourceDiff, err)
+		return nil, nil
 	}
 	if strings.TrimSpace(diff) == "" {
 		in.Skip("the diff of %s is empty", in.Ref)
@@ -304,7 +308,8 @@ func (callersSource) Collect(ctx context.Context, in *Input) ([]Item, error) {
 	top = strings.TrimSpace(top)
 	diff, err := in.Diff(ctx)
 	if err != nil {
-		return nil, err
+		in.Skip("%s: callers of the changed symbols were not looked for: %v", SourceCallers, err)
+		return nil, nil
 	}
 	symbols := changedSymbols(diff)
 	if len(symbols) > maxCallerSymbols {

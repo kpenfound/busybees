@@ -615,7 +615,9 @@ stateDiagram-v2
   `agent` and `model` (`brief_model` and `angle_models` replacing the model
   for the brief and for one angle each), with no MCP server, no tool that
   writes, runs or fetches, and in a local clone of the worker's checkout
-  under the review's artifact, which is kept under the state directory's
+  under the review's artifact, which the diff is read from too (the branch
+  against its merge base with the base branch, so no number of changed
+  files is too many) and which is kept under the state directory's
   `reviews/` (the brief, each angle's run, the judge's list; the clone is
   removed). What they cost is entered in the ledger under the round's name
   and charged to the issue. Then one reviewer session, the judge session,

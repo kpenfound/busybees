@@ -1166,8 +1166,8 @@ retargeting #2's at the default branch, and handing the issue back clears
 it.
 
 Review stays pull request by pull request: the reviewer checks out #2's
-branch and reads its diff with `gh pr diff`, which shows only #2's own
-change against #1's branch, whether or not #1 has merged yet.
+branch and reads its diff against #1's branch, which shows only #2's own
+change, whether or not #1 has merged yet.
 
 Approval waits on the stack. Once #2's own review passes, its pull request
 is not labelled `bees:approved`, and with `auto_merge` on it is not merged,

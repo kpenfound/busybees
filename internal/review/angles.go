@@ -62,10 +62,11 @@ var angleTitles = map[string]string{
 // Names inside a review's artifact directory: AnglesDir is the directory
 // the angle runs are written in, one JSON file per angle named after it;
 // CheckoutDir is the checkout of the pull request's head the sessions run
-// in, made by a container before they start (checkout.go); and ScratchDir
-// is the empty directory they run in when there is no checkout of the
-// repository under review at all. Both directories outlive the run: a
-// session is reopened where it ran.
+// in, made by a container (checkout.go) as the context is gathered
+// (Pipeline.Gather) or, when gathering made none, before they start; and
+// ScratchDir is the empty directory they run in when there is no checkout
+// of the repository under review at all. Both directories outlive the
+// run: a session is reopened where it ran.
 const (
 	AnglesDir   = "angles"
 	CheckoutDir = "checkout"
@@ -128,7 +129,9 @@ type Angles struct {
 	Models map[string]string
 	// Checkout clones the pull request's head into the artifact directory
 	// for the sessions to run in (checkout.go), which is where they run
-	// whenever it succeeds. It is nil to attempt none.
+	// whenever it succeeds. It is nil to attempt none; a clone already
+	// under the artifact directory, made as the context was gathered, is
+	// run in either way.
 	Checkout *Checkout
 	// Dir is the checkout of the repository under review the machine has,
 	// which the sessions run in when Checkout is nil or could not make
@@ -194,11 +197,12 @@ func NewAngles(cfg *Config, dir string) *Angles {
 // before Run returns. A brief whose size is not one of Sizes is reported on
 // Log and gets the angles of the largest.
 //
-// The sessions run in a checkout of the pull request's head, cloned into
-// artifact by Checkout first; when that cannot be made they run in Dir,
-// and without one in the empty ScratchDir. A checkout that could not be
-// made is reported on Log and is not an error: the review goes on with
-// what the machine has.
+// The sessions run in a checkout of the pull request's head under
+// artifact: the one gathering the context made, or one Checkout clones
+// first; when there is none and none can be made they run in Dir, and
+// without one in the empty ScratchDir. A checkout that could not be made
+// is reported on Log and is not an error: the review goes on with what
+// the machine has.
 //
 // One angle failing stops none of the others: the runs are complete whether
 // or not err is nil, a failed angle is among them with Error set and no
@@ -347,12 +351,17 @@ func (a *Angles) agentFor(angle string) (Agent, string) {
 }
 
 // dir is the directory the sessions run in: the checkout of ref's head
-// when Checkout makes one under artifact, else Dir, else the scratch
-// directory under artifact, made if it is not there.
+// under artifact when there is one already or Checkout makes one, else
+// Dir, else the scratch directory under artifact, made if it is not
+// there. A checkout the angles make is of the head alone: the base is the
+// diff source's need, and the diff is gathered by the time they run.
 func (a *Angles) dir(ctx context.Context, artifact string, ref Ref) (string, error) {
+	if dir := filepath.Join(artifact, CheckoutDir); isDir(dir) {
+		return dir, nil
+	}
 	if a.Checkout != nil {
 		dir := filepath.Join(artifact, CheckoutDir)
-		err := a.Checkout.Run(ctx, ref, dir)
+		err := a.Checkout.Run(ctx, ref, "", dir)
 		if err == nil {
 			a.logf("checked out %s under %s", ref, dir)
 			return dir, nil
@@ -371,6 +380,12 @@ func (a *Angles) dir(ctx context.Context, artifact string, ref Ref) (string, err
 		return "", err
 	}
 	return dir, nil
+}
+
+// isDir reports whether path is a directory that is there.
+func isDir(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && st.IsDir()
 }
 
 // progress tells Progress about an angle's session, and nobody when it is

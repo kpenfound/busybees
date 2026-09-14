@@ -20,8 +20,10 @@ import (
 // fails when a file named fail-build is there, and lists the tag otherwise;
 // `run` records its arguments in run-args.txt and the client's environment
 // in run-env.txt, fails when a file named fail-run is there, and otherwise
-// writes widget.go into the directory mounted at the checkout, the way the
-// clone fills it. Every subcommand appends its name to calls.txt.
+// fills the directory mounted at the checkout the way the clone does: a
+// git repository whose CheckoutBaseRef commit holds widget.go and whose
+// checked-out head adds spinner.go, so a diff read from it is spinner.go
+// alone. Every subcommand appends its name to calls.txt.
 func fakeDocker(t *testing.T) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "docker")
@@ -65,7 +67,15 @@ run)
     *) shift ;;
     esac
   done
+  git -C "$src" init -q
   echo "package widgets" > "$src/widget.go"
+  git -C "$src" add -A
+  git -C "$src" -c user.name=bees -c user.email=bees@example.com -c commit.gpgsign=false commit -q -m base
+  git -C "$src" update-ref ` + CheckoutBaseRef + ` HEAD
+  printf 'package widgets\n\nfunc Spin() {}\n' > "$src/spinner.go"
+  git -C "$src" add -A
+  git -C "$src" -c user.name=bees -c user.email=bees@example.com -c commit.gpgsign=false commit -q -m head
+  git -C "$src" checkout -q --detach HEAD
   exit 0
   ;;
 esac
@@ -155,7 +165,8 @@ func TestTheAnglesRunInACheckoutOfThePullRequestHead(t *testing.T) {
 		"\n--env\nGIT_TERMINAL_PROMPT=0\n",
 		"\n" + checkoutTag() + "\nsh\n-c\n",
 		"\nhttps://github.com/acme/widgets.git\nrefs/pull/7/head\n",
-		"fetch -q --depth 1 origin \"$2\"",
+		"fetch -q --depth 1 origin \"$2:" + checkoutHeadRef + "\"",
+		"checkout -q --detach " + checkoutHeadRef,
 		"credential.helper=",
 	} {
 		if !strings.Contains(run, arg) {
@@ -203,7 +214,7 @@ func TestTheCheckoutImageIsBuiltOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := filepath.Join(t.TempDir(), CheckoutDir)
-	if err := (&Checkout{DockerBin: docker}).Run(context.Background(), Ref{Repo: testRepo, Number: 7}, dir); err != nil {
+	if err := (&Checkout{DockerBin: docker}).Run(context.Background(), Ref{Repo: testRepo, Number: 7}, "", dir); err != nil {
 		t.Fatal(err)
 	}
 	if got := beside(t, docker, "calls.txt"); got != "image\nrun\n" {
@@ -308,7 +319,7 @@ func TestACheckoutThatRunsOutOfTimeIsNotOne(t *testing.T) {
 	}
 	dir := filepath.Join(t.TempDir(), CheckoutDir)
 	c := &Checkout{DockerBin: docker, Timeout: 200 * time.Millisecond}
-	err = c.Run(context.Background(), Ref{Repo: testRepo, Number: 7}, dir)
+	err = c.Run(context.Background(), Ref{Repo: testRepo, Number: 7}, "", dir)
 	if err == nil || !strings.Contains(err.Error(), "ran out of time") {
 		t.Fatalf("err = %v, want the checkout to have run out of time", err)
 	}
@@ -364,8 +375,8 @@ func TestWithoutACheckoutRunnerTheAnglesRunWhereTheyDid(t *testing.T) {
 func TestACloneOfTheCallersOwnMakesTheCheckout(t *testing.T) {
 	docker := fakeDocker(t)
 	var cloned []string
-	clone := func(_ context.Context, ref Ref, dir string) error {
-		cloned = append(cloned, ref.String()+" -> "+dir)
+	clone := func(_ context.Context, ref Ref, base, dir string) error {
+		cloned = append(cloned, ref.String()+" -> "+dir+" (base "+base+")")
 		return os.WriteFile(filepath.Join(dir, "widget.go"), []byte("package widgets\n"), 0o644)
 	}
 	artifact := t.TempDir()
@@ -376,8 +387,10 @@ func TestACloneOfTheCallersOwnMakesTheCheckout(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := filepath.Join(artifact, CheckoutDir)
-	if len(cloned) != 1 || cloned[0] != "acme/widgets#7 -> "+want {
-		t.Errorf("clone calls = %v, want one into %s", cloned, want)
+	// The angles ask for the head alone: the base is the diff source's
+	// need, and the diff is gathered by the time they run.
+	if len(cloned) != 1 || cloned[0] != "acme/widgets#7 -> "+want+" (base )" {
+		t.Errorf("clone calls = %v, want one into %s with no base", cloned, want)
 	}
 	for _, r := range runs {
 		if r.Dir != want {
@@ -391,10 +404,13 @@ func TestACloneOfTheCallersOwnMakesTheCheckout(t *testing.T) {
 		t.Errorf("docker was run for a checkout the caller's own clone made")
 	}
 
-	// A clone that fails: nothing is left of the directory, and the angles
-	// run in the machine's checkout as they do when the container fails.
+	// A clone that fails, for a review of its own: nothing is left of the
+	// directory, and the angles run in the machine's checkout as they do
+	// when the container fails.
+	artifact = t.TempDir()
+	want = filepath.Join(artifact, CheckoutDir)
 	local := t.TempDir()
-	failing := &Checkout{Clone: func(context.Context, Ref, string) error { return errors.New("no such commit") }}
+	failing := &Checkout{Clone: func(context.Context, Ref, string, string) error { return errors.New("no such commit") }}
 	var log bytes.Buffer
 	agent = newFakeAngleAgent(len(briefAngles))
 	runs, err = (&Angles{Agent: agent, Checkout: failing, Dir: local, Log: &log}).Run(context.Background(), artifact, &Project{}, testBrief(), testDiff)
@@ -411,5 +427,42 @@ func TestACloneOfTheCallersOwnMakesTheCheckout(t *testing.T) {
 	}
 	if !strings.Contains(log.String(), "no such commit") || !strings.Contains(log.String(), "the angles run in "+local) {
 		t.Errorf("log = %q, want the failed clone and where the angles ran", log.String())
+	}
+}
+
+// The checkout the pipeline makes fetches the base branch's tip beside the
+// head, each shallow, and the diff is read from it as the head against
+// that tip, on the host: no number of changed files is too many for it.
+func TestTheCheckoutFetchesTheBaseBesideTheHeadAndTheDiffIsReadFromIt(t *testing.T) {
+	docker := fakeDocker(t)
+	dir := filepath.Join(t.TempDir(), CheckoutDir)
+	if err := (&Checkout{DockerBin: docker}).Run(context.Background(), Ref{Repo: testRepo, Number: 7}, "main", dir); err != nil {
+		t.Fatal(err)
+	}
+	run := beside(t, docker, "run-args.txt")
+	for _, arg := range []string{
+		"\nhttps://github.com/acme/widgets.git\nrefs/pull/7/head\nmain\n",
+		"fetch -q --depth 1 origin \"$2:" + checkoutHeadRef + "\"",
+		"fetch -q --depth 1 origin \"refs/heads/$3:" + CheckoutBaseRef + "\" || true",
+	} {
+		if !strings.Contains(run, arg) {
+			t.Errorf("run args missing %q:\n%s", arg, run)
+		}
+	}
+	// The base fetch comes after the head is checked out, so a base that
+	// cannot be fetched costs the diff and not the checkout.
+	if head, base := strings.Index(run, "checkout -q --detach"), strings.Index(run, "refs/heads/$3"); head < 0 || base < head {
+		t.Errorf("the base is fetched before the head is checked out:\n%s", run)
+	}
+	diff, err := checkoutDiff(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(diff, "+++ b/spinner.go") || !strings.Contains(diff, "+func Spin() {}") || strings.Contains(diff, "widget.go") {
+		t.Errorf("diff read from the checkout:\n%s\nwant spinner.go added and widget.go, in both tips, absent", diff)
+	}
+	// A checkout with no base reference has no diff to read.
+	if _, err := checkoutDiff(context.Background(), gitRepo(t, "")); err == nil {
+		t.Error("a checkout without the base reference gave a diff")
 	}
 }

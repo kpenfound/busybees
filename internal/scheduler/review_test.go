@@ -133,6 +133,14 @@ func TestAReviewRunsBriefAnglesAndJudgeFromTheReviewerRole(t *testing.T) {
 	if !strings.Contains(got["brief"].Dir, "/ws/") {
 		t.Errorf("the brief ran in %q, want the worker's checkout", got["brief"].Dir)
 	}
+	// The diff the brief was given is the clone's own, the branch against
+	// its merge base with main, and gh was never asked for one.
+	if p := got["brief"].Prompt; !strings.Contains(p, "+++ b/work-1.txt") || strings.Contains(p, "func Widget() {}") {
+		t.Errorf("the brief was not given the clone's diff:\n%s", p)
+	}
+	if n := h.gh.callCount("pr diff"); n != 0 {
+		t.Errorf("gh pr diff ran %d times, want the diff read from the clone", n)
+	}
 	for _, kind := range []string{"documentation accuracy", "general"} {
 		s := got[kind]
 		if !strings.HasSuffix(s.Dir, "/"+review.CheckoutDir) || !strings.Contains(s.Dir, filepath.Join("reviews", "acme", "widgets", "201")) {
@@ -214,6 +222,47 @@ func TestAReviewRunsBriefAnglesAndJudgeFromTheReviewerRole(t *testing.T) {
 	}
 	if strings.Contains(h.logs.String(), "posted no review") {
 		t.Errorf("the review the judge posted was not found:\n%s", h.logs.String())
+	}
+}
+
+// The base branch cloneOf finds the merge base against is the one under the
+// remote the factory is configured with, project.remote, not origin: a
+// worker's checkout on a project whose team repository is `upstream` has
+// no refs/remotes/origin/main at all, and a lookup there would leave the
+// clone without a base and send the diff back through gh.
+func TestTheFactorysDiffIsReadFromTheCloneUnderTheConfiguredRemote(t *testing.T) {
+	logPath := reviewLogPath(t)
+	t.Setenv("FAKE_REVIEW_SIZE", "m")
+	// default_branch is spelled out because the harness clone has no
+	// `upstream` remote for Resolve to detect it from when the config loads.
+	toml := strings.Replace(anglesReviewerTOML, "[project]\n", "[project]\nremote = \"upstream\"\ndefault_branch = \"main\"\n", 1)
+	h := newHarnessAt(t, toml, time.Time{}, withRemote("upstream"))
+	seedReady(h, 1, "s", time.Now().Add(-time.Hour))
+	seedCounter(t, h, "review", 1)
+	runPass(t, h)
+
+	h.wantOrder("developer-issue-1-r1", "reviewer-pr-201-r1")
+	if p := byKind(reviewSessions(t, logPath))["brief"].Prompt; !strings.Contains(p, "+++ b/work-1.txt") || strings.Contains(p, "func Widget() {}") {
+		t.Errorf("the brief was not given the clone's diff:\n%s", p)
+	}
+	if n := h.gh.callCount("pr diff"); n != 0 {
+		t.Errorf("gh pr diff ran %d times, want the diff read from the clone", n)
+	}
+}
+
+// withRemote renames the harness clone's one remote, so that the clone has
+// no `origin` at all, and points the workspace manager at the new name the
+// way cmd/bees does from project.remote. remote.pushDefault sends the fake
+// developer's bare `git push` there too.
+func withRemote(name string) func(*Deps) {
+	return func(d *Deps) {
+		ctx := context.Background()
+		for _, args := range [][]string{{"remote", "rename", "origin", name}, {"config", "remote.pushDefault", name}} {
+			if _, err := workspace.Git(ctx, d.Workspaces.MainRepo, args...); err != nil {
+				panic(err)
+			}
+		}
+		d.Workspaces.Remote = name
 	}
 }
 

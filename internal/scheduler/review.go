@@ -53,10 +53,14 @@ import (
 // directory (review.Checkout's Clone seam, in place of `bees review`'s
 // container clone over the network), so that the diff can be written
 // beside the files for them to read without a stray file landing in the
-// worker's own worktree. The clone is removed when the angles have run:
-// nothing resumes a factory review. The artifact — the brief, each angle's
-// run and the judge's list — is kept under the state directory's reviews/
-// for a person to read.
+// worker's own worktree. The diff itself is read from that clone too
+// (cloneOf points review.CheckoutBaseRef at the merge base of the base
+// branch and the head, which the worker's full history has), so a pull
+// request with more changed files than GitHub's diff allows is reviewed
+// all the same. The clone is removed when the angles have run: nothing
+// resumes a factory review. The artifact — the brief, each angle's run
+// and the judge's list — is kept under the state directory's reviews/ for
+// a person to read.
 
 // reviewPipelineFailure is what a review that could not run is reported as:
 // the reason, for an escalation comment or the requested-review log line.
@@ -106,13 +110,14 @@ func (s *Scheduler) runReview(ctx context.Context, log *slog.Logger, pr github.P
 		}
 		started = started.Add(time.Second)
 	}
+	checkout := &review.Checkout{Clone: cloneOf(dir, pr.HeadSHA, s.ws.Remote)}
 	runner := &review.Runner{
-		Pipeline:  &review.Pipeline{Client: s.gh, Project: project, Dir: dir},
+		Pipeline:  &review.Pipeline{Client: s.gh, Project: project, Dir: dir, Checkout: checkout},
 		Distiller: &review.Distiller{Agent: &distiller, Dir: dir},
 		Angles: &review.Angles{
 			Agent: agent, Provider: agent.Provider, Model: agent.Model,
 			Sized: role.Angles, Models: role.AngleModels,
-			Checkout: &review.Checkout{Clone: cloneOf(dir)},
+			Checkout: checkout,
 			Dir:      dir,
 		},
 		Storage: storage,
@@ -238,23 +243,51 @@ func readReviewCosts(artifact string, a *review.Artifact) (*review.Brief, []revi
 	return brief, runs
 }
 
-// cloneOf makes the checkout the angle sessions run in: a local clone of
-// src, the worker's checkout of the pull request's head, at src's HEAD and
-// sharing its objects, so it costs no fetch and little disk. The pull
-// request's head is what the worker checked out — fetched and pulled by
-// the review loop, a detached checkout of the head branch for a requested
-// review — so the clone is the head as the worker has it, whichever
-// reference it was asked for.
-func cloneOf(src string) func(context.Context, review.Ref, string) error {
-	return func(ctx context.Context, _ review.Ref, dir string) error {
+// cloneOf makes the checkout the diff is read from and the angle sessions
+// run in: a local clone of src, the worker's checkout of the pull
+// request's head, at src's HEAD and sharing its objects, so it costs no
+// fetch and little disk. The pull request's head is what the worker
+// checked out — fetched and pulled by the review loop, a detached checkout
+// of the head branch for a requested review — so the clone is the head as
+// the worker has it, whichever reference it was asked for.
+//
+// The clone's review.CheckoutBaseRef is the merge base of the head and
+// the base branch as the worker's remote has it (fetched with the rest at
+// the start of the round), which is what GitHub diffs a pull request
+// against: the worker's history is whole, so the merge base is there to
+// find, and the diff read from the clone is the pull request's own. The
+// remote is the one the workspace manager fetches, project.remote, under
+// whose name the worker's remote-tracking branches live: on a project
+// whose team repository is `upstream` there is no origin/<base> to find.
+//
+// The reference is set only when the worker's HEAD is headSHA, the commit
+// GitHub says the pull request's head is: a requested review of a fork's
+// pull request, or of a branch deleted since, runs from a checkout of the
+// default branch instead (runRequestedReview), whose diff against its own
+// merge base is nothing, and the diff of such a review is gh's to read. A
+// base branch the remote does not have, or one the head shares no history
+// with, leaves the reference unset the same way.
+func cloneOf(src, headSHA, remote string) func(context.Context, review.Ref, string, string) error {
+	return func(ctx context.Context, _ review.Ref, base, dir string) error {
 		head, err := workspace.Git(ctx, src, "rev-parse", "HEAD")
 		if err != nil {
 			return err
 		}
+		head = strings.TrimSpace(head)
 		if _, err := workspace.Git(ctx, src, "clone", "-q", "--shared", "--no-checkout", src, dir); err != nil {
 			return err
 		}
-		_, err = workspace.Git(ctx, dir, "checkout", "-q", "--detach", strings.TrimSpace(head))
+		if _, err := workspace.Git(ctx, dir, "checkout", "-q", "--detach", head); err != nil {
+			return err
+		}
+		if base == "" || (headSHA != "" && head != headSHA) {
+			return nil
+		}
+		mergeBase, err := workspace.Git(ctx, src, "merge-base", "refs/remotes/"+remote+"/"+base, "HEAD")
+		if err != nil {
+			return nil
+		}
+		_, err = workspace.Git(ctx, dir, "update-ref", review.CheckoutBaseRef, strings.TrimSpace(mergeBase))
 		return err
 	}
 }
