@@ -306,11 +306,11 @@ func TestShortDuration(t *testing.T) {
 }
 
 // mailSection returns the `## Mail for you` section of a rendered prompt. The
-// fake reviewer quotes its whole prompt in the mail it sends the developer, so
-// a later reviewer prompt echoes an earlier one under "previous rounds": only
-// the mail section itself answers whether a message was delivered again. It is
-// the last such heading in the prompt; anything quoted above it is not mail
-// addressed to this session.
+// fake checks-mode reviewer quotes its whole prompt in the mail it sends the
+// developer, so a later prompt can echo an earlier one inside a quoted
+// message: only the mail section itself answers whether a message was
+// delivered again. It is the last such heading in the prompt; anything quoted
+// above it is not mail addressed to this session.
 func mailSection(t *testing.T, prompt string) string {
 	t.Helper()
 	i := strings.LastIndex(prompt, "## Mail for you")

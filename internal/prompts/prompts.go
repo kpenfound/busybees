@@ -82,8 +82,7 @@ type Data struct {
 	ConsolidateNotes  bool
 	ConsolidateReason string
 
-	Inbox          []mail.Message
-	PreviousRounds []mail.Message
+	Inbox []mail.Message
 
 	// MaxSize is roles.developer.max_size: the largest size a developer
 	// takes. Anything above it is sent back to triage to be split.

@@ -1062,10 +1062,10 @@ Messages are addressed to a **role**, not a session. Delivery rules:
 
 - A developer session for issue N with pull request M receives the unread
   developer mail where `issue == N` or `pr == M`.
-- A reviewer session receives its own earlier feedback for the pull request
-  (`from: reviewer, to: developer, pr == M`) as "previous rounds", plus the
-  unread reviewer mail where `issue == N` or `pr == M`, in review mode and in
-  checks mode alike, read afresh before each of those sessions.
+- A reviewer session receives the unread reviewer mail where `issue == N` or
+  `pr == M`, in review mode and in checks mode alike, read afresh before each
+  of those sessions. Its earlier feedback is not replayed: each round's
+  review runs again on the head as it stands.
 - A singleton session receives all unread mail addressed to its role.
 - Mail is marked read (`read_at` set) after the session that received it
   finishes, so a session that crashed sees it again.
