@@ -54,23 +54,31 @@ Every session is read-only. A `claude` session may use `Read`, `Grep`,
 Codex's read-only sandbox. No session runs the tests, builds the change or
 writes to the repository.
 
-Before the angles run, bees checks out the pull request's head for them to
-read, in a container: an Alpine image with git, built the first time and
-kept, clones `refs/pull/<number>/head` of the pull request's repository over
-HTTPS into the review's `checkout/` directory and exits. That is the head as
-it is on GitHub, whatever your working tree has checked out, and a fork's
-pull request as much as one from a branch of the repository. The angle
-sessions run in that directory, on your machine, with the same read-only
-tools; nothing runs in the container after the clone. `github.token`
-authenticates the clone when it is set, handed to the container as an
-environment variable; without it the clone is anonymous, which a private
-repository refuses.
+As the context is gathered, bees checks out the pull request's head, in a
+container: an Alpine image with git, built the first time and kept, clones
+`refs/pull/<number>/head` of the pull request's repository over HTTPS into
+the review's `checkout/` directory, fetches the tip of the base branch
+beside it, and exits. That is the head as it is on GitHub, whatever your
+working tree has checked out, and a fork's pull request as much as one from
+a branch of the repository. The `diff` source reads the diff from that
+checkout, with your machine's git, as the head against the base branch's
+tip: GitHub's own diff is refused for a pull request that changes more than
+300 files, and this one is not. It is a plain diff of the two, not the diff
+against the merge base that GitHub shows: a base branch that has moved on
+since the pull request forked from it shows its later changes in the diff,
+reversed. The angle sessions run in that same directory, on your machine,
+with the same read-only tools; nothing runs in the container after the
+clone. `github.token` authenticates the clone when it is set, handed to the
+container as an environment variable; without it the clone is anonymous,
+which a private repository refuses.
 
 The checkout needs `docker`. Without it, or when the image does not build
-or the clone fails, the review says so and goes on: the angles then run in
-the current directory when it is a checkout of the pull request's repository
-(its `origin` remote points at it), and in the empty `scratch/` directory of
-the review anywhere else.
+or the clone fails, the review says so and goes on: the diff is read with
+`gh pr diff` instead, and the angles run in the current directory when it
+is a checkout of the pull request's repository (its `origin` remote points
+at it), and in the empty `scratch/` directory of the review anywhere else.
+A diff that cannot be read either way is reported as not gathered, like
+any other source, and the review goes on without it.
 
 The other sessions run where the angles would without that checkout: the
 distiller in the current directory when it is a checkout of the repository
@@ -83,7 +91,7 @@ directory when it is that checkout and gather nothing anywhere else.
 
 | Source | What it gathers |
 |---|---|
-| `diff` | The pull request's diff |
+| `diff` | The pull request's diff, read from the checkout made for the review, or with `gh pr diff` when there is none |
 | `pr_body` | The title and body, then every comment and submitted review, oldest first |
 | `linked_issues` | The issues the pull request closes, then the others its body mentions, at most 20 |
 | `style_files` | `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `STYLE.md` and `.editorconfig`, plus the files `style_sources` names |
@@ -242,8 +250,9 @@ goes:
 ~/.config/bees/reviews/acme/widgets/7/20260910-150405/
   brief.json            the brief, and the distiller's session id
   angles/<angle>.json   each angle's session id, directory and answer
-  checkout/             the pull request's head, cloned for the angles;
-                        also holds diff.patch, for every angle to read
+  checkout/             the pull request's head, cloned for the diff and
+                        the angles; also holds diff.patch, for every
+                        angle to read
   scratch/              where the angles and triage ran without a checkout;
                         also holds diff.patch, on the same terms
   findings.json         the merged list, and what your notes hid from it
@@ -251,7 +260,8 @@ goes:
 ```
 
 The directory name is when the review started, in UTC. A review that stopped
-partway keeps what it reached. `bees review triage` reopens the newest
+partway keeps what it reached; one that stopped before the brief was
+written leaves no directory. `bees review triage` reopens the newest
 directory of the pull request, and an ask resumes the angle's session from
 its file under `angles/`. When the angles ran in your machine's own
 checkout instead of one made for the review, diff.patch is not written
