@@ -19,7 +19,9 @@
 //	<role>.json          per-role bookkeeping (last run, session counters);
 //	                     every role has one, including developer and reviewer
 //	status.json          live scheduler status
-//	ledger.jsonl         one JSON line per finished session (`bees cost`)
+//	ledger.jsonl         one JSON line per finished session (`bees cost`),
+//	                     trimmed to scheduler.retention_period, and always
+//	                     keeping at least the last 24 hours
 //	bees.log             scheduler log (JSON, rotated: bees.log.1, bees.log.2)
 package state
 
@@ -32,11 +34,18 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 // Store is a state directory.
-type Store struct{ Dir string }
+type Store struct {
+	Dir string
+
+	// ledgerMu serialises AppendLedger with TrimLedger's rewrite, so a line
+	// appended while the ledger is rewritten is never lost.
+	ledgerMu sync.Mutex
+}
 
 // New returns a store rooted at dir.
 func New(dir string) *Store { return &Store{Dir: dir} }
@@ -71,7 +80,8 @@ This directory is managed by ` + "`bees`" + `. It holds:
 - issues/    per-issue bookkeeping (review rounds, the developer worker's stage,
              and why the factory gave an issue up)
 - status.json live scheduler status (` + "`bees status`" + `)
-- ledger.jsonl one line per finished session: turns, cost and outcome (` + "`bees cost`" + `)
+- ledger.jsonl one line per finished session: turns, cost and outcome (` + "`bees cost`" + `),
+             kept for scheduler.retention_period, and always at least 24 hours
 - bees.log    every scheduler log record as JSON, rotated at 10 MiB
 
 You can safely delete sessions/ and reviews/ to reclaim space. Steering a role is a matter
