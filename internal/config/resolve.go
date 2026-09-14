@@ -9,11 +9,12 @@ import (
 	"github.com/kpenfound/busybees/internal/workspace"
 )
 
-// Resolve fills in settings that are derived from the git clone containing
-// bees.toml: project.repo from the remote's URL and project.default_branch
-// from the remote's HEAD. Explicit values in bees.toml win.
+// Resolve fills in settings that are derived from the git clone the factory
+// works in (Config.CloneDir): project.repo from the remote's URL and
+// project.default_branch from the remote's HEAD. Explicit values in
+// bees.toml win.
 func (c *Config) Resolve(ctx context.Context) error {
-	dir := c.Dir()
+	dir := c.CloneDir()
 	if c.Project.Repo == "" {
 		url, err := workspace.Git(ctx, dir, "remote", "get-url", c.Project.Remote)
 		if err != nil {

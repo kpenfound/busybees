@@ -255,6 +255,12 @@ type Project struct {
 	StateDir string `toml:"state_dir" json:"state_dir"`
 	// BranchPrefix is prepended to developer branches, e.g. "bees/issue-12".
 	BranchPrefix string `toml:"branch_prefix" json:"branch_prefix"`
+	// Dir is the git clone the factory works in, when it differs from the
+	// directory holding bees.toml (e.g. a config kept centrally for several
+	// projects). A relative path is resolved against the directory holding
+	// bees.toml. Empty means bees.toml's own directory is the clone, as
+	// today. See Config.CloneDir.
+	Dir string `toml:"dir" json:"dir"`
 }
 
 // Filter selects which GitHub issues and pull requests the factory can see.
@@ -1864,6 +1870,11 @@ func mustCanonical(name string) string {
 
 // Dir returns the directory containing bees.toml.
 func (c *Config) Dir() string { return filepath.Dir(c.Path) }
+
+// CloneDir returns the git clone the factory works in: project.dir when set
+// (resolved against Dir when relative), else Dir itself, so bees.toml can
+// live outside the repository it manages.
+func (c *Config) CloneDir() string { return c.resolvePath(c.Project.Dir) }
 
 // StateDir returns the absolute state directory.
 func (c *Config) StateDir() string { return c.resolvePath(c.Project.StateDir) }
