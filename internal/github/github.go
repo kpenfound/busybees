@@ -142,7 +142,9 @@ type Issue struct {
 	Assignees []Author      `json:"assignees"`
 	CreatedAt time.Time     `json:"createdAt"`
 	UpdatedAt time.Time     `json:"updatedAt"`
-	Comments  []Comment     `json:"comments,omitempty"`
+	// ClosedAt is when the issue closed; only IssueClosedAt asks for it.
+	ClosedAt *time.Time `json:"closedAt,omitempty"`
+	Comments []Comment  `json:"comments,omitempty"`
 }
 
 // MilestoneTitle returns the milestone title or "".
@@ -503,6 +505,23 @@ func (c *Client) GetIssue(ctx context.Context, number int) (Issue, error) {
 	}
 	var issue Issue
 	return issue, json.Unmarshal(out, &issue)
+}
+
+// IssueClosedAt returns when an issue closed, or the zero time while it is
+// open.
+func (c *Client) IssueClosedAt(ctx context.Context, number int) (time.Time, error) {
+	out, err := c.Exec(ctx, "issue", "view", strconv.Itoa(number), "-R", c.Repo, "--json", "number,state,closedAt")
+	if err != nil {
+		return time.Time{}, err
+	}
+	var issue Issue
+	if err := json.Unmarshal(out, &issue); err != nil {
+		return time.Time{}, err
+	}
+	if !strings.EqualFold(issue.State, "closed") || issue.ClosedAt == nil {
+		return time.Time{}, nil
+	}
+	return *issue.ClosedAt, nil
 }
 
 // ListOpenPRs returns open PRs matching q.

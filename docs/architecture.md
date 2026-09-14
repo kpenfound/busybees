@@ -303,12 +303,26 @@ A full pass is:
    whose call failed stays for the next pass without holding up the drafts
    behind it. Off, the queue is not even read.
 
+10. **Delete the state of closed issues.** At most once an hour, every
+    `<state_dir>/issues/<n>.json` whose issue the poll did not list is looked
+    up with `gh issue view` (and, when it records a pull request, `gh pr
+    view`). Once [`scheduler.retention_period`](configuration.md#scheduler)
+    has passed since the pull request merged, or since the issue closed when
+    none merged, the file is deleted along with the directory of every
+    session of that issue: the ones whose `issue` file names it, and, for a
+    directory older than that file, the ones named `developer-issue-<n>-…`
+    or `reviewer-pr-<its pull request>-…`. A session directory that is still
+    running or was left unfinished is kept. An issue that a developer
+    worker or a running session holds, or whose bookkeeping still records a
+    session, is left whole. A closed issue's time is remembered for the life
+    of the process, so it is looked up once.
+
 **Local passes.** A tick that is not due for a poll, and every wake, runs a
 local pass: it classifies the issue and pull request lists cached from the
 last successful poll again (reconcile's write-back and the refresh at the end
 of every session keep that cache in step), then runs steps 5 and 6, dispatches
 developers (never a requested review) and starts only the singletons that have
-unread mail. It skips the poll, steps 2 to 4, step 9 and the product
+unread mail. It skips the poll, steps 2 to 4, steps 9 and 10 and the product
 manager's and QA's other has-work checks, all of which read GitHub; the label writes
 reconcile and dispatch make still happen, because what a local pass protects
 is the polling budget, not every API call. Until the first successful poll
@@ -1169,6 +1183,7 @@ sessions get `BEES_STATE_DIR`.
                                  brief.json, angles/<angle>.json, findings.json
   sessions/<ts>-<name>-<rand>/   system-prompt.md, prompt.md, mcp.json (claude), transcript.jsonl,
                                  stderr.log, outcome.json, result.json, pid,
+                                 issue (the issue the session worked on, for retention),
                                  touched-issues.txt (the issues the session changed on
                                  GitHub, one per line, read back into the cached poll
                                  when it ends), interrupted (written by `bees kill`,
