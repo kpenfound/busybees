@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -269,5 +270,31 @@ func TestSchedulersShareThePoolRoundRobin(t *testing.T) {
 	}
 	if polls(a) != 1 || polls(b) != 1 {
 		t.Fatalf("polls a %d, b %d, want 1 each: the later dispatches must come on wakes", polls(a), polls(b))
+	}
+}
+
+// A fan-out is clamped to the shared pool as it is to max_developers: three
+// attempts on a project pool of three, sharing a pool of two, run as two.
+func TestFanOutIsClampedToTheSharedPool(t *testing.T) {
+	pool := NewSharedPool(2)
+	h := newHarnessAt(t, bestOfNTOML, time.Time{}, func(d *Deps) { d.Shared = pool })
+	seedSized(h, 1, "l")
+	runPass(t, h)
+	h.sched.wg.Wait()
+
+	got := h.sessionNames()
+	slices.Sort(got)
+	want := []string{"developer-issue-1-assemble", "developer-issue-1-attempt-1", "developer-issue-1-attempt-2"}
+	if !slices.Equal(got, want) {
+		t.Errorf("sessions: got %v want %v", got, want)
+	}
+	if !strings.Contains(h.logs.String(), "best-of-N clamped to max_developers") || !strings.Contains(h.logs.String(), "pool=2") {
+		t.Errorf("the clamp is not logged with the pool's size:\n%s", h.logs.String())
+	}
+	if got := freeSlots(h); got != 3 {
+		t.Errorf("free slots after the fan-out: got %d want 3", got)
+	}
+	if got := pool.InUse(); got != 0 {
+		t.Errorf("shared slots in use after the fan-out: got %d want 0", got)
 	}
 }
