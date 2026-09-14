@@ -432,9 +432,12 @@ func TestReAddingTheLabelAsksForAnotherReview(t *testing.T) {
 // since) does not fail the dispatch: the review runs from a checkout of
 // the default branch and the fallback is logged.
 func TestARequestedReviewFallsBackToTheDefaultBranch(t *testing.T) {
+	logPath := reviewLogPath(t)
 	h := newHarnessAt(t, reviewOnlyTOML, requestedReviewClock)
-	// No pushBranch: origin/fix-widget does not exist.
+	// No pushBranch: origin/fix-widget does not exist, and the head commit
+	// GitHub names is nothing the remote has either.
 	h.gh.prs[42] = personsPR("bees", "bees:review-requested")
+	h.gh.prs[42].HeadSHA = "aaa1111"
 	runPass(t, h)
 
 	if got := len(h.sessions(config.RoleReviewer)); got != 1 {
@@ -442,6 +445,14 @@ func TestARequestedReviewFallsBackToTheDefaultBranch(t *testing.T) {
 	}
 	if !strings.Contains(h.logs.String(), "head branch is not on the remote; reviewing from the default branch") {
 		t.Errorf("the fallback was not logged:\n%s", h.logs.String())
+	}
+	// The checkout is not the pull request's head, so its diff is not the
+	// pull request's: the brief is given the diff gh reads instead.
+	if p := byKind(reviewSessions(t, logPath))["brief"].Prompt; !strings.Contains(p, "func Widget() {}") {
+		t.Errorf("the brief was not given gh's diff of the fork's pull request:\n%s", p)
+	}
+	if n := h.gh.callCount("pr diff"); n != 1 {
+		t.Errorf("gh pr diff ran %d times, want once for a checkout that is not the head", n)
 	}
 	if prHasLabel(h, 42, "bees:review-requested") {
 		t.Errorf("the label was not removed")

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -259,8 +260,10 @@ func TestARunThatStopsBeforeTheBriefWritesNothing(t *testing.T) {
 	if _, err := r.Run(context.Background(), Ref{Repo: testRepo, Number: 7}); err == nil || !strings.Contains(err.Error(), "distiller session: no") {
 		t.Errorf("err = %v", err)
 	}
-	if _, err := os.Stat(r.Storage); !os.IsNotExist(err) {
-		t.Errorf("something was written under the storage path: %v", err)
+	// The artifact directory made for the checkout is gone again: a later
+	// triage finds no review to reopen.
+	if _, err := LatestArtifactDir(r.Storage, Ref{Repo: testRepo, Number: 7}); err == nil || !strings.Contains(err.Error(), "no review of acme/widgets#7") {
+		t.Errorf("LatestArtifactDir err = %v, want no review left under the storage path", err)
 	}
 	if _, ok := agent.reqs[AngleGeneral]; ok {
 		t.Error("an angle ran without a brief")
@@ -276,6 +279,88 @@ func TestARunThatStopsBeforeTheBriefWritesNothing(t *testing.T) {
 	}
 	if len(agent.reqs) != 0 {
 		t.Errorf("sessions ran without context: %v", agent.reqs)
+	}
+	if _, err := LatestArtifactDir(r.Storage, Ref{Repo: testRepo, Number: 7}); err == nil {
+		t.Error("a review was left under the storage path for a context that could not be gathered")
+	}
+	// The distiller failed after the pipeline had cloned the pull request
+	// under the artifact directory: the clone goes with the directory,
+	// which is no review without a brief.
+	agent = &reviewAgent{fail: map[string]error{DistillerName: errors.New("distiller session: no")}}
+	r, _ = testRunner(t, agent, nil)
+	r.Pipeline.Checkout = &Checkout{DockerBin: fakeDocker(t)}
+	if _, err := r.Run(context.Background(), Ref{Repo: testRepo, Number: 7}); err == nil || !strings.Contains(err.Error(), "distiller session: no") {
+		t.Errorf("err = %v", err)
+	}
+	if _, err := LatestArtifactDir(r.Storage, Ref{Repo: testRepo, Number: 7}); err == nil || !strings.Contains(err.Error(), "no review of acme/widgets#7") {
+		t.Errorf("LatestArtifactDir err = %v, want the directory holding the clone and no brief removed", err)
+	}
+}
+
+// One clone per review: the pipeline clones the pull request's head as it
+// gathers, reads the diff from it, and the angles run in that same clone
+// rather than making a second one. A pull request GitHub refuses the diff
+// of is reviewed like any other.
+func TestARunClonesThePullRequestOnceForTheDiffAndTheAngles(t *testing.T) {
+	agent := &reviewAgent{}
+	r, log := testRunner(t, agent, nil)
+	gh := sampleGH()
+	gh.errs = map[string]bool{"pr diff": true}
+	gh.diffErr = tooLarge
+	r.Pipeline.Client = gh.client(t)
+	docker := fakeDocker(t)
+	checkout := &Checkout{DockerBin: docker}
+	r.Pipeline.Checkout, r.Angles.Checkout = checkout, checkout
+	ref := Ref{Repo: testRepo, Number: 7}
+	a, err := r.Run(context.Background(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := beside(t, docker, "calls.txt"); got != "image\nbuild\nrun\n" {
+		t.Errorf("docker was called %q, want one clone for the whole review", got)
+	}
+	want := filepath.Join(a.Dir, CheckoutDir)
+	for _, run := range a.Runs {
+		if run.Dir != want {
+			t.Errorf("the %s angle ran in %q, want the clone the pipeline made, %s", run.Angle, run.Dir, want)
+		}
+	}
+	// The distiller and the angles were given the clone's diff, which gh
+	// was never asked for.
+	if p := agent.reqs[DistillerName].Prompt; !strings.Contains(p, "+++ b/spinner.go") || strings.Contains(p, "func Widget() {}") {
+		t.Errorf("the distiller was not given the checkout's diff:\n%s", p)
+	}
+	if data, err := os.ReadFile(filepath.Join(want, DiffFile)); err != nil || !strings.Contains(string(data), "+++ b/spinner.go") {
+		t.Errorf("the diff beside the clone's files: %q, %v", data, err)
+	}
+	if slices.Contains(gh.calls, "pr diff") {
+		t.Errorf("gh was asked for the diff: %v", gh.calls)
+	}
+	if !strings.Contains(log.String(), "checked out acme/widgets#7 under "+want+"\n") || strings.Count(log.String(), "checked out") != 1 {
+		t.Errorf("log:\n%s\nwant the one checkout reported once", log.String())
+	}
+
+	// A checkout the pipeline could not make is attempted once, not again
+	// by the angles: they run where they would without one.
+	agent = &reviewAgent{}
+	r, log = testRunner(t, agent, nil)
+	missing := filepath.Join(t.TempDir(), "docker")
+	checkout = &Checkout{DockerBin: missing}
+	r.Pipeline.Checkout, r.Angles.Checkout = checkout, checkout
+	a, err = r.Run(context.Background(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, run := range a.Runs {
+		if run.Dir != r.Angles.Dir {
+			t.Errorf("the %s angle ran in %q, want the machine's checkout %s", run.Angle, run.Dir, r.Angles.Dir)
+		}
+	}
+	if n := strings.Count(log.String(), "could not check out acme/widgets#7"); n != 1 {
+		t.Errorf("the checkout was attempted %d times:\n%s", n, log.String())
+	}
+	if !strings.Contains(log.String(), "the diff is read through gh") {
+		t.Errorf("log:\n%s\nwant the diff read through gh", log.String())
 	}
 }
 

@@ -3,6 +3,9 @@ package review
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -125,6 +128,11 @@ type Input struct {
 	// them against Root; the callers source searches the whole repository,
 	// starting from here.
 	Dir string
+	// Checkout is the checkout of the pull request's head made for this
+	// review under its artifact directory (checkout.go), and "" when none
+	// was made: Diff reads the diff from it when there is one, and through
+	// gh otherwise.
+	Checkout string
 	// Project is the repository's context.toml, never nil.
 	Project *Project
 
@@ -148,11 +156,34 @@ func (in *Input) Root() string {
 
 // Diff is the pull request's diff, read once however many sources ask for
 // it: the diff source is one, and the callers source reads the changed
-// symbols out of it.
+// symbols out of it. It is read from Checkout when there is one
+// (checkoutDiff), which no number of changed files is too many for, and
+// through gh otherwise, or when the checkout's read failed: `gh pr diff`,
+// which GitHub refuses for a pull request past its limit on changed
+// files. An error is a diff that could be read neither way, and says
+// what each way said.
 func (in *Input) Diff(ctx context.Context) (string, error) {
-	if !in.gotDiff {
-		in.diff, in.diffErr = in.Client.PRDiff(ctx, in.Ref.Number)
-		in.gotDiff = true
+	if in.gotDiff {
+		return in.diff, in.diffErr
+	}
+	in.gotDiff = true
+	var fromCheckout error
+	if in.Checkout != "" {
+		diff, err := checkoutDiff(ctx, in.Checkout)
+		if err == nil {
+			in.diff = diff
+			return in.diff, nil
+		}
+		fromCheckout = err
+	}
+	diff, err := in.Client.PRDiff(ctx, in.Ref.Number)
+	switch {
+	case err == nil:
+		in.diff = diff
+	case fromCheckout != nil:
+		in.diffErr = fmt.Errorf("the diff of %s could not be read from the checkout (%v) or through gh (%w)", in.Ref, fromCheckout, err)
+	default:
+		in.diffErr = fmt.Errorf("the diff of %s could not be read through gh: %w", in.Ref, err)
 	}
 	return in.diff, in.diffErr
 }
@@ -187,11 +218,26 @@ type Pipeline struct {
 	// source reads; a source the project declares with files of its own is
 	// gathered without one.
 	Collectors []Collector
+	// Checkout clones the pull request's head, with its base branch's tip
+	// beside it, into the artifact directory Gather is given (checkout.go):
+	// the diff source reads the diff from that clone, and the angles run in
+	// it afterwards (Angles.Run). It is nil to attempt none, and the diff
+	// is then read through gh.
+	Checkout *Checkout
+	// Log is where a checkout that was made, or could not be, is reported,
+	// and nowhere when nil.
+	Log io.Writer
 }
 
 // Gather reads the pull request and gathers every context source the project
-// enables, in Project.EnabledSources order.
-func (p *Pipeline) Gather(ctx context.Context, number int) (*Bundle, error) {
+// enables, in Project.EnabledSources order. artifact is the review's
+// artifact directory, which Checkout clones the pull request's head under
+// as CheckoutDir before the sources run, for the diff source to read and
+// the angles to run in; with no Checkout, or "" for artifact, no clone is
+// made and the diff is read through gh. A clone that could not be made is
+// reported on Log and is not an error: the diff is read through gh, and
+// the review goes on with what it gathered.
+func (p *Pipeline) Gather(ctx context.Context, number int, artifact string) (*Bundle, error) {
 	project := p.Project
 	if project == nil {
 		project = &Project{}
@@ -202,6 +248,7 @@ func (p *Pipeline) Gather(ctx context.Context, number int) (*Bundle, error) {
 		return nil, fmt.Errorf("read %s: %w", ref, err)
 	}
 	in := &Input{Ref: ref, PR: pr, Client: p.Client, Dir: p.Dir, Project: project}
+	in.Checkout = p.checkout(ctx, ref, pr.BaseRefName, artifact)
 	collectors := p.Collectors
 	if collectors == nil {
 		collectors = Builtins()
@@ -228,6 +275,35 @@ func (p *Pipeline) Gather(ctx context.Context, number int) (*Bundle, error) {
 	}
 	bundle.Skipped = in.skipped
 	return bundle, nil
+}
+
+// checkout is the clone of ref's head Checkout makes under artifact, and
+// "" when there is no Checkout, no artifact, or the clone could not be
+// made, which is reported on Log with what the diff is read through
+// instead. A clone that is there already, from an earlier attempt for the
+// same review, is used as it is.
+func (p *Pipeline) checkout(ctx context.Context, ref Ref, base, artifact string) string {
+	if p.Checkout == nil || artifact == "" {
+		return ""
+	}
+	dir := filepath.Join(artifact, CheckoutDir)
+	if st, err := os.Stat(dir); err == nil && st.IsDir() {
+		return dir
+	}
+	if err := p.Checkout.Run(ctx, ref, base, dir); err != nil {
+		p.logf("could not check out %s in a container: %v; the diff is read through gh", ref, err)
+		return ""
+	}
+	p.logf("checked out %s under %s", ref, dir)
+	return dir
+}
+
+// logf writes one line to Log.
+func (p *Pipeline) logf(format string, args ...any) {
+	if p.Log == nil {
+		return
+	}
+	_, _ = fmt.Fprintf(p.Log, format+"\n", args...)
 }
 
 // NewClient is the gh client a review reads ref's repository through, and

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -19,16 +20,23 @@ import (
 // <pr>` runs before it triages, and what a test runs with every session
 // and every gh call faked.
 //
-// The artifact is written as the review goes: the brief as soon as the
+// The artifact is written as the review goes: the checkout of the pull
+// request's head as the context is gathered, the brief as soon as the
 // distiller has produced it, each angle's run as the angles finish, the
 // findings once the judge and the notes have made the list. A review that
 // stops partway leaves what it reached, which is enough to say where it
-// stopped and nothing a later command mistakes for a judged review.
+// stopped and nothing a later command mistakes for a judged review; one
+// that stops before the brief reached nothing worth keeping, and leaves
+// no directory at all.
 
 // Runner runs one review.
 type Runner struct {
 	// Pipeline gathers the context: the gh client, the project's
-	// context.toml and the checkout, as Open builds them.
+	// context.toml and the machine's checkout, as Open builds them, and
+	// the Checkout that clones the pull request's head under the artifact
+	// directory. Angles gets no checkout to attempt of its own when the
+	// pipeline has one: it runs in the clone the pipeline made, or where
+	// it would without one.
 	Pipeline *Pipeline
 	// Distiller and Angles run the sessions. Angles reports on Log, and
 	// to Progress, when it is given none of its own.
@@ -68,6 +76,7 @@ func NewRunner(ctx context.Context, ref Ref, cfg *Config, dir string) (*Runner, 
 	}
 	angles := NewAngles(cfg, pipeline.Dir)
 	angles.Rules = notes.Rules
+	pipeline.Checkout = angles.Checkout
 	return &Runner{
 		Pipeline:  pipeline,
 		Distiller: NewDistiller(cfg, pipeline.Dir),
@@ -83,10 +92,25 @@ func NewRunner(ctx context.Context, ref Ref, cfg *Config, dir string) (*Runner, 
 // every angle failing. One angle failing among others is not: the review
 // goes on without it, the failure is in the findings' Skipped and in the
 // log, and the run is kept with its error for the artifact to say so.
+//
+// The artifact directory is named before the context is gathered, so the
+// pipeline's checkout of the pull request's head has somewhere to go
+// (Checkout.Run makes the directory), and removed again when the run stops
+// before the brief is written: a directory holding a clone and no brief
+// is not a review, and a run that made no checkout wrote nothing.
 func (r *Runner) Run(ctx context.Context, ref Ref) (*Artifact, error) {
+	now := time.Now
+	if r.Now != nil {
+		now = r.Now
+	}
+	a := &Artifact{Dir: ArtifactDir(r.Storage, ref, now())}
+	if r.Pipeline.Log == nil {
+		r.Pipeline.Log = r.Log
+	}
 	r.logf("gathering the context of %s", ref)
-	bundle, err := r.Pipeline.Gather(ctx, ref.Number)
+	bundle, err := r.Pipeline.Gather(ctx, ref.Number, a.Dir)
 	if err != nil {
+		_ = os.RemoveAll(a.Dir)
 		return nil, err
 	}
 	r.logf("gathered %s from %s", text.Count(len(bundle.Items), "item"), strings.Join(bundle.Sources(), ", "))
@@ -96,14 +120,12 @@ func (r *Runner) Run(ctx context.Context, ref Ref) (*Artifact, error) {
 	r.logf("distilling the brief")
 	brief, err := r.Distiller.Distill(ctx, bundle)
 	if err != nil {
+		_ = os.RemoveAll(a.Dir)
 		return nil, err
 	}
-	now := time.Now
-	if r.Now != nil {
-		now = r.Now
-	}
-	a := &Artifact{Dir: ArtifactDir(r.Storage, ref, now()), Brief: brief}
+	a.Brief = brief
 	if err := WriteBrief(a.Dir, brief); err != nil {
+		_ = os.RemoveAll(a.Dir)
 		return nil, err
 	}
 	r.logf("the review is %s", a.Dir)
@@ -122,6 +144,13 @@ func (r *Runner) Run(ctx context.Context, ref Ref) (*Artifact, error) {
 	}
 	if r.Angles.Progress == nil {
 		r.Angles.Progress = r.Progress
+	}
+	if r.Pipeline.Checkout != nil {
+		// The pipeline attempted the checkout as it gathered, and said
+		// what came of it: the angles run in the clone it made, which
+		// Angles.Run finds under the artifact, and attempt none of their
+		// own when it made none.
+		r.Angles.Checkout = nil
 	}
 	runs, err := r.Angles.Run(ctx, a.Dir, project, brief, diff)
 	if runs == nil && err != nil {

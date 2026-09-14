@@ -133,6 +133,14 @@ func TestAReviewRunsBriefAnglesAndJudgeFromTheReviewerRole(t *testing.T) {
 	if !strings.Contains(got["brief"].Dir, "/ws/") {
 		t.Errorf("the brief ran in %q, want the worker's checkout", got["brief"].Dir)
 	}
+	// The diff the brief was given is the clone's own, the branch against
+	// its merge base with main, and gh was never asked for one.
+	if p := got["brief"].Prompt; !strings.Contains(p, "+++ b/work-1.txt") || strings.Contains(p, "func Widget() {}") {
+		t.Errorf("the brief was not given the clone's diff:\n%s", p)
+	}
+	if n := h.gh.callCount("pr diff"); n != 0 {
+		t.Errorf("gh pr diff ran %d times, want the diff read from the clone", n)
+	}
 	for _, kind := range []string{"documentation accuracy", "general"} {
 		s := got[kind]
 		if !strings.HasSuffix(s.Dir, "/"+review.CheckoutDir) || !strings.Contains(s.Dir, filepath.Join("reviews", "acme", "widgets", "201")) {
