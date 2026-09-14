@@ -13,6 +13,14 @@
 // for it on the host is a fourth thing to stop, recorded in a pid file of
 // its own.
 //
+// An opencode session is found through its pid file alone: it is given its
+// session directory through OPENCODE_CONFIG, an environment variable, so
+// its argv carries no path-bearing token to scope a ps-scan match to one
+// factory's state directory the way the claude and codex markers do, and
+// reading a process's environment to recover it is not portable across the
+// platforms this package runs on. A crashed opencode session with no live
+// pid file is therefore not found by `bees kill`.
+//
 // Every source is scoped to one factory: a process only counts when its
 // command line also references this state directory's sessions directory
 // (a claude session's argv carries `--append-system-prompt-file
