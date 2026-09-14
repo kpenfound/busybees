@@ -416,58 +416,49 @@ review on the pull request: see
 of this section describes the review of a developer's pull request.
 
 **Reads.** The pull request (title, body, branches, author); the issue with
-its body; the [review stages](#review-stages-rolesreviewerstages) to run; the
-issue's size with a sentence on the scrutiny it warrants (an `xs` change is
-checked for correctness and completeness and not asked to restructure; an `l`
-one is judged on its design too); the pull request's checks as read just
-before the first review, or a line saying nothing was verified; its own
-feedback from previous rounds; unread mail addressed to `reviewer` about the
-issue or the pull request; the round number and `scheduler.max_review_rounds`;
-its notes. With `product-fit` configured it also reads the work item's parent
-feature. It runs in the developer's worktree for that issue, brought up to the
-latest push, so it reads the change in context.
+its body; the findings the [review pipeline](#review-pipeline-rolesreviewerangles)
+already produced for it, most severe first, with the size it judged the
+change and the angles that size ran; the pull request's checks as read just
+before the first review, or a line saying nothing was verified; unread mail
+addressed to `reviewer` about the issue or the pull request; the round number
+and `scheduler.max_review_rounds`; its notes. It runs in the developer's
+worktree for that issue, brought up to the latest push, so `pr_view` reads
+the change in context.
 
-**Does.** Reads the diff with `gh pr diff` and the pull request with
-`pr_view`, where what a person already said outranks the issue and the prompt.
-Judges the change from the code: verifying that it builds and passes is CI's
-job, and the prompt tells it not to re-run the repository's test-suite.
-Whatever the stage, it looks for correctness first, then the same defect shape
-at sibling sites the pull request did not touch, then tests that would fail
-without the change, then unhandled errors, security and scope creep. What the
-formatter, the linter and the checks enforce is not a review point. It raises
-only what it can show, the input and the wrong result, never a "might" or a
-"consider". It files unrelated bugs with `issue_create` (`bug: true`,
-`related: <issue>`) rather than blocking on them. On a developer's pull
-request it does not submit a GitHub review, comment on the pull request, push
-to the branch or change labels.
+**Does.** Reads the pull request with `pr_view` for anything a person already
+said on it, which outranks the issue, the findings and these instructions.
+Posts the findings as one `comment` review with `submit_review`, the verdict
+line first and then every finding as the judge produced it: nothing dropped,
+nothing added and nothing softened, because a finding that should not be
+there is fixed in the angle or judge that raised it, not in this session.
+Verifying that the change builds and passes is CI's job: the prompt tells it
+not to re-run the repository's test-suite. It decides the verdict itself: a
+`high` finding always needs fixing before the merge, an `info` one never
+does, and between them it judges. A finding about a defect the change did
+not introduce goes in the review like the rest and is also worth an issue
+(`issue_create`, `bug: true`, `related: <issue>`), without blocking the pull
+request on it. On a developer's pull request it does not submit an approval
+or a request for changes on GitHub, which refuses both from a pull request's
+own author, push to the branch or change labels.
 Nothing it writes reaches the person who merges except its outcome note, so
-the note carries the stages that ran and how each came out, what it chose not
-to block on, and, when no check was reported, that nothing was verified for
-it.
-
-On the second and later rounds of one worker its session continues the
-previous round's conversation (`claude --resume`, or `--session` for
-`opencode`), the same way the developer's does: it starts knowing the change
-it reviewed and the points it raised, except for a `codex` role, which has no
-resume and starts fresh every round. A reviewer session for a failing check,
-and a requested review, start fresh.
+the note carries how many findings there were, what it chose not to block
+on, and, when no check was reported, that nothing was verified for it.
 
 **Mail.** Writes to `developer` only: one message per round, with `pr` and
-`issue`, its points grouped by stage in the stages' order, each group headed
-by that stage's verdict line, each point with the file and line and what it
-expects instead. An approval sends no mail, because the developer's work on
-the issue is over and no session is left to read it: anything the developer
-should know goes in the note, anything worth doing in an issue. It receives
-mail addressed to `reviewer`, in practice from a person (`bees mail send
---from human --to reviewer`), in a review session and a checks-mode session
-alike, and a copy of any comment a person writes on the issue while it is in
-`bees:review`.
+`issue`, the verdict line and every finding that needs fixing, each with its
+file and line and what it expects instead. An approval sends no mail,
+because the developer's work on the issue is over and no session is left to
+read it: anything the developer should know goes in the note, anything worth
+doing in an issue. It receives mail addressed to `reviewer`, in practice from
+a person (`bees mail send --from human --to reviewer`), in a review session
+and a checks-mode session alike, and a copy of any comment a person writes on
+the issue while it is in `bees:review`.
 
 **Outcomes.**
 
 | Status | What the orchestrator does |
 |---|---|
-| `approved` | Every stage passed. Labels the pull request and the issue `bees:approved` and requests a review from the people in `scheduler.notify`. Without `auto_merge` the worker is freed and a person merges; with it, the worker enters the checks stage ([Checks mode](#checks-mode-a-failing-check)). A pull request stacked on another one (`scheduler.stacked_prs`) is labelled only once the one beneath it is approved; the worker waits for that first. |
+| `approved` | Nothing in the list needed fixing. Labels the pull request and the issue `bees:approved` and requests a review from the people in `scheduler.notify`. Without `auto_merge` the worker is freed and a person merges; with it, the worker enters the checks stage ([Checks mode](#checks-mode-a-failing-check)). A pull request stacked on another one (`scheduler.stacked_prs`) is labelled only once the one beneath it is approved; the worker waits for that first. |
 | `changes-requested` | Checks that feedback was mailed to the developer during the session (none: escalate). On the last round: escalate. Otherwise moves the issue back to `bees:in-progress` and runs the developer with the feedback in its mail. |
 | `failed`, or no outcome | Escalates. |
 
@@ -493,20 +484,21 @@ diff are the whole brief and criteria the description does not state are not
 to be invented; the login the factory acts as, with a sentence saying whether
 that is the pull request's author (with no `[github]` table it is told to
 find out with `gh api user`); unread mail addressed to `reviewer` about the
-pull request; its notes; and the same [review stages](#review-stages-rolesreviewerstages),
-with `completeness` judged against the description and `product-fit` against
-the README and the docs alone. It runs in a read-only checkout of the head
-branch, or of the default branch when the remote does not have it.
+pull request; its notes; and the findings the same
+[review pipeline](#review-pipeline-rolesreviewerangles) produced for it, the
+brief's distiller reading the description in place of an issue. It runs in a
+read-only checkout of the head branch, or of the default branch when the
+remote does not have it.
 
-**Does.** Reads the diff and the pull request as in a review, runs every
-stage, and submits exactly one GitHub review with `submit_review`:
-`approve` when every stage passed, `request-changes` when any failed, and
-`comment` in place of `approve` when the pull request's author is the login
-the factory acts as, because GitHub refuses an approval from a pull request's
-own author, saying in the body why it is a comment. The body carries every
-stage's verdict line in the stages' order with its points under it, and ends
-with the `<!-- bees:reviewer -->` marker. It posts nothing else on the pull
-request, pushes nothing and changes no label.
+**Does.** Reads the pull request with `pr_view` as in a review, then submits
+exactly one GitHub review with `submit_review`: `approve` when nothing in the
+list needs fixing, `request-changes` when something does, and `comment` in
+place of `approve` when the pull request's author is the login the factory
+acts as, because GitHub refuses an approval from a pull request's own
+author, saying in the body why it is a comment. The body carries the verdict
+line and every finding as the judge produced it, and ends with the
+`<!-- bees:reviewer -->` marker. It posts nothing else on the pull request,
+pushes nothing and changes no label.
 
 **Mail.** Sends none: there is no developer on the pull request. It receives
 mail addressed to `reviewer` about the pull request.
@@ -521,45 +513,42 @@ outcome, is logged and the pull request is not tried again for five poll
 intervals; a person adds the label again to ask for another pass, and under
 `review_assigned_prs` a push does the same.
 
-### Review stages (`roles.reviewer.stages`)
+### Review pipeline (`roles.reviewer.angles`)
 
-A reviewer session reviews in ordered stages, each a section of its task
-prompt with its own focus, its own source of truth and its own verdict. The
-word "stage" also names the phases of a developer worker (develop, pre-review
-checks, review, checks), which are separate sessions; the two are unrelated.
+The review itself runs before the reviewer session that posts it: one
+session, the distiller, reads the pull request's context and writes a brief
+of the change, its size (`xs` to `xl`, judged from the scope and the risk of
+the diff) and its acceptance criteria; one session per angle the size calls
+for reads the brief and the diff and looks for problems from that angle
+alone; and the judge, deterministic code and not a session, merges what the
+angles found into one list, most severe first. The brief and angle sessions
+run read-only, with no MCP server and no tool that writes, runs or fetches,
+in a local clone of the pull request's checkout; only the judge step is a
+factory session, and it does not review the change again: it posts the list
+`submit_review` gives it and decides the verdict from it (see
+[reviewer](#reviewer) above). What each step costs is entered in the ledger
+under the round's name.
 
-| Stage | Question it answers | Source of truth |
-|---|---|---|
-| `implementation` | Is it correct? Error handling, edge cases, concurrency, security, the inputs and states the issue never mentioned, and whether the tests would fail without the change. | the diff |
-| `completeness` | Does it deliver the acceptance criteria, one at a time? A deviation the pull request declares is a judgement call; one it is silent about is not delivered. | the issue |
-| `cleanliness` | Is it clear, small and free of dead code? Needless abstraction, a helper with one caller, a copy of something that exists, changes the issue did not ask for. | the diff |
-| `style` | Does it follow the repository's conventions? Only what the tooling does not already enforce. | the repository's conventions, CLAUDE.md, the linter |
-| `product-fit` | Does it pull the product somewhere the feature and the documentation do not go? The work item's own scope was settled before it reached the developer and is not reopened here. | the parent feature, the README and the docs |
+| Angle | What it looks for |
+|---|---|
+| `quick_general` | One light pass over the change as a whole, for what a careful reader catches on one read |
+| `general` | A thorough pass over the change as a whole: wrong logic, a dropped error, duplicated code, and a line that breaks a rule the project wrote down |
+| `docs` | A comment or doc comment the change made false, and prose the change wrote that the code does not bear out |
+| `test_coverage` | Behaviour with no test on it, a test that would pass with the change undone, and a document the change made false |
+| `acceptance_criteria` | A criterion from the brief the change does not meet, or meets only in part, and a behaviour change nothing asked for |
+| `side_effects` | A caller the change did not update, an invariant it no longer keeps, and a claim elsewhere in the repository it made false |
 
-The default is `["implementation", "completeness", "cleanliness", "style"]`,
-in that order, so the reviewer spends its first attention on correctness and
-reaches formatting last. `product-fit` is off by default: a work item the
-project manager already scoped is not the place to reopen the product
-decision. It is the one stage that reads the parent feature, so the
-orchestrator looks the parent up only when the stage is configured; a work
-item that belongs to no feature gets the stage anyway, judged against the
-README and the docs, and the reviewer says so in the verdict.
+`roles.reviewer.angles` replaces, for one size at a time, the angles a
+change of that size is reviewed from; a size it does not name keeps the
+built-in list. `brief_model`, `angle_models` and `judge_model` override
+`model` for the brief, for one angle each and for the judge, one session at
+a time. See
+[configuration.md](configuration.md#rolesreviewer-only-the-review-pipeline)
+for the keys, their defaults and their built-in per-size lists.
 
-Every configured stage runs, even after one has found something to block on:
-the developer fixes one round of feedback at a time, so a skipped stage costs
-a whole extra round when its findings arrive. Each stage ends with a verdict
-line, `<stage>: pass` or `<stage>: fail` with one line saying why, in the
-stages' order. Approval means every stage passed; one failed stage is
-`changes-requested` whatever the others said.
-
-```toml
-[roles.reviewer]
-stages = ["implementation", "completeness", "product-fit"]
-```
-
-A name outside the five above, an empty list, or `stages` anywhere but
-`[roles.reviewer]` is a load error. See
-[configuration.md](configuration.md#rolesreviewer-only-the-review-stages).
+An angle that fails is named in the reviewer session's task and the rest are
+judged; a review where the brief or every angle failed cannot be posted and
+escalates the issue with the reason instead of running the reviewer session.
 
 ### Pre-review checks (`pre_review_checks`, on by default)
 
@@ -586,8 +575,8 @@ pre_review_checks = false    # straight from the developer to the reviewer
 
 A failing check, before the first review or after approval with `auto_merge`,
 gets the reviewer a different kind of session: a diagnosis, not a review. The
-session runs with `BEES_REVIEW_MODE=checks` in its environment and no review
-stages.
+session runs with `BEES_REVIEW_MODE=checks` in its environment, and there is
+no review pipeline before it: it has no findings to post.
 
 **Reads.** The pull request, the issue, the failing checks (name, workflow,
 bucket, description, details link), the fix round and `max_check_fix_rounds`,
@@ -739,8 +728,8 @@ prompt_file = "docs/qa-checklist.md"
   are `roles.developer` only ([developer](#developer)). **auto_merge,
   merge_method, checks_wait, checks_poll_interval, checks_timeout,
   max_check_fix_rounds, pre_review_checks, pre_review_checks_timeout,
-  stages** are `roles.reviewer` only ([reviewer](#reviewer)). Set anywhere
-  else, each is a load error.
+  angles, brief_model, angle_models, judge_model** are `roles.reviewer` only
+  ([reviewer](#reviewer)). Set anywhere else, each is a load error.
 
 `bees config show <role>` prints the result of the merge. See
 [configuration.md](configuration.md#global-and-rolesname) for every key.
