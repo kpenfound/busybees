@@ -193,7 +193,11 @@ A full pass is:
    pool of `max_developers` (default 1), or one slot per attempt, all of them
    or none, when its size fans out under `best_of_n_by_size` or
    `moe_experts_by_size`; when the pool
-   cannot supply it the pass stops dispatching. A goroutine runs the worker
+   cannot supply it the pass stops dispatching. Under a machine config with
+   `max_developers` set, every slot is also one of a pool of that size shared
+   by every project's scheduler, taken and returned on the same terms; see
+   [Several projects in one process](#several-projects-in-one-process). A
+   goroutine runs the worker
    ([The developer worker](#the-developer-worker)) and returns the slot when
    done, and the worker records the issue's size, which is what the cap counts
    and what `bees status` shows. A worker that fails with an error, rather
@@ -324,11 +328,14 @@ wake asks, however the window is configured.
 
 **Waking up.** Waiting out the poll interval for something that happened
 locally is downtime, so the loop also listens on a wake channel and runs a
-local pass for every signal. Three things signal it: a session finishing, a
+local pass for every signal. Four things signal it: a session finishing, a
 developer worker returning its slot to the pool (a worker runs several
-sessions before its slot comes free), and the two kinds of message the
+sessions before its slot comes free), the two kinds of message the
 scheduler sends itself (the merge-state notice of step 4 and the feedback of
-steps 2 and 3). A wake is never a full pass, so the polling cadence stays
+steps 2 and 3), and the shared pool of a machine config when this
+scheduler's turn for a slot has come (see
+[Several projects in one process](#several-projects-in-one-process)). A wake
+is never a full pass, so the polling cadence stays
 exactly what `poll_interval` and the window say. The channel holds one signal:
 a burst of finished sessions costs one pass rather than one each, and a full
 pass drops a pending wake because it does strictly more.
@@ -437,6 +444,39 @@ entry from `human`, addressed to the role on screen and carrying its issue and
 pull request, which reaches the *next* session on that work item. A headless
 session works to the end of the prompt it was started with and ignores a
 later turn written to its stdin.
+
+## Several projects in one process
+
+A [machine config](configuration.md#machine-config-several-projects) runs
+one scheduler per project it lists, each on its own goroutine with its own
+`bees.toml`, state directory, mailbox, notes and poll loop, exactly as a
+single-project run has: a project that fails to start or stops with an error
+is reported for that project while the others run on. Nothing is shared but
+the process, the console log and, with the machine config's `max_developers`
+set, one developer pool of that size.
+
+Each scheduler keeps its own `scheduler.max_developers` pool and takes a slot
+of the shared pool on top of each of its own, for the same things: a
+developer worker, every attempt of a fan-out, a requested review. A claim is
+all or none against both, so a fan-out is clamped to the shared pool's size
+as it is to `max_developers`. Every scheduler's own cap still holds; the
+machine's is the total across them.
+
+A scheduler the shared pool refuses queues up for it, and from then on the
+pool serves the queue in order: while it is not empty only the scheduler at
+its head may take slots, whatever is free, and a scheduler refused
+meanwhile, or one that never waited, queues up behind. When a slot frees up
+the pool wakes the head, if the pool can fill what it asked for, and the
+local pass that follows makes the claim. A scheduler leaves the queue when
+its claim is granted, and when a dispatch pass of its ends without a refusal
+(it had nothing left to dispatch: its ready issue closed, its budget ran
+out), so a turn nobody uses is not kept. One that got its turn and wants
+more queues up again at the back. That is what hands a freed slot round the
+projects waiting for one rather than back to the project that just gave it
+up, which is the one its own worker wakes: a busy project cannot starve the
+others. The `scheduler started` log line of a project on a shared pool
+carries `shared_max_developers`, and `slots wait for the shared pool` is
+logged each time a pass is refused by it.
 
 ## The developer worker
 

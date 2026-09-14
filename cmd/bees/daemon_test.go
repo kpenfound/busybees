@@ -11,6 +11,7 @@ import (
 
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/logging"
+	"github.com/kpenfound/busybees/internal/scheduler"
 	"github.com/kpenfound/busybees/internal/testutil"
 	"github.com/kpenfound/busybees/internal/versions"
 )
@@ -30,12 +31,18 @@ func writeProject(t *testing.T, repo, extra string) string {
 
 func loadMachine(t *testing.T, projects ...string) *config.Machine {
 	t.Helper()
+	return loadMachineWith(t, "", projects...)
+}
+
+// loadMachineWith is loadMachine with extra lines appended to the file.
+func loadMachineWith(t *testing.T, extra string, projects ...string) *config.Machine {
+	t.Helper()
 	path := filepath.Join(t.TempDir(), "machine.toml")
 	quoted := make([]string, len(projects))
 	for i, p := range projects {
 		quoted[i] = `"` + filepath.ToSlash(p) + `"`
 	}
-	if err := os.WriteFile(path, []byte("projects = ["+strings.Join(quoted, ", ")+"]\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("projects = ["+strings.Join(quoted, ", ")+"]\n"+extra), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	m, err := config.LoadMachine(path)
@@ -79,6 +86,9 @@ func TestMachineDaemonBuildsASchedulerPerProject(t *testing.T) {
 	if fooApp.store.Dir == barApp.store.Dir {
 		t.Fatalf("both projects share the state directory %s", fooApp.store.Dir)
 	}
+	if loops[0].SharedPool() != nil || loops[1].SharedPool() != nil {
+		t.Fatal("without max_developers in the machine config the projects share a developer pool")
+	}
 	if want := filepath.Join(filepath.Dir(foo), ".bees"); fooApp.store.Dir != want {
 		t.Errorf("foo's state directory: %s, want %s", fooApp.store.Dir, want)
 	}
@@ -101,6 +111,35 @@ func TestMachineDaemonBuildsASchedulerPerProject(t *testing.T) {
 	}
 	if !strings.Contains(console.String(), "polled foo") || !strings.Contains(console.String(), "polled bar") {
 		t.Errorf("console: %q", console.String())
+	}
+}
+
+// The machine config's max_developers is one developer pool of that size
+// that every project's scheduler is built on.
+func TestMachineDaemonSharesOneDeveloperPool(t *testing.T) {
+	t.Setenv(versions.EnvSkip, "1")
+	foo := writeProject(t, "acme/foo", "")
+	bar := writeProject(t, "acme/bar", "")
+	m := loadMachineWith(t, "max_developers = 3\n", foo, bar)
+
+	g := &globalFlags{logger: logging.New(logging.Options{Console: &bytes.Buffer{}})}
+	t.Cleanup(func() { _ = g.logger.Close() })
+	d := machineDaemon(g, m)
+	var pools []*scheduler.SharedPool
+	for _, p := range d.Projects {
+		l, err := p.Start(context.Background())
+		if err != nil {
+			t.Fatalf("%s: %v", p.Name, err)
+		}
+		loop := l.(*projectLoop)
+		t.Cleanup(func() { _ = loop.file.Close() })
+		pools = append(pools, loop.SharedPool())
+	}
+	if pools[0] == nil || pools[0] != pools[1] {
+		t.Fatalf("pools %v: want the same one for both projects", pools)
+	}
+	if got := pools[0].Size(); got != 3 {
+		t.Errorf("shared pool size %d, want max_developers = 3", got)
 	}
 }
 

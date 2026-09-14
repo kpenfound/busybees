@@ -26,12 +26,13 @@ import (
 // max_cost_per_issue budget together.
 //
 // Slots. The attempts are N concurrent agent processes, and max_developers
-// is the only bound on those, so each attempt holds one of the pool's
-// slots. All N are claimed at dispatch, all or none (claimSlots): a worker
-// that took its own slot and then waited for N-1 more would hold what
-// another fan-out is waiting for, and two of them on a pool smaller than
-// their sum would wait for each other forever. N is clamped to
-// max_developers first, because a pool can never supply more than it has.
+// is the bound on those (with the shared pool of a daemon on top of it,
+// SharedPool), so each attempt holds one of the pool's slots. All N are
+// claimed at dispatch, all or none (claimSlots): a worker that took its own
+// slot and then waited for N-1 more would hold what another fan-out is
+// waiting for, and two of them on a pool smaller than their sum would wait
+// for each other forever. N is clamped to the pool first (poolSize),
+// because a pool can never supply more than it has.
 // The worker gives the N-1 extra slots back the moment the attempts have
 // finished, and runs the rest of the issue's life on the one slot every
 // other worker has.
@@ -83,7 +84,8 @@ func (s *Scheduler) attemptBranch(issue, i int) string {
 // attemptsFor is how many developer sessions the issue's next develop round
 // runs, which is how many slots dispatch claims for it: best_of_n_by_size
 // for the issue's size, or one per expert moe_experts_by_size names for it,
-// clamped to max_developers, when that round is the first one; 1 for
+// clamped to max_developers and to the shared pool (poolSize), when that
+// round is the first one; 1 for
 // everything else. An issue whose branch already has an open pull request,
 // or whose bookkeeping records a pull request or a later round, is a review
 // loop being resumed, and a review round is one session however the size
@@ -99,37 +101,70 @@ func (s *Scheduler) attemptsFor(issue github.Issue, snap *snapshot) int {
 	if bk, err := s.store.Issue(issue.Number); err == nil && (bk.Round > 1 || bk.PR != 0) {
 		return 1
 	}
-	return clampAttempts(n, s.cfg.Scheduler.MaxDevelopers)
+	return clampAttempts(n, s.poolSize())
+}
+
+// poolSize is the most slots one claim can ever get: max_developers, or the
+// shared pool's size when that is smaller (SharedPool).
+func (s *Scheduler) poolSize() int {
+	n := s.cfg.Scheduler.MaxDevelopers
+	if s.shared != nil && s.shared.pool.Size() < n {
+		return s.shared.pool.Size()
+	}
+	return n
 }
 
 // clampAttempts bounds a configured attempt count by the size of the slot
 // pool: claiming more slots than exist would wait forever.
-func clampAttempts(n, maxDevelopers int) int {
-	if n > maxDevelopers {
-		return maxDevelopers
+func clampAttempts(n, poolSize int) int {
+	if n > poolSize {
+		return poolSize
 	}
 	return n
 }
 
 // claimSlots takes n slots from the pool without waiting, all of them or
 // none: a partial claim would hold slots the pool cannot complete while
-// another claim waits on them.
+// another claim waits on them. With a shared pool the n slots are claimed
+// from it too, on the same terms, and this scheduler's own go back when it
+// refuses: the shared pool then queues the scheduler and wakes it when its
+// turn comes (SharedPool).
 func (s *Scheduler) claimSlots(n int) bool {
 	for i := 0; i < n; i++ {
 		select {
 		case <-s.slots:
 		default:
-			s.releaseSlots(i)
+			s.releaseOwn(i)
 			return false
 		}
+	}
+	if s.shared != nil && !s.shared.acquire(n) {
+		s.releaseOwn(n)
+		s.log.Info("slots wait for the shared pool", "slots", n, "shared_max_developers", s.shared.pool.Size())
+		return false
 	}
 	return true
 }
 
-// releaseSlots gives n slots back to the pool.
+// releaseSlots gives n slots back to the pool, and to the shared pool.
 func (s *Scheduler) releaseSlots(n int) {
+	s.releaseOwn(n)
+	if s.shared != nil && n > 0 {
+		s.shared.release(n)
+	}
+}
+
+// releaseOwn gives n of this scheduler's own slots back.
+func (s *Scheduler) releaseOwn(n int) {
 	for i := 0; i < n; i++ {
 		s.slots <- struct{}{}
+	}
+}
+
+// sharedPass tells the shared pool a dispatch pass ended (sharedMember.pass).
+func (s *Scheduler) sharedPass() {
+	if s.shared != nil {
+		s.shared.pass()
 	}
 }
 
@@ -183,9 +218,9 @@ type attempt struct {
 func (s *Scheduler) runAttempts(ctx context.Context, f fanOut) ([]attempt, []*workspace.Workspace, error) {
 	if configured := s.configuredAttempts(f.issue); configured > f.attempts {
 		if f.experts != nil {
-			f.log.Warn("mixture of experts clamped to max_developers", "issue", f.issue.Number, "size", s.sizeOf(f.issue.Labels), "experts", configured, "max_developers", s.cfg.Scheduler.MaxDevelopers, "attempts", f.attempts)
+			f.log.Warn("mixture of experts clamped to max_developers", "issue", f.issue.Number, "size", s.sizeOf(f.issue.Labels), "experts", configured, "max_developers", s.cfg.Scheduler.MaxDevelopers, "pool", s.poolSize(), "attempts", f.attempts)
 		} else {
-			f.log.Warn("best-of-N clamped to max_developers", "issue", f.issue.Number, "size", s.sizeOf(f.issue.Labels), "best_of_n", configured, "max_developers", s.cfg.Scheduler.MaxDevelopers, "attempts", f.attempts)
+			f.log.Warn("best-of-N clamped to max_developers", "issue", f.issue.Number, "size", s.sizeOf(f.issue.Labels), "best_of_n", configured, "max_developers", s.cfg.Scheduler.MaxDevelopers, "pool", s.poolSize(), "attempts", f.attempts)
 		}
 	}
 	if f.experts != nil {

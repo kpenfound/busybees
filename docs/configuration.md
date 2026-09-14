@@ -38,8 +38,8 @@ One bees process managing several projects reads a
 ## Machine config: several projects
 
 A machine config is a separate file that lists the `bees.toml` files of the
-projects one bees process manages. It holds one key, `projects`, and nothing
-else:
+projects one bees process manages, and holds the one setting that spans
+them:
 
 ```toml
 projects = [
@@ -47,6 +47,7 @@ projects = [
   "../bar/bees.toml",
   "/srv/factories/baz.toml",
 ]
+max_developers = 3
 ```
 
 - A relative path is relative to the directory of the machine config. A
@@ -55,9 +56,20 @@ projects = [
   missing file, a directory, an empty entry, a project listed twice, or a
   project file that fails to load is an error naming the entry, for example
   `projects[1] = "../bar/bees.toml": ...`.
-- The list must not be empty, and any key besides `projects` is a load error.
-  Project settings stay in each project's `bees.toml`, so each project keeps
-  its own state directory, mailbox and notes.
+- The list must not be empty, and any key besides `projects` and
+  `max_developers` is a load error. Project settings stay in each project's
+  `bees.toml`, so each project keeps its own state directory, mailbox and
+  notes.
+- `max_developers` caps the developer slots in use across every project
+  listed: the total of what their
+  [`scheduler.max_developers`](#scheduler) pools have out at once, a
+  requested review and every attempt of a fan-out counted like a worker.
+  Each project keeps its own `max_developers`; the machine's is on top of
+  them. Unset or `0` is no cap across projects, and a negative value is an
+  error. When the cap is reached and a slot frees up, it goes to the project
+  that has waited longest for one, not to the project that just gave it up,
+  so a busy project cannot starve the others. See
+  [Several projects in one process](architecture.md#several-projects-in-one-process).
 - The file has no `version` key.
 
 bees finds a machine config the same way it finds `bees.toml`: `--config`,
