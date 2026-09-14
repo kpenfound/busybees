@@ -678,11 +678,48 @@ func TestCodexRoleHasNoDefaultModel(t *testing.T) {
 	}
 }
 
+// opencode's --model takes a provider/model string with no sensible
+// bees-side default, so an opencode role with no model resolves to none,
+// the same as codex, per TestCodexRoleHasNoDefaultModel.
+func TestOpenCodeRoleHasNoDefaultModel(t *testing.T) {
+	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nagent = \"opencode\"\n[roles.qa]\nagent = \"opencode\"\nmodel = \"ollama/llama3\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev, err := cfg.Role(RoleDeveloper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dev.Agent != AgentOpenCode {
+		t.Fatalf("agent: got %q want %q", dev.Agent, AgentOpenCode)
+	}
+	if dev.Model != "" || dev.FallbackModel != "" {
+		t.Errorf("opencode role with no model: model %q fallback %q, want both empty", dev.Model, dev.FallbackModel)
+	}
+	qa, _ := cfg.Role(RoleQA)
+	if qa.Model != "ollama/llama3" || qa.FallbackModel != "" {
+		t.Errorf("opencode role with a model: %q / %q", qa.Model, qa.FallbackModel)
+	}
+	// A role overrides an opencode global the same way it does codex.
+	cfg, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[global]\nagent = \"opencode\"\n[roles.developer]\nagent = \"claude\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev, _ = cfg.Role(RoleDeveloper)
+	if dev.Agent != AgentClaude || dev.Model != DefaultModel {
+		t.Errorf("role overrides opencode global: %+v", dev)
+	}
+	pm, _ := cfg.Role(RoleProductManager)
+	if pm.Agent != AgentOpenCode {
+		t.Errorf("global fallback: got %q want opencode", pm.Agent)
+	}
+}
+
 // An unknown agent is a load error naming the scope and the accepted values.
 func TestAgentValidation(t *testing.T) {
 	for body, want := range map[string]string{
-		"version = 1\n[project]\nrepo = \"a/b\"\n[global]\nagent = \"gpt\"\n":          "global.agent must be one of claude, codex",
-		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nagent = \"gpt\"\n": "roles.developer.agent must be one of claude, codex",
+		"version = 1\n[project]\nrepo = \"a/b\"\n[global]\nagent = \"gpt\"\n":          "global.agent must be one of claude, codex, opencode",
+		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nagent = \"gpt\"\n": "roles.developer.agent must be one of claude, codex, opencode",
 	} {
 		_, err := Load(writeConfig(t, body))
 		if err == nil {
