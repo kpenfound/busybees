@@ -29,6 +29,10 @@ type watch struct {
 	// transcript.jsonl they were read from; the next read starts there.
 	lines []string
 	off   int64
+	// cost is the running total of an opencode session's cost, carried
+	// across reads the same way off is: opencode reports it per step
+	// rather than once at the end.
+	cost float64
 	// err is the last transcript read that failed. The lines already read
 	// stay on screen: a view that blanks itself says less than a stale one.
 	err string
@@ -66,6 +70,7 @@ type transcriptMsg struct {
 	gen   int
 	lines []string
 	off   int64
+	cost  float64
 	err   error
 }
 
@@ -97,10 +102,10 @@ func (m Model) readTail() tea.Cmd {
 	if w == nil {
 		return nil
 	}
-	dir, off := w.dir, w.off
+	dir, off, cost := w.dir, w.off, w.cost
 	return func() tea.Msg {
-		lines, next, err := readTranscript(dir, off)
-		return transcriptMsg{gen: gen, lines: lines, off: next, err: err}
+		lines, next, nextCost, err := readTranscript(dir, off, cost)
+		return transcriptMsg{gen: gen, lines: lines, off: next, cost: nextCost, err: err}
 	}
 }
 

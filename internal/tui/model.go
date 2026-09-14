@@ -610,7 +610,7 @@ func (m *Model) applyTranscript(msg transcriptMsg) {
 		m.watching.err = msg.err.Error()
 		return
 	}
-	m.watching.err, m.watching.off = "", msg.off
+	m.watching.err, m.watching.off, m.watching.cost = "", msg.off, msg.cost
 	m.watching.lines = append(m.watching.lines, msg.lines...)
 	if n := len(m.watching.lines) - maxTranscriptLines; n > 0 {
 		m.watching.lines = m.watching.lines[n:]

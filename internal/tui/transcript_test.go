@@ -24,7 +24,7 @@ const fixtureTranscript = "testdata/transcript.jsonl"
 // the init line, the thinking-token and task bookkeeping, the rate-limit
 // events — is dropped, and a thought is a marker rather than the thought.
 func TestTheTranscriptRendersWhatASessionSaidAndDid(t *testing.T) {
-	lines, off, err := readTranscript("testdata", 0)
+	lines, off, _, err := readTranscript("testdata", 0, 0)
 	if err != nil {
 		t.Fatalf("reading the fixture transcript: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestOnlyWholeTranscriptLinesAreRead(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	lines, off, err := readTranscript(dir, 0)
+	lines, off, _, err := readTranscript(dir, 0, 0)
 	if err != nil {
 		t.Fatalf("first read: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestOnlyWholeTranscriptLinesAreRead(t *testing.T) {
 	if err := os.WriteFile(path, []byte(whole+half+rest), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	lines, off, err = readTranscript(dir, off)
+	lines, off, _, err = readTranscript(dir, off, 0)
 	if err != nil {
 		t.Fatalf("second read: %v", err)
 	}
@@ -125,11 +125,11 @@ func TestOnlyWholeTranscriptLinesAreRead(t *testing.T) {
 // directory is created before claude is started, so a missing file is the
 // ordinary first moment of a session and never an error to report.
 func TestAMissingTranscriptIsNotAnError(t *testing.T) {
-	lines, off, err := readTranscript(t.TempDir(), 0)
+	lines, off, _, err := readTranscript(t.TempDir(), 0, 0)
 	if err != nil || len(lines) != 0 || off != 0 {
 		t.Errorf("readTranscript on a session with no transcript = (%q, %d, %v), want nothing at all", lines, off, err)
 	}
-	if lines, off, err := readTranscript("", 0); err != nil || len(lines) != 0 || off != 0 {
+	if lines, off, _, err := readTranscript("", 0, 0); err != nil || len(lines) != 0 || off != 0 {
 		t.Errorf("readTranscript on a session with no directory = (%q, %d, %v), want nothing at all", lines, off, err)
 	}
 }
@@ -144,7 +144,7 @@ func TestALineTheViewCannotParseIsDropped(t *testing.T) {
 		`{"type":"system","subtype":"init"}`,
 		`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed"}}`,
 	} {
-		if got := renderTranscriptLine([]byte(line)); len(got) != 0 {
+		if got, _ := renderTranscriptLine([]byte(line), 0); len(got) != 0 {
 			t.Errorf("renderTranscriptLine(%q) = %q, want nothing", line, got)
 		}
 	}
@@ -155,14 +155,14 @@ func TestALineTheViewCannotParseIsDropped(t *testing.T) {
 // it happened. So assistant text is kept whole and indented under its
 // marker, and a user turn is cut short with a count of what was left.
 func TestALongBlockIsIndentedUnderItsMarkerAndAUserTurnIsCutShort(t *testing.T) {
-	say := renderTranscriptLine([]byte(
-		`{"type":"assistant","message":{"content":[{"type":"text","text":"first\nsecond\nthird"}]}}`))
+	say, _ := renderTranscriptLine([]byte(
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"first\nsecond\nthird"}]}}`), 0)
 	if want := []string{"● first", "  second", "  third"}; strings.Join(say, "|") != strings.Join(want, "|") {
 		t.Errorf("assistant text rendered as %q, want %q", say, want)
 	}
 
-	turn := renderTranscriptLine([]byte(
-		`{"type":"user","message":{"content":[{"type":"text","text":"a\nb\nc\nd\ne\nf"}]}}`))
+	turn, _ := renderTranscriptLine([]byte(
+		`{"type":"user","message":{"content":[{"type":"text","text":"a\nb\nc\nd\ne\nf"}]}}`), 0)
 	if len(turn) != 4 || !strings.HasPrefix(turn[0], userMark+"a") {
 		t.Fatalf("a user turn rendered as %q", turn)
 	}
@@ -182,7 +182,7 @@ func TestAFailedSessionsResultLineSaysSo(t *testing.T) {
 		{`{"type":"result","subtype":"error","is_error":true,"num_turns":2,"total_cost_usd":0.2}`,
 			"● session ended: failed, 2 turns, $0.20"},
 	} {
-		if got := renderTranscriptLine([]byte(tc.line)); len(got) != 1 || got[0] != tc.want {
+		if got, _ := renderTranscriptLine([]byte(tc.line), 0); len(got) != 1 || got[0] != tc.want {
 			t.Errorf("result line rendered as %q, want [%q]", got, tc.want)
 		}
 	}
@@ -211,7 +211,7 @@ func TestACodexTranscriptRendersTheSameWay(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, session.TranscriptFile), []byte(transcript), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	lines, _, err := readTranscript(dir, 0)
+	lines, _, _, err := readTranscript(dir, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,12 +241,73 @@ func TestACodexTranscriptRendersTheSameWay(t *testing.T) {
 		}
 	}
 	// A turn that failed says so, and why.
-	if got := renderTranscriptLine([]byte(`{"type":"turn.failed","error":{"message":"stream disconnected\nbefore completion"}}`)); len(got) != 1 || got[0] != "● session ended: failed: stream disconnected before completion" {
+	if got, _ := renderTranscriptLine([]byte(`{"type":"turn.failed","error":{"message":"stream disconnected\nbefore completion"}}`), 0); len(got) != 1 || got[0] != "● session ended: failed: stream disconnected before completion" {
 		t.Errorf("failed turn rendered as %q", got)
 	}
 	// So does a bare "error" event, codex's other way of ending a turn,
 	// whose message sits at the top level rather than under "error".
-	if got := renderTranscriptLine([]byte(`{"type":"error","message":"You have hit your usage limit. Try again at 3pm."}`)); len(got) != 1 || got[0] != "● session ended: failed: You have hit your usage limit. Try again at 3pm." {
+	if got, _ := renderTranscriptLine([]byte(`{"type":"error","message":"You have hit your usage limit. Try again at 3pm."}`), 0); len(got) != 1 || got[0] != "● session ended: failed: You have hit your usage limit. Try again at 3pm." {
 		t.Errorf("error event rendered as %q", got)
+	}
+}
+
+// An opencode session's transcript reads the same way a claude or codex
+// one does: what the session said, and the end of the session — with the
+// cost opencode reports per step summed into a running total, since it is
+// known here unlike codex's. A step that ends to call tools renders
+// nothing, but its cost still counts.
+func TestAnOpenCodeTranscriptRendersTheSameWay(t *testing.T) {
+	transcript := strings.Join([]string{
+		`{"type":"text","sessionID":"ses_1","part":{"type":"text","text":"I'll start by reading the diff"}}`,
+		`{"type":"step_finish","sessionID":"ses_1","part":{"type":"step-finish","reason":"tool-calls","cost":0.03}}`,
+		`{"type":"step_finish","sessionID":"ses_1","part":{"type":"step-finish","reason":"stop","cost":0.04}}`,
+	}, "\n") + "\n"
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, session.TranscriptFile), []byte(transcript), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lines, _, cost, err := readTranscript(dir, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"● I'll start by reading the diff",
+		"● session ended: ok, $0.07",
+	}
+	if got := strings.Join(lines, "\n"); got != strings.Join(want, "\n") {
+		t.Errorf("the rendered transcript = %q, want %q", got, want)
+	}
+	if cost != 0.07 {
+		t.Errorf("the running cost = %v, want the two steps summed to 0.07", cost)
+	}
+}
+
+// An opencode session that ends with an error, rather than a step_finish
+// whose reason is "stop", says so from the error's nested message, falling
+// back to its name when there is no message.
+func TestAnOpenCodeSessionsErrorLineSaysWhy(t *testing.T) {
+	for _, tc := range []struct{ line, want string }{
+		{`{"type":"error","error":{"name":"ProviderAuthError","data":{"message":"invalid API key"}}}`,
+			"● session ended: failed: invalid API key"},
+		{`{"type":"error","error":{"name":"ProviderAuthError"}}`,
+			"● session ended: failed: ProviderAuthError"},
+	} {
+		if got, _ := renderTranscriptLine([]byte(tc.line), 0); len(got) != 1 || got[0] != tc.want {
+			t.Errorf("renderTranscriptLine(%q) = %q, want [%q]", tc.line, got, tc.want)
+		}
+	}
+}
+
+// A step that ends for a reason other than calling tools or stopping — the
+// model's own length or content-filter limit — ends the session as a
+// failure named after the reason, the same name
+// internal/session.opencodeBackend.consume gives it.
+func TestAnOpenCodeStepThatEndsForAnUnknownReasonFailsTheSession(t *testing.T) {
+	got, cost := renderTranscriptLine([]byte(`{"type":"step_finish","part":{"reason":"length","cost":0.01}}`), 0.02)
+	if want := []string{"● session ended: step_length"}; strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("renderTranscriptLine = %q, want %q", got, want)
+	}
+	if cost != 0.03 {
+		t.Errorf("the running cost = %v, want the step's cost added to what came in", cost)
 	}
 }
