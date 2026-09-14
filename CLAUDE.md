@@ -9,7 +9,9 @@ GitHub repository. Read `docs/architecture.md` before changing the scheduler.
 - Everything builds and tests through Dagger.
 - `dagger check` runs `go:lint-all`, `go:test-all` and `go:generate-all` (from the
   official `github.com/dagger/go` module in `dagger.toml`). Run it before committing.
-- `go build ./... && go test ./...` works locally too and is faster while iterating.
+- `go build ./... && go test ./...` works locally too and is faster while iterating,
+  but it runs neither lint nor codegen and is not a substitute for `dagger check`:
+  `dagger check` is the only validation a pull request may report as done.
 - `dagger call qa-playground playground terminal` opens a shell with `bees` built
   from the working tree, a test project and stubbed `gh` and `claude`: the QA
   playground, a dang module in `.dagger/modules/qa-playground` described in
