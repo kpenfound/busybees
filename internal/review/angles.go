@@ -282,6 +282,7 @@ func (a *Angles) Run(ctx context.Context, artifact string, project *Project, bri
 // general pass and its documentation read; a larger one the thorough general
 // pass instead, its tests and its acceptance criteria; and only the largest
 // its side effects, which are what a change breaks far from its diff.
+// internal/config's DefaultReviewAngles is a copy of it: change both together.
 var sizeAngles = map[string][]string{
 	"xs": {AngleQuickGeneral, AngleDocs},
 	"s":  {AngleQuickGeneral, AngleDocs},

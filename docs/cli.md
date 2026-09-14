@@ -354,7 +354,7 @@ against what you wrote, and durations print as duration strings (`"45m0s"`).
 The role-specific keys appear on the role that owns them: the reviewer carries
 its merge policy (`auto_merge`, `merge_method`, `checks_wait`,
 `checks_poll_interval`, `checks_timeout`, `max_check_fix_rounds`) and its
-resolved `stages`, and the developer its `commit_flags`, `max_size`,
+resolved `angles`, `brief_model`, `judge_model` and `angle_models`, and the developer its `commit_flags`, `max_size`,
 `model_by_size` and the best-of-N and mixture-of-experts keys.
 
 ```sh
@@ -365,7 +365,7 @@ bees config show developer
 ```json
 {
   "path": "/src/widgets/bees.toml",
-  "version": 1,
+  "version": 2,
   "filter": { "label": "bees", "require_label": true, "assignee": "@me", "milestone": "", "creator": "" },
   "github": { "login": "busybees-bot", "token": "$BEES_GITHUB_TOKEN", "git_name": "", "git_email": "" },
   "scheduler": { "poll_interval": "5m0s", "max_developers": 1, "max_review_rounds": 3, "...": "" },
@@ -378,7 +378,16 @@ bees config show developer
       "timeout": "45m0s",
       "enabled": true,
       "sandbox": "none",
-      "stages": ["implementation", "completeness", "cleanliness", "style"],
+      "angles": {
+        "xs": ["quick_general", "docs"],
+        "s": ["quick_general", "docs"],
+        "m": ["general", "docs", "test_coverage", "acceptance_criteria"],
+        "l": ["general", "docs", "test_coverage", "acceptance_criteria"],
+        "xl": ["general", "docs", "test_coverage", "acceptance_criteria", "side_effects"]
+      },
+      "brief_model": "",
+      "judge_model": "",
+      "angle_models": {},
       "auto_merge": false,
       "merge_method": "squash",
       "checks_wait": "1m0s",

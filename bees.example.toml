@@ -7,7 +7,7 @@
 # Format version of this file. bees refuses files newer than it understands and
 # upgrades older ones in memory. Leave it alone; bees releases that change the
 # format say what to do.
-version = 1
+version = 2
 
 #===============================================================================
 # Project
@@ -406,12 +406,15 @@ label = "bees"
 #pre_review_checks = true
 # Review anyway when those checks are still pending after this long.
 #pre_review_checks_timeout = "10m"
-# The review stages, in order. Each gets its own focus and its own verdict,
-# and an approval needs every one of them to pass. One or more of
-# implementation, completeness, cleanliness, style, product-fit. product-fit
-# judges the change against the work item's parent feature and is off by
-# default.
-#stages = ["implementation", "completeness", "cleanliness", "style"]
+# The review angles a pull request of each size is reviewed from, one or more
+# of quick_general, general, docs, test_coverage, acceptance_criteria,
+# side_effects. A size not named here gets its default:
+#angles = { xs = ["quick_general", "docs"], s = ["quick_general", "docs"], m = ["general", "docs", "test_coverage", "acceptance_criteria"], l = ["general", "docs", "test_coverage", "acceptance_criteria"], xl = ["general", "docs", "test_coverage", "acceptance_criteria", "side_effects"] }
+# The model for the session that writes the review brief, for the judge, and
+# per angle. Unset: model.
+#brief_model = "sonnet"
+#judge_model = "opus"
+#angle_models = { quick_general = "sonnet", docs = "sonnet" }
 #shell = "/bin/bash"
 #[roles.reviewer.env]
 #EXAMPLE = "value"

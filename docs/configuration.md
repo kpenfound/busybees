@@ -33,11 +33,11 @@ in [Reviewing a pull request](review.md#configuration).
 ## `version`
 
 ```toml
-version = 1
+version = 2
 ```
 
 The format version of the file, not of bees. `bees init` writes the current
-one, `1`. A file without the key is version 0.
+one, `2`. A file without the key is version 0.
 
 - A file newer than the running bees understands is refused with `upgrade
   bees`.
@@ -48,8 +48,10 @@ one, `1`. A file without the key is version 0.
   else, so the diff can be read before the factory starts; `bees config
   validate` only reports that a migration is pending.
 - Migrations rewrite the text of the file, so comments and the commented-out
-  defaults survive. The one migration, 0 to 1, adds the `version` key and
-  changes nothing else.
+  defaults survive. The migration from 0 to 1 adds the `version` key and
+  changes nothing else. The migration from 1 to 2 removes
+  `roles.reviewer.stages` and leaves a comment in its place: no stage maps
+  onto a review angle, so the reviewer gets the default `angles`.
 
 Adding an optional key never bumps the version. Renaming or removing a key, or
 changing what one means, does, and the release notes of the bees version that
@@ -1126,7 +1128,7 @@ headers = { Authorization = "Bearer $BROWSER_MCP_TOKEN" }
 ### Solo project, two developers
 
 ```toml
-version = 1
+version = 2
 # repo and default_branch are derived from the origin remote.
 
 [filter]
@@ -1158,7 +1160,7 @@ timeout = "30m"
 ### Team repository, only work assigned to me
 
 ```toml
-version = 1
+version = 2
 
 [project]
 remote = "upstream"        # my origin is a fork; the team repository is upstream

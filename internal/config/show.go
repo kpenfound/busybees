@@ -79,8 +79,12 @@ type RoleView struct {
 	MoEAssemblerPrompt *string               `json:"moe_assembler_prompt,omitempty"`
 	// MinIssueSize is only set on the product manager.
 	MinIssueSize *string `json:"min_issue_size,omitempty"`
-	// Stages is only set on the reviewer.
-	Stages *[]string `json:"stages,omitempty"`
+	// Angles and the brief, judge and angle model overrides are only set on
+	// the reviewer.
+	Angles      *map[string][]string `json:"angles,omitempty"`
+	BriefModel  *string              `json:"brief_model,omitempty"`
+	JudgeModel  *string              `json:"judge_model,omitempty"`
+	AngleModels *map[string]string   `json:"angle_models,omitempty"`
 	// MergeView is only set on the reviewer; its keys are inlined.
 	*MergeView
 }
@@ -184,8 +188,14 @@ func (c *Config) View(roles []string) (View, error) {
 			rv.MoEAssemblerModel = &rr.MoEAssemblerModel
 			rv.MoEAssemblerPrompt = &rr.MoEAssemblerPrompt
 		case RoleReviewer:
-			stages := c.ReviewStages()
-			rv.Stages = &stages
+			angles := map[string][]string{}
+			maps.Copy(angles, rr.Angles)
+			rv.Angles = &angles
+			rv.BriefModel = &rr.BriefModel
+			rv.JudgeModel = &rr.JudgeModel
+			angleModels := map[string]string{}
+			maps.Copy(angleModels, rr.AngleModels)
+			rv.AngleModels = &angleModels
 			m := c.Merge()
 			rv.MergeView = &MergeView{
 				AutoMerge:          m.AutoMerge,

@@ -200,7 +200,7 @@ func (d Duration) MarshalText() ([]byte, error) { return []byte(d.String()), nil
 // natively. Bump it (and add a migration) when a change to the schema cannot
 // be read by older files as-is: renamed or removed keys, changed semantics.
 // Adding optional keys is not a breaking change.
-const CurrentVersion = 1
+const CurrentVersion = 2
 
 // migration rewrites the text of a bees.toml from one format version to the
 // next. Migrations work on the text, not the decoded tree, so the user's
@@ -213,6 +213,7 @@ type migration func(text string) (string, error)
 // migrate`) writes the result back to disk.
 var migrations = map[int]migration{
 	0: addVersionKey,
+	1: dropReviewStages,
 }
 
 type Config struct {
@@ -553,10 +554,17 @@ type RoleSettings struct {
 	// PreReviewChecksTimeout bounds that pre-review read: still pending
 	// after this and the review happens anyway. Default 10m.
 	PreReviewChecksTimeout Duration `toml:"pre_review_checks_timeout"`
-	// Stages are the review stages a reviewer session runs, in order, each
-	// with its own focus and its own verdict. One or more of
-	// KnownReviewStages; unset means DefaultReviewStages.
-	Stages []string `toml:"stages"`
+	// Angles names the review angles a pull request of each size is reviewed
+	// from, keyed by "xs".."xl", each list one or more of KnownReviewAngles.
+	// A size it does not name gets DefaultReviewAngles.
+	Angles map[string][]string `toml:"angles"`
+	// BriefModel and JudgeModel override Model for the session that writes
+	// the review brief and for the judge. Empty: Model.
+	BriefModel string `toml:"brief_model"`
+	JudgeModel string `toml:"judge_model"`
+	// AngleModels overrides Model per angle, keyed by angle name. An angle
+	// it does not name uses Model.
+	AngleModels map[string]string `toml:"angle_models"`
 }
 
 // MergePolicy is the reviewer's checks configuration. It covers both the
@@ -575,9 +583,9 @@ type MergePolicy struct {
 	PreReviewChecksTimeout time.Duration
 }
 
-// KnownReviewStages are the review stages roles.reviewer.stages may name. A
-// reviewer session runs the configured ones in order and gives each its own
-// verdict; approval needs every one of them to pass.
+// KnownReviewStages are the review stages the reviewer's prompt describes. A
+// reviewer session runs the ones ReviewStages returns in order and gives each
+// its own verdict; approval needs every one of them to pass.
 //
 //   - implementation — is it correct? Error handling, edge cases, tests, security.
 //   - completeness   — does it deliver the work item's acceptance criteria?
@@ -586,25 +594,39 @@ type MergePolicy struct {
 //   - product-fit    — does it fit the parent feature and the product direction?
 var KnownReviewStages = []string{"implementation", "completeness", "cleanliness", "style", StageProductFit}
 
-// DefaultReviewStages is roles.reviewer.stages when it is not set: the four
-// stages that judge the change against the work item. StageProductFit is
-// deliberately absent, so the default reproduces the single-pass reviewer's
-// scope — a work item the project manager already scoped is not the place to
-// re-open the product decision, and only a configured product-fit stage makes
-// the parent feature worth a lookup.
+// DefaultReviewStages are the stages every reviewer session runs: the four
+// that judge the change against the work item. StageProductFit is absent, so
+// the parent feature is not looked up for a review.
 var DefaultReviewStages = []string{"implementation", "completeness", "cleanliness", "style"}
 
 // StageProductFit is the one stage that needs the work item's parent feature:
 // the scheduler looks the parent up only when it is configured.
 const StageProductFit = "product-fit"
 
-// ReviewStages returns the resolved roles.reviewer.stages. Validate has
-// already rejected an unknown stage and an empty list.
+// ReviewStages returns the review stages a reviewer session runs:
+// DefaultReviewStages, since roles.reviewer.stages is gone from bees.toml
+// (version 2 replaced it with roles.reviewer.angles). It stays until the
+// reviewer runs the angles instead, so the scheduler and the prompts keep
+// reviewing the way they did.
 func (c *Config) ReviewStages() []string {
-	if s := c.Roles[RoleReviewer].Stages; len(s) > 0 {
-		return slices.Clone(s)
-	}
 	return slices.Clone(DefaultReviewStages)
+}
+
+// KnownReviewAngles are the angles roles.reviewer.angles and
+// roles.reviewer.angle_models may name. It is a copy of
+// internal/review's BuiltinAngles, which imports this package and so cannot
+// be imported back; TestKnownReviewAnglesMatchReview keeps the two equal.
+var KnownReviewAngles = []string{"quick_general", "general", "docs", "test_coverage", "acceptance_criteria", "side_effects"}
+
+// DefaultReviewAngles are the angles a pull request of each size is reviewed
+// from when roles.reviewer.angles does not name that size. It is a copy of
+// sizeAngles in internal/review/angles.go: change both together.
+var DefaultReviewAngles = map[string][]string{
+	"xs": {"quick_general", "docs"},
+	"s":  {"quick_general", "docs"},
+	"m":  {"general", "docs", "test_coverage", "acceptance_criteria"},
+	"l":  {"general", "docs", "test_coverage", "acceptance_criteria"},
+	"xl": {"general", "docs", "test_coverage", "acceptance_criteria", "side_effects"},
 }
 
 // Defaults for the merge policy.
@@ -1248,16 +1270,24 @@ type ResolvedRole struct {
 	MoEExpertsByName   map[string]MoEExpert
 	MoEAssemblerModel  string
 	MoEAssemblerPrompt string
-	FallbackModel      string
-	Agent              string
-	Effort             string
-	MaxTurns           int
-	Timeout            time.Duration
-	AllowedTools       []string
-	DisallowedTools    []string
-	Enabled            bool
-	Shell              string
-	Env                map[string]string
+	// Angles, the review angles per pull request size with every one of
+	// Sizes filled in; BriefModel, JudgeModel and AngleModels, the model
+	// overrides for the brief, the judge and each angle, empty or absent
+	// meaning Model. Reviewer only.
+	Angles          map[string][]string
+	BriefModel      string
+	JudgeModel      string
+	AngleModels     map[string]string
+	FallbackModel   string
+	Agent           string
+	Effort          string
+	MaxTurns        int
+	Timeout         time.Duration
+	AllowedTools    []string
+	DisallowedTools []string
+	Enabled         bool
+	Shell           string
+	Env             map[string]string
 	// Sandbox is the resolved sandbox mode, one of SandboxModes.
 	Sandbox string
 	// SandboxImage is the image a SandboxContainer session runs in, empty
@@ -1413,6 +1443,41 @@ func setVersion(text string, v int) string {
 // addVersionKey is the 0 -> 1 migration: the format is unchanged, the file
 // only gains its version key (which migrate itself sets).
 func addVersionKey(text string) (string, error) { return text, nil }
+
+// stagesNote replaces a roles.reviewer.stages line in a migrated file.
+const stagesNote = "# stages was removed in version 2: no review stage maps onto a review\n# angle, so the reviewer uses the default angles (see roles.reviewer.angles)."
+
+var (
+	tableHeaderRE = regexp.MustCompile(`^[ \t]*\[\[?[ \t]*([^\]]*?)[ \t]*\]\]?[ \t]*(#.*)?$`)
+	stagesLineRE  = regexp.MustCompile(`^[ \t]*#?[ \t]*stages[ \t]*=`)
+)
+
+// dropReviewStages is the 1 to 2 migration: roles.reviewer.stages gave way
+// to roles.reviewer.angles. The old stage names have no counterpart among the
+// angles, so the stages line (set or commented out, over as many lines as its
+// array takes) is replaced with a comment saying so and angles stays unset.
+func dropReviewStages(text string) (string, error) {
+	lines := strings.Split(text, "\n")
+	out := make([]string, 0, len(lines))
+	section := ""
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
+		if m := tableHeaderRE.FindStringSubmatch(line); m != nil {
+			section = m[1]
+		}
+		if section != "roles."+RoleReviewer || !stagesLineRE.MatchString(line) {
+			out = append(out, line)
+			continue
+		}
+		depth := strings.Count(line, "[") - strings.Count(line, "]")
+		for depth > 0 && i+1 < len(lines) {
+			i++
+			depth += strings.Count(lines[i], "[") - strings.Count(lines[i], "]")
+		}
+		out = append(out, stagesNote)
+	}
+	return strings.Join(out, "\n"), nil
+}
 
 // Find looks for bees.toml in dir and its parents.
 func Find(dir string) (string, error) {
@@ -1615,8 +1680,8 @@ func (c *Config) Validate() error {
 	errs = append(errs, c.Notes.validate()...)
 	check := func(scope string, rs RoleSettings) {
 		if scope != "roles."+RoleReviewer {
-			if rs.AutoMerge != nil || rs.MergeMethod != "" || rs.ChecksWait.Duration != 0 || rs.ChecksPollInterval.Duration != 0 || rs.ChecksTimeout.Duration != 0 || rs.MaxCheckFixRounds != 0 || rs.PreReviewChecks != nil || rs.PreReviewChecksTimeout.Duration != 0 || rs.Stages != nil {
-				errs = append(errs, fmt.Sprintf("%s: auto_merge, merge_method, checks_wait, checks_poll_interval, checks_timeout, max_check_fix_rounds, pre_review_checks, pre_review_checks_timeout and stages are only valid under roles.reviewer", scope))
+			if rs.AutoMerge != nil || rs.MergeMethod != "" || rs.ChecksWait.Duration != 0 || rs.ChecksPollInterval.Duration != 0 || rs.ChecksTimeout.Duration != 0 || rs.MaxCheckFixRounds != 0 || rs.PreReviewChecks != nil || rs.PreReviewChecksTimeout.Duration != 0 || rs.Angles != nil || rs.BriefModel != "" || rs.JudgeModel != "" || rs.AngleModels != nil {
+				errs = append(errs, fmt.Sprintf("%s: auto_merge, merge_method, checks_wait, checks_poll_interval, checks_timeout, max_check_fix_rounds, pre_review_checks, pre_review_checks_timeout, angles, brief_model, judge_model and angle_models are only valid under roles.reviewer", scope))
 			}
 		}
 		if scope != "global" && rs.SkillsRefresh != "" {
@@ -1679,14 +1744,28 @@ func (c *Config) Validate() error {
 				errs = append(errs, fmt.Sprintf("%s: size %q is in both best_of_n_by_size and moe_experts_by_size, and a size fans out one way or the other", scope, size))
 			}
 		}
-		// An unset list means the default; an explicit empty one is a
+		// An absent size means the default; an explicit empty list is a
 		// configuration error, not "review nothing".
-		if rs.Stages != nil && len(rs.Stages) == 0 {
-			errs = append(errs, fmt.Sprintf("%s.stages must name at least one stage (want one or more of %s)", scope, strings.Join(KnownReviewStages, ", ")))
+		for _, size := range slices.Sorted(maps.Keys(rs.Angles)) {
+			if !slices.Contains(Sizes, size) {
+				errs = append(errs, fmt.Sprintf("%s.angles: unknown size %q (want one of %s)", scope, size, strings.Join(Sizes, ", ")))
+				continue
+			}
+			if len(rs.Angles[size]) == 0 {
+				errs = append(errs, fmt.Sprintf("%s.angles.%s must name at least one angle (want one or more of %s)", scope, size, strings.Join(KnownReviewAngles, ", ")))
+			}
+			for _, angle := range rs.Angles[size] {
+				if !slices.Contains(KnownReviewAngles, angle) {
+					errs = append(errs, fmt.Sprintf("%s.angles.%s: unknown angle %q (want one or more of %s)", scope, size, angle, strings.Join(KnownReviewAngles, ", ")))
+				}
+			}
 		}
-		for _, stage := range rs.Stages {
-			if !slices.Contains(KnownReviewStages, stage) {
-				errs = append(errs, fmt.Sprintf("%s.stages: unknown stage %q (want one or more of %s)", scope, stage, strings.Join(KnownReviewStages, ", ")))
+		for _, angle := range slices.Sorted(maps.Keys(rs.AngleModels)) {
+			switch {
+			case !slices.Contains(KnownReviewAngles, angle):
+				errs = append(errs, fmt.Sprintf("%s.angle_models: unknown angle %q (want one of %s)", scope, angle, strings.Join(KnownReviewAngles, ", ")))
+			case strings.TrimSpace(rs.AngleModels[angle]) == "":
+				errs = append(errs, fmt.Sprintf("%s.angle_models.%s must name a model", scope, angle))
 			}
 		}
 		switch rs.MergeMethod {
@@ -1821,6 +1900,8 @@ func (c *Config) Role(name string) (ResolvedRole, error) {
 		Name:                    canonical,
 		Model:                   firstNonEmpty(rs.Model, g.Model, defaultModel),
 		ModelBySize:             sizeModels(rs.ModelBySize),
+		Angles:                  reviewAngles(rs.Angles),
+		AngleModels:             sizeModels(rs.AngleModels),
 		BestOfNBySize:           sizeInts(rs.BestOfNBySize),
 		BestOfNModel:            strings.TrimSpace(rs.BestOfNModel),
 		BestOfNPrompt:           strings.TrimSpace(rs.BestOfNPrompt),
@@ -1830,6 +1911,8 @@ func (c *Config) Role(name string) (ResolvedRole, error) {
 		MoEExpertsByName:        expertTable(rs.MoEExperts),
 		MoEAssemblerModel:       strings.TrimSpace(rs.MoEAssemblerModel),
 		MoEAssemblerPrompt:      strings.TrimSpace(rs.MoEAssemblerPrompt),
+		BriefModel:              strings.TrimSpace(rs.BriefModel),
+		JudgeModel:              strings.TrimSpace(rs.JudgeModel),
 		FallbackModel:           firstNonEmpty(rs.FallbackModel, g.FallbackModel, defaultFallback),
 		Agent:                   agent,
 		Effort:                  firstNonEmpty(rs.Effort, g.Effort),
@@ -1996,6 +2079,21 @@ func sizeInts(m map[string]int) map[string]int {
 			out = make(map[string]int, len(m))
 		}
 		out[size] = n
+	}
+	return out
+}
+
+// reviewAngles resolves roles.reviewer.angles: one entry for every one of
+// Sizes, the configured list where there is one and DefaultReviewAngles
+// otherwise, every list a copy.
+func reviewAngles(m map[string][]string) map[string][]string {
+	out := make(map[string][]string, len(Sizes))
+	for _, size := range Sizes {
+		if angles := m[size]; len(angles) > 0 {
+			out[size] = slices.Clone(angles)
+		} else {
+			out[size] = slices.Clone(DefaultReviewAngles[size])
+		}
 	}
 	return out
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -418,11 +419,11 @@ func TestMergePolicy(t *testing.T) {
 	if p = cfg.Merge(); p.PreReviewChecks || p.PreReviewChecksTimeout != 90*time.Second {
 		t.Fatalf("pre-review custom: %+v", p)
 	}
-	// Both pre-review keys belong to the reviewer only. stages joined the same
-	// list in #240, which is why the sentence names it too.
+	// Both pre-review keys belong to the reviewer only, in the same sentence
+	// as the other reviewer-only keys.
 	for _, scope := range []string{"[global]", "[roles.developer]"} {
 		_, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"+scope+"\npre_review_checks = true\npre_review_checks_timeout = \"5m\"\n"))
-		if err == nil || !strings.Contains(err.Error(), "pre_review_checks, pre_review_checks_timeout and stages are only valid under roles.reviewer") {
+		if err == nil || !strings.Contains(err.Error(), "pre_review_checks, pre_review_checks_timeout, angles, brief_model, judge_model and angle_models are only valid under roles.reviewer") {
 			t.Fatalf("%s: %v", scope, err)
 		}
 	}
@@ -849,7 +850,7 @@ func TestVersion(t *testing.T) {
 			t.Errorf("newer: %v", err)
 		}
 	}
-	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"))
+	cfg, err := Load(writeConfig(t, "version = 2\n[project]\nrepo = \"a/b\"\n"))
 	if err != nil || cfg.Version != CurrentVersion || cfg.NeedsRewrite() {
 		t.Fatalf("current: %+v %v", cfg, err)
 	}
@@ -874,7 +875,7 @@ func TestMigrateUnversionedFile(t *testing.T) {
 	}
 	data, _ := os.ReadFile(path)
 	text := string(data)
-	want := "# my factory\n\n# Format version of this file (see docs/configuration.md).\nversion = 1\n\n[project]\n# keep this comment\nrepo = \"a/b\"\n#branch_prefix = \"bees/\"\n"
+	want := "# my factory\n\n# Format version of this file (see docs/configuration.md).\nversion = 2\n\n[project]\n# keep this comment\nrepo = \"a/b\"\n#branch_prefix = \"bees/\"\n"
 	if text != want {
 		t.Fatalf("rewritten file:\n%s\nwant:\n%s", text, want)
 	}
@@ -1587,7 +1588,7 @@ func TestNotesSettings(t *testing.T) {
 		t.Fatalf("default: %q, want %q", cfg.Notes.Backend, NotesBackendFile)
 	}
 
-	path := writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"+neo4jNotesTOML)
+	path := writeConfig(t, "version = 2\n[project]\nrepo = \"a/b\"\n"+neo4jNotesTOML)
 	cfg, err = Load(path)
 	if err != nil {
 		t.Fatal(err)
@@ -1885,68 +1886,94 @@ func TestGitHubTokenVar(t *testing.T) {
 	}
 }
 
-// roles.reviewer.stages is the reviewer's ordered review stages. The default
-// carries no product-fit stage on purpose: it is what keeps the staged
-// reviewer's scope the same as the single-pass reviewer it replaced (#240).
-// An unknown stage and an explicitly empty list are both load errors, and the
-// error has to name the key, the bad value and the valid set, because a
-// mistyped stage would otherwise be silently skipped.
-func TestReviewStages(t *testing.T) {
-	head := "version = 1\n[project]\nrepo = \"a/b\"\n"
+// roles.reviewer.angles picks the review angles per pull request size, and
+// every size resolves to a list: the configured one where there is one,
+// DefaultReviewAngles otherwise. brief_model, judge_model and angle_models
+// are model overrides that resolve to what was written, empty or absent
+// meaning Model, which the session that runs them falls back to. Every bad
+// value is a load error naming the key, the value and the valid set.
+func TestReviewAngles(t *testing.T) {
+	head := "version = 2\n[project]\nrepo = \"a/b\"\n"
 	cfg, err := Load(writeConfig(t, head))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := cfg.ReviewStages(); !slices.Equal(got, DefaultReviewStages) {
-		t.Errorf("default stages: %v, want %v", got, DefaultReviewStages)
-	}
-	if slices.Contains(cfg.ReviewStages(), StageProductFit) {
-		t.Errorf("product-fit is on by default: %v", cfg.ReviewStages())
-	}
-	// Every default stage is a known one, and product-fit is known too.
-	for _, stage := range DefaultReviewStages {
-		if !slices.Contains(KnownReviewStages, stage) {
-			t.Errorf("default stage %q is not in the known set %v", stage, KnownReviewStages)
-		}
-	}
-	if !slices.Contains(KnownReviewStages, StageProductFit) {
-		t.Errorf("product-fit is not in the known set %v", KnownReviewStages)
-	}
-	// The resolver hands out a copy: a caller that sorts or appends to it
-	// must not rewrite the default for every later session. Compare against a
-	// snapshot taken first, not against DefaultReviewStages itself: a resolver
-	// that returns the package slice mutates the want along with the got, and
-	// the assertion passes on exactly the code it exists to reject.
-	want := slices.Clone(DefaultReviewStages)
-	cfg.ReviewStages()[0] = "mutated"
-	if got := cfg.ReviewStages(); !slices.Equal(got, want) {
-		t.Errorf("stages after a caller mutated its copy: %v, want %v", got, want)
-	}
-
-	cfg, err = Load(writeConfig(t, head+"[roles.reviewer]\nstages = [\"product-fit\", \"style\"]\n"))
+	r, err := cfg.Role(RoleReviewer)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := cfg.ReviewStages(); !slices.Equal(got, []string{"product-fit", "style"}) {
-		t.Errorf("configured stages: %v", got)
+	if !reflect.DeepEqual(r.Angles, DefaultReviewAngles) {
+		t.Errorf("default angles: %v, want %v", r.Angles, DefaultReviewAngles)
 	}
-	// A configured list is copied too, so a caller cannot rewrite the config.
-	cfg.ReviewStages()[0] = "mutated"
-	if got := cfg.ReviewStages(); !slices.Equal(got, []string{"product-fit", "style"}) {
-		t.Errorf("configured stages after a caller mutated its copy: %v", got)
+	if r.BriefModel != "" || r.JudgeModel != "" || len(r.AngleModels) != 0 {
+		t.Errorf("model overrides set by default: %q %q %v", r.BriefModel, r.JudgeModel, r.AngleModels)
+	}
+	for _, size := range Sizes {
+		for _, angle := range DefaultReviewAngles[size] {
+			if !slices.Contains(KnownReviewAngles, angle) {
+				t.Errorf("default angle %q for %s is not in %v", angle, size, KnownReviewAngles)
+			}
+		}
+	}
+	if !slices.Equal(slices.Sorted(maps.Keys(DefaultReviewAngles)), slices.Sorted(slices.Values(Sizes))) {
+		t.Errorf("DefaultReviewAngles is keyed by %v, want every one of %v", slices.Collect(maps.Keys(DefaultReviewAngles)), Sizes)
+	}
+	// The resolved lists are copies: a caller that appends to or rewrites
+	// one must not change the default for every later session. Compare with
+	// a snapshot, not with DefaultReviewAngles, which a shared slice would
+	// change along with the got.
+	want := slices.Clone(DefaultReviewAngles["xs"])
+	r.Angles["xs"][0] = "mutated"
+	if r, _ = cfg.Role(RoleReviewer); !slices.Equal(r.Angles["xs"], want) {
+		t.Errorf("xs after a caller mutated its copy: %v, want %v", r.Angles["xs"], want)
 	}
 
+	cfg, err = Load(writeConfig(t, head+"[roles.reviewer]\nmodel = \"opus\"\nangles = { m = [\"general\", \"docs\"] }\nbrief_model = \" haiku \"\njudge_model = \"sonnet\"\nangle_models = { docs = \" haiku \", general = \"opus\" }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err = cfg.Role(RoleReviewer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Angles["m"]; !slices.Equal(got, []string{"general", "docs"}) {
+		t.Errorf("configured m: %v", got)
+	}
+	for _, size := range Sizes {
+		if size != "m" && !slices.Equal(r.Angles[size], DefaultReviewAngles[size]) {
+			t.Errorf("%s: %v, want the default %v", size, r.Angles[size], DefaultReviewAngles[size])
+		}
+	}
+	if r.Model != "opus" || r.BriefModel != "haiku" || r.JudgeModel != "sonnet" {
+		t.Errorf("models: model %q brief %q judge %q", r.Model, r.BriefModel, r.JudgeModel)
+	}
+	if want := map[string]string{"docs": "haiku", "general": "opus"}; !reflect.DeepEqual(r.AngleModels, want) {
+		t.Errorf("angle_models: %v, want %v", r.AngleModels, want)
+	}
+	r.Angles["m"][0] = "mutated"
+	if r, _ = cfg.Role(RoleReviewer); r.Angles["m"][0] != "general" {
+		t.Errorf("configured m after a caller mutated its copy: %v", r.Angles["m"])
+	}
+
+	valid := "quick_general, general, docs, test_coverage, acceptance_criteria, side_effects"
+	scoped := ": auto_merge, merge_method, checks_wait, checks_poll_interval, checks_timeout, max_check_fix_rounds, pre_review_checks, pre_review_checks_timeout, angles, brief_model, judge_model and angle_models are only valid under roles.reviewer"
 	for _, tc := range []struct {
 		name, body, want string
 	}{
-		{"unknown stage", "[roles.reviewer]\nstages = [\"implementation\", \"vibes\"]\n",
-			"roles.reviewer.stages: unknown stage \"vibes\" (want one or more of implementation, completeness, cleanliness, style, product-fit)"},
-		{"empty list", "[roles.reviewer]\nstages = []\n",
-			"roles.reviewer.stages must name at least one stage (want one or more of implementation, completeness, cleanliness, style, product-fit)"},
-		{"global scope", "[global]\nstages = [\"style\"]\n",
-			"global: auto_merge, merge_method, checks_wait, checks_poll_interval, checks_timeout, max_check_fix_rounds, pre_review_checks, pre_review_checks_timeout and stages are only valid under roles.reviewer"},
-		{"another role", "[roles.developer]\nstages = [\"style\"]\n",
-			"roles.developer: auto_merge, merge_method, checks_wait, checks_poll_interval, checks_timeout, max_check_fix_rounds, pre_review_checks, pre_review_checks_timeout and stages are only valid under roles.reviewer"},
+		{"unknown angle", "[roles.reviewer]\nangles = { s = [\"docs\", \"vibes\"] }\n",
+			"roles.reviewer.angles.s: unknown angle \"vibes\" (want one or more of " + valid + ")"},
+		{"unknown size", "[roles.reviewer]\nangles = { xxl = [\"docs\"] }\n",
+			"roles.reviewer.angles: unknown size \"xxl\" (want one of xs, s, m, l, xl)"},
+		{"empty list", "[roles.reviewer]\nangles = { m = [] }\n",
+			"roles.reviewer.angles.m must name at least one angle (want one or more of " + valid + ")"},
+		{"unknown angle model", "[roles.reviewer]\nangle_models = { style = \"opus\" }\n",
+			"roles.reviewer.angle_models: unknown angle \"style\" (want one of " + valid + ")"},
+		{"empty angle model", "[roles.reviewer]\nangle_models = { docs = \" \" }\n",
+			"roles.reviewer.angle_models.docs must name a model"},
+		{"angles in global", "[global]\nangles = { m = [\"docs\"] }\n", "global" + scoped},
+		{"brief_model in another role", "[roles.developer]\nbrief_model = \"opus\"\n", "roles.developer" + scoped},
+		{"judge_model in another role", "[roles.qa]\njudge_model = \"opus\"\n", "roles.qa" + scoped},
+		{"angle_models in another role", "[roles.developer]\nangle_models = { docs = \"opus\" }\n", "roles.developer" + scoped},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := Load(writeConfig(t, head+tc.body))
@@ -1957,6 +1984,52 @@ func TestReviewStages(t *testing.T) {
 				t.Errorf("error is not actionable: %v", err)
 			}
 		})
+	}
+	// stages is gone: a version 2 file that still has it is an unknown key.
+	if _, err := Load(writeConfig(t, head+"[roles.reviewer]\nstages = [\"style\"]\n")); err == nil || !strings.Contains(err.Error(), "stages") {
+		t.Errorf("stages in a version 2 file: %v", err)
+	}
+}
+
+// The 1 to 2 migration drops roles.reviewer.stages, set or commented out and
+// over as many lines as its array takes, and leaves a comment where it was:
+// no stage maps onto an angle, so angles stays unset. A stages key anywhere
+// but [roles.reviewer] is not the reviewer's and is left alone.
+func TestMigrateReviewStages(t *testing.T) {
+	orig := "version = 1\n[project]\nrepo = \"a/b\"\n\n[roles.reviewer]\n# keep this comment\nauto_merge = true\n#stages = [\"implementation\", \"style\"]\nstages = [\n  \"implementation\",\n  \"completeness\",\n]\nmodel = \"opus\"\n\n[roles.reviewer.env]\nstages = \"kept\"\n"
+	path := writeConfig(t, orig)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Version != 2 || cfg.MigratedFrom != 1 || !cfg.NeedsRewrite() {
+		t.Fatalf("migrated in memory: version %d from %d", cfg.Version, cfg.MigratedFrom)
+	}
+	r, err := cfg.Role(RoleReviewer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(r.Angles, DefaultReviewAngles) || r.Model != "opus" || r.Env["stages"] != "kept" || !cfg.Merge().AutoMerge {
+		t.Errorf("migrated reviewer: %+v", r)
+	}
+	backup, err := cfg.Rewrite()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	want := "version = 2\n[project]\nrepo = \"a/b\"\n\n[roles.reviewer]\n# keep this comment\nauto_merge = true\n" + stagesNote + "\n" + stagesNote + "\nmodel = \"opus\"\n\n[roles.reviewer.env]\nstages = \"kept\"\n"
+	if string(data) != want {
+		t.Fatalf("rewritten file:\n%s\nwant:\n%s", data, want)
+	}
+	if filepath.Base(backup) != "bees.toml.v1.bak" {
+		t.Errorf("backup: %s", backup)
+	}
+	if again, err := Load(path); err != nil || again.NeedsRewrite() {
+		t.Fatalf("reload: %v", err)
+	}
+	// A file with no stages key comes through unchanged but for the version.
+	if got, _ := migrate("version = 1\n[roles.qa]\nstages = 1\n", 1, 2, migrations); got != "version = 2\n[roles.qa]\nstages = 1\n" {
+		t.Errorf("stages outside roles.reviewer: %q", got)
 	}
 }
 
