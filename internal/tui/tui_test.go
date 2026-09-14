@@ -190,3 +190,94 @@ func (f *drainingFactory) Run(ctx context.Context) error {
 	f.drain()
 	return nil
 }
+
+// fakeMachine stands in for the daemon: it runs and hard-stops like a
+// factory and has no event stream of its own — each project's comes with
+// Deps.Projects.
+type fakeMachine struct {
+	stop      chan struct{}
+	err       error
+	ctxErr    error
+	hardStops atomic.Int32
+}
+
+func (f *fakeMachine) HardStop() { f.hardStops.Add(1) }
+
+func (f *fakeMachine) Run(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		f.ctxErr = ctx.Err()
+	case <-f.stop:
+	}
+	return f.err
+}
+
+// A daemon's view lives exactly as long as the daemon, reads every project's
+// event stream, and returns what the daemon returned.
+func TestRunMachineEndsWhenTheDaemonDoes(t *testing.T) {
+	headless(t)
+	want := errors.New("every project stopped")
+	foo, bar := make(chan scheduler.Event, 1), make(chan scheduler.Event, 1)
+	m := &fakeMachine{stop: make(chan struct{}), err: want}
+	done := make(chan error, 1)
+	go func() {
+		done <- RunMachine(context.Background(), Deps{Projects: []Project{
+			{Name: "foo", Repo: "acme/foo", Events: foo},
+			{Name: "bar", Repo: "acme/bar", Events: bar},
+		}}, m, nil)
+	}()
+	// Both streams are read: neither channel is left full.
+	foo <- scheduler.Event{Kind: scheduler.EventPoll}
+	bar <- scheduler.Event{Kind: scheduler.EventPoll}
+	deadline := time.After(30 * time.Second)
+	for len(foo) > 0 || len(bar) > 0 {
+		select {
+		case <-deadline:
+			t.Fatalf("the view did not read both streams: foo %d, bar %d", len(foo), len(bar))
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	close(m.stop)
+	select {
+	case err := <-done:
+		if !errors.Is(err, want) {
+			t.Errorf("RunMachine returned %v, want the daemon's %v", err, want)
+		}
+	case <-deadline:
+		t.Fatal("RunMachine did not return after the daemon stopped")
+	}
+}
+
+// Ctrl-C in a daemon's view stops the daemon, and every project with it: the
+// first press cancels its context, the second hard-stops it.
+func TestCtrlCInADaemonsViewStopsTheDaemon(t *testing.T) {
+	keys, keyboard := io.Pipe()
+	real := programOptions
+	t.Cleanup(func() { programOptions = real })
+	programOptions = func() []tea.ProgramOption {
+		return []tea.ProgramOption{tea.WithInput(keys), tea.WithOutput(io.Discard), tea.WithoutRenderer()}
+	}
+	m := &fakeMachine{stop: make(chan struct{})}
+	done := make(chan error, 1)
+	go func() {
+		done <- RunMachine(context.Background(), Deps{Projects: []Project{{Name: "foo"}, {Name: "bar"}}}, m, nil)
+	}()
+	if _, err := keyboard.Write([]byte{3, 3}); err != nil { // ^C: cool down, then stop now
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("RunMachine returned %v, want nil", err)
+		}
+		if m.ctxErr == nil {
+			t.Error("ctrl-c did not cancel the daemon's context")
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("ctrl-c did not stop the daemon")
+	}
+	_ = keyboard.Close()
+	if m.hardStops.Load() != 1 {
+		t.Errorf("the daemon was hard-stopped %d times, want once", m.hardStops.Load())
+	}
+}

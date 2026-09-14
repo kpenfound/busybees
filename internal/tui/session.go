@@ -19,11 +19,14 @@ import (
 // last thing it said is usually the thing worth reading, so the view keeps
 // showing it until the reader goes back.
 type watch struct {
-	name  string
-	role  string
-	dir   string
-	issue int
-	pr    int
+	// project is the index in Model.projects of the project the session
+	// belongs to: whose Send a typed message goes through.
+	project int
+	name    string
+	role    string
+	dir     string
+	issue   int
+	pr      int
 
 	// lines are the rendered transcript lines and off is how much of
 	// transcript.jsonl they were read from; the next read starts there.
@@ -55,11 +58,23 @@ type watch struct {
 // open starts watching the session selected in the Now panel.
 func (m Model) open(s running) Model {
 	m.watching = &watch{
-		name: s.name, role: s.role, dir: s.dir, issue: s.issue, pr: s.pr,
+		project: s.project, name: s.name, role: s.role, dir: s.dir, issue: s.issue, pr: s.pr,
 		follow: true,
 	}
 	m.tailGen++
 	return m
+}
+
+// ref names the watched session: its project and its name.
+func (w *watch) ref() sessionRef { return sessionRef{project: w.project, name: w.name} }
+
+// sender is the Send of the watched session's project, nil when there is
+// none to send through.
+func (m Model) sender() func(to string, issue, pr int, subject, body string) error {
+	if m.watching == nil {
+		return nil
+	}
+	return m.projects[m.watching.project].Send
 }
 
 // ---- messages --------------------------------------------------------------
@@ -113,7 +128,7 @@ func (m Model) readTail() tea.Cmd {
 // running as. See Deps.Send for why it is a message to the role rather than
 // to the session.
 func (m Model) deliver(body string) tea.Cmd {
-	w, send := m.watching, m.deps.Send
+	w, send := m.watching, m.sender()
 	if w == nil || send == nil {
 		return nil
 	}
@@ -168,7 +183,7 @@ func (m Model) sessionKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.tailGen++
 		return m, nil
 	case "m":
-		if m.deps.Send != nil {
+		if m.sender() != nil {
 			w.composing, w.sent = true, ""
 		}
 	case "up", "k":
@@ -306,7 +321,7 @@ func (m Model) sessionFooter() string {
 		return "transcript: " + oneLine(t.err)
 	case t.sent != "":
 		return t.sent
-	case m.deps.Send == nil:
+	case m.sender() == nil:
 		return "esc back · ↑/↓ scroll · end follow · q or ctrl-c stops (sessions finish)"
 	default:
 		return "esc back · ↑/↓ scroll · end follow · m message · q or ctrl-c stops (sessions finish)"

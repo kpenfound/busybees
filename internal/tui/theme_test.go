@@ -148,15 +148,15 @@ func unstyled() lipgloss.TerminalColor { return lipgloss.NewStyle().GetForegroun
 func TestTheWaitingPanelsArePickedOut(t *testing.T) {
 	plainTitle := titleStyle.GetForeground()
 
-	var m Model
+	m := New(Deps{})
 	for i, title := range panelTitles {
 		if got := m.panelStyleOf(i).GetForeground(); got != plainTitle {
 			t.Errorf("the empty %s panel is drawn in %v, want the ordinary title colour %v", title, got, plainTitle)
 		}
 	}
 
-	m.status.NeedsHuman = []state.Escalated{{Issue: 1}}
-	m.status.Approved = []state.ApprovedPR{{PR: 2}}
+	m.projects[0].status.NeedsHuman = []state.Escalated{{Issue: 1}}
+	m.projects[0].status.Approved = []state.ApprovedPR{{PR: 2}}
 	needsHuman := m.panelStyleOf(panelNeedsHuman).GetForeground()
 	approved := m.panelStyleOf(panelApproved).GetForeground()
 	if needsHuman == plainTitle {
