@@ -121,12 +121,12 @@ func TestReviewRequestedLabelDispatchesOneReviewer(t *testing.T) {
 	if strings.Contains(prompt, "## Issue") {
 		t.Errorf("a requested review rendered an issue section:\n%s", prompt)
 	}
-	for _, want := range []string{"## No issue, no acceptance criteria", "## Review stages", "### `implementation`", "`submit_review`"} {
+	for _, want := range []string{"## No issue, no acceptance criteria", "## Findings", "quick general: Widget does nothing", "documentation accuracy: Widget does nothing", "`submit_review`"} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("prompt lacks %q:\n%s", want, prompt)
 		}
 	}
-	if sys := systemPromptOf(t, h, 0); !strings.Contains(sys, "submitted with `submit_review`") || strings.Contains(sys, "Do not submit a GitHub review") {
+	if sys := systemPromptOf(t, h, 0); !strings.Contains(sys, "The event is your verdict") || strings.Contains(sys, "The event is `comment`") {
 		t.Errorf("the system prompt is not the requested-review one:\n%s", sys)
 	}
 	// The session had no issue and no developer to mail: its verdict is one
@@ -153,16 +153,16 @@ func TestReviewRequestedLabelDispatchesOneReviewer(t *testing.T) {
 	}
 }
 
-// review is the gh call the fake reviewer recorded when it submitted its
+// submitted is the gh call the fake reviewer recorded when it submitted its
 // review: the argument list, the body it sent on stdin, and the BEES_ISSUE
 // it ran with.
-type review struct {
+type submitted struct {
 	args  []string
 	body  string
 	issue string
 }
 
-func reviewOf(t *testing.T, sessionDir string) review {
+func reviewOf(t *testing.T, sessionDir string) submitted {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(sessionDir, "review.json"))
 	if err != nil {
@@ -176,7 +176,7 @@ func reviewOf(t *testing.T, sessionDir string) review {
 	if err := json.Unmarshal(b, &rec); err != nil {
 		t.Fatal(err)
 	}
-	return review{args: rec.Args, body: rec.Stdin, issue: rec.Issue}
+	return submitted{args: rec.Args, body: rec.Stdin, issue: rec.Issue}
 }
 
 // The verdict is approve when every stage passed, request-changes when one

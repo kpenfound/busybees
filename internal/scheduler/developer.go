@@ -11,7 +11,6 @@ import (
 
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/github"
-	"github.com/kpenfound/busybees/internal/mail"
 	"github.com/kpenfound/busybees/internal/prompts"
 	"github.com/kpenfound/busybees/internal/session"
 	"github.com/kpenfound/busybees/internal/state"
@@ -122,12 +121,15 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 		bookkeeping.Round = 1
 	}
 	bookkeeping.Branch = branch
-	// The agent's id of each role's last session in this loop, so the next
-	// round of that role resumes the conversation instead of starting cold.
-	// Locals on purpose: the id is only good for this worktree, whose paths
-	// the conversation refers to, and a worker started after a restart has
-	// a new worktree and starts both roles fresh.
-	var developerSessionID, reviewerSessionID string
+	// The agent's id of the developer's last session in this loop, so the
+	// next round resumes the conversation instead of starting cold. A local
+	// on purpose: the id is only good for this worktree, whose paths the
+	// conversation refers to, and a worker started after a restart has a
+	// new worktree and starts fresh. The reviewer's judge session is not
+	// resumed: every round's review is run again on the head as it stands,
+	// and the session posts that round's list, so there is no context to
+	// keep.
+	var developerSessionID string
 
 	// A session this issue's bookkeeping still records as running, whose
 	// process is gone, was interrupted: a scheduler dying while it worked,
@@ -331,7 +333,6 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 			if err != nil {
 				return err
 			}
-			previous, _ := s.mail.List(mail.Filter{To: config.RoleDeveloper, From: config.RoleReviewer, PR: pr.Number})
 			// The checks section belongs to the review the read was made for.
 			// The read happens once, before the first review, so a later round
 			// must not be told "CI is green" about a head the developer has
@@ -349,41 +350,46 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 			if err != nil {
 				return err
 			}
-			// product-fit is the only stage that judges the change against the
-			// work item's parent feature, and it is off by default: looking the
-			// parent up unconditionally would add a GraphQL query to every
-			// review round of every repository for a section nobody renders.
-			// A failed lookup is reported but never fatal: the stage still runs
-			// against the README and the docs, which is worth more than a review
-			// that dies because a GraphQL query flaked. It is reported because
-			// the alternative — a silent nil — tells the reviewer the work item
-			// belongs to no feature, and that lands in the verdict as a fact.
-			stages := s.cfg.ReviewStages()
-			var parent *github.Parent
-			if slices.Contains(stages, config.StageProductFit) {
-				p, err := s.gh.ParentIssue(ctx, issue.Number)
-				if !s.op("work-item-parent", err, "work item parent", "issue", issue.Number, "err", err) {
-					parent = p
-				}
-			}
+			// The review itself: brief, angles and judge (review.go), before
+			// the session that posts what it found. A review that could not
+			// run is a review nobody gave, and the issue goes to a person
+			// with the reason rather than round after round of the same
+			// failure.
 			name := fmt.Sprintf("reviewer-pr-%d-r%d", pr.Number, bookkeeping.Round)
-			log.Info("reviewer session", "pr", pr.Number, "round", bookkeeping.Round, "mail", len(inbox), "stages", strings.Join(stages, ","))
+			found, _, err := s.runReview(ctx, log, freshPR, ws.RepoDir, name, issue.Number)
+			if err != nil {
+				var failure reviewPipelineFailure
+				if errors.As(err, &failure) && ctx.Err() == nil {
+					return s.escalate(ctx, issue.Number, failure.escalation(pr.Number))
+				}
+				return err
+			}
+			log.Info("reviewer session", "pr", pr.Number, "round", bookkeeping.Round, "mail", len(inbox), "size", found.Size, "angles", strings.Join(found.Angles, ","), "findings", found.Count)
 			started := s.now()
 			res, err := s.runSessionWithRetry(ctx, sessionSpec{
-				role: config.RoleReviewer, name: name, workDir: ws.RepoDir, branch: branch, worker: w, resumeID: reviewerSessionID,
-				data: prompts.Data{Issue: &freshIssue, PR: &freshPR, Inbox: inbox, PreviousRounds: previous, Round: bookkeeping.Round, MaxRounds: maxRounds,
-					Stages: stages, Parent: parent,
+				role: config.RoleReviewer, name: name, workDir: ws.RepoDir, branch: branch, worker: w, judge: true,
+				data: prompts.Data{Issue: &freshIssue, PR: &freshPR, Inbox: inbox, Round: bookkeeping.Round, MaxRounds: maxRounds,
+					Review: found,
 					Checks: roundChecks, ChecksStatus: roundStatus, ChecksTimeout: shortDuration(policy.PreReviewChecksTimeout)},
 			})
 			if err != nil {
 				return err
 			}
-			if res.ClaudeID != "" {
-				reviewerSessionID = res.ClaudeID
-			}
 			readErr := s.mail.MarkRead(inbox...)
 			s.opAs(log, slog.LevelWarn, "mail", readErr, "mark mail read", "err", readErr)
 			status, note := outcomeOf(res)
+			// The findings go on the pull request for the person who merges
+			// it, as one comment review. A verdict without one is not a
+			// failure — the verdict reaches the developer and the orchestrator
+			// through the outcome and the mailbox — but it is a session that
+			// skipped half its job, and worth a degraded operation.
+			if status == OutcomeApproved || status == OutcomeChangesRequested {
+				posted, err := s.reviewSince(ctx, pr.Number, "", started)
+				if err == nil && !posted {
+					err = fmt.Errorf("pull request #%d has no review since the session started", pr.Number)
+				}
+				s.opAs(log, slog.LevelWarn, "review-post", err, "the reviewer posted no review on the pull request", "pr", pr.Number, "err", err)
+			}
 			switch status {
 			case OutcomeApproved:
 				log.Info("pull request approved", "pr", pr.Number, "note", note)

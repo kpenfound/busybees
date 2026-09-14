@@ -104,7 +104,112 @@ func fakeAssemble(sessionDir, stateDir string, git func(args ...string), fail fu
 	return session.Outcome{Status: OutcomePROpened, PR: fakePR}
 }
 
+// fakeDiff is what the fake gh answers `pr diff` with: one file, so the
+// review's diff source gathers something and a finding has a line to
+// anchor to.
+const fakeDiff = "diff --git a/widget.go b/widget.go\n--- a/widget.go\n+++ b/widget.go\n@@ -1,2 +1,3 @@\n package widgets\n+func Widget() {}\n"
+
+// isReviewSession tells a brief or angle session of the review pipeline
+// (internal/review's CLIAgent, run as claude or codex) from a factory
+// session: claude's is asked for `--output-format json` where the runner
+// asks for stream-json, and codex's runs in its read-only sandbox where the
+// runner bypasses it.
+func isReviewSession() bool {
+	if i := slices.Index(os.Args, "--output-format"); i >= 0 && i+1 < len(os.Args) && os.Args[i+1] == "json" {
+		return true
+	}
+	return len(os.Args) > 1 && os.Args[1] == "exec" && slices.Contains(os.Args, "read-only")
+}
+
+// fakeReviewSession is the fake distiller or angle session. It reads its
+// prompt from stdin, tells the two apart by the prompt's last line (the
+// distiller's asks for the brief, an angle's names the angle), records the
+// session in the file FAKE_REVIEW_LOG names when it is set — one JSON line
+// per session: the kind, the command line and the directory it ran in —
+// and answers as the CLI it was started as: claude's result object, or
+// codex's event stream.
+//
+// The brief sizes the change FAKE_REVIEW_SIZE, "s" when unset. Each angle
+// reports one finding, titled after the angle so the judge keeps them all
+// apart, unless FAKE_REVIEW_EMPTY is set; FAKE_ANGLE_FAIL names an angle
+// (its prompt title, "documentation accuracy"), or "all", whose session
+// dies instead.
+func fakeReviewSession() {
+	prompt, _ := io.ReadAll(os.Stdin)
+	lines := strings.Split(strings.TrimSpace(string(prompt)), "\n")
+	last := lines[len(lines)-1]
+	kind := "brief"
+	if _, after, ok := strings.Cut(last, "from the "); ok {
+		kind, _, _ = strings.Cut(after, " angle")
+	}
+	if p := os.Getenv("FAKE_REVIEW_LOG"); p != "" {
+		dir, _ := os.Getwd()
+		var files []string
+		if entries, err := os.ReadDir(dir); err == nil {
+			for _, e := range entries {
+				files = append(files, e.Name())
+			}
+		}
+		rec, _ := json.Marshal(map[string]any{"kind": kind, "args": os.Args[1:], "dir": dir, "files": files, "role": os.Getenv(session.EnvRole), "prompt": string(prompt)})
+		f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "fake review session:", err)
+			os.Exit(2)
+		}
+		_, _ = f.Write(append(rec, '\n'))
+		_ = f.Close()
+	}
+	if fail := os.Getenv("FAKE_ANGLE_FAIL"); kind != "brief" && (fail == kind || fail == "all") {
+		fmt.Fprintln(os.Stderr, "fake review session: the model is overloaded")
+		os.Exit(1)
+	}
+	var answer string
+	if kind == "brief" {
+		size := os.Getenv("FAKE_REVIEW_SIZE")
+		if size == "" {
+			size = "s"
+		}
+		answer = fmt.Sprintf(`{"summary":"Adds the widget.","size":%q,"acceptance_criteria":[{"text":"a widget exists","source":"#1"}],"touched_areas":[{"name":"widgets","paths":["widget.go"],"summary":"adds Widget"}]}`, size)
+	} else if os.Getenv("FAKE_REVIEW_EMPTY") == "1" {
+		answer = `{"findings":[]}`
+	} else {
+		// Anchored to a line of its own per angle (the length of the
+		// angle's title), so the judge does not fold two angles' findings
+		// into one.
+		answer = fmt.Sprintf(`{"findings":[{"category":"correctness","severity":"medium","file":"widget.go","lines":[%d,%d],"side":"new","title":"%s: Widget does nothing","body":"Widget has an empty body (from the %s angle).","evidence":"func Widget() {}"}]}`, len(kind), len(kind), kind, kind)
+	}
+	if os.Args[1] == "exec" {
+		for _, ev := range []string{
+			`{"type":"thread.started","thread_id":"thread-` + kind + `"}`,
+			`{"type":"item.completed","item":{"type":"agent_message","text":` + strconv.Quote(answer) + `}}`,
+			`{"type":"turn.completed"}`,
+		} {
+			fmt.Println(ev)
+		}
+		return
+	}
+	fmt.Printf(`{"type":"result","subtype":"success","is_error":false,"result":%s,"session_id":"sid-review-%s","num_turns":1,"total_cost_usd":0.25}`+"\n", strconv.Quote(answer), kind)
+}
+
+// findingsOf is the `## Findings` section of a judge session's task, which
+// is what the fake posts as its review's body.
+func findingsOf(prompt string) string {
+	_, after, ok := strings.Cut(prompt, "## Findings")
+	if !ok {
+		return "(no findings section)"
+	}
+	before, _, _ := strings.Cut(after, "## Instructions")
+	return strings.TrimSpace(before)
+}
+
 func fakeClaude() {
+	// A brief or angle session of the review pipeline has no role, no
+	// session directory and no state directory: it is answered before any
+	// of those is looked at.
+	if isReviewSession() {
+		fakeReviewSession()
+		return
+	}
 	role := os.Getenv(session.EnvRole)
 	sessionDir := os.Getenv(session.EnvSessionDir)
 	stateDir := os.Getenv(session.EnvStateDir)
@@ -325,21 +430,48 @@ func fakeClaude() {
 			outcome = session.Outcome{Status: OutcomeFailed, Note: "cannot read the diff"}
 			break
 		}
-		// No issue: a review a person asked for with bees:review-requested.
-		// There is no developer to mail, so the fake does what the prompt
-		// tells a real reviewer: it reads off its task whether the factory
-		// is the pull request's author (the task states the comparison; the
-		// fake never re-derives it) and submits one review through
-		// github.Client.SubmitReview — approve, or comment when the factory
-		// is the author, or request-changes under FAKE_REVIEW_ALWAYS_CHANGES. The gh call is recorded in the session
-		// directory as review.json ({"args", "stdin", "issue"}) for tests to
-		// read, since the scheduler's fake gh lives in another process.
-		if issue == 0 {
-			counter("review")
-			prompt, err := os.ReadFile(filepath.Join(sessionDir, "prompt.md"))
-			if err != nil {
+		// The judge session posts the findings its task carries as one
+		// review, the way the prompt tells a real reviewer to: the body is
+		// the verdict line and the task's `## Findings` section, submitted
+		// through github.Client.SubmitReview. The gh call is recorded in
+		// the session directory as review.json ({"args", "stdin", "issue"})
+		// for tests to read, since the scheduler's fake gh lives in another
+		// process, and the state GitHub would hold is recorded for the
+		// harness's fake, which the scheduler reads the review back from.
+		// FAKE_REVIEW_NO_SUBMIT reports the verdict without submitting
+		// anything, the way a session that hallucinated its status does.
+		prompt, err := os.ReadFile(filepath.Join(sessionDir, "prompt.md"))
+		if err != nil {
+			fail(err)
+		}
+		submit := func(event string) {
+			if os.Getenv("FAKE_REVIEW_NO_SUBMIT") == "1" {
+				return
+			}
+			body := event + ": the findings of the review\n\n" + findingsOf(string(prompt)) + "\n\n<!-- bees:reviewer -->"
+			c := github.New(os.Getenv(session.EnvRepo))
+			c.ExecStdin = func(_ context.Context, stdin string, args ...string) ([]byte, error) {
+				rec, err := json.Marshal(map[string]any{"args": args, "stdin": stdin, "issue": os.Getenv(session.EnvIssue)})
+				if err != nil {
+					return nil, err
+				}
+				return nil, os.WriteFile(filepath.Join(sessionDir, "review.json"), rec, 0o644)
+			}
+			if err := c.SubmitReview(context.Background(), pr, event, body); err != nil {
 				fail(err)
 			}
+			if err := requestGHEdit(stateDir, ghEdit{Number: pr, Review: reviewStates[event]}); err != nil {
+				fail(err)
+			}
+		}
+		// No issue: a review a person asked for with bees:review-requested.
+		// There is no developer to mail, so the review is the verdict: the
+		// fake reads off its task whether the factory is the pull request's
+		// author (the task states the comparison; the fake never re-derives
+		// it) and submits approve, or comment when the factory is the
+		// author, or request-changes under FAKE_REVIEW_ALWAYS_CHANGES.
+		if issue == 0 {
+			counter("review")
 			event, status := "approve", OutcomeApproved
 			switch {
 			case os.Getenv("FAKE_REVIEW_ALWAYS_CHANGES") == "1":
@@ -356,31 +488,14 @@ func fakeClaude() {
 					event = "request-changes"
 				}
 			}
-			body := "implementation: pass — does what the description says\n\n<!-- bees:reviewer -->"
-			c := github.New(os.Getenv(session.EnvRepo))
-			c.ExecStdin = func(_ context.Context, stdin string, args ...string) ([]byte, error) {
-				rec, err := json.Marshal(map[string]any{"args": args, "stdin": stdin, "issue": os.Getenv(session.EnvIssue)})
-				if err != nil {
-					return nil, err
-				}
-				return nil, os.WriteFile(filepath.Join(sessionDir, "review.json"), rec, 0o644)
-			}
-			// FAKE_REVIEW_NO_SUBMIT reports the verdict without submitting
-			// anything, the way a session that hallucinated its status does.
-			if os.Getenv("FAKE_REVIEW_NO_SUBMIT") != "1" {
-				if err := c.SubmitReview(context.Background(), pr, event, body); err != nil {
-					fail(err)
-				}
-				// The scheduler reads the review back off GitHub when the
-				// session ends, and the override above never reached the
-				// harness's fake: record the state GitHub would hold.
-				if err := requestGHEdit(stateDir, ghEdit{Number: pr, Review: reviewStates[event]}); err != nil {
-					fail(err)
-				}
-			}
+			submit(event)
 			outcome = session.Outcome{Status: status, Note: "one review submitted"}
 			break
 		}
+		// A developer's pull request: the findings go on it as a comment
+		// review, and the verdict to the developer by mail and to the
+		// orchestrator as the outcome.
+		submit("comment")
 		// FAKE_REVIEW_ALWAYS_CHANGES never approves, which is the only way
 		// to reach the "not approved after N review rounds" escalation.
 		if os.Getenv("FAKE_REVIEW_ALWAYS_CHANGES") == "1" {
@@ -948,6 +1063,11 @@ func (f *fakeGH) exec(ctx context.Context, args ...string) ([]byte, error) {
 			return nil, fmt.Errorf("no pr %d", num())
 		}
 		return json.Marshal(p)
+	case "pr diff":
+		if _, ok := f.prs[num()]; !ok {
+			return nil, fmt.Errorf("no pr %d", num())
+		}
+		return []byte(fakeDiff), nil
 	case "pr merge":
 		f.merged = append(f.merged, num())
 		f.mergeArgs = append(f.mergeArgs, args)
@@ -1315,16 +1435,27 @@ func TestFullDeveloperReviewLoop(t *testing.T) {
 			t.Errorf("%s last run not recorded", r)
 		}
 	}
-	// Every session is in the ledger, with what it cost and what it did.
+	// Every session is in the ledger, with what it cost and what it did,
+	// and so is each review round's pipeline: the brief and the two angles
+	// of an `s` change, entered once under the round's name with what the
+	// fake CLI reported they cost ($0.25 each).
 	ledger, err := h.store.ReadLedger(time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ledger) != 7 {
-		t.Fatalf("ledger has %d entries, want one per session (7):\n%+v", len(ledger), ledger)
+	if len(ledger) != 9 {
+		t.Fatalf("ledger has %d entries, want one per session (7) and one per review (2):\n%+v", len(ledger), ledger)
 	}
 	byRole := map[string][]state.LedgerEntry{}
+	reviews := 0
 	for _, e := range ledger {
+		if e.Outcome == "reviewed" {
+			reviews++
+			if e.Role != config.RoleReviewer || e.Issue != 1 || e.PR != fakePR || e.Turns != 2 || e.CostUSD != 0.75 || !strings.HasPrefix(e.Session, "reviewer-pr-101-r") {
+				t.Errorf("review ledger entry not filled in: %+v", e)
+			}
+			continue
+		}
 		if e.Turns != 2 || e.CostUSD != 0.01 || e.Session == "" || e.Time.IsZero() {
 			t.Errorf("ledger entry not filled in: %+v", e)
 		}
@@ -2152,14 +2283,15 @@ func TestSizeSurvivesTheStateMachine(t *testing.T) {
 	if !github.HasLabel(h.gh.issues[1].Labels, "bees:size/xs") {
 		t.Fatalf("size label lost: %v", h.gh.issues[1].Labels)
 	}
-	// The reviewer was told the size.
+	// The reviewer's judge session is told the brief's size, which the
+	// review pipeline sized itself, not the label's.
 	dirs := h.sessions(config.RoleReviewer)
 	if len(dirs) == 0 {
 		t.Fatal("no reviewer session")
 	}
-	prompt, _ := os.ReadFile(filepath.Join(dirs[0], "system-prompt.md"))
-	if !strings.Contains(string(prompt), "this is an `xs` change") {
-		t.Fatalf("reviewer system prompt does not mention the size:\n%s", prompt)
+	prompt, _ := os.ReadFile(filepath.Join(dirs[0], "prompt.md"))
+	if !strings.Contains(string(prompt), "the change was sized `s`") {
+		t.Fatalf("reviewer task does not carry the brief's size:\n%s", prompt)
 	}
 }
 

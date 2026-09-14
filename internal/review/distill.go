@@ -81,6 +81,7 @@ func (d *Distiller) Distill(ctx context.Context, b *Bundle) (*Brief, error) {
 	brief.Sources = b.Sources()
 	brief.NotGathered = b.Skipped
 	brief.SessionID = res.ID
+	brief.CostUSD = res.CostUSD
 	return brief, nil
 }
 

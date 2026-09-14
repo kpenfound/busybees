@@ -9,6 +9,10 @@
 //	notes/<role>.md      per-role notes, the roles' only long-term memory
 //	notes/archive/       notes files replaced by `bees notes reset`
 //	sessions/<id>/       one directory per session (prompts, transcript, result)
+//	reviews/<owner>/<name>/<pr>/<started>/
+//	                     one review artifact per review the reviewer ran on a
+//	                     pull request (see package review: brief.json,
+//	                     angles/, findings.json)
 //	issues/<n>.json      per-issue bookkeeping (review round, PR number, the
 //	                     developer worker's stage, its running session and,
 //	                     once the factory gives up, why it did)
@@ -62,13 +66,15 @@ This directory is managed by ` + "`bees`" + `. It holds:
              bees.toml's notes.backend says otherwise), with archive/ holding
              the ones ` + "`bees notes reset`" + ` replaced
 - sessions/  prompts, transcripts and results of every session
+- reviews/   the reviewer's review of each pull request: the brief, what each
+             angle found and the judge's list
 - issues/    per-issue bookkeeping (review rounds, the developer worker's stage,
              and why the factory gave an issue up)
 - status.json live scheduler status (` + "`bees status`" + `)
 - ledger.jsonl one line per finished session: turns, cost and outcome (` + "`bees cost`" + `)
 - bees.log    every scheduler log record as JSON, rotated at 10 MiB
 
-You can safely delete sessions/ to reclaim space. Steering a role is a matter
+You can safely delete sessions/ and reviews/ to reclaim space. Steering a role is a matter
 of editing its notes file: ` + "`bees notes edit <role>`" + `, or by hand.
 `
 
@@ -81,6 +87,11 @@ func (s *Store) FeedbackDir() string { return filepath.Join(s.Dir, "feedback") }
 
 // SessionsDir returns the sessions directory.
 func (s *Store) SessionsDir() string { return filepath.Join(s.Dir, "sessions") }
+
+// ReviewsDir returns the directory the reviewer's review artifacts are
+// written under (internal/review's ArtifactDir), one per review of a pull
+// request.
+func (s *Store) ReviewsDir() string { return filepath.Join(s.Dir, "reviews") }
 
 // NotesPath returns the notes file for a role.
 func (s *Store) NotesPath(role string) string {

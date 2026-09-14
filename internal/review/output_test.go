@@ -369,3 +369,37 @@ func TestPostsNamesTheModesThatSubmitAReview(t *testing.T) {
 		t.Error("the verbs are not the past tense of the modes")
 	}
 }
+
+// RenderFindings is the judge's list as markdown, before any triage: each
+// finding under its title with where it points, its severity and category,
+// its body, its suggestion as a plain code block, the angle that found it
+// and the ones that also did, and its sources; most severe first as the
+// judge ordered them.
+func TestRenderFindingsIsTheJudgesListAsMarkdown(t *testing.T) {
+	items := Merge([]Finding{
+		{Angle: AngleGeneral, Category: "naming", Severity: SeverityMedium, File: "old.go", Lines: LineRange{1, 1}, Side: SideOld,
+			Title: "The package was the last of its name", Body: "nothing else was called old", Suggestion: "package older", Sources: []string{"CONTRIBUTING.md"}},
+		{Angle: AngleTests, Category: "missing test", Severity: SeverityHigh, File: "gather.go", Lines: LineRange{12, 13}, Side: SideNew,
+			Title: "c has no test for its argument", Body: "nothing exercises c(1)"},
+		{Angle: AngleQuickGeneral, Category: "missing test", Severity: SeverityLow, File: "gather.go", Lines: LineRange{12, 12}, Side: SideNew,
+			Title: "c has no test for its argument", Body: "nothing exercises c(1)"},
+		{Angle: AngleAcceptance, Category: "scope", Severity: SeverityLow,
+			Title: "The change renames Gather, which the issue did not ask for", Body: "every caller moves"},
+	}, nil)
+	got := RenderFindings(items)
+	want := "### c has no test for its argument\n\n" +
+		"`gather.go:12-13` · high · missing test\n\nnothing exercises c(1)\n\n" +
+		"_Found from the test_coverage, quick_general angles._\n\n---\n\n" +
+		"### The package was the last of its name\n\n" +
+		"`old.go:1 (removed)` · medium · naming\n\nnothing else was called old\n\n```\npackage older\n```\n\n" +
+		"_Found from the general angle._ Sources: CONTRIBUTING.md.\n\n---\n\n" +
+		"### The change renames Gather, which the issue did not ask for\n\n" +
+		"low · scope\n\nevery caller moves\n\n" +
+		"_Found from the acceptance_criteria angle._"
+	if got != want {
+		t.Errorf("RenderFindings =\n%s\nwant\n%s", got, want)
+	}
+	if got := RenderFindings(nil); got != "" {
+		t.Errorf("RenderFindings(nil) = %q, want nothing", got)
+	}
+}
