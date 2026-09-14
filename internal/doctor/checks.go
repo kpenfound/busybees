@@ -54,6 +54,8 @@ type Deps struct {
 	ClaudeBin string
 	// CodexBin is the codex executable. Default "codex".
 	CodexBin string
+	// OpenCodeBin is the opencode executable. Default "opencode".
+	OpenCodeBin string
 
 	// MachineGitHub runs the one gh command that is about the machine's own
 	// authentication rather than the repository: `gh auth status`. It never
@@ -72,8 +74,8 @@ type Deps struct {
 // checks run against. It never fails: a configuration that does not load or
 // does not resolve is reported by the config checks instead, so the toolchain
 // checks still run on a machine that has no bees.toml yet.
-func New(ctx context.Context, configPath, claudeBin, codexBin string) *Deps {
-	d := &Deps{ConfigPath: configPath, ClaudeBin: claudeBin, CodexBin: codexBin, MachineGitHub: github.New("")}
+func New(ctx context.Context, configPath, claudeBin, codexBin, openCodeBin string) *Deps {
+	d := &Deps{ConfigPath: configPath, ClaudeBin: claudeBin, CodexBin: codexBin, OpenCodeBin: openCodeBin, MachineGitHub: github.New("")}
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		d.ConfigErr = err
@@ -110,6 +112,9 @@ func (d *Deps) Checks() []Check {
 	if d.usesCodex() {
 		checks = append(checks, Check{Run: d.checkCodex})
 	}
+	if d.usesOpenCode() {
+		checks = append(checks, Check{Run: d.checkOpenCode}, Check{Run: d.checkOpenCodeConfigWritable})
+	}
 	checks = append(checks, Check{Run: d.checkProject}, Check{Run: d.checkRemote},
 		Check{Run: d.checkStateDirIgnored}, Check{Run: d.checkNotesWritable}, Check{Run: d.checkPromptFiles},
 		Check{Run: d.checkProjectPrompts}, Check{Run: d.checkSchedulerBuild})
@@ -138,6 +143,21 @@ func (d *Deps) usesCodex() bool {
 			continue
 		}
 		if role.Agent == config.AgentCodex {
+			return true
+		}
+	}
+	return false
+}
+
+// usesOpenCode reports whether any enabled role resolves to agent =
+// "opencode", the same way usesCodex gates checkCodex.
+func (d *Deps) usesOpenCode() bool {
+	for _, name := range config.Roles {
+		role, err := d.Config.Role(name)
+		if err != nil || !role.Enabled {
+			continue
+		}
+		if role.Agent == config.AgentOpenCode {
 			return true
 		}
 	}
@@ -217,6 +237,13 @@ func (d *Deps) codexBin() string {
 		return d.CodexBin
 	}
 	return "codex"
+}
+
+func (d *Deps) openCodeBin() string {
+	if d.OpenCodeBin != "" {
+		return d.OpenCodeBin
+	}
+	return "opencode"
 }
 
 // ---- toolchain -------------------------------------------------------------
@@ -405,6 +432,29 @@ func (d *Deps) checkCodex(ctx context.Context) Result {
 	return pass(name, GroupToolchain, fmt.Sprintf("codex %s at %s", oneLine(string(out)), path))
 }
 
+// checkOpenCode only runs when usesOpenCode found a role configured for it:
+// opencode is opt-in the same way codex is. bees pins no minimum version for
+// opencode yet, so this only asks that it is installed and runs.
+func (d *Deps) checkOpenCode(ctx context.Context) Result {
+	const name = "opencode runnable"
+	bin := d.openCodeBin()
+	path := bin
+	if !strings.ContainsRune(bin, filepath.Separator) {
+		p, err := d.lookPath(bin)
+		if err != nil {
+			return fail(name, GroupToolchain, fmt.Sprintf("%s not found on PATH", bin),
+				"install opencode (https://opencode.ai), or set $BEES_OPENCODE_BIN to its path")
+		}
+		path = p
+	}
+	out, err := exec.CommandContext(ctx, path, "--version").CombinedOutput()
+	if err != nil {
+		return fail(name, GroupToolchain, fmt.Sprintf("%s --version failed: %s", path, oneLine(string(out)+" "+err.Error())),
+			"check that "+path+" is a working opencode installation")
+	}
+	return pass(name, GroupToolchain, fmt.Sprintf("opencode %s at %s", oneLine(string(out)), path))
+}
+
 // ---- config ----------------------------------------------------------------
 
 func (d *Deps) checkConfigLoads(context.Context) Result {
@@ -479,6 +529,29 @@ func (d *Deps) checkNotesWritable(context.Context) Result {
 	if err != nil {
 		return fail(name, GroupConfig, oneLine(err.Error()),
 			fmt.Sprintf("make %s writable: the roles' notes are their only memory between sessions", dir))
+	}
+	_ = f.Close()
+	_ = os.Remove(f.Name())
+	return pass(name, GroupConfig, dir)
+}
+
+// checkOpenCodeConfigWritable only runs when usesOpenCode found a role
+// configured for it: an opencode session's MCP configuration
+// (internal/session's opencodeConfig) is written into that session's own
+// directory under the sessions directory, so this checks that directory the
+// same way checkNotesWritable checks the notes one, rather than requiring an
+// opencode.json to pre-exist somewhere - bees itself creates the file.
+func (d *Deps) checkOpenCodeConfigWritable(context.Context) Result {
+	const name = "opencode session dir writable"
+	dir := filepath.Join(d.Config.StateDir(), "sessions")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fail(name, GroupConfig, oneLine(err.Error()),
+			"create the state directory by hand, or point project.state_dir somewhere writable")
+	}
+	f, err := os.CreateTemp(dir, ".doctor-")
+	if err != nil {
+		return fail(name, GroupConfig, oneLine(err.Error()),
+			fmt.Sprintf("make %s writable: an opencode session's MCP configuration is written there", dir))
 	}
 	_ = f.Close()
 	_ = os.Remove(f.Name())
