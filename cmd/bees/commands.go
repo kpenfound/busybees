@@ -705,7 +705,7 @@ func newConfigCmd(g *globalFlags) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "%s is a valid machine config (%s)\n", m.Path, text.Count(len(m.Configs), "project"))
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s is a valid machine config (%s)\n", m.Path, text.Count(len(m.Configs), "project"))
 				return nil
 			}
 			cfg, err := loadConfig(g)
