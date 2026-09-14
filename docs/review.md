@@ -272,9 +272,16 @@ path. `--config` reads another file.
 ```toml
 provider = "claude"
 model = "opus"
+brief_model = "sonnet"
 notes_path = "reviewer-notes.md"
 storage_path = "reviews"
 output = "ask"
+
+[angles]
+xs = ["quick_general"]
+
+[angle_models]
+docs = "haiku"
 
 [github]
 token = "$REVIEW_GH_TOKEN"
@@ -283,7 +290,11 @@ token = "$REVIEW_GH_TOKEN"
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `provider` | string | `"claude"` | The agent every session runs as: `claude` or `codex` |
-| `model` | string | `"opus"` | The model every session uses |
+| `model` | string | `"opus"` | The model every session uses unless a key below names another |
+| `brief_model` | string | `model` | The model of the distiller session that writes the brief |
+| `angle_models.<angle>` | string | `model` | The model of that angle's session |
+| `judge_model` | string | none | Accepted and checked, and has no effect: the judge is not a session |
+| `angles.<size>` | list | the built-in list | The angles a change of that size is reviewed from |
 | `notes_path` | path | `"reviewer-notes.md"` | Your reviewer notes |
 | `storage_path` | path | `"reviews"` | The directory review directories are created in |
 | `output` | string | `"ask"` | How a review ends without `--post` or `--report`: `ask`, `approve`, `comment`, `reject`, `report` or `discard` |
@@ -292,6 +303,14 @@ token = "$REVIEW_GH_TOKEN"
 A path is absolute, starts with `~`, or is relative to the directory
 `config.toml` is in, which puts the defaults at
 `~/.config/bees/reviewer-notes.md` and `~/.config/bees/reviews/`.
+
+`angles.<size>` replaces the list [Angles](#angles) gives that size;
+`<size>` is `xs`, `s`, `m`, `l` or `xl`, and the list names at least one
+angle. `context.toml` still turns angles off on top of it. Every session
+runs as `provider`: `brief_model` and `angle_models` change the model only.
+`judge_model` gives the file the shape of `roles.reviewer` in `bees.toml`,
+where the judge is a session; in `bees review` the judge is code and uses
+no model.
 
 `github.token` takes a `$VAR` or `${VAR}` reference, expanded from the
 environment, so the secret stays out of the file. A reference to a variable
