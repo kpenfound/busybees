@@ -489,6 +489,17 @@ func TestCheckStateDirIgnored(t *testing.T) {
 	outside := t.TempDir()
 	f = setup(t, "state_dir = "+fmt.Sprintf("%q", outside)+"\n", nil)
 	wantResult(t, f.run(t, f.checkStateDirIgnored), Pass, "outside the clone")
+
+	// bees.toml's own directory need not be a git repository at all
+	// (project.dir points the clone elsewhere): check-ignore's exit 128 for
+	// "not a git repository" must not be read as "not ignored".
+	nonGit := t.TempDir()
+	_, elsewhere := testutil.SetupRepos(t)
+	f = setupIn(t, nonGit, "dir = "+fmt.Sprintf("%q", elsewhere)+"\n", nil)
+	r := f.run(t, f.checkStateDirIgnored)
+	if strings.Contains(r.Detail, "not ignored") || strings.Contains(r.Remediation, "not ignored") {
+		t.Errorf("checkStateDirIgnored() = %+v, want no \"not ignored\" claim for a non-git bees.toml dir", r)
+	}
 }
 
 func TestCheckNotesWritable(t *testing.T) {
