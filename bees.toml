@@ -1,5 +1,5 @@
 # bees.toml — configuration for a busybees software factory.
-version = 1
+version = 2
 
 #===============================================================================
 # Project
@@ -71,7 +71,7 @@ notes_max_bytes = 18768
 # Build a blocked_by chain of work items under the same feature as a stack of
 # branches and pull requests, each depending on its predecessor's, instead of
 # independently.
-stacked_prs = true
+#stacked_prs = true
 
 #===============================================================================
 # Global role settings
@@ -150,6 +150,7 @@ model = "sonnet"
 # Run a cheaper (or stronger) model for some work item sizes. Keys are the
 # sizes xs, s, m, l and xl; a size with no entry uses model above.
 model_by_size = { xs = "sonnet", s = "sonnet", l = "fable" }
+sandbox = "none"
 # Skills by git URL: <url>[@ref][#sub/dir], cloned and exposed to claude as
 # plugins. Skills in the repository's .claude/skills/ and in ~/.claude/skills/
 # are available automatically and need not be listed.
@@ -185,8 +186,17 @@ skills = [
 # implementation, completeness, cleanliness, style, product-fit. product-fit
 # judges the change against the work item's parent feature and is off by
 # default.
-stages = ["implementation", "completeness"]
-
+# stages was removed in version 2: no review stage maps onto a review
+# angle, so the reviewer uses the default angles (see roles.reviewer.angles).
+# The review angles a pull request of each size is reviewed from, one or more
+# of quick_general, general, docs, test_coverage, acceptance_criteria,
+# side_effects. A size not named here gets its default:
+angles = { xs = ["quick_general"], s = ["quick_general"], m = ["quick_general", "docs", "test_coverage"], l = ["general", "docs", "test_coverage"], xl = ["general", "docs", "test_coverage", "acceptance_criteria"] }
+# The model for the session that writes the review brief, for the judge, and
+# per angle. Unset: model.
+brief_model = "sonnet"
+judge_model = "sonnet"
+angle_models = { quick_general = "sonnet", docs = "sonnet", test_coverage = "sonnet" }
 # Tests the default branch after merges, files bugs, reports to the PM.
 [roles.qa]
 model = "sonnet"
