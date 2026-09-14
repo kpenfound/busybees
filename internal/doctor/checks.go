@@ -507,6 +507,13 @@ func (d *Deps) checkStateDirIgnored(ctx context.Context) Result {
 	if err != nil || strings.HasPrefix(rel, "..") {
 		return pass(name, GroupConfig, cfg.StateDir()+" is outside the clone")
 	}
+	// bees.toml's own directory need not be inside any git repository at all
+	// (project.dir decouples it from the clone): there's nothing there for
+	// git to commit, so check-ignore's generic non-zero exit for that case
+	// must not be read as "not ignored".
+	if _, err := d.git(ctx, cfg.Dir(), "rev-parse", "--is-inside-work-tree"); err != nil {
+		return pass(name, GroupConfig, cfg.Dir()+" is not a git repository")
+	}
 	// Ask about a path inside the state dir: a "/.bees/" rule only matches
 	// the bare directory once it exists on disk, and doctor should give the
 	// same answer before and after the first session.

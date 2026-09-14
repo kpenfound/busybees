@@ -185,6 +185,15 @@ type IssueState struct {
 	WorkerStage   string `json:"worker_stage,omitempty"`
 	AfterDevelop  string `json:"after_develop,omitempty"`
 	PreReviewDone bool   `json:"pre_review_done,omitempty"`
+	// ReviewArtifact is the artifact directory of the full review the worker
+	// ran on its pull request, and ReviewedHead the head commit that review
+	// read. A later review round verifies that review's findings against the
+	// head as it stands instead of reviewing the change again
+	// (scheduler.verifyReview). They are the worker's, written through
+	// SaveIssue, and belong to the pull request the artifact directory is
+	// named for: one recorded for another pull request is not verified.
+	ReviewArtifact string `json:"review_artifact,omitempty"`
+	ReviewedHead   string `json:"reviewed_head,omitempty"`
 	// Session is the session the scheduler last started for this issue,
 	// recorded before it runs and cleared when it ends. A record left
 	// behind is what says a session never finished — a scheduler dying

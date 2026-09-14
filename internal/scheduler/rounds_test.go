@@ -50,9 +50,9 @@ func resumeOf(t *testing.T, h *harness, name string) string {
 // TestASecondRoundResumesTheFirstRoundsSession is the point of #494: a
 // developer handed back review feedback continues the conversation it had
 // in round 1 instead of relearning the codebase. Round 1 runs fresh and
-// round 2 resumes it. The reviewer's judge session is never resumed: every
-// round's review runs again on the head as it stands and the session posts
-// that round's list, so there is no conversation worth keeping.
+// round 2 resumes it. The reviewer's judge session is never resumed: a later
+// round is told the first review's findings and the commit it read, so there
+// is no conversation worth keeping.
 func TestASecondRoundResumesTheFirstRoundsSession(t *testing.T) {
 	h := newHarness(t, devOnlyTOML)
 	seedReady(h, 1, "s", time.Now().Add(-time.Hour))

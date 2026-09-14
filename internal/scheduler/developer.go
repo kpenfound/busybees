@@ -12,9 +12,11 @@ import (
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/prompts"
+	"github.com/kpenfound/busybees/internal/review"
 	"github.com/kpenfound/busybees/internal/session"
 	"github.com/kpenfound/busybees/internal/state"
 	"github.com/kpenfound/busybees/internal/text"
+	"github.com/kpenfound/busybees/internal/workspace"
 )
 
 // Outcome statuses reported by sessions with `bees done`.
@@ -126,9 +128,8 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 	// on purpose: the id is only good for this worktree, whose paths the
 	// conversation refers to, and a worker started after a restart has a
 	// new worktree and starts fresh. The reviewer's judge session is not
-	// resumed: every round's review is run again on the head as it stands,
-	// and the session posts that round's list, so there is no context to
-	// keep.
+	// resumed: a later round is told the first review's findings and the
+	// commit it read, which is all it needs to verify them.
 	var developerSessionID string
 
 	// A session this issue's bookkeeping still records as running, whose
@@ -354,17 +355,33 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 			// the session that posts what it found. A review that could not
 			// run is a review nobody gave, and the issue goes to a person
 			// with the reason rather than round after round of the same
-			// failure.
+			// failure. A later round runs no review: the session verifies
+			// the findings the full review posted against the head as it
+			// stands, so the developer is held to what was asked and not to
+			// a new list every round.
 			name := fmt.Sprintf("reviewer-pr-%d-r%d", pr.Number, bookkeeping.Round)
-			found, _, err := s.runReview(ctx, log, freshPR, ws.RepoDir, name, issue.Number)
-			if err != nil {
-				var failure reviewPipelineFailure
-				if errors.As(err, &failure) && ctx.Err() == nil {
-					return s.escalate(ctx, issue.Number, failure.escalation(pr.Number))
-				}
-				return err
+			found, verify := (*prompts.Review)(nil), false
+			if bookkeeping.Round > 1 {
+				found, verify = s.verifyReview(log, bookkeeping, pr.Number)
 			}
-			log.Info("reviewer session", "pr", pr.Number, "round", bookkeeping.Round, "mail", len(inbox), "size", found.Size, "angles", strings.Join(found.Angles, ","), "findings", found.Count)
+			if !verify {
+				head, headErr := workspace.Git(ctx, ws.RepoDir, "rev-parse", "HEAD")
+				var a *review.Artifact
+				found, a, err = s.runReview(ctx, log, freshPR, ws.RepoDir, name, issue.Number)
+				if err != nil {
+					var failure reviewPipelineFailure
+					if errors.As(err, &failure) && ctx.Err() == nil {
+						return s.escalate(ctx, issue.Number, failure.escalation(pr.Number))
+					}
+					return err
+				}
+				bookkeeping.ReviewArtifact, bookkeeping.ReviewedHead = a.Dir, ""
+				if headErr == nil {
+					bookkeeping.ReviewedHead = strings.TrimSpace(head)
+				}
+				_ = s.store.SaveIssue(bookkeeping)
+			}
+			log.Info("reviewer session", "pr", pr.Number, "round", bookkeeping.Round, "mail", len(inbox), "verify", verify, "size", found.Size, "angles", strings.Join(found.Angles, ","), "findings", found.Count)
 			started := s.now()
 			res, err := s.runSessionWithRetry(ctx, sessionSpec{
 				role: config.RoleReviewer, name: name, workDir: ws.RepoDir, branch: branch, worker: w, judge: true,
