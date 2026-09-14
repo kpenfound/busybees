@@ -344,11 +344,12 @@ fixed in passing. It never changes labels and never pushes to the default
 branch.
 
 **A later round.** The second and later developer sessions of one worker
-continue the conversation of the previous one (`claude --resume`), so the
-developer handed feedback still knows the codebase and its own change. The
-task prompt is rebuilt for the round all the same. A worker started after a
-restart of `bees run` begins a fresh conversation, and so does every round of
-a `codex` role, which has no resume. See
+continue the conversation of the previous one (`claude --resume`, or
+`--session` for `opencode`), so the developer handed feedback still knows the
+codebase and its own change. The task prompt is rebuilt for the round all the
+same. A worker started after a restart of `bees run` begins a fresh
+conversation, and so does every round of a `codex` role, which has no resume.
+See
 [The developer worker](architecture.md#the-developer-worker).
 
 **A session that was interrupted.** When the session working the issue never
@@ -445,10 +446,11 @@ to block on, and, when no check was reported, that nothing was verified for
 it.
 
 On the second and later rounds of one worker its session continues the
-previous round's conversation (`claude --resume`), the same way the
-developer's does: it starts knowing the change it reviewed and the points it
-raised. A reviewer session for a failing check, and a requested review,
-start fresh.
+previous round's conversation (`claude --resume`, or `--session` for
+`opencode`), the same way the developer's does: it starts knowing the change
+it reviewed and the points it raised, except for a `codex` role, which has no
+resume and starts fresh every round. A reviewer session for a failing check,
+and a requested review, start fresh.
 
 **Mail.** Writes to `developer` only: one message per round, with `pr` and
 `issue`, its points grouped by stage in the stages' order, each group headed

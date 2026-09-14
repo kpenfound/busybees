@@ -580,8 +580,10 @@ reported a cost — an agent prices a session in the event that ends its stream
 and says nothing before it, so a session that ended without reaching that
 event (killed by a signal, most often) leaves the cost unknown rather than a
 cost of zero. A codex session's cost is never known: codex reports tokens
-rather than a price. A session that really did cost nothing still prints
-`$0.00`.
+rather than a price. An opencode session's cost is the sum of its steps'
+costs, known whenever at least one step finished, zero and known for a local
+model that really is free. A session that really did cost nothing still
+prints `$0.00`.
 
 **Recent** is what just happened: the sessions that have finished, newest
 first, with how each ended, what it said about it, how long it took and what
@@ -1235,8 +1237,9 @@ bees done failed -m "Could not get the test-suite to run: missing DATABASE_URL"
 Runs the built-in MCP server on stdio (or over HTTP, below). You never start
 it yourself: `bees`
 hands it to every session as the server named `bees` (in `mcp.json` for
-claude, as `mcp_servers.bees` overrides for codex), and the agent starts it
-as `<bees binary> mcp serve` with the session's `BEES_*`
+claude, as `mcp_servers.bees` overrides for codex, in the `mcp` table of the
+configuration file `OPENCODE_CONFIG` names for opencode), and the agent
+starts it as `<bees binary> mcp serve` with the session's `BEES_*`
 variables. The name `bees` is reserved — a `[global.mcp.bees]` or
 `[roles.<role>.mcp.bees]` entry in `bees.toml` fails validation.
 
