@@ -118,6 +118,14 @@ type Angles struct {
 	Agent    Agent
 	Provider string
 	Model    string
+	// Sized replaces the built-in angles of each size it names (sizeAngles),
+	// config.toml's angles; a size it leaves out keeps the built-in list.
+	Sized map[string][]string
+	// Models is the model of each angle it names, config.toml's
+	// angle_models: that angle's session runs as a copy of Agent with the
+	// model replaced, when Agent is the CLI agent. The provider is Provider
+	// for every angle.
+	Models map[string]string
 	// Checkout clones the pull request's head into the artifact directory
 	// for the sessions to run in (checkout.go), which is where they run
 	// whenever it succeeds. It is nil to attempt none.
@@ -162,7 +170,8 @@ const (
 )
 
 // NewAngles is the angle runner of a review, as the global configuration
-// says: cfg's provider and model, a checkout of the pull request's head
+// says: cfg's provider and model, the angles and per-angle models cfg sets,
+// a checkout of the pull request's head
 // authenticated by cfg's github.token, and dir the checkout Open was given
 // for when that one cannot be made.
 func NewAngles(cfg *Config, dir string) *Angles {
@@ -171,11 +180,15 @@ func NewAngles(cfg *Config, dir string) *Angles {
 	if cfg != nil {
 		checkout.Token = cfg.GitHub.ResolvedToken()
 	}
-	return &Angles{Agent: agent, Provider: agent.Provider, Model: agent.Model, Checkout: checkout, Dir: dir}
+	a := &Angles{Agent: agent, Provider: agent.Provider, Model: agent.Model, Checkout: checkout, Dir: dir}
+	if cfg != nil {
+		a.Sized, a.Models = cfg.Angles, cfg.AngleModels
+	}
+	return a
 }
 
-// Run fans out one session per angle the brief's size calls for and project
-// enables (anglesFor), all at once, each given the brief and told where to
+// Run fans out one session per angle the brief's size calls for (Sized, else
+// sizeAngles) and project enables (anglesFor), all at once, each given the brief and told where to
 // read the diff, and waits for every one of them. The runs come back in
 // BuiltinAngles order and are written into artifact, one file per angle,
 // before Run returns. A brief whose size is not one of Sizes is reported on
@@ -210,7 +223,7 @@ func (a *Angles) Run(ctx context.Context, artifact string, project *Project, bri
 	if !slices.Contains(Sizes, brief.Size) {
 		a.logf("the brief sizes the change %q, which is not one of %s: the angles of %s run", brief.Size, strings.Join(Sizes, ", "), largestSize())
 	}
-	angles := anglesFor(project, brief.Size)
+	angles := anglesFor(project, a.sizedAngles(brief.Size))
 	if len(angles) == 0 {
 		return nil, nil
 	}
@@ -236,9 +249,10 @@ func (a *Angles) Run(ctx context.Context, artifact string, project *Project, bri
 		wg.Add(1)
 		go func(i int, angle string) {
 			defer wg.Done()
-			run := AngleRun{Angle: angle, Provider: a.Provider, Model: a.Model, Dir: dir}
+			agent, model := a.agentFor(angle)
+			run := AngleRun{Angle: angle, Provider: a.Provider, Model: model, Dir: dir}
 			a.progress(angle, AngleStarted)
-			res, err := a.Agent.Run(ctx, AgentRequest{Name: angle, Prompt: prompts[i], Dir: dir})
+			res, err := agent.Run(ctx, AgentRequest{Name: angle, Prompt: prompts[i], Dir: dir})
 			if err != nil {
 				run.Error = err.Error()
 				a.progress(angle, AngleFailed)
@@ -263,7 +277,8 @@ func (a *Angles) Run(ctx context.Context, artifact string, project *Project, bri
 }
 
 // sizeAngles are the angles a change of each of Sizes is reviewed from,
-// before the project's own [angles] switches: a small change gets the quick
+// unless config.toml's angles replaces a size's list, before the project's
+// own [angles] switches: a small change gets the quick
 // general pass and its documentation read; a larger one the thorough general
 // pass instead, its tests and its acceptance criteria; and only the largest
 // its side effects, which are what a change breaks far from its diff.
@@ -279,20 +294,12 @@ var sizeAngles = map[string][]string{
 // them gets.
 func largestSize() string { return Sizes[len(Sizes)-1] }
 
-// anglesFor lists the angles a review of a change of size runs: the ones
-// sizeAngles gives the size that project enables, in BuiltinAngles order.
-// The size only narrows what the project enables, and never runs an angle
-// the project turned off; what is left can be one angle, or none.
-//
-// A size that is not one of Sizes gets the angles of the largest. Distill
-// refuses such a brief (Brief.Validate), but a brief read back from an
-// artifact, or made by any other caller, has not been through it, and a
-// change nobody sized is better reviewed too thoroughly than not at all.
-func anglesFor(project *Project, size string) []string {
-	sized, ok := sizeAngles[size]
-	if !ok {
-		sized = sizeAngles[largestSize()]
-	}
+// anglesFor lists the angles a review runs: the ones in sized, the angles
+// its change's size calls for (sizedAngles), that project enables, in
+// BuiltinAngles order. The size only narrows what the project enables, and
+// never runs an angle the project turned off; what is left can be one
+// angle, or none.
+func anglesFor(project *Project, sized []string) []string {
 	var angles []string
 	for _, angle := range project.EnabledAngles() {
 		if slices.Contains(sized, angle) {
@@ -300,6 +307,42 @@ func anglesFor(project *Project, size string) []string {
 		}
 	}
 	return angles
+}
+
+// sizedAngles is the angles a change of size is reviewed from before the
+// project's switches: overrides[size] when it is set, else sizeAngles[size].
+//
+// A size that is not one of Sizes gets the angles of the largest. Distill
+// refuses such a brief (Brief.Validate), but a brief read back from an
+// artifact, or made by any other caller, has not been through it, and a
+// change nobody sized is better reviewed too thoroughly than not at all.
+func sizedAngles(overrides map[string][]string, size string) []string {
+	if !slices.Contains(Sizes, size) {
+		size = largestSize()
+	}
+	if sized, ok := overrides[size]; ok {
+		return sized
+	}
+	return sizeAngles[size]
+}
+
+// sizedAngles is the angles a change of size is reviewed from, with Sized
+// laid over the built-in lists.
+func (a *Angles) sizedAngles(size string) []string { return sizedAngles(a.Sized, size) }
+
+// agentFor is the agent an angle's session runs as and the model it records:
+// Agent and Model, or, when Models names the angle and Agent is the CLI
+// agent, a copy of that agent running Models' model instead. An agent that
+// is not the CLI agent has no model to replace, and runs as itself.
+func (a *Angles) agentFor(angle string) (Agent, string) {
+	model := a.Models[angle]
+	cli, ok := a.Agent.(*CLIAgent)
+	if model == "" || !ok {
+		return a.Agent, a.Model
+	}
+	copied := *cli
+	copied.Model = model
+	return &copied, model
 }
 
 // dir is the directory the sessions run in: the checkout of ref's head
@@ -360,7 +403,8 @@ func (a *Angles) Resume(ctx context.Context, run AngleRun, question string) (*Ag
 	case run.Provider != a.Provider:
 		return nil, fmt.Errorf("the %s angle ran as %s and the configured provider is %s, which cannot resume its session", run.Angle, run.Provider, a.Provider)
 	}
-	return a.Agent.Run(ctx, AgentRequest{Name: run.Angle, Prompt: resumePrompt(run, question), Dir: run.Dir, ResumeID: run.SessionID})
+	agent, _ := a.agentFor(run.Angle)
+	return agent.Run(ctx, AgentRequest{Name: run.Angle, Prompt: resumePrompt(run, question), Dir: run.Dir, ResumeID: run.SessionID})
 }
 
 // writeDiff writes the pull request's diff once per review run to DiffFile

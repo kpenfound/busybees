@@ -367,3 +367,22 @@ func TestARunTellsItsProgressWhatTheAnglesAreDoing(t *testing.T) {
 		t.Errorf("progress was told about %d angles, want the 3 that ran: %v", len(progress.events), progress.events)
 	}
 }
+
+// config.toml's angles replace a size's list for the run and for what the
+// log says it reviews from.
+func TestARunReviewsFromTheConfiguredAnglesOfTheBriefsSize(t *testing.T) {
+	agent := &reviewAgent{}
+	r, log := testRunner(t, agent, nil)
+	agent.answers[DistillerName] = strings.Replace(answeredBrief, `"size": "m"`, `"size": "xs"`, 1)
+	r.Angles.Sized = map[string][]string{"xs": {AngleGeneral, AngleDocs}}
+	a, err := r.Run(context.Background(), Ref{Repo: testRepo, Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(ranAngles(a.Runs), ","); got != AngleGeneral {
+		t.Errorf("angles run: %s, want general alone (docs is off in context.toml)", got)
+	}
+	if want := "reviewing a size xs change from 1 angle: general\n"; !strings.Contains(log.String(), want) {
+		t.Errorf("the log lacks %q:\n%s", want, log.String())
+	}
+}
