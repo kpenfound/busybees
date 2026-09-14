@@ -91,7 +91,7 @@ func New(ctx context.Context, configPath, claudeBin, codexBin, openCodeBin strin
 	}
 	// Keep is deliberately left off even when scheduler.keep_workspaces is
 	// set: doctor's worktree is a probe and always cleans up after itself.
-	ws := workspace.NewManager(cfg.Dir(), cfg.Scheduler.WorkspaceRoot)
+	ws := workspace.NewManager(cfg.CloneDir(), cfg.Scheduler.WorkspaceRoot)
 	ws.Remote = cfg.Project.Remote
 	d.Workspaces = ws
 	sk := skills.NewManager(skills.CacheDir())
@@ -477,7 +477,7 @@ func (d *Deps) checkProject(ctx context.Context) Result {
 		return fail(name, GroupConfig, oneLine(d.ResolveErr.Error()),
 			`set project.repo = "owner/name" and project.default_branch in bees.toml, or point the remote at a GitHub URL`)
 	}
-	url, err := d.git(ctx, cfg.Dir(), "remote", "get-url", cfg.Project.Remote)
+	url, err := d.git(ctx, cfg.CloneDir(), "remote", "get-url", cfg.Project.Remote)
 	if err != nil {
 		return fail(name, GroupConfig, fmt.Sprintf("remote %q: %s", cfg.Project.Remote, oneLine(err.Error())),
 			fmt.Sprintf("add the remote (`git remote add %s <url>`) or set project.remote in bees.toml", cfg.Project.Remote))
@@ -493,7 +493,7 @@ func (d *Deps) checkProject(ctx context.Context) Result {
 func (d *Deps) checkRemote(ctx context.Context) Result {
 	const name = "remote reachable"
 	cfg := d.Config
-	if _, err := d.git(ctx, cfg.Dir(), "ls-remote", "--exit-code", cfg.Project.Remote, "HEAD"); err != nil {
+	if _, err := d.git(ctx, cfg.CloneDir(), "ls-remote", "--exit-code", cfg.Project.Remote, "HEAD"); err != nil {
 		return fail(name, GroupConfig, fmt.Sprintf("%s: %s", cfg.Project.Remote, oneLine(err.Error())),
 			"check the network and your git credentials (`gh auth setup-git` for https remotes)")
 	}
@@ -593,16 +593,16 @@ func (d *Deps) checkPromptFiles(context.Context) Result {
 	return pass(name, GroupConfig, strings.Join(found, ", "))
 }
 
-// checkProjectPrompts inspects bees/prompts/ in the repository bees.toml sits
-// in: the role instructions a project versions with its code. A repository
-// with no such directory is the normal case and passes silently.
+// checkProjectPrompts inspects bees/prompts/ in the main clone (Config.
+// CloneDir): the role instructions a project versions with its code. A
+// repository with no such directory is the normal case and passes silently.
 //
 // It reads the main clone. A session reads the same files from its own
 // worktree, so a branch can carry instructions this check never sees - which
 // is the point of the feature, and why the detail names the checkout.
 func (d *Deps) checkProjectPrompts(context.Context) Result {
 	const name = "project prompt files"
-	dir := d.Config.Dir()
+	dir := d.Config.CloneDir()
 	known, unknown, err := prompts.ProjectPromptFiles(dir)
 	if err != nil {
 		return fail(name, GroupConfig, oneLine(err.Error()),
@@ -698,11 +698,11 @@ func (d *Deps) checkSchedulerBuild(ctx context.Context) Result {
 	}
 	rev, short := st.Revision, abbrev(st.Revision)
 
-	head, err := d.git(ctx, d.Config.Dir(), "rev-parse", "HEAD")
+	head, err := d.git(ctx, d.Config.CloneDir(), "rev-parse", "HEAD")
 	if err != nil {
 		return warn(name, GroupConfig,
 			fmt.Sprintf("running %s, and this repository cannot say what HEAD is: %s", short, oneLine(err.Error())),
-			"run `git rev-parse HEAD` in "+d.Config.Dir()+" and fix what it reports: until it answers, nothing can say whether the running scheduler is current")
+			"run `git rev-parse HEAD` in "+d.Config.CloneDir()+" and fix what it reports: until it answers, nothing can say whether the running scheduler is current")
 	}
 	if head == rev {
 		return pass(name, GroupConfig, fmt.Sprintf("running %s, the commit HEAD is on", short))
@@ -710,18 +710,18 @@ func (d *Deps) checkSchedulerBuild(ctx context.Context) Result {
 	// An unknown revision has to be ruled out before the ancestry test: git
 	// fails the same way for a commit it has never heard of as for one that
 	// is merely not an ancestor.
-	if _, err := d.git(ctx, d.Config.Dir(), "cat-file", "-e", rev+"^{commit}"); err != nil {
+	if _, err := d.git(ctx, d.Config.CloneDir(), "cat-file", "-e", rev+"^{commit}"); err != nil {
 		return warn(name, GroupConfig, fmt.Sprintf("running %s, which is not a commit in this repository", short),
 			remedy+" (it was built somewhere else, or from a commit that was never pushed here)")
 	}
 	// --is-ancestor prints nothing and answers with its exit status, which
 	// d.git turns into an error.
-	if _, err := d.git(ctx, d.Config.Dir(), "merge-base", "--is-ancestor", rev, "HEAD"); err != nil {
+	if _, err := d.git(ctx, d.Config.CloneDir(), "merge-base", "--is-ancestor", rev, "HEAD"); err != nil {
 		return warn(name, GroupConfig, fmt.Sprintf("running %s, which is not an ancestor of HEAD (%s)", short, abbrev(head)),
 			remedy+", or check out the branch the scheduler was built from")
 	}
 	behind := "behind HEAD"
-	if out, err := d.git(ctx, d.Config.Dir(), "rev-list", "--count", rev+"..HEAD"); err == nil {
+	if out, err := d.git(ctx, d.Config.CloneDir(), "rev-list", "--count", rev+"..HEAD"); err == nil {
 		if n, err := strconv.Atoi(strings.TrimSpace(out)); err == nil && n > 0 {
 			behind = text.Count(n, "commit") + " behind HEAD"
 		}
