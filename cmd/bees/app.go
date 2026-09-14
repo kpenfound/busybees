@@ -119,8 +119,12 @@ func newApp(ctx context.Context, g *globalFlags) (*app, error) {
 	if err != nil {
 		return nil, err
 	}
-	log := slog.Default()
+	return newAppFor(ctx, g, cfg, slog.Default())
+}
 
+// newAppFor wires the packages together for cfg, a loaded and resolved
+// bees.toml, logging to log.
+func newAppFor(ctx context.Context, g *globalFlags, cfg *config.Config, log *slog.Logger) (*app, error) {
 	if cfg.NeedsRewrite() {
 		from := cfg.MigratedFrom
 		backup, err := cfg.Rewrite()
