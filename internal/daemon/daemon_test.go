@@ -207,3 +207,37 @@ func TestHardStopReachesEveryStartedLoop(t *testing.T) {
 		t.Errorf("the loop that never ran was hard-stopped")
 	}
 }
+
+// closingLoop is a loop holding a resource from its start.
+type closingLoop struct {
+	fakeLoop
+	closed atomic.Int32
+}
+
+func (c *closingLoop) Close() error { c.closed.Add(1); return nil }
+
+// A loop whose start finishes after HardStop is never run, and what its start
+// acquired is released rather than left open for the life of the process.
+func TestALoopDiscardedUnrunIsClosed(t *testing.T) {
+	release := make(chan struct{})
+	started := make(chan struct{})
+	late := &closingLoop{fakeLoop: fakeLoop{run: func(context.Context) error { t.Error("a loop started after HardStop ran"); return nil }}}
+	log, _ := quietLogger()
+	d := &Daemon{Projects: []Project{{Name: "late", Start: func(context.Context) (Loop, error) {
+		close(started)
+		<-release
+		return late, nil
+	}}}, Logger: log}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := runAsync(ctx, d)
+	<-started
+	d.HardStop()
+	close(release)
+	if err := wait(t, done); err != nil {
+		t.Fatal(err)
+	}
+	if n := late.closed.Load(); n != 1 {
+		t.Errorf("the discarded loop was closed %d times, want 1", n)
+	}
+}

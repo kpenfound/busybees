@@ -10,12 +10,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"runtime/debug"
 	"sync"
 )
 
 // Loop is one project's poll loop: what *scheduler.Scheduler is.
+//
+// A Loop that holds something from its start until it runs (a log file) also
+// implements io.Closer: the daemon closes a loop it discards unrun, and a loop
+// that runs releases it itself.
 type Loop interface {
 	// Run polls until ctx is cancelled and the work in flight has finished.
 	Run(ctx context.Context) error
@@ -93,6 +98,10 @@ func (d *Daemon) runProject(ctx context.Context, p Project) (err error) {
 		return fmt.Errorf("start: %w", err)
 	}
 	if !d.add(loop) {
+		// Never run, so nothing else releases what Start acquired.
+		if c, ok := loop.(io.Closer); ok {
+			return c.Close()
+		}
 		return nil
 	}
 	return loop.Run(ctx)

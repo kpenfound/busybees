@@ -39,9 +39,16 @@ type projectLoop struct {
 }
 
 func (p *projectLoop) Run(ctx context.Context) error {
-	defer func() { _ = p.file.Close() }()
+	defer func() { _ = p.Close() }()
 	return p.Scheduler.Run(ctx)
 }
+
+// Close releases the project's log file: after Run, or instead of it when
+// the daemon discards a loop it never ran (see daemon.Loop).
+func (p *projectLoop) Close() error { return p.file.Close() }
+
+// The daemon closes a loop it discards unrun only through io.Closer.
+var _ io.Closer = (*projectLoop)(nil)
 
 // startProject builds one project's scheduler. The project's [logging] table
 // is not applied: one console serves every project, so no project's table
