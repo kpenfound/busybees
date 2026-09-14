@@ -57,7 +57,7 @@ func watched(name, role string, issue, pr int, dir string) tea.Msg {
 		Kind: scheduler.EventSessionStarted, Time: fixed.Add(-time.Minute), Session: name,
 		Role: role, Dir: dir, Issue: issue, PR: pr, Model: "opus",
 	}
-	return eventMsg(ev)
+	return eventMsg{Event: ev}
 }
 
 // run drives one command to its message and folds it back into the model,
