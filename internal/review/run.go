@@ -111,7 +111,7 @@ func (r *Runner) Run(ctx context.Context, ref Ref) (*Artifact, error) {
 	if project == nil {
 		project = &Project{}
 	}
-	angles := anglesFor(project, brief.Size)
+	angles := anglesFor(project, r.Angles.sizedAngles(brief.Size))
 	r.logf("reviewing a size %s change from %s: %s", brief.Size, text.Count(len(angles), "angle"), strings.Join(angles, ", "))
 	var diff string
 	if items := bundle.Of(SourceDiff); len(items) > 0 {

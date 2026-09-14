@@ -268,6 +268,22 @@ func TestTheDistillerRunsTheConfiguredAgent(t *testing.T) {
 	}
 }
 
+func TestTheDistillerRunsAsTheBriefModel(t *testing.T) {
+	for _, tc := range []struct{ toml, want string }{
+		{"model = \"opus\"\nbrief_model = \"sonnet\"\n", "sonnet"},
+		{"model = \"opus\"\nangle_models.docs = \"haiku\"\n", "opus"},
+	} {
+		cfg, err := ParseConfig(tc.toml, filepath.Join(t.TempDir(), ConfigFile))
+		if err != nil {
+			t.Fatal(err)
+		}
+		agent := NewDistiller(cfg, "").Agent.(*CLIAgent)
+		if agent.Model != tc.want || agent.Provider != DefaultProvider {
+			t.Errorf("%s: distiller agent = %+v, want model %q", tc.toml, agent, tc.want)
+		}
+	}
+}
+
 func TestASessionCannotAnswerWithWhatItWasNotAsked(t *testing.T) {
 	// parseBrief takes the five things the session was asked for and
 	// nothing else, so a brief carries no fact a session made up even

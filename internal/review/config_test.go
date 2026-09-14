@@ -3,6 +3,7 @@ package review
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -56,6 +57,39 @@ func TestConfigPartialFileKeepsDefaults(t *testing.T) {
 	}
 	if cfg.Provider != DefaultProvider || cfg.Model != DefaultModel || cfg.NotesPath != DefaultNotesPath || cfg.StoragePath != DefaultStoragePath {
 		t.Fatalf("the rest is not defaulted: %+v", cfg)
+	}
+	if cfg.Angles != nil || cfg.AngleModels != nil || cfg.BriefModel != "" || cfg.JudgeModel != "" {
+		t.Fatalf("a file with no per-step keys overrides nothing: %+v", cfg)
+	}
+}
+
+// The per-size angles and per-step models have the shape of bees.toml's
+// roles.reviewer.
+func TestConfigReviewerShape(t *testing.T) {
+	cfg, err := LoadConfig(writeFile(t, t.TempDir(), ConfigFile, `
+model = "opus"
+brief_model = "sonnet"
+judge_model = "haiku"
+
+[angles]
+xs = ["quick_general"]
+xl = ["general", "side_effects"]
+
+[angle_models]
+docs = "haiku"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Model != "opus" || cfg.BriefModel != "sonnet" || cfg.JudgeModel != "haiku" {
+		t.Fatalf("models: %+v", cfg)
+	}
+	want := map[string][]string{"xs": {AngleQuickGeneral}, "xl": {AngleGeneral, AngleSideEffects}}
+	if !reflect.DeepEqual(cfg.Angles, want) {
+		t.Fatalf("angles = %v, want %v", cfg.Angles, want)
+	}
+	if !reflect.DeepEqual(cfg.AngleModels, map[string]string{AngleDocs: "haiku"}) {
+		t.Fatalf("angle_models = %v", cfg.AngleModels)
 	}
 }
 
@@ -116,6 +150,12 @@ func TestConfigInvalid(t *testing.T) {
 		{"provider", "provider = \"gemini\"\n", []string{"provider \"gemini\" must be one of claude, codex"}},
 		{"output", "output = \"merge\"\n", []string{"output \"merge\" must be one of ask, approve, comment, reject, report, discard"}},
 		{"token variable", "[github]\ntoken = \"$REVIEW_UNSET_TOKEN\"\n", []string{"github.token reads $REVIEW_UNSET_TOKEN, which is not set"}},
+		{"unknown per-step key", "angle_model = \"haiku\"\n", []string{"unknown keys", "angle_model"}},
+		{"unknown size", "[angles]\nxxl = [\"general\"]\n", []string{"angles.xxl", "\"xxl\" is not a size"}},
+		{"unknown angle in a size", "[angles]\nxs = [\"quick_general\", \"style\"]\n", []string{"angles.xs", "\"style\" is not an angle"}},
+		{"empty size", "[angles]\nm = []\n", []string{"angles.m must name at least one angle"}},
+		{"unknown angle model", "[angle_models]\nstyle = \"haiku\"\n", []string{"angle_models.style", "\"style\" is not an angle"}},
+		{"empty angle model", "[angle_models]\ndocs = \"\"\n", []string{"angle_models.docs must name a model"}},
 		{"token expands to nothing", "[github]\ntoken = \"$REVIEW_UNSET_TOKEN$REVIEW_UNSET_TOKEN\"\n", []string{"expands to nothing"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

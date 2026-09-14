@@ -39,9 +39,14 @@ type Distiller struct {
 }
 
 // NewDistiller is the distiller a review runs, as the global configuration
-// says: cfg's provider and model, and dir the checkout Open was given.
+// says: cfg's provider, its brief_model or else its model, and dir the
+// checkout Open was given.
 func NewDistiller(cfg *Config, dir string) *Distiller {
-	return &Distiller{Agent: NewAgent(cfg), Dir: dir}
+	agent := NewAgent(cfg)
+	if cfg != nil && cfg.BriefModel != "" {
+		agent.Model = cfg.BriefModel
+	}
+	return &Distiller{Agent: agent, Dir: dir}
 }
 
 // Distill runs the distiller session over the bundle and returns the brief
