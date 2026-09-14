@@ -28,7 +28,7 @@ var files embed.FS
 //
 //	{{template "consolidate" .}}   rewrite your notes this session
 //	{{template "interrupted" .}}   the session before this one was killed
-//	{{template "stages" .}}        the reviewer's review stages (renders nothing without .Stages)
+//	{{template "findings" .}}      what the reviewer's review found (renders nothing without .Review)
 
 // Data is everything a prompt template can reference. Fields that do not
 // apply to a role are left zero.
@@ -85,10 +85,6 @@ type Data struct {
 	Inbox          []mail.Message
 	PreviousRounds []mail.Message
 
-	// Size is the work item's size ("xs", "s", "m", "l", "xl"), empty when
-	// the issue carries no size label. Set for developer and reviewer
-	// sessions.
-	Size string
 	// MaxSize is roles.developer.max_size: the largest size a developer
 	// takes. Anything above it is sent back to triage to be split.
 	MaxSize string
@@ -156,11 +152,13 @@ type Data struct {
 	// and leaves open is not listed again until it gains a sub-issue and that
 	// one closes too.
 	CompletedFeatures []github.Issue
-	// Stages are the reviewer's review stages (roles.reviewer.stages), in the
-	// order to run them. Set for a reviewer review session; empty for every
-	// other role and for the reviewer's checks-mode task, which diagnoses one
+	// Review is what the reviewer's review of the pull request found: the
+	// brief's size and summary, the angles that ran, the judge's findings
+	// (internal/review, run by the scheduler before the session). Set for
+	// the reviewer's judge session, which posts it; nil for every other
+	// role and for the reviewer's checks-mode task, which diagnoses one
 	// failure rather than reviewing.
-	Stages []string
+	Review *Review
 	// Mode is the variant of a role's session, empty for every session that
 	// existed before it: "requested" for a reviewer reviewing a pull request
 	// the factory did not write — asked for with bees:review-requested or by
@@ -175,8 +173,7 @@ type Data struct {
 	// request's own author.
 	ActsAs string
 	// Parent is the feature a work item belongs to, when it is a sub-issue.
-	// Set for a developer session, and for a reviewer session whose stages
-	// include config.StageProductFit — the only stage that reads it.
+	// Set for a developer session.
 	Parent *github.Parent
 	// Parents maps an issue number to its parent feature, for the issues that
 	// have one: the triage items (project manager) and the open work items
@@ -190,6 +187,32 @@ type Data struct {
 	// attempt order. Set only for the developer's assembler tasks
 	// (developer_assemble, developer_moe_assemble).
 	Attempts []Attempt
+}
+
+// Review is what the review pipeline (internal/review: a brief distilled
+// from the change's context, one read-only session per angle its size calls
+// for, a judge merging what they found) came to on a pull request, as the
+// reviewer's judge session is told it. The scheduler runs the pipeline
+// before the session and fills this in from its artifact (scheduler's
+// review.go).
+type Review struct {
+	// Size is the brief's size of the change, one of review.Sizes, and
+	// Summary the brief's summary of it.
+	Size    string
+	Summary string
+	// Angles are the angles that ran, in the order they ran, and Skipped
+	// the ones that reviewed nothing, each with why (a session that
+	// failed, an answer with no findings in it).
+	Angles  []string
+	Skipped []string
+	// Count is how many findings the judge kept and Findings the list
+	// rendered as markdown (review.RenderFindings), most severe first;
+	// "" when it kept none.
+	Count    int
+	Findings string
+	// Artifact is the directory the review is kept in (review.ArtifactDir
+	// under the state directory's reviews/), for a person to read.
+	Artifact string
 }
 
 // Attempt is what one attempt of a fan-out came to, as the assembler is
@@ -317,6 +340,7 @@ func render(name string, d Data) (string, error) {
 	funcs := template.FuncMap{
 		"formatMail": mail.Format,
 		"count":      text.Count,
+		"join":       strings.Join,
 		"labels": func(ls []github.Label) string {
 			return strings.Join(github.LabelNames(ls), ", ")
 		},
