@@ -146,13 +146,18 @@ func TestRetentionRemovesAClosedIssuesStateOnceRetentionPeriodHasPassed(t *testi
 func TestRetentionSweepsAtMostOncePerInterval(t *testing.T) {
 	closed := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	h := newHarnessAt(t, retentionTOML, closed.Add(time.Hour))
+	// 7 closed inside the retention period, so its close time is remembered;
+	// 301 is bookkeeping gh cannot view (a requested review's pull request),
+	// asked about again on every sweep.
 	h.gh.issues[7] = &github.Issue{Number: 7, State: "CLOSED", ClosedAt: &closed}
-	if err := h.store.SaveIssue(state.IssueState{Number: 7}); err != nil {
-		t.Fatal(err)
+	for _, n := range []int{7, 301} {
+		if err := h.store.SaveIssue(state.IssueState{Number: n}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	runPass(t, h)
-	if got := h.gh.callCount("issue view"); got != 1 {
-		t.Fatalf("issue view calls after the first sweep = %d, want 1", got)
+	if got := h.gh.callCount("issue view"); got != 2 {
+		t.Fatalf("issue view calls after the first sweep = %d, want 2", got)
 	}
 	// A poll is due, a sweep is not.
 	h.clock.advance(59 * time.Minute)
@@ -160,13 +165,18 @@ func TestRetentionSweepsAtMostOncePerInterval(t *testing.T) {
 	h.sched.nextPoll = time.Time{}
 	h.sched.mu.Unlock()
 	runPass(t, h)
-	if got := h.gh.callCount("issue view"); got != 1 {
-		t.Fatalf("issue view calls after a second pass inside the interval = %d, want 1", got)
+	if got := h.gh.callCount("issue view"); got != 2 {
+		t.Fatalf("issue view calls after a second pass inside the interval = %d, want 2", got)
 	}
-	// Due again: the close is remembered, so GitHub is not asked twice.
+	// Due again: 301 is asked about again, 7's close is remembered.
 	h.clock.advance(time.Hour)
 	runPass(t, h)
-	if got := h.gh.callCount("issue view"); got != 1 {
-		t.Fatalf("issue view calls after a later sweep = %d, want 1 (the close time is remembered)", got)
+	if got := h.gh.callCount("issue view"); got != 3 {
+		t.Fatalf("issue view calls after a later sweep = %d, want 3 (7's close time is remembered)", got)
+	}
+	for _, n := range []int{7, 301} {
+		if !exists(filepath.Join(h.store.Dir, "issues", strconv.Itoa(n)+".json")) {
+			t.Errorf("issues/%d.json removed inside the retention period", n)
+		}
 	}
 }
