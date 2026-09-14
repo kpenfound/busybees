@@ -36,3 +36,12 @@ includeExtraFiles = [
 
 [modules.qa-playground]
 source = ".dagger/modules/qa-playground"
+
+[modules.dagger-dang-sdk]
+source = "github.com/dagger/dang-sdk"
+
+[sdks.dang]
+module = "dagger-dang-sdk"
+
+[sdks.dang.scopes.".dagger/modules/qa-playground"]
+is-module = true
