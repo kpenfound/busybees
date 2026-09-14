@@ -28,10 +28,11 @@ import (
 )
 
 // TestMain lets the test binary double as a fake `claude` — and a fake
-// `codex`, which it tells apart by its first argument, codex's `exec` — when
-// FAKE_CLAUDE is set: the runner executes it, it inspects its role and
-// environment, performs a scripted action and prints a stream-json result,
-// or codex's event stream when it is codex.
+// `codex` or `opencode`, which it tells apart by its first argument, codex's
+// `exec` or opencode's `run` — when FAKE_CLAUDE is set: the runner executes
+// it, it inspects its role and environment, performs a scripted action and
+// prints a stream-json result, or codex's or opencode's event stream when
+// it is one of those.
 //
 // The flags that steer the fake (FAKE_CLAUDE, FAKE_DEV_HANG, FAKE_DEV_FAIL,
 // FAKE_DEV_MAIL_TO, FAKE_ATTEMPT_FAIL, FAKE_ASSEMBLE_FAIL, FAKE_REVIEW_ALWAYS_CHANGES,
@@ -112,14 +113,25 @@ func fakeClaude() {
 		fmt.Fprintln(os.Stderr, "fake claude:", err)
 		os.Exit(2)
 	}
-	// The runner starts codex as `codex exec --json ...`; claude never gets
-	// `exec`. A codex session prints codex's events instead of claude's
+	// The runner starts codex as `codex exec --json ...` and opencode as
+	// `opencode run --format json ...`; claude never gets either. A codex or
+	// opencode session prints its own events instead of claude's
 	// stream-json, and the runner reads each stream its own way.
 	codex := len(os.Args) > 1 && os.Args[1] == "exec"
-	if codex {
-		// The prompt is on stdin for codex; claude reads it there too, but
-		// only codex closes with an error when it is left unread.
+	opencode := len(os.Args) > 1 && os.Args[1] == "run"
+	if codex || opencode {
+		// The prompt is on stdin for codex and opencode; claude reads it
+		// there too, but only those two close with an error when it is
+		// left unread.
 		_, _ = io.Copy(io.Discard, os.Stdin)
+	}
+	if opencode {
+		// opencode is configured through the file OPENCODE_CONFIG names,
+		// which it reads for its MCP servers and instructions; record the
+		// path so tests can see where the runner put it.
+		if err := os.WriteFile(filepath.Join(sessionDir, "opencode-config.txt"), []byte(os.Getenv(session.EnvOpenCodeConfig)), 0o644); err != nil {
+			fail(err)
+		}
 	}
 	// Record the command line so tests can assert on the flags the runner
 	// built, the way internal/session's fake does.
@@ -141,9 +153,12 @@ func fakeClaude() {
 	// The session id claude reports is derived from the --name the runner
 	// passed ("bees-developer-issue-1-r1" -> "sid-developer-issue-1-r1"), so
 	// a test can predict the id a later round must resume with.
+	// An opencode session's id is derived from its --title the same way.
 	sessionID := "fake"
-	if i := slices.Index(os.Args, "--name"); i >= 0 && i+1 < len(os.Args) {
-		sessionID = "sid-" + strings.TrimPrefix(os.Args[i+1], "bees-")
+	for _, flag := range []string{"--name", "--title"} {
+		if i := slices.Index(os.Args, flag); i >= 0 && i+1 < len(os.Args) {
+			sessionID = "sid-" + strings.TrimPrefix(os.Args[i+1], "bees-")
+		}
 	}
 	// FAKE_RESUME_FAIL makes a resumed launch die the way real claude does
 	// with a session id it no longer has: before any result event, with a
@@ -465,6 +480,17 @@ func fakeClaude() {
 		fmt.Println(`{"type":"item.completed","item":{"id":"item_0","type":"mcp_tool_call","server":"bees","tool":"done","status":"completed"}}`)
 		fmt.Printf(`{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":%q}}`+"\n", text)
 		fmt.Println(`{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":2}}`)
+		return
+	}
+	if opencode {
+		// Two finished steps are the two turns, the first ended by a tool
+		// call and the second by the model stopping; each carries half
+		// the cost, which opencode reports per step.
+		fmt.Printf(`{"type":"step_start","timestamp":1,"sessionID":%q,"part":{"type":"step-start"}}`+"\n", sessionID)
+		fmt.Printf(`{"type":"tool_use","timestamp":2,"sessionID":%q,"part":{"type":"tool","tool":"bees_done","state":{"status":"completed"}}}`+"\n", sessionID)
+		fmt.Printf(`{"type":"step_finish","timestamp":3,"sessionID":%q,"part":{"type":"step-finish","reason":"tool-calls","cost":%v,"tokens":{"input":10,"output":2}}}`+"\n", sessionID, cost/2)
+		fmt.Printf(`{"type":"text","timestamp":4,"sessionID":%q,"part":{"type":"text","text":%q}}`+"\n", sessionID, text)
+		fmt.Printf(`{"type":"step_finish","timestamp":5,"sessionID":%q,"part":{"type":"step-finish","reason":"stop","cost":%v,"tokens":{"input":10,"output":2}}}`+"\n", sessionID, cost/2)
 		return
 	}
 	fmt.Printf(`{"type":"result","subtype":"success","is_error":false,"result":%q,"session_id":%q,"num_turns":2,"total_cost_usd":%v}`+"\n", text, sessionID, cost)
@@ -1066,6 +1092,7 @@ func newHarnessAt(t *testing.T, toml string, now time.Time, opts ...func(*Deps))
 	runner := &session.Runner{
 		ClaudeBin:   os.Args[0],
 		CodexBin:    os.Args[0],
+		OpenCodeBin: os.Args[0],
 		SessionsDir: store.SessionsDir(),
 		StateDir:    store.Dir,
 		Repo:        cfg.Project.Repo,

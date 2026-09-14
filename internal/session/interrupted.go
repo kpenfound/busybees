@@ -104,8 +104,8 @@ func CheckInterrupted(role, dir string, alive func(int) bool) (*Interrupted, boo
 }
 
 // CountTurns counts the turns of a transcript that no final event has
-// closed: claude's assistant messages, or codex's completed items, whichever
-// the transcript carries. A session takes its turn count from the end of
+// closed: claude's assistant messages, codex's completed items or
+// opencode's finished steps, whichever the transcript carries. A session takes its turn count from the end of
 // its stream, and three kinds of session never reached one: an interrupted
 // one, a running one the live view is watching, and one whose agent process
 // died from a signal. The turns are counted instead: close enough to say
@@ -130,7 +130,7 @@ func CountTurns(path string) int {
 		if err := json.Unmarshal(sc.Bytes(), &probe); err != nil {
 			continue
 		}
-		if probe.Type == "assistant" || probe.Type == "item.completed" {
+		if probe.Type == "assistant" || probe.Type == "item.completed" || probe.Type == "step_finish" {
 			n++
 		}
 	}

@@ -1,8 +1,8 @@
 // Package session runs one headless agent session for a role.
 //
 // A session is one non-interactive run of the role's agent — `claude -p`,
-// or `codex exec` when the role's agent setting says so (see backend.go) —
-// executed inside a workspace with the role's resolved settings: model and
+// or `codex exec` or `opencode run` when the role's agent setting says so
+// (see backend.go) — executed inside a workspace with the role's resolved settings: model and
 // fallback model, appended system prompt, skills (as plugin dirs), MCP
 // servers and tool restrictions. Every session also gets the built-in bees
 // MCP server (see internal/mcpserver). The session communicates back through
@@ -87,8 +87,8 @@ type Request struct {
 	// ResumeID, when set, is the agent's own id of an earlier session
 	// (Result.ClaudeID) whose conversation this one continues, so a later
 	// round of the same role starts with the previous round's context
-	// instead of relearning the codebase. Only claude can: codex has no
-	// resume, and ignores it. The caller owns the id's lifetime; one that
+	// instead of relearning the codebase. Claude and opencode can; codex
+	// has no resume, and ignores it. The caller owns the id's lifetime; one that
 	// the agent no longer knows makes the launch fail before it says
 	// anything, which the caller's retry runs fresh.
 	ResumeID string
@@ -198,6 +198,9 @@ type Runner struct {
 	// CodexBin is the codex executable, run for a role whose agent is
 	// codex. Default "codex".
 	CodexBin string
+	// OpenCodeBin is the opencode executable, run for a role whose agent
+	// is opencode. Default "opencode".
+	OpenCodeBin string
 	// DockerBin is the container engine a container session is run with.
 	// Default config.ContainerEngine.
 	DockerBin string
@@ -227,7 +230,8 @@ type Runner struct {
 	// Skills prepares skill plugin dirs. Optional.
 	Skills *skills.Manager
 	// AddDirs are extra directories claude may access (the state dir).
-	// Codex, which runs without a sandbox, needs no such list.
+	// Codex, which runs without a sandbox, needs no such list, and neither
+	// does opencode, whose --auto approves writing outside the worktree.
 	AddDirs []string
 	// Stream, when set, receives every stream-json line (debug output).
 	Stream io.Writer
@@ -298,12 +302,19 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 	} else {
 		paths.mcp = mcpEntries(req, r.builtinMCP(req, sessionDir))
 	}
-	bin, args, stdin, err := be.command(ctx, r, req, paths)
+	bin, args, stdin, extra, err := be.command(ctx, r, req, paths)
 	if err != nil {
 		return nil, err
 	}
 	env := r.env(req, sessionDir)
+	for _, v := range extra {
+		env = append(env, v.name+"="+v.value)
+	}
 	if box != nil {
+		// The backend's variables reach the container the way the
+		// session's own do: by name on the engine's command line, with the
+		// value in the client's environment.
+		box.vars = append(box.vars, extra...)
 		bin, args, err = box.command(ctx, bin, args)
 		if err != nil {
 			return nil, err
@@ -665,7 +676,7 @@ func (r *Runner) NewSessionDir(name string) (string, error) {
 
 // tee copies every line of a session's stdout to the transcript (and to
 // r.Stream when set), handing each one that is a JSON object with a "type"
-// to visit along with that type. It is the read loop both backends share:
+// to visit along with that type. It is the read loop every backend shares:
 // what differs between them is what the lines mean, which is visit's
 // business. A line the scanner cannot hold is the end of the stream.
 func (r *Runner) tee(stdout io.Reader, transcript io.Writer, visit func(line []byte, typ string)) error {
@@ -691,7 +702,8 @@ func (r *Runner) tee(stdout io.Reader, transcript io.Writer, visit func(line []b
 }
 
 // MCPEntry is one MCP server as a session is given it: an entry of claude's
-// --mcp-config file, or the source of codex's mcp_servers overrides.
+// --mcp-config file, the source of codex's mcp_servers overrides, or a
+// server of opencode's configuration file.
 type MCPEntry struct {
 	Type    string            `json:"type,omitempty"`
 	Command string            `json:"command,omitempty"`
