@@ -819,7 +819,7 @@ Most things the scheduler does are best-effort: a failed label edit,
 assignment or mail update warns and the pass carries on. A warning nobody
 reads is silence, though, so each of those sites reports under a short, stable
 operation name (`poll`, `assign`, `label`, `reconcile`, `human-feedback`,
-`check-prs`, `list-created`, `ledger`, `write-status`,
+`check-prs`, `list-created`, `ledger`, `retention`, `write-status`,
 `project-prompts/<role>`, and so on). The record logs what the site logged
 plus `op=<name>`, and keeps a per-operation streak of consecutive failures; a
 success clears the streak. `status.json` carries the streaks as `degraded`, so
