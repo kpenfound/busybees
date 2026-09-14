@@ -103,6 +103,17 @@ func fakeCodex(t *testing.T, output string) string {
 	return p
 }
 
+// fakeOpenCode writes a shell script standing in for the opencode binary,
+// the same way fakeClaude stands in for claude.
+func fakeOpenCode(t *testing.T, output string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "opencode")
+	if err := os.WriteFile(p, []byte("#!/bin/sh\nprintf '%s\\n' '"+output+"'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
 // fixture is a clone with a bees.toml, a fake gh and a fake claude.
 type fixture struct {
 	*Deps
@@ -126,7 +137,7 @@ func setupIn(t *testing.T, clone, extra string, replies map[string]ghReply) *fix
 	if err := os.WriteFile(path, []byte(baseTOML+extra), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	d := New(context.Background(), path, fakeClaude(t, "2.9.0 (Claude Code)"), "")
+	d := New(context.Background(), path, fakeClaude(t, "2.9.0 (Claude Code)"), "", "")
 	if d.ConfigErr != nil {
 		t.Fatalf("load bees.toml: %v", d.ConfigErr)
 	}
@@ -346,6 +357,62 @@ func TestChecksIncludeCodexOnlyWhenConfigured(t *testing.T) {
 	}
 }
 
+func TestCheckOpenCode(t *testing.T) {
+	t.Run("runnable", func(t *testing.T) {
+		f := setup(t, "", nil)
+		f.OpenCodeBin = fakeOpenCode(t, "opencode-cli 0.1.0")
+		wantResult(t, f.run(t, f.checkOpenCode), Pass, "opencode-cli 0.1.0")
+	})
+
+	t.Run("not on PATH", func(t *testing.T) {
+		f := setup(t, "", nil)
+		f.OpenCodeBin = "opencode"
+		wantResult(t, f.run(t, f.checkOpenCode), Fail, "not found on PATH", "BEES_OPENCODE_BIN")
+	})
+
+	t.Run("not runnable", func(t *testing.T) {
+		f := setup(t, "", nil)
+		f.OpenCodeBin = filepath.Join(t.TempDir(), "gone")
+		wantResult(t, f.run(t, f.checkOpenCode), Fail, "--version failed")
+	})
+}
+
+// TestChecksIncludeOpenCodeOnlyWhenConfigured pins usesOpenCode the same way
+// TestChecksIncludeCodexOnlyWhenConfigured pins usesCodex: Checks() carries
+// two extra checks (the toolchain check and the config writable check) the
+// moment a role is actually configured to run opencode.
+func TestChecksIncludeOpenCodeOnlyWhenConfigured(t *testing.T) {
+	base := len(setup(t, "", nil).Checks())
+
+	with := setup(t, "[roles.developer]\nagent = \"opencode\"\n", nil)
+	if got := len(with.Checks()); got != base+2 {
+		t.Errorf("got %d checks with an opencode role configured, want %d (base %d + the two opencode checks)", got, base+2, base)
+	}
+
+	disabled := setup(t, "[roles.developer]\nagent = \"opencode\"\nenabled = false\n", nil)
+	if got := len(disabled.Checks()); got != base {
+		t.Errorf("got %d checks with the opencode role disabled, want %d", got, base)
+	}
+}
+
+func TestCheckOpenCodeConfigWritable(t *testing.T) {
+	f := setup(t, "", nil)
+	r := f.run(t, f.checkOpenCodeConfigWritable)
+	wantResult(t, r, Pass, "sessions")
+	if entries, err := os.ReadDir(r.Detail); err != nil || len(entries) != 0 {
+		t.Errorf("the probe file should be gone: %v %v", entries, err)
+	}
+
+	// A state dir that is a regular file: MkdirAll fails whatever the
+	// permissions are, including for root in a CI container.
+	blocked := filepath.Join(t.TempDir(), "state")
+	if err := os.WriteFile(blocked, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f = setup(t, "state_dir = "+fmt.Sprintf("%q", blocked)+"\n", nil)
+	wantResult(t, f.run(t, f.checkOpenCodeConfigWritable), Fail, "not a directory")
+}
+
 // ---- config ----------------------------------------------------------------
 
 func TestCheckConfigLoads(t *testing.T) {
@@ -357,7 +424,7 @@ func TestCheckConfigLoads(t *testing.T) {
 	if err := os.WriteFile(path, []byte("version = 1\n[project]\nnonsense = true\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	d := New(context.Background(), path, "claude", "codex")
+	d := New(context.Background(), path, "claude", "codex", "opencode")
 	if d.Config != nil {
 		t.Fatal("an invalid bees.toml must not load")
 	}
@@ -1038,7 +1105,7 @@ func TestChecksWithoutAResolvedRepo(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A local origin: config.Resolve cannot derive a GitHub repository.
-	d := New(context.Background(), path, fakeClaude(t, "2.9.0 (Claude Code)"), "")
+	d := New(context.Background(), path, fakeClaude(t, "2.9.0 (Claude Code)"), "", "")
 	gh := &fakeGH{t: t, replies: map[string]ghReply{"auth status": {out: "- Token scopes: 'repo'"}}}
 	gh.installAll(d)
 	d.LookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }

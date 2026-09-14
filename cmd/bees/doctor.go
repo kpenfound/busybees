@@ -15,9 +15,10 @@ func newDoctorCmd(g *globalFlags) *cobra.Command {
 		Use:   "doctor",
 		Short: "Check that the machine, the configuration and GitHub are ready",
 		Long: `doctor runs the preflight checks the factory otherwise only discovers
-mid-run: the toolchain (git, gh, claude, and codex when a role is configured
-with agent = "codex"), the configuration, access to the GitHub repository and
-creating a worktree.
+mid-run: the toolchain (git, gh, claude, codex when a role is configured with
+agent = "codex", and opencode when a role is configured with agent =
+"opencode"), the configuration, access to the GitHub repository and creating
+a worktree.
 
 Every check reports a pass, a warning (something that will probably bite you)
 or a failure (the factory cannot run), plus the command to fix it. doctor
@@ -31,13 +32,13 @@ carry the base label but fall outside filter.assignee or filter.milestone back
 into the filter. It never touches an item that does not carry the base label,
 and it never changes bees.toml.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			d := &doctor.Deps{ClaudeBin: claudeBin(), CodexBin: codexBin()}
+			d := &doctor.Deps{ClaudeBin: claudeBin(), CodexBin: codexBin(), OpenCodeBin: opencodeBin()}
 			// No bees.toml is not fatal: the toolchain checks still run and
 			// the config check reports why there is no configuration.
 			if path, err := configPath(g); err != nil {
 				d.ConfigErr = err
 			} else {
-				d = doctor.New(cmd.Context(), path, d.ClaudeBin, d.CodexBin)
+				d = doctor.New(cmd.Context(), path, d.ClaudeBin, d.CodexBin, d.OpenCodeBin)
 			}
 			checks := d.Checks()
 			results := doctor.Run(cmd.Context(), checks)
