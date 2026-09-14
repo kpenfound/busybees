@@ -1,5 +1,9 @@
 // Package tui draws the factory's live view: what `bees run` shows while it
-// works, fed by the scheduler's event stream in the same process.
+// works, fed by the scheduler's event stream in the same process — or, for a
+// daemon running several projects, by every project's stream (RunMachine),
+// with a selector over the projects: all of them together, each row naming
+// its project in a column of its own, or one project at a time, drawn as
+// that project's single-project view would be.
 //
 // It has two screens. The first is the panels. Now lists every running
 // session — role, issue or pull request, the stage its developer worker is
@@ -49,6 +53,13 @@ var programOptions = func() []tea.ProgramOption {
 // too when HardStop is called.
 type Factory interface {
 	Subscribe() <-chan scheduler.Event
+	Machine
+}
+
+// Machine is the half of a daemon the view drives: what a Factory is
+// without the event stream, which for a daemon comes with each project in
+// Deps.Projects instead (daemon.Daemon is one).
+type Machine interface {
 	Run(ctx context.Context) error
 	HardStop()
 }
@@ -68,16 +79,25 @@ type Factory interface {
 // person who left the view early watches the stop finish instead of a
 // silent terminal. It may be nil.
 func Run(ctx context.Context, d Deps, f Factory, down func()) error {
+	d.Events = f.Subscribe()
+	return RunMachine(ctx, d, f, down)
+}
+
+// RunMachine is Run for a daemon: the view is over d.Projects, each with
+// the event stream of its own scheduler, and m runs and hard-stops all of
+// them. The keys stop the machine as a whole, every project's work in
+// flight finishing on the first press and stopped on the second, exactly as
+// Run's do a single project's.
+func RunMachine(ctx context.Context, d Deps, m Machine, down func()) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	d.Events = f.Subscribe()
 	d.Stop = cancel
-	d.HardStop = f.HardStop
+	d.HardStop = m.HardStop
 
 	p := tea.NewProgram(New(d), programOptions()...)
 	done := make(chan error, 1)
 	go func() {
-		err := f.Run(ctx)
+		err := m.Run(ctx)
 		done <- err
 		// Whatever stopped the factory — a drain the person asked for, a
 		// SIGTERM, --once finishing — the view has nothing left to show.

@@ -59,42 +59,42 @@ func plain(s string) string { return ansi.ReplaceAllString(s, "") }
 // started/ended/staged are the scheduler events the view is fed, in the
 // shape the scheduler publishes them (events.go).
 func started(name, role string, issue, pr int, at time.Time, model string, fallback bool) tea.Msg {
-	return eventMsg(scheduler.Event{
+	return eventMsg{Event: scheduler.Event{
 		Kind: scheduler.EventSessionStarted, Time: at, Session: name, Role: role,
 		Issue: issue, PR: pr, Model: model, Fallback: fallback,
-	})
+	}}
 }
 
 // startedIn is started() for a session the scheduler boxed.
 func startedIn(name, role string, issue, pr int, at time.Time, model, sandbox string) tea.Msg {
-	return eventMsg(scheduler.Event{
+	return eventMsg{Event: scheduler.Event{
 		Kind: scheduler.EventSessionStarted, Time: at, Session: name, Role: role,
 		Issue: issue, PR: pr, Model: model, Sandbox: sandbox,
-	})
+	}}
 }
 
 func ended(name, role string, issue, pr int, turns int, cost float64) tea.Msg {
-	return eventMsg(scheduler.Event{
+	return eventMsg{Event: scheduler.Event{
 		Kind: scheduler.EventSessionEnded, Time: fixed, Session: name, Role: role,
 		Issue: issue, PR: pr, Outcome: "pr-opened", Turns: turns, CostUSD: cost, CostKnown: true,
-	})
+	}}
 }
 
 // endedUnknownCost is a session-ended event for a session that ended with no
 // closing event, so its cost is not a real zero but unpriced (a signalled
 // process, most often — see #359).
 func endedUnknownCost(name, role string, issue, pr int, turns int) tea.Msg {
-	return eventMsg(scheduler.Event{
+	return eventMsg{Event: scheduler.Event{
 		Kind: scheduler.EventSessionEnded, Time: fixed, Session: name, Role: role,
 		Issue: issue, PR: pr, Outcome: "failed", Turns: turns,
-	})
+	}}
 }
 
 func staged(issue int, name string, round int) tea.Msg {
-	return eventMsg(scheduler.Event{
+	return eventMsg{Event: scheduler.Event{
 		Kind: scheduler.EventStage, Time: fixed, Role: config.RoleDeveloper,
 		Issue: issue, Stage: name, Round: round,
-	})
+	}}
 }
 
 // The Now panel lists every running session with what a person watching the
@@ -310,10 +310,10 @@ func TestALongStageNameDoesNotPushTheModelColumnOff(t *testing.T) {
 // renders: how it ended, what it said about it, what it cost and how long it
 // took.
 func endedAs(name, role string, issue, pr int, outcome, note string, cost float64, took time.Duration) tea.Msg {
-	return eventMsg(scheduler.Event{
+	return eventMsg{Event: scheduler.Event{
 		Kind: scheduler.EventSessionEnded, Time: fixed, Session: name, Role: role,
 		Issue: issue, PR: pr, Outcome: outcome, Note: note, CostUSD: cost, CostKnown: true, Duration: took,
-	})
+	}}
 }
 
 // escalated and approved are what the scheduler records in status.json for
@@ -797,8 +797,8 @@ func TestAListTooLongForItsPanelAccountsForTheRest(t *testing.T) {
 func TestTheViewFitsTheTerminalItIsDrawnIn(t *testing.T) {
 	busy := []tea.Msg{
 		started("developer-issue-1-r1", config.RoleDeveloper, 1, 2, fixed, "opus", false),
-		eventMsg(scheduler.Event{Kind: scheduler.EventSessionEnded, Time: fixed, Session: "x",
-			Role: config.RoleReviewer, Issue: 3, Outcome: "approved"}),
+		eventMsg{Event: scheduler.Event{Kind: scheduler.EventSessionEnded, Time: fixed, Session: "x",
+			Role: config.RoleReviewer, Issue: 3, Outcome: "approved"}},
 		statusMsg{status: state.Status{
 			NeedsHuman: []state.Escalated{{Issue: 7, Title: "t", Since: fixed.Add(-time.Hour)}},
 			Approved:   []state.ApprovedPR{{PR: 9, Issue: 8, Title: "t", Since: fixed.Add(-time.Hour)}},
@@ -812,8 +812,8 @@ func TestTheViewFitsTheTerminalItIsDrawnIn(t *testing.T) {
 	for i := range 4 {
 		crowded = append(crowded, started(
 			fmt.Sprintf("developer-issue-%d-r1", 10+i), config.RoleDeveloper, 10+i, 20+i, fixed, "opus", false))
-		crowded = append(crowded, eventMsg(scheduler.Event{Kind: scheduler.EventSessionEnded, Time: fixed,
-			Session: fmt.Sprintf("s%d", i), Role: config.RoleReviewer, Issue: 30 + i, Outcome: "approved"}))
+		crowded = append(crowded, eventMsg{Event: scheduler.Event{Kind: scheduler.EventSessionEnded, Time: fixed,
+			Session: fmt.Sprintf("s%d", i), Role: config.RoleReviewer, Issue: 30 + i, Outcome: "approved"}})
 	}
 	st := state.Status{}
 	for i := range 4 {
@@ -878,9 +878,9 @@ func TestTheSelectionIsAlwaysOnARowThatIsDrawn(t *testing.T) {
 			"developer-issue-"+string(rune('1'+i))+"-r1", config.RoleDeveloper, 10+i, 30+i, fixed, "opus", false))
 	}
 	for i := range 8 {
-		msgs = append(msgs, eventMsg(scheduler.Event{
+		msgs = append(msgs, eventMsg{Event: scheduler.Event{
 			Kind: scheduler.EventSessionEnded, Time: fixed, Session: "s" + string(rune('a'+i)),
-			Role: config.RoleReviewer, Issue: 50 + i, Outcome: "approved", Note: "fine"}))
+			Role: config.RoleReviewer, Issue: 50 + i, Outcome: "approved", Note: "fine"}})
 	}
 	st := state.Status{}
 	for i := range 3 {

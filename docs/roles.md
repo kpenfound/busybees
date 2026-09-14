@@ -55,9 +55,10 @@ your comments reach a session is under
 
 **Learning the project.** busybees tells a role nothing about how to build,
 test or run the product. The role reads the repository's README, CONTRIBUTING,
-CLAUDE.md, Makefile and CI configuration, and records the commands and gotchas
-in its notes file. The prompt adds that documentation which is missing or
-wrong is worth an issue.
+CLAUDE.md, Makefile and CI configuration, and records in its notes file the
+commands and gotchas that took finding out, without copying what a document
+already states. The prompt adds that documentation which is missing or wrong
+is worth an issue.
 
 **The comment marker.** People and bees share one GitHub account unless
 [`[github]`](configuration.md#github) gives the factory its own, so every
@@ -120,7 +121,12 @@ A role's only long-term memory is what the `notes_read` tool returns and what
 `notes_write` replaces it with: nothing renders notes into the prompt, so the
 role is told to call `notes_read` at the start of a session, before anything
 else, and `notes_write` before it finishes, with the complete text, headings
-included: decisions, conventions, gotchas, what it tested. A first read
+included. Notes are curated memory, not a log: they keep what a later session
+could not work out again (decisions and why, gotchas, conventions no document
+states, and for QA what it tested) and leave out what the session did and what
+`git log`, the code, the repository's docs, an issue or a pull request already
+records. The developer's exact build and test commands are kept on purpose,
+so no session has to find them again. A first read
 creates the notes with a `# <role> notes` heading and the four sections roles
 keep their notes under: **Project facts** (how to build, test and run the
 project), **Conventions**, **Decisions** and **Open questions**. Anything
@@ -131,8 +137,9 @@ Nothing curates the notes behind a role's back. Every
 `scheduler.notes_consolidate_every` sessions (default 10), or sooner once they
 are larger than `scheduler.notes_max_bytes` (default 32768), the task prompt
 asks the session to rewrite them into those sections on top of its normal
-work: merge duplicates, drop what is stale or contradicted, keep decisions,
-commands and gotchas. The counters live in `<state_dir>/<role>.json`; the size
+work: merge duplicates, drop what is stale or contradicted and what the code,
+its docs, git history or GitHub already record, keep decisions, commands and
+gotchas. The counters live in `<state_dir>/<role>.json`; the size
 `bees status` shows and this trigger reads is measured in the backend
 [`notes.backend`](configuration.md#notes) selects, so it is the size of what
 `notes_read` returns.

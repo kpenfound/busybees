@@ -64,14 +64,25 @@ type Deps struct {
 	// Repo is the repository the factory is building, for the header and
 	// for the GitHub links every row can be opened at.
 	Repo string
+	// Projects is what a daemon's view is given: one Project per project
+	// the daemon runs, in the order it lists them, and the view gains a
+	// selector — all, then each project — that filters every panel to one
+	// project or shows all of them together with a column naming each
+	// row's. When it lists any, the per-project fields above (Events,
+	// Status, Mail, Kill, Send, Repo) are not read: each Project carries
+	// its own. A single-project view leaves it empty and has no selector.
+	Projects []Project
 }
 
 // running is one session the factory is running right now, as the Now panel
 // renders it. It is built from the session-started event and dropped when
 // the matching session-ended arrives.
 type running struct {
-	name string
-	role string
+	// project is the index in Model.projects of the project the session
+	// belongs to.
+	project int
+	name    string
+	role    string
 	// dir is the session's own directory, which is where its
 	// transcript.jsonl is: what the session view follows.
 	dir      string
@@ -109,6 +120,7 @@ type spend struct {
 // Everything in it arrives on the session-ended event: nothing is looked up
 // afterwards.
 type finished struct {
+	project   int
 	role      string
 	issue     int
 	pr        int
@@ -138,22 +150,21 @@ type stage struct {
 type Model struct {
 	deps Deps
 
-	// sessions are the running sessions in the order they started; spent
-	// and stages are keyed by the work item an event was about (see
-	// spendKey) and by issue number.
+	// projects are the projects the view is over (Deps.projects): one for
+	// `bees run` on a project, one per project for a daemon. shown is the
+	// one the panels are filtered to, or allProjects; a single-project
+	// view is always on its one project.
+	projects []project
+	shown    int
+
+	// sessions are the running sessions in the order they started, across
+	// every project; what each work item has spent, and the stage it is in,
+	// are kept on its project.
 	sessions []running
-	spent    map[string]spend
-	stages   map[int]stage
 	// recent are the sessions that have finished, newest first, capped at
 	// recentRows: a view of what just happened, not a log — ledger.jsonl and
 	// bees.log keep everything.
 	recent []finished
-
-	status state.Status
-	mail   map[string]int
-	// statusErr is the last error reading status.json or the mailbox. The
-	// view keeps drawing what it last read and says so.
-	statusErr string
 
 	// watching is the session the session view is showing, or nil when the
 	// view is the panels; tailGen numbers the session views so the
@@ -178,13 +189,13 @@ type Model struct {
 	// (see targets). notice is the one line the footer shows instead of the
 	// key hints: what the last key did, or why it could not.
 	//
-	// confirmKill is the name of the session an armed k confirmation names,
-	// and empty when nothing is armed: the confirmation carries its target
-	// and the second press acts on that session, never on whatever the
-	// cursor is on by then (see kill).
+	// confirmKill names the session an armed k confirmation is about, and
+	// nothing (an empty name) when nothing is armed: the confirmation
+	// carries its target and the second press acts on that session, never
+	// on whatever the cursor is on by then (see kill).
 	notice      string
 	cursor      int
-	confirmKill string
+	confirmKill sessionRef
 }
 
 // New builds the model. Nothing is read and no goroutine is started until
@@ -193,25 +204,39 @@ func New(d Deps) Model {
 	if d.Now == nil {
 		d.Now = time.Now
 	}
-	return Model{deps: d, spent: map[string]spend{}, stages: map[int]stage{}}
+	m := Model{deps: d}
+	for _, p := range d.projects() {
+		m.projects = append(m.projects, project{Project: p, spent: map[string]spend{}, stages: map[int]stage{}})
+	}
+	// A daemon's view opens on every project; a single-project view has
+	// nothing else to open on.
+	if m.multi() {
+		m.shown = allProjects
+	}
+	return m
 }
 
 // ---- messages --------------------------------------------------------------
 
-// eventMsg is one scheduler event delivered to the model.
-type eventMsg scheduler.Event
+// eventMsg is one scheduler event delivered to the model, with the project
+// whose scheduler published it.
+type eventMsg struct {
+	project int
+	scheduler.Event
+}
 
-// statusMsg is a fresh read of status.json and the mailbox.
+// statusMsg is a fresh read of one project's status.json and mailbox.
 type statusMsg struct {
-	status state.Status
-	mail   map[string]int
-	err    error
+	project int
+	status  state.Status
+	mail    map[string]int
+	err     error
 }
 
 // turnsMsg is a fresh count of the assistant messages in each running
-// session's transcript, keyed by session name. A session that has ended by
-// the time it arrives is simply not in the model any more.
-type turnsMsg map[string]int
+// session's transcript. A session that has ended by the time it arrives is
+// simply not in the model any more.
+type turnsMsg map[sessionRef]int
 
 // actedMsg is what a key that did something outside the model reports back:
 // the empty string when it worked, and what went wrong when it did not.
@@ -237,13 +262,18 @@ const redrawInterval = time.Second
 const refreshEvery = 5
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.waitForEvent(), m.refresh(), m.countTurns(), redraw())
+	cmds := []tea.Cmd{m.countTurns(), redraw()}
+	for p := range m.projects {
+		cmds = append(cmds, m.waitForEvent(p), m.refresh(p))
+	}
+	return tea.Batch(cmds...)
 }
 
-// waitForEvent blocks on the event stream and delivers the next event. It is
-// re-issued after every event, so exactly one read is outstanding at a time.
-func (m Model) waitForEvent() tea.Cmd {
-	ch := m.deps.Events
+// waitForEvent blocks on project p's event stream and delivers the next
+// event. It is re-issued after every event, so exactly one read per project
+// is outstanding at a time.
+func (m Model) waitForEvent(p int) tea.Cmd {
+	ch := m.projects[p].Events
 	if ch == nil {
 		return nil
 	}
@@ -252,30 +282,40 @@ func (m Model) waitForEvent() tea.Cmd {
 		if !ok {
 			return nil
 		}
-		return eventMsg(ev)
+		return eventMsg{project: p, Event: ev}
 	}
 }
 
-// refresh re-reads status.json and the mailbox — the same numbers `bees
-// status` prints, computed by the scheduler and read here, never recomputed.
-func (m Model) refresh() tea.Cmd {
-	read, counts := m.deps.Status, m.deps.Mail
+// refresh re-reads project p's status.json and mailbox — the same numbers
+// `bees status` prints, computed by the scheduler and read here, never
+// recomputed.
+func (m Model) refresh(p int) tea.Cmd {
+	read, counts := m.projects[p].Status, m.projects[p].Mail
 	if read == nil {
 		return nil
 	}
 	return func() tea.Msg {
 		st, err := read()
 		if err != nil {
-			return statusMsg{err: err}
+			return statusMsg{project: p, err: err}
 		}
-		msg := statusMsg{status: st}
+		msg := statusMsg{project: p, status: st}
 		if counts != nil {
 			if msg.mail, err = counts(); err != nil {
-				return statusMsg{status: st, err: err}
+				return statusMsg{project: p, status: st, err: err}
 			}
 		}
 		return msg
 	}
+}
+
+// refreshAll is refresh for every project.
+func (m Model) refreshAll() tea.Cmd {
+	cmds := make([]tea.Cmd, 0, len(m.projects))
+	for p := range m.projects {
+		cmds = append(cmds, m.refresh(p))
+	}
+	return tea.Batch(cmds...)
 }
 
 // countTurns counts the assistant messages of every running session's own
@@ -289,11 +329,14 @@ func (m Model) refresh() tea.Cmd {
 // nothing and an offset per session to avoid the re-scan would be a third
 // place in this package tracking one.
 func (m Model) countTurns() tea.Cmd {
-	type live struct{ name, dir string }
+	type live struct {
+		ref sessionRef
+		dir string
+	}
 	open := make([]live, 0, len(m.sessions))
 	for _, s := range m.sessions {
 		if s.dir != "" {
-			open = append(open, live{s.name, s.dir})
+			open = append(open, live{s.ref(), s.dir})
 		}
 	}
 	if len(open) == 0 {
@@ -302,7 +345,7 @@ func (m Model) countTurns() tea.Cmd {
 	return func() tea.Msg {
 		out := make(turnsMsg, len(open))
 		for _, l := range open {
-			out[l.name] = session.CountTurns(filepath.Join(l.dir, session.TranscriptFile))
+			out[l.ref] = session.CountTurns(filepath.Join(l.dir, session.TranscriptFile))
 		}
 		return out
 	}
@@ -323,21 +366,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		return m.key(msg)
 	case eventMsg:
-		m.apply(scheduler.Event(msg))
+		m.apply(msg.project, msg.Event)
 		m.clampCursor()
-		return m, tea.Batch(m.waitForEvent(), m.refresh())
+		return m, tea.Batch(m.waitForEvent(msg.project), m.refresh(msg.project))
 	case actedMsg:
 		m.notice = msg.note
 	case statusMsg:
+		p := &m.projects[msg.project]
 		if msg.err != nil {
-			m.statusErr = msg.err.Error()
+			p.statusErr = msg.err.Error()
 			return m, nil
 		}
-		m.statusErr, m.status, m.mail = "", msg.status, msg.mail
+		p.statusErr, p.status, p.mail = "", msg.status, msg.mail
 		m.clampCursor()
 	case turnsMsg:
 		for i, s := range m.sessions {
-			if n, ok := msg[s.name]; ok {
+			if n, ok := msg[s.ref()]; ok {
 				m.sessions[i].turns = n
 			}
 		}
@@ -366,7 +410,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		m.ticks++
 		if m.ticks%refreshEvery == 0 {
-			return m, tea.Batch(redraw(), m.refresh(), m.countTurns())
+			return m, tea.Batch(redraw(), m.refreshAll(), m.countTurns())
 		}
 		return m, redraw()
 	case Stopped:
@@ -394,8 +438,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // person writing "queue a retry" must not lose the factory to their first
 // keystroke.
 //
-// Everything else belongs to the screen that is up. On the panels the arrows
-// move one selection through every panel's rows in turn; enter opens the
+// Everything else belongs to the screen that is up. On the panels ↑ and ↓
+// move one selection through every panel's rows in turn, and in a daemon's
+// view ← and → cycle the project selector (see Model.cycle); enter opens the
 // selected session's transcript (session.go), o opens what is selected on
 // GitHub, and k stops a session and hands its issue to a person. k asks
 // first, the way Ctrl-C does: it is the one key here that throws work away,
@@ -405,7 +450,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	k := msg.String()
 	if k != "k" {
-		m.confirmKill = ""
+		m.confirmKill = sessionRef{}
 	}
 	if k == "ctrl+c" || (k == "q" && !m.composing()) {
 		m.notice = ""
@@ -435,6 +480,19 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "down", "tab":
 		m.notice = ""
 		m.cursor = min(max(0, len(m.targets())-1), m.cursor+1)
+	case "left", "right":
+		if !m.multi() {
+			return m, nil
+		}
+		m.notice = ""
+		if k == "left" {
+			m.cycle(-1)
+		} else {
+			m.cycle(1)
+		}
+		// The rows the cursor walks are the ones in view, and there are
+		// different ones now.
+		m.clampCursor()
 	case "enter":
 		if s, ok := m.selection(); ok {
 			m.notice = ""
@@ -469,11 +527,12 @@ func (m Model) openOnGitHub() (tea.Model, tea.Cmd) {
 	if n == 0 {
 		n = t.issue
 	}
-	if n == 0 || m.deps.Repo == "" {
+	repo := m.projects[t.project].Repo
+	if n == 0 || repo == "" {
 		m.notice = "the selected row is about no issue or pull request"
 		return m, nil
 	}
-	url := fmt.Sprintf("https://github.com/%s/issues/%d", m.deps.Repo, n)
+	url := fmt.Sprintf("https://github.com/%s/issues/%d", repo, n)
 	open := m.deps.Open
 	m.notice = "opening " + url
 	return m, func() tea.Msg {
@@ -503,15 +562,17 @@ func (m Model) openOnGitHub() (tea.Model, tea.Cmd) {
 // Every other key disarms the confirmation (see key), so a person who moves
 // the cursor and presses k arms it afresh on the session they are now on.
 func (m Model) kill() (tea.Model, tea.Cmd) {
-	// Kill is non-nil here: nothing can be armed without it (below).
-	if name := m.confirmKill; name != "" {
-		m.confirmKill = ""
-		if !m.isRunning(name) {
+	// The project's Kill is non-nil here: nothing can be armed without it
+	// (below).
+	if ref := m.confirmKill; ref.name != "" {
+		m.confirmKill = sessionRef{}
+		name := ref.name
+		if !m.isRunning(ref) {
 			m.notice = name + " has finished; nothing was stopped"
 			return m, nil
 		}
 		m.notice = "stopping " + name
-		kill := m.deps.Kill
+		kill := m.projects[ref.project].Kill
 		return m, func() tea.Msg {
 			if err := kill(name); err != nil {
 				return actedMsg{note: "could not stop " + name + ": " + oneLine(err.Error())}
@@ -524,26 +585,30 @@ func (m Model) kill() (tea.Model, tea.Cmd) {
 	case !ok:
 		m.notice = "select a running session to stop it"
 		return m, nil
-	case m.deps.Kill == nil:
+	case m.projects[s.project].Kill == nil:
 		m.notice = "this view cannot stop a session"
 		return m, nil
 	}
-	m.confirmKill = s.name
+	m.confirmKill = s.ref()
 	m.notice = fmt.Sprintf("k again to stop %s and hand %s to a person", s.name, number(s.issue))
 	return m, nil
 }
 
-// isRunning says whether a session of this name is still running, which is
-// what an armed confirmation is checked against: the Now panel is the whole
-// record of what the view knows to be alive (see apply).
-func (m Model) isRunning(name string) bool {
-	return slices.ContainsFunc(m.sessions, func(s running) bool { return s.name == name })
+// isRunning says whether the session is still running, which is what an
+// armed confirmation is checked against: the Now panel is the whole record
+// of what the view knows to be alive (see apply).
+func (m Model) isRunning(ref sessionRef) bool {
+	return slices.ContainsFunc(m.sessions, func(s running) bool { return s.ref() == ref })
 }
+
+// ref names the session: its project and its name.
+func (s running) ref() sessionRef { return sessionRef{project: s.project, name: s.name} }
 
 // target is one row a person can select. session is the running session the
 // row is about, empty for a row that is not one; issue and pr are what it
-// links to.
+// links to, in project's repository.
 type target struct {
+	project int
 	session string
 	issue   int
 	pr      int
@@ -555,23 +620,24 @@ type target struct {
 // list is what makes a single cursor and two keys enough.
 //
 // It enumerates only the rows that are *drawn*: a list squeezed by a short
-// terminal shows its first entries and accounts for the rest, and a panel
-// that did not fit at all shows none. Walking entries that are not on screen
-// would leave ↓ marking nothing and k naming a session a person cannot see.
+// terminal shows its first entries and accounts for the rest, a panel that
+// did not fit at all shows none, and a project the selector has not chosen
+// shows nothing at all. Walking entries that are not on screen would leave
+// ↓ marking nothing and k naming a session a person cannot see.
 func (m Model) targets() []target {
 	l, want := m.layout(), m.want()
 	var out []target
-	for _, s := range m.sessions[:l.entries(0, want[0])] {
-		out = append(out, target{session: s.name, issue: s.issue, pr: s.pr})
+	for _, s := range m.shownSessions()[:l.entries(0, want[0])] {
+		out = append(out, target{project: s.project, session: s.name, issue: s.issue, pr: s.pr})
 	}
-	for _, f := range m.recent[:l.entries(1, want[1])] {
-		out = append(out, target{issue: f.issue, pr: f.pr})
+	for _, f := range m.shownRecent()[:l.entries(1, want[1])] {
+		out = append(out, target{project: f.project, issue: f.issue, pr: f.pr})
 	}
-	for _, e := range m.status.NeedsHuman[:l.entries(2, want[2])] {
-		out = append(out, target{issue: e.Issue})
+	for _, e := range m.shownNeedsHuman()[:l.entries(2, want[2])] {
+		out = append(out, target{project: e.project, issue: e.Issue})
 	}
-	for _, a := range m.status.Approved[:l.entries(3, want[3])] {
-		out = append(out, target{issue: a.Issue, pr: a.PR})
+	for _, a := range m.shownApproved()[:l.entries(3, want[3])] {
+		out = append(out, target{project: a.project, issue: a.Issue, pr: a.PR})
 	}
 	return out
 }
@@ -592,7 +658,7 @@ func (m Model) selection() (running, bool) {
 		return running{}, false
 	}
 	for _, s := range m.sessions {
-		if s.name == t.session {
+		if s.project == t.project && s.name == t.session {
 			return s, true
 		}
 	}
@@ -634,30 +700,32 @@ func (m *Model) clampCursor() {
 	}
 }
 
-// apply folds one scheduler event into the model.
-func (m *Model) apply(ev scheduler.Event) {
+// apply folds one scheduler event, published by project p's scheduler,
+// into the model.
+func (m *Model) apply(p int, ev scheduler.Event) {
 	switch ev.Kind {
 	case scheduler.EventSessionStarted:
 		m.sessions = append(m.sessions, running{
-			name: ev.Session, role: ev.Role, dir: ev.Dir, issue: ev.Issue, pr: ev.PR,
+			project: p, name: ev.Session, role: ev.Role, dir: ev.Dir, issue: ev.Issue, pr: ev.PR,
 			started: ev.Time, model: ev.Model, fallback: ev.Fallback, sandbox: ev.Sandbox,
 		})
 	case scheduler.EventSessionEnded:
-		m.drop(ev.Session)
+		ref := sessionRef{project: p, name: ev.Session}
+		m.drop(ref)
 		// A session being read stays on screen after it has finished: its
 		// transcript is on disk and its last words are usually the ones
 		// worth reading.
-		if m.watching != nil && m.watching.name == ev.Session {
+		if m.watching != nil && m.watching.ref() == ref {
 			m.watching.ended = true
 		}
 		key := spendKey(ev.Issue, ev.Role)
-		s := m.spent[key]
+		s := m.projects[p].spent[key]
 		s.turns += ev.Turns
 		s.cost += ev.CostUSD
 		s.known = s.known || ev.CostKnown
-		m.spent[key] = s
+		m.projects[p].spent[key] = s
 		m.recent = append([]finished{{
-			role: ev.Role, issue: ev.Issue, pr: ev.PR, at: ev.Time,
+			project: p, role: ev.Role, issue: ev.Issue, pr: ev.PR, at: ev.Time,
 			outcome: ev.Outcome, note: ev.Note, cost: ev.CostUSD, costKnown: ev.CostKnown, took: ev.Duration,
 		}}, m.recent...)
 		if len(m.recent) > recentRows {
@@ -665,15 +733,15 @@ func (m *Model) apply(ev scheduler.Event) {
 		}
 	case scheduler.EventStage:
 		if ev.Issue > 0 {
-			m.stages[ev.Issue] = stage{name: ev.Stage, round: ev.Round}
+			m.projects[p].stages[ev.Issue] = stage{name: ev.Stage, round: ev.Round}
 		}
 	}
 }
 
 // drop removes a finished session from the running list.
-func (m *Model) drop(name string) {
+func (m *Model) drop(ref sessionRef) {
 	for i, s := range m.sessions {
-		if s.name == name {
+		if s.ref() == ref {
 			m.sessions = append(m.sessions[:i:i], m.sessions[i+1:]...)
 			return
 		}
@@ -760,9 +828,10 @@ type layout struct {
 // keeps one.
 func (l layout) entries(i, n int) int { return shown(n, l.rows[i]) }
 
-// want is how many entries each list panel has, in panel order.
+// want is how many entries each list panel has, in panel order: the ones of
+// the projects in view.
 func (m Model) want() []int {
-	return []int{len(m.sessions), len(m.recent), len(m.status.NeedsHuman), len(m.status.Approved)}
+	return []int{len(m.shownSessions()), len(m.shownRecent()), len(m.shownNeedsHuman()), len(m.shownApproved())}
 }
 
 // layout fits the view into the terminal. The header, the Now panel, the
@@ -819,22 +888,18 @@ func (m Model) View() string {
 	return b.String()
 }
 
-// header names the repository and the clock the view is drawing at, plus
-// (right to left) the pause notice while dispatch is paused, or the daily
-// budget reading while it is not, and a status error — a standing condition
-// belongs here rather than in either screen's footer, which the stopping
-// notice already owns.
+// header names the repository — in a daemon's view the project selector,
+// then the repository of the project in view — and the clock the view is
+// drawing at, plus (right to left) the pause notice while dispatch is
+// paused, or the daily budget reading while it is not, and a status error,
+// for each project in view (see notices) — a standing condition belongs
+// here rather than in either screen's footer, which the stopping notice
+// already owns.
 func (m Model) header(w int) string {
-	left := titleStyle.Render("busybees") + "  " + m.deps.Repo
+	left := titleStyle.Render("busybees") + "  " + m.title()
 	right := m.deps.Now().Format("15:04:05")
-	switch notice := m.status.PauseNotice(m.deps.Now()); {
-	case notice != "":
-		right = warnStyle.Render("⏸ "+notice) + "   " + right
-	case m.status.BudgetNotice() != "":
-		right = headerStyle.Render(m.status.BudgetNotice()) + "   " + right
-	}
-	if m.statusErr != "" {
-		right = warnStyle.Render("status: "+oneLine(m.statusErr)) + "   " + right
+	for _, notice := range slices.Backward(m.notices()) {
+		right = notice + "   " + right
 	}
 	gap := w - lipgloss.Width(left) - lipgloss.Width(right)
 	if gap < 1 {
@@ -874,15 +939,19 @@ func (m Model) footer() string {
 	if s := m.stoppingNotice(); s != "" {
 		return s
 	}
-	switch {
-	case m.notice != "":
+	if m.notice != "" {
 		return m.notice
-	case len(m.sessions) > 0:
-		return "↑↓ select · enter watch · o open on GitHub · k stop session · q or ctrl-c stops (sessions finish)"
-	default:
-		// enter and k both act on a running session, and there are none.
-		return "↑↓ select · o open on GitHub · q or ctrl-c stops (sessions finish)"
 	}
+	hints := ""
+	if m.multi() {
+		hints = "←→ project · "
+	}
+	if len(m.shownSessions()) > 0 {
+		return hints + "↑↓ select · enter watch · o open on GitHub · k stop session · q or ctrl-c stops (sessions finish)"
+	}
+	// enter and k both act on a running session, and there are none in
+	// view.
+	return hints + "↑↓ select · o open on GitHub · q or ctrl-c stops (sessions finish)"
 }
 
 // panel draws one titled box around w columns of text, with its title and
@@ -899,9 +968,9 @@ func panel(title, body string, w int, style lipgloss.Style) string {
 // the view says "nothing needs you" by looking ordinary.
 func (m Model) panelStyleOf(i int) lipgloss.Style {
 	switch {
-	case i == panelNeedsHuman && len(m.status.NeedsHuman) > 0:
+	case i == panelNeedsHuman && len(m.shownNeedsHuman()) > 0:
 		return warnTitleStyle
-	case i == panelApproved && len(m.status.Approved) > 0:
+	case i == panelApproved && len(m.shownApproved()) > 0:
 		return cleanTitleStyle
 	default:
 		return titleStyle
@@ -915,14 +984,15 @@ func (m Model) panelStyleOf(i int) lipgloss.Style {
 // marks the one enter opens the session view on and k stops — the same ▸ the
 // other panels draw, because there is one selection over the whole view.
 func (m Model) nowPanel(w, rows, from int) string {
-	if len(m.sessions) == 0 {
+	sessions := m.shownSessions()
+	if len(sessions) == 0 {
 		return hintStyle.Render("no sessions running")
 	}
-	sw := sandboxColumn(m.sessions)
-	out := []string{headerStyle.Render(clip(nowRow(sw, "  ", "role", "issue", "pr", "stage", "elapsed", "turns", "cost", "sandbox", "model"), w))}
-	out = append(out, listRows(len(m.sessions), rows, func(i int) string {
-		s := m.sessions[i]
-		spent := m.spent[spendKey(s.issue, s.role)]
+	sw := sandboxColumn(sessions)
+	out := []string{headerStyle.Render(clip(nowRow(sw, m.leadHeader(), "role", "issue", "pr", "stage", "elapsed", "turns", "cost", "sandbox", "model"), w))}
+	out = append(out, listRows(len(sessions), rows, func(i int) string {
+		s := sessions[i]
+		spent := m.projects[s.project].spent[spendKey(s.issue, s.role)]
 		// The turns of this session, counted live, on top of what the work
 		// item's finished sessions reported. The cost has no live half — an
 		// agent prices a session only in the event that ends its stream — so
@@ -937,7 +1007,7 @@ func (m Model) nowPanel(w, rows, from int) string {
 		// be handed a cell carrying escape sequences.
 		return roleStyle(s.role).Render(clip(nowRow(
 			sw,
-			mark(m.cursor, from+i),
+			m.lead(from+i, s.project),
 			prompts.Title(s.role),
 			number(s.issue),
 			number(s.pr),
@@ -946,7 +1016,7 @@ func (m Model) nowPanel(w, rows, from int) string {
 			strconv.Itoa(s.turns+spent.turns),
 			cost,
 			sandboxCell(s),
-			modelCell(s, w, sw),
+			modelCell(s, w, sw, m.leadHeader()),
 		), w))
 	})...)
 	return strings.Join(out, "\n")
@@ -958,12 +1028,14 @@ func (m Model) nowPanel(w, rows, from int) string {
 // marker — off the end of the row.
 const stageWidth = 20
 
-// nowRow lays the Now panel's columns out. The header and every row go
-// through it, so they cannot drift apart. A sandbox width of zero leaves the
-// column out altogether, separator included, so a row without it is laid out
-// exactly as a row that never had the column.
-func nowRow(sandboxW int, sel, role, issue, pr, stage, elapsed, turns, cost, sandbox, model string) string {
-	row := fmt.Sprintf("%s%-16s %-5s %-5s %-*s %8s %6s %8s ", sel, role, issue, pr, stageWidth, stage, elapsed, turns, cost)
+// nowRow lays the Now panel's columns out, after lead (Model.lead: the
+// selection mark and, in a view over every project, the project column).
+// The header and every row go through it, so they cannot drift apart. A
+// sandbox width of zero leaves the column out altogether, separator
+// included, so a row without it is laid out exactly as a row that never had
+// the column.
+func nowRow(sandboxW int, lead, role, issue, pr, stage, elapsed, turns, cost, sandbox, model string) string {
+	row := fmt.Sprintf("%s%-16s %-5s %-5s %-*s %8s %6s %8s ", lead, role, issue, pr, stageWidth, stage, elapsed, turns, cost)
 	if sandboxW > 0 {
 		row += fmt.Sprintf(" %-*s", sandboxW, sandbox)
 	}
@@ -1006,7 +1078,10 @@ func sandboxCell(s running) string {
 // when the row does not fit, never the marker — a session running on the
 // fallback model is the thing a person watching wants to see, and a name
 // long enough to crowd it out is the least surprising part of the row.
-func modelCell(s running, w, sandboxW int) string {
+//
+// lead is what the row starts with (Model.leadHeader), which the project
+// column widens.
+func modelCell(s running, w, sandboxW int, lead string) string {
 	name, marker := s.model, ""
 	if name == "" {
 		name = "-"
@@ -1014,7 +1089,7 @@ func modelCell(s running, w, sandboxW int) string {
 	if s.fallback {
 		marker = " (fallback)"
 	}
-	budget := w - lipgloss.Width(nowRow(sandboxW, "  ", "", "", "", "", "", "", "", "", "")) - lipgloss.Width(marker)
+	budget := w - lipgloss.Width(nowRow(sandboxW, lead, "", "", "", "", "", "", "", "", "")) - lipgloss.Width(marker)
 	if budget < 1 {
 		// Not even room for the marker: give what room there is to it and
 		// let the row's own clip decide the rest. A cut "(fallback" still
@@ -1028,7 +1103,7 @@ func modelCell(s running, w, sandboxW int) string {
 // stage for the issue, with the round it is on. A singleton role owns no
 // issue and so has no stage.
 func (m Model) stageOf(s running) string {
-	st, ok := m.stages[s.issue]
+	st, ok := m.projects[s.project].stages[s.issue]
 	if !ok {
 		return "-"
 	}
@@ -1057,11 +1132,13 @@ var queueTitles = map[string]string{"open_prs": "open PRs", "no_state": "no stat
 
 // queuesPanel renders the counts `bees status` prints, read from
 // status.json rather than computed a second time, plus the unread mail per
-// role and the time to the next GitHub poll.
+// role and the time to the next GitHub poll — of the project in view, or
+// added up over every project (see summarise).
 func (m Model) queuesPanel(w int) string {
+	s := m.summarise()
 	var cells []string
-	for _, k := range queueNames(m.status.Queues) {
-		cells = append(cells, fmt.Sprintf("%-13s %3d", queueTitle(k), m.status.Queues[k]))
+	for _, k := range queueNames(s.queues) {
+		cells = append(cells, fmt.Sprintf("%-13s %3d", queueTitle(k), s.queues[k]))
 	}
 	// As many cells per line as the panel is wide enough for: each is
 	// queueCell columns and they are separated by two more.
@@ -1070,8 +1147,8 @@ func (m Model) queuesPanel(w int) string {
 	for i := 0; i < len(cells); i += per {
 		rows = append(rows, clip(strings.Join(cells[i:min(i+per, len(cells))], "  "), w))
 	}
-	rows = append(rows, clip(fmt.Sprintf("%-13s %s", "unread mail", m.mailText()), w))
-	rows = append(rows, clip(fmt.Sprintf("%-13s %s", "next poll", m.nextPollText()), w))
+	rows = append(rows, clip(fmt.Sprintf("%-13s %s", "unread mail", mailText(s.mail)), w))
+	rows = append(rows, clip(fmt.Sprintf("%-13s %s", "next poll", nextPollText(s.nextPoll, m.deps.Now())), w))
 	return strings.Join(rows, "\n")
 }
 
@@ -1098,10 +1175,10 @@ func queueTitle(k string) string {
 }
 
 // mailText lists the roles with unread mail, or says there is none.
-func (m Model) mailText() string {
+func mailText(mail map[string]int) string {
 	var parts []string
 	for _, r := range config.Roles {
-		if n := m.mail[r]; n > 0 {
+		if n := mail[r]; n > 0 {
 			parts = append(parts, fmt.Sprintf("%s %d", prompts.Title(r), n))
 		}
 	}
@@ -1113,9 +1190,9 @@ func (m Model) mailText() string {
 
 // nextPollText counts down to the next GitHub poll, from the time the
 // scheduler recorded for it.
-func (m Model) nextPollText() string {
-	switch d := m.status.NextPoll.Sub(m.deps.Now()); {
-	case m.status.NextPoll.IsZero():
+func nextPollText(next, now time.Time) string {
+	switch d := next.Sub(now); {
+	case next.IsZero():
 		return "not scheduled yet"
 	case d > 0:
 		return "in " + dur(d)

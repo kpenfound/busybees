@@ -18,12 +18,13 @@ const recentRows = 8
 // it, what it was about, how it ended and what it cost. Everything in it
 // arrived on a session-ended event — nothing is looked up.
 func (m Model) recentPanel(w, rows, from int) string {
-	if len(m.recent) == 0 {
+	recent := m.shownRecent()
+	if len(recent) == 0 {
 		return hintStyle.Render("no sessions have finished yet")
 	}
-	out := []string{headerStyle.Render(clip(recentRow("  ", "role", "issue", "pr", "outcome", "took", "cost", "note"), w))}
-	out = append(out, listRows(len(m.recent), rows, func(i int) string {
-		f := m.recent[i]
+	out := []string{headerStyle.Render(clip(recentRow(m.leadHeader(), "role", "issue", "pr", "outcome", "took", "cost", "note"), w))}
+	out = append(out, listRows(len(recent), rows, func(i int) string {
+		f := recent[i]
 		// A session that ended with no closing event never reported a cost:
 		// "-" says so, rather than the confident-looking "$0.00" a session
 		// that genuinely cost nothing still prints.
@@ -35,7 +36,7 @@ func (m Model) recentPanel(w, rows, from int) string {
 		// cell carrying escape sequences would lose recentRow's padding,
 		// which counts bytes, and could be cut mid-escape by clip.
 		return outcomeStyle(f.outcome).Render(clip(recentRow(
-			mark(m.cursor, from+i),
+			m.lead(from+i, f.project),
 			prompts.Title(f.role),
 			number(f.issue),
 			number(f.pr),
@@ -54,8 +55,9 @@ func (m Model) recentPanel(w, rows, from int) string {
 // and must not be able to push it around.
 const outcomeWidth = 18
 
-func recentRow(sel, role, issue, pr, outcome, took, cost, note string) string {
-	return fmt.Sprintf("%s%-16s %-5s %-5s %-*s %8s %8s  %s", sel, role, issue, pr, outcomeWidth, outcome, took, cost, note)
+// recentRow lays the Recent panel's columns out after lead (Model.lead).
+func recentRow(lead, role, issue, pr, outcome, took, cost, note string) string {
+	return fmt.Sprintf("%s%-16s %-5s %-5s %-*s %8s %8s  %s", lead, role, issue, pr, outcomeWidth, outcome, took, cost, note)
 }
 
 // outcomeText is what a finished session reported, or the word for having
@@ -72,18 +74,19 @@ func outcomeText(o string) string {
 // list and the reasons come from status.json, where the scheduler put them
 // on the poll that counted the queues.
 func (m Model) needsHumanPanel(w, rows, from int) string {
-	if len(m.status.NeedsHuman) == 0 {
+	needsHuman := m.shownNeedsHuman()
+	if len(needsHuman) == 0 {
 		return hintStyle.Render("nothing is waiting for a person")
 	}
-	out := []string{headerStyle.Render(clip(escalatedRow("  ", "issue", "waiting", "title", "why"), w))}
-	out = append(out, listRows(len(m.status.NeedsHuman), rows, func(i int) string {
-		e := m.status.NeedsHuman[i]
+	out := []string{headerStyle.Render(clip(escalatedRow(m.leadHeader(), "issue", "waiting", "title", "why"), w))}
+	out = append(out, listRows(len(needsHuman), rows, func(i int) string {
+		e := needsHuman[i]
 		return clip(escalatedRow(
-			mark(m.cursor, from+i),
+			m.lead(from+i, e.project),
 			number(e.Issue),
 			age(e.Since, m.deps.Now()),
 			clip(e.Title, titleWidth),
-			reasonText(e),
+			reasonText(e.Escalated),
 		), w)
 	})...)
 	return strings.Join(out, "\n")
@@ -92,8 +95,10 @@ func (m Model) needsHumanPanel(w, rows, from int) string {
 // titleWidth is the width of the title column in the two issue lists.
 const titleWidth = 26
 
-func escalatedRow(sel, issue, waiting, title, why string) string {
-	return fmt.Sprintf("%s%-5s %-9s %-*s  %s", sel, issue, waiting, titleWidth, title, why)
+// escalatedRow lays the Needs human panel's columns out after lead
+// (Model.lead).
+func escalatedRow(lead, issue, waiting, title, why string) string {
+	return fmt.Sprintf("%s%-5s %-9s %-*s  %s", lead, issue, waiting, titleWidth, title, why)
 }
 
 // reasonText is why the factory gave an issue up. An issue a person labelled
@@ -110,14 +115,15 @@ func reasonText(e state.Escalated) string {
 // approvedPanel lists the pull requests the reviewer approved that are
 // waiting for a person to merge, oldest first.
 func (m Model) approvedPanel(w, rows, from int) string {
-	if len(m.status.Approved) == 0 {
+	approved := m.shownApproved()
+	if len(approved) == 0 {
 		return hintStyle.Render("no approved pull requests are waiting to be merged")
 	}
-	out := []string{headerStyle.Render(clip(approvedRow("  ", "pr", "issue", "open", "title"), w))}
-	out = append(out, listRows(len(m.status.Approved), rows, func(i int) string {
-		a := m.status.Approved[i]
+	out := []string{headerStyle.Render(clip(approvedRow(m.leadHeader(), "pr", "issue", "open", "title"), w))}
+	out = append(out, listRows(len(approved), rows, func(i int) string {
+		a := approved[i]
 		return clip(approvedRow(
-			mark(m.cursor, from+i),
+			m.lead(from+i, a.project),
 			number(a.PR),
 			number(a.Issue),
 			age(a.Since, m.deps.Now()),
@@ -127,13 +133,16 @@ func (m Model) approvedPanel(w, rows, from int) string {
 	return strings.Join(out, "\n")
 }
 
-func approvedRow(sel, pr, issue, open, title string) string {
-	return fmt.Sprintf("%s%-5s %-5s %-9s  %s", sel, pr, issue, open, title)
+// approvedRow lays the Approved PRs panel's columns out after lead
+// (Model.lead).
+func approvedRow(lead, pr, issue, open, title string) string {
+	return fmt.Sprintf("%s%-5s %-5s %-9s  %s", lead, pr, issue, open, title)
 }
 
 // mark draws the selection: the row the cursor is on is the one o opens and
 // the one k asks about, so every panel's rows carry the same two columns for
-// it.
+// it (and, in a view over every project, the project column beside them:
+// Model.lead).
 func mark(cursor, row int) string {
 	if cursor == row {
 		return "▸ "

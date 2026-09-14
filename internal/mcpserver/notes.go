@@ -65,7 +65,9 @@ func (s *server) addNotesTools(srv *mcp.Server) {
 		Title: "Read your notes",
 		Description: "Read your role's notes: the only memory it keeps between sessions, as one " +
 			"markdown text. Nothing renders them into the prompt, so read them at the start of a " +
-			"session, before anything else.",
+			"session, before anything else. They hold what a later session could not work out again " +
+			"(decisions and why, gotchas, conventions no document states), not a log of what " +
+			"sessions did.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		InputSchema: schemaFor[notesReadInput](nil),
 	}, s.notesRead)
@@ -76,7 +78,9 @@ func (s *server) addNotesTools(srv *mcp.Server) {
 		Description: "Replace your role's notes with the given text. The write is the whole text, " +
 			"not an addition: read the notes first with notes_read, merge in what this session " +
 			"learned, drop what is stale, keep the standard headings, and write the complete " +
-			"result back before you report your outcome. An empty text is refused; nothing keeps " +
+			"result back before you report your outcome. Leave out what is already recorded " +
+			"elsewhere: what this session did, git history, the code, the repository's docs, " +
+			"issues and pull requests. An empty text is refused; nothing keeps " +
 			"a copy of what a write replaces.",
 		InputSchema: schemaFor[notesWriteInput](nil),
 	}, s.notesWrite)
