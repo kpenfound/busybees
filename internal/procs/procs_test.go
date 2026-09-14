@@ -44,6 +44,11 @@ func TestParsePS(t *testing.T) {
 		// process that is not codex at all.
 		`  1200   1200 codex exec --json -c mcp_servers.bees.env.BEES_SESSION_DIR="/b/.bees/sessions/20260829-developer-issue-4-r1" -`,
 		`  1300   1300 grep mcp_servers.bees.env.BEES_SESSION_DIR=/a/.bees/sessions/20260829-developer-issue-4-r1`,
+		// An opencode session: no --name and no session-directory override in
+		// its argv (it gets one through OPENCODE_CONFIG, an environment
+		// variable the ps scan cannot see), so it carries no marker and is
+		// never matched. It is found through its pid file alone.
+		`  1400   1400 opencode run --format json --auto --title bees-developer-issue-5-r1`,
 	}, "\n") + "\n"
 
 	got := parsePS(text, 300, scope)
