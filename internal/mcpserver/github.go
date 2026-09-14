@@ -118,11 +118,11 @@ func (s *server) addGitHubTools(srv *mcp.Server) {
 		mcp.AddTool(srv, &mcp.Tool{
 			Name:  "submit_review",
 			Title: "Submit a review on a pull request",
-			Description: "Submit one GitHub review on a pull request a person asked the factory to " +
-				"review: approve, request-changes or comment, with the whole verdict in the body. " +
-				"Only for a requested review; a developer's pull request gets its feedback by " +
-				"mail. Defaults to the pull request this session is working on. The marker that " +
-				"tells your reviews apart from a person's is appended for you.",
+			Description: "Submit one GitHub review on a pull request: approve, request-changes or " +
+				"comment, with the verdict line and every finding of the review in the body. On a " +
+				"developer's pull request the event is comment, and the verdict reaches the " +
+				"developer by mail. Defaults to the pull request this session is working on. The " +
+				"marker that tells your reviews apart from a person's is appended for you.",
 			InputSchema: schemaFor[submitReviewInput](map[string][]string{
 				"event": github.ReviewEvents,
 			}),
@@ -385,8 +385,8 @@ func (s *server) issueSetState(ctx context.Context, _ *mcp.CallToolRequest, in i
 
 type submitReviewInput struct {
 	Number int    `json:"number,omitempty" jsonschema:"pull request to review (defaults to the pull request this session is working on)"`
-	Event  string `json:"event" jsonschema:"the verdict: approve when every stage passed, request-changes when any failed, comment when you may not approve (the pull request's author is the login the factory acts as)"`
-	Body   string `json:"body" jsonschema:"the review: each stage's verdict line and the points under it, in the stages' order"`
+	Event  string `json:"event" jsonschema:"the verdict: approve when nothing needs fixing before the merge, request-changes when something does, comment when you may not approve or request changes (the pull request's author is the login the factory acts as, as it is on every developer's pull request)"`
+	Body   string `json:"body" jsonschema:"the review: the verdict line, then every finding as the review found it"`
 }
 
 func (s *server) submitReview(ctx context.Context, _ *mcp.CallToolRequest, in submitReviewInput) (*mcp.CallToolResult, any, error) {

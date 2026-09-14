@@ -57,6 +57,10 @@ type sessionSpec struct {
 	// best-of-N's retries: it runs roles.developer.moe_assembler_model and
 	// moe_assembler_prompt instead. Never set without assembler.
 	moeAssembler bool
+	// judge marks the reviewer's judge session, the one that posts what the
+	// review found (review.go): it runs roles.reviewer.judge_model where it
+	// is set.
+	judge bool
 }
 
 // runSession resolves the role, renders prompts and runs the session.
@@ -98,6 +102,9 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 			role.Prompt = prompt
 		}
 	}
+	if spec.judge && role.JudgeModel != "" {
+		role.Model = role.JudgeModel
+	}
 	fallback := spec.useFallback && role.FallbackModel != ""
 	if fallback {
 		role.Model = role.FallbackModel
@@ -136,9 +143,6 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 	d.SessionDir = sessionDir
 	d.Sandbox = role.Sandbox
 	d.ConsolidateNotes, d.ConsolidateReason = s.consolidateNotes(spec.role, int(notesSize))
-	if d.Issue != nil && (spec.role == config.RoleDeveloper || spec.role == config.RoleReviewer) {
-		d.Size = s.sizeOf(d.Issue.Labels)
-	}
 	if d.MaxRounds == 0 {
 		d.MaxRounds = s.cfg.Scheduler.MaxReviewRounds
 	}

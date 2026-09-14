@@ -48,10 +48,11 @@ func resumeOf(t *testing.T, h *harness, name string) string {
 }
 
 // TestASecondRoundResumesTheFirstRoundsSession is the point of #494: a
-// developer handed back review feedback, and the reviewer looking at the
-// fix, continue the conversation they had in round 1 instead of relearning
-// the codebase. Round 1 of either role runs fresh; round 2 of each resumes
-// its own role's round 1 and not the other's.
+// developer handed back review feedback continues the conversation it had
+// in round 1 instead of relearning the codebase. Round 1 runs fresh and
+// round 2 resumes it. The reviewer's judge session is never resumed: every
+// round's review runs again on the head as it stands and the session posts
+// that round's list, so there is no conversation worth keeping.
 func TestASecondRoundResumesTheFirstRoundsSession(t *testing.T) {
 	h := newHarness(t, devOnlyTOML)
 	seedReady(h, 1, "s", time.Now().Add(-time.Hour))
@@ -69,8 +70,8 @@ func TestASecondRoundResumesTheFirstRoundsSession(t *testing.T) {
 	if got, want := resumeOf(t, h, "developer-issue-1-r2"), "sid-developer-issue-1-r1"; got != want {
 		t.Errorf("round 2 of the developer resumed %q, want %q", got, want)
 	}
-	if got, want := resumeOf(t, h, "reviewer-pr-201-r2"), "sid-reviewer-pr-201-r1"; got != want {
-		t.Errorf("round 2 of the reviewer resumed %q, want %q", got, want)
+	if got := resumeOf(t, h, "reviewer-pr-201-r2"); got != "" {
+		t.Errorf("round 2 of the reviewer resumed %q, want a fresh judge session", got)
 	}
 	if last := h.gh.history[1][len(h.gh.history[1])-1]; last != "bees:approved" {
 		t.Fatalf("history: %v", h.gh.history[1])
@@ -110,18 +111,20 @@ func TestAFailedResumeIsRetriedFresh(t *testing.T) {
 	seedReady(h, 1, "s", time.Now().Add(-time.Hour))
 	runPass(t, h)
 
-	// Round 2 of each role is launched resumed, dies, and is retried fresh.
+	// Round 2 of the developer is launched resumed, dies, and is retried
+	// fresh; the reviewer's judge session is never resumed, so it never
+	// dies of it.
 	h.wantOrder("developer-issue-1-r1", "reviewer-pr-201-r1",
 		"developer-issue-1-r2", "developer-issue-1-r2-retry1",
-		"reviewer-pr-201-r2", "reviewer-pr-201-r2-retry1")
+		"reviewer-pr-201-r2")
 	if got, want := resumeOf(t, h, "developer-issue-1-r2"), "sid-developer-issue-1-r1"; got != want {
 		t.Errorf("the failed attempt resumed %q, want %q", got, want)
 	}
 	if got := resumeOf(t, h, "developer-issue-1-r2-retry1"); got != "" {
 		t.Errorf("the retry resumed %q, want a fresh session", got)
 	}
-	if got := resumeOf(t, h, "reviewer-pr-201-r2-retry1"); got != "" {
-		t.Errorf("the reviewer's retry resumed %q, want a fresh session", got)
+	if got := resumeOf(t, h, "reviewer-pr-201-r2"); got != "" {
+		t.Errorf("the reviewer's round 2 resumed %q, want a fresh session", got)
 	}
 	// The failure was classified as infrastructure: the loop finished
 	// instead of escalating, and the issue was approved.

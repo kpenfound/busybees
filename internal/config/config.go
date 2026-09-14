@@ -583,35 +583,6 @@ type MergePolicy struct {
 	PreReviewChecksTimeout time.Duration
 }
 
-// KnownReviewStages are the review stages the reviewer's prompt describes. A
-// reviewer session runs the ones ReviewStages returns in order and gives each
-// its own verdict; approval needs every one of them to pass.
-//
-//   - implementation — is it correct? Error handling, edge cases, tests, security.
-//   - completeness   — does it deliver the work item's acceptance criteria?
-//   - cleanliness    — is it clear, small and free of dead code?
-//   - style          — does it follow the repository's formatting and lint conventions?
-//   - product-fit    — does it fit the parent feature and the product direction?
-var KnownReviewStages = []string{"implementation", "completeness", "cleanliness", "style", StageProductFit}
-
-// DefaultReviewStages are the stages every reviewer session runs: the four
-// that judge the change against the work item. StageProductFit is absent, so
-// the parent feature is not looked up for a review.
-var DefaultReviewStages = []string{"implementation", "completeness", "cleanliness", "style"}
-
-// StageProductFit is the one stage that needs the work item's parent feature:
-// the scheduler looks the parent up only when it is configured.
-const StageProductFit = "product-fit"
-
-// ReviewStages returns the review stages a reviewer session runs:
-// DefaultReviewStages, since roles.reviewer.stages is gone from bees.toml
-// (version 2 replaced it with roles.reviewer.angles). It stays until the
-// reviewer runs the angles instead, so the scheduler and the prompts keep
-// reviewing the way they did.
-func (c *Config) ReviewStages() []string {
-	return slices.Clone(DefaultReviewStages)
-}
-
 // KnownReviewAngles are the angles roles.reviewer.angles and
 // roles.reviewer.angle_models may name. It is a copy of
 // internal/review's BuiltinAngles, which imports this package and so cannot

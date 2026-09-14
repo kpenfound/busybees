@@ -388,10 +388,10 @@ func TestReviewerChecksSessionReceivesMail(t *testing.T) {
 	}
 }
 
-// The default stage list has no product-fit, so a default reviewer costs no
-// ParentIssue query: the parent lookup is one GraphQL call per review round,
-// and the only stage that reads it is off by default.
-func TestDefaultReviewStagesCostNoParentLookup(t *testing.T) {
+// A review costs no ParentIssue query: the parent lookup is one GraphQL call
+// per developer session, and nothing in the review — brief, angles, judge
+// session — reads the parent feature.
+func TestAReviewCostsNoParentLookup(t *testing.T) {
 	h := newHarness(t, prereviewTOML)
 	seedPreReviewIssue(t, h, "Ship it")
 	h.gh.issues[5] = &github.Issue{Number: 5, Title: "Exports", State: "OPEN",
@@ -402,14 +402,8 @@ func TestDefaultReviewStagesCostNoParentLookup(t *testing.T) {
 	runPreReviewLoop(t, h)
 
 	h.wantOrder("developer-issue-1-r1", "reviewer-pr-101-r1")
-	review := promptOf(t, h, 1)
-	for _, want := range []string{"### `implementation`", "### `completeness`", "### `cleanliness`", "### `style`"} {
-		if !strings.Contains(review, want) {
-			t.Errorf("the default stages are missing %q:\n%s", want, review)
-		}
-	}
-	if strings.Contains(review, "### `product-fit`") {
-		t.Errorf("product-fit is on by default:\n%s", review)
+	if review := promptOf(t, h, 1); !strings.Contains(review, "## Findings") {
+		t.Errorf("the reviewer's task carries no findings:\n%s", review)
 	}
 	// One query for the developer session, none for the review.
 	if n := h.gh.callCount("api graphql"); n != 1 {
