@@ -84,9 +84,9 @@ func TestConsolidateNotesParagraph(t *testing.T) {
 	// prompt has to give back the prompt as it is rendered today.
 	const para = "\nAlso consolidate your notes this session (every 10 sessions): read them with\n" +
 		"`notes_read` and write back a consolidated version with `notes_write`, organised under\n" +
-		"the standard sections — merge duplicates, drop what is stale or contradicted, keep\n" +
-		"decisions, commands and gotchas. Do it before you report your outcome, in addition to\n" +
-		"your normal work.\n"
+		"the standard sections — merge duplicates, drop what is stale or contradicted and what\n" +
+		"the code, its docs, git history or GitHub already record, keep decisions, commands and\n" +
+		"gotchas. Do it before you report your outcome, in addition to your normal work.\n"
 
 	for _, name := range append(append([]string{}, config.Roles...), "reviewer_checks", "developer_assemble", "developer_moe_assemble") {
 		off, err := TaskNamed(config.RoleDeveloper, name, sample())
@@ -159,6 +159,32 @@ func TestSystemPromptNamesTheNotesSections(t *testing.T) {
 			if !strings.Contains(sys, section) {
 				t.Errorf("%s system prompt does not name the %q section", role, section)
 			}
+		}
+	}
+}
+
+// Sessions used to fill their notes with a log of what they did and with what
+// git, the code, the docs and GitHub already record (feedback #692). The system
+// prompt says what to keep and, just as plainly, what to leave out.
+func TestSystemPromptSaysWhatNotesLeaveOut(t *testing.T) {
+	for _, role := range config.Roles {
+		sys, err := System(role, sample(), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		flow := flowed(sys)
+		for _, want := range []string{
+			"Notes are curated memory, not a log.",
+			"Keep what a later session could not work out again: decisions and why they were made",
+			"Leave out what is already recorded somewhere else: what you did this session, what `git log` or `git blame` shows, what the code or the repository's docs already say",
+			"Do not copy into them what a document already states plainly.",
+		} {
+			if !strings.Contains(flow, want) {
+				t.Errorf("%s system prompt lacks %q", role, want)
+			}
+		}
+		if strings.Contains(flow, "anything your future self should know") {
+			t.Errorf("%s system prompt still invites recording anything", role)
 		}
 	}
 }
