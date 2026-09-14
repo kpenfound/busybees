@@ -36,6 +36,9 @@ type app struct {
 	ws     *workspace.Manager
 	log    *slog.Logger
 	logger *logging.Logger
+	// shared is the developer pool the projects of one machine config
+	// share (machineDaemon); nil for a single-project run.
+	shared *scheduler.SharedPool
 }
 
 // claudeBin is the claude executable sessions are run with.
@@ -224,6 +227,7 @@ func (a *app) scheduler() (*scheduler.Scheduler, error) {
 		Logger:     a.log,
 		Version:    buildVersion,
 		Revision:   buildRevision,
+		Shared:     a.shared,
 	})
 }
 

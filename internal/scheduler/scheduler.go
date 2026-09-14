@@ -69,6 +69,10 @@ type Deps struct {
 	Self string
 	// Now overrides the clock (tests).
 	Now func() time.Time
+	// Shared is the pool several schedulers in one process take their
+	// developer slots from, on top of their own (SharedPool): the machine
+	// config's max_developers. nil for a single-project run.
+	Shared *SharedPool
 }
 
 // Scheduler runs the factory.
@@ -166,6 +170,9 @@ type Scheduler struct {
 	wake  chan struct{}
 	wg    sync.WaitGroup
 	slots chan struct{}
+	// shared is this scheduler's membership of Deps.Shared, nil without
+	// one: every claim on slots is also a claim on it (claimSlots).
+	shared *sharedMember
 	// sessionCtx is the context every session runs under while Run is
 	// running, and stopSessions cancels it. It is derived from Run's context
 	// but not cancelled with it: cancelling the loop stops polling and
@@ -244,7 +251,19 @@ func New(d Deps) (*Scheduler, error) {
 	for i := 0; i < d.Config.Scheduler.MaxDevelopers; i++ {
 		s.slots <- struct{}{}
 	}
+	if d.Shared != nil {
+		s.shared = d.Shared.join(d.Config.Project.Repo, s.signal)
+	}
 	return s, nil
+}
+
+// SharedPool is the pool this scheduler shares with the other schedulers in
+// its process (Deps.Shared), nil for a single-project run.
+func (s *Scheduler) SharedPool() *SharedPool {
+	if s.shared == nil {
+		return nil
+	}
+	return s.shared.pool
 }
 
 // Run executes the loop until ctx is cancelled (or, with Once, until one
@@ -279,9 +298,13 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	if err := s.ensureLabels(ctx); err != nil {
 		s.log.Warn("could not ensure labels", "err", capErrors(err))
 	}
-	s.log.Info("scheduler started", "repo", s.cfg.Project.Repo, "filter", s.describeQuery(),
+	started := []any{"repo", s.cfg.Project.Repo, "filter", s.describeQuery(),
 		"max_developers", s.cfg.Scheduler.MaxDevelopers, "poll", s.cfg.Scheduler.PollInterval.Duration,
-		"work_hours", s.cfg.Scheduler.WorkHours, "version", s.version)
+		"work_hours", s.cfg.Scheduler.WorkHours, "version", s.version}
+	if s.shared != nil {
+		started = append(started, "shared_max_developers", s.shared.pool.Size())
+	}
+	s.log.Info("scheduler started", started...)
 	// review_assigned_prs reviews what the poll finds, and without an
 	// assignee the poll finds only what carries the filter label: the
 	// setting is not wrong, it just selects nothing a person did not label.
@@ -933,6 +956,7 @@ func (s *Scheduler) pass(ctx context.Context) error {
 	// request, and only here: a local pass would dispatch from a cached
 	// pull request list that still carries a label removed on GitHub.
 	s.dispatchRequestedReviews(ctx, snap)
+	s.sharedPass()
 	s.dispatchSingletons(ctx, snap, false)
 	// Last, and on a full pass only: filing a factory-error report costs
 	// GitHub calls of its own and nothing waits on it.
@@ -961,6 +985,7 @@ func (s *Scheduler) localPass(ctx context.Context) {
 	s.op("reconcile", err, "reconcile", "err", capErrors(err))
 	s.checkDayBudget()
 	s.dispatchDevelopers(ctx, snap, true)
+	s.sharedPass()
 	s.dispatchSingletons(ctx, snap, true)
 }
 
@@ -1247,7 +1272,7 @@ func (s *Scheduler) dispatchDevelopers(ctx context.Context, snap *snapshot, loca
 				s.mu.Unlock()
 				// The worker's own slot; the extra ones a fan-out held
 				// went back when its attempts finished (workIssue).
-				s.slots <- struct{}{}
+				s.releaseSlots(1)
 				s.writeStatus()
 				// The session that finished last signalled while this
 				// worker still held the slot. Signal again now that it is

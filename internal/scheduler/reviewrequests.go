@@ -39,7 +39,8 @@ func requestedReviewKey(pr int) string { return fmt.Sprintf("requested-review-pr
 //
 // Every review takes a slot from the developer pool, so
 // scheduler.max_developers stays the one number that bounds how many
-// sessions the factory runs at once, and it runs after dispatchDevelopers
+// sessions the factory runs at once (with the machine config's
+// max_developers across projects, SharedPool), and it runs after dispatchDevelopers
 // so a review request never starves a ready issue. The worker is recorded
 // in s.owned under the pull request's number — GitHub numbers issues and
 // pull requests from one sequence, so it cannot collide with an issue a
@@ -82,16 +83,14 @@ func (s *Scheduler) dispatchRequestedReviews(ctx context.Context, snap *snapshot
 		if until, ok := s.backoffUntil(key); ok && s.now().Before(until) {
 			continue
 		}
-		select {
-		case <-s.slots:
-		default:
+		if !s.claimSlots(1) {
 			return // pool is full
 		}
 		if requested {
 			if err := s.gh.EditLabels(ctx, pr.Number, nil, []string{s.labels.ReviewRequested}); err != nil {
 				// Nothing was claimed: the label is still there, and the next
 				// poll tries again.
-				s.slots <- struct{}{}
+				s.releaseSlots(1)
 				s.log.Warn("could not claim the review request", "pr", pr.Number, "err", err)
 				continue
 			}
@@ -117,7 +116,7 @@ func (s *Scheduler) dispatchRequestedReviews(ctx context.Context, snap *snapshot
 				s.mu.Lock()
 				delete(s.owned, pr.Number)
 				s.mu.Unlock()
-				s.slots <- struct{}{}
+				s.releaseSlots(1)
 				s.writeStatus()
 				// As in dispatchDevelopers: the slot is back in the pool
 				// only now, after the session's own signal.

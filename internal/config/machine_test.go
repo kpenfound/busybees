@@ -57,6 +57,23 @@ func TestLoadMachine(t *testing.T) {
 	if !m.Configs[2].NeedsRewrite() {
 		t.Error("a listed version-1 bees.toml should load migrated in memory")
 	}
+	if m.MaxDevelopers != 0 {
+		t.Errorf("MaxDevelopers = %d, want 0: no cap unless the file sets one", m.MaxDevelopers)
+	}
+}
+
+// max_developers is the one setting a machine config has besides the
+// projects: a cap across all of them.
+func TestLoadMachineMaxDevelopers(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "foo/bees.toml", projectTOML)
+	m, err := LoadMachine(writeFile(t, root, "machine.toml", "projects = [\"foo/bees.toml\"]\nmax_developers = 3\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.MaxDevelopers != 3 {
+		t.Errorf("MaxDevelopers = %d, want 3", m.MaxDevelopers)
+	}
 }
 
 // Every rejection names the machine config and, for an entry, the entry.
@@ -73,8 +90,9 @@ func TestLoadMachineRejects(t *testing.T) {
 		want       []string
 	}{
 		{"empty list", "projects = []\n", []string{"projects is empty"}},
+		{"negative cap", "projects = [\"good/bees.toml\"]\nmax_developers = -1\n", []string{"max_developers must be >= 0"}},
 		{"not a list", "projects = \"good/bees.toml\"\n", []string{"parse"}},
-		{"unknown key", "projects = [\"good/bees.toml\"]\n[project]\nrepo = \"a/b\"\n", []string{"unknown keys: project, project.repo", "a machine config has only projects"}},
+		{"unknown key", "projects = [\"good/bees.toml\"]\n[project]\nrepo = \"a/b\"\n", []string{"unknown keys: project, project.repo", "a machine config has only projects and max_developers"}},
 		{"blank entry", "projects = [\"good/bees.toml\", \" \"]\n", []string{`projects[1] = " "`, "is empty"}},
 		{"missing file", "projects = [\"nope/bees.toml\"]\n", []string{`projects[0] = "nope/bees.toml"`, "no such file"}},
 		{"directory", "projects = [\"dir\"]\n", []string{`projects[0] = "dir"`, "is a directory: name the bees.toml file in it"}},
