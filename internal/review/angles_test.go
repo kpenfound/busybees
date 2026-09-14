@@ -637,6 +637,89 @@ func TestTheAnglesRunTheConfiguredAgent(t *testing.T) {
 	}
 }
 
+func TestConfiguredAnglesReplaceASizesBuiltinList(t *testing.T) {
+	cfg, err := ParseConfig("[angles]\nxs = [\"quick_general\", \"side_effects\"]\nxl = [\"docs\"]\n", filepath.Join(t.TempDir(), ConfigFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		size    string
+		project *Project
+		want    []string
+	}{
+		{"the size's own list", "xs", &Project{}, []string{AngleQuickGeneral, AngleSideEffects}},
+		{"still filtered by context.toml", "xs", projectWith(t, "[angles]\nside_effects = false\n"), []string{AngleQuickGeneral}},
+		{"a size the file leaves out keeps the built-in list", "s", &Project{}, []string{AngleQuickGeneral, AngleDocs}},
+		{"a size that is not one gets the largest's", "huge", &Project{}, []string{AngleDocs}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			angles := NewAngles(cfg, t.TempDir())
+			angles.Checkout = nil
+			angles.Agent = newFakeAngleAgent(len(tc.want))
+			runs, err := angles.Run(context.Background(), t.TempDir(), tc.project, sized(tc.size), testDiff)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := ranAngles(runs); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("angles run = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestOnlyTheQuickPassRunsForAnXSChangeConfiguredSo(t *testing.T) {
+	cfg, err := ParseConfig("[angles]\nxs = [\"quick_general\"]\n", filepath.Join(t.TempDir(), ConfigFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := NewAngles(cfg, "")
+	if got := anglesFor(&Project{}, a.sizedAngles("xs")); !reflect.DeepEqual(got, []string{AngleQuickGeneral}) {
+		t.Errorf("xs angles = %v, want the quick pass alone", got)
+	}
+	if got := anglesFor(&Project{}, NewAngles(nil, "").sizedAngles("xs")); !reflect.DeepEqual(got, []string{AngleQuickGeneral, AngleDocs}) {
+		t.Errorf("xs angles with no configuration = %v, want the built-in list", got)
+	}
+}
+
+func TestAnAngleModelRunsThatAngleAsItsModel(t *testing.T) {
+	cfg, err := ParseConfig("model = \"opus\"\n[angle_models]\ndocs = \"haiku\"\n", filepath.Join(t.TempDir(), ConfigFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ angle, want string }{
+		{AngleDocs, "haiku"},
+		{AngleGeneral, "opus"},
+	} {
+		t.Run(tc.angle, func(t *testing.T) {
+			bin, record := fakeCLI(t, claudeAnswer)
+			angles := NewAngles(cfg, t.TempDir())
+			angles.Checkout = nil
+			angles.Agent.(*CLIAgent).ClaudeBin = bin
+			runs, err := angles.Run(context.Background(), t.TempDir(), onlyAngle(t, tc.angle), testBrief(), testDiff)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := args(t, record); !strings.Contains(got, "\n--model\n"+tc.want+"\n") {
+				t.Errorf("the %s session was not run as %s:\n%s", tc.angle, tc.want, got)
+			}
+			if len(runs) != 1 || runs[0].Model != tc.want || runs[0].Provider != config.AgentClaude {
+				t.Errorf("runs = %+v, want the %s run recorded as %s", runs, tc.angle, tc.want)
+			}
+			// A resumed session runs as the model it ran as.
+			if _, err := angles.Resume(context.Background(), runs[0], "why?"); err != nil {
+				t.Fatal(err)
+			}
+			if got := args(t, record); !strings.Contains(got, "\n--model\n"+tc.want+"\n") || !strings.Contains(got, "\n--resume\n") {
+				t.Errorf("the resumed %s session was not run as %s:\n%s", tc.angle, tc.want, got)
+			}
+			if angles.Model != "opus" || angles.Agent.(*CLIAgent).Model != "opus" {
+				t.Errorf("the override changed the shared agent: %+v", angles.Agent)
+			}
+		})
+	}
+}
+
 func TestAnAngleSessionIsToldWhatItsReviewerDismissedBefore(t *testing.T) {
 	agent := newFakeAngleAgent(len(briefAngles))
 	angles := &Angles{Agent: agent, Dir: t.TempDir(), Rules: []Rule{

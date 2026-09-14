@@ -45,6 +45,7 @@ package review
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -125,6 +126,22 @@ type Config struct {
 	// SupportedProviders, and Model the model they use.
 	Provider string `toml:"provider"`
 	Model    string `toml:"model"`
+	// Angles replaces, for each size it names, the angles a change of that
+	// size is reviewed from (sizeAngles in angles.go): angles.xs =
+	// ["quick_general"]. A size it leaves out keeps the built-in list, and
+	// context.toml's per-project switches still turn an angle off on top of
+	// either.
+	Angles map[string][]string `toml:"angles"`
+	// BriefModel is the model the distiller session uses, and AngleModels
+	// the model of each angle session it names; a step with none uses Model.
+	// The provider is never overridden per step: every session runs as
+	// Provider.
+	BriefModel  string            `toml:"brief_model"`
+	AngleModels map[string]string `toml:"angle_models"`
+	// JudgeModel is accepted and validated so the file has the shape of
+	// bees.toml's roles.reviewer, and has no effect here: the judge of
+	// `bees review` is deterministic code (judge.go), not a session.
+	JudgeModel string `toml:"judge_model"`
 	// NotesPath is where the reviewer notes a dismissal appends to live,
 	// StoragePath the directory review artifact directories are created in.
 	// Both take `~`, an absolute path, or a path relative to Path's
@@ -264,6 +281,28 @@ func (c *Config) Validate() error {
 	}
 	if !slices.Contains(OutputModes, c.Output) {
 		errs = append(errs, fmt.Sprintf("output %q must be one of %s", c.Output, strings.Join(OutputModes, ", ")))
+	}
+	for _, size := range slices.Sorted(maps.Keys(c.Angles)) {
+		if !slices.Contains(Sizes, size) {
+			errs = append(errs, fmt.Sprintf("angles.%s: %q is not a size, which is one of %s", size, size, strings.Join(Sizes, ", ")))
+			continue
+		}
+		if len(c.Angles[size]) == 0 {
+			errs = append(errs, fmt.Sprintf("angles.%s must name at least one angle: remove the key to keep the built-in list", size))
+		}
+		for _, angle := range c.Angles[size] {
+			if !slices.Contains(BuiltinAngles, angle) {
+				errs = append(errs, fmt.Sprintf("angles.%s: %q is not an angle, which is one of %s", size, angle, strings.Join(BuiltinAngles, ", ")))
+			}
+		}
+	}
+	for _, angle := range slices.Sorted(maps.Keys(c.AngleModels)) {
+		switch {
+		case !slices.Contains(BuiltinAngles, angle):
+			errs = append(errs, fmt.Sprintf("angle_models.%s: %q is not an angle, which is one of %s", angle, angle, strings.Join(BuiltinAngles, ", ")))
+		case strings.TrimSpace(c.AngleModels[angle]) == "":
+			errs = append(errs, fmt.Sprintf("angle_models.%s must name a model: remove the key to use model", angle))
+		}
 	}
 	if c.GitHub.Token != "" && c.GitHub.ResolvedToken() == "" {
 		where := fmt.Sprintf("github.token %q expands to nothing", c.GitHub.Token)
