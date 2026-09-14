@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 const projectTOML = "version = 2\n[project]\nrepo = \"a/b\"\n"
@@ -76,6 +77,35 @@ func TestLoadMachineMaxDevelopers(t *testing.T) {
 	}
 }
 
+// A machine config's retention_period reaches every listed project that does
+// not set its own; a project's own value wins.
+func TestLoadMachineRetentionPeriod(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "unset/bees.toml", projectTOML)
+	writeFile(t, root, "set/bees.toml", projectTOML+"[scheduler]\nretention_period = \"2h\"\n")
+	m, err := LoadMachine(writeFile(t, root, "machine.toml", "projects = [\"unset/bees.toml\", \"set/bees.toml\"]\nretention_period = \"72h\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.Configs[0].Scheduler.RetentionPeriod.Duration; got != 72*time.Hour {
+		t.Errorf("unset project: retention_period = %s, want the machine's 72h", got)
+	}
+	if got := m.Configs[1].Scheduler.RetentionPeriod.Duration; got != 2*time.Hour {
+		t.Errorf("project setting its own: retention_period = %s, want its 2h", got)
+	}
+
+	m, err = LoadMachine(writeFile(t, root, "machine.toml", "projects = [\"unset/bees.toml\"]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.RetentionPeriod != nil {
+		t.Errorf("RetentionPeriod = %s, want nil when the file does not set it", m.RetentionPeriod)
+	}
+	if got := m.Configs[0].Scheduler.RetentionPeriod.Duration; got != DefaultRetentionPeriod {
+		t.Errorf("no machine value: retention_period = %s, want the default %s", got, DefaultRetentionPeriod)
+	}
+}
+
 // Every rejection names the machine config and, for an entry, the entry.
 func TestLoadMachineRejects(t *testing.T) {
 	root := t.TempDir()
@@ -91,8 +121,11 @@ func TestLoadMachineRejects(t *testing.T) {
 	}{
 		{"empty list", "projects = []\n", []string{"projects is empty"}},
 		{"negative cap", "projects = [\"good/bees.toml\"]\nmax_developers = -1\n", []string{"max_developers must be >= 0"}},
+		{"zero retention", "projects = [\"good/bees.toml\"]\nretention_period = \"0s\"\n", []string{"retention_period", "must be a positive duration"}},
+		{"negative retention", "projects = [\"good/bees.toml\"]\nretention_period = \"-1h\"\n", []string{"retention_period", "must be a positive duration"}},
+		{"unparseable retention", "projects = [\"good/bees.toml\"]\nretention_period = \"a day\"\n", []string{"retention_period", "invalid duration"}},
 		{"not a list", "projects = \"good/bees.toml\"\n", []string{"parse"}},
-		{"unknown key", "projects = [\"good/bees.toml\"]\n[project]\nrepo = \"a/b\"\n", []string{"unknown keys: project, project.repo", "a machine config has only projects and max_developers"}},
+		{"unknown key", "projects = [\"good/bees.toml\"]\n[project]\nrepo = \"a/b\"\n", []string{"unknown keys: project, project.repo", "a machine config has only projects, max_developers and retention_period"}},
 		{"blank entry", "projects = [\"good/bees.toml\", \" \"]\n", []string{`projects[1] = " "`, "is empty"}},
 		{"missing file", "projects = [\"nope/bees.toml\"]\n", []string{`projects[0] = "nope/bees.toml"`, "no such file"}},
 		{"directory", "projects = [\"dir\"]\n", []string{`projects[0] = "dir"`, "is a directory: name the bees.toml file in it"}},

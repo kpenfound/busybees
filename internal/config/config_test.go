@@ -369,6 +369,41 @@ func TestRetryPolicy(t *testing.T) {
 	}
 }
 
+// retention_period defaults to 24h, takes any positive duration and refuses
+// anything that would turn retention off or is not a duration, naming the key.
+func TestRetentionPeriod(t *testing.T) {
+	cfg, err := Load(writeConfig(t, "version = 2\n[project]\nrepo = \"a/b\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Scheduler.RetentionPeriod; got == nil || got.Duration != 24*time.Hour {
+		t.Fatalf("default retention_period = %v, want 24h", got)
+	}
+	cfg, err = Load(writeConfig(t, "version = 2\n[project]\nrepo = \"a/b\"\n[scheduler]\nretention_period = \"168h\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Scheduler.RetentionPeriod.Duration; got != 168*time.Hour {
+		t.Errorf("retention_period = %s, want 168h", got)
+	}
+	for value, want := range map[string]string{
+		"0s":    "must be a positive duration",
+		"-1h":   "must be a positive duration",
+		"a day": "invalid duration",
+	} {
+		_, err := Load(writeConfig(t, "version = 2\n[project]\nrepo = \"a/b\"\n[scheduler]\nretention_period = \""+value+"\"\n"))
+		if err == nil {
+			t.Errorf("retention_period = %q: loaded, want an error", value)
+			continue
+		}
+		for _, w := range []string{"retention_period", want} {
+			if !strings.Contains(err.Error(), w) {
+				t.Errorf("retention_period = %q: error %q does not mention %q", value, err, w)
+			}
+		}
+	}
+}
+
 func TestFilterLabelRequired(t *testing.T) {
 	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[filter]\nrequire_label = false\nassignee = \"me\"\n"))
 	if err != nil {

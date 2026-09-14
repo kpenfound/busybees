@@ -33,16 +33,18 @@ const machineKey = "projects"
 var ErrMachineConfig = errors.New("is a machine config listing projects, not a project bees.toml")
 
 // Machine is a machine config: the paths of the bees.toml files of the
-// projects one bees process manages, and the one setting that spans them,
-// a cap on the developer slots in use across all of them. Each project
-// keeps its own bees.toml, state directory, mailbox and notes; this file
-// says where they are.
+// projects one bees process manages, and the settings that span them: a cap
+// on the developer slots in use across all of them, and the retention
+// period of the projects that do not set their own. Each project keeps its
+// own bees.toml, state directory, mailbox and notes; this file says where
+// they are.
 //
 //	projects = [
 //	  "~/src/foo/bees.toml",
 //	  "../bar/bees.toml",
 //	]
 //	max_developers = 3
+//	retention_period = "72h"
 type Machine struct {
 	// Path is the absolute path of the machine config itself.
 	Path string `toml:"-"`
@@ -52,6 +54,10 @@ type Machine struct {
 	// the total of what each project's scheduler.max_developers pool has
 	// out at once. 0, the default, is no cap beyond each project's own.
 	MaxDevelopers int `toml:"max_developers"`
+	// RetentionPeriod is scheduler.retention_period for every listed project
+	// whose bees.toml does not set it. Nil, the default, leaves those
+	// projects on the built-in default. It must be positive.
+	RetentionPeriod *Duration `toml:"retention_period"`
 	// Configs are the projects' configs, loaded in the order Projects lists
 	// them, each Config's Path the absolute path the entry resolved to.
 	Configs []*Config `toml:"-"`
@@ -107,13 +113,16 @@ func LoadMachine(path string) (*Machine, error) {
 		for _, k := range undecoded {
 			keys = append(keys, k.String())
 		}
-		return nil, fmt.Errorf("%s: unknown keys: %s (a machine config has only %s and max_developers; project settings belong in each project's bees.toml)", path, strings.Join(keys, ", "), machineKey)
+		return nil, fmt.Errorf("%s: unknown keys: %s (a machine config has only %s, max_developers and retention_period; project settings belong in each project's bees.toml)", path, strings.Join(keys, ", "), machineKey)
 	}
 	if len(m.Projects) == 0 {
 		return nil, fmt.Errorf("%s: %s is empty: list the path of at least one project's bees.toml", path, machineKey)
 	}
 	if m.MaxDevelopers < 0 {
 		return nil, fmt.Errorf("%s: max_developers must be >= 0 (0 is no cap across projects)", path)
+	}
+	if d := m.RetentionPeriod; d != nil && d.Duration <= 0 {
+		return nil, fmt.Errorf("%s: retention_period %q must be a positive duration such as \"24h\" (retention cannot be turned off)", path, d.String())
 	}
 	seen := map[string]int{}
 	for i, entry := range m.Projects {
@@ -136,6 +145,9 @@ func LoadMachine(path string) (*Machine, error) {
 		cfg, err := Load(p)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %s: %w", path, key, err)
+		}
+		if m.RetentionPeriod != nil && cfg.retentionPeriodDefaulted {
+			cfg.Scheduler.RetentionPeriod = &Duration{m.RetentionPeriod.Duration}
 		}
 		m.Configs = append(m.Configs, cfg)
 	}
