@@ -110,7 +110,7 @@ func (s *Scheduler) runReview(ctx context.Context, log *slog.Logger, pr github.P
 		}
 		started = started.Add(time.Second)
 	}
-	checkout := &review.Checkout{Clone: cloneOf(dir, pr.HeadSHA)}
+	checkout := &review.Checkout{Clone: cloneOf(dir, pr.HeadSHA, s.ws.Remote)}
 	runner := &review.Runner{
 		Pipeline:  &review.Pipeline{Client: s.gh, Project: project, Dir: dir, Checkout: checkout},
 		Distiller: &review.Distiller{Agent: &distiller, Dir: dir},
@@ -255,15 +255,19 @@ func readReviewCosts(artifact string, a *review.Artifact) (*review.Brief, []revi
 // the base branch as the worker's remote has it (fetched with the rest at
 // the start of the round), which is what GitHub diffs a pull request
 // against: the worker's history is whole, so the merge base is there to
-// find, and the diff read from the clone is the pull request's own. It is
-// set only when the worker's HEAD is headSHA, the commit GitHub says the
-// pull request's head is: a requested review of a fork's pull request, or
-// of a branch deleted since, runs from a checkout of the default branch
-// instead (runRequestedReview), whose diff against its own merge base is
-// nothing, and the diff of such a review is gh's to read. A base branch
-// the remote does not have, or one the head shares no history with,
-// leaves the reference unset the same way.
-func cloneOf(src, headSHA string) func(context.Context, review.Ref, string, string) error {
+// find, and the diff read from the clone is the pull request's own. The
+// remote is the one the workspace manager fetches, project.remote, under
+// whose name the worker's remote-tracking branches live: on a project
+// whose team repository is `upstream` there is no origin/<base> to find.
+//
+// The reference is set only when the worker's HEAD is headSHA, the commit
+// GitHub says the pull request's head is: a requested review of a fork's
+// pull request, or of a branch deleted since, runs from a checkout of the
+// default branch instead (runRequestedReview), whose diff against its own
+// merge base is nothing, and the diff of such a review is gh's to read. A
+// base branch the remote does not have, or one the head shares no history
+// with, leaves the reference unset the same way.
+func cloneOf(src, headSHA, remote string) func(context.Context, review.Ref, string, string) error {
 	return func(ctx context.Context, _ review.Ref, base, dir string) error {
 		head, err := workspace.Git(ctx, src, "rev-parse", "HEAD")
 		if err != nil {
@@ -279,7 +283,7 @@ func cloneOf(src, headSHA string) func(context.Context, review.Ref, string, stri
 		if base == "" || (headSHA != "" && head != headSHA) {
 			return nil
 		}
-		mergeBase, err := workspace.Git(ctx, src, "merge-base", "refs/remotes/origin/"+base, "HEAD")
+		mergeBase, err := workspace.Git(ctx, src, "merge-base", "refs/remotes/"+remote+"/"+base, "HEAD")
 		if err != nil {
 			return nil
 		}
