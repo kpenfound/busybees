@@ -130,8 +130,9 @@ func newApp(ctx context.Context, g *globalFlags) (*app, error) {
 		log.Info("migrated bees.toml", "from", from, "to", config.CurrentVersion, "backup", backup)
 	}
 
-	if _, err := workspace.Git(ctx, cfg.Dir(), "rev-parse", "--git-dir"); err != nil {
-		return nil, fmt.Errorf("%s must live inside a git clone of %s: %w", cfg.Path, cfg.Project.Repo, err)
+	if _, err := workspace.Git(ctx, cfg.CloneDir(), "rev-parse", "--git-dir"); err != nil {
+		return nil, fmt.Errorf("%s must be a git clone of %s (set project.dir in %s if the clone lives elsewhere): %w",
+			cfg.CloneDir(), cfg.Project.Repo, cfg.Path, err)
 	}
 
 	if err := resolveFilterAssignee(ctx, cfg); err != nil {
@@ -163,7 +164,7 @@ func newApp(ctx context.Context, g *globalFlags) (*app, error) {
 	skillMgr.RefreshAlways, skillMgr.RefreshAfter = cfg.SkillsRefresh()
 	skillMgr.Logger = log
 
-	ws := workspace.NewManager(cfg.Dir(), cfg.Scheduler.WorkspaceRoot)
+	ws := workspace.NewManager(cfg.CloneDir(), cfg.Scheduler.WorkspaceRoot)
 	ws.Keep = cfg.Scheduler.KeepWorkspaces
 	ws.Remote = cfg.Project.Remote
 

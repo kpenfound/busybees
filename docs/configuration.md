@@ -1,7 +1,8 @@
 # Configuring busybees: `bees.toml`
 
 One file configures a factory: `bees.toml`, in the root of a git clone of the
-project being built. Without `--template`, `bees init` writes it with every
+project being built, or elsewhere with `project.dir` naming the clone (see
+[`[project]`](#project) below). Without `--template`, `bees init` writes it with every
 option listed and the optional ones commented out at their default, so
 configuring is uncommenting and editing lines; see
 [config templates](templates.md) for the alternative. `bees config validate`
@@ -109,14 +110,15 @@ the value is yours and bees cannot guess the replacement. The MCP server name
 | `default_branch` | string | derived | Branch developers branch from, reviewers diff against and QA tests. Read from the remote's HEAD when unset. |
 | `state_dir` | string | `".bees"` | Where mail, notes, session logs and scheduler state live. A relative path is resolved against the directory holding `bees.toml`. `bees init` adds it to `.gitignore` when it is inside the clone. |
 | `branch_prefix` | string | `"bees/"` | Prefix of developer branches: `bees/issue-12`. |
+| `dir` | string | `bees.toml`'s directory | The git clone the factory works in, when it differs from the directory holding `bees.toml`. A relative path is resolved against the directory holding `bees.toml`. |
 
 What the product is and how to build, test and run it are not configuration.
 Every role reads the repository's own README, CONTRIBUTING and CLAUDE.md, and
 keeps what it learns in its notes file.
 
-The clone holding `bees.toml` is the main checkout. Every session runs in a
-temporary `git worktree` cut from it, so `remote` has to point at the GitHub
-repository.
+The main checkout is `dir` when set, else the clone holding `bees.toml`.
+Every session runs in a temporary `git worktree` cut from it, so `remote` has
+to point at the GitHub repository.
 
 ## `[filter]`
 
@@ -1066,8 +1068,8 @@ of instructions reviewed like code.
 Sessions read the files from their own worktree at session start, so a session
 sees the files on the branch it is working on, and an edit takes effect on the
 next session with no rebuild and no restart. `bees prompts show <role>
---rendered` has no worktree and reads the checkout `bees.toml` sits in; it says
-so when it finds any.
+--rendered` has no worktree and reads the main checkout (`project.dir`, else
+the checkout `bees.toml` sits in); it says so when it finds any.
 
 A file bees cannot use, unreadable or larger than 64 KiB, never stops a
 session: the session warns, skips that file and runs with the rest. `bees

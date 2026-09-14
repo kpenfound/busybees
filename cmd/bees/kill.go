@@ -165,7 +165,7 @@ func cleanWorktrees(ctx context.Context, cfg *config.Config, dryRun bool) ([]str
 	if resolved, err := filepath.EvalSymlinks(root); err == nil {
 		root = resolved
 	}
-	out, err := workspace.Git(ctx, cfg.Dir(), "worktree", "list", "--porcelain")
+	out, err := workspace.Git(ctx, cfg.CloneDir(), "worktree", "list", "--porcelain")
 	if err != nil {
 		return nil, err
 	}
@@ -186,13 +186,13 @@ func cleanWorktrees(ctx context.Context, cfg *config.Config, dryRun bool) ([]str
 		if dryRun {
 			continue
 		}
-		if _, err := workspace.Git(ctx, cfg.Dir(), "worktree", "remove", "--force", path); err != nil {
+		if _, err := workspace.Git(ctx, cfg.CloneDir(), "worktree", "remove", "--force", path); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 		}
 		_ = os.RemoveAll(filepath.Dir(path)) // the temp dir holding the worktree
 	}
 	if !dryRun {
-		_, _ = workspace.Git(ctx, cfg.Dir(), "worktree", "prune")
+		_, _ = workspace.Git(ctx, cfg.CloneDir(), "worktree", "prune")
 		if entries, err := os.ReadDir(root); err == nil {
 			for _, e := range entries {
 				p := filepath.Join(root, e.Name())

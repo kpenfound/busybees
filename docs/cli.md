@@ -460,8 +460,9 @@ the repository's own
 [project prompt files](configuration.md#project-prompt-files), with placeholder
 values for the worktree and issue.
 
-The project prompt files are read from the checkout `bees.toml` sits in, which
-is the only one this command has. A session reads them from its own worktree,
+The project prompt files are read from the main checkout (`project.dir`, else
+the checkout `bees.toml` sits in), which is the only one this command has. A
+session reads them from its own worktree,
 so a branch that changes `bees/prompts/` renders a different prompt; when the
 command finds any, it says so on stderr.
 

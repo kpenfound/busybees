@@ -158,6 +158,38 @@ func TestDefaults(t *testing.T) {
 	}
 }
 
+func TestCloneDir(t *testing.T) {
+	t.Run("unset falls back to Dir", func(t *testing.T) {
+		cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.CloneDir() != cfg.Dir() {
+			t.Fatalf("clone dir: got %s, want %s", cfg.CloneDir(), cfg.Dir())
+		}
+	})
+	t.Run("relative, resolved against Dir", func(t *testing.T) {
+		cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\ndir = \"../clone\"\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := filepath.Join(filepath.Dir(cfg.Dir()), "clone")
+		if cfg.CloneDir() != want {
+			t.Fatalf("clone dir: got %s, want %s", cfg.CloneDir(), want)
+		}
+	})
+	t.Run("absolute, used as-is", func(t *testing.T) {
+		abs := filepath.Join(t.TempDir(), "clone")
+		cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\ndir = \""+filepath.ToSlash(abs)+"\"\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.CloneDir() != abs {
+			t.Fatalf("clone dir: got %s, want %s", cfg.CloneDir(), abs)
+		}
+	})
+}
+
 // The notes-consolidation keys default when absent or zero, and are taken
 // as written otherwise.
 func TestNotesConsolidationDefaults(t *testing.T) {

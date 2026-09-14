@@ -809,7 +809,7 @@ func newPromptsCmd(g *globalFlags) *cobra.Command {
 				// renders a different prompt - say so rather than let this
 				// read as the prompt every session gets.
 				_, _ = fmt.Fprintf(os.Stderr, "\nnote: %s read from %s. A session reads them from its own branch, which may differ.\n",
-					text.Count(len(project), "project prompt file"), cfg.Dir())
+					text.Count(len(project), "project prompt file"), cfg.CloneDir())
 			}
 			return nil
 		},
@@ -827,17 +827,17 @@ func newPromptsCmd(g *globalFlags) *cobra.Command {
 // too, or the command prints an empty value for it.
 //
 // The project's own prompt files (prompts.LoadProject) are read from the main
-// clone - the checkout bees.toml sits in - because this command runs outside
-// any session and has no worktree. It returns them so the caller can say so:
-// a session reads them from its own branch, which may carry different text.
-// A file that cannot be read is an error here, where a person is looking at
-// the prompt, rather than the warning a session skips it with.
+// clone (Config.CloneDir) because this command runs outside any session and
+// has no worktree. It returns them so the caller can say so: a session reads
+// them from its own branch, which may carry different text. A file that
+// cannot be read is an error here, where a person is looking at the prompt,
+// rather than the warning a session skips it with.
 func renderedPrompt(cfg *config.Config, role string) (string, []prompts.ProjectPrompt, error) {
 	rr, err := cfg.Role(role)
 	if err != nil {
 		return "", nil, err
 	}
-	project, err := prompts.LoadProject(cfg.Dir(), role)
+	project, err := prompts.LoadProject(cfg.CloneDir(), role)
 	if err != nil {
 		return "", nil, err
 	}

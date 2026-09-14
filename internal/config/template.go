@@ -149,6 +149,10 @@ version = {{.Version}}
 #state_dir = ".bees"
 # Prefix for developer branches (bees/issue-12).
 #branch_prefix = "bees/"
+# Git clone the factory works in, when it differs from the directory holding
+# this file. Relative to this file. Unset: this file's own directory is the
+# clone, as above.
+#dir = ""
 
 #===============================================================================
 # Visibility filter — which issues and pull requests the factory can see.
