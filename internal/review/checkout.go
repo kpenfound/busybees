@@ -78,8 +78,17 @@ git -c credential.helper='!f() { echo username=x-access-token; echo "password=$G
 git checkout -q --detach FETCH_HEAD
 `
 
-// Checkout clones a pull request's head into a directory, in a container.
+// Checkout clones a pull request's head into a directory, in a container
+// or, for a caller that has the head at hand already, by a Clone of its
+// own.
 type Checkout struct {
+	// Clone, when set, makes the checkout instead of the container: it
+	// fills dir, which exists and is empty, with ref's head, and an error
+	// is a checkout that could not be made. The factory sets it (its
+	// reviewer worker has the pull request's branch checked out already,
+	// and clones that rather than fetching the head over the network);
+	// `bees review` leaves it nil and clones in the container.
+	Clone func(ctx context.Context, ref Ref, dir string) error
 	// DockerBin is the container engine's client, "docker" when it is
 	// empty.
 	DockerBin string
@@ -95,6 +104,16 @@ type Checkout struct {
 // that failed; dir is removed again, so nothing is left of a checkout that
 // is not one, and the caller runs the sessions elsewhere.
 func (c *Checkout) Run(ctx context.Context, ref Ref, dir string) error {
+	if c.Clone != nil {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+		if err := c.Clone(ctx, ref, dir); err != nil {
+			_ = os.RemoveAll(dir)
+			return err
+		}
+		return nil
+	}
 	docker := c.DockerBin
 	if docker == "" {
 		docker = "docker"

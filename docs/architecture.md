@@ -565,12 +565,11 @@ stateDiagram-v2
   worker `resumed`. The record is not consumed by the worker that reads it,
   only overwritten by the next session as it starts, so a worker that returns
   before starting a session leaves it for the next one.
-- **Later rounds.** Within one worker's loop, a role's second and later
-  sessions continue the conversation of its previous one: the developer
-  handed review feedback and the reviewer looking at the fix keep what they
-  learned in round 1 instead of relearning the codebase. The id is the one
-  claude reports in `result.json` (`claude_session_id`); the next session of
-  the same role in the develop or review stage is launched with
+- **Later rounds.** Within one worker's loop, the developer's second and
+  later sessions continue the conversation of its previous one: handed
+  review feedback, it keeps what it learned in round 1 instead of relearning
+  the codebase. The id is the one claude reports in `result.json`
+  (`claude_session_id`); the next developer session is launched with
   `--resume <id>` and `--system-prompt-snapshot off`, because claude
   otherwise reuses the system prompt it recorded on the conversation's first
   request and the round's own system prompt would go unread. The task
@@ -580,7 +579,9 @@ stateDiagram-v2
   paths the old conversation does not know, so its first session of each
   role starts fresh. A resumed launch that fails, as one with an id claude
   no longer has does, is retried like any infrastructure failure, without
-  the id. Checks-mode reviewer sessions and requested reviews start fresh.
+  the id. Reviewer sessions of every kind start fresh: the judge session,
+  because every round's review runs again on the head as it stands and the
+  session posts that round's list; checks mode; a requested review.
   Codex has no resume: every round of a codex role is a new thread. An
   opencode role's later round continues the session with `--session`.
 - **Bookkeeping.** `<state_dir>/issues/<n>.json` records the review round,
@@ -601,20 +602,27 @@ stateDiagram-v2
   asked to diagnose failing checks, is shared between the prereview and checks
   stages, and is compared with `roles.reviewer.max_check_fix_rounds` (default
   2); check-fix rounds do not count against `max_review_rounds` either.
-- **The reviewer's review stages** (`roles.reviewer.stages`) are sections of
-  one reviewer session's prompt, not worker stages like the ones above: a
-  staged review is still one session. The prompt carries the configured stages
-  in order, each with its own focus and its own verdict, and the reviewer is
-  told to run every one rather than stop at the first that blocks. The list is
-  validated at load. `product-fit` is the one stage with a source of truth
-  outside the diff and the issue: it needs the work item's parent feature, so
-  the worker makes that GraphQL lookup only when the stage is configured (off
-  by default; one call per review round when on). A work item with no parent
-  renders the stage without one, and so does one whose lookup fails: the
-  failure is reported as the `work-item-parent` degraded operation rather than
-  costing the review, because a silent nothing would reach the verdict as
-  "this work item belongs to no feature". See
-  [Review stages](roles.md#review-stages-rolesreviewerstages).
+- **The review** is `bees review`'s pipeline, run by the worker before the
+  reviewer session (`review.go`, over `internal/review`'s `Runner`): the pull
+  request's context is gathered, a distiller session briefs the change and
+  sizes it, one session per angle `roles.reviewer.angles` gives that size
+  looks for problems from that angle alone, and the judge, deterministic
+  code, merges what they found into one list. The brief and the angle
+  sessions are `internal/review`'s read-only sessions, run as the role's
+  `agent` and `model` (`brief_model` and `angle_models` replacing the model
+  for the brief and for one angle each), with no MCP server, no tool that
+  writes, runs or fetches, and in a local clone of the worker's checkout
+  under the review's artifact, which is kept under the state directory's
+  `reviews/` (the brief, each angle's run, the judge's list; the clone is
+  removed). What they cost is entered in the ledger under the round's name
+  and charged to the issue. Then one reviewer session, the judge session,
+  running `judge_model`, is told the list and posts every finding on the pull
+  request with `submit_review`, untriaged: as a `comment` review on a
+  developer's pull request, whose author the factory is, with the verdict
+  going to the developer by mail and to the orchestrator as the outcome. An
+  angle that fails is named in the session's task and the rest are judged; a
+  review that could not run (no brief, every angle failing) escalates the
+  issue with the reason. See [Review](workflow.md#review).
 - **Prereview stage** (`pre_review_checks`, on by default, independent of
   `auto_merge`). Between the developer and the first review the worker waits
   for the pull request's checks with a deadline of
@@ -719,7 +727,11 @@ Checked, in Go, when the session ends:
 
 A reviewer's `approved` in the review loop has nothing to check, because the
 orchestrator performs the approval itself: it labels the pull request and the
-issue, and requests a review from `scheduler.notify`.
+issue, and requests a review from `scheduler.notify`. The findings the
+session was to post on the pull request are looked for after either verdict,
+and a session that posted none is the `review-post` degraded operation
+rather than a failure: the verdict travels by outcome and mail, and the
+review on the pull request is for the person who merges.
 
 Not checked, because there is nothing to look at afterwards:
 
@@ -733,7 +745,7 @@ Not checked, because there is nothing to look at afterwards:
   is owed: their work is issues that may or may not need writing, and `done`
   and `idle` are both honest with nothing changed on GitHub.
 - what any role decided. Whether an issue is detailed enough to build, how big
-  it is, what a feature breaks into, whether a diff passes a review stage:
+  it is, what a feature breaks into, what verdict a review's findings call for:
   these are the judgment the session exists to make, and the label a prompt
   moves is that decision rather than a claim about one. The mechanical half of
   such a move is scheduler-owned where one exists: `bees:question` is removed
@@ -1050,10 +1062,10 @@ Messages are addressed to a **role**, not a session. Delivery rules:
 
 - A developer session for issue N with pull request M receives the unread
   developer mail where `issue == N` or `pr == M`.
-- A reviewer session receives its own earlier feedback for the pull request
-  (`from: reviewer, to: developer, pr == M`) as "previous rounds", plus the
-  unread reviewer mail where `issue == N` or `pr == M`, in review mode and in
-  checks mode alike, read afresh before each of those sessions.
+- A reviewer session receives the unread reviewer mail where `issue == N` or
+  `pr == M`, in review mode and in checks mode alike, read afresh before each
+  of those sessions. Its earlier feedback is not replayed: each round's
+  review runs again on the head as it stands.
 - A singleton session receives all unread mail addressed to its role.
 - Mail is marked read (`read_at` set) after the session that received it
   finishes, so a session that crashed sees it again.
@@ -1104,6 +1116,9 @@ sessions get `BEES_STATE_DIR`.
                                  on, waiting to be filed against busybees
   notes/<role>.md                role memory (`bees notes show|edit|reset|add`)
   notes/archive/<role>-<ts>.md   notes replaced by `bees notes reset`
+  reviews/<owner>/<name>/<pr>/<started>/
+                                 one review of one pull request, as internal/review writes it:
+                                 brief.json, angles/<angle>.json, findings.json
   sessions/<ts>-<name>-<rand>/   system-prompt.md, prompt.md, mcp.json (claude), transcript.jsonl,
                                  stderr.log, outcome.json, result.json, pid,
                                  touched-issues.txt (the issues the session changed on

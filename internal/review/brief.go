@@ -59,8 +59,12 @@ type Brief struct {
 	Sources     []string `json:"sources,omitempty"`
 	NotGathered []string `json:"not_gathered,omitempty"`
 	// SessionID is the distiller session's own id, which is what a later
-	// session would be resumed from.
-	SessionID string `json:"session_id,omitempty"`
+	// session would be resumed from, and CostUSD what that session cost
+	// when the CLI reported a cost (AgentResult.CostUSD): what the factory
+	// counts against its budgets, since the distiller is no session of its
+	// own runner.
+	SessionID string  `json:"session_id,omitempty"`
+	CostUSD   float64 `json:"cost_usd,omitempty"`
 }
 
 // Sizes are the sizes a brief can give a change, smallest first.

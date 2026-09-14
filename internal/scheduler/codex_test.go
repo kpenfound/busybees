@@ -104,15 +104,18 @@ func TestACodexDeveloperWalksTheWholeLoop(t *testing.T) {
 		t.Fatalf("second developer prompt:\n%s", prompt)
 	}
 	// The ledger carries the codex sessions with no cost and the claude ones
-	// with theirs.
+	// with theirs, and each review's pipeline once.
 	ledger, err := h.store.ReadLedger(time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ledger) != 4 {
-		t.Fatalf("ledger has %d entries, want 4:\n%+v", len(ledger), ledger)
+	if len(ledger) != 6 {
+		t.Fatalf("ledger has %d entries, want 4 sessions and 2 reviews:\n%+v", len(ledger), ledger)
 	}
 	for _, e := range ledger {
+		if e.Outcome == "reviewed" {
+			continue
+		}
 		switch e.Role {
 		case config.RoleDeveloper:
 			if e.CostUSD != 0 || e.Turns != 2 {

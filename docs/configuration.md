@@ -363,7 +363,7 @@ freely on top of it:
 | Visibility backstop | 2 list calls | after every session |
 | Refreshing what a session changed | 1 `issue view` per issue | after a session, for each issue it created or relabelled through the MCP server; none when it changed no issue |
 | The marker audit | 1 comment read per issue or pull request | after a session, for its issue, the pull request it was given or opened, and each issue it changed, only with `[github]` set, and nothing at all without it |
-| Parent feature lookup | 1 GraphQL call per triage item, per open work item, per developer session, and per review round with a `product-fit` stage configured | per project manager run, product manager run, developer session, reviewer session |
+| Parent feature lookup | 1 GraphQL call per triage item, per open work item and per developer session | per project manager run, product manager run, developer session |
 | `bees issue create --parent` | 3 calls (parent details, create, attach as sub-issue); `--related` 2; plain 1 | whenever a role files an issue |
 | Worker stage transitions | a few `issue view`, `pr view` and `issue edit` calls | per transition |
 
@@ -574,40 +574,40 @@ check was reported. `bees doctor` says which of the three is in force, and
 `bees status` shows it in the worker stage (`checks (required)`, `checks
 (reported)`, `checks (none)`).
 
-### `[roles.reviewer]` only: the review stages
+### `[roles.reviewer]` only: the review pipeline
 
-The reviewer reviews in ordered stages, each with its own focus, source of
-truth and verdict. Like the checks keys, `stages` is accepted only under
-`[roles.reviewer]`.
+The reviewer's review runs a brief, then one session per angle, then a
+judge that merges what they found; these keys size and model each step.
+Like the checks keys, they are accepted only under `[roles.reviewer]`.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `stages` | string list | `["implementation", "completeness", "cleanliness", "style"]` | The stages to run, in order. One or more of `implementation`, `completeness`, `cleanliness`, `style`, `product-fit`. An unknown name or an empty list is a load error. |
+| `angles.<size>` | string list | the built-in list for that size | The angles a pull request of that size is reviewed from. `<size>` is `xs`, `s`, `m`, `l` or `xl`; one or more of `quick_general`, `general`, `docs`, `test_coverage`, `acceptance_criteria`, `side_effects`. An unknown size or angle, or an empty list, is a load error. A size this does not name keeps the built-in list. |
+| `brief_model` | string | `model` | The model of the session that distills the brief. |
+| `angle_models.<angle>` | string | `model` | The model of that angle's session. An angle not one of the six above is a load error. |
+| `judge_model` | string | `model` | The model of the reviewer session that posts the judge's findings and decides the verdict. |
 
-| Stage | Question it answers | Source of truth |
-|---|---|---|
-| `implementation` | Is it correct? Error handling, edge cases, tests, security. | the diff |
-| `completeness` | Does it deliver the work item's acceptance criteria? | the issue |
-| `cleanliness` | Is it clear, small, free of dead code and needless abstraction? | the diff |
-| `style` | Does it follow the repository's formatting and lint conventions? | the repository's conventions, CLAUDE.md, the linter |
-| `product-fit` | Does it fit the parent feature and the product direction? | the parent feature, the README and the docs |
+| Size | Built-in angles |
+|---|---|
+| `xs`, `s` | `quick_general`, `docs` |
+| `m`, `l` | `general`, `docs`, `test_coverage`, `acceptance_criteria` |
+| `xl` | `general`, `docs`, `test_coverage`, `acceptance_criteria`, `side_effects` |
 
-Every configured stage runs, and each ends with a verdict line. Requesting
-changes still sends one message to the developer, grouped by stage in the
-configured order. An approval means every stage passed.
-
-`product-fit` is off by default: a work item the project manager already
-scoped is not the place to reopen the product decision. It is the only stage
-that reads the work item's parent feature, and the orchestrator makes that
-lookup, one GraphQL call per review round, only when the stage is configured.
+The brief and every angle session run read-only, with no MCP server and no
+tool that writes, runs or fetches; only the reviewer session that posts the
+judge's list and decides the verdict runs with the factory's tools. An
+angle that fails is named in that session's task and the rest are judged; a
+review where the brief or every angle failed escalates the issue instead.
 
 ```toml
 [roles.reviewer]
-stages = ["implementation", "completeness", "cleanliness", "style", "product-fit"]
+angles.xs = ["quick_general"]
+angle_models.docs = "haiku"
+judge_model = "sonnet"
 ```
 
-See [Review stages](roles.md#review-stages-rolesreviewerstages) for what each
-stage looks at.
+See [Review pipeline](roles.md#review-pipeline-rolesreviewerangles) for what
+each angle looks at.
 
 ### `[roles.product_manager]` only: minimum issue size
 
