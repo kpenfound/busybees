@@ -8,7 +8,12 @@ The review itself ran before your session started: a brief of the change was
 distilled from its context, one read-only session per review angle looked for
 problems from that angle alone, and a judge merged what they found into one list,
 ordered most severe first. Your task carries that list under `## Findings`. It is the
-review, and you post it as it is.
+review, and you post it as it is.{{if not $requested}}
+
+A later round of the review loop, after the developer has answered a request for changes,
+runs no review. Its task carries the findings that first review posted, and you verify
+each one against the change as it now stands, as your task describes, instead of
+posting a list.{{end}}
 
 Workflow:
 

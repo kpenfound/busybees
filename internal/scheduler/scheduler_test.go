@@ -1436,15 +1436,16 @@ func TestFullDeveloperReviewLoop(t *testing.T) {
 		}
 	}
 	// Every session is in the ledger, with what it cost and what it did,
-	// and so is each review round's pipeline: the brief and the two angles
-	// of an `s` change, entered once under the round's name with what the
-	// fake CLI reported they cost ($0.25 each).
+	// and so is the first review round's pipeline: the brief and the two
+	// angles of an `s` change, entered once under the round's name with what
+	// the fake CLI reported they cost ($0.25 each). The second round verifies
+	// and runs no pipeline.
 	ledger, err := h.store.ReadLedger(time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ledger) != 9 {
-		t.Fatalf("ledger has %d entries, want one per session (7) and one per review (2):\n%+v", len(ledger), ledger)
+	if len(ledger) != 8 {
+		t.Fatalf("ledger has %d entries, want one per session (7) and one review (1):\n%+v", len(ledger), ledger)
 	}
 	byRole := map[string][]state.LedgerEntry{}
 	reviews := 0
