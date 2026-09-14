@@ -1292,6 +1292,9 @@ func Parse(text, path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	if kind, err := kindOf(text); err == nil && kind == KindMachine {
+		return nil, fmt.Errorf("%s %w", path, ErrMachineConfig)
+	}
 	version, err := fileVersion(text)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)

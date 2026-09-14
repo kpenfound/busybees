@@ -694,8 +694,20 @@ func newConfigCmd(g *globalFlags) *cobra.Command {
 	cmd := groupCmd("config", "Inspect bees.toml")
 	cmd.AddCommand(&cobra.Command{
 		Use:   "validate",
-		Short: "Check bees.toml for errors",
+		Short: "Check bees.toml (or a machine config) for errors",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			p, err := configPath(g)
+			if err != nil {
+				return err
+			}
+			if kind, err := config.DetectKind(p); err == nil && kind == config.KindMachine {
+				m, err := config.LoadMachine(p)
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "%s is a valid machine config (%s)\n", m.Path, text.Count(len(m.Configs), "project"))
+				return nil
+			}
 			cfg, err := loadConfig(g)
 			if err != nil {
 				return err
