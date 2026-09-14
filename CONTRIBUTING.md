@@ -5,6 +5,7 @@
 ```
 cmd/bees/            the cobra CLI: every `bees` command
 internal/config/     bees.toml and the machine config: schema, defaults, validation, global/role merging, labels, the init template
+internal/daemon/     several projects' schedulers in one process, one goroutine each, a failure kept to its project
 internal/doctor/     the checks `bees doctor` runs
 internal/duplicates/ the existing issues a new title and body would duplicate: a local word-overlap score over every issue, open and closed
 internal/feedback/   the queue of factory-error drafts report_factory_error writes: JSON under <state_dir>/feedback/
