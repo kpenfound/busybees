@@ -6,9 +6,10 @@
 // them is bees.toml:
 //
 //	~/.config/bees/config.toml   the person's own settings (this file):
-//	                             provider and model, where reviewer notes and
-//	                             review artifacts live, the default output
-//	                             mode, GitHub authentication
+//	                             provider and model, the angles of each size
+//	                             and the model of each step, where reviewer
+//	                             notes and review artifacts live, the default
+//	                             output mode, GitHub authentication
 //	context.toml                 the project's settings (project.go): which
 //	                             angles run, extra style sources, category
 //	                             overrides, which context sources are gathered
