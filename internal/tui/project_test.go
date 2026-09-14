@@ -168,6 +168,7 @@ func TestTheSameSessionNameInTwoProjectsIsTwoSessions(t *testing.T) {
 		in(0, started("developer-issue-12-r1", config.RoleDeveloper, 12, 0, fixed, "opus", false)),
 		in(1, started("developer-issue-12-r1", config.RoleDeveloper, 12, 0, fixed, "opus", false)),
 		in(1, ended("developer-issue-12-r1", config.RoleDeveloper, 12, 31, 87, 2.41)),
+		in(1, staged(12, "reviewer", 1)),
 		in(1, started("reviewer-pr-31-r1", config.RoleReviewer, 12, 31, fixed, "opus", false)),
 	)
 	if !strings.Contains(view, "foo     developer        #12   -     developer r2") {
@@ -176,8 +177,8 @@ func TestTheSameSessionNameInTwoProjectsIsTwoSessions(t *testing.T) {
 	if strings.Contains(view, "bar     developer        #12   -  ") {
 		t.Errorf("bar's ended session is still in the Now panel:\n%s", view)
 	}
-	if !strings.Contains(view, "bar     reviewer         #12   #31   -") || !strings.Contains(view, "$2.41") {
-		t.Errorf("bar's next session on the issue does not carry bar's spend, or carries foo's stage:\n%s", view)
+	if !strings.Contains(view, "bar     reviewer         #12   #31   reviewer r1") || !strings.Contains(view, "$2.41") {
+		t.Errorf("bar's next session on the issue does not carry bar's spend and stage:\n%s", view)
 	}
 	if strings.Count(view, "$2.41") != 2 { // bar's reviewer row and the Recent row
 		t.Errorf("the spend is not bar's alone:\n%s", view)

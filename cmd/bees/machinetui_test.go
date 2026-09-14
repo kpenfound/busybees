@@ -79,7 +79,9 @@ func TestMachineViewReachesTheSchedulerOnceItHasStarted(t *testing.T) {
 	t.Setenv(versions.EnvSkip, "1")
 	foo := writeProject(t, "acme/foo", "")
 	m := loadMachine(t, foo)
-	g := &globalFlags{logger: logging.New(logging.Options{Console: &bytes.Buffer{}})}
+	// --verbose, which streams every session event to stderr: not under the
+	// view, which owns the terminal.
+	g := &globalFlags{logger: logging.New(logging.Options{Console: &bytes.Buffer{}}), verbose: true}
 	t.Cleanup(func() { _ = g.logger.Close() })
 	d := machineDaemon(g, m)
 	projects, stop := machineView(context.Background(), d, m)
