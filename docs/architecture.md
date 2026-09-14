@@ -581,7 +581,8 @@ stateDiagram-v2
   role starts fresh. A resumed launch that fails, as one with an id claude
   no longer has does, is retried like any infrastructure failure, without
   the id. Checks-mode reviewer sessions and requested reviews start fresh.
-  Codex has no resume: every round of a codex role is a new thread.
+  Codex has no resume: every round of a codex role is a new thread. An
+  opencode role's later round continues the session with `--session`.
 - **Bookkeeping.** `<state_dir>/issues/<n>.json` records the review round,
   pull request number, branch, `check_fix_rounds` and the three resume fields,
   plus the running session, the two human-comment clocks,
@@ -815,7 +816,38 @@ is the result text, and `turn.completed`, `turn.failed` or a bare `error`
 event says how it ended. Codex reports tokens, never a cost, so a codex
 session's cost is unknown rather than zero.
 
-For either agent, stderr is saved to `stderr.log` when non-empty, and
+With `agent = "opencode"` it is one `opencode run`:
+
+```
+OPENCODE_CONFIG=<session>/opencode.json \
+opencode run --format json --auto --title bees-<session name> \
+  [--model <model>] [--session <session id>]
+```
+
+The task prompt is written to stdin. opencode has no flag to append to its
+system prompt and no `--mcp-config`, but it reads one more configuration
+file from the path `OPENCODE_CONFIG` names, so the session is given
+`<session>/opencode.json`: its `instructions` entry is the rendered system
+prompt file, which opencode appends to its own system prompt, and its `mcp`
+table is every MCP server, the built-in one included, with the session's
+`BEES_*` variables as that server's environment. The file lives in the
+session directory, never in the worktree; a project's own `opencode.json` is
+read as well. `--auto` approves what opencode would otherwise ask about (a
+write outside the worktree, such as into the state directory), the
+counterpart of `--dangerously-skip-permissions`; an explicit `deny` in the
+project's configuration still holds. `--session` continues an earlier
+session the way `--resume` does for claude, and there is no snapshot to
+switch off: opencode reads the instruction files again on every request.
+It has no fallback model, turn limit, tool allow-list or plugin
+directories, and `effort` is not passed either (its `--variant` takes a
+name the model defines, not a level), so those settings are not passed. Its
+stream is appended to `transcript.jsonl` the same way: every event carries
+the session id, each `step_finish` is one turn and carries what the step
+cost, the last `text` event is the result text, and a `step_finish` whose
+reason is `stop`, or an `error` event, says how it ended. The costs add up
+to the session's, a known cost even when a local model makes it zero.
+
+For every agent, stderr is saved to `stderr.log` when non-empty, and
 `result.json` summarises the run. A session that ended without a final event
 (a signalled process, most often) has no known cost: `bees status`, the live
 view and the summary line say so rather than printing zero, and its turns are
@@ -899,7 +931,8 @@ counted from the transcript's assistant messages or completed items instead.
   deliberately is not, because that file sits in the session directory on
   disk, and claude passes its own environment on to the servers it starts.
   Codex does not: a codex session's built-in server sees only the `BEES_*`
-  variables its entry names. See
+  variables its entry names. opencode lays the entry's environment over
+  its own, as claude does. See
   [Exported into every session](configuration.md#exported-into-every-session).
 - **Prompts.** The system prompt is `system/common.md` plus
   `system/<role>.md`, the role's custom `prompt` from `bees.toml`, and then
@@ -936,15 +969,18 @@ counted from the transcript's assistant messages or completed items instead.
   concurrently and share one cache, so preparation is serialised and a wrapper
   that already points at the right target is left alone. Clones are refreshed
   according to `global.skills_refresh`; `bees skills` inspects the cache.
-  Plugin directories are Claude Code's: a `codex` session is passed none,
-  whatever its role configures. See [Skills](configuration.md#skills).
+  Plugin directories are Claude Code's: a `codex` or `opencode` session is
+  passed none, whatever its role configures. See
+  [Skills](configuration.md#skills).
 - **MCP.** A claude session gets `mcp.json`, always passed with
   `--strict-mcp-config`, so it sees exactly two things: the servers of the
   resolved role (`$VAR` in `env` and `headers` expanded from the bees
   process environment) and the built-in `bees` server, `<bees binary> mcp
   serve` over stdio with the session's `BEES_*` variables in its `env`. A
   codex session gets the same two things as `mcp_servers` overrides on its
-  command line, next to whatever its own configuration file names. That
+  command line, next to whatever its own configuration file names, and an
+  opencode session as the `mcp` table of the configuration file
+  `OPENCODE_CONFIG` names, next to the project's own. That
   server serves the factory's own operations as tools backed by the same code
   the CLI uses, so a session calls a schema instead of composing a command
   line: `mail_send`, `mail_list`, `issue_create`, `issue_link`, `issue_view`,
@@ -1125,7 +1161,9 @@ bees-<session>` a claude session is started with; for a codex session, the
 MCP server its directory), let `bees kill` find the orphans: it merges the
 pid files with a `ps` scan restricted to processes whose executable is
 `claude` or `codex` (directly or through an interpreter), cross-checking pid
-files against the scan so a reused pid is discarded rather than killed. Both
+files against the scan so a reused pid is discarded rather than killed. An
+opencode session is found through its pid file alone: its argv carries no
+path of the state directory, so the scan does not know it. Both
 sources are scoped to one factory: a scanned process counts only when its
 command line also references this state directory's `sessions/` (a claude
 session's argv carries `--append-system-prompt-file <sessions
