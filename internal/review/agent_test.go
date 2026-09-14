@@ -283,3 +283,41 @@ func TestTheAgentIsTheConfiguredProviderAndModel(t *testing.T) {
 		t.Errorf("agent = %+v, want the defaults", agent)
 	}
 }
+
+// The session runs in the caller's environment with Env on top of it: a
+// role's own variables from bees.toml when the factory runs the review.
+func TestTheSessionIsGivenTheAgentsEnvironment(t *testing.T) {
+	envFile := filepath.Join(t.TempDir(), "env")
+	bin, _ := fakeCLI(t, "env > "+envFile+"\n"+claudeAnswer)
+	t.Setenv("REVIEW_TEST_INHERITED", "from the caller")
+	agent := &CLIAgent{ClaudeBin: bin, Env: map[string]string{"REVIEW_TEST_ROLE": "from the role", "REVIEW_TEST_INHERITED": "from the role too"}}
+	if _, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Prompt: "do it", Dir: t.TempDir()}); err != nil {
+		t.Fatal(err)
+	}
+	env, err := os.ReadFile(envFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := "\n" + string(env)
+	if !strings.Contains(got, "\nREVIEW_TEST_ROLE=from the role\n") {
+		t.Errorf("the role's variable did not reach the session:\n%s", env)
+	}
+	// A variable the role sets wins over the caller's own, as it does for a
+	// factory session.
+	if !strings.Contains(got, "\nREVIEW_TEST_INHERITED=from the role too\n") {
+		t.Errorf("the role's value of an inherited variable did not win:\n%s", env)
+	}
+	// Nothing is set on a session whose agent has no Env.
+	envFile = filepath.Join(t.TempDir(), "env")
+	bin, _ = fakeCLI(t, "env > "+envFile+"\n"+claudeAnswer)
+	if _, err := (&CLIAgent{ClaudeBin: bin}).Run(context.Background(), AgentRequest{Name: "distiller", Prompt: "do it", Dir: t.TempDir()}); err != nil {
+		t.Fatal(err)
+	}
+	env, err = os.ReadFile(envFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(env), "REVIEW_TEST_ROLE") || !strings.Contains(string(env), "REVIEW_TEST_INHERITED=from the caller") {
+		t.Errorf("an agent with no Env changed the environment:\n%s", env)
+	}
+}

@@ -214,6 +214,31 @@ func Report(brief *Brief, selected []Selection) string {
 	return out.String()
 }
 
+// RenderFindings renders findings as markdown, each with where it points,
+// its severity and category, its body, its suggestion as a code block, and
+// the angle that found it: the list as the judge made it, before any
+// triage, which is what the factory's reviewer posts (the judge session of
+// internal/scheduler) and what a person reads in its prompt. Most severe
+// first, as the judge ordered them, separated by a rule; "" for none.
+func RenderFindings(findings []Finding) string {
+	parts := make([]string, 0, len(findings))
+	for _, f := range findings {
+		var out strings.Builder
+		fmt.Fprintf(&out, "### %s\n\n", f.Title)
+		out.WriteString(renderSelection(Selection{Finding: f, Comment: f.Body}, false, true))
+		from, noun := f.Angle, "angle"
+		if len(f.AlsoFrom) > 0 {
+			from, noun = from+", "+strings.Join(f.AlsoFrom, ", "), "angles"
+		}
+		fmt.Fprintf(&out, "\n\n_Found from the %s %s._", from, noun)
+		if len(f.Sources) > 0 {
+			fmt.Fprintf(&out, " Sources: %s.", strings.Join(f.Sources, ", "))
+		}
+		parts = append(parts, out.String())
+	}
+	return strings.Join(parts, "\n\n---\n\n")
+}
+
 // renderSelections renders selections one after another, separated by a
 // rule, and "" for none.
 func renderSelections(selected []Selection, located bool) string {

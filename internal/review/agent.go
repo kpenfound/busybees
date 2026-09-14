@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -100,6 +102,10 @@ type CLIAgent struct {
 	// DefaultMaxTurns when they are zero.
 	Timeout  time.Duration
 	MaxTurns int
+	// Env are variables set for the session on top of the environment the
+	// caller runs in, a role's own from bees.toml when the factory runs the
+	// review. Nothing for `bees review`, whose sessions run as the person.
+	Env map[string]string
 }
 
 // NewAgent is the agent a review's sessions run as, as the global
@@ -135,6 +141,9 @@ func (a *CLIAgent) Run(ctx context.Context, req AgentRequest) (*AgentResult, err
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	cmd.Env = os.Environ()
+	for _, k := range slices.Sorted(maps.Keys(a.Env)) {
+		cmd.Env = append(cmd.Env, k+"="+a.Env[k])
+	}
 	// A session that ran out of time is killed with everything it started,
 	// the way the factory's runner does it: the CLI's own children hold the
 	// pipes open, so killing the CLI alone would leave the review waiting
