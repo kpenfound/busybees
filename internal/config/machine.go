@@ -33,18 +33,25 @@ const machineKey = "projects"
 var ErrMachineConfig = errors.New("is a machine config listing projects, not a project bees.toml")
 
 // Machine is a machine config: the paths of the bees.toml files of the
-// projects one bees process manages. Each project keeps its own bees.toml,
-// state directory, mailbox and notes; this file only says where they are.
+// projects one bees process manages, and the one setting that spans them,
+// a cap on the developer slots in use across all of them. Each project
+// keeps its own bees.toml, state directory, mailbox and notes; this file
+// says where they are.
 //
 //	projects = [
 //	  "~/src/foo/bees.toml",
 //	  "../bar/bees.toml",
 //	]
+//	max_developers = 3
 type Machine struct {
 	// Path is the absolute path of the machine config itself.
 	Path string `toml:"-"`
 	// Projects are the listed paths as written in the file.
 	Projects []string `toml:"projects"`
+	// MaxDevelopers caps the developer slots in use across every project:
+	// the total of what each project's scheduler.max_developers pool has
+	// out at once. 0, the default, is no cap beyond each project's own.
+	MaxDevelopers int `toml:"max_developers"`
 	// Configs are the projects' configs, loaded in the order Projects lists
 	// them, each Config's Path the absolute path the entry resolved to.
 	Configs []*Config `toml:"-"`
@@ -100,10 +107,13 @@ func LoadMachine(path string) (*Machine, error) {
 		for _, k := range undecoded {
 			keys = append(keys, k.String())
 		}
-		return nil, fmt.Errorf("%s: unknown keys: %s (a machine config has only %s; project settings belong in each project's bees.toml)", path, strings.Join(keys, ", "), machineKey)
+		return nil, fmt.Errorf("%s: unknown keys: %s (a machine config has only %s and max_developers; project settings belong in each project's bees.toml)", path, strings.Join(keys, ", "), machineKey)
 	}
 	if len(m.Projects) == 0 {
 		return nil, fmt.Errorf("%s: %s is empty: list the path of at least one project's bees.toml", path, machineKey)
+	}
+	if m.MaxDevelopers < 0 {
+		return nil, fmt.Errorf("%s: max_developers must be >= 0 (0 is no cap across projects)", path)
 	}
 	seen := map[string]int{}
 	for i, entry := range m.Projects {

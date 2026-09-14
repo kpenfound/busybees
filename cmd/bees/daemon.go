@@ -18,13 +18,19 @@ import (
 // lists, each built the way a single-project run builds its own: its own
 // bees.toml, state directory, mailbox, notes and poll loop. The projects
 // share the console; each keeps its own <state_dir>/bees.log, and its
-// records carry a project attribute naming its repository.
+// records carry a project attribute naming its repository. With the machine
+// config's max_developers set they share one developer pool of that size
+// too (scheduler.SharedPool), on top of each project's own.
 func machineDaemon(g *globalFlags, m *config.Machine) *daemon.Daemon {
 	d := &daemon.Daemon{Logger: slog.Default()}
+	var shared *scheduler.SharedPool
+	if m.MaxDevelopers > 0 {
+		shared = scheduler.NewSharedPool(m.MaxDevelopers)
+	}
 	for _, cfg := range m.Configs {
 		d.Projects = append(d.Projects, daemon.Project{
 			Name:  cfg.Path,
-			Start: func(ctx context.Context) (daemon.Loop, error) { return startProject(ctx, g, cfg) },
+			Start: func(ctx context.Context) (daemon.Loop, error) { return startProject(ctx, g, cfg, shared) },
 		})
 	}
 	return d
@@ -53,7 +59,7 @@ var _ io.Closer = (*projectLoop)(nil)
 // startProject builds one project's scheduler. The project's [logging] table
 // is not applied: one console serves every project, so no project's table
 // decides its format or level.
-func startProject(ctx context.Context, g *globalFlags, cfg *config.Config) (*projectLoop, error) {
+func startProject(ctx context.Context, g *globalFlags, cfg *config.Config, pool *scheduler.SharedPool) (*projectLoop, error) {
 	if err := cfg.Resolve(ctx); err != nil {
 		return nil, err
 	}
@@ -69,7 +75,7 @@ func startProject(ctx context.Context, g *globalFlags, cfg *config.Config) (*pro
 		return nil, fmt.Errorf("open the log file: %w", err)
 	}
 	log = log.With("project", cfg.Project.Repo)
-	loop, err := buildProject(ctx, g, cfg, log)
+	loop, err := buildProject(ctx, g, cfg, log, pool)
 	if err != nil {
 		_ = file.Close()
 		return nil, err
@@ -78,11 +84,12 @@ func startProject(ctx context.Context, g *globalFlags, cfg *config.Config) (*pro
 	return loop, nil
 }
 
-func buildProject(ctx context.Context, g *globalFlags, cfg *config.Config, log *slog.Logger) (*projectLoop, error) {
+func buildProject(ctx context.Context, g *globalFlags, cfg *config.Config, log *slog.Logger, pool *scheduler.SharedPool) (*projectLoop, error) {
 	a, err := newAppFor(ctx, g, cfg, log)
 	if err != nil {
 		return nil, err
 	}
+	a.shared = pool
 	// The project's bees.log is the tee's file: attaching it to the shared
 	// logger would write every project's records into it.
 	a.logger = nil
