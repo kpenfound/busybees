@@ -617,10 +617,13 @@ stateDiagram-v2
   writes, runs or fetches, and in a local clone of the worker's checkout
   under the review's artifact, which the diff is read from too (the branch
   against its merge base with the base branch, so no number of changed
-  files is too many) and which is kept under the state directory's
-  `reviews/` (the brief, each angle's run, the judge's list; the clone is
-  removed). What they cost is entered in the ledger under the round's name
-  and charged to the issue. Then one reviewer session, the judge session,
+  files is too many; a requested review that could not check out the head
+  runs from the default branch and reads the diff through `gh pr diff`,
+  which GitHub refuses past 300 changed files) and which is kept under the
+  state directory's `reviews/` (the brief, each angle's run, the judge's
+  list; the clone is removed). What they cost is entered in the ledger
+  under the round's name and charged to the issue. Then one reviewer
+  session, the judge session,
   running `judge_model`, is told the list and posts every finding on the pull
   request with `submit_review`, untriaged: as a `comment` review on a
   developer's pull request, whose author the factory is, with the verdict

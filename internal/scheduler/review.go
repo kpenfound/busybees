@@ -57,10 +57,12 @@ import (
 // (cloneOf points review.CheckoutBaseRef at the merge base of the base
 // branch and the head, which the worker's full history has), so a pull
 // request with more changed files than GitHub's diff allows is reviewed
-// all the same. The clone is removed when the angles have run: nothing
-// resumes a factory review. The artifact — the brief, each angle's run
-// and the judge's list — is kept under the state directory's reviews/ for
-// a person to read.
+// all the same, when the worker's checkout is the head GitHub names for
+// it; a requested review that could not check out the head runs from the
+// default branch and reads the diff through gh, limit and all. The clone
+// is removed when the angles have run: nothing resumes a factory review.
+// The artifact — the brief, each angle's run and the judge's list — is
+// kept under the state directory's reviews/ for a person to read.
 
 // reviewPipelineFailure is what a review that could not run is reported as:
 // the reason, for an escalation comment or the requested-review log line.
