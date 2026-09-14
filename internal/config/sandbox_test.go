@@ -642,9 +642,10 @@ container_use_environment = "envs/dev"
 	}
 }
 
-// The claude box is Claude Code's, so a codex role cannot ask for it: `bees
-// run` refuses the configuration naming the role, and the runner refuses the
-// session, rather than run codex with its own sandbox switched off.
+// The claude box is Claude Code's, so a codex or opencode role cannot ask
+// for it: `bees run` refuses the configuration naming the role, and the
+// runner refuses the session, rather than run the agent with its own
+// sandbox switched off.
 func TestCheckSandboxAgent(t *testing.T) {
 	if err := CheckSandboxAgent(SandboxClaude, AgentCodex); err == nil {
 		t.Error("a codex role was given the claude sandbox")
@@ -655,8 +656,18 @@ func TestCheckSandboxAgent(t *testing.T) {
 			}
 		}
 	}
+	if err := CheckSandboxAgent(SandboxClaude, AgentOpenCode); err == nil {
+		t.Error("an opencode role was given the claude sandbox")
+	} else {
+		for _, want := range []string{"claude", "opencode"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not mention %q", err, want)
+			}
+		}
+	}
 	for _, tc := range []struct{ mode, agent string }{
 		{SandboxClaude, AgentClaude}, {SandboxClaude, ""}, {SandboxNone, AgentCodex}, {"", AgentCodex}, {SandboxContainer, AgentCodex},
+		{SandboxNone, AgentOpenCode}, {"", AgentOpenCode}, {SandboxContainer, AgentOpenCode},
 	} {
 		if err := CheckSandboxAgent(tc.mode, tc.agent); err != nil {
 			t.Errorf("sandbox %q with agent %q refused: %v", tc.mode, tc.agent, err)

@@ -158,12 +158,13 @@ var DispatchOrders = []string{DispatchSmallFirst, DispatchOldest, DispatchLargeF
 // Session backends accepted by the agent key: which CLI a role's sessions
 // run as. internal/session builds the command line for each.
 const (
-	AgentClaude = "claude"
-	AgentCodex  = "codex"
+	AgentClaude   = "claude"
+	AgentCodex    = "codex"
+	AgentOpenCode = "opencode"
 )
 
 // Agents lists the accepted agent values.
-var Agents = []string{AgentClaude, AgentCodex}
+var Agents = []string{AgentClaude, AgentCodex, AgentOpenCode}
 
 // Notes backends accepted by notes.backend: where role notes live.
 const (
@@ -432,7 +433,7 @@ type RoleSettings struct {
 	// when Model has reached its usage limit.
 	Model         string `toml:"model"`
 	FallbackModel string `toml:"fallback_model"`
-	// Agent is the CLI backend a session runs as: claude or codex.
+	// Agent is the CLI backend a session runs as: claude, codex or opencode.
 	Agent string `toml:"agent"`
 	// Effort is passed as claude --effort (low/medium/high/max) when set,
 	// or as codex's model_reasoning_effort setting, where max reads as high.
@@ -1807,10 +1808,13 @@ func (c *Config) Role(name string) (ResolvedRole, error) {
 	// The model defaults are claude's. A codex role that names no model
 	// runs with codex's own configured model rather than "opus", and has no
 	// fallback model at all: codex has no such flag, and a retry with the
-	// fallback model is then a retry with the same one.
+	// fallback model is then a retry with the same one. An opencode role
+	// that names no model has the same result: opencode's --model takes a
+	// provider/model string (e.g. "ollama/llama3") with no sensible
+	// bees-side default.
 	agent := firstNonEmpty(rs.Agent, g.Agent, DefaultAgent)
 	defaultModel, defaultFallback := DefaultModel, DefaultFallbackModel
-	if agent == AgentCodex {
+	if agent == AgentCodex || agent == AgentOpenCode {
 		defaultModel, defaultFallback = "", ""
 	}
 	r := ResolvedRole{

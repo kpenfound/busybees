@@ -196,13 +196,13 @@ func oneLine(out []byte, err error) string {
 }
 
 // CheckSandboxAgent reports whether the role's agent can run under one
-// mode. SandboxClaude is Claude Code's own sandbox, so a codex role asking
-// for it would run with codex's approvals and sandbox switched off and
-// nothing boxing it; that is refused, both here and by the runner, rather
-// than run unboxed. None asks nothing of the agent, and container asks its
-// own question of the agent's credential in CheckSandboxContainer.
+// mode. SandboxClaude is Claude Code's own sandbox, so a codex or opencode
+// role asking for it would run with its own approvals and sandbox switched
+// off and nothing boxing it; that is refused, both here and by the runner,
+// rather than run unboxed. None asks nothing of the agent, and container
+// asks its own question of the agent's credential in CheckSandboxContainer.
 func CheckSandboxAgent(mode, agent string) error {
-	if mode == SandboxClaude && agent == AgentCodex {
+	if mode == SandboxClaude && (agent == AgentCodex || agent == AgentOpenCode) {
 		return fmt.Errorf("sandbox %q is Claude Code's sandbox and agent %q does not run under it", mode, agent)
 	}
 	return nil
