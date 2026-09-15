@@ -12,7 +12,8 @@ import (
 type FailureKind int
 
 const (
-	// FailureNone is the zero value: the session produced a result.
+	// FailureNone is reserved for callers that have not classified a session;
+	// ClassifyFailure returns FailureInfra or FailureBehavioural.
 	FailureNone FailureKind = iota
 	// FailureInfra is a failure of the machinery around the model — a
 	// timeout, an API error, exhausted turns, a crashed agent process.
