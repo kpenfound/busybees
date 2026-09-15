@@ -46,14 +46,17 @@ func (b *Bundle[R]) Of(source string) []Item {
 	return out
 }
 
-// Sources lists the sources that contributed an item, in bundle order and
-// without repeats.
+// Sources lists the sources that contributed an item, in first-seen order
+// without repeats, including when items from a source are interleaved.
 func (b *Bundle[R]) Sources() []string {
+	seen := make(map[string]struct{})
 	var out []string
 	for _, it := range b.Items {
-		if len(out) == 0 || out[len(out)-1] != it.Source {
-			out = append(out, it.Source)
+		if _, ok := seen[it.Source]; ok {
+			continue
 		}
+		seen[it.Source] = struct{}{}
+		out = append(out, it.Source)
 	}
 	return out
 }

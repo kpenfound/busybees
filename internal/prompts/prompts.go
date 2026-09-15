@@ -201,8 +201,8 @@ type Review struct {
 	Size    string
 	Summary string
 	// Angles are the angles that ran, in the order they ran, and Skipped
-	// the ones that reviewed nothing, each with why (a session that
-	// failed, an answer with no findings in it).
+	// names failed sessions and answers the judge could not parse, each
+	// with why. Successful empty findings lists are not skipped.
 	Angles  []string
 	Skipped []string
 	// Count is how many findings the judge kept and Findings the list

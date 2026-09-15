@@ -39,10 +39,11 @@ var severitySynonyms = map[string]string{
 }
 
 // Judge merges what the angle sessions came to into the findings a review
-// triages. A run that failed, and one whose answer holds no findings list,
-// contributes nothing and is named in Findings.Skipped; the rest are read
-// with ParseFindings and merged with Merge under project's category pins. A
-// nil project pins nothing.
+// triages. Failed runs and answers ParseFindings cannot parse (including
+// malformed findings fields) contribute nothing and are named in Findings.Skipped.
+// Missing or null findings lists contribute no findings without being skipped.
+// Parsed findings are merged with Merge under project's category pins. A nil
+// project pins nothing.
 func Judge(runs []AngleRun, project *Settings, alike Comparator) *Findings {
 	var all []Finding
 	var skipped []string

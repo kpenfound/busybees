@@ -92,8 +92,8 @@ type TouchedArea struct {
 	Summary string `json:"summary,omitempty"`
 }
 
-// Text renders the brief as the markdown a session reads. It is what an
-// angle session is given, with the diff, instead of the raw bundle.
+// Text renders the brief as markdown for an angle session. The angle prompt
+// adds the diff location separately; Text does not include the diff.
 func (b *Brief[R]) Text() string {
 	var out strings.Builder
 	fmt.Fprintf(&out, "# Review brief: %s\n\n", b.Ref)

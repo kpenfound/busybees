@@ -169,10 +169,9 @@ type Findings struct {
 	// Items are the findings, deduplicated, severity-normalised, most
 	// severe first. Empty for a change with nothing wrong.
 	Items []Finding `json:"findings"`
-	// Skipped names the angles that reported nothing the judge could read,
-	// each with why: a session that failed, an answer with no findings
-	// list in it. A review with a skipped angle is a review nobody looked
-	// at from that angle, which is worth saying when the findings are.
+	// Skipped names failed sessions and answers ParseFindings could not read,
+	// each with why. Missing or null findings lists are successful empty
+	// results and are not skipped.
 	Skipped []string `json:"skipped,omitempty"`
 	// Silenced are the findings the reviewer notes acted on (noise.go): the
 	// ones a rule kept out of Items, and the ones it let through one
@@ -201,8 +200,8 @@ type findingDraft struct {
 // and sessionID. Every finding comes back as the session said it, trimmed,
 // with its category lowercased and its anchor made consistent (no lines or
 // side without a file, a side that is SideNew or SideOld); the judge does
-// the rest. An answer with no JSON object in it, or an object that is not a
-// findings list, is an error: the session did not review.
+// the rest. An answer with no JSON object or a malformed findings field is
+// an error. A missing or null findings field returns no findings and no error.
 //
 // A finding with neither title nor body is dropped: there is nothing to
 // show a person. One with a body and no title is kept under its first line.

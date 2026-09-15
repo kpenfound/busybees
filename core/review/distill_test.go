@@ -51,7 +51,9 @@ const answeredBrief = `{
 
 func TestTheDistillerReadsTheBundleAndWritesTheBrief(t *testing.T) {
 	agent := &fakeAgent{answer: answeredBrief, id: "sess-1", cost: 0.5}
-	brief, err := (&Distiller[testRef]{Agent: agent, Dir: t.TempDir()}).Distill(context.Background(), testBundle())
+	bundle := testBundle()
+	bundle.Items = append(bundle.Items, Item{Source: SourceDiff, Name: "another diff", Content: "diff --git a/other.go b/other.go"})
+	brief, err := (&Distiller[testRef]{Agent: agent, Dir: t.TempDir()}).Distill(context.Background(), bundle)
 	if err != nil {
 		t.Fatal(err)
 	}
