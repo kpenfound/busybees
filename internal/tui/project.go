@@ -2,9 +2,11 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/kpenfound/busybees/internal/scheduler"
@@ -17,6 +19,11 @@ import (
 // daemon's view lists one Project per project it runs in Deps.Projects, and
 // the view gains a selector over them (see Model.shown).
 type Project struct {
+	// Path is the resolved bees.toml identity. Generation distinguishes a new
+	// loop after removal from the old loop still draining at the same path.
+	Path       string
+	Generation uint64
+	Draining   bool
 	// Name is what the selector and the project column call the project.
 	// Empty on the one project of a single-project view, which draws
 	// neither.
@@ -28,6 +35,8 @@ type Project struct {
 	// (Scheduler.Subscribe). A nil channel means "no live events", which
 	// is what a test drives.
 	Events <-chan scheduler.Event
+	// Done cancels outstanding event reads when the source is retired.
+	Done <-chan struct{}
 	// Status reads the project's status.json; Mail counts its unread
 	// messages per role. See Deps.Status and Deps.Mail.
 	Status func() (state.Status, error)
@@ -99,7 +108,12 @@ func (m *Model) cycle(d int) {
 		return
 	}
 	n := len(m.projects) + 1
-	m.shown = ((m.shown+1+d)%n+n)%n - 1
+	at := slices.Index(m.order, m.shown) + 1
+	at = ((at+d)%n + n) % n
+	m.shown = allProjects
+	if at > 0 {
+		m.shown = m.order[at-1]
+	}
 }
 
 // selector renders the entries a person cycles through, the one in view
@@ -107,10 +121,13 @@ func (m *Model) cycle(d int) {
 // the colour: "all [foo] bar".
 func (m Model) selector() string {
 	names := make([]string, 0, len(m.projects)+1)
-	for i := allProjects; i < len(m.projects); i++ {
+	for _, i := range append([]int{allProjects}, m.order...) {
 		name := "all"
 		if i >= 0 {
 			name = m.projects[i].Name
+			if m.projects[i].Draining {
+				name += " (draining)"
+			}
 		}
 		if i == m.shown {
 			name = titleStyle.Render("[" + name + "]")
@@ -124,8 +141,18 @@ func (m Model) selector() string {
 // single-project view; in a daemon's view the selector, followed by the
 // repository of the project in view, and by nothing when every project is.
 func (m Model) title() string {
+	if w := m.watching; w != nil && m.projects[w.project] == nil {
+		return w.repo + " (removed)"
+	}
+	if len(m.order) == 0 {
+		return "all"
+	}
 	if !m.multi() {
-		return m.projects[0].Repo
+		p := m.projects[m.order[0]]
+		if p.Draining {
+			return p.Repo + " (draining)"
+		}
+		return p.Repo
 	}
 	if m.all() {
 		return m.selector()
@@ -140,7 +167,8 @@ func (m Model) title() string {
 // told apart from the ones still working.
 func (m Model) notices() []string {
 	var out []string
-	for i, p := range m.projects {
+	for _, i := range m.order {
+		p := m.projects[i]
 		if !m.inView(i) {
 			continue
 		}
@@ -233,7 +261,8 @@ type escalatedIn struct {
 // project's in the order its status.json lists them, project by project.
 func (m Model) shownNeedsHuman() []escalatedIn {
 	var out []escalatedIn
-	for i, p := range m.projects {
+	for _, i := range m.order {
+		p := m.projects[i]
 		if !m.inView(i) {
 			continue
 		}
@@ -255,7 +284,8 @@ type approvedIn struct {
 // project.
 func (m Model) shownApproved() []approvedIn {
 	var out []approvedIn
-	for i, p := range m.projects {
+	for _, i := range m.order {
+		p := m.projects[i]
 		if !m.inView(i) {
 			continue
 		}
@@ -282,7 +312,8 @@ type summary struct {
 // what "all" is for, and cycling to a project reads that project's own.
 func (m Model) summarise() summary {
 	s := summary{queues: map[string]int{}, mail: map[string]int{}}
-	for i, p := range m.projects {
+	for _, i := range m.order {
+		p := m.projects[i]
 		if !m.inView(i) {
 			continue
 		}
@@ -297,4 +328,82 @@ func (m Model) summarise() summary {
 		}
 	}
 	return s
+}
+
+// projectsMsg is a full snapshot, so coalescing cannot lose a retirement.
+type projectsMsg []Project
+
+func (m Model) waitForProjects() tea.Cmd {
+	if m.deps.ProjectUpdates == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		projects, ok := <-m.deps.ProjectUpdates
+		if !ok {
+			return nil
+		}
+		return projectsMsg(projects)
+	}
+}
+
+func (m *Model) addProject(p Project) int {
+	id := m.nextProject
+	m.nextProject++
+	m.projects[id] = &project{Project: p, spent: map[string]spend{}, stages: map[int]stage{}}
+	m.order = append(m.order, id)
+	return id
+}
+
+// updateProjects retains sources and state by path and incarnation. Handles
+// never move or get reused, including after a project leaves the selector.
+func (m Model) updateProjects(next []Project) (tea.Model, tea.Cmd) {
+	old := m.order
+	m.order = nil
+	keep := map[int]bool{}
+	cmds := []tea.Cmd{m.waitForProjects()}
+	for _, p := range next {
+		id := -1
+		for _, candidate := range old {
+			prev := m.projects[candidate]
+			if prev.Path == p.Path && prev.Generation == p.Generation {
+				id = candidate
+				break
+			}
+		}
+		if id < 0 {
+			id = m.addProject(p)
+			cmds = append(cmds, m.waitForEvent(id), m.refresh(id))
+		} else {
+			// The source callbacks belong to the incarnation, not the snapshot.
+			m.projects[id].Name, m.projects[id].Draining = p.Name, p.Draining
+			m.order = append(m.order, id)
+		}
+		keep[id] = true
+	}
+	for _, id := range old {
+		if !keep[id] {
+			delete(m.projects, id)
+		}
+	}
+	m.sessions = slices.DeleteFunc(m.sessions, func(s running) bool { return !keep[s.project] })
+	m.recent = slices.DeleteFunc(m.recent, func(s finished) bool { return !keep[s.project] })
+	if !keep[m.shown] {
+		m.shown = allProjects
+	}
+	if len(m.order) == 1 {
+		m.shown = m.order[0]
+	}
+	if w := m.watching; w != nil {
+		p := m.projects[w.project]
+		if p == nil || p.Draining {
+			w.composing = false
+		}
+		if p == nil {
+			w.ended = true
+		}
+	}
+	m.confirmKill = sessionRef{}
+	m.notice = ""
+	m.clampCursor()
+	return m, tea.Batch(cmds...)
 }

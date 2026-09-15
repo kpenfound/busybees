@@ -19,14 +19,16 @@ import (
 // last thing it said is usually the thing worth reading, so the view keeps
 // showing it until the reader goes back.
 type watch struct {
-	// project is the index in Model.projects of the project the session
+	// project is the stable handle in Model.projects of the project the session
 	// belongs to: whose Send a typed message goes through.
 	project int
-	name    string
-	role    string
-	dir     string
-	issue   int
-	pr      int
+	// repo keeps the transcript attributed after its project leaves the view.
+	repo  string
+	name  string
+	role  string
+	dir   string
+	issue int
+	pr    int
 
 	// lines are the rendered transcript lines and off is how much of
 	// transcript.jsonl they were read from; the next read starts there.
@@ -58,7 +60,7 @@ type watch struct {
 // open starts watching the session selected in the Now panel.
 func (m Model) open(s running) Model {
 	m.watching = &watch{
-		project: s.project, name: s.name, role: s.role, dir: s.dir, issue: s.issue, pr: s.pr,
+		project: s.project, repo: m.projects[s.project].Repo, name: s.name, role: s.role, dir: s.dir, issue: s.issue, pr: s.pr,
 		follow: true,
 	}
 	m.tailGen++
@@ -74,7 +76,11 @@ func (m Model) sender() func(to string, issue, pr int, subject, body string) err
 	if m.watching == nil {
 		return nil
 	}
-	return m.projects[m.watching.project].Send
+	p := m.projects[m.watching.project]
+	if p == nil || p.Draining {
+		return nil
+	}
+	return p.Send
 }
 
 // ---- messages --------------------------------------------------------------
@@ -314,6 +320,8 @@ func (m Model) sessionFooter() string {
 	switch {
 	case m.stopping || m.hardStopped:
 		return m.stoppingNotice()
+	case m.projects[t.project] == nil || m.projects[t.project].Draining:
+		return "project no longer active; messaging disabled · esc back · ↑/↓ scroll · end follow"
 	case t.composing:
 		return fmt.Sprintf("message for the next %s session%s (enter queues it, esc cancels)",
 			prompts.Title(t.role), on(t.issue, t.pr))

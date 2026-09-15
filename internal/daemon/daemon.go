@@ -37,6 +37,25 @@ type Project struct {
 	// Start builds the project's loop. It runs on the project's own
 	// goroutine, so a slow or failing start holds up no other project.
 	Start func(ctx context.Context) (Loop, error)
+	// Observe receives this loop's lifecycle on the daemon goroutine. It must
+	// not wait for a consumer. A removed incarnation finishes before a new
+	// incarnation of the same Name starts.
+	Observe func(ProjectState)
+}
+
+// ProjectState describes one loop's lifecycle, independently of its path.
+type ProjectState int
+
+const (
+	ProjectActive ProjectState = iota
+	ProjectDraining
+	ProjectFinished
+)
+
+func (p Project) notify(s ProjectState) {
+	if p.Observe != nil {
+		p.Observe(s)
+	}
 }
 
 // ProjectError is what one project's start or loop failed with.
@@ -56,6 +75,10 @@ type Daemon struct {
 	// stays alive until cancellation, even when every project has stopped.
 	// Once Reload is closed, Run returns after the active projects finish.
 	Reload <-chan []Project
+	// Reconciled receives the desired order after each reconciliation or loop
+	// completion, once all corresponding lifecycle notifications have run.
+	// It must not wait for a consumer.
+	Reconciled func([]string)
 	// Logger gets one record per project that fails. nil is slog.Default().
 	Logger *slog.Logger
 
@@ -78,6 +101,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		log = slog.Default()
 	}
 	type running struct {
+		project Project
 		cancel  context.CancelFunc
 		active  bool
 		removed bool
@@ -93,20 +117,35 @@ func (d *Daemon) Run(ctx context.Context) error {
 	var errs []error
 	start := func(p Project) {
 		projectCtx, cancel := context.WithCancel(ctx)
-		entries[p.Name] = &running{cancel: cancel, active: true}
+		entries[p.Name] = &running{project: p, cancel: cancel, active: true}
 		active++
+		p.notify(ProjectActive)
 		go func() { finished <- result{p.Name, d.runProject(projectCtx, p)} }()
 	}
+	var order []string
+	changed := func() {
+		if d.Reconciled != nil {
+			d.Reconciled(slices.Clone(order))
+		}
+	}
 	reconcile := func(projects []Project) {
+		order = nil
+		for _, p := range projects {
+			order = append(order, p.Name)
+		}
 		desired = map[string]Project{}
 		for _, p := range projects {
 			desired[p.Name] = p
 		}
 		for name, entry := range entries {
 			if _, keep := desired[name]; !keep {
+				if !entry.removed {
+					entry.project.notify(ProjectDraining)
+				}
 				entry.removed = true
 				entry.cancel()
 				if !entry.active {
+					entry.project.notify(ProjectFinished)
 					delete(entries, name)
 				}
 			}
@@ -116,6 +155,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 				start(p)
 			}
 		}
+		changed()
 	}
 	reconcile(d.Projects)
 	reload := d.Reload
@@ -144,6 +184,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 				errs = append(errs, &ProjectError{Project: r.name, Err: r.err})
 			}
 			if entry.removed {
+				entry.project.notify(ProjectFinished)
 				delete(entries, r.name)
 				// A project re-added during its cool-down starts only after the old
 				// scheduler has released its state and sessions.
@@ -151,6 +192,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 					start(p)
 				}
 			}
+			changed()
 		}
 	}
 

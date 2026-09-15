@@ -605,8 +605,13 @@ starting another. A malformed config leaves the running set untouched and
 logs the error. Restart to apply edits to unchanged projects or the machine's
 `max_developers`. `--once` exits after every project's one pass and ignores
 reloads. Foreground machine runs accept the same signals.
-The live view keeps its initial project selector after a reload; use
-`--no-tui` when changing the list during a run.
+
+The live selector follows successful reloads in config order, keeping the
+selected project and its accumulated state. Removed projects stay in the
+selector as draining until their work finishes; their sessions can still be
+watched and stopped. An open transcript stays readable until Escape, even
+after its project leaves the selector. Messaging is disabled once the project
+is removed from the active list. Invalid reloads leave the view unchanged.
 
 ### `bees machine`
 
