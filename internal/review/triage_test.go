@@ -19,9 +19,9 @@ import (
 func judged(t *testing.T) *Artifact {
 	t.Helper()
 	items := Merge([]Finding{
-		{Angle: AngleTests, SessionID: "sess-tests", Category: "missing test", Severity: SeverityHigh, File: "gather.go", Lines: LineRange{12, 14}, Side: SideNew,
+		{Angle: AngleTests, SessionID: "sess-tests", Category: "missing test", Severity: SeverityHigh, File: "gather.go", Lines: LineRange{Start: 12, End: 14}, Side: SideNew,
 			Title: "Gather has no test for a source that cannot read", Body: "nothing exercises Skipped", Suggestion: "func TestASourceThatCannotRead(t *testing.T) {"},
-		{Angle: AngleTests, SessionID: "sess-tests", Category: "docs", Severity: SeverityMedium, File: "README.md", Lines: LineRange{3, 3}, Side: SideNew,
+		{Angle: AngleTests, SessionID: "sess-tests", Category: "docs", Severity: SeverityMedium, File: "README.md", Lines: LineRange{Start: 3, End: 3}, Side: SideNew,
 			Title: "The README still claims a source failure stops everything", Body: "the sentence the change made false is still there"},
 		{Angle: AngleAcceptance, Category: "scope", Severity: SeverityLow,
 			Title: "The change renames Gather, which the issue did not ask for", Body: "every caller moves for a rename nobody wanted"},

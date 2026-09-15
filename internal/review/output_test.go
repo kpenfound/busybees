@@ -63,7 +63,7 @@ func TestAnchorsAreEveryLineOfEveryHunkOnBothSides(t *testing.T) {
 	a := ParseAnchors(sampleDiff)
 	has := func(file, side string, start, end int) bool {
 		t.Helper()
-		return a.Has(&Finding{File: file, Side: side, Lines: LineRange{start, end}})
+		return a.Has(&Finding{File: file, Side: side, Lines: LineRange{Start: start, End: end}})
 	}
 	for _, c := range []struct {
 		file       string
@@ -107,7 +107,7 @@ func TestAnchorsAreEveryLineOfEveryHunkOnBothSides(t *testing.T) {
 		}
 	}
 	var none *Anchors
-	if none.Has(&Finding{File: "gather.go", Side: SideNew, Lines: LineRange{13, 13}}) {
+	if none.Has(&Finding{File: "gather.go", Side: SideNew, Lines: LineRange{Start: 13, End: 13}}) {
 		t.Error("nil anchors anchored a finding")
 	}
 }
@@ -116,11 +116,11 @@ func TestAnchorsAreEveryLineOfEveryHunkOnBothSides(t *testing.T) {
 // with its text edited.
 func selections(edited string) []Selection {
 	a := &Artifact{Findings: &Findings{Items: Merge([]Finding{
-		{Angle: AngleTests, Category: "missing test", Severity: SeverityHigh, File: "gather.go", Lines: LineRange{12, 13}, Side: SideNew,
+		{Angle: AngleTests, Category: "missing test", Severity: SeverityHigh, File: "gather.go", Lines: LineRange{Start: 12, End: 13}, Side: SideNew,
 			Title: "c has no test for its argument", Body: "nothing exercises c(1)", Suggestion: "\tc(1) // tested\n\td()"},
-		{Angle: AngleGeneral, Category: "naming", Severity: SeverityMedium, File: "old.go", Lines: LineRange{1, 1}, Side: SideOld,
+		{Angle: AngleGeneral, Category: "naming", Severity: SeverityMedium, File: "old.go", Lines: LineRange{Start: 1, End: 1}, Side: SideOld,
 			Title: "The package was the last of its name", Body: "nothing else was called old", Suggestion: "package older"},
-		{Angle: AngleGeneral, Category: "docs", Severity: SeverityLow, File: "README.md", Lines: LineRange{3, 3}, Side: SideNew,
+		{Angle: AngleGeneral, Category: "docs", Severity: SeverityLow, File: "README.md", Lines: LineRange{Start: 3, End: 3}, Side: SideNew,
 			Title: "The README still names c()", Body: "the sentence the change made false is still there"},
 		{Angle: AngleAcceptance, Category: "scope", Severity: SeverityLow,
 			Title: "The change renames Gather, which the issue did not ask for", Body: "every caller moves"},
@@ -221,7 +221,7 @@ func TestComposeGivesABodyToAReviewGitHubNeedsOneFor(t *testing.T) {
 }
 
 func TestSuggestionsWithBackticksAreFencedLonger(t *testing.T) {
-	s := Selection{Finding: Finding{File: "README.md", Lines: LineRange{3, 3}, Side: SideNew, Title: "T", Suggestion: "```go\nx\n```"}, Comment: "T"}
+	s := Selection{Finding: Finding{File: "README.md", Lines: LineRange{Start: 3, End: 3}, Side: SideNew, Title: "T", Suggestion: "```go\nx\n```"}, Comment: "T"}
 	got := renderSelection(s, true, false)
 	if want := "T\n\n````suggestion\n```go\nx\n```\n````"; got != want {
 		t.Errorf("rendered:\n%s\nwant:\n%s", got, want)
@@ -377,11 +377,11 @@ func TestPostsNamesTheModesThatSubmitAReview(t *testing.T) {
 // judge ordered them.
 func TestRenderFindingsIsTheJudgesListAsMarkdown(t *testing.T) {
 	items := Merge([]Finding{
-		{Angle: AngleGeneral, Category: "naming", Severity: SeverityMedium, File: "old.go", Lines: LineRange{1, 1}, Side: SideOld,
+		{Angle: AngleGeneral, Category: "naming", Severity: SeverityMedium, File: "old.go", Lines: LineRange{Start: 1, End: 1}, Side: SideOld,
 			Title: "The package was the last of its name", Body: "nothing else was called old", Suggestion: "package older", Sources: []string{"CONTRIBUTING.md"}},
-		{Angle: AngleTests, Category: "missing test", Severity: SeverityHigh, File: "gather.go", Lines: LineRange{12, 13}, Side: SideNew,
+		{Angle: AngleTests, Category: "missing test", Severity: SeverityHigh, File: "gather.go", Lines: LineRange{Start: 12, End: 13}, Side: SideNew,
 			Title: "c has no test for its argument", Body: "nothing exercises c(1)"},
-		{Angle: AngleQuickGeneral, Category: "missing test", Severity: SeverityLow, File: "gather.go", Lines: LineRange{12, 12}, Side: SideNew,
+		{Angle: AngleQuickGeneral, Category: "missing test", Severity: SeverityLow, File: "gather.go", Lines: LineRange{Start: 12, End: 12}, Side: SideNew,
 			Title: "c has no test for its argument", Body: "nothing exercises c(1)"},
 		{Angle: AngleAcceptance, Category: "scope", Severity: SeverityLow,
 			Title: "The change renames Gather, which the issue did not ask for", Body: "every caller moves"},

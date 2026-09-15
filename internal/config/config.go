@@ -597,7 +597,7 @@ var KnownReviewAngles = []string{"quick_general", "general", "docs", "test_cover
 
 // DefaultReviewAngles are the angles a pull request of each size is reviewed
 // from when roles.reviewer.angles does not name that size. It is a copy of
-// sizeAngles in internal/review/angles.go: change both together.
+// sizeAngles in core/review/angles.go: change both together.
 var DefaultReviewAngles = map[string][]string{
 	"xs": {"quick_general", "docs"},
 	"s":  {"quick_general", "docs"},

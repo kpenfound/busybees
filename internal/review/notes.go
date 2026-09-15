@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/kpenfound/busybees/internal/duplicates"
-	"github.com/kpenfound/busybees/internal/text"
 )
 
 // The reviewer notes: one markdown file of a person's own, outside any
@@ -151,13 +150,7 @@ type Rule struct {
 }
 
 // Line is the rule as it is written in the file.
-func (r Rule) Line() string {
-	line := fmt.Sprintf("- [%s] [%s] [%s] %s: %s", or(r.Repo, anyValue), or(r.Angle, anyValue), or(r.Category, anyValue), r.Action, strings.TrimSpace(r.Text))
-	if r.Count > 0 {
-		line += fmt.Sprintf(" (%s)", text.Count(r.Count, "dismissal"))
-	}
-	return line
-}
+func (r Rule) Line() string { return r.core().Line() }
 
 // Notes is a reviewer notes file read into memory.
 type Notes struct {

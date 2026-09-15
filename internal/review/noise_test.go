@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	core "github.com/kpenfound/busybees/core/review"
 )
 
 // noisy is a finding as the judge left it: anchored, with an id, a category
@@ -14,12 +16,12 @@ func noisy(angle, category, severity, file, title string) Finding {
 		Category: category,
 		Severity: severity,
 		File:     file,
-		Lines:    LineRange{12, 14},
+		Lines:    LineRange{Start: 12, End: 14},
 		Side:     SideNew,
 		Title:    title,
 		Body:     "what is wrong with " + file + " and why it matters",
 	}
-	f.ID = findingID(&f)
+	f.ID = Merge([]Finding{f}, nil)[0].ID
 	return f
 }
 
@@ -158,7 +160,7 @@ func TestAnAngleIsToldTheRulesThatNameIt(t *testing.T) {
 		{Repo: testRepo, Angle: AngleTests, Action: RuleDrop, Text: "another angle"},
 		{Repo: testRepo, Angle: AngleGeneral, Category: "naming", Action: RuleDrop},
 	}
-	got := noiseSection(rules, testRepo, AngleGeneral)
+	got := core.NoiseSection(coreRules(rules), testRepo, AngleGeneral)
 	for _, want := range []string{
 		"## Dismissed before\n",
 		"- receiver names are short here\n",
@@ -177,13 +179,13 @@ func TestAnAngleIsToldTheRulesThatNameIt(t *testing.T) {
 		}
 	}
 	// Nothing to say is nothing said, not an empty heading.
-	if got := noiseSection(rules, testRepo, AngleSideEffects); !strings.Contains(got, "every angle hears this one") {
+	if got := core.NoiseSection(coreRules(rules), testRepo, AngleSideEffects); !strings.Contains(got, "every angle hears this one") {
 		t.Errorf("side effects: %q", got)
 	}
-	if got := noiseSection(rules[3:], testRepo, AngleGeneral); got != "" {
+	if got := core.NoiseSection(coreRules(rules[3:]), testRepo, AngleGeneral); got != "" {
 		t.Errorf("with no rule for the angle the section is %q, want nothing", got)
 	}
-	if got := noiseSection(nil, testRepo, AngleGeneral); got != "" {
+	if got := core.NoiseSection(nil, testRepo, AngleGeneral); got != "" {
 		t.Errorf("with no rules at all the section is %q, want nothing", got)
 	}
 }
