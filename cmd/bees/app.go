@@ -82,7 +82,7 @@ func usesClaude(cfg *config.Config) bool {
 	return false
 }
 
-// configPath resolves the bees.toml to use.
+// configPath resolves the active project or machine configuration file.
 func configPath(g *globalFlags) (string, error) {
 	if g.config != "" {
 		return filepath.Abs(g.config)
