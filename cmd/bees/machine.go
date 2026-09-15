@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -173,16 +174,12 @@ func newMachineControlCmd(g *globalFlags, reload bool, signal machineSignal) *co
 	}
 }
 
-// The daemon holds this existing lock through drain. An unlocked stale pid
-// must not signal a different process that has since acquired the same pid.
+var errMachineStarting = errors.New("machine daemon is starting or has not published its PID; retry the command")
+
+// The inherited flock spans startup and drain. The child's record lock binds
+// the published PID to its kernel-reported owner, excluding stale PID files
+// while a replacement daemon is starting.
 func machinePID(path string) (int, error) {
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return 0, nil
-	}
-	if err != nil {
-		return 0, err
-	}
 	lock, err := os.OpenFile(path+".lock", os.O_RDWR, 0)
 	if errors.Is(err, os.ErrNotExist) {
 		return 0, nil
@@ -199,9 +196,31 @@ func machinePID(path string) (int, error) {
 	if !errors.Is(err, syscall.EWOULDBLOCK) {
 		return 0, err
 	}
+	pidFile, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, errMachineStarting
+	}
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = pidFile.Close() }()
+	data, err := io.ReadAll(pidFile)
+	if err != nil {
+		return 0, err
+	}
+	owner := syscall.Flock_t{Type: syscall.F_WRLCK, Whence: 0}
+	if err := syscall.FcntlFlock(pidFile.Fd(), syscall.F_GETLK, &owner); err != nil {
+		return 0, err
+	}
+	if owner.Type == syscall.F_UNLCK {
+		return 0, errMachineStarting
+	}
 	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
 	if err != nil || pid <= 1 {
 		return 0, fmt.Errorf("%s: invalid daemon pid %q", path, strings.TrimSpace(string(data)))
+	}
+	if int(owner.Pid) != pid {
+		return 0, errMachineStarting
 	}
 	return pid, nil
 }
@@ -211,6 +230,11 @@ func waitMachine(ctx context.Context, path string, pid int, signal machineSignal
 	defer ticker.Stop()
 	for {
 		current, err := machinePID(path)
+		// Startup without the old owner's published PID means its drain has
+		// completed, even if a replacement already holds the inherited flock.
+		if errors.Is(err, errMachineStarting) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}

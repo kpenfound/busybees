@@ -635,7 +635,8 @@ scheduler starts, and no state directory is created.
 Reads each project's `ledger.jsonl` and prints its config path, finished
 session count, turns and cost, followed by a total. `--since` defaults to
 `24h` and accepts a Go duration, as with `bees cost`. A missing ledger counts
-as zero; an unreadable ledger fails the report with the project's path.
+as zero; a read or scan failure (including an overlong line) fails the report
+with the project's path, without printing partial costs.
 The report covers retained ledger entries and starts no schedulers.
 
 #### `bees machine stop`
@@ -644,8 +645,10 @@ Sends SIGTERM to the detached daemon named by `bees-machine.pid` beside the
 active config and waits for graceful shutdown. Work in flight finishes;
 the command returns when the daemon removes its pidfile after all projects
 stop, releases its lock, or exits. There is no forced-stop timeout; Ctrl-C
-cancels the wait. An absent or stale pidfile is a successful no-op. The
-existing daemon lock is checked before signaling to reject stale pids.
+cancels the wait. An absent or stale pidfile with no daemon lock is a
+successful no-op. Stop and reload verify the PID against the kernel
+owner of the daemon's lock before signaling. During startup, before the
+child publishes its PID and lock ownership, they ask you to retry.
 
 #### `bees machine reload`
 

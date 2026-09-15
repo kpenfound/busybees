@@ -243,3 +243,17 @@ func TestTrimLedgerKeepsConcurrentAppends(t *testing.T) {
 		t.Fatalf("%d entries after trimming, want %d", len(got), workers*each)
 	}
 }
+
+func TestReadLedgerScanFailure(t *testing.T) {
+	s := New(t.TempDir())
+	if err := s.AppendLedger(LedgerEntry{CostUSD: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AppendLedger(LedgerEntry{Session: strings.Repeat("x", maxLedgerLine), CostUSD: 2}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadLedger(time.Time{})
+	if err == nil || len(got) != 0 {
+		t.Fatalf("partial ledger returned: %v, %v", got, err)
+	}
+}

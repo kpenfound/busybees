@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -123,9 +127,10 @@ func TestMachineCostAggregatesAndFilters(t *testing.T) {
 	for _, tc := range []struct {
 		args  []string
 		total string
+		rows  []string
 	}{
-		{nil, "total 2 5 $3.75"},
-		{[]string{"--since", "72h"}, "total 4 25 $23.75"},
+		{nil, "total 2 5 $3.75", []string{"1 2 $1.25", "1 3 $2.50", "0 0 $0.00"}},
+		{[]string{"--since", "72h"}, "total 4 25 $23.75", []string{"2 12 $11.25", "2 13 $12.50", "0 0 $0.00"}},
 	} {
 		out, err := machineOutput(t, m.Path, "cost", tc.args...)
 		if err != nil {
@@ -136,8 +141,8 @@ func TestMachineCostAggregatesAndFilters(t *testing.T) {
 			t.Fatalf("rows: %s", out)
 		}
 		for i, cfg := range m.Configs {
-			if !strings.HasPrefix(lines[i+1], cfg.Path) {
-				t.Fatalf("project order: %s", out)
+			if strings.Join(strings.Fields(lines[i+1]), " ") != cfg.Path+" "+tc.rows[i] {
+				t.Fatalf("project cost row: %s", out)
 			}
 		}
 		if strings.Join(strings.Fields(lines[4]), " ") != tc.total || strings.Join(strings.Fields(lines[3]), " ") != m.Configs[2].Path+" 0 0 $0.00" {
@@ -157,35 +162,136 @@ func TestMachineCostAggregatesAndFilters(t *testing.T) {
 	}
 }
 
-func lockedMachine(t *testing.T) (string, string) {
+// The helper owns a real daemon lock in a different process: F_GETLK does
+// not report locks owned by the querying process itself.
+func TestMachineDaemonLockHelper(t *testing.T) {
+	path := os.Getenv("TEST_MACHINE_LOCK_PATH")
+	if path == "" {
+		return
+	}
+	cleanup, err := registerDaemonChild(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	fmt.Println("ready")
+	_, _ = os.Stdin.Read(make([]byte, 1))
+}
+
+func lockedMachine(t *testing.T) (string, string, int) {
 	t.Helper()
 	configPath := writeMachine(t, `["foo/bees.toml"]`)
 	path := filepath.Join(filepath.Dir(configPath), MachinePIDFile)
-	if err := os.WriteFile(path, []byte("4242\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() { _ = lock.Close() }()
 	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = lock.Close() })
-	return configPath, path
+	child := exec.Command(os.Args[0], "-test.run=^TestMachineDaemonLockHelper$")
+	child.Env = append(os.Environ(), daemonChildEnv+"=1", "TEST_MACHINE_LOCK_PATH="+path)
+	child.ExtraFiles = []*os.File{lock}
+	stdin, err := child.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := child.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	child.Stderr = os.Stderr
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = stdin.Close(); _ = child.Wait() })
+	if line, err := bufio.NewReader(stdout).ReadString('\n'); err != nil || line != "ready\n" {
+		t.Fatalf("helper readiness: %q %v", line, err)
+	}
+	return configPath, path, child.Process.Pid
+}
+
+func TestMachineControlRejectsStartupPID(t *testing.T) {
+	for _, reload := range []bool{false, true} {
+		for _, published := range []bool{false, true} {
+			t.Run(fmt.Sprintf("reload=%t/published=%t", reload, published), func(t *testing.T) {
+				path := writeMachine(t, `["foo/bees.toml"]`)
+				pidPath := filepath.Join(filepath.Dir(path), MachinePIDFile)
+				// With published=false, model detachRun holding its flock before
+				// the child registers. With published=true, the PID file names
+				// a different process than the current record-lock owner.
+				if published {
+					path, pidPath, _ = lockedMachine(t)
+				} else {
+					lock, err := os.OpenFile(pidPath+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+					if err != nil {
+						t.Fatal(err)
+					}
+					t.Cleanup(func() { _ = lock.Close() })
+					if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())+"\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				calls := 0
+				cmd := newMachineControlCmd(&globalFlags{config: path}, reload, func(int, syscall.Signal) error { calls++; return syscall.ESRCH })
+				cmd.SetOut(&bytes.Buffer{})
+				cmd.SetErr(&bytes.Buffer{})
+				err := cmd.Execute()
+				if err == nil || !strings.Contains(err.Error(), "starting") || calls != 0 {
+					t.Fatalf("startup PID accepted: err=%v signal calls=%d", err, calls)
+				}
+			})
+		}
+	}
+}
+
+func TestMachineCostScanFailure(t *testing.T) {
+	for _, mode := range []string{"overlong", "read-error"} {
+		t.Run(mode, func(t *testing.T) {
+			m := machineReportFixture(t)
+			if err := state.New(m.Configs[0].StateDir()).AppendLedger(state.LedgerEntry{CostUSD: 1}); err != nil {
+				t.Fatal(err)
+			}
+			store := state.New(m.Configs[1].StateDir())
+			if err := os.MkdirAll(store.Dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if mode == "read-error" {
+				// Opening a directory succeeds; scanning it fails, even as root.
+				if err := os.Mkdir(store.LedgerPath(), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if err := store.AppendLedger(state.LedgerEntry{CostUSD: 2}); err != nil {
+					t.Fatal(err)
+				}
+				if err := store.AppendLedger(state.LedgerEntry{Session: strings.Repeat("x", 2<<20), CostUSD: 3}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			out, err := machineOutput(t, m.Path, "cost")
+			if err == nil || !strings.Contains(err.Error(), m.Configs[1].Path+": read costs:") || out != "" {
+				t.Fatalf("scan failure published costs: out=%q err=%v", out, err)
+			}
+		})
+	}
 }
 
 func TestMachineControlSignalsAndWaits(t *testing.T) {
 	for _, reload := range []bool{false, true} {
 		t.Run(map[bool]string{false: "stop", true: "reload"}[reload], func(t *testing.T) {
-			path, pidPath := lockedMachine(t)
+			path, pidPath, daemonPID := lockedMachine(t)
 			// The daemon owns project reconciliation, including invalid project paths.
 			if err := os.Remove(filepath.Join(filepath.Dir(path), "foo", "bees.toml")); err != nil {
 				t.Fatal(err)
 			}
 			var signals []syscall.Signal
 			cmd := newMachineControlCmd(&globalFlags{config: path}, reload, func(pid int, sig syscall.Signal) error {
-				if pid != 4242 {
+				if pid != daemonPID {
 					t.Fatalf("pid: %d", pid)
 				}
 				signals = append(signals, sig)
@@ -220,7 +326,7 @@ func TestMachineControlNoDaemon(t *testing.T) {
 			t.Run(mode+map[bool]string{false: "stop", true: "reload"}[reload], func(t *testing.T) {
 				path := writeMachine(t, `["foo/bees.toml"]`)
 				if mode == "exited" {
-					path, _ = lockedMachine(t)
+					path, _, _ = lockedMachine(t)
 				}
 				if mode == "stale" {
 					pidPath := filepath.Join(filepath.Dir(path), MachinePIDFile)
@@ -261,7 +367,7 @@ func TestMachineControlNoDaemon(t *testing.T) {
 func TestMachineControlErrorsAndCancellation(t *testing.T) {
 	for _, mode := range []string{"permission", "cancel", "bad-pid"} {
 		t.Run(mode, func(t *testing.T) {
-			path, pidPath := lockedMachine(t)
+			path, pidPath, _ := lockedMachine(t)
 			if mode == "bad-pid" {
 				if err := os.WriteFile(pidPath, []byte("0\n"), 0o600); err != nil {
 					t.Fatal(err)
@@ -331,13 +437,13 @@ func TestMachineActiveConfigResolution(t *testing.T) {
 func TestMachineWaitHandlesExitAndReplacement(t *testing.T) {
 	for _, mode := range []string{"exit", "replacement"} {
 		t.Run(mode, func(t *testing.T) {
-			_, path := lockedMachine(t)
+			_, path, daemonPID := lockedMachine(t)
 			calls := 0
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
-			err := waitMachine(ctx, path, 4242, func(pid int, sig syscall.Signal) error {
+			err := waitMachine(ctx, path, daemonPID, func(pid int, sig syscall.Signal) error {
 				calls++
-				if pid != 4242 || sig != 0 {
+				if pid != daemonPID || sig != 0 {
 					t.Fatalf("unexpected signal: %d %v", pid, sig)
 				}
 				if mode == "exit" {
