@@ -590,11 +590,11 @@ kill -TERM "$(cat .bees/bees.pid)"
 
 There is no dedicated stop or reload command for a detached project.
 Use the project pid file with `kill`; machine control does not target a
-project run. For a machine, use its pid file with the same signal protocol:
+project run. For a machine, select its config:
 
 ```sh
-kill -HUP "$(cat ~/.config/bees/bees-machine.pid)"   # reload projects
-kill -TERM "$(cat ~/.config/bees/bees-machine.pid)"  # drain and stop
+bees machine reload -c ~/.config/bees/machine.toml
+bees machine stop -c ~/.config/bees/machine.toml
 ```
 
 SIGHUP in machine mode rereads the project list. Added projects start;
@@ -607,6 +607,61 @@ logs the error. Restart to apply edits to unchanged projects or the machine's
 reloads. Foreground machine runs accept the same signals.
 The live view keeps its initial project selector after a reload; use
 `--no-tui` when changing the list during a run.
+
+### `bees machine`
+
+These commands require an active
+[machine config](configuration.md#machine-config-several-projects), selected
+by `--config`, then `$BEES_CONFIG`, then the upward `bees.toml` search. A
+project config is refused. Bare `bees machine` prints help.
+
+```sh
+bees machine status -c ~/.config/bees/machine.toml
+bees machine cost -c ~/.config/bees/machine.toml --since 72h
+bees machine reload -c ~/.config/bees/machine.toml
+bees machine stop -c ~/.config/bees/machine.toml
+```
+
+#### `bees machine status`
+
+Reads each configured project's `status.json` and prints its config path,
+snapshot timestamp, worker count and last error, in config order. Missing,
+unreadable or empty snapshots are shown as `unavailable`. A recorded snapshot
+can outlive its scheduler; it does not prove a project is running. No
+scheduler starts, and no state directory is created.
+
+#### `bees machine cost`
+
+Reads each project's `ledger.jsonl` and prints its config path, finished
+session count, turns and cost, followed by a total. `--since` defaults to
+`24h` and accepts a Go duration, as with `bees cost`. A missing ledger counts
+as zero; a read or scan failure (including an overlong line) fails the report
+with the project's path, without printing partial costs.
+The report covers retained ledger entries and starts no schedulers.
+
+#### `bees machine stop`
+
+Sends SIGTERM to the detached daemon named by `bees-machine.pid` beside the
+active config and waits for graceful shutdown. Work in flight finishes;
+the command returns when the daemon removes its pidfile after all projects
+stop, releases its lock, or exits. There is no forced-stop timeout; Ctrl-C
+cancels the wait. An absent or stale pidfile with no daemon lock is a
+successful no-op. Stop and reload verify the PID against the kernel
+owner of the daemon's lock before signaling. During startup, before the
+child publishes its PID and lock ownership, they ask you to retry.
+
+#### `bees machine reload`
+
+Sends SIGHUP through the same pidfile. A missing daemon is an error. Success
+means the reload was requested; check the daemon log for the result. The
+daemon rereads and reconciles the project list as described under
+[Running in the background](#running-in-the-background). Stop and reload
+need the active file to identify a machine config, but do not load its
+project files, so a removed project config does not block control.
+
+Stop and reload target detached machine runs (`bees run -d`). Foreground
+runs do not write pidfiles; use their terminal or send their process a
+signal directly.
 
 ### The live view
 

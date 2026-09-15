@@ -156,12 +156,23 @@ esac
 				if err := os.WriteFile(active, []byte(body), 0o644); err != nil {
 					t.Fatal(err)
 				}
-				if err := syscall.Kill(pid, syscall.SIGHUP); err != nil {
-					t.Fatal(err)
+				reload := exec.CommandContext(ctx, bin, "machine", "reload", "--config", active)
+				reload.Env = env
+				if out, err := reload.CombinedOutput(); err != nil || !strings.Contains(string(out), "reload requested") {
+					t.Fatalf("machine reload: %v %s", err, out)
 				}
 				eventually(t, func() bool { return exists(status(c)) }, "added project c polling after SIGHUP")
 			}
-			if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
+			if machine {
+				stop := exec.CommandContext(ctx, bin, "machine", "stop", "--config", active)
+				stop.Env = env
+				if out, err := stop.CombinedOutput(); err != nil || !strings.Contains(string(out), "machine daemon stopped") {
+					t.Fatalf("machine stop: %v %s", err, out)
+				}
+				if exists(pidPath) {
+					t.Fatal("machine stop returned before graceful pid cleanup")
+				}
+			} else if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
 				t.Fatal(err)
 			}
 			eventually(t, func() bool { return !exists(pidPath) }, "graceful pid cleanup")

@@ -61,7 +61,8 @@ func (s *Store) AppendLedger(e LedgerEntry) error {
 
 // ReadLedger returns the entries recorded at or after since (a zero since
 // returns everything). Lines that do not parse are skipped: a half-written
-// tail must never break `bees cost`.
+// tail must never break `bees cost`. Read and scan failures return an error
+// without entries, so callers cannot report a partial total.
 func (s *Store) ReadLedger(since time.Time) ([]LedgerEntry, error) {
 	f, err := os.Open(s.LedgerPath())
 	if errors.Is(err, os.ErrNotExist) {
@@ -85,8 +86,9 @@ func (s *Store) ReadLedger(since time.Time) ([]LedgerEntry, error) {
 		}
 		out = append(out, e)
 	}
-	// A scan error (an overlong line, a truncated read) ends the ledger
-	// early; what was read before it is still good.
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
@@ -146,5 +148,5 @@ func (s *Store) TrimLedger(before time.Time) (int, error) {
 	return removed, nil
 }
 
-// maxLedgerLine caps how long a ledger line may be before it is skipped.
+// maxLedgerLine caps how long a ledger line may be before scanning fails.
 const maxLedgerLine = 1 << 20

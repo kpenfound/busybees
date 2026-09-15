@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"syscall"
 
 	"github.com/kpenfound/busybees/internal/config"
@@ -126,10 +125,24 @@ func registerDaemonChild(path string) (func(), error) {
 	}
 	// gh and agent subprocesses must not keep the daemon lock alive.
 	syscall.CloseOnExec(3)
-	pid := []byte(strconv.Itoa(os.Getpid()) + "\n")
-	if err := os.WriteFile(path, pid, 0o600); err != nil {
+	pidFile, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0o600)
+	if err != nil {
 		_ = lock.Close()
 		return nil, err
 	}
-	return func() { _ = os.Remove(path); _ = lock.Close() }, nil
+	cleanup := func() { _ = os.Remove(path); _ = pidFile.Close(); _ = lock.Close() }
+	if _, err := fmt.Fprintf(pidFile, "%d\n", os.Getpid()); err != nil {
+		cleanup()
+		return nil, err
+	}
+	// A process-owned record lock on the PID file exposes its owner's PID
+	// through F_GETLK. Publish it only after writing our PID and installing
+	// signal handlers, so controls can distinguish startup from a live daemon.
+	// Keep it separate from flock: the two lock types interact on macOS.
+	owner := syscall.Flock_t{Type: syscall.F_WRLCK, Whence: 0}
+	if err := syscall.FcntlFlock(pidFile.Fd(), syscall.F_SETLK, &owner); err != nil {
+		cleanup()
+		return nil, err
+	}
+	return cleanup, nil
 }
