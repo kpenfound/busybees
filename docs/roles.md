@@ -553,9 +553,13 @@ under the round's name.
 
 `roles.reviewer.angles` replaces, for one size at a time, the angles a
 change of that size is reviewed from; a size it does not name keeps the
-built-in list. `brief_model`, `angle_models` and `judge_model` override
-`model` for the brief, for one angle each and for the judge, one session at
-a time. See
+built-in list. `brief_profile`, `angle_profiles` and `judge_profile` select
+named execution profiles after the reviewer's size-specific selection.
+Unspecified phases and angles keep that fallback. Brief and angle profiles
+use Claude or Codex and ignore sandbox: the host adapter enforces a read-only
+checkout with no commands, writes, web/network tools, MCP/factory identity
+or writable/shared VCS. The judge applies all five profile fields, including
+sandbox, with reviewer-owned prompt, tools and permissions. See
 [configuration.md](configuration.md#rolesreviewer-only-the-review-pipeline)
 for the keys, their defaults and their built-in per-size lists.
 
@@ -749,7 +753,7 @@ prompt_file = "docs/qa-checklist.md"
   are `roles.developer` only ([developer](#developer)). **auto_merge,
   merge_method, checks_wait, checks_poll_interval, checks_timeout,
   max_check_fix_rounds, pre_review_checks, pre_review_checks_timeout,
-  angles, brief_model, angle_models, judge_model** are `roles.reviewer` only
+  angles, brief_profile, angle_profiles, judge_profile** are `roles.reviewer` only
   ([reviewer](#reviewer)). Set anywhere else, each is a load error.
 
 `bees config show <role>` prints the result of the merge. See

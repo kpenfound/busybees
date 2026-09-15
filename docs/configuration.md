@@ -91,11 +91,11 @@ See [Running in the background](cli.md#running-in-the-background).
 ## `version`
 
 ```toml
-version = 3
+version = 4
 ```
 
 The format version of the file, not of bees. `bees init` writes the current
-one, `3`. A file without the key is version 0.
+one, `4`. A file without the key is version 0.
 
 - A file newer than the running bees understands is refused with `upgrade
   bees`.
@@ -113,7 +113,11 @@ one, `3`. A file without the key is version 0.
   from 2 to 3 moves `agent`, `model`, `fallback_model`, `sandbox`, `effort` and
   `model_by_size` into named `[profiles.<name>]` tables and replaces them with
   `profile` and `profile_by_size`; scopes without those settings use the
-  implicit built-in profile.
+  implicit built-in profile. The migration from 3 to 4 converts reviewer
+  phase model overrides to named phase profiles, cloning the ordinary
+  reviewer fallback profile's five fields and replacing its model. Equal
+  profiles are reused; size-specific fallback still applies to phases with
+  no override.
 
 Adding an optional key never bumps the version. Renaming or removing a key, or
 changing what one means, does, and the release notes of the bees version that
@@ -679,15 +683,16 @@ check was reported. `bees doctor` says which of the three is in force, and
 ### `[roles.reviewer]` only: the review pipeline
 
 The reviewer's review runs a brief, then one session per angle, then a
-judge that merges what they found; these keys size and model each step.
+judge that merges what they found; these keys choose angles and execution
+profiles for each step.
 Like the checks keys, they are accepted only under `[roles.reviewer]`.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `angles.<size>` | string list | the built-in list for that size | The angles a pull request of that size is reviewed from. `<size>` is `xs`, `s`, `m`, `l` or `xl`; one or more of `quick_general`, `general`, `docs`, `test_coverage`, `acceptance_criteria`, `side_effects`. An unknown size or angle, or an empty list, is a load error. A size this does not name keeps the built-in list. |
-| `brief_model` | string | `model` | The model of the session that distills the brief. |
-| `angle_models.<angle>` | string | `model` | The model of that angle's session. An angle not one of the six above is a load error. |
-| `judge_model` | string | `model` | The model of the reviewer session that posts the judge's findings and decides the verdict. |
+| `brief_profile` | profile name | size-resolved reviewer profile | Execution profile for the brief. Must use Claude or Codex; sandbox is ignored. |
+| `angle_profiles.<angle>` | profile name | size-resolved reviewer profile | Execution profile for that angle. Must use Claude or Codex; sandbox is ignored. Unknown profile or angle names fail loading with the complete key path. |
+| `judge_profile` | profile name | size-resolved reviewer profile | All five execution fields, including sandbox, for the reviewer session that posts findings and decides the verdict. |
 
 | Size | Built-in angles |
 |---|---|
@@ -695,17 +700,42 @@ Like the checks keys, they are accepted only under `[roles.reviewer]`.
 | `m`, `l` | `general`, `docs`, `test_coverage`, `acceptance_criteria` |
 | `xl` | `general`, `docs`, `test_coverage`, `acceptance_criteria`, `side_effects` |
 
-The brief and every angle session run read-only, with no MCP server and no
-tool that writes, runs or fetches; only the reviewer session that posts the
-judge's list and decides the verdict runs with the factory's tools. An
-angle that fails is named in that session's task and the rest are judged; a
-review where the brief or every angle failed escalates the issue instead.
+Phase overrides resolve through `[profiles.*]` after ordinary role and
+`profile_by_size` selection. An unspecified angle uses the size-resolved
+reviewer profile. Brief and angle sessions select `agent`, `model`,
+`fallback_model` and `effort`, subject to backend support (fallback model is
+Claude-only; Codex maps `max` effort to `high`). They ignore the profile's
+`sandbox` and use the host adapter's mandatory read-only checkout policy:
+no commands, writes, web/network tools, MCP, factory identity, or writable
+or shared VCS access. Claude and Codex are the supported host agents.
+
+The judge applies all five profile fields, including `sandbox`, through an
+ordinary factory reviewer session. Its prompt, tools, permissions and ability
+to post the verdict belong to the reviewer workflow. Profiles contain no
+prompts, MCP, skills, environment, sandbox image, container environment,
+shell, timeout, turn limit or VCS settings; those remain role/phase-owned.
+
+An angle that fails is named in the judge's task and the rest are judged;
+a review where the brief or every angle failed escalates the issue instead.
+The standalone `bees review` configuration is separate and model-based; see
+[Review configuration](review.md).
 
 ```toml
+[profiles.review_quick]
+agent = "claude"
+model = "haiku"
+effort = "low"
+
+[profiles.review_judge]
+agent = "claude"
+model = "sonnet"
+sandbox = "claude"
+
 [roles.reviewer]
 angles.xs = ["quick_general"]
-angle_models.docs = "haiku"
-judge_model = "sonnet"
+brief_profile = "review_quick"
+angle_profiles.docs = "review_quick"
+judge_profile = "review_judge"
 ```
 
 See [Review pipeline](roles.md#review-pipeline-rolesreviewerangles) for what
@@ -1083,7 +1113,7 @@ session with an error naming the path or the build command, not a
 | `skills_refresh` | Global only. |
 | `min_issue_size` | `roles.product_manager` only. |
 | `commit_flags`, `max_size`, `best_of_n_by_size`, `best_of_n_model`, `best_of_n_prompt`, `assembler_model`, `assembler_prompt`, `moe_experts_by_size`, `moe_experts`, `moe_assembler_model`, `moe_assembler_prompt` | `roles.developer` only. |
-| `auto_merge`, `merge_method`, `checks_wait`, `checks_poll_interval`, `checks_timeout`, `max_check_fix_rounds`, `pre_review_checks`, `pre_review_checks_timeout`, `angles`, `brief_model`, `angle_models`, `judge_model` | `roles.reviewer` only. `bees config show reviewer` prints the resolved policy. |
+| `auto_merge`, `merge_method`, `checks_wait`, `checks_poll_interval`, `checks_timeout`, `max_check_fix_rounds`, `pre_review_checks`, `pre_review_checks_timeout`, `angles`, `brief_profile`, `angle_profiles`, `judge_profile` | `roles.reviewer` only. `bees config show reviewer` prints the resolved policy. |
 
 `bees config show <role>` prints the result.
 
@@ -1228,7 +1258,7 @@ headers = { Authorization = "Bearer $BROWSER_MCP_TOKEN" }
 ### Solo project, two developers
 
 ```toml
-version = 3
+version = 4
 # repo and default_branch are derived from the origin remote.
 
 [filter]
@@ -1263,7 +1293,7 @@ timeout = "30m"
 ### Team repository, only work assigned to me
 
 ```toml
-version = 3
+version = 4
 
 [project]
 remote = "upstream"        # my origin is a fork; the team repository is upstream

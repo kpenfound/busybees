@@ -490,7 +490,7 @@ func TestMergePolicy(t *testing.T) {
 	// as the other reviewer-only keys.
 	for _, scope := range []string{"[global]", "[roles.developer]"} {
 		_, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"+scope+"\npre_review_checks = true\npre_review_checks_timeout = \"5m\"\n"))
-		if err == nil || !strings.Contains(err.Error(), "pre_review_checks, pre_review_checks_timeout, angles, brief_model, judge_model and angle_models are only valid under roles.reviewer") {
+		if err == nil || !strings.Contains(err.Error(), "pre_review_checks, pre_review_checks_timeout, angles, brief_profile, judge_profile and angle_profiles are only valid under roles.reviewer") {
 			t.Fatalf("%s: %v", scope, err)
 		}
 	}
@@ -769,7 +769,7 @@ func TestOpenCodeRoleHasNoDefaultModel(t *testing.T) {
 		t.Errorf("opencode role with a model: %q / %q", qa.Model, qa.FallbackModel)
 	}
 	// A role overrides an opencode global the same way it does codex.
-	cfg, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[global]\nagent = \"opencode\"\n[roles.developer]\nagent = \"claude\"\n"))
+	cfg, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[global]\nagent = \"opencode\"\n[roles.reviewer]\nagent = \"claude\"\n[roles.developer]\nagent = \"claude\"\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -917,7 +917,7 @@ func TestVersion(t *testing.T) {
 			t.Errorf("newer: %v", err)
 		}
 	}
-	cfg, err := Load(writeConfig(t, "version = 3\n[project]\nrepo = \"a/b\"\n"))
+	cfg, err := Load(writeConfig(t, "version = 4\n[project]\nrepo = \"a/b\"\n"))
 	if err != nil || cfg.Version != CurrentVersion || cfg.NeedsRewrite() {
 		t.Fatalf("current: %+v %v", cfg, err)
 	}
@@ -942,7 +942,7 @@ func TestMigrateUnversionedFile(t *testing.T) {
 	}
 	data, _ := os.ReadFile(path)
 	text := string(data)
-	want := "# my factory\n\n# Format version of this file (see docs/configuration.md).\nversion = 3\n\n[project]\n# keep this comment\nrepo = \"a/b\"\n#branch_prefix = \"bees/\"\n"
+	want := "# my factory\n\n# Format version of this file (see docs/configuration.md).\nversion = 4\n\n[project]\n# keep this comment\nrepo = \"a/b\"\n#branch_prefix = \"bees/\"\n"
 	if text != want {
 		t.Fatalf("rewritten file:\n%s\nwant:\n%s", text, want)
 	}
@@ -1655,7 +1655,7 @@ func TestNotesSettings(t *testing.T) {
 		t.Fatalf("default: %q, want %q", cfg.Notes.Backend, NotesBackendFile)
 	}
 
-	path := writeConfig(t, "version = 3\n[project]\nrepo = \"a/b\"\n"+neo4jNotesTOML)
+	path := writeConfig(t, "version = 4\n[project]\nrepo = \"a/b\"\n"+neo4jNotesTOML)
 	cfg, err = Load(path)
 	if err != nil {
 		t.Fatal(err)
@@ -1955,10 +1955,9 @@ func TestGitHubTokenVar(t *testing.T) {
 
 // roles.reviewer.angles picks the review angles per pull request size, and
 // every size resolves to a list: the configured one where there is one,
-// DefaultReviewAngles otherwise. brief_model, judge_model and angle_models
-// are model overrides that resolve to what was written, empty or absent
-// meaning Model, which the session that runs them falls back to. Every bad
-// value is a load error naming the key, the value and the valid set.
+// DefaultReviewAngles otherwise. Legacy phase model overrides migrate to
+// profiles preserving their model choices. Every bad value is a load error
+// naming the key, the value and the valid set.
 func TestReviewAngles(t *testing.T) {
 	head := "version = 2\n[project]\nrepo = \"a/b\"\n"
 	cfg, err := Load(writeConfig(t, head))
@@ -1972,8 +1971,8 @@ func TestReviewAngles(t *testing.T) {
 	if !reflect.DeepEqual(r.Angles, DefaultReviewAngles) {
 		t.Errorf("default angles: %v, want %v", r.Angles, DefaultReviewAngles)
 	}
-	if r.BriefModel != "" || r.JudgeModel != "" || len(r.AngleModels) != 0 {
-		t.Errorf("model overrides set by default: %q %q %v", r.BriefModel, r.JudgeModel, r.AngleModels)
+	if r.BriefProfile != nil || r.JudgeProfile != nil || len(r.AngleProfiles) != 0 {
+		t.Errorf("model overrides set by default: %v %v %v", r.BriefProfile, r.JudgeProfile, r.AngleProfiles)
 	}
 	for _, size := range Sizes {
 		for _, angle := range DefaultReviewAngles[size] {
@@ -2011,11 +2010,11 @@ func TestReviewAngles(t *testing.T) {
 			t.Errorf("%s: %v, want the default %v", size, r.Angles[size], DefaultReviewAngles[size])
 		}
 	}
-	if r.Model != "opus" || r.BriefModel != "haiku" || r.JudgeModel != "sonnet" {
-		t.Errorf("models: model %q brief %q judge %q", r.Model, r.BriefModel, r.JudgeModel)
+	if r.Model != "opus" || r.ForBrief().Model != "haiku" || r.ForJudge().Model != "sonnet" {
+		t.Errorf("models: model %q brief %q judge %q", r.Model, r.ForBrief().Model, r.ForJudge().Model)
 	}
-	if want := map[string]string{"docs": "haiku", "general": "opus"}; !reflect.DeepEqual(r.AngleModels, want) {
-		t.Errorf("angle_models: %v, want %v", r.AngleModels, want)
+	if want := map[string]string{"docs": "haiku", "general": "opus"}; r.ForAngle("docs").Model != want["docs"] || r.ForAngle("general").Model != want["general"] {
+		t.Errorf("angle profiles: %v, want %v", r.AngleProfiles, want)
 	}
 	r.Angles["m"][0] = "mutated"
 	if r, _ = cfg.Role(RoleReviewer); r.Angles["m"][0] != "general" {
@@ -2023,7 +2022,7 @@ func TestReviewAngles(t *testing.T) {
 	}
 
 	valid := "quick_general, general, docs, test_coverage, acceptance_criteria, side_effects"
-	scoped := ": auto_merge, merge_method, checks_wait, checks_poll_interval, checks_timeout, max_check_fix_rounds, pre_review_checks, pre_review_checks_timeout, angles, brief_model, judge_model and angle_models are only valid under roles.reviewer"
+	scoped := ": auto_merge, merge_method, checks_wait, checks_poll_interval, checks_timeout, max_check_fix_rounds, pre_review_checks, pre_review_checks_timeout, angles, brief_profile, judge_profile and angle_profiles are only valid under roles.reviewer"
 	for _, tc := range []struct {
 		name, body, want string
 	}{
@@ -2033,14 +2032,14 @@ func TestReviewAngles(t *testing.T) {
 			"roles.reviewer.angles: unknown size \"xxl\" (want one of xs, s, m, l, xl)"},
 		{"empty list", "[roles.reviewer]\nangles = { m = [] }\n",
 			"roles.reviewer.angles.m must name at least one angle (want one or more of " + valid + ")"},
-		{"unknown angle model", "[roles.reviewer]\nangle_models = { style = \"opus\" }\n",
-			"roles.reviewer.angle_models: unknown angle \"style\" (want one of " + valid + ")"},
-		{"empty angle model", "[roles.reviewer]\nangle_models = { docs = \" \" }\n",
-			"roles.reviewer.angle_models.docs must name a model"},
+		{"unknown angle model", "[roles.reviewer]\nangle_profiles = { style = \"opus\" }\n",
+			"roles.reviewer.angle_profiles.style: unknown angle \"style\" (want one of " + valid + ")"},
+		{"empty angle model", "[roles.reviewer]\nangle_profiles = { docs = \" \" }\n",
+			"roles.reviewer.angle_profiles.docs: unknown profile"},
 		{"angles in global", "[global]\nangles = { m = [\"docs\"] }\n", "global" + scoped},
-		{"brief_model in another role", "[roles.developer]\nbrief_model = \"opus\"\n", "roles.developer" + scoped},
-		{"judge_model in another role", "[roles.qa]\njudge_model = \"opus\"\n", "roles.qa" + scoped},
-		{"angle_models in another role", "[roles.developer]\nangle_models = { docs = \"opus\" }\n", "roles.developer" + scoped},
+		{"brief_profile in another role", "[roles.developer]\nbrief_profile = \"opus\"\n", "roles.developer" + scoped},
+		{"judge_profile in another role", "[roles.qa]\njudge_profile = \"opus\"\n", "roles.qa" + scoped},
+		{"angle_profiles in another role", "[roles.developer]\nangle_profiles = { docs = \"opus\" }\n", "roles.developer" + scoped},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := Load(writeConfig(t, head+tc.body))

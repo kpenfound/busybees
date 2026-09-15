@@ -95,6 +95,9 @@ type CLIAgent struct {
 	// model it runs. An empty model leaves the choice to the CLI.
 	Provider string
 	Model    string
+	// FallbackModel is Claude-only; Effort maps to each backend's reasoning setting.
+	FallbackModel string
+	Effort        string
 	// ClaudeBin and CodexBin are the executables, "claude" and "codex" when
 	// they are empty.
 	ClaudeBin string
@@ -146,9 +149,30 @@ func (a *CLIAgent) Run(ctx context.Context, req AgentRequest) (*AgentResult, err
 	cmd.Stdin = strings.NewReader(req.Prompt)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	cmd.Env = os.Environ()
-	for _, k := range slices.Sorted(maps.Keys(a.Env)) {
-		cmd.Env = append(cmd.Env, k+"="+a.Env[k])
+	cmd.Env = reviewEnvironment(os.Environ(), a.Env)
+	if a.Provider == config.AgentCodex {
+		// Empty TOML tables merge with local configuration; they do not erase
+		// inherited MCP servers. Ask the CLI for its effective server names and
+		// explicitly disable every one. A failed inventory fails closed.
+		probe := exec.CommandContext(runCtx, bin, "mcp", "list", "--json")
+		probe.Dir, probe.Env = cmd.Dir, cmd.Env
+		data, err := probe.Output()
+		if err != nil {
+			return nil, fmt.Errorf("%s session: list codex MCP servers: %w", req.Name, err)
+		}
+		var servers []struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(data, &servers); err != nil {
+			return nil, fmt.Errorf("%s session: decode codex MCP servers: %w", req.Name, err)
+		}
+		if servers == nil {
+			return nil, fmt.Errorf("%s session: codex MCP inventory must be an array", req.Name)
+		}
+		for _, server := range servers {
+			name, _ := json.Marshal(server.Name)
+			cmd.Args = append(cmd.Args[:len(cmd.Args)-1], "-c", "mcp_servers."+string(name)+".enabled=false", "-")
+		}
 	}
 	// A session that ran out of time is killed with everything it started,
 	// the way the factory's runner does it: the CLI's own children hold the
@@ -193,6 +217,8 @@ func (a *CLIAgent) command(req AgentRequest) (string, []string, error) {
 			// enforcement: unlike a factory session, a review session is
 			// never given --dangerously-skip-permissions.
 			"--permission-prompts", "none",
+			"--tools", strings.Join(ReadOnlyTools, ","),
+			"--setting-sources", "",
 			"--allowedTools", strings.Join(ReadOnlyTools, ","),
 			"--disallowedTools", strings.Join(DeniedTools, ","),
 			// An MCP server is another way to run something, and the
@@ -204,6 +230,12 @@ func (a *CLIAgent) command(req AgentRequest) (string, []string, error) {
 		if a.Model != "" {
 			args = append(args, "--model", a.Model)
 		}
+		if a.FallbackModel != "" {
+			args = append(args, "--fallback-model", a.FallbackModel)
+		}
+		if a.Effort != "" {
+			args = append(args, "--effort", a.Effort)
+		}
 		if req.ResumeID != "" {
 			args = append(args, "--resume", req.ResumeID)
 		}
@@ -213,12 +245,23 @@ func (a *CLIAgent) command(req AgentRequest) (string, []string, error) {
 		if bin == "" {
 			bin = "codex"
 		}
-		// Codex has no tool list to restrict. Its own sandbox is the
-		// restriction: read-only refuses a write and a command alike,
-		// which is what the tool lists above add up to for claude.
-		args := []string{"exec", "--json", "--sandbox", "read-only", "--skip-git-repo-check"}
+		// The read-only sandbox blocks writes. Separately disable commands,
+		// network tools, plugins and delegation; read-only alone allows commands.
+		args := []string{"exec", "--json", "--sandbox", "read-only", "--skip-git-repo-check",
+			"-c", `approval_policy="never"`, "-c", `web_search="disabled"`,
+			"-c", "orchestrator.mcp.enabled=false"}
+		for _, feature := range []string{"shell_tool", "unified_exec", "js_repl", "browser_use", "browser_use_external", "computer_use", "in_app_browser", "multi_agent", "multi_agent_v2", "apps", "plugins", "hooks", "codex_hooks", "plugin_hooks", "skill_mcp_dependency_install", "tool_suggest", "web_search_request", "web_search_cached"} {
+			args = append(args, "-c", "features."+feature+"=false")
+		}
 		if a.Model != "" {
 			args = append(args, "--model", a.Model)
+		}
+		if a.Effort != "" {
+			effort := a.Effort
+			if effort == "max" {
+				effort = "high"
+			}
+			args = append(args, "-c", "model_reasoning_effort="+strconv.Quote(effort))
 		}
 		args = append(args, "-")
 		return bin, args, nil
@@ -343,4 +386,25 @@ func tail(s string) string {
 		s = "..." + s[len(s)-400:]
 	}
 	return ": " + s
+}
+
+// A review must not inherit factory identity or Git access overrides, even when
+// its caller is itself a factory session or the role's env names those keys.
+func reviewEnvironment(inherited []string, overrides map[string]string) []string {
+	env := map[string]string{}
+	for _, entry := range inherited {
+		k, v, ok := strings.Cut(entry, "=")
+		if ok {
+			env[k] = v
+		}
+	}
+	maps.Copy(env, overrides)
+	out := []string{}
+	for _, k := range slices.Sorted(maps.Keys(env)) {
+		if strings.HasPrefix(k, "BEES_") || strings.HasPrefix(k, "GIT_") {
+			continue
+		}
+		out = append(out, k+"="+env[k])
+	}
+	return out
 }

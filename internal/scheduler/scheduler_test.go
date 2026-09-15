@@ -204,6 +204,10 @@ func findingsOf(prompt string) string {
 }
 
 func fakeClaude() {
+	if len(os.Args) > 1 && os.Args[1] == "mcp" {
+		fmt.Println("[]")
+		return
+	}
 	// A brief or angle session of the review pipeline has no role, no
 	// session directory and no state directory: it is answered before any
 	// of those is looked at.

@@ -127,6 +127,8 @@ type Angles struct {
 	// model replaced, when Agent is the CLI agent. The provider is Provider
 	// for every angle.
 	Models map[string]string
+	// Agents supplies factory phase overrides, already restricted to host adapters.
+	Agents map[string]*CLIAgent
 	// Checkout clones the pull request's head into the artifact directory
 	// for the sessions to run in (checkout.go), which is where they run
 	// whenever it succeeds. It is nil to attempt none; a clone already
@@ -254,7 +256,11 @@ func (a *Angles) Run(ctx context.Context, artifact string, project *Project, bri
 		go func(i int, angle string) {
 			defer wg.Done()
 			agent, model := a.agentFor(angle)
-			run := AngleRun{Angle: angle, Provider: a.Provider, Model: model, Dir: dir}
+			provider := a.Provider
+			if cli, ok := agent.(*CLIAgent); ok {
+				provider = cli.Provider
+			}
+			run := AngleRun{Angle: angle, Provider: provider, Model: model, Dir: dir}
 			a.progress(angle, AngleStarted)
 			res, err := agent.Run(ctx, AgentRequest{Name: angle, Prompt: prompts[i], Dir: dir})
 			if err != nil {
@@ -340,6 +346,9 @@ func (a *Angles) sizedAngles(size string) []string { return sizedAngles(a.Sized,
 // agent, a copy of that agent running Models' model instead. An agent that
 // is not the CLI agent has no model to replace, and runs as itself.
 func (a *Angles) agentFor(angle string) (Agent, string) {
+	if agent := a.Agents[angle]; agent != nil {
+		return agent, agent.Model
+	}
 	model := a.Models[angle]
 	cli, ok := a.Agent.(*CLIAgent)
 	if model == "" || !ok {

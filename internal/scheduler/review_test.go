@@ -77,15 +77,20 @@ func byKind(sessions []reviewSession) map[string]reviewSession {
 	return out
 }
 
-// anglesReviewerTOML configures the reviewer the way #647 lets a person:
-// the angles of one size replaced, and a model per step.
+// anglesReviewerTOML configures the angles of one size and a profile per phase.
 const anglesReviewerTOML = devOnlyTOML + `
 [roles.reviewer]
 model = "opus"
-brief_model = "sonnet"
-judge_model = "gpt-judge"
+brief_profile = "brief"
+judge_profile = "judge"
 angles.m = ["general", "docs"]
-angle_models.docs = "haiku"
+angle_profiles.docs = "docs"
+[profiles.brief]
+model = "sonnet"
+[profiles.judge]
+model = "gpt-judge"
+[profiles.docs]
+model = "haiku"
 `
 
 // A developer's pull request dispatched for review goes through the review
@@ -115,24 +120,24 @@ func TestAReviewRunsBriefAnglesAndJudgeFromTheReviewerRole(t *testing.T) {
 		t.Fatalf("review sessions: %v, want %v", kinds, want)
 	}
 	got := byKind(sessions)
-	// The brief runs brief_model, the docs angle its angle_models entry,
+	// The brief runs brief_profile, the docs angle its angle_profiles entry,
 	// and the general angle, with no entry of its own, the role's model.
 	for kind, want := range map[string]string{"brief": "sonnet", "documentation accuracy": "haiku", "general": "opus"} {
 		if m := modelOf(got[kind].Args); m != want {
 			t.Errorf("the %s session ran --model %q, want %q:\n%s", kind, m, want, strings.Join(got[kind].Args, " "))
 		}
 	}
-	// The judge session is a factory session running judge_model.
+	// The judge session is a factory session running judge_profile.
 	judge := argsOfNamed(t, h, "reviewer-pr-201-r1")
 	if m := modelOf(judge); m != "gpt-judge" {
 		t.Errorf("the judge session ran --model %q, want gpt-judge:\n%s", m, strings.Join(judge, "\n"))
 	}
-	// The brief session runs in the worker's checkout; the angles run in a
-	// clone of it under the artifact, with the branch's files and the diff
+	// The brief and angles run in an independent
+	// clone of the worker's checkout under the artifact, with the branch's files and the diff
 	// written beside them, and none of them is a factory session: no role,
 	// no MCP server, the read-only tool lists, no permission bypass.
-	if !strings.Contains(got["brief"].Dir, "/ws/") {
-		t.Errorf("the brief ran in %q, want the worker's checkout", got["brief"].Dir)
+	if !strings.HasSuffix(got["brief"].Dir, "/"+review.CheckoutDir) {
+		t.Errorf("the brief ran in %q, want the isolated clone", got["brief"].Dir)
 	}
 	// The diff the brief was given is the clone's own, the branch against
 	// its merge base with main, and gh was never asked for one.
@@ -578,5 +583,148 @@ func TestReviewStatesForEachVerdict(t *testing.T) {
 		if got := reviewStatesFor(status); !slices.Equal(got, want) {
 			t.Errorf("reviewStatesFor(%q) = %v, want %v", status, got, want)
 		}
+	}
+}
+
+func TestReviewPhaseProfilesSelectBackendsAndKeepPermissions(t *testing.T) {
+	logPath := reviewLogPath(t)
+	t.Setenv("FAKE_REVIEW_SIZE", "m")
+	h := newHarness(t, devOnlyTOML+`
+[profiles.base]
+agent = "claude"
+model = "base"
+fallback_model = "base-fallback"
+effort = "low"
+sandbox = "claude"
+[profiles.sized]
+agent = "claude"
+model = "sized"
+fallback_model = "sized-fallback"
+effort = "medium"
+sandbox = "container"
+[profiles.brief]
+agent = "claude"
+model = "brief"
+fallback_model = "brief-fallback"
+effort = "high"
+sandbox = "container"
+[profiles.docs]
+agent = "codex"
+model = "docs"
+fallback_model = "docs-fallback"
+effort = "max"
+sandbox = "container"
+[profiles.judge]
+agent = "codex"
+model = "judge"
+fallback_model = "judge-fallback"
+effort = "low"
+sandbox = "none"
+[roles.reviewer]
+profile = "base"
+profile_by_size = { s = "sized" }
+brief_profile = "brief"
+judge_profile = "judge"
+angle_profiles = { docs = "docs" }
+angles.m = ["general", "docs"]
+prompt = "reviewer-owned-prompt"
+max_turns = 19
+`)
+	seedReady(h, 1, "s", time.Now().Add(-time.Hour))
+	seedCounter(t, h, "review", 1)
+	runPass(t, h)
+	got := byKind(reviewSessions(t, logPath))
+	for kind, wants := range map[string][]string{
+		"brief":                  {"--model brief", "--fallback-model brief-fallback", "--effort high", "--max-turns 19", "--strict-mcp-config", "--tools Read,Grep,Glob,LS,NotebookRead"},
+		"general":                {"--model sized", "--fallback-model sized-fallback", "--effort medium", "--strict-mcp-config"},
+		"documentation accuracy": {"exec --json --sandbox read-only", "--model docs", `model_reasoning_effort="high"`, "features.shell_tool=false", `web_search="disabled"`},
+	} {
+		line := strings.Join(got[kind].Args, " ")
+		for _, want := range wants {
+			if !strings.Contains(line, want) {
+				t.Errorf("%s lacks %q: %s", kind, want, line)
+			}
+		}
+		if strings.Contains(line, "dangerously") || strings.Contains(line, "mcp_servers.bees") || got[kind].Role != "" {
+			t.Errorf("%s gained factory permissions: %+v", kind, got[kind])
+		}
+	}
+	judge := strings.Join(argsOfNamed(t, h, "reviewer-pr-201-r1"), " ")
+	for _, want := range []string{"exec --json", "--model judge", `model_reasoning_effort="low"`, "--dangerously-bypass-approvals-and-sandbox", "mcp_servers.bees"} {
+		if !strings.Contains(judge, want) {
+			t.Errorf("judge lacks %q: %s", want, judge)
+		}
+	}
+	if strings.Contains(judge, "--sandbox read-only") {
+		t.Error("judge inherited host restrictions")
+	}
+	dir, err := review.LatestArtifactDir(h.store.ReviewsDir(), review.Ref{Repo: "acme/widgets", Number: 201})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact, err := review.ReadArtifact(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, run := range artifact.Runs {
+		if run.Angle == "docs" && (run.Provider != "codex" || run.Model != "docs") {
+			t.Errorf("wrong persisted agent: %+v", run)
+		}
+	}
+	dirs := h.sessions(config.RoleReviewer)
+	if len(dirs) != 1 {
+		t.Fatalf("judge dirs: %v", dirs)
+	}
+	prompt, err := os.ReadFile(filepath.Join(dirs[0], "system-prompt.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(prompt), "reviewer-owned-prompt") {
+		t.Error("judge lost reviewer prompt")
+	}
+}
+
+func TestReviewCloneHasIndependentGitObjects(t *testing.T) {
+	h := newHarness(t, devOnlyTOML)
+	src := h.sched.ws.MainRepo
+	dst := filepath.Join(t.TempDir(), "clone")
+	if err := cloneOf(src, "", "origin")(context.Background(), review.Ref{}, "main", dst); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, ".git", "objects", "info", "alternates")); !os.IsNotExist(err) {
+		t.Fatalf("clone shares object storage: %v", err)
+	}
+	objects := filepath.Join(src, ".git", "objects")
+	checked := 0
+	err := filepath.WalkDir(objects, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(objects, path)
+		if err != nil {
+			return err
+		}
+		original, err := os.Stat(path)
+		if err != nil {
+			return err
+		}
+		copied, err := os.Stat(filepath.Join(dst, ".git", "objects", rel))
+		if err != nil {
+			return err
+		}
+		if os.SameFile(original, copied) {
+			t.Errorf("shared Git object %s", rel)
+		}
+		checked++
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checked == 0 {
+		t.Fatal("no objects checked")
 	}
 }

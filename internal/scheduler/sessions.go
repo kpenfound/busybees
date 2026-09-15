@@ -61,7 +61,7 @@ type sessionSpec struct {
 	// moe_assembler_prompt instead. Never set without assembler.
 	moeAssembler bool
 	// judge marks the reviewer's judge session, the one that posts what the
-	// review found (review.go): it runs roles.reviewer.judge_model where it
+	// review found (review.go): it runs roles.reviewer.judge_profile where it
 	// is set.
 	judge bool
 	// reviewActivity identifies the pipeline this judge replaces in live
@@ -117,8 +117,8 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (_ *sessio
 			role.Prompt = prompt
 		}
 	}
-	if spec.judge && role.JudgeModel != "" {
-		role.Model = role.JudgeModel
+	if spec.judge {
+		role = role.ForJudge()
 	}
 	fallback := spec.useFallback && role.FallbackModel != ""
 	if fallback {

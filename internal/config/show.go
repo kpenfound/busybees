@@ -82,12 +82,10 @@ type RoleView struct {
 	MoEAssemblerPrompt *string               `json:"moe_assembler_prompt,omitempty"`
 	// MinIssueSize is only set on the product manager.
 	MinIssueSize *string `json:"min_issue_size,omitempty"`
-	// Angles and the brief, judge and angle model overrides are only set on
-	// the reviewer.
-	Angles      *map[string][]string `json:"angles,omitempty"`
-	BriefModel  *string              `json:"brief_model,omitempty"`
-	JudgeModel  *string              `json:"judge_model,omitempty"`
-	AngleModels *map[string]string   `json:"angle_models,omitempty"`
+	// Review phase profiles include the resolved fallback at each size.
+	Angles *map[string][]string `json:"angles,omitempty"`
+	*ReviewProfilesView
+	ReviewProfilesBySize map[string]ReviewProfilesView `json:"review_profiles_by_size,omitempty"`
 	// MergeView is only set on the reviewer; its keys are inlined.
 	*MergeView
 }
@@ -199,11 +197,13 @@ func (c *Config) View(roles []string) (View, error) {
 			angles := map[string][]string{}
 			maps.Copy(angles, rr.Angles)
 			rv.Angles = &angles
-			rv.BriefModel = &rr.BriefModel
-			rv.JudgeModel = &rr.JudgeModel
-			angleModels := map[string]string{}
-			maps.Copy(angleModels, rr.AngleModels)
-			rv.AngleModels = &angleModels
+			phases := reviewProfilesView(rr)
+			rv.ReviewProfilesView = &phases
+			rv.ReviewProfilesBySize = map[string]ReviewProfilesView{}
+			for _, size := range Sizes {
+				rv.ReviewProfilesBySize[size] = reviewProfilesView(rr.ForSize(size))
+			}
+
 			m := c.Merge()
 			rv.MergeView = &MergeView{
 				AutoMerge:          m.AutoMerge,
@@ -220,4 +220,21 @@ func (c *Config) View(roles []string) (View, error) {
 		v.Roles[rr.Name] = rv
 	}
 	return v, nil
+}
+
+// ReviewProfilesView shows the selected profile data. Brief/angle sandbox values
+// are descriptive only: the host adapter enforces read-only regardless of them.
+type ReviewProfilesView struct {
+	BriefProfile     AgentProfile            `json:"brief_profile"`
+	JudgeProfile     AgentProfile            `json:"judge_profile"`
+	AngleProfiles    map[string]AgentProfile `json:"angle_profiles"`
+	HostReviewPolicy string                  `json:"host_review_policy"`
+}
+
+func reviewProfilesView(r ResolvedRole) ReviewProfilesView {
+	v := ReviewProfilesView{BriefProfile: r.ForBrief().AgentProfile(), JudgeProfile: r.ForJudge().AgentProfile(), AngleProfiles: map[string]AgentProfile{}, HostReviewPolicy: "brief/angles: sandbox ignored; read-only checkout; no commands, writes, web/network tools, MCP, factory identity or writable/shared VCS"}
+	for _, angle := range KnownReviewAngles {
+		v.AngleProfiles[angle] = r.ForAngle(angle).AgentProfile()
+	}
+	return v
 }
