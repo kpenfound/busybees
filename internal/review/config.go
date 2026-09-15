@@ -18,19 +18,15 @@
 // present is held to the same standard as bees.toml, an unknown key and an
 // invalid value are load errors naming the key.
 //
-// The review itself starts in ref.go, which turns what a person typed into
-// the pull request under review, and context.go, which gathers the sources
-// context.toml enables into the bundle a review reads. distill.go runs the
-// first session over that bundle and brief.go is what it produces, the
-// starting context of every session after it; checkout.go clones the pull
-// request's head, in a container, for the sessions to read; angles.go fans
-// those sessions out, one per angle the change's size calls for and the
-// project enables, in that checkout, and keeps enough of each to reopen it; agent.go runs every one of them,
-// read-only. findings.go is what an
-// angle answers with and judge.go merges every angle's into the one list a
-// review triages; notes.go is the reviewer notes, the file outside every
-// review that holds what this reviewer has dismissed before, and noise.go
-// keeps what they dismissed out of the list before triage reads it.
+// ref.go resolves the pull request, and context.go gathers the enabled sources
+// into a bundle. checkout.go clones the head for the diff and angle sessions.
+// run.go passes the acquired context and diff to core/review: distillation,
+// size-based angle execution, deterministic judging and noise filtering.
+// agent.go supplies read-only CLI sessions; angles.go supplies configured
+// models, working directories and provider-specific resumption. notes.go owns
+// reviewer notes storage and consolidation, and judge.go supplies the existing
+// busybees text comparator to core's merge and filter stages.
+//
 // triage.go is the triage queue over that list, the four actions it takes on
 // a finding and what each writes back; console.go drives it from a
 // terminal one line at a time (the screen that drives it on single keys is
@@ -128,7 +124,7 @@ type Config struct {
 	Provider string `toml:"provider"`
 	Model    string `toml:"model"`
 	// Angles replaces, for each size it names, the angles a change of that
-	// size is reviewed from (sizeAngles in angles.go): angles.xs =
+	// size is reviewed from (sizeAngles in core/review/angles.go): angles.xs =
 	// ["quick_general"]. A size it leaves out keeps the built-in list, and
 	// context.toml's per-project switches still turn an angle off on top of
 	// either.
@@ -141,7 +137,7 @@ type Config struct {
 	AngleModels map[string]string `toml:"angle_models"`
 	// JudgeModel is accepted and validated so the file has the shape of
 	// bees.toml's roles.reviewer, and has no effect here: the judge of
-	// `bees review` is deterministic code (judge.go), not a session.
+	// `bees review` is deterministic code (core/review/judge.go), not a session.
 	JudgeModel string `toml:"judge_model"`
 	// NotesPath is where the reviewer notes a dismissal appends to live,
 	// StoragePath the directory review artifact directories are created in.

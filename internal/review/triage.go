@@ -442,13 +442,3 @@ func (q *Queue) Summary() string {
 	}
 	return fmt.Sprintf("%s of %s", strings.Join(parts, ", "), text.Count(len(q.Findings()), "finding"))
 }
-
-// Comment is the text a finding is posted as when triage does not edit it:
-// its title, then its body. The suggestion is not in it: the output renders
-// that as a suggestion of its own, and the text is what a person edits.
-func (f *Finding) Comment() string {
-	if f.Body == "" {
-		return f.Title
-	}
-	return f.Title + "\n\n" + f.Body
-}

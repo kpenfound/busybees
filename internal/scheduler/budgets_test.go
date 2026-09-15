@@ -419,26 +419,6 @@ func resultCosting(cost float64) *session.Result {
 	return &session.Result{CostUSD: cost}
 }
 
-// TestOverBudgetStreak: the streak is per work item, and any session within
-// budget clears it — two expensive sessions a week apart are not a pattern.
-func TestOverBudgetStreak(t *testing.T) {
-	h := newHarness(t, baseTOML)
-	for i, want := range []int{1, 2, 3} {
-		if got := h.sched.overBudgetStreak(budgetSubject{Work: "issue-1"}, true); got != want {
-			t.Fatalf("over-budget session %d: streak %d want %d", i+1, got, want)
-		}
-	}
-	if got := h.sched.overBudgetStreak(budgetSubject{Work: "issue-1"}, false); got != 0 {
-		t.Errorf("a session within budget should clear the streak, got %d", got)
-	}
-	if got := h.sched.overBudgetStreak(budgetSubject{Work: "issue-1"}, true); got != 1 {
-		t.Errorf("streak after the reset: got %d want 1", got)
-	}
-	if got := h.sched.overBudgetStreak(budgetSubject{Work: "issue-2"}, true); got != 1 {
-		t.Errorf("another work item shares the streak: got %d want 1", got)
-	}
-}
-
 func TestBudgetKey(t *testing.T) {
 	withIssue := sessionSpec{role: config.RoleDeveloper}
 	withIssue.data.Issue = &github.Issue{Number: 12}

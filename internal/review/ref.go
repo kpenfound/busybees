@@ -112,3 +112,6 @@ func dirName(dir string) string {
 	}
 	return dir
 }
+
+// ReviewScope matches reviewer notes against the acquired repository identity.
+func (r Ref) ReviewScope() string { return r.Repo }

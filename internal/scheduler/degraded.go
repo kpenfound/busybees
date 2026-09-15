@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"sort"
-	"time"
 
 	"github.com/kpenfound/busybees/internal/logging"
 	"github.com/kpenfound/busybees/internal/state"
@@ -17,23 +15,13 @@ import (
 // way reports its outcome here, so a broken one shows up in the run's summary
 // stream, in status.json and in `bees status` instead of only in the log.
 //
-// This is bookkeeping, not policy: recording a failure never changes what the
-// scheduler does next.
+// Core tracks the streak; this adapter decides how a crossing is surfaced.
+// Recording a failure never changes what the scheduler dispatches next.
 
 // degradedEscalateAfter is how many consecutive failures of one operation
 // make it a person's problem. One failure is usually a transient GitHub
 // error; three in a row is a breakage that will not fix itself.
 const degradedEscalateAfter = 3
-
-// opFailure is the current failure streak of one named operation. It exists
-// only while the operation is failing: a success deletes it.
-type opFailure struct {
-	count     int
-	first     time.Time
-	last      time.Time
-	err       string
-	escalated bool
-}
 
 // op records the outcome of a named factory operation. A nil err clears the
 // operation's failure streak; a non-nil err logs the warning that used to be
@@ -65,26 +53,12 @@ func (s *Scheduler) opAs(log *slog.Logger, level slog.Level, name string, err er
 // as a single line naming the item, so each mutation records its own streak
 // here without adding a line of its own.
 func (s *Scheduler) track(name string, err error) bool {
-	if err == nil {
-		s.mu.Lock()
-		delete(s.degraded, name)
-		s.mu.Unlock()
-		return false
+	message := ""
+	if err != nil {
+		message = oneLine(err.Error(), escalationNoteLimit)
 	}
-	now := s.now()
-	s.mu.Lock()
-	e := s.degraded[name]
-	if e == nil {
-		e = &opFailure{first: now}
-		s.degraded[name] = e
-	}
-	e.count++
-	e.last = now
-	e.err = oneLine(err.Error(), escalationNoteLimit)
-	shout := e.count >= degradedEscalateAfter && !e.escalated
-	e.escalated = e.escalated || shout
-	count, last := e.count, e.err
-	s.mu.Unlock()
+	e, shout := s.degraded.Record(name, err != nil, message, s.now(), degradedEscalateAfter)
+	count, last := e.Count, e.LastError
 
 	if shout {
 		// Deliberately no GitHub comment and no mail: there is no issue to
@@ -94,26 +68,9 @@ func (s *Scheduler) track(name string, err error) bool {
 		s.log.Error(fmt.Sprintf("⚠ %s has failed %d times in a row: %s", name, count, last),
 			logging.SummaryKey, true, "op", name, "failures", count, "err", last)
 	}
-	return true
+	return err != nil
 }
 
 // degradedLocked snapshots the failing operations for status.json, sorted by
 // operation name so the file is stable between writes. The caller holds s.mu.
-func (s *Scheduler) degradedLocked() []state.OpFailure {
-	if len(s.degraded) == 0 {
-		return nil
-	}
-	out := make([]state.OpFailure, 0, len(s.degraded))
-	for name, e := range s.degraded {
-		out = append(out, state.OpFailure{
-			Op:        name,
-			Count:     e.count,
-			First:     e.first,
-			Last:      e.last,
-			LastError: e.err,
-			Escalated: e.escalated,
-		})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Op < out[j].Op })
-	return out
-}
+func (s *Scheduler) degradedLocked() []state.OpFailure { return s.degraded.Snapshot() }

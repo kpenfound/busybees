@@ -91,3 +91,72 @@ lists leave the schema unrestricted; the callback remains responsible for policy
 contract. Each call receives a copy of the default work tags. Busybees uses this
 adapter to keep issue/PR fields and their defaults, state migration and PR outcome
 requirements outside core.
+
+## Operational primitives
+
+`ops` contains reusable pieces for caller-owned reconcile loops. It does not
+poll a tracker, choose a workflow, log, or escalate work:
+
+- `ClassifyFailure`, `RetryPolicy.Decide`, `SelectModel` and `Sleep` preserve
+  reported-outcome precedence, retry counts, delays and fallback selection.
+- `Ledger` appends, reads and atomically trims JSONL accounting. Share one
+  instance per file to serialize append/trim. `Now` supplies timestamps for
+  entries without one; reads skip malformed lines, trims preserve their bytes,
+  and a read error never returns partial totals. Schema migration is external.
+- `Spend` selects opaque work keys and an inclusive time cutoff. `OverBudget`
+  uses a strict threshold with nonpositive limits unlimited. `EvaluateWindow`
+  returns reached/crossed/released signals with caller-supplied hysteresis and
+  window. `Streaks` counts consecutive crossings per comparable subject.
+- `PauseUntil` and `CapacityPause` calculate reset/backoff, extend episodes
+  without shortening them and report release once. `Degraded` resets on success
+  and reports one threshold crossing per failure streak, with sorted snapshots.
+- `Bus` stamps events with an injected clock and drops new events for a full
+  subscriber buffer. Work keys and tags, event kinds, roles, phases and outcomes
+  carry caller meaning only; each subscriber receives independent work tags.
+- `SharedPool` gives all-or-none claims to queued members in FIFO order. Call
+  `Pass` after each dispatch pass and `Leave` when a loop stops; release active
+  claims normally. Claims must fit the pool. Wake callbacks must not block or
+  call back into the pool because they run under its lock.
+- `NewWake` creates one coalescing wake per loop. `Wait` services local work
+  without resetting the caller's tick source and stops on cancellation. A ready
+  tick consumes a pending wake; `Drain` also lets an immediate full pass consume
+  it. The caller owns timers, full passes, and how many loops exist.
+
+Busybees keeps one loop per project. Its adapter chooses the 24-hour budget
+window, retention floor, retry configuration, eight-hour reported-reset cap,
+two-session budget streak and three-failure degraded threshold. It renders
+status and logs, maps work to GitHub and decides what operational signals do.
+
+## Review pipeline
+
+`review.Runner[R].Run` takes an artifact directory, `review.Bundle[R]` and a
+supplied diff. Context items retain their source names, content and order;
+skipped-source reasons pass through to the brief. `R` is the caller's reference
+type, with display text, a URL and an opaque scope for reviewer-note rules.
+Its JSON representation is preserved in `brief.json`; it must support decoding
+when artifacts are read back. Core does not interpret tracker identity.
+
+Supply `Distiller.Agent` and `Angles.Agent` through the small `review.Agent`
+interface. `Angles.AgentFor` can select a prepared agent and recorded model for
+each angle; timeout, turn-limit and backend settings belong to those agents.
+`Settings` enables angles and pins category severities. `Angles.Sized` overrides
+size selection. The judge merges findings deterministically, without a session.
+
+`Runner.Compare` supplies text comparison for both duplicate findings and note
+rules. Nil disables text matching; overlapping findings in the same file, side
+and category still merge. Rule scopes are opaque strings with `*` and empty
+values matching any scope. `Runner.Rules` filters findings; `Angles.Rules`
+provides the rules included in angle prompts.
+
+The caller owns directory naming and acquisition. `Angles.Prepare` optionally
+supplies a working directory; otherwise angles use `Angles.Dir` or an artifact
+scratch directory. Core writes the diff only into a directory the review owns,
+never into `Angles.Dir`. Before the brief is persisted, an error removes the
+artifact directory and acquired files in it. Later errors retain the completed
+stages for inspection. One failed angle is non-fatal when another succeeds.
+
+Artifacts keep `brief.json`, `angles/<angle>.json`, `findings.json` and
+`triage.json`. `ReadArtifact[R]` reads partial artifacts after the brief; the
+caller owns interactive triage and publication. Progress callbacks run on the
+angle goroutines and must be concurrency-safe. Runs preserve reported session
+IDs, turns and costs; the brief preserves its session ID and cost.

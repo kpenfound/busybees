@@ -30,12 +30,12 @@ import (
 	"sort"
 	"strings"
 	"time"
-
 	// scheduler.timezone must resolve on hosts without a system zoneinfo
 	// database (minimal containers), so embed one.
 	_ "time/tzdata"
 
 	"github.com/BurntSushi/toml"
+	"github.com/kpenfound/busybees/core/ops"
 	"github.com/kpenfound/busybees/internal/logging"
 )
 
@@ -598,7 +598,7 @@ var KnownReviewAngles = []string{"quick_general", "general", "docs", "test_cover
 
 // DefaultReviewAngles are the angles a pull request of each size is reviewed
 // from when roles.reviewer.angles does not name that size. It is a copy of
-// sizeAngles in internal/review/angles.go: change both together.
+// sizeAngles in core/review/angles.go: change both together.
 var DefaultReviewAngles = map[string][]string{
 	"xs": {"quick_general", "docs"},
 	"s":  {"quick_general", "docs"},
@@ -744,15 +744,7 @@ func (c *Config) Merge() MergePolicy {
 }
 
 // RetryPolicy is the resolved [scheduler] retry configuration.
-type RetryPolicy struct {
-	// Retries is the number of extra attempts a session gets after an
-	// infrastructure failure. 0 means a session runs exactly once.
-	Retries int
-	// Delay is how long to wait before an attempt is repeated.
-	Delay time.Duration
-	// WithFallback runs a retry with the role's fallback model as primary.
-	WithFallback bool
-}
+type RetryPolicy = ops.RetryPolicy
 
 // Retry returns the resolved retry policy.
 func (c *Config) Retry() RetryPolicy {

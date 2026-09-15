@@ -1,9 +1,7 @@
 package scheduler
 
 import (
-	"time"
-
-	"github.com/kpenfound/busybees/core/work"
+	"github.com/kpenfound/busybees/core/ops"
 )
 
 // Event kinds published on the scheduler's event stream.
@@ -40,72 +38,7 @@ const (
 // which is still written after every pass: the event stream says when
 // something happened, status.json says what the factory currently looks
 // like.
-type Event struct {
-	Work work.Ref `json:"work"`
-	// Kind is one of the Event* constants above.
-	Kind string
-	// Activity identifies a review pipeline within this project's stream.
-	// The matching judge's session events carry the same identity.
-	Activity string
-	// Started and Phase describe review activity throughout its lifecycle.
-	// Phase is "brief" or "angles"; Completed includes failed angles.
-	Started   time.Time
-	Phase     string
-	Completed int
-	Total     int
-	// Success is set on review-ended only. Err explains a failed end.
-	Success bool
-	// Time is the scheduler's clock when the event was published.
-	Time time.Time
-	// Role is the role of the session or review activity; empty for a poll.
-	// A stage event carries the developer role, since a stage belongs to a
-	// developer worker.
-	Role string
-	// Session is the session name (the directory under sessions/), empty
-	// for review, stage and poll events.
-	Session string
-	// Dir is the session's own directory, where its transcript.jsonl is
-	// written. It is set on session-started only — that is where a view
-	// learns which directory to follow, and the name alone cannot say:
-	// NewSessionDir stamps a timestamp on the front and a random suffix on
-	// the end of it.
-	Dir string
-
-	// Stage is the developer worker's stage on a stage event, empty
-	// otherwise.
-	Stage string
-	// Round is the review round a stage, review or session event belongs to.
-	Round int
-	// Model is the model the session runs with and Fallback marks a
-	// session running on the role's fallback model
-	// (scheduler.retry_with_fallback). Both are set on session-started
-	// only: a view renders them for a session that is still running, and
-	// the model a finished session used is in the ledger.
-	Model    string
-	Fallback bool
-	// Sandbox is the mode the session is boxed in (config.SandboxModes),
-	// set on session-started only, for the same reason as Model: a view
-	// renders it for a session that is still running.
-	Sandbox string
-	// Outcome and Note are what a finished session reported, or the
-	// synthetic "failed" of a session that reported nothing.
-	Outcome string
-	Note    string
-	// Turns, CostUSD and Duration are what a finished session took, cost
-	// and how long it ran. An agent reports all three in the event that ends
-	// its stream, so they arrive with session-ended and never before it.
-	// CostKnown is false when a session ended without that event (a signalled
-	// process, most often) and for every codex session, which reports tokens
-	// rather than a price; in either case CostUSD is not a real zero but an
-	// unpriced session.
-	Turns     int
-	CostUSD   float64
-	CostKnown bool
-	Duration  time.Duration
-	// Err is set on a poll that failed and on a session that could not be
-	// run at all, or on a failed review activity.
-	Err string
-}
+type Event = ops.Event
 
 // eventBuffer is how far behind a subscriber may fall before its events
 // start being dropped. It is generous enough that a view redrawing at any
@@ -118,31 +51,9 @@ const eventBuffer = 64
 // nothing down and loses events instead. It is never closed — a subscriber
 // lives as long as the scheduler does — and callers must not assume they
 // are the only one.
-func (s *Scheduler) Subscribe() <-chan Event {
-	ch := make(chan Event, eventBuffer)
-	s.evMu.Lock()
-	s.subs = append(s.subs, ch)
-	s.evMu.Unlock()
-	return ch
-}
+func (s *Scheduler) Subscribe() <-chan Event { return s.events.Subscribe() }
 
-// publish sends ev to every subscriber, stamping it with the scheduler's
-// clock (never time.Now, so two runs of the same fixture produce the same
-// events). It never blocks: a subscriber whose buffer is full is skipped.
-func (s *Scheduler) publish(ev Event) {
-	ev.Time = s.now()
-	s.evMu.Lock()
-	subs := s.subs
-	s.evMu.Unlock()
-	// The slice is only ever appended to, so iterating the snapshot taken
-	// under the lock is safe while another goroutine subscribes.
-	for _, ch := range subs {
-		select {
-		case ch <- ev:
-		default:
-		}
-	}
-}
+func (s *Scheduler) publish(ev Event) { s.events.Publish(ev) }
 
 // sessionEvent builds the event for a session, filled in with the issue and
 // pull request it is about.

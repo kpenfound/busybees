@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kpenfound/busybees/core/ops"
 	"github.com/kpenfound/busybees/core/work"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/ghwork"
@@ -120,10 +121,8 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (_ *sessio
 	if spec.judge {
 		role = role.ForJudge()
 	}
-	fallback := spec.useFallback && role.FallbackModel != ""
-	if fallback {
-		role.Model = role.FallbackModel
-	}
+	model, fallback := ops.SelectModel(role.Model, role.FallbackModel, spec.useFallback)
+	role.Model = model
 	s.setWorkerSandbox(spec.worker, role.Sandbox)
 	if err := s.store.EnsureNotes(spec.role); err != nil {
 		return nil, err
@@ -555,70 +554,6 @@ func (s *Scheduler) sentSinceFrom(from, role string, issue, pr int, t time.Time)
 	return false
 }
 
-// failureKind classifies why a session did not produce a usable result.
-type failureKind int
-
-const (
-	// failureNone is the zero value: the session produced a result.
-	failureNone failureKind = iota
-	// failureInfra is a failure of the machinery around the model — a
-	// timeout, an API error, exhausted turns, a crashed agent process.
-	// Retrying it later is likely to work.
-	failureInfra
-	// failureBehavioural is the session itself: it ran and reported (even
-	// `failed`), or chose not to report at all. Running it again would only
-	// repeat the same decision.
-	failureBehavioural
-)
-
-func (k failureKind) String() string {
-	switch k {
-	case failureNone:
-		return "none"
-	case failureInfra:
-		return "infrastructure"
-	case failureBehavioural:
-		return "behavioural"
-	}
-	return "unknown"
-}
-
-// classifyFailure decides whether a finished session is worth retrying.
-func classifyFailure(res *session.Result) failureKind {
-	switch {
-	case res.HasOutcome && res.Outcome.Status != "":
-		// The session ran and said what happened; retrying changes nothing.
-		return failureBehavioural
-	case res.TimedOut:
-		return failureInfra
-	case res.IsError, res.ExitCode != 0:
-		return failureInfra
-	case rateLimitedText(res.ResultText):
-		return failureInfra
-	default:
-		// Clean exit, no error, no outcome: the model chose not to report.
-		return failureBehavioural
-	}
-}
-
-// infraReason names an infrastructure failure for logs and escalations.
-func infraReason(res *session.Result) string {
-	switch {
-	case res.TimedOut:
-		return "timed out"
-	case res.ErrorSubtype == "error_max_turns":
-		return "ran out of turns"
-	case rateLimitedText(res.ResultText):
-		return "rate limited or overloaded"
-	case res.ErrorSubtype != "":
-		return "session error (" + res.ErrorSubtype + ")"
-	case res.ExitCode != 0:
-		return fmt.Sprintf("the agent exited with code %d", res.ExitCode)
-	default:
-		return "unknown"
-	}
-}
-
 // runSessionWithRetry runs a session and repeats it, up to
 // scheduler.retries times, while it keeps failing for infrastructure
 // reasons. The result of the last attempt is returned either way, except
@@ -634,7 +569,7 @@ func (s *Scheduler) runSessionWithRetry(ctx context.Context, spec sessionSpec) (
 			// Its own name, so <state_dir>/sessions/ keeps both transcripts.
 			try.name = fmt.Sprintf("%s-retry%d", spec.name, attempt-1)
 			try.data.Retry = attempt - 1
-			try.useFallback = policy.WithFallback
+			try.useFallback = policy.Decide(attempt-1, true).UseFallback
 			// A resumed launch that failed may have failed on the resume
 			// itself (an id claude no longer has): the retry starts fresh.
 			try.resumeID = ""
@@ -664,14 +599,14 @@ func (s *Scheduler) runSessionWithRetry(ctx context.Context, spec sessionSpec) (
 			s.log.Warn("session over its cost budget; treating it as failed",
 				"role", spec.role, "session", try.name, "cost_usd", res.CostUSD,
 				"max_cost_per_session", s.cfg.Scheduler.MaxCostPerSession, "consecutive", streak)
-			if streak >= overBudgetEscalateAfter || attempt > policy.Retries {
+			if streak >= overBudgetEscalateAfter || !policy.Decide(attempt, true).Retry {
 				return failedResult(res, overBudgetNote(note, streak, spec.role)), nil
 			}
 			// One expensive session can be bad luck, so it is retried like
 			// an infrastructure failure — with the role's fallback model
 			// when scheduler.retry_with_fallback is on, which is usually the
 			// cheaper one.
-			if err := sleepCtx(ctx, policy.Delay); err != nil {
+			if err := ops.Sleep(ctx, policy.Decide(attempt, true).Delay); err != nil {
 				return failedResult(res, note), err
 			}
 			continue
@@ -679,14 +614,15 @@ func (s *Scheduler) runSessionWithRetry(ctx context.Context, spec sessionSpec) (
 		if s.cfg.Scheduler.MaxCostPerSession > 0 {
 			s.overBudgetStreak(budgetKey(spec), false)
 		}
-		kind := classifyFailure(res)
-		if kind != failureInfra || attempt > policy.Retries {
+		kind := ops.ClassifyFailure(res)
+		decision := policy.Decide(attempt, kind == ops.FailureInfra)
+		if !decision.Retry {
 			return res, nil
 		}
 		s.log.Warn("session failed; retrying",
 			"role", spec.role, "session", try.name, "attempt", attempt,
-			"kind", kind.String(), "reason", infraReason(res), "in", policy.Delay)
-		if err := sleepCtx(ctx, policy.Delay); err != nil {
+			"kind", kind.String(), "reason", ops.InfraReason(res), "in", policy.Delay)
+		if err := ops.Sleep(ctx, decision.Delay); err != nil {
 			return res, err
 		}
 	}
@@ -708,14 +644,14 @@ func overBudgetNote(note string, streak int, role string) string {
 // badly, naming the classification and, for infrastructure failures, how
 // many attempts were made.
 func (s *Scheduler) sessionFailure(role string, res *session.Result, status, note string) string {
-	if classifyFailure(res) != failureInfra {
+	if ops.ClassifyFailure(res) != ops.FailureInfra {
 		return fmt.Sprintf("The %s session ended with `%s`: %s", roleTitle(role), status, note)
 	}
 	attempts := s.cfg.Retry().Retries + 1
 	if attempts == 1 {
-		return fmt.Sprintf("The %s session failed for infrastructure reasons (%s): %s", roleTitle(role), infraReason(res), note)
+		return fmt.Sprintf("The %s session failed for infrastructure reasons (%s): %s", roleTitle(role), ops.InfraReason(res), note)
 	}
-	return fmt.Sprintf("The %s session failed %d times for infrastructure reasons (%s): %s", roleTitle(role), attempts, infraReason(res), note)
+	return fmt.Sprintf("The %s session failed %d times for infrastructure reasons (%s): %s", roleTitle(role), attempts, ops.InfraReason(res), note)
 }
 
 // outcomeOf returns the session's reported status, or a synthetic one when

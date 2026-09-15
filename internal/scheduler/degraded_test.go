@@ -212,8 +212,8 @@ func TestOpWithoutAnErrorRecordsNothing(t *testing.T) {
 	}
 	h.sched.mu.Lock()
 	defer h.sched.mu.Unlock()
-	if len(h.sched.degraded) != 0 {
-		t.Fatalf("a success created an entry: %v", h.sched.degraded)
+	if len(h.sched.degraded.Snapshot()) != 0 {
+		t.Fatalf("a success created an entry: %v", h.sched.degraded.Snapshot())
 	}
 	if got := h.logs.String(); got != "" {
 		t.Errorf("a success logged: %q", got)
