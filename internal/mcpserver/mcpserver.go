@@ -34,9 +34,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/kpenfound/busybees/core/mcphost"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/feedback"
 	"github.com/kpenfound/busybees/internal/issues"
@@ -124,18 +124,19 @@ func New(env Env, deps Deps) *mcp.Server {
 	if s.drafts == nil && env.StateDir != "" {
 		s.drafts = feedback.Open(state.New(env.StateDir).FeedbackDir())
 	}
-	srv := mcp.NewServer(&mcp.Implementation{
-		Name:    config.BuiltinMCPServer,
-		Title:   "busybees",
-		Version: Version,
-	}, nil)
+	srv := mcphost.NewRegistry(config.Roles, mcphost.AllTools, mcphost.AllTools)
 	s.addMailTools(srv)
 	s.addIssueTools(srv)
 	s.addGitHubTools(srv)
 	s.addFeedbackTools(srv)
 	s.addNotesTools(srv)
 	s.addDoneTool(srv)
-	return srv
+	host, err := srv.NewServer(env.Role, mcp.Implementation{Name: config.BuiltinMCPServer, Title: "busybees", Version: Version})
+	if err != nil {
+		// Both fallback policies accept every role.
+		panic(err)
+	}
+	return host
 }
 
 // Version is reported to the client during the initialize handshake. It is
@@ -147,24 +148,4 @@ func text(format string, args ...any) *mcp.CallToolResult {
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf(format, args...)}},
 	}
-}
-
-// schemaFor infers the input schema of In and constrains the named
-// properties to the given values. A nil or empty value list leaves the
-// property unconstrained.
-func schemaFor[In any](enums map[string][]string) *jsonschema.Schema {
-	s, err := jsonschema.For[In](nil)
-	if err != nil {
-		panic(fmt.Sprintf("mcpserver: schema for %T: %v", *new(In), err))
-	}
-	for prop, values := range enums {
-		p, ok := s.Properties[prop]
-		if !ok {
-			panic(fmt.Sprintf("mcpserver: %T has no property %q", *new(In), prop))
-		}
-		for _, v := range values {
-			p.Enum = append(p.Enum, v)
-		}
-	}
-	return s
 }

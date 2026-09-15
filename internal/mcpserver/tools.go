@@ -7,6 +7,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/kpenfound/busybees/core/mcphost"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/issues"
@@ -31,23 +32,23 @@ type mailListInput struct {
 	PR     int  `json:"pr,omitempty" jsonschema:"only messages about this pull request"`
 }
 
-func (s *server) addMailTools(srv *mcp.Server) {
-	mcp.AddTool(srv, &mcp.Tool{
+func (s *server) addMailTools(srv *mcphost.Registry) {
+	mcphost.AddTool(srv, &mcp.Tool{
 		Name:  "mail_send",
 		Title: "Send mail to another role",
 		Description: "Send a message to another role in the factory. The mailbox is the only " +
 			"channel between roles: never talk to a role through a GitHub comment. Attach the " +
 			"issue and/or PR the message is about so it reaches the session working on it; both " +
 			"default to this session's issue and PR.",
-		InputSchema: schemaFor[mailSendInput](map[string][]string{"to": config.Roles}),
+		InputSchema: mcphost.SchemaFor[mailSendInput](map[string][]string{"to": config.Roles}),
 	}, s.mailSend)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	mcphost.AddTool(srv, &mcp.Tool{
 		Name:        "mail_list",
 		Title:       "Read the mailbox",
 		Description: "List messages in the local mailbox in full. Mail addressed to this session is already included in the task prompt; use this to look further back.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-		InputSchema: schemaFor[mailListInput](nil),
+		InputSchema: mcphost.SchemaFor[mailListInput](nil),
 	}, s.mailList)
 }
 
@@ -116,23 +117,23 @@ type issueLinkInput struct {
 	Child  int `json:"child" jsonschema:"issue to attach as a sub-issue"`
 }
 
-func (s *server) addIssueTools(srv *mcp.Server) {
-	mcp.AddTool(srv, &mcp.Tool{
+func (s *server) addIssueTools(srv *mcphost.Registry) {
+	mcphost.AddTool(srv, &mcp.Tool{
 		Name:  "issue_create",
 		Title: "Create a factory issue",
 		Description: "Create a GitHub issue the way the factory needs it: with the visibility " +
 			"label and assignee, the kind and state labels, attached to its parent feature as a " +
 			"sub-issue and in the inherited milestone. Always use this instead of `gh issue create`.",
-		InputSchema: schemaFor[issueCreateInput](nil),
+		InputSchema: mcphost.SchemaFor[issueCreateInput](nil),
 	}, s.issueCreate)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	mcphost.AddTool(srv, &mcp.Tool{
 		Name:  "issue_link",
 		Title: "Attach an issue to a feature",
 		Description: "Attach an existing issue to a feature issue as a GitHub sub-issue, so the feature's " +
 			"progress shows on GitHub. It also puts the issue in the feature's milestone when the issue " +
 			"is in none; a milestone it already has is left alone.",
-		InputSchema: schemaFor[issueLinkInput](nil),
+		InputSchema: mcphost.SchemaFor[issueLinkInput](nil),
 	}, s.issueLink)
 }
 

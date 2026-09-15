@@ -7,6 +7,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/kpenfound/busybees/core/mcphost"
 	"github.com/kpenfound/busybees/internal/state"
 )
 
@@ -59,8 +60,8 @@ type notesWriteInput struct {
 	Text string `json:"text" jsonschema:"the complete new notes, markdown, replacing everything there was: keep the standard headings and everything still true"`
 }
 
-func (s *server) addNotesTools(srv *mcp.Server) {
-	mcp.AddTool(srv, &mcp.Tool{
+func (s *server) addNotesTools(srv *mcphost.Registry) {
+	mcphost.AddTool(srv, &mcp.Tool{
 		Name:  "notes_read",
 		Title: "Read your notes",
 		Description: "Read your role's notes: the only memory it keeps between sessions, as one " +
@@ -69,10 +70,10 @@ func (s *server) addNotesTools(srv *mcp.Server) {
 			"(decisions and why, gotchas, conventions no document states), not a log of what " +
 			"sessions did.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-		InputSchema: schemaFor[notesReadInput](nil),
+		InputSchema: mcphost.SchemaFor[notesReadInput](nil),
 	}, s.notesRead)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	mcphost.AddTool(srv, &mcp.Tool{
 		Name:  "notes_write",
 		Title: "Replace your notes",
 		Description: "Replace your role's notes with the given text. The write is the whole text, " +
@@ -82,7 +83,7 @@ func (s *server) addNotesTools(srv *mcp.Server) {
 			"elsewhere: what this session did, git history, the code, the repository's docs, " +
 			"issues and pull requests. An empty text is refused; nothing keeps " +
 			"a copy of what a write replaces.",
-		InputSchema: schemaFor[notesWriteInput](nil),
+		InputSchema: mcphost.SchemaFor[notesWriteInput](nil),
 	}, s.notesWrite)
 }
 

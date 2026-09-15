@@ -1,4 +1,4 @@
-# Core agent runner
+# Core factory components
 
 `github.com/kpenfound/busybees/core` is a standalone Go module. It imports no
 package from the busybees root module. Build and test from this directory:
@@ -65,3 +65,29 @@ server. `agentbin` refuses real agent and engine executables from test binaries.
 The container fake records commands and simulates lifecycle operations without
 starting Docker. Busybees adapter tests use these same fakes for its environment,
 identity and MCP contracts.
+
+## MCP host
+
+`mcphost.NewRegistry` accepts arbitrary role names and separate policies for an
+empty role and an unknown role: `RejectRole`, `AllTools` or `NoTools`.
+`mcphost.AddTool` registers an SDK typed handler, metadata and optional role
+scope. With no scope, every known role gets the tool. Duplicate tool names and
+unknown scopes panic during registration; hidden and unknown tools receive the
+SDK's unknown-tool error. `SchemaFor` adds enums to an inferred input schema.
+
+`Registry.NewServer` takes a role and SDK implementation metadata and returns an
+independent server snapshot. Registration copies metadata and scopes. Handlers
+receive independently decoded inputs; callers synchronize mutable collaborators.
+`Connect` and `Tools` use an in-memory client. `Run` accepts SDK transports,
+including stdio, and treats ordinary client closure as success. `ServeHTTP` owns
+an already-bound listener, requires a bearer token and closes on cancellation.
+The caller owns address announcements and environment variable names.
+
+`AddDone` registers a generic outcome tool with status and note inputs.
+`DoneOptions` supplies the advertised statuses, description, default `work.Ref`
+and a reporting callback that validates and records `agent.Outcome`. Empty status
+lists leave the schema unrestricted; the callback remains responsible for policy.
+`AddDoneTool` accepts a custom typed input and decoder for an existing wire
+contract. Each call receives a copy of the default work tags. Busybees uses this
+adapter to keep issue/PR fields and their defaults, state migration and PR outcome
+requirements outside core.
