@@ -563,20 +563,21 @@ func writeOpenCodeConfig(path, instructions string, entries map[string]MCPEntry)
 // opencodeEvent is one line of `opencode run --format json`, reduced to
 // the fields the runner reads.
 type opencodeEvent struct {
-	Type      string `json:"type"`
-	SessionID string `json:"sessionID"`
-	Part      struct {
-		Type   string  `json:"type"`
-		Text   string  `json:"text"`
-		Reason string  `json:"reason"`
-		Cost   float64 `json:"cost"`
-	} `json:"part"`
-	Error struct {
-		Name string `json:"name"`
-		Data struct {
-			Message string `json:"message"`
-		} `json:"data"`
-	} `json:"error"`
+    Type          string `json:"type"`
+    SessionID     string `json:"sessionID"`
+    SessionIDAlt  string `json:"session_id"`
+    Part          struct {
+        Type   string  `json:"type"`
+        Text   string  `json:"text"`
+        Reason string  `json:"reason"`
+        Cost   float64 `json:"cost"`
+    } `json:"part"`
+    Error struct {
+        Name string `json:"name"`
+        Data struct {
+            Message string `json:"message"`
+        } `json:"data"`
+    } `json:"error"`
 }
 
 // consume reads opencode's event stream. The session id is on every event,
@@ -598,7 +599,11 @@ func (opencodeBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer
 			return
 		}
 		if sessionID == "" {
-			sessionID = ev.SessionID
+			if ev.SessionID != "" {
+				sessionID = ev.SessionID
+			} else {
+				sessionID = ev.SessionIDAlt
+			}
 		}
 		switch typ {
 		case "text":
