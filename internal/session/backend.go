@@ -424,6 +424,21 @@ func (codexBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer) (
 
 // opencodeBackend runs a session as `opencode run --format json`,
 // opencode's non-interactive mode.
+
+// makeSuccessEnd creates a generic successful streamEnd used when a backend
+// finishes without an explicit end event.
+func makeSuccessEnd(sessionID, result string, turns int, cost float64, costKnown bool) *streamEnd {
+    return &streamEnd{
+        SessionID: sessionID,
+        Result:    result,
+        IsError:   false,
+        Subtype:   "success",
+        NumTurns:  turns,
+        CostUSD:   cost,
+        CostKnown: costKnown,
+    }
+}
+// opencode's non-interactive mode.
 //
 // What differs from claude and from codex, and how each difference is met:
 //
@@ -636,10 +651,14 @@ func (opencodeBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer
 			end = &streamEnd{Subtype: "error", Result: msg}
 		}
 	})
-	if end == nil {
-		return nil, nil, err
-	}
-	end.SessionID = sessionID
+if end == nil {
+    if lastText != "" {
+        end = makeSuccessEnd(sessionID, lastText, turns, cost, costKnown)
+    } else {
+        return nil, nil, err
+    }
+}
+end.SessionID = sessionID
 	end.NumTurns = turns
 	end.CostUSD, end.CostKnown = cost, costKnown
 	if end.Result == "" {

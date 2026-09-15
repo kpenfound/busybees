@@ -263,9 +263,9 @@ echo '{"type":"step_finish","sessionID":"ses_4","part":{"type":"step-finish","re
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !res.IsError || res.ErrorSubtype != "no_result" || res.NumTurns != 2 || res.CostKnown {
+if res.IsError || res.ErrorSubtype != "" || res.NumTurns != 2 || !res.CostKnown || res.CostUSD != 0.2 || res.ResultText != "half way" {
 		t.Fatalf("result: %+v", res)
-	}
+		}
 }
 
 // TestOpenCodeCommandResumes: a request naming a session to resume passes
