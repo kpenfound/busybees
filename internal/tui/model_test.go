@@ -1323,51 +1323,58 @@ func reviewActivity(kind string) scheduler.Event {
 }
 
 func TestReviewActivityUpdatesAndHandsOffInPlace(t *testing.T) {
-	m := New(Deps{Now: func() time.Time { return fixed }})
-	m.width, m.height = 140, panelHeight
-	ev := reviewActivity(scheduler.EventReviewStarted)
-	m.apply(0, ev)
-	m.apply(0, scheduler.Event{Kind: scheduler.EventSessionStarted, Session: "other", Role: config.RoleDeveloper, Time: fixed})
-	if len(m.sessions) != 2 || m.sessions[0].activity == nil {
-		t.Fatalf("brief rows: %+v", m.sessions)
-	}
-	for _, want := range []string{"reviewer", "#12", "#31", "review: brief", "1m0s"} {
-		if view := plain(m.nowPanel(136, 5, 0)); !strings.Contains(view, want) {
-			t.Errorf("brief lacks %q:\n%s", want, view)
-		}
-	}
-	ev.Kind, ev.Phase, ev.Total = scheduler.EventReviewProgress, "angles", 3
-	for completed := 0; completed <= 3; completed++ {
-		ev.Completed = completed
-		m.apply(0, ev)
-		m.apply(0, ev) // repeated updates must not add a row
-		if len(m.sessions) != 2 || m.sessions[0].started != ev.Started || m.cursor != 0 {
-			t.Fatalf("progress moved the row: %+v", m.sessions)
-		}
-		want := fmt.Sprintf("review: angles %d/3 done", completed)
-		if view := plain(m.nowPanel(136, 5, 0)); !strings.Contains(view, want) {
-			t.Errorf("progress lacks %q:\n%s", want, view)
-		}
-	}
-	ev.Kind, ev.Success = scheduler.EventReviewEnded, true
-	m.apply(0, ev)
-	if len(m.sessions) != 2 || m.sessions[0].activity == nil || len(m.recent) != 0 {
-		t.Fatal("successful pipeline disappeared before the judge")
-	}
-	judge := scheduler.Event{Kind: scheduler.EventSessionStarted, Activity: ev.Activity,
-		Session: "judge", Role: config.RoleReviewer, Dir: t.TempDir(), Issue: 12, PR: 31,
-		Round: 2, Time: fixed, Model: "sonnet", Sandbox: config.SandboxNone}
-	m.apply(0, judge)
-	if len(m.sessions) != 2 || m.sessions[0].activity != nil || m.sessions[0].name != "judge" || m.sessions[1].name != "other" || m.cursor != 0 || len(m.recent) != 0 {
-		t.Fatalf("handoff: %+v", m.sessions)
-	}
-	if s, ok := m.selection(); !ok || s.dir != judge.Dir || s.model != judge.Model || s.started != fixed {
-		t.Fatalf("judge is not an ordinary selectable session: %+v, %v", s, ok)
-	}
-	judge.Kind, judge.Turns, judge.CostUSD, judge.CostKnown = scheduler.EventSessionEnded, 4, 0.5, true
-	m.apply(0, judge)
-	if len(m.sessions) != 1 || len(m.recent) != 1 || m.projects[0].spent[spendKey(12, config.RoleReviewer)].cost != 0.5 {
-		t.Fatal("judge end did not use ordinary session accounting")
+	for _, total := range []int{0, 3} {
+		t.Run(fmt.Sprintf("angles=%d", total), func(t *testing.T) {
+			m := New(Deps{Now: func() time.Time { return fixed }})
+			m.width, m.height = 140, panelHeight
+			ev := reviewActivity(scheduler.EventReviewStarted)
+			m.apply(0, ev)
+			m.apply(0, scheduler.Event{Kind: scheduler.EventSessionStarted, Session: "other", Role: config.RoleDeveloper, Time: fixed})
+			if len(m.sessions) != 2 || m.sessions[0].activity == nil {
+				t.Fatalf("brief rows: %+v", m.sessions)
+			}
+			for _, want := range []string{"reviewer", "#12", "#31", "review: brief", "1m0s"} {
+				if view := plain(m.nowPanel(136, 5, 0)); !strings.Contains(view, want) {
+					t.Errorf("brief lacks %q:\n%s", want, view)
+				}
+			}
+			ev.Kind, ev.Phase, ev.Total = scheduler.EventReviewProgress, "angles", total
+			for completed := 0; completed <= total; completed++ {
+				ev.Completed = completed
+				m.apply(0, ev)
+				m.apply(0, ev) // repeated updates must not add a row
+				if len(m.sessions) != 2 || m.sessions[0].started != ev.Started || m.cursor != 0 {
+					t.Fatalf("progress moved the row: %+v", m.sessions)
+				}
+				want := fmt.Sprintf("review: angles %d/%d done", completed, total)
+				if view := plain(m.nowPanel(136, 5, 0)); !strings.Contains(view, want) {
+					t.Errorf("progress lacks %q:\n%s", want, view)
+				}
+			}
+			ev.Kind, ev.Success = scheduler.EventReviewEnded, true
+			m.apply(0, ev)
+			if len(m.sessions) != 2 || m.sessions[0].activity == nil || len(m.recent) != 0 {
+				t.Fatal("successful pipeline disappeared before the judge")
+			}
+			if view := plain(m.nowPanel(136, 5, 0)); !strings.Contains(view, fmt.Sprintf("review: angles %d/%d done", total, total)) {
+				t.Fatalf("successful pipeline lost its final progress before the judge:\n%s", view)
+			}
+			judge := scheduler.Event{Kind: scheduler.EventSessionStarted, Activity: ev.Activity,
+				Session: "judge", Role: config.RoleReviewer, Dir: t.TempDir(), Issue: 12, PR: 31,
+				Round: 2, Time: fixed, Model: "sonnet", Sandbox: config.SandboxNone}
+			m.apply(0, judge)
+			if len(m.sessions) != 2 || m.sessions[0].activity != nil || m.sessions[0].name != "judge" || m.sessions[1].name != "other" || m.cursor != 0 || len(m.recent) != 0 {
+				t.Fatalf("handoff: %+v", m.sessions)
+			}
+			if s, ok := m.selection(); !ok || s.dir != judge.Dir || s.model != judge.Model || s.started != fixed {
+				t.Fatalf("judge is not an ordinary selectable session: %+v, %v", s, ok)
+			}
+			judge.Kind, judge.Turns, judge.CostUSD, judge.CostKnown = scheduler.EventSessionEnded, 4, 0.5, true
+			m.apply(0, judge)
+			if len(m.sessions) != 1 || len(m.recent) != 1 || m.projects[0].spent[spendKey(12, config.RoleReviewer)].cost != 0.5 {
+				t.Fatal("judge end did not use ordinary session accounting")
+			}
+		})
 	}
 }
 

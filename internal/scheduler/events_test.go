@@ -446,8 +446,9 @@ func assertReviewLifecycle(t *testing.T, events []Event, id string, issue, pr, r
 			lifecycle = append(lifecycle, ev)
 		}
 	}
+	// A negative total means the pipeline failed before AnglesReady.
 	want := 2
-	if total > 0 {
+	if total >= 0 {
 		want += total + 1 // initial 0/total, then every completion
 	}
 	if len(lifecycle) != want {
@@ -464,7 +465,10 @@ func assertReviewLifecycle(t *testing.T, events []Event, id string, issue, pr, r
 		if ev.Activity != id || ev.Role != config.RoleReviewer || ev.Issue != issue || ev.PR != pr || ev.Round != round || ev.Started != start.Started || ev.Session != "" || ev.Dir != "" {
 			t.Errorf("identity at %d: %+v", i, ev)
 		}
-		if i > 0 && total > 0 {
+		if i > 0 && i < len(lifecycle)-1 && ev.Kind != EventReviewProgress {
+			t.Errorf("non-progress event at %d: %+v", i, ev)
+		}
+		if i > 0 && total >= 0 {
 			completed := min(i-1, total)
 			if ev.Phase != "angles" || ev.Total != total || ev.Completed != completed {
 				t.Errorf("progress at %d: %+v, want %d/%d", i, ev, completed, total)
@@ -481,7 +485,7 @@ func TestReviewActivityFailureAndCancellation(t *testing.T) {
 			h.gh.prs[42] = &pr
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			total := 0
+			total := -1
 			switch failure {
 			case "config":
 				if err := os.WriteFile(filepath.Join(h.clone, "context.toml"), []byte("invalid = ["), 0o644); err != nil {
@@ -562,17 +566,29 @@ func TestReviewActivityIsRemovedWhenJudgePreparationFails(t *testing.T) {
 // The total comes from the brief's size, role overrides and project switches,
 // rather than the full built-in angle list or the count of started callbacks.
 func TestReviewActivityCountsEnabledAngles(t *testing.T) {
-	t.Setenv("FAKE_REVIEW_SIZE", "m")
-	h := newHarness(t, anglesReviewerTOML)
-	pr := github.PR{Number: 42, BaseRefName: "main"}
-	h.gh.prs[42] = &pr
-	if err := os.WriteFile(filepath.Join(h.clone, "context.toml"), []byte("[angles]\ngeneral = false\n"), 0o644); err != nil {
-		t.Fatal(err)
+	for _, allDisabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("all-disabled=%v", allDisabled), func(t *testing.T) {
+			t.Setenv("FAKE_REVIEW_SIZE", "m")
+			h := newHarness(t, anglesReviewerTOML)
+			pr := github.PR{Number: 42, BaseRefName: "main"}
+			h.gh.prs[42] = &pr
+			switches, total := "[angles]\ngeneral = false\n", 1
+			if allDisabled {
+				switches += "docs = false\n"
+				total = 0
+			}
+			if err := os.WriteFile(filepath.Join(h.clone, "context.toml"), []byte(switches), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			sub := h.sched.Subscribe()
+			_, artifact, err := h.sched.runReview(context.Background(), h.sched.log, pr, h.clone, "review-42-r2", 9, 2, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(artifact.Runs) != total {
+				t.Fatalf("ran %d angles, want %d", len(artifact.Runs), total)
+			}
+			assertReviewLifecycle(t, drain(sub), "review-42-r2", 9, 42, 2, total, true)
+		})
 	}
-	sub := h.sched.Subscribe()
-	_, _, err := h.sched.runReview(context.Background(), h.sched.log, pr, h.clone, "review-42-r2", 9, 2, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertReviewLifecycle(t, drain(sub), "review-42-r2", 9, 42, 2, 1, true)
 }

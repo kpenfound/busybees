@@ -1010,12 +1010,12 @@ func (m Model) panelStyleOf(i int) lipgloss.Style {
 	}
 }
 
-// nowPanel renders sessions and review activities: who is running, what it is
-// about, the stage its developer worker is in, how long it has been going,
-// what the work item has spent so far, the sandbox it is boxed in and the
-// model it runs on. The cursor
-// marks a row; enter and k act only on session rows — the same ▸ the
-// other panels draw, because there is one selection over the whole view.
+// nowPanel renders sessions and review activities with their role, issue,
+// pull request and elapsed time. Session rows also show the developer-worker
+// stage, work-item spend, sandbox and model; synthetic review rows show the
+// review phase and have no session fields of their own. The cursor marks a
+// row with the same ▸ as the other panels, because there is one selection
+// over the whole view. Enter and k act only on session rows.
 func (m Model) nowPanel(w, rows, from int) string {
 	sessions := m.shownSessions()
 	if len(sessions) == 0 {
