@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/daemon"
+	"github.com/kpenfound/busybees/internal/logging"
 	"github.com/kpenfound/busybees/internal/versions"
 )
 
@@ -96,5 +98,57 @@ func TestMachineRunOptionsReachEveryScheduler(t *testing.T) {
 	_, err := (runOptions{}).projects(machineDaemon(&globalFlags{}, m).Projects)[0].Start(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "git") {
 		t.Fatalf("bad toolchain accepted: %v", err)
+	}
+}
+
+// Machine preflight happens under the live view. Its diagnostics belong in
+// the project's log and status error, without writes over the terminal.
+func TestMachinePreflightLogsFailureAndReportsDetailsToView(t *testing.T) {
+	t.Setenv(versions.EnvSkip, "1")
+	m := loadMachine(t, writeProject(t, "acme/broken", ""))
+	var console bytes.Buffer
+	g := &globalFlags{logger: logging.New(logging.Options{Console: &console})}
+	t.Cleanup(func() { _ = g.logger.Close() })
+	// Build while git is available; only preflight sees the broken toolchain.
+	loop, err := machineDaemon(g, m).Projects[0].Start(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := &daemon.Daemon{Logger: g.logger.Logger, Projects: (runOptions{}).projects([]daemon.Project{{
+		Name:  m.Configs[0].Path,
+		Start: func(context.Context) (daemon.Loop, error) { return loop, nil },
+	}})}
+	projects, stop := machineView(context.Background(), d, m)
+	defer stop()
+	restore := quietConsole(g.logger, g.console, m.Configs[0].Logging, &console)
+	defer restore()
+	console.Reset()
+	t.Setenv("PATH", t.TempDir())
+	out := captureStdout(t, func() {
+		if err := d.Run(context.Background()); err == nil {
+			t.Error("broken toolchain accepted")
+		}
+	})
+	if out != "" || console.Len() != 0 {
+		t.Errorf("preflight wrote over the view: stdout=%q console=%q", out, console.String())
+	}
+	data, err := os.ReadFile(filepath.Join(m.Configs[0].StateDir(), "bees.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, statusErr := projects[0].Status()
+	if statusErr == nil {
+		t.Fatal("view has no failure")
+	}
+	if !strings.Contains(string(data), `"project":"acme/broken"`) {
+		t.Errorf("failure log has no project attribution: %s", data)
+	}
+	for _, want := range []string{"git", "not found", "install"} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("project log missing %q: %s", want, data)
+		}
+		if !strings.Contains(statusErr.Error(), want) {
+			t.Errorf("view missing %q: %v", want, statusErr)
+		}
 	}
 }

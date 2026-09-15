@@ -98,27 +98,10 @@ esac
 		}
 	}
 	env = append(env, "PATH="+stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	fixture := func(name string) string {
-		p := writeProject(t, "acme/"+name, "state_dir = \"state\"\n")
-		f, err := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
-		body := "\n[scheduler]\npoll_interval = \"100ms\"\n"
-		for _, r := range config.Roles {
-			body += fmt.Sprintf("\n[roles.%s]\nenabled = false\n", r)
-		}
-		if _, err = f.WriteString(body); err != nil {
-			t.Fatal(err)
-		}
-		if err = f.Close(); err != nil {
-			t.Fatal(err)
-		}
-		return p
-	}
+
 	for _, machine := range []bool{false, true} {
 		t.Run(fmt.Sprintf("machine=%t", machine), func(t *testing.T) {
-			a, b := fixture("a"), fixture("b")
+			a, b := processProject(t, "a"), processProject(t, "b")
 			active := a
 			pidPath := filepath.Join(filepath.Dir(a), "state", ProjectPIDFile)
 			if machine {
@@ -168,7 +151,7 @@ esac
 				t.Fatalf("duplicate: %v %s", err, out)
 			}
 			if machine {
-				c := fixture("c")
+				c := processProject(t, "c")
 				body := fmt.Sprintf("projects = [%q, %q]\n", a, c)
 				if err := os.WriteFile(active, []byte(body), 0o644); err != nil {
 					t.Fatal(err)
@@ -217,5 +200,93 @@ func eventually(t *testing.T, test func() bool, description string) {
 			t.Fatal("timed out waiting for", description)
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func processProject(t *testing.T, name string) string {
+	t.Helper()
+	p := writeProject(t, "acme/"+name, "state_dir = \"state\"\n")
+	f, err := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := "\n[scheduler]\npoll_interval = \"100ms\"\n"
+	for _, r := range config.Roles {
+		body += fmt.Sprintf("\n[roles.%s]\nenabled = false\n", r)
+	}
+	if _, err = f.WriteString(body); err != nil {
+		t.Fatal(err)
+	}
+	if err = f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// Hold the original project's one pass in a fake gh call so a real SIGHUP
+// arrives while --once is running, then let that pass finish normally.
+func TestMachineOnceIgnoresSIGHUPProcess(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "bees")
+	if out, err := exec.Command("go", "build", "-buildvcs=false", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, out)
+	}
+	a, b := processProject(t, "a"), processProject(t, "b")
+	m := loadMachine(t, a)
+	stubDir := t.TempDir()
+	started, release := filepath.Join(stubDir, "started"), filepath.Join(stubDir, "release")
+	gh := `#!/bin/sh
+case "$*" in
+ "--version") echo 'gh version 2.90.0 (fake)';;
+ *)
+  touch "$TEST_STARTED"
+  while [ ! -f "$TEST_RELEASE" ]; do sleep 0.01; done
+  echo '[]';;
+esac
+`
+	if err := os.WriteFile(filepath.Join(stubDir, "gh"), []byte(gh), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "run", "--config", m.Path, "--skip-doctor", "--no-tui", "--once")
+	for _, e := range os.Environ() {
+		if !strings.HasPrefix(e, "BEES_") && !strings.HasPrefix(e, "PATH=") {
+			cmd.Env = append(cmd.Env, e)
+		}
+	}
+	cmd.Env = append(cmd.Env, "PATH="+stubDir+string(os.PathListSeparator)+os.Getenv("PATH"), "TEST_STARTED="+started, "TEST_RELEASE="+release)
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	eventually(t, func() bool { _, err := os.Stat(started); return err == nil }, "original project in its single pass")
+	if err := os.WriteFile(m.Path, []byte(fmt.Sprintf("projects = [%q, %q]\n", a, b)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Process.Signal(syscall.SIGHUP); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("SIGHUP stopped --once: %v\n%s", err, out.String())
+	case <-time.After(150 * time.Millisecond):
+	}
+	if err := os.WriteFile(release, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("single pass did not finish: %v\n%s", err, out.String())
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(b), "state")); !os.IsNotExist(err) {
+		t.Fatalf("SIGHUP started the added project: %v\n%s", err, out.String())
+	}
+	if strings.Contains(out.String(), "reloaded machine projects") {
+		t.Fatalf("--once reloaded: %s", out.String())
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(a), "state", "status.json")); err != nil {
+		t.Fatalf("original project did not complete its pass: %v", err)
 	}
 }

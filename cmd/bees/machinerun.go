@@ -31,7 +31,7 @@ func (o runOptions) projects(projects []daemon.Project) []daemon.Project {
 			p := l.(*projectLoop)
 			if !o.skipDoctor {
 				d := doctor.New(ctx, p.app.cfg.Path, claudeBin(), codexBin(), opencodeBin())
-				if err := preflight(ctx, d.Checks()); err != nil {
+				if err := loggedPreflight(ctx, d.Checks(), p.app.log); err != nil {
 					_ = p.Close()
 					return nil, err
 				}

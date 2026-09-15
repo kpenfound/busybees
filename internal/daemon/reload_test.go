@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -99,5 +101,78 @@ func TestReloadKeepsEmptyDaemonAliveAndHardStopsDrainingLoops(t *testing.T) {
 	cancel()
 	if err := wait(t, done); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestReloadKeepsDaemonAliveAfterEveryProjectFails(t *testing.T) {
+	for _, action := range []string{"cancel", "reload", "close"} {
+		t.Run(action, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			reload := make(chan []Project)
+			startErr, loopErr := errors.New("cannot start"), errors.New("cannot poll")
+			log, logs := quietLogger()
+			d := &Daemon{Logger: log, Reload: reload, Projects: []Project{
+				project("start-failure", nil, startErr),
+				project("loop-failure", &fakeLoop{run: func(context.Context) error { return loopErr }}, nil),
+			}}
+			done := runAsync(ctx, d)
+			for strings.Count(logs.String(), "project stopped") != 2 {
+				select {
+				case err := <-done:
+					t.Fatalf("daemon returned before reload or cancellation: %v", err)
+				case <-ctx.Done():
+					t.Fatal("projects did not report both failures")
+				case <-time.After(time.Millisecond):
+				}
+			}
+			select {
+			case err := <-done:
+				t.Fatalf("daemon exited after all projects failed: %v", err)
+			case <-time.After(50 * time.Millisecond):
+			}
+			switch action {
+			case "cancel":
+				cancel()
+			case "close":
+				close(reload)
+			case "reload":
+				started, release := make(chan struct{}), make(chan struct{})
+				healthy := project("healthy", &fakeLoop{run: func(ctx context.Context) error {
+					close(started)
+					select {
+					case <-release:
+					case <-ctx.Done():
+					}
+					return nil
+				}}, nil)
+				select {
+				case reload <- []Project{healthy}:
+				case err := <-done:
+					t.Fatalf("daemon returned instead of reloading: %v", err)
+				case <-ctx.Done():
+					t.Fatal("reload blocked")
+				}
+				select {
+				case <-started:
+				case <-ctx.Done():
+					t.Fatal("replacement never started")
+				}
+				close(reload)
+				select {
+				case err := <-done:
+					t.Fatalf("closed reload did not wait for active project: %v", err)
+				case <-time.After(50 * time.Millisecond):
+				}
+				close(release)
+			}
+			err := wait(t, done)
+			if !errors.Is(err, startErr) || !errors.Is(err, loopErr) {
+				t.Fatalf("lost project errors: %v", err)
+			}
+			if ctx.Err() == context.DeadlineExceeded {
+				t.Fatal("daemon needed timeout to exit")
+			}
+		})
 	}
 }

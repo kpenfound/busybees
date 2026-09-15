@@ -52,8 +52,9 @@ func (e *ProjectError) Unwrap() error { return e.Err }
 // Daemon runs Projects concurrently.
 type Daemon struct {
 	Projects []Project
-	// Reload supplies replacement project lists. With Reload set, Run stays
-	// alive until cancellation, even when every project has stopped.
+	// Reload supplies replacement project lists. While Reload is open, Run
+	// stays alive until cancellation, even when every project has stopped.
+	// Once Reload is closed, Run returns after the active projects finish.
 	Reload <-chan []Project
 	// Logger gets one record per project that fails. nil is slog.Default().
 	Logger *slog.Logger
@@ -64,9 +65,11 @@ type Daemon struct {
 }
 
 // Run starts every project on its own goroutine. Without Reload it returns
-// once all projects have returned; with Reload it waits for cancellation,
-// reconciling each new list by Name. Cancelling ctx asks every loop for its
-// cool-down, as it does for a single-project run. A project that fails does not cancel the others.
+// once all projects have returned; while Reload is open it waits for
+// cancellation, reconciling each new list by Name. Closing Reload lets Run
+// return after the active projects finish. Cancelling ctx asks every loop for
+// its cool-down, as it does for a single-project run. A project that fails
+// does not cancel the others.
 // The error joins a *ProjectError for every project that failed, and is nil
 // when none did.
 func (d *Daemon) Run(ctx context.Context) error {

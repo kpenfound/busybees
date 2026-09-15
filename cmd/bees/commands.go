@@ -396,11 +396,13 @@ In a terminal it draws a live view of the factory — what is running now and
 what is queued — and logs to ` + "`<state_dir>/bees.log`" + ` instead of the console.
 --no-tui, or a stdout that is not a terminal, logs to the console as before.
 
-Before the first poll it runs the cheap half of ` + "`bees doctor`" + ` (everything
-except the per-role checks, which clone skills and start MCP servers) and
-refuses to start when one of them fails, so the factory does not discover a
-missing label or an expired token one session at a time. --skip-doctor starts
-anyway; ` + "`bees tick`" + ` and ` + "`bees exec`" + ` never run the preflight.
+Before each project's first poll it runs the cheap half of ` + "`bees doctor`" + `
+(everything except the per-role checks, which clone skills and start MCP
+servers). A project run prints failed checks and exits non-zero. Machine mode
+logs failures to the affected project's bees.log and reports them in the live
+view while other projects continue. Without --once, it stays alive for reloads
+even if every project fails. --skip-doctor bypasses these checks;
+` + "`bees tick`" + ` and ` + "`bees exec`" + ` never run the preflight.
 
 Ahead of that, and whatever --skip-doctor says, it refuses to start while a
 role in the rotation asks for a sandbox bees cannot build here: running that
@@ -473,15 +475,33 @@ from.`,
 // refuses to start when one of them failed. Warnings are not printed: a
 // factory that is going to work must not print a table on every start.
 func preflight(ctx context.Context, checks []doctor.Check) error {
+	return loggedPreflight(ctx, checks, nil)
+}
+
+// loggedPreflight uses the project logger in machine mode, where the live
+// view already owns the console. Its error carries details for the view.
+// A nil logger preserves the single-project command's printed doctor table.
+func loggedPreflight(ctx context.Context, checks []doctor.Check, log *slog.Logger) error {
 	cheap := doctor.CheapChecks(checks)
 	results := doctor.Run(ctx, cheap)
 	n := doctor.Failures(results)
 	if n == 0 {
 		return nil
 	}
-	fmt.Print(doctor.Text(results))
-	return fmt.Errorf("preflight: %d of %d checks failed — fix them, run `bees doctor --fix`, or start anyway with `bees run --skip-doctor`",
-		n, len(results))
+	err := fmt.Errorf("preflight: %d of %d checks failed — fix them, run `bees doctor --fix`, or start anyway with `bees run --skip-doctor`", n, len(results))
+	if log == nil {
+		fmt.Print(doctor.Text(results))
+		return err
+	}
+	var details []string
+	for _, r := range results {
+		if r.Status != doctor.Fail {
+			continue
+		}
+		log.Error("preflight check failed", "check", r.Name, "detail", r.Detail, "remediation", r.Remediation)
+		details = append(details, fmt.Sprintf("%s: %s; %s", r.Name, r.Detail, r.Remediation))
+	}
+	return fmt.Errorf("%w: %s", err, strings.Join(details, "; "))
 }
 
 func newTickCmd(g *globalFlags) *cobra.Command {

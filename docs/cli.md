@@ -478,8 +478,10 @@ bees prompts show pm --rendered | less
 The active config selects the mode: a project `bees.toml` runs one scheduler;
 a [machine config](configuration.md#machine-config-several-projects) runs one
 for every listed project. Both stay in the foreground unless `-d` is given.
-The run flags apply to every project in machine mode. A project's preflight
-or startup failure is logged for that project while the others run on.
+The run flags apply to every project in machine mode. Preflight runs per
+project; failures are logged to that project's `bees.log` and reported in the
+live view while the other projects continue. Without `--once`, a machine run
+stays alive for reloads even if every project fails.
 
 Runs the scheduler until interrupted. Every `poll_interval` (default 5m; two
 API calls per poll) it lists visible issues and PRs, delivers new human
@@ -499,11 +501,12 @@ the review that belongs with it — until it is approved, escalated, out of
 bounded by its role's `timeout`. SIGTERM requests the same graceful stop.
 A second Ctrl-C or SIGTERM stops the running sessions immediately.
 
-Before the first poll it runs the cheap half of [`bees doctor`](#bees-doctor) —
+Before each project's first poll it runs the cheap half of
+[`bees doctor`](#bees-doctor):
 every check except the `roles` group, which clones skills and starts MCP
-servers — and refuses to start when one of them fails: it prints the doctor
-table and exits non-zero, having started no session. Warnings do not stop it
-and are not printed, so a start that is going to work stays quiet.
+servers. In project mode, a failed check prints the doctor table and exits
+non-zero, having started no session. Warnings do not stop a project and are
+not printed, so a start that is going to work stays quiet.
 `--skip-doctor` bypasses the preflight. `bees tick` and `bees exec` never run
 it: they are debugging commands and must stay usable on a half-configured
 machine.
