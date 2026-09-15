@@ -116,15 +116,19 @@ printf '{"status":"pr-opened","pr":12,"note":"hi"}' > "$BEES_SESSION_DIR/outcome
 		t.Fatal(err)
 	}
 	var cfg struct {
-		Schema       string                 `json:"$schema"`
-		Instructions []string               `json:"instructions"`
-		MCP          map[string]opencodeMCP `json:"mcp"`
+		Schema       string                   `json:"$schema"`
+		Instructions []string                 `json:"instructions"`
+		Agent        map[string]opencodeAgent `json:"agent"`
+		MCP          map[string]opencodeMCP   `json:"mcp"`
 	}
 	if err := json.Unmarshal(cb, &cfg); err != nil {
 		t.Fatalf("opencode.json: %v\n%s", err, cb)
 	}
 	if cfg.Schema == "" || !slices.Equal(cfg.Instructions, []string{filepath.Join(res.SessionDir, "system-prompt.md")}) {
 		t.Errorf("opencode.json: %s", cb)
+	}
+	if cfg.Agent["build"].Variant != "max" {
+		t.Errorf("opencode.json build variant = %q, want max:\n%s", cfg.Agent["build"].Variant, cb)
 	}
 	if len(cfg.MCP) != 3 {
 		t.Errorf("opencode.json names %d servers, want 3:\n%s", len(cfg.MCP), cb)
@@ -185,6 +189,9 @@ echo '{"type":"step_finish","timestamp":1,"sessionID":"ses_2","part":{"type":"st
 	cb, _ := os.ReadFile(filepath.Join(res.SessionDir, OpenCodeConfigFile))
 	if strings.Contains(string(cb), "instructions") {
 		t.Errorf("an instruction file listed with no system prompt:\n%s", cb)
+	}
+	if strings.Contains(string(cb), "variant") {
+		t.Errorf("a variant listed with no effort:\n%s", cb)
 	}
 }
 
@@ -322,7 +329,7 @@ func TestOpenCodeServers(t *testing.T) {
 	// What is written is what opencode reads: the command is one list, the
 	// type is spelled opencode's way.
 	path := filepath.Join(t.TempDir(), OpenCodeConfigFile)
-	if err := writeOpenCodeConfig(path, "", map[string]MCPEntry{"zeta": {Command: "/bin/z", Args: []string{"a"}}}); err != nil {
+	if err := writeOpenCodeConfig(path, "", map[string]MCPEntry{"zeta": {Command: "/bin/z", Args: []string{"a"}}}, ""); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(path)

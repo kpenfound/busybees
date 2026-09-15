@@ -476,10 +476,10 @@ func makeSuccessEnd(sessionID, result string, turns int, cost float64, costKnown
 //     request, so the round's own system prompt is what a resumed session
 //     gets, with no snapshot to switch off. The session is titled after
 //     the session name, as claude's is named.
-//   - Effort is not passed. opencode's --variant is the nearest thing, but
-//     a variant is a name the model defines (anthropic's are "high" and
-//     "max", openai's "low" to "xhigh"), not a level, and what opencode
-//     does with a name the model lacks is not documented.
+//   - Effort goes as the default build agent's `variant` in opencodeConfig.
+//     opencode calls variants names the model defines (anthropic's are
+//     "high" and "max", openai's "low" to "xhigh"), not levels, so the
+//     profile's value is passed through for the configured model to interpret.
 //   - max_turns, allowed_tools, disallowed_tools and skills have no
 //     counterpart and are not passed.
 //   - The stream is JSON lines of events, each carrying the session id as
@@ -522,7 +522,7 @@ func (opencodeBackend) command(_ context.Context, r *Runner, req Request, paths 
 	if req.SystemPrompt == "" {
 		instructions = ""
 	}
-	if err := writeOpenCodeConfig(configPath, instructions, paths.mcp); err != nil {
+	if err := writeOpenCodeConfig(configPath, instructions, paths.mcp, req.Role.Effort); err != nil {
 		return "", nil, "", nil, err
 	}
 	return bin, args, req.Prompt, []envVar{{EnvOpenCodeConfig, configPath}}, nil
@@ -540,12 +540,20 @@ type opencodeMCP struct {
 	Enabled     bool              `json:"enabled"`
 }
 
+// opencodeAgent is the part of opencode.json that selects a model variant for
+// the default build agent.
+type opencodeAgent struct {
+	Variant string `json:"variant,omitempty"`
+}
+
 // opencodeConfig is the configuration file an opencode session is given:
-// the system prompt file as an instruction and the session's MCP servers.
+// the system prompt file as an instruction, the session's MCP servers and,
+// when configured, the default build agent's model variant.
 type opencodeConfig struct {
-	Schema       string                 `json:"$schema"`
-	Instructions []string               `json:"instructions,omitempty"`
-	MCP          map[string]opencodeMCP `json:"mcp"`
+	Schema       string                   `json:"$schema"`
+	Instructions []string                 `json:"instructions,omitempty"`
+	Agent        map[string]opencodeAgent `json:"agent,omitempty"`
+	MCP          map[string]opencodeMCP   `json:"mcp"`
 }
 
 // opencodeServers renders MCP entries as opencode.json's mcp table: a
@@ -565,11 +573,15 @@ func opencodeServers(entries map[string]MCPEntry) map[string]opencodeMCP {
 }
 
 // writeOpenCodeConfig writes the session's opencode.json: instructions is
-// the system prompt file, or empty when there is no system prompt.
-func writeOpenCodeConfig(path, instructions string, entries map[string]MCPEntry) error {
+// the system prompt file, or empty when there is no system prompt; effort is
+// the default build agent's variant, or empty when it is not configured.
+func writeOpenCodeConfig(path, instructions string, entries map[string]MCPEntry, effort string) error {
 	cfg := opencodeConfig{Schema: "https://opencode.ai/config.json", MCP: opencodeServers(entries)}
 	if instructions != "" {
 		cfg.Instructions = []string{instructions}
+	}
+	if effort != "" {
+		cfg.Agent = map[string]opencodeAgent{"build": {Variant: effort}}
 	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
