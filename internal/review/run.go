@@ -59,6 +59,9 @@ type Runner struct {
 	// runs. It is nil to be told nothing. Angles gets it when it is given
 	// none of its own, as with Log.
 	Progress func(angle string, event AngleEvent)
+	// AnglesReady receives the enabled angle set after distillation and
+	// before any angle progress callbacks. Nil is told nothing.
+	AnglesReady func(angles []string)
 }
 
 // NewRunner is the runner of a review of ref as the global configuration
@@ -134,6 +137,9 @@ func (r *Runner) Run(ctx context.Context, ref Ref) (*Artifact, error) {
 		project = &Project{}
 	}
 	angles := anglesFor(project, r.Angles.sizedAngles(brief.Size))
+	if r.AnglesReady != nil {
+		r.AnglesReady(angles)
+	}
 	r.logf("reviewing a size %s change from %s: %s", brief.Size, text.Count(len(angles), "angle"), strings.Join(angles, ", "))
 	var diff string
 	if items := bundle.Of(SourceDiff); len(items) > 0 {

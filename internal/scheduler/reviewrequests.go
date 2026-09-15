@@ -217,14 +217,14 @@ func (s *Scheduler) runRequestedReview(ctx context.Context, pr github.PR, w *sta
 	}
 	name := fmt.Sprintf("reviewer-requested-pr-%d", pr.Number)
 	// The review itself (review.go), then the session that posts it.
-	found, _, err := s.runReview(ctx, log, freshPR, ws.RepoDir, name, 0)
+	found, _, err := s.runReview(ctx, log, freshPR, ws.RepoDir, name, 0, 1)
 	if err != nil {
 		return err
 	}
 	log.Info("requested review session", "mail", len(inbox), "size", found.Size, "angles", strings.Join(found.Angles, ","), "findings", found.Count)
 	started := s.now()
 	res, err := s.runSessionWithRetry(ctx, sessionSpec{
-		role: config.RoleReviewer, name: name, task: "reviewer_requested", workDir: ws.RepoDir, worker: w, judge: true,
+		role: config.RoleReviewer, name: name, task: "reviewer_requested", workDir: ws.RepoDir, worker: w, judge: true, reviewActivity: name,
 		// Mode switches the reviewer's prompts to the requested review; ActsAs
 		// tells it whose approval GitHub would refuse (its own author's).
 		data: prompts.Data{PR: &freshPR, Inbox: inbox, Review: found, Round: 1, Mode: prompts.ModeRequested, ActsAs: s.gh.ActsAs},

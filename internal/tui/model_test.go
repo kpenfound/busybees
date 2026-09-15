@@ -1316,3 +1316,134 @@ func TestTheNowPanelDoesNotInventASandbox(t *testing.T) {
 		t.Errorf("a session with no recorded mode was reported as unboxed: %q", qa)
 	}
 }
+
+func reviewActivity(kind string) scheduler.Event {
+	return scheduler.Event{Kind: kind, Activity: "review-31-r2", Role: config.RoleReviewer,
+		Issue: 12, PR: 31, Round: 2, Started: fixed.Add(-time.Minute), Time: fixed, Phase: "brief"}
+}
+
+func TestReviewActivityUpdatesAndHandsOffInPlace(t *testing.T) {
+	m := New(Deps{Now: func() time.Time { return fixed }})
+	m.width, m.height = 140, panelHeight
+	ev := reviewActivity(scheduler.EventReviewStarted)
+	m.apply(0, ev)
+	m.apply(0, scheduler.Event{Kind: scheduler.EventSessionStarted, Session: "other", Role: config.RoleDeveloper, Time: fixed})
+	if len(m.sessions) != 2 || m.sessions[0].activity == nil {
+		t.Fatalf("brief rows: %+v", m.sessions)
+	}
+	for _, want := range []string{"reviewer", "#12", "#31", "review: brief", "1m0s"} {
+		if view := plain(m.nowPanel(136, 5, 0)); !strings.Contains(view, want) {
+			t.Errorf("brief lacks %q:\n%s", want, view)
+		}
+	}
+	ev.Kind, ev.Phase, ev.Total = scheduler.EventReviewProgress, "angles", 3
+	for completed := 0; completed <= 3; completed++ {
+		ev.Completed = completed
+		m.apply(0, ev)
+		m.apply(0, ev) // repeated updates must not add a row
+		if len(m.sessions) != 2 || m.sessions[0].started != ev.Started || m.cursor != 0 {
+			t.Fatalf("progress moved the row: %+v", m.sessions)
+		}
+		want := fmt.Sprintf("review: angles %d/3 done", completed)
+		if view := plain(m.nowPanel(136, 5, 0)); !strings.Contains(view, want) {
+			t.Errorf("progress lacks %q:\n%s", want, view)
+		}
+	}
+	ev.Kind, ev.Success = scheduler.EventReviewEnded, true
+	m.apply(0, ev)
+	if len(m.sessions) != 2 || m.sessions[0].activity == nil || len(m.recent) != 0 {
+		t.Fatal("successful pipeline disappeared before the judge")
+	}
+	judge := scheduler.Event{Kind: scheduler.EventSessionStarted, Activity: ev.Activity,
+		Session: "judge", Role: config.RoleReviewer, Dir: t.TempDir(), Issue: 12, PR: 31,
+		Round: 2, Time: fixed, Model: "sonnet", Sandbox: config.SandboxNone}
+	m.apply(0, judge)
+	if len(m.sessions) != 2 || m.sessions[0].activity != nil || m.sessions[0].name != "judge" || m.sessions[1].name != "other" || m.cursor != 0 || len(m.recent) != 0 {
+		t.Fatalf("handoff: %+v", m.sessions)
+	}
+	if s, ok := m.selection(); !ok || s.dir != judge.Dir || s.model != judge.Model || s.started != fixed {
+		t.Fatalf("judge is not an ordinary selectable session: %+v, %v", s, ok)
+	}
+	judge.Kind, judge.Turns, judge.CostUSD, judge.CostKnown = scheduler.EventSessionEnded, 4, 0.5, true
+	m.apply(0, judge)
+	if len(m.sessions) != 1 || len(m.recent) != 1 || m.projects[0].spent[spendKey(12, config.RoleReviewer)].cost != 0.5 {
+		t.Fatal("judge end did not use ordinary session accounting")
+	}
+}
+
+func TestReviewActivityFailureDoesNotEnterRecentOrSpend(t *testing.T) {
+	for _, reason := range []string{"context canceled", "every angle failed", "judge preparation failed"} {
+		m := New(Deps{})
+		ev := reviewActivity(scheduler.EventReviewStarted)
+		m.apply(0, ev)
+		ev.Kind, ev.Err = scheduler.EventReviewEnded, reason
+		m.apply(0, ev)
+		if len(m.sessions) != 0 || len(m.recent) != 0 || len(m.projects[0].spent) != 0 {
+			t.Fatalf("%s left rows or spend: %+v", reason, m)
+		}
+	}
+}
+
+func TestReviewActivityActions(t *testing.T) {
+	for _, pr := range []int{31, 0} {
+		var opened string
+		m := New(Deps{Repo: "acme/widgets", Now: func() time.Time { return fixed },
+			Kill: func(string) error { t.Fatal("synthetic row called Kill"); return nil },
+			Open: func(url string) error { opened = url; return nil },
+		})
+		m.width, m.height = 140, panelHeight
+		ev := reviewActivity(scheduler.EventReviewStarted)
+		ev.PR = pr
+		m.apply(0, ev)
+		for _, key := range []tea.KeyMsg{{Type: tea.KeyEnter}, {Type: tea.KeyRunes, Runes: []rune{'k'}}, {Type: tea.KeyRunes, Runes: []rune{'k'}}} {
+			next, cmd := m.Update(key)
+			m = next.(Model)
+			if cmd != nil || m.watching != nil || m.confirmKill.name != "" {
+				t.Fatal("synthetic row allowed transcript or kill action")
+			}
+		}
+		if m.countTurns() != nil {
+			t.Fatal("synthetic row polled a transcript")
+		}
+		_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+		if cmd == nil {
+			t.Fatal("no GitHub open action")
+		}
+		cmd()
+		n := pr
+		if n == 0 {
+			n = 12
+		}
+		if want := fmt.Sprintf("https://github.com/acme/widgets/issues/%d", n); opened != want {
+			t.Errorf("opened %q, want %q", opened, want)
+		}
+		m.notice = ""
+		if strings.Contains(m.footer(), "enter watch") || strings.Contains(m.footer(), "k stop") {
+			t.Fatal("footer advertises session actions for a synthetic row")
+		}
+		m.stopping = true
+		if strings.Contains(m.stoppingNotice(), "1 running session") {
+			t.Fatal("synthetic row counted as a factory session")
+		}
+	}
+}
+
+func TestReviewActivityFitsCompactLayout(t *testing.T) {
+	ev := reviewActivity(scheduler.EventReviewProgress)
+	ev.Phase, ev.Completed, ev.Total = "angles", 1, 3
+	for _, width := range []int{60, 80, 100, 140} {
+		view := drive(t, Deps{}, tea.WindowSizeMsg{Width: width, Height: 20}, eventMsg{Event: ev})
+		if len(strings.Split(view, "\n")) > 20 {
+			t.Errorf("view exceeds height at width %d:\n%s", width, view)
+		}
+		for _, line := range strings.Split(view, "\n") {
+			// Footer hints retain their existing wrapping behavior.
+			if strings.HasPrefix(line, "│") && len([]rune(line)) > width {
+				t.Errorf("panel exceeds width %d: %s", width, line)
+			}
+		}
+		if width >= 80 && !strings.Contains(view, "review: angles 1/3 done") {
+			t.Errorf("progress clipped at width %d:\n%s", width, view)
+		}
+	}
+}
