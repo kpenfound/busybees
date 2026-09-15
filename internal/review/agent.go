@@ -118,9 +118,10 @@ func (a *CLIAgent) Run(ctx context.Context, req AgentRequest) (*AgentResult, err
 	cmd.Env = reviewEnvironment(os.Environ(), a.Env)
 	if a.Provider == config.AgentCodex {
 		// Empty TOML tables merge with local configuration; they do not erase
-		// inherited MCP servers. Ask the CLI for its effective server names and
-		// explicitly disable every one. A failed inventory fails closed.
-		probe := exec.CommandContext(runCtx, bin, "mcp", "list", "--json")
+		// inherited MCP servers. Inventory with the session's restrictions so
+		// disabled plugins and apps cannot contribute transportless overrides.
+		probeArgs := append([]string{"mcp", "list", "--json"}, codexReviewConfigArgs()...)
+		probe := exec.CommandContext(runCtx, bin, probeArgs...)
 		probe.Dir, probe.Env = cmd.Dir, cmd.Env
 		data, err := probe.Output()
 		if err != nil {
@@ -135,9 +136,16 @@ func (a *CLIAgent) Run(ctx context.Context, req AgentRequest) (*AgentResult, err
 		if servers == nil {
 			return nil, fmt.Errorf("%s session: codex MCP inventory must be an array", req.Name)
 		}
+		var disabled []string
 		for _, server := range servers {
 			name, _ := json.Marshal(server.Name)
-			cmd.Args = append(cmd.Args[:len(cmd.Args)-1], "-c", "mcp_servers."+string(name)+".enabled=false", "-")
+			disabled = append(disabled, string(name)+"={enabled=false}")
+		}
+		if len(disabled) > 0 {
+			// Codex splits override paths on dots literally, including quotes.
+			// Names belong in the TOML value, where quoted keys are parsed and
+			// the disabled flags merge with each server's existing transport.
+			cmd.Args = append(cmd.Args[:len(cmd.Args)-1], "-c", "mcp_servers={"+strings.Join(disabled, ",")+"}", "-")
 		}
 	}
 	// A session that ran out of time is killed with everything it started,
@@ -211,14 +219,7 @@ func (a *CLIAgent) command(req AgentRequest) (string, []string, error) {
 		if bin == "" {
 			bin = "codex"
 		}
-		// The read-only sandbox blocks writes. Separately disable commands,
-		// network tools, plugins and delegation; read-only alone allows commands.
-		args := []string{"exec", "--json", "--sandbox", "read-only", "--skip-git-repo-check",
-			"-c", `approval_policy="never"`, "-c", `web_search="disabled"`,
-			"-c", "orchestrator.mcp.enabled=false"}
-		for _, feature := range []string{"shell_tool", "unified_exec", "js_repl", "browser_use", "browser_use_external", "computer_use", "in_app_browser", "multi_agent", "multi_agent_v2", "apps", "plugins", "hooks", "codex_hooks", "plugin_hooks", "skill_mcp_dependency_install", "tool_suggest", "web_search_request", "web_search_cached"} {
-			args = append(args, "-c", "features."+feature+"=false")
-		}
+		args := append([]string{"exec", "--json", "--sandbox", "read-only", "--skip-git-repo-check"}, codexReviewConfigArgs()...)
 		if a.Model != "" {
 			args = append(args, "--model", a.Model)
 		}
@@ -233,6 +234,17 @@ func (a *CLIAgent) command(req AgentRequest) (string, []string, error) {
 		return bin, args, nil
 	}
 	return "", nil, fmt.Errorf("review: unknown provider %s (want one of %s)", strconv.Quote(a.Provider), strings.Join(SupportedProviders, ", "))
+}
+
+// codexReviewConfigArgs restricts both MCP discovery and the review session.
+// Read-only sandboxing blocks writes but needs separate tool restrictions.
+func codexReviewConfigArgs() []string {
+	args := []string{"-c", `approval_policy="never"`, "-c", `web_search="disabled"`,
+		"-c", "orchestrator.mcp.enabled=false"}
+	for _, feature := range []string{"shell_tool", "unified_exec", "js_repl", "browser_use", "browser_use_external", "computer_use", "in_app_browser", "multi_agent", "multi_agent_v2", "apps", "plugins", "hooks", "codex_hooks", "plugin_hooks", "skill_mcp_dependency_install", "tool_suggest", "web_search_request", "web_search_cached"} {
+		args = append(args, "-c", "features."+feature+"=false")
+	}
+	return args
 }
 
 // sessionEnd is what a CLI said at the end of a session, in the terms both

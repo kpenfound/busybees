@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/BurntSushi/toml"
+
 	"github.com/kpenfound/busybees/internal/config"
 )
 
@@ -20,7 +22,7 @@ func fakeCLI(t *testing.T, body string) (bin, record string) {
 	bin = filepath.Join(dir, "agent")
 	record = filepath.Join(dir, "record")
 	script := "#!/bin/sh\n" +
-		"if [ \"$1\" = mcp ]; then echo '[]'; exit 0; fi\n" +
+		"if [ \"$1\" = mcp ]; then printf '%s\\n' \"$@\" > " + record + ".mcp-args; pwd > " + record + ".mcp-dir; echo '[]'; exit 0; fi\n" +
 		"printf '%s\\n' \"$@\" > " + record + ".args\n" +
 		"cat > " + record + ".stdin\n" +
 		"pwd > " + record + ".dir\n" +
@@ -364,24 +366,89 @@ func TestCodexReviewDisablesInheritedMCP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	script := strings.Replace(string(data), "echo '[]'", `echo '[{"name":"bees"},{"name":"server.with.dots"}]'`, 1)
+	// Dynamically supplied servers disappear only when the inventory receives
+	// the same feature restrictions as the review session.
+	inventory := `case " $* " in
+  *" features.plugins=false "*) echo '[{"name":"bees"},{"name":"server.with.dots"},{"name":"server \"quoted\""}]' ;;
+  *) echo '[{"name":"codex_app"}]' ;;
+esac`
+	script := strings.Replace(string(data), "echo '[]'", inventory, 1)
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	a := &CLIAgent{Provider: config.AgentCodex, CodexBin: bin}
-	if _, err := a.Run(context.Background(), AgentRequest{Dir: t.TempDir()}); err != nil {
+	a := &CLIAgent{Provider: config.AgentCodex, CodexBin: bin, Model: "chosen", Effort: "medium"}
+	dir := t.TempDir()
+	if _, err := a.Run(context.Background(), AgentRequest{Dir: dir}); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`mcp_servers."bees".enabled=false`, `mcp_servers."server.with.dots".enabled=false`} {
-		if !strings.Contains(args(t, record), "\n"+want+"\n") {
-			t.Errorf("did not disable %s", want)
+	probeArgs := "\n" + recorded(t, record, "mcp-args")
+	wantDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(recorded(t, record, "mcp-dir")); got != wantDir {
+		t.Errorf("inventory directory = %q, want %q", got, wantDir)
+	}
+	for _, want := range []string{
+		`orchestrator.mcp.enabled=false`, `features.apps=false`, `features.plugins=false`,
+		`features.shell_tool=false`, `features.unified_exec=false`, `features.js_repl=false`,
+		`web_search="disabled"`, `approval_policy="never"`,
+	} {
+		if !strings.Contains(probeArgs, "\n"+want+"\n") || !strings.Contains(args(t, record), "\n"+want+"\n") {
+			t.Errorf("inventory and session must both receive %s", want)
 		}
 	}
-	script = strings.Replace(script, `echo '[{"name":"bees"},{"name":"server.with.dots"}]'`, "echo invalid", 1)
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
+	// Codex splits override paths on dots without interpreting quotes. Keep
+	// server names inside the TOML value so their punctuation stays literal.
+	var overrides struct {
+		Servers map[string]struct {
+			Enabled *bool `toml:"enabled"`
+		} `toml:"mcp_servers"`
 	}
-	if _, err := a.Run(context.Background(), AgentRequest{Dir: t.TempDir()}); err == nil || !strings.Contains(err.Error(), "decode codex MCP") {
-		t.Fatalf("did not fail closed: %v", err)
+	for _, arg := range strings.Split(recorded(t, record, "args"), "\n") {
+		key, _, _ := strings.Cut(arg, "=")
+		if strings.HasPrefix(key, "mcp_servers.") {
+			t.Fatalf("server name placed in a dotted override path: %s", arg)
+		}
+		if key == "mcp_servers" {
+			if _, err := toml.Decode(arg, &overrides); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if len(overrides.Servers) != 3 {
+		t.Fatalf("disabled servers = %v, want the three configured servers", overrides.Servers)
+	}
+	for _, name := range []string{"bees", "server.with.dots", `server "quoted"`} {
+		if server := overrides.Servers[name]; server.Enabled == nil || *server.Enabled {
+			t.Errorf("server %q was not disabled", name)
+		}
+	}
+}
+
+func TestCodexReviewMCPInventoryFailsClosed(t *testing.T) {
+	for _, tc := range []struct{ name, response, want string }{
+		{"failed command", "exit 1", "list codex MCP"},
+		{"invalid JSON", "echo invalid", "decode codex MCP"},
+		{"null", "echo null", "must be an array"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bin, record := fakeCLI(t, codexAnswer)
+			data, err := os.ReadFile(bin)
+			if err != nil {
+				t.Fatal(err)
+			}
+			script := strings.Replace(string(data), "echo '[]'", tc.response, 1)
+			if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			a := &CLIAgent{Provider: config.AgentCodex, CodexBin: bin}
+			if _, err := a.Run(context.Background(), AgentRequest{Dir: t.TempDir()}); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("did not fail closed: %v", err)
+			}
+			if _, err := os.Stat(record + ".args"); !os.IsNotExist(err) {
+				t.Fatalf("session ran after inventory failure: %v", err)
+			}
+		})
 	}
 }
