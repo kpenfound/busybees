@@ -375,8 +375,10 @@ func newRunCmd(g *globalFlags) *cobra.Command {
 	var roles string
 	var skipDoctor bool
 	var noTUI bool
+	var detach bool
 	cmd := &cobra.Command{
 		Use:   "run",
+		Args:  cobra.NoArgs,
 		Short: "Run the factory until interrupted",
 		Long: `run polls GitHub, keeps the workflow labels consistent and dispatches
 sessions: a pool of developer workers plus the product manager, project
@@ -385,6 +387,10 @@ for the work in flight to finish: an issue a developer worker holds runs on
 through the stages it has left, until it is approved, escalated, out of review
 rounds or over its cost budget. A second Ctrl-C stops the running sessions
 now.
+
+The active config selects one project or every project a machine config lists.
+-d/--daemon backgrounds either mode and prints the child pid. SIGTERM drains
+the work in flight; SIGHUP reloads a machine config's project list.
 
 In a terminal it draws a live view of the factory — what is running now and
 what is queued — and logs to ` + "`<state_dir>/bees.log`" + ` instead of the console.
@@ -404,6 +410,24 @@ from.`,
 			if err := refuseInsideSession("run"); err != nil {
 				return err
 			}
+			active, err := resolveRunConfig(g)
+			if err != nil {
+				return err
+			}
+			if _, err := parseRoles(roles); err != nil {
+				return err
+			}
+			if detach && os.Getenv(daemonChildEnv) != "1" {
+				return detachRun(cmd, active)
+			}
+			if active.machine != nil {
+				return runMachine(cmd, g, active.machine, runOptions{once: once, roles: roles, skipDoctor: skipDoctor}, noTUI)
+			}
+			cleanup, err := registerDaemonChild(active.pidPath())
+			if err != nil {
+				return err
+			}
+			defer cleanup()
 			a, err := newApp(cmd.Context(), g)
 			if err != nil {
 				return err
@@ -437,6 +461,7 @@ from.`,
 			return s.Run(cmd.Context())
 		},
 	}
+	cmd.Flags().BoolVarP(&detach, "daemon", "d", false, "detach and log to a file (project or machine mode)")
 	cmd.Flags().BoolVar(&once, "once", false, "do a single pass and exit when its sessions finish")
 	cmd.Flags().StringVar(&roles, "roles", "", "comma-separated roles to run (default: all enabled)")
 	cmd.Flags().BoolVar(&skipDoctor, "skip-doctor", false, "start without running the doctor preflight")

@@ -472,6 +472,15 @@ is reported for that project while the others run on. Nothing is shared but
 the process, the console log and, with the machine config's `max_developers`
 set, one developer pool of that size.
 
+`bees run` selects this mode from the active config. Without `--once`, the
+machine stays alive until interrupted, even if all its projects fail.
+SIGHUP validates and reconciles the project list: additions start, removals
+drain their in-flight work, and unchanged projects keep their schedulers.
+SIGTERM drains every project, including those already being removed; a
+second interrupt hard-stops their sessions. See
+[Running in the background](cli.md#running-in-the-background) for pid and log
+locations and the detach behavior.
+
 Each scheduler keeps its own `scheduler.max_developers` pool and takes a slot
 of the shared pool on top of each of its own, for the same things: a
 developer worker, every attempt of a fan-out, a requested review. A claim is
@@ -487,9 +496,11 @@ the pool wakes the head, if the pool can fill what it asked for, and the
 local pass that follows makes the claim. A scheduler leaves the queue when
 its claim is granted, and when a dispatch pass of its ends without a refusal
 (it had nothing left to dispatch: its ready issue closed, its budget ran
-out), so a turn nobody uses is not kept. One that got its turn and wants
-more queues up again at the back. That is what hands a freed slot round the
-projects waiting for one rather than back to the project that just gave it
+out), or when it stops polling. A draining scheduler keeps the slots its
+workers hold, but gives up its pending turn so other projects can proceed.
+One that got its turn and wants more queues up again at the back. That is
+what hands a freed slot round the projects waiting for one rather than back
+to the project that just gave it
 up, which is the one its own worker wakes: a busy project cannot starve the
 others. The `scheduler started` log line of a project on a shared pool
 carries `shared_max_developers`, and `slots wait for the shared pool` is
