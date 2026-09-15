@@ -288,8 +288,9 @@ type WorkState struct {
 	// SaveIssue.
 	Proposal           bool      `json:"proposal,omitempty"`
 	ProposalApprovedAt time.Time `json:"proposal_approved_at,omitempty"`
-	// OpenChildren are the open sub-issues a feature had when the product
-	// manager last ran, and CompleteReportedAt when the scheduler last told
+	// OpenChildren remembers open sub-issues after the product manager last
+	// ran, plus children attached during that run even if already closed.
+	// CompleteReportedAt records when the scheduler last told
 	// it that all of them had closed. Together they are how the scheduler
 	// notices a finished feature without asking GitHub on the polling path:
 	// GitHub's sub-issue summary carries counts only, so the numbers are
@@ -564,7 +565,7 @@ func (s *Store) SetProposal(n int, proposal bool, approvedAt time.Time) error {
 	return s.writeJSON(s.WorkPath(ghwork.IssueKey(n)), is)
 }
 
-// SetOpenChildren records a feature's open sub-issues, and with a non-zero
+// SetOpenChildren records a feature's remembered sub-issues, and with a non-zero
 // reportedAt that the scheduler has just presented the feature as complete.
 // A nil children leaves the remembered set alone, which is how a caller says
 // its lookup was empty or incomplete and must not be recorded; a set that

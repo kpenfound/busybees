@@ -168,14 +168,14 @@ func (s *Scheduler) completedFeatures(snap *snapshot) []github.Issue {
 
 // recordFeatureProgress remembers, for every open feature, which of its
 // sub-issues are open right now, so a later pass can notice locally that they
-// have all closed. The numbers come from the parents map runProductManager
-// already builds; reported are the features presented as complete in this
-// run, which are marked so the trigger fires once.
+// have all closed. After a successful runProductManager session, the numbers
+// include newly attached children even if already closed. Reported features
+// are marked only when the complete refresh finds no work to re-arm.
 //
 // A feature with no open children is not recorded over the set it had: that
 // is the state the completeness check exists to spot, and forgetting the
 // children would also lose what the re-arm rule compares against. For the
-// same reason a run whose ParentIssue queries did not all answer (complete is
+// same reason a run whose relationship queries did not all answer (complete is
 // false) records nothing: a truncated answer is indistinguishable from
 // children that closed, and would report a feature complete while a real
 // sub-issue is still open. A set that did change clears the marker, so a
@@ -203,7 +203,7 @@ func (s *Scheduler) recordFeatureProgress(snap *snapshot, parents map[int]github
 			record = openNow
 		}
 		var reportedAt time.Time
-		if done[f.Number] {
+		if complete && done[f.Number] && record == nil {
 			reportedAt = s.now()
 		}
 		if record == nil && reportedAt.IsZero() {
@@ -400,6 +400,21 @@ func (s *Scheduler) runProductManager(ctx context.Context, snap *snapshot) error
 	for _, f := range complete {
 		s.log.Info("feature work is complete", "issue", f.Number)
 	}
+	// Capture all relationships, not only open work, so old closed children
+	// are distinguished from work attached and closed during this session.
+	before := map[int]map[int]bool{}
+	beforeComplete := true
+	for _, f := range snap.features {
+		children, err := s.gh.ListSubIssues(ctx, f.Number)
+		if s.op("feature-children", err, "feature children", "issue", f.Number, "err", err) {
+			beforeComplete = false
+			continue
+		}
+		before[f.Number] = map[int]bool{}
+		for _, child := range children {
+			before[f.Number][child.Number] = true
+		}
+	}
 	if err := s.runSingleton(ctx, config.RoleProductManager, prompts.Data{
 		Issues: work, PRs: snap.prs, Milestones: milestones, Inbox: inbox,
 		Feedback: feedback, FreshFeatures: freshFeatures, Proposals: proposals,
@@ -415,8 +430,35 @@ func (s *Scheduler) runProductManager(ctx context.Context, snap *snapshot) error
 		s.recordFeatureProgress(snap, parents, nil, parentsComplete)
 		return err
 	}
-	s.recordFeatureProgress(snap, parents, complete, parentsComplete)
+	// Only a complete refresh can consume the report. Keep closed children
+	// added during the session too, otherwise fast work could disappear between
+	// the session and this bookkeeping without ever arming the local check.
+	refreshed := map[int]github.Parent{}
+	refreshComplete := parentsComplete && beforeComplete
+	for _, f := range snap.features {
+		children, err := s.gh.ListSubIssues(ctx, f.Number)
+		if s.op("feature-children", err, "feature children", "issue", f.Number, "err", err) {
+			refreshComplete = false
+			continue
+		}
+		for _, child := range children {
+			if !s.featureWorkItem(child) {
+				continue
+			}
+			if child.State == "OPEN" || !before[f.Number][child.Number] {
+				refreshed[child.Number] = github.Parent{Number: f.Number, Title: f.Title}
+			}
+		}
+	}
+	s.recordFeatureProgress(snap, refreshed, complete, refreshComplete)
 	return nil
+}
+
+// featureWorkItem keeps relationship history within the same visibility and
+// kind boundaries as the open work items in the poll.
+func (s *Scheduler) featureWorkItem(i github.Issue) bool {
+	return s.query.Matches(i.Labels, i.Assignees, i.MilestoneTitle(), i.Author.Login) &&
+		!github.HasLabel(i.Labels, s.labels.Feature) && !github.HasLabel(i.Labels, s.labels.Feedback)
 }
 
 // ---- QA --------------------------------------------------------------------

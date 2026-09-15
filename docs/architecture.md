@@ -273,7 +273,13 @@ A full pass is:
    notices that every recorded number is absent from the poll. Such a feature
    is presented once and marked; a recorded set that changes clears the mark,
    so a feature that gains a sub-issue is presented again when that one
-   closes. A run whose parent lookups did not all answer records nothing,
+   closes. Successful sessions refresh each feature's paginated child list
+   before recording progress. A before-session child list distinguishes old
+   closed work from children attached during the session: newly attached
+   children are remembered even if already closed, and leave completion armed
+   for the next eligible poll. An unchanged completion is marked only when
+   the refresh finds no new or open work. These reads stay off the polling
+   path. A run whose relationship lookups did not all answer records nothing,
    since a partial answer would look like children that closed, and a feature
    no run has recorded children for waits for the interval.
 

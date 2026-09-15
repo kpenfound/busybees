@@ -1114,3 +1114,40 @@ func TestListAllIssues(t *testing.T) {
 		t.Fatalf("issues: %+v", issues)
 	}
 }
+
+func TestListSubIssuesRequiresCompletePages(t *testing.T) {
+	for _, tc := range []struct {
+		name, raw string
+		fail      bool
+		want      int
+	}{
+		{name: "empty", raw: `[[]]`},
+		{name: "open and closed pages", raw: `[[{"number":1,"state":"open","repository_url":"https://api.github.com/repos/acme/widgets","user":{"login":"person"},"labels":[{"name":"bees"}]}],[{"number":2,"state":"closed","repository_url":"https://api.github.com/repos/acme/widgets"}]]`, want: 2},
+		{name: "other repository", raw: `[[{"number":1,"state":"open","repository_url":"https://api.github.com/repos/other/widgets"}]]`},
+		{name: "missing pages", raw: `null`, fail: true},
+		{name: "partial pages", raw: `[[{"number":1,"state":"open","repository_url":"https://api.github.com/repos/acme/widgets"}],null]`, fail: true},
+		{name: "malformed", raw: `[[`, fail: true},
+		{name: "missing child fields", raw: `[[{}]]`, fail: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := New("acme/widgets")
+			c.Exec = func(_ context.Context, args ...string) ([]byte, error) {
+				want := []string{"api", "--paginate", "--slurp", "repos/acme/widgets/issues/5/sub_issues?per_page=100"}
+				if !slices.Equal(args, want) {
+					t.Fatalf("args = %v, want %v", args, want)
+				}
+				return []byte(tc.raw), nil
+			}
+			got, err := c.ListSubIssues(context.Background(), 5)
+			if (err != nil) != tc.fail {
+				t.Fatalf("error = %v, want failure %v", err, tc.fail)
+			}
+			if len(got) != tc.want {
+				t.Fatalf("children = %v, want %d", got, tc.want)
+			}
+			if tc.want == 2 && (got[0].Author.Login != "person" || got[0].State != "OPEN" || got[1].State != "CLOSED" || !HasLabel(got[0].Labels, "bees")) {
+				t.Fatalf("REST fields were not converted: %+v", got)
+			}
+		})
+	}
+}

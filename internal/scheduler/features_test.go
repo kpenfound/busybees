@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -406,5 +407,116 @@ func TestAFailedProductManagerSessionStillRecordsTheSubIssues(t *testing.T) {
 	runPass(t, h)
 	if !strings.Contains(section(t, lastPMPrompt(t, h), "## Features whose work is done"), "#5: Exports") {
 		t.Error("the re-armed feature is not presented for a close decision")
+	}
+}
+
+// Change GitHub while the fake agent is held in flight. Both a newly created
+// child and an existing loose item attached during the run must be remembered,
+// even if it closes before the scheduler can perform its refresh.
+func TestFeatureRelationshipsRefreshAfterProductManager(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		closed, attach bool
+		failure        string
+	}{
+		{name: "created open"}, {name: "created closed", closed: true},
+		{name: "attached open", attach: true}, {name: "attached closed", attach: true, closed: true},
+		{name: "unchanged"}, {name: "lookup failed", failure: "failed"},
+		{name: "lookup incomplete", failure: "incomplete"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			now := time.Now()
+			h := newHarnessAt(t, pmOnlyTOML, now)
+			h.gh.parents = map[int]int{1: 5}
+			seedFeature(h, 5, "Exports", now.Add(-2*time.Hour))
+			quietFeature(h, 5, now.Add(-time.Hour))
+			seedWorkItem(h, 1, "CSV", now.Add(-time.Hour))
+			if tc.attach {
+				seedWorkItem(h, 7, "XLSX", now.Add(-time.Hour))
+			}
+			runPass(t, h)
+			h.gh.issues[1].State = "CLOSED"
+
+			release := filepath.Join(t.TempDir(), "release")
+			t.Setenv("FAKE_WAIT_FOR", release)
+			h.clock.advance(2 * h.cfg.Scheduler.PollInterval.Duration)
+			forcePoll(h)
+			finished := make(chan struct{})
+			go func() { defer close(finished); runPass(t, h) }()
+			waitFor(t, 30*time.Second, "completion session to start", func() bool {
+				return len(h.sessionOrder()) == 2
+			})
+			h.gh.mu.Lock()
+			if tc.name != "unchanged" {
+				if !tc.attach {
+					seedWorkItem(h, 7, "XLSX", now)
+				}
+				h.gh.parents[7] = 5
+				if tc.closed {
+					h.gh.issues[7].State = "CLOSED"
+				}
+			}
+			switch tc.failure {
+			case "failed":
+				h.gh.childErr = map[int]error{5: errors.New("relationship lookup failed")}
+			case "incomplete":
+				h.gh.childResponse = map[int]string{5: `[[{"repository_url":"https://api.github.com/repos/acme/widgets","number":7,"state":"open"}],null]`}
+			}
+			h.gh.mu.Unlock()
+			if err := os.WriteFile(release, nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-finished:
+			case <-time.After(time.Minute):
+				t.Fatal("session did not finish")
+			}
+			t.Setenv("FAKE_WAIT_FOR", "")
+			is, err := h.store.Issue(5)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.name == "unchanged" {
+				if is.CompleteReportedAt.IsZero() {
+					t.Fatal("unchanged completion was not recorded")
+				}
+				nextPass(t, h)
+				if n := len(h.sessions(config.RoleProductManager)); n != 2 {
+					t.Fatalf("unchanged feature ran again: %d", n)
+				}
+				return
+			}
+			if !is.CompleteReportedAt.IsZero() {
+				t.Fatal("refresh silently consumed completion")
+			}
+			want := []int{7}
+			if tc.failure != "" {
+				want = []int{1}
+			}
+			if !slices.Equal(is.OpenChildren, ghwork.Keys(want)) {
+				t.Fatalf("remembered children = %v, want %v", is.OpenChildren, want)
+			}
+			if tc.failure != "" {
+				return
+			}
+			if !tc.closed {
+				nextPass(t, h)
+				if n := len(h.sessions(config.RoleProductManager)); n != 2 {
+					t.Fatalf("open child triggered completion: %d", n)
+				}
+				h.gh.issues[7].State = "CLOSED"
+			}
+			nextPass(t, h)
+			if n := len(h.sessions(config.RoleProductManager)); n != 3 {
+				t.Fatalf("new child's closure did not wake PM: %d", n)
+			}
+			if !strings.Contains(section(t, lastPMPrompt(t, h), "## Features whose work is done"), "#5: Exports") {
+				t.Fatal("feature missing from completion decision")
+			}
+			nextPass(t, h)
+			if n := len(h.sessions(config.RoleProductManager)); n != 3 {
+				t.Fatalf("completion repeated: %d", n)
+			}
+		})
 	}
 }

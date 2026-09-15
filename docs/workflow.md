@@ -1376,8 +1376,12 @@ prompt.
 open sub-issue of a feature closing is an event nobody would otherwise
 report: the work items are gone from the queues, and the feature would sit
 open until the product manager next ran for another reason. Each product
-manager run records which sub-issues of each feature are open. Every later
-pass checks those numbers against the issues the poll still finds open, which
+manager run refreshes and records which sub-issues of each feature are open
+when it ends. Children attached during the session are remembered even if
+already closed by then, so their completion still wakes a later session.
+Failed or incomplete relationship reads preserve the previous memory and
+leave a pending completion report armed. Every later pass checks those
+numbers against the issues the poll still finds open, which
 costs no GitHub call. When all of them have closed, the feature wakes the
 product manager and is presented in a section of its own as one yes/no
 decision: is the feature's original intent complete? If it is, the product
