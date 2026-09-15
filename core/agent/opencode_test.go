@@ -53,7 +53,7 @@ printf '{"status":"submitted","pr":12,"note":"hi"}' > "$TASK_SESSION_DIR/outcome
 	r.OpenCodeBin = bin
 	role := opencodeRole("ollama/llama3")
 	role.FallbackModel = "sonnet"
-	role.Effort = "max"
+	role.Effort = "custom-variant"
 	role.AllowedTools = []string{"Bash"}
 	role.MCP = map[string]MCPEntry{
 		"x":      {Command: "srv", Args: []string{"--port", "1"}, Env: map[string]string{"K": "$HOME"}},
@@ -125,8 +125,8 @@ printf '{"status":"submitted","pr":12,"note":"hi"}' > "$TASK_SESSION_DIR/outcome
 	if cfg.Schema == "" || !slices.Equal(cfg.Instructions, []string{filepath.Join(res.SessionDir, "system-prompt.md")}) {
 		t.Errorf("opencode.json: %s", cb)
 	}
-	if cfg.Agent["build"].Variant != "max" {
-		t.Errorf("opencode.json build variant = %q, want max:\n%s", cfg.Agent["build"].Variant, cb)
+	if cfg.Agent["build"].Variant != "custom-variant" {
+		t.Errorf("opencode.json build variant = %q, want custom-variant:\n%s", cfg.Agent["build"].Variant, cb)
 	}
 	if len(cfg.MCP) != 3 {
 		t.Errorf("opencode.json names %d servers, want 3:\n%s", len(cfg.MCP), cb)

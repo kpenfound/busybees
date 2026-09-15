@@ -17,7 +17,7 @@ func TestProfileResolution(t *testing.T) {
 [profiles.claude]
 [profiles.remote]
 agent = "opencode"
-effort = "high"
+effort = "custom-variant"
 [profiles.code]
 agent = "codex"
 model = "code-model"
@@ -46,7 +46,7 @@ sandbox = "container"
 				}
 				want := map[string]AgentProfile{
 					"claude": {Agent: "claude", Model: "opus", FallbackModel: "sonnet", Sandbox: "none"},
-					"remote": {Agent: "opencode", Effort: "high", Sandbox: "none"},
+					"remote": {Agent: "opencode", Effort: "custom-variant", Sandbox: "none"},
 					"code":   {Agent: "codex", Model: "code-model", Sandbox: "container"},
 				}[tc.want]
 				if got := profileOf(r.ForSize(tc.size)); got != want {
@@ -225,7 +225,6 @@ func TestProfileValidation(t *testing.T) {
 	}
 	for body, want := range map[string]string{
 		"[profiles.bad]\nagent = \"invalid\"":                       "profiles.bad.agent",
-		"[profiles.bad]\neffort = \"invalid\"":                      "profiles.bad.effort",
 		"[profiles.bad]\nsandbox = \"invalid\"":                     "profiles.bad.sandbox",
 		"[profiles.bad]\nprompt = \"invalid\"":                      "profiles.bad.prompt",
 		"[profiles.bad]\nmodel_by_size = {}":                        "profiles.bad.model_by_size",
@@ -235,6 +234,31 @@ func TestProfileValidation(t *testing.T) {
 		if _, err := Load(writeConfig(t, "version = 3\n"+body+"\n")); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: %v", body, err)
 		}
+	}
+	for _, tc := range []struct {
+		name, agent, effort string
+		valid               bool
+	}{
+		{name: "opencode variant", agent: AgentOpenCode, effort: "custom-variant", valid: true},
+		{name: "explicit claude", agent: AgentClaude, effort: "invalid"},
+		{name: "explicit codex", agent: AgentCodex, effort: "invalid"},
+		{name: "default claude", effort: "invalid"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := "version = 3\n[profiles.test]\n"
+			if tc.agent != "" {
+				body += fmt.Sprintf("agent = %q\n", tc.agent)
+			}
+			body += fmt.Sprintf("effort = %q\n", tc.effort)
+			_, err := Load(writeConfig(t, body))
+			if tc.valid {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), "profiles.test.effort") {
+				t.Fatalf("error: %v", err)
+			}
+		})
 	}
 }
 
