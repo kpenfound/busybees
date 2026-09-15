@@ -7,6 +7,7 @@ core/agent/         standalone session runner, backends, sandbox and result arti
 core/agent/agentbin/ fake-executable guard
 core/agent/agenttest/ shared fake agents, Docker and host MCP server
 core/agent/procs/    finding and stopping sessions (processes and containers)
+core/mcphost/        MCP host, typed role-scoped registration, lifecycle and outcome tool
 cmd/bees/            the cobra CLI: every `bees` command
 internal/config/     bees.toml and the machine config: schema, defaults, validation, global/role merging, labels, the init template
 internal/daemon/     several projects' schedulers in one process, one goroutine each, a failure kept to its project
@@ -17,7 +18,7 @@ internal/github/     thin wrapper around the gh CLI: issues, PRs, labels, milest
 internal/issues/     `bees issue create/link`: filter labels, kind and state labels, sub-issue of --parent, inherited milestone
 internal/logging/    console and file logging; bees.log rotation
 internal/mail/       the local mailbox: JSON messages under <state_dir>/mail/<role>/
-internal/mcpserver/  the built-in MCP server (`bees mcp serve`): the factory's operations as tools, filtered by role
+internal/mcpserver/  busybees MCP tool registration, collaborators and authorization on core/mcphost
 internal/nams/       the Neo4j Agent Memory REST client behind notes_read and notes_write with notes.backend = "neo4j"
 internal/prompts/    role prompts embedded in the binary (system/*.md, task/*.md), the project's own bees/prompts/ files, the renderer
 internal/review/     bees review: two configuration files, the context gathered for a pull request, the distiller session that briefs the review, the container checkout of the pull request's head and the angle sessions that review from it there, the judge that merges their findings, the reviewer notes and the noise filter made of them, the triage queue and its two front ends (the console, and the terminal UI in internal/reviewtui/ at a terminal), the runner that strings the pipeline together, the end that posts or prints what triage selected, the artifact directory a review is kept in

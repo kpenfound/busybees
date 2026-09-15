@@ -2,23 +2,20 @@ package main
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net"
-	"net/http"
 	"os"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
 
+	"github.com/kpenfound/busybees/core/mcphost"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/duplicates"
 	"github.com/kpenfound/busybees/internal/github"
@@ -56,11 +53,7 @@ and the session reaches it over HTTP.`
 			if listen != "" {
 				return serveMCPHTTP(cmd.Context(), srv, listen, os.Getenv(session.EnvMCPToken), cmd.OutOrStdout())
 			}
-			err := srv.Run(cmd.Context(), &mcp.StdioTransport{})
-			if isCleanShutdown(err) {
-				return nil
-			}
-			return err
+			return mcphost.Run(cmd.Context(), srv, &mcp.StdioTransport{})
 		},
 	}
 	serve.Flags().StringVar(&listen, "listen", "", "serve over HTTP on this address instead of stdio, for a container session (needs $"+session.EnvMCPToken+")")
@@ -155,53 +148,10 @@ func serveMCPHTTP(ctx context.Context, srv *mcp.Server, addr, token string, out 
 		return err
 	}
 	if _, err := fmt.Fprintf(out, "%s%s\n", session.MCPListening, ln.Addr()); err != nil {
+		_ = ln.Close()
 		return err
 	}
-	hs := &http.Server{Handler: mcpHTTPHandler(srv, token)}
-	go func() {
-		<-ctx.Done()
-		_ = hs.Close()
-	}()
-	if err := hs.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
-		return err
-	}
-	return nil
-}
-
-// mcpHTTPHandler serves srv over streamable HTTP to a client presenting
-// token as its bearer credential, and answers 401 to any other request.
-// The SDK's own guard, which refuses a request to a loopback listener whose
-// Host header is not a loopback name, is switched off: it protects a local
-// server from a browser tricked into reaching it (DNS rebinding), which the
-// token does here, and the container reaches the loopback listener through
-// the host's alias, which is exactly such a Host header.
-func mcpHTTPHandler(srv *mcp.Server, token string) http.Handler {
-	h := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, &mcp.StreamableHTTPOptions{DisableLocalhostProtection: true})
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if !ok || subtle.ConstantTimeCompare([]byte(got), []byte(token)) != 1 {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		h.ServeHTTP(w, r)
-	})
-}
-
-// codeServerClosing is the jsonrpc2 error code the SDK answers with once the
-// connection is going away ("server is closing"). It is not exported, and the
-// read error it reports is formatted with %v rather than wrapped, so matching
-// on the code is the only way to recognise it.
-const codeServerClosing = -32004
-
-// isCleanShutdown reports whether an error from mcp.Server.Run is an ordinary
-// end of session rather than a failure. claude closes the server's stdin when
-// it is done with it and kills the process on shutdown; neither is worth a
-// nonzero exit status, which claude would record as the server having crashed.
-func isCleanShutdown(err error) bool {
-	return err == nil ||
-		errors.Is(err, io.EOF) ||
-		errors.Is(err, context.Canceled) ||
-		errors.Is(err, &jsonrpc.Error{Code: codeServerClosing})
+	return mcphost.ServeHTTP(ctx, srv, ln, token)
 }
 
 // backend is the production implementation of the server's Issues, GitHub,

@@ -10,6 +10,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/kpenfound/busybees/core/mcphost"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/duplicates"
 	"github.com/kpenfound/busybees/internal/github"
@@ -60,96 +61,86 @@ var errNoIssues = errors.New("issues are unavailable: bees.toml could not be loa
 // only two transitions a role makes itself; the orchestrator owns the rest.
 var states = []string{"ready", "blocked"}
 
-func (s *server) addGitHubTools(srv *mcp.Server) {
-	mcp.AddTool(srv, &mcp.Tool{
+func (s *server) addGitHubTools(srv *mcphost.Registry) {
+	mcphost.AddTool(srv, &mcp.Tool{
 		Name:  "issue_view",
 		Title: "Read an issue",
 		Description: "Read one issue in full: its labels, milestone, parent feature, body and " +
 			"every comment, oldest first, marked as written by a bee or by a person. Defaults " +
 			"to the issue this session is working on. Issues outside the factory's filter are refused.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-		InputSchema: schemaFor[issueViewInput](nil),
+		InputSchema: mcphost.SchemaFor[issueViewInput](nil),
 	}, s.issueView)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	mcphost.AddTool(srv, &mcp.Tool{
 		Name:  "pr_view",
 		Title: "Read a pull request",
 		Description: "Read one pull request: title, branches, body, the state of its required " +
 			"checks and every review and comment a person left on it. Defaults to the pull " +
 			"request this session is working on. Pull requests outside the factory's filter are refused.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-		InputSchema: schemaFor[prViewInput](nil),
+		InputSchema: mcphost.SchemaFor[prViewInput](nil),
 	}, s.prView)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	mcphost.AddTool(srv, &mcp.Tool{
 		Name:  "comment",
 		Title: "Comment on an issue or pull request",
 		Description: "Post a comment on an issue or pull request. Comments on GitHub are for " +
 			"people: use `mail_send` to talk to another role. The marker that tells your " +
 			"comments apart from a person's is appended for you.",
-		InputSchema: schemaFor[commentInput](nil),
+		InputSchema: mcphost.SchemaFor[commentInput](nil),
 	}, s.comment)
 
-	if s.roleIs(config.RoleProductManager, config.RoleProjectManager) {
-		mcp.AddTool(srv, &mcp.Tool{
-			Name:  "issue_edit_body",
-			Title: "Rewrite an issue body",
-			Description: "Replace the body of an issue with a new one. Feature and feedback " +
-				"issues belong to the product manager; nobody else may rewrite them.",
-			InputSchema: schemaFor[issueEditBodyInput](nil),
-		}, s.issueEditBody)
-	}
+	mcphost.AddTool(srv, &mcp.Tool{
+		Name:  "issue_edit_body",
+		Title: "Rewrite an issue body",
+		Description: "Replace the body of an issue with a new one. Feature and feedback " +
+			"issues belong to the product manager; nobody else may rewrite them.",
+		InputSchema: mcphost.SchemaFor[issueEditBodyInput](nil),
+	}, s.issueEditBody, config.RoleProductManager, config.RoleProjectManager)
 
-	if s.roleIs(config.RoleProjectManager) {
-		mcp.AddTool(srv, &mcp.Tool{
-			Name:  "issue_set_state",
-			Title: "Move a work item out of triage",
-			Description: "Move a refined work item from triage to ready (with its size, which " +
-				"is required) or to blocked, in one edit. Only an issue in triage can be moved; " +
-				"the orchestrator owns every other transition.",
-			InputSchema: schemaFor[issueSetStateInput](map[string][]string{
-				"state": states,
-				"size":  config.Sizes,
-			}),
-		}, s.issueSetState)
-	}
+	mcphost.AddTool(srv, &mcp.Tool{
+		Name:  "issue_set_state",
+		Title: "Move a work item out of triage",
+		Description: "Move a refined work item from triage to ready (with its size, which " +
+			"is required) or to blocked, in one edit. Only an issue in triage can be moved; " +
+			"the orchestrator owns every other transition.",
+		InputSchema: mcphost.SchemaFor[issueSetStateInput](map[string][]string{
+			"state": states,
+			"size":  config.Sizes,
+		}),
+	}, s.issueSetState, config.RoleProjectManager)
 
-	if s.roleIs(config.RoleReviewer) {
-		mcp.AddTool(srv, &mcp.Tool{
-			Name:  "submit_review",
-			Title: "Submit a review on a pull request",
-			Description: "Submit one GitHub review on a pull request: approve, request-changes or " +
-				"comment, with the verdict line and every finding of the review in the body. On a " +
-				"developer's pull request the event is comment, and the verdict reaches the " +
-				"developer by mail. Defaults to the pull request this session is working on. The " +
-				"marker that tells your reviews apart from a person's is appended for you.",
-			InputSchema: schemaFor[submitReviewInput](map[string][]string{
-				"event": github.ReviewEvents,
-			}),
-		}, s.submitReview)
-	}
+	mcphost.AddTool(srv, &mcp.Tool{
+		Name:  "submit_review",
+		Title: "Submit a review on a pull request",
+		Description: "Submit one GitHub review on a pull request: approve, request-changes or " +
+			"comment, with the verdict line and every finding of the review in the body. On a " +
+			"developer's pull request the event is comment, and the verdict reaches the " +
+			"developer by mail. Defaults to the pull request this session is working on. The " +
+			"marker that tells your reviews apart from a person's is appended for you.",
+		InputSchema: mcphost.SchemaFor[submitReviewInput](map[string][]string{
+			"event": github.ReviewEvents,
+		}),
+	}, s.submitReview, config.RoleReviewer)
 
-	if s.roleIs(config.RoleProductManager) {
-		mcp.AddTool(srv, &mcp.Tool{
-			Name:  "issue_question",
-			Title: "Wait for a person to answer",
-			Description: "Mark a feature or feedback issue as waiting for a person to answer, " +
-				"or clear that once they have. Post the question itself as a comment first.",
-			InputSchema: schemaFor[issueQuestionInput](nil),
-		}, s.issueQuestion)
-	}
+	mcphost.AddTool(srv, &mcp.Tool{
+		Name:  "issue_question",
+		Title: "Wait for a person to answer",
+		Description: "Mark a feature or feedback issue as waiting for a person to answer, " +
+			"or clear that once they have. Post the question itself as a comment first.",
+		InputSchema: mcphost.SchemaFor[issueQuestionInput](nil),
+	}, s.issueQuestion, config.RoleProductManager)
 
-	if s.roleIs(config.RoleQA) {
-		mcp.AddTool(srv, &mcp.Tool{
-			Name:  "file_bug",
-			Title: "File a bug report",
-			Description: "File a bug you reproduced yourself, checked against every issue in the " +
-				"repository first: when one of them already reports it, nothing is filed and the " +
-				"candidates come back for you to comment on instead. This is how QA opens a bug; " +
-				"`issue_create` does not check for duplicates.",
-			InputSchema: schemaFor[fileBugInput](nil),
-		}, s.fileBug)
-	}
+	mcphost.AddTool(srv, &mcp.Tool{
+		Name:  "file_bug",
+		Title: "File a bug report",
+		Description: "File a bug you reproduced yourself, checked against every issue in the " +
+			"repository first: when one of them already reports it, nothing is filed and the " +
+			"candidates come back for you to comment on instead. This is how QA opens a bug; " +
+			"`issue_create` does not check for duplicates.",
+		InputSchema: mcphost.SchemaFor[fileBugInput](nil),
+	}, s.fileBug, config.RoleQA)
 }
 
 // touched records that this session changed an issue on GitHub, so the

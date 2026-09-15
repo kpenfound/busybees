@@ -6,6 +6,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/kpenfound/busybees/core/mcphost"
 	"github.com/kpenfound/busybees/internal/feedback"
 )
 
@@ -23,8 +24,8 @@ type reportFactoryErrorInput struct {
 	Detail string `json:"detail" jsonschema:"the error and enough context to act on it: what you did, what the tool or orchestrator did instead, what you expected; already scrubbed of repository names, tokens, file paths and people"`
 }
 
-func (s *server) addFeedbackTools(srv *mcp.Server) {
-	mcp.AddTool(srv, &mcp.Tool{
+func (s *server) addFeedbackTools(srv *mcphost.Registry) {
+	mcphost.AddTool(srv, &mcp.Tool{
 		Name:  "report_factory_error",
 		Title: "Report an error the factory caused",
 		Description: "Record a draft issue about an error caused by the factory itself, not by the " +
@@ -35,7 +36,7 @@ func (s *server) addFeedbackTools(srv *mcp.Server) {
 			"repository, no organisation, no file path, no token or secret and no person — replace " +
 			"them with placeholders like <repo>, <path> and <login>. Nothing scrubs after you. " +
 			"Without scheduler.report_factory_errors in bees.toml the draft is not recorded.",
-		InputSchema: schemaFor[reportFactoryErrorInput](nil),
+		InputSchema: mcphost.SchemaFor[reportFactoryErrorInput](nil),
 	}, s.reportFactoryError)
 }
 

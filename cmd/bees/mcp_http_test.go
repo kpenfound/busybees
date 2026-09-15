@@ -10,6 +10,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/kpenfound/busybees/core/mcphost"
 	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/mail"
 	"github.com/kpenfound/busybees/internal/mcpserver"
@@ -39,7 +40,7 @@ func TestMCPOverHTTPNeedsTheToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := mcpserver.Env{Role: "developer", StateDir: st.Dir, SessionDir: t.TempDir(), Issue: 3}
-	ts := httptest.NewServer(mcpHTTPHandler(mcpserver.New(env, mcpserver.Deps{}), "s3cret"))
+	ts := httptest.NewServer(mcphost.HTTPHandler(mcpserver.New(env, mcpserver.Deps{}), "s3cret"))
 	defer ts.Close()
 	ctx := context.Background()
 

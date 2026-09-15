@@ -10,6 +10,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 
+	"github.com/kpenfound/busybees/core/mcphost"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/mcpserver"
 )
@@ -85,7 +86,7 @@ func renderTools(t *testing.T, role string) string {
 // jsonrpc2 "server is closing" error; exiting nonzero there would make every
 // session record its bees server as having crashed.
 func TestIsCleanShutdown(t *testing.T) {
-	closing := &jsonrpc.Error{Code: codeServerClosing, Message: "server is closing"}
+	closing := &jsonrpc.Error{Code: -32004, Message: "server is closing"}
 	for _, tc := range []struct {
 		name string
 		err  error
@@ -101,8 +102,8 @@ func TestIsCleanShutdown(t *testing.T) {
 		{"a real failure", errors.New("broken pipe"), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := isCleanShutdown(tc.err); got != tc.want {
-				t.Fatalf("isCleanShutdown(%v) = %v, want %v", tc.err, got, tc.want)
+			if got := mcphost.IsCleanShutdown(tc.err); got != tc.want {
+				t.Fatalf("mcphost.IsCleanShutdown(%v) = %v, want %v", tc.err, got, tc.want)
 			}
 		})
 	}
