@@ -414,7 +414,14 @@ func sessionMarker(dir string, after func(string) error) error {
 	if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if _, err := os.Stat(dst); err == nil {
+	if b, err := os.ReadFile(dst); err == nil {
+		var ref work.Ref
+		if err := json.Unmarshal(b, &ref); err != nil {
+			return fmt.Errorf("%s: %w", dst, err)
+		}
+		if ref.Key == "" {
+			return fmt.Errorf("missing work key in session marker %s", dst)
+		}
 		return nil
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err

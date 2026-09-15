@@ -195,7 +195,7 @@ func TestMigrationConflictKeepsRecoverableSource(t *testing.T) {
 	}
 }
 func TestMigrationCorruptionAndIOFailure(t *testing.T) {
-	for _, name := range []string{"mail/developer/issue.json", "issues/12.json", "sessions/finished/outcome.json", "sessions/interrupted/issue", "status.json", "ledger.jsonl"} {
+	for _, name := range []string{"mail/developer/issue.json", "issues/12.json", "sessions/finished/outcome.json", "sessions/interrupted/issue", "sessions/new/work.json", "status.json", "ledger.jsonl"} {
 		t.Run(name, func(t *testing.T) {
 			dir := fixture(t)
 			path := filepath.Join(dir, name)
