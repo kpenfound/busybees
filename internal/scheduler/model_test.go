@@ -2,9 +2,11 @@ package scheduler
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -68,5 +70,92 @@ func TestDeveloperModelBySize(t *testing.T) {
 				t.Errorf("reviewer --model: got %q want %q", got, config.DefaultModel)
 			}
 		})
+	}
+}
+
+// Both the developer and the reviewer must select the entire sized profile.
+func TestSessionsUseWholeSizeProfile(t *testing.T) {
+	h := newHarness(t, baseTOML+`
+[profiles.sized]
+agent = "codex"
+model = "sized-model"
+effort = "high"
+[global]
+profile_by_size = { s = "sized" }
+[roles.product_manager]
+enabled = false
+[roles.project_manager]
+enabled = false
+[roles.qa]
+enabled = false
+`)
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now()}
+	h.gh.prs[fakePR] = &github.PR{Number: fakePR, Title: "Build", State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
+	seedCounter(t, h, "review", 1)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if err := h.sched.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, role := range []string{config.RoleDeveloper, config.RoleReviewer} {
+		dirs := h.sessions(role)
+		if len(dirs) == 0 {
+			t.Fatalf("no %s session", role)
+		}
+		for _, dir := range dirs {
+			args := argsOf(t, dir)
+			if len(args) < 3 || args[1] != "exec" {
+				t.Fatalf("%s backend: %v", role, args)
+			}
+			joined := strings.Join(args, "\n")
+			if !strings.Contains(joined, `model_reasoning_effort="high"`) || !strings.Contains(joined, "sized-model") {
+				t.Fatalf("%s profile: %v", role, args)
+			}
+		}
+	}
+}
+
+// A size edit after dispatch must reach the brief, angles and judge together.
+func TestReviewUsesFreshIssueSizeProfile(t *testing.T) {
+	logPath := reviewLogPath(t)
+	h := newHarness(t, devOnlyTOML+`
+[profiles.fresh]
+agent = "codex"
+model = "fresh-model"
+effort = "high"
+[roles.reviewer]
+profile_by_size = { l = "fresh" }
+`)
+	seedReady(h, 1, "s", time.Now().Add(-time.Hour))
+	seedCounter(t, h, "review", 1)
+	prev := h.sched.gh.Exec
+	h.sched.gh.Exec = func(ctx context.Context, args ...string) ([]byte, error) {
+		data, err := prev(ctx, args...)
+		if err != nil || len(args) < 3 || args[0] != "issue" || args[1] != "view" || args[2] != "1" {
+			return data, err
+		}
+		var issue github.Issue
+		if err := json.Unmarshal(data, &issue); err != nil {
+			return nil, err
+		}
+		if github.HasLabel(issue.Labels, "bees:review") {
+			for i := range issue.Labels {
+				if issue.Labels[i].Name == "bees:size/s" {
+					issue.Labels[i].Name = "bees:size/l"
+				}
+			}
+		}
+		return json.Marshal(issue)
+	}
+	runPass(t, h)
+	sessions := reviewSessions(t, logPath)
+	if len(sessions) < 2 {
+		t.Fatalf("expected brief and angles, got %d sessions", len(sessions))
+	}
+	sessions = append(sessions, reviewSession{Kind: "judge", Args: argsOfNamed(t, h, "reviewer-pr-201-r1")})
+	for _, s := range sessions {
+		if modelOf(s.Args) != "fresh-model" || !strings.Contains(strings.Join(s.Args, " "), "exec") {
+			t.Errorf("%s did not select the fresh codex profile: %v", s.Kind, s.Args)
+		}
 	}
 }

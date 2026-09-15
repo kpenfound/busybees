@@ -142,8 +142,10 @@ func (d *Deps) usesCodex() bool {
 		if err != nil || !role.Enabled {
 			continue
 		}
-		if role.Agent == config.AgentCodex {
-			return true
+		for _, size := range append([]string{""}, config.Sizes...) {
+			if role.ForSize(size).Agent == config.AgentCodex {
+				return true
+			}
 		}
 	}
 	return false
@@ -157,8 +159,10 @@ func (d *Deps) usesOpenCode() bool {
 		if err != nil || !role.Enabled {
 			continue
 		}
-		if role.Agent == config.AgentOpenCode {
-			return true
+		for _, size := range append([]string{""}, config.Sizes...) {
+			if role.ForSize(size).Agent == config.AgentOpenCode {
+				return true
+			}
 		}
 	}
 	return false

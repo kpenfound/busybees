@@ -197,9 +197,8 @@ You never need to add a kind label.
 
 Besides its state label, a work item carries at most one size label. The
 reviewer is told the size and adjusts its scrutiny to it, `bees status`
-breaks the ready queue down by size, and the size can pick the model a
-developer session runs
-([`roles.developer.model_by_size`](configuration.md#rolesdeveloper-only-commit-flags-max-size-and-per-size-models)).
+breaks the ready queue down by size, and `profile_by_size` can pick the agent
+profile a session runs. Set it under `[global]` or any `[roles.<name>]` table.
 
 | Size | Label | Rough meaning |
 |---|---|---|
