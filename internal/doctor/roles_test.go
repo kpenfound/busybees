@@ -27,9 +27,16 @@ func TestMain(m *testing.M) {
 	switch os.Getenv("FAKE_MCP") {
 	case "":
 		os.Exit(m.Run())
-	case "ok":
+	case "ok", "slow-shutdown", "failed-shutdown":
 		srv := mcp.NewServer(&mcp.Implementation{Name: "fake", Version: "1"}, nil)
 		if err := srv.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
+			os.Exit(1)
+		}
+		switch os.Getenv("FAKE_MCP") {
+		case "slow-shutdown":
+			// Initialized successfully, but needs SIGTERM after stdin closes.
+			time.Sleep(time.Minute)
+		case "failed-shutdown":
 			os.Exit(1)
 		}
 		os.Exit(0)
@@ -193,6 +200,30 @@ func TestRoleMCPServerThatNeverAnswersTimesOut(t *testing.T) {
 	case <-time.After(30 * time.Second):
 		t.Fatal("the check hung: an unresponsive MCP server must time out")
 	}
+}
+
+// The probe checks initialization. Its own cleanup must not turn an answered
+// request into a failure when a server needs SIGTERM or exits nonzero on EOF.
+func TestRoleMCPServerShutdownDoesNotFailInitialize(t *testing.T) {
+	for _, mode := range []string{"slow-shutdown", "failed-shutdown"} {
+		t.Run(mode, func(t *testing.T) {
+			f := setupRoles(t, mcpTOML(t, "developer", mode), nil)
+			role, err := f.Config.Role(config.RoleDeveloper)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantResult(t, f.run(t, f.checkRoleMCP(role)), Pass, "probe", "answered")
+		})
+	}
+}
+
+func TestRoleMCPServerThatExitsBeforeInitialize(t *testing.T) {
+	f := setupRoles(t, mcpTOML(t, "developer", "crash"), nil)
+	role, err := f.Config.Role(config.RoleDeveloper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantResult(t, f.run(t, f.checkRoleMCP(role)), Fail, "probe")
 }
 
 func TestRoleMCPServerThatCannotBeStarted(t *testing.T) {

@@ -2,6 +2,8 @@ package session
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -343,5 +345,96 @@ func TestTheTokenVariableReachesTheSession(t *testing.T) {
 		return nil
 	}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Codex filters the environment when starting an MCP server. Check the
+// generated overrides against the session environment, then load bees.toml
+// with only the credentials that would reach the built-in server.
+func TestCodexBuiltinMCPCredentials(t *testing.T) {
+	const secret = "ghp_codex_environment_only"
+	for _, tc := range []struct {
+		name, token, tokenVar string
+	}{
+		{"bees variable", "$BEES_GITHUB_TOKEN", "BEES_GITHUB_TOKEN"},
+		{"braced variable", "${BEES_GITHUB_TOKEN}", "BEES_GITHUB_TOKEN"},
+		{"custom variable", "$FACTORY_GITHUB_TOKEN", "FACTORY_GITHUB_TOKEN"},
+		{"gh variable", "$GH_TOKEN", EnvGHToken},
+		{"literal", secret, ""},
+		{"machine identity", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(EnvGHToken, secret)
+			if tc.tokenVar != "" {
+				t.Setenv(tc.tokenVar, secret)
+			}
+			const notesVar = "BEES_NAMS_KEY"
+			const notesSecret = "nams_codex_environment_only"
+			t.Setenv(notesVar, notesSecret)
+			r := newRunner(t, "")
+			if tc.token != "" {
+				r.GitHub = config.GitHub{Login: "busybees-bot", Token: tc.token}
+			}
+			r.Notes = config.Notes{Backend: config.NotesBackendNeo4j,
+				Neo4jURL: "https://nams.example.com/v1", Neo4jAPIKey: "$" + notesVar}
+			req := Request{Role: codexRole(""), WorkDir: t.TempDir()}
+			dir := t.TempDir()
+			parentEnv := map[string]string{}
+			for _, kv := range r.env(req, dir) {
+				k, v, _ := strings.Cut(kv, "=")
+				parentEnv[k] = v
+			}
+			entry := r.builtinMCP(req, dir)
+			overrides := codexMCPOverrides(map[string]MCPEntry{config.BuiltinMCPServer: entry})
+			childEnv := map[string]string{}
+			for _, o := range overrides {
+				key, value, _ := strings.Cut(o, "=")
+				switch {
+				case key == "mcp_servers.bees.env_vars":
+					var names []string
+					if err := json.Unmarshal([]byte(value), &names); err != nil {
+						t.Fatal(err)
+					}
+					for _, name := range names {
+						childEnv[name] = parentEnv[name]
+					}
+				case strings.HasPrefix(key, "mcp_servers.bees.env."):
+					var v string
+					if err := json.Unmarshal([]byte(value), &v); err != nil {
+						t.Fatal(err)
+					}
+					childEnv[strings.TrimPrefix(key, "mcp_servers.bees.env.")] = v
+				}
+			}
+			if childEnv[EnvGHToken] != secret {
+				t.Error("the built-in server did not receive GH_TOKEN")
+			}
+			if tc.tokenVar != "" {
+				t.Setenv(tc.tokenVar, childEnv[tc.tokenVar])
+			}
+			t.Setenv(notesVar, childEnv[notesVar])
+			path := filepath.Join(t.TempDir(), "bees.toml")
+			body := fmt.Sprintf("version = 1\n[project]\nrepo = \"a/b\"\n[github]\nlogin = %q\ntoken = %q\n"+
+				"[notes]\nbackend = \"neo4j\"\nneo4j_url = %q\nneo4j_api_key = %q\n",
+				r.GitHub.Login, tc.token, r.Notes.Neo4jURL, r.Notes.Neo4jAPIKey)
+			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := config.Load(path); err != nil {
+				t.Errorf("the built-in server cannot load bees.toml: %v", err)
+			}
+			if err := WriteMCPConfig(filepath.Join(dir, "mcp.json"), map[string]MCPEntry{config.BuiltinMCPServer: entry}); err != nil {
+				t.Fatal(err)
+			}
+			b, err := os.ReadFile(filepath.Join(dir, "mcp.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, s := range []string{secret, notesSecret} {
+				if strings.Contains(strings.Join(overrides, "\n"), s) || strings.Contains(string(b), s) {
+					t.Error("a credential was written into the MCP config or command arguments")
+				}
+			}
+		})
 	}
 }

@@ -331,7 +331,7 @@ func codexList(l []string) string {
 
 // codexMCPOverrides renders MCP entries as `-c` overrides of codex's
 // mcp_servers table, one per key, in a stable order: stdio servers by
-// command, args and env; remote ones by url and http_headers. Names are
+// command, args, env and env_vars; remote ones by url and http_headers. Names are
 // sorted so two sessions of one role build the same command line.
 func codexMCPOverrides(entries map[string]MCPEntry) []string {
 	var out []string
@@ -342,6 +342,9 @@ func codexMCPOverrides(entries map[string]MCPEntry) []string {
 			out = append(out, prefix+"command="+codexValue(e.Command))
 			if len(e.Args) > 0 {
 				out = append(out, prefix+"args="+codexList(e.Args))
+			}
+			if len(e.EnvVars) > 0 {
+				out = append(out, prefix+"env_vars="+codexList(e.EnvVars))
 			}
 			for _, k := range sortedKeys(e.Env) {
 				out = append(out, prefix+"env."+k+"="+codexValue(e.Env[k]))
@@ -423,6 +426,21 @@ func (codexBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer) (
 }
 
 // opencodeBackend runs a session as `opencode run --format json`,
+// opencode's non-interactive mode.
+
+// makeSuccessEnd creates a generic successful streamEnd used when a backend
+// finishes without an explicit end event.
+func makeSuccessEnd(sessionID, result string, turns int, cost float64, costKnown bool) *streamEnd {
+    return &streamEnd{
+        SessionID: sessionID,
+        Result:    result,
+        IsError:   false,
+        Subtype:   "success",
+        NumTurns:  turns,
+        CostUSD:   cost,
+        CostKnown: costKnown,
+    }
+}
 // opencode's non-interactive mode.
 //
 // What differs from claude and from codex, and how each difference is met:
@@ -563,20 +581,21 @@ func writeOpenCodeConfig(path, instructions string, entries map[string]MCPEntry)
 // opencodeEvent is one line of `opencode run --format json`, reduced to
 // the fields the runner reads.
 type opencodeEvent struct {
-	Type      string `json:"type"`
-	SessionID string `json:"sessionID"`
-	Part      struct {
-		Type   string  `json:"type"`
-		Text   string  `json:"text"`
-		Reason string  `json:"reason"`
-		Cost   float64 `json:"cost"`
-	} `json:"part"`
-	Error struct {
-		Name string `json:"name"`
-		Data struct {
-			Message string `json:"message"`
-		} `json:"data"`
-	} `json:"error"`
+    Type          string `json:"type"`
+    SessionID     string `json:"sessionID"`
+    SessionIDAlt  string `json:"session_id"`
+    Part          struct {
+        Type   string  `json:"type"`
+        Text   string  `json:"text"`
+        Reason string  `json:"reason"`
+        Cost   float64 `json:"cost"`
+    } `json:"part"`
+    Error struct {
+        Name string `json:"name"`
+        Data struct {
+            Message string `json:"message"`
+        } `json:"data"`
+    } `json:"error"`
 }
 
 // consume reads opencode's event stream. The session id is on every event,
@@ -598,7 +617,11 @@ func (opencodeBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer
 			return
 		}
 		if sessionID == "" {
-			sessionID = ev.SessionID
+			if ev.SessionID != "" {
+				sessionID = ev.SessionID
+			} else {
+				sessionID = ev.SessionIDAlt
+			}
 		}
 		switch typ {
 		case "text":
@@ -631,10 +654,14 @@ func (opencodeBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer
 			end = &streamEnd{Subtype: "error", Result: msg}
 		}
 	})
-	if end == nil {
-		return nil, nil, err
-	}
-	end.SessionID = sessionID
+if end == nil {
+    if lastText != "" {
+        end = makeSuccessEnd(sessionID, lastText, turns, cost, costKnown)
+    } else {
+        return nil, nil, err
+    }
+}
+end.SessionID = sessionID
 	end.NumTurns = turns
 	end.CostUSD, end.CostKnown = cost, costKnown
 	if end.Result == "" {

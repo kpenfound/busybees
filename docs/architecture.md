@@ -1006,10 +1006,11 @@ counted from the transcript's assistant messages or completed items instead.
   also written into the built-in MCP server's entry in `mcp.json` (for
   codex, its overrides) rather than left to inheritance; the token variable
   deliberately is not, because that file sits in the session directory on
-  disk, and claude passes its own environment on to the servers it starts.
-  Codex does not: a codex session's built-in server sees only the `BEES_*`
-  variables its entry names. opencode lays the entry's environment over
-  its own, as claude does. See
+  disk. Claude and opencode pass their own environment on to the servers
+  they start. Codex filters that environment, so the built-in server's
+  `env_vars` override names the GitHub credential variables and, with the
+  Neo4j notes backend, the variable `notes.neo4j_api_key` reads. Codex copies
+  their values from its environment when it starts the server. See
   [Exported into every session](configuration.md#exported-into-every-session).
 - **Prompts.** The system prompt is `system/common.md` plus
   `system/<role>.md`, the role's custom `prompt` from `bees.toml`, and then
