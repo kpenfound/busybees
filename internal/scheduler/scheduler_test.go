@@ -660,6 +660,9 @@ type fakeGH struct {
 	// parentErr makes the ParentIssue query fail for one work item, which is
 	// how a partial parent lookup is expressed: the other items still answer.
 	parentErr map[int]error
+	// childResponse overrides a complete paginated relationship response.
+	childResponse map[int]string
+	childErr      map[int]error
 	// errFor makes a command fail: it is keyed by the command name, either
 	// the first two arguments ("label list") or the first one ("label"), or
 	// by "requested_reviewers" and "assignees" for the review-request and
@@ -926,6 +929,29 @@ func (f *fakeGH) exec(ctx context.Context, args ...string) ([]byte, error) {
 				return nil, err
 			}
 			return []byte("{}"), nil
+		}
+		if path := args[len(args)-1]; strings.Contains(path, "/sub_issues?per_page=") {
+			var parent int
+			if _, err := fmt.Sscanf(path, "repos/acme/widgets/issues/%d/sub_issues?per_page=100", &parent); err != nil {
+				return nil, err
+			}
+			if err := f.childErr[parent]; err != nil {
+				return nil, err
+			}
+			if raw, ok := f.childResponse[parent]; ok {
+				return []byte(raw), nil
+			}
+			children := []map[string]any{}
+			for n, child := range f.issues {
+				p := f.parents[n]
+				if n == 1 && p == 0 && f.issues[5] != nil {
+					p = 5
+				}
+				if p == parent {
+					children = append(children, map[string]any{"repository_url": "https://api.github.com/repos/acme/widgets", "number": n, "state": strings.ToLower(child.State), "user": child.Author, "labels": child.Labels, "assignees": child.Assignees, "milestone": child.Milestone})
+				}
+			}
+			return json.Marshal([]any{children})
 		}
 		if args[1] == "graphql" {
 			n := 0

@@ -1310,6 +1310,51 @@ func (c *Client) GetIssueDetails(ctx context.Context, number int) (IssueDetails,
 	return d, json.Unmarshal(out, &d)
 }
 
+// ListSubIssues returns direct children in this repository, including closed
+// issues. Fetch every page: a partial relationship view must never be used as
+// completion evidence.
+func (c *Client) ListSubIssues(ctx context.Context, number int) ([]Issue, error) {
+	out, err := c.Exec(ctx, "api", "--paginate", "--slurp", fmt.Sprintf("repos/%s/issues/%d/sub_issues?per_page=100", c.Repo, number))
+	if err != nil {
+		return nil, err
+	}
+	var pages [][]struct {
+		Issue
+		User          Author `json:"user"`
+		RepositoryURL string `json:"repository_url"`
+	}
+	if err := json.Unmarshal(out, &pages); err != nil {
+		return nil, err
+	}
+	if len(pages) == 0 {
+		return nil, errors.New("missing sub-issue pages")
+	}
+	var issues []Issue
+	seen := map[int]bool{}
+	for _, page := range pages {
+		if page == nil {
+			return nil, errors.New("missing sub-issue page")
+		}
+		for _, child := range page {
+			child.State = strings.ToUpper(child.State)
+			if child.RepositoryURL == "" || child.Number <= 0 || (child.State != "OPEN" && child.State != "CLOSED") {
+				return nil, errors.New("invalid sub-issue")
+			}
+			// Cross-repository children have a different issue-number namespace.
+			if !strings.HasSuffix(strings.ToLower(child.RepositoryURL), "/repos/"+strings.ToLower(c.Repo)) {
+				continue
+			}
+			if seen[child.Number] {
+				return nil, errors.New("repeated sub-issue")
+			}
+			seen[child.Number] = true
+			child.Author = child.User
+			issues = append(issues, child.Issue)
+		}
+	}
+	return issues, nil
+}
+
 // Parent is the parent issue of a sub-issue.
 type Parent struct {
 	Number int    `json:"number"`
