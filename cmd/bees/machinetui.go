@@ -96,13 +96,14 @@ func newMachineView(ctx context.Context, d *daemon.Daemon) *machineViews {
 func (v *machineViews) initial() []tui.Project { return v.startup }
 
 func (v *machineViews) wrap(m *config.Machine, projects []daemon.Project) []daemon.Project {
-	names := projectNames(v.ctx, m.Configs)
+	full := projectFullNames(v.ctx, m.Configs)
+	names := projectNames(full)
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	for i := range projects {
 		cfg := m.Configs[i]
 		v.next++
-		pv := &projectView{name: names[i], events: make(chan scheduler.Event, viewEventBuffer), stop: make(chan struct{})}
+		pv := &projectView{name: names[i], fullName: full[i], events: make(chan scheduler.Event, viewEventBuffer), stop: make(chan struct{})}
 		store := state.New(cfg.StateDir())
 		pv.source = tui.Project{
 			Path: projects[i].Name, Generation: v.next, Name: names[i], Repo: cfg.Project.Repo,
@@ -176,6 +177,16 @@ func (v *machineViews) publish() {
 	}
 	slices.SortFunc(draining, func(a, b tui.Project) int { return cmp.Compare(a.Generation, b.Generation) })
 	out = append(out, draining...)
+	// Labels describe the complete live membership, including collisions
+	// with draining removals. Rename only snapshot values, retaining every
+	// source's identity, event subscription and callbacks.
+	full := make([]string, len(out))
+	for i, p := range out {
+		full[i] = v.live[p.Path].fullName
+	}
+	for i, name := range projectNames(full) {
+		out[i].Name = name
+	}
 	select {
 	case <-v.updates:
 	default:
@@ -196,14 +207,12 @@ func (v *machineViews) close() {
 	}
 }
 
-// projectNames is what the live view calls the daemon's projects: the name
-// half of each one's repository (acme/foo is foo), or the whole owner/name
-// when two projects share one. A project's repository is resolved here,
+// projectFullNames resolves the repositories used to name view sources,
 // from its remote when its bees.toml does not set it, so the view can name
 // the project before its scheduler has started; one that cannot be resolved
 // is named by the directory its bees.toml is in, and its start reports the
 // error.
-func projectNames(ctx context.Context, configs []*config.Config) []string {
+func projectFullNames(ctx context.Context, configs []*config.Config) []string {
 	full := make([]string, len(configs))
 	for i, cfg := range configs {
 		if err := cfg.Resolve(ctx); err != nil {
@@ -212,6 +221,12 @@ func projectNames(ctx context.Context, configs []*config.Config) []string {
 		}
 		full[i] = cfg.Project.Repo
 	}
+	return full
+}
+
+// projectNames shortens repository names (acme/foo is foo), keeping the
+// whole owner/name when live projects, including draining ones, share a name.
+func projectNames(full []string) []string {
 	names := make([]string, len(full))
 	shared := map[string]int{}
 	for i, f := range full {
@@ -235,6 +250,7 @@ const viewEventBuffer = 64
 // scheduler exists (see machineView), and its way to the scheduler after.
 type projectView struct {
 	name     string
+	fullName string
 	events   chan scheduler.Event
 	stop     chan struct{}
 	source   tui.Project

@@ -159,7 +159,7 @@ func TestProjectNamesTellProjectsApart(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := loadMachine(t, foo, other, bar, unresolved)
-	got := projectNames(context.Background(), m.Configs)
+	got := projectNames(projectFullNames(context.Background(), m.Configs))
 	want := []string{"acme/foo", "other/foo", "bar", filepath.Base(clone)}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("names %v, want %v", got, want)

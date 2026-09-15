@@ -36,6 +36,59 @@ func viewSnapshot(t *testing.T, ch <-chan []tui.Project, accept func([]tui.Proje
 	}
 }
 
+func TestMachineViewNamesIncludeDrainingProjects(t *testing.T) {
+	for _, repos := range [][]string{{"acme/foo", "other/foo"}, {"other/foo", "acme/foo"}} {
+		t.Run(repos[0], func(t *testing.T) {
+			a, b := writeProject(t, repos[0], ""), writeProject(t, repos[1], "")
+			m := loadMachine(t, a)
+			d := machineDaemon(&globalFlags{}, m)
+			v := newMachineView(context.Background(), d)
+			defer v.close()
+			d.Projects = v.wrap(m, d.Projects)
+			initial := v.initial()[0]
+			old := v.live[a]
+			if initial.Name != "foo" {
+				t.Fatalf("initial name: %q", initial.Name)
+			}
+
+			next := loadMachine(t, b)
+			added := v.wrap(next, machineDaemon(&globalFlags{}, next).Projects)
+			d.Projects[0].Observe(daemon.ProjectDraining)
+			added[0].Observe(daemon.ProjectActive)
+			d.Reconciled([]string{b})
+			ps := <-v.updates
+			if len(ps) != 2 || ps[0].Name != repos[1] || ps[1].Name != repos[0] || !ps[1].Draining {
+				t.Fatalf("active and draining names: %+v", ps)
+			}
+			if v.live[a] != old || ps[1].Path != initial.Path || ps[1].Generation != initial.Generation || ps[1].Events != initial.Events || ps[1].Done != initial.Done {
+				t.Fatal("renaming replaced the draining source")
+			}
+			old.fail(errors.New("old source start failure"))
+			if err := ps[1].Kill("x"); err == nil || !strings.Contains(err.Error(), "old source start failure") {
+				t.Fatalf("renamed control detached from old source: %v", err)
+			}
+			if err := ps[0].Kill("x"); err == nil || !strings.Contains(err.Error(), "has not started yet") {
+				t.Fatalf("added control attached to old source: %v", err)
+			}
+
+			// Once the collision drains, the surviving source gets its short
+			// label back without replacing its identity or event subscription.
+			d.Projects[0].Observe(daemon.ProjectFinished)
+			d.Reconciled([]string{b})
+			finished := <-v.updates
+			if len(finished) != 1 || finished[0].Name != "foo" {
+				t.Fatalf("names after drain: %+v", finished)
+			}
+			if finished[0].Generation != ps[0].Generation || finished[0].Events != ps[0].Events || finished[0].Done != ps[0].Done {
+				t.Fatal("shortening the name replaced the surviving source")
+			}
+			if ps[0].Name != repos[1] || ps[1].Name != repos[0] {
+				t.Fatal("renaming mutated a previously published snapshot")
+			}
+		})
+	}
+}
+
 // Exercise the accepted config -> daemon -> view path with delayed starts.
 // No scheduler or external executable runs: starts drain under explicit control.
 func TestMachineViewReloadReconcilesAndReaddsDuringDrain(t *testing.T) {
