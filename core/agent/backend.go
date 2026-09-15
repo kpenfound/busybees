@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/kpenfound/busybees/core/agent/procs"
 )
 
 // A backend is one CLI a session can run as, chosen by the role's resolved
@@ -280,6 +282,8 @@ func (codexBackend) command(_ context.Context, r *Runner, req Request, paths ses
 		"--json",
 		"--dangerously-bypass-approvals-and-sandbox",
 		"--skip-git-repo-check",
+		// A path-bearing marker independent of optional MCP configuration.
+		"-c", procs.CodexMarker(r.EnvironmentPrefix) + codexValue(paths.dir),
 	}
 	if req.Profile.Model != "" {
 		args = append(args, "--model", req.Profile.Model)
@@ -348,6 +352,9 @@ func codexMCPOverrides(entries map[string]MCPEntry) []string {
 		}
 		if e.URL != "" {
 			out = append(out, prefix+"url="+codexValue(e.URL))
+			if e.BearerTokenEnv != "" {
+				out = append(out, prefix+"bearer_token_env_var="+codexValue(e.BearerTokenEnv))
+			}
 			for _, k := range sortedKeys(e.Headers) {
 				out = append(out, prefix+"http_headers."+k+"="+codexValue(e.Headers[k]))
 			}
@@ -562,7 +569,11 @@ func opencodeServers(entries map[string]MCPEntry) map[string]opencodeMCP {
 		case e.Command != "":
 			out[name] = opencodeMCP{Type: "local", Command: append([]string{e.Command}, e.Args...), Environment: e.Env, Enabled: true}
 		case e.URL != "":
-			out[name] = opencodeMCP{Type: "remote", URL: e.URL, Headers: e.Headers, Enabled: true}
+			headers := e.Headers
+			if e.BearerTokenEnv != "" {
+				headers = bearerHeaders(e, "{env:"+e.BearerTokenEnv+"}")
+			}
+			out[name] = opencodeMCP{Type: "remote", URL: e.URL, Headers: headers, Enabled: true}
 		}
 	}
 	return out

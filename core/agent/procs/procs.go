@@ -9,9 +9,9 @@
 // third: the agent runs in the container, so the container is what is
 // found and stopped, from the id file and the label the runner leaves
 // (see container.go); what the process table shows of it is the engine
-// client that started it, and the built-in MCP server the runner started
-// for it on the host is a fourth thing to stop, recorded in a pid file of
-// its own.
+// client that started it. When the caller supplies a host MCP server,
+// that optional process is a fourth thing to stop, recorded in its own
+// pid file.
 //
 // An opencode session is found through its pid file alone: it is given its
 // session directory through OPENCODE_CONFIG, an environment variable, so
@@ -54,10 +54,14 @@ const PIDFile = "pid"
 const SessionMarker = "--name agent-"
 
 // CodexSessionMarker is the argv fragment that identifies a codex session
-// using the default markers: codex has no --name, so an MCP override giving a
-// server the session's directory is what marks one, and its value is
-// what scopes it to a factory.
-const CodexSessionMarker = "mcp_servers.agent.env.AGENT_SESSION_DIR="
+// using the default namespace. The shell environment override identifies
+// the session even when the caller supplies no MCP servers.
+const CodexSessionMarker = "shell_environment_policy.set.SESSION_DIR="
+
+// CodexMarker returns the session-directory override for a caller's namespace.
+func CodexMarker(prefix string) string {
+	return "shell_environment_policy.set." + prefix + "SESSION_DIR="
+}
 
 // Proc is a process that looks like an agent session.
 type Proc struct {
@@ -74,7 +78,7 @@ type Proc struct {
 	// removing the container: the agent runs inside it and outlives the
 	// engine client PID names.
 	Container string
-	// Server is the pid of the built-in MCP server running on the host for
+	// Server is the pid of the caller-supplied MCP server running on the host for
 	// a session in the container sandbox, which has no caller binary inside.
 	// It is a process group of its own, so stopping the session means
 	// stopping it too (see ServerPIDFile).
@@ -250,7 +254,7 @@ func inScope(command string, prefixes []string) bool {
 // markers as an argument of its own.
 func hasMarker(command string, markers ...Markers) bool {
 	m := markerSet(markers)
-	for _, marker := range []string{m.Session, m.Codex} {
+	for _, marker := range []string{m.Session, m.Codex, m.LegacyCodex} {
 		if marker != "" && strings.Contains(command, " "+marker) {
 			return true
 		}
@@ -364,7 +368,7 @@ func Find(ctx context.Context, sessionsDir string, markers ...Markers) ([]Proc, 
 }
 
 // Kill stops a session: its container, when it runs in one, its process and
-// process group, and the built-in MCP server on the host when it left one —
+// process group, and the caller-supplied MCP server on the host when it left one —
 // SIGTERM, then SIGKILL after grace if it is still alive. The container is
 // removed first, because it outlives the engine client that started it and
 // the agent is inside it; the server goes last, so the tools it serves stay
@@ -433,11 +437,15 @@ func signal(p Proc, sig syscall.Signal) error {
 }
 
 // Markers describes the caller's session command markers and container label.
-type Markers struct{ Session, Codex, Container string }
+type Markers struct {
+	Session, Codex, Container string
+	// LegacyCodex optionally recognizes sessions launched before the standalone runner.
+	LegacyCodex string
+}
 
 func markerSet(markers []Markers) Markers {
 	if len(markers) > 0 {
 		return markers[0]
 	}
-	return Markers{SessionMarker, CodexSessionMarker, ContainerLabel}
+	return Markers{Session: SessionMarker, Codex: CodexSessionMarker, Container: ContainerLabel, LegacyCodex: "mcp_servers.agent.env.AGENT_SESSION_DIR="}
 }

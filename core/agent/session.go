@@ -73,8 +73,8 @@ type Result struct {
 	// recorded: the number here, its name in ErrorSubtype ("signal_killed").
 	Signal int `json:"signal,omitempty"`
 	// ClaudeID is the id the agent gave the session: claude's session id,
-	// or codex's thread id. The JSON name is kept for the readers of
-	// result.json that predate codex.
+	// OpenCode's session id, or codex's thread id. The JSON name is kept for
+	// readers of result.json that predate codex.
 	ClaudeID     string  `json:"claude_session_id,omitempty"`
 	ResultText   string  `json:"result_text,omitempty"`
 	IsError      bool    `json:"is_error"`
@@ -168,7 +168,7 @@ type Runner struct {
 	// DockerBin is the container engine a container session is run with.
 	// Default ContainerEngine.
 	DockerBin string
-	// ContainerListen is the address the built-in MCP server listens on
+	// ContainerListen is the address the caller-supplied MCP server listens on
 	// for a container session. Empty picks the address the container
 	// reaches the host by (see containerListen).
 	ContainerListen string
@@ -531,6 +531,9 @@ type MCPEntry struct {
 	// EnvVars names variables Codex must inherit from its own environment.
 	// Claude and OpenCode inherit it already, so this is not a file entry.
 	EnvVars []string `json:"-"`
+	// BearerTokenEnv names the process variable holding an HTTP bearer token.
+	// Backend writers render an environment reference, never the secret value.
+	BearerTokenEnv string `json:"-"`
 }
 
 // MCPEntries converts configured servers into file entries, expanding $VAR
@@ -551,16 +554,32 @@ func MCPEntries(servers map[string]MCPEntry) map[string]MCPEntry {
 		for k, v := range s.Headers {
 			headers[k] = os.ExpandEnv(v)
 		}
-		out[name] = MCPEntry{Type: typ, Command: s.Command, Args: s.Args, Env: env, URL: s.URL, Headers: headers, EnvVars: slices.Clone(s.EnvVars)}
+		out[name] = MCPEntry{Type: typ, Command: s.Command, Args: s.Args, Env: env, URL: s.URL, Headers: headers, EnvVars: slices.Clone(s.EnvVars), BearerTokenEnv: s.BearerTokenEnv}
 	}
 	return out
+}
+
+// bearerHeaders preserves public headers and adds a backend-specific token reference.
+func bearerHeaders(entry MCPEntry, reference string) map[string]string {
+	headers := maps.Clone(entry.Headers)
+	if headers == nil {
+		headers = map[string]string{}
+	}
+	headers["Authorization"] = "Bearer " + reference
+	return headers
 }
 
 // WriteMCPConfig writes the file claude is given as --mcp-config.
 func WriteMCPConfig(path string, entries map[string]MCPEntry) error {
 	out := struct {
 		MCPServers map[string]MCPEntry `json:"mcpServers"`
-	}{MCPServers: entries}
+	}{MCPServers: maps.Clone(entries)}
+	for name, entry := range out.MCPServers {
+		if entry.BearerTokenEnv != "" {
+			entry.Headers = bearerHeaders(entry, "${"+entry.BearerTokenEnv+"}")
+			out.MCPServers[name] = entry
+		}
+	}
 	data, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
 		return err

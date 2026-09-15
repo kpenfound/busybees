@@ -969,10 +969,12 @@ keychain.
 The `bees` binary is not in the container. The built-in MCP server runs on the
 host as `bees mcp serve --listen`, with the environment a session on the host
 would have started it with, and the session reaches it over HTTP at
-`host.docker.internal` with a bearer token of its own, carried in the
-session's `mcp.json`. The tools work unchanged; the session's prompt does not
-offer the `bees` commands. A stdio MCP server configured in `bees.toml` starts
-inside the container, so its command must be in the image; a remote one is
+`host.docker.internal` with a bearer token of its own, passed through the
+container environment. The backend configuration references that variable;
+the token value stays out of configuration files and command arguments. The
+tools work unchanged; the session's prompt does not offer the `bees` commands.
+A stdio MCP server configured in `bees.toml` starts inside the container, so
+its command must be in the image; a remote one is
 reached as configured (`host.docker.internal` reaches a server on the host).
 
 The image must hold the agent, `git` and `gh`. A Dockerfile that does:

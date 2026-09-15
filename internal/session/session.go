@@ -44,8 +44,8 @@ const EnvGHToken = config.EnvGHToken
 
 // EnvMCPToken carries the bearer token `bees mcp serve --listen` requires
 // of its client, for a container session's built-in server. It is set on
-// the server process alone: the session gets the token in its mcp.json
-// entry, never in its environment.
+// the host server and container session environments; backend configuration
+// refers to this variable without recording the token value.
 const EnvMCPToken = "BEES_MCP_TOKEN"
 
 // MCPListening is the prefix of the line `bees mcp serve --listen` prints
@@ -69,7 +69,7 @@ var CountTurns = agent.CountTurns
 var WriteMCPConfig = agent.WriteMCPConfig
 
 var ClaudeSandboxDomains = []string{"github.com", "*.github.com"}
-var ProcessMarkers = procs.Markers{Session: "--name bees-", Codex: "mcp_servers.bees.env.BEES_SESSION_DIR=", Container: "bees.session"}
+var ProcessMarkers = procs.Markers{Session: "--name bees-", Codex: procs.CodexMarker(beesEnvPrefix), LegacyCodex: "mcp_servers.bees.env.BEES_SESSION_DIR=", Container: "bees.session"}
 
 // ProfileForRole strips workflow settings after size and fallback selection.
 func ProfileForRole(role config.ResolvedRole) Profile {

@@ -158,7 +158,7 @@ printf '{"status":"submitted","pr":7}' > "$TASK_SESSION_DIR/outcome.json"
 	}
 
 	// The built-in server ran on the host with the session's environment
-	// and a token, which is what the session's mcp.json carries.
+	// and a token, referenced through the environment in mcp.json.
 	serverEnv := lines(t, filepath.Join(dir, "server-env.txt"))
 	var token string
 	for _, kv := range serverEnv {
@@ -181,7 +181,7 @@ printf '{"status":"submitted","pr":7}' > "$TASK_SESSION_DIR/outcome.json"
 	if builtin.Type != "http" || builtin.URL != "http://host.docker.internal:45678/mcp" || builtin.Command != "" {
 		t.Errorf("built-in server entry: %+v", builtin)
 	}
-	if builtin.Headers["Authorization"] != "Bearer "+token {
+	if builtin.Headers["Authorization"] != "Bearer ${"+EnvMCPToken+"}" {
 		t.Errorf("built-in server header: %q, token %q", builtin.Headers["Authorization"], token)
 	}
 	if len(builtin.Env) != 0 {
@@ -311,10 +311,6 @@ func TestContainerListenPerOS(t *testing.T) {
 		}
 	}
 }
-
-// A container role missing what the box needs is refused before anything
-// starts, naming the missing thing, by the runner too: `task exec` and
-// `task tick` do not ask config.CheckSandbox.
 
 // A session that is stopped — its timeout here — has its container removed,
 // not only its engine client killed: the container outlives the client.

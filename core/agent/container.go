@@ -23,8 +23,9 @@ import (
 )
 
 // A container session runs the backend command unchanged inside the engine.
-// The work directory, optional shared git metadata, caller mounts and skill
-// cache use host paths so references in prompts also resolve in the container.
+// The work directory, session directory, optional shared git metadata,
+// caller mounts and skill cache use host paths so references in prompts
+// also resolve in the container.
 // The container runs as the host user with a private tmpfs home. Environment
 // values reach the engine by name, never on its command line.
 //
@@ -46,11 +47,11 @@ var (
 	hostGID = os.Getgid
 )
 
-// serverStart is how long the built-in server has to report its address.
+// serverStart is how long the caller-supplied server has to report its address.
 const serverStart = 15 * time.Second
 
 // container is one session's box: the engine command that runs it, the
-// built-in server on the host it talks to, and what it is given.
+// caller-supplied server on the host it talks to, and what it is given.
 type container struct {
 	r          *Runner
 	req        Request
@@ -60,7 +61,7 @@ type container struct {
 	// image is what the container runs: the role's sandbox_image, or the
 	// image built from its container_use_environment.
 	image string
-	// server is the built-in MCP server on the host, and builtin the entry
+	// server is the caller-supplied MCP server on the host, and builtin the entry
 	// the session reaches it through.
 	server  *exec.Cmd
 	builtin MCPEntry
@@ -71,7 +72,7 @@ type container struct {
 // startContainer prepares a container session: it settles the image
 // (building it from the role's container_use_environment when that is set,
 // before anything else starts, so a failed build leaves nothing to stop),
-// starts the built-in server on the host and builds the session's
+// starts the caller-supplied server on the host and builds the session's
 // environment. Run has already asked Profile.Validate what the
 // box needs. The container itself is started by Run, through command;
 // close stops the server.
@@ -165,15 +166,16 @@ func (c *container) startServer(ctx context.Context) error {
 		c.close()
 		return fmt.Errorf("the built-in MCP server reported %q: %w", reported, err)
 	}
+	c.vars = append(c.vars, envVar{h.TokenEnv, token})
 	c.builtin = MCPEntry{
-		Type:    "http",
-		URL:     "http://" + net.JoinHostPort(containerHostAlias, port) + h.Path,
-		Headers: map[string]string{"Authorization": "Bearer " + token},
+		Type:           "http",
+		URL:            "http://" + net.JoinHostPort(containerHostAlias, port) + h.Path,
+		BearerTokenEnv: h.TokenEnv,
 	}
 	return nil
 }
 
-// containerListen is the address the built-in server listens on for a
+// containerListen is the address the caller-supplied server listens on for a
 // container session: ContainerListen when set, else the loopback on macOS,
 // which Docker Desktop's host alias reaches, and the bridge gateway on
 // Linux, which is the address the host alias resolves to there and the one
@@ -281,6 +283,7 @@ func (c *container) command(ctx context.Context, bin string, args []string) (str
 // and both must resolve inside.
 func (c *container) mounts(ctx context.Context) ([]string, error) {
 	r, req := c.r, c.req
+	destinations := map[string]bool{}
 	bind := func(path string, ro bool) []string {
 		var out []string
 		dests := []string{path}
@@ -288,6 +291,10 @@ func (c *container) mounts(ctx context.Context) ([]string, error) {
 			dests = append(dests, real)
 		}
 		for _, dst := range dests {
+			if destinations[dst] {
+				continue
+			}
+			destinations[dst] = true
 			spec := "type=bind,source=" + path + ",destination=" + dst
 			if ro {
 				spec += ",readonly"
@@ -303,6 +310,24 @@ func (c *container) mounts(ctx context.Context) ([]string, error) {
 	}
 	for _, dir := range r.MountDirs {
 		out = append(out, bind(dir, false)...)
+	}
+	// Generated prompts and configuration must be reachable even when the
+	// caller keeps session artifacts outside the work directory.
+	covered := func(path string) bool {
+		for dir := range destinations {
+			// Compare actual container paths: mounting a target does not
+			// expose an alias, nor does mounting an alias's parent expose
+			// a target outside that parent.
+			rel, err := filepath.Rel(dir, path)
+			if err == nil && rel != ".." && !strings.HasPrefix(rel, "../") {
+				return true
+			}
+		}
+		return false
+	}
+	real, _ := filepath.EvalSymlinks(c.sessionDir)
+	if c.sessionDir != "" && (!covered(c.sessionDir) || (real != "" && !covered(real))) {
+		out = append(out, bind(c.sessionDir, false)...)
 	}
 	if r.Skills != nil && len(req.Profile.Skills) > 0 {
 		for _, dir := range r.SkillMountDirs {
@@ -392,7 +417,7 @@ func (c *container) remove() {
 	_ = agentbin.CommandContext(ctx, c.r.dockerBin(), "rm", "--force", c.name).Run()
 }
 
-// close stops the built-in server and forgets the container id and the
+// close stops the caller-supplied server and forgets the container id and the
 // server's pid: the container is gone (--rm) or removed, and the server has
 // been killed, so neither record has anything left to point at.
 func (c *container) close() {

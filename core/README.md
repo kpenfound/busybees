@@ -4,6 +4,8 @@
 package from the busybees root module. Build and test from this directory:
 
 ```sh
+go build ./...
+go test ./...
 ```
 
 The repository's `dagger check` builds, lints, generates and tests both modules.
@@ -34,7 +36,15 @@ The caller also supplies:
 MCP entries contain public context in `Env` and credential names in `EnvVars`.
 Pass credential values in the request environment. `MCPEntries` can expand
 configured environment references before entries are passed to the runner;
-prepared entries are not expanded again.
+prepared entries are not expanded again. `BearerTokenEnv` names the process
+variable holding a remote server's bearer token; each backend writes its native
+environment reference. `HostMCP` uses this field for its generated token.
+
+Codex receives the session directory through
+`-c shell_environment_policy.set.<prefix>SESSION_DIR=...` even without MCP.
+Orphan scans use `procs.CodexMarker(prefix)` with the same environment prefix;
+`LegacyCodex` can also match a caller's older MCP-based marker. With the default
+empty prefix, `procs.Find` needs no marker overrides.
 
 Result, transcript, outcome, PID and interruption artifacts retain their file
 formats. The issue/PR fields on outcomes are retained for existing readers;

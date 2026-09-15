@@ -23,9 +23,9 @@ import (
 // and the label the container carries (the session marker's), whose value
 // is the session directory and so scopes a container to one factory.
 //
-// Such a session leaves a third record, for a third thing to stop: the
-// built-in MCP server the runner starts on the host for it, because the
-// caller binary is not in the container (see ServerPIDFile).
+// When the caller supplies a host MCP server, the session leaves a third
+// record for that process. The caller binary runs outside the container
+// (see ServerPIDFile).
 
 // ContainerIDFile is the file in a session directory the engine writes the
 // container's id to (--cidfile) when a container-backed session starts. It
@@ -40,7 +40,7 @@ const ContainerIDFile = "container-id"
 const ContainerLabel = "agent.session"
 
 // ServerPIDFile is the file in a session directory the runner writes the
-// pid of the built-in MCP server it started on the host for a
+// pid of the optional caller-supplied MCP server it started on the host for a
 // container-backed session to. The server runs in a process group of its
 // own, outside the session's and outside the scheduler's, so nothing else
 // reaches it: a crash that takes the scheduler down without running its
