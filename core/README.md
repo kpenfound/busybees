@@ -126,3 +126,37 @@ Busybees keeps one loop per project. Its adapter chooses the 24-hour budget
 window, retention floor, retry configuration, eight-hour reported-reset cap,
 two-session budget streak and three-failure degraded threshold. It renders
 status and logs, maps work to GitHub and decides what operational signals do.
+
+## Review pipeline
+
+`review.Runner[R].Run` takes an artifact directory, `review.Bundle[R]` and a
+supplied diff. Context items retain their source names, content and order;
+skipped-source reasons pass through to the brief. `R` is the caller's reference
+type, with display text, a URL and an opaque scope for reviewer-note rules.
+Its JSON representation is preserved in `brief.json`; it must support decoding
+when artifacts are read back. Core does not interpret tracker identity.
+
+Supply `Distiller.Agent` and `Angles.Agent` through the small `review.Agent`
+interface. `Angles.AgentFor` can select a prepared agent and recorded model for
+each angle; timeout, turn-limit and backend settings belong to those agents.
+`Settings` enables angles and pins category severities. `Angles.Sized` overrides
+size selection. The judge merges findings deterministically, without a session.
+
+`Runner.Compare` supplies text comparison for both duplicate findings and note
+rules. Nil disables text matching; overlapping findings in the same file, side
+and category still merge. Rule scopes are opaque strings with `*` and empty
+values matching any scope. `Runner.Rules` filters findings; `Angles.Rules`
+provides the rules included in angle prompts.
+
+The caller owns directory naming and acquisition. `Angles.Prepare` optionally
+supplies a working directory; otherwise angles use `Angles.Dir` or an artifact
+scratch directory. Core writes the diff only into a directory the review owns,
+never into `Angles.Dir`. Before the brief is persisted, an error removes the
+artifact directory and acquired files in it. Later errors retain the completed
+stages for inspection. One failed angle is non-fatal when another succeeds.
+
+Artifacts keep `brief.json`, `angles/<angle>.json`, `findings.json` and
+`triage.json`. `ReadArtifact[R]` reads partial artifacts after the brief; the
+caller owns interactive triage and publication. Progress callbacks run on the
+angle goroutines and must be concurrency-safe. Runs preserve reported session
+IDs, turns and costs; the brief preserves its session ID and cost.

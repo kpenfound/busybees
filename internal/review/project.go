@@ -8,34 +8,17 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	core "github.com/kpenfound/busybees/core/review"
 )
 
-// The angles a review runs from, each one a session of its own reading the
-// review brief, as many of them as the change's size calls for (sizeAngles
-// in angles.go). A project turns one off, or back on, under [angles].
-const (
-	// AngleQuickGeneral gives a small change one light pass for whatever is
-	// wrong with it.
-	AngleQuickGeneral = "quick_general"
-	// AngleGeneral reviews the change as a whole, thoroughly, not narrowed
-	// to one concern.
-	AngleGeneral = "general"
-	// AngleDocs checks the comments and the prose that describe the code
-	// against the code as the change leaves it.
-	AngleDocs = "docs"
-	// AngleTests checks the tests and the documentation the change owes.
-	AngleTests = "test_coverage"
-	// AngleAcceptance checks the change against the acceptance criteria of
-	// what it says it does.
-	AngleAcceptance = "acceptance_criteria"
-	// AngleSideEffects checks what the change breaks elsewhere.
-	AngleSideEffects = "side_effects"
-)
+const AngleQuickGeneral = core.AngleQuickGeneral
+const AngleGeneral = core.AngleGeneral
+const AngleDocs = core.AngleDocs
+const AngleTests = core.AngleTests
+const AngleAcceptance = core.AngleAcceptance
+const AngleSideEffects = core.AngleSideEffects
 
-// BuiltinAngles lists the angles a review can run, in the order they are
-// fanned out. A review runs the ones its change's size calls for that the
-// project enables (anglesFor in angles.go).
-var BuiltinAngles = []string{AngleQuickGeneral, AngleGeneral, AngleDocs, AngleTests, AngleAcceptance, AngleSideEffects}
+var BuiltinAngles = core.BuiltinAngles
 
 // The context sources a review gathers for the distiller. A project turns
 // one off, or adds one of its own, under [[context_sources]].
@@ -57,19 +40,13 @@ const (
 // order they enter the context bundle.
 var BuiltinSources = []string{SourceDiff, SourcePRBody, SourceLinkedIssues, SourceStyleFiles, SourceCallers}
 
-// Severities a category can be pinned to, most severe last. SeverityOff
-// drops the category's findings instead of ranking them.
-const (
-	SeverityOff    = "off"
-	SeverityInfo   = "info"
-	SeverityLow    = "low"
-	SeverityMedium = "medium"
-	SeverityHigh   = "high"
-)
+const SeverityOff = core.SeverityOff
+const SeverityInfo = core.SeverityInfo
+const SeverityLow = core.SeverityLow
+const SeverityMedium = core.SeverityMedium
+const SeverityHigh = core.SeverityHigh
 
-// Severities lists the accepted severity values, in the order they are
-// printed.
-var Severities = []string{SeverityOff, SeverityInfo, SeverityLow, SeverityMedium, SeverityHigh}
+var Severities = core.Severities
 
 // Project is the per-project configuration, context.toml, read from the
 // repository under review. Every table is an override: a project that has no
@@ -252,17 +229,8 @@ func (p *Project) Dir() string {
 
 // EnabledAngles lists the angles this project enables, in BuiltinAngles
 // order. A review runs the ones among them its change's size calls for
-// (anglesFor in angles.go).
-func (p *Project) EnabledAngles() []string {
-	angles := make([]string, 0, len(BuiltinAngles))
-	for _, a := range BuiltinAngles {
-		if on, ok := p.Angles[a]; ok && !on {
-			continue
-		}
-		angles = append(angles, a)
-	}
-	return angles
-}
+// (core/review angle selection).
+func (p *Project) EnabledAngles() []string { return p.core().EnabledAngles() }
 
 // EnabledSources lists the context sources this project gathers: the
 // built-ins it did not turn off, in BuiltinSources order, then its own, in
@@ -303,4 +271,11 @@ func sortedNames[V any](m map[string]V) []string {
 	}
 	slices.Sort(names)
 	return names
+}
+
+func (p *Project) core() *core.Settings {
+	if p == nil {
+		return &core.Settings{}
+	}
+	return &core.Settings{Angles: p.Angles, Categories: p.Categories}
 }
