@@ -652,7 +652,11 @@ func (opencodeBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer
 		}
 	})
 if end == nil {
-	end = makeSuccessEnd(sessionID, lastText, turns, cost, costKnown)
+    if lastText != "" {
+        end = makeSuccessEnd(sessionID, lastText, turns, cost, costKnown)
+    } else {
+        return nil, nil, err
+    }
 }
 end.SessionID = sessionID
 	end.NumTurns = turns
