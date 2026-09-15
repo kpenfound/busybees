@@ -21,10 +21,14 @@ import (
 // drawn over it, the way runWithTUI does a single project's scheduler: the
 // console is silenced while the view is up and given back the moment it
 // comes down, and each project's <state_dir>/bees.log keeps every record.
-// The view is over every project the daemon runs, with a selector to cycle
-// through them; its stop keys stop the daemon, and every project with it.
+// The view starts with every listed project and a selector to cycle through
+// them; its sources are a startup snapshot, not updated by SIGHUP. Its stop
+// keys stop the daemon, and every project with it.
 func runMachineWithTUI(ctx context.Context, g *globalFlags, m *config.Machine, console io.Writer) error {
-	d := machineDaemon(g, m)
+	return runPreparedMachineWithTUI(ctx, g, m, console, machineDaemon(g, m))
+}
+
+func runPreparedMachineWithTUI(ctx context.Context, g *globalFlags, m *config.Machine, console io.Writer, d *daemon.Daemon) error {
 	projects, stop := machineView(ctx, d, m)
 	defer stop()
 	// No project's [logging] table applies to the shared console (see

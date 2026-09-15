@@ -1,6 +1,6 @@
 // Command bees is the busybees software factory: a lightweight orchestrator
 // that runs a staff of headless coding-agent sessions (product manager,
-// project manager, developers, reviewers, QA) against one GitHub repository.
+// project manager, developers, reviewers, QA) against one or more GitHub repositories.
 package main
 
 import (

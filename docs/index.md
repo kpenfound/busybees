@@ -2,7 +2,7 @@
 
 **busybees** is a lightweight software factory: a Go CLI (`bees`) that runs a
 staff of headless coding-agent sessions — product manager, project manager,
-developers, reviewers and QA — against a single GitHub repository. A role runs
+developers, reviewers and QA, against one or more GitHub repositories. A role runs
 as [Claude Code](https://claude.com/claude-code), as
 [Codex](https://github.com/openai/codex) or as [opencode](https://opencode.ai).
 

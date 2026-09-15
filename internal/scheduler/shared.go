@@ -15,8 +15,9 @@ import "sync"
 // at its head may take slots, whatever is free, and a scheduler the head
 // refused too, or one that never waited, queues up behind. A scheduler
 // leaves the queue when its claim is granted, or when a dispatch pass of
-// its ends without a refusal (it had nothing left to dispatch: its ready
-// issue closed, its budget ran out), so a turn nobody uses is not kept.
+// its ends without a refusal, or when it stops polling (nothing will claim
+// its pending turn). A pass can have nothing left to dispatch: its ready
+// issue closed or its budget ran out, so a turn nobody uses is not kept.
 // Whenever the head could be served the pool wakes it, and the local pass
 // that follows makes the claim. A scheduler that got its turn and wants
 // more queues up again at the back, which is what hands a freed slot round
@@ -128,6 +129,24 @@ func (m *sharedMember) pass() {
 	if refused {
 		return
 	}
+	if i := m.position(); i >= 0 {
+		p.queue = append(p.queue[:i], p.queue[i+1:]...)
+		if i == 0 {
+			p.wakeHead()
+		}
+	}
+}
+
+// leave drops a stopped scheduler's pending claim without releasing the
+// slots its in-flight workers still own. Their normal releases handle those.
+func (m *sharedMember) leave() {
+	if m == nil {
+		return
+	}
+	p := m.pool
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	m.refused = false
 	if i := m.position(); i >= 0 {
 		p.queue = append(p.queue[:i], p.queue[i+1:]...)
 		if i == 0 {

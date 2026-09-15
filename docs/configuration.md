@@ -83,7 +83,9 @@ a top-level `projects` key is a machine config. `bees config validate` checks
 either kind. A command that works on one project refuses a machine config
 with an error saying which kind of file it found.
 
-You edit the file by hand.
+You edit the file by hand. `bees run --config /path/to/machine.toml` runs
+every listed project. Add `-d` to detach; SIGHUP reloads the project list.
+See [Running in the background](cli.md#running-in-the-background).
 
 ## `version`
 
