@@ -177,7 +177,12 @@ func probeMCP(ctx context.Context, e session.MCPEntry) error {
 	if err != nil {
 		return err
 	}
-	return cs.Close()
+	// Initialization succeeded. Close still reaps the subprocess, including
+	// terminating a server that keeps running after stdin closes. An error
+	// from that cleanup (for example "signal: terminated") does not mean the
+	// server failed to answer the probe.
+	_ = cs.Close()
+	return nil
 }
 
 // envPairs renders an entry's environment as KEY=VALUE, in a stable order.
