@@ -14,6 +14,7 @@ import (
 	"github.com/kpenfound/busybees/core/agent/agentbin"
 	"github.com/kpenfound/busybees/core/agent/agenttest"
 	"github.com/kpenfound/busybees/core/agent/procs"
+	"github.com/kpenfound/busybees/core/vcs"
 )
 
 // These tests use Runner directly: no caller fixture supplies a namespace,
@@ -28,7 +29,7 @@ func TestCallerDefinedEnvironmentPrefix(t *testing.T) {
 			bin := agenttest.Script(t, "claude", `env > "$DUMP"
 echo '{"type":"result","subtype":"success","result":"ok"}'`)
 			r := Runner{ClaudeBin: bin, EnvironmentPrefix: prefix}
-			req := Request{SessionDir: dir, WorkDir: t.TempDir(), Profile: Profile{Name: "custom", Shell: "/bin/sh", Env: map[string]string{"SETTING": "profile"}}, Env: map[string]string{"DUMP": filepath.Join(dir, "env"), "SETTING": "request"}}
+			req := Request{SessionDir: dir, Workspace: fakeWorkspace{dir: t.TempDir()}, Profile: Profile{Name: "custom", Shell: "/bin/sh", Env: map[string]string{"SETTING": "profile"}}, Env: map[string]string{"DUMP": filepath.Join(dir, "env"), "SETTING": "request"}}
 			res, err := r.Run(context.Background(), req)
 			if err != nil || res.IsError {
 				t.Fatalf("run: %+v, %v", res, err)
@@ -68,7 +69,7 @@ func TestCallerDefinedOutcomes(t *testing.T) {
 		accept bool
 	}{{valid, true}, {[]string{"deferred"}, false}, {nil, true}, {[]string{}, false}} {
 		r := Runner{ClaudeBin: agenttest.Script(t, "claude", `echo '{"type":"result","subtype":"success","result":"ok"}'`)}
-		res, err := r.Run(context.Background(), Request{Profile: Profile{Name: "publisher"}, WorkDir: t.TempDir(), SessionDir: dir, ValidOutcomes: tc.valid})
+		res, err := r.Run(context.Background(), Request{Profile: Profile{Name: "publisher"}, Workspace: fakeWorkspace{dir: t.TempDir()}, SessionDir: dir, ValidOutcomes: tc.valid})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -86,7 +87,7 @@ func TestCanceledSessionRemainsInterrupted(t *testing.T) {
 exec sleep 60`)}
 	ended := make(chan error, 1)
 	go func() {
-		_, err := r.Run(ctx, Request{SessionDir: dir, WorkDir: dir, Profile: Profile{Name: "custom"}})
+		_, err := r.Run(ctx, Request{SessionDir: dir, Workspace: fakeWorkspace{dir: dir}, Profile: Profile{Name: "custom"}})
 		ended <- err
 	}()
 	deadline := time.Now().Add(5 * time.Second)
@@ -125,7 +126,7 @@ echo '{"type":"step_finish","part":{"reason":"stop"}}'`
 			}
 			bin := agenttest.Script(t, backend, body)
 			r := Runner{ClaudeBin: bin, CodexBin: bin, OpenCodeBin: bin, DockerBin: agenttest.Docker(t, "image", "RUN_DIR"), ContainerLabel: "custom.session"}
-			res, err := r.Run(context.Background(), Request{SessionDir: dir, WorkDir: t.TempDir(), Profile: Profile{Name: "custom", Agent: backend, Sandbox: SandboxContainer, SandboxImage: "image"}, Env: map[string]string{"RUN_DIR": dir}})
+			res, err := r.Run(context.Background(), Request{SessionDir: dir, Workspace: fakeWorkspace{dir: t.TempDir()}, Profile: Profile{Name: "custom", Agent: backend, Sandbox: SandboxContainer, SandboxImage: "image"}, Env: map[string]string{"RUN_DIR": dir}})
 			if err != nil || res.IsError {
 				t.Fatalf("container: %+v, %v", res, err)
 			}
@@ -150,7 +151,7 @@ func TestContainerEngineGuard(t *testing.T) {
 	}
 	dir := t.TempDir()
 	r := Runner{DockerBin: real}
-	_, err = r.Run(context.Background(), Request{SessionDir: dir, WorkDir: dir, Profile: Profile{Sandbox: SandboxContainer, SandboxImage: "image"}})
+	_, err = r.Run(context.Background(), Request{SessionDir: dir, Workspace: fakeWorkspace{dir: dir}, Profile: Profile{Sandbox: SandboxContainer, SandboxImage: "image"}})
 	if !errors.Is(err, agentbin.ErrRealAgent) {
 		t.Fatalf("unguarded engine: %v", err)
 	}
@@ -163,7 +164,7 @@ func TestContainerAgentGuard(t *testing.T) {
 	}
 	dir := t.TempDir()
 	r := Runner{ClaudeBin: real, DockerBin: agenttest.Docker(t, "image", "RUN_DIR")}
-	_, err = r.Run(context.Background(), Request{SessionDir: dir, WorkDir: dir,
+	_, err = r.Run(context.Background(), Request{SessionDir: dir, Workspace: fakeWorkspace{dir: dir},
 		Env:     map[string]string{"RUN_DIR": dir},
 		Profile: Profile{Sandbox: SandboxContainer, SandboxImage: "image"},
 	})
@@ -173,14 +174,14 @@ func TestContainerAgentGuard(t *testing.T) {
 }
 
 func TestVCSAccessControlsSharedGitMount(t *testing.T) {
-	repo, worktree := linkedWorktree(t)
+	metadata, worktree := workspaceFixture(t)
 	for _, access := range []bool{true, false} {
-		c := container{r: &Runner{}, req: Request{WorkDir: worktree, Profile: Profile{VCSAccess: access}}}
+		c := container{r: &Runner{}, req: Request{Workspace: fakeWorkspace{dir: worktree, access: &vcs.Access{Mounts: []string{metadata}}}, Profile: Profile{VCSAccess: access}}}
 		mounts, err := c.mounts(context.Background())
 		if err != nil {
 			t.Fatal(err)
 		}
-		gitDir, _ := filepath.EvalSymlinks(filepath.Join(repo, ".git"))
+		gitDir := metadata
 		exposed := strings.Contains(strings.Join(mounts, " "), "source="+gitDir+",")
 		if exposed != access {
 			t.Errorf("VCSAccess=%v: shared .git exposed=%v", access, exposed)

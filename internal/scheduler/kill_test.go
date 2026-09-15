@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/core/agent/procs"
+	"github.com/kpenfound/busybees/core/vcs"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
@@ -307,7 +308,7 @@ func TestAStoppedSessionIsNotRetried(t *testing.T) {
 	h.sched.killed["developer-issue-1-r1"] = true
 	h.sched.mu.Unlock()
 
-	spec := sessionSpec{role: config.RoleDeveloper, name: "developer-issue-1-r1", workDir: h.cfg.Dir()}
+	spec := sessionSpec{role: config.RoleDeveloper, name: "developer-issue-1-r1", workspace: vcs.Directory(h.cfg.Dir())}
 	spec.data.Issue = &github.Issue{Number: 1, Title: "Issue 1"}
 	_, err := h.sched.runSessionWithRetry(context.Background(), spec)
 	if !errors.Is(err, errSessionKilled) {

@@ -88,7 +88,7 @@ func TestContainerUseEnvironmentBuildsTheImage(t *testing.T) {
 	writeContainerUseEnvironment(t, worktree, "envs/dev", containerUseFixture)
 	fakeDir := filepath.Dir(r.DockerBin)
 
-	res, err := r.Run(context.Background(), Request{Name: "cue", Profile: role, WorkDir: worktree})
+	res, err := r.Run(context.Background(), Request{Name: "cue", Profile: role, Workspace: fakeWorkspace{dir: worktree}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestContainerUseEnvironmentBuildsTheImage(t *testing.T) {
 	if err := os.Remove(filepath.Join(fakeDir, "docker-build.txt")); err != nil {
 		t.Fatal(err)
 	}
-	res2, err := r.Run(context.Background(), Request{Name: "cue2", Profile: role, WorkDir: worktree})
+	res2, err := r.Run(context.Background(), Request{Name: "cue2", Profile: role, Workspace: fakeWorkspace{dir: worktree}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +229,7 @@ func TestContainerUseEnvironmentRefusedWhenUnusable(t *testing.T) {
 			if tc.body != "" {
 				writeContainerUseEnvironment(t, worktree, "envs/dev", tc.body)
 			}
-			_, err := r.Run(context.Background(), Request{Name: "cue", Profile: role, WorkDir: worktree})
+			_, err := r.Run(context.Background(), Request{Name: "cue", Profile: role, Workspace: fakeWorkspace{dir: worktree}})
 			if err == nil {
 				t.Fatal("the session ran")
 			}
@@ -254,7 +254,7 @@ func TestContainerUseEnvironmentBuildFailureFailsTheSession(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(fakeDir, "fail-build"), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := r.Run(context.Background(), Request{Name: "cue", Profile: role, WorkDir: worktree})
+	_, err := r.Run(context.Background(), Request{Name: "cue", Profile: role, Workspace: fakeWorkspace{dir: worktree}})
 	if err == nil {
 		t.Fatal("the session ran")
 	}

@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/kpenfound/busybees/core/agent/agenttest"
 	"github.com/kpenfound/busybees/core/agent/procs"
+	"github.com/kpenfound/busybees/core/vcs"
 )
 
 // fakeDocker writes a shell script standing in for the docker CLI: `run`
@@ -35,26 +35,18 @@ func fakeDocker(t *testing.T, image string) string {
 // reports an address and waits to be killed.
 func fakeBees(t *testing.T) string { return agenttest.MCPServer(t, "TASK_SESSION_DIR") }
 
-// linkedWorktree creates a repository with one commit and a linked worktree
-// of it, and returns both directories.
-func linkedWorktree(t *testing.T) (repo, worktree string) {
+// fakeWorkspace has no git layout and supplies metadata explicitly.
+type fakeWorkspace struct {
+	dir    string
+	access *vcs.Access
+}
+
+func (w fakeWorkspace) Directory() string { return w.dir }
+func (w fakeWorkspace) VCS() *vcs.Access  { return w.access }
+
+func workspaceFixture(t *testing.T) (metadata, directory string) {
 	t.Helper()
-	repo = filepath.Join(t.TempDir(), "repo")
-	worktree = filepath.Join(t.TempDir(), "wt")
-	git := func(args ...string) {
-		t.Helper()
-		cmd := exec.Command("git", append([]string{"-C", repo, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"}, args...)...)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-	if err := os.MkdirAll(repo, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	git("init", "-q", "-b", "main")
-	git("commit", "-q", "--allow-empty", "-m", "init")
-	git("worktree", "add", "-q", worktree, "-b", "work")
-	return repo, worktree
+	return t.TempDir(), t.TempDir()
 }
 
 func lines(t *testing.T, path string) []string {
@@ -84,7 +76,8 @@ cat > "$TASK_SESSION_DIR/stdin.txt"
 echo '{"type":"result","subtype":"success","is_error":false,"result":"boxed","session_id":"abc","num_turns":2,"total_cost_usd":0.1}'
 printf '{"status":"submitted","work":{"key":"task/7","tags":{"ticket":"seven"}}}' > "$TASK_SESSION_DIR/outcome.json"
 `)
-	repo, worktree := linkedWorktree(t)
+	metadata, worktree := workspaceFixture(t)
+	metadata, _ = filepath.EvalSymlinks(metadata)
 	r := newRunner(t, claude)
 	r.DockerBin = fakeDocker(t, "ghcr.io/acme/task:1")
 	r.ServerBin = fakeBees(t)
@@ -93,7 +86,7 @@ printf '{"status":"submitted","work":{"key":"task/7","tags":{"ticket":"seven"}}}
 	role := Profile{Name: "builder", Model: "opus", MaxTurns: 5, Timeout: time.Minute,
 		Sandbox: SandboxContainer, SandboxImage: "ghcr.io/acme/task:1",
 		Shell: "/bin/sh", Env: map[string]string{"FACTORY_TOKEN": "abc"}}
-	res, err := r.Run(context.Background(), Request{Name: "boxed", Profile: role, WorkDir: worktree, SystemPrompt: "SYS", Prompt: "TASK", Env: map[string]string{EnvIssue: "12"}})
+	res, err := r.Run(context.Background(), Request{Name: "boxed", Profile: role, Workspace: fakeWorkspace{dir: worktree, access: &vcs.Access{Mounts: []string{metadata}}}, SystemPrompt: "SYS", Prompt: "TASK", Env: map[string]string{EnvIssue: "12"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +94,7 @@ printf '{"status":"submitted","work":{"key":"task/7","tags":{"ticket":"seven"}}}
 		t.Fatalf("result: %+v", res)
 	}
 	dir := res.SessionDir
-	realRepo, err := filepath.EvalSymlinks(repo)
+	realRepo, err := filepath.EvalSymlinks(metadata)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +110,7 @@ printf '{"status":"submitted","work":{"key":"task/7","tags":{"ticket":"seven"}}}
 		"--mount type=tmpfs,destination=/home/task,tmpfs-mode=1777",
 		"--mount type=bind,source=" + worktree + ",destination=" + worktree + " ",
 		"--mount type=bind,source=" + worktree + ",destination=" + realWorktree + " ",
-		"--mount type=bind,source=" + filepath.Join(realRepo, ".git") + ",destination=" + filepath.Join(realRepo, ".git") + " ",
+		"--mount type=bind,source=" + realRepo + ",destination=" + realRepo + " ",
 		"--mount type=bind,source=" + r.StateDir + ",destination=" + r.StateDir + " ",
 		"--env HOME=/home/task",
 		"--env ACCESS_TOKEN ", "--env ANTHROPIC_API_KEY ", "--env FACTORY_TOKEN ", "--env SHELL ",
@@ -235,7 +228,7 @@ printf '{"status":"submitted","work":{"key":"task/7","tags":{"ticket":"seven"}}}
 func TestContainerCommandPerOS(t *testing.T) {
 	r := newRunner(t, "claude")
 	role := Profile{Name: "builder", Sandbox: SandboxContainer, SandboxImage: "img"}
-	c := &container{r: r.Runner, req: Request{Name: "d", Profile: role, WorkDir: t.TempDir()}, sessionDir: t.TempDir(), name: "task-d-1", image: role.SandboxImage}
+	c := &container{r: r.Runner, req: Request{Name: "d", Profile: role, Workspace: fakeWorkspace{dir: t.TempDir()}}, sessionDir: t.TempDir(), name: "task-d-1", image: role.SandboxImage}
 	c.vars = r.containerVars(c.req, c.sessionDir)
 	for _, tc := range []struct {
 		goos    string
@@ -322,7 +315,7 @@ func TestStoppedContainerSessionIsRemoved(t *testing.T) {
 	r.ServerBin = fakeBees(t)
 	r.ContainerListen = "127.0.0.1:0"
 	role := Profile{Name: "auditor", Model: "opus", MaxTurns: 1, Timeout: 200 * time.Millisecond, Sandbox: SandboxContainer, SandboxImage: "img"}
-	res, err := r.Run(context.Background(), Request{Name: "slow", Profile: role, WorkDir: t.TempDir()})
+	res, err := r.Run(context.Background(), Request{Name: "slow", Profile: role, Workspace: fakeWorkspace{dir: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}

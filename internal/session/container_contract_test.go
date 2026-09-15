@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/kpenfound/busybees/core/agent/agenttest"
+	"github.com/kpenfound/busybees/core/vcs"
 	"github.com/kpenfound/busybees/internal/config"
 )
 
@@ -28,7 +29,7 @@ func TestContainerSessionRefusedWithoutWhatItNeeds(t *testing.T) {
 	} {
 		r := newRunner(t, claude)
 		r.GitHub = tc.gh
-		_, err := r.Run(context.Background(), Request{Name: "boxed", Profile: ProfileForRole(tc.role), WorkDir: t.TempDir()})
+		_, err := r.Run(context.Background(), Request{Name: "boxed", Profile: ProfileForRole(tc.role), Workspace: vcs.Directory(t.TempDir())})
 		if err == nil {
 			t.Fatalf("%s: a container session ran", tc.name)
 		}
@@ -61,7 +62,7 @@ func TestContainerIdentityContract(t *testing.T) {
 	r.GitHub = config.GitHub{Login: "bot", Token: "$BEES_GITHUB_KEY", GitName: "Bot", GitEmail: "bot@example.com"}
 	r.Notes = config.Notes{Backend: config.NotesBackendNeo4j, Neo4jAPIKey: "$BEES_NOTES_KEY"}
 	profile := ProfileForRole(config.ResolvedRole{Name: "developer", Sandbox: config.SandboxContainer, SandboxImage: "image", Shell: "/bin/bash", Env: map[string]string{EnvGHToken: "role-must-not-win"}})
-	req := Request{Name: "contract", Profile: profile, WorkDir: t.TempDir(), Env: map[string]string{EnvIssue: "724", EnvPR: "900", EnvBranch: "bees/issue-724"}}
+	req := Request{Name: "contract", Profile: profile, Workspace: vcs.Directory(t.TempDir()), Env: map[string]string{EnvIssue: "724", EnvPR: "900", EnvBranch: "bees/issue-724"}}
 	prepared := r.prepare(req, "/session")
 	for _, name := range []string{"PATH", "USER", "HOST_ONLY", EnvBin, "BEES_STALE"} {
 		if _, ok := prepared.Env[name]; ok {
@@ -122,5 +123,46 @@ func TestContainerIdentityContract(t *testing.T) {
 		if !strings.Contains(string(args), want) {
 			t.Errorf("missing container convention %s", want)
 		}
+	}
+}
+
+func TestDeniedProfileDoesNotInjectFactoryVCSIdentity(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "agent-secret")
+	for _, mode := range []string{config.SandboxNone, config.SandboxClaude, config.SandboxContainer} {
+		t.Run(mode, func(t *testing.T) {
+			r := newRunner(t, fakeClaude(t, `env > "$BEES_SESSION_DIR/agent-env"
+echo '{"type":"result","subtype":"success","result":"ok"}'`))
+			r.GitHub = config.GitHub{Login: "bot", Token: "denied-github-token", GitName: "denied-author", GitEmail: "denied@example.com"}
+			r.DockerBin = agenttest.Docker(t, "image", EnvSessionDir)
+			r.BeesBin = agenttest.MCPServer(t, EnvSessionDir)
+			r.ContainerListen = "127.0.0.1:0"
+			profile := ProfileForRole(config.ResolvedRole{Name: "developer", Sandbox: mode, SandboxImage: "image"})
+			profile.VCSAccess = false
+			req := Request{Name: "denied", Profile: profile, Workspace: vcs.Directory(t.TempDir())}
+			prepared := r.prepare(req, "/session")
+			for _, env := range []map[string]string{prepared.Env, prepared.ContainerEnv, prepared.HostMCP.Env} {
+				for k := range env {
+					if strings.HasPrefix(k, "GIT_") || k == EnvGHToken {
+						t.Errorf("VCS entry in general environment: %s", k)
+					}
+				}
+			}
+			if len(prepared.HostMCP.Entry.EnvVars) != 0 {
+				t.Fatalf("forwarded VCS credentials: %v", prepared.HostMCP.Entry.EnvVars)
+			}
+			res, err := r.Run(context.Background(), req)
+			if err != nil || res.IsError {
+				t.Fatalf("run: %+v, %v", res, err)
+			}
+			data, err := os.ReadFile(filepath.Join(res.SessionDir, "agent-env"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, secret := range []string{"denied-github-token", "denied-author", "denied@example.com"} {
+				if strings.Contains(string(data), secret) {
+					t.Errorf("denied VCS identity reached agent: %s", secret)
+				}
+			}
+		})
 	}
 }

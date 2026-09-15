@@ -25,7 +25,7 @@ func TestARealAgentNeverRunsFromATestBinary(t *testing.T) {
 	r := newRunner(t, sh)
 	sessions := r.SessionsDir
 	role := Profile{Name: "builder", Model: "opus", MaxTurns: 5, Timeout: time.Minute}
-	_, err = r.Run(context.Background(), Request{Name: "real", Profile: role, WorkDir: t.TempDir(), SystemPrompt: "SYS", Prompt: "TASK"})
+	_, err = r.Run(context.Background(), Request{Name: "real", Profile: role, Workspace: fakeWorkspace{dir: t.TempDir()}, SystemPrompt: "SYS", Prompt: "TASK"})
 	if !errors.Is(err, agentbin.ErrRealAgent) {
 		t.Fatalf("err = %v, want ErrRealAgent", err)
 	}

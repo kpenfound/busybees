@@ -59,7 +59,7 @@ printf '{"status":"submitted","work":{"key":"task/12","tags":{"ticket":"twelve"}
 		"x":      {Command: "srv", Args: []string{"--port", "1"}, Env: map[string]string{"K": "$HOME"}},
 		"remote": {URL: "https://x.example/mcp", Headers: map[string]string{"Authorization": "Bearer t"}},
 	}
-	res, err := r.Run(context.Background(), Request{Name: "o1", Profile: role, WorkDir: t.TempDir(), SystemPrompt: "SYS", Prompt: "TASK", Env: map[string]string{EnvIssue: "12"}})
+	res, err := r.Run(context.Background(), Request{Name: "o1", Profile: role, Workspace: fakeWorkspace{dir: t.TempDir()}, SystemPrompt: "SYS", Prompt: "TASK", Env: map[string]string{EnvIssue: "12"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ echo '{"type":"step_finish","timestamp":1,"sessionID":"ses_2","part":{"type":"st
 `)
 	r := newRunner(t, "")
 	r.OpenCodeBin = bin
-	res, err := r.Run(context.Background(), Request{Name: "o2", Profile: opencodeRole(""), WorkDir: t.TempDir(), Prompt: "TASK"})
+	res, err := r.Run(context.Background(), Request{Name: "o2", Profile: opencodeRole(""), Workspace: fakeWorkspace{dir: t.TempDir()}, Prompt: "TASK"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +235,7 @@ echo '{"type":"step_finish","sessionID":"ses_3","part":{"type":"step-finish","re
 			bin := fakeOpenCode(t, tc.events+"exit "+strconv.Itoa(tc.exit)+"\n")
 			r := newRunner(t, "")
 			r.OpenCodeBin = bin
-			res, err := r.Run(context.Background(), Request{Name: "o3", Profile: opencodeRole(""), WorkDir: t.TempDir(), Prompt: "TASK"})
+			res, err := r.Run(context.Background(), Request{Name: "o3", Profile: opencodeRole(""), Workspace: fakeWorkspace{dir: t.TempDir()}, Prompt: "TASK"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -264,7 +264,7 @@ echo '{"type":"step_finish","sessionID":"ses_4","part":{"type":"step-finish","re
 `)
 	r := newRunner(t, "")
 	r.OpenCodeBin = bin
-	res, err := r.Run(context.Background(), Request{Name: "o4", Profile: opencodeRole(""), WorkDir: t.TempDir(), Prompt: "TASK"})
+	res, err := r.Run(context.Background(), Request{Name: "o4", Profile: opencodeRole(""), Workspace: fakeWorkspace{dir: t.TempDir()}, Prompt: "TASK"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kpenfound/busybees/core/vcs"
 	"github.com/kpenfound/busybees/internal/config"
 )
 
@@ -72,7 +73,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
 	r.Notes = notes
 	if _, err := r.Run(context.Background(), Request{
 		Name: "t", Profile: ProfileForRole(config.ResolvedRole{Name: "developer", Model: "opus", MaxTurns: 1, Timeout: time.Minute}),
-		WorkDir: t.TempDir(),
+		Workspace: vcs.Directory(t.TempDir()),
 	}); err != nil {
 		t.Fatal(err)
 	}
