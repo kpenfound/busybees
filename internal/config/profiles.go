@@ -165,13 +165,19 @@ func migrateAgentProfiles(text string) (string, error) {
 			for _, line := range strings.Split(strings.TrimSuffix(st.text, "\n"), "\n") {
 				fmt.Fprintln(&rewritten, "# Previous: "+line)
 			}
-			for _, key := range slices.Sorted(maps.Keys(st.raw)) {
-				value, err := inlineProfileValue(st.raw[key])
-				if err != nil {
-					return "", err
-				}
-				fmt.Fprintf(&rewritten, "%s = %s\n", toml.Key{key}.String(), value)
+			// Decode wraps dotted assignments in parent maps. Serialize only
+			// the assigned value, keeping its path relative to this section,
+			// so sibling assignments do not redefine their shared parent.
+			key := st.path[st.sectionDepth:]
+			var assigned any = st.raw
+			for _, part := range key {
+				assigned = assigned.(map[string]any)[part]
 			}
+			value, err := inlineProfileValue(assigned)
+			if err != nil {
+				return "", err
+			}
+			fmt.Fprintf(&rewritten, "%s = %s\n", toml.Key(key).String(), value)
 			st.text = rewritten.String()
 		}
 	}

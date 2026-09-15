@@ -130,6 +130,53 @@ developer = { model = "haiku", skills = ["a", "b"] }
 	}
 }
 
+func TestProfileMigrationSequentialInlineRoles(t *testing.T) {
+	for _, prefix := range []string{"", "[roles]\n"} {
+		t.Run(prefix, func(t *testing.T) {
+			key := "roles."
+			if prefix != "" {
+				key = ""
+			}
+			body := "version = 2\n" + prefix + key + `"developer" = { model = "haiku", skills = ["keep"] } # developer comment
+` + key + `qa = { model = "sonnet", env = { model = "keep" } } # qa comment
+`
+			path := writeConfig(t, body)
+			cfg, err := Load(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := cfg.Rewrite(); err != nil {
+				t.Fatal(err)
+			}
+			again, err := Load(path)
+			if err != nil || again.NeedsRewrite() {
+				t.Fatalf("reload: %v", err)
+			}
+			for role, model := range map[string]string{RoleDeveloper: "haiku", RoleQA: "sonnet"} {
+				r, err := again.Role(role)
+				if err != nil || r.Model != model {
+					t.Fatalf("%s: model %q, error %v", role, r.Model, err)
+				}
+				if role == RoleDeveloper && !reflect.DeepEqual(r.Skills, []string{"keep"}) || role == RoleQA && r.Env["model"] != "keep" {
+					t.Fatalf("lost unrelated settings: %+v", r)
+				}
+			}
+			b, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, comment := range []string{"# developer comment", "# qa comment"} {
+				if !strings.Contains(string(b), comment) {
+					t.Fatalf("lost %s", comment)
+				}
+			}
+			if twice, err := migrateAgentProfiles(string(b)); err != nil || twice != string(b) {
+				t.Fatalf("migration not idempotent: %v", err)
+			}
+		})
+	}
+}
+
 func TestProfileMigrationPreservesPromptAndComments(t *testing.T) {
 	body := "version = 2\n[global]\nprompt = '''\n[roles.developer]\nmodel = \"example\"\n'''\nmodel = '''haiku''' # keep inline\n[roles.developer]\n#agent = \"claude\"\n[roles.developer.env]\nmodel = \"env model\"\n"
 	cfg, err := Load(writeConfig(t, body))

@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -110,6 +111,51 @@ enabled = false
 			if !strings.Contains(joined, `model_reasoning_effort="high"`) || !strings.Contains(joined, "sized-model") {
 				t.Fatalf("%s profile: %v", role, args)
 			}
+		}
+	}
+}
+
+// A size edit after dispatch must reach the brief, angles and judge together.
+func TestReviewUsesFreshIssueSizeProfile(t *testing.T) {
+	logPath := reviewLogPath(t)
+	h := newHarness(t, devOnlyTOML+`
+[profiles.fresh]
+agent = "codex"
+model = "fresh-model"
+effort = "high"
+[roles.reviewer]
+profile_by_size = { l = "fresh" }
+`)
+	seedReady(h, 1, "s", time.Now().Add(-time.Hour))
+	seedCounter(t, h, "review", 1)
+	prev := h.sched.gh.Exec
+	h.sched.gh.Exec = func(ctx context.Context, args ...string) ([]byte, error) {
+		data, err := prev(ctx, args...)
+		if err != nil || len(args) < 3 || args[0] != "issue" || args[1] != "view" || args[2] != "1" {
+			return data, err
+		}
+		var issue github.Issue
+		if err := json.Unmarshal(data, &issue); err != nil {
+			return nil, err
+		}
+		if github.HasLabel(issue.Labels, "bees:review") {
+			for i := range issue.Labels {
+				if issue.Labels[i].Name == "bees:size/s" {
+					issue.Labels[i].Name = "bees:size/l"
+				}
+			}
+		}
+		return json.Marshal(issue)
+	}
+	runPass(t, h)
+	sessions := reviewSessions(t, logPath)
+	if len(sessions) < 2 {
+		t.Fatalf("expected brief and angles, got %d sessions", len(sessions))
+	}
+	sessions = append(sessions, reviewSession{Kind: "judge", Args: argsOfNamed(t, h, "reviewer-pr-201-r1")})
+	for _, s := range sessions {
+		if modelOf(s.Args) != "fresh-model" || !strings.Contains(strings.Join(s.Args, " "), "exec") {
+			t.Errorf("%s did not select the fresh codex profile: %v", s.Kind, s.Args)
 		}
 	}
 }
