@@ -686,7 +686,7 @@ max_turns = 19
 
 func TestReviewCloneHasIndependentGitObjects(t *testing.T) {
 	h := newHarness(t, devOnlyTOML)
-	src := h.sched.ws.MainRepo
+	src := h.clone
 	dst := filepath.Join(t.TempDir(), "clone")
 	if err := cloneOf(src, "", "origin")(context.Background(), review.Ref{}, "main", dst); err != nil {
 		t.Fatal(err)
