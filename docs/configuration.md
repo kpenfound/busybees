@@ -613,7 +613,7 @@ profile_by_size = { xs = "bar", s = "bar", l = "foo", xl = "foo" }
 | `agent` | string | `"claude"` | CLI a session runs as: `claude` (`claude -p`), `codex` (`codex exec`) or `opencode`. An unknown value is a load error. See [Running a session](architecture.md#running-a-session). |
 | `model` | string | `"opus"` for `claude`, `""` otherwise | Model alias or full id, passed to the selected agent (`provider/model` for opencode). An empty value lets codex or opencode use its own configured model. |
 | `fallback_model` | string | `"sonnet"` for `claude`, `""` otherwise | Passed as `claude --fallback-model` when it differs from `model`. Codex and opencode have no fallback-model flag. |
-| `effort` | string | `""` | Passed as `claude --effort` when set: `low`, `medium`, `high` or `max`. Codex receives it as `model_reasoning_effort`; `max` maps to `high`. Opencode ignores it. |
+| `effort` | string | `""` | Passed as `claude --effort` when set: `low`, `medium`, `high` or `max`. Codex receives it as `model_reasoning_effort`; `max` maps to `high`. Opencode receives it as the default `build` agent's `variant`; variants are names the model defines, not levels. |
 | `sandbox` | string | `"none"` | How much of the machine a session can reach: `none`, `claude` or `container`. See [Sandboxing](#sandboxing). |
 
 The effective profile follows this order for a work item size:
