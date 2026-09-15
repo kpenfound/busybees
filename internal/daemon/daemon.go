@@ -13,6 +13,7 @@ import (
 	"io"
 	"log/slog"
 	"runtime/debug"
+	"slices"
 	"sync"
 )
 
@@ -51,6 +52,9 @@ func (e *ProjectError) Unwrap() error { return e.Err }
 // Daemon runs Projects concurrently.
 type Daemon struct {
 	Projects []Project
+	// Reload supplies replacement project lists. With Reload set, Run stays
+	// alive until cancellation, even when every project has stopped.
+	Reload <-chan []Project
 	// Logger gets one record per project that fails. nil is slog.Default().
 	Logger *slog.Logger
 
@@ -59,9 +63,10 @@ type Daemon struct {
 	stopped bool
 }
 
-// Run starts every project on its own goroutine and returns once all of them
-// have returned: cancelling ctx asks each loop for its cool-down, as it does
-// for a single-project run. A project that fails does not cancel the others.
+// Run starts every project on its own goroutine. Without Reload it returns
+// once all projects have returned; with Reload it waits for cancellation,
+// reconciling each new list by Name. Cancelling ctx asks every loop for its
+// cool-down, as it does for a single-project run. A project that fails does not cancel the others.
 // The error joins a *ProjectError for every project that failed, and is nil
 // when none did.
 func (d *Daemon) Run(ctx context.Context) error {
@@ -69,19 +74,83 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if log == nil {
 		log = slog.Default()
 	}
-	errs := make([]error, len(d.Projects))
-	var wg sync.WaitGroup
-	for i, p := range d.Projects {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if err := d.runProject(ctx, p); err != nil {
-				log.Error("project stopped", "project", p.Name, "err", err)
-				errs[i] = &ProjectError{Project: p.Name, Err: err}
-			}
-		}()
+	type running struct {
+		cancel  context.CancelFunc
+		active  bool
+		removed bool
 	}
-	wg.Wait()
+	type result struct {
+		name string
+		err  error
+	}
+	entries := map[string]*running{}
+	desired := map[string]Project{}
+	finished := make(chan result)
+	active := 0
+	var errs []error
+	start := func(p Project) {
+		projectCtx, cancel := context.WithCancel(ctx)
+		entries[p.Name] = &running{cancel: cancel, active: true}
+		active++
+		go func() { finished <- result{p.Name, d.runProject(projectCtx, p)} }()
+	}
+	reconcile := func(projects []Project) {
+		desired = map[string]Project{}
+		for _, p := range projects {
+			desired[p.Name] = p
+		}
+		for name, entry := range entries {
+			if _, keep := desired[name]; !keep {
+				entry.removed = true
+				entry.cancel()
+				if !entry.active {
+					delete(entries, name)
+				}
+			}
+		}
+		for _, p := range projects {
+			if _, exists := entries[p.Name]; !exists {
+				start(p)
+			}
+		}
+	}
+	reconcile(d.Projects)
+	reload := d.Reload
+	stopping := ctx.Done()
+	for active > 0 || reload != nil {
+		select {
+		case <-stopping:
+			stopping = nil
+			reload = nil
+			desired = nil
+		case projects, ok := <-reload:
+			if !ok {
+				reload = nil
+				continue
+			}
+			if ctx.Err() == nil {
+				reconcile(projects)
+			}
+		case r := <-finished:
+			active--
+			entry := entries[r.name]
+			entry.cancel()
+			entry.active = false
+			if r.err != nil {
+				log.Error("project stopped", "project", r.name, "err", r.err)
+				errs = append(errs, &ProjectError{Project: r.name, Err: r.err})
+			}
+			if entry.removed {
+				delete(entries, r.name)
+				// A project re-added during its cool-down starts only after the old
+				// scheduler has released its state and sessions.
+				if p, ok := desired[r.name]; ok && ctx.Err() == nil {
+					start(p)
+				}
+			}
+		}
+	}
+
 	return errors.Join(errs...)
 }
 
@@ -97,13 +166,14 @@ func (d *Daemon) runProject(ctx context.Context, p Project) (err error) {
 	if err != nil {
 		return fmt.Errorf("start: %w", err)
 	}
-	if !d.add(loop) {
+	if ctx.Err() != nil || !d.add(loop) {
 		// Never run, so nothing else releases what Start acquired.
 		if c, ok := loop.(io.Closer); ok {
 			return c.Close()
 		}
 		return nil
 	}
+	defer d.remove(loop)
 	return loop.Run(ctx)
 }
 
@@ -117,6 +187,13 @@ func (d *Daemon) add(loop Loop) bool {
 	}
 	d.loops = append(d.loops, loop)
 	return true
+}
+
+// remove forgets a finished loop so later hard stops only reach live loops.
+func (d *Daemon) remove(loop Loop) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.loops = slices.DeleteFunc(d.loops, func(l Loop) bool { return l == loop })
 }
 
 // HardStop stops the running sessions of every project that has started, and

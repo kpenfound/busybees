@@ -351,6 +351,9 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			break
 		}
 	}
+	// No further dispatch pass can claim this scheduler's queued turn.
+	// Give it up before draining, so other machine projects keep working.
+	s.shared.leave()
 	if msg := stopNotice(s.liveCount(), s.heldIssues(), ctx.Err() != nil); msg != "" {
 		s.log.Info(msg)
 	}
