@@ -1569,7 +1569,10 @@ its count moves. `--notes` works on a file other than the configured one, and
 Reports what finished sessions cost, summed from `<state_dir>/ledger.jsonl`:
 one JSON line per session, appended when it ends, with its role, issue, PR,
 turns, cost, duration and outcome. The numbers are what the agent reported;
-nothing is reconciled against billing.
+nothing is reconciled against billing. The ledger holds
+[`scheduler.retention_period`](configuration.md#scheduler) of sessions, and
+at least the last 24 hours, so a `--since` longer than that reports only what
+is still there.
 
 ```
 $ bees cost --since 72h --by role

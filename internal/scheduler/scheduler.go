@@ -955,6 +955,7 @@ func (s *Scheduler) pass(ctx context.Context) error {
 	s.op("check-prs", err, "check PRs", "err", err)
 	err = s.reconcile(ctx, snap)
 	s.op("reconcile", err, "reconcile", "err", capErrors(err))
+	s.trimLedger()
 	s.checkDayBudget()
 	s.dispatchDevelopers(ctx, snap, false)
 	// After the developers, so a ready issue is never starved by a review

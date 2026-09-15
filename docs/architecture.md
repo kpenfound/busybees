@@ -158,7 +158,10 @@ A full pass is:
      oscillating on the edge. The sum is recomputed from the ledger on every
      pass; a restart loses only the hysteresis. The other two budgets are
      enforced elsewhere: `max_cost_per_issue` between a developer worker's
-     stages, `max_cost_per_session` after a session ends. See
+     stages, `max_cost_per_session` after a session ends. A full pass trims
+     the ledger to `scheduler.retention_period` first, and never inside the
+     last 24 hours; a local pass does not trim (see
+     [State directory](#state-directory)). See
      [Cost budgets](configuration.md#cost-budgets).
    - **Claude session limit.** Recorded from a finished session rather than
      computed here: a session whose last `rate_limit_event` was blocking, or
@@ -819,7 +822,7 @@ Most things the scheduler does are best-effort: a failed label edit,
 assignment or mail update warns and the pass carries on. A warning nobody
 reads is silence, though, so each of those sites reports under a short, stable
 operation name (`poll`, `assign`, `label`, `reconcile`, `human-feedback`,
-`check-prs`, `list-created`, `ledger`, `retention`, `write-status`,
+`check-prs`, `list-created`, `ledger`, `ledger-trim`, `write-status`,
 `project-prompts/<role>`, and so on). The record logs what the site logged
 plus `op=<name>`, and keeps a per-operation streak of consecutive failures; a
 success clears the streak. `status.json` carries the streaks as `degraded`, so
@@ -1197,7 +1200,8 @@ sessions get `BEES_STATE_DIR`.
                                  {last_run, last_check, sessions, last_consolidated}
   status.json                    live scheduler status for `bees status` (queues, workers,
                                  singletons, pauses, degraded operations, last_poll, last_error)
-  ledger.jsonl                   append-only, one JSON line per finished session
+  ledger.jsonl                   one JSON line per finished session, trimmed to
+                                 scheduler.retention_period
                                  {time, role, session, issue, pr, turns, cost_usd,
                                  duration_ms, outcome, error_subtype, timed_out}
   bees.log                       every record of the last scheduler runs as JSON, rotated
@@ -1207,7 +1211,12 @@ sessions get `BEES_STATE_DIR`.
 `ledger.jsonl` is the factory's accounting: one line for every session that
 finishes, whatever it reported, and `bees cost` sums it. Lines are written
 with a single append so concurrent workers cannot interleave, and a line that
-does not parse is skipped on read rather than failing it.
+does not parse is skipped on read rather than failing it. Every full pass,
+before the daily budget is summed, removes the lines older than
+`scheduler.retention_period`, and never one from the last 24 hours, which the
+daily budget reads. The trim writes the kept lines to a temporary file renamed
+over the ledger, only when there is a line to remove, and keeps a line it
+cannot date.
 
 `<role>.json` carries what the scheduler remembers about a role between runs:
 when the singleton roles last ran (`last_run`) and last looked for work

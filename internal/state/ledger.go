@@ -2,6 +2,7 @@ package state
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -45,6 +46,8 @@ func (s *Store) AppendLedger(e LedgerEntry) error {
 	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
 		return err
 	}
+	s.ledgerMu.Lock()
+	defer s.ledgerMu.Unlock()
 	f, err := os.OpenFile(s.LedgerPath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
@@ -85,6 +88,62 @@ func (s *Store) ReadLedger(since time.Time) ([]LedgerEntry, error) {
 	// A scan error (an overlong line, a truncated read) ends the ledger
 	// early; what was read before it is still good.
 	return out, nil
+}
+
+// TrimLedger removes the entries recorded before before and returns how many
+// it removed. The ledger is rewritten through a temporary file renamed over
+// it, so a reader sees either the old ledger or the trimmed one, and only when
+// there is something to remove. A line that does not parse is kept: its age is
+// unknown, and ReadLedger skips it anyway.
+func (s *Store) TrimLedger(before time.Time) (int, error) {
+	s.ledgerMu.Lock()
+	defer s.ledgerMu.Unlock()
+	b, err := os.ReadFile(s.LedgerPath())
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	var kept []byte
+	removed := 0
+	for len(b) > 0 {
+		line := b
+		if i := bytes.IndexByte(b, '\n'); i >= 0 {
+			line, b = b[:i+1], b[i+1:]
+		} else {
+			b = nil
+		}
+		var e LedgerEntry
+		if err := json.Unmarshal(line, &e); err == nil && e.Time.Before(before) {
+			removed++
+			continue
+		}
+		kept = append(kept, line...)
+	}
+	if removed == 0 {
+		return 0, nil
+	}
+	tmp, err := os.CreateTemp(s.Dir, "ledger.jsonl.*")
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = os.Remove(tmp.Name()) }()
+	if _, err := tmp.Write(kept); err != nil {
+		_ = tmp.Close()
+		return 0, err
+	}
+	if err := tmp.Chmod(0o644); err != nil {
+		_ = tmp.Close()
+		return 0, err
+	}
+	if err := tmp.Close(); err != nil {
+		return 0, err
+	}
+	if err := os.Rename(tmp.Name(), s.LedgerPath()); err != nil {
+		return 0, err
+	}
+	return removed, nil
 }
 
 // maxLedgerLine caps how long a ledger line may be before it is skipped.
