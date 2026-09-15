@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"testing"
 
-	"github.com/kpenfound/busybees/internal/agentbin"
+	"github.com/kpenfound/busybees/core/agent/agentbin"
 )
 
 // A review session goes through the same guard as a factory session: an

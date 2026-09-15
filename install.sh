@@ -24,7 +24,7 @@ REPO="kpenfound/busybees"
 API_URL="https://api.github.com/repos/${REPO}/releases/latest"
 DOWNLOAD_URL="https://github.com/${REPO}/releases/download"
 BIN="bees"
-SOURCE_HINT="build from source instead: go install github.com/${REPO}/cmd/bees@latest"
+SOURCE_HINT="build from source instead: clone https://github.com/${REPO}, then run go install ./cmd/bees from the clone"
 
 install_dir="${BEES_INSTALL_DIR:-/usr/local/bin}"
 

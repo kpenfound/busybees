@@ -109,7 +109,7 @@ func TestFromContainers(t *testing.T) {
 // container on the machine, and the engine is not asked at all: there is
 // nothing an answer could be attributed to.
 func TestFromContainersWithoutScopeMatchesNothing(t *testing.T) {
-	engine := fakeEngine(t, "aaa111\t/a/.bees/sessions/20260906-qa-1\n")
+	engine := fakeEngine(t, "aaa111\t/a/.agent/sessions/20260906-qa-1\n")
 	got, err := FromContainers(context.Background(), "")
 	if err != nil || len(got) != 0 {
 		t.Fatalf("empty scope: %+v %v", got, err)
@@ -138,7 +138,7 @@ func TestFindAttachesTheContainerToItsSession(t *testing.T) {
 		t.Skipf("cannot name a shell docker to stand in for the engine client: %v", err)
 	}
 	cmd := exec.Command(client, "-c", "sleep 60 & wait", "run",
-		"--name", "bees-developer-issue-1-r1-ab12", "--label", ContainerLabel+"="+dir)
+		"--name", "agent-developer-issue-1-r1-ab12", "--label", ContainerLabel+"="+dir)
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +265,7 @@ func TestKillingAContainerAloneSignalsNothing(t *testing.T) {
 }
 
 // A container whose engine client has gone — killed on its own, or lost
-// with the machine — is a session of its own for `bees kill` to stop, and
+// with the machine — is a session of its own for `agent kill` to stop, and
 // it names the session directory it belongs to so the session can be
 // marked as stopped.
 func TestFindReportsAContainerWhoseClientIsGone(t *testing.T) {
@@ -292,24 +292,24 @@ func TestFindReportsAContainerWhoseClientIsGone(t *testing.T) {
 
 // The engine client of a container-backed session is what the process table
 // shows of it. It counts as a session — so a pid file naming it is not
-// discarded as a reused pid — and only with the label bees puts on a
+// discarded as a reused pid — and only with the label agent puts on a
 // session's container, so another container of the machine is left alone.
 func TestParsePSFindsTheEngineClient(t *testing.T) {
-	scope := "/a/.bees/sessions"
+	scope := "/a/.agent/sessions"
 	client := func(pid int, sessionsDir, name string) string {
 		dir := sessionsDir + "/20260906-" + name
 		return fmt.Sprintf("  %d   %d /usr/local/bin/docker run --rm --interactive", pid, pid) +
-			" --name bees-" + name + "-ab12 --cidfile " + dir + "/container-id" +
-			" --label bees.session=" + dir + " ghcr.io/acme/bees:1 claude -p --name bees-" + name
+			" --name agent-" + name + "-ab12 --cidfile " + dir + "/container-id" +
+			" --label agent.session=" + dir + " ghcr.io/acme/agent:1 claude -p --name agent-" + name
 	}
 	text := strings.Join([]string{
 		client(100, scope, "developer-issue-1-r1"),
 		// Another project's factory.
-		client(200, "/b/.bees/sessions", "developer-issue-9-r1"),
-		// The engine running something that is not a bees session, with a
+		client(200, "/b/.agent/sessions", "developer-issue-9-r1"),
+		// The engine running something that is not a agent session, with a
 		// session directory of this factory on its command line all the
 		// same.
-		"  300   300 docker run --rm --name bees-x -v /a/.bees/sessions/x:/s alpine sh",
+		"  300   300 docker run --rm --name agent-x -v /a/.agent/sessions/x:/s alpine sh",
 	}, "\n") + "\n"
 
 	got := parsePS(text, 1, scope)
@@ -358,10 +358,10 @@ func gone(t *testing.T, pid int) bool {
 	return !Alive(pid)
 }
 
-// The MCP server bees runs on the host for a container session outlives a
+// The MCP server agent runs on the host for a container session outlives a
 // crash: it is in a process group of its own, so neither the scheduler's
 // own kill nor the process table scan reaches it. Its pid file is what
-// `bees kill` finds it by, and it is found even when nothing else of the
+// `agent kill` finds it by, and it is found even when nothing else of the
 // session is left — the crash that orphaned the server took the engine
 // client and the container with it.
 func TestFindAndKillReachTheOrphanedServer(t *testing.T) {

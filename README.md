@@ -36,7 +36,9 @@ Anywhere the script does not cover — Windows, another architecture, or a build
 unreleased `main` — build from source with Go 1.25+ instead:
 
 ```sh
-go install github.com/kpenfound/busybees/cmd/bees@latest
+git clone https://github.com/kpenfound/busybees.git
+cd busybees
+go install ./cmd/bees
 ```
 
 [Releasing](docs/releasing.md) describes what a release contains and how to install one

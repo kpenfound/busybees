@@ -71,7 +71,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
 	r := newRunner(t, bin)
 	r.Notes = notes
 	if _, err := r.Run(context.Background(), Request{
-		Name: "t", Role: config.ResolvedRole{Name: "developer", Model: "opus", MaxTurns: 1, Timeout: time.Minute},
+		Name: "t", Profile: ProfileForRole(config.ResolvedRole{Name: "developer", Model: "opus", MaxTurns: 1, Timeout: time.Minute}),
 		WorkDir: t.TempDir(),
 	}); err != nil {
 		t.Fatal(err)

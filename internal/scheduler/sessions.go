@@ -246,7 +246,7 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (_ *sessio
 	startedActivity = true
 	res, err := s.runner.Run(sctx, session.Request{
 		Name:         spec.name,
-		Role:         role,
+		Profile:      session.ProfileForRole(role),
 		WorkDir:      spec.workDir,
 		SystemPrompt: system,
 		Prompt:       task,

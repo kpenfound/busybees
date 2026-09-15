@@ -4,14 +4,13 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/core/agent/agentbin"
 )
 
 // A session in the container sandbox is found differently from one on the
@@ -26,7 +25,7 @@ import (
 //
 // Such a session leaves a third record, for a third thing to stop: the
 // built-in MCP server the runner starts on the host for it, because the
-// bees binary is not in the container (see ServerPIDFile).
+// caller binary is not in the container (see ServerPIDFile).
 
 // ContainerIDFile is the file in a session directory the engine writes the
 // container's id to (--cidfile) when a container-backed session starts. It
@@ -36,9 +35,9 @@ const ContainerIDFile = "container-id"
 
 // ContainerLabel is the label every container-backed session's container
 // carries, with the session directory as its value, so `docker ps --filter
-// label=bees.session` lists one factory's sessions and the value says which
+// label=agent.session` lists one factory's sessions and the value says which
 // session each one is.
-const ContainerLabel = "bees.session"
+const ContainerLabel = "agent.session"
 
 // ServerPIDFile is the file in a session directory the runner writes the
 // pid of the built-in MCP server it started on the host for a
@@ -77,7 +76,7 @@ func RemoveServerPID(dir string) { _ = os.Remove(filepath.Join(dir, ServerPIDFil
 // process that has gone is deleted, as a stale pid file is.
 //
 // Unlike the session's main pid, the server's is not cross-checked against
-// the process table: `bees mcp serve` is deliberately not one of the
+// the process table: the caller server is deliberately not one of the
 // executables the scan counts (it is no agent session), so the scan can say
 // nothing about it.
 func liveServer(dir string) int {
@@ -92,14 +91,10 @@ func liveServer(dir string) int {
 	return pid
 }
 
-// containerMarker is the argv fragment that identifies the engine client of
-// a container-backed session in the process table.
-const containerMarker = "--label " + ContainerLabel + "="
-
 // Engine is the container engine command asked which containers are running
 // and told to remove one. It is a variable so a test can answer for a
 // machine that has no container engine; nothing but a test changes it.
-var Engine = config.ContainerEngine
+var Engine = "docker"
 
 // containerStop is how long the engine is given to remove a container.
 const containerStop = 30 * time.Second
@@ -127,8 +122,8 @@ func RemoveContainerID(dir string) { _ = os.Remove(filepath.Join(dir, ContainerI
 //
 // It fails when there is no engine to ask, which is also the answer to
 // "are any container sessions running": none that can be found or stopped.
-func FromContainers(ctx context.Context, sessionsDir string) ([]Proc, error) {
-	running, err := runningContainers(ctx, sessionsDir)
+func FromContainers(ctx context.Context, sessionsDir string, markers ...Markers) ([]Proc, error) {
+	running, err := runningContainers(ctx, sessionsDir, markers...)
 	if err != nil {
 		return nil, err
 	}
@@ -145,14 +140,15 @@ func FromContainers(ctx context.Context, sessionsDir string) ([]Proc, error) {
 // sessions of this factory, as session directory -> container id. A
 // container labelled with another factory's session directory is not this
 // factory's and is left alone, however many factories share a machine.
-func runningContainers(ctx context.Context, sessionsDir string) (map[string]string, error) {
+func runningContainers(ctx context.Context, sessionsDir string, markers ...Markers) (map[string]string, error) {
+	label := markerSet(markers).Container
 	prefixes := scopePrefixes(sessionsDir)
 	if len(prefixes) == 0 {
 		return nil, nil // no scope, no attribution: match nothing rather than everything
 	}
-	out, err := exec.CommandContext(ctx, Engine, "ps", "--no-trunc",
-		"--filter", "label="+ContainerLabel,
-		"--format", "{{.ID}}\t{{.Label \""+ContainerLabel+"\"}}").Output()
+	out, err := agentbin.CommandContext(ctx, Engine, "ps", "--no-trunc",
+		"--filter", "label="+label,
+		"--format", "{{.ID}}\t{{.Label \""+label+"\"}}").Output()
 	if err != nil {
 		return nil, fmt.Errorf("list the container sessions (%s ps): %w", Engine, err)
 	}
@@ -213,7 +209,7 @@ func underScope(dir string, prefixes []string) bool {
 }
 
 // sameDir reports whether two paths name the same directory, as given or
-// resolved: a container's label carries the session directory as bees knew
+// resolved: a container's label carries the session directory as the caller knew
 // it, which need not be the path the caller of Find gave.
 func sameDir(a, b string) bool {
 	if a == "" || b == "" {
@@ -233,7 +229,7 @@ func sameDir(a, b string) bool {
 func removeContainer(id string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), containerStop)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, Engine, "rm", "--force", id).CombinedOutput()
+	out, err := agentbin.CommandContext(ctx, Engine, "rm", "--force", id).CombinedOutput()
 	if err == nil || strings.Contains(strings.ToLower(string(out)), "no such container") {
 		return nil
 	}

@@ -9,6 +9,8 @@ source = "github.com/dagger/go"
 [modules.go.settings]
 base = "golang:1.26-bookworm"
 
+# Both the root module and standalone core/ module are discovered below.
+# The root module replaces its core dependency with ./core.
 # The module treats every go.mod in the workspace as a Go module to check, and
 # the workspace does not read .gitignore. A session may leave a copy of go.mod
 # in its own directory under .bees/ (factory state, never source), where

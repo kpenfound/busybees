@@ -177,6 +177,7 @@ func newAppFor(ctx context.Context, g *globalFlags, cfg *config.Config, log *slo
 	ws.Keep = cfg.Scheduler.KeepWorkspaces
 	ws.Remote = cfg.Project.Remote
 
+	// The busybees adapter supplies identity and context to core/agent.
 	runner := &session.Runner{
 		ClaudeBin:   bin,
 		CodexBin:    codexBin(),

@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kpenfound/busybees/core/agent/procs"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/github"
-	"github.com/kpenfound/busybees/internal/procs"
 	"github.com/kpenfound/busybees/internal/state"
 )
 

@@ -1,4 +1,4 @@
-package session
+package agent
 
 import (
 	"bytes"
@@ -9,18 +9,17 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
-	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/core/agent/agentbin"
 )
 
 // A container session whose role sets container_use_environment
-// (config.ResolvedRole.ContainerUseEnvironment) runs in an image bees builds
+// (Profile.ContainerUseEnvironment) runs in an image the runner builds
 // from a dagger/container-use environment definition instead of one a
 // person built and named in sandbox_image. Only the definition's file
-// format is shared with container-use: bees does not run its Go package,
+// format is shared with container-use: the runner does not run its Go package,
 // the Dagger SDK, a Dagger engine or its MCP server, none of which it needs
 // to turn four fields into a Dockerfile. The file is
 // <container_use_environment>/.container-use/environment.json, read from
@@ -32,7 +31,7 @@ import (
 //   - setup_commands, then install_commands: one RUN each, through
 //     `sh -c`, at build time. container-use runs setup_commands, copies its
 //     environment's source tree in, then runs install_commands, so an
-//     install command there can read a checked-in file (package.json). Bees
+//     install command there can read a checked-in file (package.json). The caller
 //     has no source copy to put between the two lists: the worktree is
 //     bind-mounted when the container runs (container.mounts), not baked
 //     into the image, so the lists run back to back and an install command
@@ -44,15 +43,15 @@ import (
 //   - workdir: the container always runs in the worktree, at its host path
 //     (container.command's --workdir), which the definition cannot move.
 //   - secrets: container-use resolves them through Dagger's secret
-//     providers (env://, file://, op://) in its pipeline; bees has no
+//     providers (env://, file://, op://) in its pipeline; the runner has no
 //     pipeline to resolve them in, and the sandbox already forwards the
-//     credentials a session needs (containerVars, config.AgentCredentials).
+//     credentials a session needs (containerVars, AgentCredentials).
 //   - services: other containers; the sandbox is one container.
 //
 // The image is tagged after a hash of the Dockerfile, so a definition
 // whose resolved inputs are unchanged reuses the image built for it and a
-// change to any of them builds a new one. It must hold the agent, git and
-// gh like a sandbox_image, which is the definition's own job, and `docker
+// change to any of them builds a new one. It must hold the agent and configured tools
+// like a sandbox_image, which is the definition's own job, and `docker
 // build` pulls base_image when it is not on the machine. A definition that
 // is missing, malformed or fails to build fails the session, not the
 // configuration: it is a file of the project, and its branch may change it.
@@ -66,14 +65,14 @@ const (
 
 // containerUseRepo is the repository the built images belong to; the tag
 // is the hash of what they were built from.
-const containerUseRepo = "bees-container-use"
+const containerUseRepo = "agent-container-use"
 
 // containerUseBuildLog is the file in the session directory that holds the
 // build's output.
 const containerUseBuildLog = "docker-build.log"
 
 // containerUseEnvironment is the part of container-use's EnvironmentConfig
-// bees builds from. The fields it leaves out (workdir, secrets, services)
+// the runner builds from. The fields it leaves out (workdir, secrets, services)
 // are dropped by the decoder, which is what ignoring them means here.
 type containerUseEnvironment struct {
 	BaseImage       string   `json:"base_image"`
@@ -89,27 +88,27 @@ type containerUseEnvironment struct {
 // for people reading it afterwards, and a build's output goes to
 // containerUseBuildLog beside it.
 func (r *Runner) containerUseImage(ctx context.Context, req Request, sessionDir string) (string, error) {
-	path := filepath.Join(req.WorkDir, req.Role.ContainerUseEnvironment, containerUseDir, containerUseFile)
+	path := filepath.Join(req.WorkDir, req.Profile.ContainerUseEnvironment, containerUseDir, containerUseFile)
 	env, err := loadContainerUseEnvironment(path)
 	if err != nil {
-		return "", fmt.Errorf("container_use_environment %q: %w", req.Role.ContainerUseEnvironment, err)
+		return "", fmt.Errorf("container_use_environment %q: %w", req.Profile.ContainerUseEnvironment, err)
 	}
 	dockerfile, err := containerUseDockerfile(env)
 	if err != nil {
-		return "", fmt.Errorf("container_use_environment %q: %s: %w", req.Role.ContainerUseEnvironment, path, err)
+		return "", fmt.Errorf("container_use_environment %q: %s: %w", req.Profile.ContainerUseEnvironment, path, err)
 	}
 	if err := os.WriteFile(filepath.Join(sessionDir, "Dockerfile"), []byte(dockerfile), 0o644); err != nil {
 		return "", err
 	}
-	tag := containerUseTag(dockerfile)
+	tag := containerUseTag(dockerfile, r.ContainerUseRepository)
 	docker := r.dockerBin()
-	if exec.CommandContext(ctx, docker, "image", "inspect", "--format", "{{.Id}}", tag).Run() == nil {
+	if agentbin.CommandContext(ctx, docker, "image", "inspect", "--format", "{{.Id}}", tag).Run() == nil {
 		return tag, nil
 	}
 	// The build context is a directory of its own holding the Dockerfile
 	// alone: the session directory has the prompts in it, and everything
 	// in a context is sent to the engine.
-	buildDir, err := os.MkdirTemp("", "bees-container-use-")
+	buildDir, err := os.MkdirTemp("", "agent-container-use-")
 	if err != nil {
 		return "", err
 	}
@@ -123,11 +122,11 @@ func (r *Runner) containerUseImage(ctx context.Context, req Request, sessionDir 
 		return "", err
 	}
 	defer func() { _ = log.Close() }()
-	cmd := exec.CommandContext(ctx, docker, "build", "--tag", tag, "--file", filepath.Join(buildDir, "Dockerfile"), buildDir)
+	cmd := agentbin.CommandContext(ctx, docker, "build", "--tag", tag, "--file", filepath.Join(buildDir, "Dockerfile"), buildDir)
 	cmd.Stdout = log
 	cmd.Stderr = log
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("container_use_environment %q: %s build --tag %s failed building %s: %w; see %s", req.Role.ContainerUseEnvironment, config.ContainerEngine, tag, path, err, logPath)
+		return "", fmt.Errorf("container_use_environment %q: %s build --tag %s failed building %s: %w; see %s", req.Profile.ContainerUseEnvironment, ContainerEngine, tag, path, err, logPath)
 	}
 	return tag, nil
 }
@@ -148,7 +147,7 @@ func loadContainerUseEnvironment(path string) (containerUseEnvironment, error) {
 		return env, fmt.Errorf("%s is not a container-use environment definition: %w", path, err)
 	}
 	if env.BaseImage == "" {
-		return env, fmt.Errorf("%s names no base_image: the image the definition builds on, which must hold the agent, git and gh", path)
+		return env, fmt.Errorf("%s names no base_image: the image the definition builds on, which must hold the agent and configured tools", path)
 	}
 	if strings.ContainsAny(env.BaseImage, "\n\r") {
 		return env, fmt.Errorf("%s names a base_image that spans more than one line", path)
@@ -189,10 +188,14 @@ func containerUseDockerfile(env containerUseEnvironment) (string, error) {
 
 // containerUseTag names the image a Dockerfile builds: the repository and a
 // prefix of the hash of the Dockerfile's text. The Dockerfile holds exactly
-// the fields bees builds from, so a change to the definition's formatting
-// or to a field bees ignores leaves the tag alone, and a change to any of
+// the fields the runner builds from, so a change to the definition's formatting
+// or to a field the runner ignores leaves the tag alone, and a change to any of
 // base_image, env, setup_commands or install_commands changes it.
-func containerUseTag(dockerfile string) string {
+func containerUseTag(dockerfile string, repositories ...string) string {
+	repo := containerUseRepo
+	if len(repositories) > 0 && repositories[0] != "" {
+		repo = repositories[0]
+	}
 	sum := sha256.Sum256([]byte(dockerfile))
-	return containerUseRepo + ":" + hex.EncodeToString(sum[:8])
+	return repo + ":" + hex.EncodeToString(sum[:8])
 }
