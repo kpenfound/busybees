@@ -298,3 +298,51 @@ func TestFanOutIsClampedToTheSharedPool(t *testing.T) {
 		t.Errorf("shared slots in use after the fan-out: got %d want 0", got)
 	}
 }
+
+// A scheduler removed from a machine must relinquish its queued turn while
+// preserving slots still held by work in flight.
+func TestStoppingSchedulerLeavesSharedQueue(t *testing.T) {
+	pool := NewSharedPool(2)
+	var w woken
+	owner, next := w.member(pool, "owner"), w.member(pool, "next")
+	if !owner.acquire(2) {
+		t.Fatal("initial acquire")
+	}
+	h := newHarnessAt(t, wakeTOML+rolesOffTOML, time.Date(2026, 3, 2, 10, 0, 0, 0, time.UTC), func(d *Deps) { d.Shared = pool })
+	h.sched.Once = false
+	seedReady(h, 1, "s", time.Now())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- h.sched.Run(ctx) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for len(pool.Waiting()) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("scheduler never queued")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if next.acquire(1) {
+		t.Fatal("full pool granted claim")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("scheduler did not stop")
+	}
+	if got := fmt.Sprint(pool.Waiting()); got != "[next]" {
+		t.Fatalf("stopped scheduler kept its turn: %s", got)
+	}
+	if pool.InUse() != 2 {
+		t.Fatal("stop released another worker's slots")
+	}
+	owner.release(2)
+	if !next.acquire(1) {
+		t.Fatal("next project remains blocked")
+	}
+	next.release(1)
+}

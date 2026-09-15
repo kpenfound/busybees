@@ -2,7 +2,7 @@
 
 **busybees** is a lightweight software factory: a Go CLI (`bees`) that runs a staff of
 headless coding-agent sessions — product manager, project manager, developers,
-reviewers and QA — against a single GitHub repository.
+reviewers and QA, against one or more GitHub repositories.
 
 Humans steer it through GitHub. Create and label issues, comment, merge pull requests;
 the bees do the rest. Every role runs in its own temporary git worktree, talks to the
@@ -91,7 +91,10 @@ ways to run the factory.
   exchange review feedback through a mailbox in the state directory; every comment a
   bee posts on GitHub is to a person, and ends with an invisible marker. See
   [The mailbox](docs/architecture.md#the-mailbox).
-- **One config file.** `bees.toml` holds project settings, the visibility filter,
+- **Several projects per process.** A machine config lists each project's
+  `bees.toml`. `bees run -d` runs in the background; SIGHUP reloads the list.
+  See [Running in the background](docs/cli.md#running-in-the-background).
+- **A config per project.** `bees.toml` holds project settings, the visibility filter,
   scheduler limits, agent profiles, and global and per-role prompt/skills/MCP
   settings. See
   [Configuration](docs/configuration.md) and [bees.example.toml](bees.example.toml).

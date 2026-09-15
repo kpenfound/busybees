@@ -22,18 +22,27 @@ import (
 // config's max_developers set they share one developer pool of that size
 // too (scheduler.SharedPool), on top of each project's own.
 func machineDaemon(g *globalFlags, m *config.Machine) *daemon.Daemon {
-	d := &daemon.Daemon{Logger: slog.Default()}
+	return &daemon.Daemon{Logger: slog.Default(), Projects: machineProjectFactory(g, m)(m)}
+}
+
+// The factory keeps the original shared pool across project-list reloads.
+func machineProjectFactory(g *globalFlags, m *config.Machine) func(*config.Machine) []daemon.Project {
 	var shared *scheduler.SharedPool
 	if m.MaxDevelopers > 0 {
 		shared = scheduler.NewSharedPool(m.MaxDevelopers)
 	}
+	return func(next *config.Machine) []daemon.Project { return machineProjects(g, next, shared) }
+}
+
+func machineProjects(g *globalFlags, m *config.Machine, shared *scheduler.SharedPool) []daemon.Project {
+	var projects []daemon.Project
 	for _, cfg := range m.Configs {
-		d.Projects = append(d.Projects, daemon.Project{
+		projects = append(projects, daemon.Project{
 			Name:  cfg.Path,
 			Start: func(ctx context.Context) (daemon.Loop, error) { return startProject(ctx, g, cfg, shared) },
 		})
 	}
-	return d
+	return projects
 }
 
 // projectLoop is one project's scheduler, closing the project's log file when

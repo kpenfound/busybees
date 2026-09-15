@@ -477,6 +477,14 @@ bees prompts show pm --rendered | less
 
 ### `bees run`
 
+The active config selects the mode: a project `bees.toml` runs one scheduler;
+a [machine config](configuration.md#machine-config-several-projects) runs one
+for every listed project. Both stay in the foreground unless `-d` is given.
+The run flags apply to every project in machine mode. Preflight runs per
+project; failures are logged to that project's `bees.log` and reported in the
+live view while the other projects continue. Without `--once`, a machine run
+stays alive for reloads even if every project fails.
+
 Runs the scheduler until interrupted. Every `poll_interval` (default 5m; two
 API calls per poll) it lists visible issues and PRs, delivers new human
 reviews and comments on factory PRs to the developer as mail (sending an
@@ -492,13 +500,15 @@ for the work already in flight to finish. An issue a developer worker holds
 goes on through the stages it has left — a developer session is followed by
 the review that belongs with it — until it is approved, escalated, out of
 `max_review_rounds` or over `max_cost_per_issue`; each session is still
-bounded by its role's `timeout`. A second Ctrl-C stops them now.
+bounded by its role's `timeout`. SIGTERM requests the same graceful stop.
+A second Ctrl-C or SIGTERM stops the running sessions immediately.
 
-Before the first poll it runs the cheap half of [`bees doctor`](#bees-doctor) —
+Before each project's first poll it runs the cheap half of
+[`bees doctor`](#bees-doctor):
 every check except the `roles` group, which clones skills and starts MCP
-servers — and refuses to start when one of them fails: it prints the doctor
-table and exits non-zero, having started no session. Warnings do not stop it
-and are not printed, so a start that is going to work stays quiet.
+servers. In project mode, a failed check prints the doctor table and exits
+non-zero, having started no session. Warnings do not stop a project and are
+not printed, so a start that is going to work stays quiet.
 `--skip-doctor` bypasses the preflight. `bees tick` and `bees exec` never run
 it: they are debugging commands and must stay usable on a half-configured
 machine.
@@ -531,6 +541,7 @@ the run continues.
 
 | Flag | Description |
 |---|---|
+| `-d, --daemon` | Detach and print the child pid; see below. |
 | `--once` | Do one pass and exit when the sessions it started finish. Same scheduling as `bees tick`; in a terminal it draws [the live view](#the-live-view) rather than logging the pass, so `bees tick` or `--no-tui` is what prints a report. |
 | `--roles a,b` | Only run these roles (aliases accepted: `pm`, `pjm`, `dev`, `reviewer`, `qa`). |
 | `--skip-doctor` | Start without running the doctor preflight. |
@@ -542,6 +553,60 @@ bees run --roles dev,reviewer
 bees -v run --once
 bees --log-format json --quiet run
 ```
+
+#### Running in the background
+
+```sh
+bees run -d                             # one project, config found from cwd
+bees run --config ~/.config/bees/machine.toml --daemon
+```
+
+The parent prints the child pid and exits immediately. The child starts a
+separate process session, reads the same config and flags, and runs the
+preflight and poll loops. It has no terminal UI. Startup errors and console
+output go to a file; each project's `bees.log` still records its own events.
+A printed pid confirms the process was spawned, not that preflight passed.
+
+For a project run, files are under the configured `state_dir`:
+
+- `bees.pid`: the child pid, removed after graceful shutdown.
+- `bees-daemon.log`: appended stdout and stderr, including startup errors.
+
+For a machine run, files are next to the active machine config:
+
+- `bees-machine.pid`: the child pid, removed after graceful shutdown.
+- `bees-machine-daemon.log`: appended stdout and stderr for the whole process.
+
+A lock beside each pid file prevents duplicate detached starts. Keep machine
+configs in separate directories when running more than one detached machine.
+The lock file stays on disk; a stopped process releases its lock, so a later
+start can replace a stale pid left by a crash.
+
+Stop a detached project with its pid file (use your configured state path):
+
+```sh
+kill -TERM "$(cat .bees/bees.pid)"
+```
+
+There is no dedicated stop or reload command for a detached project.
+Use the project pid file with `kill`; machine control does not target a
+project run. For a machine, use its pid file with the same signal protocol:
+
+```sh
+kill -HUP "$(cat ~/.config/bees/bees-machine.pid)"   # reload projects
+kill -TERM "$(cat ~/.config/bees/bees-machine.pid)"  # drain and stop
+```
+
+SIGHUP in machine mode rereads the project list. Added projects start;
+removed projects stop polling and finish their work in flight. Unchanged
+projects keep running with their existing configuration and concurrency pool.
+Re-adding a project while it drains waits for that scheduler to finish before
+starting another. A malformed config leaves the running set untouched and
+logs the error. Restart to apply edits to unchanged projects or the machine's
+`max_developers`. `--once` exits after every project's one pass and ignores
+reloads. Foreground machine runs accept the same signals.
+The live view keeps its initial project selector after a reload; use
+`--no-tui` when changing the list during a run.
 
 ### The live view
 
