@@ -56,10 +56,22 @@ func runMachine(cmd *cobra.Command, g *globalFlags, m *config.Machine, opts runO
 	hup := make(chan os.Signal, 1)
 	signal.Notify(hup, syscall.SIGHUP)
 	defer signal.Stop(hup)
+	var view *machineViews
+	if logTUIMode(d.Logger, noTUI, os.Stdout) {
+		view = newMachineView(ctx, d)
+		defer view.close()
+		d.Projects = view.wrap(m, d.Projects)
+	}
 	if !opts.once {
 		changes := make(chan []daemon.Project)
 		d.Reload = changes
-		go reloadMachine(ctx, hup, changes, m.Path, func(next *config.Machine) []daemon.Project { return opts.projects(build(next)) }, d.Logger)
+		go reloadMachine(ctx, hup, changes, m.Path, func(next *config.Machine) []daemon.Project {
+			projects := opts.projects(build(next))
+			if view != nil {
+				projects = view.wrap(next, projects)
+			}
+			return projects
+		}, d.Logger)
 	}
 	// SIGTERM is registered by main; register SIGHUP before exposing the pid.
 	cleanup, err := registerDaemonChild(filepath.Join(filepath.Dir(m.Path), MachinePIDFile))
@@ -68,8 +80,8 @@ func runMachine(cmd *cobra.Command, g *globalFlags, m *config.Machine, opts runO
 	}
 	defer cleanup()
 	defer hardStopOnSecondInterrupt(d.HardStop)()
-	if logTUIMode(d.Logger, noTUI, os.Stdout) {
-		return runPreparedMachineWithTUI(ctx, g, m, cmd.ErrOrStderr(), d)
+	if view != nil {
+		return runPreparedMachineView(ctx, g, cmd.ErrOrStderr(), d, view)
 	}
 	return d.Run(ctx)
 }

@@ -1,11 +1,13 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"io"
 	"path"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -22,22 +24,27 @@ import (
 // console is silenced while the view is up and given back the moment it
 // comes down, and each project's <state_dir>/bees.log keeps every record.
 // The view starts with every listed project and a selector to cycle through
-// them; its sources are a startup snapshot, not updated by SIGHUP. Its stop
+// them and follows accepted reloads through each old loop's drain. Its stop
 // keys stop the daemon, and every project with it.
 func runMachineWithTUI(ctx context.Context, g *globalFlags, m *config.Machine, console io.Writer) error {
 	return runPreparedMachineWithTUI(ctx, g, m, console, machineDaemon(g, m))
 }
 
 func runPreparedMachineWithTUI(ctx context.Context, g *globalFlags, m *config.Machine, console io.Writer, d *daemon.Daemon) error {
-	projects, stop := machineView(ctx, d, m)
-	defer stop()
+	view := newMachineView(ctx, d)
+	d.Projects = view.wrap(m, d.Projects)
+	return runPreparedMachineView(ctx, g, console, d, view)
+}
+
+func runPreparedMachineView(ctx context.Context, g *globalFlags, console io.Writer, d *daemon.Daemon, view *machineViews) error {
+	defer view.close()
 	// No project's [logging] table applies to the shared console (see
 	// startProject), so the flags alone say what it prints once it is back.
 	restore := quietConsole(g.logger, g.console, config.Logging{}, console)
 	var once sync.Once
 	give := func() { once.Do(restore) }
 	defer give()
-	return runMachineView(ctx, tui.Deps{Projects: projects, Now: time.Now, Open: openInBrowser}, d, give)
+	return runMachineView(ctx, tui.Deps{Projects: view.initial(), ProjectUpdates: view.updates, Now: time.Now, Open: openInBrowser}, d, give)
 }
 
 // runMachineView draws the view over the daemon: a variable so a test can
@@ -57,14 +64,54 @@ var runMachineView = tui.RunMachine
 // scheduler once it exists and refuse until then. The function returned
 // ends the forwarding, for when the view is down.
 func machineView(ctx context.Context, d *daemon.Daemon, m *config.Machine) ([]tui.Project, func()) {
-	names := projectNames(ctx, m.Configs)
-	stop := make(chan struct{})
-	projects := make([]tui.Project, len(d.Projects))
-	for i := range d.Projects {
+	view := newMachineView(ctx, d)
+	d.Projects = view.wrap(m, d.Projects)
+	return view.initial(), view.close
+}
+
+// machineViews publishes coalesced full snapshots. Only the daemon's lifecycle
+// callbacks change membership; preparing an unused reload never replaces a source.
+type machineViews struct {
+	ctx     context.Context
+	mu      sync.Mutex
+	next    uint64
+	order   []string
+	live    map[string]*projectView
+	startup []tui.Project
+	updates chan []tui.Project
+	stopped bool
+}
+
+func newMachineView(ctx context.Context, d *daemon.Daemon) *machineViews {
+	v := &machineViews{ctx: ctx, live: map[string]*projectView{}, updates: make(chan []tui.Project, 1)}
+	d.Reconciled = func(names []string) {
+		v.mu.Lock()
+		defer v.mu.Unlock()
+		v.order = names
+		v.publish()
+	}
+	return v
+}
+
+func (v *machineViews) initial() []tui.Project { return v.startup }
+
+func (v *machineViews) wrap(m *config.Machine, projects []daemon.Project) []daemon.Project {
+	full := projectFullNames(v.ctx, m.Configs)
+	names := projectNames(full)
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	for i := range projects {
 		cfg := m.Configs[i]
-		pv := &projectView{name: names[i], events: make(chan scheduler.Event, viewEventBuffer), stop: stop}
-		start := d.Projects[i].Start
-		d.Projects[i].Start = func(ctx context.Context) (daemon.Loop, error) {
+		v.next++
+		pv := &projectView{name: names[i], fullName: full[i], events: make(chan scheduler.Event, viewEventBuffer), stop: make(chan struct{})}
+		store := state.New(cfg.StateDir())
+		pv.source = tui.Project{
+			Path: projects[i].Name, Generation: v.next, Name: names[i], Repo: cfg.Project.Repo,
+			Events: pv.events, Done: pv.stop, Status: pv.status(store), Mail: mail.Open(store.MailDir()).Counts,
+			Kill: pv.kill(v.ctx), Send: pv.send,
+		}
+		start := projects[i].Start
+		projects[i].Start = func(ctx context.Context) (daemon.Loop, error) {
 			loop, err := start(ctx)
 			if err != nil {
 				pv.fail(err)
@@ -73,28 +120,99 @@ func machineView(ctx context.Context, d *daemon.Daemon, m *config.Machine) ([]tu
 			pv.attach(loop.(*projectLoop))
 			return loop, nil
 		}
-		store := state.New(cfg.StateDir())
-		projects[i] = tui.Project{
-			Name:   names[i],
-			Repo:   cfg.Project.Repo,
-			Events: pv.events,
-			Status: pv.status(store),
-			Mail:   mail.Open(store.MailDir()).Counts,
-			Kill:   pv.kill(ctx),
-			Send:   pv.send,
+		projects[i].Observe = func(state daemon.ProjectState) {
+			v.mu.Lock()
+			defer v.mu.Unlock()
+			if v.stopped {
+				pv.retire()
+				return
+			}
+			switch state {
+			case daemon.ProjectActive:
+				v.live[pv.source.Path] = pv
+			case daemon.ProjectDraining:
+				pv.source.Draining = true
+				pv.mu.Lock()
+				pv.draining = true
+				pv.mu.Unlock()
+			case daemon.ProjectFinished:
+				delete(v.live, pv.source.Path)
+				pv.retire()
+			}
+		}
+		// Startup sources are readable before Daemon.Run starts any loop.
+		if len(v.order) == 0 {
+			v.startup = append(v.startup, pv.source)
+			v.live[pv.source.Path] = pv
 		}
 	}
-	return projects, sync.OnceFunc(func() { close(stop) })
+	if len(v.order) == 0 {
+		for _, p := range v.startup {
+			v.order = append(v.order, p.Path)
+		}
+	}
+	return projects
 }
 
-// projectNames is what the live view calls the daemon's projects: the name
-// half of each one's repository (acme/foo is foo), or the whole owner/name
-// when two projects share one. A project's repository is resolved here,
+// publish replaces a buffered snapshot while holding mu. The only other
+// channel operation is the UI receiving, so the send always has room.
+func (v *machineViews) publish() {
+	if v.stopped {
+		return
+	}
+	out := make([]tui.Project, 0, len(v.live))
+	seen := map[string]bool{}
+	for _, name := range v.order {
+		if p := v.live[name]; p != nil {
+			out = append(out, p.source)
+			seen[name] = true
+		}
+	}
+	// Draining removals follow the desired entries in their original order.
+	var draining []tui.Project
+	for name, p := range v.live {
+		if !seen[name] {
+			draining = append(draining, p.source)
+		}
+	}
+	slices.SortFunc(draining, func(a, b tui.Project) int { return cmp.Compare(a.Generation, b.Generation) })
+	out = append(out, draining...)
+	// Labels describe the complete live membership, including collisions
+	// with draining removals. Rename only snapshot values, retaining every
+	// source's identity, event subscription and callbacks.
+	full := make([]string, len(out))
+	for i, p := range out {
+		full[i] = v.live[p.Path].fullName
+	}
+	for i, name := range projectNames(full) {
+		out[i].Name = name
+	}
+	select {
+	case <-v.updates:
+	default:
+	}
+	v.updates <- out
+}
+
+func (v *machineViews) close() {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.stopped {
+		return
+	}
+	v.stopped = true
+	close(v.updates)
+	for _, p := range v.live {
+		p.retire()
+	}
+}
+
+// projectFullNames resolves the repositories used to name view sources,
 // from its remote when its bees.toml does not set it, so the view can name
 // the project before its scheduler has started; one that cannot be resolved
 // is named by the directory its bees.toml is in, and its start reports the
 // error.
-func projectNames(ctx context.Context, configs []*config.Config) []string {
+func projectFullNames(ctx context.Context, configs []*config.Config) []string {
 	full := make([]string, len(configs))
 	for i, cfg := range configs {
 		if err := cfg.Resolve(ctx); err != nil {
@@ -103,6 +221,12 @@ func projectNames(ctx context.Context, configs []*config.Config) []string {
 		}
 		full[i] = cfg.Project.Repo
 	}
+	return full
+}
+
+// projectNames shortens repository names (acme/foo is foo), keeping the
+// whole owner/name when live projects, including draining ones, share a name.
+func projectNames(full []string) []string {
 	names := make([]string, len(full))
 	shared := map[string]int{}
 	for i, f := range full {
@@ -125,9 +249,14 @@ const viewEventBuffer = 64
 // projectView is one project's stand-in in the live view until its
 // scheduler exists (see machineView), and its way to the scheduler after.
 type projectView struct {
-	name   string
-	events chan scheduler.Event
-	stop   <-chan struct{}
+	name     string
+	fullName string
+	events   chan scheduler.Event
+	stop     chan struct{}
+	source   tui.Project
+	once     sync.Once
+	draining bool
+	retired  bool
 
 	mu   sync.Mutex
 	loop *projectLoop
@@ -138,12 +267,23 @@ type projectView struct {
 // events to the view.
 func (pv *projectView) attach(loop *projectLoop) {
 	pv.mu.Lock()
+	if pv.retired {
+		pv.mu.Unlock()
+		return
+	}
 	pv.loop = loop
 	pv.mu.Unlock()
 	// --verbose streams every session event to stderr, which would scribble
 	// over the view exactly as the console log would (see runWithTUI).
 	loop.app.runner.Stream = nil
 	go forward(loop.Subscribe(), pv.events, pv.stop)
+}
+
+func (pv *projectView) retire() {
+	pv.mu.Lock()
+	pv.retired = true
+	pv.mu.Unlock()
+	pv.once.Do(func() { close(pv.stop) })
 }
 
 func (pv *projectView) fail(err error) {
@@ -158,6 +298,8 @@ func (pv *projectView) started() (*projectLoop, error) {
 	pv.mu.Lock()
 	defer pv.mu.Unlock()
 	switch {
+	case pv.retired:
+		return nil, fmt.Errorf("%s is no longer active", pv.name)
 	case pv.loop != nil:
 		return pv.loop, nil
 	case pv.err != nil:
@@ -197,6 +339,12 @@ func (pv *projectView) kill(ctx context.Context) func(session string) error {
 // send queues a message typed in the session view in the project's mailbox
 // (see sendFromView).
 func (pv *projectView) send(to string, issue, pr int, subject, body string) error {
+	pv.mu.Lock()
+	disabled := pv.draining || pv.retired
+	pv.mu.Unlock()
+	if disabled {
+		return fmt.Errorf("%s is no longer active; messaging disabled", pv.name)
+	}
 	loop, err := pv.started()
 	if err != nil {
 		return err
@@ -212,7 +360,10 @@ func forward(from <-chan scheduler.Event, to chan<- scheduler.Event, stop <-chan
 		select {
 		case <-stop:
 			return
-		case ev := <-from:
+		case ev, ok := <-from:
+			if !ok {
+				return
+			}
 			select {
 			case to <- ev:
 			default:

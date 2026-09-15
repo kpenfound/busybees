@@ -3,6 +3,8 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -174,5 +176,75 @@ func TestReloadKeepsDaemonAliveAfterEveryProjectFails(t *testing.T) {
 				t.Fatal("daemon needed timeout to exit")
 			}
 		})
+	}
+}
+
+// Observers receive the original incarnation's drain and finish, and a
+// complete reconciliation boundary after all lifecycle changes, even when a
+// newer callback for the same path has arrived in a reload.
+func TestReloadLifecycleObserversKeepIncarnationsAndOrder(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	reload := make(chan []Project)
+	release := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
+	type snapshot struct {
+		order  []string
+		states []string
+	}
+	updates := make(chan snapshot, 20)
+	var states []string // daemon goroutine only; copied at each boundary
+	makeProject := func(path, incarnation string, hold bool) Project {
+		p := project(path, &fakeLoop{run: func(ctx context.Context) error {
+			<-ctx.Done()
+			if hold {
+				<-release
+			}
+			return nil
+		}}, nil)
+		p.Observe = func(s ProjectState) { states = append(states, fmt.Sprintf("%s:%d", incarnation, s)) }
+		return p
+	}
+	a, b, c := makeProject("a", "a1", false), makeProject("b", "b1", true), makeProject("c", "c1", false)
+	d := &Daemon{Projects: []Project{a, b}, Reload: reload, Reconciled: func(order []string) {
+		updates <- snapshot{order, slices.Clone(states)}
+		states = nil
+	}}
+	done := runAsync(ctx, d)
+	receive := func() snapshot {
+		t.Helper()
+		select {
+		case s := <-updates:
+			return s
+		case <-time.After(5 * time.Second):
+			t.Fatal("no lifecycle boundary")
+			return snapshot{}
+		}
+	}
+	if s := receive(); !slices.Equal(s.states, []string{"a1:0", "b1:0"}) {
+		t.Fatalf("initial: %+v", s)
+	}
+	reload <- []Project{a, c}
+	if s := receive(); !slices.Equal(s.order, []string{"a", "c"}) || !slices.Equal(s.states, []string{"b1:1", "c1:0"}) {
+		t.Fatalf("replace: %+v", s)
+	}
+	b2 := makeProject("b", "b2", false)
+	reload <- []Project{c, b2, a}
+	if s := receive(); !slices.Equal(s.order, []string{"c", "b", "a"}) || len(s.states) != 0 {
+		t.Fatalf("reorder/readd restarted a source: %+v", s)
+	}
+	close(release)
+	if s := receive(); !slices.Equal(s.states, []string{"b1:2", "b2:0"}) {
+		t.Fatalf("old/new incarnation: %+v", s)
+	}
+	cancel()
+	if err := wait(t, done); err != nil {
+		t.Fatal(err)
 	}
 }

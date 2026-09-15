@@ -72,6 +72,9 @@ type Deps struct {
 	// Status, Mail, Kill, Send, Repo) are not read: each Project carries
 	// its own. A single-project view leaves it empty and has no selector.
 	Projects []Project
+	// ProjectUpdates supplies complete machine membership snapshots, including
+	// draining sources. Producers may coalesce snapshots without blocking.
+	ProjectUpdates <-chan []Project
 }
 
 // running is one Now row: a factory session or a synthetic review activity.
@@ -79,7 +82,7 @@ type Deps struct {
 // They hand their position to the matching judge session.
 type running struct {
 	activity *scheduler.Event
-	// project is the index in Model.projects of the project the session
+	// project is the stable handle in Model.projects of the project the session
 	// belongs to.
 	project int
 	name    string
@@ -155,8 +158,10 @@ type Model struct {
 	// `bees run` on a project, one per project for a daemon. shown is the
 	// one the panels are filtered to, or allProjects; a single-project
 	// view is always on its one project.
-	projects []project
-	shown    int
+	projects    map[int]*project
+	order       []int
+	nextProject int
+	shown       int
 
 	// sessions are the Now rows (sessions and activities) in start order, across
 	// every project; what each work item has spent, and the stage it is in,
@@ -205,9 +210,9 @@ func New(d Deps) Model {
 	if d.Now == nil {
 		d.Now = time.Now
 	}
-	m := Model{deps: d}
+	m := Model{deps: d, projects: map[int]*project{}}
 	for _, p := range d.projects() {
-		m.projects = append(m.projects, project{Project: p, spent: map[string]spend{}, stages: map[int]stage{}})
+		m.addProject(p)
 	}
 	// A daemon's view opens on every project; a single-project view has
 	// nothing else to open on.
@@ -263,7 +268,7 @@ const redrawInterval = time.Second
 const refreshEvery = 5
 
 func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{m.countTurns(), redraw()}
+	cmds := []tea.Cmd{m.countTurns(), redraw(), m.waitForProjects()}
 	for p := range m.projects {
 		cmds = append(cmds, m.waitForEvent(p), m.refresh(p))
 	}
@@ -274,16 +279,20 @@ func (m Model) Init() tea.Cmd {
 // event. It is re-issued after every event, so exactly one read per project
 // is outstanding at a time.
 func (m Model) waitForEvent(p int) tea.Cmd {
-	ch := m.projects[p].Events
+	ch, done := m.projects[p].Events, m.projects[p].Done
 	if ch == nil {
 		return nil
 	}
 	return func() tea.Msg {
-		ev, ok := <-ch
-		if !ok {
+		select {
+		case <-done:
 			return nil
+		case ev, ok := <-ch:
+			if !ok {
+				return nil
+			}
+			return eventMsg{project: p, Event: ev}
 		}
-		return eventMsg{project: p, Event: ev}
 	}
 }
 
@@ -366,14 +375,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clampCursor()
 	case tea.KeyMsg:
 		return m.key(msg)
+	case projectsMsg:
+		return m.updateProjects(msg)
 	case eventMsg:
+		if m.projects[msg.project] == nil {
+			return m, nil
+		}
 		m.apply(msg.project, msg.Event)
 		m.clampCursor()
 		return m, tea.Batch(m.waitForEvent(msg.project), m.refresh(msg.project))
 	case actedMsg:
 		m.notice = msg.note
 	case statusMsg:
-		p := &m.projects[msg.project]
+		p := m.projects[msg.project]
+		if p == nil {
+			return m, nil
+		}
 		if msg.err != nil {
 			p.statusErr = msg.err.Error()
 			return m, nil
