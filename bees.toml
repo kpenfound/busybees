@@ -1,14 +1,10 @@
 # bees.toml — configuration for a busybees software factory.
-version = 2
+version = 3
 
 #===============================================================================
 # Project
 #===============================================================================
 [project]
-# Git remote the factory fetches from and pushes to.
-#remote = "origin"
-# GitHub repository, as owner/name. Derived from the remote's URL when unset.
-#repo = "kpenfound/busybees"
 # Prefix for developer branches (bees/issue-12).
 branch_prefix = "bees/"
 
@@ -20,8 +16,6 @@ branch_prefix = "bees/"
 # The factory's label; also the base name of the workflow labels
 # (bees:triage, bees:ready, bees:in-progress, ...).
 label = "bees"
-# Only see items in this milestone.
-#milestone = ""
 # Only see items opened by this GitHub login. What the factory opens itself
 # is visible too, whoever it acts as.
 creator = "kpenfound"
@@ -58,25 +52,63 @@ qa_interval = "4h"
 notify = ["kpenfound"]
 # The first poll of the work day happens the moment the window opens, whatever
 # off_hours_poll_interval is.
-work_hours = "11:00-23:59"
+#work_hours = "11:00-23:59"
 # Default: 1h, or poll_interval when that is longer.
 off_hours_poll_interval = "2h"
 work_days = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 # Whole factory, rolling 24 hours. At or over it no new session starts; the
 # sessions already running finish.
-max_cost_per_day = 200.0
-max_cost_per_day_resume_percent = 70.0
+#max_cost_per_day = 200.0
+#max_cost_per_day_resume_percent = 70.0
 # Ask for consolidation early once a notes file grows past this many bytes.
 notes_max_bytes = 18768
 # Build a blocked_by chain of work items under the same feature as a stack of
 # branches and pull requests, each depending on its predecessor's, instead of
 # independently.
-#stacked_prs = true
+stacked_prs = false
+
+#===============================================================================
+# Profiles
+#===============================================================================
+
+[profiles.default]
+agent = "codex"
+model = "gpt-5.6-terra"
+fallback_model = "gpt-5.6-luna"
+effort = "medium"
+sandbox = "none"
+
+[profiles.coder_smart]
+agent = "codex"
+model = "gpt-6-astra"
+effort = "high"
+
+[profiles.coder_medium]
+agent = "codex"
+model = "gpt-6-astra"
+effort = "medium"
+
+[profiles.coder_dumb]
+agent = "codex"
+model = "gpt-5.6-luna"
+effort = "medium"
+
+[profiles.manager_smart]
+agent = "codex"
+model = "gpt-5.6-sol"
+effort = "high"
+
+[profiles.manager_dumb]
+agent = "codex"
+model = "gpt-5.6-sol"
+effort = "low"
+
 
 #===============================================================================
 # Global role settings
 #===============================================================================
 [global]
+profile = "default"
 # Text appended to every role's base prompt.
 #prompt = """
 #"""
@@ -89,10 +121,12 @@ skills = [
   "https://github.com/poteto/plugins#pstack/skills/unslop",
 ]
 # claude model, and the model used once it has hit its usage limit.
-#model = "opus"
-#fallback_model = "sonnet"
+# Agent settings moved to profiles (version 3).
+# Previous: agent = "codex"
+# Configure model through profile / profile_by_size and [profiles.<name>].
+# Configure fallback_model through profile / profile_by_size and [profiles.<name>].
 # Effort level: low, medium, high or max.
-#effort = "high"
+# Configure effort through profile / profile_by_size and [profiles.<name>].
 # Agentic turns per session and wall-clock limit.
 #max_turns = 200
 #timeout = "45m"
@@ -101,6 +135,13 @@ skills = [
 disallowed_tools = ["Artifact"]
 # Shell for claude's Bash tool in sessions (exported as $SHELL).
 #shell = "/bin/bash"
+
+
+# How much of the machine a session can reach: none, claude or container.
+# Set it per role in [roles.<name>] to box the roles that run untrusted code
+# harder than the ones that only read the repository.
+# Agent settings moved to profiles (version 3).
+# Previous: sandbox = "none"
 
 # Environment variables exported into every session (claude, its Bash tool,
 # MCP servers, git). $VARS are expanded from the bees environment. Roles can
@@ -116,10 +157,6 @@ DAGGER_X_RELEASE = "v1.0.0-beta.13"
 #args = ["-y", "@modelcontextprotocol/server-github"]
 #env = { GITHUB_PERSONAL_ACCESS_TOKEN = "$GITHUB_TOKEN" }
 
-# How much of the machine a session can reach: none, claude or container.
-# Set it per role in [roles.<name>] to box the roles that run untrusted code
-# harder than the ones that only read the repository.
-sandbox = "claude"
 
 #===============================================================================
 # Per-role settings.
@@ -127,30 +164,19 @@ sandbox = "claude"
 
 # Owns the product vision and feature issues; breaks features into work items.
 [roles.product_manager]
-model = "sonnet"
-#fallback_model = "sonnet"
-effort = "medium"
+profile = "manager_smart"
 
 # Triages issues into build-ready work and answers developer questions.
 [roles.project_manager]
-model = "sonnet"
-#fallback_model = "sonnet"
-#effort = "medium"
+profile = "manager_dumb"
 
 # Implements one issue on a branch and opens a pull request.
 [roles.developer]
-# Extra flags for every git commit the developer makes.
-#commit_flags = "--gpg-sign --signoff"
-#model = "opus"
-#fallback_model = "sonnet"
-#effort = "high"
+profile = "coder_medium"
+profile_by_size = { l = "coder_smart", m = "coder_medium", s = "coder_dumb", xs = "coder_dumb" }
 # Largest size a developer takes: xs, s, m, l or xl. Anything bigger is sent
 # back to triage for the project manager to split.
 #max_size = "l"
-# Run a cheaper (or stronger) model for some work item sizes. Keys are the
-# sizes xs, s, m, l and xl; a size with no entry uses model above.
-model_by_size = { xs = "sonnet", s = "sonnet", l = "fable" }
-sandbox = "none"
 # Skills by git URL: <url>[@ref][#sub/dir], cloned and exposed to claude as
 # plugins. Skills in the repository's .claude/skills/ and in ~/.claude/skills/
 # are available automatically and need not be listed.
@@ -159,22 +185,17 @@ skills = [
   "https://github.com/mattpocock/skills#skills/engineering/resolving-merge-conflicts",
   "https://github.com/mattpocock/skills#skills/engineering/tdd",
 ]
+[roles.developer.mcp.dagger]
+command = "dagger"
+args = ["mcp", "--progress", "plain", "-m", "dagger.io/go@main"]
+env = { DAGGER_X_RELEASE = "v1.0.0-beta.13" }
 
 # Reviews pull requests and, optionally, merges them once checks are green.
 [roles.reviewer]
-model = "sonnet"
-#fallback_model = "sonnet"
-#effort = "high"
 # Merge approved pull requests automatically once the required checks are
 # green. Off: humans merge. When checks fail the reviewer diagnoses the main
 # error and hands it to the developer to fix (up to max_check_fix_rounds).
 #auto_merge = true
-# Wait after approval before polling checks; some take a moment to start.
-#checks_wait = "1m"
-# How often to poll the checks while waiting (one API call each).
-#checks_poll_interval = "2m"
-# Escalate to a human if checks are still pending after this long.
-#checks_timeout = "30m"
 # Skills by git URL: <url>[@ref][#sub/dir], cloned and exposed to claude as
 # plugins. Skills in the repository's .claude/skills/ and in ~/.claude/skills/
 # are available automatically and need not be listed.
@@ -186,20 +207,17 @@ skills = [
 # implementation, completeness, cleanliness, style, product-fit. product-fit
 # judges the change against the work item's parent feature and is off by
 # default.
-# stages was removed in version 2: no review stage maps onto a review
-# angle, so the reviewer uses the default angles (see roles.reviewer.angles).
 # The review angles a pull request of each size is reviewed from, one or more
 # of quick_general, general, docs, test_coverage, acceptance_criteria,
 # side_effects. A size not named here gets its default:
 angles = { xs = ["quick_general"], s = ["quick_general"], m = ["quick_general", "docs", "test_coverage"], l = ["general", "docs", "test_coverage"], xl = ["general", "docs", "test_coverage", "acceptance_criteria"] }
 # The model for the session that writes the review brief, for the judge, and
 # per angle. Unset: model.
-brief_model = "sonnet"
-judge_model = "sonnet"
-angle_models = { quick_general = "sonnet", docs = "sonnet", test_coverage = "sonnet" }
+brief_model = "gpt-5.6-terra"
+judge_model = "gpt-5.6-terra"
+angle_models = { quick_general = "gpt-5.6-luna", docs = "gpt-5.6-luna", test_coverage = "gpt-5.6-terra" }
+
 # Tests the default branch after merges, files bugs, reports to the PM.
 [roles.qa]
-model = "sonnet"
-#fallback_model = "sonnet"
-effort = "medium"
+profile = "coder_medium"
 #enabled = true
