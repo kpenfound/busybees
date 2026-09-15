@@ -1855,7 +1855,9 @@ func (c *Config) Validate() error {
 	// container_use_environment only means anything alongside sandbox =
 	// "container", and is instead of sandbox_image, not alongside it; both
 	// can be set on different scopes (global vs. role), so the check needs
-	// the resolved role rather than one scope's raw settings. A Role error
+	// the ordinary size-resolved role rather than one scope's raw settings.
+	// A judge profile may select a different sandbox; non-container sessions
+	// ignore the retained role-owned container settings. A Role error
 	// here is already reported by the scope-level check above (prompt_file),
 	// so it is skipped rather than duplicated.
 	for _, name := range Roles {
@@ -1865,17 +1867,11 @@ func (c *Config) Validate() error {
 		}
 		for _, size := range append([]string{""}, slices.Sorted(maps.Keys(r.ProfilesBySize))...) {
 			r := r.ForSize(size)
-			variants := []ResolvedRole{r}
-			if name == RoleReviewer && r.JudgeProfile != nil {
-				variants = append(variants, r.ForJudge())
+			if r.Sandbox != SandboxContainer {
+				errs = append(errs, fmt.Sprintf("roles.%s: container_use_environment is only valid when sandbox is \"container\"", name))
 			}
-			for _, r := range variants {
-				if r.Sandbox != SandboxContainer {
-					errs = append(errs, fmt.Sprintf("roles.%s: container_use_environment is only valid when sandbox is \"container\"", name))
-				}
-				if r.SandboxImage != "" {
-					errs = append(errs, fmt.Sprintf("roles.%s: container_use_environment and sandbox_image are mutually exclusive", name))
-				}
+			if r.SandboxImage != "" {
+				errs = append(errs, fmt.Sprintf("roles.%s: container_use_environment and sandbox_image are mutually exclusive", name))
 			}
 		}
 	}

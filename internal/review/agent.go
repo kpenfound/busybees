@@ -20,11 +20,10 @@ import (
 	"github.com/kpenfound/busybees/internal/config"
 )
 
-// A review session reads and says what it read. It never writes a file,
-// never runs a command and never reaches the network: CI owns tests and
-// builds, and a review that changed the thing it is reviewing would be a
-// different tool. The distiller is the first such session and every angle
-// session after it runs under the same restriction, so it is set here once.
+// A review session is given no tools that write files, run commands or reach
+// the network. The adapter may run read-only CLI probes, such as Codex's
+// `mcp list`, before launching it. CI owns tests and builds; the distiller and
+// every angle session share the same tool restrictions, set here once.
 //
 // Each CLI is held to it the way that CLI can be: claude by the tools it is
 // given and the tools it is refused, codex by its own read-only sandbox.

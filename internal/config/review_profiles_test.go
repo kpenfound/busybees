@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"reflect"
 	"strings"
@@ -288,5 +289,60 @@ func TestReviewPhaseSandboxValidation(t *testing.T) {
 		} else if err != nil {
 			t.Fatalf("%s applied ignored sandbox: %v", key, err)
 		}
+	}
+}
+
+func TestJudgeSandboxKeepsReviewerContainerSettings(t *testing.T) {
+	for _, tc := range []struct {
+		name, base, large, judge, environment, image, wantError string
+	}{
+		{name: "container reviewer and unboxed judge", base: "container", large: "container", judge: "none", environment: "envs/reviewer"},
+		{name: "unboxed reviewer and container judge", base: "none", large: "none", judge: "container", image: "review-image"},
+		{name: "ordinary reviewer still requires container", base: "none", large: "container", judge: "container", environment: "envs/reviewer", wantError: `container_use_environment is only valid when sandbox is "container"`},
+		{name: "size profile still requires container", base: "container", large: "none", judge: "container", environment: "envs/reviewer", wantError: `container_use_environment is only valid when sandbox is "container"`},
+		{name: "container settings remain exclusive", base: "container", large: "container", judge: "none", environment: "envs/reviewer", image: "review-image", wantError: "container_use_environment and sandbox_image are mutually exclusive"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := Load(writeConfig(t, fmt.Sprintf(`version = 4
+[profiles.base]
+sandbox = %q
+[profiles.large]
+sandbox = %q
+[profiles.judge]
+sandbox = %q
+[roles.reviewer]
+profile = "base"
+profile_by_size = { l = "large" }
+judge_profile = "judge"
+container_use_environment = %q
+sandbox_image = %q
+[roles.reviewer.env]
+GH_TOKEN = "test-token"
+ANTHROPIC_API_KEY = "test-key"
+`, tc.base, tc.large, tc.judge, tc.environment, tc.image)))
+			if tc.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), "roles.reviewer: "+tc.wantError) {
+					t.Fatalf("Load() = %v, want reviewer error %q", err, tc.wantError)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			r, err := c.Role(RoleReviewer)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, size := range []string{"", "l"} {
+				judge := r.ForSize(size).ForJudge()
+				if judge.Sandbox != tc.judge || judge.ContainerUseEnvironment != tc.environment || judge.SandboxImage != tc.image {
+					t.Errorf("size %q: judge sandbox/container settings = %q/%q/%q, want %q/%q/%q", size, judge.Sandbox, judge.ContainerUseEnvironment, judge.SandboxImage, tc.judge, tc.environment, tc.image)
+				}
+			}
+			machine(t, &fakeMachine{onPath: []string{"docker"}})
+			if err := c.CheckSandbox(); err != nil {
+				t.Fatalf("valid reviewer/judge sandbox combination failed startup: %v", err)
+			}
+		})
 	}
 }
