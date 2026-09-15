@@ -2,6 +2,8 @@ package scheduler
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/github"
+	"github.com/kpenfound/busybees/internal/prompts"
 	"github.com/kpenfound/busybees/internal/state"
 )
 
@@ -386,5 +389,206 @@ func TestTheSessionStartedEventNamesTheSessionsDirectory(t *testing.T) {
 		if ev.Kind != EventSessionStarted && ev.Dir != "" {
 			t.Errorf("a %s event names a session directory: %v", ev.Kind, ev)
 		}
+	}
+}
+
+// Both entry points must publish the same ordered lifecycle and identify the
+// judge that replaces it, even when one of the concurrent angles fails.
+func TestReviewActivityLifecycleAndJudgeHandoff(t *testing.T) {
+	for _, requested := range []bool{false, true} {
+		for _, failedAngle := range []string{"", "documentation accuracy"} {
+			t.Run(fmt.Sprintf("requested=%v/failed=%s", requested, failedAngle), func(t *testing.T) {
+				t.Setenv("FAKE_ANGLE_FAIL", failedAngle)
+				t.Setenv("FAKE_REVIEW_SIZE", "xl") // five concurrent angles
+				cfg := devOnlyTOML
+				if requested {
+					cfg = reviewOnlyTOML
+				}
+				h := newHarnessAt(t, cfg, requestedReviewClock)
+				issue, pr, id := 1, 201, "reviewer-pr-201-r1"
+				if requested {
+					pushBranch(t, h.clone, "fix-widget")
+					h.gh.prs[42] = personsPR("bees", "bees:review-requested")
+					issue, pr, id = 0, 42, "reviewer-requested-pr-42"
+				} else {
+					seedReady(h, 1, "s", requestedReviewClock.Add(-time.Hour))
+					seedCounter(t, h, "review", 1)
+				}
+				sub := h.sched.Subscribe()
+				runPass(t, h)
+				events := drain(sub)
+				assertReviewLifecycle(t, events, id, issue, pr, 1, 5, true)
+				var end, judge = -1, -1
+				for i, ev := range events {
+					if ev.Kind == EventReviewEnded {
+						end = i
+					}
+					if ev.Kind == EventSessionStarted && ev.Role == config.RoleReviewer {
+						judge = i
+						if ev.Activity != id || ev.Issue != issue || ev.PR != pr || ev.Round != 1 || ev.Dir == "" {
+							t.Fatalf("judge handoff: %+v", ev)
+						}
+					}
+				}
+				if judge <= end || end < 0 {
+					t.Fatalf("end at %d, judge at %d: %+v", end, judge, events)
+				}
+			})
+		}
+	}
+}
+
+func assertReviewLifecycle(t *testing.T, events []Event, id string, issue, pr, round, total int, success bool) {
+	t.Helper()
+	var lifecycle []Event
+	for _, ev := range events {
+		if ev.Kind == EventReviewStarted || ev.Kind == EventReviewProgress || ev.Kind == EventReviewEnded {
+			lifecycle = append(lifecycle, ev)
+		}
+	}
+	// A negative total means the pipeline failed before AnglesReady.
+	want := 2
+	if total >= 0 {
+		want += total + 1 // initial 0/total, then every completion
+	}
+	if len(lifecycle) != want {
+		t.Fatalf("lifecycle has %d events, want %d: %+v", len(lifecycle), want, lifecycle)
+	}
+	start, end := lifecycle[0], lifecycle[len(lifecycle)-1]
+	if start.Kind != EventReviewStarted || start.Phase != "brief" || start.Completed != 0 || start.Total != 0 || start.Started.IsZero() || start.Time.Before(start.Started) {
+		t.Fatalf("start: %+v", start)
+	}
+	if end.Kind != EventReviewEnded || end.Success != success || (!success && end.Err == "") || (success && end.Err != "") {
+		t.Fatalf("end: %+v", end)
+	}
+	for i, ev := range lifecycle {
+		if ev.Activity != id || ev.Role != config.RoleReviewer || ev.Issue != issue || ev.PR != pr || ev.Round != round || ev.Started != start.Started || ev.Session != "" || ev.Dir != "" {
+			t.Errorf("identity at %d: %+v", i, ev)
+		}
+		if i > 0 && i < len(lifecycle)-1 && ev.Kind != EventReviewProgress {
+			t.Errorf("non-progress event at %d: %+v", i, ev)
+		}
+		if i > 0 && total >= 0 {
+			completed := min(i-1, total)
+			if ev.Phase != "angles" || ev.Total != total || ev.Completed != completed {
+				t.Errorf("progress at %d: %+v, want %d/%d", i, ev, completed, total)
+			}
+		}
+	}
+}
+
+func TestReviewActivityFailureAndCancellation(t *testing.T) {
+	for _, failure := range []string{"config", "brief", "angles", "cancelled"} {
+		t.Run(failure, func(t *testing.T) {
+			h := newHarness(t, devOnlyTOML)
+			pr := github.PR{Number: 42, BaseRefName: "main"}
+			h.gh.prs[42] = &pr
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			total := -1
+			switch failure {
+			case "config":
+				if err := os.WriteFile(filepath.Join(h.clone, "context.toml"), []byte("invalid = ["), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			case "brief":
+				t.Setenv("FAKE_REVIEW_SIZE", "invalid")
+			case "angles":
+				t.Setenv("FAKE_ANGLE_FAIL", "all")
+				total = 2
+			case "cancelled":
+				cancel()
+			}
+			sub := h.sched.Subscribe()
+			_, _, err := h.sched.runReview(ctx, h.sched.log, pr, h.clone, "review-42-r3", 7, 3, "")
+			if err == nil {
+				t.Fatal("pipeline succeeded")
+			}
+			events := drain(sub)
+			assertReviewLifecycle(t, events, "review-42-r3", 7, 42, 3, total, false)
+			if count(events, EventSessionStarted) != 0 || count(events, EventSessionEnded) != 0 {
+				t.Fatalf("pipeline published factory session events: %+v", events)
+			}
+		})
+	}
+}
+
+func TestReviewActivityStartsBeforeGatheringAndNeverBlocks(t *testing.T) {
+	h := newHarness(t, devOnlyTOML)
+	slow, live := h.sched.Subscribe(), h.sched.Subscribe()
+	for range eventBuffer {
+		h.sched.publish(Event{Kind: EventPoll})
+	}
+	drain(live)
+	seen := false
+	h.sched.gh.Exec = func(context.Context, ...string) ([]byte, error) {
+		if !seen {
+			seen = true
+			select {
+			case ev := <-live:
+				if ev.Kind != EventReviewStarted || ev.Phase != "brief" {
+					t.Errorf("before gathering: %+v", ev)
+				}
+			default:
+				t.Error("context gathering began before activity")
+			}
+		}
+		return nil, errors.New("context unavailable")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, _, err := h.sched.runReview(ctx, h.sched.log, github.PR{Number: 42}, h.clone, "review-42", 0, 1, "")
+	if err == nil || !seen || len(slow) != eventBuffer {
+		t.Fatalf("err=%v gathered=%v slow buffer=%d", err, seen, len(slow))
+	}
+	if evs := drain(live); len(evs) != 1 || evs[0].Kind != EventReviewEnded || evs[0].Success {
+		t.Fatalf("terminal event: %+v", evs)
+	}
+}
+
+func TestReviewActivityIsRemovedWhenJudgePreparationFails(t *testing.T) {
+	h := newHarness(t, devOnlyTOML)
+	sub := h.sched.Subscribe()
+	_, err := h.sched.runSessionWithRetry(context.Background(), sessionSpec{
+		role: config.RoleReviewer, name: "judge", task: "missing-template", workDir: h.clone,
+		reviewActivity: "review-42", judge: true,
+		data: prompts.Data{PR: &github.PR{Number: 42}, Round: 2},
+	})
+	if err == nil {
+		t.Fatal("judge preparation succeeded")
+	}
+	events := drain(sub)
+	if len(events) != 1 || events[0].Kind != EventReviewEnded || events[0].Activity != "review-42" || events[0].PR != 42 || events[0].Round != 2 || events[0].Success || events[0].Err == "" {
+		t.Fatalf("cleanup: %+v", events)
+	}
+}
+
+// The total comes from the brief's size, role overrides and project switches,
+// rather than the full built-in angle list or the count of started callbacks.
+func TestReviewActivityCountsEnabledAngles(t *testing.T) {
+	for _, allDisabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("all-disabled=%v", allDisabled), func(t *testing.T) {
+			t.Setenv("FAKE_REVIEW_SIZE", "m")
+			h := newHarness(t, anglesReviewerTOML)
+			pr := github.PR{Number: 42, BaseRefName: "main"}
+			h.gh.prs[42] = &pr
+			switches, total := "[angles]\ngeneral = false\n", 1
+			if allDisabled {
+				switches += "docs = false\n"
+				total = 0
+			}
+			if err := os.WriteFile(filepath.Join(h.clone, "context.toml"), []byte(switches), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			sub := h.sched.Subscribe()
+			_, artifact, err := h.sched.runReview(context.Background(), h.sched.log, pr, h.clone, "review-42-r2", 9, 2, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(artifact.Runs) != total {
+				t.Fatalf("ran %d angles, want %d", len(artifact.Runs), total)
+			}
+			assertReviewLifecycle(t, drain(sub), "review-42-r2", 9, 42, 2, total, true)
+		})
 	}
 }

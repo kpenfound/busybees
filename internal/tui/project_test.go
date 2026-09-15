@@ -334,3 +334,55 @@ func TestEveryProjectsEventStreamIsRead(t *testing.T) {
 		t.Errorf("the events were tagged %v", got)
 	}
 }
+
+func TestReviewActivityBelongsToItsEventSourceProject(t *testing.T) {
+	d := twoProjects()
+	d.Now = func() time.Time { return fixed }
+	var opened string
+	d.Open = func(url string) error { opened = url; return nil }
+	m := New(d)
+	m.width, m.height = 140, panelHeight
+	ev := reviewActivity(scheduler.EventReviewStarted)
+	// Identical project-local identities must coexist across projects.
+	for p := range 2 {
+		next, _ := m.Update(eventMsg{project: p, Event: ev})
+		m = next.(Model)
+	}
+	if len(m.sessions) != 2 {
+		t.Fatalf("project activities collided: %+v", m.sessions)
+	}
+	view := plain(m.View())
+	for _, want := range []string{"project role", "foo     reviewer", "bar     reviewer"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("all-project view lacks %q:\n%s", want, view)
+		}
+	}
+	m.cycle(1) // foo
+	if rows := m.shownSessions(); len(rows) != 1 || rows[0].project != 0 {
+		t.Fatalf("foo rows: %+v", rows)
+	}
+	m.cycle(1) // bar
+	if rows := m.shownSessions(); len(rows) != 1 || rows[0].project != 1 {
+		t.Fatalf("bar rows: %+v", rows)
+	}
+	_, cmd := m.openOnGitHub()
+	cmd()
+	if opened != "https://github.com/acme/bar/issues/31" {
+		t.Errorf("wrong project's link: %s", opened)
+	}
+	ev.Kind, ev.Phase, ev.Completed, ev.Total = scheduler.EventReviewProgress, "angles", 1, 3
+	m.apply(0, ev)
+	if m.sessions[0].activity.Completed != 1 || m.sessions[1].activity.Completed != 0 {
+		t.Fatal("progress crossed projects")
+	}
+	m.apply(1, scheduler.Event{Kind: scheduler.EventSessionStarted, Activity: ev.Activity,
+		Session: "bar-judge", Role: config.RoleReviewer, PR: 31, Time: fixed})
+	if len(m.sessions) != 2 || m.sessions[0].activity == nil || m.sessions[1].name != "bar-judge" {
+		t.Fatalf("handoff crossed projects: %+v", m.sessions)
+	}
+	ev.Kind, ev.Err = scheduler.EventReviewEnded, "cancelled"
+	m.apply(0, ev)
+	if len(m.sessions) != 1 || m.sessions[0].name != "bar-judge" || len(m.recent) != 0 {
+		t.Fatal("failure removed another project's judge or created Recent")
+	}
+}

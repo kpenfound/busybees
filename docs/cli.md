@@ -707,12 +707,22 @@ busybees  acme/widgets                                                          
 ↑↓ select · enter watch · o open on GitHub · k stop session · q or ctrl-c stops (sessions finish)
 ```
 
-**Now** is every session running right now: the role, the issue and pull
-request it is about, the stage its developer worker is in with the round it
-is on, how long it has been going, and the model it runs on — `(fallback)`
+**Now** lists running sessions and review-pipeline activity. Sessions show
+the role, the issue and pull request, the developer worker's stage and round,
+how long the session has been going, and its model: `(fallback)`
 when a retry is running on the role's `fallback_model`. `↑`/`↓` move the
 cursor down the list and Enter opens
 [the session view](#watching-one-session) on the session it is on.
+
+A review pipeline has one reviewer-coloured row, starting at `review: brief`
+while it gathers context and distills the brief. Once its angles are known,
+its stage reads, for example, `review: angles 1/3 done`. Failed angles count
+as done. The judge session replaces that row when it starts; a failed or
+cancelled pipeline disappears without an entry in Recent. In a machine view,
+these rows belong to their project and follow the project selector.
+
+Use `o` on a pipeline row to open its pull request (or issue). Enter and `k`
+do nothing on it: it has no session transcript or session-stop action.
 
 **Turns** is what the *work item* has taken: the sessions of it that have
 already finished, plus the assistant messages the running session's own

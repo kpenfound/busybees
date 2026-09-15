@@ -456,7 +456,15 @@ func TestALaterReviewRoundVerifiesTheFirstRoundsFindings(t *testing.T) {
 	h := newHarness(t, devOnlyTOML)
 	seedReady(h, 1, "s", time.Now().Add(-time.Hour))
 	// The fake reviewer requests changes on round 1 and approves round 2.
+	sub := h.sched.Subscribe()
 	runPass(t, h)
+	events := drain(sub)
+	assertReviewLifecycle(t, events, "reviewer-pr-201-r1", 1, 201, 1, 2, true)
+	for _, ev := range events {
+		if ev.Kind == EventSessionStarted && ev.Session == "reviewer-pr-201-r2" && ev.Activity != "" {
+			t.Errorf("verification round claims a pipeline: %+v", ev)
+		}
+	}
 
 	h.wantOrder("developer-issue-1-r1", "reviewer-pr-201-r1", "developer-issue-1-r2", "reviewer-pr-201-r2")
 	kinds := map[string]int{}

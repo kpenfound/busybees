@@ -53,10 +53,8 @@ func (d Deps) projects() []Project {
 
 // project is one project as the model tracks it: its inputs, the last read
 // of its status.json and mailbox, and what its work items have spent and
-// which stage each is in. Sessions, running and finished, are kept on the
-// model in the order they started across every project, each tagged with
-// the project it belongs to, because the Now and Recent panels list them in
-// that order.
+// which stage each is in. Sessions and review activities are kept on the
+// model, tagged with their project: Now in start order, Recent newest first.
 type project struct {
 	Project
 	status state.Status
@@ -201,7 +199,7 @@ func (m Model) projectCell(name string) string {
 	return fmt.Sprintf("%-*s ", w, name)
 }
 
-// shownSessions is the running sessions of the projects in view, in the
+// shownSessions is the Now rows of the projects in view, in the
 // order they started.
 func (m Model) shownSessions() []running {
 	var out []running

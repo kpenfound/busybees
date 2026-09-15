@@ -5,8 +5,9 @@
 // its project in a column of its own, or one project at a time, drawn as
 // that project's single-project view would be.
 //
-// It has two screens. The first is the panels. Now lists every running
-// session — role, issue or pull request, the stage its developer worker is
+// It has two screens. The first is the panels. Now lists review-pipeline
+// activity (brief, then angle progress) and every running session: role,
+// issue or pull request, the stage its developer worker is
 // in, how long it has been going, what the work item has spent and the model
 // it runs on — and Recent the ones that have finished, with how each ended.
 // Needs human is every issue the factory has given up on and why; Approved
