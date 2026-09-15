@@ -418,11 +418,17 @@ func TestFeatureRelationshipsRefreshAfterProductManager(t *testing.T) {
 		name           string
 		closed, attach bool
 		failure        string
+		excluded       string
+		parentFailure  bool
 	}{
 		{name: "created open"}, {name: "created closed", closed: true},
 		{name: "attached open", attach: true}, {name: "attached closed", attach: true, closed: true},
 		{name: "unchanged"}, {name: "lookup failed", failure: "failed"},
 		{name: "lookup incomplete", failure: "incomplete"},
+		{name: "unrelated parent lookup failed", parentFailure: true},
+		{name: "outside label filter", excluded: "label"},
+		{name: "feature child", excluded: "bees:feature"},
+		{name: "feedback child", excluded: "bees:feedback"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			now := time.Now()
@@ -436,6 +442,10 @@ func TestFeatureRelationshipsRefreshAfterProductManager(t *testing.T) {
 			}
 			runPass(t, h)
 			h.gh.issues[1].State = "CLOSED"
+			if tc.parentFailure {
+				seedWorkItem(h, 9, "Unrelated work", now.Add(-time.Hour))
+				h.gh.parentErr = map[int]error{9: errors.New("unrelated parent lookup failed")}
+			}
 
 			release := filepath.Join(t.TempDir(), "release")
 			t.Setenv("FAKE_WAIT_FOR", release)
@@ -452,6 +462,13 @@ func TestFeatureRelationshipsRefreshAfterProductManager(t *testing.T) {
 					seedWorkItem(h, 7, "XLSX", now)
 				}
 				h.gh.parents[7] = 5
+				switch tc.excluded {
+				case "label":
+					h.gh.issues[7].Labels = nil
+				case "bees:feature", "bees:feedback":
+					h.gh.issues[7].Labels = []github.Label{{Name: "bees"}, {Name: tc.excluded}}
+					quietFeature(h, 7, now.Add(-time.Hour))
+				}
 				if tc.closed {
 					h.gh.issues[7].State = "CLOSED"
 				}
@@ -476,13 +493,23 @@ func TestFeatureRelationshipsRefreshAfterProductManager(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if tc.name == "unchanged" {
+			if tc.name == "unchanged" || tc.excluded != "" {
 				if is.CompleteReportedAt.IsZero() {
 					t.Fatal("unchanged completion was not recorded")
+				}
+				if slices.Contains(is.OpenChildren, ghwork.IssueKey(7)) {
+					t.Fatalf("excluded child remembered as work: %v", is.OpenChildren)
 				}
 				nextPass(t, h)
 				if n := len(h.sessions(config.RoleProductManager)); n != 2 {
 					t.Fatalf("unchanged feature ran again: %d", n)
+				}
+				if tc.excluded != "" {
+					h.gh.issues[7].State = "CLOSED"
+					nextPass(t, h)
+					if n := len(h.sessions(config.RoleProductManager)); n != 2 {
+						t.Fatalf("excluded child's closure triggered completion: %d", n)
+					}
 				}
 				return
 			}

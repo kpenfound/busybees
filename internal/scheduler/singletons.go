@@ -434,7 +434,7 @@ func (s *Scheduler) runProductManager(ctx context.Context, snap *snapshot) error
 	// added during the session too, otherwise fast work could disappear between
 	// the session and this bookkeeping without ever arming the local check.
 	refreshed := map[int]github.Parent{}
-	refreshComplete := parentsComplete && beforeComplete
+	refreshComplete := beforeComplete
 	for _, f := range snap.features {
 		children, err := s.gh.ListSubIssues(ctx, f.Number)
 		if s.op("feature-children", err, "feature children", "issue", f.Number, "err", err) {

@@ -279,9 +279,10 @@ A full pass is:
    children are remembered even if already closed, and leave completion armed
    for the next eligible poll. An unchanged completion is marked only when
    the refresh finds no new or open work. These reads stay off the polling
-   path. A run whose relationship lookups did not all answer records nothing,
-   since a partial answer would look like children that closed, and a feature
-   no run has recorded children for waits for the interval.
+   path. After a successful session, an incomplete before- or after-session
+   relationship refresh records nothing; failed sessions retain the existing
+   pre-session parent-recording behavior. A feature no run has recorded
+   children for waits for the interval.
 
    **Planning mode.** The planning section of the prompt lists no breakdown
    step and the planned section says the scope is settled; the enforced half
