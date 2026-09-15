@@ -7,6 +7,7 @@ core/agent/         standalone session runner, backends, sandbox and result arti
 core/agent/agentbin/ fake-executable guard
 core/agent/agenttest/ shared fake agents, Docker and host MCP server
 core/agent/procs/    finding and stopping sessions (processes and containers)
+core/ops/            retry, ledger/budgets, pause/degraded signals, events, slots and wakes
 core/mcphost/        MCP host, typed role-scoped registration, lifecycle and outcome tool
 cmd/bees/            the cobra CLI: every `bees` command
 internal/config/     bees.toml and the machine config: schema, defaults, validation, global/role merging, labels, the init template
@@ -26,7 +27,7 @@ internal/reviewtui/  the triage screen: the diff beside the finding, the console
 internal/scheduler/  the loop: poll, human feedback, merge state, reconcile, developer workers, singleton roles, the event stream
 internal/session/    busybees profile, environment, identity and outcome adapter
 internal/skills/     skill repositories by git URL, exposed as claude plugin directories
-internal/state/      the state directory: notes, per-issue and per-role bookkeeping, status.json, the ledger
+internal/state/      busybees bookkeeping/status, notes and schema migration around the core ledger
 internal/testutil/   test helpers: a local bare git remote and a clone
 internal/text/       small English renderings shared by every package
 internal/tui/        the live view `bees run` draws in a terminal

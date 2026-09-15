@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/kpenfound/busybees/core/ops"
 	"github.com/kpenfound/busybees/core/work"
 	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/logging"
@@ -66,14 +67,7 @@ func (s *Scheduler) workSpend(ref work.Ref) (float64, int) {
 		s.log.Warn("could not read the ledger", "work", ref.Key, "err", err)
 		return 0, 0
 	}
-	var cost float64
-	var sessions int
-	for _, e := range entries {
-		if e.Work.Key == ref.Key {
-			cost += e.CostUSD
-			sessions++
-		}
-	}
+	cost, sessions := ops.Spend(entries, ref.Key, time.Time{})
 	if sessions == 0 {
 		return 0, 0
 	}
@@ -93,7 +87,7 @@ func (s *Scheduler) overIssueBudget(issue int) (string, bool) {
 		return "", false
 	}
 	cost, sessions := s.issueSpend(issue)
-	if cost <= budget {
+	if !ops.OverBudget(cost, budget) {
 		return "", false
 	}
 	return fmt.Sprintf("Issue #%d has cost $%.2f across %s, over the `max_cost_per_issue` budget of $%.2f. Raise the budget or take it from here.",
@@ -120,29 +114,16 @@ func (s *Scheduler) checkDayBudget() {
 		s.log.Warn("could not read the ledger for the daily budget", "err", err)
 		return
 	}
-	var spent float64
-	for _, e := range entries {
-		spent += e.CostUSD
-	}
-	resume := budget * s.cfg.Scheduler.MaxCostPerDayResumePercent / 100
 	s.mu.Lock()
-	was := s.dayPaused
-	// Hysteresis: the factory pauses at the budget and, once paused, stays
-	// paused until the window has fallen back to the resume threshold.
-	// Resuming the moment the window is a cent under budget only dispatches
-	// enough to go over it again. At the default 100% the threshold is the
-	// budget itself and this is the plain "under budget" test.
-	paused := spent >= budget
-	if was {
-		paused = spent >= resume
-	}
+	signal := ops.EvaluateWindow(entries, now, dayWindow, budget, s.cfg.Scheduler.MaxCostPerDayResumePercent, s.dayPaused)
+	spent, resume, paused := signal.Spent, signal.Resume, signal.Reached
 	s.dayPaused, s.daySpend = paused, spent
 	s.mu.Unlock()
 	switch {
-	case paused && !was:
+	case signal.Crossed:
 		s.log.Warn(fmt.Sprintf("⏸ daily cost budget reached ($%.2f of $%.2f in the last 24h); starting no new sessions", spent, budget),
 			logging.SummaryKey, true, "cost_usd", spent, "max_cost_per_day", budget)
-	case was && !paused:
+	case signal.Released:
 		// The threshold is named because it is what the pause was waiting
 		// for: without it a pause that lasted while the window sat between
 		// the two numbers reads as arbitrarily long in bees.log.
@@ -161,7 +142,7 @@ func (s *Scheduler) dayBudgetReached() bool {
 // overSessionBudget reports whether one finished session cost more than
 // scheduler.max_cost_per_session, and the note that says so.
 func overSessionBudget(res *session.Result, budget float64) (string, bool) {
-	if budget <= 0 || res.CostUSD <= budget {
+	if !ops.OverBudget(res.CostUSD, budget) {
 		return "", false
 	}
 	return fmt.Sprintf("the session cost $%.2f, over the `max_cost_per_session` budget of $%.2f", res.CostUSD, budget), true
@@ -176,14 +157,7 @@ type budgetSubject struct {
 }
 
 func (s *Scheduler) overBudgetStreak(key budgetSubject, over bool) int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if !over {
-		delete(s.overBudget, key)
-		return 0
-	}
-	s.overBudget[key]++
-	return s.overBudget[key]
+	return s.overBudget.Record(key, over)
 }
 
 // budgetKey is what an over-budget streak is counted against.

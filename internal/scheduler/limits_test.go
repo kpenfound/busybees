@@ -10,39 +10,6 @@ import (
 	"github.com/kpenfound/busybees/internal/github"
 )
 
-// TestPauseUntil covers what the factory does with the reset time a session
-// reported: an unusable one falls back to scheduler.rate_limit_backoff, an
-// implausible one is clamped, and a reset that has just arrived is no pause
-// at all.
-func TestPauseUntil(t *testing.T) {
-	now := time.Date(2026, 8, 30, 23, 13, 0, 0, time.UTC)
-	const backoff = 15 * time.Minute
-	cases := []struct {
-		name   string
-		resets time.Time
-		want   time.Time
-	}{
-		{"no reset time at all", time.Time{}, now.Add(backoff)},
-		{"reset in the past", now.Add(-time.Hour), now.Add(backoff)},
-		{"reset exactly at now", now, now},
-		{"reset ahead", now.Add(37 * time.Minute), now.Add(37 * time.Minute)},
-		{"reset at the cap", now.Add(maxLimitPause), now.Add(maxLimitPause)},
-		{"reset beyond the cap", now.Add(7 * 24 * time.Hour), now.Add(maxLimitPause)},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := pauseUntil(now, c.resets, backoff); !got.Equal(c.want) {
-				t.Errorf("pauseUntil = %s, want %s", got, c.want)
-			}
-		})
-	}
-	// A pause until exactly now is one the dispatch gate never sees: the
-	// predicate asks whether the clock is still before it.
-	if now.Before(pauseUntil(now, now, backoff)) {
-		t.Error("a reset at now must not pause dispatch")
-	}
-}
-
 // TestSessionLimitPausesDeveloperDispatch: a developer session that dies on
 // the account-wide limit is not retried, its issue is not escalated, and
 // nothing else is dispatched until the reset time — which `bees status`

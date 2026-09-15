@@ -1,163 +1,39 @@
 package state
 
 import (
-	"bufio"
-	"bytes"
-	"encoding/json"
-	"errors"
-	"os"
 	"path/filepath"
 	"time"
 
-	"github.com/kpenfound/busybees/core/work"
+	"github.com/kpenfound/busybees/core/ops"
 )
 
-// LedgerEntry records one finished session in the ledger. It is what the
-// session cost the factory, not what it did: the outcome is kept as a label
-// so `bees cost` can tell a wasted session from a productive one.
-type LedgerEntry struct {
-	Work    work.Ref  `json:"work"`
-	Time    time.Time `json:"time"`
-	Role    string    `json:"role"`
-	Session string    `json:"session"`
+// LedgerEntry is the core accounting record; migration belongs to this adapter.
+type LedgerEntry = ops.LedgerEntry
 
-	Turns        int     `json:"turns"`
-	CostUSD      float64 `json:"cost_usd"`
-	DurationMS   int64   `json:"duration_ms"`
-	Outcome      string  `json:"outcome"`
-	ErrorSubtype string  `json:"error_subtype"`
-	TimedOut     bool    `json:"timed_out"`
-}
-
-// LedgerPath returns the ledger file.
 func (s *Store) LedgerPath() string { return filepath.Join(s.Dir, "ledger.jsonl") }
 
-// AppendLedger appends one entry to the ledger, creating it if needed. The
-// line is written with a single Write to an O_APPEND file so concurrent
-// workers never interleave.
+func (s *Store) ledgerStore() *ops.Ledger {
+	s.ledgerOnce.Do(func() { s.ledger = ops.NewLedger(s.Dir) })
+	return s.ledger
+}
+
 func (s *Store) AppendLedger(e LedgerEntry) error {
 	if err := s.Migrate(); err != nil {
 		return err
 	}
-	if e.Time.IsZero() {
-		e.Time = time.Now()
-	}
-	e.Time = e.Time.UTC()
-	line, err := json.Marshal(e)
-	if err != nil {
-		return err
-	}
-	line = append(line, '\n')
-	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
-		return err
-	}
-	s.ledgerMu.Lock()
-	defer s.ledgerMu.Unlock()
-	f, err := os.OpenFile(s.LedgerPath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	if _, err := f.Write(line); err != nil {
-		_ = f.Close()
-		return err
-	}
-	return f.Close()
+	return s.ledgerStore().AppendLedger(e)
 }
 
-// ReadLedger returns the entries recorded at or after since (a zero since
-// returns everything). Lines that do not parse are skipped: a half-written
-// tail must never break `bees cost`. Read and scan failures return an error
-// without entries, so callers cannot report a partial total.
 func (s *Store) ReadLedger(since time.Time) ([]LedgerEntry, error) {
 	if err := s.MigrateExisting(); err != nil {
 		return nil, err
 	}
-	f, err := os.Open(s.LedgerPath())
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = f.Close() }()
-
-	var out []LedgerEntry
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), maxLedgerLine)
-	for sc.Scan() {
-		var e LedgerEntry
-		if err := json.Unmarshal(sc.Bytes(), &e); err != nil {
-			continue
-		}
-		if e.Time.Before(since) {
-			continue
-		}
-		out = append(out, e)
-	}
-	if err := sc.Err(); err != nil {
-		return nil, err
-	}
-	return out, nil
+	return s.ledgerStore().ReadLedger(since)
 }
 
-// TrimLedger removes the entries recorded before before and returns how many
-// it removed. The ledger is rewritten through a temporary file renamed over
-// it, so a reader sees either the old ledger or the trimmed one, and only when
-// there is something to remove. A line that does not parse is kept: its age is
-// unknown, and ReadLedger skips it anyway.
 func (s *Store) TrimLedger(before time.Time) (int, error) {
 	if err := s.Migrate(); err != nil {
 		return 0, err
 	}
-	s.ledgerMu.Lock()
-	defer s.ledgerMu.Unlock()
-	b, err := os.ReadFile(s.LedgerPath())
-	if errors.Is(err, os.ErrNotExist) {
-		return 0, nil
-	}
-	if err != nil {
-		return 0, err
-	}
-	var kept []byte
-	removed := 0
-	for len(b) > 0 {
-		line := b
-		if i := bytes.IndexByte(b, '\n'); i >= 0 {
-			line, b = b[:i+1], b[i+1:]
-		} else {
-			b = nil
-		}
-		var e LedgerEntry
-		if err := json.Unmarshal(line, &e); err == nil && e.Time.Before(before) {
-			removed++
-			continue
-		}
-		kept = append(kept, line...)
-	}
-	if removed == 0 {
-		return 0, nil
-	}
-	tmp, err := os.CreateTemp(s.Dir, "ledger.jsonl.*")
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = os.Remove(tmp.Name()) }()
-	if _, err := tmp.Write(kept); err != nil {
-		_ = tmp.Close()
-		return 0, err
-	}
-	if err := tmp.Chmod(0o644); err != nil {
-		_ = tmp.Close()
-		return 0, err
-	}
-	if err := tmp.Close(); err != nil {
-		return 0, err
-	}
-	if err := os.Rename(tmp.Name(), s.LedgerPath()); err != nil {
-		return 0, err
-	}
-	return removed, nil
+	return s.ledgerStore().TrimLedger(before)
 }
-
-// maxLedgerLine caps how long a ledger line may be before scanning fails.
-const maxLedgerLine = 1 << 20
