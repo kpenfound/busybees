@@ -532,11 +532,14 @@ label = "{{.Label}}"
 # of quick_general, general, docs, test_coverage, acceptance_criteria,
 # side_effects. A size not named here gets its default:
 #angles = { xs = ["quick_general", "docs"], s = ["quick_general", "docs"], m = ["general", "docs", "test_coverage", "acceptance_criteria"], l = ["general", "docs", "test_coverage", "acceptance_criteria"], xl = ["general", "docs", "test_coverage", "acceptance_criteria", "side_effects"] }
-# The model for the session that writes the review brief, for the judge, and
-# per angle. Unset: the profile model.
-#brief_model = "sonnet"
-#judge_model = "opus"
-#angle_models = { quick_general = "sonnet", docs = "sonnet" }
+# Named profiles for the brief, judge and individual angles. Unset: the
+# reviewer's size-resolved profile. Brief/angles accept Claude or Codex only;
+# their sandbox is ignored: host read-only, no commands/writes, web/network
+# tools, MCP/factory identity or writable/shared VCS. The judge applies all
+# five profile fields, including sandbox, with reviewer-owned tools/permissions.
+#brief_profile = "default"
+#judge_profile = "default"
+#angle_profiles = { quick_general = "default", docs = "default" }
 #shell = "/bin/bash"
 #[roles.reviewer.env]
 #EXAMPLE = "value"

@@ -29,9 +29,11 @@ type Angles struct {
 	Sized map[string][]string
 	// Models is the model of each angle it names, config.toml's
 	// angle_models: that angle's session runs as a copy of Agent with the
-	// model replaced, when Agent is the CLI agent. The provider is Provider
-	// for every angle.
+	// model replaced, when Agent is the CLI agent. Factory Agents overrides
+	// take precedence and can select a different provider.
 	Models map[string]string
+	// Agents supplies factory phase overrides, already restricted to host adapters.
+	Agents map[string]*CLIAgent
 	// Checkout clones the pull request's head into the artifact directory
 	// for the sessions to run in (checkout.go), which is where they run
 	// whenever it succeeds. It is nil to attempt none; a clone already
@@ -92,11 +94,12 @@ func NewAngles(cfg *Config, dir string) *Angles {
 	return a
 }
 
-// agentFor is the agent an angle's session runs as and the model it records:
-// Agent and Model, or, when Models names the angle and Agent is the CLI
-// agent, a copy of that agent running Models' model instead. An agent that
-// is not the CLI agent has no model to replace, and runs as itself.
+// agentFor selects a factory Agents override first, then a standalone Models
+// override on a copy of the CLI agent, then the default Agent and Model.
 func (a *Angles) agentFor(angle string) (Agent, string) {
+	if agent := a.Agents[angle]; agent != nil {
+		return agent, agent.Model
+	}
 	model := a.Models[angle]
 	cli, ok := a.Agent.(*CLIAgent)
 	if model == "" || !ok {
@@ -176,6 +179,12 @@ func (a *Angles) Resume(ctx context.Context, run AngleRun, question string) (*Ag
 func (a *Angles) core(ref Ref) *core.Angles[Ref] {
 	return &core.Angles[Ref]{Agent: a.Agent, Provider: a.Provider, Model: a.Model, Sized: a.Sized,
 		Dir: a.Dir, Log: a.Log, Rules: coreRules(a.Rules), Progress: a.Progress, AgentFor: a.agentFor,
+		ProviderFor: func(angle string) string {
+			if agent := a.Agents[angle]; agent != nil {
+				return agent.Provider
+			}
+			return a.Provider
+		},
 		Prepare: func(ctx context.Context, artifact string) (string, error) { return a.dir(ctx, artifact, ref) },
 	}
 }

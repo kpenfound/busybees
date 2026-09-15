@@ -93,20 +93,26 @@ func (c *Config) CheckSandbox() error {
 		}
 		for _, size := range append([]string{""}, slices.Sorted(maps.Keys(r.ProfilesBySize))...) {
 			r := r.ForSize(size)
-			if err := CheckSandboxMode(r.Sandbox); err != nil {
-				return fmt.Errorf("roles.%s: %w", name, err)
+			variants := []ResolvedRole{r}
+			if name == RoleReviewer && r.JudgeProfile != nil {
+				variants = append(variants, r.ForJudge())
 			}
-			if err := CheckSandboxAgent(r.Sandbox, r.Agent); err != nil {
-				return fmt.Errorf("roles.%s: %w", name, err)
-			}
-			if err := CheckSandboxHost(r.Sandbox); err != nil {
-				return fmt.Errorf("roles.%s: %w", name, err)
-			}
-			if err := CheckSandboxContainer(r, c.GitHub); err != nil {
-				return fmt.Errorf("roles.%s: %w", name, err)
-			}
-			if err := CheckSandboxEngine(r.Sandbox, r.SandboxImage); err != nil {
-				return fmt.Errorf("roles.%s: %w", name, err)
+			for _, r := range variants {
+				if err := CheckSandboxMode(r.Sandbox); err != nil {
+					return fmt.Errorf("roles.%s: %w", name, err)
+				}
+				if err := CheckSandboxAgent(r.Sandbox, r.Agent); err != nil {
+					return fmt.Errorf("roles.%s: %w", name, err)
+				}
+				if err := CheckSandboxHost(r.Sandbox); err != nil {
+					return fmt.Errorf("roles.%s: %w", name, err)
+				}
+				if err := CheckSandboxContainer(r, c.GitHub); err != nil {
+					return fmt.Errorf("roles.%s: %w", name, err)
+				}
+				if err := CheckSandboxEngine(r.Sandbox, r.SandboxImage); err != nil {
+					return fmt.Errorf("roles.%s: %w", name, err)
+				}
 			}
 		}
 	}

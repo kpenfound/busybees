@@ -115,6 +115,9 @@ type Angles[R Reference] struct {
 	// AgentFor optionally selects an agent and recorded model per angle.
 	// It is called concurrently; profile construction belongs to the caller.
 	AgentFor func(angle string) (Agent, string)
+	// ProviderFor optionally selects the provider recorded for an angle. Both
+	// callbacks must be safe for concurrent calls; nil retains Provider.
+	ProviderFor func(angle string) string
 	// Dir is an existing working directory, used when Prepare is nil.
 	// Core does not write the diff into this caller-owned directory.
 	// With no directory, sessions use a persistent scratch directory.
@@ -208,7 +211,11 @@ func (a *Angles[R]) Run(ctx context.Context, artifact string, project *Settings,
 		go func(i int, angle string) {
 			defer wg.Done()
 			agent, model := a.agentFor(angle)
-			run := AngleRun{Angle: angle, Provider: a.Provider, Model: model, Dir: dir}
+			provider := a.Provider
+			if a.ProviderFor != nil {
+				provider = a.ProviderFor(angle)
+			}
+			run := AngleRun{Angle: angle, Provider: provider, Model: model, Dir: dir}
 			a.progress(angle, AngleStarted)
 			res, err := agent.Run(ctx, AgentRequest{Name: angle, Prompt: prompts[i], Dir: dir})
 			if err != nil {

@@ -359,10 +359,15 @@ Durations print as duration strings (`"45m0s"`).
 The role-specific keys appear on the role that owns them: the reviewer carries
 its merge policy (`auto_merge`, `merge_method`, `checks_wait`,
 `checks_poll_interval`, `checks_timeout`, `max_check_fix_rounds`) and its
-resolved `angles`, `brief_model`, `judge_model` and `angle_models`, and the developer its `commit_flags`, `max_size`,
+resolved `angles`, `brief_profile`, `judge_profile` and `angle_profiles`, and the developer its `commit_flags`, `max_size`,
 and the best-of-N and mixture-of-experts keys. Each role also carries
 `profiles_by_size`, the resolved agent settings for its size overrides;
-`profiles` lists the named profile definitions.
+`profiles` lists the named profile definitions. Reviewer phase fields show
+resolved five-field profiles, with `review_profiles_by_size` showing each
+size's effective phases. `host_review_policy` explains that brief/angle
+sandbox values are ignored: the host adapter permits no commands, writes,
+web/network tools, MCP/factory identity or writable/shared VCS. The judge
+applies its sandbox through the ordinary reviewer workflow.
 
 ```sh
 bees config show
@@ -372,7 +377,7 @@ bees config show developer
 ```json
 {
   "path": "/src/widgets/bees.toml",
-  "version": 2,
+  "version": 4,
   "filter": { "label": "bees", "require_label": true, "assignee": "@me", "milestone": "", "creator": "" },
   "github": { "login": "busybees-bot", "token": "$BEES_GITHUB_TOKEN", "git_name": "", "git_email": "" },
   "scheduler": { "poll_interval": "5m0s", "max_developers": 1, "max_review_rounds": 3, "...": "" },
@@ -392,9 +397,11 @@ bees config show developer
         "l": ["general", "docs", "test_coverage", "acceptance_criteria"],
         "xl": ["general", "docs", "test_coverage", "acceptance_criteria", "side_effects"]
       },
-      "brief_model": "",
-      "judge_model": "",
-      "angle_models": {},
+      "brief_profile": { "agent": "claude", "model": "opus", "fallback_model": "sonnet", "effort": "", "sandbox": "none" },
+      "judge_profile": { "agent": "claude", "model": "opus", "fallback_model": "sonnet", "effort": "", "sandbox": "none" },
+      "angle_profiles": { "docs": { "agent": "claude", "model": "opus", "fallback_model": "sonnet", "effort": "", "sandbox": "none" }, "...": {} },
+      "review_profiles_by_size": { "...": {} },
+      "host_review_policy": "brief/angles: sandbox ignored; read-only checkout; no commands, writes, web/network tools, MCP, factory identity or writable/shared VCS",
       "auto_merge": false,
       "merge_method": "squash",
       "checks_wait": "1m0s",

@@ -779,9 +779,14 @@ request](review.md)), run on the worker's checkout of the pull request
 branch: a brief of the change is distilled from its context and sized, one
 read-only session per angle `roles.reviewer.angles` gives that size looks
 for problems from that angle alone, and the judge merges what they found
-into one list, most severe first. Every session of it runs the reviewer's
-`agent` and `model`, with `brief_model`, `angle_models` and `judge_model`
-replacing the model for one step each. The reviewer session then posts that
+into one list, most severe first. `brief_profile`, `angle_profiles` and
+`judge_profile` select named profiles after the reviewer's size-resolved
+profile; unspecified phases retain that fallback. Brief/angle profiles use
+Claude or Codex, with sandbox ignored and a fixed host read-only policy:
+no commands, writes, web/network tools, MCP/factory identity or writable/shared
+VCS. The judge uses all five profile fields, including sandbox, through the
+ordinary reviewer session with reviewer-owned prompt, tools and permissions.
+The reviewer session then posts that
 list on the pull request as one `comment` review, every finding and nothing
 else, for the person who merges to read, and decides: it approves when
 nothing in the list needs fixing before the merge, or sends the developer

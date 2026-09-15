@@ -34,7 +34,7 @@ import (
 // the ordinary session runner, the judge session, which has the built-in
 // MCP tools and posts the judge's list on the pull request with
 // submit_review, every finding and untriaged, and decides the verdict. It
-// is the only session of a review that has a tool at all.
+// is the only session of a review that has factory tools.
 //
 // That is the first round of the review loop. A later round, after the
 // developer answered a request for changes, runs no pipeline: the judge
@@ -42,16 +42,12 @@ import (
 // commit that round read (verifyReview), and verifies them against the head
 // as it stands. A requested review is always a full one.
 //
-// The pipeline is configured by roles.reviewer (config.ResolvedRole): its
-// agent and model run every session, angles says which angles each size
-// runs, and brief_model, judge_model and angle_models replace the model for
-// the distiller, the judge session and one angle each, falling back to
-// model where they are unset. That fallback is applied here, the way the
-// developer's best_of_n_model is in sessions.go; config leaves the fields
-// empty on purpose.
+// The pipeline uses the reviewer's size-resolved profile, then its named
+// brief and angle overrides. Only execution settings reach the host adapter;
+// its read-only policy always takes precedence over a profile's sandbox.
 //
-// The sessions run in the worker's checkout of the pull request's head,
-// and the angles in a local clone of it under the review's artifact
+// The judge runs in the worker's checkout of the pull request's head;
+// the brief and angles use an independent clone under the review's artifact
 // directory (review.Checkout's Clone seam, in place of `bees review`'s
 // container clone over the network), so that the diff can be written
 // beside the files for them to read without a stray file landing in the
@@ -110,9 +106,10 @@ func (s *Scheduler) runReview(ctx context.Context, log *slog.Logger, pr github.P
 	}
 	role = role.ForSize(size)
 	agent := s.reviewAgent(role)
-	distiller := *agent
-	if role.BriefModel != "" {
-		distiller.Model = role.BriefModel
+	distiller := s.reviewAgent(role.ForBrief())
+	angleAgents := map[string]*review.CLIAgent{}
+	for angle := range role.AngleProfiles {
+		angleAgents[angle] = s.reviewAgent(role.ForAngle(angle))
 	}
 	project, err := review.LoadProject(review.FindProject(dir))
 	if err != nil {
@@ -135,12 +132,11 @@ func (s *Scheduler) runReview(ctx context.Context, log *slog.Logger, pr github.P
 	checkout := &review.Checkout{Clone: cloneOf(dir, pr.HeadSHA, s.ws.RemoteName())}
 	runner := &review.Runner{
 		Pipeline:  &review.Pipeline{Client: s.gh, Project: project, Dir: dir, Checkout: checkout},
-		Distiller: &review.Distiller{Agent: &distiller, Dir: dir},
+		Distiller: &review.Distiller{Agent: &reviewBriefAgent{CLIAgent: distiller, checkout: filepath.Join(review.ArtifactDir(storage, ref, started), review.CheckoutDir)}},
 		Angles: &review.Angles{
 			Agent: agent, Provider: agent.Provider, Model: agent.Model,
-			Sized: role.Angles, Models: role.AngleModels,
+			Sized: role.Angles, Agents: angleAgents,
 			Checkout: checkout,
-			Dir:      dir,
 		},
 		Storage: storage,
 		AnglesReady: func(angles []string) {
@@ -183,18 +179,20 @@ func (s *Scheduler) runReview(ctx context.Context, log *slog.Logger, pr github.P
 }
 
 // reviewAgent is the agent the brief and angle sessions run as: the
-// reviewer role's agent and model, held to the role's timeout and turn
-// limit and given its environment, and run as the same executables the
+// selected profile's execution fields (sandbox ignored), held to the role's
+// timeout and turn limit and given its environment, using the executables the
 // role's own sessions are.
 func (s *Scheduler) reviewAgent(role config.ResolvedRole) *review.CLIAgent {
 	return &review.CLIAgent{
-		Provider:  role.Agent,
-		Model:     role.Model,
-		ClaudeBin: s.runner.ClaudeBin,
-		CodexBin:  s.runner.CodexBin,
-		Timeout:   role.Timeout,
-		MaxTurns:  role.MaxTurns,
-		Env:       role.Env,
+		Provider:      role.Agent,
+		Model:         role.Model,
+		FallbackModel: role.FallbackModel,
+		Effort:        role.Effort,
+		ClaudeBin:     s.runner.ClaudeBin,
+		CodexBin:      s.runner.CodexBin,
+		Timeout:       role.Timeout,
+		MaxTurns:      role.MaxTurns,
+		Env:           role.Env,
 	}
 }
 
@@ -284,10 +282,10 @@ func readReviewCosts(artifact string, a *review.Artifact) (*review.Brief, []revi
 	return brief, runs
 }
 
-// cloneOf makes the checkout the diff is read from and the angle sessions
-// run in: a local clone of src, the worker's checkout of the pull
-// request's head, at src's HEAD and sharing its objects, so it costs no
-// fetch and little disk. The pull request's head is what the worker
+// cloneOf makes the checkout the diff, brief and angle sessions read:
+// an independent local clone of src, the worker's checkout of the pull
+// request's head, at src's HEAD. Objects are copied, never shared or
+// hard-linked to the worker. The pull request's head is what the worker
 // checked out — fetched and pulled by the review loop, a detached checkout
 // of the head branch for a requested review — so the clone is the head as
 // the worker has it, whichever reference it was asked for.
@@ -315,7 +313,7 @@ func cloneOf(src, headSHA, remote string) func(context.Context, review.Ref, stri
 			return err
 		}
 		head = strings.TrimSpace(head)
-		if _, err := workspace.Git(ctx, src, "clone", "-q", "--shared", "--no-checkout", src, dir); err != nil {
+		if _, err := workspace.Git(ctx, src, "clone", "-q", "--no-hardlinks", "--no-checkout", src, dir); err != nil {
 			return err
 		}
 		if _, err := workspace.Git(ctx, dir, "checkout", "-q", "--detach", head); err != nil {
@@ -370,4 +368,18 @@ func reviewStatesFor(status string) []string {
 // on a developer's pull request.
 func (e reviewPipelineFailure) escalation(pr int) string {
 	return fmt.Sprintf("The review of pull request #%d could not run: %v. The reviewer's brief and angle sessions are configured by `roles.reviewer` in bees.toml.", pr, e.err)
+}
+
+// The brief reads the same isolated clone as the angles. If gathering could not
+// clone it, use the distiller's empty scratch directory and its gathered bundle.
+type reviewBriefAgent struct {
+	*review.CLIAgent
+	checkout string
+}
+
+func (a *reviewBriefAgent) Run(ctx context.Context, req review.AgentRequest) (*review.AgentResult, error) {
+	if st, err := os.Stat(a.checkout); err == nil && st.IsDir() {
+		req.Dir = a.checkout
+	}
+	return a.CLIAgent.Run(ctx, req)
 }

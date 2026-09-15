@@ -20,6 +20,7 @@ func fakeCLI(t *testing.T, body string) (bin, record string) {
 	bin = filepath.Join(dir, "agent")
 	record = filepath.Join(dir, "record")
 	script := "#!/bin/sh\n" +
+		"if [ \"$1\" = mcp ]; then echo '[]'; exit 0; fi\n" +
 		"printf '%s\\n' \"$@\" > " + record + ".args\n" +
 		"cat > " + record + ".stdin\n" +
 		"pwd > " + record + ".dir\n" +
@@ -319,5 +320,68 @@ func TestTheSessionIsGivenTheAgentsEnvironment(t *testing.T) {
 	}
 	if strings.Contains(string(env), "REVIEW_TEST_ROLE") || !strings.Contains(string(env), "REVIEW_TEST_INHERITED=from the caller") {
 		t.Errorf("an agent with no Env changed the environment:\n%s", env)
+	}
+}
+
+func TestReviewExecutionSettingsAndSafety(t *testing.T) {
+	for _, provider := range []string{config.AgentClaude, config.AgentCodex} {
+		t.Run(provider, func(t *testing.T) {
+			answer := claudeAnswer
+			if provider == config.AgentCodex {
+				answer = codexAnswer
+			}
+			bin, record := fakeCLI(t, answer)
+			a := &CLIAgent{Provider: provider, ClaudeBin: bin, CodexBin: bin, Model: "chosen", FallbackModel: "fallback", Effort: "max"}
+			if _, err := a.Run(context.Background(), AgentRequest{Dir: t.TempDir()}); err != nil {
+				t.Fatal(err)
+			}
+			got := args(t, record)
+			wants := []string{"\n--model\nchosen\n"}
+			if provider == config.AgentClaude {
+				wants = append(wants, "\n--fallback-model\nfallback\n", "\n--effort\nmax\n", "\n--tools\nRead,Grep,Glob,LS,NotebookRead\n", "\n--setting-sources\n\n")
+			} else {
+				wants = append(wants, "\nmodel_reasoning_effort=\"high\"\n", "\nfeatures.shell_tool=false\n", "\nfeatures.plugins=false\n", "\nweb_search=\"disabled\"\n", "\n--sandbox\nread-only\n")
+				if strings.Contains(got, "--fallback-model") {
+					t.Fatal("Codex received Claude fallback flag")
+				}
+			}
+			for _, want := range wants {
+				if !strings.Contains(got, want) {
+					t.Errorf("missing %q in %s", want, got)
+				}
+			}
+		})
+	}
+	env := reviewEnvironment([]string{"BEES_ROLE=reviewer", "BEES_SESSION_DIR=/session", "GIT_DIR=/shared", "GIT_CONFIG_COUNT=1", "KEEP=yes"}, map[string]string{"BEES_REPO": "secret", "GIT_WORK_TREE": "/repo", "ROLE_ENV": "ok"})
+	if strings.Join(env, " ") != "KEEP=yes ROLE_ENV=ok" {
+		t.Fatalf("identity leaked: %v", env)
+	}
+}
+
+func TestCodexReviewDisablesInheritedMCP(t *testing.T) {
+	bin, record := fakeCLI(t, codexAnswer)
+	data, err := os.ReadFile(bin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := strings.Replace(string(data), "echo '[]'", `echo '[{"name":"bees"},{"name":"server.with.dots"}]'`, 1)
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	a := &CLIAgent{Provider: config.AgentCodex, CodexBin: bin}
+	if _, err := a.Run(context.Background(), AgentRequest{Dir: t.TempDir()}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`mcp_servers."bees".enabled=false`, `mcp_servers."server.with.dots".enabled=false`} {
+		if !strings.Contains(args(t, record), "\n"+want+"\n") {
+			t.Errorf("did not disable %s", want)
+		}
+	}
+	script = strings.Replace(script, `echo '[{"name":"bees"},{"name":"server.with.dots"}]'`, "echo invalid", 1)
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Run(context.Background(), AgentRequest{Dir: t.TempDir()}); err == nil || !strings.Contains(err.Error(), "decode codex MCP") {
+		t.Fatalf("did not fail closed: %v", err)
 	}
 }

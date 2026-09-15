@@ -1,5 +1,5 @@
 # bees.toml — configuration for a busybees software factory.
-version = 3
+version = 4
 
 #===============================================================================
 # Project
@@ -74,6 +74,13 @@ stacked_prs = false
 [profiles.default]
 agent = "codex"
 model = "gpt-5.6-terra"
+fallback_model = "gpt-5.6-luna"
+effort = "medium"
+sandbox = "none"
+
+[profiles.review_fast]
+agent = "codex"
+model = "gpt-5.6-luna"
 fallback_model = "gpt-5.6-luna"
 effort = "medium"
 sandbox = "none"
@@ -202,20 +209,17 @@ env = { DAGGER_X_RELEASE = "v1.0.0-beta.13" }
 skills = [
   "https://github.com/mattpocock/skills#skills/engineering/code-review",
 ]
-# The review stages, in order. Each gets its own focus and its own verdict,
-# and an approval needs every one of them to pass. One or more of
-# implementation, completeness, cleanliness, style, product-fit. product-fit
-# judges the change against the work item's parent feature and is off by
-# default.
 # The review angles a pull request of each size is reviewed from, one or more
 # of quick_general, general, docs, test_coverage, acceptance_criteria,
 # side_effects. A size not named here gets its default:
 angles = { xs = ["quick_general"], s = ["quick_general"], m = ["quick_general", "docs", "test_coverage"], l = ["general", "docs", "test_coverage"], xl = ["general", "docs", "test_coverage", "acceptance_criteria"] }
-# The model for the session that writes the review brief, for the judge, and
-# per angle. Unset: model.
-brief_model = "gpt-5.6-terra"
-judge_model = "gpt-5.6-terra"
-angle_models = { quick_general = "gpt-5.6-luna", docs = "gpt-5.6-luna", test_coverage = "gpt-5.6-terra" }
+# Phase execution profiles; unspecified phases use the size-resolved reviewer.
+# Brief/angles ignore sandbox and retain the host read-only floor: no commands,
+# writes, web/network tools, MCP/factory identity or writable/shared VCS.
+# The judge uses all five fields with reviewer-owned tools and permissions.
+brief_profile = "default"
+judge_profile = "default"
+angle_profiles = { quick_general = "review_fast", docs = "review_fast", test_coverage = "default" }
 
 # Tests the default branch after merges, files bugs, reports to the PM.
 [roles.qa]

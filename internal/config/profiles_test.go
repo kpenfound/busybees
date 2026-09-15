@@ -36,7 +36,13 @@ sandbox = "container"
 				{`profile_by_size = { xs = "code" }`, "", "", "claude"},
 				{`profile_by_size = { xs = "code" }`, "", "unknown", "claude"},
 			} {
-				cfg, err := Load(writeConfig(t, "version = 3\n"+profiles+"\n[global]\n"+tc.global+"\n[roles."+role+"]\n"+tc.local+"\n"))
+				reviewPhases := `brief_profile = "claude"
+angle_profiles = { quick_general = "claude", general = "claude", docs = "claude", test_coverage = "claude", acceptance_criteria = "claude", side_effects = "claude" }
+`
+				if role != RoleReviewer {
+					reviewPhases = "[roles.reviewer]\n" + reviewPhases
+				}
+				cfg, err := Load(writeConfig(t, "version = 4\n"+profiles+"\n[global]\n"+tc.global+"\n[roles."+role+"]\n"+tc.local+"\n"+reviewPhases))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -70,7 +76,7 @@ func TestProfileMigration(t *testing.T) {
 		{"inherit explicit global model", "[global]\nmodel = \"custom\"\neffort = \"high\"\n[roles.developer]\nagent = \"codex\"\n", RoleDeveloper, "", AgentProfile{Agent: "codex", Model: "custom", Effort: "high", Sandbox: "none"}, 2},
 		{"codex empty defaults", "[roles.developer]\nagent = \"codex\"\n", RoleDeveloper, "", AgentProfile{Agent: "codex", Sandbox: "none"}, 1},
 		{"opencode empty defaults", "[roles.developer]\nagent = \"opencode\"\n", RoleDeveloper, "", AgentProfile{Agent: "opencode", Sandbox: "none"}, 1},
-		{"global agent role override", "[global]\nagent = \"opencode\"\n[roles.developer]\nagent = \"claude\"\n", RoleDeveloper, "", defaults, 2},
+		{"global agent role override", "[global]\nagent = \"opencode\"\n[roles.reviewer]\nenabled = false\n[roles.developer]\nagent = \"claude\"\n", RoleDeveloper, "", defaults, 2},
 		{"size only", "[roles.developer]\nmodel_by_size = { xs = \"haiku\" }\n", RoleDeveloper, "xs", AgentProfile{Agent: "claude", Model: "haiku", FallbackModel: "sonnet", Sandbox: "none"}, 2},
 		{"size subtable", "[roles.developer.model_by_size]\nxs = \"haiku\"\n", RoleDeveloper, "xs", AgentProfile{Agent: "claude", Model: "haiku", FallbackModel: "sonnet", Sandbox: "none"}, 2},
 		{"quoted dotted keys", "roles.\"developer\".model = \"haiku\"\n", RoleDeveloper, "", AgentProfile{Agent: "claude", Model: "haiku", FallbackModel: "sonnet", Sandbox: "none"}, 1},

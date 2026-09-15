@@ -204,7 +204,7 @@ func (d Duration) MarshalText() ([]byte, error) { return []byte(d.String()), nil
 // natively. Bump it (and add a migration) when a change to the schema cannot
 // be read by older files as-is: renamed or removed keys, changed semantics.
 // Adding optional keys is not a breaking change.
-const CurrentVersion = 3
+const CurrentVersion = 4
 
 // migration rewrites the text of a bees.toml from one format version to the
 // next. Migrations work on the text, not the decoded tree, so the user's
@@ -219,6 +219,7 @@ var migrations = map[int]migration{
 	0: addVersionKey,
 	1: dropReviewStages,
 	2: migrateAgentProfiles,
+	3: migrateReviewProfiles,
 }
 
 type Config struct {
@@ -564,13 +565,13 @@ type RoleSettings struct {
 	// from, keyed by "xs".."xl", each list one or more of KnownReviewAngles.
 	// A size it does not name gets DefaultReviewAngles.
 	Angles map[string][]string `toml:"angles"`
-	// BriefModel and JudgeModel override Model for the session that writes
-	// the review brief and for the judge. Empty: Model.
-	BriefModel string `toml:"brief_model"`
-	JudgeModel string `toml:"judge_model"`
-	// AngleModels overrides Model per angle, keyed by angle name. An angle
-	// it does not name uses Model.
-	AngleModels map[string]string `toml:"angle_models"`
+	// BriefProfile and JudgeProfile select phase execution profiles. Empty
+	// means the ordinary size-resolved reviewer profile.
+	BriefProfile string `toml:"brief_profile"`
+	JudgeProfile string `toml:"judge_profile"`
+	// AngleProfiles selects a named execution profile per angle. An angle
+	// it does not name uses the size-resolved reviewer profile.
+	AngleProfiles map[string]string `toml:"angle_profiles"`
 }
 
 // MergePolicy is the reviewer's checks configuration. It covers both the
@@ -590,7 +591,7 @@ type MergePolicy struct {
 }
 
 // KnownReviewAngles are the angles roles.reviewer.angles and
-// roles.reviewer.angle_models may name. It is a copy of
+// roles.reviewer.angle_profiles may name. It is a copy of
 // internal/review's BuiltinAngles, which imports this package and so cannot
 // be imported back; TestKnownReviewAnglesMatchReview keeps the two equal.
 var KnownReviewAngles = []string{"quick_general", "general", "docs", "test_coverage", "acceptance_criteria", "side_effects"}
@@ -1245,13 +1246,13 @@ type ResolvedRole struct {
 	MoEAssemblerModel  string
 	MoEAssemblerPrompt string
 	// Angles, the review angles per pull request size with every one of
-	// Sizes filled in; BriefModel, JudgeModel and AngleModels, the model
-	// overrides for the brief, the judge and each angle, empty or absent
-	// meaning Model. Reviewer only.
+	// Sizes filled in; BriefProfile, JudgeProfile and AngleProfiles hold
+	// resolved overrides, with nil/absent meaning the size-resolved profile.
+	// Reviewer only.
 	Angles          map[string][]string
-	BriefModel      string
-	JudgeModel      string
-	AngleModels     map[string]string
+	BriefProfile    *AgentProfile
+	JudgeProfile    *AgentProfile
+	AngleProfiles   map[string]AgentProfile
 	FallbackModel   string
 	Agent           string
 	Effort          string
@@ -1324,6 +1325,22 @@ func Parse(text, path string) (*Config, error) {
 	cfg.applyDefaults()
 	if err := cfg.Validate(); err != nil {
 		return nil, err
+	}
+	// Scope is a property of the key, including explicitly empty values.
+	for _, key := range md.Keys() {
+		if len(key) < 2 {
+			continue
+		}
+		scopeLen := 1
+		if key[0] == "roles" {
+			scopeLen = 2
+		}
+		if len(key) <= scopeLen || (key[0] != "global" && key[0] != "roles") {
+			continue
+		}
+		if slices.Contains([]string{"brief_profile", "judge_profile", "angle_profiles"}, key[scopeLen]) && strings.Join(key[:scopeLen], ".") != "roles.reviewer" {
+			return nil, fmt.Errorf("%s: only valid under roles.reviewer", key.String())
+		}
 	}
 	return &cfg, nil
 }
@@ -1664,8 +1681,8 @@ func (c *Config) Validate() error {
 	errs = append(errs, c.Notes.validate()...)
 	check := func(scope string, rs RoleSettings) {
 		if scope != "roles."+RoleReviewer {
-			if rs.AutoMerge != nil || rs.MergeMethod != "" || rs.ChecksWait.Duration != 0 || rs.ChecksPollInterval.Duration != 0 || rs.ChecksTimeout.Duration != 0 || rs.MaxCheckFixRounds != 0 || rs.PreReviewChecks != nil || rs.PreReviewChecksTimeout.Duration != 0 || rs.Angles != nil || rs.BriefModel != "" || rs.JudgeModel != "" || rs.AngleModels != nil {
-				errs = append(errs, fmt.Sprintf("%s: auto_merge, merge_method, checks_wait, checks_poll_interval, checks_timeout, max_check_fix_rounds, pre_review_checks, pre_review_checks_timeout, angles, brief_model, judge_model and angle_models are only valid under roles.reviewer", scope))
+			if rs.AutoMerge != nil || rs.MergeMethod != "" || rs.ChecksWait.Duration != 0 || rs.ChecksPollInterval.Duration != 0 || rs.ChecksTimeout.Duration != 0 || rs.MaxCheckFixRounds != 0 || rs.PreReviewChecks != nil || rs.PreReviewChecksTimeout.Duration != 0 || rs.Angles != nil || rs.BriefProfile != "" || rs.JudgeProfile != "" || rs.AngleProfiles != nil {
+				errs = append(errs, fmt.Sprintf("%s: auto_merge, merge_method, checks_wait, checks_poll_interval, checks_timeout, max_check_fix_rounds, pre_review_checks, pre_review_checks_timeout, angles, brief_profile, judge_profile and angle_profiles are only valid under roles.reviewer", scope))
 			}
 		}
 		if scope != "global" && rs.SkillsRefresh != "" {
@@ -1750,13 +1767,17 @@ func (c *Config) Validate() error {
 				}
 			}
 		}
-		for _, angle := range slices.Sorted(maps.Keys(rs.AngleModels)) {
-			switch {
-			case !slices.Contains(KnownReviewAngles, angle):
-				errs = append(errs, fmt.Sprintf("%s.angle_models: unknown angle %q (want one of %s)", scope, angle, strings.Join(KnownReviewAngles, ", ")))
-			case strings.TrimSpace(rs.AngleModels[angle]) == "":
-				errs = append(errs, fmt.Sprintf("%s.angle_models.%s must name a model", scope, angle))
+		if rs.BriefProfile != "" {
+			checkProfile("brief_profile", rs.BriefProfile)
+		}
+		if rs.JudgeProfile != "" {
+			checkProfile("judge_profile", rs.JudgeProfile)
+		}
+		for _, angle := range slices.Sorted(maps.Keys(rs.AngleProfiles)) {
+			if !slices.Contains(KnownReviewAngles, angle) {
+				errs = append(errs, fmt.Sprintf("%s.angle_profiles.%s: unknown angle %q (want one of %s)", scope, angle, angle, strings.Join(KnownReviewAngles, ", ")))
 			}
+			checkProfile("angle_profiles."+angle, rs.AngleProfiles[angle])
 		}
 		switch rs.MergeMethod {
 		case "", "squash", "merge", "rebase":
@@ -1834,7 +1855,9 @@ func (c *Config) Validate() error {
 	// container_use_environment only means anything alongside sandbox =
 	// "container", and is instead of sandbox_image, not alongside it; both
 	// can be set on different scopes (global vs. role), so the check needs
-	// the resolved role rather than one scope's raw settings. A Role error
+	// the ordinary size-resolved role rather than one scope's raw settings.
+	// A judge profile may select a different sandbox; non-container sessions
+	// ignore the retained role-owned container settings. A Role error
 	// here is already reported by the scope-level check above (prompt_file),
 	// so it is skipped rather than duplicated.
 	for _, name := range Roles {
@@ -1852,6 +1875,7 @@ func (c *Config) Validate() error {
 			}
 		}
 	}
+	errs = append(errs, c.validateReviewProfiles()...)
 	if len(errs) > 0 {
 		return fmt.Errorf("invalid bees.toml:\n  - %s", strings.Join(errs, "\n  - "))
 	}
@@ -1906,7 +1930,7 @@ func (c *Config) Role(name string) (ResolvedRole, error) {
 		Model:                   p.Model,
 		ProfilesBySize:          bySize,
 		Angles:                  reviewAngles(rs.Angles),
-		AngleModels:             sizeModels(rs.AngleModels),
+		AngleProfiles:           c.reviewAngleProfiles(rs.AngleProfiles),
 		BestOfNBySize:           sizeInts(rs.BestOfNBySize),
 		BestOfNModel:            strings.TrimSpace(rs.BestOfNModel),
 		BestOfNPrompt:           strings.TrimSpace(rs.BestOfNPrompt),
@@ -1916,8 +1940,8 @@ func (c *Config) Role(name string) (ResolvedRole, error) {
 		MoEExpertsByName:        expertTable(rs.MoEExperts),
 		MoEAssemblerModel:       strings.TrimSpace(rs.MoEAssemblerModel),
 		MoEAssemblerPrompt:      strings.TrimSpace(rs.MoEAssemblerPrompt),
-		BriefModel:              strings.TrimSpace(rs.BriefModel),
-		JudgeModel:              strings.TrimSpace(rs.JudgeModel),
+		BriefProfile:            c.reviewProfile(rs.BriefProfile),
+		JudgeProfile:            c.reviewProfile(rs.JudgeProfile),
 		FallbackModel:           p.FallbackModel,
 		Agent:                   p.Agent,
 		Effort:                  p.Effort,
@@ -2104,22 +2128,6 @@ func reviewAngles(m map[string][]string) map[string][]string {
 		} else {
 			out[size] = slices.Clone(DefaultReviewAngles[size])
 		}
-	}
-	return out
-}
-
-// sizeModels copies a model_by_size table, trimming the model names and
-// dropping empty entries. It returns nil for an empty table.
-func sizeModels(m map[string]string) map[string]string {
-	var out map[string]string
-	for size, model := range m {
-		if model = strings.TrimSpace(model); model == "" {
-			continue
-		}
-		if out == nil {
-			out = make(map[string]string, len(m))
-		}
-		out[size] = model
 	}
 	return out
 }

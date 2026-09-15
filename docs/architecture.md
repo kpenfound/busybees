@@ -684,10 +684,12 @@ stateDiagram-v2
   sizes it, one session per angle `roles.reviewer.angles` gives that size
   looks for problems from that angle alone, and the judge, deterministic
   code, merges what they found into one list. The brief and the angle
-  sessions are `internal/review`'s read-only sessions, run as the role's
-  `agent` and `model` (`brief_model` and `angle_models` replacing the model
-  for the brief and for one angle each), with no MCP server, no tool that
-  writes, runs or fetches, and in a local clone of the worker's checkout
+  sessions are `internal/review`'s read-only host sessions. `brief_profile`
+  and `angle_profiles` select agent, model, fallback model and effort after
+  the role's size-resolved profile; unspecified phases retain that fallback.
+  Only Claude and Codex are supported. Profile sandbox is ignored: no
+  commands, writes, web/network tools, MCP/factory identity or writable/shared
+  VCS are available. Both phases read an independent clone of the worker's checkout
   under the review's artifact, which the diff is read from too (the branch
   against its merge base with the base branch, so no number of changed
   files is too many; a requested review that could not check out the head
@@ -697,7 +699,8 @@ stateDiagram-v2
   list; the clone is removed). What they cost is entered in the ledger
   under the round's name and charged to the issue. Then one reviewer
   session, the judge session,
-  running `judge_model`, is told the list and posts every finding on the pull
+  applying all five fields of `judge_profile` (or the size-resolved fallback),
+  including sandbox, with reviewer-owned prompt, tools and permissions, is told the list and posts every finding on the pull
   request with `submit_review`, untriaged: as a `comment` review on a
   developer's pull request, whose author the factory is, with the verdict
   going to the developer by mail and to the orchestrator as the outcome. An
