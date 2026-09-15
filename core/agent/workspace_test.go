@@ -1,0 +1,101 @@
+package agent
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/kpenfound/busybees/core/agent/agenttest"
+	"github.com/kpenfound/busybees/core/vcs"
+)
+
+// A denied profile must not even inspect optional repository capabilities.
+type deniedWorkspace struct{ dir string }
+
+func (w deniedWorkspace) Directory() string { return w.dir }
+
+func (w deniedWorkspace) VCS() *vcs.Access { panic("VCS inspected for a denied profile") }
+
+func TestWorkspaceAccessContract(t *testing.T) {
+	// If git discovery returns, fail on its side effect even if its error is ignored.
+	gitDir := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "git-called")
+	t.Setenv("GIT_DISCOVERY_MARKER", marker)
+	if err := os.WriteFile(filepath.Join(gitDir, "git"), []byte("#!/bin/sh\ntouch \"$GIT_DISCOVERY_MARKER\"\nexit 1\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", gitDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	for _, allowed := range []bool{false, true} {
+		for _, mode := range []string{SandboxNone, SandboxClaude, SandboxContainer} {
+			t.Run(mode+map[bool]string{false: "/denied", true: "/allowed"}[allowed], func(t *testing.T) {
+				dir, metadata, sessionDir := t.TempDir(), t.TempDir(), t.TempDir()
+				var ws vcs.Workspace = deniedWorkspace{dir: dir}
+				if allowed {
+					ws = fakeWorkspace{dir: dir, access: &vcs.Access{Mounts: []string{metadata}}}
+				}
+				req := Request{Workspace: ws, SessionDir: sessionDir, Profile: Profile{Sandbox: mode, SandboxImage: "image", VCSAccess: allowed},
+					VCSEnv:          map[string]string{"GIT_AUTHOR_NAME": "workspace-author", "GH_TOKEN": "workspace-token", "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "push.default", "GIT_CONFIG_VALUE_0": "current"},
+					VCSContainerEnv: map[string]string{"GIT_CONFIG_VALUE_0": "container-value"},
+					Env:             map[string]string{"DUMP": filepath.Join(sessionDir, "env"), "CWD_DUMP": filepath.Join(sessionDir, "cwd")}}
+				r := Runner{ClaudeBin: agenttest.Script(t, "claude", `env > "$DUMP"
+pwd > "$CWD_DUMP"
+echo '{"type":"result","subtype":"success","result":"ok"}'`)}
+				if mode == SandboxContainer {
+					// Exercise the actual mount/command/environment construction, with no engine launch.
+					c := container{r: &r, req: req, sessionDir: sessionDir, image: "image", vars: r.containerVars(req, sessionDir)}
+					_, args, err := c.command(context.Background(), "claude", nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					mounted := strings.Contains(strings.Join(args, " "), "source="+metadata+",")
+					if mounted != allowed {
+						t.Fatalf("VCS mount present=%v, allowed=%v: %v", mounted, allowed, args)
+					}
+					env := map[string]string{}
+					for _, v := range dedupe(c.vars) {
+						env[v.name] = v.value
+					}
+					if got := env["GH_TOKEN"]; (got == "workspace-token") != allowed {
+						t.Fatalf("VCS credential=%q, allowed=%v", got, allowed)
+					}
+					want := ""
+					if allowed {
+						want = "container-value"
+					}
+					if env["GIT_CONFIG_VALUE_0"] != want {
+						t.Fatalf("container config=%q, want=%q", env["GIT_CONFIG_VALUE_0"], want)
+					}
+				} else {
+					res, err := r.Run(context.Background(), req)
+					if err != nil || res.IsError {
+						t.Fatalf("non-git workspace: %+v, %v", res, err)
+					}
+					data, err := os.ReadFile(req.Env["DUMP"])
+					if err != nil {
+						t.Fatal(err)
+					}
+					env := strings.Split(string(data), "\n")
+					for _, value := range []string{"GIT_AUTHOR_NAME=workspace-author", "GH_TOKEN=workspace-token", "GIT_CONFIG_VALUE_0=current"} {
+						if slices.Contains(env, value) != allowed {
+							t.Errorf("%s exposure, allowed=%v", value, allowed)
+						}
+					}
+					data, err = os.ReadFile(req.Env["CWD_DUMP"])
+					if err != nil {
+						t.Fatal(err)
+					}
+					real, _ := filepath.EvalSymlinks(dir)
+					if strings.TrimSpace(string(data)) != real {
+						t.Fatalf("ran in %q, want %q", data, real)
+					}
+				}
+			})
+		}
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("core attempted git discovery: %v", err)
+	}
+}

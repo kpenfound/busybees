@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kpenfound/busybees/core/vcs"
 	"github.com/kpenfound/busybees/core/work"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/ghwork"
@@ -35,8 +36,17 @@ import (
 	"github.com/kpenfound/busybees/internal/session"
 	"github.com/kpenfound/busybees/internal/state"
 	"github.com/kpenfound/busybees/internal/text"
-	"github.com/kpenfound/busybees/internal/workspace"
 )
+
+// WorkspaceProvider adds the git operations busybees' workflow needs to
+// core's workspace lifecycle. Branch naming and remote policy stay here.
+type WorkspaceProvider interface {
+	vcs.Provider
+	Fetch(context.Context) error
+	CommitsAhead(context.Context, string, string) (int, error)
+	DeleteBranch(context.Context, string) error
+	RemoteName() string
+}
 
 // Deps are the collaborators the scheduler needs.
 type Deps struct {
@@ -44,7 +54,7 @@ type Deps struct {
 	GitHub     *github.Client
 	Mail       *mail.Box
 	Runner     *session.Runner
-	Workspaces *workspace.Manager
+	Workspaces WorkspaceProvider
 	Store      *state.Store
 	Logger     *slog.Logger
 	// Notes is the backend a role's notes live in (notes.backend), the one
@@ -91,7 +101,7 @@ type Scheduler struct {
 	upstream *github.Client
 	mail     *mail.Box
 	runner   *session.Runner
-	ws       *workspace.Manager
+	ws       WorkspaceProvider
 	store    *state.Store
 	notes    mcpserver.Notes
 	log      *slog.Logger

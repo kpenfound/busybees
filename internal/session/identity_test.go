@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kpenfound/busybees/core/vcs"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/testutil"
 	"github.com/kpenfound/busybees/internal/workspace"
@@ -77,7 +78,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
 	r.GitHub = gh
 	res, err := r.Run(context.Background(), Request{
 		Name: "t", Profile: ProfileForRole(config.ResolvedRole{Name: "developer", Model: "opus", MaxTurns: 1, Timeout: time.Minute}),
-		WorkDir: t.TempDir(),
+		Workspace: vcs.Directory(t.TempDir()),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -256,7 +257,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
 	r.GitHub = botIdentity
 	res, err := r.Run(context.Background(), Request{
 		Name: "t", Profile: ProfileForRole(config.ResolvedRole{Name: "developer", Model: "opus", MaxTurns: 1, Timeout: time.Minute}),
-		WorkDir: clone,
+		Workspace: vcs.Directory(clone),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -377,7 +378,7 @@ func TestCodexBuiltinMCPCredentials(t *testing.T) {
 			}
 			r.Notes = config.Notes{Backend: config.NotesBackendNeo4j,
 				Neo4jURL: "https://nams.example.com/v1", Neo4jAPIKey: "$" + notesVar}
-			req := Request{Profile: Profile{Name: "developer", Agent: "codex"}, WorkDir: t.TempDir()}
+			req := Request{Profile: Profile{Name: "developer", Agent: "codex", VCSAccess: true}, Workspace: vcs.Directory(t.TempDir())}
 			dir := t.TempDir()
 			entry := r.builtinMCP(req, dir)
 			argsPath := filepath.Join(t.TempDir(), "args")

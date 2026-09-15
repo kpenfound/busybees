@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kpenfound/busybees/core/vcs"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
@@ -105,13 +106,13 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 	if err := s.ws.Fetch(ctx); err != nil {
 		return fmt.Errorf("fetch: %w", err)
 	}
-	ws, err := s.ws.Branch(ctx, w.Name, branch, base)
+	ws, err := s.ws.Acquire(ctx, vcs.Request{Name: w.Name, Branch: branch, Ref: base})
 	if err != nil {
 		_ = s.escalate(ctx, issue.Number, "Could not create a worktree for branch `"+branch+"`: "+err.Error())
 		return fmt.Errorf("workspace: %w", err)
 	}
 	defer func() {
-		if err := s.ws.Remove(context.WithoutCancel(ctx), ws); err != nil {
+		if err := s.ws.Release(context.WithoutCancel(ctx), ws); err != nil {
 			log.Warn("workspace cleanup failed", "err", err)
 		}
 	}()
@@ -261,7 +262,7 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 				log.Info("developer session", "round", bookkeeping.Round, "mail", len(inbox))
 				started = s.now()
 				res, err = s.runSessionWithRetry(ctx, sessionSpec{
-					role: config.RoleDeveloper, name: name, workDir: ws.RepoDir, branch: branch, worker: w, resumeID: developerSessionID,
+					role: config.RoleDeveloper, name: name, workspace: ws, branch: branch, worker: w, resumeID: developerSessionID,
 					data: prompts.Data{Issue: &fresh, PR: pr, Inbox: inbox, Round: bookkeeping.Round, MaxRounds: maxRounds, Parent: parent, BaseBranch: base},
 				})
 				if err != nil {
@@ -343,7 +344,7 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 			reviewChecks, reviewStatus = nil, ""
 			// Make sure the worktree has the developer's latest commits.
 			if err := s.ws.Fetch(ctx); err == nil {
-				_, _ = gitPull(ctx, ws.RepoDir)
+				_, _ = gitPull(ctx, ws.Directory())
 			}
 			// Read the mailbox here rather than once for the worker: this
 			// stage runs again on every round, and each session must see the
@@ -367,9 +368,9 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 			}
 			activity := ""
 			if !verify {
-				head, headErr := workspace.Git(ctx, ws.RepoDir, "rev-parse", "HEAD")
+				head, headErr := workspace.Git(ctx, ws.Directory(), "rev-parse", "HEAD")
 				var a *review.Artifact
-				found, a, err = s.runReview(ctx, log, freshPR, ws.RepoDir, name, issue.Number, bookkeeping.Round, s.sizeOf(freshIssue.Labels))
+				found, a, err = s.runReview(ctx, log, freshPR, ws.Directory(), name, issue.Number, bookkeeping.Round, s.sizeOf(freshIssue.Labels))
 				if err != nil {
 					var failure reviewPipelineFailure
 					if errors.As(err, &failure) && ctx.Err() == nil {
@@ -387,7 +388,7 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 			log.Info("reviewer session", "pr", pr.Number, "round", bookkeeping.Round, "mail", len(inbox), "verify", verify, "size", found.Size, "angles", strings.Join(found.Angles, ","), "findings", found.Count)
 			started := s.now()
 			res, err := s.runSessionWithRetry(ctx, sessionSpec{
-				role: config.RoleReviewer, name: name, workDir: ws.RepoDir, branch: branch, worker: w, judge: true, reviewActivity: activity,
+				role: config.RoleReviewer, name: name, workspace: ws, branch: branch, worker: w, judge: true, reviewActivity: activity,
 				data: prompts.Data{Issue: &freshIssue, PR: &freshPR, Inbox: inbox, Round: bookkeeping.Round, MaxRounds: maxRounds,
 					Review: found,
 					Checks: roundChecks, ChecksStatus: roundStatus, ChecksTimeout: shortDuration(policy.PreReviewChecksTimeout)},
@@ -473,7 +474,7 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 			// A failing check goes to the reviewer in checks mode, exactly as
 			// it does after approval; the review itself waits until it is green.
 			next, err := s.fixFailedChecks(ctx, checksFix{
-				issue: issue, pr: pr, repoDir: ws.RepoDir, branch: branch, worker: w,
+				issue: issue, pr: pr, workspace: ws, branch: branch, worker: w,
 				bookkeeping: &bookkeeping, checks: checks, policy: policy, stage: "prereview", log: log,
 			})
 			if err != nil || next == "" {
@@ -546,7 +547,7 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 			}
 			// Checks failed: the reviewer diagnoses, the developer fixes.
 			next, err := s.fixFailedChecks(ctx, checksFix{
-				issue: issue, pr: pr, repoDir: ws.RepoDir, branch: branch, worker: w,
+				issue: issue, pr: pr, workspace: ws, branch: branch, worker: w,
 				bookkeeping: &bookkeeping, checks: checks, gate: gate, policy: policy, stage: "checks", log: log,
 			})
 			if err != nil || next == "" {
@@ -567,7 +568,7 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 type checksFix struct {
 	issue       github.Issue
 	pr          *github.PR
-	repoDir     string
+	workspace   vcs.Workspace
 	branch      string
 	worker      *state.Worker
 	bookkeeping *state.WorkState
@@ -599,7 +600,7 @@ func (s *Scheduler) fixFailedChecks(ctx context.Context, f checksFix) (string, e
 		return "", err
 	}
 	if err := s.ws.Fetch(ctx); err == nil {
-		_, _ = gitPull(ctx, f.repoDir)
+		_, _ = gitPull(ctx, f.workspace.Directory())
 	}
 	// Read the mailbox here rather than once for the worker: this stage runs
 	// again on every fix round, and each session must see the mail that
@@ -612,7 +613,7 @@ func (s *Scheduler) fixFailedChecks(ctx context.Context, f checksFix) (string, e
 	f.log.Info("checks failed; reviewer diagnosing", "pr", f.pr.Number, "stage", f.stage, "gate", string(f.gate), "round", f.bookkeeping.CheckFixRounds, "checks", checkNames(github.Failed(f.checks)), "mail", len(inbox))
 	started := s.now()
 	res, err := s.runSessionWithRetry(ctx, sessionSpec{
-		role: config.RoleReviewer, name: name, task: "reviewer_checks", workDir: f.repoDir, branch: f.branch, worker: f.worker,
+		role: config.RoleReviewer, name: name, task: "reviewer_checks", workspace: f.workspace, branch: f.branch, worker: f.worker,
 		data: prompts.Data{Issue: &freshIssue, PR: &freshPR, Inbox: inbox, FailedChecks: github.Failed(f.checks), Round: f.bookkeeping.CheckFixRounds, MaxRounds: f.policy.MaxCheckFixRounds},
 		env:  map[string]string{"BEES_REVIEW_MODE": "checks"},
 	})

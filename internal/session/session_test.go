@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/core/agent/agenttest"
+	"github.com/kpenfound/busybees/core/vcs"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/ghwork"
 )
@@ -36,7 +37,7 @@ printf '{"status":"pr-opened","work":{"key":"pr-12","tags":{"github.pr":"12"}},"
 	role := config.ResolvedRole{Name: "developer", Model: "opus", FallbackModel: "sonnet", MaxTurns: 10, Timeout: time.Minute,
 		MCP:   map[string]config.MCPServer{"x": {Command: "srv", Env: map[string]string{"K": "$HOME"}}},
 		Shell: "/bin/sh", Env: map[string]string{"FACTORY_TOKEN": "abc", "CACHE": "$HOME/cache"}}
-	res, err := r.Run(context.Background(), Request{Name: "t1", Profile: ProfileForRole(role), WorkDir: t.TempDir(), SystemPrompt: "SYS", Prompt: "TASK", Env: map[string]string{"EXTRA": "1", EnvIssue: "12"}})
+	res, err := r.Run(context.Background(), Request{Name: "t1", Profile: ProfileForRole(role), Workspace: vcs.Directory(t.TempDir()), SystemPrompt: "SYS", Prompt: "TASK", Env: map[string]string{"EXTRA": "1", EnvIssue: "12"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +108,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
 		t.Setenv(EnvStateDir, "/inherited")
 		r := role
 		r.Env = roleEnv
-		res, err := newRunner(t, bin).Run(context.Background(), Request{Name: "t", Profile: ProfileForRole(r), WorkDir: t.TempDir(), Env: reqEnv})
+		res, err := newRunner(t, bin).Run(context.Background(), Request{Name: "t", Profile: ProfileForRole(r), Workspace: vcs.Directory(t.TempDir()), Env: reqEnv})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -187,7 +188,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
 `)
 	r := newRunner(t, bin)
 	role := config.ResolvedRole{Name: "reviewer", Model: "opus", MaxTurns: 10, Timeout: time.Minute}
-	res, err := r.Run(context.Background(), Request{Name: "t5", Profile: ProfileForRole(role), WorkDir: t.TempDir()})
+	res, err := r.Run(context.Background(), Request{Name: "t5", Profile: ProfileForRole(role), Workspace: vcs.Directory(t.TempDir())})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +215,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
 
 func TestConfiguredSkillsNeedAPreparer(t *testing.T) {
 	r := newRunner(t, fakeClaude(t, "exit 0"))
-	_, err := r.Run(context.Background(), Request{WorkDir: t.TempDir(), Profile: ProfileForRole(config.ResolvedRole{Name: "developer", Skills: []string{"https://example.com/skills"}})})
+	_, err := r.Run(context.Background(), Request{Workspace: vcs.Directory(t.TempDir()), Profile: ProfileForRole(config.ResolvedRole{Name: "developer", Skills: []string{"https://example.com/skills"}})})
 	if err == nil || !strings.Contains(err.Error(), "no skills manager") {
 		t.Fatalf("missing preparer: %v", err)
 	}

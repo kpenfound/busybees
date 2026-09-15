@@ -205,14 +205,21 @@ func (r *Runner) prepare(req Request, dir string) Request {
 	if r.BeesBin != "" {
 		host["PATH"] = filepath.Dir(r.BeesBin) + string(os.PathListSeparator) + os.Getenv("PATH")
 	}
+	vcsHost, vcsContainer := map[string]string{}, map[string]string{}
+	for _, v := range r.vcsVars(req) {
+		vcsHost[v.name] = v.value
+		vcsContainer[v.name] = v.value
+	}
 	if os.Getenv("GIT_CONFIG_COUNT") == "" {
 		for _, v := range gitConfigVars(r.gitConfig()) {
-			host[v.name] = v.value
+			vcsHost[v.name] = v.value
 		}
 	}
 	for _, v := range gitConfigVars(append(r.gitConfig(), containerGitConfig...)) {
-		container[v.name] = v.value
+		vcsContainer[v.name] = v.value
 	}
+	req.VCSEnv = vcsHost
+	req.VCSContainerEnv = vcsContainer
 	req.Env = host
 	if req.Profile.Sandbox == agent.SandboxContainer {
 		req.Env = container
@@ -273,9 +280,12 @@ func (r *Runner) builtinMCP(req Request, sessionDir string) MCPEntry {
 	}
 	// Codex filters its child servers' environment. Forward credential names
 	// explicitly, without putting their values in mcp.json or command args.
-	envVars := []string{EnvGHToken, "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"}
-	if v := r.GitHub.TokenVar(); v != "" {
-		envVars = append(envVars, v)
+	var envVars []string
+	if req.Profile.VCSAccess {
+		envVars = []string{EnvGHToken, "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"}
+		if v := r.GitHub.TokenVar(); v != "" {
+			envVars = append(envVars, v)
+		}
 	}
 	if r.Notes.Backend == config.NotesBackendNeo4j {
 		if v := r.Notes.Neo4jAPIKeyVar(); v != "" {
@@ -289,7 +299,7 @@ func (r *Runner) builtinMCP(req Request, sessionDir string) MCPEntry {
 // sessionVars are the variables bees sets for a session, wherever it runs,
 // in the order they are set: the role's configured environment first, so
 // bees' own variables win, then the shell, the BEES_* variables, the
-// factory's GitHub identity and the git identity.
+// caller's request context. VCS identity is supplied separately by vcsVars.
 func (r *Runner) sessionVars(req Request, sessionDir string) []envVar {
 	var vars []envVar
 	set := func(k, v string) { vars = append(vars, envVar{k, v}) }
@@ -300,6 +310,25 @@ func (r *Runner) sessionVars(req Request, sessionDir string) []envVar {
 		set("SHELL", req.Profile.Shell)
 	}
 	vars = append(vars, r.beesEnv(req, sessionDir)...)
+	// notes.neo4j_api_key may be a $VAR reference too, and the same strip
+	// would leave a session whose notes_read and notes_write cannot load
+	// [notes]: put the name back the same way, with the value the scheduler
+	// resolved, and only when the backend reads it.
+	if r.Notes.Backend == config.NotesBackendNeo4j {
+		if v, key := r.Notes.Neo4jAPIKeyVar(), r.Notes.ResolvedNeo4jAPIKey(); v != "" && key != "" {
+			set(v, key)
+		}
+	}
+	for _, k := range slices.Sorted(maps.Keys(req.Env)) {
+		set(k, req.Env[k])
+	}
+	return vars
+}
+
+// vcsVars are supplied separately so core gates identity with VCSAccess.
+func (r *Runner) vcsVars(req Request) []envVar {
+	var vars []envVar
+	set := func(k, v string) { vars = append(vars, envVar{k, v}) }
 	// The factory's own GitHub identity, so a session's gh, pushes and
 	// commits are the bot's rather than the machine owner's. It sits with
 	// bees' own variables, after req.Profile.Env, so a role cannot configure a
@@ -321,18 +350,12 @@ func (r *Runner) sessionVars(req Request, sessionDir string) []envVar {
 			set(v, token)
 		}
 	}
-	// notes.neo4j_api_key may be a $VAR reference too, and the same strip
-	// would leave a session whose notes_read and notes_write cannot load
-	// [notes]: put the name back the same way, with the value the scheduler
-	// resolved, and only when the backend reads it.
-	if r.Notes.Backend == config.NotesBackendNeo4j {
-		if v, key := r.Notes.Neo4jAPIKeyVar(), r.Notes.ResolvedNeo4jAPIKey(); v != "" && key != "" {
-			set(v, key)
-		}
-	}
 	vars = append(vars, r.gitIdentity()...)
-	for _, k := range slices.Sorted(maps.Keys(req.Env)) {
-		set(k, req.Env[k])
+	// Explicit per-request values retain their precedence over adapter defaults.
+	for i, v := range vars {
+		if value, ok := req.Env[v.name]; ok {
+			vars[i].value = value
+		}
 	}
 	return vars
 }

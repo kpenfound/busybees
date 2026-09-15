@@ -31,7 +31,7 @@ echo '{"type":"result","subtype":"error_max_turns","is_error":true,"result":"ran
 exit 1
 `)
 	r := newRunner(t, bin)
-	res, err := r.Run(context.Background(), Request{Name: "t2", Profile: Profile{Name: "auditor", Model: "opus", MaxTurns: 10}, WorkDir: t.TempDir()})
+	res, err := r.Run(context.Background(), Request{Name: "t2", Profile: Profile{Name: "auditor", Model: "opus", MaxTurns: 10}, Workspace: fakeWorkspace{dir: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ exit 1
 func TestRunTimeout(t *testing.T) {
 	bin := fakeClaude(t, `sleep 5`)
 	r := newRunner(t, bin)
-	res, err := r.Run(context.Background(), Request{Name: "t3", Profile: Profile{Name: "auditor", Model: "opus", MaxTurns: 1, Timeout: 200 * time.Millisecond}, WorkDir: t.TempDir()})
+	res, err := r.Run(context.Background(), Request{Name: "t3", Profile: Profile{Name: "auditor", Model: "opus", MaxTurns: 1, Timeout: 200 * time.Millisecond}, Workspace: fakeWorkspace{dir: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ echo '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsA
 echo '{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"abc","num_turns":1,"total_cost_usd":0.01}'
 `)
 			r := newRunner(t, bin)
-			res, err := r.Run(context.Background(), Request{Name: "t", Profile: Profile{Name: "builder", Timeout: time.Minute}, WorkDir: t.TempDir()})
+			res, err := r.Run(context.Background(), Request{Name: "t", Profile: Profile{Name: "builder", Timeout: time.Minute}, Workspace: fakeWorkspace{dir: t.TempDir()}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -153,7 +153,7 @@ func TestSessionLimitedFromResultText(t *testing.T) {
 echo '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"You'"'"'ve hit your session limit · resets 11:50pm (America/Detroit)","session_id":"abc","num_turns":0}'
 `)
 	r := newRunner(t, bin)
-	res, err := r.Run(context.Background(), Request{Name: "t", Profile: Profile{Name: "builder", Timeout: time.Minute}, WorkDir: t.TempDir()})
+	res, err := r.Run(context.Background(), Request{Name: "t", Profile: Profile{Name: "builder", Timeout: time.Minute}, Workspace: fakeWorkspace{dir: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +216,7 @@ echo '{"type":"assistant","message":{"content":[{"type":"text","text":"three"}]}
 `+tc.kill+`
 `)
 			r := newRunner(t, bin)
-			res, err := r.Run(context.Background(), Request{Name: "sig", Profile: Profile{Name: "builder", Model: "opus", MaxTurns: 10, Timeout: time.Minute}, WorkDir: t.TempDir()})
+			res, err := r.Run(context.Background(), Request{Name: "sig", Profile: Profile{Name: "builder", Model: "opus", MaxTurns: 10, Timeout: time.Minute}, Workspace: fakeWorkspace{dir: t.TempDir()}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -252,7 +252,7 @@ echo '{"type":"assistant","message":{"content":[{"type":"text","text":"three"}]}
 func TestRealExitCodeKeepsItsSubtype(t *testing.T) {
 	bin := fakeClaude(t, "exit 3\n")
 	r := newRunner(t, bin)
-	res, err := r.Run(context.Background(), Request{Name: "exit3", Profile: Profile{Name: "auditor", Model: "opus", MaxTurns: 10, Timeout: time.Minute}, WorkDir: t.TempDir()})
+	res, err := r.Run(context.Background(), Request{Name: "exit3", Profile: Profile{Name: "auditor", Model: "opus", MaxTurns: 10, Timeout: time.Minute}, Workspace: fakeWorkspace{dir: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +269,7 @@ echo '{"type":"result","subtype":"error_max_turns","is_error":true,"result":"ran
 kill -9 $$
 `)
 	r := newRunner(t, bin)
-	res, err := r.Run(context.Background(), Request{Name: "streamwins", Profile: Profile{Name: "auditor", Model: "opus", MaxTurns: 10, Timeout: time.Minute}, WorkDir: t.TempDir()})
+	res, err := r.Run(context.Background(), Request{Name: "streamwins", Profile: Profile{Name: "auditor", Model: "opus", MaxTurns: 10, Timeout: time.Minute}, Workspace: fakeWorkspace{dir: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -321,7 +321,7 @@ printf '{"status":"submitted","work":{"key":"task/12","tags":{"ticket":"twelve"}
 	role.Effort = "max"
 	role.AllowedTools = []string{"Bash"}
 	role.MCP = map[string]MCPEntry{"x": {Command: "srv", Args: []string{"--port", "1"}, Env: map[string]string{"K": "$HOME"}}}
-	res, err := r.Run(context.Background(), Request{Name: "c1", Profile: role, WorkDir: t.TempDir(), SystemPrompt: "SYS", Prompt: "TASK", Env: map[string]string{EnvIssue: "12"}})
+	res, err := r.Run(context.Background(), Request{Name: "c1", Profile: role, Workspace: fakeWorkspace{dir: t.TempDir()}, SystemPrompt: "SYS", Prompt: "TASK", Env: map[string]string{EnvIssue: "12"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -420,7 +420,7 @@ echo '{"type":"turn.completed","usage":{}}'
 	r.CodexBin = bin
 	role := codexRole("")
 	role.Effort = "low"
-	res, err := r.Run(context.Background(), Request{Name: "c2", Profile: role, WorkDir: t.TempDir(), Prompt: "TASK"})
+	res, err := r.Run(context.Background(), Request{Name: "c2", Profile: role, Workspace: fakeWorkspace{dir: t.TempDir()}, Prompt: "TASK"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -468,7 +468,7 @@ echo '{"type":"turn.failed","error":{"message":"stream disconnected"}}'
 			bin := fakeCodex(t, tc.events+"exit "+strconv.Itoa(tc.exit)+"\n")
 			r := newRunner(t, "")
 			r.CodexBin = bin
-			res, err := r.Run(context.Background(), Request{Name: "c3", Profile: codexRole(""), WorkDir: t.TempDir(), Prompt: "TASK"})
+			res, err := r.Run(context.Background(), Request{Name: "c3", Profile: codexRole(""), Workspace: fakeWorkspace{dir: t.TempDir()}, Prompt: "TASK"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -497,7 +497,7 @@ echo '{"type":"item.completed","item":{"type":"agent_message","text":"half way"}
 `)
 	r := newRunner(t, "")
 	r.CodexBin = bin
-	res, err := r.Run(context.Background(), Request{Name: "c4", Profile: codexRole(""), WorkDir: t.TempDir(), Prompt: "TASK"})
+	res, err := r.Run(context.Background(), Request{Name: "c4", Profile: codexRole(""), Workspace: fakeWorkspace{dir: t.TempDir()}, Prompt: "TASK"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -513,7 +513,7 @@ func TestUnknownAgentIsRefused(t *testing.T) {
 	bin := fakeClaude(t, `touch "$TASK_SESSION_DIR/ran"`)
 	r := newRunner(t, bin)
 	role := Profile{Name: "builder", Agent: "gpt", Timeout: time.Minute}
-	_, err := r.Run(context.Background(), Request{Name: "c5", Profile: role, WorkDir: t.TempDir(), Prompt: "TASK"})
+	_, err := r.Run(context.Background(), Request{Name: "c5", Profile: role, Workspace: fakeWorkspace{dir: t.TempDir()}, Prompt: "TASK"})
 	if err == nil || !strings.Contains(err.Error(), `"gpt"`) {
 		t.Fatalf("err = %v, want one naming the agent", err)
 	}
@@ -564,7 +564,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
 	r := newRunner(t, bin)
 	sessions := r.SessionsDir
 	role := Profile{Name: "builder", Model: "opus", MaxTurns: 5, Timeout: time.Minute, Sandbox: SandboxContainer}
-	_, err := r.Run(context.Background(), Request{Name: "boxed", Profile: role, WorkDir: t.TempDir(), SystemPrompt: "SYS", Prompt: "TASK"})
+	_, err := r.Run(context.Background(), Request{Name: "boxed", Profile: role, Workspace: fakeWorkspace{dir: t.TempDir()}, SystemPrompt: "SYS", Prompt: "TASK"})
 	if err == nil {
 		t.Fatal("a container session ran without a container")
 	}
@@ -589,7 +589,7 @@ func TestRunAcceptsNoSandbox(t *testing.T) {
 	for _, mode := range []string{"", SandboxNone} {
 		r := newRunner(t, bin)
 		role := Profile{Name: "builder", Model: "opus", MaxTurns: 5, Timeout: time.Minute, Sandbox: mode}
-		if _, err := r.Run(context.Background(), Request{Name: "plain", Profile: role, WorkDir: t.TempDir(), SystemPrompt: "SYS", Prompt: "TASK"}); err != nil {
+		if _, err := r.Run(context.Background(), Request{Name: "plain", Profile: role, Workspace: fakeWorkspace{dir: t.TempDir()}, SystemPrompt: "SYS", Prompt: "TASK"}); err != nil {
 			t.Errorf("sandbox %q: %v", mode, err)
 		}
 	}
@@ -606,7 +606,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
 	r := newRunner(t, bin)
 	role := Profile{Name: "builder", Model: "opus", MaxTurns: 5, Timeout: time.Minute, Sandbox: SandboxClaude,
 		MCP: map[string]MCPEntry{"x": {Command: "srv"}}}
-	res, err := r.Run(context.Background(), Request{Name: "boxed", Profile: role, WorkDir: t.TempDir(), SystemPrompt: "SYS", Prompt: "TASK"})
+	res, err := r.Run(context.Background(), Request{Name: "boxed", Profile: role, Workspace: fakeWorkspace{dir: t.TempDir()}, SystemPrompt: "SYS", Prompt: "TASK"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -681,7 +681,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
 	for _, mode := range []string{"", SandboxNone} {
 		r := newRunner(t, bin)
 		role := Profile{Name: "builder", Model: "opus", MaxTurns: 5, Timeout: time.Minute, Sandbox: mode}
-		res, err := r.Run(context.Background(), Request{Name: "plain", Profile: role, WorkDir: t.TempDir(), SystemPrompt: "SYS", Prompt: "TASK"})
+		res, err := r.Run(context.Background(), Request{Name: "plain", Profile: role, Workspace: fakeWorkspace{dir: t.TempDir()}, SystemPrompt: "SYS", Prompt: "TASK"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -739,7 +739,7 @@ echo '{"type":"turn.completed"}'
 	r.CodexBin = bin
 	sessions := r.SessionsDir
 	role := Profile{Name: "auditor", Agent: AgentCodex, Timeout: time.Minute, Sandbox: SandboxClaude}
-	_, err := r.Run(context.Background(), Request{Name: "boxed-codex", Profile: role, WorkDir: t.TempDir(), SystemPrompt: "SYS", Prompt: "TASK"})
+	_, err := r.Run(context.Background(), Request{Name: "boxed-codex", Profile: role, Workspace: fakeWorkspace{dir: t.TempDir()}, SystemPrompt: "SYS", Prompt: "TASK"})
 	if err == nil {
 		t.Fatal("a codex session ran in a claude box")
 	}

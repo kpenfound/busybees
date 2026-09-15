@@ -65,6 +65,8 @@ GitHub repository. Read `docs/architecture.md` before changing the scheduler.
 - `internal/nams` — the Neo4j Agent Memory REST client behind the notes tools with `notes.backend = "neo4j"`: one conversation per role (`userId` `bees-notes-<role>`), each write a message holding the whole notes text, a read the newest message; no Neo4j driver, no SDK, nothing deleted. Faked in its tests with an `httptest` server (`fakeNAMS`).
 - `internal/mail` — local JSON mailbox; the only channel between roles. `internal/feedback` — the queue of factory-error drafts `report_factory_error` writes (`Draft`, `Queue.Add`/`List`/`Remove`); the scheduler files them against `kpenfound/busybees` and removes them (`factoryerrors.go`).
 - `internal/github` — thin `gh` wrapper. `internal/workspace` — git worktrees. `internal/skills` — skills by git URL → `--plugin-dir`.
+- `core/vcs` — workspace directory, optional VCS mounts and provider lifecycle.
+  `internal/workspace` implements it with git worktrees; core does no git discovery.
 - `core/work` — opaque work keys, caller tags and collision-resistant filenames.
 - `internal/ghwork` — busybees GitHub key/tag mapping; `internal/mailfmt` supplies
   GitHub display fields to the generic mailbox formatter.

@@ -109,7 +109,7 @@ func (c *container) startServer(ctx context.Context) error {
 	args := append(slices.Clone(h.Entry.Args), h.ListenArgs...)
 	args = append(args, addr)
 	cmd := agentbin.CommandContext(context.Background(), h.Entry.Command, args...)
-	cmd.Dir = c.req.WorkDir
+	cmd.Dir = c.req.workDir()
 	serverReq := c.req
 	if h.Env != nil {
 		serverReq.Env = h.Env
@@ -224,6 +224,11 @@ func (r *Runner) containerVars(req Request, sessionDir string) []envVar {
 	for _, k := range slices.Sorted(maps.Keys(req.ContainerEnv)) {
 		vars = append(vars, envVar{k, req.ContainerEnv[k]})
 	}
+	if req.Profile.VCSAccess {
+		for _, k := range slices.Sorted(maps.Keys(req.VCSContainerEnv)) {
+			vars = append(vars, envVar{k, req.VCSContainerEnv[k]})
+		}
+	}
 	vars = append(vars, envVar{"HOME", r.containerHome()})
 	return vars
 }
@@ -241,7 +246,7 @@ func (c *container) command(ctx context.Context, bin string, args []string) (str
 		"--name", c.name,
 		"--cidfile", filepath.Join(c.sessionDir, procs.ContainerIDFile),
 		"--label", r.containerLabel() + "=" + c.sessionDir,
-		"--workdir", req.WorkDir,
+		"--workdir", req.workDir(),
 		"--mount", "type=tmpfs,destination=" + r.containerHome() + ",tmpfs-mode=1777",
 	}
 	mounts, err := c.mounts(ctx)
@@ -281,7 +286,7 @@ func (c *container) command(ctx context.Context, bin string, args []string) (str
 // the temp directory the worktrees live under is one, /var -> /private/var),
 // while the prompts and the environment name the path as the caller knows it,
 // and both must resolve inside.
-func (c *container) mounts(ctx context.Context) ([]string, error) {
+func (c *container) mounts(_ context.Context) ([]string, error) {
 	r, req := c.r, c.req
 	destinations := map[string]bool{}
 	bind := func(path string, ro bool) []string {
@@ -304,9 +309,15 @@ func (c *container) mounts(ctx context.Context) ([]string, error) {
 		return out
 	}
 	var out []string
-	out = append(out, bind(req.WorkDir, false)...)
-	if gitDir, err := commonGitDir(ctx, req.WorkDir); req.Profile.VCSAccess && err == nil && !within(gitDir, req.WorkDir) {
-		out = append(out, bind(gitDir, false)...)
+	out = append(out, bind(req.workDir(), false)...)
+	if req.Profile.VCSAccess && req.Workspace != nil {
+		if access := req.Workspace.VCS(); access != nil {
+			for _, dir := range access.Mounts {
+				if !within(dir, req.workDir()) {
+					out = append(out, bind(dir, false)...)
+				}
+			}
+		}
 	}
 	for _, dir := range r.MountDirs {
 		out = append(out, bind(dir, false)...)
@@ -335,18 +346,6 @@ func (c *container) mounts(ctx context.Context) ([]string, error) {
 		}
 	}
 	return out, nil
-}
-
-// commonGitDir is the repository directory a worktree's git operations
-// write to: the repository's own .git for a linked worktree, which is
-// outside the worktree and must be mounted with it. Git reports it as a
-// real path, which is also how the worktree's .git file names it.
-func commonGitDir(ctx context.Context, workDir string) (string, error) {
-	out, err := exec.CommandContext(ctx, "git", "-C", workDir, "rev-parse", "--path-format=absolute", "--git-common-dir").Output()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Clean(strings.TrimSpace(string(out))), nil
 }
 
 // within reports whether path is dir or inside it, either as given or as

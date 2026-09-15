@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kpenfound/busybees/core/vcs"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
@@ -16,7 +17,6 @@ import (
 	"github.com/kpenfound/busybees/internal/prompts"
 	"github.com/kpenfound/busybees/internal/session"
 	"github.com/kpenfound/busybees/internal/state"
-	"github.com/kpenfound/busybees/internal/workspace"
 )
 
 // Best of N. An issue whose size roles.developer.best_of_n_by_size sets to
@@ -186,7 +186,7 @@ type fanOut struct {
 	log       *slog.Logger
 	// ws is the worker's own worktree on the issue's branch, where the
 	// assembler runs; release gives the extra slots back to the pool.
-	ws      *workspace.Workspace
+	ws      vcs.Workspace
 	release func()
 }
 
@@ -216,7 +216,7 @@ type attempt struct {
 // account-wide session limit (errSessionLimited), which every attempt
 // would hit alike and which is returned as it is, so the caller pauses the
 // factory rather than giving the issue up.
-func (s *Scheduler) runAttempts(ctx context.Context, f fanOut) ([]attempt, []*workspace.Workspace, error) {
+func (s *Scheduler) runAttempts(ctx context.Context, f fanOut) ([]attempt, []vcs.Workspace, error) {
 	if configured := s.configuredAttempts(f.issue); configured > f.attempts {
 		if f.experts != nil {
 			f.log.Warn("mixture of experts clamped to max_developers", "issue", f.issue.Number, "size", s.sizeOf(f.issue.Labels), "experts", configured, "max_developers", s.cfg.Scheduler.MaxDevelopers, "pool", s.poolSize(), "attempts", f.attempts)
@@ -229,10 +229,10 @@ func (s *Scheduler) runAttempts(ctx context.Context, f fanOut) ([]attempt, []*wo
 	} else {
 		f.log.Info("best-of-N: running the attempts", "attempts", f.attempts, "mail", len(f.inbox))
 	}
-	var wss []*workspace.Workspace
+	var wss []vcs.Workspace
 	for i := 1; i <= f.attempts; i++ {
 		branch := s.attemptBranch(f.issue.Number, i)
-		ws, err := s.ws.Branch(ctx, fmt.Sprintf("%s-attempt-%d", f.worker.Name, i), branch, f.base)
+		ws, err := s.ws.Acquire(ctx, vcs.Request{Name: fmt.Sprintf("%s-attempt-%d", f.worker.Name, i), Branch: branch, Ref: f.base})
 		if err != nil {
 			_ = s.escalate(ctx, f.issue.Number, "Could not create a worktree for branch `"+branch+"`: "+err.Error())
 			return nil, wss, fmt.Errorf("workspace: %w", err)
@@ -243,15 +243,15 @@ func (s *Scheduler) runAttempts(ctx context.Context, f fanOut) ([]attempt, []*wo
 	var wg sync.WaitGroup
 	for i := 1; i <= f.attempts; i++ {
 		wg.Add(1)
-		go func(i int, ws *workspace.Workspace) {
+		go func(i int, ws vcs.Workspace) {
 			defer wg.Done()
-			a := attempt{branch: ws.Branch, expert: f.expert(i)}
+			a := attempt{branch: s.attemptBranch(f.issue.Number, i), expert: f.expert(i)}
 			// No worker: the attempts share one, and the retry and sandbox
 			// marks N sessions would write on it would only overwrite each
 			// other. The worker's stage names the fan-out instead.
 			res, err := s.runSessionWithRetry(ctx, sessionSpec{
 				role: config.RoleDeveloper, name: fmt.Sprintf("developer-issue-%d-attempt-%d", f.issue.Number, i),
-				workDir: ws.RepoDir, branch: ws.Branch, attempt: i, moeExpert: a.expert,
+				workspace: ws, branch: a.branch, attempt: i, moeExpert: a.expert,
 				data: prompts.Data{Issue: &f.issue, Inbox: f.inbox, Round: 1, MaxRounds: f.maxRounds, Parent: f.parent, BaseBranch: f.base},
 			})
 			if err != nil {
@@ -348,8 +348,8 @@ func (s *Scheduler) assemble(ctx context.Context, f fanOut) (*session.Result, ti
 	// branches are the attempts' work now.
 	f.release()
 	for _, aws := range wss {
-		if rmErr := s.ws.Remove(context.WithoutCancel(ctx), aws); rmErr != nil {
-			f.log.Warn("workspace cleanup failed", "branch", aws.Branch, "err", rmErr)
+		if rmErr := s.ws.Release(context.WithoutCancel(ctx), aws); rmErr != nil {
+			f.log.Warn("workspace cleanup failed", "workspace", aws.Directory(), "err", rmErr)
 		}
 	}
 	if errors.Is(err, errSessionLimited) {
@@ -401,7 +401,7 @@ func (s *Scheduler) assemble(ctx context.Context, f fanOut) (*session.Result, ti
 	started := s.now()
 	res, err := s.runSessionWithRetry(ctx, sessionSpec{
 		role: config.RoleDeveloper, name: fmt.Sprintf("developer-issue-%d-assemble", f.issue.Number),
-		workDir: f.ws.RepoDir, branch: f.ws.Branch, worker: f.worker, assembler: true, moeAssembler: moe, task: task,
+		workspace: f.ws, branch: s.BranchFor(f.issue.Number), worker: f.worker, assembler: true, moeAssembler: moe, task: task,
 		data: prompts.Data{Issue: &f.issue, Inbox: f.inbox, Round: 1, MaxRounds: f.maxRounds, Parent: f.parent, BaseBranch: f.base, Attempts: data},
 	})
 	// The assembler has ended, whatever it came to: what it pushed is on

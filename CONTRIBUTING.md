@@ -7,6 +7,7 @@ core/agent/         standalone session runner, backends, sandbox and result arti
 core/agent/agentbin/ fake-executable guard
 core/agent/agenttest/ shared fake agents, Docker and host MCP server
 core/agent/procs/    finding and stopping sessions (processes and containers)
+core/vcs/           workspace contract and provider lifecycle; no git discovery
 cmd/bees/            the cobra CLI: every `bees` command
 internal/config/     bees.toml and the machine config: schema, defaults, validation, global/role merging, labels, the init template
 internal/daemon/     several projects' schedulers in one process, one goroutine each, a failure kept to its project

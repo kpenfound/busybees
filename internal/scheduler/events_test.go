@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kpenfound/busybees/core/vcs"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
@@ -551,7 +552,7 @@ func TestReviewActivityIsRemovedWhenJudgePreparationFails(t *testing.T) {
 	h := newHarness(t, devOnlyTOML)
 	sub := h.sched.Subscribe()
 	_, err := h.sched.runSessionWithRetry(context.Background(), sessionSpec{
-		role: config.RoleReviewer, name: "judge", task: "missing-template", workDir: h.clone,
+		role: config.RoleReviewer, name: "judge", task: "missing-template", workspace: vcs.Directory(h.clone),
 		reviewActivity: "review-42", judge: true,
 		data: prompts.Data{PR: &github.PR{Number: 42}, Round: 2},
 	})
