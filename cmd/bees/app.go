@@ -75,8 +75,10 @@ func usesClaude(cfg *config.Config) bool {
 		if err != nil || !role.Enabled {
 			continue
 		}
-		if role.Agent == config.AgentClaude {
-			return true
+		for _, size := range append([]string{""}, config.Sizes...) {
+			if role.ForSize(size).Agent == config.AgentClaude {
+				return true
+			}
 		}
 	}
 	return false

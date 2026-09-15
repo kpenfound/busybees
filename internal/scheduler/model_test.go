@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -68,5 +69,47 @@ func TestDeveloperModelBySize(t *testing.T) {
 				t.Errorf("reviewer --model: got %q want %q", got, config.DefaultModel)
 			}
 		})
+	}
+}
+
+// Both the developer and the reviewer must select the entire sized profile.
+func TestSessionsUseWholeSizeProfile(t *testing.T) {
+	h := newHarness(t, baseTOML+`
+[profiles.sized]
+agent = "codex"
+model = "sized-model"
+effort = "high"
+[global]
+profile_by_size = { s = "sized" }
+[roles.product_manager]
+enabled = false
+[roles.project_manager]
+enabled = false
+[roles.qa]
+enabled = false
+`)
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now()}
+	h.gh.prs[fakePR] = &github.PR{Number: fakePR, Title: "Build", State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
+	seedCounter(t, h, "review", 1)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if err := h.sched.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, role := range []string{config.RoleDeveloper, config.RoleReviewer} {
+		dirs := h.sessions(role)
+		if len(dirs) == 0 {
+			t.Fatalf("no %s session", role)
+		}
+		for _, dir := range dirs {
+			args := argsOf(t, dir)
+			if len(args) < 3 || args[1] != "exec" {
+				t.Fatalf("%s backend: %v", role, args)
+			}
+			joined := strings.Join(args, "\n")
+			if !strings.Contains(joined, `model_reasoning_effort="high"`) || !strings.Contains(joined, "sized-model") {
+				t.Fatalf("%s profile: %v", role, args)
+			}
+		}
 	}
 }

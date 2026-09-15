@@ -36,6 +36,8 @@ func TestUsesClaude(t *testing.T) {
 		body string
 		want bool
 	}{
+		{"claude only in a size profile", "[profiles.code]\nagent = \"codex\"\n[profiles.claude]\n[global]\nprofile = \"code\"\n[roles.qa]\nprofile_by_size = { xs = \"claude\" }\n", true},
+
 		{"default: no agent configured anywhere", "", true},
 		{"global agent = codex", "[global]\nagent = \"codex\"\n", false},
 		{

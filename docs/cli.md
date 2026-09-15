@@ -354,13 +354,15 @@ under every role, since it governs how each role's skills are refreshed. `github
 never printed resolved: a `"$VAR"` value is shown as written and anything else
 as `"(set)"`.
 
-The JSON keys are the `bees.toml` key names, so you can match what is printed
-against what you wrote, and durations print as duration strings (`"45m0s"`).
+The JSON keys follow `bees.toml`; agent settings are resolved for each role.
+Durations print as duration strings (`"45m0s"`).
 The role-specific keys appear on the role that owns them: the reviewer carries
 its merge policy (`auto_merge`, `merge_method`, `checks_wait`,
 `checks_poll_interval`, `checks_timeout`, `max_check_fix_rounds`) and its
 resolved `angles`, `brief_model`, `judge_model` and `angle_models`, and the developer its `commit_flags`, `max_size`,
-`model_by_size` and the best-of-N and mixture-of-experts keys.
+and the best-of-N and mixture-of-experts keys. Each role also carries
+`profiles_by_size`, the resolved agent settings for its size overrides;
+`profiles` lists the named profile definitions.
 
 ```sh
 bees config show

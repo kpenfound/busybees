@@ -92,7 +92,8 @@ ways to run the factory.
   bee posts on GitHub is to a person, and ends with an invisible marker. See
   [The mailbox](docs/architecture.md#the-mailbox).
 - **One config file.** `bees.toml` holds project settings, the visibility filter,
-  scheduler limits, and global and per-role prompt/skills/MCP/model settings. See
+  scheduler limits, agent profiles, and global and per-role prompt/skills/MCP
+  settings. See
   [Configuration](docs/configuration.md) and [bees.example.toml](bees.example.toml).
 - **A CLI for status, cost and control.** `bees status`, `bees cost`, `bees tick`,
   `bees exec`, `bees notes`, and `bees kill`. See [CLI reference](docs/cli.md).

@@ -391,7 +391,7 @@ the checks stage.
 
 **Configuration.** `roles.developer` takes the common keys and a few of its
 own: `commit_flags`, `max_size` (default `l`, the largest work item a
-developer takes), `model_by_size` (a model per size label), the best-of-N
+developer takes), the best-of-N
 keys (`best_of_n_by_size` and the model and prompt overrides for the attempts
 and the assembler) and the mixture-of-experts keys (`moe_experts_by_size`,
 `moe_experts`, `moe_assembler_model` and `moe_assembler_prompt`). Set
@@ -683,18 +683,23 @@ Everything is in `bees.toml`. `[global]` applies to every role and
 `[roles.<name>]` layers on top of it:
 
 ```toml
+[profiles.standard]
+model = "opus"
+fallback_model = "sonnet"
+[profiles.review]
+model = "sonnet"
+
 [global]
 prompt = "Follow CONVENTIONS.md. Prefer small PRs."
 skills = ["https://github.com/acme/skills#skills/repo-conventions"]
-model = "opus"
-fallback_model = "sonnet"
+profile = "standard"
 shell = "/bin/bash"
 [global.env]
 CI = "true"
 
 [roles.reviewer]
 prompt = "Block any PR that lowers test coverage."
-model = "sonnet"
+profile = "review"
 max_turns = 60
 
 [roles.developer]
@@ -726,16 +731,19 @@ prompt_file = "docs/qa-checklist.md"
   passed none.
 - **mcp** servers are unioned; a role's server replaces a global one with the
   same name. The name `bees` is reserved for the built-in server.
-- **model / fallback_model / agent / effort / max_turns / timeout /
-  allowed_tools / disallowed_tools / shell / env** fall back to `[global]`,
-  then to the built-in defaults. `fallback_model` is what a `claude` session
+- **profile / profile_by_size** select an agent profile: role size override,
+  role profile, global size override, global profile, then built-in defaults.
+  A profile bundles `agent`, `model`, `fallback_model`, `effort` and `sandbox`.
+  `fallback_model` is what a `claude` session
   switches to when `model` has reached its usage limit. `agent` is the CLI
   a session runs as, `claude`, `codex` or `opencode`; a `codex` or `opencode`
   role has no default `model` or `fallback_model`, and ignores `max_turns`,
   `allowed_tools` and `disallowed_tools`; an `opencode` role ignores
   `effort` too (see [Running a
   session](architecture.md#running-a-session)).
-- **commit_flags, max_size, model_by_size, best_of_n_by_size,
+- **max_turns / timeout / shell** fall back to `[global]`, then to built-in
+  defaults. Tool lists combine and role environment entries override global ones.
+- **commit_flags, max_size, best_of_n_by_size,
   best_of_n_model, best_of_n_prompt, assembler_model, assembler_prompt,
   moe_experts_by_size, moe_experts, moe_assembler_model, moe_assembler_prompt**
   are `roles.developer` only ([developer](#developer)). **auto_merge,
