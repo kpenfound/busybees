@@ -19,8 +19,9 @@ The file starts with a `version` key, followed by these tables:
 | `[scheduler]` | Concurrency, polling, retries, budgets and the review loop |
 | `[logging]` | Console log format and level |
 | `[notes]` | Where a role's notes live: files, or Neo4j Agent Memory |
-| `[global]` | Prompt, skills, MCP servers, model, sandbox and environment for every role |
+| `[global]` | Prompt, skills, MCP servers, profile selection and environment for every role |
 | `[roles.<name>]` | The same keys per role, plus a few that only one role takes |
+| `[profiles.<name>]` | Agent, model, effort and sandbox settings selected by `[global]` or a role |
 
 An unknown key anywhere in the file is a load error, so a typo cannot pass as
 a default. Every validation error names the key and what to change.
@@ -90,11 +91,11 @@ See [Running in the background](cli.md#running-in-the-background).
 ## `version`
 
 ```toml
-version = 2
+version = 3
 ```
 
 The format version of the file, not of bees. `bees init` writes the current
-one, `2`. A file without the key is version 0.
+one, `3`. A file without the key is version 0.
 
 - A file newer than the running bees understands is refused with `upgrade
   bees`.
@@ -108,7 +109,11 @@ one, `2`. A file without the key is version 0.
   defaults survive. The migration from 0 to 1 adds the `version` key and
   changes nothing else. The migration from 1 to 2 removes
   `roles.reviewer.stages` and leaves a comment in its place: no stage maps
-  onto a review angle, so the reviewer gets the default `angles`.
+  onto a review angle, so the reviewer gets the default `angles`. The migration
+  from 2 to 3 moves `agent`, `model`, `fallback_model`, `sandbox`, `effort` and
+  `model_by_size` into named `[profiles.<name>]` tables and replaces them with
+  `profile` and `profile_by_size`; scopes without those settings use the
+  implicit built-in profile.
 
 Adding an optional key never bumps the version. Renaming or removing a key, or
 changing what one means, does, and the release notes of the bees version that
@@ -314,7 +319,7 @@ assignee = "busybees-bot"
 | `max_review_rounds` | int | `3` | Developer and reviewer rounds before an issue is escalated with `bees:needs-human`. `0` means the default; a negative value is rejected. |
 | `retries` | int | `1` | Extra attempts a session gets after failing for infrastructure reasons: it timed out, ran out of turns, hit an API error or rate limit, or the agent crashed. A session that ran and reported with `bees done`, `failed` included, is not retried, and neither is one that hit the claude session limit. `0` disables retrying; `0` to `5`. See [Escalation](workflow.md#escalation-beesneeds-human). |
 | `retry_delay` | duration | `"10m"` | Wait before a retry. `"0s"` retries at once; a negative value is rejected. |
-| `retry_with_fallback` | bool | `true` | Run the retry with the role's `fallback_model` as its primary model. A role without one reruns as it was. |
+| `retry_with_fallback` | bool | `true` | Run the retry with the fallback model from the role's resolved profile as its primary model. A profile without one reruns as it was. |
 | `triage_batch_size` | int | `5` | Most issues handed to the project manager in one session. `0` means the default. |
 | `notes_consolidate_every` | int | `10` | Sessions a role runs between two in which it is also asked to consolidate its [notes](roles.md#notes-files). `0` means the default; a negative value is rejected. |
 | `notes_max_bytes` | int | `32768` | Ask for consolidation early, whatever the session count, once a role's notes are larger than this. Measured in the backend [`notes.backend`](#notes) names. `0` means the default; a negative value is rejected. |
@@ -462,8 +467,8 @@ first moment the factory can act on it:
   rather than at $99.99. The pause is logged once, the release names the
   threshold it crossed, and `bees status` names the pause while it lasts.
 - Per session, after the session ended. An over-budget session is treated as
-  failed whatever it reported, so it is retried once, with the role's
-  `fallback_model` when `retry_with_fallback` is on. Two over-budget sessions
+  failed whatever it reported, so it is retried once, with the resolved
+  profile's fallback model when `retry_with_fallback` is on. Two over-budget sessions
   in a row for one work item escalate it: the role's `max_turns` or `timeout`
   is the wrong shape for that work.
 
@@ -563,20 +568,58 @@ The CLI accepts aliases such as `pm` and `dev`; the TOML keys do not.
 | `skills` | string list | `[]` | Skills by git URL. See [Skills](#skills). |
 | `skills_refresh` | string | `"24h"` | `[global]` only. How stale a skill clone may get before it is pulled when a session needs it: `never`, `always` or a duration. |
 | `mcp.<name>` | table | | MCP servers keyed by name. See [MCP servers](#mcp-servers). |
-| `model` | string | `"opus"` | Model alias or full id, passed as `claude --model`, `codex --model` or `opencode --model` (`provider/model` for opencode). The default is claude's: a `codex` or `opencode` role with no `model` passes none and runs with the model its own configuration names. |
-| `fallback_model` | string | `"sonnet"` | Passed as `claude --fallback-model`, which Claude Code switches to when `model` has reached its usage limit. Not passed when it equals `model`. A `codex` or `opencode` role has none by default, and one it names is not passed: neither has such a flag, so a retry with the fallback model runs the same model again. |
-| `agent` | string | `"claude"` | CLI a session runs as: `claude` (`claude -p`), `codex` (`codex exec`) or `opencode`. An unknown value is a load error. See [Running a session](architecture.md#running-a-session) for what each is started with. |
-| `effort` | string | `""` | Passed as `claude --effort` when set: `low`, `medium`, `high` or `max`. A `codex` role gets it as its `model_reasoning_effort` setting; codex's levels stop at `high`, so `max` is passed as `high`. An `opencode` role gets it as the default build agent's `variant`; opencode's variants are names the model defines, not levels. |
+| `profile` | string | `""` | Profile name. Under `[global]`, the default profile for every role; under a role, that role's profile override. An empty value uses the implicit built-in profile. |
+| `profile_by_size` | table | `{}` | Profile name per work item size, keyed by `xs`, `s`, `m`, `l` or `xl`. Accepted under `[global]` and every role. |
 | `max_turns` | int | `200` | Agentic turns per session (`claude --max-turns`). `0` means the default. Codex and opencode have no such limit and a `codex` or `opencode` role ignores it. |
 | `timeout` | duration | `"45m"` | Wall-clock limit for one session; the session's process group is killed when it expires. `"0s"` means the default. |
 | `allowed_tools` | string list | `[]` | Passed as `claude --allowedTools`. A `codex` or `opencode` role ignores it. |
 | `disallowed_tools` | string list | `[]` | Passed as `claude --disallowedTools`. A `codex` or `opencode` role ignores it. |
 | `shell` | string | the shell bees runs under | Exported into sessions as `$SHELL`. Claude Code discovers its Bash tool's shell from `$SHELL`, so this is the lever, without being a guarantee. Must be an existing file. |
-| `sandbox` | string | `"none"` | How much of the machine a session of this role can reach: `none`, `claude` or `container`. See [Sandboxing](#sandboxing). |
 | `sandbox_image` | string | `""` | The image a `container` session runs in: it must hold the role's agent, `git` and `gh`. A `container` role without one or `container_use_environment` is refused at `bees run`. See [The container mode](#the-container-mode). |
-| `container_use_environment` | string | `""` | Path, relative to the project repository root, to a `dagger/container-use` environment definition to build the `container` sandbox's image from, instead of `sandbox_image`. Requires `sandbox = "container"` and is a load error together with `sandbox_image` on the same resolved role. See [Building from container-use](#building-from-container-use). |
+| `container_use_environment` | string | `""` | Path, relative to the project repository root, to a `dagger/container-use` environment definition to build the `container` profile's image from, instead of `sandbox_image`. Requires the resolved profile's `sandbox = "container"` and is a load error together with `sandbox_image` on the same resolved role. See [Building from container-use](#building-from-container-use). |
 | `env` | table | `{}` | Environment variables exported into every session: the agent, its shell tool and git see them, and so do MCP servers under `claude` and `opencode` (codex starts a server with only the variables its entry names). A `$VAR` value is expanded from the bees process environment when the session starts. A name may not be empty or contain `=` or a space. See [Exported into every session](#exported-into-every-session) for how it meets the variables bees sets itself. |
 | `enabled` | bool | `true` | Roles only. `false` takes a role out of the rotation. Disabling `reviewer` makes a developer's pull request count as approved the moment it is opened, and with `auto_merge` it goes straight to the checks stage. Under `[global]` the key is an error. A named set of these decisions is a [config template](templates.md). |
+
+## `[profiles.<name>]`
+
+A profile bundles the agent, model, fallback model, effort and sandbox for a
+session. Profiles are named globally, then selected by `[global]` or a role.
+Values omitted from a profile use its built-in defaults; a profile configured
+for `codex` or `opencode` has no default model or fallback model.
+
+```toml
+[global]
+profile = "bar"
+
+[profiles.foo]
+agent = "claude"
+model = "fable"
+fallback_model = "opus"
+effort = "max"
+sandbox = "claude"
+
+[profiles.bar]
+agent = "opencode"
+model = "ollama/qwen3.8:27b-mlx"
+effort = "high"
+
+[roles.developer]
+profile = "foo"
+profile_by_size = { xs = "bar", s = "bar", l = "foo", xl = "foo" }
+```
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `agent` | string | `"claude"` | CLI a session runs as: `claude` (`claude -p`), `codex` (`codex exec`) or `opencode`. An unknown value is a load error. See [Running a session](architecture.md#running-a-session). |
+| `model` | string | `"opus"` for `claude`, `""` otherwise | Model alias or full id, passed to the selected agent (`provider/model` for opencode). An empty value lets codex or opencode use its own configured model. |
+| `fallback_model` | string | `"sonnet"` for `claude`, `""` otherwise | Passed as `claude --fallback-model` when it differs from `model`. Codex and opencode have no fallback-model flag. |
+| `effort` | string | `""` | Passed as `claude --effort` when set: `low`, `medium`, `high` or `max`. Codex receives it as `model_reasoning_effort`; `max` maps to `high`. Opencode receives it as the default `build` agent's `variant`; variants are names the model defines, not levels. |
+| `sandbox` | string | `"none"` | How much of the machine a session can reach: `none`, `claude` or `container`. See [Sandboxing](#sandboxing). |
+
+The effective profile follows this order for a work item size:
+role `profile_by_size[size]`, role `profile`, global
+`profile_by_size[size]`, global `profile`, then the implicit built-in profile.
+An unknown profile name or size is a load error.
 
 ### `[roles.reviewer]` only: checks and auto-merge
 
@@ -687,7 +730,7 @@ that gets created, and the project manager still sizes a work item as it
 finds it during triage. Work that is genuinely smaller still gets its own
 issue, whoever files it, so a bug found mid-implementation is unaffected.
 
-### `[roles.developer]` only: commit flags, max size and per-size models
+### `[roles.developer]` only: commit flags and max size
 
 These keys describe the developer, so they are accepted only under
 `[roles.developer]`.
@@ -696,23 +739,12 @@ These keys describe the developer, so they are accepted only under
 |---|---|---|---|
 | `commit_flags` | string | `""` | Extra flags for every `git commit` the developer makes, appended to its prompt verbatim. |
 | `max_size` | string | `"l"` | The largest work item a developer takes: `xs`, `s`, `m`, `l` or `xl`. A `bees:ready` issue sized above it is moved back to `bees:triage` for the project manager to split; the project manager is told the limit. See [Sizing](workflow.md#size-decides-what-gets-built-next). |
-| `model_by_size` | table | `{}` | The model per work item size, keyed by `xs`, `s`, `m`, `l`, `xl`. An unknown key or an empty value is a load error. A size with no entry, and an issue with no size label, uses `model`. |
 
 ```toml
 [roles.developer]
 commit_flags = "--gpg-sign --signoff"
 max_size = "m"          # anything bigger goes back to triage to be split
-
-[roles.developer.model_by_size]
-xs = "sonnet"           # a typo fix does not need the strongest model
-s = "sonnet"
 ```
-
-`model_by_size` is read once per session from the size label the issue carries
-when the developer picks it up: `bees:size/xs` above runs as `--model sonnet`,
-every other size as the developer's `model`. `fallback_model` is unchanged, and
-a retry that runs with it still overrides the size's choice. The reviewer is
-told the size too and always runs its own `model`.
 
 Signing (`--gpg-sign`, `-S`) happens inside a headless session on the machine
 running `bees`, so a signing key and agent must work for that user without a
@@ -728,9 +760,9 @@ It is off until a size names a count.
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `best_of_n_by_size` | table | `{}` | Attempts per work item size, keyed by `xs`, `s`, `m`, `l`, `xl`. An unknown key, or a value below `1`, is a load error. A size with no entry, and an issue with no size label, gets one attempt. |
-| `best_of_n_model` | string | `""` | The model every attempt runs when a size fans out. Empty: an attempt resolves its model the way a single session does, through `model_by_size` and `model`. |
+| `best_of_n_model` | string | `""` | The model every attempt runs when a size fans out. Empty: an attempt resolves its model the way a single session does, through its selected `profile_by_size` or `profile`. |
 | `best_of_n_prompt` | string | `""` | The prompt every attempt runs with. Empty: the developer's own `prompt`. |
-| `assembler_model` | string | `""` | The model the assembler session runs. Empty: the developer's `model`. |
+| `assembler_model` | string | `""` | The model the assembler session runs. Empty: the developer's resolved profile model. |
 | `assembler_prompt` | string | `""` | The prompt the assembler session runs with. Empty: the developer's own `prompt`. |
 
 ```toml
@@ -764,8 +796,8 @@ experts.
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `moe_experts_by_size` | table | `{}` | The experts a work item of that size fans out to, keyed by `xs`, `s`, `m`, `l`, `xl`, each an ordered list of names from `moe_experts`. An unknown size, an empty list, a name `moe_experts` does not define, or a size that is also in `best_of_n_by_size`, is a load error. A size with no entry, and an issue with no size label, runs a plain developer round. |
-| `moe_experts` | table | `{}` | The experts themselves, one sub-table per name. `prompt` is what that expert's session runs with in place of the developer's own `prompt`, `model` the model it runs. Both are optional: an expert that names neither runs the developer's prompt and resolves its model the way a single session does, through `model_by_size` and `model`. |
-| `moe_assembler_model` | string | `""` | The model the assembler session runs. Empty: the developer's `model`. |
+| `moe_experts` | table | `{}` | The experts themselves, one sub-table per name. `prompt` is what that expert's session runs with in place of the developer's own `prompt`, `model` the model it runs. Both are optional: an expert that names neither runs the developer's prompt and resolves its model the way a single session does, through its selected `profile_by_size` or `profile`. |
+| `moe_assembler_model` | string | `""` | The model the assembler session runs. Empty: the developer's resolved profile model. |
 | `moe_assembler_prompt` | string | `""` | The prompt the assembler session runs with. Empty: the developer's own `prompt`. |
 
 ```toml
@@ -804,16 +836,19 @@ a candidate; when none did, the issue is handed to a person,
 
 ### Sandboxing
 
-`sandbox` says how much of the machine a session of that role can reach. It is
-a `[global]` key with a per-role override, so the roles that run untrusted code
-can be boxed harder than the ones that only read the repository:
+`sandbox` in a profile says how much of the machine a session can reach. Select
+different profiles when roles that run untrusted code need a harder box than
+roles that only read the repository:
 
 ```toml
-[global]
+[profiles.unboxed]
 sandbox = "none"
 
-[roles.developer]
+[profiles.boxed]
 sandbox = "container"
+
+[roles.developer]
+profile = "boxed"
 ```
 
 | Mode | What a session can reach |
@@ -871,8 +906,8 @@ What the session can reach:
 
 On macOS nothing needs installing. On Linux the box needs `bubblewrap` and
 `socat` on `PATH`, which `bees run` checks before it starts. The box is
-Claude Code's, so a role whose [`agent`](#global-and-rolesname) is `codex`
-or `opencode` cannot use it: `bees run` refuses to start, naming the role.
+Claude Code's, so a role whose resolved profile's `agent` is `codex` or
+`opencode` cannot use it: `bees run` refuses to start, naming the role.
 Commit signing
 through `gpg` does not work inside the box, because `gpg` writes under
 `~/.gnupg`.
@@ -1039,12 +1074,13 @@ session with an error naming the path or the build command, not a
 | `skills` | Union, global first, order kept, duplicates dropped. |
 | `mcp` | Union by name; a role server replaces a global one of the same name. |
 | `env` | Union by name; the role wins. |
-| `model`, `fallback_model`, `agent`, `effort`, `max_turns`, `timeout`, `shell`, `sandbox`, `sandbox_image`, `container_use_environment` | Role value if set, else global, else the built-in default. |
+| `max_turns`, `timeout`, `shell`, `sandbox_image`, `container_use_environment` | Role value if set, else global, else the built-in default. |
+| `profile`, `profile_by_size` | For a work item size: role `profile_by_size[size]`, role `profile`, global `profile_by_size[size]`, global `profile`, then the implicit built-in profile. |
 | `allowed_tools`, `disallowed_tools` | Global list followed by the role list. |
 | `enabled` | Role only. |
 | `skills_refresh` | Global only. |
 | `min_issue_size` | `roles.product_manager` only. |
-| `commit_flags`, `max_size`, `model_by_size`, `best_of_n_by_size`, `best_of_n_model`, `best_of_n_prompt`, `assembler_model`, `assembler_prompt`, `moe_experts_by_size`, `moe_experts`, `moe_assembler_model`, `moe_assembler_prompt` | `roles.developer` only. |
+| `commit_flags`, `max_size`, `best_of_n_by_size`, `best_of_n_model`, `best_of_n_prompt`, `assembler_model`, `assembler_prompt`, `moe_experts_by_size`, `moe_experts`, `moe_assembler_model`, `moe_assembler_prompt` | `roles.developer` only. |
 | `auto_merge`, `merge_method`, `checks_wait`, `checks_poll_interval`, `checks_timeout`, `max_check_fix_rounds`, `pre_review_checks`, `pre_review_checks_timeout`, `angles`, `brief_model`, `angle_models`, `judge_model` | `roles.reviewer` only. `bees config show reviewer` prints the resolved policy. |
 
 `bees config show <role>` prints the result.
@@ -1190,7 +1226,7 @@ headers = { Authorization = "Bearer $BROWSER_MCP_TOKEN" }
 ### Solo project, two developers
 
 ```toml
-version = 2
+version = 3
 # repo and default_branch are derived from the origin remote.
 
 [filter]
@@ -1205,11 +1241,14 @@ prompt = """
 Use conventional commits. Never add a dependency without a comment saying why.
 """
 
+[profiles.reviewer]
+model = "sonnet"
+
 [roles.developer]
 commit_flags = "--signoff"
 
 [roles.reviewer]
-model = "sonnet"
+profile = "reviewer"
 prompt = "Be strict about error handling and test coverage."
 auto_merge = true
 checks_timeout = "20m"
@@ -1222,7 +1261,7 @@ timeout = "30m"
 ### Team repository, only work assigned to me
 
 ```toml
-version = 2
+version = 3
 
 [project]
 remote = "upstream"        # my origin is a fork; the team repository is upstream
@@ -1256,11 +1295,11 @@ missing or too old; `bees init` checks `gh`.
 | [`gh`](https://cli.github.com/) | 2.50.0 | `gh pr checks --json` (2.50.0) and `gh api --slurp` (2.49.0). |
 | Claude Code (`claude`) | 2.1.76 | `claude --name` (2.1.76); `--append-system-prompt-file`, `--effort`, `--plugin-dir`, `--strict-mcp-config` and `--fallback-model` are older. |
 
-The Claude Code check only runs when at least one enabled role resolves to
-`agent = "claude"`, the default (see
-[`agent`](#global-and-rolesname)). A factory where every enabled role is
-`agent = "codex"` or `agent = "opencode"` never runs it, so `claude` does
-not need to be installed.
+The Claude Code check only runs when at least one enabled role resolves to an
+agent profile whose `agent` is `"claude"`, the default (see
+[`[profiles.<name>]`](#profilesname)). A factory where every enabled role
+resolves to `"codex"` or `"opencode"` never runs it, so `claude` does not
+need to be installed.
 
 Set `BEES_SKIP_VERSION_CHECK=1` to run with an unsupported version anyway.
 
