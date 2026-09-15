@@ -1817,10 +1817,12 @@ func (c *Config) Validate() error {
 		if name == "" {
 			errs = append(errs, "profiles: profile name must not be empty")
 		}
-		switch p.Effort {
-		case "", "low", "medium", "high", "max":
-		default:
-			errs = append(errs, fmt.Sprintf("%s.effort must be low, medium, high or max", scope))
+		if p.resolved().Agent != AgentOpenCode {
+			switch p.Effort {
+			case "", "low", "medium", "high", "max":
+			default:
+				errs = append(errs, fmt.Sprintf("%s.effort must be low, medium, high or max", scope))
+			}
 		}
 		if p.Agent != "" && !slices.Contains(Agents, p.Agent) {
 			errs = append(errs, fmt.Sprintf("%s.agent must be one of %s", scope, strings.Join(Agents, ", ")))
