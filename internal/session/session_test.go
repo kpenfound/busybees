@@ -716,7 +716,7 @@ func TestUnknownAgentIsRefused(t *testing.T) {
 // whether it reads overrides as JSON or as TOML.
 func TestCodexMCPOverrides(t *testing.T) {
 	got := codexMCPOverrides(map[string]MCPEntry{
-		"zeta":  {Type: "stdio", Command: "/bin/z", Args: []string{"a b", `q"uote`}, Env: map[string]string{"B": "2", "A": "line\nbreak"}},
+		"zeta":  {Type: "stdio", Command: "/bin/z", Args: []string{"a b", `q"uote`}, Env: map[string]string{"B": "2", "A": "line\nbreak"}, EnvVars: []string{"API_TOKEN"}},
 		"alpha": {Type: "http", URL: "https://x.example/mcp", Headers: map[string]string{"Authorization": "Bearer t"}},
 		"empty": {},
 	})
@@ -725,6 +725,7 @@ func TestCodexMCPOverrides(t *testing.T) {
 		`mcp_servers.alpha.http_headers.Authorization="Bearer t"`,
 		`mcp_servers.zeta.command="/bin/z"`,
 		`mcp_servers.zeta.args=["a b","q\"uote"]`,
+		`mcp_servers.zeta.env_vars=["API_TOKEN"]`,
 		`mcp_servers.zeta.env.A="line\nbreak"`,
 		`mcp_servers.zeta.env.B="2"`,
 	}

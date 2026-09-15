@@ -527,7 +527,19 @@ func (r *Runner) builtinMCP(req Request, sessionDir string) MCPEntry {
 			env[v.name] = v.value
 		}
 	}
-	return MCPEntry{Type: "stdio", Command: bin, Args: []string{"mcp", "serve"}, Env: env}
+	// Codex filters its child servers' environment. Forward credential names
+	// explicitly, without putting their values in mcp.json or command args.
+	envVars := []string{EnvGHToken, "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"}
+	if v := r.GitHub.TokenVar(); v != "" {
+		envVars = append(envVars, v)
+	}
+	if r.Notes.Backend == config.NotesBackendNeo4j {
+		if v := r.Notes.Neo4jAPIKeyVar(); v != "" {
+			envVars = append(envVars, v)
+		}
+	}
+	slices.Sort(envVars)
+	return MCPEntry{Type: "stdio", Command: bin, Args: []string{"mcp", "serve"}, Env: env, EnvVars: slices.Compact(envVars)}
 }
 
 // env is the environment of a session on the host: the host's own, less
@@ -597,10 +609,9 @@ func (r *Runner) sessionVars(req Request, sessionDir string) []envVar {
 		// can be handed a token from a stale environment. It is deliberately
 		// not one of beesEnv's variables: those are written into mcp.json in
 		// the session directory, and the secret must not reach disk. claude
-		// passes its own environment on to the MCP server it starts, so the
-		// built-in one is served by this. Codex does not (it starts a server
-		// with a fixed handful of variables plus the entry's env), so under
-		// codex the built-in server's gh runs without the factory's token.
+		// passes its own environment on to the MCP server it starts. Codex
+		// filters that environment, so builtinMCP forwards the credential
+		// names through its env_vars setting.
 		if v := r.GitHub.TokenVar(); v != "" {
 			set(v, token)
 		}
@@ -718,6 +729,9 @@ type MCPEntry struct {
 	Env     map[string]string `json:"env,omitempty"`
 	URL     string            `json:"url,omitempty"`
 	Headers map[string]string `json:"headers,omitempty"`
+	// EnvVars names variables Codex must inherit from its own environment.
+	// Claude and OpenCode inherit it already, so this is not a file entry.
+	EnvVars []string `json:"-"`
 }
 
 // MCPEntries converts configured servers into file entries, expanding $VAR

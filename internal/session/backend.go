@@ -331,7 +331,7 @@ func codexList(l []string) string {
 
 // codexMCPOverrides renders MCP entries as `-c` overrides of codex's
 // mcp_servers table, one per key, in a stable order: stdio servers by
-// command, args and env; remote ones by url and http_headers. Names are
+// command, args, env and env_vars; remote ones by url and http_headers. Names are
 // sorted so two sessions of one role build the same command line.
 func codexMCPOverrides(entries map[string]MCPEntry) []string {
 	var out []string
@@ -342,6 +342,9 @@ func codexMCPOverrides(entries map[string]MCPEntry) []string {
 			out = append(out, prefix+"command="+codexValue(e.Command))
 			if len(e.Args) > 0 {
 				out = append(out, prefix+"args="+codexList(e.Args))
+			}
+			if len(e.EnvVars) > 0 {
+				out = append(out, prefix+"env_vars="+codexList(e.EnvVars))
 			}
 			for _, k := range sortedKeys(e.Env) {
 				out = append(out, prefix+"env."+k+"="+codexValue(e.Env[k]))

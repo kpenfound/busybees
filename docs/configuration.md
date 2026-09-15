@@ -1144,10 +1144,13 @@ A `claude` session is given the servers in a per-session `--mcp-config` file
 loaded with `--strict-mcp-config`, so it sees the servers configured here plus
 the built-in one, and none of your own. A `codex` session is given the same
 servers as `-c mcp_servers.<name>.<key>=<value>` overrides on its command
-line, next to whatever `~/.codex/config.toml` configures. Codex starts a
-stdio server with a fixed handful of variables plus the entry's own `env`,
-not with the session's environment. An `opencode` session is given the same
-servers as the `mcp` table of a per-session `opencode.json`, handed to it
+line, next to whatever `~/.codex/config.toml` configures. Codex filters a
+stdio server's inherited environment. Bees forwards the built-in server's
+GitHub credentials and configured notes API key through `env_vars`, which
+names variables to read from the session's environment. Their values stay
+out of the generated MCP configuration and command arguments. Configured
+servers receive their entry's `env` values. An `opencode` session is given
+the same servers as the `mcp` table of a per-session `opencode.json`, handed to it
 through `OPENCODE_CONFIG`, next to whatever its global configuration and
 the project's own `opencode.json` name.
 
