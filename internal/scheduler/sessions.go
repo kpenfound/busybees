@@ -125,6 +125,12 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 	if err != nil {
 		return nil, err
 	}
+	if spec.data.Issue != nil {
+		// What the retention sweep finds the issue's sessions by. Losing it
+		// costs disk space, never the session.
+		err := session.WriteIssue(sessionDir, spec.data.Issue.Number)
+		s.op("session-issue-file", err, "could not record the session's issue", "dir", sessionDir, "err", err)
+	}
 
 	d := spec.data
 	d.Project = s.cfg.Project

@@ -72,6 +72,33 @@ func TestRoleStateRoundTrip(t *testing.T) {
 // TestIssueCostSurvivesASaveIssue: a developer worker holds one IssueState
 // for the whole life of an issue, so SaveIssue must never write back the
 // running cost as it was when the worker started.
+func TestIssueNumbersAndRemoveIssue(t *testing.T) {
+	s := New(t.TempDir())
+	if got, err := s.IssueNumbers(); err != nil || got != nil {
+		t.Fatalf("no issues directory: IssueNumbers() = %v, %v", got, err)
+	}
+	for _, n := range []int{12, 3} {
+		if err := s.SaveIssue(IssueState{Number: n}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(s.Dir, "issues", "notes.txt"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.IssueNumbers(); err != nil || fmt.Sprint(got) != "[3 12]" {
+		t.Fatalf("IssueNumbers() = %v, %v; want [3 12]", got, err)
+	}
+	if err := s.RemoveIssue(12); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RemoveIssue(12); err != nil {
+		t.Fatalf("removing bookkeeping that is already gone: %v", err)
+	}
+	if got, _ := s.IssueNumbers(); fmt.Sprint(got) != "[3]" {
+		t.Fatalf("after RemoveIssue(12): IssueNumbers() = %v, want [3]", got)
+	}
+}
+
 func TestIssueCostSurvivesASaveIssue(t *testing.T) {
 	s := New(t.TempDir())
 	if err := s.Init(); err != nil {

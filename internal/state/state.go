@@ -311,6 +311,39 @@ func (s *Store) Issue(n int) (IssueState, error) {
 	return is, err
 }
 
+// IssueNumbers returns every issue that has bookkeeping, smallest first.
+func (s *Store) IssueNumbers() ([]int, error) {
+	entries, err := os.ReadDir(filepath.Join(s.Dir, "issues"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []int
+	for _, e := range entries {
+		name, ok := strings.CutSuffix(e.Name(), ".json")
+		if !ok || e.IsDir() {
+			continue
+		}
+		if n, err := strconv.Atoi(name); err == nil && n > 0 {
+			out = append(out, n)
+		}
+	}
+	slices.Sort(out)
+	return out, nil
+}
+
+// RemoveIssue deletes an issue's bookkeeping. An issue that has none is not
+// an error.
+func (s *Store) RemoveIssue(n int) error {
+	err := os.Remove(filepath.Join(s.Dir, "issues", strconv.Itoa(n)+".json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
 // SaveIssue saves the developer worker's bookkeeping for an issue: the review
 // round, its pull request and branch, the check-fix rounds and the worker's
 // stage. Every other field is taken from the file rather than from is,

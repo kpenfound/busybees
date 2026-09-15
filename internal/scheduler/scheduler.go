@@ -191,6 +191,10 @@ type Scheduler struct {
 	// state mu protects.
 	evMu sync.Mutex
 	subs []chan Event
+	// lastSweep is when the retention sweep last ran, and triggers the time
+	// each closed issue it has looked up went stale (retention.go).
+	lastSweep time.Time
+	triggers  map[int]time.Time
 	// Issues and PRs from the last successful poll, reused by local passes.
 	lastIssues []github.Issue
 	lastPRs    []github.PR
@@ -245,6 +249,7 @@ func New(d Deps) (*Scheduler, error) {
 		killed:       map[string]bool{},
 		overBudget:   map[string]int{},
 		interrupted:  map[int]*session.Interrupted{},
+		triggers:     map[int]time.Time{},
 		wake:         make(chan struct{}, 1),
 		slots:        make(chan struct{}, d.Config.Scheduler.MaxDevelopers),
 	}
@@ -962,6 +967,9 @@ func (s *Scheduler) pass(ctx context.Context) error {
 	// Last, and on a full pass only: filing a factory-error report costs
 	// GitHub calls of its own and nothing waits on it.
 	s.drainFeedbackQueue(ctx)
+	// Last of all: deleting the state of closed issues is housekeeping, and
+	// nothing waits on it either.
+	s.sweepRetention(ctx, snap)
 	return nil
 }
 
