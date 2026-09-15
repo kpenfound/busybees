@@ -1,4 +1,4 @@
-package session
+package agent
 
 import (
 	"bufio"
@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/kpenfound/busybees/internal/procs"
+	"github.com/kpenfound/busybees/core/agent/procs"
 )
 
 // ResultFile is the file Run writes when a session ends, whatever it ended
@@ -20,7 +20,7 @@ const ResultFile = "result.json"
 const TranscriptFile = "transcript.jsonl"
 
 // InterruptedFile marks a session directory whose session was stopped on
-// purpose — `bees kill`, the live view's kill key and the scheduler's hard
+// purpose — orphan cleanup, the live view's kill key and the scheduler's hard
 // stop write it — so the next session can be told it was stopped rather
 // than left to guess that the machine crashed. It holds one line of prose,
 // which is what MarkInterrupted was given.
@@ -41,7 +41,7 @@ type Interrupted struct {
 	// number comes from the event that ends a stream, which an interrupted
 	// session never emitted.
 	Turns int
-	// Killed is true when the session was stopped on purpose (`bees kill`)
+	// Killed is true when the session was stopped on purpose (orphan cleanup)
 	// rather than lost with the process that ran it, and Note is what the
 	// marker said.
 	Killed bool

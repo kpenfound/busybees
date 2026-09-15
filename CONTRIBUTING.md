@@ -3,6 +3,10 @@
 ## Package layout
 
 ```
+core/agent/         standalone session runner, backends, sandbox and result artifacts
+core/agent/agentbin/ fake-executable guard
+core/agent/agenttest/ shared fake agents, Docker and host MCP server
+core/agent/procs/    finding and stopping sessions (processes and containers)
 cmd/bees/            the cobra CLI: every `bees` command
 internal/config/     bees.toml and the machine config: schema, defaults, validation, global/role merging, labels, the init template
 internal/daemon/     several projects' schedulers in one process, one goroutine each, a failure kept to its project
@@ -15,12 +19,11 @@ internal/logging/    console and file logging; bees.log rotation
 internal/mail/       the local mailbox: JSON messages under <state_dir>/mail/<role>/
 internal/mcpserver/  the built-in MCP server (`bees mcp serve`): the factory's operations as tools, filtered by role
 internal/nams/       the Neo4j Agent Memory REST client behind notes_read and notes_write with notes.backend = "neo4j"
-internal/procs/      finding and stopping sessions (processes and containers): `bees kill`, and one at a time from the live view
 internal/prompts/    role prompts embedded in the binary (system/*.md, task/*.md), the project's own bees/prompts/ files, the renderer
 internal/review/     bees review: two configuration files, the context gathered for a pull request, the distiller session that briefs the review, the container checkout of the pull request's head and the angle sessions that review from it there, the judge that merges their findings, the reviewer notes and the noise filter made of them, the triage queue and its two front ends (the console, and the terminal UI in internal/reviewtui/ at a terminal), the runner that strings the pipeline together, the end that posts or prints what triage selected, the artifact directory a review is kept in
 internal/reviewtui/  the triage screen: the diff beside the finding, the console's keys each acting on one press, driving the same triage queue
 internal/scheduler/  the loop: poll, human feedback, merge state, reconcile, developer workers, singleton roles, the event stream
-internal/session/    one headless `claude -p`, `codex exec` or `opencode run` session: arguments, environment, transcript, result and outcome
+internal/session/    busybees profile, environment, identity and outcome adapter
 internal/skills/     skill repositories by git URL, exposed as claude plugin directories
 internal/state/      the state directory: notes, per-issue and per-role bookkeeping, status.json, the ledger
 internal/testutil/   test helpers: a local bare git remote and a clone
@@ -32,7 +35,7 @@ internal/workspace/  temporary git worktrees created from the main clone
 
 Dependency direction is strictly downwards: `cmd/bees` → `tui` → `scheduler`
 → everything else, and `scheduler` is the only package that knows about all
-the others. `github` and `session` execute external programs (`gh`, `claude`)
+the others. `github` and `core/agent` execute external programs (`gh`, `claude`)
 and both expose an override point (`Client.Exec`, `Runner.ClaudeBin`) so tests
 never need the real ones. Read [docs/architecture.md](docs/architecture.md)
 before changing the scheduler: it describes the loop, the developer worker's
@@ -54,11 +57,17 @@ dagger check
 
 `dagger check` runs `go:lint-all`, `go:test-all` and `go:generate-all` from the
 `github.com/dagger/go` module installed by `dagger.toml`. `dagger check -l` lists
-the checks, and `dagger check go:test-all` runs one of them.
+the checks, and `dagger check go:test-all` runs one of them. Each check discovers
+both Go modules. The root `go.mod` uses a local replacement for `./core`.
+
+For focused iteration, build and test the standalone module from `core/` with
+`go build ./...` and `go test ./...`; use the same commands from the repository
+root for busybees. Run `dagger check` from the repository root before committing.
+See [core/README.md](core/README.md) for the execution boundary.
 
 ### Testing rules
 
-- Tests never call the real `claude` or `gh`. `gh` is faked through
+- Tests never call the real `claude`, `codex`, `opencode` or `gh`. `gh` is faked through
   `github.Client.Exec`: the scheduler tests replace it with an in-memory
   implementation that understands the `gh` invocations the wrapper makes
   (`issue list`, including `--state all --search` for the visibility
@@ -75,7 +84,7 @@ the checks, and `dagger check go:test-all` runs one of them.
   stream-json `result` line; `Runner.ClaudeBin` is set to `os.Args[0]`. The
   session tests fake `claude` with a shell script the same way. Those two
   are the only executables a test binary may run as an agent: before a
-  session starts, `internal/agentbin.Resolve` refuses any other one when
+  session starts, `core/agent/agentbin.Resolve` refuses any other one when
   `testing.Testing()` reports a `go test` build, whether the binary is
   running its tests or was started again as a command of its own (a test of
   `bees run` that executes the real command, say). A test that forgets its
@@ -91,11 +100,9 @@ the checks, and `dagger check go:test-all` runs one of them.
   `bees mcp serve --listen` with one that reports an address. The review
   tests fake it with a script of their own that records the build and the
   run and writes a file into the mounted directory in place of the clone;
-  `internal/review` imports nothing of `internal/session`. The one real
-  container session, `TestContainerEndToEnd` in `internal/session`, is
-  skipped unless `BEES_CONTAINER_E2E=<image>` is set, and then needs
-  `docker`, `GH_TOKEN` and a claude credential in the environment; run it
-  by hand after touching `container.go`.
+  `internal/review` uses its own fake. `core/agent/agenttest` supplies the shared
+  session fakes; core's engine and host-server launches use the same guard as
+  agent launches. There is no opt-in path to real agents in the test suite.
 - `skills.Manager.Git` is replaced with a copy of a fixture directory, so
   every supported repository layout is exercised offline.
 - `install.sh` is checked with `shellcheck -s sh install.sh`. No test runs it,

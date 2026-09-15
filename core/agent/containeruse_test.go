@@ -1,4 +1,4 @@
-package session
+package agent
 
 import (
 	"context"
@@ -7,12 +7,10 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/kpenfound/busybees/internal/config"
 )
 
 // containerUseFixture is a definition with every field container-use
-// writes, the three bees ignores among them, and commands and values a
+// writes, the three task ignores among them, and commands and values a
 // naive rendering would break on.
 const containerUseFixture = `{
   "workdir": "/workdir",
@@ -58,23 +56,22 @@ func writeContainerUseEnvironment(t *testing.T, worktree, dir, body string) stri
 // containerUseRunner is a runner for a container session whose role sets
 // container_use_environment and no sandbox_image, with the fakes a
 // container session needs.
-func containerUseRunner(t *testing.T, claudeBody string) (*Runner, config.ResolvedRole) {
+func containerUseRunner(t *testing.T, claudeBody string) (*testRunner, Profile) {
 	t.Helper()
 	t.Setenv("ANTHROPIC_API_KEY", "sk-host")
 	fakeContainerHost(t, "darwin")
 	r := newRunner(t, fakeClaude(t, claudeBody))
 	r.DockerBin = fakeDocker(t, containerUseRepo+":*")
-	r.BeesBin = fakeBees(t)
+	r.ServerBin = fakeBees(t)
 	r.StateDir = t.TempDir()
-	r.GitHub = config.GitHub{Login: "bot", Token: "ghp_secret"}
 	r.ContainerListen = "127.0.0.1:0"
-	role := config.ResolvedRole{Name: "developer", Model: "opus", MaxTurns: 5, Timeout: time.Minute,
-		Sandbox: config.SandboxContainer, ContainerUseEnvironment: "envs/dev"}
+	role := Profile{Name: "builder", Model: "opus", MaxTurns: 5, Timeout: time.Minute,
+		Sandbox: SandboxContainer, ContainerUseEnvironment: "envs/dev"}
 	return r, role
 }
 
 const containerUseClaude = `
-printf '%s\n' "$@" > "$BEES_SESSION_DIR/args.txt"
+printf '%s\n' "$@" > "$TASK_SESSION_DIR/args.txt"
 echo '{"type":"result","subtype":"success","is_error":false,"result":"built","session_id":"abc","num_turns":2,"total_cost_usd":0.1}'
 `
 
@@ -91,7 +88,7 @@ func TestContainerUseEnvironmentBuildsTheImage(t *testing.T) {
 	writeContainerUseEnvironment(t, worktree, "envs/dev", containerUseFixture)
 	fakeDir := filepath.Dir(r.DockerBin)
 
-	res, err := r.Run(context.Background(), Request{Name: "cue", Role: role, WorkDir: worktree})
+	res, err := r.Run(context.Background(), Request{Name: "cue", Profile: role, WorkDir: worktree})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +134,7 @@ func TestContainerUseEnvironmentBuildsTheImage(t *testing.T) {
 	if err := os.Remove(filepath.Join(fakeDir, "docker-build.txt")); err != nil {
 		t.Fatal(err)
 	}
-	res2, err := r.Run(context.Background(), Request{Name: "cue2", Role: role, WorkDir: worktree})
+	res2, err := r.Run(context.Background(), Request{Name: "cue2", Profile: role, WorkDir: worktree})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,16 +224,16 @@ func TestContainerUseEnvironmentRefusedWhenUnusable(t *testing.T) {
 		{"base image over two lines", `{"base_image": "img\nFROM evil"}`, []string{filepath.Join("envs/dev", containerUseDir, containerUseFile), "more than one line"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r, role := containerUseRunner(t, `touch "$BEES_SESSION_DIR/ran"`)
+			r, role := containerUseRunner(t, `touch "$TASK_SESSION_DIR/ran"`)
 			worktree := t.TempDir()
 			if tc.body != "" {
 				writeContainerUseEnvironment(t, worktree, "envs/dev", tc.body)
 			}
-			_, err := r.Run(context.Background(), Request{Name: "cue", Role: role, WorkDir: worktree})
+			_, err := r.Run(context.Background(), Request{Name: "cue", Profile: role, WorkDir: worktree})
 			if err == nil {
 				t.Fatal("the session ran")
 			}
-			for _, want := range append([]string{"developer", "container_use_environment"}, tc.want...) {
+			for _, want := range append([]string{"builder", "container_use_environment"}, tc.want...) {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("error %q does not mention %q", err, want)
 				}
@@ -250,18 +247,18 @@ func TestContainerUseEnvironmentRefusedWhenUnusable(t *testing.T) {
 // command and where its output is, and starts neither the server nor the
 // agent.
 func TestContainerUseEnvironmentBuildFailureFailsTheSession(t *testing.T) {
-	r, role := containerUseRunner(t, `touch "$BEES_SESSION_DIR/ran"`)
+	r, role := containerUseRunner(t, `touch "$TASK_SESSION_DIR/ran"`)
 	worktree := t.TempDir()
 	path := writeContainerUseEnvironment(t, worktree, "envs/dev", containerUseFixture)
 	fakeDir := filepath.Dir(r.DockerBin)
 	if err := os.WriteFile(filepath.Join(fakeDir, "fail-build"), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := r.Run(context.Background(), Request{Name: "cue", Role: role, WorkDir: worktree})
+	_, err := r.Run(context.Background(), Request{Name: "cue", Profile: role, WorkDir: worktree})
 	if err == nil {
 		t.Fatal("the session ran")
 	}
-	for _, want := range []string{"developer", "container_use_environment", "envs/dev", path, "docker build --tag " + containerUseRepo + ":", containerUseBuildLog} {
+	for _, want := range []string{"builder", "container_use_environment", "envs/dev", path, "docker build --tag " + containerUseRepo + ":", containerUseBuildLog} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not mention %q", err, want)
 		}
@@ -279,7 +276,7 @@ func TestContainerUseEnvironmentBuildFailureFailsTheSession(t *testing.T) {
 
 // assertContainerUseNothingStarted checks that no session directory of the
 // runner saw the built-in server or the agent start.
-func assertContainerUseNothingStarted(t *testing.T, r *Runner) {
+func assertContainerUseNothingStarted(t *testing.T, r *testRunner) {
 	t.Helper()
 	entries, _ := os.ReadDir(r.SessionsDir)
 	for _, e := range entries {

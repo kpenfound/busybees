@@ -76,7 +76,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
 	r := newRunner(t, bin)
 	r.GitHub = gh
 	res, err := r.Run(context.Background(), Request{
-		Name: "t", Role: config.ResolvedRole{Name: "developer", Model: "opus", MaxTurns: 1, Timeout: time.Minute},
+		Name: "t", Profile: ProfileForRole(config.ResolvedRole{Name: "developer", Model: "opus", MaxTurns: 1, Timeout: time.Minute}),
 		WorkDir: t.TempDir(),
 	})
 	if err != nil {
@@ -255,7 +255,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
 	r := newRunner(t, bin)
 	r.GitHub = botIdentity
 	res, err := r.Run(context.Background(), Request{
-		Name: "t", Role: config.ResolvedRole{Name: "developer", Model: "opus", MaxTurns: 1, Timeout: time.Minute},
+		Name: "t", Profile: ProfileForRole(config.ResolvedRole{Name: "developer", Model: "opus", MaxTurns: 1, Timeout: time.Minute}),
 		WorkDir: clone,
 	})
 	if err != nil {
@@ -377,15 +377,36 @@ func TestCodexBuiltinMCPCredentials(t *testing.T) {
 			}
 			r.Notes = config.Notes{Backend: config.NotesBackendNeo4j,
 				Neo4jURL: "https://nams.example.com/v1", Neo4jAPIKey: "$" + notesVar}
-			req := Request{Role: codexRole(""), WorkDir: t.TempDir()}
+			req := Request{Profile: Profile{Name: "developer", Agent: "codex"}, WorkDir: t.TempDir()}
 			dir := t.TempDir()
+			entry := r.builtinMCP(req, dir)
+			argsPath := filepath.Join(t.TempDir(), "args")
+			envPath := filepath.Join(t.TempDir(), "environment")
+			r.CodexBin = fakeClaude(t, "env > "+envPath+"\nprintf '%s\\n' \"$@\" > "+argsPath+"\necho '{\"type\":\"turn.completed\"}'")
+			req.SessionDir = dir
+			if _, err := r.Run(context.Background(), req); err != nil {
+				t.Fatal(err)
+			}
+			envData, err := os.ReadFile(envPath)
+			if err != nil {
+				t.Fatal(err)
+			}
 			parentEnv := map[string]string{}
-			for _, kv := range r.env(req, dir) {
+			for _, kv := range strings.Split(string(envData), "\n") {
 				k, v, _ := strings.Cut(kv, "=")
 				parentEnv[k] = v
 			}
-			entry := r.builtinMCP(req, dir)
-			overrides := codexMCPOverrides(map[string]MCPEntry{config.BuiltinMCPServer: entry})
+			argsData, err := os.ReadFile(argsPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			args := strings.Split(strings.TrimSpace(string(argsData)), "\n")
+			var overrides []string
+			for i := 0; i+1 < len(args); i++ {
+				if args[i] == "-c" {
+					overrides = append(overrides, args[i+1])
+				}
+			}
 			childEnv := map[string]string{}
 			for _, o := range overrides {
 				key, value, _ := strings.Cut(o, "=")

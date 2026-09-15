@@ -1260,13 +1260,16 @@ The runner writes the session's pid to `<session dir>/pid` right after
 starting the agent and removes it when the session ends. When bees dies,
 those files, and a marker in every session's argv (the `--name
 bees-<session>` a claude session is started with; for a codex session, the
-`mcp_servers.bees.env.BEES_SESSION_DIR=` override that hands the built-in
-MCP server its directory), let `bees kill` find the orphans: it merges the
-pid files with a `ps` scan restricted to processes whose executable is
+`shell_environment_policy.set.BEES_SESSION_DIR=` override that gives shell
+commands the session directory, independently of MCP configuration), let
+`bees kill` find the orphans: it merges the pid files with a `ps` scan
+restricted to processes whose executable is
 `claude` or `codex` (directly or through an interpreter), cross-checking pid
-files against the scan so a reused pid is discarded rather than killed. An
-opencode session is found through its pid file alone: its argv carries no
-path of the state directory, so the scan does not know it. Both
+files against the scan so a reused pid is discarded rather than killed. The
+scan also recognizes the older
+`mcp_servers.bees.env.BEES_SESSION_DIR=` marker. An opencode session is found
+through its pid file alone: its argv carries no path of the state directory,
+so the scan does not know it. Both
 sources are scoped to one factory: a scanned process counts only when its
 command line also references this state directory's `sessions/` (a claude
 session's argv carries `--append-system-prompt-file <sessions

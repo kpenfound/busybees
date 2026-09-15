@@ -1,4 +1,4 @@
-package session
+package agent
 
 import (
 	"context"
@@ -9,8 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kpenfound/busybees/internal/agentbin"
-	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/core/agent/agentbin"
 )
 
 // TestARealAgentNeverRunsFromATestBinary pins the guard every session goes
@@ -25,8 +24,8 @@ func TestARealAgentNeverRunsFromATestBinary(t *testing.T) {
 	}
 	r := newRunner(t, sh)
 	sessions := r.SessionsDir
-	role := config.ResolvedRole{Name: "developer", Model: "opus", MaxTurns: 5, Timeout: time.Minute}
-	_, err = r.Run(context.Background(), Request{Name: "real", Role: role, WorkDir: t.TempDir(), SystemPrompt: "SYS", Prompt: "TASK"})
+	role := Profile{Name: "builder", Model: "opus", MaxTurns: 5, Timeout: time.Minute}
+	_, err = r.Run(context.Background(), Request{Name: "real", Profile: role, WorkDir: t.TempDir(), SystemPrompt: "SYS", Prompt: "TASK"})
 	if !errors.Is(err, agentbin.ErrRealAgent) {
 		t.Fatalf("err = %v, want ErrRealAgent", err)
 	}
@@ -35,7 +34,7 @@ func TestARealAgentNeverRunsFromATestBinary(t *testing.T) {
 	for _, e := range entries {
 		for _, f := range []string{TranscriptFile, "pid"} {
 			if _, err := os.Stat(filepath.Join(sessions, e.Name(), f)); err == nil {
-				t.Errorf("%s written for a session bees refused to start", f)
+				t.Errorf("%s written for a session task refused to start", f)
 			}
 		}
 	}

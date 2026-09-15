@@ -1,4 +1,4 @@
-package session
+package agent
 
 import (
 	"os"
@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kpenfound/busybees/internal/procs"
+	"github.com/kpenfound/busybees/core/agent/procs"
 )
 
 // sessionDir builds a session directory holding the named files, and returns
@@ -14,7 +14,7 @@ import (
 // file.
 func sessionDir(t *testing.T, files map[string]string) string {
 	t.Helper()
-	dir := filepath.Join(t.TempDir(), "20260831-081500-developer-issue-4-r1-ab")
+	dir := filepath.Join(t.TempDir(), "20260831-081500-builder-issue-4-r1-ab")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -67,11 +67,11 @@ func TestCheckInterruptedTellsARunningSessionFromAnInterruptedOne(t *testing.T) 
 		alive: live,
 		want:  nil,
 	}, {
-		name: "stopped by bees kill: the pid file is gone and the marker is there",
+		name: "stopped by task kill: the pid file is gone and the marker is there",
 		files: map[string]string{TranscriptFile: transcript,
-			InterruptedFile: "stopped by bees kill\n"},
+			InterruptedFile: "stopped by task kill\n"},
 		alive: dead,
-		want:  &Interrupted{Turns: 3, Killed: true, Note: "stopped by bees kill"},
+		want:  &Interrupted{Turns: 3, Killed: true, Note: "stopped by task kill"},
 	}, {
 		name:  "no pid file and no result: the pid file was cleaned up, the session never finished",
 		files: map[string]string{TranscriptFile: transcript},
@@ -92,7 +92,7 @@ func TestCheckInterruptedTellsARunningSessionFromAnInterruptedOne(t *testing.T) 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := sessionDir(t, tc.files)
-			got, running := CheckInterrupted("developer", dir, tc.alive)
+			got, running := CheckInterrupted("builder", dir, tc.alive)
 			if running != tc.running {
 				t.Fatalf("running = %v, want %v", running, tc.running)
 			}
@@ -105,7 +105,7 @@ func TestCheckInterruptedTellsARunningSessionFromAnInterruptedOne(t *testing.T) 
 			if got == nil {
 				t.Fatal("nothing reported, want an interrupted session")
 			}
-			if got.Role != "developer" || got.Name != filepath.Base(dir) || got.Dir != dir {
+			if got.Role != "builder" || got.Name != filepath.Base(dir) || got.Dir != dir {
 				t.Errorf("session identity: %+v", got)
 			}
 			if got.Turns != tc.want.Turns {
@@ -130,28 +130,28 @@ func TestCheckInterruptedTellsARunningSessionFromAnInterruptedOne(t *testing.T) 
 // nothing about anything.
 func TestCheckInterruptedIgnoresAMissingDirectory(t *testing.T) {
 	for _, dir := range []string{"", filepath.Join(t.TempDir(), "not-there")} {
-		if got, running := CheckInterrupted("developer", dir, func(int) bool { return false }); got != nil || running {
+		if got, running := CheckInterrupted("builder", dir, func(int) bool { return false }); got != nil || running {
 			t.Errorf("%q reported %+v (running %v)", dir, got, running)
 		}
 	}
 }
 
-// The marker `bees kill` leaves is what tells a session that was stopped on
+// The marker `task kill` leaves is what tells a session that was stopped on
 // purpose from one lost with the machine. Writing it into a directory that
 // has since been removed must not fail a kill.
 func TestMarkInterrupted(t *testing.T) {
 	dir := sessionDir(t, map[string]string{procs.PIDFile: "4242\n"})
-	if err := MarkInterrupted(dir, "stopped by bees kill"); err != nil {
+	if err := MarkInterrupted(dir, "stopped by task kill"); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(filepath.Join(dir, InterruptedFile))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(string(b)) != "stopped by bees kill" {
+	if strings.TrimSpace(string(b)) != "stopped by task kill" {
 		t.Fatalf("marker holds %q", b)
 	}
-	in, _ := CheckInterrupted("developer", dir, func(int) bool { return false })
+	in, _ := CheckInterrupted("builder", dir, func(int) bool { return false })
 	if in == nil || !in.Killed {
 		t.Fatalf("the marker was not read back: %+v", in)
 	}

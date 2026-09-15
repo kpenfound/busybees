@@ -5,7 +5,7 @@
 // Every test that runs a session fakes its agent, with a script under the
 // test's temporary directory or with the test binary itself (see
 // CONTRIBUTING.md). A test that forgets to, or a test binary re-executed as
-// a command of its own (`bees.test run`), would otherwise find the real
+// a command of its own (a caller command), would otherwise find the real
 // claude on PATH and run it: for real, unwatched, and as many times as the
 // scheduler it started asks. Resolve refuses that. In a binary built by
 // `go test` the executable must be one of those two fakes, and anything
@@ -14,6 +14,7 @@
 package agentbin
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -82,4 +83,16 @@ func under(dir, path string) bool {
 		return false
 	}
 	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// CommandContext applies the fake-executable guard to helper processes as well
+// as agents, notably the container engine and caller-owned host MCP server.
+func CommandContext(ctx context.Context, bin string, args ...string) *exec.Cmd {
+	path, err := Resolve(bin)
+	if err != nil {
+		cmd := exec.CommandContext(ctx, bin, args...)
+		cmd.Err = err
+		return cmd
+	}
+	return exec.CommandContext(ctx, path, args...)
 }

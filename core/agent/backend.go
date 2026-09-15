@@ -1,4 +1,4 @@
-package session
+package agent
 
 import (
 	"context"
@@ -14,12 +14,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/core/agent/procs"
 )
 
 // A backend is one CLI a session can run as, chosen by the role's resolved
-// agent setting (config.AgentClaude, config.AgentCodex or
-// config.AgentOpenCode). The runner owns everything a session is regardless
+// agent setting (AgentClaude, AgentCodex or
+// AgentOpenCode). The runner owns everything a session is regardless
 // of its backend — the session directory, the prompt files, the
 // environment, the process group, the timeout, the transcript, the pid
 // file, the outcome and the result file — and asks the backend for the two
@@ -45,7 +45,7 @@ type sessionPaths struct {
 	systemPrompt string
 	prompt       string
 	// mcp are the session's MCP servers, the built-in one included: the
-	// runner decides how that one is reached (a `bees mcp serve` the agent
+	// runner decides how that one is reached (a caller-owned server the agent
 	// starts, or the host's HTTP server for a container session).
 	mcp map[string]MCPEntry
 }
@@ -65,17 +65,14 @@ type streamEnd struct {
 	CostKnown bool
 }
 
-// backendFor returns the backend the role's agent setting names. The
-// setting is validated when bees.toml loads, so an unknown value here is a
-// role that never went through config (a test's hand-built ResolvedRole)
-// and the empty value is the default, claude.
+// backendFor selects the requested backend. An empty name selects Claude.
 func backendFor(agent string) (backend, error) {
 	switch agent {
-	case "", config.AgentClaude:
+	case "", AgentClaude:
 		return claudeBackend{}, nil
-	case config.AgentCodex:
+	case AgentCodex:
 		return codexBackend{}, nil
-	case config.AgentOpenCode:
+	case AgentOpenCode:
 		return opencodeBackend{}, nil
 	}
 	return nil, errors.New("session: unknown agent " + strconv.Quote(agent))
@@ -89,7 +86,7 @@ func (claudeBackend) command(ctx context.Context, r *Runner, req Request, paths 
 	if bin == "" {
 		bin = "claude"
 	}
-	boxed := req.Role.Sandbox == config.SandboxClaude
+	boxed := req.Profile.Sandbox == SandboxClaude
 	args := []string{
 		"-p",
 		"--output-format", "stream-json",
@@ -110,15 +107,15 @@ func (claudeBackend) command(ctx context.Context, r *Runner, req Request, paths 
 	}
 	args = append(args,
 		"--append-system-prompt-file", paths.systemPrompt,
-		"--model", req.Role.Model,
-		"--max-turns", strconv.Itoa(req.Role.MaxTurns),
-		"--name", "bees-"+req.Name,
+		"--model", req.Profile.Model,
+		"--max-turns", strconv.Itoa(req.Profile.MaxTurns),
+		"--name", r.namePrefix()+req.Name,
 	)
-	if req.Role.FallbackModel != "" && req.Role.FallbackModel != req.Role.Model {
-		args = append(args, "--fallback-model", req.Role.FallbackModel)
+	if req.Profile.FallbackModel != "" && req.Profile.FallbackModel != req.Profile.Model {
+		args = append(args, "--fallback-model", req.Profile.FallbackModel)
 	}
-	if req.Role.Effort != "" {
-		args = append(args, "--effort", req.Role.Effort)
+	if req.Profile.Effort != "" {
+		args = append(args, "--effort", req.Profile.Effort)
 	}
 	if req.ResumeID != "" {
 		// Claude renders the system prompt once, on a conversation's first
@@ -132,21 +129,21 @@ func (claudeBackend) command(ctx context.Context, r *Runner, req Request, paths 
 	for _, d := range r.AddDirs {
 		args = append(args, "--add-dir", d)
 	}
-	if len(req.Role.AllowedTools) > 0 {
-		args = append(args, "--allowedTools", strings.Join(req.Role.AllowedTools, ","))
+	if len(req.Profile.AllowedTools) > 0 {
+		args = append(args, "--allowedTools", strings.Join(req.Profile.AllowedTools, ","))
 	}
-	if len(req.Role.DisallowedTools) > 0 {
-		args = append(args, "--disallowedTools", strings.Join(req.Role.DisallowedTools, ","))
+	if len(req.Profile.DisallowedTools) > 0 {
+		args = append(args, "--disallowedTools", strings.Join(req.Profile.DisallowedTools, ","))
 	}
-	// Every session gets the built-in bees server next to whatever bees.toml
-	// configures, so mcp.json is always written.
+	// Write the caller's complete server set, including an empty set, so
+	// local MCP configuration does not add unexpected servers.
 	mcpPath := filepath.Join(paths.dir, "mcp.json")
 	if err := WriteMCPConfig(mcpPath, paths.mcp); err != nil {
 		return "", nil, "", nil, err
 	}
 	args = append(args, "--mcp-config", mcpPath, "--strict-mcp-config")
 	if boxed {
-		settings, err := claudeSandboxSettings(sortedKeys(paths.mcp), runtime.GOOS)
+		settings, err := claudeSandboxSettings(sortedKeys(paths.mcp), runtime.GOOS, req.Profile.SandboxDomains)
 		if err != nil {
 			return "", nil, "", nil, err
 		}
@@ -155,11 +152,11 @@ func (claudeBackend) command(ctx context.Context, r *Runner, req Request, paths 
 		}
 		args = append(args, "--settings", string(settings))
 	}
-	if len(req.Role.Skills) > 0 {
+	if len(req.Profile.Skills) > 0 {
 		if r.Skills == nil {
 			return "", nil, "", nil, errors.New("session: skills configured but no skills manager")
 		}
-		dirs, err := r.Skills.Prepare(ctx, req.Role.Skills)
+		dirs, err := r.Skills.Prepare(ctx, req.Profile.Skills)
 		if err != nil {
 			return "", nil, "", nil, err
 		}
@@ -249,7 +246,7 @@ func (claudeBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer) 
 //     stdin.
 //   - There is no --mcp-config: MCP servers are configuration, so each one
 //     is passed as `-c mcp_servers.<name>.<key>=<value>` overrides — the
-//     built-in bees server included, with the session's BEES_* variables as
+//     caller-owned server included, with the session context as
 //     its env, the way mcp.json carries them for claude. Every value is a
 //     JSON string or a JSON array of strings, which codex parses whether it
 //     reads its overrides as JSON or as TOML (a JSON object is not a TOML
@@ -285,12 +282,14 @@ func (codexBackend) command(_ context.Context, r *Runner, req Request, paths ses
 		"--json",
 		"--dangerously-bypass-approvals-and-sandbox",
 		"--skip-git-repo-check",
+		// A path-bearing marker independent of optional MCP configuration.
+		"-c", procs.CodexMarker(r.EnvironmentPrefix) + codexValue(paths.dir),
 	}
-	if req.Role.Model != "" {
-		args = append(args, "--model", req.Role.Model)
+	if req.Profile.Model != "" {
+		args = append(args, "--model", req.Profile.Model)
 	}
-	if req.Role.Effort != "" {
-		args = append(args, "-c", "model_reasoning_effort="+codexValue(codexEffort(req.Role.Effort)))
+	if req.Profile.Effort != "" {
+		args = append(args, "-c", "model_reasoning_effort="+codexValue(codexEffort(req.Profile.Effort)))
 	}
 	for _, o := range codexMCPOverrides(paths.mcp) {
 		args = append(args, "-c", o)
@@ -353,6 +352,9 @@ func codexMCPOverrides(entries map[string]MCPEntry) []string {
 		}
 		if e.URL != "" {
 			out = append(out, prefix+"url="+codexValue(e.URL))
+			if e.BearerTokenEnv != "" {
+				out = append(out, prefix+"bearer_token_env_var="+codexValue(e.BearerTokenEnv))
+			}
 			for _, k := range sortedKeys(e.Headers) {
 				out = append(out, prefix+"http_headers."+k+"="+codexValue(e.Headers[k]))
 			}
@@ -431,16 +433,17 @@ func (codexBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer) (
 // makeSuccessEnd creates a generic successful streamEnd used when a backend
 // finishes without an explicit end event.
 func makeSuccessEnd(sessionID, result string, turns int, cost float64, costKnown bool) *streamEnd {
-    return &streamEnd{
-        SessionID: sessionID,
-        Result:    result,
-        IsError:   false,
-        Subtype:   "success",
-        NumTurns:  turns,
-        CostUSD:   cost,
-        CostKnown: costKnown,
-    }
+	return &streamEnd{
+		SessionID: sessionID,
+		Result:    result,
+		IsError:   false,
+		Subtype:   "success",
+		NumTurns:  turns,
+		CostUSD:   cost,
+		CostKnown: costKnown,
+	}
 }
+
 // opencode's non-interactive mode.
 //
 // What differs from claude and from codex, and how each difference is met:
@@ -460,8 +463,8 @@ func makeSuccessEnd(sessionID, result string, turns int, cost float64, costKnown
 //     at it (opencodeConfig): its `instructions` entry lists the rendered
 //     system prompt file, which opencode appends to its own system prompt
 //     the way --append-system-prompt-file does for claude; its `mcp` table
-//     is every MCP server, the built-in bees server included, with the
-//     session's BEES_* variables as the server's environment. The file is
+//     is every MCP server, any caller-owned server included, with the
+//     session context as the server's environment. The file is
 //     never written into the worktree: the project's own opencode.json, when
 //     it has one, is read as well, so the session sees the project's
 //     servers next to these. opencode starts a stdio server with the
@@ -509,10 +512,10 @@ func (opencodeBackend) command(_ context.Context, r *Runner, req Request, paths 
 		"run",
 		"--format", "json",
 		"--auto",
-		"--title", "bees-" + req.Name,
+		"--title", r.namePrefix() + req.Name,
 	}
-	if req.Role.Model != "" {
-		args = append(args, "--model", req.Role.Model)
+	if req.Profile.Model != "" {
+		args = append(args, "--model", req.Profile.Model)
 	}
 	if req.ResumeID != "" {
 		args = append(args, "--session", req.ResumeID)
@@ -522,7 +525,7 @@ func (opencodeBackend) command(_ context.Context, r *Runner, req Request, paths 
 	if req.SystemPrompt == "" {
 		instructions = ""
 	}
-	if err := writeOpenCodeConfig(configPath, instructions, paths.mcp, req.Role.Effort); err != nil {
+	if err := writeOpenCodeConfig(configPath, instructions, paths.mcp, req.Profile.Effort); err != nil {
 		return "", nil, "", nil, err
 	}
 	return bin, args, req.Prompt, []envVar{{EnvOpenCodeConfig, configPath}}, nil
@@ -566,7 +569,11 @@ func opencodeServers(entries map[string]MCPEntry) map[string]opencodeMCP {
 		case e.Command != "":
 			out[name] = opencodeMCP{Type: "local", Command: append([]string{e.Command}, e.Args...), Environment: e.Env, Enabled: true}
 		case e.URL != "":
-			out[name] = opencodeMCP{Type: "remote", URL: e.URL, Headers: e.Headers, Enabled: true}
+			headers := e.Headers
+			if e.BearerTokenEnv != "" {
+				headers = bearerHeaders(e, "{env:"+e.BearerTokenEnv+"}")
+			}
+			out[name] = opencodeMCP{Type: "remote", URL: e.URL, Headers: headers, Enabled: true}
 		}
 	}
 	return out
@@ -593,21 +600,21 @@ func writeOpenCodeConfig(path, instructions string, entries map[string]MCPEntry,
 // opencodeEvent is one line of `opencode run --format json`, reduced to
 // the fields the runner reads.
 type opencodeEvent struct {
-    Type          string `json:"type"`
-    SessionID     string `json:"sessionID"`
-    SessionIDAlt  string `json:"session_id"`
-    Part          struct {
-        Type   string  `json:"type"`
-        Text   string  `json:"text"`
-        Reason string  `json:"reason"`
-        Cost   float64 `json:"cost"`
-    } `json:"part"`
-    Error struct {
-        Name string `json:"name"`
-        Data struct {
-            Message string `json:"message"`
-        } `json:"data"`
-    } `json:"error"`
+	Type         string `json:"type"`
+	SessionID    string `json:"sessionID"`
+	SessionIDAlt string `json:"session_id"`
+	Part         struct {
+		Type   string  `json:"type"`
+		Text   string  `json:"text"`
+		Reason string  `json:"reason"`
+		Cost   float64 `json:"cost"`
+	} `json:"part"`
+	Error struct {
+		Name string `json:"name"`
+		Data struct {
+			Message string `json:"message"`
+		} `json:"data"`
+	} `json:"error"`
 }
 
 // consume reads opencode's event stream. The session id is on every event,
@@ -666,14 +673,14 @@ func (opencodeBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer
 			end = &streamEnd{Subtype: "error", Result: msg}
 		}
 	})
-if end == nil {
-    if lastText != "" {
-        end = makeSuccessEnd(sessionID, lastText, turns, cost, costKnown)
-    } else {
-        return nil, nil, err
-    }
-}
-end.SessionID = sessionID
+	if end == nil {
+		if lastText != "" {
+			end = makeSuccessEnd(sessionID, lastText, turns, cost, costKnown)
+		} else {
+			return nil, nil, err
+		}
+	}
+	end.SessionID = sessionID
 	end.NumTurns = turns
 	end.CostUSD, end.CostKnown = cost, costKnown
 	if end.Result == "" {
@@ -685,13 +692,4 @@ end.SessionID = sessionID
 // sortedKeys returns a map's keys in order.
 func sortedKeys[V any](m map[string]V) []string {
 	return slices.Sorted(maps.Keys(m))
-}
-
-// mcpEntries is what a session's MCP servers are, whatever backend runs it:
-// the resolved role's servers and the built-in bees server, as the runner
-// says it is reached.
-func mcpEntries(req Request, builtin MCPEntry) map[string]MCPEntry {
-	entries := MCPEntries(req.Role.MCP)
-	entries[config.BuiltinMCPServer] = builtin
-	return entries
 }

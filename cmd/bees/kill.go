@@ -8,13 +8,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
-
+	"github.com/kpenfound/busybees/core/agent/procs"
 	"github.com/kpenfound/busybees/internal/config"
-	"github.com/kpenfound/busybees/internal/procs"
 	"github.com/kpenfound/busybees/internal/session"
 	"github.com/kpenfound/busybees/internal/state"
 	"github.com/kpenfound/busybees/internal/workspace"
+	"github.com/spf13/cobra"
 )
 
 func newKillCmd(g *globalFlags) *cobra.Command {
@@ -61,7 +60,7 @@ scheduler as well.`,
 				}
 			}
 
-			found, err := procs.Find(ctx, store.SessionsDir())
+			found, err := procs.Find(ctx, store.SessionsDir(), session.ProcessMarkers)
 			if err != nil {
 				return err
 			}

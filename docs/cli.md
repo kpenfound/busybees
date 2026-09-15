@@ -1182,8 +1182,10 @@ Sessions are found two ways: from the `pid` file each running session keeps in
 its `<state_dir>/sessions/<id>/` directory, and from the process table, limited
 to sessions of this state directory — a `claude` or `codex` process counts
 only when it carries a session marker (the `--name bees-…` argument every
-claude session is started with, or the `mcp_servers.bees.env.BEES_SESSION_DIR=`
-override every codex session gets) *and* its command line references
+claude session is started with, or the
+`shell_environment_policy.set.BEES_SESSION_DIR=` override every codex session
+gets; the older `mcp_servers.bees.env.BEES_SESSION_DIR=` marker also counts)
+*and* its command line references
 `<state_dir>/sessions/`. Another project's factory
 running on the same machine is never touched, whichever config you point
 `bees kill` at. Pid files are cross-checked against that scan, so a pid reused
@@ -1738,8 +1740,8 @@ Prints `bees <version>`, resolved from the binary itself:
 
 | Build | Output |
 |---|---|
-| `go install github.com/kpenfound/busybees/cmd/bees@latest` (or `@v0.2.0`) | The module version Go recorded: a tag (`bees v0.2.0`) or, for an untagged module, the pseudo-version `@latest` resolves to (`bees v0.0.0-20260829201307-b24a0605c2a1`). |
-| `go build ./cmd/bees` in a clone | The version Go stamps from the checkout — on Go 1.24+ a pseudo-version, with `+dirty` appended when the working tree has uncommitted changes. |
+| A binary installed from a published Go module version | The module version Go recorded: a tag (`bees v0.2.0`) or a pseudo-version. |
+| `go install ./cmd/bees` in a clone | `bees dev (b24a0605c2a1)`: the 12-character revision, with ` modified` appended when the working tree has uncommitted changes. |
 | A build whose module version is `(devel)` but that carries VCS stamps | `bees dev (b24a0605c2a1)` — the 12-character commit, with ` modified` appended when the working tree was dirty. |
 | Built with `-ldflags "-X main.version=v1.2.3"` | `bees v1.2.3`. The override wins over everything else. |
 | A binary from a [GitHub release](releasing.md) | `bees v0.2.0` — the tag the release was cut from, stamped through that same override. |

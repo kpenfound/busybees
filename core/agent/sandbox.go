@@ -1,16 +1,9 @@
-package session
+package agent
 
 import (
 	"encoding/json"
 	"slices"
 )
-
-// ClaudeSandboxDomains are the hosts a session in config.SandboxClaude may
-// reach: GitHub, where the factory's work is, for `gh` and `git push` over
-// https. Nothing else resolves inside the box, so a module proxy, a package
-// registry or an ssh remote needs the project to widen the list through its
-// own .claude/settings.json, which Claude Code merges with this one.
-var ClaudeSandboxDomains = []string{"github.com", "*.github.com"}
 
 // sandboxFile is the copy of the settings block kept in the session
 // directory. Claude reads the block inline from --settings, not from this
@@ -20,8 +13,8 @@ var ClaudeSandboxDomains = []string{"github.com", "*.github.com"}
 // people reading the directory afterwards.
 const sandboxFile = "sandbox.json"
 
-// claudeSettings is the settings block bees passes with --settings for a
-// session in config.SandboxClaude. Every key is one Claude Code documents at
+// claudeSettings is the settings block the caller passes with --settings for a
+// session in SandboxClaude. Every key is one Claude Code documents at
 // https://code.claude.com/docs/en/sandboxing and was measured against Claude
 // Code 2.1.263 on macOS; the comments say what each one buys.
 type claudeSettings struct {
@@ -53,14 +46,14 @@ type claudeSandbox struct {
 	// the system's trust daemon, which Go programs need to verify a TLS
 	// certificate: without it `gh` fails every call with "x509: OSStatus
 	// -26276" under Seatbelt. It is a macOS key, written only there, and it
-	// is the one hole the box has that bees chose: Claude Code names the
+	// is the one hole the box has that the caller chose: Claude Code names the
 	// daemon a possible exfiltration channel.
 	EnableWeakerNetworkIsolation bool                 `json:"enableWeakerNetworkIsolation,omitempty"`
 	Network                      claudeSandboxNetwork `json:"network"`
 }
 
 type claudeSandboxNetwork struct {
-	// AllowedDomains is ClaudeSandboxDomains.
+	// AllowedDomains is domains.
 	AllowedDomains []string `json:"allowedDomains"`
 	// StrictAllowlist refuses a host outside the list instead of asking:
 	// with no one to answer, asking would refuse too, but refusing outright
@@ -83,9 +76,9 @@ type claudePermissions struct {
 
 // claudeSandboxSettings renders the settings block for a session whose MCP
 // servers are named in servers, on the operating system goos.
-func claudeSandboxSettings(servers []string, goos string) ([]byte, error) {
+func claudeSandboxSettings(servers []string, goos string, domains []string) ([]byte, error) {
 	allow := []string{"Bash", "Read"}
-	for _, d := range ClaudeSandboxDomains {
+	for _, d := range domains {
 		allow = append(allow, "WebFetch(domain:"+d+")")
 	}
 	for _, s := range slices.Sorted(slices.Values(servers)) {
@@ -99,7 +92,7 @@ func claudeSandboxSettings(servers []string, goos string) ([]byte, error) {
 			FailIfUnavailable:            true,
 			EnableWeakerNetworkIsolation: goos == "darwin",
 			Network: claudeSandboxNetwork{
-				AllowedDomains:  slices.Clone(ClaudeSandboxDomains),
+				AllowedDomains:  slices.Clone(domains),
 				StrictAllowlist: true,
 			},
 		},

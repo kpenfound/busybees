@@ -1,4 +1,4 @@
-package session
+package agent
 
 import (
 	"bufio"
@@ -6,78 +6,38 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"maps"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
-	"github.com/kpenfound/busybees/internal/config"
-	"github.com/kpenfound/busybees/internal/procs"
+	"github.com/kpenfound/busybees/core/agent/agentbin"
+	"github.com/kpenfound/busybees/core/agent/procs"
 )
 
-// A container session (config.SandboxContainer) runs the backend's command
-// line unchanged inside `docker run`, with these differences from a session
-// on the host:
+// A container session runs the backend command unchanged inside the engine.
+// The work directory, session directory, optional shared git metadata,
+// caller mounts and skill cache use host paths so references in prompts
+// also resolve in the container.
+// The container runs as the host user with a private tmpfs home. Environment
+// values reach the engine by name, never on its command line.
 //
-//   - The container sees three things of the host, each bind-mounted at its
-//     host path so every path in the prompts, the environment and mcp.json
-//     means the same inside: the worktree, the repository's .git (a linked
-//     worktree's .git file points into it, and commits write there) and the
-//     state directory (mail, notes, the session directory). A role with
-//     skills also gets the skills cache, read-only. Nothing else: no home
-//     directory, no other checkout, no credential store.
-//   - It runs as the host's user, with a HOME of its own on a tmpfs.
-//   - Its environment is built from nothing rather than from the host's:
-//     the role's env and shell, the BEES_* variables, the [github] token
-//     and git identity, the git configuration a session runs with, the
-//     agent's own credential forwarded from the host (config.AgentCredentials)
-//     and that HOME. Values are handed to the engine by name, never on its
-//     command line.
-//   - The bees binary is not in the container, so the built-in MCP server
-//     runs on the host — `bees mcp serve --listen`, with the environment a
-//     session on the host would have given it — and the session reaches it
-//     over HTTP at containerHostAlias with a bearer token of its own; the
-//     `bees` commands are not available inside. A configured stdio MCP
-//     server starts inside the container and must be in the image; a
-//     remote one is reached as configured.
-//   - The engine writes the container's id to procs.ContainerIDFile in the
-//     session directory, and the container is named after the session and
-//     labelled with procs.ContainerLabel, so `bees kill` and the live
-//     view's kill key can find it. Stopping the session removes the
-//     container. The server's pid goes to procs.ServerPIDFile beside it,
-//     because the server is in a process group of its own and a crash that
-//     skips close leaves it running otherwise. Both files are removed when
-//     the session ends.
-//
-// The image — sandbox_image, or the one built from the role's
-// container_use_environment (containeruse.go) — must hold the agent, git
-// and gh; nothing of the host's toolchain is available inside.
-
-// containerHome is the session's home directory inside the container: a
-// tmpfs, so neither the image's home directory nor anything of the host's
-// reaches the session, and nothing the agent writes under ~ survives it.
-const containerHome = "/home/bees"
+// When HostMCP is supplied, its server runs in a separate host process group
+// and the container receives an HTTP entry with a per-session bearer token.
+// The engine writes a container id, and the runner records the host server PID
+// beside it so orphan cleanup can remove both after a crash.
 
 // containerHostAlias is the name the container reaches the host by. Docker
 // Desktop resolves it on its own; on Linux the container is started with
 // --add-host so it does.
 const containerHostAlias = "host.docker.internal"
-
-// containerGitConfig is added to gitConfig for a session in a container.
-// The mounted repository is owned by the host's user, which the container's
-// may not be, so it is trusted explicitly; and the container has no ssh
-// keys or agent, so an ssh remote is pushed to over https, where the
-// [github] token works.
-var containerGitConfig = []envVar{
-	{"safe.directory", "*"},
-	{"url.https://github.com/.insteadOf", "git@github.com:"},
-	{"url.https://github.com/.insteadOf", "ssh://git@github.com/"},
-}
 
 // hostOS, hostUID and hostGID describe the machine to the container code,
 // as variables so a test can describe one it is not running on.
@@ -87,21 +47,21 @@ var (
 	hostGID = os.Getgid
 )
 
-// serverStart is how long the built-in server has to report its address.
+// serverStart is how long the caller-supplied server has to report its address.
 const serverStart = 15 * time.Second
 
 // container is one session's box: the engine command that runs it, the
-// built-in server on the host it talks to, and what it is given.
+// caller-supplied server on the host it talks to, and what it is given.
 type container struct {
 	r          *Runner
 	req        Request
 	sessionDir string
-	// name is the container's name (bees-<session name>-<random>).
+	// name is the container's name (<name prefix><session name>-<random>).
 	name string
 	// image is what the container runs: the role's sandbox_image, or the
 	// image built from its container_use_environment.
 	image string
-	// server is the built-in MCP server on the host, and builtin the entry
+	// server is the caller-supplied MCP server on the host, and builtin the entry
 	// the session reaches it through.
 	server  *exec.Cmd
 	builtin MCPEntry
@@ -112,13 +72,13 @@ type container struct {
 // startContainer prepares a container session: it settles the image
 // (building it from the role's container_use_environment when that is set,
 // before anything else starts, so a failed build leaves nothing to stop),
-// starts the built-in server on the host and builds the session's
-// environment. Run has already asked config.CheckSandboxContainer what the
+// starts the caller-supplied server on the host and builds the session's
+// environment. Run has already asked Profile.Validate what the
 // box needs. The container itself is started by Run, through command;
 // close stops the server.
 func (r *Runner) startContainer(ctx context.Context, req Request, sessionDir string) (*container, error) {
-	c := &container{r: r, req: req, sessionDir: sessionDir, name: "bees-" + sanitize(req.Name) + "-" + randomHex(4), image: req.Role.SandboxImage}
-	if req.Role.ContainerUseEnvironment != "" {
+	c := &container{r: r, req: req, sessionDir: sessionDir, name: r.namePrefix() + sanitize(req.Name) + "-" + randomHex(4), image: req.Profile.SandboxImage}
+	if req.Profile.ContainerUseEnvironment != "" {
 		image, err := r.containerUseImage(ctx, req, sessionDir)
 		if err != nil {
 			return nil, err
@@ -126,13 +86,15 @@ func (r *Runner) startContainer(ctx context.Context, req Request, sessionDir str
 		c.image = image
 	}
 	c.vars = r.containerVars(req, sessionDir)
-	if err := c.startServer(ctx); err != nil {
-		return nil, err
+	if req.HostMCP != nil {
+		if err := c.startServer(ctx); err != nil {
+			return nil, err
+		}
 	}
 	return c, nil
 }
 
-// startServer runs `bees mcp serve --listen` on the host with the
+// startServer runs the caller HTTP server on the host with the
 // environment a session on the host would have started it with, reads the
 // address it reports, and builds the entry the session reaches it by: the
 // host's alias, the port, and a token this session alone holds.
@@ -143,9 +105,20 @@ func (c *container) startServer(ctx context.Context) error {
 		return err
 	}
 	token := randomHex(32)
-	cmd := exec.Command(r.beesBin(), "mcp", "serve", "--listen", addr)
+	h := c.req.HostMCP
+	args := append(slices.Clone(h.Entry.Args), h.ListenArgs...)
+	args = append(args, addr)
+	cmd := agentbin.CommandContext(context.Background(), h.Entry.Command, args...)
 	cmd.Dir = c.req.WorkDir
-	cmd.Env = append(r.env(c.req, c.sessionDir), EnvMCPToken+"="+token)
+	serverReq := c.req
+	if h.Env != nil {
+		serverReq.Env = h.Env
+	}
+	cmd.Env = r.env(serverReq, c.sessionDir)
+	for _, key := range slices.Sorted(maps.Keys(h.Entry.Env)) {
+		cmd.Env = append(cmd.Env, key+"="+h.Entry.Env[key])
+	}
+	cmd.Env = append(cmd.Env, h.TokenEnv+"="+token)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stderr, err := os.Create(filepath.Join(c.sessionDir, "mcp-server.log"))
 	if err != nil {
@@ -163,7 +136,7 @@ func (c *container) startServer(ctx context.Context) error {
 	c.server = cmd
 	// The server is in a process group of its own, outside the session's
 	// and outside this process's, so nothing finds it once this process is
-	// gone. Recording its pid is what lets `bees kill` reap it after a
+	// gone. Recording its pid is what lets orphan cleanup reap it after a
 	// crash; close removes the file again.
 	if err := procs.WriteServerPID(c.sessionDir, cmd.Process.Pid); err != nil {
 		c.close()
@@ -183,7 +156,7 @@ func (c *container) startServer(ctx context.Context) error {
 	case <-time.After(serverStart):
 	case <-ctx.Done():
 	}
-	reported, ok := strings.CutPrefix(listening, MCPListening)
+	reported, ok := strings.CutPrefix(listening, h.ListeningPrefix)
 	if !ok {
 		c.close()
 		return fmt.Errorf("the built-in MCP server did not report its address (got %q); see %s", listening, filepath.Join(c.sessionDir, "mcp-server.log"))
@@ -193,15 +166,16 @@ func (c *container) startServer(ctx context.Context) error {
 		c.close()
 		return fmt.Errorf("the built-in MCP server reported %q: %w", reported, err)
 	}
+	c.vars = append(c.vars, envVar{h.TokenEnv, token})
 	c.builtin = MCPEntry{
-		Type:    "http",
-		URL:     "http://" + net.JoinHostPort(containerHostAlias, port) + "/mcp",
-		Headers: map[string]string{"Authorization": "Bearer " + token},
+		Type:           "http",
+		URL:            "http://" + net.JoinHostPort(containerHostAlias, port) + h.Path,
+		BearerTokenEnv: h.TokenEnv,
 	}
 	return nil
 }
 
-// containerListen is the address the built-in server listens on for a
+// containerListen is the address the caller-supplied server listens on for a
 // container session: ContainerListen when set, else the loopback on macOS,
 // which Docker Desktop's host alias reaches, and the bridge gateway on
 // Linux, which is the address the host alias resolves to there and the one
@@ -215,45 +189,42 @@ func (r *Runner) containerListen(ctx context.Context) (string, error) {
 	case "darwin":
 		return "127.0.0.1:0", nil
 	case "linux":
-		out, err := exec.CommandContext(ctx, r.dockerBin(), "network", "inspect", "bridge", "--format", "{{(index .IPAM.Config 0).Gateway}}").Output()
+		out, err := agentbin.CommandContext(ctx, r.dockerBin(), "network", "inspect", "bridge", "--format", "{{(index .IPAM.Config 0).Gateway}}").Output()
 		if err != nil {
-			return "", fmt.Errorf("find the address the container reaches the host by (%s network inspect bridge): %w", config.ContainerEngine, err)
+			return "", fmt.Errorf("find the address the container reaches the host by (%s network inspect bridge): %w", ContainerEngine, err)
 		}
 		gw := strings.TrimSpace(string(out))
 		if net.ParseIP(gw) == nil {
-			return "", fmt.Errorf("%s network inspect bridge reported %q, not an address", config.ContainerEngine, gw)
+			return "", fmt.Errorf("%s network inspect bridge reported %q, not an address", ContainerEngine, gw)
 		}
 		return net.JoinHostPort(gw, "0"), nil
 	default:
-		return "", fmt.Errorf("sandbox %q runs on macOS and Linux only, not %s", config.SandboxContainer, hostOS)
+		return "", fmt.Errorf("sandbox %q runs on macOS and Linux only, not %s", SandboxContainer, hostOS)
 	}
 }
 
 // containerVars is the session's environment inside the container, built
-// from nothing: the host's variables stay on the host. BEES_BIN is left
-// out because the binary is not inside, and HOME is the tmpfs the container
-// is given.
+// from nothing: only backend credentials and caller-supplied context are
+// forwarded. HOME is the private tmpfs the container is given.
 func (r *Runner) containerVars(req Request, sessionDir string) []envVar {
 	var vars []envVar
-	agent := req.Role.Agent
+	agent := req.Profile.Agent
 	if agent == "" {
-		agent = config.AgentClaude
+		agent = AgentClaude
 	}
 	// The agent's own credential, forwarded from the host when it is
 	// there: inside there is no keychain to hold one. Set before the
 	// role's env so a role can name a different one.
-	for _, name := range config.AgentCredentials[agent] {
+	for _, name := range AgentCredentials[agent] {
 		if v := os.Getenv(name); v != "" {
 			vars = append(vars, envVar{name, v})
 		}
 	}
-	for _, v := range r.sessionVars(req, sessionDir) {
-		if v.name != EnvBin {
-			vars = append(vars, v)
-		}
+	vars = append(vars, r.sessionVars(req, sessionDir)...)
+	for _, k := range slices.Sorted(maps.Keys(req.ContainerEnv)) {
+		vars = append(vars, envVar{k, req.ContainerEnv[k]})
 	}
-	vars = append(vars, gitConfigVars(append(r.gitConfig(), containerGitConfig...))...)
-	vars = append(vars, envVar{"HOME", containerHome})
+	vars = append(vars, envVar{"HOME", r.containerHome()})
 	return vars
 }
 
@@ -269,9 +240,9 @@ func (c *container) command(ctx context.Context, bin string, args []string) (str
 		"run", "--rm", "--interactive",
 		"--name", c.name,
 		"--cidfile", filepath.Join(c.sessionDir, procs.ContainerIDFile),
-		"--label", procs.ContainerLabel + "=" + c.sessionDir,
+		"--label", r.containerLabel() + "=" + c.sessionDir,
 		"--workdir", req.WorkDir,
-		"--mount", "type=tmpfs,destination=" + containerHome + ",tmpfs-mode=1777",
+		"--mount", "type=tmpfs,destination=" + r.containerHome() + ",tmpfs-mode=1777",
 	}
 	mounts, err := c.mounts(ctx)
 	if err != nil {
@@ -308,10 +279,11 @@ func (c *container) command(ctx context.Context, bin string, args []string) (str
 // A path that goes through a symbolic link is mounted at its real path as
 // well: git records real paths in a linked worktree's pointers (on macOS
 // the temp directory the worktrees live under is one, /var -> /private/var),
-// while the prompts and the environment name the path as bees knows it,
+// while the prompts and the environment name the path as the caller knows it,
 // and both must resolve inside.
 func (c *container) mounts(ctx context.Context) ([]string, error) {
 	r, req := c.r, c.req
+	destinations := map[string]bool{}
 	bind := func(path string, ro bool) []string {
 		var out []string
 		dests := []string{path}
@@ -319,6 +291,10 @@ func (c *container) mounts(ctx context.Context) ([]string, error) {
 			dests = append(dests, real)
 		}
 		for _, dst := range dests {
+			if destinations[dst] {
+				continue
+			}
+			destinations[dst] = true
 			spec := "type=bind,source=" + path + ",destination=" + dst
 			if ro {
 				spec += ",readonly"
@@ -329,14 +305,34 @@ func (c *container) mounts(ctx context.Context) ([]string, error) {
 	}
 	var out []string
 	out = append(out, bind(req.WorkDir, false)...)
-	if gitDir, err := commonGitDir(ctx, req.WorkDir); err == nil && !within(gitDir, req.WorkDir) {
+	if gitDir, err := commonGitDir(ctx, req.WorkDir); req.Profile.VCSAccess && err == nil && !within(gitDir, req.WorkDir) {
 		out = append(out, bind(gitDir, false)...)
 	}
-	if r.StateDir != "" {
-		out = append(out, bind(r.StateDir, false)...)
+	for _, dir := range r.MountDirs {
+		out = append(out, bind(dir, false)...)
 	}
-	if r.Skills != nil && len(req.Role.Skills) > 0 {
-		out = append(out, bind(r.Skills.CacheDir, true)...)
+	// Generated prompts and configuration must be reachable even when the
+	// caller keeps session artifacts outside the work directory.
+	covered := func(path string) bool {
+		for dir := range destinations {
+			// Compare actual container paths: mounting a target does not
+			// expose an alias, nor does mounting an alias's parent expose
+			// a target outside that parent.
+			rel, err := filepath.Rel(dir, path)
+			if err == nil && rel != ".." && !strings.HasPrefix(rel, "../") {
+				return true
+			}
+		}
+		return false
+	}
+	real, _ := filepath.EvalSymlinks(c.sessionDir)
+	if c.sessionDir != "" && (!covered(c.sessionDir) || (real != "" && !covered(real))) {
+		out = append(out, bind(c.sessionDir, false)...)
+	}
+	if r.Skills != nil && len(req.Profile.Skills) > 0 {
+		for _, dir := range r.SkillMountDirs {
+			out = append(out, bind(dir, true)...)
+		}
 	}
 	return out, nil
 }
@@ -370,7 +366,7 @@ func within(path, dir string) bool {
 // with the session's variables laid over it so the engine reads their
 // values by name. Each name appears once, holding the value set last: the
 // engine reads a name's first occurrence, and a role's env must not win
-// over bees' own variables here when it does not on the host. HOME is the
+// over the caller's own variables here when it does not on the host. HOME is the
 // exception (see command).
 func (c *container) clientEnv() []string {
 	vars := dedupe(c.vars)
@@ -382,7 +378,7 @@ func (c *container) clientEnv() []string {
 		names[v.name] = true
 	}
 	var env []string
-	for _, kv := range hostEnv() {
+	for _, kv := range hostEnv(c.r.EnvironmentPrefix) {
 		name, _, _ := strings.Cut(kv, "=")
 		if !names[name] {
 			env = append(env, kv)
@@ -418,10 +414,10 @@ func dedupe(vars []envVar) []envVar {
 func (c *container) remove() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	_ = exec.CommandContext(ctx, c.r.dockerBin(), "rm", "--force", c.name).Run()
+	_ = agentbin.CommandContext(ctx, c.r.dockerBin(), "rm", "--force", c.name).Run()
 }
 
-// close stops the built-in server and forgets the container id and the
+// close stops the caller-supplied server and forgets the container id and the
 // server's pid: the container is gone (--rm) or removed, and the server has
 // been killed, so neither record has anything left to point at.
 func (c *container) close() {
@@ -438,18 +434,14 @@ func (r *Runner) dockerBin() string {
 	if r.DockerBin != "" {
 		return r.DockerBin
 	}
-	return config.ContainerEngine
+	return ContainerEngine
 }
 
-// beesBin is the bees executable: BeesBin, else this very binary.
-func (r *Runner) beesBin() string {
-	if r.BeesBin != "" {
-		return r.BeesBin
+func (r *Runner) containerHome() string {
+	if r.ContainerHome != "" {
+		return r.ContainerHome
 	}
-	if self, err := os.Executable(); err == nil {
-		return self
-	}
-	return "bees"
+	return "/home/agent"
 }
 
 func randomHex(n int) string {

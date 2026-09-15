@@ -13,42 +13,42 @@ import (
 	"time"
 )
 
-// psLine renders a process table line the way a bees session appears: the
+// psLine renders a process table line the way a agent session appears: the
 // session marker plus the system prompt path that attributes it to a
 // factory's sessions directory.
 func psLine(pid, pgid int, sessionsDir, name string) string {
-	return fmt.Sprintf("  %d   %d /usr/local/bin/claude -p --append-system-prompt-file %s/20260829-%s/system-prompt.md --name bees-%s",
+	return fmt.Sprintf("  %d   %d /usr/local/bin/claude -p --append-system-prompt-file %s/20260829-%s/system-prompt.md --name agent-%s",
 		pid, pgid, sessionsDir, name, name)
 }
 
 func TestParsePS(t *testing.T) {
-	scope := "/a/.bees/sessions"
+	scope := "/a/.agent/sessions"
 	text := strings.Join([]string{
 		psLine(100, 100, scope, "developer-issue-1-r1"),
 		"  101   100 npx -y some-mcp",
-		"  200   200 bees kill",
-		"  300   300 vim --name bees-foo.txt",
-		"  400   400 claude --add-dir /a/.bees --append-system-prompt-file /a/.bees/sessions/20260829-qa/system-prompt.md --name bees-qa-0829",
-		"  500   500 /bin/zsh -c ./claude -p --append-system-prompt-file /a/.bees/sessions/20260829-x/system-prompt.md --name bees-x",
-		"  600   600 claude-desktop --append-system-prompt-file /a/.bees/sessions/20260829-x/system-prompt.md --name bees-x",
-		"  700   700 /usr/bin/node /opt/claude/bin/claude -p --append-system-prompt-file /a/.bees/sessions/20260829-reviewer-pr-3/system-prompt.md --name bees-reviewer-pr-3",
+		"  200   200 agent kill",
+		"  300   300 vim --name agent-foo.txt",
+		"  400   400 claude --add-dir /a/.agent --append-system-prompt-file /a/.agent/sessions/20260829-qa/system-prompt.md --name agent-qa-0829",
+		"  500   500 /bin/zsh -c ./claude -p --append-system-prompt-file /a/.agent/sessions/20260829-x/system-prompt.md --name agent-x",
+		"  600   600 claude-desktop --append-system-prompt-file /a/.agent/sessions/20260829-x/system-prompt.md --name agent-x",
+		"  700   700 /usr/bin/node /opt/claude/bin/claude -p --append-system-prompt-file /a/.agent/sessions/20260829-reviewer-pr-3/system-prompt.md --name agent-reviewer-pr-3",
 		// Another project's factory, and a sibling directory of this one.
-		psLine(800, 800, "/b/.bees/sessions", "developer-issue-9-r1"),
-		psLine(900, 900, "/a/.bees/sessions-old", "developer-issue-2-r1"),
+		psLine(800, 800, "/b/.agent/sessions", "developer-issue-9-r1"),
+		psLine(900, 900, "/a/.agent/sessions-old", "developer-issue-2-r1"),
 		// This factory, but with no pid file: an orphan of a crashed run.
 		psLine(1000, 1000, scope, "developer-issue-3-r1"),
 		// A codex session: no --name, marked and scoped by the override that
 		// hands the built-in MCP server the session directory.
-		`  1100   1100 /usr/local/bin/codex exec --json -c mcp_servers.bees.env.BEES_SESSION_DIR="/a/.bees/sessions/20260829-developer-issue-4-r1" -`,
+		`  1100   1100 /usr/local/bin/codex exec --json -c mcp_servers.agent.env.AGENT_SESSION_DIR="/a/.agent/sessions/20260829-developer-issue-4-r1" -`,
 		// The same override on another factory's codex session, and on a
 		// process that is not codex at all.
-		`  1200   1200 codex exec --json -c mcp_servers.bees.env.BEES_SESSION_DIR="/b/.bees/sessions/20260829-developer-issue-4-r1" -`,
-		`  1300   1300 grep mcp_servers.bees.env.BEES_SESSION_DIR=/a/.bees/sessions/20260829-developer-issue-4-r1`,
+		`  1200   1200 codex exec --json -c mcp_servers.agent.env.AGENT_SESSION_DIR="/b/.agent/sessions/20260829-developer-issue-4-r1" -`,
+		`  1300   1300 grep mcp_servers.agent.env.AGENT_SESSION_DIR=/a/.agent/sessions/20260829-developer-issue-4-r1`,
 		// An opencode session: no --name and no session-directory override in
 		// its argv (it gets one through OPENCODE_CONFIG, an environment
 		// variable the ps scan cannot see), so it carries no marker and is
 		// never matched. It is found through its pid file alone.
-		`  1400   1400 opencode run --format json --auto --title bees-developer-issue-5-r1`,
+		`  1400   1400 opencode run --format json --auto --title agent-developer-issue-5-r1`,
 	}, "\n") + "\n"
 
 	got := parsePS(text, 300, scope)
@@ -75,7 +75,7 @@ func TestParsePSResolvesSymlinkedScope(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(real, "sessions"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// What the session's argv carries when bees run resolved the path
+	// What the session's argv carries when agent run resolved the path
 	// itself (on macOS /var/… is reported as /private/var/…).
 	resolved, err := filepath.EvalSymlinks(linked)
 	if err != nil {
@@ -98,7 +98,7 @@ func TestParsePSResolvesSymlinkedScope(t *testing.T) {
 
 // An empty scope attributes nothing, rather than matching every path.
 func TestParsePSWithoutScopeMatchesNothing(t *testing.T) {
-	if got := parsePS(psLine(100, 100, "/a/.bees/sessions", "qa")+"\n", 1, ""); len(got) != 0 {
+	if got := parsePS(psLine(100, 100, "/a/.agent/sessions", "qa")+"\n", 1, ""); len(got) != 0 {
 		t.Fatalf("empty scope: %+v", got)
 	}
 }

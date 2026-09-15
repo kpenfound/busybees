@@ -1,4 +1,4 @@
-package session
+package agent
 
 import (
 	"context"
@@ -10,8 +10,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/kpenfound/busybees/internal/config"
 )
 
 // fakeOpenCode writes a shell script standing in for the opencode binary.
@@ -26,8 +24,8 @@ func fakeOpenCode(t *testing.T, body string) string {
 }
 
 // opencodeRole is a role resolved with agent = "opencode".
-func opencodeRole(model string) config.ResolvedRole {
-	return config.ResolvedRole{Name: "developer", Agent: config.AgentOpenCode, Model: model, MaxTurns: 10, Timeout: time.Minute}
+func opencodeRole(model string) Profile {
+	return Profile{Name: "builder", Agent: AgentOpenCode, Model: model, MaxTurns: 10, Timeout: time.Minute}
 }
 
 // TestOpenCodeRunSuccess covers a session of a role whose agent is
@@ -39,9 +37,9 @@ func opencodeRole(model string) config.ResolvedRole {
 // summed cost off opencode's event stream.
 func TestOpenCodeRunSuccess(t *testing.T) {
 	bin := fakeOpenCode(t, `
-printf '%s\n' "$@" > "$BEES_SESSION_DIR/args.txt"
-cat > "$BEES_SESSION_DIR/stdin.txt"
-env > "$BEES_SESSION_DIR/env.txt"
+printf '%s\n' "$@" > "$TASK_SESSION_DIR/args.txt"
+cat > "$TASK_SESSION_DIR/stdin.txt"
+env > "$TASK_SESSION_DIR/env.txt"
 echo '{"type":"step_start","timestamp":1,"sessionID":"ses_1","part":{"type":"step-start"}}'
 echo '{"type":"tool_use","timestamp":2,"sessionID":"ses_1","part":{"type":"tool","tool":"bash","state":{"status":"completed"}}}'
 echo '{"type":"step_finish","timestamp":3,"sessionID":"ses_1","part":{"type":"step-finish","reason":"tool-calls","cost":0.25,"tokens":{"input":1,"output":1}}}'
@@ -49,7 +47,7 @@ echo '{"type":"text","timestamp":4,"sessionID":"ses_1","part":{"type":"text","te
 echo '{"type":"step_finish","timestamp":5,"sessionID":"ses_1","part":{"type":"step-finish","reason":"tool-calls","cost":0.5}}'
 echo '{"type":"text","timestamp":6,"sessionID":"ses_1","part":{"type":"text","text":"all done"}}'
 echo '{"type":"step_finish","timestamp":7,"sessionID":"ses_1","part":{"type":"step-finish","reason":"stop","cost":0.25}}'
-printf '{"status":"pr-opened","pr":12,"note":"hi"}' > "$BEES_SESSION_DIR/outcome.json"
+printf '{"status":"submitted","pr":12,"note":"hi"}' > "$TASK_SESSION_DIR/outcome.json"
 `)
 	r := newRunner(t, "")
 	r.OpenCodeBin = bin
@@ -57,11 +55,11 @@ printf '{"status":"pr-opened","pr":12,"note":"hi"}' > "$BEES_SESSION_DIR/outcome
 	role.FallbackModel = "sonnet"
 	role.Effort = "max"
 	role.AllowedTools = []string{"Bash"}
-	role.MCP = map[string]config.MCPServer{
+	role.MCP = map[string]MCPEntry{
 		"x":      {Command: "srv", Args: []string{"--port", "1"}, Env: map[string]string{"K": "$HOME"}},
 		"remote": {URL: "https://x.example/mcp", Headers: map[string]string{"Authorization": "Bearer t"}},
 	}
-	res, err := r.Run(context.Background(), Request{Name: "o1", Role: role, WorkDir: t.TempDir(), SystemPrompt: "SYS", Prompt: "TASK", Env: map[string]string{EnvIssue: "12"}})
+	res, err := r.Run(context.Background(), Request{Name: "o1", Profile: role, WorkDir: t.TempDir(), SystemPrompt: "SYS", Prompt: "TASK", Env: map[string]string{EnvIssue: "12"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +69,7 @@ printf '{"status":"pr-opened","pr":12,"note":"hi"}' > "$BEES_SESSION_DIR/outcome
 	if !res.CostKnown || res.CostUSD != 1 {
 		t.Errorf("cost: known %v, %v; want the steps' sum, 1", res.CostKnown, res.CostUSD)
 	}
-	if !res.HasOutcome || res.Outcome.Status != "pr-opened" || res.Outcome.PR != 12 {
+	if !res.HasOutcome || res.Outcome.Status != "submitted" || res.Outcome.PR != 12 {
 		t.Fatalf("outcome: %+v", res.Outcome)
 	}
 	b, _ := os.ReadFile(filepath.Join(res.SessionDir, "args.txt"))
@@ -79,7 +77,7 @@ printf '{"status":"pr-opened","pr":12,"note":"hi"}' > "$BEES_SESSION_DIR/outcome
 	if head := strings.Join(args[:4], " "); head != "run --format json --auto" {
 		t.Errorf("args start %q", head)
 	}
-	for _, want := range [][2]string{{"--title", "bees-o1"}, {"--model", "ollama/llama3"}} {
+	for _, want := range [][2]string{{"--title", "task-o1"}, {"--model", "ollama/llama3"}} {
 		if i := slices.Index(args, want[0]); i < 0 || i+1 >= len(args) || args[i+1] != want[1] {
 			t.Errorf("args missing %s %s:\n%s", want[0], want[1], b)
 		}
@@ -106,7 +104,7 @@ printf '{"status":"pr-opened","pr":12,"note":"hi"}' > "$BEES_SESSION_DIR/outcome
 	// system prompt as an instruction and both kinds of server.
 	env, _ := os.ReadFile(filepath.Join(res.SessionDir, "env.txt"))
 	configPath := filepath.Join(res.SessionDir, OpenCodeConfigFile)
-	for _, want := range []string{EnvOpenCodeConfig + "=" + configPath, "BEES_ROLE=developer", "BEES_STATE_DIR=/state", "BEES_ISSUE=12", "BEES_BIN=/usr/local/bin/bees"} {
+	for _, want := range []string{EnvOpenCodeConfig + "=" + configPath, "TASK_ROLE=builder", "TASK_STATE_DIR=/state", "TASK_ISSUE=12", "TASK_BIN=/usr/local/bin/task"} {
 		if !strings.Contains(string(env), want+"\n") {
 			t.Errorf("env missing %s", want)
 		}
@@ -133,13 +131,13 @@ printf '{"status":"pr-opened","pr":12,"note":"hi"}' > "$BEES_SESSION_DIR/outcome
 	if len(cfg.MCP) != 3 {
 		t.Errorf("opencode.json names %d servers, want 3:\n%s", len(cfg.MCP), cb)
 	}
-	bees := cfg.MCP["bees"]
-	if bees.Type != "local" || !slices.Equal(bees.Command, []string{"/usr/local/bin/bees", "mcp", "serve"}) || !bees.Enabled {
-		t.Errorf("built-in server: %+v", bees)
+	task := cfg.MCP["tools"]
+	if task.Type != "local" || !slices.Equal(task.Command, []string{"/usr/local/bin/task", "mcp", "serve"}) || !task.Enabled {
+		t.Errorf("built-in server: %+v", task)
 	}
-	for k, want := range map[string]string{"BEES_ROLE": "developer", "BEES_SESSION_DIR": res.SessionDir, "BEES_ISSUE": "12"} {
-		if bees.Environment[k] != want {
-			t.Errorf("built-in server environment %s = %q, want %q", k, bees.Environment[k], want)
+	for k, want := range map[string]string{"TASK_ROLE": "builder", "TASK_SESSION_DIR": res.SessionDir, "TASK_ISSUE": "12"} {
+		if task.Environment[k] != want {
+			t.Errorf("built-in server environment %s = %q, want %q", k, task.Environment[k], want)
 		}
 	}
 	if x := cfg.MCP["x"]; x.Type != "local" || !slices.Equal(x.Command, []string{"srv", "--port", "1"}) || x.Environment["K"] != os.Getenv("HOME") {
@@ -170,12 +168,12 @@ printf '{"status":"pr-opened","pr":12,"note":"hi"}' > "$BEES_SESSION_DIR/outcome
 // a local model's zero cost is a known cost, not an unknown one.
 func TestOpenCodeLeavesTheModelToOpenCodeWhenUnset(t *testing.T) {
 	bin := fakeOpenCode(t, `
-printf '%s\n' "$@" > "$BEES_SESSION_DIR/args.txt"
+printf '%s\n' "$@" > "$TASK_SESSION_DIR/args.txt"
 echo '{"type":"step_finish","timestamp":1,"sessionID":"ses_2","part":{"type":"step-finish","reason":"stop","cost":0}}'
 `)
 	r := newRunner(t, "")
 	r.OpenCodeBin = bin
-	res, err := r.Run(context.Background(), Request{Name: "o2", Role: opencodeRole(""), WorkDir: t.TempDir(), Prompt: "TASK"})
+	res, err := r.Run(context.Background(), Request{Name: "o2", Profile: opencodeRole(""), WorkDir: t.TempDir(), Prompt: "TASK"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +235,7 @@ echo '{"type":"step_finish","sessionID":"ses_3","part":{"type":"step-finish","re
 			bin := fakeOpenCode(t, tc.events+"exit "+strconv.Itoa(tc.exit)+"\n")
 			r := newRunner(t, "")
 			r.OpenCodeBin = bin
-			res, err := r.Run(context.Background(), Request{Name: "o3", Role: opencodeRole(""), WorkDir: t.TempDir(), Prompt: "TASK"})
+			res, err := r.Run(context.Background(), Request{Name: "o3", Profile: opencodeRole(""), WorkDir: t.TempDir(), Prompt: "TASK"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -266,13 +264,13 @@ echo '{"type":"step_finish","sessionID":"ses_4","part":{"type":"step-finish","re
 `)
 	r := newRunner(t, "")
 	r.OpenCodeBin = bin
-	res, err := r.Run(context.Background(), Request{Name: "o4", Role: opencodeRole(""), WorkDir: t.TempDir(), Prompt: "TASK"})
+	res, err := r.Run(context.Background(), Request{Name: "o4", Profile: opencodeRole(""), WorkDir: t.TempDir(), Prompt: "TASK"})
 	if err != nil {
 		t.Fatal(err)
 	}
-if res.IsError || res.ErrorSubtype != "" || res.NumTurns != 2 || !res.CostKnown || res.CostUSD != 0.2 || res.ResultText != "half way" {
+	if res.IsError || res.ErrorSubtype != "" || res.NumTurns != 2 || !res.CostKnown || res.CostUSD != 0.2 || res.ResultText != "half way" {
 		t.Fatalf("result: %+v", res)
-		}
+	}
 }
 
 // TestOpenCodeCommandResumes: a request naming a session to resume passes
@@ -280,10 +278,10 @@ if res.IsError || res.ErrorSubtype != "" || res.NumTurns != 2 || !res.CostKnown 
 // changes; a fresh request passes no --session.
 func TestOpenCodeCommandResumes(t *testing.T) {
 	r := newRunner(t, "")
-	paths := sessionPaths{dir: t.TempDir(), systemPrompt: "/s/system-prompt.md", mcp: map[string]MCPEntry{config.BuiltinMCPServer: {Command: "bees", Args: []string{"mcp", "serve"}}}}
+	paths := sessionPaths{dir: t.TempDir(), systemPrompt: "/s/system-prompt.md", mcp: map[string]MCPEntry{"tools": {Command: "task", Args: []string{"mcp", "serve"}}}}
 	var got [][]string
 	for _, id := range []string{"", "ses_abc"} {
-		_, args, stdin, env, err := opencodeBackend{}.command(context.Background(), r, Request{Name: "n", Role: opencodeRole("m"), SystemPrompt: "SYS", Prompt: "TASK", ResumeID: id}, paths)
+		_, args, stdin, env, err := opencodeBackend{}.command(context.Background(), r.Runner, Request{Name: "n", Profile: opencodeRole("m"), SystemPrompt: "SYS", Prompt: "TASK", ResumeID: id}, paths)
 		if err != nil {
 			t.Fatal(err)
 		}
