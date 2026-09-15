@@ -217,7 +217,7 @@ func (s *Scheduler) runRequestedReview(ctx context.Context, pr github.PR, w *sta
 	}
 	name := fmt.Sprintf("reviewer-requested-pr-%d", pr.Number)
 	// The review itself (review.go), then the session that posts it.
-	found, _, err := s.runReview(ctx, log, freshPR, ws.RepoDir, name, 0)
+	found, _, err := s.runReview(ctx, log, freshPR, ws.RepoDir, name, 0, s.sizeOf(freshPR.Labels))
 	if err != nil {
 		return err
 	}

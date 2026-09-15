@@ -3,19 +3,20 @@ package config
 import "maps"
 
 // View is the resolved configuration as printed by `bees config show`. Its
-// JSON field names are the bees.toml key names, so what the command prints can
-// be matched against what the user wrote, and durations render as duration
+// JSON field names follow bees.toml, with profiles_by_size showing each size
+// override as resolved agent settings. Durations render as duration
 // strings ("45m0s") rather than nanoseconds.
 type View struct {
-	Path      string              `json:"path"`
-	Version   int                 `json:"version"`
-	Project   Project             `json:"project"`
-	Filter    FilterView          `json:"filter"`
-	GitHub    GitHubView          `json:"github"`
-	Scheduler Scheduler           `json:"scheduler"`
-	Logging   Logging             `json:"logging"`
-	Notes     Notes               `json:"notes"`
-	Roles     map[string]RoleView `json:"roles"`
+	Path      string                  `json:"path"`
+	Version   int                     `json:"version"`
+	Project   Project                 `json:"project"`
+	Filter    FilterView              `json:"filter"`
+	GitHub    GitHubView              `json:"github"`
+	Scheduler Scheduler               `json:"scheduler"`
+	Logging   Logging                 `json:"logging"`
+	Notes     Notes                   `json:"notes"`
+	Roles     map[string]RoleView     `json:"roles"`
+	Profiles  map[string]AgentProfile `json:"profiles"`
 }
 
 // FilterView is [filter] with require_label resolved to the bool the factory
@@ -62,16 +63,18 @@ type RoleView struct {
 	SandboxImage            string               `json:"sandbox_image"`
 	ContainerUseEnvironment string               `json:"container_use_environment"`
 
-	// CommitFlags, MaxSize, ModelBySize and the best-of-N and
+	// ProfilesBySize describes the effective size overrides for every role.
+	ProfilesBySize map[string]AgentProfile `json:"profiles_by_size"`
+
+	// CommitFlags, MaxSize and the best-of-N and
 	// mixture-of-experts keys are only set on the developer.
-	CommitFlags     *string            `json:"commit_flags,omitempty"`
-	MaxSize         *string            `json:"max_size,omitempty"`
-	ModelBySize     *map[string]string `json:"model_by_size,omitempty"`
-	BestOfNBySize   *map[string]int    `json:"best_of_n_by_size,omitempty"`
-	BestOfNModel    *string            `json:"best_of_n_model,omitempty"`
-	BestOfNPrompt   *string            `json:"best_of_n_prompt,omitempty"`
-	AssemblerModel  *string            `json:"assembler_model,omitempty"`
-	AssemblerPrompt *string            `json:"assembler_prompt,omitempty"`
+	CommitFlags     *string         `json:"commit_flags,omitempty"`
+	MaxSize         *string         `json:"max_size,omitempty"`
+	BestOfNBySize   *map[string]int `json:"best_of_n_by_size,omitempty"`
+	BestOfNModel    *string         `json:"best_of_n_model,omitempty"`
+	BestOfNPrompt   *string         `json:"best_of_n_prompt,omitempty"`
+	AssemblerModel  *string         `json:"assembler_model,omitempty"`
+	AssemblerPrompt *string         `json:"assembler_prompt,omitempty"`
 
 	MoEExpertsBySize   *map[string][]string  `json:"moe_experts_by_size,omitempty"`
 	MoEExperts         *map[string]MoEExpert `json:"moe_experts,omitempty"`
@@ -114,6 +117,10 @@ func (c *Config) View(roles []string) (View, error) {
 		Logging:   c.Logging,
 		Notes:     c.Notes.redacted(),
 		Roles:     map[string]RoleView{},
+		Profiles:  maps.Clone(c.Profiles),
+	}
+	if v.Profiles == nil {
+		v.Profiles = map[string]AgentProfile{}
 	}
 	if v.Scheduler.WorkDays == nil {
 		v.Scheduler.WorkDays = []string{}
@@ -125,6 +132,7 @@ func (c *Config) View(roles []string) (View, error) {
 		}
 		rv := RoleView{
 			Name:                    rr.Name,
+			ProfilesBySize:          maps.Clone(rr.ProfilesBySize),
 			Prompt:                  rr.Prompt,
 			Skills:                  rr.Skills,
 			SkillsRefresh:           c.SkillsRefreshPolicy(),
@@ -143,6 +151,9 @@ func (c *Config) View(roles []string) (View, error) {
 			Sandbox:                 rr.Sandbox,
 			SandboxImage:            rr.SandboxImage,
 			ContainerUseEnvironment: rr.ContainerUseEnvironment,
+		}
+		if rv.ProfilesBySize == nil {
+			rv.ProfilesBySize = map[string]AgentProfile{}
 		}
 		// Empty collections print as [] / {} rather than null.
 		if rv.Skills == nil {
@@ -169,9 +180,6 @@ func (c *Config) View(roles []string) (View, error) {
 			rv.CommitFlags = &flags
 			size := c.MaxSize()
 			rv.MaxSize = &size
-			bySize := map[string]string{}
-			maps.Copy(bySize, rr.ModelBySize)
-			rv.ModelBySize = &bySize
 			nBySize := map[string]int{}
 			maps.Copy(nBySize, rr.BestOfNBySize)
 			rv.BestOfNBySize = &nBySize

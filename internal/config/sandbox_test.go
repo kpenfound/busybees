@@ -82,7 +82,7 @@ func TestEverySandboxModeLoads(t *testing.T) {
 func TestUnknownSandboxModeIsALoadError(t *testing.T) {
 	for scope, want := range map[string]string{
 		"global":          "global.sandbox must be one of none, claude, container",
-		"roles.developer": "roles.developer.sandbox must be one of none, claude, container",
+		"roles.developer": "profiles.developer.sandbox must be one of none, claude, container",
 	} {
 		_, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n["+scope+"]\nsandbox = \"jail\"\n"))
 		if err == nil {

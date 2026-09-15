@@ -84,11 +84,12 @@ func (e reviewPipelineFailure) Unwrap() error { return e.err }
 // Review.Skipped and the rest are reviewed. What the sessions cost is
 // recorded either way, in the ledger and against the issue, so the budgets
 // see a review that failed halfway as well as one that ran.
-func (s *Scheduler) runReview(ctx context.Context, log *slog.Logger, pr github.PR, dir, name string, issue int) (*prompts.Review, *review.Artifact, error) {
+func (s *Scheduler) runReview(ctx context.Context, log *slog.Logger, pr github.PR, dir, name string, issue int, size string) (*prompts.Review, *review.Artifact, error) {
 	role, err := s.cfg.Role(config.RoleReviewer)
 	if err != nil {
 		return nil, nil, err
 	}
+	role = role.ForSize(size)
 	agent := s.reviewAgent(role)
 	distiller := *agent
 	if role.BriefModel != "" {

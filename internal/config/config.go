@@ -203,7 +203,7 @@ func (d Duration) MarshalText() ([]byte, error) { return []byte(d.String()), nil
 // natively. Bump it (and add a migration) when a change to the schema cannot
 // be read by older files as-is: renamed or removed keys, changed semantics.
 // Adding optional keys is not a breaking change.
-const CurrentVersion = 2
+const CurrentVersion = 3
 
 // migration rewrites the text of a bees.toml from one format version to the
 // next. Migrations work on the text, not the decoded tree, so the user's
@@ -217,6 +217,7 @@ type migration func(text string) (string, error)
 var migrations = map[int]migration{
 	0: addVersionKey,
 	1: dropReviewStages,
+	2: migrateAgentProfiles,
 }
 
 type Config struct {
@@ -233,6 +234,7 @@ type Config struct {
 	Logging   Logging                 `toml:"logging"`
 	Notes     Notes                   `toml:"notes"`
 	Roles     map[string]RoleSettings `toml:"roles"`
+	Profiles  map[string]AgentProfile `toml:"profiles"`
 
 	// Path is the absolute path of the loaded bees.toml (not part of the file).
 	Path string `toml:"-"`
@@ -443,15 +445,12 @@ type RoleSettings struct {
 	Skills []string `toml:"skills"`
 	// MCP servers keyed by name.
 	MCP map[string]MCPServer `toml:"mcp"`
-	// Model is the claude model alias or id. FallbackModel is used automatically
-	// when Model has reached its usage limit.
-	Model         string `toml:"model"`
-	FallbackModel string `toml:"fallback_model"`
-	// Agent is the CLI backend a session runs as: claude, codex or opencode.
-	Agent string `toml:"agent"`
-	// Effort is passed as claude --effort (low/medium/high/max) when set,
-	// or as codex's model_reasoning_effort setting, where max reads as high.
-	Effort string `toml:"effort"`
+	// Profile names an entry in Config.Profiles. Empty inherits the global
+	// selection, then the implicit built-in profile.
+	Profile string `toml:"profile"`
+	// ProfileBySize selects a whole profile for a work item size (xs..xl).
+	// A role's profile takes precedence over global size overrides.
+	ProfileBySize map[string]string `toml:"profile_by_size"`
 	// MaxTurns caps agentic turns for a single session.
 	MaxTurns int `toml:"max_turns"`
 	// Timeout kills a session that runs longer than this.
@@ -469,12 +468,8 @@ type RoleSettings struct {
 	// expanded from the bees process environment. Role entries override
 	// global ones with the same name.
 	Env map[string]string `toml:"env"`
-	// Sandbox is how much of the machine a session of this role can reach:
-	// one of SandboxModes. A role's value replaces the global one, and
-	// SandboxNone — no sandbox at all — is the default.
-	Sandbox string `toml:"sandbox"`
-	// SandboxImage is the container image a session runs in when Sandbox
-	// is SandboxContainer: it must hold the role's agent, git and gh. A
+	// SandboxImage is the container image a session runs in when the profile
+	// selects SandboxContainer: it must hold the role's agent, git and gh. A
 	// role's value replaces the global one, so a role that runs the product
 	// itself can name an image that carries the product's toolchain. There
 	// is no default: a container role without one, or a
@@ -484,7 +479,7 @@ type RoleSettings struct {
 	// root, to a dagger/container-use environment definition the container
 	// sandbox builds and runs instead of SandboxImage. A role's value
 	// replaces the global one. Empty (the default) leaves the sandbox
-	// unchanged; only valid when Sandbox is SandboxContainer, and mutually
+	// unchanged; only valid when the profile selects SandboxContainer, and mutually
 	// exclusive with SandboxImage.
 	ContainerUseEnvironment string `toml:"container_use_environment"`
 
@@ -502,9 +497,6 @@ type RoleSettings struct {
 	// MaxSize is the largest work item size a developer takes ("xs".."xl").
 	// A ready issue sized above it is sent back to triage to be split.
 	MaxSize string `toml:"max_size"`
-	// ModelBySize picks the model per work item size, keyed by "xs".."xl".
-	// A size with no entry uses Model.
-	ModelBySize map[string]string `toml:"model_by_size"`
 	// BestOfNBySize is how many developer attempts one work item of that
 	// size gets, keyed by "xs".."xl". A size with no entry, and an entry of
 	// 1, is one attempt: the empty table means best-of-N is off.
@@ -1241,8 +1233,8 @@ type ResolvedRole struct {
 	Skills []string
 	MCP    map[string]MCPServer
 	Model  string
-	// ModelBySize overrides Model per work item size; developer only.
-	ModelBySize map[string]string
+	// ProfilesBySize holds fully resolved profiles for work item sizes.
+	ProfilesBySize map[string]AgentProfile
 	// BestOfNBySize, the best-of-N attempt count per work item size, and the
 	// model and prompt overrides for the attempts and for the assembler;
 	// developer only. Read through BestOfN.
@@ -1691,8 +1683,8 @@ func (c *Config) Validate() error {
 		if scope == "global" && rs.Enabled != nil {
 			errs = append(errs, fmt.Sprintf("%s: enabled is only valid under roles.<name>", scope))
 		}
-		if scope != "roles."+RoleDeveloper && (rs.CommitFlags != "" || rs.MaxSize != "" || len(rs.ModelBySize) > 0 || len(rs.BestOfNBySize) > 0 || rs.BestOfNModel != "" || rs.BestOfNPrompt != "" || rs.AssemblerModel != "" || rs.AssemblerPrompt != "" || len(rs.MoEExpertsBySize) > 0 || len(rs.MoEExperts) > 0 || rs.MoEAssemblerModel != "" || rs.MoEAssemblerPrompt != "") {
-			errs = append(errs, fmt.Sprintf("%s: commit_flags, max_size, model_by_size, best_of_n_by_size, best_of_n_model, best_of_n_prompt, assembler_model, assembler_prompt, moe_experts_by_size, moe_experts, moe_assembler_model and moe_assembler_prompt are only valid under roles.developer", scope))
+		if scope != "roles."+RoleDeveloper && (rs.CommitFlags != "" || rs.MaxSize != "" || len(rs.BestOfNBySize) > 0 || rs.BestOfNModel != "" || rs.BestOfNPrompt != "" || rs.AssemblerModel != "" || rs.AssemblerPrompt != "" || len(rs.MoEExpertsBySize) > 0 || len(rs.MoEExperts) > 0 || rs.MoEAssemblerModel != "" || rs.MoEAssemblerPrompt != "") {
+			errs = append(errs, fmt.Sprintf("%s: commit_flags, max_size, best_of_n_by_size, best_of_n_model, best_of_n_prompt, assembler_model, assembler_prompt, moe_experts_by_size, moe_experts, moe_assembler_model and moe_assembler_prompt are only valid under roles.developer", scope))
 		}
 		if scope != "roles."+RoleProductManager && rs.MinIssueSize != "" {
 			errs = append(errs, fmt.Sprintf("%s: min_issue_size is only valid under roles.product_manager", scope))
@@ -1703,13 +1695,19 @@ func (c *Config) Validate() error {
 		if rs.MaxSize != "" && !slices.Contains(Sizes, rs.MaxSize) {
 			errs = append(errs, fmt.Sprintf("%s.max_size must be one of %s", scope, strings.Join(Sizes, ", ")))
 		}
-		for _, size := range slices.Sorted(maps.Keys(rs.ModelBySize)) {
-			switch {
-			case !slices.Contains(Sizes, size):
-				errs = append(errs, fmt.Sprintf("%s.model_by_size: unknown size %q (want one of %s)", scope, size, strings.Join(Sizes, ", ")))
-			case strings.TrimSpace(rs.ModelBySize[size]) == "":
-				errs = append(errs, fmt.Sprintf("%s.model_by_size.%s must name a model", scope, size))
+		checkProfile := func(key, name string) {
+			if _, ok := c.Profiles[name]; !ok {
+				errs = append(errs, fmt.Sprintf("%s.%s: unknown profile %q (declare it under [profiles.%s])", scope, key, name, name))
 			}
+		}
+		if rs.Profile != "" {
+			checkProfile("profile", rs.Profile)
+		}
+		for _, size := range slices.Sorted(maps.Keys(rs.ProfileBySize)) {
+			if !slices.Contains(Sizes, size) {
+				errs = append(errs, fmt.Sprintf("%s.profile_by_size: unknown size %q (want one of %s)", scope, size, strings.Join(Sizes, ", ")))
+			}
+			checkProfile("profile_by_size."+size, rs.ProfileBySize[size])
 		}
 		// Off for a size is the absent key, so 0 is a value nothing reads.
 		for _, size := range slices.Sorted(maps.Keys(rs.BestOfNBySize)) {
@@ -1785,20 +1783,6 @@ func (c *Config) Validate() error {
 				errs = append(errs, fmt.Sprintf("%s.mcp.%s: type must be stdio, http or sse", scope, name))
 			}
 		}
-		switch rs.Effort {
-		case "", "low", "medium", "high", "max":
-		default:
-			errs = append(errs, fmt.Sprintf("%s.effort must be low, medium, high or max", scope))
-		}
-		if rs.Agent != "" && !slices.Contains(Agents, rs.Agent) {
-			errs = append(errs, fmt.Sprintf("%s.agent must be one of %s", scope, strings.Join(Agents, ", ")))
-		}
-		// Every mode of SandboxModes loads, including the ones no session
-		// can run in yet: whether a mode works on this machine is a question
-		// about the machine, and CheckSandbox asks it once at `bees run`.
-		if rs.Sandbox != "" && !slices.Contains(SandboxModes, rs.Sandbox) {
-			errs = append(errs, fmt.Sprintf("%s.sandbox must be one of %s", scope, strings.Join(SandboxModes, ", ")))
-		}
 		// An image reference is one word: a space or a tab in it is a
 		// pasted-in command line, not an image.
 		if strings.ContainsAny(rs.SandboxImage, " \t") {
@@ -1828,6 +1812,26 @@ func (c *Config) Validate() error {
 			}
 		}
 	}
+	for _, name := range slices.Sorted(maps.Keys(c.Profiles)) {
+		p, scope := c.Profiles[name], "profiles."+name
+		if name == "" {
+			errs = append(errs, "profiles: profile name must not be empty")
+		}
+		switch p.Effort {
+		case "", "low", "medium", "high", "max":
+		default:
+			errs = append(errs, fmt.Sprintf("%s.effort must be low, medium, high or max", scope))
+		}
+		if p.Agent != "" && !slices.Contains(Agents, p.Agent) {
+			errs = append(errs, fmt.Sprintf("%s.agent must be one of %s", scope, strings.Join(Agents, ", ")))
+		}
+		// Every mode of SandboxModes loads, including the ones no session
+		// can run in yet: whether a mode works on this machine is a question
+		// about the machine, and CheckSandbox asks it once at `bees run`.
+		if p.Sandbox != "" && !slices.Contains(SandboxModes, p.Sandbox) {
+			errs = append(errs, fmt.Sprintf("%s.sandbox must be one of %s", scope, strings.Join(SandboxModes, ", ")))
+		}
+	}
 	check("global", c.Global)
 	for name, rs := range c.Roles {
 		check("roles."+name, rs)
@@ -1843,11 +1847,14 @@ func (c *Config) Validate() error {
 		if err != nil || r.ContainerUseEnvironment == "" {
 			continue
 		}
-		if r.Sandbox != SandboxContainer {
-			errs = append(errs, fmt.Sprintf("roles.%s: container_use_environment is only valid when sandbox is \"container\"", name))
-		}
-		if r.SandboxImage != "" {
-			errs = append(errs, fmt.Sprintf("roles.%s: container_use_environment and sandbox_image are mutually exclusive", name))
+		for _, size := range append([]string{""}, slices.Sorted(maps.Keys(r.ProfilesBySize))...) {
+			r := r.ForSize(size)
+			if r.Sandbox != SandboxContainer {
+				errs = append(errs, fmt.Sprintf("roles.%s: container_use_environment is only valid when sandbox is \"container\"", name))
+			}
+			if r.SandboxImage != "" {
+				errs = append(errs, fmt.Sprintf("roles.%s: container_use_environment and sandbox_image are mutually exclusive", name))
+			}
 		}
 	}
 	if len(errs) > 0 {
@@ -1888,22 +1895,21 @@ func (c *Config) Role(name string) (ResolvedRole, error) {
 	rs := c.Roles[canonical]
 	g := c.Global
 
-	// The model defaults are claude's. A codex role that names no model
-	// runs with codex's own configured model rather than "opus", and has no
-	// fallback model at all: codex has no such flag, and a retry with the
-	// fallback model is then a retry with the same one. An opencode role
-	// that names no model has the same result: opencode's --model takes a
-	// provider/model string (e.g. "ollama/llama3") with no sensible
-	// bees-side default.
-	agent := firstNonEmpty(rs.Agent, g.Agent, DefaultAgent)
-	defaultModel, defaultFallback := DefaultModel, DefaultFallbackModel
-	if agent == AgentCodex || agent == AgentOpenCode {
-		defaultModel, defaultFallback = "", ""
+	p := c.Profiles[firstNonEmpty(rs.Profile, g.Profile)].resolved()
+	var bySize map[string]AgentProfile
+	for _, size := range Sizes {
+		selected := firstNonEmpty(rs.ProfileBySize[size], rs.Profile, g.ProfileBySize[size], g.Profile)
+		if selected != firstNonEmpty(rs.Profile, g.Profile) {
+			if bySize == nil {
+				bySize = map[string]AgentProfile{}
+			}
+			bySize[size] = c.Profiles[selected].resolved()
+		}
 	}
 	r := ResolvedRole{
 		Name:                    canonical,
-		Model:                   firstNonEmpty(rs.Model, g.Model, defaultModel),
-		ModelBySize:             sizeModels(rs.ModelBySize),
+		Model:                   p.Model,
+		ProfilesBySize:          bySize,
 		Angles:                  reviewAngles(rs.Angles),
 		AngleModels:             sizeModels(rs.AngleModels),
 		BestOfNBySize:           sizeInts(rs.BestOfNBySize),
@@ -1917,14 +1923,14 @@ func (c *Config) Role(name string) (ResolvedRole, error) {
 		MoEAssemblerPrompt:      strings.TrimSpace(rs.MoEAssemblerPrompt),
 		BriefModel:              strings.TrimSpace(rs.BriefModel),
 		JudgeModel:              strings.TrimSpace(rs.JudgeModel),
-		FallbackModel:           firstNonEmpty(rs.FallbackModel, g.FallbackModel, defaultFallback),
-		Agent:                   agent,
-		Effort:                  firstNonEmpty(rs.Effort, g.Effort),
+		FallbackModel:           p.FallbackModel,
+		Agent:                   p.Agent,
+		Effort:                  p.Effort,
 		MaxTurns:                firstPositive(rs.MaxTurns, g.MaxTurns, DefaultMaxTurns),
 		Timeout:                 firstPositiveDur(rs.Timeout.Duration, g.Timeout.Duration, DefaultTimeout),
 		Enabled:                 true,
 		Shell:                   firstNonEmpty(rs.Shell, g.Shell),
-		Sandbox:                 firstNonEmpty(rs.Sandbox, g.Sandbox, DefaultSandbox),
+		Sandbox:                 p.Sandbox,
 		SandboxImage:            firstNonEmpty(rs.SandboxImage, g.SandboxImage),
 		ContainerUseEnvironment: firstNonEmpty(rs.ContainerUseEnvironment, g.ContainerUseEnvironment),
 		MCP:                     map[string]MCPServer{},
@@ -1993,12 +1999,17 @@ func (r ResolvedRole) MCPNames() []string {
 	return names
 }
 
-// ModelFor returns the model to run a work item of the given size with: the
-// model_by_size override when there is one, else the role's Model. An empty or
-// unknown size falls back to Model.
-func (r ResolvedRole) ModelFor(size string) string {
-	return firstNonEmpty(r.ModelBySize[size], r.Model)
+// ForSize selects the whole profile for size. Empty or unknown sizes keep
+// the role's base profile. The returned value can be customized for a session.
+func (r ResolvedRole) ForSize(size string) ResolvedRole {
+	if p, ok := r.ProfilesBySize[size]; ok {
+		r.Agent, r.Model, r.FallbackModel, r.Effort, r.Sandbox = p.Agent, p.Model, p.FallbackModel, p.Effort, p.Sandbox
+	}
+	return r
 }
+
+// ModelFor returns the model from the profile selected for size.
+func (r ResolvedRole) ModelFor(size string) string { return r.ForSize(size).Model }
 
 // BestOfN returns how many developer attempts a work item of the given size
 // gets: the best_of_n_by_size entry when there is one, else 1. An empty or

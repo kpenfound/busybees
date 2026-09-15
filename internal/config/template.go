@@ -320,6 +320,17 @@ label = "{{.Label}}"
 #neo4j_url = "https://memory.neo4jlabs.com/v1"
 #neo4j_api_key = "$BEES_NEO4J_API_KEY"
 
+# Agent profiles bundle backend, models, effort and sandbox. Each profile uses
+# its own defaults; codex and opencode have no default model or fallback model.
+# No declaration is required when using the built-in defaults. Uncomment this
+# example to name those defaults explicitly.
+#[profiles.default]
+#agent = "claude"        # claude | codex | opencode
+#model = "opus"
+#fallback_model = "sonnet"
+#effort = ""            # low | medium | high | max (empty: agent default)
+#sandbox = "none"       # none | claude | container
+
 #===============================================================================
 # Global role settings — apply to every role, merged with [roles.<name>]:
 # prompts concatenate (global first), skills union, env and mcp servers union
@@ -340,13 +351,10 @@ label = "{{.Label}}"
 # How stale a skill clone may get before it is pulled: never, always or a
 # duration. Global only; see "bees skills".
 #skills_refresh = "24h"
-# claude model, and the model used once it has hit its usage limit.
-#model = "opus"
-#fallback_model = "sonnet"
-# CLI backend a session runs as.
-#agent = "claude"        # claude | codex | opencode
-# Effort level: low, medium, high or max.
-#effort = "high"
+# Choose a named agent profile. Unset: claude, opus, sonnet fallback, no sandbox.
+#profile = "default"
+# Size overrides apply to every role. A role's profile overrides this table.
+#profile_by_size = { xs = "default", s = "default" }
 # Agentic turns per session and wall-clock limit.
 #max_turns = 200
 #timeout = "45m"
@@ -355,10 +363,6 @@ label = "{{.Label}}"
 #disallowed_tools = ["WebSearch"]
 # Shell for claude's Bash tool in sessions (exported as $SHELL).
 #shell = "/bin/bash"
-# How much of the machine a session can reach: none, claude or container.
-# Set it per role in [roles.<name>] to box the roles that run untrusted code
-# harder than the ones that only read the repository.
-#sandbox = "none"
 # Image a container session runs in (sandbox = "container"): it must hold
 # the agent, git and gh. Name one per role for a role that runs the product.
 #sandbox_image = "ghcr.io/acme/widgets-bees:latest"
@@ -390,7 +394,7 @@ label = "{{.Label}}"
 
 #===============================================================================
 # Per-role settings. Every key from [global] is valid here, plus enabled;
-# the developer also takes commit_flags, max_size, model_by_size and the
+# the developer also takes commit_flags, max_size and the
 # best-of-N keys, the product manager min_issue_size, and the reviewer the
 # auto-merge keys.
 #===============================================================================
@@ -405,10 +409,8 @@ label = "{{.Label}}"
 #min_issue_size = "s"
 #prompt_file = ""
 #skills = []
-#model = "opus"
-#fallback_model = "sonnet"
-#agent = "claude"        # claude | codex | opencode
-#effort = "high"
+#profile = "default"
+#profile_by_size = { xs = "default", s = "default" }
 #max_turns = 200
 #timeout = "45m"
 {{setting . "roles.product_manager.enabled" "#enabled = true"}}
@@ -424,10 +426,8 @@ label = "{{.Label}}"
 #"""
 #prompt_file = ""
 #skills = []
-#model = "opus"
-#fallback_model = "sonnet"
-#agent = "claude"        # claude | codex | opencode
-#effort = "high"
+#profile = "default"
+#profile_by_size = { xs = "default", s = "default" }
 #max_turns = 200
 #timeout = "45m"
 {{setting . "roles.project_manager.enabled" "#enabled = true"}}
@@ -446,15 +446,12 @@ label = "{{.Label}}"
 # Largest size a developer takes: xs, s, m, l or xl. Anything bigger is sent
 # back to triage for the project manager to split.
 #max_size = "l"
-# Run a cheaper (or stronger) model for some work item sizes. Keys are the
-# sizes xs, s, m, l and xl; a size with no entry uses model above.
-#model_by_size = { xs = "sonnet", s = "sonnet" }
 # Best of N: how many developer attempts one work item gets, keyed by size. An
 # assembler session then picks the pull request from the attempts. A size with
 # no entry gets one attempt, and an empty table is best-of-N off.
 #best_of_n_by_size = { l = 3 }
 # Model and prompt for each attempt, and for the assembler that picks between
-# them. Unset, an attempt runs the model and prompt above and so does the
+# them. Unset, an attempt runs the profile model and prompt and so does the
 # assembler.
 #best_of_n_model = "opus"
 #best_of_n_prompt = """
@@ -468,16 +465,14 @@ label = "{{.Label}}"
 # cannot be listed here and in best_of_n_by_size both.
 #moe_experts_by_size = { xl = ["backend", "frontend"] }
 # Model and prompt for the session that merges the experts' work and opens the
-# pull request. Unset, it runs the model and prompt above.
+# pull request. Unset, it runs the profile model and prompt.
 #moe_assembler_model = "opus"
 #moe_assembler_prompt = """
 #"""
 #prompt_file = ""
 #skills = []
-#model = "opus"
-#fallback_model = "sonnet"
-#agent = "claude"        # claude | codex | opencode
-#effort = "high"
+#profile = "default"
+#profile_by_size = { xs = "default", s = "default" }
 #max_turns = 200
 #timeout = "45m"
 {{setting . "roles.developer.enabled" "#enabled = true"}}
@@ -505,10 +500,8 @@ label = "{{.Label}}"
 #"""
 #prompt_file = ""
 #skills = []
-#model = "opus"
-#fallback_model = "sonnet"
-#agent = "claude"        # claude | codex | opencode
-#effort = "high"
+#profile = "default"
+#profile_by_size = { xs = "default", s = "default" }
 #max_turns = 200
 #timeout = "45m"
 # Disabling the reviewer treats pull requests as approved as soon as the
@@ -540,7 +533,7 @@ label = "{{.Label}}"
 # side_effects. A size not named here gets its default:
 #angles = { xs = ["quick_general", "docs"], s = ["quick_general", "docs"], m = ["general", "docs", "test_coverage", "acceptance_criteria"], l = ["general", "docs", "test_coverage", "acceptance_criteria"], xl = ["general", "docs", "test_coverage", "acceptance_criteria", "side_effects"] }
 # The model for the session that writes the review brief, for the judge, and
-# per angle. Unset: model.
+# per angle. Unset: the profile model.
 #brief_model = "sonnet"
 #judge_model = "opus"
 #angle_models = { quick_general = "sonnet", docs = "sonnet" }
@@ -556,10 +549,8 @@ label = "{{.Label}}"
 #"""
 #prompt_file = ""
 #skills = []
-#model = "opus"
-#fallback_model = "sonnet"
-#agent = "claude"        # claude | codex | opencode
-#effort = "high"
+#profile = "default"
+#profile_by_size = { xs = "default", s = "default" }
 #max_turns = 200
 #timeout = "45m"
 {{setting . "roles.qa.enabled" "#enabled = true"}}
