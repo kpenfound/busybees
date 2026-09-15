@@ -264,11 +264,11 @@ func withRemote(name string) func(*Deps) {
 	return func(d *Deps) {
 		ctx := context.Background()
 		for _, args := range [][]string{{"remote", "rename", "origin", name}, {"config", "remote.pushDefault", name}} {
-			if _, err := workspace.Git(ctx, d.Workspaces.MainRepo, args...); err != nil {
+			if _, err := workspace.Git(ctx, d.Workspaces.(*workspace.Manager).MainRepo, args...); err != nil {
 				panic(err)
 			}
 		}
-		d.Workspaces.Remote = name
+		d.Workspaces.(*workspace.Manager).Remote = name
 	}
 }
 

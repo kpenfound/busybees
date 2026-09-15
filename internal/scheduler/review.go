@@ -129,7 +129,7 @@ func (s *Scheduler) runReview(ctx context.Context, log *slog.Logger, pr github.P
 		}
 		started = started.Add(time.Second)
 	}
-	checkout := &review.Checkout{Clone: cloneOf(dir, pr.HeadSHA, s.ws.Remote)}
+	checkout := &review.Checkout{Clone: cloneOf(dir, pr.HeadSHA, s.ws.RemoteName())}
 	runner := &review.Runner{
 		Pipeline:  &review.Pipeline{Client: s.gh, Project: project, Dir: dir, Checkout: checkout},
 		Distiller: &review.Distiller{Agent: &reviewBriefAgent{CLIAgent: distiller, checkout: filepath.Join(review.ArtifactDir(storage, ref, started), review.CheckoutDir)}},

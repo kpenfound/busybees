@@ -88,7 +88,7 @@ type containerUseEnvironment struct {
 // for people reading it afterwards, and a build's output goes to
 // containerUseBuildLog beside it.
 func (r *Runner) containerUseImage(ctx context.Context, req Request, sessionDir string) (string, error) {
-	path := filepath.Join(req.WorkDir, req.Profile.ContainerUseEnvironment, containerUseDir, containerUseFile)
+	path := filepath.Join(req.workDir(), req.Profile.ContainerUseEnvironment, containerUseDir, containerUseFile)
 	env, err := loadContainerUseEnvironment(path)
 	if err != nil {
 		return "", fmt.Errorf("container_use_environment %q: %w", req.Profile.ContainerUseEnvironment, err)

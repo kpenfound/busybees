@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kpenfound/busybees/core/vcs"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
@@ -196,15 +197,15 @@ func (s *Scheduler) runRequestedReview(ctx context.Context, pr github.PR, w *sta
 	if err := s.ws.Fetch(ctx); err != nil {
 		return fmt.Errorf("fetch: %w", err)
 	}
-	ws, err := s.ws.Detached(ctx, w.Name, pr.HeadRefName)
+	ws, err := s.ws.Acquire(ctx, vcs.Request{Name: w.Name, Ref: pr.HeadRefName})
 	if err != nil {
 		log.Warn("head branch is not on the remote; reviewing from the default branch", "err", err)
-		if ws, err = s.ws.Detached(ctx, w.Name, s.cfg.Project.DefaultBranch); err != nil {
+		if ws, err = s.ws.Acquire(ctx, vcs.Request{Name: w.Name, Ref: s.cfg.Project.DefaultBranch}); err != nil {
 			return fmt.Errorf("workspace: %w", err)
 		}
 	}
 	defer func() {
-		if err := s.ws.Remove(context.WithoutCancel(ctx), ws); err != nil {
+		if err := s.ws.Release(context.WithoutCancel(ctx), ws); err != nil {
 			log.Warn("workspace cleanup failed", "err", err)
 		}
 	}()
@@ -218,14 +219,14 @@ func (s *Scheduler) runRequestedReview(ctx context.Context, pr github.PR, w *sta
 	}
 	name := fmt.Sprintf("reviewer-requested-pr-%d", pr.Number)
 	// The review itself (review.go), then the session that posts it.
-	found, _, err := s.runReview(ctx, log, freshPR, ws.RepoDir, name, 0, 1, s.sizeOf(freshPR.Labels))
+	found, _, err := s.runReview(ctx, log, freshPR, ws.Directory(), name, 0, 1, s.sizeOf(freshPR.Labels))
 	if err != nil {
 		return err
 	}
 	log.Info("requested review session", "mail", len(inbox), "size", found.Size, "angles", strings.Join(found.Angles, ","), "findings", found.Count)
 	started := s.now()
 	res, err := s.runSessionWithRetry(ctx, sessionSpec{
-		role: config.RoleReviewer, name: name, task: "reviewer_requested", workDir: ws.RepoDir, worker: w, judge: true, reviewActivity: name,
+		role: config.RoleReviewer, name: name, task: "reviewer_requested", workspace: ws, worker: w, judge: true, reviewActivity: name,
 		// Mode switches the reviewer's prompts to the requested review; ActsAs
 		// tells it whose approval GitHub would refuse (its own author's).
 		data: prompts.Data{PR: &freshPR, Inbox: inbox, Review: found, Round: 1, Mode: prompts.ModeRequested, ActsAs: s.gh.ActsAs},
