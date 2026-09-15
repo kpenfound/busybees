@@ -112,8 +112,9 @@ one, `3`. A file without the key is version 0.
   onto a review angle, so the reviewer gets the default `angles`. The migration
   from 2 to 3 moves `agent`, `model`, `fallback_model`, `sandbox`, `effort` and
   `model_by_size` into named `[profiles.<name>]` tables and replaces them with
-  `profile` and `profile_by_size`; scopes without those settings use the
-  implicit built-in profile.
+  `profile` and `profile_by_size`; roles without their own settings inherit the
+  migrated global selection, and when no profile is selected the implicit
+  built-in profile is used.
 
 Adding an optional key never bumps the version. Renaming or removing a key, or
 changing what one means, does, and the release notes of the bees version that
@@ -568,7 +569,7 @@ The CLI accepts aliases such as `pm` and `dev`; the TOML keys do not.
 | `skills` | string list | `[]` | Skills by git URL. See [Skills](#skills). |
 | `skills_refresh` | string | `"24h"` | `[global]` only. How stale a skill clone may get before it is pulled when a session needs it: `never`, `always` or a duration. |
 | `mcp.<name>` | table | | MCP servers keyed by name. See [MCP servers](#mcp-servers). |
-| `profile` | string | `""` | Profile name. Under `[global]`, the default profile for every role; under a role, that role's profile override. An empty value uses the implicit built-in profile. |
+| `profile` | string | `""` | Profile name. Under `[global]`, the default profile for every role; under a role, that role's profile override. An empty role value inherits the global selection; when neither scope selects a profile, the implicit built-in profile is used. |
 | `profile_by_size` | table | `{}` | Profile name per work item size, keyed by `xs`, `s`, `m`, `l` or `xl`. Accepted under `[global]` and every role. |
 | `max_turns` | int | `200` | Agentic turns per session (`claude --max-turns`). `0` means the default. Codex and opencode have no such limit and a `codex` or `opencode` role ignores it. |
 | `timeout` | duration | `"45m"` | Wall-clock limit for one session; the session's process group is killed when it expires. `"0s"` means the default. |
@@ -685,9 +686,9 @@ Like the checks keys, they are accepted only under `[roles.reviewer]`.
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `angles.<size>` | string list | the built-in list for that size | The angles a pull request of that size is reviewed from. `<size>` is `xs`, `s`, `m`, `l` or `xl`; one or more of `quick_general`, `general`, `docs`, `test_coverage`, `acceptance_criteria`, `side_effects`. An unknown size or angle, or an empty list, is a load error. A size this does not name keeps the built-in list. |
-| `brief_model` | string | `model` | The model of the session that distills the brief. |
-| `angle_models.<angle>` | string | `model` | The model of that angle's session. An angle not one of the six above is a load error. |
-| `judge_model` | string | `model` | The model of the reviewer session that posts the judge's findings and decides the verdict. |
+| `brief_model` | string | `resolved profile's model` | The model of the session that distills the brief. |
+| `angle_models.<angle>` | string | `resolved profile's model` | The model of that angle's session. An angle not one of the six above is a load error. |
+| `judge_model` | string | `resolved profile's model` | The model of the reviewer session that posts the judge's findings and decides the verdict. |
 
 | Size | Built-in angles |
 |---|---|
