@@ -927,8 +927,10 @@ project's configuration still holds. `--session` continues an earlier
 session the way `--resume` does for claude, and there is no snapshot to
 switch off: opencode reads the instruction files again on every request.
 It has no fallback model, turn limit, tool allow-list or plugin
-directories, and `effort` is not passed either (its `--variant` takes a
-name the model defines, not a level), so those settings are not passed. Its
+directories. When configured, `effort` is written as the default build
+agent's `variant`; it is a name the model defines, not a level, so the value
+is passed through without bees-side validation. Those other settings are not
+passed. Its
 stream is appended to `transcript.jsonl` the same way: every event carries
 the session id, each `step_finish` is one turn and carries what the step
 cost, the last `text` event is the result text, and a `step_finish` whose
