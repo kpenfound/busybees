@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
@@ -76,7 +77,9 @@ func (e reviewPipelineFailure) Unwrap() error { return e.err }
 // runReview runs the review pipeline on pr, whose head is checked out in
 // dir, and returns what it found as the judge session is told it, with the
 // artifact it was written to. name is the review's name in the ledger,
-// issue the work item it is charged to (0 for a requested review).
+// issue the work item it is charged to (0 for a requested review), and
+// round the review round. name also identifies its live activity until the
+// judge session starts. size selects the reviewer profile for the work item.
 //
 // An error is a review that produced no findings list: the context that
 // could not be gathered, a distiller that briefed nothing, every angle
@@ -84,7 +87,22 @@ func (e reviewPipelineFailure) Unwrap() error { return e.err }
 // Review.Skipped and the rest are reviewed. What the sessions cost is
 // recorded either way, in the ledger and against the issue, so the budgets
 // see a review that failed halfway as well as one that ran.
-func (s *Scheduler) runReview(ctx context.Context, log *slog.Logger, pr github.PR, dir, name string, issue int, size string) (*prompts.Review, *review.Artifact, error) {
+func (s *Scheduler) runReview(ctx context.Context, log *slog.Logger, pr github.PR, dir, name string, issue, round int, size string) (_ *prompts.Review, _ *review.Artifact, resultErr error) {
+	activity := Event{Kind: EventReviewStarted, Activity: name, Role: config.RoleReviewer,
+		Issue: issue, PR: pr.Number, Round: round, Started: s.now(), Phase: "brief"}
+	s.publish(activity)
+	defer func() {
+		activity.Kind, activity.Success = EventReviewEnded, resultErr == nil
+		if resultErr != nil {
+			activity.Err = resultErr.Error()
+		}
+		s.publish(activity)
+	}()
+	// Serialize counting and publication so concurrent completions cannot
+	// publish counts out of order. An angle's terminal callback counts once.
+	var progressMu sync.Mutex
+	completed := map[string]bool{}
+
 	role, err := s.cfg.Role(config.RoleReviewer)
 	if err != nil {
 		return nil, nil, err
@@ -124,6 +142,23 @@ func (s *Scheduler) runReview(ctx context.Context, log *slog.Logger, pr github.P
 			Dir:      dir,
 		},
 		Storage: storage,
+		AnglesReady: func(angles []string) {
+			activity.Kind, activity.Phase, activity.Total = EventReviewProgress, "angles", len(angles)
+			s.publish(activity)
+		},
+		Progress: func(angle string, event review.AngleEvent) {
+			if event != review.AngleFinished && event != review.AngleFailed {
+				return
+			}
+			progressMu.Lock()
+			defer progressMu.Unlock()
+			if completed[angle] {
+				return
+			}
+			completed[angle] = true
+			activity.Completed = len(completed)
+			s.publish(activity)
+		},
 		// A fixed start: the artifact directory is named by it, and it has
 		// to be known here to remove the clone from it when the run stops
 		// before it returns the artifact.
@@ -133,6 +168,9 @@ func (s *Scheduler) runReview(ctx context.Context, log *slog.Logger, pr github.P
 	artifactDir := review.ArtifactDir(storage, ref, started)
 	log.Info("reviewing", "pr", pr.Number, "agent", agent.Provider, "model", agent.Model, "artifact", artifactDir)
 	a, err := runner.Run(ctx, ref)
+	if err == nil {
+		err = ctx.Err()
+	}
 	if rmErr := os.RemoveAll(filepath.Join(artifactDir, review.CheckoutDir)); rmErr != nil {
 		log.Warn("could not remove the review's clone", "dir", artifactDir, "err", rmErr)
 	}

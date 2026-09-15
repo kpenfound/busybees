@@ -10,6 +10,12 @@ const (
 	// EventSessionEnded is emitted when that session has finished, whether
 	// it reported an outcome, failed or could not be run at all.
 	EventSessionEnded = "session-ended"
+	// Review events describe a synthetic activity, not a factory session.
+	// A successful end waits for the judge's session-started handoff; a
+	// failed end removes the activity immediately.
+	EventReviewStarted  = "review-started"
+	EventReviewProgress = "review-progress"
+	EventReviewEnded    = "review-ended"
 	// EventStage is emitted when a developer worker moves an issue to
 	// another stage of the develop -> fan-out -> assembler -> prereview ->
 	// review -> stack-wait -> checks loop.
@@ -33,14 +39,25 @@ const (
 type Event struct {
 	// Kind is one of the Event* constants above.
 	Kind string
+	// Activity identifies a review pipeline within this project's stream.
+	// The matching judge's session events carry the same identity.
+	Activity string
+	// Started and Phase describe review activity throughout its lifecycle.
+	// Phase is "brief" or "angles"; Completed includes failed angles.
+	Started   time.Time
+	Phase     string
+	Completed int
+	Total     int
+	// Success is set on review-ended only. Err explains a failed end.
+	Success bool
 	// Time is the scheduler's clock when the event was published.
 	Time time.Time
-	// Role is the role of the session an event is about; empty for a poll.
+	// Role is the role of the session or review activity; empty for a poll.
 	// A stage event carries the developer role, since a stage belongs to a
 	// developer worker.
 	Role string
 	// Session is the session name (the directory under sessions/), empty
-	// for stage and poll events.
+	// for review, stage and poll events.
 	Session string
 	// Dir is the session's own directory, where its transcript.jsonl is
 	// written. It is set on session-started only — that is where a view
@@ -55,7 +72,7 @@ type Event struct {
 	// Stage is the developer worker's stage on a stage event, empty
 	// otherwise.
 	Stage string
-	// Round is the review round a stage event belongs to.
+	// Round is the review round a stage, review or session event belongs to.
 	Round int
 	// Model is the model the session runs with and Fallback marks a
 	// session running on the role's fallback model
@@ -84,7 +101,7 @@ type Event struct {
 	CostKnown bool
 	Duration  time.Duration
 	// Err is set on a poll that failed and on a session that could not be
-	// run at all.
+	// run at all, or on a failed review activity.
 	Err string
 }
 
@@ -128,7 +145,7 @@ func (s *Scheduler) publish(ev Event) {
 // sessionEvent builds the event for a session, filled in with the issue and
 // pull request it is about.
 func sessionEvent(kind string, spec sessionSpec) Event {
-	ev := Event{Kind: kind, Role: spec.role, Session: spec.name}
+	ev := Event{Kind: kind, Role: spec.role, Session: spec.name, Activity: spec.reviewActivity, Round: spec.data.Round}
 	if spec.data.Issue != nil {
 		ev.Issue = spec.data.Issue.Number
 	}

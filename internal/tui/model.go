@@ -74,10 +74,11 @@ type Deps struct {
 	Projects []Project
 }
 
-// running is one session the factory is running right now, as the Now panel
-// renders it. It is built from the session-started event and dropped when
-// the matching session-ended arrives.
+// running is one Now row: a factory session or a synthetic review activity.
+// Activities have no session name or directory and cannot be watched or killed.
+// They hand their position to the matching judge session.
 type running struct {
+	activity *scheduler.Event
 	// project is the index in Model.projects of the project the session
 	// belongs to.
 	project int
@@ -157,7 +158,7 @@ type Model struct {
 	projects []project
 	shown    int
 
-	// sessions are the running sessions in the order they started, across
+	// sessions are the Now rows (sessions and activities) in start order, across
 	// every project; what each work item has spent, and the stage it is in,
 	// are kept on its project.
 	sessions []running
@@ -598,7 +599,7 @@ func (m Model) kill() (tea.Model, tea.Cmd) {
 // armed confirmation is checked against: the Now panel is the whole record
 // of what the view knows to be alive (see apply).
 func (m Model) isRunning(ref sessionRef) bool {
-	return slices.ContainsFunc(m.sessions, func(s running) bool { return s.ref() == ref })
+	return slices.ContainsFunc(m.sessions, func(s running) bool { return s.activity == nil && s.ref() == ref })
 }
 
 // ref names the session: its project and its name.
@@ -615,7 +616,7 @@ type target struct {
 }
 
 // targets is every selectable row, in the order the panels draw them: the
-// running sessions, then what has just finished, then what the factory is
+// Now rows, then what has just finished, then what the factory is
 // waiting for a person over, then what is waiting to be merged. One flat
 // list is what makes a single cursor and two keys enough.
 //
@@ -704,11 +705,28 @@ func (m *Model) clampCursor() {
 // into the model.
 func (m *Model) apply(p int, ev scheduler.Event) {
 	switch ev.Kind {
+	case scheduler.EventReviewStarted, scheduler.EventReviewProgress:
+		row := running{project: p, role: ev.Role, issue: ev.Issue, pr: ev.PR,
+			started: ev.Started, activity: &ev}
+		if i := m.activityIndex(p, ev.Activity); i >= 0 {
+			m.sessions[i] = row
+		} else {
+			m.sessions = append(m.sessions, row)
+		}
+	case scheduler.EventReviewEnded:
+		if i := m.activityIndex(p, ev.Activity); i >= 0 && !ev.Success {
+			m.sessions = append(m.sessions[:i:i], m.sessions[i+1:]...)
+		}
 	case scheduler.EventSessionStarted:
-		m.sessions = append(m.sessions, running{
+		row := running{
 			project: p, name: ev.Session, role: ev.Role, dir: ev.Dir, issue: ev.Issue, pr: ev.PR,
 			started: ev.Time, model: ev.Model, fallback: ev.Fallback, sandbox: ev.Sandbox,
-		})
+		}
+		if i := m.activityIndex(p, ev.Activity); i >= 0 {
+			m.sessions[i] = row
+		} else {
+			m.sessions = append(m.sessions, row)
+		}
 	case scheduler.EventSessionEnded:
 		ref := sessionRef{project: p, name: ev.Session}
 		m.drop(ref)
@@ -736,6 +754,16 @@ func (m *Model) apply(p int, ev scheduler.Event) {
 			m.projects[p].stages[ev.Issue] = stage{name: ev.Stage, round: ev.Round}
 		}
 	}
+}
+
+// activityIndex finds a synthetic row by its project-local review identity.
+func (m Model) activityIndex(project int, id string) int {
+	if id == "" {
+		return -1
+	}
+	return slices.IndexFunc(m.sessions, func(s running) bool {
+		return s.project == project && s.activity != nil && s.activity.Activity == id
+	})
 }
 
 // drop removes a finished session from the running list.
@@ -914,7 +942,12 @@ func (m Model) header(w int) string {
 // are being killed — and how many sessions it is about. Empty when nothing
 // is stopping.
 func (m Model) stoppingNotice() string {
-	n := len(m.sessions)
+	n := 0
+	for _, s := range m.sessions {
+		if s.activity == nil {
+			n++
+		}
+	}
 	switch {
 	case m.hardStopped && n > 0:
 		return fmt.Sprintf("stopping %s now", text.Count(n, "running session"))
@@ -946,7 +979,7 @@ func (m Model) footer() string {
 	if m.multi() {
 		hints = "←→ project · "
 	}
-	if len(m.shownSessions()) > 0 {
+	if slices.ContainsFunc(m.shownSessions(), func(s running) bool { return s.activity == nil }) {
 		return hints + "↑↓ select · enter watch · o open on GitHub · k stop session · q or ctrl-c stops (sessions finish)"
 	}
 	// enter and k both act on a running session, and there are none in
@@ -977,19 +1010,25 @@ func (m Model) panelStyleOf(i int) lipgloss.Style {
 	}
 }
 
-// nowPanel renders every running session: who is running it, what it is
-// about, the stage its developer worker is in, how long it has been going,
-// what the work item has spent so far, the sandbox it is boxed in and the
-// model it runs on. The cursor
-// marks the one enter opens the session view on and k stops — the same ▸ the
-// other panels draw, because there is one selection over the whole view.
+// nowPanel renders sessions and review activities with their role, issue,
+// pull request and elapsed time. Session rows also show the developer-worker
+// stage, work-item spend, sandbox and model; synthetic review rows show the
+// review phase and have no session fields of their own. The cursor marks a
+// row with the same ▸ as the other panels, because there is one selection
+// over the whole view. Enter and k act only on session rows.
 func (m Model) nowPanel(w, rows, from int) string {
 	sessions := m.shownSessions()
 	if len(sessions) == 0 {
 		return hintStyle.Render("no sessions running")
 	}
 	sw := sandboxColumn(sessions)
-	out := []string{headerStyle.Render(clip(nowRow(sw, m.leadHeader(), "role", "issue", "pr", "stage", "elapsed", "turns", "cost", "sandbox", "model"), w))}
+	stageW := stageWidth
+	for _, s := range sessions {
+		if s.activity != nil {
+			stageW = max(stageW, len(m.stageOf(s)))
+		}
+	}
+	out := []string{headerStyle.Render(clip(nowRow(sw, stageW, m.leadHeader(), "role", "issue", "pr", "stage", "elapsed", "turns", "cost", "sandbox", "model"), w))}
 	out = append(out, listRows(len(sessions), rows, func(i int) string {
 		s := sessions[i]
 		spent := m.projects[s.project].spent[spendKey(s.issue, s.role)]
@@ -1006,26 +1045,26 @@ func (m Model) nowPanel(w, rows, from int) string {
 		// nowRow pads by byte count and clip cuts by rune, and neither can
 		// be handed a cell carrying escape sequences.
 		return roleStyle(s.role).Render(clip(nowRow(
-			sw,
+			sw, stageW,
 			m.lead(from+i, s.project),
 			prompts.Title(s.role),
 			number(s.issue),
 			number(s.pr),
-			clip(m.stageOf(s), stageWidth),
+			clip(m.stageOf(s), stageW),
 			dur(m.deps.Now().Sub(s.started)),
 			strconv.Itoa(s.turns+spent.turns),
 			cost,
 			sandboxCell(s),
-			modelCell(s, w, sw, m.leadHeader()),
+			modelCell(s, w, sw, stageW, m.leadHeader()),
 		), w))
 	})...)
 	return strings.Join(out, "\n")
 }
 
-// stageWidth is the width of the stage column, which every cell is cut to:
-// the stages the scheduler publishes run to "pre-review checks (reported)"
-// and a wider one would push the model column — and with it the (fallback)
-// marker — off the end of the row.
+// stageWidth is the usual stage column width; review activity widens it
+// enough to show the completed/total angle count. Keeping it narrow otherwise
+// leaves room for the model and its (fallback) marker; longer worker stages
+// such as "pre-review checks (reported)" are clipped to fit.
 const stageWidth = 20
 
 // nowRow lays the Now panel's columns out, after lead (Model.lead: the
@@ -1034,8 +1073,8 @@ const stageWidth = 20
 // sandbox width of zero leaves the column out altogether, separator
 // included, so a row without it is laid out exactly as a row that never had
 // the column.
-func nowRow(sandboxW int, lead, role, issue, pr, stage, elapsed, turns, cost, sandbox, model string) string {
-	row := fmt.Sprintf("%s%-16s %-5s %-5s %-*s %8s %6s %8s ", lead, role, issue, pr, stageWidth, stage, elapsed, turns, cost)
+func nowRow(sandboxW, stageW int, lead, role, issue, pr, stage, elapsed, turns, cost, sandbox, model string) string {
+	row := fmt.Sprintf("%s%-16s %-5s %-5s %-*s %8s %6s %8s ", lead, role, issue, pr, stageW, stage, elapsed, turns, cost)
 	if sandboxW > 0 {
 		row += fmt.Sprintf(" %-*s", sandboxW, sandbox)
 	}
@@ -1081,7 +1120,7 @@ func sandboxCell(s running) string {
 //
 // lead is what the row starts with (Model.leadHeader), which the project
 // column widens.
-func modelCell(s running, w, sandboxW int, lead string) string {
+func modelCell(s running, w, sandboxW, stageW int, lead string) string {
 	name, marker := s.model, ""
 	if name == "" {
 		name = "-"
@@ -1089,7 +1128,7 @@ func modelCell(s running, w, sandboxW int, lead string) string {
 	if s.fallback {
 		marker = " (fallback)"
 	}
-	budget := w - lipgloss.Width(nowRow(sandboxW, lead, "", "", "", "", "", "", "", "", "")) - lipgloss.Width(marker)
+	budget := w - lipgloss.Width(nowRow(sandboxW, stageW, lead, "", "", "", "", "", "", "", "", "")) - lipgloss.Width(marker)
 	if budget < 1 {
 		// Not even room for the marker: give what room there is to it and
 		// let the row's own clip decide the rest. A cut "(fallback" still
@@ -1099,10 +1138,16 @@ func modelCell(s running, w, sandboxW int, lead string) string {
 	return clip(name, budget) + marker
 }
 
-// stageOf names the stage a session is running in: the developer worker's
+// stageOf names a review activity's phase, or a session's developer worker's
 // stage for the issue, with the round it is on. A singleton role owns no
 // issue and so has no stage.
 func (m Model) stageOf(s running) string {
+	if a := s.activity; a != nil {
+		if a.Phase == "angles" {
+			return fmt.Sprintf("review: angles %d/%d done", a.Completed, a.Total)
+		}
+		return "review: brief"
+	}
 	st, ok := m.projects[s.project].stages[s.issue]
 	if !ok {
 		return "-"

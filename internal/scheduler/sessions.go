@@ -61,10 +61,22 @@ type sessionSpec struct {
 	// review found (review.go): it runs roles.reviewer.judge_model where it
 	// is set.
 	judge bool
+	// reviewActivity identifies the pipeline this judge replaces in live
+	// views. Verification rounds leave it empty.
+	reviewActivity string
 }
 
 // runSession resolves the role, renders prompts and runs the session.
-func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.Result, error) {
+func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (_ *session.Result, resultErr error) {
+	startedActivity := false
+	defer func() {
+		// Preparation can fail before session-started hands the row off.
+		if spec.reviewActivity != "" && !startedActivity && resultErr != nil {
+			ev := sessionEvent(EventReviewEnded, spec)
+			ev.Session, ev.Err = "", resultErr.Error()
+			s.publish(ev)
+		}
+	}()
 	role, err := s.cfg.Role(spec.role)
 	if err != nil {
 		return nil, err
@@ -231,6 +243,7 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (*session.
 	s.recordLiveSession(spec.name, liveSession{role: spec.role, dir: sessionDir, issue: start.Issue, pr: start.PR})
 	defer s.dropLiveSession(spec.name)
 	s.publish(start)
+	startedActivity = true
 	res, err := s.runner.Run(sctx, session.Request{
 		Name:         spec.name,
 		Role:         role,
