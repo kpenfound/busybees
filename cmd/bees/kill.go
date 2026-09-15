@@ -44,7 +44,10 @@ scheduler as well.`,
 				return err
 			}
 			store := state.New(cfg.StateDir())
-			st, _ := store.LoadStatus()
+			st, err := store.LoadStatus()
+			if err != nil {
+				return err
+			}
 
 			// Scheduler still running?
 			if st.PID > 0 && st.PID != os.Getpid() && procs.Alive(st.PID) {

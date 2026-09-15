@@ -69,7 +69,7 @@ func (s *Store) AppendLedger(e LedgerEntry) error {
 // tail must never break `bees cost`. Read and scan failures return an error
 // without entries, so callers cannot report a partial total.
 func (s *Store) ReadLedger(since time.Time) ([]LedgerEntry, error) {
-	if err := s.migrateExisting(); err != nil {
+	if err := s.MigrateExisting(); err != nil {
 		return nil, err
 	}
 	f, err := os.Open(s.LedgerPath())

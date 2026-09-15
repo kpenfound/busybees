@@ -18,7 +18,7 @@ func (s *Store) NotesArchiveDir() string { return filepath.Join(s.Dir, "notes", 
 // NotesSize returns the size of a role's notes file in bytes, 0 when the file
 // does not exist yet.
 func (s *Store) NotesSize(role string) (int64, error) {
-	if err := s.migrateExisting(); err != nil {
+	if err := s.MigrateExisting(); err != nil {
 		return 0, err
 	}
 	fi, err := os.Stat(s.NotesPath(role))
@@ -36,7 +36,7 @@ func (s *Store) NotesSize(role string) (int64, error) {
 // returns the archive path, or "" when there was nothing to archive: a missing
 // notes file is not an error, the file is simply created.
 func (s *Store) ArchiveNotes(role string, now time.Time) (string, error) {
-	if err := s.migrateExisting(); err != nil {
+	if err := s.MigrateExisting(); err != nil {
 		return "", err
 	}
 	p := s.NotesPath(role)
@@ -82,7 +82,7 @@ func indentContinuation(text string) string {
 // every line after the first is indented by two spaces so the note reads as
 // one bullet.
 func (s *Store) AppendNotes(role, text string) error {
-	if err := s.migrateExisting(); err != nil {
+	if err := s.MigrateExisting(); err != nil {
 		return err
 	}
 	if err := s.EnsureNotes(role); err != nil {
@@ -107,7 +107,7 @@ func (s *Store) AppendNotes(role, text string) error {
 // workers share one file) sees the old text or the new one, never half of
 // either.
 func (s *Store) WriteNotes(role, text string) error {
-	if err := s.migrateExisting(); err != nil {
+	if err := s.MigrateExisting(); err != nil {
 		return err
 	}
 	p := s.NotesPath(role)

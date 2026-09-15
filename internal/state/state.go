@@ -58,8 +58,8 @@ func New(dir string) *Store { return &Store{Dir: dir} }
 // Migrate ensures every access uses the current on-disk schema.
 func (s *Store) Migrate() error { return statemigrate.Ensure(s.Dir) }
 
-// migrateExisting leaves a missing directory absent on read-only paths.
-func (s *Store) migrateExisting() error {
+// MigrateExisting leaves a missing directory absent on read-only paths.
+func (s *Store) MigrateExisting() error {
 	if _, err := os.Stat(s.Dir); errors.Is(err, os.ErrNotExist) {
 		return nil
 	} else if err != nil {
@@ -132,7 +132,7 @@ func (s *Store) NotesPath(role string) string {
 
 // ReadNotes returns a role's notes ("" when none exist yet).
 func (s *Store) ReadNotes(role string) (string, error) {
-	if err := s.migrateExisting(); err != nil {
+	if err := s.MigrateExisting(); err != nil {
 		return "", err
 	}
 	b, err := os.ReadFile(s.NotesPath(role))
@@ -316,9 +316,9 @@ type WorkState struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
-// SessionRun is one session the scheduler started for an issue: who ran it,
-// what it was called and the directory holding its prompts, transcript and,
-// once it ends, its result.
+// SessionRun is one session the scheduler started for a work item, including
+// PR-only requested reviews: who ran it, what it was called and the directory
+// holding its prompts, transcript and, once it ends, its result.
 type SessionRun struct {
 	Role      string    `json:"role"`
 	Name      string    `json:"name"`
@@ -349,7 +349,7 @@ func (s *Store) WorkPath(key work.Key) string {
 
 // WorkKeys lists persisted work identities without interpreting their keys.
 func (s *Store) WorkKeys() ([]work.Key, error) {
-	if err := s.migrateExisting(); err != nil {
+	if err := s.MigrateExisting(); err != nil {
 		return nil, err
 	}
 	entries, err := os.ReadDir(filepath.Join(s.Dir, "issues"))
@@ -402,7 +402,7 @@ func (s *Store) IssueNumbers() ([]int, error) {
 func (s *Store) RemoveIssue(n int) error { return s.RemoveWork(ghwork.IssueKey(n)) }
 
 func (s *Store) RemoveWork(key work.Key) error {
-	if err := s.migrateExisting(); err != nil {
+	if err := s.MigrateExisting(); err != nil {
 		return err
 	}
 	err := os.Remove(s.WorkPath(key))
@@ -854,7 +854,7 @@ func (s *Store) LoadStatus() (Status, error) {
 }
 
 func (s *Store) readJSON(path string, v any) error {
-	if err := s.migrateExisting(); err != nil {
+	if err := s.MigrateExisting(); err != nil {
 		return err
 	}
 	b, err := os.ReadFile(path)

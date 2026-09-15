@@ -2,12 +2,15 @@ package main
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/session"
+	"github.com/kpenfound/busybees/internal/statemigrate"
 )
 
 // sandboxConfig is a config whose state dir is somewhere nothing else writes,
@@ -113,5 +116,40 @@ func TestDoneLongMatchesValidOutcomes(t *testing.T) {
 		if !slices.Equal(got, wantSorted) {
 			t.Errorf("role %s: statuses = %v, want %v (session.ValidOutcomes)", role, statuses, want)
 		}
+	}
+}
+
+func TestMailListPreservesMissingStateDirectory(t *testing.T) {
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "absent")
+	t.Setenv(session.EnvStateDir, dir)
+	if err := os.Chmod(parent, 0555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(parent, 0755) })
+	cmd := newMailCmd(&globalFlags{})
+	cmd.SetArgs([]string{"list"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("mail list created missing state: %v", err)
+	}
+}
+
+func TestMailSendInitializesMissingStateDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "absent")
+	t.Setenv(session.EnvStateDir, dir)
+	cmd := newMailCmd(&globalFlags{})
+	cmd.SetArgs([]string{"send", "--from", "human", "--to", "developer", "--subject", "hello"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, statemigrate.Marker)); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(filepath.Join(dir, "mail", "developer"))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("mail send did not persist one message: %v %v", entries, err)
 	}
 }

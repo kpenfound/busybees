@@ -33,8 +33,8 @@ func fixture(t *testing.T) string {
 		"sessions/finished/outcome.json":                               `{"status":"pr-updated","issue":12,"pr":34,"note":"kept"}`,
 		"sessions/finished/result.json":                                `{"name":"finished","has_outcome":true,"cost_usd":2.5,"outcome":{"status":"pr-updated","issue":12,"pr":34,"note":"kept"}}`,
 		"sessions/20260914-140000-reviewer-pr-34-123/transcript.jsonl": "{}\n",
-		"status.json":                                                  `{"pid":123,"workers":[{"name":"dev","issue":12,"stage":"checks","round":3,"resumed":true},{"name":"review-77","issue":77,"stage":"requested review"}],"priority":[12],"waiting_on_deps":{"12":[55,56]},"needs_human":[{"issue":12,"reason":"kept"}],"approved":[{"issue":12,"pr":34,"title":"kept"}]}`,
-		"ledger.jsonl":                                                 "{\"time\":\"2026-09-14T12:00:00Z\",\"issue\":12,\"pr\":34,\"role\":\"developer\",\"session\":\"one\",\"cost_usd\":2.5,\"turns\":8}\n{\"time\":\"2026-09-14T13:00:00Z\",\"issue\":12,\"role\":\"reviewer\",\"session\":\"two\",\"cost_usd\":4.75}\n{\"time\":\"2026-09-14T14:00:00Z\",\"pr\":77,\"role\":\"reviewer\",\"session\":\"three\",\"cost_usd\":1}\n{truncated",
+		"status.json":                                                  `{"pid":0,"workers":[{"name":"dev","issue":12,"stage":"checks","round":3,"resumed":true},{"name":"review-77","issue":77,"stage":"requested review"}],"priority":[12],"waiting_on_deps":{"12":[55,56]},"needs_human":[{"issue":12,"reason":"kept"}],"approved":[{"issue":12,"pr":34,"title":"kept"}]}`,
+		"ledger.jsonl":                                                 "{\"time\":\"2026-09-14T12:00:00Z\",\"issue\":12,\"pr\":34,\"role\":\"developer\",\"session\":\"one\",\"cost_usd\":2.5,\"turns\":8}\n{\"time\":\"2026-09-14T13:00:00Z\",\"issue\":12,\"role\":\"reviewer\",\"session\":\"two\",\"cost_usd\":4.75}\n{\"time\":\"2026-09-14T14:00:00Z\",\"pr\":77,\"role\":\"reviewer\",\"session\":\"three\",\"cost_usd\":1}\n{\"issue\":\"bad\"}\n{truncated",
 	}
 	for name, body := range files {
 		put(t, filepath.Join(dir, name), body)
@@ -235,5 +235,59 @@ func TestConcurrentMigration(t *testing.T) {
 	}
 	if !reflect.DeepEqual(snapshot(t, dir), snapshot(t, want)) {
 		t.Fatal("concurrent migration duplicated records")
+	}
+}
+
+func TestMigrationRefusesActiveLegacyWriters(t *testing.T) {
+	for _, name := range []string{"status.json", "bees.pid", "sessions/interrupted/pid", "sessions/interrupted/mcp-server-pid", "sessions/interrupted/container-id"} {
+		t.Run(name, func(t *testing.T) {
+			dir := fixture(t)
+			body := fmt.Sprint(os.Getpid())
+			if name == "status.json" {
+				body = fmt.Sprintf(`{"pid":%d}`, os.Getpid())
+			}
+			if name == "bees.pid" {
+				body = "1"
+			} // the current daemon may migrate during its own startup
+			if name == "sessions/interrupted/container-id" {
+				body = "possibly-running-container"
+			}
+			put(t, filepath.Join(dir, name), body)
+			before := snapshot(t, dir)
+			if err := Ensure(dir); err == nil || !strings.Contains(err.Error(), "stop") {
+				t.Fatalf("active legacy writer accepted: %v", err)
+			}
+			if !reflect.DeepEqual(before, snapshot(t, dir)) {
+				t.Fatal("refused migration changed state")
+			}
+			if err := os.Remove(filepath.Join(dir, name)); err != nil {
+				t.Fatal(err)
+			}
+			if err := Ensure(dir); err != nil {
+				t.Fatalf("migration after stopping writer: %v", err)
+			}
+			// Once upgraded, current-schema writers need not stop for a read.
+			put(t, filepath.Join(dir, name), body)
+			if err := Ensure(dir); err != nil {
+				t.Fatalf("completed upgrade checked writers: %v", err)
+			}
+		})
+	}
+}
+
+func TestMigrationAllowsInactiveWritersAndOwnDaemonStartup(t *testing.T) {
+	dir := fixture(t)
+	put(t, filepath.Join(dir, "bees.pid"), fmt.Sprint(os.Getpid()))
+	// Zero PIDs cannot be live. Keep stale records for existing cleanup paths.
+	put(t, filepath.Join(dir, "sessions/interrupted/pid"), "0")
+	put(t, filepath.Join(dir, "sessions/interrupted/mcp-server-pid"), "0")
+	if err := Ensure(dir); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"pid", "mcp-server-pid"} {
+		b, err := os.ReadFile(filepath.Join(dir, "sessions/interrupted", name))
+		if err != nil || string(b) != "0" {
+			t.Fatalf("migration modified stale PID: %s %v", b, err)
+		}
 	}
 }

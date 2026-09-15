@@ -28,9 +28,9 @@ const (
 	overBudgetEscalateAfter = 2
 )
 
-// recordWorkCost adds a finished session to the running total of the issue
-// it was run for. It is called for every session, from record, so retries and
-// reviewer sessions count like any other.
+// recordWorkCost adds a finished session to its work item's running total,
+// including PR-only requested reviews. It is called for every session, from
+// record, so retries and reviewer sessions count like any other.
 func (s *Scheduler) recordWorkCost(ref work.Ref, cost float64) {
 	if ref.Key == "" {
 		return

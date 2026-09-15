@@ -13,9 +13,11 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/sys/unix"
 
+	"github.com/kpenfound/busybees/core/agent/procs"
 	"github.com/kpenfound/busybees/core/work"
 	"github.com/kpenfound/busybees/internal/ghwork"
 )
@@ -50,11 +52,89 @@ func Ensure(dir string) error {
 	if err != nil || complete {
 		return err
 	}
+	if err := excludeLegacyWriters(dir); err != nil {
+		return fmt.Errorf("migrate factory state %s: %w", dir, err)
+	}
 	if err := migrate(dir, nil); err != nil {
 		return fmt.Errorf("migrate factory state %s: %w", dir, err)
 	}
 	return nil
 }
+
+// Legacy processes do not hold the schema lock. Upgrades require a stopped
+// factory; do not rewrite anything while its recorded writers may still run.
+// Check records directly: orphan discovery deletes stale markers and can call
+// a container engine, neither of which belongs in a migration preflight.
+func excludeLegacyWriters(dir string) error {
+	b, err := os.ReadFile(filepath.Join(dir, "status.json"))
+	if err == nil {
+		var status struct {
+			PID int `json:"pid"`
+		}
+		if err := json.Unmarshal(b, &status); err != nil {
+			return err
+		}
+		if procs.Alive(status.PID) {
+			return fmt.Errorf("stop legacy scheduler pid %d before upgrading state", status.PID)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	// A detached new scheduler records its own PID before initializing state.
+	// Other daemon PIDs can cover the interval before the first status write.
+	if err := excludePID(filepath.Join(dir, "bees.pid"), true); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(filepath.Join(dir, "sessions"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		sd := filepath.Join(dir, "sessions", e.Name())
+		for _, name := range []string{procs.PIDFile, procs.ServerPIDFile} {
+			if err := excludePID(filepath.Join(sd, name), false); err != nil {
+				return err
+			}
+		}
+		path := filepath.Join(sd, procs.ContainerIDFile)
+		b, err := os.ReadFile(path)
+		if err == nil && len(bytes.TrimSpace(b)) > 0 {
+			return fmt.Errorf("stop legacy container %s before upgrading state; remove %s only after verifying the container has stopped", strings.TrimSpace(string(b)), path)
+		}
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
+}
+
+func excludePID(path string, allowSelf bool) error {
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil {
+		return fmt.Errorf("invalid legacy writer PID in %s: %w", path, err)
+	}
+	if allowSelf && pid == os.Getpid() {
+		return nil
+	}
+	if procs.Alive(pid) {
+		return fmt.Errorf("stop legacy writer pid %d recorded in %s before upgrading state", pid, path)
+	}
+	return nil
+}
+
 func completed(dir string) (bool, error) {
 	b, err := os.ReadFile(filepath.Join(dir, Marker))
 	if errors.Is(err, os.ErrNotExist) {
@@ -362,6 +442,22 @@ func move(src, dst string, b []byte, after func(string) error) error {
 	return step(after, src)
 }
 
+// legacyLedgerEntry matches the pre-upgrade reader, including type validation.
+// Only migration decodes this shape; current accounting reads work identities.
+type legacyLedgerEntry struct {
+	Time         time.Time `json:"time"`
+	Role         string    `json:"role"`
+	Session      string    `json:"session"`
+	Issue        int       `json:"issue"`
+	PR           int       `json:"pr"`
+	Turns        int       `json:"turns"`
+	CostUSD      float64   `json:"cost_usd"`
+	DurationMS   int64     `json:"duration_ms"`
+	Outcome      string    `json:"outcome"`
+	ErrorSubtype string    `json:"error_subtype"`
+	TimedOut     bool      `json:"timed_out"`
+}
+
 func ledger(path string, after func(string) error) error {
 	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -375,6 +471,22 @@ func ledger(path string, after func(string) error) error {
 		var m object
 		if json.Unmarshal(line, &m) != nil || m == nil {
 			out = append(out, line...)
+			continue
+		}
+		var legacy legacyLedgerEntry
+		if err := json.Unmarshal(line, &legacy); err != nil {
+			// A wrong-typed issue/PR would become an accepted entry if left
+			// as an unknown field in the new schema. Preserve the entire raw
+			// line as a JSON string: both the reader and trimmer reject it,
+			// and an interrupted migration preserves it on its next pass.
+			preserved, err := json.Marshal(string(line))
+			if err != nil {
+				return err
+			}
+			out = append(out, preserved...)
+			if bytes.HasSuffix(line, []byte("\n")) {
+				out = append(out, '\n')
+			}
 			continue
 		}
 		if err := subjects(m); err != nil {

@@ -142,3 +142,52 @@ func TestMigrationFailureBlocksWriters(t *testing.T) {
 		t.Fatal("failed migration published marker")
 	}
 }
+
+func TestMigrationSkipsMalformedLegacyLedgerRecords(t *testing.T) {
+	s := New(t.TempDir())
+	bad := []string{`{"issue":"bad","cost_usd":99}`, `{"pr":{},"cost_usd":98}`, `{"issue":12,"turns":"bad","cost_usd":97}`}
+	lines := []string{`{"issue":12,"session":"first","cost_usd":2}`}
+	lines = append(lines, bad...)
+	lines = append(lines, `{"pr":34,"session":"last","cost_usd":3}`, `{truncated`)
+	if err := os.WriteFile(s.LedgerPath(), []byte(strings.Join(lines, "\n")), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		entries, err := s.ReadLedger(time.Time{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) != 2 || entries[0].CostUSD != 2 || entries[1].CostUSD != 3 || entries[0].Work.Key != ghwork.IssueKey(12) || entries[1].Work.Key != ghwork.PRKey(34) {
+			t.Fatalf("accounting changed: %+v", entries)
+		}
+	}
+	b, err := os.ReadFile(s.LedgerPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, original := range bad {
+		found := false
+		for _, line := range strings.Split(string(b), "\n") {
+			var preserved string
+			if json.Unmarshal([]byte(line), &preserved) == nil && strings.TrimSuffix(preserved, "\n") == original {
+				found = true
+			}
+			if line == original {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("lost malformed record %s in %s", original, b)
+		}
+	}
+	if !strings.HasSuffix(string(b), "{truncated") {
+		t.Fatal("lost truncated tail")
+	}
+	if _, err := s.TrimLedger(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := s.ReadLedger(time.Time{})
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("malformed records became accounting entries: %+v %v", entries, err)
+	}
+}

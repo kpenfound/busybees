@@ -42,7 +42,8 @@ func mailbox(g *globalFlags) (*mail.Box, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	return mail.Open(state.New(dir).MailDir(), state.New(dir).Migrate), dir, nil
+	store := state.New(dir)
+	return mail.Open(store.MailDir(), store.MigrateExisting), dir, nil
 }
 
 // ---- mail ------------------------------------------------------------------
@@ -82,6 +83,9 @@ mail too (use --from human).`
 			}
 			text, err := readBody(body, bodyFile)
 			if err != nil {
+				return err
+			}
+			if err := state.New(dir).Migrate(); err != nil {
 				return err
 			}
 			m, err := box.Send(mail.Message{To: toRole, From: from, Subject: subject, Body: text, InReplyTo: replyTo, Work: ghwork.New(issue, pr)})

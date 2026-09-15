@@ -64,8 +64,9 @@ A full pass is:
    `review`, `approved` or `blocked` whose `updatedAt` moved past the issue's
    `issue_human_seen_at` clock, the comments written since that clock are
    fetched (one call) and what people wrote goes out as one message from
-   `human` (`issue == N`) to the role that can act on it: the developer for
-   `in-progress` and `approved`; the developer and a copy to the reviewer for
+   `human` (`github.issue == N` in its work tags) to the role that can act on it:
+   the developer for `in-progress` and `approved`; the developer and a copy to
+   the reviewer for
    `review`, so the round in flight sees it; and for `blocked`, whoever asked
    the question, read off the worker's bookkeeping: a recorded branch or pull
    request means a developer session asked, and reconcile then moves the issue
@@ -99,8 +100,9 @@ A full pass is:
    inline review comments and conversation comments are fetched with `gh api
    --paginate` (three calls). Bee comments and empty approvals are dropped by
    the rule above. The rest go to the developer as one message from `human`
-   (`issue == N`, `pr == M`) whose body carries each item's id and the `gh`
-   command to reply to it, and the clock advances to the newest item. An
+   (work tags `github.issue == N`, `github.pr == M`) whose body carries each
+   item's id and the `gh` command to reply to it, and the clock advances to
+   the newest item. An
    `approved` issue that received feedback goes back to `ready` and its pull
    request loses `bees:approved`, so a developer worker picks it up in step 7,
    unless a worker still owns the issue (the checks stage), whose labels are
@@ -113,8 +115,9 @@ A full pass is:
    in `review` or `approved`, a `CONFLICTING` pull request (with
    `scheduler.pr_fix_conflicts`) or a `BEHIND` one (with
    `scheduler.pr_keep_updated`) gets the developer one message from
-   `orchestrator` (`issue == N`, `pr == M`) asking it to merge the default
-   branch, resolve, test, push and report `pr-updated`. The head commit is
+   `orchestrator` (work tags `github.issue == N`, `github.pr == M`) asking it
+   to merge the default branch, resolve, test, push and report `pr-updated`.
+   The head commit is
    recorded as `conflict_notified_sha`, so one head is mailed about once; a
    push changes the head and, if it still conflicts, is notified again. An
    approved issue goes back to `ready` as in step 3. An `UNKNOWN` or empty
@@ -1145,10 +1148,10 @@ Messages are addressed to a **role**, not a session. Delivery rules:
 
 - A developer session for issue N with pull request M receives the unread
   developer mail whose work tags contain `github.issue == N` or `github.pr == M`.
-- A reviewer session receives the unread reviewer mail where `issue == N` or
-  `pr == M`, in review mode and in checks mode alike, read afresh before each
-  of those sessions. Its earlier feedback is not replayed: a later round is
-  given the first review's findings to verify.
+- A reviewer session receives the unread reviewer mail whose work tags contain
+  `github.issue == N` or `github.pr == M`, in review mode and in checks mode alike,
+  read afresh before each of those sessions. Its earlier feedback is not replayed:
+  a later round is given the first review's findings to verify.
 - A singleton session receives all unread mail addressed to its role.
 - Mail is marked read (`read_at` set) after the session that received it
   finishes, so a session that crashed sees it again.
@@ -1246,14 +1249,26 @@ bookkeeping with a recorded reviewed head uses its PR key. Prompts, GitHub
 API/environment parameters, touched-issue files and review artifacts remain
 at the GitHub boundary.
 
+Stop the legacy scheduler and its sessions before upgrading; do not start an
+older binary against the directory during or after migration. Migration refuses
+live scheduler, session and host MCP server PID records. A remaining container ID
+also blocks it: stop the container and remove its `container-id` file after
+verifying it has stopped. PID checks alone cannot establish container liveness.
+Use the old binary's `bees kill --scheduler` for cleanup before upgrading, or stop
+the processes and containers manually. State migration errors stop `bees kill`
+before it takes any cleanup action.
+
 Each replacement is atomic. A cross-process lock serializes migration, and
 `schema.json` is written only after all required rewrites succeed. A retry can
 encounter both bookkeeping filenames: equal records are coalesced, while a
-conflict keeps the recoverable source and reports an error. Malformed ledger
-lines are preserved byte for byte. Other malformed records block migration;
-fix the reported record and retry. Completed upgrades are a no-op, and ordinary
-readers and writers use only the new schema. Read-only commands leave a missing
-state directory absent.
+conflict keeps the recoverable source and reports an error. Invalid JSON ledger
+lines are preserved byte for byte. Objects rejected by the legacy ledger's field
+types are preserved as JSON strings containing their exact original lines; the
+ledger reader and trimmer skip these strings for accounting. Other malformed
+records block migration; fix the reported record and retry. Completed upgrades
+are a no-op, and ordinary readers and writers use only the new schema. Read-only
+Store and CLI mailbox reads leave a missing state directory absent. Application
+initialization and mailbox sends may create it.
 
 `ledger.jsonl` is the factory's accounting: one line for every session that
 finishes, whatever it reported, and `bees cost` sums it. Lines are written

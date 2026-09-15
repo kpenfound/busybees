@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/kpenfound/busybees/core/agent/procs"
@@ -106,5 +107,23 @@ func TestKillTarget(t *testing.T) {
 		if got := killTarget(tc.p); got != tc.want {
 			t.Errorf("%s: killTarget = %q, want %q", tc.name, got, tc.want)
 		}
+	}
+}
+
+func TestKillStopsOnStatusMigrationFailure(t *testing.T) {
+	path := writeProject(t, "owner/repo", "")
+	dir := filepath.Join(filepath.Dir(path), ".bees")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "schema.json"), []byte("{broken"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// No external cleanup command should run, even for --dry-run.
+	t.Setenv("PATH", t.TempDir())
+	cmd := newKillCmd(&globalFlags{config: path})
+	cmd.SetArgs([]string{"--dry-run"})
+	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "invalid state schema") {
+		t.Fatalf("kill ignored status migration failure: %v", err)
 	}
 }
