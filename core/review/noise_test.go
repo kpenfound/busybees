@@ -2,10 +2,9 @@ package review
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
-
-	core "github.com/kpenfound/busybees/core/review"
 )
 
 // noisy is a finding as the judge left it: anchored, with an id, a category
@@ -16,18 +15,18 @@ func noisy(angle, category, severity, file, title string) Finding {
 		Category: category,
 		Severity: severity,
 		File:     file,
-		Lines:    LineRange{Start: 12, End: 14},
+		Lines:    LineRange{12, 14},
 		Side:     SideNew,
 		Title:    title,
 		Body:     "what is wrong with " + file + " and why it matters",
 	}
-	f.ID = Merge([]Finding{f}, nil)[0].ID
+	f.ID = findingID(&f)
 	return f
 }
 
 // shortNames is the pattern a reviewer of testRepo has said no to before.
 func shortNames(action string) Rule {
-	return Rule{Repo: testRepo, Angle: AngleGeneral, Category: "naming", Action: action, Text: "receiver names are short here", Count: 3}
+	return Rule{Scope: testRepo, Angle: AngleGeneral, Category: "naming", Action: action, Text: "receiver names are short here", Count: 3}
 }
 
 func TestARuleDropsTheFindingsItIsAbout(t *testing.T) {
@@ -36,7 +35,7 @@ func TestARuleDropsTheFindingsItIsAbout(t *testing.T) {
 		noisy(AngleGeneral, "naming", SeverityMedium, "gadget.go", "The package name says nothing"),
 		noisy(AngleTests, "naming", SeverityMedium, "widget.go", "Receiver names here are short"),
 	}
-	kept, silenced := Filter(findings, []Rule{shortNames(RuleDrop)}, testRepo)
+	kept, silenced := Filter(findings, []Rule{shortNames(RuleDrop)}, testRepo, exactWords)
 	if want := []string{"The package name says nothing", "Receiver names here are short"}; !reflect.DeepEqual(titles(kept), want) {
 		t.Errorf("kept %q, want %q: only the finding the rule is about is dropped", titles(kept), want)
 	}
@@ -65,7 +64,7 @@ func TestADownrankRuleLetsTheFindingThroughOneSeverityLower(t *testing.T) {
 		noisy(AngleGeneral, "naming", SeverityHigh, "widget.go", "Receiver names here are short"),
 		noisy(AngleGeneral, "wording", SeverityMedium, "gadget.go", "The comment repeats the code"),
 	}
-	kept, silenced := Filter(findings, []Rule{shortNames(RuleDownrank)}, testRepo)
+	kept, silenced := Filter(findings, []Rule{shortNames(RuleDownrank)}, testRepo, exactWords)
 	if len(kept) != 2 {
 		t.Fatalf("kept %q, want both: downrank hides nothing", titles(kept))
 	}
@@ -81,7 +80,7 @@ func TestADownrankRuleLetsTheFindingThroughOneSeverityLower(t *testing.T) {
 
 func TestAFindingAlreadyAtInfoIsNotRankedBelowIt(t *testing.T) {
 	findings := []Finding{noisy(AngleGeneral, "naming", SeverityInfo, "widget.go", "Receiver names here are short")}
-	kept, silenced := Filter(findings, []Rule{shortNames(RuleDownrank)}, testRepo)
+	kept, silenced := Filter(findings, []Rule{shortNames(RuleDownrank)}, testRepo, exactWords)
 	if len(kept) != 1 || kept[0].Severity != SeverityInfo {
 		t.Errorf("kept = %+v, want the finding still there, at info", kept)
 	}
@@ -96,8 +95,8 @@ func TestARuleWithNoTextSilencesItsWholeCategory(t *testing.T) {
 		noisy(AngleGeneral, "naming", SeverityHigh, "gadget.go", "The package name says nothing"),
 		noisy(AngleGeneral, "wording", SeverityHigh, "gadget.go", "The comment repeats the code"),
 	}
-	rule := Rule{Repo: anyValue, Angle: AngleGeneral, Category: "naming", Action: RuleDrop}
-	kept, silenced := Filter(findings, []Rule{rule}, testRepo)
+	rule := Rule{Scope: anyValue, Angle: AngleGeneral, Category: "naming", Action: RuleDrop}
+	kept, silenced := Filter(findings, []Rule{rule}, testRepo, exactWords)
 	if want := []string{"The comment repeats the code"}; !reflect.DeepEqual(titles(kept), want) {
 		t.Errorf("kept %q, want %q: a rule with no text is about every finding in its category", titles(kept), want)
 	}
@@ -109,19 +108,19 @@ func TestARuleWithNoTextSilencesItsWholeCategory(t *testing.T) {
 func TestARuleOfAnotherRepositoryOrAngleIsNotAboutThisFinding(t *testing.T) {
 	findings := []Finding{noisy(AngleGeneral, "naming", SeverityHigh, "widget.go", "Receiver names here are short")}
 	for _, rule := range []Rule{
-		{Repo: "acme/gadgets", Angle: AngleGeneral, Category: "naming", Action: RuleDrop, Text: "receiver names are short here"},
-		{Repo: testRepo, Angle: AngleTests, Category: "naming", Action: RuleDrop, Text: "receiver names are short here"},
-		{Repo: testRepo, Angle: AngleGeneral, Category: "wording", Action: RuleDrop, Text: "receiver names are short here"},
-		{Repo: testRepo, Angle: AngleGeneral, Category: "naming", Action: RuleDrop, Text: "the package name says nothing"},
+		{Scope: "another component", Angle: AngleGeneral, Category: "naming", Action: RuleDrop, Text: "receiver names are short here"},
+		{Scope: testRepo, Angle: AngleTests, Category: "naming", Action: RuleDrop, Text: "receiver names are short here"},
+		{Scope: testRepo, Angle: AngleGeneral, Category: "wording", Action: RuleDrop, Text: "receiver names are short here"},
+		{Scope: testRepo, Angle: AngleGeneral, Category: "naming", Action: RuleDrop, Text: "the package name says nothing"},
 	} {
-		kept, silenced := Filter(findings, []Rule{rule}, testRepo)
+		kept, silenced := Filter(findings, []Rule{rule}, testRepo, exactWords)
 		if len(kept) != 1 || len(silenced) != 0 {
 			t.Errorf("rule %q silenced a finding it is not about: kept %+v, silenced %+v", rule.Line(), kept, silenced)
 		}
 	}
 	// The one that is about it, whatever case its fields are written in.
-	rule := Rule{Repo: "ACME/Widgets", Angle: AngleGeneral, Category: "Naming", Action: RuleDrop, Text: "receiver names are short here"}
-	if kept, silenced := Filter(findings, []Rule{rule}, testRepo); len(kept) != 0 || len(silenced) != 1 {
+	rule := Rule{Scope: "COMPONENT", Angle: AngleGeneral, Category: "Naming", Action: RuleDrop, Text: "receiver names are short here"}
+	if kept, silenced := Filter(findings, []Rule{rule}, testRepo, exactWords); len(kept) != 0 || len(silenced) != 1 {
 		t.Errorf("rule %q is about the finding: kept %+v, silenced %+v", rule.Line(), kept, silenced)
 	}
 }
@@ -129,9 +128,9 @@ func TestARuleOfAnotherRepositoryOrAngleIsNotAboutThisFinding(t *testing.T) {
 func TestADropRuleActsWhereverItIsWritten(t *testing.T) {
 	findings := []Finding{noisy(AngleGeneral, "naming", SeverityHigh, "widget.go", "Receiver names here are short")}
 	drop := shortNames(RuleDrop)
-	downrank := Rule{Repo: anyValue, Angle: anyValue, Category: anyValue, Action: RuleDownrank}
+	downrank := Rule{Scope: anyValue, Angle: anyValue, Category: anyValue, Action: RuleDownrank}
 	for _, rules := range [][]Rule{{drop, downrank}, {downrank, drop}} {
-		kept, silenced := Filter(findings, rules, testRepo)
+		kept, silenced := Filter(findings, rules, testRepo, exactWords)
 		if len(kept) != 0 || len(silenced) != 1 || silenced[0].Action != RuleDrop {
 			t.Errorf("rules %q then %q: kept %+v, silenced %+v, want the drop to act either way",
 				rules[0].Line(), rules[1].Line(), kept, silenced)
@@ -144,8 +143,8 @@ func TestFindingsAreWhatTheyWereWithoutARuleAboutThem(t *testing.T) {
 		noisy(AngleGeneral, "naming", SeverityHigh, "widget.go", "Receiver names here are short"),
 		noisy(AngleTests, "missing test", SeverityLow, "gadget.go", "Gather has no test"),
 	}
-	for _, rules := range [][]Rule{nil, {{Repo: "acme/gadgets", Angle: anyValue, Category: anyValue, Action: RuleDrop}}} {
-		kept, silenced := Filter(findings, rules, testRepo)
+	for _, rules := range [][]Rule{nil, {{Scope: "another component", Angle: anyValue, Category: anyValue, Action: RuleDrop}}} {
+		kept, silenced := Filter(findings, rules, testRepo, exactWords)
 		if !reflect.DeepEqual(kept, findings) || silenced != nil {
 			t.Errorf("with rules %+v: kept %+v and silenced %+v, want the findings as they were", rules, kept, silenced)
 		}
@@ -155,12 +154,12 @@ func TestFindingsAreWhatTheyWereWithoutARuleAboutThem(t *testing.T) {
 func TestAnAngleIsToldTheRulesThatNameIt(t *testing.T) {
 	rules := []Rule{
 		shortNames(RuleDrop),
-		{Repo: anyValue, Angle: anyValue, Category: anyValue, Action: RuleDownrank, Text: "every angle hears this one"},
-		{Repo: "acme/gadgets", Angle: AngleGeneral, Action: RuleDrop, Text: "another repository"},
-		{Repo: testRepo, Angle: AngleTests, Action: RuleDrop, Text: "another angle"},
-		{Repo: testRepo, Angle: AngleGeneral, Category: "naming", Action: RuleDrop},
+		{Scope: anyValue, Angle: anyValue, Category: anyValue, Action: RuleDownrank, Text: "every angle hears this one"},
+		{Scope: "another component", Angle: AngleGeneral, Action: RuleDrop, Text: "another repository"},
+		{Scope: testRepo, Angle: AngleTests, Action: RuleDrop, Text: "another angle"},
+		{Scope: testRepo, Angle: AngleGeneral, Category: "naming", Action: RuleDrop},
 	}
-	got := core.NoiseSection(coreRules(rules), testRepo, AngleGeneral)
+	got := NoiseSection(rules, testRepo, AngleGeneral)
 	for _, want := range []string{
 		"## Dismissed before\n",
 		"- receiver names are short here\n",
@@ -179,13 +178,22 @@ func TestAnAngleIsToldTheRulesThatNameIt(t *testing.T) {
 		}
 	}
 	// Nothing to say is nothing said, not an empty heading.
-	if got := core.NoiseSection(coreRules(rules), testRepo, AngleSideEffects); !strings.Contains(got, "every angle hears this one") {
+	if got := NoiseSection(rules, testRepo, AngleSideEffects); !strings.Contains(got, "every angle hears this one") {
 		t.Errorf("side effects: %q", got)
 	}
-	if got := core.NoiseSection(coreRules(rules[3:]), testRepo, AngleGeneral); got != "" {
+	if got := NoiseSection(rules[3:], testRepo, AngleGeneral); got != "" {
 		t.Errorf("with no rule for the angle the section is %q, want nothing", got)
 	}
-	if got := core.NoiseSection(nil, testRepo, AngleGeneral); got != "" {
+	if got := NoiseSection(nil, testRepo, AngleGeneral); got != "" {
 		t.Errorf("with no rules at all the section is %q, want nothing", got)
 	}
+}
+
+// exactWords is a synthetic comparator, not busybees' overlap policy.
+func exactWords(a, b, c, d string) bool {
+	left := strings.Fields(strings.ToLower(a + " " + b))
+	right := strings.Fields(strings.ToLower(c + " " + d))
+	slices.Sort(left)
+	slices.Sort(right)
+	return slices.Equal(left, right)
 }

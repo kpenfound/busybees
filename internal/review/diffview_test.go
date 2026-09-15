@@ -79,47 +79,47 @@ func TestADiffViewMarksAFindingOnlyWhereTheDiffHasIt(t *testing.T) {
 	}{
 		{
 			name:      "new side, with a suggestion on the last line",
-			finding:   &Finding{File: "gather.go", Side: SideNew, Lines: LineRange{12, 13}, Suggestion: "\tc(1) // tested\n\td()"},
+			finding:   &Finding{File: "gather.go", Side: SideNew, Lines: LineRange{Start: 12, End: 13}, Suggestion: "\tc(1) // tested\n\td()"},
 			inDiff:    true,
 			marked:    []string{"gather.go#0:3", "gather.go#0:4"},
 			suggested: []string{"gather.go#0:4=\tc(1) // tested\n\td()"},
 		},
 		{
 			name:      "new side, across a removed line, which is not marked",
-			finding:   &Finding{File: "gather.go", Side: SideNew, Lines: LineRange{11, 12}, Suggestion: "\tb(1)"},
+			finding:   &Finding{File: "gather.go", Side: SideNew, Lines: LineRange{Start: 11, End: 12}, Suggestion: "\tb(1)"},
 			inDiff:    true,
 			marked:    []string{"gather.go#0:1", "gather.go#0:3"},
 			suggested: []string{"gather.go#0:3=\tb(1)"},
 		},
 		{
 			name:    "new side, without a suggestion, in the second hunk",
-			finding: &Finding{File: "gather.go", Side: SideNew, Lines: LineRange{44, 44}},
+			finding: &Finding{File: "gather.go", Side: SideNew, Lines: LineRange{Start: 44, End: 44}},
 			inDiff:  true,
 			marked:  []string{"gather.go#1:3"},
 			at:      [2]int{0, 1},
 		},
 		{
 			name:    "old side, a removed line, its suggestion not attached",
-			finding: &Finding{File: "gather.go", Side: SideOld, Lines: LineRange{12, 12}, Suggestion: "\tc(2)"},
+			finding: &Finding{File: "gather.go", Side: SideOld, Lines: LineRange{Start: 12, End: 12}, Suggestion: "\tc(2)"},
 			inDiff:  true,
 			marked:  []string{"gather.go#0:2"},
 		},
 		{
 			name:    "old side, context lines by their old numbers",
-			finding: &Finding{File: "gather.go", Side: SideOld, Lines: LineRange{13, 14}},
+			finding: &Finding{File: "gather.go", Side: SideOld, Lines: LineRange{Start: 13, End: 14}},
 			inDiff:  true,
 			marked:  []string{"gather.go#0:5", "gather.go#0:6"},
 		},
 		{
 			name:    "old side of a deleted file, its suggestion not attached",
-			finding: &Finding{File: "old.go", Side: SideOld, Lines: LineRange{1, 2}, Suggestion: "package older"},
+			finding: &Finding{File: "old.go", Side: SideOld, Lines: LineRange{Start: 1, End: 2}, Suggestion: "package older"},
 			inDiff:  true,
 			marked:  []string{"old.go#0:0", "old.go#0:1"},
 			at:      [2]int{1, 0},
 		},
 		{
 			name:      "a renamed file under its new path",
-			finding:   &Finding{File: "after.go", Side: SideNew, Lines: LineRange{2, 2}, Suggestion: "// later"},
+			finding:   &Finding{File: "after.go", Side: SideNew, Lines: LineRange{Start: 2, End: 2}, Suggestion: "// later"},
 			inDiff:    true,
 			marked:    []string{"after.go#0:2"},
 			suggested: []string{"after.go#0:2=// later"},
@@ -135,19 +135,19 @@ func TestADiffViewMarksAFindingOnlyWhereTheDiffHasIt(t *testing.T) {
 		},
 		{
 			name:    "a file the diff does not touch",
-			finding: &Finding{File: "nowhere.go", Side: SideNew, Lines: LineRange{1, 1}, Suggestion: "x"},
+			finding: &Finding{File: "nowhere.go", Side: SideNew, Lines: LineRange{Start: 1, End: 1}, Suggestion: "x"},
 		},
 		{
 			name:    "a range leaving its hunk marks none of it",
-			finding: &Finding{File: "gather.go", Side: SideNew, Lines: LineRange{16, 17}, Suggestion: "x"},
+			finding: &Finding{File: "gather.go", Side: SideNew, Lines: LineRange{Start: 16, End: 17}, Suggestion: "x"},
 		},
 		{
 			name:    "a side the file does not have",
-			finding: &Finding{File: "old.go", Side: SideNew, Lines: LineRange{1, 1}, Suggestion: "x"},
+			finding: &Finding{File: "old.go", Side: SideNew, Lines: LineRange{Start: 1, End: 1}, Suggestion: "x"},
 		},
 		{
 			name:    "a renamed file under its old path",
-			finding: &Finding{File: "before.go", Side: SideNew, Lines: LineRange{2, 2}, Suggestion: "x"},
+			finding: &Finding{File: "before.go", Side: SideNew, Lines: LineRange{Start: 2, End: 2}, Suggestion: "x"},
 		},
 		{
 			name: "no finding",
