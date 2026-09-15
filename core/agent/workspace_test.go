@@ -19,6 +19,58 @@ func (w deniedWorkspace) Directory() string { return w.dir }
 
 func (w deniedWorkspace) VCS() *vcs.Access { panic("VCS inspected for a denied profile") }
 
+func TestWorkspaceVCSMountPaths(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, "work")
+	metadata := filepath.Join(dir, ".git")
+	if err := os.MkdirAll(metadata, 0755); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(root, "metadata")
+	if err := os.Symlink(metadata, alias); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{alias, metadata, dir} {
+		for _, allowed := range []bool{false, true} {
+			t.Run(filepath.Base(path)+map[bool]string{false: "/denied", true: "/allowed"}[allowed], func(t *testing.T) {
+				r := Runner{}
+				c := container{r: &r, req: Request{
+					Workspace: fakeWorkspace{dir: dir, access: &vcs.Access{Mounts: []string{path, path}}},
+					Profile:   Profile{VCSAccess: allowed},
+				}}
+				args, err := c.mounts(context.Background())
+				if err != nil {
+					t.Fatal(err)
+				}
+				mounts := map[string]int{}
+				for i := 0; i < len(args); i += 2 {
+					mounts[args[i+1]]++
+				}
+				want := map[string]int{"type=bind,source=" + dir + ",destination=" + dir: 1}
+				if allowed {
+					// Every supplied path must resolve inside, even an alias whose
+					// target is already reachable through the workspace mount.
+					want["type=bind,source="+path+",destination="+path] = 1
+					if path == alias {
+						want["type=bind,source="+path+",destination="+metadata] = 1
+					}
+				}
+				if len(mounts) != len(want) {
+					t.Errorf("mounts=%v, want %v", mounts, want)
+				}
+				for spec, count := range want {
+					if mounts[spec] != count {
+						t.Errorf("mount %q appears %d times, want %d", spec, mounts[spec], count)
+					}
+				}
+			})
+		}
+	}
+}
+
 func TestWorkspaceAccessContract(t *testing.T) {
 	// If git discovery returns, fail on its side effect even if its error is ignored.
 	gitDir := t.TempDir()

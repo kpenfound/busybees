@@ -313,9 +313,7 @@ func (c *container) mounts(_ context.Context) ([]string, error) {
 	if req.Profile.VCSAccess && req.Workspace != nil {
 		if access := req.Workspace.VCS(); access != nil {
 			for _, dir := range access.Mounts {
-				if !within(dir, req.workDir()) {
-					out = append(out, bind(dir, false)...)
-				}
+				out = append(out, bind(dir, false)...)
 			}
 		}
 	}
@@ -346,19 +344,6 @@ func (c *container) mounts(_ context.Context) ([]string, error) {
 		}
 	}
 	return out, nil
-}
-
-// within reports whether path is dir or inside it, either as given or as
-// a real path.
-func within(path, dir string) bool {
-	if real, err := filepath.EvalSymlinks(dir); err == nil {
-		dir = real
-	}
-	if real, err := filepath.EvalSymlinks(path); err == nil {
-		path = real
-	}
-	rel, err := filepath.Rel(dir, path)
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, "../")
 }
 
 // clientEnv is the environment the engine client runs with: the host's,
