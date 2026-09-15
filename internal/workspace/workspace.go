@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/kpenfound/busybees/core/vcs"
 )
 
 // Workspace is a temporary directory containing a git worktree.
@@ -27,7 +29,37 @@ type Workspace struct {
 	Branch string
 	// MainRepo is the clone the worktree belongs to.
 	MainRepo string
+	access   *vcs.Access
 }
+
+func (w *Workspace) Directory() string { return w.RepoDir }
+func (w *Workspace) VCS() *vcs.Access  { return w.access }
+
+var _ vcs.Provider = (*Manager)(nil)
+var _ vcs.Workspace = (*Workspace)(nil)
+
+// Acquire adapts the core request to busybees' git branch policy.
+func (m *Manager) Acquire(ctx context.Context, req vcs.Request) (vcs.Workspace, error) {
+	if req.Branch == "" {
+		return m.Detached(ctx, req.Name, req.Ref)
+	}
+	return m.Branch(ctx, req.Name, req.Branch, req.Ref)
+}
+
+// Release applies the adapter's keep policy and removes its worktree.
+func (m *Manager) Release(ctx context.Context, ws vcs.Workspace) error {
+	if ws == nil {
+		return nil
+	}
+	gitWS, ok := ws.(*Workspace)
+	if !ok {
+		return fmt.Errorf("workspace was not created by the git adapter")
+	}
+	return m.Remove(ctx, gitWS)
+}
+
+// RemoteName is the configured remote used by busybees' review checkout.
+func (m *Manager) RemoteName() string { return m.Remote }
 
 // Manager creates and removes workspaces.
 type Manager struct {
@@ -85,7 +117,7 @@ func (m *Manager) Fetch(ctx context.Context) error {
 func (m *Manager) Detached(ctx context.Context, name, ref string) (*Workspace, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	ws, err := m.prepare(name)
+	ws, err := m.prepare(ctx, name)
 	if err != nil {
 		return nil, err
 	}
@@ -102,7 +134,7 @@ func (m *Manager) Detached(ctx context.Context, name, ref string) (*Workspace, e
 func (m *Manager) Branch(ctx context.Context, name, branch, base string) (*Workspace, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	ws, err := m.prepare(name)
+	ws, err := m.prepare(ctx, name)
 	if err != nil {
 		return nil, err
 	}
@@ -203,7 +235,7 @@ func (m *Manager) Prune(ctx context.Context) error {
 
 // prepare allocates the temp directory a workspace lives in. It is called
 // with m.mu held; it must not take the lock itself.
-func (m *Manager) prepare(name string) (*Workspace, error) {
+func (m *Manager) prepare(ctx context.Context, name string) (*Workspace, error) {
 	if err := os.MkdirAll(m.Root, 0o755); err != nil {
 		return nil, err
 	}
@@ -211,7 +243,14 @@ func (m *Manager) prepare(name string) (*Workspace, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Workspace{Root: root, RepoDir: filepath.Join(root, filepath.Base(root)), MainRepo: m.MainRepo}, nil
+	// Resolve the common directory here, under the same lock as worktree
+	// creation. Core never needs to inspect git or a linked-worktree .git file.
+	common, err := Git(ctx, m.MainRepo, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		_ = os.RemoveAll(root)
+		return nil, err
+	}
+	return &Workspace{Root: root, RepoDir: filepath.Join(root, filepath.Base(root)), MainRepo: m.MainRepo, access: &vcs.Access{Mounts: []string{filepath.Clean(common)}}}, nil
 }
 
 // refExists is called with m.mu held; it must not take the lock itself.

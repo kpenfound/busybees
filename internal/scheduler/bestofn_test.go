@@ -1038,7 +1038,7 @@ func TestMoEAttemptsCarryTheirExpert(t *testing.T) {
 	}
 	attempts, wss, err := h.sched.runAttempts(ctx, f)
 	for _, ws := range wss {
-		if rmErr := h.sched.ws.Remove(ctx, ws); rmErr != nil {
+		if rmErr := h.sched.ws.Release(ctx, ws); rmErr != nil {
 			t.Error(rmErr)
 		}
 	}

@@ -861,6 +861,15 @@ for what `bees status` prints.
 
 ## Running a session
 
+The scheduler acquires and releases `core/vcs.Workspace` values through a
+provider interface. `internal/workspace` is the git adapter: it supplies the
+working directory and shared git metadata mounts, and retains serialized
+creation, fetch, removal and prune operations. Core's session runner performs
+no git discovery. Busybees profiles explicitly allow VCS access, and its session
+adapter supplies identity and git configuration through the gated VCS environment
+fields. Core callers may instead supply a directory without repository metadata.
+
+
 A session is one non-interactive run of the role's `agent`, executed inside
 the worktree. With `agent = "claude"`, the default, it is one `claude -p`:
 

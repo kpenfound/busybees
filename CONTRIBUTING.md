@@ -10,6 +10,7 @@ core/agent/procs/    finding and stopping sessions (processes and containers)
 core/ops/            retry, ledger/budgets, pause/degraded signals, events, slots and wakes
 core/mcphost/        MCP host, typed role-scoped registration, lifecycle and outcome tool
 core/review/         brief, concurrent angles, judge, findings, filtering and artifacts over supplied context and diff
+core/vcs/           workspace contract and provider lifecycle; no git discovery
 cmd/bees/            the cobra CLI: every `bees` command
 internal/config/     bees.toml and the machine config: schema, defaults, validation, global/role merging, labels, the init template
 internal/daemon/     several projects' schedulers in one process, one goroutine each, a failure kept to its project

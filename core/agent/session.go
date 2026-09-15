@@ -23,6 +23,7 @@ import (
 
 	"github.com/kpenfound/busybees/core/agent/agentbin"
 	"github.com/kpenfound/busybees/core/agent/procs"
+	"github.com/kpenfound/busybees/core/vcs"
 )
 
 // Request describes one session to run.
@@ -36,8 +37,12 @@ type Request struct {
 	HostMCP *HostMCP
 	// ContainerEnv overrides Env only inside the container.
 	ContainerEnv map[string]string
-	// WorkDir is the directory the agent runs in (the worktree).
-	WorkDir string
+	// Workspace supplies the working directory and optional VCS resources.
+	Workspace vcs.Workspace
+	// VCSEnv and VCSContainerEnv are caller-owned identity, credentials and
+	// configuration, injected only when the profile allows VCS access.
+	VCSEnv          map[string]string
+	VCSContainerEnv map[string]string
 	// SystemPrompt is appended to claude's default system prompt.
 	SystemPrompt string
 	// Prompt is the task given to the session.
@@ -294,7 +299,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(runCtx, bin, args...)
-	cmd.Dir = req.WorkDir
+	cmd.Dir = req.workDir()
 	cmd.Stdin = strings.NewReader(stdin)
 	cmd.Env = env
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -323,7 +328,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 		return nil, err
 	}
 
-	r.Logger.Info("session start", "session", req.Name, "role", req.Profile.Name, "agent", req.Profile.Agent, "model", req.Profile.Model, "sandbox", req.Profile.Sandbox, "dir", req.WorkDir)
+	r.Logger.Info("session start", "session", req.Name, "role", req.Profile.Name, "agent", req.Profile.Agent, "model", req.Profile.Model, "sandbox", req.Profile.Sandbox, "dir", req.workDir())
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start %s: %w", filepath.Base(bin), err)
 	}
@@ -479,6 +484,11 @@ func (r *Runner) sessionVars(req Request, _ string) []envVar {
 	for _, k := range slices.Sorted(maps.Keys(req.Env)) {
 		vars = append(vars, envVar{k, req.Env[k]})
 	}
+	if req.Profile.VCSAccess {
+		for _, k := range slices.Sorted(maps.Keys(req.VCSEnv)) {
+			vars = append(vars, envVar{k, req.VCSEnv[k]})
+		}
+	}
 	return vars
 }
 
@@ -611,4 +621,11 @@ func (r *Runner) containerLabel() string {
 		return r.ContainerLabel
 	}
 	return procs.ContainerLabel
+}
+
+func (req Request) workDir() string {
+	if req.Workspace == nil {
+		return ""
+	}
+	return req.Workspace.Directory()
 }

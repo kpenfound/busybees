@@ -27,9 +27,12 @@ The caller also supplies:
 - Backend name prefixes, container labels, writable mounts, and optional
   `HostMCP` launch details for a server that runs on the host during a container
   session. A container session without `HostMCP` starts no host server.
-- `SandboxDomains` for Claude's network permissions. `VCSAccess` controls whether
-  the runner mounts a linked worktree's shared git directory. It does not remove
-  VCS executables or restrict an unsandboxed host's filesystem.
+- `SandboxDomains` for Claude's network permissions. `VCSAccess` gates the
+  workspace's VCS mounts and the request's `VCSEnv` / `VCSContainerEnv` identity,
+  credentials and configuration. Generic `Env`, `ContainerEnv` and explicit
+  caller mounts remain caller-controlled. This setting does not remove VCS
+  executables, strip inherited host credentials or hide repository files already
+  inside the working directory; it is not a filesystem security boundary.
 - An optional `SkillPreparer` and read-only skill cache mounts. Acquisition,
   caching and configuration policy stay with the caller.
 
@@ -45,6 +48,26 @@ Codex receives the session directory through
 Orphan scans use `procs.CodexMarker(prefix)` with the same environment prefix;
 `LegacyCodex` can also match a caller's older MCP-based marker. With the default
 empty prefix, `procs.Find` needs no marker overrides.
+
+## Workspaces
+
+`agent.Request.Workspace` implements `vcs.Workspace`: `Directory()` is where the
+agent runs and `VCS()` optionally describes additional writable container mounts
+at host paths. `vcs.Directory(path)` supplies a directory without VCS metadata.
+The runner performs no git discovery. A denied profile never reads `VCS()`.
+
+`vcs.Provider` acquires a workspace from caller-defined name/ref/branch values,
+releases it, and prunes stale metadata. The caller owns this lifetime: a workspace
+may span several sessions and retries. Release it on success, errors and
+cancellation, using `context.WithoutCancel` for cleanup after cancellation.
+Providers own retention policy and interpret refs; core does neither.
+
+Busybees implements this contract in `internal/workspace`, serializing git
+operations on its main clone and supplying its shared git directory as a mount.
+Its scheduler adds fetch, commits-ahead and branch deletion operations at the
+busybees boundary. Its session adapter supplies git/GitHub identity and push
+configuration through the VCS environment fields. Busybees profiles allow VCS
+access; another caller can supply a plain directory and deny it.
 
 ## Work identity
 

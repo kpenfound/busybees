@@ -42,7 +42,7 @@ type Profile struct {
 	SandboxImage            string
 	SandboxDomains          []string
 	ContainerUseEnvironment string
-	// VCSAccess permits the runner to expose a worktree's shared git directory.
+	// VCSAccess permits workspace VCS mounts and caller-supplied VCS environment.
 	// It is not a security boundary on an unsandboxed host.
 	VCSAccess bool
 	Shell     string

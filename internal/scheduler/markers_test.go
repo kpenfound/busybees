@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kpenfound/busybees/core/vcs"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/session"
@@ -75,7 +76,7 @@ func TestASessionsCommentsAreCheckedWhenItEnds(t *testing.T) {
 	seedComments(h, 1, commentJSON(42, "busybees-bot", "Closing this.", time.Now().Add(time.Minute)))
 
 	spec := devSpec(1)
-	spec.workDir = h.cfg.Dir()
+	spec.workspace = vcs.Directory(h.cfg.Dir())
 	if _, err := h.sched.runSession(context.Background(), spec); err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +147,7 @@ func TestThePullRequestASessionOpensIsAudited(t *testing.T) {
 	seedComments(h, fakePR, commentJSON(42, "busybees-bot", "Opened.", time.Now().Add(time.Minute)))
 
 	spec := devSpec(1)
-	spec.workDir = h.cfg.Dir()
+	spec.workspace = vcs.Directory(h.cfg.Dir())
 	if spec.data.PR != nil {
 		t.Fatal("the first round is dispatched with a pull request")
 	}

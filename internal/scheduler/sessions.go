@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/core/ops"
+	"github.com/kpenfound/busybees/core/vcs"
 	"github.com/kpenfound/busybees/core/work"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/ghwork"
@@ -21,13 +22,13 @@ import (
 
 // sessionSpec describes one session to run for a role.
 type sessionSpec struct {
-	work    work.Ref
-	role    string
-	name    string
-	workDir string
-	branch  string
-	data    prompts.Data
-	env     map[string]string
+	work      work.Ref
+	role      string
+	name      string
+	workspace vcs.Workspace
+	branch    string
+	data      prompts.Data
+	env       map[string]string
 	// task selects a task template other than the role's default.
 	task string
 	// useFallback runs this attempt with the role's fallback model as its
@@ -155,7 +156,7 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (_ *sessio
 	d.CommitFlags = s.cfg.CommitFlags()
 	d.Notify = s.cfg.Mentions()
 	d.MaxSize = s.cfg.MaxSize()
-	d.WorkDir = spec.workDir
+	d.WorkDir = spec.workspace.Directory()
 	d.Branch = spec.branch
 	d.StateDir = s.store.Dir
 	d.SessionDir = sessionDir
@@ -179,7 +180,7 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (_ *sessio
 	// keyed by role because each role reads a different set of files: one
 	// role's session succeeding says nothing about another role's file, and
 	// a shared name would let it clear the streak.
-	project, perr := prompts.LoadProject(spec.workDir, spec.role)
+	project, perr := prompts.LoadProject(spec.workspace.Directory(), spec.role)
 	s.op("project-prompts/"+spec.role, perr, "project prompt file skipped", "role", spec.role, "err", perr)
 	system, err := prompts.System(spec.role, d, role.Prompt, project...)
 	if err != nil {
@@ -247,7 +248,7 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (_ *sessio
 	res, err := s.runner.Run(sctx, session.Request{
 		Name:         spec.name,
 		Profile:      session.ProfileForRole(role),
-		WorkDir:      spec.workDir,
+		Workspace:    spec.workspace,
 		SystemPrompt: system,
 		Prompt:       task,
 		Env:          env,

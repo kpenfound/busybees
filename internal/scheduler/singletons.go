@@ -7,6 +7,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/kpenfound/busybees/core/vcs"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
@@ -491,18 +492,18 @@ func (s *Scheduler) runSingleton(ctx context.Context, role string, data prompts.
 	if err := s.ws.Fetch(ctx); err != nil {
 		return fmt.Errorf("fetch: %w", err)
 	}
-	ws, err := s.ws.Detached(ctx, role, s.cfg.Project.DefaultBranch)
+	ws, err := s.ws.Acquire(ctx, vcs.Request{Name: role, Ref: s.cfg.Project.DefaultBranch})
 	if err != nil {
 		return fmt.Errorf("workspace: %w", err)
 	}
 	defer func() {
-		if err := s.ws.Remove(context.WithoutCancel(ctx), ws); err != nil {
+		if err := s.ws.Release(context.WithoutCancel(ctx), ws); err != nil {
 			s.log.Warn("workspace cleanup failed", "role", role, "err", err)
 		}
 	}()
 	started := s.now()
 	name := role + "-" + started.Format("0102-1504")
-	res, err := s.runSessionWithRetry(ctx, sessionSpec{role: role, name: name, workDir: ws.RepoDir, data: data})
+	res, err := s.runSessionWithRetry(ctx, sessionSpec{role: role, name: name, workspace: ws, data: data})
 	if err != nil {
 		return err
 	}
