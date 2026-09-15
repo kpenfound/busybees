@@ -501,6 +501,11 @@ and are not printed, so a start that is going to work stays quiet.
 it: they are debugging commands and must stay usable on a half-configured
 machine.
 
+None of the three runs inside a session (`$BEES_SESSION_DIR` set): a factory a
+bee started from its session would run agents the live view does not show, the
+cost budget does not count and a stop does not reach. It exits with an error
+naming the session instead.
+
 Ahead of the doctor, and not bypassed by `--skip-doctor`, it checks that every
 role in the rotation asks for a [sandbox](configuration.md#sandboxing) bees can
 build here, and refuses to start naming the role when one does not: falling
@@ -769,11 +774,13 @@ only, after one warning naming the path and the reason.
 
 One scheduler pass, then wait for everything it started. Useful for cron-style
 operation or for watching a single cycle while tuning prompts.
+Like `bees run`, it refuses to run inside a session.
 
 ### `bees exec <role> [--issue N] [--pr N]`
 
 Runs one session for a role right now, outside the polling loop, with the same
 prompts and label transitions the scheduler would apply.
+Like `bees run`, it refuses to run inside a session.
 
 | Role | Arguments |
 |---|---|
