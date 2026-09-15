@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/prompts"
 	"github.com/kpenfound/busybees/internal/state"
 )
@@ -83,7 +84,7 @@ func (m Model) needsHumanPanel(w, rows, from int) string {
 		e := needsHuman[i]
 		return clip(escalatedRow(
 			m.lead(from+i, e.project),
-			number(e.Issue),
+			number(ghwork.Issue(e.Work)),
 			age(e.Since, m.deps.Now()),
 			clip(e.Title, titleWidth),
 			reasonText(e.Escalated),
@@ -124,8 +125,8 @@ func (m Model) approvedPanel(w, rows, from int) string {
 		a := approved[i]
 		return clip(approvedRow(
 			m.lead(from+i, a.project),
-			number(a.PR),
-			number(a.Issue),
+			number(ghwork.PR(a.Work)),
+			number(ghwork.Issue(a.Work)),
 			age(a.Since, m.deps.Now()),
 			a.Title,
 		), w)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/session"
 )
@@ -122,5 +123,5 @@ func commentTargets(spec sessionSpec, touched []int, opened int) []commentTarget
 // has already warned about an unreadable one.
 func openedPR(sessionDir string) int {
 	o, _, _ := session.ReadOutcome(sessionDir)
-	return o.PR
+	return ghwork.PR(o.Work)
 }

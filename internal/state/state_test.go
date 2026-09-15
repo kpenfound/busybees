@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/kpenfound/busybees/internal/ghwork"
 )
 
 // A fresh notes file already has the shape roles are asked to consolidate
@@ -69,7 +71,7 @@ func TestRoleStateRoundTrip(t *testing.T) {
 	}
 }
 
-// TestIssueCostSurvivesASaveIssue: a developer worker holds one IssueState
+// TestIssueCostSurvivesASaveIssue: a developer worker holds one WorkState
 // for the whole life of an issue, so SaveIssue must never write back the
 // running cost as it was when the worker started.
 func TestIssueNumbersAndRemoveIssue(t *testing.T) {
@@ -78,7 +80,7 @@ func TestIssueNumbersAndRemoveIssue(t *testing.T) {
 		t.Fatalf("no issues directory: IssueNumbers() = %v, %v", got, err)
 	}
 	for _, n := range []int{12, 3} {
-		if err := s.SaveIssue(IssueState{Number: n}); err != nil {
+		if err := s.SaveIssue(WorkState{Work: ghwork.New(n, 0)}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -143,7 +145,7 @@ func TestIssueCostSurvivesASaveIssue(t *testing.T) {
 
 // TestTheRunningSessionSurvivesASaveIssue: the record of the session running
 // for an issue has the same shape as the cost totals — a developer worker
-// holds one IssueState for the whole life of an issue while another writer
+// holds one WorkState for the whole life of an issue while another writer
 // moves the record underneath it — but it fails in both directions, so it is
 // owned by SetIssueSession alone. A worker's save must neither resurrect a
 // record that has since been cleared (which would report a crash that never
@@ -202,7 +204,7 @@ func TestTheRunningSessionSurvivesASaveIssue(t *testing.T) {
 // writer used to go through one temp name derived from the destination
 // (issues/<n>.json.tmp), so concurrent saves truncated and wrote the same
 // file and one could rename what the other was still writing. The result was
-// invalid JSON, and permanent: every reader of a corrupt IssueState warns and
+// invalid JSON, and permanent: every reader of a corrupt WorkState warns and
 // carries on without rewriting it, so nothing ever repaired it.
 //
 // The assertion is on the errors and on the final read, not on the race
@@ -237,7 +239,7 @@ func TestConcurrentSaveIssue(t *testing.T) {
 					continue
 				}
 				if g == 0 {
-					is.OpenChildren = []int{1, 2, 3, i}
+					is.OpenChildren = ghwork.Keys([]int{1, 2, 3, i})
 				} else {
 					is.Proposal = i%2 == 0
 				}
@@ -261,7 +263,7 @@ func TestConcurrentSaveIssue(t *testing.T) {
 func TestWrittenStateFilesAreModeSixFourFourAndLeaveNoTempFile(t *testing.T) {
 	dir := t.TempDir()
 	s := New(dir)
-	if err := s.SaveIssue(IssueState{Number: 7, Round: 1}); err != nil {
+	if err := s.SaveIssue(WorkState{Round: 1, Work: ghwork.New(7, 0)}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.SaveRole("developer", RoleState{Sessions: 1}); err != nil {
@@ -281,7 +283,7 @@ func TestWrittenStateFilesAreModeSixFourFourAndLeaveNoTempFile(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "taken.json"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.writeJSON(filepath.Join(dir, "taken.json"), IssueState{Number: 1}); err == nil {
+	if err := s.writeJSON(filepath.Join(dir, "taken.json"), WorkState{Work: ghwork.New(1, 0)}); err == nil {
 		t.Error("writeJSON renamed over a directory")
 	}
 
@@ -311,22 +313,24 @@ func TestWrittenStateFilesAreModeSixFourFourAndLeaveNoTempFile(t *testing.T) {
 // SaveIssue. The two tests below are opposite halves of one rule — SaveIssue
 // writes these fields and carries every other one over from the file — so
 // they share the fixture rather than stating it twice.
-func workerFields(round int) IssueState {
-	return IssueState{
-		Number:         7,
-		Round:          round,
-		PR:             101,
+func workerFields(round int) WorkState {
+	return WorkState{
+
+		Round: round,
+
 		Branch:         "bees/issue-7",
 		CheckFixRounds: 2,
 		WorkerStage:    "review",
 		AfterDevelop:   "checks",
-		PreReviewDone:  true,
+		PreReviewDone:  true, Work: ghwork.New(7,
+
+			101),
 	}
 }
 
-func wantWorkerFields(t *testing.T, got IssueState, round int, when string) {
+func wantWorkerFields(t *testing.T, got WorkState, round int, when string) {
 	t.Helper()
-	if want := workerFields(round); got.Round != want.Round || got.PR != want.PR ||
+	if want := workerFields(round); got.Round != want.Round || ghwork.PR(got.Work) != ghwork.PR(want.Work) ||
 		got.Branch != want.Branch || got.CheckFixRounds != want.CheckFixRounds ||
 		got.WorkerStage != want.WorkerStage || got.AfterDevelop != want.AfterDevelop ||
 		got.PreReviewDone != want.PreReviewDone {
@@ -336,7 +340,7 @@ func wantWorkerFields(t *testing.T, got IssueState, round int, when string) {
 
 // TestThePollingPathsBookkeepingSurvivesASaveIssue: every field the scheduler
 // writes on its polling path has the same shape as the cost totals — a
-// developer worker holds one IssueState for the whole life of an issue, so
+// developer worker holds one WorkState for the whole life of an issue, so
 // anything it did not load is stale by the time it saves. Saving its copy
 // wholesale would forget that a person's PR feedback and their comments on
 // the issue had been delivered (delivering both twice, and each on a clock of
@@ -418,7 +422,7 @@ func TestThePollingPathsBookkeepingSurvivesASaveIssue(t *testing.T) {
 	if !got.ProposalApprovedAt.Equal(approved) {
 		t.Errorf("proposal_approved_at: got %v want %v — the product manager is never told", got.ProposalApprovedAt, approved)
 	}
-	if len(got.OpenChildren) != 2 || got.OpenChildren[0] != 11 || got.OpenChildren[1] != 12 {
+	if len(got.OpenChildren) != 2 || got.OpenChildren[0] != ghwork.IssueKey(11) || got.OpenChildren[1] != ghwork.IssueKey(12) {
 		t.Errorf("open_children: got %v want [11 12]", got.OpenChildren)
 	}
 	if !got.CompleteReportedAt.Equal(reported) {
@@ -438,12 +442,12 @@ func TestTheOwnerMethodsPreserveTheWorkerFields(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		set  func(s *Store) error
-		want func(t *testing.T, is IssueState)
+		want func(t *testing.T, is WorkState)
 	}{
 		{
 			name: "SetHumanSeenAt",
 			set:  func(s *Store) error { return s.SetHumanSeenAt(7, time.Unix(1, 0).UTC()) },
-			want: func(t *testing.T, is IssueState) {
+			want: func(t *testing.T, is WorkState) {
 				if is.HumanSeenAt.IsZero() {
 					t.Error("human_seen_at was not recorded")
 				}
@@ -452,7 +456,7 @@ func TestTheOwnerMethodsPreserveTheWorkerFields(t *testing.T) {
 		{
 			name: "SetIssueHumanSeenAt",
 			set:  func(s *Store) error { return s.SetIssueHumanSeenAt(7, time.Unix(2, 0).UTC()) },
-			want: func(t *testing.T, is IssueState) {
+			want: func(t *testing.T, is WorkState) {
 				if is.IssueHumanSeenAt.IsZero() {
 					t.Error("issue_human_seen_at was not recorded")
 				}
@@ -461,7 +465,7 @@ func TestTheOwnerMethodsPreserveTheWorkerFields(t *testing.T) {
 		{
 			name: "SetConflictNotifiedSHA",
 			set:  func(s *Store) error { return s.SetConflictNotifiedSHA(7, "cafe") },
-			want: func(t *testing.T, is IssueState) {
+			want: func(t *testing.T, is WorkState) {
 				if is.ConflictNotifiedSHA != "cafe" {
 					t.Errorf("conflict_notified_sha: got %q", is.ConflictNotifiedSHA)
 				}
@@ -470,7 +474,7 @@ func TestTheOwnerMethodsPreserveTheWorkerFields(t *testing.T) {
 		{
 			name: "SetReviewedSHA",
 			set:  func(s *Store) error { return s.SetReviewedSHA(7, "f00d") },
-			want: func(t *testing.T, is IssueState) {
+			want: func(t *testing.T, is WorkState) {
 				if is.ReviewedSHA != "f00d" {
 					t.Errorf("reviewed_sha: got %q", is.ReviewedSHA)
 				}
@@ -479,7 +483,7 @@ func TestTheOwnerMethodsPreserveTheWorkerFields(t *testing.T) {
 		{
 			name: "SetProposal",
 			set:  func(s *Store) error { return s.SetProposal(7, true, time.Time{}) },
-			want: func(t *testing.T, is IssueState) {
+			want: func(t *testing.T, is WorkState) {
 				if !is.Proposal {
 					t.Error("proposal was not recorded")
 				}
@@ -488,7 +492,7 @@ func TestTheOwnerMethodsPreserveTheWorkerFields(t *testing.T) {
 		{
 			name: "SetEscalation",
 			set:  func(s *Store) error { return s.SetEscalation(7, "gave up", time.Unix(2, 0).UTC()) },
-			want: func(t *testing.T, is IssueState) {
+			want: func(t *testing.T, is WorkState) {
 				if is.Escalation != "gave up" || is.EscalatedAt.IsZero() {
 					t.Errorf("escalation: got %q at %v", is.Escalation, is.EscalatedAt)
 				}
@@ -497,8 +501,8 @@ func TestTheOwnerMethodsPreserveTheWorkerFields(t *testing.T) {
 		{
 			name: "SetOpenChildren",
 			set:  func(s *Store) error { return s.SetOpenChildren(7, []int{3}, time.Time{}) },
-			want: func(t *testing.T, is IssueState) {
-				if len(is.OpenChildren) != 1 || is.OpenChildren[0] != 3 {
+			want: func(t *testing.T, is WorkState) {
+				if len(is.OpenChildren) != 1 || is.OpenChildren[0] != ghwork.IssueKey(3) {
 					t.Errorf("open_children: got %v want [3]", is.OpenChildren)
 				}
 			},

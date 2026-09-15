@@ -54,8 +54,8 @@ GitHub repository. Read `docs/architecture.md` before changing the scheduler.
   and a host MCP server; `agentbin` guards all agent and engine launches in tests.
 - `internal/session` — busybees adapter: `ProfileForRole` projects a resolved role
   into execution settings; `Runner` supplies the `BEES_*` context, GitHub and git
-  identity, built-in MCP entry and outcome policy. Issue and touched-issue
-  artifacts stay here. Skills acquisition stays in `internal/skills`, behind
+  identity, built-in MCP entry and outcome policy. Session work markers use
+  core's opaque identity; GitHub touched-issue artifacts stay here. Skills acquisition stays in `internal/skills`, behind
   core's `SkillPreparer` interface.
 - `internal/prompts` — role prompts embedded in the binary (`system/*.md`, `task/*.md`) rendered with `text/template`, so a prompt change reaches no session until `bees` is rebuilt and `bees run` restarted; `project.go` appends the project repository's own `bees/prompts/common.md` and `bees/prompts/<role>.md`, read from the session's worktree at session start, which need no rebuild.
 - `internal/mcpserver` — the built-in MCP server (`bees mcp serve`) added to every session as `bees`, backed by the same code as the CLI: `mail_send`, `mail_list`, `issue_create`, `issue_link`, `issue_view`, `pr_view`, `comment`, `report_factory_error` (a draft under `<state_dir>/feedback/` when `scheduler.report_factory_errors` is on, otherwise a result saying nothing was recorded), `notes_read`, `notes_write` (a role's notes as one text, read whole and replaced whole, through the Notes backend `cmd/bees/mcp.go` wires from `notes.backend`: the file under `<state_dir>/notes/`, or Neo4j Agent Memory through `internal/nams`; the prompt does not carry them) and `done` go to every role; role-scoped are `issue_edit_body` (both managers), `issue_set_state` (project manager), `issue_question` (product manager), `submit_review` (reviewer: its judge session posts the review's findings with it, as a comment review on a developer's pull request and with the verdict as the event on a requested one) and `file_bug` (QA: `issue_create` for a bug report, refused when `internal/duplicates` finds the bug already filed). The name `bees` is reserved in bees.toml.
@@ -65,6 +65,11 @@ GitHub repository. Read `docs/architecture.md` before changing the scheduler.
 - `internal/nams` — the Neo4j Agent Memory REST client behind the notes tools with `notes.backend = "neo4j"`: one conversation per role (`userId` `bees-notes-<role>`), each write a message holding the whole notes text, a read the newest message; no Neo4j driver, no SDK, nothing deleted. Faked in its tests with an `httptest` server (`fakeNAMS`).
 - `internal/mail` — local JSON mailbox; the only channel between roles. `internal/feedback` — the queue of factory-error drafts `report_factory_error` writes (`Draft`, `Queue.Add`/`List`/`Remove`); the scheduler files them against `kpenfound/busybees` and removes them (`factoryerrors.go`).
 - `internal/github` — thin `gh` wrapper. `internal/workspace` — git worktrees. `internal/skills` — skills by git URL → `--plugin-dir`.
+- `core/work` — opaque work keys, caller tags and collision-resistant filenames.
+- `internal/ghwork` — busybees GitHub key/tag mapping; `internal/mailfmt` supplies
+  GitHub display fields to the generic mailbox formatter.
+- `internal/statemigrate` — locked, restart-safe runtime state upgrade; state access
+  runs it before reading or writing, with the schema marker published last.
 - `internal/state` — state dir layout (`mail/`, `notes/`, `sessions/`, `reviews/`, `issues/`, `status.json`).
 - `internal/text` — small English renderings shared by every package; `text.Count(n, noun)` is the one plural helper (regular plurals only).
 

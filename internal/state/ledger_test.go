@@ -3,18 +3,21 @@ package state
 import (
 	"errors"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/kpenfound/busybees/internal/ghwork"
 )
 
 func TestAppendAndReadLedger(t *testing.T) {
 	s := New(t.TempDir())
 	base := time.Date(2026, 8, 29, 10, 0, 0, 0, time.UTC)
 	entries := []LedgerEntry{
-		{Time: base, Role: "developer", Session: "developer-issue-12-r1", Issue: 12, PR: 34, Turns: 18, CostUSD: 0.42, DurationMS: 214000, Outcome: "pr-opened"},
-		{Time: base.Add(time.Hour), Role: "reviewer", Session: "reviewer-pr-34-r1", Issue: 12, PR: 34, Turns: 7, CostUSD: 0.11, Outcome: "approved"},
+		{Time: base, Role: "developer", Session: "developer-issue-12-r1", Turns: 18, CostUSD: 0.42, DurationMS: 214000, Outcome: "pr-opened", Work: ghwork.New(12, 34)},
+		{Time: base.Add(time.Hour), Role: "reviewer", Session: "reviewer-pr-34-r1", Turns: 7, CostUSD: 0.11, Outcome: "approved", Work: ghwork.New(12, 34)},
 	}
 	for _, e := range entries {
 		if err := s.AppendLedger(e); err != nil {
@@ -43,7 +46,7 @@ func TestAppendAndReadLedger(t *testing.T) {
 	if len(got) != 3 {
 		t.Fatalf("read %d entries, want 3: %+v", len(got), got)
 	}
-	if got[0] != entries[0] {
+	if !reflect.DeepEqual(got[0], entries[0]) {
 		t.Errorf("first entry: got %+v want %+v", got[0], entries[0])
 	}
 	if got[2].Role != "qa" {
@@ -77,7 +80,7 @@ func TestAppendLedgerConcurrent(t *testing.T) {
 		go func(w int) {
 			defer wg.Done()
 			for i := 0; i < each; i++ {
-				e := LedgerEntry{Role: "developer", Session: strings.Repeat("x", 200), Issue: w, Turns: i}
+				e := LedgerEntry{Role: "developer", Session: strings.Repeat("x", 200), Turns: i, Work: ghwork.New(w, 0)}
 				if err := s.AppendLedger(e); err != nil {
 					t.Error(err)
 					return
@@ -166,8 +169,8 @@ func TestTrimLedger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 1 {
-		t.Errorf("state dir holds %d files after the trim, want only the ledger: %v", len(entries), entries)
+	if len(entries) != 3 {
+		t.Errorf("state dir holds %d files after the trim, want ledger, schema marker and lock: %v", len(entries), entries)
 	}
 
 	// Nothing older than the cutoff: the file is left alone.

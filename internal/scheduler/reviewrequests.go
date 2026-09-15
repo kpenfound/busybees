@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/prompts"
 	"github.com/kpenfound/busybees/internal/state"
@@ -54,7 +55,7 @@ func requestedReviewKey(pr int) string { return fmt.Sprintf("requested-review-pr
 // a person adds the label again; the alternative, removing it afterwards,
 // would re-run the review on every poll for as long as the crash repeats.
 // The head commit an assignment-triggered review looked at is recorded in
-// issues/<pr>.json before the session for the same reason and with the
+// issues/work-<hash>.json before the session for the same reason and with the
 // same trade: it survives a restart, and a person recovers a lost review
 // with a push or the label. It is recorded whichever trigger fired, so
 // removing the label and leaving the assignment does not immediately
@@ -99,12 +100,12 @@ func (s *Scheduler) dispatchRequestedReviews(ctx context.Context, snap *snapshot
 		// for the same head again once the label is gone. A failure to
 		// record is logged and the review runs anyway: at worst the next
 		// poll reviews the same head once more.
-		if err := s.store.SetReviewedSHA(pr.Number, pr.HeadSHA); err != nil {
+		if err := s.store.SetWorkReviewedSHA(ghwork.New(0, pr.Number), pr.HeadSHA); err != nil {
 			s.log.Warn("could not record the reviewed head", "pr", pr.Number, "err", err)
 		}
 		s.log.Info("review requested on a pull request", "pr", pr.Number, "title", pr.Title, "author", pr.Author.Login, "trigger", reviewTrigger(requested))
-		// Issue holds the pull request's number: see the comment above.
-		w := &state.Worker{Name: fmt.Sprintf("review-%d", pr.Number), Issue: pr.Number, Stage: requestedReviewStage, Round: 1, Since: s.now()}
+		// The worker carries the PR work key; s.owned uses its GitHub number.
+		w := &state.Worker{Name: fmt.Sprintf("review-%d", pr.Number), Stage: requestedReviewStage, Round: 1, Since: s.now(), Work: ghwork.New(0, pr.Number)}
 		s.mu.Lock()
 		s.owned[pr.Number] = w
 		s.mu.Unlock()
@@ -163,10 +164,10 @@ func (s *Scheduler) assignedForReview(pr github.PR) bool {
 	if pr.HeadSHA == "" {
 		return false
 	}
-	is, err := s.store.Issue(pr.Number)
+	is, err := s.store.Work(ghwork.New(0, pr.Number))
 	if err != nil {
 		// A record that cannot be read cannot be written either:
-		// SetReviewedSHA reads the same file first, so reviewing anyway
+		// SetWorkReviewedSHA reads the same file first, so reviewing anyway
 		// would pay for the same review on every poll for as long as the
 		// file stays broken. checkPRs skips the same way, for the same
 		// reason. A missing file is not an error: it reads as an empty

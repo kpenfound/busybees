@@ -910,7 +910,7 @@ answering the reviewer's feedback, goes straight to the reviewer with no
 second read, no second wait and no checks section: the checks that were read
 describe a head the developer has since replaced. A restarted `bees run` does
 not read them again either. That the read happened is recorded in
-`<state_dir>/issues/<n>.json` along with the stage the worker was in.
+`<state_dir>/issues/work-<hash>.json` along with the stage the worker was in.
 
 `bees status` shows the worker in the `pre-review checks` stage while it
 waits. Set `pre_review_checks = false` to go straight from the developer to
@@ -926,7 +926,7 @@ written since then. It drops the ones bees wrote and empty approvals. What is
 left goes to the developer as one mail message from `human`, listing each
 item with its author, file and line, comment id, link and the exact `gh`
 command to reply to it. The timestamp of the last item delivered is recorded
-as `human_seen_at` in `<state_dir>/issues/<n>.json`. Comments on the issue
+as `human_seen_at` in `<state_dir>/issues/work-<hash>.json`. Comments on the issue
 itself have a clock of their own next to it, `issue_human_seen_at`, so
 reading one stream never suppresses the other.
 
@@ -1078,7 +1078,7 @@ untested. An issue in `bees:in-progress` is skipped. The developer is on it
 already.
 
 The developer is told once per head commit, recorded as
-`conflict_notified_sha` in `<state_dir>/issues/<n>.json`. The same
+`conflict_notified_sha` in `<state_dir>/issues/work-<hash>.json`. The same
 conflicting head is never nagged about twice, but a push that still conflicts
 is reported again. GitHub computes mergeability lazily, so a pull request
 whose state is still unknown is left alone until the next poll.
@@ -1252,7 +1252,7 @@ which by default is the budget itself. `bees status` reports the pause.
 
 The orchestrator sets `bees:needs-human` and posts a comment on the issue
 explaining why. It records the same reason in
-`<state_dir>/issues/<n>.json`, which is where `bees run`'s live view reads it
+`<state_dir>/issues/work-<hash>.json`, which is where `bees run`'s live view reads it
 to say what the factory is stuck on without asking GitHub again. An issue you
 label `bees:needs-human` by hand has no such record, and the view says so
 rather than inventing one. The comment mentions everyone in

@@ -203,7 +203,7 @@ func newAppFor(ctx context.Context, g *globalFlags, cfg *config.Config, log *slo
 		store:  store,
 		notes:  notesBackendFor(cfg.Notes, store),
 		gh:     githubClient(cfg),
-		mail:   mail.Open(store.MailDir()),
+		mail:   mail.Open(store.MailDir(), store.Migrate),
 		runner: runner,
 		ws:     ws,
 		log:    log,

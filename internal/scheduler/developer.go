@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/prompts"
 	"github.com/kpenfound/busybees/internal/review"
@@ -138,8 +139,8 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 	// worker is marked resumed for `bees status` (interrupted.go).
 	if in := s.takeInterrupted(log, &bookkeeping); in != nil {
 		s.markResumed(w)
-		s.holdInterrupted(issue.Number, in)
-		defer s.forgetInterrupted(issue.Number)
+		s.holdInterrupted(bookkeeping.Work.Key, in)
+		defer s.forgetInterrupted(bookkeeping.Work.Key)
 	}
 
 	// Resume: an open PR for the branch means we are in the review loop.
@@ -275,7 +276,7 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 			status, note := outcomeOf(res)
 			switch status {
 			case OutcomePROpened, OutcomePRUpdated:
-				found, err := s.locatePR(ctx, res.Outcome.PR, branch)
+				found, err := s.locatePR(ctx, ghwork.PR(res.Outcome.Work), branch)
 				if err != nil {
 					return err
 				}
@@ -283,7 +284,7 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 					return s.escalate(ctx, issue.Number, fmt.Sprintf("The developer reported `%s` but no open pull request exists for branch `%s`. Note: %s", status, branch, note))
 				}
 				pr = found
-				bookkeeping.PR = pr.Number
+				bookkeeping.Work = ghwork.WithPR(bookkeeping.Work, pr.Number)
 				_ = s.store.SaveIssue(bookkeeping)
 				if err := s.ensureVisible(ctx, pr.Number, true, pr.Labels, pr.Assignees, pr.MilestoneTitle()); err != nil {
 					log.Warn("the pull request may be invisible to the factory", "pr", pr.Number, "err", err)
@@ -569,7 +570,7 @@ type checksFix struct {
 	repoDir     string
 	branch      string
 	worker      *state.Worker
-	bookkeeping *state.IssueState
+	bookkeeping *state.WorkState
 	checks      []github.Check
 	gate        checksGate
 	policy      config.MergePolicy
@@ -643,7 +644,7 @@ func firstReviewStage(policy config.MergePolicy) string {
 	return "review"
 }
 
-// workerStages are the stages workIssue runs, and the values IssueState
+// workerStages are the stages workIssue runs, and the values WorkState
 // remembers. They are the developer worker's own state machine, not
 // roles.reviewer.stages, which are sections of one reviewer session's prompt.
 var workerStages = []string{"develop", "prereview", "review", "stack-wait", "checks"}
@@ -660,7 +661,7 @@ var workerStages = []string{"develop", "prereview", "review", "stack-wait", "che
 // one stage on. Only the record is tested here; each caller adds its own
 // label and pull request tests, because they have different things in hand
 // (a snapshot in resumableChecks, the pull request in resumeStage).
-func postApprovalFixRound(bk state.IssueState) bool {
+func postApprovalFixRound(bk state.WorkState) bool {
 	return bk.WorkerStage == "develop" && bk.AfterDevelop == "checks"
 }
 
@@ -694,7 +695,7 @@ func postApprovalFixRound(bk state.IssueState) bool {
 // written before one was known, is dropped the same way: starting a stage
 // later than the truth is the expensive mistake, starting one earlier only
 // costs a session.
-func (s *Scheduler) resumeStage(log *slog.Logger, bk state.IssueState, issue github.Issue, pr *github.PR, policy config.MergePolicy) (stage, afterDevelop string, prereviewDone bool) {
+func (s *Scheduler) resumeStage(log *slog.Logger, bk state.WorkState, issue github.Issue, pr *github.PR, policy config.MergePolicy) (stage, afterDevelop string, prereviewDone bool) {
 	fromLabel := "develop"
 	if pr != nil && s.stateOf(issue.Labels) == "review" {
 		// A worker resuming into a review it has no record of reads the
@@ -717,9 +718,9 @@ func (s *Scheduler) resumeStage(log *slog.Logger, bk state.IssueState, issue git
 	// when stageMatchesLabels was true for a stage other than develop, which
 	// needs an open pull request either way it can be true, and the one below
 	// only when inReviewLoop was true, which needs one too.
-	if bk.WorkerStage != "develop" && bk.PR != pr.Number {
+	if bk.WorkerStage != "develop" && ghwork.PR(bk.Work) != pr.Number {
 		log.Info("the remembered stage belongs to another pull request; resuming from the label",
-			"remembered", bk.WorkerStage, "remembered_pr", bk.PR, "pr", pr.Number, "stage", fromLabel)
+			"remembered", bk.WorkerStage, "remembered_pr", ghwork.PR(bk.Work), "pr", pr.Number, "stage", fromLabel)
 		return fromLabel, "review", false
 	}
 	afterDevelop, prereviewDone = bk.AfterDevelop, bk.PreReviewDone
@@ -729,7 +730,7 @@ func (s *Scheduler) resumeStage(log *slog.Logger, bk state.IssueState, issue git
 	// is the whole reason to resume it, so it survives the drop below — and
 	// this is the third way a pr.Number read here is safe by short-circuit.
 	approvedFixRound := pr != nil && s.stateOf(issue.Labels) == "approved" && postApprovalFixRound(bk)
-	if (!s.inReviewLoop(issue, pr) && !approvedFixRound) || bk.PR != pr.Number {
+	if (!s.inReviewLoop(issue, pr) && !approvedFixRound) || ghwork.PR(bk.Work) != pr.Number {
 		// The sub-state belongs to a pull request under review: which gate a
 		// developer round goes back to, and whether that pull request's checks
 		// have been read. develop matches any label, so without this an issue

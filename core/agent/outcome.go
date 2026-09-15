@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/kpenfound/busybees/core/work"
 )
 
 // OutcomeFile is the file a session's outcome is written to inside the
@@ -16,10 +18,9 @@ const OutcomeFile = "outcome.json"
 
 // Outcome is the structured result a session reports when it finishes.
 type Outcome struct {
-	Status string `json:"status"`
-	Note   string `json:"note,omitempty"`
-	PR     int    `json:"pr,omitempty"`
-	Issue  int    `json:"issue,omitempty"`
+	Work   work.Ref `json:"work"`
+	Status string   `json:"status"`
+	Note   string   `json:"note,omitempty"`
 }
 
 // ValidateOutcome checks a caller-supplied status set. Nil accepts any status.

@@ -3,6 +3,7 @@ package scheduler
 import (
 	"log/slog"
 
+	"github.com/kpenfound/busybees/core/work"
 	"github.com/kpenfound/busybees/internal/session"
 	"github.com/kpenfound/busybees/internal/state"
 )
@@ -14,7 +15,7 @@ import (
 // started as if the branch were untouched.
 //
 // The scheduler records the session it is about to run in the issue's
-// bookkeeping (state.IssueState.Session) and clears it when the session
+// bookkeeping (state.WorkState.Session) and clears it when the session
 // ends, so a record that outlives its session is the signal. The worker
 // that takes the issue over reads it, tells the first session of the role
 // that was interrupted (prompts.Data.Interrupted) and marks itself resumed
@@ -26,7 +27,7 @@ import (
 // a session that has not written its result yet is simply a session in
 // progress — and one whose session finished after the record was written is
 // cleared without a word.
-func (s *Scheduler) takeInterrupted(log *slog.Logger, bk *state.IssueState) *session.Interrupted {
+func (s *Scheduler) takeInterrupted(log *slog.Logger, bk *state.WorkState) *session.Interrupted {
 	rec := bk.Session
 	if rec == nil {
 		return nil
@@ -42,7 +43,7 @@ func (s *Scheduler) takeInterrupted(log *slog.Logger, bk *state.IssueState) *ses
 		// the record is stale.
 		bk.Session = nil
 		s.mu.Lock()
-		err := s.store.SetIssueSession(bk.Number, nil)
+		err := s.store.SetWorkSession(bk.Work, nil)
 		s.mu.Unlock()
 		if err != nil {
 			log.Warn("could not clear the recorded session", "session", rec.Name, "err", err)
@@ -65,30 +66,30 @@ func (s *Scheduler) takeInterrupted(log *slog.Logger, bk *state.IssueState) *ses
 // happened to runs for the issue, and forgetInterrupted drops it when the
 // worker ends. The report is worth having for the session that takes the
 // work over and stale for anything later, so it never outlives one worker.
-func (s *Scheduler) holdInterrupted(issue int, in *session.Interrupted) {
+func (s *Scheduler) holdInterrupted(key work.Key, in *session.Interrupted) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.interrupted[issue] = in
+	s.interrupted[key] = in
 }
 
-func (s *Scheduler) forgetInterrupted(issue int) {
+func (s *Scheduler) forgetInterrupted(key work.Key) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.interrupted, issue)
+	delete(s.interrupted, key)
 }
 
 // interruptedFor hands the held interruption to a session of the role it
 // happened to, once. Another role's session gets nothing: a developer told
 // that a reviewer session was interrupted learns nothing it can act on, and
 // the branch advice would be about a session that never wrote to it.
-func (s *Scheduler) interruptedFor(issue int, role string) *session.Interrupted {
+func (s *Scheduler) interruptedFor(key work.Key, role string) *session.Interrupted {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	in, ok := s.interrupted[issue]
+	in, ok := s.interrupted[key]
 	if !ok || in == nil || in.Role != role {
 		return nil
 	}
-	delete(s.interrupted, issue)
+	delete(s.interrupted, key)
 	return in
 }
 
@@ -109,23 +110,23 @@ func (s *Scheduler) markResumed(w *state.Worker) {
 // worker holds: that copy is a stage older, and this field is the one thing
 // about an issue that must survive the process that wrote it. Failing to
 // record it costs a crash report, never the session.
-func (s *Scheduler) recordRunningSession(spec sessionSpec, issue int, dir string) {
+func (s *Scheduler) recordRunningSession(spec sessionSpec, ref work.Ref, dir string) {
 	run := &state.SessionRun{Role: spec.role, Name: spec.name, Dir: dir, StartedAt: s.now()}
 	s.mu.Lock()
-	err := s.store.SetIssueSession(issue, run)
+	err := s.store.SetWorkSession(ref, run)
 	s.mu.Unlock()
 	if err != nil {
-		s.log.Warn("could not record the running session", "issue", issue, "session", spec.name, "err", err)
+		s.log.Warn("could not record the running session", "work", ref.Key, "session", spec.name, "err", err)
 	}
 }
 
 // clearRunningSession removes that record: the session ended, whatever it
 // ended with, so nothing was interrupted.
-func (s *Scheduler) clearRunningSession(issue int) {
+func (s *Scheduler) clearRunningSession(ref work.Ref) {
 	s.mu.Lock()
-	err := s.store.SetIssueSession(issue, nil)
+	err := s.store.SetWorkSession(ref, nil)
 	s.mu.Unlock()
 	if err != nil {
-		s.log.Warn("could not clear the recorded session", "issue", issue, "err", err)
+		s.log.Warn("could not clear the recorded session", "work", ref.Key, "err", err)
 	}
 }

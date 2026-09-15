@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/mail"
 )
@@ -333,7 +334,7 @@ func TestReviewerReceivesHumanMail(t *testing.T) {
 	seedPreReviewIssue(t, h, "Two rounds")
 	h.gh.checks = []checksResponse{{`[{"name":"go / test","bucket":"pass","state":"SUCCESS"}]`, nil}}
 	if _, err := h.box.Send(mail.Message{From: HumanSender, To: config.RoleReviewer,
-		Subject: "Naming", Body: "leave the flag names alone", Issue: 1}); err != nil {
+		Subject: "Naming", Body: "leave the flag names alone", Work: ghwork.New(1, 0)}); err != nil {
 		t.Fatal(err)
 	}
 	runPreReviewLoop(t, h)
@@ -367,7 +368,7 @@ func TestReviewerChecksSessionReceivesMail(t *testing.T) {
 	passing := `[{"name":"go / test","bucket":"pass","state":"SUCCESS","link":"https://ci.example.com/run/2"}]`
 	h.gh.checks = []checksResponse{{failing, fmt.Errorf("exit status 1")}, {passing, nil}}
 	if _, err := h.box.Send(mail.Message{From: HumanSender, To: config.RoleReviewer,
-		Subject: "That check", Body: "the CI runner is being replaced", PR: fakePR}); err != nil {
+		Subject: "That check", Body: "the CI runner is being replaced", Work: ghwork.New(0, fakePR)}); err != nil {
 		t.Fatal(err)
 	}
 	runPreReviewLoop(t, h)

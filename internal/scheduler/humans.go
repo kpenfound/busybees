@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/mail"
 	"github.com/kpenfound/busybees/internal/state"
@@ -65,9 +66,8 @@ func (s *Scheduler) deliverHumanFeedback(ctx context.Context, snap *snapshot) er
 			From:    HumanSender,
 			To:      config.RoleDeveloper,
 			Subject: fmt.Sprintf("Feedback on PR #%d from %s", pr.Number, strings.Join(activityAuthors(activity), ", ")),
-			Body:    formatActivity(s.cfg.Project.Repo, pr.Number, activity),
-			Issue:   issueNum,
-			PR:      pr.Number,
+			Body:    formatActivity(s.cfg.Project.Repo, pr.Number, activity), Work: ghwork.New(issueNum,
+				pr.Number),
 		}
 		if _, err := s.mail.Send(m); err != nil {
 			errs = append(errs, err.Error())
@@ -216,8 +216,7 @@ func (s *Scheduler) deliverHumanIssueComments(ctx context.Context, snap *snapsho
 				From:    HumanSender,
 				To:      s.issueCommentRecipient(st, bk),
 				Subject: fmt.Sprintf("Comment on issue #%d from %s", n, strings.Join(activityAuthors(activity), ", ")),
-				Body:    formatIssueComments(n, activity),
-				Issue:   n,
+				Body:    formatIssueComments(n, activity), Work: ghwork.New(n, 0),
 			}
 			if _, err := s.mail.Send(m); err != nil {
 				errs = append(errs, err.Error())
@@ -228,7 +227,7 @@ func (s *Scheduler) deliverHumanIssueComments(ctx context.Context, snap *snapsho
 				// issue alone would reach it; the PR is there because that
 				// is what a reviewer session is about.
 				copyToReviewer := m
-				copyToReviewer.To, copyToReviewer.PR = config.RoleReviewer, bk.PR
+				copyToReviewer.To, copyToReviewer.Work = config.RoleReviewer, ghwork.WithPR(copyToReviewer.Work, ghwork.PR(bk.Work))
 				if _, err := s.mail.Send(copyToReviewer); err != nil {
 					errs = append(errs, err.Error())
 				}
@@ -251,8 +250,8 @@ func (s *Scheduler) deliverHumanIssueComments(ctx context.Context, snap *snapsho
 // to. Only blocked is ambiguous, and the developer worker's bookkeeping
 // settles it: a branch or a pull request means a developer session asked the
 // question, anything else means triage did.
-func (s *Scheduler) issueCommentRecipient(st string, bk state.IssueState) string {
-	if st == "blocked" && bk.Branch == "" && bk.PR == 0 {
+func (s *Scheduler) issueCommentRecipient(st string, bk state.WorkState) string {
+	if st == "blocked" && bk.Branch == "" && ghwork.PR(bk.Work) == 0 {
 		return config.RoleProjectManager
 	}
 	return config.RoleDeveloper
@@ -311,8 +310,7 @@ func (s *Scheduler) deliverMention(ctx context.Context, issue github.Issue, to s
 		From:    HumanSender,
 		To:      to,
 		Subject: fmt.Sprintf("Mention on issue #%d from %s", n, strings.Join(activityAuthors(mentions), ", ")),
-		Body:    formatIssueComments(n, mentions),
-		Issue:   n,
+		Body:    formatIssueComments(n, mentions), Work: ghwork.New(n, 0),
 	}
 	if _, err := s.mail.Send(m); err != nil {
 		return err

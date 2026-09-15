@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/kpenfound/busybees/internal/ghwork"
 )
 
 func TestValidOutcomes(t *testing.T) {
@@ -43,8 +46,8 @@ func TestReport(t *testing.T) {
 	}{
 		{name: "normalised", role: "reviewer", in: Outcome{Status: " Approved ", Note: "lgtm"},
 			want: Outcome{Status: "approved", Note: "lgtm"}},
-		{name: "pr carried through", role: "developer", in: Outcome{Status: "pr-opened", PR: 7, Issue: 3},
-			want: Outcome{Status: "pr-opened", PR: 7, Issue: 3}},
+		{name: "pr carried through", role: "developer", in: Outcome{Status: "pr-opened", Work: ghwork.New(3, 7)},
+			want: Outcome{Status: "pr-opened", Work: ghwork.New(3, 7)}},
 		{name: "wrong status for role", role: "developer", in: Outcome{Status: "approved"},
 			wantErr: `status "approved" is not valid for developer`},
 		{name: "pr-opened needs a pr", role: "developer", in: Outcome{Status: "pr-opened"},
@@ -65,7 +68,7 @@ func TestReport(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got != tc.want {
+			if !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("outcome = %+v, want %+v", got, tc.want)
 			}
 			// Read the file back rather than trusting the returned value.
@@ -77,7 +80,7 @@ func TestReport(t *testing.T) {
 			if err := json.Unmarshal(b, &written); err != nil {
 				t.Fatal(err)
 			}
-			if written != tc.want {
+			if !reflect.DeepEqual(written, tc.want) {
 				t.Fatalf("%s = %+v, want %+v", OutcomeFile, written, tc.want)
 			}
 		})

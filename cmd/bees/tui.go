@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/logging"
 	"github.com/kpenfound/busybees/internal/mail"
 	"github.com/kpenfound/busybees/internal/scheduler"
@@ -106,8 +107,8 @@ func quietConsole(l *logging.Logger, f consoleFlags, cfg config.Logging, console
 func sendFromView(a *app) func(to string, issue, pr int, subject, body string) error {
 	return func(to string, issue, pr int, subject, body string) error {
 		_, err := a.mail.Send(mail.Message{
-			From: scheduler.HumanSender, To: to, Issue: issue, PR: pr,
-			Subject: subject, Body: body,
+			From: scheduler.HumanSender, To: to,
+			Subject: subject, Body: body, Work: ghwork.New(issue, pr),
 		})
 		return err
 	}

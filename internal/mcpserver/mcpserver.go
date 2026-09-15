@@ -119,7 +119,7 @@ type server struct {
 func New(env Env, deps Deps) *mcp.Server {
 	s := &server{env: env, mail: deps.Mail, issues: deps.Issues, github: deps.GitHub, feedback: deps.Feedback, drafts: deps.Drafts, notes: deps.Notes}
 	if s.mail == nil && env.StateDir != "" {
-		s.mail = mail.Open(state.New(env.StateDir).MailDir())
+		s.mail = mail.Open(state.New(env.StateDir).MailDir(), state.New(env.StateDir).Migrate)
 	}
 	if s.drafts == nil && env.StateDir != "" {
 		s.drafts = feedback.Open(state.New(env.StateDir).FeedbackDir())

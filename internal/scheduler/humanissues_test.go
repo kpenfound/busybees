@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/mail"
 	"github.com/kpenfound/busybees/internal/state"
@@ -138,13 +139,13 @@ func TestAQuietIssueCostsNoCommentFetch(t *testing.T) {
 func TestACommentOnABlockedIssueGoesToWhoeverIsWaiting(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
-		bk        *state.IssueState
+		bk        *state.WorkState
 		wantTo    string
 		wantState string
 	}{
 		{
 			name:      "blocked out of a developer session",
-			bk:        &state.IssueState{Number: 1, Round: 1, Branch: "bees/issue-1"},
+			bk:        &state.WorkState{Round: 1, Branch: "bees/issue-1", Work: ghwork.New(1, 0)},
 			wantTo:    config.RoleDeveloper,
 			wantState: "ready",
 		},
@@ -177,7 +178,7 @@ func TestACommentOnABlockedIssueGoesToWhoeverIsWaiting(t *testing.T) {
 			if len(msgs) != 1 {
 				t.Fatalf("%d messages for %s, want 1: %+v", len(msgs), tc.wantTo, msgs)
 			}
-			if msgs[0].From != HumanSender || msgs[0].Issue != 1 {
+			if msgs[0].From != HumanSender || ghwork.Issue(msgs[0].Work) != 1 {
 				t.Errorf("mail: %+v", msgs[0])
 			}
 			if !strings.Contains(msgs[0].Body, "yes, keep both flags") {
@@ -271,8 +272,9 @@ func TestACommentOnAnIssueInReviewReachesTheDeveloperAndTheReviewer(t *testing.T
 	if err := os.WriteFile(h.gh.prMarker, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.store.SaveIssue(state.IssueState{Number: 1, Round: 1, PR: fakePR, Branch: "bees/issue-1",
-		WorkerStage: "review", AfterDevelop: "review", PreReviewDone: true}); err != nil {
+	if err := h.store.SaveIssue(state.WorkState{Round: 1, Branch: "bees/issue-1",
+		WorkerStage: "review", AfterDevelop: "review", PreReviewDone: true, Work: ghwork.New(1, fakePR),
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.store.SetIssueHumanSeenAt(1, now.Add(-time.Hour)); err != nil {
@@ -300,7 +302,7 @@ func TestACommentOnAnIssueInReviewReachesTheDeveloperAndTheReviewer(t *testing.T
 			t.Fatalf("%d messages for %s, want 1: %+v", len(msgs), tc.role, msgs)
 		}
 		m := msgs[0]
-		if m.From != HumanSender || m.Issue != 1 || m.PR != tc.wantPR {
+		if m.From != HumanSender || ghwork.Issue(m.Work) != 1 || ghwork.PR(m.Work) != tc.wantPR {
 			t.Errorf("%s mail: %+v", tc.role, m)
 		}
 		if m.Subject != "Comment on issue #1 from kyle" {
@@ -435,7 +437,7 @@ func TestAnAnswerToATriageQuestionSurvivesTheSeed(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("%d messages for the project manager, want the answer: %+v", len(msgs), msgs)
 	}
-	if msgs[0].From != HumanSender || msgs[0].Issue != 1 {
+	if msgs[0].From != HumanSender || ghwork.Issue(msgs[0].Work) != 1 {
 		t.Errorf("mail: %+v", msgs[0])
 	}
 	if !strings.Contains(msgs[0].Body, "yes, both flags, and keep the old one working") {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/workspace"
 )
@@ -131,7 +132,7 @@ func TestDependencyHoldsReadyIssue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fmt.Sprint(st.WaitingOnDeps) != "map[1:[2]]" {
+	if fmt.Sprint(st.WaitingOnDeps) != "map[issue-1:[issue-2]]" {
 		t.Fatalf("status waiting_on_deps: %v", st.WaitingOnDeps)
 	}
 
@@ -586,7 +587,7 @@ func TestAWorkerKilledInStackWaitResumesInIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bk.WorkerStage != "stack-wait" || bk.PR != stackedPR {
+	if bk.WorkerStage != "stack-wait" || ghwork.PR(bk.Work) != stackedPR {
 		t.Fatalf("bookkeeping after the crash: %+v", bk)
 	}
 	if got := h.stateOfIssue(1); got != "review" {
@@ -762,7 +763,7 @@ func TestAStackedPullRequestWhosePredecessorClosedUnmergedWhileNoWorkerRan(t *te
 				if err != nil {
 					t.Fatal(err)
 				}
-				bk.WorkerStage, bk.PR, bk.Branch, bk.Round = tc.stage, stackedPR, "bees/issue-1", 1
+				bk.WorkerStage, bk.Work, bk.Branch, bk.Round = tc.stage, ghwork.WithPR(bk.Work, stackedPR), "bees/issue-1", 1
 				if err := h.store.SaveIssue(bk); err != nil {
 					t.Fatal(err)
 				}

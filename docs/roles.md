@@ -610,7 +610,7 @@ command that reproduces it into one mail to the developer.
 | `approved` | "Wait again": the checks were already green when the reviewer looked, or it re-ran a failure it judged unrelated (infrastructure, flakiness), which it does at most once. The orchestrator waits `checks_wait` and polls once more. |
 | `failed`, or no outcome | Escalates. |
 
-Fix rounds are counted in `<state_dir>/issues/<n>.json` and capped by
+Fix rounds are counted in `<state_dir>/issues/work-<hash>.json` and capped by
 `max_check_fix_rounds` (default 2). Pre-review and post-approval rounds share
 the counter, and neither counts against `max_review_rounds`. The reviewer is
 told when it is on the last fix round. What the post-approval stage polls,

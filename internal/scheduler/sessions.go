@@ -7,7 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kpenfound/busybees/core/work"
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/logging"
 	"github.com/kpenfound/busybees/internal/mail"
 	"github.com/kpenfound/busybees/internal/prompts"
@@ -18,6 +20,7 @@ import (
 
 // sessionSpec describes one session to run for a role.
 type sessionSpec struct {
+	work    work.Ref
 	role    string
 	name    string
 	workDir string
@@ -137,11 +140,9 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (_ *sessio
 	if err != nil {
 		return nil, err
 	}
-	if spec.data.Issue != nil {
-		// What the retention sweep finds the issue's sessions by. Losing it
-		// costs disk space, never the session.
-		err := session.WriteIssue(sessionDir, spec.data.Issue.Number)
-		s.op("session-issue-file", err, "could not record the session's issue", "dir", sessionDir, "err", err)
+	if ref := sessionWork(spec); ref.Key != "" {
+		err := session.WriteWork(sessionDir, ref)
+		s.op("session-work-file", err, "could not record the session's work", "dir", sessionDir, "err", err)
 	}
 
 	d := spec.data
@@ -164,11 +165,11 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (_ *sessio
 	if d.MaxRounds == 0 {
 		d.MaxRounds = s.cfg.Scheduler.MaxReviewRounds
 	}
-	if d.Issue != nil && spec.attempt == 0 {
+	if sessionWork(spec).Key != "" && spec.attempt == 0 {
 		// What a session that never finished on this issue left behind — a
 		// scheduler dying while it worked, or a hard stop — for the first
 		// session of the role it was interrupted in.
-		d.Interrupted = s.interruptedFor(d.Issue.Number, spec.role)
+		d.Interrupted = s.interruptedFor(sessionWork(spec).Key, spec.role)
 	}
 
 	// The project's own prompt files come from the worktree, so a branch's
@@ -222,13 +223,13 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (_ *sessio
 	// would have. A session that had already finished when the hard stop
 	// landed wrote its result file, so the stale record it leaves is cleared
 	// silently by the next worker (takeInterrupted).
-	if d.Issue != nil {
-		s.recordRunningSession(spec, d.Issue.Number, sessionDir)
+	if sessionWork(spec).Key != "" {
+		s.recordRunningSession(spec, sessionWork(spec), sessionDir)
 		defer func() {
 			if sctx.Err() != nil {
 				return
 			}
-			s.clearRunningSession(d.Issue.Number)
+			s.clearRunningSession(sessionWork(spec))
 		}()
 	}
 	start := sessionEvent(EventSessionStarted, spec)
@@ -240,7 +241,7 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (_ *sessio
 	// transcript in it; KillSession takes a name, so that stopping a session
 	// is asking the scheduler about one of its own rather than handing it a
 	// path to kill.
-	s.recordLiveSession(spec.name, liveSession{role: spec.role, dir: sessionDir, issue: start.Issue, pr: start.PR})
+	s.recordLiveSession(spec.name, liveSession{role: spec.role, dir: sessionDir, Work: start.Work.Clone()})
 	defer s.dropLiveSession(spec.name)
 	s.publish(start)
 	startedActivity = true
@@ -293,8 +294,8 @@ func endEvent(spec sessionSpec, res *session.Result) Event {
 	ev.Outcome, ev.Note = outcomeOf(res)
 	ev.Turns, ev.CostUSD, ev.Duration = res.NumTurns, res.CostUSD, res.Duration
 	ev.CostKnown = res.CostKnown
-	if res.Outcome.PR > 0 {
-		ev.PR = res.Outcome.PR
+	if ghwork.PR(res.Outcome.Work) > 0 {
+		ev.Work = ghwork.WithPR(ev.Work, ghwork.PR(res.Outcome.Work))
 	}
 	return ev
 }
@@ -383,20 +384,15 @@ func (s *Scheduler) record(spec sessionSpec, res *session.Result) {
 		ErrorSubtype: res.ErrorSubtype,
 		TimedOut:     res.TimedOut,
 	}
-	if spec.data.Issue != nil {
-		e.Issue = spec.data.Issue.Number
-	}
-	if spec.data.PR != nil {
-		e.PR = spec.data.PR.Number
-	}
-	if res.Outcome.PR > 0 {
-		e.PR = res.Outcome.PR
+	e.Work = sessionWork(spec)
+	if ghwork.PR(res.Outcome.Work) > 0 {
+		e.Work = ghwork.WithPR(e.Work, ghwork.PR(res.Outcome.Work))
 	}
 	err := s.store.AppendLedger(e)
 	s.op("ledger", err, "could not record the session in the ledger", "session", spec.name, "error", err)
 	// The issue's running total is what scheduler.max_cost_per_issue is spent
 	// against; every session run for the issue counts, retries included.
-	s.recordIssueCost(e.Issue, e.CostUSD)
+	s.recordWorkCost(e.Work, e.CostUSD)
 }
 
 // summary is everything a session summary line needs.
@@ -436,8 +432,8 @@ func (s *Scheduler) summarize(spec sessionSpec, res *session.Result) {
 	if spec.data.PR != nil {
 		sum.pr = spec.data.PR.Number
 	}
-	if res.Outcome.PR > 0 {
-		sum.pr = res.Outcome.PR
+	if ghwork.PR(res.Outcome.Work) > 0 {
+		sum.pr = ghwork.PR(res.Outcome.Work)
 	}
 	s.log.Info(formatSummary(sum), logging.SummaryKey, true,
 		"role", sum.role, "issue", sum.issue, "pr", sum.pr, "outcome", sum.outcome,
@@ -521,7 +517,7 @@ func (s *Scheduler) inbox(role string, issue, pr int) ([]mail.Message, error) {
 	}
 	var out []mail.Message
 	for _, m := range msgs {
-		if (issue > 0 && m.Issue == issue) || (pr > 0 && m.PR == pr) {
+		if (issue > 0 && ghwork.Issue(m.Work) == issue) || (pr > 0 && ghwork.PR(m.Work) == pr) {
 			out = append(out, m)
 		}
 	}
@@ -552,7 +548,7 @@ func (s *Scheduler) sentSinceFrom(from, role string, issue, pr int, t time.Time)
 		if m.CreatedAt.Before(t.Add(-time.Second)) {
 			continue
 		}
-		if (issue > 0 && m.Issue == issue) || (pr > 0 && m.PR == pr) || (issue == 0 && pr == 0) {
+		if (issue > 0 && ghwork.Issue(m.Work) == issue) || (pr > 0 && ghwork.PR(m.Work) == pr) || (issue == 0 && pr == 0) {
 			return true
 		}
 	}
@@ -760,3 +756,19 @@ func oneLine(s string, n int) string {
 }
 
 func roleTitle(role string) string { return prompts.Title(role) }
+
+// sessionWork translates prompt subjects once at the busybees boundary. A
+// caller-provided reference retains its opaque key and all custom tags.
+func sessionWork(spec sessionSpec) work.Ref {
+	if spec.work.Key != "" {
+		return spec.work.Clone()
+	}
+	var issue, pr int
+	if spec.data.Issue != nil {
+		issue = spec.data.Issue.Number
+	}
+	if spec.data.PR != nil {
+		pr = spec.data.PR.Number
+	}
+	return ghwork.New(issue, pr)
+}

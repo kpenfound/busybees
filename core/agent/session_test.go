@@ -312,7 +312,7 @@ echo '{"type":"item.completed","item":{"id":"item_0","type":"command_execution",
 echo '{"type":"item.completed","item":{"id":"item_1","type":"mcp_tool_call","server":"task","tool":"done","status":"completed"}}'
 echo '{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"all done"}}'
 echo '{"type":"turn.completed","usage":{"input_tokens":120,"cached_input_tokens":0,"output_tokens":30}}'
-printf '{"status":"submitted","pr":12,"note":"hi"}' > "$TASK_SESSION_DIR/outcome.json"
+printf '{"status":"submitted","work":{"key":"task/12","tags":{"ticket":"twelve"}},"note":"hi"}' > "$TASK_SESSION_DIR/outcome.json"
 `)
 	r := newRunner(t, "")
 	r.CodexBin = bin
@@ -331,7 +331,7 @@ printf '{"status":"submitted","pr":12,"note":"hi"}' > "$TASK_SESSION_DIR/outcome
 	if res.CostKnown || res.CostUSD != 0 {
 		t.Errorf("a codex session reported a cost: known %v, %v", res.CostKnown, res.CostUSD)
 	}
-	if !res.HasOutcome || res.Outcome.Status != "submitted" || res.Outcome.PR != 12 {
+	if !res.HasOutcome || res.Outcome.Status != "submitted" || res.Outcome.Work.Key != "task/12" || res.Outcome.Work.Tags["ticket"] != "twelve" {
 		t.Fatalf("outcome: %+v", res.Outcome)
 	}
 	b, _ := os.ReadFile(filepath.Join(res.SessionDir, "args.txt"))

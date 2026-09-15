@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/mail"
 	"github.com/kpenfound/busybees/internal/prompts"
@@ -98,7 +99,7 @@ func (s *Scheduler) attemptsFor(issue github.Issue, snap *snapshot) int {
 	if n <= 1 || s.hasOpenPR(snap, issue) {
 		return 1
 	}
-	if bk, err := s.store.Issue(issue.Number); err == nil && (bk.Round > 1 || bk.PR != 0) {
+	if bk, err := s.store.Issue(issue.Number); err == nil && (bk.Round > 1 || ghwork.PR(bk.Work) != 0) {
 		return 1
 	}
 	return clampAttempts(n, s.poolSize())
@@ -257,7 +258,7 @@ func (s *Scheduler) runAttempts(ctx context.Context, f fanOut) ([]attempt, []*wo
 				a.err = err
 			} else {
 				a.status, a.note = outcomeOf(res)
-				a.pr = res.Outcome.PR
+				a.pr = ghwork.PR(res.Outcome.Work)
 			}
 			results[i-1] = a
 		}(i, wss[i-1])

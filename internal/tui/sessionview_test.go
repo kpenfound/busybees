@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/scheduler"
 	"github.com/kpenfound/busybees/internal/session"
 	"github.com/kpenfound/busybees/internal/state"
@@ -55,7 +56,7 @@ func watcher(t *testing.T, dir string, extra ...tea.Msg) (tea.Model, *[]sent, te
 func watched(name, role string, issue, pr int, dir string) tea.Msg {
 	ev := scheduler.Event{
 		Kind: scheduler.EventSessionStarted, Time: fixed.Add(-time.Minute), Session: name,
-		Role: role, Dir: dir, Issue: issue, PR: pr, Model: "opus",
+		Role: role, Dir: dir, Model: "opus", Work: ghwork.New(issue, pr),
 	}
 	return eventMsg{Event: ev}
 }

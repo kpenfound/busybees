@@ -16,6 +16,7 @@ import (
 
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/doctor"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/mcpserver"
 	"github.com/kpenfound/busybees/internal/prompts"
@@ -658,14 +659,14 @@ func queuesText(st state.Status) string {
 	}
 	held := make([]int, 0, len(st.WaitingOnDeps))
 	for n := range st.WaitingOnDeps {
-		held = append(held, n)
+		held = append(held, ghwork.Number(n))
 	}
 	sort.Ints(held)
 	b.WriteString("\nwaiting on dependencies:\n")
 	for _, n := range held {
-		refs := make([]string, 0, len(st.WaitingOnDeps[n]))
-		for _, x := range st.WaitingOnDeps[n] {
-			refs = append(refs, fmt.Sprintf("#%d", x))
+		refs := make([]string, 0, len(st.WaitingOnDeps[ghwork.IssueKey(n)]))
+		for _, x := range st.WaitingOnDeps[ghwork.IssueKey(n)] {
+			refs = append(refs, fmt.Sprintf("#%d", ghwork.Number(x)))
 		}
 		fmt.Fprintf(&b, "  #%-3d blocked by %s\n", n, strings.Join(refs, ", "))
 	}

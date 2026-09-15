@@ -6,7 +6,9 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/session"
+	"github.com/kpenfound/busybees/internal/state"
 )
 
 type doneInput struct {
@@ -33,6 +35,11 @@ func (s *server) addDoneTool(srv *mcp.Server) {
 }
 
 func (s *server) done(ctx context.Context, _ *mcp.CallToolRequest, in doneInput) (*mcp.CallToolResult, any, error) {
+	if s.env.StateDir != "" {
+		if err := state.New(s.env.StateDir).Migrate(); err != nil {
+			return nil, nil, err
+		}
+	}
 	if in.PR == 0 {
 		in.PR = s.env.PR
 	}
@@ -40,7 +47,7 @@ func (s *server) done(ctx context.Context, _ *mcp.CallToolRequest, in doneInput)
 		in.Issue = s.env.Issue
 	}
 	o, err := session.Report(s.env.SessionDir, s.env.Role, session.Outcome{
-		Status: in.Status, Note: in.Note, PR: in.PR, Issue: in.Issue,
+		Status: in.Status, Note: in.Note, Work: ghwork.New(in.Issue, in.PR),
 	})
 	if err != nil {
 		return nil, nil, err

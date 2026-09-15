@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/prompts"
 	"github.com/kpenfound/busybees/internal/scheduler"
 	"github.com/kpenfound/busybees/internal/session"
@@ -652,10 +653,10 @@ func (m Model) targets() []target {
 		out = append(out, target{project: f.project, issue: f.issue, pr: f.pr})
 	}
 	for _, e := range m.shownNeedsHuman()[:l.entries(2, want[2])] {
-		out = append(out, target{project: e.project, issue: e.Issue})
+		out = append(out, target{project: e.project, issue: ghwork.Issue(e.Work)})
 	}
 	for _, a := range m.shownApproved()[:l.entries(3, want[3])] {
-		out = append(out, target{project: a.project, issue: a.Issue, pr: a.PR})
+		out = append(out, target{project: a.project, issue: ghwork.Issue(a.Work), pr: ghwork.PR(a.Work)})
 	}
 	return out
 }
@@ -723,7 +724,7 @@ func (m *Model) clampCursor() {
 func (m *Model) apply(p int, ev scheduler.Event) {
 	switch ev.Kind {
 	case scheduler.EventReviewStarted, scheduler.EventReviewProgress:
-		row := running{project: p, role: ev.Role, issue: ev.Issue, pr: ev.PR,
+		row := running{project: p, role: ev.Role, issue: ghwork.Issue(ev.Work), pr: ghwork.PR(ev.Work),
 			started: ev.Started, activity: &ev}
 		if i := m.activityIndex(p, ev.Activity); i >= 0 {
 			m.sessions[i] = row
@@ -736,7 +737,7 @@ func (m *Model) apply(p int, ev scheduler.Event) {
 		}
 	case scheduler.EventSessionStarted:
 		row := running{
-			project: p, name: ev.Session, role: ev.Role, dir: ev.Dir, issue: ev.Issue, pr: ev.PR,
+			project: p, name: ev.Session, role: ev.Role, dir: ev.Dir, issue: ghwork.Issue(ev.Work), pr: ghwork.PR(ev.Work),
 			started: ev.Time, model: ev.Model, fallback: ev.Fallback, sandbox: ev.Sandbox,
 		}
 		if i := m.activityIndex(p, ev.Activity); i >= 0 {
@@ -753,22 +754,22 @@ func (m *Model) apply(p int, ev scheduler.Event) {
 		if m.watching != nil && m.watching.ref() == ref {
 			m.watching.ended = true
 		}
-		key := spendKey(ev.Issue, ev.Role)
+		key := spendKey(ghwork.Issue(ev.Work), ev.Role)
 		s := m.projects[p].spent[key]
 		s.turns += ev.Turns
 		s.cost += ev.CostUSD
 		s.known = s.known || ev.CostKnown
 		m.projects[p].spent[key] = s
 		m.recent = append([]finished{{
-			project: p, role: ev.Role, issue: ev.Issue, pr: ev.PR, at: ev.Time,
+			project: p, role: ev.Role, issue: ghwork.Issue(ev.Work), pr: ghwork.PR(ev.Work), at: ev.Time,
 			outcome: ev.Outcome, note: ev.Note, cost: ev.CostUSD, costKnown: ev.CostKnown, took: ev.Duration,
 		}}, m.recent...)
 		if len(m.recent) > recentRows {
 			m.recent = m.recent[:recentRows]
 		}
 	case scheduler.EventStage:
-		if ev.Issue > 0 {
-			m.projects[p].stages[ev.Issue] = stage{name: ev.Stage, round: ev.Round}
+		if ghwork.Issue(ev.Work) > 0 {
+			m.projects[p].stages[ghwork.Issue(ev.Work)] = stage{name: ev.Stage, round: ev.Round}
 		}
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/review"
 	"github.com/kpenfound/busybees/internal/state"
 	"github.com/kpenfound/busybees/internal/workspace"
@@ -363,7 +364,7 @@ func TestAFailedAngleIsSkippedAndAFailedReviewEscalates(t *testing.T) {
 	}
 	var failed int
 	for _, e := range ledger {
-		if e.Session == "reviewer-pr-201-r1" && e.Outcome == OutcomeFailed && e.CostUSD == 0.25 && e.Issue == 1 {
+		if e.Session == "reviewer-pr-201-r1" && e.Outcome == OutcomeFailed && e.CostUSD == 0.25 && ghwork.Issue(e.Work) == 1 {
 			failed++
 		}
 	}
@@ -550,7 +551,7 @@ func TestVerifyReviewNeedsTheReviewOfThisPullRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, ok := h.sched.verifyReview(log, state.IssueState{ReviewArtifact: dir, ReviewedHead: "abc"}, 201)
+	got, ok := h.sched.verifyReview(log, state.WorkState{ReviewArtifact: dir, ReviewedHead: "abc"}, 201)
 	if !ok || !got.Verify || got.ReviewedHead != "abc" || got.Count != 1 || !strings.Contains(got.Findings, "Widget does nothing") || got.Artifact != dir {
 		t.Fatalf("verifyReview of this pull request's review = %+v, %v", got, ok)
 	}
@@ -562,7 +563,7 @@ func TestVerifyReviewNeedsTheReviewOfThisPullRequest(t *testing.T) {
 		"another pull request": {dir, 202},
 		"an artifact gone":     {filepath.Join(filepath.Dir(dir), "gone"), 201},
 	} {
-		if got, ok := h.sched.verifyReview(log, state.IssueState{ReviewArtifact: c.artifact}, c.pr); ok || got != nil {
+		if got, ok := h.sched.verifyReview(log, state.WorkState{ReviewArtifact: c.artifact}, c.pr); ok || got != nil {
 			t.Errorf("%s: verifyReview = %+v, %v, want a full review", name, got, ok)
 		}
 	}

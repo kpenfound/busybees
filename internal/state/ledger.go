@@ -8,23 +8,25 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/kpenfound/busybees/core/work"
 )
 
 // LedgerEntry records one finished session in the ledger. It is what the
 // session cost the factory, not what it did: the outcome is kept as a label
 // so `bees cost` can tell a wasted session from a productive one.
 type LedgerEntry struct {
-	Time         time.Time `json:"time"`
-	Role         string    `json:"role"`
-	Session      string    `json:"session"`
-	Issue        int       `json:"issue"`
-	PR           int       `json:"pr"`
-	Turns        int       `json:"turns"`
-	CostUSD      float64   `json:"cost_usd"`
-	DurationMS   int64     `json:"duration_ms"`
-	Outcome      string    `json:"outcome"`
-	ErrorSubtype string    `json:"error_subtype"`
-	TimedOut     bool      `json:"timed_out"`
+	Work    work.Ref  `json:"work"`
+	Time    time.Time `json:"time"`
+	Role    string    `json:"role"`
+	Session string    `json:"session"`
+
+	Turns        int     `json:"turns"`
+	CostUSD      float64 `json:"cost_usd"`
+	DurationMS   int64   `json:"duration_ms"`
+	Outcome      string  `json:"outcome"`
+	ErrorSubtype string  `json:"error_subtype"`
+	TimedOut     bool    `json:"timed_out"`
 }
 
 // LedgerPath returns the ledger file.
@@ -34,6 +36,9 @@ func (s *Store) LedgerPath() string { return filepath.Join(s.Dir, "ledger.jsonl"
 // line is written with a single Write to an O_APPEND file so concurrent
 // workers never interleave.
 func (s *Store) AppendLedger(e LedgerEntry) error {
+	if err := s.Migrate(); err != nil {
+		return err
+	}
 	if e.Time.IsZero() {
 		e.Time = time.Now()
 	}
@@ -64,6 +69,9 @@ func (s *Store) AppendLedger(e LedgerEntry) error {
 // tail must never break `bees cost`. Read and scan failures return an error
 // without entries, so callers cannot report a partial total.
 func (s *Store) ReadLedger(since time.Time) ([]LedgerEntry, error) {
+	if err := s.migrateExisting(); err != nil {
+		return nil, err
+	}
 	f, err := os.Open(s.LedgerPath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -98,6 +106,9 @@ func (s *Store) ReadLedger(since time.Time) ([]LedgerEntry, error) {
 // there is something to remove. A line that does not parse is kept: its age is
 // unknown, and ReadLedger skips it anyway.
 func (s *Store) TrimLedger(before time.Time) (int, error) {
+	if err := s.Migrate(); err != nil {
+		return 0, err
+	}
 	s.ledgerMu.Lock()
 	defer s.ledgerMu.Unlock()
 	b, err := os.ReadFile(s.LedgerPath())

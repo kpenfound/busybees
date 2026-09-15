@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/session"
 	"github.com/kpenfound/busybees/internal/state"
 )
@@ -155,8 +156,8 @@ func TestTheWaitingPanelsArePickedOut(t *testing.T) {
 		}
 	}
 
-	m.projects[0].status.NeedsHuman = []state.Escalated{{Issue: 1}}
-	m.projects[0].status.Approved = []state.ApprovedPR{{PR: 2}}
+	m.projects[0].status.NeedsHuman = []state.Escalated{{Work: ghwork.New(1, 0)}}
+	m.projects[0].status.Approved = []state.ApprovedPR{{Work: ghwork.New(0, 2)}}
 	needsHuman := m.panelStyleOf(panelNeedsHuman).GetForeground()
 	approved := m.panelStyleOf(panelApproved).GetForeground()
 	if needsHuman == plainTitle {

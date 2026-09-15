@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/prompts"
 	"github.com/kpenfound/busybees/internal/session"
 	"github.com/kpenfound/busybees/internal/state"
@@ -111,7 +112,7 @@ func TestBestOfNRunsOneAttemptPerSlot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(st.Workers) != 1 || st.Workers[0].Issue != 1 || st.Workers[0].Stage != "fan-out" {
+	if len(st.Workers) != 1 || ghwork.Issue(st.Workers[0].Work) != 1 || st.Workers[0].Stage != "fan-out" {
 		t.Errorf("workers during the fan-out: %+v", st.Workers)
 	}
 	if err := os.WriteFile(release, nil, 0o644); err != nil {
@@ -170,8 +171,8 @@ func TestBestOfNRunsOneAttemptPerSlot(t *testing.T) {
 	}
 	// From the review stage on this is any developer's pull request: with
 	// the reviewer disabled it is approved at once.
-	if bk.PR != 201 {
-		t.Errorf("issue #1 pull request: got %d want 201", bk.PR)
+	if ghwork.PR(bk.Work) != 201 {
+		t.Errorf("issue #1 pull request: got %d want 201", ghwork.PR(bk.Work))
 	}
 	if got := h.stateOfIssue(1); got != "approved" {
 		t.Errorf("issue #1 state: got %q want approved (comments: %v)", got, h.gh.comments[1])
@@ -187,7 +188,7 @@ func stagesOf(events <-chan Event, issue int) []string {
 	for {
 		select {
 		case ev := <-events:
-			if ev.Kind == EventStage && ev.Issue == issue {
+			if ev.Kind == EventStage && ghwork.Issue(ev.Work) == issue {
 				stages = append(stages, ev.Stage)
 			}
 		default:
@@ -431,7 +432,7 @@ func TestBestOfNDoesNotFanOutAResumedIssue(t *testing.T) {
 			name: "a later round in the bookkeeping",
 			seed: func(t *testing.T, h *harness) {
 				seedReady(h, 1, "l", old)
-				if err := h.store.SaveIssue(state.IssueState{Number: 1, Round: 2, PR: 201, Branch: "bees/issue-1"}); err != nil {
+				if err := h.store.SaveIssue(state.WorkState{Round: 2, Branch: "bees/issue-1", Work: ghwork.New(1, 201)}); err != nil {
 					t.Fatal(err)
 				}
 			},
@@ -928,7 +929,7 @@ func TestMoERunsOneSessionPerExpert(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(st.Workers) != 1 || st.Workers[0].Issue != 1 || st.Workers[0].Stage != "fan-out" {
+	if len(st.Workers) != 1 || ghwork.Issue(st.Workers[0].Work) != 1 || st.Workers[0].Stage != "fan-out" {
 		t.Errorf("workers during the fan-out: %+v", st.Workers)
 	}
 	if err := os.WriteFile(release, nil, 0o644); err != nil {
@@ -984,8 +985,8 @@ func TestMoERunsOneSessionPerExpert(t *testing.T) {
 	if bk.Cost != 4.0 || bk.Sessions != 4 {
 		t.Errorf("issue spend: $%.2f over %d sessions, want $4.00 over 4", bk.Cost, bk.Sessions)
 	}
-	if bk.PR != 201 {
-		t.Errorf("issue #1 pull request: got %d want 201", bk.PR)
+	if ghwork.PR(bk.Work) != 201 {
+		t.Errorf("issue #1 pull request: got %d want 201", ghwork.PR(bk.Work))
 	}
 	if got := h.stateOfIssue(1); got != "approved" {
 		t.Errorf("issue #1 state: got %q want approved (comments: %v)", got, h.gh.comments[1])
@@ -1032,7 +1033,7 @@ func TestMoEAttemptsCarryTheirExpert(t *testing.T) {
 	seedSized(h, 1, "l")
 	ctx := context.Background()
 	f := fanOut{
-		issue: *h.gh.issues[1], worker: &state.Worker{Name: "dev-1", Issue: 1}, attempts: 2,
+		issue: *h.gh.issues[1], worker: &state.Worker{Name: "dev-1", Work: ghwork.New(1, 0)}, attempts: 2,
 		experts: []string{"backend", "frontend", "tests"}, base: "main", log: h.sched.log,
 	}
 	attempts, wss, err := h.sched.runAttempts(ctx, f)

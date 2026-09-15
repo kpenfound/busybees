@@ -3,15 +3,17 @@ package mail
 import (
 	"strings"
 	"testing"
+
+	"github.com/kpenfound/busybees/core/work"
 )
 
 func TestSendListMark(t *testing.T) {
 	box := Open(t.TempDir())
-	m1, err := box.Send(Message{From: "developer", To: "project_manager", Subject: "q", Body: "how?", Issue: 3})
+	m1, err := box.Send(Message{From: "developer", To: "project_manager", Subject: "q", Body: "how?", Work: work.Ref{Key: "task-A", Tags: map[string]string{"task": "A"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	m2, err := box.Send(Message{From: "reviewer", To: "developer", Subject: "review", Body: "fix", PR: 9, Issue: 3})
+	m2, err := box.Send(Message{From: "reviewer", To: "developer", Subject: "review", Body: "fix", Work: work.Ref{Key: "task-A", Tags: map[string]string{"task": "A", "change": "B"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,13 +32,13 @@ func TestSendListMark(t *testing.T) {
 	if len(forPM) != 1 || forPM[0].Body != "how?" {
 		t.Fatalf("filter to: %+v", forPM)
 	}
-	byPR, _ := box.List(Filter{PR: 9})
-	if len(byPR) != 1 || byPR[0].ID != m2.ID {
-		t.Fatalf("filter pr: %+v", byPR)
+	byChange, _ := box.List(Filter{Tags: map[string]string{"change": "B"}})
+	if len(byChange) != 1 || byChange[0].ID != m2.ID {
+		t.Fatalf("filter change: %+v", byChange)
 	}
-	byIssue, _ := box.List(Filter{Issue: 3})
-	if len(byIssue) != 2 {
-		t.Fatalf("filter issue: %+v", byIssue)
+	byTask, _ := box.List(Filter{Tags: map[string]string{"task": "A"}})
+	if len(byTask) != 2 {
+		t.Fatalf("filter task: %+v", byTask)
 	}
 	if err := box.MarkRead(m1); err != nil {
 		t.Fatal(err)
@@ -53,8 +55,8 @@ func TestSendListMark(t *testing.T) {
 	if err != nil || got.Subject != "review" {
 		t.Fatalf("get: %+v %v", got, err)
 	}
-	text := Format(got)
-	if !strings.Contains(text, "### review") || !strings.Contains(text, "- pr: #9") || !strings.Contains(text, "fix") {
+	text := Format(got, Field{Name: "change", Value: "B"})
+	if !strings.Contains(text, "### review") || !strings.Contains(text, "- change: B") || !strings.Contains(text, "fix") {
 		t.Fatalf("format: %s", text)
 	}
 }
@@ -64,5 +66,24 @@ func TestEmptyBox(t *testing.T) {
 	msgs, err := box.List(Filter{To: "qa"})
 	if err != nil || len(msgs) != 0 {
 		t.Fatalf("empty: %v %v", msgs, err)
+	}
+}
+
+func TestOpaqueAddressingAndRoleMail(t *testing.T) {
+	box := Open(t.TempDir())
+	refs := []work.Ref{{Key: "custom/path", Tags: map[string]string{"lane": "A", "empty": ""}}, {Key: "other", Tags: map[string]string{"lane": "A"}}, {Tags: map[string]string{"annotation": "role only"}}}
+	for _, ref := range refs {
+		if _, err := box.Send(Message{From: "caller", To: "role", Subject: "message", Work: ref}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		filter Filter
+		want   int
+	}{{Filter{Key: "custom/path"}, 1}, {Filter{Tags: map[string]string{"lane": "A"}}, 2}, {Filter{Tags: map[string]string{"empty": ""}}, 1}, {Filter{Key: "custom/path", Tags: map[string]string{"lane": "wrong"}}, 0}, {Filter{Unaddressed: true}, 1}} {
+		got, err := box.List(tc.filter)
+		if err != nil || len(got) != tc.want {
+			t.Fatalf("filter %+v: %d %v", tc.filter, len(got), err)
+		}
 	}
 }

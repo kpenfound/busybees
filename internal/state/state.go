@@ -13,7 +13,8 @@
 //	                     one review artifact per review the reviewer ran on a
 //	                     pull request (see package review: brief.json,
 //	                     angles/, findings.json)
-//	issues/<n>.json      per-issue bookkeeping (review round, PR number, the
+//	issues/work-<hash>.json
+//	                     per-work bookkeeping (review round, caller tags,
 //	                     developer worker's stage, its running session and,
 //	                     once the factory gives up, why it did)
 //	<role>.json          per-role bookkeeping (last run, session counters);
@@ -22,6 +23,7 @@
 //	ledger.jsonl         one JSON line per finished session (`bees cost`),
 //	                     trimmed to scheduler.retention_period, and always
 //	                     keeping at least the last 24 hours
+//	schema.json          runtime schema version, written after migration
 //	bees.log             scheduler log (JSON, rotated: bees.log.1, bees.log.2)
 package state
 
@@ -32,10 +34,13 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/kpenfound/busybees/core/work"
+	"github.com/kpenfound/busybees/internal/ghwork"
+	"github.com/kpenfound/busybees/internal/statemigrate"
 )
 
 // Store is a state directory.
@@ -50,8 +55,24 @@ type Store struct {
 // New returns a store rooted at dir.
 func New(dir string) *Store { return &Store{Dir: dir} }
 
+// Migrate ensures every access uses the current on-disk schema.
+func (s *Store) Migrate() error { return statemigrate.Ensure(s.Dir) }
+
+// migrateExisting leaves a missing directory absent on read-only paths.
+func (s *Store) migrateExisting() error {
+	if _, err := os.Stat(s.Dir); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	return s.Migrate()
+}
+
 // Init creates the directory layout.
 func (s *Store) Init() error {
+	if err := s.Migrate(); err != nil {
+		return err
+	}
 	for _, d := range []string{"", "mail", "notes", "sessions", "issues"} {
 		if err := os.MkdirAll(filepath.Join(s.Dir, d), 0o755); err != nil {
 			return err
@@ -77,8 +98,9 @@ This directory is managed by ` + "`bees`" + `. It holds:
 - sessions/  prompts, transcripts and results of every session
 - reviews/   the reviewer's review of each pull request: the brief, what each
              angle found and the judge's list
-- issues/    per-issue bookkeeping (review rounds, the developer worker's stage,
-             and why the factory gave an issue up)
+- schema.json runtime schema version, published after migration
+- issues/    bookkeeping keyed by opaque work identity (review rounds, worker
+             stage, and why the factory gave an issue up)
 - status.json live scheduler status (` + "`bees status`" + `)
 - ledger.jsonl one line per finished session: turns, cost and outcome (` + "`bees cost`" + `),
              kept for scheduler.retention_period, and always at least 24 hours
@@ -110,6 +132,9 @@ func (s *Store) NotesPath(role string) string {
 
 // ReadNotes returns a role's notes ("" when none exist yet).
 func (s *Store) ReadNotes(role string) (string, error) {
+	if err := s.migrateExisting(); err != nil {
+		return "", err
+	}
 	b, err := os.ReadFile(s.NotesPath(role))
 	if errors.Is(err, os.ErrNotExist) {
 		return "", nil
@@ -121,6 +146,9 @@ func (s *Store) ReadNotes(role string) (string, error) {
 // notes_read returns the section headings roles are asked to consolidate
 // their notes into, and the structure exists from the first run.
 func (s *Store) EnsureNotes(role string) error {
+	if err := s.Migrate(); err != nil {
+		return err
+	}
 	p := s.NotesPath(role)
 	if _, err := os.Stat(p); err == nil {
 		return nil
@@ -145,9 +173,9 @@ func NotesSkeleton(role string) string {
 	return b.String()
 }
 
-// IssueState is per-issue bookkeeping. Two writers share the file and every
-// field below says which one owns it: the developer worker
-// (scheduler.workIssue) holds one IssueState for the whole life of an issue
+// WorkState is per-work bookkeeping with busybees workflow metadata. Two
+// writers share the file and every field below says which one owns it: the developer worker
+// (scheduler.workIssue) holds one WorkState for the whole life of an issue
 // and writes it back with SaveIssue, while the scheduler's polling path
 // writes single fields through the owner methods on Store (SetIssueSession,
 // AddIssueCost, SetHumanSeenAt, SetIssueHumanSeenAt, SetConflictNotifiedSHA,
@@ -156,17 +184,14 @@ func NotesSkeleton(role string) string {
 // does not own over from the file, so a worker's copy — loaded when it
 // started, and by then stale — cannot erase what the polling path recorded
 // while it ran.
-type IssueState struct {
-	// Number is the issue these fields belong to and UpdatedAt when the file
-	// was last written; every writer sets both.
-	Number int `json:"number"`
-	// Round is the review round the developer worker is on, PR the pull
-	// request it opened, Branch the branch it works on and CheckFixRounds
+type WorkState struct {
+	// Work identifies the subject and carries caller-defined routing tags.
+	Work work.Ref `json:"work"`
+	// Round is the review round, Branch the branch it works on and CheckFixRounds
 	// how many reviewer-diagnoses/developer-fixes iterations failing
 	// required checks have cost. They are the worker's own bookkeeping,
 	// written through SaveIssue.
 	Round          int    `json:"round"`
-	PR             int    `json:"pr,omitempty"`
 	Branch         string `json:"branch,omitempty"`
 	CheckFixRounds int    `json:"check_fix_rounds,omitempty"`
 	// WorkerStage is the stage the developer worker (scheduler.workIssue) was
@@ -185,7 +210,7 @@ type IssueState struct {
 	// send back, which is recorded under bees:approved before the develop
 	// stage can relabel the issue: it keeps the AfterDevelop that names the
 	// gate it returns to, and only PreReviewDone goes. All of them belong to
-	// the pull request PR names, so a record left for any other one — or
+	// the pull request the Work tags name, so a record left for any other one — or
 	// written before a number was known — is dropped too
 	// (scheduler.resumeStage).
 	//
@@ -214,7 +239,7 @@ type IssueState struct {
 	// question — where did the last attempt get to
 	// (scheduler.takeInterrupted). SetIssueSession is its only writer:
 	// SaveIssue carries it over from the file, like the cost totals, so a
-	// worker holding an IssueState across several sessions cannot write
+	// worker holding an WorkState across several sessions cannot write
 	// back a record that has since been cleared.
 	Session *SessionRun `json:"session,omitempty"`
 	// HumanSeenAt is the timestamp of the latest human PR activity already
@@ -249,7 +274,7 @@ type IssueState struct {
 	// Cost is what every session run for this issue has cost so far, in USD,
 	// and Sessions how many sessions that was. Both are owned by
 	// AddIssueCost: SaveIssue carries them over from the file, so a caller
-	// holding an IssueState across several sessions cannot write back a
+	// holding an WorkState across several sessions cannot write back a
 	// stale total. scheduler.max_cost_per_issue is spent against them.
 	Cost     float64 `json:"cost,omitempty"`
 	Sessions int     `json:"sessions,omitempty"`
@@ -275,8 +300,8 @@ type IssueState struct {
 	// being reported complete can be reported again. Both are owned by
 	// SetOpenChildren (scheduler.recordFeatureProgress), which is where those
 	// rules live, and carried over by SaveIssue.
-	OpenChildren       []int     `json:"open_children,omitempty"`
-	CompleteReportedAt time.Time `json:"complete_reported_at,omitempty"`
+	OpenChildren       []work.Key `json:"open_children,omitempty"`
+	CompleteReportedAt time.Time  `json:"complete_reported_at,omitempty"`
 	// Escalation is why the factory gave this issue up to a person and
 	// EscalatedAt when it did. The bees:needs-human label says that it
 	// happened; the reason is said once, in a GitHub comment and in the log,
@@ -302,17 +327,31 @@ type SessionRun struct {
 }
 
 // Issue loads bookkeeping for an issue (zero value when none).
-func (s *Store) Issue(n int) (IssueState, error) {
-	var is IssueState
-	err := s.readJSON(filepath.Join(s.Dir, "issues", strconv.Itoa(n)+".json"), &is)
-	if is.Number == 0 {
-		is.Number = n
+func (s *Store) Issue(n int) (WorkState, error) { return s.Work(ghwork.New(n, 0)) }
+
+// Work loads bookkeeping by opaque key, retaining caller metadata on first use.
+func (s *Store) Work(ref work.Ref) (WorkState, error) {
+	is := WorkState{Work: ref.Clone()}
+	if ref.Key == "" {
+		return is, errors.New("work key is required")
+	}
+	err := s.readJSON(s.WorkPath(ref.Key), &is)
+	if err == nil && is.Work.Key != ref.Key {
+		return is, fmt.Errorf("bookkeeping key mismatch at %s", s.WorkPath(ref.Key))
 	}
 	return is, err
 }
 
-// IssueNumbers returns every issue that has bookkeeping, smallest first.
-func (s *Store) IssueNumbers() ([]int, error) {
+// WorkPath returns the collision-safe bookkeeping filename for a key.
+func (s *Store) WorkPath(key work.Key) string {
+	return filepath.Join(s.Dir, "issues", key.Filename())
+}
+
+// WorkKeys lists persisted work identities without interpreting their keys.
+func (s *Store) WorkKeys() ([]work.Key, error) {
+	if err := s.migrateExisting(); err != nil {
+		return nil, err
+	}
 	entries, err := os.ReadDir(filepath.Join(s.Dir, "issues"))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -320,13 +359,37 @@ func (s *Store) IssueNumbers() ([]int, error) {
 	if err != nil {
 		return nil, err
 	}
-	var out []int
+	var keys []work.Key
 	for _, e := range entries {
-		name, ok := strings.CutSuffix(e.Name(), ".json")
-		if !ok || e.IsDir() {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 			continue
 		}
-		if n, err := strconv.Atoi(name); err == nil && n > 0 {
+		var is WorkState
+		if err := s.readJSON(filepath.Join(s.Dir, "issues", e.Name()), &is); err != nil {
+			return nil, err
+		}
+		if is.Work.Key == "" || e.Name() != is.Work.Key.Filename() {
+			return nil, fmt.Errorf("invalid work bookkeeping filename %s", e.Name())
+		}
+		keys = append(keys, is.Work.Key)
+	}
+	slices.Sort(keys)
+	return keys, nil
+}
+
+// IssueNumbers returns every issue that has bookkeeping, smallest first.
+func (s *Store) IssueNumbers() ([]int, error) {
+	keys, err := s.WorkKeys()
+	if err != nil {
+		return nil, err
+	}
+	var out []int
+	for _, key := range keys {
+		is, err := s.Work(work.Ref{Key: key})
+		if err != nil {
+			return nil, err
+		}
+		if n := ghwork.Issue(is.Work); n > 0 {
 			out = append(out, n)
 		}
 	}
@@ -336,8 +399,13 @@ func (s *Store) IssueNumbers() ([]int, error) {
 
 // RemoveIssue deletes an issue's bookkeeping. An issue that has none is not
 // an error.
-func (s *Store) RemoveIssue(n int) error {
-	err := os.Remove(filepath.Join(s.Dir, "issues", strconv.Itoa(n)+".json"))
+func (s *Store) RemoveIssue(n int) error { return s.RemoveWork(ghwork.IssueKey(n)) }
+
+func (s *Store) RemoveWork(key work.Key) error {
+	if err := s.migrateExisting(); err != nil {
+		return err
+	}
+	err := os.Remove(s.WorkPath(key))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
@@ -347,7 +415,7 @@ func (s *Store) RemoveIssue(n int) error {
 // SaveIssue saves the developer worker's bookkeeping for an issue: the review
 // round, its pull request and branch, the check-fix rounds and the worker's
 // stage. Every other field is taken from the file rather than from is,
-// because a developer worker holds one IssueState for the whole life of an
+// because a developer worker holds one WorkState for the whole life of an
 // issue while the scheduler's polling path keeps writing to the same file:
 // saving the worker's copy wholesale would write back the cost totals as they
 // were when it started, resurrect a session record that has since been
@@ -357,66 +425,78 @@ func (s *Store) RemoveIssue(n int) error {
 // file (AddIssueCost, SetIssueSession, SetHumanSeenAt,
 // SetIssueHumanSeenAt, SetConflictNotifiedSHA, SetReviewedSHA, SetProposal,
 // SetOpenChildren); this is the other half of that rule.
-func (s *Store) SaveIssue(is IssueState) error {
-	if cur, err := s.Issue(is.Number); err == nil {
-		is.Cost, is.Sessions, is.Session = cur.Cost, cur.Sessions, cur.Session
-		is.HumanSeenAt, is.ConflictNotifiedSHA = cur.HumanSeenAt, cur.ConflictNotifiedSHA
-		is.ReviewedSHA = cur.ReviewedSHA
-		is.IssueHumanSeenAt = cur.IssueHumanSeenAt
-		is.Proposal, is.ProposalApprovedAt = cur.Proposal, cur.ProposalApprovedAt
-		is.OpenChildren, is.CompleteReportedAt = cur.OpenChildren, cur.CompleteReportedAt
-		is.Escalation, is.EscalatedAt = cur.Escalation, cur.EscalatedAt
-	}
-	is.UpdatedAt = time.Now().UTC()
-	return s.writeJSON(filepath.Join(s.Dir, "issues", strconv.Itoa(is.Number)+".json"), is)
-}
+func (s *Store) SaveIssue(is WorkState) error { return s.SaveWork(is) }
 
-// SetIssueSession records the session running for an issue, or clears it with
-// nil. It is the only writer of IssueState.Session: SaveIssue carries the
-// field over from the file, so a worker's own saves can neither clear a
-// record a session has just written nor write back one it has cleared.
-func (s *Store) SetIssueSession(n int, run *SessionRun) error {
-	is, err := s.Issue(n)
+// SaveWork saves worker-owned fields and preserves the other writers' fields.
+func (s *Store) SaveWork(is WorkState) error {
+	if is.Work.Key == "" {
+		return errors.New("work key is required")
+	}
+	cur, err := s.Work(is.Work)
 	if err != nil {
 		return err
 	}
-	is.Number, is.Session = n, run
+	is.Cost, is.Sessions, is.Session = cur.Cost, cur.Sessions, cur.Session
+	is.HumanSeenAt, is.ConflictNotifiedSHA = cur.HumanSeenAt, cur.ConflictNotifiedSHA
+	is.ReviewedSHA = cur.ReviewedSHA
+	is.IssueHumanSeenAt = cur.IssueHumanSeenAt
+	is.Proposal, is.ProposalApprovedAt = cur.Proposal, cur.ProposalApprovedAt
+	is.OpenChildren, is.CompleteReportedAt = cur.OpenChildren, cur.CompleteReportedAt
+	is.Escalation, is.EscalatedAt = cur.Escalation, cur.EscalatedAt
 	is.UpdatedAt = time.Now().UTC()
-	return s.writeJSON(filepath.Join(s.Dir, "issues", strconv.Itoa(n)+".json"), is)
+	return s.writeJSON(s.WorkPath(is.Work.Key), is)
+}
+
+// SetIssueSession records the session running for an issue, or clears it with
+// nil. It is the only writer of WorkState.Session: SaveIssue carries the
+// field over from the file, so a worker's own saves can neither clear a
+// record a session has just written nor write back one it has cleared.
+func (s *Store) SetIssueSession(n int, run *SessionRun) error {
+	return s.SetWorkSession(ghwork.New(n, 0), run)
+}
+
+func (s *Store) SetWorkSession(ref work.Ref, run *SessionRun) error {
+	is, err := s.Work(ref)
+	if err != nil {
+		return err
+	}
+	is.Session = run
+	is.UpdatedAt = time.Now().UTC()
+	return s.writeJSON(s.WorkPath(is.Work.Key), is)
 }
 
 // SetEscalation records why the factory gave an issue up to a person, and
-// when. It is the only writer of IssueState.Escalation and EscalatedAt:
+// when. It is the only writer of WorkState.Escalation and EscalatedAt:
 // SaveIssue carries them over from the file, so a developer worker still
-// holding an IssueState for the issue it was escalated over cannot erase the
+// holding an WorkState for the issue it was escalated over cannot erase the
 // one record of the reason.
 func (s *Store) SetEscalation(n int, reason string, at time.Time) error {
 	is, err := s.Issue(n)
 	if err != nil {
 		return err
 	}
-	is.Number, is.Escalation, is.EscalatedAt = n, reason, at
+	is.Work, is.Escalation, is.EscalatedAt = ghwork.WithIssue(is.Work, n), reason, at
 	is.UpdatedAt = time.Now().UTC()
-	return s.writeJSON(filepath.Join(s.Dir, "issues", strconv.Itoa(n)+".json"), is)
+	return s.writeJSON(s.WorkPath(ghwork.IssueKey(n)), is)
 }
 
 // SetHumanSeenAt records how far the scheduler has read a pull request's
-// human reviews and comments. It is the only writer of IssueState.HumanSeenAt:
+// human reviews and comments. It is the only writer of WorkState.HumanSeenAt:
 // SaveIssue carries the field over from the file, so a developer worker
-// holding an IssueState across several sessions cannot write back an older
+// holding an WorkState across several sessions cannot write back an older
 // mark and have the same feedback delivered to it twice.
 func (s *Store) SetHumanSeenAt(n int, t time.Time) error {
 	is, err := s.Issue(n)
 	if err != nil {
 		return err
 	}
-	is.Number, is.HumanSeenAt = n, t
+	is.Work, is.HumanSeenAt = ghwork.WithIssue(is.Work, n), t
 	is.UpdatedAt = time.Now().UTC()
-	return s.writeJSON(filepath.Join(s.Dir, "issues", strconv.Itoa(n)+".json"), is)
+	return s.writeJSON(s.WorkPath(ghwork.IssueKey(n)), is)
 }
 
 // SetIssueHumanSeenAt records how far the scheduler has read an issue's own
-// human comments. It is the only writer of IssueState.IssueHumanSeenAt, and
+// human comments. It is the only writer of WorkState.IssueHumanSeenAt, and
 // deliberately separate from SetHumanSeenAt: the pull request and the issue
 // are two comment streams, and advancing one clock past the other would drop
 // the comments it has not delivered yet.
@@ -425,14 +505,14 @@ func (s *Store) SetIssueHumanSeenAt(n int, t time.Time) error {
 	if err != nil {
 		return err
 	}
-	is.Number, is.IssueHumanSeenAt = n, t
+	is.Work, is.IssueHumanSeenAt = ghwork.WithIssue(is.Work, n), t
 	is.UpdatedAt = time.Now().UTC()
-	return s.writeJSON(filepath.Join(s.Dir, "issues", strconv.Itoa(n)+".json"), is)
+	return s.writeJSON(s.WorkPath(ghwork.IssueKey(n)), is)
 }
 
 // SetConflictNotifiedSHA records the pull request head the developer was told
 // to bring up to date. It is the only writer of
-// IssueState.ConflictNotifiedSHA: SaveIssue carries the field over from the
+// WorkState.ConflictNotifiedSHA: SaveIssue carries the field over from the
 // file, so a developer worker's own saves cannot forget the head and have the
 // scheduler mail about it again.
 func (s *Store) SetConflictNotifiedSHA(n int, sha string) error {
@@ -440,23 +520,27 @@ func (s *Store) SetConflictNotifiedSHA(n int, sha string) error {
 	if err != nil {
 		return err
 	}
-	is.Number, is.ConflictNotifiedSHA = n, sha
+	is.Work, is.ConflictNotifiedSHA = ghwork.WithIssue(is.Work, n), sha
 	is.UpdatedAt = time.Now().UTC()
-	return s.writeJSON(filepath.Join(s.Dir, "issues", strconv.Itoa(n)+".json"), is)
+	return s.writeJSON(s.WorkPath(ghwork.IssueKey(n)), is)
 }
 
 // SetReviewedSHA records the pull request head an assignment-triggered review
-// looked at. It is the only writer of IssueState.ReviewedSHA: SaveIssue
+// looked at. It is the only writer of WorkState.ReviewedSHA: SaveIssue
 // carries the field over from the file, so a developer worker's own saves
 // cannot forget the head and have the scheduler review the same head again.
 func (s *Store) SetReviewedSHA(n int, sha string) error {
-	is, err := s.Issue(n)
+	return s.SetWorkReviewedSHA(ghwork.New(n, 0), sha)
+}
+
+func (s *Store) SetWorkReviewedSHA(ref work.Ref, sha string) error {
+	is, err := s.Work(ref)
 	if err != nil {
 		return err
 	}
-	is.Number, is.ReviewedSHA = n, sha
+	is.ReviewedSHA = sha
 	is.UpdatedAt = time.Now().UTC()
-	return s.writeJSON(filepath.Join(s.Dir, "issues", strconv.Itoa(n)+".json"), is)
+	return s.writeJSON(s.WorkPath(is.Work.Key), is)
 }
 
 // SetProposal records whether a feature carries the proposal label, and with
@@ -471,12 +555,12 @@ func (s *Store) SetProposal(n int, proposal bool, approvedAt time.Time) error {
 	if err != nil {
 		return err
 	}
-	is.Number, is.Proposal = n, proposal
+	is.Work, is.Proposal = ghwork.WithIssue(is.Work, n), proposal
 	if !approvedAt.IsZero() {
 		is.ProposalApprovedAt = approvedAt
 	}
 	is.UpdatedAt = time.Now().UTC()
-	return s.writeJSON(filepath.Join(s.Dir, "issues", strconv.Itoa(n)+".json"), is)
+	return s.writeJSON(s.WorkPath(ghwork.IssueKey(n)), is)
 }
 
 // SetOpenChildren records a feature's open sub-issues, and with a non-zero
@@ -496,44 +580,52 @@ func (s *Store) SetOpenChildren(n int, children []int, reportedAt time.Time) err
 	if err != nil {
 		return err
 	}
-	changed := children != nil && !slices.Equal(is.OpenChildren, children)
+	changed := children != nil && !slices.Equal(is.OpenChildren, ghwork.Keys(children))
 	if !changed && reportedAt.IsZero() {
 		return nil
 	}
 	if changed {
-		is.OpenChildren, is.CompleteReportedAt = children, time.Time{}
+		is.OpenChildren, is.CompleteReportedAt = ghwork.Keys(children), time.Time{}
 	}
 	if !reportedAt.IsZero() {
 		is.CompleteReportedAt = reportedAt
 	}
-	is.Number = n
+	is.Work = ghwork.WithIssue(is.Work, n)
 	is.UpdatedAt = time.Now().UTC()
-	return s.writeJSON(filepath.Join(s.Dir, "issues", strconv.Itoa(n)+".json"), is)
+	return s.writeJSON(s.WorkPath(ghwork.IssueKey(n)), is)
 }
 
 // AddIssueCost adds one finished session to an issue's running total and
 // returns the totals after it. It is the only writer of the cost fields.
-func (s *Store) AddIssueCost(number int, cost float64) (IssueState, error) {
-	is, err := s.Issue(number)
+func (s *Store) AddIssueCost(number int, cost float64) (WorkState, error) {
+	return s.AddWorkCost(ghwork.New(number, 0), cost)
+}
+
+func (s *Store) AddWorkCost(ref work.Ref, cost float64) (WorkState, error) {
+	is, err := s.Work(ref)
 	if err != nil {
 		return is, err
 	}
 	is.Cost += cost
 	is.Sessions++
 	is.UpdatedAt = time.Now().UTC()
-	return is, s.writeJSON(filepath.Join(s.Dir, "issues", strconv.Itoa(is.Number)+".json"), is)
+	return is, s.writeJSON(s.WorkPath(is.Work.Key), is)
 }
 
 // SetIssueCost replaces an issue's running totals, which is how a total is
 // seeded from the ledger for an issue whose bookkeeping predates budgets.
-func (s *Store) SetIssueCost(number int, cost float64, sessions int) (IssueState, error) {
-	is, err := s.Issue(number)
+func (s *Store) SetIssueCost(number int, cost float64, sessions int) (WorkState, error) {
+	return s.SetWorkCost(ghwork.New(number, 0), cost, sessions)
+}
+
+func (s *Store) SetWorkCost(ref work.Ref, cost float64, sessions int) (WorkState, error) {
+	is, err := s.Work(ref)
 	if err != nil {
 		return is, err
 	}
 	is.Cost, is.Sessions = cost, sessions
 	is.UpdatedAt = time.Now().UTC()
-	return is, s.writeJSON(filepath.Join(s.Dir, "issues", strconv.Itoa(is.Number)+".json"), is)
+	return is, s.writeJSON(s.WorkPath(is.Work.Key), is)
 }
 
 // RoleState is per-role bookkeeping. Singleton roles use it to remember
@@ -564,12 +656,9 @@ func (s *Store) SaveRole(role string, rs RoleState) error {
 
 // Worker describes a running developer worker.
 type Worker struct {
-	Name string `json:"name"`
-	// Issue is the issue the developer worker holds. For a review a person
-	// asked for with bees:review-requested (Stage "requested review") it is
-	// the pull request's number instead: GitHub numbers issues and pull
-	// requests from one sequence, so the two never collide.
-	Issue int `json:"issue"`
+	Work work.Ref `json:"work"`
+	Name string   `json:"name"`
+	// Work identifies the issue, or the pull request for a requested review.
 	// Size is the issue's size label ("xs".."xl"), recorded when the worker
 	// starts. It is what scheduler.max_large_in_flight counts.
 	Size  string `json:"size,omitempty"`
@@ -622,7 +711,7 @@ type Status struct {
 	ReadySizes map[string]int `json:"ready_sizes,omitempty"`
 	// Priority lists the ready issues carrying bees:priority, smallest
 	// number first: the queue a person told the factory to build next.
-	Priority []int `json:"priority,omitempty"`
+	Priority []work.Key `json:"priority,omitempty"`
 	// BudgetPaused is true while no new session is being dispatched because
 	// the rolling 24h spend reached scheduler.max_cost_per_day and has not
 	// yet fallen back to scheduler.max_cost_per_day_resume_percent of it, so
@@ -639,7 +728,7 @@ type Status struct {
 	LimitPausedUntil time.Time `json:"limit_paused_until,omitempty"`
 	// WaitingOnDeps maps a ready issue to the blockers it declares that are
 	// still open, so `bees status` can explain why it is not being built.
-	WaitingOnDeps map[int][]int `json:"waiting_on_deps,omitempty"`
+	WaitingOnDeps map[work.Key][]work.Key `json:"waiting_on_deps,omitempty"`
 	// NeedsHuman lists the issues the factory has given up on and is waiting
 	// for a person over, first escalated first. Queues counts them; this is
 	// what they are, so a view can say which issue and why without asking
@@ -708,11 +797,12 @@ func ShortDur(d time.Duration) string {
 
 // Escalated is one issue the factory handed to a person: which issue, what
 // it is called, why the factory gave it up and when. The reason is what
-// scheduler.escalate recorded (IssueState.Escalation); it is empty for an
+// scheduler.escalate recorded (WorkState.Escalation); it is empty for an
 // issue a person labelled by hand, and for one escalated before this state
 // directory existed.
 type Escalated struct {
-	Issue  int    `json:"issue"`
+	Work work.Ref `json:"work"`
+
 	Title  string `json:"title"`
 	Reason string `json:"reason,omitempty"`
 	// Since is when the factory escalated the issue, zero when it did not
@@ -727,8 +817,8 @@ type Escalated struct {
 // time for it, and the number a person waiting to merge is really being told
 // is how long the change has been in flight.
 type ApprovedPR struct {
-	PR    int       `json:"pr"`
-	Issue int       `json:"issue"`
+	Work work.Ref `json:"work"`
+
 	Title string    `json:"title"`
 	Since time.Time `json:"since,omitempty"`
 }
@@ -764,6 +854,9 @@ func (s *Store) LoadStatus() (Status, error) {
 }
 
 func (s *Store) readJSON(path string, v any) error {
+	if err := s.migrateExisting(); err != nil {
+		return err
+	}
 	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -775,6 +868,9 @@ func (s *Store) readJSON(path string, v any) error {
 }
 
 func (s *Store) writeJSON(path string, v any) error {
+	if err := s.Migrate(); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}

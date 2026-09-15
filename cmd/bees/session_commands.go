@@ -9,8 +9,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/issues"
 	"github.com/kpenfound/busybees/internal/mail"
+	"github.com/kpenfound/busybees/internal/mailfmt"
 	"github.com/kpenfound/busybees/internal/session"
 	"github.com/kpenfound/busybees/internal/state"
 )
@@ -40,7 +42,7 @@ func mailbox(g *globalFlags) (*mail.Box, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	return mail.Open(state.New(dir).MailDir()), dir, nil
+	return mail.Open(state.New(dir).MailDir(), state.New(dir).Migrate), dir, nil
 }
 
 // ---- mail ------------------------------------------------------------------
@@ -82,7 +84,7 @@ mail too (use --from human).`
 			if err != nil {
 				return err
 			}
-			m, err := box.Send(mail.Message{To: toRole, From: from, Subject: subject, Body: text, Issue: issue, PR: pr, InReplyTo: replyTo})
+			m, err := box.Send(mail.Message{To: toRole, From: from, Subject: subject, Body: text, InReplyTo: replyTo, Work: ghwork.New(issue, pr)})
 			if err != nil {
 				return err
 			}
@@ -116,7 +118,7 @@ mail too (use --from human).`
 					return err
 				}
 			}
-			msgs, err := box.List(mail.Filter{To: lTo, From: lFrom, Issue: lIssue, PR: lPR, UnreadOnly: unread})
+			msgs, err := box.List(mail.Filter{To: lTo, From: lFrom, UnreadOnly: unread, Tags: ghwork.New(lIssue, lPR).Tags})
 			if err != nil {
 				return err
 			}
@@ -126,7 +128,7 @@ mail too (use --from human).`
 			}
 			for _, m := range msgs {
 				if full {
-					fmt.Println(mail.Format(m))
+					fmt.Println(mailfmt.FormatMail(m))
 					continue
 				}
 				flag := " "
@@ -134,11 +136,11 @@ mail too (use --from human).`
 					flag = "*"
 				}
 				ctx := ""
-				if m.Issue > 0 {
-					ctx += fmt.Sprintf(" issue#%d", m.Issue)
+				if ghwork.Issue(m.Work) > 0 {
+					ctx += fmt.Sprintf(" issue#%d", ghwork.Issue(m.Work))
 				}
-				if m.PR > 0 {
-					ctx += fmt.Sprintf(" pr#%d", m.PR)
+				if ghwork.PR(m.Work) > 0 {
+					ctx += fmt.Sprintf(" pr#%d", ghwork.PR(m.Work))
 				}
 				fmt.Printf("%s %s  %-16s -> %-16s%s  %s\n", flag, m.ID, m.From, m.To, ctx, m.Subject)
 			}
@@ -165,7 +167,7 @@ mail too (use --from human).`
 			if err != nil {
 				return err
 			}
-			fmt.Print(mail.Format(m))
+			fmt.Print(mailfmt.FormatMail(m))
 			return nil
 		},
 	}
@@ -300,8 +302,13 @@ func newDoneCmd() *cobra.Command {
 			if issue == 0 {
 				issue = envInt(session.EnvIssue)
 			}
+			if dir := os.Getenv(session.EnvStateDir); dir != "" {
+				if err := state.New(dir).Migrate(); err != nil {
+					return err
+				}
+			}
 			o, err := session.Report(os.Getenv(session.EnvSessionDir), os.Getenv(session.EnvRole),
-				session.Outcome{Status: args[0], Note: note, PR: pr, Issue: issue})
+				session.Outcome{Status: args[0], Note: note, Work: ghwork.New(issue, pr)})
 			if err != nil {
 				return err
 			}

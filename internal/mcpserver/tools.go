@@ -8,8 +8,10 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/issues"
 	"github.com/kpenfound/busybees/internal/mail"
+	"github.com/kpenfound/busybees/internal/mailfmt"
 )
 
 // ---- mail ------------------------------------------------------------------
@@ -68,7 +70,7 @@ func (s *server) mailSend(ctx context.Context, _ *mcp.CallToolRequest, in mailSe
 	}
 	m, err := s.mail.Send(mail.Message{
 		To: to, From: s.env.Role, Subject: in.Subject, Body: in.Body,
-		Issue: in.Issue, PR: in.PR, InReplyTo: in.InReplyTo,
+		InReplyTo: in.InReplyTo, Work: ghwork.New(in.Issue, in.PR),
 	})
 	if err != nil {
 		return nil, nil, err
@@ -80,7 +82,7 @@ func (s *server) mailList(ctx context.Context, _ *mcp.CallToolRequest, in mailLi
 	if s.mail == nil {
 		return nil, nil, errors.New("no mailbox: $BEES_STATE_DIR is not set")
 	}
-	msgs, err := s.mail.List(mail.Filter{Issue: in.Issue, PR: in.PR, UnreadOnly: in.Unread})
+	msgs, err := s.mail.List(mail.Filter{UnreadOnly: in.Unread, Tags: ghwork.New(in.Issue, in.PR).Tags})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -89,7 +91,7 @@ func (s *server) mailList(ctx context.Context, _ *mcp.CallToolRequest, in mailLi
 	}
 	var b strings.Builder
 	for _, m := range msgs {
-		b.WriteString(mail.Format(m))
+		b.WriteString(mailfmt.FormatMail(m))
 	}
 	return text("%s", b.String()), nil, nil
 }

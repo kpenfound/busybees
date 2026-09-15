@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/state"
 )
 
@@ -122,7 +123,7 @@ func workersText(st state.Status) string {
 		if sandbox == "" {
 			sandbox = "-"
 		}
-		fmt.Fprintf(&b, "  %-12s issue #%-5d %-3s %-17s %-20s sandbox %-9s since %s", w.Name, w.Issue, size, w.Stage, round, sandbox, w.Since.Format(time.Kitchen))
+		fmt.Fprintf(&b, "  %-12s issue #%-5d %-3s %-17s %-20s sandbox %-9s since %s", w.Name, ghwork.Number(w.Work.Key), size, w.Stage, round, sandbox, w.Since.Format(time.Kitchen))
 		if w.Resumed {
 			b.WriteString("   resumed")
 		}

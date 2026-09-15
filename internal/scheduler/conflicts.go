@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/mail"
 )
@@ -72,9 +73,8 @@ func (s *Scheduler) checkPRs(ctx context.Context, snap *snapshot) error {
 			From:    OrchestratorSender,
 			To:      config.RoleDeveloper,
 			Subject: fmt.Sprintf("PR #%d %s %s", pr.Number, reason, base),
-			Body:    updateBranchBody(pr, s.cfg.Project.Remote, base, reason),
-			Issue:   issue.Number,
-			PR:      pr.Number,
+			Body:    updateBranchBody(pr, s.cfg.Project.Remote, base, reason), Work: ghwork.New(issue.Number,
+				pr.Number),
 		}
 		if _, err := s.mail.Send(m); err != nil {
 			errs = append(errs, err.Error())

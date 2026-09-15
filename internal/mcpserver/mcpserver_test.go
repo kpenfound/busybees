@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/issues"
 	"github.com/kpenfound/busybees/internal/mail"
@@ -175,7 +177,7 @@ func TestMailSendDefaultsIssueAndPR(t *testing.T) {
 	if m.From != config.RoleDeveloper || m.Subject != "Which format?" || m.Body != "CSV or JSON?" {
 		t.Fatalf("message: %+v", m)
 	}
-	if m.Issue != 36 || m.PR != 72 {
+	if ghwork.Issue(m.Work) != 36 || ghwork.PR(m.Work) != 72 {
 		t.Fatalf("issue/pr not defaulted from the environment: %+v", m)
 	}
 
@@ -186,7 +188,7 @@ func TestMailSendDefaultsIssueAndPR(t *testing.T) {
 	// Explicit numbers win over the environment.
 	h.call("mail_send", map[string]any{"to": "reviewer", "subject": "s", "body": "b", "issue": 1, "pr": 2})
 	msgs, _ = h.mail.List(mail.Filter{To: config.RoleReviewer})
-	if len(msgs) != 1 || msgs[0].Issue != 1 || msgs[0].PR != 2 {
+	if len(msgs) != 1 || ghwork.Issue(msgs[0].Work) != 1 || ghwork.PR(msgs[0].Work) != 2 {
 		t.Fatalf("explicit issue/pr: %+v", msgs)
 	}
 }
@@ -209,11 +211,11 @@ func TestDoneWritesTheOutcome(t *testing.T) {
 		t.Fatalf("outcome: %v %v", ok, err)
 	}
 	// The same outcome `bees done pr-opened --pr 72 -m "opened #72"` writes.
-	want, err := session.Report(t.TempDir(), config.RoleDeveloper, session.Outcome{Status: "pr-opened", Note: "opened #72", PR: 72, Issue: 36})
+	want, err := session.Report(t.TempDir(), config.RoleDeveloper, session.Outcome{Status: "pr-opened", Note: "opened #72", Work: ghwork.New(36, 72)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if o != want {
+	if !reflect.DeepEqual(o, want) {
 		t.Fatalf("outcome = %+v, want %+v", o, want)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/mail"
 	"github.com/kpenfound/busybees/internal/state"
@@ -84,7 +85,7 @@ func TestAFeatureWhoseWorkIsDoneWakesTheProductManagerOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(is.OpenChildren) != 1 || is.OpenChildren[0] != 1 {
+	if len(is.OpenChildren) != 1 || is.OpenChildren[0] != ghwork.IssueKey(1) {
 		t.Fatalf("the feature's open sub-issues were not recorded: %+v", is.OpenChildren)
 	}
 	if !is.CompleteReportedAt.IsZero() {
@@ -208,7 +209,7 @@ func TestAFeatureThatGainsASubIssueIsReportedAgain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(is.OpenChildren) != 1 || is.OpenChildren[0] != 7 {
+	if len(is.OpenChildren) != 1 || is.OpenChildren[0] != ghwork.IssueKey(7) {
 		t.Fatalf("the new sub-issue was not recorded: %+v", is.OpenChildren)
 	}
 	if !is.CompleteReportedAt.IsZero() {
@@ -256,7 +257,7 @@ func TestAnEmptyParentLookupKeepsTheRecordedSubIssues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(is.OpenChildren) != 1 || is.OpenChildren[0] != 1 {
+	if len(is.OpenChildren) != 1 || is.OpenChildren[0] != ghwork.IssueKey(1) {
 		t.Fatalf("a run that saw no sub-issues erased the recorded ones: %+v", is.OpenChildren)
 	}
 
@@ -326,7 +327,7 @@ func TestAPartialParentLookupKeepsTheRecordedSubIssues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(is.OpenChildren, []int{1, 7}) {
+	if !slices.Equal(is.OpenChildren, ghwork.Keys([]int{1, 7})) {
 		t.Fatalf("the feature's open sub-issues were not recorded: %+v", is.OpenChildren)
 	}
 
@@ -345,7 +346,7 @@ func TestAPartialParentLookupKeepsTheRecordedSubIssues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(is.OpenChildren, []int{1, 7}) {
+	if !slices.Equal(is.OpenChildren, ghwork.Keys([]int{1, 7})) {
 		t.Fatalf("a partial lookup was recorded over the remembered set: %+v", is.OpenChildren)
 	}
 
@@ -389,7 +390,7 @@ func TestAFailedProductManagerSessionStillRecordsTheSubIssues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(is.OpenChildren, []int{7}) {
+	if !slices.Equal(is.OpenChildren, ghwork.Keys([]int{7})) {
 		t.Fatalf("the failed run did not record the new sub-issue: %+v", is.OpenChildren)
 	}
 	if !is.CompleteReportedAt.IsZero() {

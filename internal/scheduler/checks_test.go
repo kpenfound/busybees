@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/state"
 )
@@ -228,7 +229,7 @@ func TestTheWorkerStageNamesTheGate(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t, checksTOML)
 			h.gh.checks, h.gh.checksAll = tc.required, tc.all
-			w := &state.Worker{Name: "dev-1", Issue: 1, Stage: "checks", Round: 1}
+			w := &state.Worker{Name: "dev-1", Stage: "checks", Round: 1, Work: ghwork.New(1, 0)}
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			policy := h.sched.cfg.Merge()

@@ -12,6 +12,7 @@ import (
 
 	"github.com/kpenfound/busybees/core/agent/procs"
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/session"
 	"github.com/kpenfound/busybees/internal/state"
 )
@@ -261,7 +262,7 @@ func TestAResumedWorkerIsMarkedInTheStatus(t *testing.T) {
 	}
 	for _, w := range workers {
 		if !w.Resumed {
-			t.Errorf("worker %s (issue %d, stage %s) is not marked resumed", w.Name, w.Issue, w.Stage)
+			t.Errorf("worker %s (issue %d, stage %s) is not marked resumed", w.Name, ghwork.Issue(w.Work), w.Stage)
 		}
 	}
 }
@@ -287,7 +288,7 @@ func TestTheRunningSessionIsRecordedWhileItRuns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var during state.IssueState
+	var during state.WorkState
 	if err := json.Unmarshal(b, &during); err != nil {
 		t.Fatal(err)
 	}

@@ -47,7 +47,7 @@ echo '{"type":"text","timestamp":4,"sessionID":"ses_1","part":{"type":"text","te
 echo '{"type":"step_finish","timestamp":5,"sessionID":"ses_1","part":{"type":"step-finish","reason":"tool-calls","cost":0.5}}'
 echo '{"type":"text","timestamp":6,"sessionID":"ses_1","part":{"type":"text","text":"all done"}}'
 echo '{"type":"step_finish","timestamp":7,"sessionID":"ses_1","part":{"type":"step-finish","reason":"stop","cost":0.25}}'
-printf '{"status":"submitted","pr":12,"note":"hi"}' > "$TASK_SESSION_DIR/outcome.json"
+printf '{"status":"submitted","work":{"key":"task/12","tags":{"ticket":"twelve"}},"note":"hi"}' > "$TASK_SESSION_DIR/outcome.json"
 `)
 	r := newRunner(t, "")
 	r.OpenCodeBin = bin
@@ -69,7 +69,7 @@ printf '{"status":"submitted","pr":12,"note":"hi"}' > "$TASK_SESSION_DIR/outcome
 	if !res.CostKnown || res.CostUSD != 1 {
 		t.Errorf("cost: known %v, %v; want the steps' sum, 1", res.CostKnown, res.CostUSD)
 	}
-	if !res.HasOutcome || res.Outcome.Status != "submitted" || res.Outcome.PR != 12 {
+	if !res.HasOutcome || res.Outcome.Status != "submitted" || res.Outcome.Work.Key != "task/12" || res.Outcome.Work.Tags["ticket"] != "twelve" {
 		t.Fatalf("outcome: %+v", res.Outcome)
 	}
 	b, _ := os.ReadFile(filepath.Join(res.SessionDir, "args.txt"))

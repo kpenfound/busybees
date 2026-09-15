@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/mail"
 	"github.com/kpenfound/busybees/internal/workspace"
@@ -490,7 +491,7 @@ func assignedPR(labels ...string) *github.PR {
 // reviewedSHA is the head the scheduler recorded for a pull request.
 func reviewedSHA(t *testing.T, h *harness, n int) string {
 	t.Helper()
-	is, err := h.store.Issue(n)
+	is, err := h.store.Work(ghwork.New(0, n))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -605,7 +606,7 @@ func TestARecordedHeadSurvivesARestart(t *testing.T) {
 	h := newHarnessAt(t, assignedReviewTOML, requestedReviewClock)
 	pushBranch(t, h.clone, "fix-widget")
 	h.gh.prs[42] = assignedPR("bees")
-	if err := h.store.SetReviewedSHA(42, "aaa1111"); err != nil {
+	if err := h.store.SetWorkReviewedSHA(ghwork.New(0, 42), "aaa1111"); err != nil {
 		t.Fatal(err)
 	}
 	runPass(t, h)
@@ -666,7 +667,7 @@ func TestTheLabelIsDispatchedOverAnAlreadyReviewedHead(t *testing.T) {
 	h := newHarnessAt(t, assignedReviewTOML, requestedReviewClock)
 	pushBranch(t, h.clone, "fix-widget")
 	h.gh.prs[42] = assignedPR("bees", "bees:review-requested")
-	if err := h.store.SetReviewedSHA(42, "aaa1111"); err != nil {
+	if err := h.store.SetWorkReviewedSHA(ghwork.New(0, 42), "aaa1111"); err != nil {
 		t.Fatal(err)
 	}
 	runPass(t, h)
@@ -711,7 +712,7 @@ func TestALocalPassNeverDispatchesAnAssignedReview(t *testing.T) {
 	// The cached list still carries the head the pass just recorded; a
 	// local pass that dispatched from it would review it twice. Forget the
 	// record, so only the full/local distinction can stop a second session.
-	if err := h.store.SetReviewedSHA(42, ""); err != nil {
+	if err := h.store.SetWorkReviewedSHA(ghwork.New(0, 42), ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -728,7 +729,7 @@ func TestAnUnreadableRecordDoesNotReviewOnEveryPoll(t *testing.T) {
 	h := newHarnessAt(t, assignedReviewTOML, requestedReviewClock)
 	pushBranch(t, h.clone, "fix-widget")
 	h.gh.prs[42] = assignedPR("bees")
-	p := filepath.Join(h.store.Dir, "issues", "42.json")
+	p := h.store.WorkPath(ghwork.PRKey(42))
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -766,7 +767,7 @@ func TestAnAssignedPullRequestWithNoHeadCommitIsSkipped(t *testing.T) {
 	// A head was remembered before: without the guard the comparison with
 	// the empty head asks for one more review and then records the empty
 	// head over the real one.
-	if err := h.store.SetReviewedSHA(42, "aaa1111"); err != nil {
+	if err := h.store.SetWorkReviewedSHA(ghwork.New(0, 42), "aaa1111"); err != nil {
 		t.Fatal(err)
 	}
 	runPass(t, h)

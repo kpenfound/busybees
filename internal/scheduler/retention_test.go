@@ -3,14 +3,15 @@ package scheduler
 import (
 	"os"
 	"path/filepath"
-	"strconv"
 	"testing"
 	"time"
 
 	"github.com/kpenfound/busybees/core/agent/procs"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/session"
 	"github.com/kpenfound/busybees/internal/state"
+	"github.com/kpenfound/busybees/internal/statemigrate"
 )
 
 // retentionTOML runs no session: every role but the developer is off, and
@@ -77,7 +78,7 @@ func TestRetentionRemovesAClosedIssuesStateOnceRetentionPeriodHasPassed(t *testi
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:needs-human"}}}
 	h.gh.prs[209] = &github.PR{Number: 209, State: "MERGED", MergedAt: &merged, HeadRefName: "bees/issue-9"}
 
-	for _, is := range []state.IssueState{{Number: 7, Round: 2}, {Number: 8, Round: 1}, {Number: 9, PR: 209}, {Number: 10}} {
+	for _, is := range []state.WorkState{{Round: 2, Work: ghwork.New(7, 0)}, {Round: 1, Work: ghwork.New(8, 0)}, {Work: ghwork.New(9, 209)}, {Work: ghwork.New(10, 0)}} {
 		if err := h.store.SaveIssue(is); err != nil {
 			t.Fatal(err)
 		}
@@ -93,8 +94,16 @@ func TestRetentionRemovesAClosedIssuesStateOnceRetentionPeriodHasPassed(t *testi
 	legacy9 := fakeSessionDir(t, h, "reviewer-pr-209-r1", 0, true, 0)
 	open8 := fakeSessionDir(t, h, "developer-issue-8-r1", 8, true, 0)
 	unrelated := fakeSessionDir(t, h, "qa", 0, true, 0)
+	// These directories predate work markers. Re-run the one-time upgrade
+	// before the scheduler starts, as an existing installation would.
+	if err := os.Remove(filepath.Join(h.store.Dir, statemigrate.Marker)); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.Migrate(); err != nil {
+		t.Fatal(err)
+	}
 
-	issueFile := func(n int) string { return filepath.Join(h.store.Dir, "issues", strconv.Itoa(n)+".json") }
+	issueFile := func(n int) string { return h.store.WorkPath(ghwork.IssueKey(n)) }
 	keptAlways := func() {
 		t.Helper()
 		for _, p := range []string{issueFile(8), open8, issueFile(10), running, unrelated} {
@@ -151,7 +160,7 @@ func TestRetentionSweepsAtMostOncePerInterval(t *testing.T) {
 	// asked about again on every sweep.
 	h.gh.issues[7] = &github.Issue{Number: 7, State: "CLOSED", ClosedAt: &closed}
 	for _, n := range []int{7, 301} {
-		if err := h.store.SaveIssue(state.IssueState{Number: n}); err != nil {
+		if err := h.store.SaveIssue(state.WorkState{Work: ghwork.New(n, 0)}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -175,8 +184,8 @@ func TestRetentionSweepsAtMostOncePerInterval(t *testing.T) {
 		t.Fatalf("issue view calls after a later sweep = %d, want 3 (7's close time is remembered)", got)
 	}
 	for _, n := range []int{7, 301} {
-		if !exists(filepath.Join(h.store.Dir, "issues", strconv.Itoa(n)+".json")) {
-			t.Errorf("issues/%d.json removed inside the retention period", n)
+		if !exists(h.store.WorkPath(ghwork.IssueKey(n))) {
+			t.Errorf("bookkeeping for #%d removed inside the retention period", n)
 		}
 	}
 }

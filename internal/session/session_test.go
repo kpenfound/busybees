@@ -12,6 +12,7 @@ import (
 
 	"github.com/kpenfound/busybees/core/agent/agenttest"
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 )
 
 func fakeClaude(t *testing.T, body string) string { return agenttest.Script(t, "claude", body) }
@@ -29,7 +30,7 @@ cat > "$BEES_SESSION_DIR/stdin.txt"
 env > "$BEES_SESSION_DIR/env.txt"
 echo '{"type":"system","subtype":"init"}'
 echo '{"type":"result","subtype":"success","is_error":false,"result":"all done","session_id":"abc","num_turns":4,"total_cost_usd":0.25}'
-printf '{"status":"pr-opened","pr":12,"note":"hi"}' > "$BEES_SESSION_DIR/outcome.json"
+printf '{"status":"pr-opened","work":{"key":"pr-12","tags":{"github.pr":"12"}},"note":"hi"}' > "$BEES_SESSION_DIR/outcome.json"
 `)
 	r := newRunner(t, bin)
 	role := config.ResolvedRole{Name: "developer", Model: "opus", FallbackModel: "sonnet", MaxTurns: 10, Timeout: time.Minute,
@@ -42,7 +43,7 @@ printf '{"status":"pr-opened","pr":12,"note":"hi"}' > "$BEES_SESSION_DIR/outcome
 	if res.IsError || res.ResultText != "all done" || res.NumTurns != 4 || res.CostUSD != 0.25 || res.ClaudeID != "abc" {
 		t.Fatalf("result: %+v", res)
 	}
-	if !res.HasOutcome || res.Outcome.Status != "pr-opened" || res.Outcome.PR != 12 {
+	if !res.HasOutcome || res.Outcome.Status != "pr-opened" || ghwork.PR(res.Outcome.Work) != 12 {
 		t.Fatalf("outcome: %+v", res.Outcome)
 	}
 	args, _ := os.ReadFile(filepath.Join(res.SessionDir, "args.txt"))

@@ -8,6 +8,7 @@ import (
 
 	"github.com/kpenfound/busybees/core/agent"
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 )
 
 // OutcomeFile is the file a session's outcome is written to inside the
@@ -46,7 +47,7 @@ func Report(dir, role string, o Outcome) (Outcome, error) {
 	if err := ValidateOutcome(role, o.Status); err != nil {
 		return o, err
 	}
-	if (o.Status == "pr-opened" || o.Status == "pr-updated") && o.PR == 0 {
+	if (o.Status == "pr-opened" || o.Status == "pr-updated") && ghwork.PR(o.Work) == 0 {
 		return o, fmt.Errorf("%s requires a pull request number", o.Status)
 	}
 	return o, WriteOutcome(dir, o)

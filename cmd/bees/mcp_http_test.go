@@ -10,6 +10,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/mail"
 	"github.com/kpenfound/busybees/internal/mcpserver"
 	"github.com/kpenfound/busybees/internal/state"
@@ -77,7 +78,7 @@ func TestMCPOverHTTPNeedsTheToken(t *testing.T) {
 		t.Fatalf("mail_send over HTTP: %v %+v", err, res)
 	}
 	msgs, err := mail.Open(st.MailDir()).List(mail.Filter{To: "project_manager"})
-	if err != nil || len(msgs) != 1 || msgs[0].Body != "over http" || msgs[0].Issue != 3 {
+	if err != nil || len(msgs) != 1 || msgs[0].Body != "over http" || ghwork.Issue(msgs[0].Work) != 3 {
 		t.Fatalf("mail written by the HTTP server: %v %+v", err, msgs)
 	}
 }
