@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/kpenfound/busybees/core/ops"
 	"github.com/kpenfound/busybees/internal/logging"
 	"github.com/kpenfound/busybees/internal/session"
 	"github.com/kpenfound/busybees/internal/state"
@@ -38,14 +39,7 @@ var errSessionLimited = errors.New("claude session limit reached")
 // scheduler.rate_limit_backoff — which is exactly what that key means. One
 // further ahead than maxLimitPause is clamped to it.
 func pauseUntil(now, resets time.Time, backoff time.Duration) time.Time {
-	switch {
-	case resets.IsZero(), resets.Before(now):
-		return now.Add(backoff)
-	case resets.After(now.Add(maxLimitPause)):
-		return now.Add(maxLimitPause)
-	default:
-		return resets
-	}
+	return ops.PauseUntil(now, resets, backoff, maxLimitPause)
 }
 
 // recordSessionLimit pauses dispatch when a finished session died on the
@@ -58,15 +52,7 @@ func (s *Scheduler) recordSessionLimit(res *session.Result) bool {
 	}
 	now := s.now()
 	until := pauseUntil(now, resets, s.cfg.Scheduler.RateLimitBackoff.Duration)
-	s.mu.Lock()
-	// An episode already under way is extended, never shortened: two
-	// sessions hitting the same limit report the same window.
-	started := !s.limitPausedUntil.After(now)
-	if until.After(s.limitPausedUntil) {
-		s.limitPausedUntil = until
-	}
-	until = s.limitPausedUntil
-	s.mu.Unlock()
+	until, started := s.capacity.Extend(now, until)
 	if started {
 		s.log.Warn(fmt.Sprintf("⏸ claude session limit reached; starting no new sessions until %s", until.Local().Format("15:04 MST")),
 			logging.SummaryKey, true, "until", until, "reset_reported", !resets.IsZero())
@@ -80,24 +66,16 @@ func (s *Scheduler) recordSessionLimit(res *session.Result) bool {
 // and logs that it lifted, so a pause is announced exactly twice however
 // many times the gates ask.
 func (s *Scheduler) limitPaused() bool {
-	s.mu.Lock()
-	if s.limitPausedUntil.IsZero() {
-		s.mu.Unlock()
-		return false
+	paused, released := s.capacity.Check(s.now())
+	if released {
+		s.log.Info("▶ claude session limit reset; dispatching again", logging.SummaryKey, true)
 	}
-	if s.now().Before(s.limitPausedUntil) {
-		s.mu.Unlock()
-		return true
-	}
-	s.limitPausedUntil = time.Time{}
-	s.mu.Unlock()
-	s.log.Info("▶ claude session limit reset; dispatching again", logging.SummaryKey, true)
-	return false
+	return paused
 }
 
 // limitStatus fills the session-limit field of the status file. A pause
 // whose reset time has passed but that no dispatch gate has looked at yet
 // is still on the scheduler; `bees status` compares it with the clock.
 func (s *Scheduler) limitStatus(st *state.Status) {
-	st.LimitPausedUntil = s.limitPausedUntil
+	st.LimitPausedUntil = s.capacity.Until()
 }

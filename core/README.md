@@ -92,6 +92,41 @@ contract. Each call receives a copy of the default work tags. Busybees uses this
 adapter to keep issue/PR fields and their defaults, state migration and PR outcome
 requirements outside core.
 
+## Operational primitives
+
+`ops` contains reusable pieces for caller-owned reconcile loops. It does not
+poll a tracker, choose a workflow, log, or escalate work:
+
+- `ClassifyFailure`, `RetryPolicy.Decide`, `SelectModel` and `Sleep` preserve
+  reported-outcome precedence, retry counts, delays and fallback selection.
+- `Ledger` appends, reads and atomically trims JSONL accounting. Share one
+  instance per file to serialize append/trim. `Now` supplies timestamps for
+  entries without one; reads skip malformed lines, trims preserve their bytes,
+  and a read error never returns partial totals. Schema migration is external.
+- `Spend` selects opaque work keys and an inclusive time cutoff. `OverBudget`
+  uses a strict threshold with nonpositive limits unlimited. `EvaluateWindow`
+  returns reached/crossed/released signals with caller-supplied hysteresis and
+  window. `Streaks` counts consecutive crossings per comparable subject.
+- `PauseUntil` and `CapacityPause` calculate reset/backoff, extend episodes
+  without shortening them and report release once. `Degraded` resets on success
+  and reports one threshold crossing per failure streak, with sorted snapshots.
+- `Bus` stamps events with an injected clock and drops new events for a full
+  subscriber buffer. Work keys and tags, event kinds, roles, phases and outcomes
+  carry caller meaning only; each subscriber receives independent work tags.
+- `SharedPool` gives all-or-none claims to queued members in FIFO order. Call
+  `Pass` after each dispatch pass and `Leave` when a loop stops; release active
+  claims normally. Claims must fit the pool. Wake callbacks must not block or
+  call back into the pool because they run under its lock.
+- `NewWake` creates one coalescing wake per loop. `Wait` services local work
+  without resetting the caller's tick source and stops on cancellation. A ready
+  tick consumes a pending wake; `Drain` also lets an immediate full pass consume
+  it. The caller owns timers, full passes, and how many loops exist.
+
+Busybees keeps one loop per project. Its adapter chooses the 24-hour budget
+window, retention floor, retry configuration, eight-hour reported-reset cap,
+two-session budget streak and three-failure degraded threshold. It renders
+status and logs, maps work to GitHub and decides what operational signals do.
+
 ## Review pipeline
 
 `review.Runner[R].Run` takes an artifact directory, `review.Bundle[R]` and a

@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kpenfound/busybees/core/ops"
 	"github.com/kpenfound/busybees/core/work"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/ghwork"
@@ -116,7 +117,7 @@ type Scheduler struct {
 	lastErr  string
 	// degraded holds the current failure streak of every named operation
 	// that is failing right now; a success deletes its entry (degraded.go).
-	degraded map[string]*opFailure
+	degraded ops.Degraded
 	queues   map[string]int
 	waiting  map[int][]int
 	// warnedCycles remembers the issues we already warned about, so a
@@ -142,13 +143,13 @@ type Scheduler struct {
 	// dispatching again rather than waiting the pause out.
 	dayPaused bool
 	daySpend  float64
-	// limitPausedUntil is when dispatch resumes after a session hit the
+	// capacity tracks when dispatch resumes after a session hit the
 	// account-wide claude session limit; zero when none is in force. It is
 	// in memory only, like dayPaused: after a restart the first session
 	// re-learns the limit and re-pauses.
-	limitPausedUntil time.Time
+	capacity ops.CapacityPause
 	// overBudget counts consecutive over-budget sessions per work item.
-	overBudget map[budgetSubject]int
+	overBudget ops.Streaks[budgetSubject]
 	// live holds every session running right now, by the name the event
 	// stream publishes, and killed the ones a person stopped through
 	// KillSession (kill.go). Both are the live view's half of the picture:
@@ -169,12 +170,12 @@ type Scheduler struct {
 	// loop runs a local pass at once instead of sitting out the rest of the
 	// poll interval. Buffered with one slot, so a burst of signals coalesces
 	// into a single pass.
-	wake  chan struct{}
+	wake  ops.Wake
 	wg    sync.WaitGroup
 	slots chan struct{}
 	// shared is this scheduler's membership of Deps.Shared, nil without
 	// one: every claim on slots is also a claim on it (claimSlots).
-	shared *sharedMember
+	shared *ops.Member
 	// sessionCtx is the context every session runs under while Run is
 	// running, and stopSessions cancels it. It is derived from Run's context
 	// but not cancelled with it: cancelling the loop stops polling and
@@ -188,11 +189,7 @@ type Scheduler struct {
 	// under its caller's context and dies with it, as it always has.
 	sessionCtx   context.Context
 	stopSessions context.CancelFunc
-	// evMu guards subs, the event stream's subscribers (events.go). It is
-	// its own lock: publishing must never contend with, or depend on, the
-	// state mu protects.
-	evMu sync.Mutex
-	subs []chan Event
+	events       *ops.Bus
 	// lastSweep is when the retention sweep last ran, and triggers the time
 	// each closed issue it has looked up went stale (retention.go).
 	lastSweep time.Time
@@ -242,24 +239,23 @@ func New(d Deps) (*Scheduler, error) {
 		owned:        map[int]*state.Worker{},
 		running:      map[string]bool{},
 		backoff:      map[string]time.Time{},
-		degraded:     map[string]*opFailure{},
 		queues:       map[string]int{},
 		waiting:      map[int][]int{},
 		warnedCycles: map[int]bool{},
 		readySizes:   map[string]int{},
 		live:         map[string]liveSession{},
 		killed:       map[string]bool{},
-		overBudget:   map[budgetSubject]int{},
 		interrupted:  map[work.Key]*session.Interrupted{},
 		triggers:     map[int]time.Time{},
-		wake:         make(chan struct{}, 1),
+		wake:         ops.NewWake(),
+		events:       ops.NewBus(eventBuffer, d.Now),
 		slots:        make(chan struct{}, d.Config.Scheduler.MaxDevelopers),
 	}
 	for i := 0; i < d.Config.Scheduler.MaxDevelopers; i++ {
 		s.slots <- struct{}{}
 	}
 	if d.Shared != nil {
-		s.shared = d.Shared.join(d.Config.Project.Repo, s.signal)
+		s.shared = d.Shared.Join(d.Config.Project.Repo, s.signal)
 	}
 	return s, nil
 }
@@ -270,7 +266,7 @@ func (s *Scheduler) SharedPool() *SharedPool {
 	if s.shared == nil {
 		return nil
 	}
-	return s.shared.pool
+	return s.shared.Pool()
 }
 
 // Run executes the loop until ctx is cancelled (or, with Once, until one
@@ -309,7 +305,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		"max_developers", s.cfg.Scheduler.MaxDevelopers, "poll", s.cfg.Scheduler.PollInterval.Duration,
 		"work_hours", s.cfg.Scheduler.WorkHours, "version", s.version}
 	if s.shared != nil {
-		started = append(started, "shared_max_developers", s.shared.pool.Size())
+		started = append(started, "shared_max_developers", s.shared.Pool().Size())
 	}
 	s.log.Info("scheduler started", started...)
 	// review_assigned_prs reviews what the poll finds, and without an
@@ -355,7 +351,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	}
 	// No further dispatch pass can claim this scheduler's queued turn.
 	// Give it up before draining, so other machine projects keep working.
-	s.shared.leave()
+	s.shared.Leave()
 	if msg := stopNotice(s.liveCount(), s.heldIssues(), ctx.Err() != nil); msg != "" {
 		s.log.Info(msg)
 	}
@@ -457,17 +453,7 @@ func (s *Scheduler) sessionContext(ctx context.Context) context.Context {
 func (s *Scheduler) waitForTick(ctx context.Context) bool {
 	timer := time.NewTimer(s.cfg.Scheduler.PollInterval.Duration)
 	defer timer.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return false
-		case <-timer.C:
-			return true
-		case <-s.wake:
-			s.localPass(ctx)
-			s.writeStatus()
-		}
-	}
+	return s.wake.Wait(ctx, timer.C, func() { s.localPass(ctx); s.writeStatus() })
 }
 
 // signal asks the loop to run a local pass now rather than at the next tick.
@@ -485,21 +471,10 @@ func (s *Scheduler) waitForTick(ctx context.Context) bool {
 // need to: the session that sent it signals when it finishes, and the local
 // pass that follows re-reads the mailbox from disk. Mail a person sends by
 // hand while nothing is running still waits for the next tick.
-func (s *Scheduler) signal() {
-	select {
-	case s.wake <- struct{}{}:
-	default:
-	}
-}
+func (s *Scheduler) signal() { s.wake.Signal() }
 
-// drainWake drops a pending wake. It is called before a full pass, which
-// does strictly more than the local pass the signal asked for.
-func (s *Scheduler) drainWake() {
-	select {
-	case <-s.wake:
-	default:
-	}
-}
+// drainWake consumes a wake superseded by a full pass.
+func (s *Scheduler) drainWake() { s.wake.Drain() }
 
 // ensureLabels creates the workflow labels the repository does not have
 // yet. A repository initialised by an older build is missing every label
@@ -567,19 +542,7 @@ func capErrors(err error) string {
 // later": GitHub's rate-limit responses as surfaced by gh, and the API
 // errors a session's agent reports when it is throttled or the service is
 // overloaded.
-var rateLimitPhrases = []string{"rate limit", "abuse detection", "secondary rate", "overloaded", "usage limit", "session limit"}
-
-// rateLimitedText reports whether a message names a rate limit or an
-// overloaded service. Matching is case-insensitive.
-func rateLimitedText(msg string) bool {
-	msg = strings.ToLower(msg)
-	for _, p := range rateLimitPhrases {
-		if strings.Contains(msg, p) {
-			return true
-		}
-	}
-	return false
-}
+func rateLimitedText(msg string) bool { return ops.RateLimitedText(msg) }
 
 // isRateLimited recognises GitHub's rate-limit responses as surfaced by gh.
 func isRateLimited(err error) bool { return rateLimitedText(err.Error()) }

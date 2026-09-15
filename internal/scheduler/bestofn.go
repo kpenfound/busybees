@@ -109,8 +109,8 @@ func (s *Scheduler) attemptsFor(issue github.Issue, snap *snapshot) int {
 // shared pool's size when that is smaller (SharedPool).
 func (s *Scheduler) poolSize() int {
 	n := s.cfg.Scheduler.MaxDevelopers
-	if s.shared != nil && s.shared.pool.Size() < n {
-		return s.shared.pool.Size()
+	if s.shared != nil && s.shared.Pool().Size() < n {
+		return s.shared.Pool().Size()
 	}
 	return n
 }
@@ -139,9 +139,9 @@ func (s *Scheduler) claimSlots(n int) bool {
 			return false
 		}
 	}
-	if s.shared != nil && !s.shared.acquire(n) {
+	if s.shared != nil && !s.shared.Acquire(n) {
 		s.releaseOwn(n)
-		s.log.Info("slots wait for the shared pool", "slots", n, "shared_max_developers", s.shared.pool.Size())
+		s.log.Info("slots wait for the shared pool", "slots", n, "shared_max_developers", s.shared.Pool().Size())
 		return false
 	}
 	return true
@@ -151,7 +151,7 @@ func (s *Scheduler) claimSlots(n int) bool {
 func (s *Scheduler) releaseSlots(n int) {
 	s.releaseOwn(n)
 	if s.shared != nil && n > 0 {
-		s.shared.release(n)
+		s.shared.Release(n)
 	}
 }
 
@@ -162,10 +162,10 @@ func (s *Scheduler) releaseOwn(n int) {
 	}
 }
 
-// sharedPass tells the shared pool a dispatch pass ended (sharedMember.pass).
+// sharedPass tells the shared pool a dispatch pass ended (ops.Member.Pass).
 func (s *Scheduler) sharedPass() {
 	if s.shared != nil {
-		s.shared.pass()
+		s.shared.Pass()
 	}
 }
 

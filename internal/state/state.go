@@ -38,6 +38,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kpenfound/busybees/core/ops"
 	"github.com/kpenfound/busybees/core/work"
 	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/statemigrate"
@@ -47,9 +48,9 @@ import (
 type Store struct {
 	Dir string
 
-	// ledgerMu serialises AppendLedger with TrimLedger's rewrite, so a line
-	// appended while the ledger is rewritten is never lost.
-	ledgerMu sync.Mutex
+	// The shared core ledger serializes appends against atomic trimming.
+	ledgerOnce sync.Once
+	ledger     *ops.Ledger
 }
 
 // New returns a store rooted at dir.
@@ -826,19 +827,7 @@ type ApprovedPR struct {
 // OpFailure is the current failure streak of one named factory operation
 // (an assignment, a label edit, the poll itself): how many times in a row it
 // has failed, since when, and what it last said.
-type OpFailure struct {
-	Op    string `json:"op"`
-	Count int    `json:"count"`
-	// First and Last are the ends of the streak: the failure that started
-	// it and the most recent one.
-	First time.Time `json:"first"`
-	Last  time.Time `json:"last"`
-	// LastError is the most recent error, on one line and capped.
-	LastError string `json:"last_error,omitempty"`
-	// Escalated records that this streak already produced its one summary
-	// line, so it is not repeated on every pass.
-	Escalated bool `json:"escalated,omitempty"`
-}
+type OpFailure = ops.OpFailure
 
 // SaveStatus writes status.json.
 func (s *Store) SaveStatus(st Status) error {

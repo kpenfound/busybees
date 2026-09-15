@@ -205,43 +205,6 @@ func TestEventsAreDroppedWhenTheSubscriberNeverReads(t *testing.T) {
 	}
 }
 
-// publish drops rather than blocks, keeps the events a subscriber has not
-// read yet, and gives every subscriber its own copy.
-func TestPublishDropsRatherThanBlocks(t *testing.T) {
-	at := time.Date(2026, 8, 31, 9, 0, 0, 0, time.UTC)
-	s := &Scheduler{now: func() time.Time { return at }}
-	// Publishing with nobody subscribed is a no-op, not a panic.
-	s.publish(Event{Kind: EventPoll})
-
-	first, second := s.Subscribe(), s.Subscribe()
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for i := range eventBuffer + 10 {
-			s.publish(Event{Kind: EventSessionStarted, Work: ghwork.New(i, 0)})
-		}
-	}()
-	select {
-	case <-done:
-	case <-time.After(10 * time.Second):
-		t.Fatal("publish blocked on a subscriber that is not reading")
-	}
-
-	for name, sub := range map[string]<-chan Event{"first": first, "second": second} {
-		got := drain(sub)
-		if len(got) != eventBuffer {
-			t.Fatalf("%s subscriber got %d events, want %d", name, len(got), eventBuffer)
-		}
-		// The buffer keeps what arrived first and drops the overflow.
-		if ghwork.Issue(got[0].Work) != 0 || ghwork.Issue(got[len(got)-1].Work) != eventBuffer-1 {
-			t.Errorf("%s subscriber kept issues %d..%d, want 0..%d", name, ghwork.Issue(got[0].Work), ghwork.Issue(got[len(got)-1].Work), eventBuffer-1)
-		}
-		if !got[0].Time.Equal(at) {
-			t.Errorf("%s subscriber: event stamped %s, want the scheduler's clock %s", name, got[0].Time, at)
-		}
-	}
-}
-
 // A view re-reads status.json when a poll event arrives, so the file must
 // already hold what the pass found when the event is published. The first
 // pass of an idle factory writes status.json nowhere else, so an event

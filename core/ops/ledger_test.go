@@ -1,23 +1,24 @@
-package state
+package ops
 
 import (
 	"errors"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/kpenfound/busybees/internal/ghwork"
+	"github.com/kpenfound/busybees/core/work"
 )
 
 func TestAppendAndReadLedger(t *testing.T) {
-	s := New(t.TempDir())
+	s := NewLedger(t.TempDir())
 	base := time.Date(2026, 8, 29, 10, 0, 0, 0, time.UTC)
 	entries := []LedgerEntry{
-		{Time: base, Role: "developer", Session: "developer-issue-12-r1", Turns: 18, CostUSD: 0.42, DurationMS: 214000, Outcome: "pr-opened", Work: ghwork.New(12, 34)},
-		{Time: base.Add(time.Hour), Role: "reviewer", Session: "reviewer-pr-34-r1", Turns: 7, CostUSD: 0.11, Outcome: "approved", Work: ghwork.New(12, 34)},
+		{Time: base, Role: "builder", Session: "builder-job-a-r1", Turns: 18, CostUSD: 0.42, DurationMS: 214000, Outcome: "built", Work: work.Ref{Key: "job/a", Tags: map[string]string{"topic": "build"}}},
+		{Time: base.Add(time.Hour), Role: "checker", Session: "checker-job-b-r1", Turns: 7, CostUSD: 0.11, Outcome: "approved", Work: work.Ref{Key: "job/a", Tags: map[string]string{"topic": "build"}}},
 	}
 	for _, e := range entries {
 		if err := s.AppendLedger(e); err != nil {
@@ -35,7 +36,7 @@ func TestAppendAndReadLedger(t *testing.T) {
 	if err := f.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.AppendLedger(LedgerEntry{Time: base.Add(2 * time.Hour), Role: "qa", Session: "qa-r1", Turns: 3, CostUSD: 0.05, Outcome: "reported"}); err != nil {
+	if err := s.AppendLedger(LedgerEntry{Time: base.Add(2 * time.Hour), Role: "audit", Session: "qa-r1", Turns: 3, CostUSD: 0.05, Outcome: "reported"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -49,7 +50,7 @@ func TestAppendAndReadLedger(t *testing.T) {
 	if !reflect.DeepEqual(got[0], entries[0]) {
 		t.Errorf("first entry: got %+v want %+v", got[0], entries[0])
 	}
-	if got[2].Role != "qa" {
+	if got[2].Role != "audit" {
 		t.Errorf("garbage line was not skipped: %+v", got)
 	}
 
@@ -58,13 +59,13 @@ func TestAppendAndReadLedger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got[0].Role != "reviewer" {
+	if len(got) != 2 || got[0].Role != "checker" {
 		t.Fatalf("since: %+v", got)
 	}
 }
 
 func TestReadLedgerMissingFile(t *testing.T) {
-	s := New(t.TempDir())
+	s := NewLedger(t.TempDir())
 	got, err := s.ReadLedger(time.Time{})
 	if err != nil || got != nil {
 		t.Fatalf("got %+v, %v; want nil, nil", got, err)
@@ -72,7 +73,7 @@ func TestReadLedgerMissingFile(t *testing.T) {
 }
 
 func TestAppendLedgerConcurrent(t *testing.T) {
-	s := New(t.TempDir())
+	s := NewLedger(t.TempDir())
 	const workers, each = 8, 20
 	var wg sync.WaitGroup
 	for w := 0; w < workers; w++ {
@@ -80,7 +81,7 @@ func TestAppendLedgerConcurrent(t *testing.T) {
 		go func(w int) {
 			defer wg.Done()
 			for i := 0; i < each; i++ {
-				e := LedgerEntry{Role: "developer", Session: strings.Repeat("x", 200), Turns: i, Work: ghwork.New(w, 0)}
+				e := LedgerEntry{Role: "builder", Session: strings.Repeat("x", 200), Turns: i, Work: work.Ref{Key: work.Key(strconv.Itoa(w))}}
 				if err := s.AppendLedger(e); err != nil {
 					t.Error(err)
 					return
@@ -113,13 +114,13 @@ func TestAppendLedgerConcurrent(t *testing.T) {
 }
 
 func TestTrimLedger(t *testing.T) {
-	s := New(t.TempDir())
+	s := NewLedger(t.TempDir())
 	base := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
 	for _, e := range []LedgerEntry{
-		{Time: base.Add(-72 * time.Hour), Role: "developer", Session: "ancient"},
-		{Time: base.Add(-25 * time.Hour), Role: "reviewer", Session: "old"},
-		{Time: base.Add(-24 * time.Hour), Role: "qa", Session: "edge"},
-		{Time: base.Add(-time.Hour), Role: "developer", Session: "recent"},
+		{Time: base.Add(-72 * time.Hour), Role: "builder", Session: "ancient"},
+		{Time: base.Add(-25 * time.Hour), Role: "checker", Session: "old"},
+		{Time: base.Add(-24 * time.Hour), Role: "audit", Session: "edge"},
+		{Time: base.Add(-time.Hour), Role: "builder", Session: "recent"},
 	} {
 		if err := s.AppendLedger(e); err != nil {
 			t.Fatal(err)
@@ -169,8 +170,8 @@ func TestTrimLedger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 3 {
-		t.Errorf("state dir holds %d files after the trim, want ledger, schema marker and lock: %v", len(entries), entries)
+	if len(entries) != 1 {
+		t.Errorf("state dir holds %d files after the trim, want only ledger: %v", len(entries), entries)
 	}
 
 	// Nothing older than the cutoff: the file is left alone.
@@ -191,7 +192,7 @@ func TestTrimLedger(t *testing.T) {
 }
 
 func TestTrimLedgerMissingFile(t *testing.T) {
-	s := New(t.TempDir())
+	s := NewLedger(t.TempDir())
 	if removed, err := s.TrimLedger(time.Now()); err != nil || removed != 0 {
 		t.Fatalf("got %d, %v; want 0, nil", removed, err)
 	}
@@ -203,7 +204,7 @@ func TestTrimLedgerMissingFile(t *testing.T) {
 // TestTrimLedgerKeepsConcurrentAppends trims while workers append: every line
 // appended must survive, since each is newer than the cutoff.
 func TestTrimLedgerKeepsConcurrentAppends(t *testing.T) {
-	s := New(t.TempDir())
+	s := NewLedger(t.TempDir())
 	now := time.Now()
 	for i := 0; i < 50; i++ {
 		if err := s.AppendLedger(LedgerEntry{Time: now.Add(-48 * time.Hour), Session: "old"}); err != nil {
@@ -248,7 +249,7 @@ func TestTrimLedgerKeepsConcurrentAppends(t *testing.T) {
 }
 
 func TestReadLedgerScanFailure(t *testing.T) {
-	s := New(t.TempDir())
+	s := NewLedger(t.TempDir())
 	if err := s.AppendLedger(LedgerEntry{CostUSD: 1}); err != nil {
 		t.Fatal(err)
 	}
@@ -258,5 +259,30 @@ func TestReadLedgerScanFailure(t *testing.T) {
 	got, err := s.ReadLedger(time.Time{})
 	if err == nil || len(got) != 0 {
 		t.Fatalf("partial ledger returned: %v, %v", got, err)
+	}
+}
+
+func TestTrimPreservesMalformedTruncatedBytes(t *testing.T) {
+	s := NewLedger(t.TempDir())
+	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	s.Now = func() time.Time { return now }
+	if err := s.AppendLedger(LedgerEntry{Session: "clock"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.ReadLedger(time.Time{}); err != nil || len(got) != 1 || !got[0].Time.Equal(now) {
+		t.Fatalf("clock=%+v err=%v", got, err)
+	}
+	// Every retained byte, including unknown fields and an unfinished final
+	// line without a newline, survives a rewrite triggered by an old record.
+	kept := "not-json\n{\"time\":\"2026-09-15T12:00:00Z\",\"extra\":42}\n{\"unfinished\":"
+	old := "{\"time\":\"2026-09-01T00:00:00Z\"}\n"
+	if err := os.WriteFile(s.LedgerPath(), []byte(old+kept), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if removed, err := s.TrimLedger(now.Add(-24 * time.Hour)); err != nil || removed != 1 {
+		t.Fatalf("trim=%d err=%v", removed, err)
+	}
+	if got, err := os.ReadFile(s.LedgerPath()); err != nil || string(got) != kept {
+		t.Fatalf("retained=%q err=%v", got, err)
 	}
 }
