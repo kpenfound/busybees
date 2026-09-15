@@ -220,6 +220,18 @@ func TestDoneWritesTheOutcome(t *testing.T) {
 	}
 }
 
+func TestDoneDefaultsPRFromSession(t *testing.T) {
+	h := newHarness(t, config.RoleDeveloper, Deps{})
+	h.call("done", map[string]any{"status": "pr-opened"})
+	o, ok, err := session.ReadOutcome(h.sessionDir)
+	if err != nil || !ok {
+		t.Fatalf("outcome: %v %v", ok, err)
+	}
+	if got := ghwork.PR(o.Work); got != 72 {
+		t.Fatalf("outcome PR = %d, want session default 72", got)
+	}
+}
+
 func TestDoneRejectsAStatusTheRoleMayNotReport(t *testing.T) {
 	h := newHarness(t, config.RoleReviewer, Deps{})
 	// The advertised enum is what rejects this: the SDK validates the input
