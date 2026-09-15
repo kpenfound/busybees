@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/prompts"
 	"github.com/kpenfound/busybees/internal/state"
@@ -151,7 +152,7 @@ func (s *Scheduler) completedFeatures(snap *snapshot) []github.Issue {
 			continue
 		}
 		done := true
-		for _, c := range is.OpenChildren {
+		for _, c := range ghwork.Numbers(is.OpenChildren) {
 			if snap.open[c] {
 				done = false
 				break
@@ -180,7 +181,7 @@ func (s *Scheduler) completedFeatures(snap *snapshot) []github.Issue {
 // feature that gains a sub-issue after being reported complete is reported
 // again when that one closes. This function decides what to record;
 // state.Store.SetOpenChildren, which owns both fields, is what writes it —
-// the polling path never saves a whole IssueState, because a developer worker
+// the polling path never saves a whole WorkState, because a developer worker
 // may be holding one for the same issue.
 func (s *Scheduler) recordFeatureProgress(snap *snapshot, parents map[int]github.Parent, reported []github.Issue, complete bool) {
 	children := map[int][]int{}
@@ -591,7 +592,7 @@ func (s *Scheduler) RunRole(ctx context.Context, role string, issue, pr int) err
 				_ = s.store.SaveIssue(bk)
 			}
 		}
-		w := &state.Worker{Name: "exec-" + role, Issue: issue, Size: s.sizeOf(i.Labels), Since: s.now()}
+		w := &state.Worker{Name: "exec-" + role, Size: s.sizeOf(i.Labels), Since: s.now(), Work: ghwork.New(issue, 0)}
 		s.mu.Lock()
 		s.owned[issue] = w
 		s.mu.Unlock()

@@ -6,6 +6,8 @@ import (
 	"fmt"
 
 	"github.com/kpenfound/busybees/core/agent/procs"
+	"github.com/kpenfound/busybees/core/work"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/session"
 )
 
@@ -19,10 +21,9 @@ var errSessionKilled = errors.New("session stopped by a person")
 // recorded in runSession beside the event that announces the session, and
 // dropped when that session ends.
 type liveSession struct {
-	role  string
-	dir   string
-	issue int
-	pr    int
+	Work work.Ref `json:"work"`
+	role string
+	dir  string
 }
 
 // recordLiveSession remembers a session for as long as it runs, so a view
@@ -93,7 +94,7 @@ func (s *Scheduler) KillSession(ctx context.Context, name string) error {
 		return fmt.Errorf("session %q is not running a process this scheduler can stop", name)
 	}
 	s.log.Warn(fmt.Sprintf("stopping session %s: a person asked for it", name),
-		"role", ls.role, "session", name, "issue", ls.issue, "pid", p.PID)
+		"role", ls.role, "session", name, "issue", ghwork.Issue(ls.Work), "pid", p.PID)
 	if err := procs.Kill(p, procs.DefaultGrace); err != nil {
 		s.mu.Lock()
 		delete(s.killed, name)
@@ -105,10 +106,10 @@ func (s *Scheduler) KillSession(ctx context.Context, name string) error {
 	if err := session.MarkInterrupted(ls.dir, "stopped from the live view"); err != nil {
 		s.log.Warn("could not mark the stopped session", "session", name, "err", err)
 	}
-	if ls.issue <= 0 {
+	if ghwork.Issue(ls.Work) <= 0 {
 		return nil
 	}
-	return s.escalate(ctx, ls.issue, killedReason(ls))
+	return s.escalate(ctx, ghwork.Issue(ls.Work), killedReason(ls))
 }
 
 // killedReason is what the escalation comment says. It names the role that
@@ -116,8 +117,8 @@ func (s *Scheduler) KillSession(ctx context.Context, name string) error {
 // work is unreported: the branch is where the person now has to look.
 func killedReason(ls liveSession) string {
 	reason := fmt.Sprintf("A person stopped the running `%s` session from `bees run`'s live view.", ls.role)
-	if ls.pr > 0 {
-		reason += fmt.Sprintf(" It was working on #%d.", ls.pr)
+	if ghwork.PR(ls.Work) > 0 {
+		reason += fmt.Sprintf(" It was working on #%d.", ghwork.PR(ls.Work))
 	}
 	return reason + " Whatever it had done is unreported and may still be on its branch."
 }

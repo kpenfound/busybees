@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/state"
 )
 
@@ -17,9 +18,9 @@ func fixtureLedger(t *testing.T) []state.LedgerEntry {
 	day1 := time.Date(2026, 8, 28, 12, 0, 0, 0, time.Local)
 	day2 := day1.Add(24 * time.Hour)
 	for _, e := range []state.LedgerEntry{
-		{Time: day1, Role: "developer", Session: "developer-issue-12-r1", Issue: 12, PR: 34, Turns: 18, CostUSD: 0.42, Outcome: "pr-opened"},
-		{Time: day1.Add(time.Hour), Role: "reviewer", Session: "reviewer-pr-34-r1", Issue: 12, PR: 34, Turns: 6, CostUSD: 0.10, Outcome: "changes-requested"},
-		{Time: day2, Role: "developer", Session: "developer-issue-13-r1", Issue: 13, PR: 35, Turns: 10, CostUSD: 0.25, Outcome: "pr-opened"},
+		{Time: day1, Role: "developer", Session: "developer-issue-12-r1", Turns: 18, CostUSD: 0.42, Outcome: "pr-opened", Work: ghwork.New(12, 34)},
+		{Time: day1.Add(time.Hour), Role: "reviewer", Session: "reviewer-pr-34-r1", Turns: 6, CostUSD: 0.10, Outcome: "changes-requested", Work: ghwork.New(12, 34)},
+		{Time: day2, Role: "developer", Session: "developer-issue-13-r1", Turns: 10, CostUSD: 0.25, Outcome: "pr-opened", Work: ghwork.New(13, 35)},
 		{Time: day2.Add(time.Hour), Role: "qa", Session: "qa-r1", Turns: 4, CostUSD: 0.03, Outcome: "reported"},
 	} {
 		if err := store.AppendLedger(e); err != nil {

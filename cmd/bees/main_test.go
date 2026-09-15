@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/logging"
 	"github.com/kpenfound/busybees/internal/state"
 )
@@ -127,7 +128,7 @@ func TestQueuesTextShowsPriorityIssues(t *testing.T) {
 	st := state.Status{
 		Queues:     map[string]int{"ready": 4},
 		ReadySizes: map[string]int{"xs": 1, "s": 2, "m": 1},
-		Priority:   []int{7, 12},
+		Priority:   ghwork.Keys([]int{7, 12}),
 	}
 	if got, want := queuesText(st), "  ready          4  (xs 1, s 2, m 1, 2 priority)\n"; got != want {
 		t.Fatalf("got:\n%q\nwant:\n%q", got, want)
@@ -138,12 +139,12 @@ func TestQueuesTextShowsPriorityIssues(t *testing.T) {
 		t.Fatalf("unexpected priority marker: %q", got)
 	}
 	// The numbers travel in --json, as waiting_on_deps does.
-	st.Priority = []int{7}
+	st.Priority = ghwork.Keys([]int{7})
 	b, err := json.Marshal(st)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(b), `"priority":[7]`) {
+	if !strings.Contains(string(b), `"priority":["issue-7"]`) {
 		t.Fatalf("status JSON: %s", b)
 	}
 	st.Priority = nil

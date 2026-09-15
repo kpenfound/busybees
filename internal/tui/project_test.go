@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/scheduler"
 	"github.com/kpenfound/busybees/internal/state"
 )
@@ -376,7 +377,7 @@ func TestReviewActivityBelongsToItsEventSourceProject(t *testing.T) {
 		t.Fatal("progress crossed projects")
 	}
 	m.apply(1, scheduler.Event{Kind: scheduler.EventSessionStarted, Activity: ev.Activity,
-		Session: "bar-judge", Role: config.RoleReviewer, PR: 31, Time: fixed})
+		Session: "bar-judge", Role: config.RoleReviewer, Time: fixed, Work: ghwork.New(0, 31)})
 	if len(m.sessions) != 2 || m.sessions[0].activity == nil || m.sessions[1].name != "bar-judge" {
 		t.Fatalf("handoff crossed projects: %+v", m.sessions)
 	}

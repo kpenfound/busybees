@@ -9,9 +9,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spf13/cobra"
+
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/state"
 	"github.com/kpenfound/busybees/internal/text"
-	"github.com/spf13/cobra"
 )
 
 // The dimensions `bees cost --by` can group the ledger by.
@@ -121,10 +123,10 @@ func groupCost(entries []state.LedgerEntry, by string) ([]costGroup, costGroup) 
 func costKey(e state.LedgerEntry, by string) string {
 	switch by {
 	case byIssue:
-		if e.Issue == 0 {
+		if ghwork.Issue(e.Work) == 0 {
 			return noGroup
 		}
-		return strconv.Itoa(e.Issue)
+		return strconv.Itoa(ghwork.Issue(e.Work))
 	case byDay:
 		return e.Time.Local().Format("2006-01-02")
 	default:

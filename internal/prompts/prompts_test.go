@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/mail"
 	"github.com/kpenfound/busybees/internal/session"
@@ -28,7 +29,7 @@ func sample() Data {
 		// The proposal gate is on by default; a test that turns it off says so.
 		FeatureProposals: true,
 		WorkDir:          "/tmp/ws", Branch: "bees/issue-4", BaseBranch: "main", StateDir: "/s", SessionDir: "/s/sessions/1",
-		Inbox:             []mail.Message{{ID: "m1", From: "reviewer", To: "developer", Subject: "Review round 1", Body: "please fix", PR: 9, CreatedAt: sampleMailTime}},
+		Inbox:             []mail.Message{{ID: "m1", From: "reviewer", To: "developer", Subject: "Review round 1", Body: "please fix", CreatedAt: sampleMailTime, Work: ghwork.New(0, 9)}},
 		Issue:             &github.Issue{Number: 4, Title: "Add thing", Body: "details", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:feature"}}, Author: github.Author{Login: "kyle"}},
 		PR:                &github.PR{Number: 9, Title: "Add thing", HeadRefName: "bees/issue-4", BaseRefName: "main", Author: github.Author{Login: "bot"}},
 		Issues:            []github.Issue{{Number: 6, Title: "Waiting", Labels: []github.Label{{Name: "bees:triage"}, {Name: "bees:bug"}}}, {Number: 7, Title: "Building", Labels: []github.Label{{Name: "bees:in-progress"}}}},

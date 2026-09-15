@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
 )
 
@@ -71,12 +72,12 @@ func TestAMentionOnAPreFlightIssueReachesTheProjectManager(t *testing.T) {
 	if len(msgs) != 2 {
 		t.Fatalf("%d messages for the project manager, want the two mentions: %+v", len(msgs), msgs)
 	}
-	if msgs[0].Issue != 1 || msgs[1].Issue != 2 {
-		t.Fatalf("mail is about issues %d and %d, want 1 (triage) and 2 (ready)", msgs[0].Issue, msgs[1].Issue)
+	if ghwork.Issue(msgs[0].Work) != 1 || ghwork.Issue(msgs[1].Work) != 2 {
+		t.Fatalf("mail is about issues %d and %d, want 1 (triage) and 2 (ready)", ghwork.Issue(msgs[0].Work), ghwork.Issue(msgs[1].Work))
 	}
 	for _, m := range msgs {
 		if m.From != HumanSender {
-			t.Errorf("mail about issue #%d is from %q, want %q", m.Issue, m.From, HumanSender)
+			t.Errorf("mail about issue #%d is from %q, want %q", ghwork.Issue(m.Work), m.From, HumanSender)
 		}
 	}
 	if strings.Contains(msgs[0].Body, "from before the factory looked") {
@@ -92,7 +93,7 @@ func TestAMentionOnAPreFlightIssueReachesTheProjectManager(t *testing.T) {
 	// itself: nothing is mailed about issue 3, to anyone.
 	for _, role := range []string{config.RoleProjectManager, config.RoleProductManager, config.RoleDeveloper} {
 		for _, m := range roleMail(t, h, role) {
-			if m.Issue == 3 || strings.Contains(m.Body, "rename the flag") {
+			if ghwork.Issue(m.Work) == 3 || strings.Contains(m.Body, "rename the flag") {
 				t.Errorf("a comment mentioning nobody was delivered to %s: %+v", role, m)
 			}
 		}
@@ -129,8 +130,8 @@ func TestAMentionOnAFeatureOrFeedbackIssueReachesTheProductManager(t *testing.T)
 	if len(msgs) != 2 {
 		t.Fatalf("%d messages for the product manager, want the feature's and the feedback's: %+v", len(msgs), msgs)
 	}
-	if msgs[0].Issue != 1 || msgs[1].Issue != 2 {
-		t.Fatalf("mail is about issues %d and %d, want 1 (feature) and 2 (feedback)", msgs[0].Issue, msgs[1].Issue)
+	if ghwork.Issue(msgs[0].Work) != 1 || ghwork.Issue(msgs[1].Work) != 2 {
+		t.Fatalf("mail is about issues %d and %d, want 1 (feature) and 2 (feedback)", ghwork.Issue(msgs[0].Work), ghwork.Issue(msgs[1].Work))
 	}
 	if !strings.Contains(msgs[0].Body, "break this one up now") || !strings.Contains(msgs[1].Body, "worth a feature?") {
 		t.Errorf("mail bodies are missing the comments:\n%s\n%s", msgs[0].Body, msgs[1].Body)

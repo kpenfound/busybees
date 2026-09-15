@@ -1,6 +1,10 @@
 package scheduler
 
-import "time"
+import (
+	"time"
+
+	"github.com/kpenfound/busybees/core/work"
+)
 
 // Event kinds published on the scheduler's event stream.
 const (
@@ -37,6 +41,7 @@ const (
 // something happened, status.json says what the factory currently looks
 // like.
 type Event struct {
+	Work work.Ref `json:"work"`
 	// Kind is one of the Event* constants above.
 	Kind string
 	// Activity identifies a review pipeline within this project's stream.
@@ -65,10 +70,7 @@ type Event struct {
 	// NewSessionDir stamps a timestamp on the front and a random suffix on
 	// the end of it.
 	Dir string
-	// Issue and PR are what the event is about; zero when it is about
-	// neither (a singleton session, a poll).
-	Issue int
-	PR    int
+
 	// Stage is the developer worker's stage on a stage event, empty
 	// otherwise.
 	Stage string
@@ -146,11 +148,6 @@ func (s *Scheduler) publish(ev Event) {
 // pull request it is about.
 func sessionEvent(kind string, spec sessionSpec) Event {
 	ev := Event{Kind: kind, Role: spec.role, Session: spec.name, Activity: spec.reviewActivity, Round: spec.data.Round}
-	if spec.data.Issue != nil {
-		ev.Issue = spec.data.Issue.Number
-	}
-	if spec.data.PR != nil {
-		ev.PR = spec.data.PR.Number
-	}
+	ev.Work = sessionWork(spec)
 	return ev
 }

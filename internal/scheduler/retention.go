@@ -5,16 +5,16 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"regexp"
-	"strconv"
 	"time"
 
+	"github.com/kpenfound/busybees/core/work"
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/session"
 )
 
 // Retention. An issue that has closed is never worked on again, so the
-// state it left — its bookkeeping in issues/<n>.json and the directory of
+// state it left — its bookkeeping in issues/work-<hash>.json and the directory of
 // every session that worked on it — is deleted once
 // scheduler.retention_period has passed since it went stale: its pull
 // request merging, or the issue closing when no pull request merged.
@@ -32,12 +32,6 @@ import (
 // retentionSweepInterval is how often the sweep runs. A closed issue's state
 // goes up to this much later than retention_period says, never earlier.
 const retentionSweepInterval = time.Hour
-
-// legacySessionName matches the name of a session directory written before
-// session.IssueFile existed, for the two kinds of session that name what
-// they worked on: a developer session names its issue, a reviewer session
-// its pull request.
-var legacySessionName = regexp.MustCompile(`^\d{8}-\d{6}-(developer-issue|reviewer-pr)-(\d+)-`)
 
 // sweepRetention deletes the state of the issues that closed more than
 // retention_period ago.
@@ -75,7 +69,7 @@ func (s *Scheduler) sweepRetention(ctx context.Context, snap *snapshot) {
 		if bk.Session != nil {
 			continue
 		}
-		stale, err := s.staleSince(ctx, n, bk.PR)
+		stale, err := s.staleSince(ctx, n, ghwork.PR(bk.Work))
 		if err != nil {
 			// A pull request's number (a requested review keeps bookkeeping
 			// under it) is not an issue gh can view; nor is anything while gh
@@ -93,7 +87,7 @@ func (s *Scheduler) sweepRetention(ctx context.Context, snap *snapshot) {
 			}
 		}
 		removed, kept := 0, 0
-		for _, dir := range index.of(n, bk.PR) {
+		for _, dir := range index.of(n, ghwork.PR(bk.Work)) {
 			if in, running := session.CheckInterrupted("", dir, s.alive); running || in != nil {
 				kept++
 				continue
@@ -127,7 +121,7 @@ func (s *Scheduler) holds(n int) bool {
 		return true
 	}
 	for _, ls := range s.live {
-		if ls.issue == n {
+		if ghwork.Issue(ls.Work) == n {
 			return true
 		}
 	}
@@ -168,11 +162,11 @@ func (s *Scheduler) staleSince(ctx context.Context, n, pr int) (time.Time, error
 // the issue they worked on and, for a directory that names a pull request
 // instead, by that pull request.
 type sessionIndex struct {
-	byIssue, byPR map[int][]string
+	byWork map[work.Key][]string
 }
 
 func indexSessions(sessionsDir string) (*sessionIndex, error) {
-	idx := &sessionIndex{byIssue: map[int][]string{}, byPR: map[int][]string{}}
+	idx := &sessionIndex{byWork: map[work.Key][]string{}}
 	entries, err := os.ReadDir(sessionsDir)
 	if errors.Is(err, os.ErrNotExist) {
 		return idx, nil
@@ -185,19 +179,12 @@ func indexSessions(sessionsDir string) (*sessionIndex, error) {
 			continue
 		}
 		dir := filepath.Join(sessionsDir, e.Name())
-		if n := session.ReadIssue(dir); n > 0 {
-			idx.byIssue[n] = append(idx.byIssue[n], dir)
-			continue
+		ref, err := session.ReadWork(dir)
+		if err != nil {
+			return nil, err
 		}
-		m := legacySessionName.FindStringSubmatch(e.Name())
-		if m == nil {
-			continue
-		}
-		n, _ := strconv.Atoi(m[2])
-		if m[1] == "developer-issue" {
-			idx.byIssue[n] = append(idx.byIssue[n], dir)
-		} else {
-			idx.byPR[n] = append(idx.byPR[n], dir)
+		if ref.Key != "" {
+			idx.byWork[ref.Key] = append(idx.byWork[ref.Key], dir)
 		}
 	}
 	return idx, nil
@@ -206,9 +193,9 @@ func indexSessions(sessionsDir string) (*sessionIndex, error) {
 // of returns the session directories of an issue whose pull request is pr (0
 // for none).
 func (idx *sessionIndex) of(issue, pr int) []string {
-	dirs := idx.byIssue[issue]
+	dirs := idx.byWork[ghwork.IssueKey(issue)]
 	if pr > 0 {
-		dirs = append(dirs[:len(dirs):len(dirs)], idx.byPR[pr]...)
+		dirs = append(dirs[:len(dirs):len(dirs)], idx.byWork[ghwork.PRKey(pr)]...)
 	}
 	return dirs
 }

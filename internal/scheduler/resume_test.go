@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/state"
 )
@@ -78,8 +79,9 @@ func TestAResumedWorkerDoesNotReadTheChecksAgain(t *testing.T) {
 	}
 	// What the killed worker left behind: it was in its second review round,
 	// and the pre-review read had already happened.
-	if err := h.store.SaveIssue(state.IssueState{Number: 1, Round: 2, PR: fakePR, Branch: "bees/issue-1",
-		WorkerStage: "review", AfterDevelop: "review", PreReviewDone: true}); err != nil {
+	if err := h.store.SaveIssue(state.WorkState{Round: 2, Branch: "bees/issue-1",
+		WorkerStage: "review", AfterDevelop: "review", PreReviewDone: true, Work: ghwork.New(1, fakePR),
+	}); err != nil {
 		t.Fatal(err)
 	}
 	seedCounter(t, h, "review", 1) // approve on the first round
@@ -105,8 +107,9 @@ func TestARememberedStageThatContradictsTheLabelLosesToIt(t *testing.T) {
 	if err := os.WriteFile(h.gh.prMarker, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.store.SaveIssue(state.IssueState{Number: 1, Round: 1, PR: fakePR, Branch: "bees/issue-1",
-		WorkerStage: "review", AfterDevelop: "review", PreReviewDone: true}); err != nil {
+	if err := h.store.SaveIssue(state.WorkState{Round: 1, Branch: "bees/issue-1",
+		WorkerStage: "review", AfterDevelop: "review", PreReviewDone: true, Work: ghwork.New(1, fakePR),
+	}); err != nil {
 		t.Fatal(err)
 	}
 	seedCounter(t, h, "review", 1) // approve the round that does happen
@@ -139,8 +142,9 @@ func TestAResumedDeveloperReturnsToTheStageThatSentIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Killed during the developer session of the first check-fix round.
-	if err := h.store.SaveIssue(state.IssueState{Number: 1, Round: 1, PR: fakePR, Branch: "bees/issue-1",
-		CheckFixRounds: 1, WorkerStage: "develop", AfterDevelop: "checks"}); err != nil {
+	if err := h.store.SaveIssue(state.WorkState{Round: 1, Branch: "bees/issue-1",
+		CheckFixRounds: 1, WorkerStage: "develop", AfterDevelop: "checks", Work: ghwork.New(1, fakePR),
+	}); err != nil {
 		t.Fatal(err)
 	}
 	h.gh.checks = []checksResponse{{passingJSON, nil}}
@@ -169,8 +173,9 @@ func TestAResumedDeveloperRoundDoesNotPayForTheReadAgain(t *testing.T) {
 	}
 	// The reviewer requested changes and the worker died before the developer
 	// finished; the pre-review read belongs to the pull request and is done.
-	if err := h.store.SaveIssue(state.IssueState{Number: 1, Round: 2, PR: fakePR, Branch: "bees/issue-1",
-		WorkerStage: "develop", AfterDevelop: "review", PreReviewDone: true}); err != nil {
+	if err := h.store.SaveIssue(state.WorkState{Round: 2, Branch: "bees/issue-1",
+		WorkerStage: "develop", AfterDevelop: "review", PreReviewDone: true, Work: ghwork.New(1, fakePR),
+	}); err != nil {
 		t.Fatal(err)
 	}
 	seedCounter(t, h, "review", 1) // approve the round that follows
@@ -198,7 +203,7 @@ func TestResumeStage(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		name          string
-		bk            state.IssueState
+		bk            state.WorkState
 		state         string
 		pr            *github.PR
 		stage, after  string
@@ -208,27 +213,27 @@ func TestResumeStage(t *testing.T) {
 			stage: "develop", after: "review"},
 		{name: "nothing remembered, a pull request in review", state: "review", pr: pr,
 			stage: "prereview", after: "review"},
-		{name: "remembered mid-checks", bk: state.IssueState{PR: fakePR, WorkerStage: "checks", AfterDevelop: "checks", PreReviewDone: true},
+		{name: "remembered mid-checks", bk: state.WorkState{WorkerStage: "checks", AfterDevelop: "checks", PreReviewDone: true, Work: ghwork.New(0, fakePR)},
 			state: "in-progress", pr: pr, stage: "checks", after: "checks", prereviewDone: true},
-		{name: "remembered mid-round, the read already made", bk: state.IssueState{PR: fakePR, WorkerStage: "develop", AfterDevelop: "review", PreReviewDone: true},
+		{name: "remembered mid-round, the read already made", bk: state.WorkState{WorkerStage: "develop", AfterDevelop: "review", PreReviewDone: true, Work: ghwork.New(0, fakePR)},
 			state: "review", pr: pr, stage: "develop", after: "review", prereviewDone: true},
 		// The record belongs to the pull request it was written for: the two
 		// above match the open one, these do not. A person can close a pull
 		// request and open another on the same branch while nothing is
 		// running, and the second one's review has not happened.
-		{name: "a checks stage recorded for another pull request", bk: state.IssueState{PR: 999, WorkerStage: "checks", AfterDevelop: "checks", PreReviewDone: true},
+		{name: "a checks stage recorded for another pull request", bk: state.WorkState{WorkerStage: "checks", AfterDevelop: "checks", PreReviewDone: true, Work: ghwork.New(0, 999)},
 			state: "in-progress", pr: pr, stage: "develop", after: "review"},
-		{name: "a develop stage whose sub-state was recorded for another pull request", bk: state.IssueState{PR: 999, WorkerStage: "develop", AfterDevelop: "checks", PreReviewDone: true},
+		{name: "a develop stage whose sub-state was recorded for another pull request", bk: state.WorkState{WorkerStage: "develop", AfterDevelop: "checks", PreReviewDone: true, Work: ghwork.New(0, 999)},
 			state: "review", pr: pr, stage: "develop", after: "review"},
 		// Written before the number was known. Dropping it is the safe
 		// direction and is intended.
-		{name: "a record with no pull request number", bk: state.IssueState{WorkerStage: "checks", AfterDevelop: "checks", PreReviewDone: true},
+		{name: "a record with no pull request number", bk: state.WorkState{WorkerStage: "checks", AfterDevelop: "checks", PreReviewDone: true},
 			state: "in-progress", pr: pr, stage: "develop", after: "review"},
-		{name: "a develop stage whose sub-state was recorded before the number was known", bk: state.IssueState{WorkerStage: "develop", AfterDevelop: "checks", PreReviewDone: true},
+		{name: "a develop stage whose sub-state was recorded before the number was known", bk: state.WorkState{WorkerStage: "develop", AfterDevelop: "checks", PreReviewDone: true},
 			state: "review", pr: pr, stage: "develop", after: "review"},
 		// develop fits any label, so its sub-state is dropped on the same
 		// test the stages are: this issue is starting a fresh round.
-		{name: "a develop stage on an issue sent back to ready", bk: state.IssueState{PR: fakePR, WorkerStage: "develop", AfterDevelop: "checks", PreReviewDone: true},
+		{name: "a develop stage on an issue sent back to ready", bk: state.WorkState{WorkerStage: "develop", AfterDevelop: "checks", PreReviewDone: true, Work: ghwork.New(0, fakePR)},
 			state: "ready", pr: pr, stage: "develop", after: "review"},
 		// The one develop record whose labels are legitimately outside the
 		// review loop: the post-approval checks sent it back to the developer
@@ -236,28 +241,28 @@ func TestResumeStage(t *testing.T) {
 		// issue. Its gate survives; pre_review_done does not, because nothing
 		// on the way back to the checks asks whether the first review's read
 		// was made.
-		{name: "a post-approval fix round under approved", bk: state.IssueState{PR: fakePR, WorkerStage: "develop", AfterDevelop: "checks", PreReviewDone: true},
+		{name: "a post-approval fix round under approved", bk: state.WorkState{WorkerStage: "develop", AfterDevelop: "checks", PreReviewDone: true, Work: ghwork.New(0, fakePR)},
 			state: "approved", pr: pr, stage: "develop", after: "checks"},
-		{name: "a post-approval fix round recorded for another pull request", bk: state.IssueState{PR: 999, WorkerStage: "develop", AfterDevelop: "checks", PreReviewDone: true},
+		{name: "a post-approval fix round recorded for another pull request", bk: state.WorkState{WorkerStage: "develop", AfterDevelop: "checks", PreReviewDone: true, Work: ghwork.New(0, 999)},
 			state: "approved", pr: pr, stage: "develop", after: "review"},
-		{name: "a post-approval fix round whose pull request has gone", bk: state.IssueState{PR: fakePR, WorkerStage: "develop", AfterDevelop: "checks", PreReviewDone: true},
+		{name: "a post-approval fix round whose pull request has gone", bk: state.WorkState{WorkerStage: "develop", AfterDevelop: "checks", PreReviewDone: true, Work: ghwork.New(0, fakePR)},
 			state: "approved", stage: "develop", after: "review"},
 		// The label wins, and takes the sub-state with it.
-		{name: "a review stage on an issue sent back to ready", bk: state.IssueState{PR: fakePR, WorkerStage: "review", AfterDevelop: "review", PreReviewDone: true},
+		{name: "a review stage on an issue sent back to ready", bk: state.WorkState{WorkerStage: "review", AfterDevelop: "review", PreReviewDone: true, Work: ghwork.New(0, fakePR)},
 			state: "ready", pr: pr, stage: "develop", after: "review"},
-		{name: "a review stage whose pull request has gone", bk: state.IssueState{PR: fakePR, WorkerStage: "prereview", PreReviewDone: true},
+		{name: "a review stage whose pull request has gone", bk: state.WorkState{WorkerStage: "prereview", PreReviewDone: true, Work: ghwork.New(0, fakePR)},
 			state: "review", stage: "develop", after: "review"},
 		// The wait for the stack: the label still says review, and the record
 		// is what says the review has passed.
-		{name: "remembered waiting for the stack", bk: state.IssueState{PR: fakePR, WorkerStage: "stack-wait", AfterDevelop: "review", PreReviewDone: true},
+		{name: "remembered waiting for the stack", bk: state.WorkState{WorkerStage: "stack-wait", AfterDevelop: "review", PreReviewDone: true, Work: ghwork.New(0, fakePR)},
 			state: "review", pr: pr, stage: "stack-wait", after: "review", prereviewDone: true},
-		{name: "a stack-wait stage on an issue sent back to ready", bk: state.IssueState{PR: fakePR, WorkerStage: "stack-wait", AfterDevelop: "review", PreReviewDone: true},
+		{name: "a stack-wait stage on an issue sent back to ready", bk: state.WorkState{WorkerStage: "stack-wait", AfterDevelop: "review", PreReviewDone: true, Work: ghwork.New(0, fakePR)},
 			state: "ready", pr: pr, stage: "develop", after: "review"},
-		{name: "a stage no version of this worker runs", bk: state.IssueState{PR: fakePR, WorkerStage: "reviewing", PreReviewDone: true},
+		{name: "a stage no version of this worker runs", bk: state.WorkState{WorkerStage: "reviewing", PreReviewDone: true, Work: ghwork.New(0, fakePR)},
 			state: "review", pr: pr, stage: "prereview", after: "review"},
 		// Nothing in the file can send the worker to a stage that does not
 		// exist: both consumers of afterDevelop read anything else as review.
-		{name: "an after_develop no version of this worker runs", bk: state.IssueState{PR: fakePR, WorkerStage: "develop", AfterDevelop: "reviewing"},
+		{name: "an after_develop no version of this worker runs", bk: state.WorkState{WorkerStage: "develop", AfterDevelop: "reviewing", Work: ghwork.New(0, fakePR)},
 			state: "review", pr: pr, stage: "develop", after: "review"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -282,8 +287,9 @@ func TestExecReviewerForgetsARecordedStage(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The last worker stopped in a developer round of this pull request.
-	if err := h.store.SaveIssue(state.IssueState{Number: 1, Round: 1, PR: fakePR, Branch: "bees/issue-1",
-		WorkerStage: "develop", AfterDevelop: "review", PreReviewDone: true}); err != nil {
+	if err := h.store.SaveIssue(state.WorkState{Round: 1, Branch: "bees/issue-1",
+		WorkerStage: "develop", AfterDevelop: "review", PreReviewDone: true, Work: ghwork.New(1, fakePR),
+	}); err != nil {
 		t.Fatal(err)
 	}
 	seedCounter(t, h, "review", 1) // approve straight away
@@ -316,8 +322,9 @@ func TestASubStateDoesNotSurviveTheIssueGoingBackToReady(t *testing.T) {
 	}
 	// What the killed worker left: it had approved the pull request, a check
 	// failed, and the reviewer sent the developer a fix request.
-	if err := h.store.SaveIssue(state.IssueState{Number: 1, Round: 1, PR: fakePR, Branch: "bees/issue-1",
-		WorkerStage: "develop", AfterDevelop: "checks", PreReviewDone: true}); err != nil {
+	if err := h.store.SaveIssue(state.WorkState{Round: 1, Branch: "bees/issue-1",
+		WorkerStage: "develop", AfterDevelop: "checks", PreReviewDone: true, Work: ghwork.New(1, fakePR),
+	}); err != nil {
 		t.Fatal(err)
 	}
 	h.gh.checks = []checksResponse{{passingJSON, nil}}
@@ -412,11 +419,12 @@ func TestAWorkerKilledInThePostApprovalChecksIsResumed(t *testing.T) {
 // the post-approval checks nor the develop round they send back — is left
 // exactly where it is.
 func TestAnApprovedIssueThatIsNotAResumptionIsNotDispatched(t *testing.T) {
-	checks := &state.IssueState{Number: 1, Round: 1, PR: fakePR, Branch: "bees/issue-1",
-		WorkerStage: "checks", AfterDevelop: "checks"}
+	checks := &state.WorkState{Round: 1, Branch: "bees/issue-1",
+		WorkerStage: "checks", AfterDevelop: "checks", Work: ghwork.New(1, fakePR),
+	}
 	for _, tc := range []struct {
 		name string
-		bk   *state.IssueState
+		bk   *state.WorkState
 		// openPR is whether a pull request for the branch is open. The
 		// remembered checks stage belongs to one, and without it the worker
 		// would fall back to a developer round on a pull request that has
@@ -424,12 +432,16 @@ func TestAnApprovedIssueThatIsNotAResumptionIsNotDispatched(t *testing.T) {
 		openPR bool
 	}{
 		{"nothing remembered", nil, true},
-		{"a stage other than checks", &state.IssueState{Number: 1, Round: 1, PR: fakePR, Branch: "bees/issue-1",
-			WorkerStage: "review", AfterDevelop: "review"}, true},
+		{"a stage other than checks", &state.WorkState{Round: 1, Branch: "bees/issue-1",
+			WorkerStage: "review", AfterDevelop: "review", Work: ghwork.New(1, fakePR),
+		}, true},
+
 		// develop is recorded by every round there is; only the gate it
 		// returns to says this one came from the post-approval checks.
-		{"a develop round that leads to a review", &state.IssueState{Number: 1, Round: 1, PR: fakePR, Branch: "bees/issue-1",
-			WorkerStage: "develop", AfterDevelop: "review"}, true},
+
+		{"a develop round that leads to a review", &state.WorkState{Round: 1, Branch: "bees/issue-1",
+			WorkerStage: "develop", AfterDevelop: "review", Work: ghwork.New(1, fakePR),
+		}, true},
 		{"a checks stage whose pull request has gone", checks, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -559,8 +571,9 @@ func TestASubStateRecordedForAnotherPullRequestIsDropped(t *testing.T) {
 	}
 	// The record was left for pull request 999 — approved, a check failed, the
 	// reviewer sent the developer a fix request — and 101 is what is open now.
-	if err := h.store.SaveIssue(state.IssueState{Number: 1, Round: 1, PR: 999, Branch: "bees/issue-1",
-		WorkerStage: "develop", AfterDevelop: "checks", PreReviewDone: true}); err != nil {
+	if err := h.store.SaveIssue(state.WorkState{Round: 1, Branch: "bees/issue-1",
+		WorkerStage: "develop", AfterDevelop: "checks", PreReviewDone: true, Work: ghwork.New(1, 999),
+	}); err != nil {
 		t.Fatal(err)
 	}
 	h.gh.checks = []checksResponse{{passingJSON, nil}}
@@ -590,8 +603,9 @@ func TestAStageRecordedForAnotherPullRequestIsDropped(t *testing.T) {
 	if err := os.WriteFile(h.gh.prMarker, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.store.SaveIssue(state.IssueState{Number: 1, Round: 1, PR: 999, Branch: "bees/issue-1",
-		WorkerStage: "checks", AfterDevelop: "checks"}); err != nil {
+	if err := h.store.SaveIssue(state.WorkState{Round: 1, Branch: "bees/issue-1",
+		WorkerStage: "checks", AfterDevelop: "checks", Work: ghwork.New(1, 999),
+	}); err != nil {
 		t.Fatal(err)
 	}
 	h.gh.checks = []checksResponse{{passingJSON, nil}}
@@ -624,8 +638,9 @@ func TestAWorkerKilledInAPostApprovalFixRoundIsResumed(t *testing.T) {
 	}
 	// Approved, waiting out the post-approval checks, when the scheduler was
 	// restarted: the resumption #281 added.
-	if err := h.store.SaveIssue(state.IssueState{Number: 1, Round: 1, PR: fakePR, Branch: "bees/issue-1",
-		WorkerStage: "checks", AfterDevelop: "review"}); err != nil {
+	if err := h.store.SaveIssue(state.WorkState{Round: 1, Branch: "bees/issue-1",
+		WorkerStage: "checks", AfterDevelop: "review", Work: ghwork.New(1, fakePR),
+	}); err != nil {
 		t.Fatal(err)
 	}
 	h.gh.checks = []checksResponse{

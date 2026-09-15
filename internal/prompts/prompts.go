@@ -14,6 +14,7 @@ import (
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/mail"
+	"github.com/kpenfound/busybees/internal/mailfmt"
 	"github.com/kpenfound/busybees/internal/session"
 	"github.com/kpenfound/busybees/internal/text"
 )
@@ -343,7 +344,7 @@ func render(name string, d Data) (string, error) {
 	}
 	labels := d.Labels
 	funcs := template.FuncMap{
-		"formatMail": mail.Format,
+		"formatMail": mailfmt.FormatMail,
 		"count":      text.Count,
 		"join":       strings.Join,
 		"labels": func(ls []github.Label) string {

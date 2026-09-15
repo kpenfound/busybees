@@ -46,10 +46,17 @@ Orphan scans use `procs.CodexMarker(prefix)` with the same environment prefix;
 `LegacyCodex` can also match a caller's older MCP-based marker. With the default
 empty prefix, `procs.Find` needs no marker overrides.
 
-Result, transcript, outcome, PID and interruption artifacts retain their file
-formats. The issue/PR fields on outcomes are retained for existing readers;
-work-key migration is a separate change. Busybees issue and touched-issue files
-are owned by its adapter.
+## Work identity
+
+`work.Ref` carries an opaque string `Key` and caller-defined string `Tags`.
+Core stores and compares these values without interpreting tracker identity.
+`agent.Outcome.Work` records the reported work, and `agent.WriteWork` and
+`agent.ReadWork` persist it in a session's `work.json` marker. Keys have a
+bounded, case-safe hashed filename representation for bookkeeping stores.
+
+Busybees supplies GitHub mapping and a one-time upgrade of its existing state
+directories. Transcript, PID and interruption artifacts keep their formats;
+GitHub environment parameters and touched-issue files stay in its adapter.
 
 ## Testing
 

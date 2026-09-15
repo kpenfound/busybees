@@ -64,8 +64,9 @@ A full pass is:
    `review`, `approved` or `blocked` whose `updatedAt` moved past the issue's
    `issue_human_seen_at` clock, the comments written since that clock are
    fetched (one call) and what people wrote goes out as one message from
-   `human` (`issue == N`) to the role that can act on it: the developer for
-   `in-progress` and `approved`; the developer and a copy to the reviewer for
+   `human` (`github.issue == N` in its work tags) to the role that can act on it:
+   the developer for `in-progress` and `approved`; the developer and a copy to
+   the reviewer for
    `review`, so the round in flight sees it; and for `blocked`, whoever asked
    the question, read off the worker's bookkeeping: a recorded branch or pull
    request means a developer session asked, and reconcile then moves the issue
@@ -99,8 +100,9 @@ A full pass is:
    inline review comments and conversation comments are fetched with `gh api
    --paginate` (three calls). Bee comments and empty approvals are dropped by
    the rule above. The rest go to the developer as one message from `human`
-   (`issue == N`, `pr == M`) whose body carries each item's id and the `gh`
-   command to reply to it, and the clock advances to the newest item. An
+   (work tags `github.issue == N`, `github.pr == M`) whose body carries each
+   item's id and the `gh` command to reply to it, and the clock advances to
+   the newest item. An
    `approved` issue that received feedback goes back to `ready` and its pull
    request loses `bees:approved`, so a developer worker picks it up in step 7,
    unless a worker still owns the issue (the checks stage), whose labels are
@@ -113,8 +115,9 @@ A full pass is:
    in `review` or `approved`, a `CONFLICTING` pull request (with
    `scheduler.pr_fix_conflicts`) or a `BEHIND` one (with
    `scheduler.pr_keep_updated`) gets the developer one message from
-   `orchestrator` (`issue == N`, `pr == M`) asking it to merge the default
-   branch, resolve, test, push and report `pr-updated`. The head commit is
+   `orchestrator` (work tags `github.issue == N`, `github.pr == M`) asking it
+   to merge the default branch, resolve, test, push and report `pr-updated`.
+   The head commit is
    recorded as `conflict_notified_sha`, so one head is mailed about once; a
    push changes the head and, if it still conflicts, is notified again. An
    approved issue goes back to `ready` as in step 3. An `UNKNOWN` or empty
@@ -217,7 +220,7 @@ A full pass is:
    looked at this head. The label is removed before the session
    starts, which claims the request: one label is one pass whatever the
    session does, a failure or a killed scheduler included, and the head
-   commit is recorded in `issues/<pr>.json` before the session for the same
+   commit is recorded in `issues/work-<hash>.json` before the session for the same
    reason. Only a full pass dispatches one, because a local pass classifies
    the cached pull request list, which still carries a label removed on
    GitHub. The session is
@@ -266,7 +269,7 @@ A full pass is:
    query per work item, because the progress summary carries counts, not
    numbers); and the features whose work is done. That last list costs no
    GitHub call: every product manager run records each feature's open
-   sub-issue numbers in `<state_dir>/issues/<n>.json`, and a later pass
+   sub-issue numbers in `<state_dir>/issues/work-<hash>.json`, and a later pass
    notices that every recorded number is absent from the poll. Such a feature
    is presented once and marked; a recorded set that changes clears the mark,
    so a feature that gains a sub-issue is presented again when that one
@@ -307,15 +310,15 @@ A full pass is:
    behind it. Off, the queue is not even read.
 
 10. **Delete the state of closed issues.** At most once an hour, every
-    `<state_dir>/issues/<n>.json` whose issue the poll did not list is looked
+    `<state_dir>/issues/work-<hash>.json` whose issue the poll did not list is looked
     up with `gh issue view` (and, when it records a pull request, `gh pr
     view`). Once [`scheduler.retention_period`](configuration.md#scheduler)
     has passed since the pull request merged, or since the issue closed when
     none merged, the file is deleted along with the directory of every
-    session of that issue: the ones whose `issue` file names it, and, for a
-    directory older than that file, the ones named `developer-issue-<n>-…`
-    or `reviewer-pr-<its pull request>-…`. A session directory that is still
-    running or was left unfinished is kept. An issue that a developer
+    session of that issue: the ones whose `work.json` marker names the issue
+    or its pull request. Migration creates markers for older directories
+    named `developer-issue-<n>-…` or `reviewer-pr-<its pull request>-…`.
+    A session directory that is still running or was left unfinished is kept. An issue that a developer
     worker or a running session holds, or whose bookkeeping still records a
     session, is left whole. A closed issue's time is remembered for the life
     of the process, so it is looked up once.
@@ -587,7 +590,7 @@ stateDiagram-v2
 - **Resume.** Before working each stage the worker records the stage it is in
   (`develop`, `fan-out`, `assembler`, `prereview`, `review`, `stack-wait` or
   `checks`), the gate a developer round returns to, and whether the
-  pre-review checks have been read, in `<state_dir>/issues/<n>.json`. A
+  pre-review checks have been read, in `<state_dir>/issues/work-<hash>.json`. A
   worker that finds a recorded stage comes back to it, so a `bees run`
   killed in the checks stage or in the middle of a check-fix round carries
   on there instead of paying for a review that has already happened: a
@@ -655,7 +658,7 @@ stateDiagram-v2
   review.
   Codex has no resume: every round of a codex role is a new thread. An
   opencode role's later round continues the session with `--session`.
-- **Bookkeeping.** `<state_dir>/issues/<n>.json` records the review round,
+- **Bookkeeping.** `<state_dir>/issues/work-<hash>.json` records the review round,
   pull request number, branch, `check_fix_rounds`, the three resume fields,
   and the full review's artifact directory and the head commit it read
   (`review_artifact`, `reviewed_head`),
@@ -1131,8 +1134,10 @@ A message is one JSON file at `<state_dir>/mail/<to-role>/<id>.json`:
   "to": "developer",
   "subject": "Review round 1",
   "body": "...",
-  "issue": 12,
-  "pr": 34,
+  "work": {
+    "key": "issue-12",
+    "tags": {"github.issue": "12", "github.pr": "34"}
+  },
   "created_at": "2026-08-29T15:12:01Z",
   "read_at": null,
   "in_reply_to": ""
@@ -1142,11 +1147,11 @@ A message is one JSON file at `<state_dir>/mail/<to-role>/<id>.json`:
 Messages are addressed to a **role**, not a session. Delivery rules:
 
 - A developer session for issue N with pull request M receives the unread
-  developer mail where `issue == N` or `pr == M`.
-- A reviewer session receives the unread reviewer mail where `issue == N` or
-  `pr == M`, in review mode and in checks mode alike, read afresh before each
-  of those sessions. Its earlier feedback is not replayed: a later round is
-  given the first review's findings to verify.
+  developer mail whose work tags contain `github.issue == N` or `github.pr == M`.
+- A reviewer session receives the unread reviewer mail whose work tags contain
+  `github.issue == N` or `github.pr == M`, in review mode and in checks mode alike,
+  read afresh before each of those sessions. Its earlier feedback is not replayed:
+  a later round is given the first review's findings to verify.
 - A singleton session receives all unread mail addressed to its role.
 - Mail is marked read (`read_at` set) after the session that received it
   finishes, so a session that crashed sees it again.
@@ -1190,6 +1195,8 @@ sessions get `BEES_STATE_DIR`.
 ```
 <state_dir>/                     default .bees/ next to bees.toml
   README.md
+  schema.json                   {version: 1}, published after state migration
+  .schema.lock                  serializes migration across bees processes
   mail/<role>/*.json             the mailbox
   feedback/<id>.json             {id, role, session_dir, title, detail, created_at}: a
                                  draft report of an error the factory caused, written by
@@ -1202,12 +1209,12 @@ sessions get `BEES_STATE_DIR`.
                                  brief.json, angles/<angle>.json, findings.json
   sessions/<ts>-<name>-<rand>/   system-prompt.md, prompt.md, mcp.json (claude), transcript.jsonl,
                                  stderr.log, outcome.json, result.json, pid,
-                                 issue (the issue the session worked on, for retention),
+                                 work.json (opaque key and tags, used by retention),
                                  touched-issues.txt (the issues the session changed on
                                  GitHub, one per line, read back into the cached poll
                                  when it ends), interrupted (written by `bees kill`,
                                  the live view's k key and a hard stop)
-  issues/<n>.json                {number, round, pr, branch, check_fix_rounds, worker_stage,
+  issues/work-<hash>.json        {work, round, branch, check_fix_rounds, worker_stage,
                                  after_develop, pre_review_done, session, human_seen_at,
                                  issue_human_seen_at, conflict_notified_sha, cost, sessions,
                                  proposal, proposal_approved_at, open_children,
@@ -1218,11 +1225,50 @@ sessions get `BEES_STATE_DIR`.
                                  singletons, pauses, degraded operations, last_poll, last_error)
   ledger.jsonl                   one JSON line per finished session, trimmed to
                                  scheduler.retention_period
-                                 {time, role, session, issue, pr, turns, cost_usd,
+                                 {time, role, session, work, turns, cost_usd,
                                  duration_ms, outcome, error_subtype, timed_out}
   bees.log                       every record of the last scheduler runs as JSON, rotated
                                  at 10 MiB into bees.log.1 and bees.log.2
 ```
+
+### Runtime identity and upgrades
+
+Runtime records carry `work: {key, tags}`. Keys are opaque strings in core;
+busybees maps GitHub subjects to `issue-N` or `pr-N`, using the issue key when
+both are known. The `github.issue` and `github.pr` string tags retain both
+addresses for routing and display. Bookkeeping filenames use `work-` followed
+by the lowercase SHA-256 of the key and `.json`; readers also verify the key
+inside the file. This supports arbitrary keys without filesystem separators,
+length limits on the original key, or case-folding collisions.
+
+Before scheduler startup or state access, busybees upgrades an existing state
+directory in place. It rewrites mail, ledger lines, numeric bookkeeping files,
+session work markers, outcomes, results and status snapshots. Legacy session
+names supply markers when no explicit marker existed. Requested-review
+bookkeeping with a recorded reviewed head uses its PR key. Prompts, GitHub
+API/environment parameters, touched-issue files and review artifacts remain
+at the GitHub boundary.
+
+Stop the legacy scheduler and its sessions before upgrading; do not start an
+older binary against the directory during or after migration. Migration refuses
+live scheduler, session and host MCP server PID records. A remaining container ID
+also blocks it: stop the container and remove its `container-id` file after
+verifying it has stopped. PID checks alone cannot establish container liveness.
+Use the old binary's `bees kill --scheduler` for cleanup before upgrading, or stop
+the processes and containers manually. State migration errors stop `bees kill`
+before it takes any cleanup action.
+
+Each replacement is atomic. A cross-process lock serializes migration, and
+`schema.json` is written only after all required rewrites succeed. A retry can
+encounter both bookkeeping filenames: equal records are coalesced, while a
+conflict keeps the recoverable source and reports an error. Invalid JSON ledger
+lines are preserved byte for byte. Objects rejected by the legacy ledger's field
+types are preserved as JSON strings containing their exact original lines; the
+ledger reader and trimmer skip these strings for accounting. Other malformed
+records block migration; fix the reported record and retry. Completed upgrades
+are a no-op, and ordinary readers and writers use only the new schema. Read-only
+Store and CLI mailbox reads leave a missing state directory absent. Application
+initialization and mailbox sends may create it.
 
 `ledger.jsonl` is the factory's accounting: one line for every session that
 finishes, whatever it reported, and `bees cost` sums it. Lines are written

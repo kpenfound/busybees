@@ -13,6 +13,7 @@ import (
 
 	"github.com/kpenfound/busybees/core/agent/procs"
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/state"
 )
@@ -65,7 +66,7 @@ func TestKillingASessionStopsItAndEscalatesItsIssue(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "session")
 	cmd := liveProcess(t, dir)
 	h.sched.recordLiveSession("developer-issue-1-r1", liveSession{
-		role: config.RoleDeveloper, dir: dir, issue: 1, pr: 201,
+		role: config.RoleDeveloper, dir: dir, Work: ghwork.New(1, 201),
 	})
 
 	if err := h.sched.KillSession(context.Background(), "developer-issue-1-r1"); err != nil {
@@ -118,7 +119,7 @@ func TestKillingASessionThatIsNotRunning(t *testing.T) {
 	// a kill that did not happen.
 	seedIssue(h, 1, "bees:in-progress", "m", time.Now().Add(-time.Hour))
 	h.sched.recordLiveSession("developer-issue-1-r1", liveSession{
-		role: config.RoleDeveloper, dir: t.TempDir(), issue: 1,
+		role: config.RoleDeveloper, dir: t.TempDir(), Work: ghwork.New(1, 0),
 	})
 	if err := h.sched.KillSession(context.Background(), "developer-issue-1-r1"); err == nil {
 		t.Fatal("KillSession of a session with no live process returned no error")
@@ -174,7 +175,7 @@ func TestKillingAContainerSessionRemovesItsContainer(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.sched.recordLiveSession("developer-issue-1-r1", liveSession{
-		role: config.RoleDeveloper, dir: dir, issue: 1,
+		role: config.RoleDeveloper, dir: dir, Work: ghwork.New(1, 0),
 	})
 
 	if err := h.sched.KillSession(context.Background(), "developer-issue-1-r1"); err != nil {
@@ -246,16 +247,16 @@ func TestTheNeedsHumanAndApprovedQueuesCarryTheirDetail(t *testing.T) {
 	}
 
 	want := []state.Escalated{
-		{Issue: 2, Title: "Issue 2", Reason: "3 review rounds and no approval"},
-		{Issue: 1, Title: "Issue 1"},
+		{Title: "Issue 2", Reason: "3 review rounds and no approval", Work: ghwork.New(2, 0)},
+		{Title: "Issue 1", Work: ghwork.New(1, 0)},
 	}
 	if len(st.NeedsHuman) != len(want) {
 		t.Fatalf("needs_human: got %+v, want %d entries", st.NeedsHuman, len(want))
 	}
 	for i, w := range want {
 		got := st.NeedsHuman[i]
-		if got.Issue != w.Issue || got.Title != w.Title || got.Reason != w.Reason {
-			t.Errorf("needs_human[%d]: got %+v want issue %d %q %q", i, got, w.Issue, w.Title, w.Reason)
+		if ghwork.Issue(got.Work) != ghwork.Issue(w.Work) || got.Title != w.Title || got.Reason != w.Reason {
+			t.Errorf("needs_human[%d]: got %+v want issue %d %q %q", i, got, ghwork.Issue(w.Work), w.Title, w.Reason)
 		}
 	}
 	if st.NeedsHuman[0].Since.IsZero() {
@@ -263,10 +264,10 @@ func TestTheNeedsHumanAndApprovedQueuesCarryTheirDetail(t *testing.T) {
 	}
 
 	// Oldest pull request first: #204 was opened a day before #203.
-	if len(st.Approved) != 2 || st.Approved[0].PR != 204 || st.Approved[1].PR != 203 {
+	if len(st.Approved) != 2 || ghwork.PR(st.Approved[0].Work) != 204 || ghwork.PR(st.Approved[1].Work) != 203 {
 		t.Fatalf("approved: got %+v, want PRs 204 then 203", st.Approved)
 	}
-	if st.Approved[0].Issue != 4 || st.Approved[0].Title != "Issue 4" || st.Approved[0].Since.IsZero() {
+	if ghwork.Issue(st.Approved[0].Work) != 4 || st.Approved[0].Title != "Issue 4" || st.Approved[0].Since.IsZero() {
 		t.Errorf("approved[0]: got %+v, want the issue, title and open time of PR 204", st.Approved[0])
 	}
 }

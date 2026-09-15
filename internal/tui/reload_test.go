@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/scheduler"
 	"github.com/kpenfound/busybees/internal/state"
 )
@@ -50,7 +51,7 @@ func TestMachineMembershipPreservesSourcesStateAndSelection(t *testing.T) {
 	if !strings.Contains(m.selector(), "b (draining)") {
 		t.Fatal(m.selector())
 	}
-	events <- scheduler.Event{Kind: scheduler.EventStage, Issue: 12, Stage: "checks", Round: 3}
+	events <- scheduler.Event{Kind: scheduler.EventStage, Stage: "checks", Round: 3, Work: ghwork.New(12, 0)}
 	m = updateModel(m, pendingEvent())
 	m = updateModel(m, pendingStatus())
 	if original.stages[12].round != 3 {
@@ -92,7 +93,7 @@ func TestMachineRetirementIgnoresLateResultsAndReaddedPath(t *testing.T) {
 	m = updateModel(m, projectsMsg{a, newB, c})
 	newID := m.order[1]
 	m = updateModel(m, in(newID, started("same", config.RoleDeveloper, 12, 1, fixed, "opus", false)))
-	events <- scheduler.Event{Kind: scheduler.EventSessionEnded, Session: "same", Issue: 12, Role: config.RoleDeveloper, CostUSD: 99, CostKnown: true}
+	events <- scheduler.Event{Kind: scheduler.EventSessionEnded, Session: "same", Role: config.RoleDeveloper, CostUSD: 99, CostKnown: true, Work: ghwork.New(12, 0)}
 	m = updateModel(m, pendingEvent())
 	m = updateModel(m, pendingStatus())
 	m = updateModel(m, turnsMsg{sessionRef{project: 1, name: "same"}: 99})

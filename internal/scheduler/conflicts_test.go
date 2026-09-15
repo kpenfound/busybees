@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/mail"
 	"github.com/kpenfound/busybees/internal/workspace"
@@ -71,7 +72,7 @@ func TestConflictingPRGoesBackToTheDeveloper(t *testing.T) {
 	if got == nil {
 		t.Fatalf("no mail from the orchestrator in the developer's inbox: %+v", msgs)
 	}
-	if got.Issue != 1 || got.PR != fakePR || got.Subject != "PR #101 conflicts with main" {
+	if ghwork.Issue(got.Work) != 1 || ghwork.PR(got.Work) != fakePR || got.Subject != "PR #101 conflicts with main" {
 		t.Fatalf("mail: %+v", got)
 	}
 	for _, want := range []string{"branch `bees/issue-1`", "resolve the conflicts", "`pr-updated`", "https://x/pull/101"} {

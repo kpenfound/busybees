@@ -6,13 +6,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/state"
 )
 
 func TestQueuesTextDependencies(t *testing.T) {
 	st := state.Status{
 		Queues:        map[string]int{"ready": 4, "triage": 1},
-		WaitingOnDeps: map[int][]int{46: {44}, 40: {37, 38}},
+		WaitingOnDeps: ghwork.Dependencies(map[int][]int{46: {44}, 40: {37, 38}}),
 	}
 	got := queuesText(st)
 	for _, want := range []string{

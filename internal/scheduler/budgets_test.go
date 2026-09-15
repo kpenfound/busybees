@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/session"
 	"github.com/kpenfound/busybees/internal/state"
@@ -123,8 +124,8 @@ func TestDailyBudgetStopsNewSessions(t *testing.T) {
 	h := newHarness(t, baseTOML+"max_cost_per_day = 100.0\n")
 	now := time.Now()
 	for _, e := range []state.LedgerEntry{
-		{Time: now.Add(-2 * time.Hour), Role: config.RoleDeveloper, Session: "old", Issue: 1, CostUSD: 60},
-		{Time: now.Add(-1 * time.Hour), Role: config.RoleReviewer, Session: "old2", Issue: 1, CostUSD: 41.20},
+		{Time: now.Add(-2 * time.Hour), Role: config.RoleDeveloper, Session: "old", CostUSD: 60, Work: ghwork.New(1, 0)},
+		{Time: now.Add(-1 * time.Hour), Role: config.RoleReviewer, Session: "old2", CostUSD: 41.20, Work: ghwork.New(1, 0)},
 		// Outside the rolling window: not counted.
 		{Time: now.Add(-30 * time.Hour), Role: config.RoleQA, Session: "ancient", CostUSD: 500},
 	} {
@@ -166,10 +167,10 @@ func TestDailyBudgetResumesAtTheResumeThreshold(t *testing.T) {
 	seedCounter(t, h, "review", 1) // the reviewer approves its first review
 	// $100 in the window, in entries that age out one pass at a time.
 	for _, e := range []state.LedgerEntry{
-		{Time: start.Add(-23 * time.Hour), Role: config.RoleDeveloper, Session: "a", Issue: 9, CostUSD: 15},
-		{Time: start.Add(-22 * time.Hour), Role: config.RoleDeveloper, Session: "b", Issue: 9, CostUSD: 5},
-		{Time: start.Add(-21 * time.Hour), Role: config.RoleDeveloper, Session: "c", Issue: 9, CostUSD: 1},
-		{Time: start.Add(-1 * time.Hour), Role: config.RoleReviewer, Session: "d", Issue: 9, CostUSD: 79},
+		{Time: start.Add(-23 * time.Hour), Role: config.RoleDeveloper, Session: "a", CostUSD: 15, Work: ghwork.New(9, 0)},
+		{Time: start.Add(-22 * time.Hour), Role: config.RoleDeveloper, Session: "b", CostUSD: 5, Work: ghwork.New(9, 0)},
+		{Time: start.Add(-21 * time.Hour), Role: config.RoleDeveloper, Session: "c", CostUSD: 1, Work: ghwork.New(9, 0)},
+		{Time: start.Add(-1 * time.Hour), Role: config.RoleReviewer, Session: "d", CostUSD: 79, Work: ghwork.New(9, 0)},
 	} {
 		if err := h.store.AppendLedger(e); err != nil {
 			t.Fatal(err)
@@ -252,8 +253,8 @@ func TestTheDefaultResumePercentKeepsTodaysBehaviour(t *testing.T) {
 
 	t.Run("resumes as soon as the window is under budget", func(t *testing.T) {
 		h := seed(t, "max_cost_per_day = 100.0\n",
-			state.LedgerEntry{Time: start.Add(-23 * time.Hour), Role: config.RoleDeveloper, Session: "a", Issue: 9, CostUSD: 0.01},
-			state.LedgerEntry{Time: start.Add(-time.Hour), Role: config.RoleDeveloper, Session: "b", Issue: 9, CostUSD: 99.99})
+			state.LedgerEntry{Time: start.Add(-23 * time.Hour), Role: config.RoleDeveloper, Session: "a", CostUSD: 0.01, Work: ghwork.New(9, 0)},
+			state.LedgerEntry{Time: start.Add(-time.Hour), Role: config.RoleDeveloper, Session: "b", CostUSD: 99.99, Work: ghwork.New(9, 0)})
 		runPass(t, h)
 		if n := sessionCount(h); n != 0 {
 			t.Fatalf("%d sessions started at the budget", n)
@@ -270,7 +271,7 @@ func TestTheDefaultResumePercentKeepsTodaysBehaviour(t *testing.T) {
 
 	t.Run("inert without a daily budget", func(t *testing.T) {
 		h := seed(t, "max_cost_per_day_resume_percent = 80.0\n",
-			state.LedgerEntry{Time: start.Add(-time.Hour), Role: config.RoleDeveloper, Session: "a", Issue: 9, CostUSD: 500})
+			state.LedgerEntry{Time: start.Add(-time.Hour), Role: config.RoleDeveloper, Session: "a", CostUSD: 500, Work: ghwork.New(9, 0)})
 		runPass(t, h)
 		if n := sessionCount(h); n == 0 {
 			t.Error("nothing dispatched with no daily budget set")
@@ -423,17 +424,17 @@ func resultCosting(cost float64) *session.Result {
 func TestOverBudgetStreak(t *testing.T) {
 	h := newHarness(t, baseTOML)
 	for i, want := range []int{1, 2, 3} {
-		if got := h.sched.overBudgetStreak("issue-1", true); got != want {
+		if got := h.sched.overBudgetStreak(budgetSubject{Work: "issue-1"}, true); got != want {
 			t.Fatalf("over-budget session %d: streak %d want %d", i+1, got, want)
 		}
 	}
-	if got := h.sched.overBudgetStreak("issue-1", false); got != 0 {
+	if got := h.sched.overBudgetStreak(budgetSubject{Work: "issue-1"}, false); got != 0 {
 		t.Errorf("a session within budget should clear the streak, got %d", got)
 	}
-	if got := h.sched.overBudgetStreak("issue-1", true); got != 1 {
+	if got := h.sched.overBudgetStreak(budgetSubject{Work: "issue-1"}, true); got != 1 {
 		t.Errorf("streak after the reset: got %d want 1", got)
 	}
-	if got := h.sched.overBudgetStreak("issue-2", true); got != 1 {
+	if got := h.sched.overBudgetStreak(budgetSubject{Work: "issue-2"}, true); got != 1 {
 		t.Errorf("another work item shares the streak: got %d want 1", got)
 	}
 }
@@ -441,11 +442,11 @@ func TestOverBudgetStreak(t *testing.T) {
 func TestBudgetKey(t *testing.T) {
 	withIssue := sessionSpec{role: config.RoleDeveloper}
 	withIssue.data.Issue = &github.Issue{Number: 12}
-	if got := budgetKey(withIssue); got != "issue-12" {
-		t.Errorf("issue spec: %q", got)
+	if got := budgetKey(withIssue); got != (budgetSubject{Work: "issue-12"}) {
+		t.Errorf("issue spec: %+v", got)
 	}
-	if got := budgetKey(sessionSpec{role: config.RoleQA}); got != "role-qa" {
-		t.Errorf("singleton spec: %q", got)
+	if got := budgetKey(sessionSpec{role: config.RoleQA}); got != (budgetSubject{Role: config.RoleQA}) {
+		t.Errorf("singleton spec: %+v", got)
 	}
 }
 
@@ -455,9 +456,9 @@ func TestBudgetKey(t *testing.T) {
 func TestIssueSpendSeedsFromTheLedger(t *testing.T) {
 	h := newHarness(t, baseTOML)
 	for _, e := range []state.LedgerEntry{
-		{Time: time.Now().Add(-72 * time.Hour), Role: config.RoleDeveloper, Session: "a", Issue: 5, CostUSD: 3},
-		{Time: time.Now().Add(-71 * time.Hour), Role: config.RoleReviewer, Session: "b", Issue: 5, CostUSD: 1.5},
-		{Time: time.Now().Add(-70 * time.Hour), Role: config.RoleDeveloper, Session: "c", Issue: 6, CostUSD: 99},
+		{Time: time.Now().Add(-72 * time.Hour), Role: config.RoleDeveloper, Session: "a", CostUSD: 3, Work: ghwork.New(5, 0)},
+		{Time: time.Now().Add(-71 * time.Hour), Role: config.RoleReviewer, Session: "b", CostUSD: 1.5, Work: ghwork.New(5, 0)},
+		{Time: time.Now().Add(-70 * time.Hour), Role: config.RoleDeveloper, Session: "c", CostUSD: 99, Work: ghwork.New(6, 0)},
 	} {
 		if err := h.store.AppendLedger(e); err != nil {
 			t.Fatal(err)

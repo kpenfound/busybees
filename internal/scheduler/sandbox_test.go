@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/state"
 )
 
@@ -61,7 +62,7 @@ func TestASessionReportsTheSandboxItRunsIn(t *testing.T) {
 // session's mode replaces the first's rather than being ignored.
 func TestSetWorkerSandboxFollowsTheRunningSession(t *testing.T) {
 	h := newHarness(t, devOnlyTOML)
-	w := &state.Worker{Name: "dev-1", Issue: 1, Stage: "develop"}
+	w := &state.Worker{Name: "dev-1", Stage: "develop", Work: ghwork.New(1, 0)}
 	h.sched.setWorkerSandbox(w, config.SandboxContainer)
 	if w.Sandbox != config.SandboxContainer {
 		t.Errorf("first session's sandbox: got %q, want %q", w.Sandbox, config.SandboxContainer)

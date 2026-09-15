@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/session"
 )
@@ -71,7 +72,7 @@ func TestEscalationWithoutNotify(t *testing.T) {
 }
 
 // escalate's SetEscalation write must hold s.mu like every other writer of
-// issue bookkeeping (recordIssueCost): otherwise it races a fan-out
+// issue bookkeeping (recordWorkCost): otherwise it races a fan-out
 // attempt's concurrent, locked AddIssueCost calls for the same issue and
 // loses its own write to the unsynchronized read-modify-write of the issue's
 // state file.
@@ -85,7 +86,7 @@ func TestEscalationDoesNotRaceRecordIssueCost(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			h.sched.recordIssueCost(12, 1.0)
+			h.sched.recordWorkCost(ghwork.New(12, 0), 1.0)
 		}()
 	}
 	wg.Add(1)

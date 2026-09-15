@@ -46,6 +46,11 @@ and the session reaches it over HTTP.`
 		Short: "Serve the bees tools on stdio (started by the agent, not by hand)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if dir := os.Getenv(session.EnvStateDir); dir != "" {
+				if err := state.New(dir).Migrate(); err != nil {
+					return err
+				}
+			}
 			b := &backend{g: g}
 			srv := mcpserver.New(mcpserver.EnvFromOS(), mcpserver.Deps{Issues: b, GitHub: b, Feedback: b, Notes: b})
 			if listen != "" {

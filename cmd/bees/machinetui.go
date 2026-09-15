@@ -107,7 +107,7 @@ func (v *machineViews) wrap(m *config.Machine, projects []daemon.Project) []daem
 		store := state.New(cfg.StateDir())
 		pv.source = tui.Project{
 			Path: projects[i].Name, Generation: v.next, Name: names[i], Repo: cfg.Project.Repo,
-			Events: pv.events, Done: pv.stop, Status: pv.status(store), Mail: mail.Open(store.MailDir()).Counts,
+			Events: pv.events, Done: pv.stop, Status: pv.status(store), Mail: mail.Open(store.MailDir(), store.Migrate).Counts,
 			Kill: pv.kill(v.ctx), Send: pv.send,
 		}
 		start := projects[i].Start

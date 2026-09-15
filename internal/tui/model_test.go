@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/scheduler"
 	"github.com/kpenfound/busybees/internal/state"
 )
@@ -61,39 +62,39 @@ func plain(s string) string { return ansi.ReplaceAllString(s, "") }
 func started(name, role string, issue, pr int, at time.Time, model string, fallback bool) tea.Msg {
 	return eventMsg{Event: scheduler.Event{
 		Kind: scheduler.EventSessionStarted, Time: at, Session: name, Role: role,
-		Issue: issue, PR: pr, Model: model, Fallback: fallback,
+		Model: model, Fallback: fallback, Work: ghwork.New(issue, pr),
 	}}
 }
 
-// startedIn is started() for a session the scheduler boxed.
 func startedIn(name, role string, issue, pr int, at time.Time, model, sandbox string) tea.Msg {
 	return eventMsg{Event: scheduler.Event{
 		Kind: scheduler.EventSessionStarted, Time: at, Session: name, Role: role,
-		Issue: issue, PR: pr, Model: model, Sandbox: sandbox,
+		Model: model, Sandbox: sandbox, Work: ghwork.New(issue, pr),
 	}}
 }
 
 func ended(name, role string, issue, pr int, turns int, cost float64) tea.Msg {
 	return eventMsg{Event: scheduler.Event{
 		Kind: scheduler.EventSessionEnded, Time: fixed, Session: name, Role: role,
-		Issue: issue, PR: pr, Outcome: "pr-opened", Turns: turns, CostUSD: cost, CostKnown: true,
+		Outcome: "pr-opened", Turns: turns, CostUSD: cost, CostKnown: true, Work: ghwork.New(issue, pr),
 	}}
 }
 
 // endedUnknownCost is a session-ended event for a session that ended with no
 // closing event, so its cost is not a real zero but unpriced (a signalled
 // process, most often — see #359).
+
 func endedUnknownCost(name, role string, issue, pr int, turns int) tea.Msg {
 	return eventMsg{Event: scheduler.Event{
 		Kind: scheduler.EventSessionEnded, Time: fixed, Session: name, Role: role,
-		Issue: issue, PR: pr, Outcome: "failed", Turns: turns,
+		Outcome: "failed", Turns: turns, Work: ghwork.New(issue, pr),
 	}}
 }
 
 func staged(issue int, name string, round int) tea.Msg {
 	return eventMsg{Event: scheduler.Event{
 		Kind: scheduler.EventStage, Time: fixed, Role: config.RoleDeveloper,
-		Issue: issue, Stage: name, Round: round,
+		Stage: name, Round: round, Work: ghwork.New(issue, 0),
 	}}
 }
 
@@ -101,6 +102,7 @@ func staged(issue int, name string, round int) tea.Msg {
 // factory needs: who is running it, what it is about, the stage its worker
 // is in, how long it has been going, what the work item has spent so far and
 // the model it runs on.
+
 func TestNowPanelListsTheRunningSessions(t *testing.T) {
 	view := drive(t, Deps{Repo: "acme/widgets"},
 		staged(12, "developer", 2),
@@ -312,18 +314,20 @@ func TestALongStageNameDoesNotPushTheModelColumnOff(t *testing.T) {
 func endedAs(name, role string, issue, pr int, outcome, note string, cost float64, took time.Duration) tea.Msg {
 	return eventMsg{Event: scheduler.Event{
 		Kind: scheduler.EventSessionEnded, Time: fixed, Session: name, Role: role,
-		Issue: issue, PR: pr, Outcome: outcome, Note: note, CostUSD: cost, CostKnown: true, Duration: took,
+		Outcome: outcome, Note: note, CostUSD: cost, CostKnown: true, Duration: took, Work: ghwork.New(issue, pr),
 	}}
 }
 
+// startedIn is started() for a session the scheduler boxed.
 // escalated and approved are what the scheduler records in status.json for
 // the two panels that are about people rather than about sessions.
+
 func escalated(n int, title, reason string, since time.Time) state.Escalated {
-	return state.Escalated{Issue: n, Title: title, Reason: reason, Since: since}
+	return state.Escalated{Title: title, Reason: reason, Since: since, Work: ghwork.New(n, 0)}
 }
 
 func approvedPR(pr, issue int, title string, since time.Time) state.ApprovedPR {
-	return state.ApprovedPR{PR: pr, Issue: issue, Title: title, Since: since}
+	return state.ApprovedPR{Title: title, Since: since, Work: ghwork.New(issue, pr)}
 }
 
 // The Recent panel is what just happened: the sessions that have finished,
@@ -798,10 +802,10 @@ func TestTheViewFitsTheTerminalItIsDrawnIn(t *testing.T) {
 	busy := []tea.Msg{
 		started("developer-issue-1-r1", config.RoleDeveloper, 1, 2, fixed, "opus", false),
 		eventMsg{Event: scheduler.Event{Kind: scheduler.EventSessionEnded, Time: fixed, Session: "x",
-			Role: config.RoleReviewer, Issue: 3, Outcome: "approved"}},
+			Role: config.RoleReviewer, Outcome: "approved", Work: ghwork.New(3, 0)}},
 		statusMsg{status: state.Status{
-			NeedsHuman: []state.Escalated{{Issue: 7, Title: "t", Since: fixed.Add(-time.Hour)}},
-			Approved:   []state.ApprovedPR{{PR: 9, Issue: 8, Title: "t", Since: fixed.Add(-time.Hour)}},
+			NeedsHuman: []state.Escalated{{Title: "t", Since: fixed.Add(-time.Hour), Work: ghwork.New(7, 0)}},
+			Approved:   []state.ApprovedPR{{Title: "t", Since: fixed.Add(-time.Hour), Work: ghwork.New(8, 9)}},
 		}},
 	}
 	// A list with more entries than rows spends one of its rows saying how
@@ -813,12 +817,12 @@ func TestTheViewFitsTheTerminalItIsDrawnIn(t *testing.T) {
 		crowded = append(crowded, started(
 			fmt.Sprintf("developer-issue-%d-r1", 10+i), config.RoleDeveloper, 10+i, 20+i, fixed, "opus", false))
 		crowded = append(crowded, eventMsg{Event: scheduler.Event{Kind: scheduler.EventSessionEnded, Time: fixed,
-			Session: fmt.Sprintf("s%d", i), Role: config.RoleReviewer, Issue: 30 + i, Outcome: "approved"}})
+			Session: fmt.Sprintf("s%d", i), Role: config.RoleReviewer, Outcome: "approved", Work: ghwork.New(30+i, 0)}})
 	}
 	st := state.Status{}
 	for i := range 4 {
-		st.NeedsHuman = append(st.NeedsHuman, state.Escalated{Issue: 70 + i, Title: "t", Since: fixed.Add(-time.Hour)})
-		st.Approved = append(st.Approved, state.ApprovedPR{PR: 90 + i, Issue: 80 + i, Title: "t", Since: fixed.Add(-time.Hour)})
+		st.NeedsHuman = append(st.NeedsHuman, state.Escalated{Title: "t", Since: fixed.Add(-time.Hour), Work: ghwork.New(70+i, 0)})
+		st.Approved = append(st.Approved, state.ApprovedPR{Title: "t", Since: fixed.Add(-time.Hour), Work: ghwork.New(80+i, 90+i)})
 	}
 	crowded = append(crowded, statusMsg{status: st})
 
@@ -880,12 +884,12 @@ func TestTheSelectionIsAlwaysOnARowThatIsDrawn(t *testing.T) {
 	for i := range 8 {
 		msgs = append(msgs, eventMsg{Event: scheduler.Event{
 			Kind: scheduler.EventSessionEnded, Time: fixed, Session: "s" + string(rune('a'+i)),
-			Role: config.RoleReviewer, Issue: 50 + i, Outcome: "approved", Note: "fine"}})
+			Role: config.RoleReviewer, Outcome: "approved", Note: "fine", Work: ghwork.New(50+i, 0)}})
 	}
 	st := state.Status{}
 	for i := range 3 {
-		st.NeedsHuman = append(st.NeedsHuman, state.Escalated{Issue: 70 + i, Title: "t", Reason: "why", Since: fixed.Add(-time.Hour)})
-		st.Approved = append(st.Approved, state.ApprovedPR{PR: 90 + i, Issue: 80 + i, Title: "t", Since: fixed.Add(-time.Hour)})
+		st.NeedsHuman = append(st.NeedsHuman, state.Escalated{Title: "t", Reason: "why", Since: fixed.Add(-time.Hour), Work: ghwork.New(70+i, 0)})
+		st.Approved = append(st.Approved, state.ApprovedPR{Title: "t", Since: fixed.Add(-time.Hour), Work: ghwork.New(80+i, 90+i)})
 	}
 	msgs = append(msgs, statusMsg{status: st})
 
@@ -1319,7 +1323,7 @@ func TestTheNowPanelDoesNotInventASandbox(t *testing.T) {
 
 func reviewActivity(kind string) scheduler.Event {
 	return scheduler.Event{Kind: kind, Activity: "review-31-r2", Role: config.RoleReviewer,
-		Issue: 12, PR: 31, Round: 2, Started: fixed.Add(-time.Minute), Time: fixed, Phase: "brief"}
+		Round: 2, Started: fixed.Add(-time.Minute), Time: fixed, Phase: "brief", Work: ghwork.New(12, 31)}
 }
 
 func TestReviewActivityUpdatesAndHandsOffInPlace(t *testing.T) {
@@ -1360,8 +1364,9 @@ func TestReviewActivityUpdatesAndHandsOffInPlace(t *testing.T) {
 				t.Fatalf("successful pipeline lost its final progress before the judge:\n%s", view)
 			}
 			judge := scheduler.Event{Kind: scheduler.EventSessionStarted, Activity: ev.Activity,
-				Session: "judge", Role: config.RoleReviewer, Dir: t.TempDir(), Issue: 12, PR: 31,
-				Round: 2, Time: fixed, Model: "sonnet", Sandbox: config.SandboxNone}
+				Session: "judge", Role: config.RoleReviewer, Dir: t.TempDir(),
+				Round: 2, Time: fixed, Model: "sonnet", Sandbox: config.SandboxNone, Work: ghwork.New(12, 31),
+			}
 			m.apply(0, judge)
 			if len(m.sessions) != 2 || m.sessions[0].activity != nil || m.sessions[0].name != "judge" || m.sessions[1].name != "other" || m.cursor != 0 || len(m.recent) != 0 {
 				t.Fatalf("handoff: %+v", m.sessions)
@@ -1400,7 +1405,7 @@ func TestReviewActivityActions(t *testing.T) {
 		})
 		m.width, m.height = 140, panelHeight
 		ev := reviewActivity(scheduler.EventReviewStarted)
-		ev.PR = pr
+		ev.Work = ghwork.WithPR(ev.Work, pr)
 		m.apply(0, ev)
 		for _, key := range []tea.KeyMsg{{Type: tea.KeyEnter}, {Type: tea.KeyRunes, Runes: []rune{'k'}}, {Type: tea.KeyRunes, Runes: []rune{'k'}}} {
 			next, cmd := m.Update(key)

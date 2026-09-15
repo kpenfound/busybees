@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/kpenfound/busybees/core/work"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/logging"
 	"github.com/kpenfound/busybees/internal/session"
 	"github.com/kpenfound/busybees/internal/state"
@@ -26,17 +28,17 @@ const (
 	overBudgetEscalateAfter = 2
 )
 
-// recordIssueCost adds a finished session to the running total of the issue
-// it was run for. It is called for every session, from record, so retries and
-// reviewer sessions count like any other.
-func (s *Scheduler) recordIssueCost(issue int, cost float64) {
-	if issue == 0 {
+// recordWorkCost adds a finished session to its work item's running total,
+// including PR-only requested reviews. It is called for every session, from
+// record, so retries and reviewer sessions count like any other.
+func (s *Scheduler) recordWorkCost(ref work.Ref, cost float64) {
+	if ref.Key == "" {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, err := s.store.AddIssueCost(issue, cost); err != nil {
-		s.log.Warn("could not record what the session cost the issue", "issue", issue, "err", err)
+	if _, err := s.store.AddWorkCost(ref, cost); err != nil {
+		s.log.Warn("could not record what the session cost the work", "work", ref.Key, "err", err)
 	}
 }
 
@@ -46,12 +48,14 @@ func (s *Scheduler) recordIssueCost(issue int, cost float64) {
 // the ledger once, which is also what makes the total survive a state file
 // that was thrown away but not the ledger, as far as the ledger still reaches
 // back: trimLedger keeps only max(scheduler.retention_period, 24h) of it.
-func (s *Scheduler) issueSpend(issue int) (float64, int) {
+func (s *Scheduler) issueSpend(issue int) (float64, int) { return s.workSpend(ghwork.New(issue, 0)) }
+
+func (s *Scheduler) workSpend(ref work.Ref) (float64, int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	is, err := s.store.Issue(issue)
+	is, err := s.store.Work(ref)
 	if err != nil {
-		s.log.Warn("could not read what the issue has cost", "issue", issue, "err", err)
+		s.log.Warn("could not read what the issue has cost", "work", ref.Key, "err", err)
 		return 0, 0
 	}
 	if is.Sessions > 0 || is.Cost > 0 {
@@ -59,13 +63,13 @@ func (s *Scheduler) issueSpend(issue int) (float64, int) {
 	}
 	entries, err := s.store.ReadLedger(time.Time{})
 	if err != nil {
-		s.log.Warn("could not read the ledger", "issue", issue, "err", err)
+		s.log.Warn("could not read the ledger", "work", ref.Key, "err", err)
 		return 0, 0
 	}
 	var cost float64
 	var sessions int
 	for _, e := range entries {
-		if e.Issue == issue {
+		if e.Work.Key == ref.Key {
 			cost += e.CostUSD
 			sessions++
 		}
@@ -73,8 +77,8 @@ func (s *Scheduler) issueSpend(issue int) (float64, int) {
 	if sessions == 0 {
 		return 0, 0
 	}
-	if _, err := s.store.SetIssueCost(issue, cost, sessions); err != nil {
-		s.log.Warn("could not seed what the issue has cost", "issue", issue, "err", err)
+	if _, err := s.store.SetWorkCost(ref, cost, sessions); err != nil {
+		s.log.Warn("could not seed what the issue has cost", "work", ref.Key, "err", err)
 	}
 	return cost, sessions
 }
@@ -166,7 +170,12 @@ func overSessionBudget(res *session.Result, budget float64) (string, bool) {
 // overBudgetStreak counts consecutive over-budget sessions for one work item
 // (or, for the singleton roles, for the role). A session within budget clears
 // the streak.
-func (s *Scheduler) overBudgetStreak(key string, over bool) int {
+type budgetSubject struct {
+	Work work.Key
+	Role string
+}
+
+func (s *Scheduler) overBudgetStreak(key budgetSubject, over bool) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !over {
@@ -178,11 +187,11 @@ func (s *Scheduler) overBudgetStreak(key string, over bool) int {
 }
 
 // budgetKey is what an over-budget streak is counted against.
-func budgetKey(spec sessionSpec) string {
-	if spec.data.Issue != nil {
-		return fmt.Sprintf("issue-%d", spec.data.Issue.Number)
+func budgetKey(spec sessionSpec) budgetSubject {
+	if ref := sessionWork(spec); ref.Key != "" {
+		return budgetSubject{Work: ref.Key}
 	}
-	return "role-" + spec.role
+	return budgetSubject{Role: spec.role}
 }
 
 // failedResult copies a session result with its outcome replaced by a

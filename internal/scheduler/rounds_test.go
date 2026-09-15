@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/state"
 )
 
@@ -148,8 +149,9 @@ func TestAWorkerStartedAfterARestartResumesNoSession(t *testing.T) {
 	pushBranch(t, h.clone, "bees/issue-1")
 	// What the last scheduler left: the loop in the develop stage of round
 	// 2, and round 1's sessions with their ids recorded.
-	if err := h.store.SaveIssue(state.IssueState{Number: 1, Round: 2, PR: 201, Branch: "bees/issue-1",
-		WorkerStage: "develop", AfterDevelop: "review", PreReviewDone: true}); err != nil {
+	if err := h.store.SaveIssue(state.WorkState{Round: 2, Branch: "bees/issue-1",
+		WorkerStage: "develop", AfterDevelop: "review", PreReviewDone: true, Work: ghwork.New(1, 201),
+	}); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"developer-issue-1-r1", "reviewer-pr-201-r1"} {

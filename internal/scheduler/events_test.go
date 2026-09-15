@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/prompts"
 	"github.com/kpenfound/busybees/internal/state"
@@ -105,15 +106,15 @@ func TestSchedulerPublishesSessionStageAndPollEvents(t *testing.T) {
 	if !ok {
 		t.Fatalf("no developer session-started event: %v", events)
 	}
-	if start.Issue != 1 || start.Session == "" {
-		t.Errorf("developer started: issue %d, session %q", start.Issue, start.Session)
+	if ghwork.Issue(start.Work) != 1 || start.Session == "" {
+		t.Errorf("developer started: issue %d, session %q", ghwork.Issue(start.Work), start.Session)
 	}
 	end, ok := find(events, EventSessionEnded, config.RoleDeveloper)
 	if !ok {
 		t.Fatalf("no developer session-ended event: %v", events)
 	}
-	if end.Outcome != OutcomePROpened || end.PR != fakePR {
-		t.Errorf("developer ended: outcome %q, PR %d; want %q on PR %d", end.Outcome, end.PR, OutcomePROpened, fakePR)
+	if end.Outcome != OutcomePROpened || ghwork.PR(end.Work) != fakePR {
+		t.Errorf("developer ended: outcome %q, PR %d; want %q on PR %d", end.Outcome, ghwork.PR(end.Work), OutcomePROpened, fakePR)
 	}
 	if end.CostUSD <= 0 {
 		t.Errorf("developer ended with no cost: %v", end)
@@ -131,8 +132,8 @@ func TestSchedulerPublishesSessionStageAndPollEvents(t *testing.T) {
 	if !ok {
 		t.Fatalf("no stage event: %v", events)
 	}
-	if stage.Issue != 1 || stage.Stage == "" {
-		t.Errorf("stage event: issue %d, stage %q", stage.Issue, stage.Stage)
+	if ghwork.Issue(stage.Work) != 1 || stage.Stage == "" {
+		t.Errorf("stage event: issue %d, stage %q", ghwork.Issue(stage.Work), stage.Stage)
 	}
 	// Once mode is exactly one full pass, so exactly one poll event.
 	if got := count(events, EventPoll); got != 1 {
@@ -217,7 +218,7 @@ func TestPublishDropsRatherThanBlocks(t *testing.T) {
 	go func() {
 		defer close(done)
 		for i := range eventBuffer + 10 {
-			s.publish(Event{Kind: EventSessionStarted, Issue: i})
+			s.publish(Event{Kind: EventSessionStarted, Work: ghwork.New(i, 0)})
 		}
 	}()
 	select {
@@ -232,8 +233,8 @@ func TestPublishDropsRatherThanBlocks(t *testing.T) {
 			t.Fatalf("%s subscriber got %d events, want %d", name, len(got), eventBuffer)
 		}
 		// The buffer keeps what arrived first and drops the overflow.
-		if got[0].Issue != 0 || got[len(got)-1].Issue != eventBuffer-1 {
-			t.Errorf("%s subscriber kept issues %d..%d, want 0..%d", name, got[0].Issue, got[len(got)-1].Issue, eventBuffer-1)
+		if ghwork.Issue(got[0].Work) != 0 || ghwork.Issue(got[len(got)-1].Work) != eventBuffer-1 {
+			t.Errorf("%s subscriber kept issues %d..%d, want 0..%d", name, ghwork.Issue(got[0].Work), ghwork.Issue(got[len(got)-1].Work), eventBuffer-1)
 		}
 		if !got[0].Time.Equal(at) {
 			t.Errorf("%s subscriber: event stamped %s, want the scheduler's clock %s", name, got[0].Time, at)
@@ -425,7 +426,7 @@ func TestReviewActivityLifecycleAndJudgeHandoff(t *testing.T) {
 					}
 					if ev.Kind == EventSessionStarted && ev.Role == config.RoleReviewer {
 						judge = i
-						if ev.Activity != id || ev.Issue != issue || ev.PR != pr || ev.Round != 1 || ev.Dir == "" {
+						if ev.Activity != id || ghwork.Issue(ev.Work) != issue || ghwork.PR(ev.Work) != pr || ev.Round != 1 || ev.Dir == "" {
 							t.Fatalf("judge handoff: %+v", ev)
 						}
 					}
@@ -462,7 +463,7 @@ func assertReviewLifecycle(t *testing.T, events []Event, id string, issue, pr, r
 		t.Fatalf("end: %+v", end)
 	}
 	for i, ev := range lifecycle {
-		if ev.Activity != id || ev.Role != config.RoleReviewer || ev.Issue != issue || ev.PR != pr || ev.Round != round || ev.Started != start.Started || ev.Session != "" || ev.Dir != "" {
+		if ev.Activity != id || ev.Role != config.RoleReviewer || ghwork.Issue(ev.Work) != issue || ghwork.PR(ev.Work) != pr || ev.Round != round || ev.Started != start.Started || ev.Session != "" || ev.Dir != "" {
 			t.Errorf("identity at %d: %+v", i, ev)
 		}
 		if i > 0 && i < len(lifecycle)-1 && ev.Kind != EventReviewProgress {
@@ -558,7 +559,7 @@ func TestReviewActivityIsRemovedWhenJudgePreparationFails(t *testing.T) {
 		t.Fatal("judge preparation succeeded")
 	}
 	events := drain(sub)
-	if len(events) != 1 || events[0].Kind != EventReviewEnded || events[0].Activity != "review-42" || events[0].PR != 42 || events[0].Round != 2 || events[0].Success || events[0].Err == "" {
+	if len(events) != 1 || events[0].Kind != EventReviewEnded || events[0].Activity != "review-42" || ghwork.PR(events[0].Work) != 42 || events[0].Round != 2 || events[0].Success || events[0].Err == "" {
 		t.Fatalf("cleanup: %+v", events)
 	}
 }

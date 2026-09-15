@@ -25,7 +25,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kpenfound/busybees/core/work"
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/logging"
 	"github.com/kpenfound/busybees/internal/mail"
@@ -146,7 +148,7 @@ type Scheduler struct {
 	// re-learns the limit and re-pauses.
 	limitPausedUntil time.Time
 	// overBudget counts consecutive over-budget sessions per work item.
-	overBudget map[string]int
+	overBudget map[budgetSubject]int
 	// live holds every session running right now, by the name the event
 	// stream publishes, and killed the ones a person stopped through
 	// KillSession (kill.go). Both are the live view's half of the picture:
@@ -157,7 +159,7 @@ type Scheduler struct {
 	// interrupted holds, per issue, the session a killed scheduler or a
 	// hard stop left unfinished, until the worker that took the issue over
 	// runs a session of the role it happened to (interrupted.go).
-	interrupted map[int]*session.Interrupted
+	interrupted map[work.Key]*session.Interrupted
 	// alive answers whether a pid is still running, and is how an
 	// interrupted session is told from a running one. nil is procs.Alive;
 	// tests replace it so no test has to kill a real process.
@@ -247,8 +249,8 @@ func New(d Deps) (*Scheduler, error) {
 		readySizes:   map[string]int{},
 		live:         map[string]liveSession{},
 		killed:       map[string]bool{},
-		overBudget:   map[string]int{},
-		interrupted:  map[int]*session.Interrupted{},
+		overBudget:   map[budgetSubject]int{},
+		interrupted:  map[work.Key]*session.Interrupted{},
 		triggers:     map[int]time.Time{},
 		wake:         make(chan struct{}, 1),
 		slots:        make(chan struct{}, d.Config.Scheduler.MaxDevelopers),
@@ -757,7 +759,7 @@ func (s *Scheduler) setQueues(snap *snapshot) {
 func (s *Scheduler) escalatedIssues(snap *snapshot) []state.Escalated {
 	var out []state.Escalated
 	for _, i := range snap.byState["needs-human"] {
-		e := state.Escalated{Issue: i.Number, Title: i.Title}
+		e := state.Escalated{Title: i.Title, Work: ghwork.New(i.Number, 0)}
 		if bk, err := s.store.Issue(i.Number); err == nil {
 			e.Reason, e.Since = bk.Escalation, bk.EscalatedAt
 		}
@@ -771,7 +773,7 @@ func (s *Scheduler) escalatedIssues(snap *snapshot) []state.Escalated {
 		if !x.Since.Equal(y.Since) {
 			return x.Since.Before(y.Since)
 		}
-		return x.Issue < y.Issue
+		return ghwork.Issue(x.Work) < ghwork.Issue(y.Work)
 	})
 	return out
 }
@@ -788,13 +790,13 @@ func (s *Scheduler) approvedPRs(snap *snapshot) []state.ApprovedPR {
 		if !ok {
 			continue
 		}
-		out = append(out, state.ApprovedPR{PR: pr.Number, Issue: i.Number, Title: pr.Title, Since: pr.CreatedAt})
+		out = append(out, state.ApprovedPR{Title: pr.Title, Since: pr.CreatedAt, Work: ghwork.New(i.Number, pr.Number)})
 	}
 	sort.Slice(out, func(a, b int) bool {
 		if !out[a].Since.Equal(out[b].Since) {
 			return out[a].Since.Before(out[b].Since)
 		}
-		return out[a].PR < out[b].PR
+		return ghwork.PR(out[a].Work) < ghwork.PR(out[b].Work)
 	})
 	return out
 }
@@ -1270,7 +1272,7 @@ func (s *Scheduler) dispatchDevelopers(ctx context.Context, snap *snapshot, loca
 			issue = live
 			size = s.sizeOf(issue.Labels)
 		}
-		w := &state.Worker{Name: fmt.Sprintf("dev-%d", issue.Number), Issue: issue.Number, Size: size, Stage: "starting", Since: s.now()}
+		w := &state.Worker{Name: fmt.Sprintf("dev-%d", issue.Number), Size: size, Stage: "starting", Since: s.now(), Work: ghwork.New(issue.Number, 0)}
 		s.mu.Lock()
 		s.owned[issue.Number] = w
 		s.mu.Unlock()
@@ -1555,7 +1557,9 @@ func (s *Scheduler) writeStatus() {
 	for _, w := range s.owned {
 		st.Workers = append(st.Workers, *w)
 	}
-	sort.Slice(st.Workers, func(i, j int) bool { return st.Workers[i].Issue < st.Workers[j].Issue })
+	sort.Slice(st.Workers, func(i, j int) bool {
+		return ghwork.Number(st.Workers[i].Work.Key) < ghwork.Number(st.Workers[j].Work.Key)
+	})
 	for _, r := range []string{config.RoleProductManager, config.RoleProjectManager, config.RoleQA} {
 		if s.running[r] {
 			st.Singletons[r] = "running"
@@ -1567,16 +1571,16 @@ func (s *Scheduler) writeStatus() {
 		st.Queues[k] = v
 	}
 	if len(s.waiting) > 0 {
-		st.WaitingOnDeps = make(map[int][]int, len(s.waiting))
+		st.WaitingOnDeps = make(map[work.Key][]work.Key, len(s.waiting))
 		for k, v := range s.waiting {
-			st.WaitingOnDeps[k] = append([]int(nil), v...)
+			st.WaitingOnDeps[ghwork.IssueKey(k)] = ghwork.Keys(v)
 		}
 	}
 	st.ReadySizes = map[string]int{}
 	for k, v := range s.readySizes {
 		st.ReadySizes[k] = v
 	}
-	st.Priority = append([]int(nil), s.priority...)
+	st.Priority = ghwork.Keys(s.priority)
 	st.NeedsHuman = append([]state.Escalated(nil), s.needsHuman...)
 	st.Approved = append([]state.ApprovedPR(nil), s.approved...)
 	st.Degraded = s.degradedLocked()
@@ -1592,10 +1596,10 @@ func (s *Scheduler) updateWorker(w *state.Worker, stage string, round int) {
 	w.Stage = stage
 	w.Round = round
 	w.Attempt = 1
-	issue := w.Issue
+	ref := w.Work.Clone()
 	s.mu.Unlock()
 	s.writeStatus()
-	s.publish(Event{Kind: EventStage, Role: config.RoleDeveloper, Issue: issue, Stage: stage, Round: round})
+	s.publish(Event{Kind: EventStage, Role: config.RoleDeveloper, Stage: stage, Round: round, Work: ref})
 }
 
 // setWorkerSandbox records the sandbox mode the worker's running session is

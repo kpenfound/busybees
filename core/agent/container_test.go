@@ -82,7 +82,7 @@ cat > "$TASK_SESSION_DIR/stdin.txt"
 [ -f "$TASK_SESSION_DIR/container-id" ] && cp "$TASK_SESSION_DIR/container-id" "$TASK_SESSION_DIR/id-while-running"
 [ -f "$TASK_SESSION_DIR/mcp-server-pid" ] && cp "$TASK_SESSION_DIR/mcp-server-pid" "$TASK_SESSION_DIR/server-pid-while-running"
 echo '{"type":"result","subtype":"success","is_error":false,"result":"boxed","session_id":"abc","num_turns":2,"total_cost_usd":0.1}'
-printf '{"status":"submitted","pr":7}' > "$TASK_SESSION_DIR/outcome.json"
+printf '{"status":"submitted","work":{"key":"task/7","tags":{"ticket":"seven"}}}' > "$TASK_SESSION_DIR/outcome.json"
 `)
 	repo, worktree := linkedWorktree(t)
 	r := newRunner(t, claude)
@@ -97,7 +97,7 @@ printf '{"status":"submitted","pr":7}' > "$TASK_SESSION_DIR/outcome.json"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.IsError || res.ResultText != "boxed" || !res.HasOutcome || res.Outcome.PR != 7 {
+	if res.IsError || res.ResultText != "boxed" || !res.HasOutcome || res.Outcome.Work.Key != "task/7" || res.Outcome.Work.Tags["ticket"] != "seven" {
 		t.Fatalf("result: %+v", res)
 	}
 	dir := res.SessionDir

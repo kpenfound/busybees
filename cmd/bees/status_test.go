@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/state"
 )
 
@@ -265,8 +266,8 @@ func TestSchedulerLine(t *testing.T) {
 // reported; one that started fresh reads exactly as it always did (#250).
 func TestWorkersTextMarksAResumedWorker(t *testing.T) {
 	since := time.Date(2026, 8, 31, 8, 22, 0, 0, time.Local)
-	fresh := state.Worker{Name: "dev-1", Issue: 7, Size: "m", Stage: "developer", Round: 1, Since: since}
-	resumed := state.Worker{Name: "dev-2", Issue: 9, Size: "s", Stage: "reviewer", Round: 2, Since: since, Resumed: true}
+	fresh := state.Worker{Name: "dev-1", Size: "m", Stage: "developer", Round: 1, Since: since, Work: ghwork.New(7, 0)}
+	resumed := state.Worker{Name: "dev-2", Size: "s", Stage: "reviewer", Round: 2, Since: since, Resumed: true, Work: ghwork.New(9, 0)}
 
 	if got := workersText(state.Status{}); got != "  none\n" {
 		t.Errorf("no workers renders %q", got)
@@ -296,8 +297,8 @@ func TestWorkersTextMarksAResumedWorker(t *testing.T) {
 func TestWorkersTextReportsTheSandbox(t *testing.T) {
 	since := time.Date(2026, 8, 31, 8, 22, 0, 0, time.Local)
 	got := workersText(state.Status{Workers: []state.Worker{
-		{Name: "dev-1", Issue: 7, Stage: "developer", Round: 1, Since: since, Sandbox: "container"},
-		{Name: "dev-2", Issue: 9, Stage: "reviewer", Round: 1, Since: since, Sandbox: "none"},
+		{Name: "dev-1", Stage: "developer", Round: 1, Since: since, Sandbox: "container", Work: ghwork.New(7, 0)},
+		{Name: "dev-2", Stage: "reviewer", Round: 1, Since: since, Sandbox: "none", Work: ghwork.New(9, 0)},
 	}})
 	lines := strings.Split(strings.TrimSuffix(got, "\n"), "\n")
 	for i, want := range []string{"sandbox container", "sandbox none"} {

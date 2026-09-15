@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/logging"
 	"github.com/kpenfound/busybees/internal/mail"
@@ -101,7 +102,7 @@ func fakeAssemble(sessionDir, stateDir string, git func(args ...string), fail fu
 			fail(err)
 		}
 	}
-	return session.Outcome{Status: OutcomePROpened, PR: fakePR}
+	return session.Outcome{Status: OutcomePROpened, Work: ghwork.New(0, fakePR)}
 }
 
 // fakeDiff is what the fake gh answers `pr diff` with: one file, so the
@@ -337,7 +338,7 @@ func fakeClaude() {
 	// is exactly what a scheduler killed mid-session leaves behind.
 	if os.Getenv("FAKE_COPY_ISSUE_STATE") == "1" {
 		if n := os.Getenv(session.EnvIssue); n != "" {
-			if b, err := os.ReadFile(filepath.Join(stateDir, "issues", n+".json")); err == nil {
+			if b, err := os.ReadFile(state.New(stateDir).WorkPath(ghwork.IssueKey(envIntFixture(n)))); err == nil {
 				if err := os.WriteFile(filepath.Join(stateDir, "running-"+filepath.Base(sessionDir)+".json"), b, 0o644); err != nil {
 					fail(err)
 				}
@@ -407,9 +408,9 @@ func fakeClaude() {
 					fail(err)
 				}
 			}
-			outcome = session.Outcome{Status: OutcomePROpened, PR: fakePR}
+			outcome = session.Outcome{Status: OutcomePROpened, Work: ghwork.New(0, fakePR)}
 		} else {
-			outcome = session.Outcome{Status: OutcomePRUpdated, PR: fakePR}
+			outcome = session.Outcome{Status: OutcomePRUpdated, Work: ghwork.New(0, fakePR)}
 		}
 	case config.RoleReviewer:
 		pr, _ := strconv.Atoi(os.Getenv(session.EnvPR))
@@ -417,7 +418,7 @@ func fakeClaude() {
 		if os.Getenv("BEES_REVIEW_MODE") == "checks" {
 			counter("checks")
 			prompt, _ := os.ReadFile(filepath.Join(sessionDir, "prompt.md"))
-			if _, err := box.Send(mail.Message{From: role, To: config.RoleDeveloper, Subject: "Check failed: go / test", Body: "main error: TestX fails\n\n" + string(prompt), PR: pr, Issue: issue}); err != nil {
+			if _, err := box.Send(mail.Message{From: role, To: config.RoleDeveloper, Subject: "Check failed: go / test", Body: "main error: TestX fails\n\n" + string(prompt), Work: ghwork.New(issue, pr)}); err != nil {
 				fail(err)
 			}
 			outcome = session.Outcome{Status: OutcomeChangesRequested}
@@ -500,14 +501,14 @@ func fakeClaude() {
 		// to reach the "not approved after N review rounds" escalation.
 		if os.Getenv("FAKE_REVIEW_ALWAYS_CHANGES") == "1" {
 			round := counter("review")
-			if _, err := box.Send(mail.Message{From: role, To: config.RoleDeveloper, Subject: fmt.Sprintf("Review round %d", round), Body: "still not right", PR: pr, Issue: issue}); err != nil {
+			if _, err := box.Send(mail.Message{From: role, To: config.RoleDeveloper, Subject: fmt.Sprintf("Review round %d", round), Body: "still not right", Work: ghwork.New(issue, pr)}); err != nil {
 				fail(err)
 			}
 			outcome = session.Outcome{Status: OutcomeChangesRequested}
 			break
 		}
 		if counter("review") == 1 {
-			if _, err := box.Send(mail.Message{From: role, To: config.RoleDeveloper, Subject: "Review round 1", Body: "please add tests", PR: pr, Issue: issue}); err != nil {
+			if _, err := box.Send(mail.Message{From: role, To: config.RoleDeveloper, Subject: "Review round 1", Body: "please add tests", Work: ghwork.New(issue, pr)}); err != nil {
 				fail(err)
 			}
 			outcome = session.Outcome{Status: OutcomeChangesRequested}
@@ -1414,7 +1415,7 @@ func TestFullDeveloperReviewLoop(t *testing.T) {
 	if len(unread) != 1 || unread[0].From != config.RoleQA || unread[0].To != config.RoleProductManager {
 		t.Fatalf("unread mail left: %+v", unread)
 	}
-	if is, _ := h.store.Issue(1); is.Round != 2 || is.PR != fakePR {
+	if is, _ := h.store.Issue(1); is.Round != 2 || ghwork.PR(is.Work) != fakePR {
 		t.Fatalf("bookkeeping: %+v", is)
 	}
 	// Both commits reached origin on the developer branch and worktrees are gone.
@@ -1452,7 +1453,7 @@ func TestFullDeveloperReviewLoop(t *testing.T) {
 	for _, e := range ledger {
 		if e.Outcome == "reviewed" {
 			reviews++
-			if e.Role != config.RoleReviewer || e.Issue != 1 || e.PR != fakePR || e.Turns != 2 || e.CostUSD != 0.75 || !strings.HasPrefix(e.Session, "reviewer-pr-101-r") {
+			if e.Role != config.RoleReviewer || ghwork.Issue(e.Work) != 1 || ghwork.PR(e.Work) != fakePR || e.Turns != 2 || e.CostUSD != 0.75 || !strings.HasPrefix(e.Session, "reviewer-pr-101-r") {
 				t.Errorf("review ledger entry not filled in: %+v", e)
 			}
 			continue
@@ -1480,17 +1481,17 @@ func TestFullDeveloperReviewLoop(t *testing.T) {
 	}
 	for i, want := range []string{OutcomePROpened, OutcomePRUpdated} {
 		got := byRole[config.RoleDeveloper][i]
-		if got.Outcome != want || got.Issue != 1 || got.PR != fakePR {
+		if got.Outcome != want || ghwork.Issue(got.Work) != 1 || ghwork.PR(got.Work) != fakePR {
 			t.Errorf("developer ledger entry %d: %+v", i, got)
 		}
 	}
 	for i, want := range []string{OutcomeChangesRequested, OutcomeApproved} {
 		got := byRole[config.RoleReviewer][i]
-		if got.Outcome != want || got.PR != fakePR {
+		if got.Outcome != want || ghwork.PR(got.Work) != fakePR {
 			t.Errorf("reviewer ledger entry %d: %+v", i, got)
 		}
 	}
-	if e := byRole[config.RoleQA][0]; e.Issue != 0 || e.PR != 0 {
+	if e := byRole[config.RoleQA][0]; ghwork.Issue(e.Work) != 0 || ghwork.PR(e.Work) != 0 {
 		t.Errorf("qa ledger entry should have no issue or PR: %+v", e)
 	}
 }
@@ -1499,7 +1500,7 @@ func TestQuestionBlocksAndAnswerUnblocks(t *testing.T) {
 	h := newHarness(t, baseTOML+"\n[roles.product_manager]\nenabled = false\n[roles.qa]\nenabled = false\n")
 	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Vague", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:blocked"}}}
 	// The developer asked earlier; now the project manager's answer is waiting.
-	if _, err := h.box.Send(mail.Message{From: config.RoleProjectManager, To: config.RoleDeveloper, Subject: "Re: Vague", Body: "do X", Issue: 1}); err != nil {
+	if _, err := h.box.Send(mail.Message{From: config.RoleProjectManager, To: config.RoleDeveloper, Subject: "Re: Vague", Body: "do X", Work: ghwork.New(1, 0)}); err != nil {
 		t.Fatal(err)
 	}
 	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
@@ -2027,7 +2028,7 @@ func TestLocalPassUnblocksIssueOffHours(t *testing.T) {
 	}
 	// The project manager answers by mail; the next local pass picks it up
 	// without polling GitHub.
-	if _, err := h.box.Send(mail.Message{From: config.RoleProjectManager, To: config.RoleDeveloper, Subject: "Re: Vague", Body: "do X", Issue: 1}); err != nil {
+	if _, err := h.box.Send(mail.Message{From: config.RoleProjectManager, To: config.RoleDeveloper, Subject: "Re: Vague", Body: "do X", Work: ghwork.New(1, 0)}); err != nil {
 		t.Fatal(err)
 	}
 	h.clock.advance(h.cfg.Scheduler.PollInterval.Duration)
@@ -2243,7 +2244,7 @@ func TestUnblockedIssueIsSizedInTheSamePass(t *testing.T) {
 	h := newHarness(t, noRolesTOML)
 	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Vague", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:blocked"}}}
 	// The answer the developer asked for is waiting in the mailbox.
-	if _, err := h.box.Send(mail.Message{From: config.RoleProjectManager, To: config.RoleDeveloper, Subject: "Re: Vague", Body: "do X", Issue: 1}); err != nil {
+	if _, err := h.box.Send(mail.Message{From: config.RoleProjectManager, To: config.RoleDeveloper, Subject: "Re: Vague", Body: "do X", Work: ghwork.New(1, 0)}); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -2307,7 +2308,7 @@ func TestNoStateQueueIsNamedAndRecountedAfterReconcile(t *testing.T) {
 	// A blocked issue whose question reconcile is about to answer: it must
 	// leave the blocked bucket, not be counted in both.
 	h.gh.issues[2] = &github.Issue{Number: 2, Title: "Vague", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:blocked"}}}
-	if _, err := h.box.Send(mail.Message{From: config.RoleProjectManager, To: config.RoleDeveloper, Subject: "Re: Vague", Body: "do X", Issue: 2}); err != nil {
+	if _, err := h.box.Send(mail.Message{From: config.RoleProjectManager, To: config.RoleDeveloper, Subject: "Re: Vague", Body: "do X", Work: ghwork.New(2, 0)}); err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
@@ -2445,3 +2446,5 @@ func TestQAReceivesHumanMail(t *testing.T) {
 		t.Errorf("the second qa session has no empty mail section:\n%s", second)
 	}
 }
+
+func envIntFixture(value string) int { n, _ := strconv.Atoi(value); return n }

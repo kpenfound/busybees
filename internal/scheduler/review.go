@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/prompts"
 	"github.com/kpenfound/busybees/internal/review"
@@ -89,7 +90,7 @@ func (e reviewPipelineFailure) Unwrap() error { return e.err }
 // see a review that failed halfway as well as one that ran.
 func (s *Scheduler) runReview(ctx context.Context, log *slog.Logger, pr github.PR, dir, name string, issue, round int, size string) (_ *prompts.Review, _ *review.Artifact, resultErr error) {
 	activity := Event{Kind: EventReviewStarted, Activity: name, Role: config.RoleReviewer,
-		Issue: issue, PR: pr.Number, Round: round, Started: s.now(), Phase: "brief"}
+		Round: round, Started: s.now(), Phase: "brief", Work: ghwork.New(issue, pr.Number)}
 	s.publish(activity)
 	defer func() {
 		activity.Kind, activity.Success = EventReviewEnded, resultErr == nil
@@ -222,7 +223,7 @@ func reviewData(a *review.Artifact) *prompts.Review {
 // and the commit that review read. ok is false when there is nothing to
 // verify — no review recorded, one recorded for another pull request, or an
 // artifact that can no longer be read — and the round runs the full review.
-func (s *Scheduler) verifyReview(log *slog.Logger, bk state.IssueState, pr int) (*prompts.Review, bool) {
+func (s *Scheduler) verifyReview(log *slog.Logger, bk state.WorkState, pr int) (*prompts.Review, bool) {
 	if bk.ReviewArtifact == "" {
 		return nil, false
 	}
@@ -250,10 +251,9 @@ func (s *Scheduler) recordReview(name string, issue, pr int, artifact string, st
 		Time:       s.now(),
 		Role:       config.RoleReviewer,
 		Session:    name,
-		Issue:      issue,
-		PR:         pr,
 		DurationMS: s.now().Sub(started).Milliseconds(),
 		Outcome:    "reviewed",
+		Work:       ghwork.New(issue, pr),
 	}
 	if runErr != nil {
 		e.Outcome = OutcomeFailed
@@ -268,7 +268,7 @@ func (s *Scheduler) recordReview(name string, issue, pr int, artifact string, st
 	}
 	err := s.store.AppendLedger(e)
 	s.op("ledger", err, "could not record the review in the ledger", "session", name, "error", err)
-	s.recordIssueCost(issue, e.CostUSD)
+	s.recordWorkCost(ghwork.New(issue, pr), e.CostUSD)
 }
 
 // readReviewCosts is the brief and the angle runs a review wrote: from the

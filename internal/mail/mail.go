@@ -3,9 +3,8 @@
 // <state_dir>/mail/<to-role>/.
 //
 // Messages are addressed to a role, not to a session. A message may carry an
-// issue and/or PR number; the scheduler uses that to deliver it to the
-// session that is working on that item (for example a project manager's
-// answer is delivered to whichever developer picks the issue back up).
+// opaque work key and caller-defined tags; the caller uses those to deliver
+// it to the session working on that item.
 package mail
 
 import (
@@ -19,17 +18,19 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/kpenfound/busybees/core/work"
 )
 
 // Message is one mailbox entry.
 type Message struct {
-	ID        string    `json:"id"`
-	From      string    `json:"from"`
-	To        string    `json:"to"`
-	Subject   string    `json:"subject"`
-	Body      string    `json:"body"`
-	Issue     int       `json:"issue,omitempty"`
-	PR        int       `json:"pr,omitempty"`
+	Work    work.Ref `json:"work"`
+	ID      string   `json:"id"`
+	From    string   `json:"from"`
+	To      string   `json:"to"`
+	Subject string   `json:"subject"`
+	Body    string   `json:"body"`
+
 	CreatedAt time.Time `json:"created_at"`
 	// ReadAt is set when the message has been delivered to a session.
 	ReadAt *time.Time `json:"read_at,omitempty"`
@@ -41,16 +42,36 @@ type Message struct {
 func (m Message) Unread() bool { return m.ReadAt == nil }
 
 // Box is a mailbox rooted at a directory.
-type Box struct{ root string }
+type Box struct {
+	root    string
+	prepare func() error
+}
 
-// Open returns a mailbox rooted at dir (created on demand).
-func Open(dir string) *Box { return &Box{root: dir} }
+// Open returns a mailbox rooted at dir (created on demand). An optional
+// prepare callback gates access, for example on the caller's state migration.
+func Open(dir string, prepare ...func() error) *Box {
+	b := &Box{root: dir}
+	if len(prepare) > 0 {
+		b.prepare = prepare[0]
+	}
+	return b
+}
+
+func (b *Box) ready() error {
+	if b.prepare != nil {
+		return b.prepare()
+	}
+	return nil
+}
 
 // Root returns the mailbox directory.
 func (b *Box) Root() string { return b.root }
 
 // Send stores a message and returns it with ID and timestamp filled in.
 func (b *Box) Send(m Message) (Message, error) {
+	if err := b.ready(); err != nil {
+		return m, err
+	}
 	if m.To == "" {
 		return m, errors.New("mail: recipient role is required")
 	}
@@ -77,15 +98,18 @@ func (b *Box) Send(m Message) (Message, error) {
 type Filter struct {
 	To         string
 	From       string
-	Issue      int // when > 0, only messages for this issue
-	PR         int // when > 0, only messages for this PR
+	Key        work.Key
+	Tags       map[string]string
 	UnreadOnly bool
-	// Unaddressed selects messages with no issue and no PR (broadcasts to the role).
+	// Unaddressed selects messages with no work key (broadcasts to the role).
 	Unaddressed bool
 }
 
 // List returns messages matching f, oldest first.
 func (b *Box) List(f Filter) ([]Message, error) {
+	if err := b.ready(); err != nil {
+		return nil, err
+	}
 	var roles []string
 	if f.To != "" {
 		roles = []string{f.To}
@@ -124,13 +148,13 @@ func (b *Box) List(f Filter) ([]Message, error) {
 			if f.From != "" && m.From != f.From {
 				continue
 			}
-			if f.Issue > 0 && m.Issue != f.Issue {
+			if f.Key != "" && m.Work.Key != f.Key {
 				continue
 			}
-			if f.PR > 0 && m.PR != f.PR {
+			if !m.Work.Matches(f.Tags) {
 				continue
 			}
-			if f.Unaddressed && (m.Issue != 0 || m.PR != 0) {
+			if f.Unaddressed && m.Work.Key != "" {
 				continue
 			}
 			if f.UnreadOnly && !m.Unread() {
@@ -164,6 +188,9 @@ func (b *Box) Get(id string) (Message, error) {
 
 // MarkRead marks the given messages as delivered.
 func (b *Box) MarkRead(msgs ...Message) error {
+	if err := b.ready(); err != nil {
+		return err
+	}
 	now := time.Now().UTC()
 	for _, m := range msgs {
 		if m.ReadAt != nil {
@@ -190,16 +217,16 @@ func (b *Box) Counts() (map[string]int, error) {
 	return counts, nil
 }
 
-// Format renders a message as Markdown for inclusion in a prompt.
-func Format(m Message) string {
+// Field is a caller-rendered work detail included in a message prompt.
+type Field struct{ Name, Value string }
+
+// Format renders a message as Markdown with caller-provided work details.
+func Format(m Message, fields ...Field) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "### %s\n", strings.TrimSpace(m.Subject))
 	fmt.Fprintf(&sb, "- id: %s\n- from: %s\n- to: %s\n- sent: %s\n", m.ID, m.From, m.To, m.CreatedAt.Format(time.RFC3339))
-	if m.Issue > 0 {
-		fmt.Fprintf(&sb, "- issue: #%d\n", m.Issue)
-	}
-	if m.PR > 0 {
-		fmt.Fprintf(&sb, "- pr: #%d\n", m.PR)
+	for _, field := range fields {
+		fmt.Fprintf(&sb, "- %s: %s\n", field.Name, field.Value)
 	}
 	if m.InReplyTo != "" {
 		fmt.Fprintf(&sb, "- in reply to: %s\n", m.InReplyTo)

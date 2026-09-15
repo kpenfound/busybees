@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
 )
 
@@ -421,7 +422,7 @@ func TestPriorityIssueIsDispatchedBeforeOlderReadyWork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fmt.Sprint(st.Priority) != "[2]" {
+	if fmt.Sprint(ghwork.Numbers(st.Priority)) != "[2]" {
 		t.Fatalf("status priority %v, want [2]", st.Priority)
 	}
 }

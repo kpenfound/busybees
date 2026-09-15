@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
 )
 
@@ -42,7 +43,7 @@ func TestNeedsHumanHoldsAnIssueThatKeepsItsStateLabel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(st.NeedsHuman) != 1 || st.NeedsHuman[0].Issue != 1 {
+	if len(st.NeedsHuman) != 1 || ghwork.Issue(st.NeedsHuman[0].Work) != 1 {
 		t.Errorf("needs_human: got %+v, want issue 1", st.NeedsHuman)
 	}
 	if n := st.Queues["ready"]; n != 0 {
