@@ -364,10 +364,11 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 			if bookkeeping.Round > 1 {
 				found, verify = s.verifyReview(log, bookkeeping, pr.Number)
 			}
+			activity := ""
 			if !verify {
 				head, headErr := workspace.Git(ctx, ws.RepoDir, "rev-parse", "HEAD")
 				var a *review.Artifact
-				found, a, err = s.runReview(ctx, log, freshPR, ws.RepoDir, name, issue.Number, s.sizeOf(freshIssue.Labels))
+				found, a, err = s.runReview(ctx, log, freshPR, ws.RepoDir, name, issue.Number, bookkeeping.Round, s.sizeOf(freshIssue.Labels))
 				if err != nil {
 					var failure reviewPipelineFailure
 					if errors.As(err, &failure) && ctx.Err() == nil {
@@ -375,6 +376,7 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 					}
 					return err
 				}
+				activity = name
 				bookkeeping.ReviewArtifact, bookkeeping.ReviewedHead = a.Dir, ""
 				if headErr == nil {
 					bookkeeping.ReviewedHead = strings.TrimSpace(head)
@@ -384,7 +386,7 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 			log.Info("reviewer session", "pr", pr.Number, "round", bookkeeping.Round, "mail", len(inbox), "verify", verify, "size", found.Size, "angles", strings.Join(found.Angles, ","), "findings", found.Count)
 			started := s.now()
 			res, err := s.runSessionWithRetry(ctx, sessionSpec{
-				role: config.RoleReviewer, name: name, workDir: ws.RepoDir, branch: branch, worker: w, judge: true,
+				role: config.RoleReviewer, name: name, workDir: ws.RepoDir, branch: branch, worker: w, judge: true, reviewActivity: activity,
 				data: prompts.Data{Issue: &freshIssue, PR: &freshPR, Inbox: inbox, Round: bookkeeping.Round, MaxRounds: maxRounds,
 					Review: found,
 					Checks: roundChecks, ChecksStatus: roundStatus, ChecksTimeout: shortDuration(policy.PreReviewChecksTimeout)},

@@ -435,8 +435,9 @@ in the same process. A subscriber gets a buffered channel of events: a session
 started (with the model it runs on, whether that is the role's fallback, and
 its directory, which is where its `transcript.jsonl` is and the one thing a
 view cannot work out from the name), a session ended (with its outcome, turns,
-cost and duration), a developer worker moved to another stage, a full pass
-finished. Events are published beside `status.json`, never instead of it: the
+cost and duration), a review pipeline started, advanced from its brief to
+angle progress or ended, a developer worker moved to another stage, a full
+pass finished. Events are published beside `status.json`, never instead of it: the
 event says something happened, `status.json` says what the factory looks like.
 The poll event is published after the write, so a view that re-reads the file
 when one arrives sees the pass that event is about, never the one before it.
@@ -445,8 +446,9 @@ never blocks: an event a subscriber has no room for is dropped, so a view that
 stops reading loses events instead of slowing a pass down.
 
 The [live view](cli.md#the-live-view) is the subscriber. Its Now and Recent
-panels are built from the session and stage events; Needs human, Approved PRs
-and Queues are `status.json`, re-read when an event says it changed. Two
+panels are built from the session and stage events, with review-pipeline
+activity also shown in Now until its judge session starts. Needs human,
+Approved PRs and Queues are `status.json`, re-read when an event says it changed. Two
 things come from a session's own `transcript.jsonl`, in the directory the
 started event named, because no event carries them: the transcript the session
 view shows, and the turn count the Now panel shows for a session still running
