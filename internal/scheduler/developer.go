@@ -368,7 +368,7 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 			if !verify {
 				head, headErr := workspace.Git(ctx, ws.RepoDir, "rev-parse", "HEAD")
 				var a *review.Artifact
-				found, a, err = s.runReview(ctx, log, freshPR, ws.RepoDir, name, issue.Number, bookkeeping.Round)
+				found, a, err = s.runReview(ctx, log, freshPR, ws.RepoDir, name, issue.Number, bookkeeping.Round, s.sizeOf(freshIssue.Labels))
 				if err != nil {
 					var failure reviewPipelineFailure
 					if errors.As(err, &failure) && ctx.Err() == nil {

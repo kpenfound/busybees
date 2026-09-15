@@ -79,7 +79,7 @@ func (e reviewPipelineFailure) Unwrap() error { return e.err }
 // artifact it was written to. name is the review's name in the ledger,
 // issue the work item it is charged to (0 for a requested review), and
 // round the review round. name also identifies its live activity until the
-// judge session starts.
+// judge session starts. size selects the reviewer profile for the work item.
 //
 // An error is a review that produced no findings list: the context that
 // could not be gathered, a distiller that briefed nothing, every angle
@@ -87,7 +87,7 @@ func (e reviewPipelineFailure) Unwrap() error { return e.err }
 // Review.Skipped and the rest are reviewed. What the sessions cost is
 // recorded either way, in the ledger and against the issue, so the budgets
 // see a review that failed halfway as well as one that ran.
-func (s *Scheduler) runReview(ctx context.Context, log *slog.Logger, pr github.PR, dir, name string, issue, round int) (_ *prompts.Review, _ *review.Artifact, resultErr error) {
+func (s *Scheduler) runReview(ctx context.Context, log *slog.Logger, pr github.PR, dir, name string, issue, round int, size string) (_ *prompts.Review, _ *review.Artifact, resultErr error) {
 	activity := Event{Kind: EventReviewStarted, Activity: name, Role: config.RoleReviewer,
 		Issue: issue, PR: pr.Number, Round: round, Started: s.now(), Phase: "brief"}
 	s.publish(activity)
@@ -107,6 +107,7 @@ func (s *Scheduler) runReview(ctx context.Context, log *slog.Logger, pr github.P
 	if err != nil {
 		return nil, nil, err
 	}
+	role = role.ForSize(size)
 	agent := s.reviewAgent(role)
 	distiller := *agent
 	if role.BriefModel != "" {

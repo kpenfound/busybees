@@ -81,11 +81,11 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (_ *sessio
 	if err != nil {
 		return nil, err
 	}
-	// A copy: the configured role keeps its own model. The developer can run
-	// a different model per work item size; a retry with the fallback model
-	// overrides whatever the size picked.
-	if spec.role == config.RoleDeveloper && spec.data.Issue != nil {
-		role.Model = role.ModelFor(s.sizeOf(spec.data.Issue.Labels))
+	// Select the whole profile before attempt, assembler and retry overrides.
+	if spec.data.Issue != nil {
+		role = role.ForSize(s.sizeOf(spec.data.Issue.Labels))
+	} else if spec.data.PR != nil {
+		role = role.ForSize(s.sizeOf(spec.data.PR.Labels))
 	}
 	switch {
 	case spec.moeExpert != "":

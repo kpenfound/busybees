@@ -90,7 +90,7 @@ func TestViewIncludesRoleSpecificKeys(t *testing.T) {
 	if got := dev["max_size"]; got != "m" {
 		t.Errorf("developer max_size: got %#v want %q", got, "m")
 	}
-	if got := dev["model_by_size"]; !reflect.DeepEqual(got, map[string]any{"xs": "haiku"}) {
+	if got := dev["profiles_by_size"].(map[string]any)["xs"].(map[string]any)["model"]; got != "haiku" {
 		t.Errorf("developer model_by_size: got %#v want %v", got, map[string]any{"xs": "haiku"})
 	}
 	if got := dev["best_of_n_by_size"]; !reflect.DeepEqual(got, map[string]any{"l": float64(3)}) {
@@ -115,7 +115,7 @@ func TestViewIncludesRoleSpecificKeys(t *testing.T) {
 
 	// Nobody else carries them.
 	ownedBy := map[string]string{
-		"commit_flags": RoleDeveloper, "max_size": RoleDeveloper, "model_by_size": RoleDeveloper,
+		"commit_flags": RoleDeveloper, "max_size": RoleDeveloper,
 		"best_of_n_by_size": RoleDeveloper, "best_of_n_model": RoleDeveloper,
 		"best_of_n_prompt": RoleDeveloper, "assembler_model": RoleDeveloper,
 		"assembler_prompt":    RoleDeveloper,
@@ -264,10 +264,14 @@ func TestViewCoversTemplateKeys(t *testing.T) {
 		} else if i := strings.Index(sec, ".moe_experts."); i >= 0 {
 			sec, key = sec[:i], "moe_experts"
 		}
-		if skip[key] {
+		if skip[key] || key == "profile" || key == "profile_by_size" {
 			continue
 		}
 		switch {
+		case strings.HasPrefix(sec, "profiles."):
+			if _, ok := roleOf(t, out, RoleDeveloper)[key]; !ok {
+				t.Errorf("profile setting %s missing", key)
+			}
 		case sec == "global":
 			for _, r := range Roles {
 				if _, ok := roleOf(t, out, r)[key]; !ok {

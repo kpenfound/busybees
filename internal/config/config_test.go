@@ -650,8 +650,8 @@ func TestModelBySize(t *testing.T) {
 	if dev, err = cfg.Role(RoleDeveloper); err != nil {
 		t.Fatal(err)
 	}
-	if dev.ModelBySize != nil || dev.ModelFor("xs") != dev.Model {
-		t.Errorf("unset model_by_size: %v, ModelFor(\"xs\") = %q", dev.ModelBySize, dev.ModelFor("xs"))
+	if dev.ProfilesBySize != nil || dev.ModelFor("xs") != dev.Model {
+		t.Errorf("unset model_by_size: %v, ModelFor(\"xs\") = %q", dev.ProfilesBySize, dev.ModelFor("xs"))
 	}
 }
 
@@ -660,8 +660,8 @@ func TestModelBySizeErrorsNameTheBadKey(t *testing.T) {
 	for body, want := range map[string]string{
 		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nmodel_by_size = { xxl = \"opus\" }\n": "model_by_size: unknown size \"xxl\" (want one of xs, s, m, l, xl)",
 		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nmodel_by_size = { xs = \"  \" }\n":    "roles.developer.model_by_size.xs must name a model",
-		"version = 1\n[project]\nrepo = \"a/b\"\n[global]\nmodel_by_size = { xs = \"haiku\" }\n":          "global: commit_flags, max_size, model_by_size, best_of_n_by_size, best_of_n_model, best_of_n_prompt, assembler_model, assembler_prompt, moe_experts_by_size, moe_experts, moe_assembler_model and moe_assembler_prompt are only valid under roles.developer",
-		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.reviewer]\nmodel_by_size = { xs = \"haiku\" }\n":  "roles.reviewer: commit_flags, max_size, model_by_size, best_of_n_by_size, best_of_n_model, best_of_n_prompt, assembler_model, assembler_prompt, moe_experts_by_size, moe_experts, moe_assembler_model and moe_assembler_prompt are only valid under roles.developer",
+		"version = 1\n[project]\nrepo = \"a/b\"\n[global]\nmodel_by_size = { xs = \"haiku\" }\n":          "global: model_by_size is only valid under roles.developer",
+		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.reviewer]\nmodel_by_size = { xs = \"haiku\" }\n":  "roles.reviewer: model_by_size is only valid under roles.developer",
 	} {
 		_, err := Load(writeConfig(t, body))
 		if err == nil {
@@ -787,7 +787,7 @@ func TestOpenCodeRoleHasNoDefaultModel(t *testing.T) {
 func TestAgentValidation(t *testing.T) {
 	for body, want := range map[string]string{
 		"version = 1\n[project]\nrepo = \"a/b\"\n[global]\nagent = \"gpt\"\n":          "global.agent must be one of claude, codex, opencode",
-		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nagent = \"gpt\"\n": "roles.developer.agent must be one of claude, codex, opencode",
+		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nagent = \"gpt\"\n": "profiles.developer.agent must be one of claude, codex, opencode",
 	} {
 		_, err := Load(writeConfig(t, body))
 		if err == nil {
@@ -815,7 +815,7 @@ func TestTemplateUncommented(t *testing.T) {
 	if err != nil {
 		t.Fatalf("uncommented template does not load: %v", err)
 	}
-	if cfg.Scheduler.MaxDevelopers != 1 || cfg.Global.Model != "opus" || cfg.Roles[RoleReviewer].MergeMethod != "squash" {
+	if cfg.Scheduler.MaxDevelopers != 1 || cfg.Profiles[cfg.Global.Profile].Model != "opus" || cfg.Roles[RoleReviewer].MergeMethod != "squash" {
 		t.Fatalf("unexpected values: %+v", cfg.Scheduler)
 	}
 	if cfg.Filter.Assignee != "@me" || len(cfg.Global.MCP) != 2 || cfg.Roles[RoleQA].MCP["example"].Command != "example-mcp" {
@@ -917,7 +917,7 @@ func TestVersion(t *testing.T) {
 			t.Errorf("newer: %v", err)
 		}
 	}
-	cfg, err := Load(writeConfig(t, "version = 2\n[project]\nrepo = \"a/b\"\n"))
+	cfg, err := Load(writeConfig(t, "version = 3\n[project]\nrepo = \"a/b\"\n"))
 	if err != nil || cfg.Version != CurrentVersion || cfg.NeedsRewrite() {
 		t.Fatalf("current: %+v %v", cfg, err)
 	}
@@ -942,7 +942,7 @@ func TestMigrateUnversionedFile(t *testing.T) {
 	}
 	data, _ := os.ReadFile(path)
 	text := string(data)
-	want := "# my factory\n\n# Format version of this file (see docs/configuration.md).\nversion = 2\n\n[project]\n# keep this comment\nrepo = \"a/b\"\n#branch_prefix = \"bees/\"\n"
+	want := "# my factory\n\n# Format version of this file (see docs/configuration.md).\nversion = 3\n\n[project]\n# keep this comment\nrepo = \"a/b\"\n#branch_prefix = \"bees/\"\n"
 	if text != want {
 		t.Fatalf("rewritten file:\n%s\nwant:\n%s", text, want)
 	}
@@ -1655,7 +1655,7 @@ func TestNotesSettings(t *testing.T) {
 		t.Fatalf("default: %q, want %q", cfg.Notes.Backend, NotesBackendFile)
 	}
 
-	path := writeConfig(t, "version = 2\n[project]\nrepo = \"a/b\"\n"+neo4jNotesTOML)
+	path := writeConfig(t, "version = 3\n[project]\nrepo = \"a/b\"\n"+neo4jNotesTOML)
 	cfg, err = Load(path)
 	if err != nil {
 		t.Fatal(err)
@@ -2069,7 +2069,7 @@ func TestMigrateReviewStages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Version != 2 || cfg.MigratedFrom != 1 || !cfg.NeedsRewrite() {
+	if cfg.Version != CurrentVersion || cfg.MigratedFrom != 1 || !cfg.NeedsRewrite() {
 		t.Fatalf("migrated in memory: version %d from %d", cfg.Version, cfg.MigratedFrom)
 	}
 	r, err := cfg.Role(RoleReviewer)
@@ -2085,6 +2085,10 @@ func TestMigrateReviewStages(t *testing.T) {
 	}
 	data, _ := os.ReadFile(path)
 	want := "version = 2\n[project]\nrepo = \"a/b\"\n\n[roles.reviewer]\n# keep this comment\nauto_merge = true\n" + stagesNote + "\n" + stagesNote + "\nmodel = \"opus\"\n\n[roles.reviewer.env]\nstages = \"kept\"\n"
+	want, err = migrate(want, 2, CurrentVersion, migrations)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if string(data) != want {
 		t.Fatalf("rewritten file:\n%s\nwant:\n%s", data, want)
 	}
@@ -2273,11 +2277,11 @@ func TestBestOfNErrorsNameTheBadKey(t *testing.T) {
 		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nbest_of_n_by_size = { xxl = 3 }\n": "best_of_n_by_size: unknown size \"xxl\" (want one of xs, s, m, l, xl)",
 		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nbest_of_n_by_size = { l = 0 }\n":   "roles.developer.best_of_n_by_size.l must be at least 1",
 		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nbest_of_n_by_size = { m = -2 }\n":  "roles.developer.best_of_n_by_size.m must be at least 1",
-		"version = 1\n[project]\nrepo = \"a/b\"\n[global]\nbest_of_n_by_size = { l = 3 }\n":            "global: commit_flags, max_size, model_by_size, best_of_n_by_size, best_of_n_model, best_of_n_prompt, assembler_model, assembler_prompt, moe_experts_by_size, moe_experts, moe_assembler_model and moe_assembler_prompt are only valid under roles.developer",
-		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.reviewer]\nbest_of_n_model = \"opus\"\n":       "roles.reviewer: commit_flags, max_size, model_by_size, best_of_n_by_size, best_of_n_model, best_of_n_prompt, assembler_model, assembler_prompt, moe_experts_by_size, moe_experts, moe_assembler_model and moe_assembler_prompt are only valid under roles.developer",
-		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.qa]\nbest_of_n_prompt = \"x\"\n":               "roles.qa: commit_flags, max_size, model_by_size, best_of_n_by_size, best_of_n_model, best_of_n_prompt, assembler_model, assembler_prompt, moe_experts_by_size, moe_experts, moe_assembler_model and moe_assembler_prompt are only valid under roles.developer",
-		"version = 1\n[project]\nrepo = \"a/b\"\n[global]\nassembler_model = \"opus\"\n":               "global: commit_flags, max_size, model_by_size, best_of_n_by_size, best_of_n_model, best_of_n_prompt, assembler_model, assembler_prompt, moe_experts_by_size, moe_experts, moe_assembler_model and moe_assembler_prompt are only valid under roles.developer",
-		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.reviewer]\nassembler_prompt = \"x\"\n":         "roles.reviewer: commit_flags, max_size, model_by_size, best_of_n_by_size, best_of_n_model, best_of_n_prompt, assembler_model, assembler_prompt, moe_experts_by_size, moe_experts, moe_assembler_model and moe_assembler_prompt are only valid under roles.developer",
+		"version = 1\n[project]\nrepo = \"a/b\"\n[global]\nbest_of_n_by_size = { l = 3 }\n":            "global: commit_flags, max_size, best_of_n_by_size, best_of_n_model, best_of_n_prompt, assembler_model, assembler_prompt, moe_experts_by_size, moe_experts, moe_assembler_model and moe_assembler_prompt are only valid under roles.developer",
+		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.reviewer]\nbest_of_n_model = \"opus\"\n":       "roles.reviewer: commit_flags, max_size, best_of_n_by_size, best_of_n_model, best_of_n_prompt, assembler_model, assembler_prompt, moe_experts_by_size, moe_experts, moe_assembler_model and moe_assembler_prompt are only valid under roles.developer",
+		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.qa]\nbest_of_n_prompt = \"x\"\n":               "roles.qa: commit_flags, max_size, best_of_n_by_size, best_of_n_model, best_of_n_prompt, assembler_model, assembler_prompt, moe_experts_by_size, moe_experts, moe_assembler_model and moe_assembler_prompt are only valid under roles.developer",
+		"version = 1\n[project]\nrepo = \"a/b\"\n[global]\nassembler_model = \"opus\"\n":               "global: commit_flags, max_size, best_of_n_by_size, best_of_n_model, best_of_n_prompt, assembler_model, assembler_prompt, moe_experts_by_size, moe_experts, moe_assembler_model and moe_assembler_prompt are only valid under roles.developer",
+		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.reviewer]\nassembler_prompt = \"x\"\n":         "roles.reviewer: commit_flags, max_size, best_of_n_by_size, best_of_n_model, best_of_n_prompt, assembler_model, assembler_prompt, moe_experts_by_size, moe_experts, moe_assembler_model and moe_assembler_prompt are only valid under roles.developer",
 	} {
 		_, err := Load(writeConfig(t, body))
 		if err == nil {
@@ -2420,10 +2424,10 @@ func TestMoEErrorsNameTheBadKey(t *testing.T) {
 		// An entry of 1 is best-of-N off, and still names the size in both
 		// tables: the error says so rather than one mode winning silently.
 		dev + "best_of_n_by_size = { l = 1 }\nmoe_experts_by_size = { l = [\"backend\"] }\n" + expert:                "roles.developer: size \"l\" is in both best_of_n_by_size and moe_experts_by_size",
-		"version = 1\n[project]\nrepo = \"a/b\"\n[global]\nmoe_experts_by_size = { l = [\"backend\"] }\n":            "global: commit_flags, max_size, model_by_size, best_of_n_by_size, best_of_n_model, best_of_n_prompt, assembler_model, assembler_prompt, moe_experts_by_size, moe_experts, moe_assembler_model and moe_assembler_prompt are only valid under roles.developer",
-		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.reviewer]\nmoe_experts = { backend = { prompt = \"x\" } }\n": "roles.reviewer: commit_flags, max_size, model_by_size, best_of_n_by_size, best_of_n_model, best_of_n_prompt, assembler_model, assembler_prompt, moe_experts_by_size, moe_experts, moe_assembler_model and moe_assembler_prompt are only valid under roles.developer",
-		"version = 1\n[project]\nrepo = \"a/b\"\n[global]\nmoe_assembler_model = \"opus\"\n":                         "global: commit_flags, max_size, model_by_size, best_of_n_by_size, best_of_n_model, best_of_n_prompt, assembler_model, assembler_prompt, moe_experts_by_size, moe_experts, moe_assembler_model and moe_assembler_prompt are only valid under roles.developer",
-		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.qa]\nmoe_assembler_prompt = \"x\"\n":                         "roles.qa: commit_flags, max_size, model_by_size, best_of_n_by_size, best_of_n_model, best_of_n_prompt, assembler_model, assembler_prompt, moe_experts_by_size, moe_experts, moe_assembler_model and moe_assembler_prompt are only valid under roles.developer",
+		"version = 1\n[project]\nrepo = \"a/b\"\n[global]\nmoe_experts_by_size = { l = [\"backend\"] }\n":            "global: commit_flags, max_size, best_of_n_by_size, best_of_n_model, best_of_n_prompt, assembler_model, assembler_prompt, moe_experts_by_size, moe_experts, moe_assembler_model and moe_assembler_prompt are only valid under roles.developer",
+		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.reviewer]\nmoe_experts = { backend = { prompt = \"x\" } }\n": "roles.reviewer: commit_flags, max_size, best_of_n_by_size, best_of_n_model, best_of_n_prompt, assembler_model, assembler_prompt, moe_experts_by_size, moe_experts, moe_assembler_model and moe_assembler_prompt are only valid under roles.developer",
+		"version = 1\n[project]\nrepo = \"a/b\"\n[global]\nmoe_assembler_model = \"opus\"\n":                         "global: commit_flags, max_size, best_of_n_by_size, best_of_n_model, best_of_n_prompt, assembler_model, assembler_prompt, moe_experts_by_size, moe_experts, moe_assembler_model and moe_assembler_prompt are only valid under roles.developer",
+		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.qa]\nmoe_assembler_prompt = \"x\"\n":                         "roles.qa: commit_flags, max_size, best_of_n_by_size, best_of_n_model, best_of_n_prompt, assembler_model, assembler_prompt, moe_experts_by_size, moe_experts, moe_assembler_model and moe_assembler_prompt are only valid under roles.developer",
 	} {
 		_, err := Load(writeConfig(t, body))
 		if err == nil {

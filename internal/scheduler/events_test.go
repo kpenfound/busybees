@@ -496,7 +496,7 @@ func TestReviewActivityFailureAndCancellation(t *testing.T) {
 				cancel()
 			}
 			sub := h.sched.Subscribe()
-			_, _, err := h.sched.runReview(ctx, h.sched.log, pr, h.clone, "review-42-r3", 7, 3)
+			_, _, err := h.sched.runReview(ctx, h.sched.log, pr, h.clone, "review-42-r3", 7, 3, "")
 			if err == nil {
 				t.Fatal("pipeline succeeded")
 			}
@@ -533,7 +533,7 @@ func TestReviewActivityStartsBeforeGatheringAndNeverBlocks(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_, _, err := h.sched.runReview(ctx, h.sched.log, github.PR{Number: 42}, h.clone, "review-42", 0, 1)
+	_, _, err := h.sched.runReview(ctx, h.sched.log, github.PR{Number: 42}, h.clone, "review-42", 0, 1, "")
 	if err == nil || !seen || len(slow) != eventBuffer {
 		t.Fatalf("err=%v gathered=%v slow buffer=%d", err, seen, len(slow))
 	}
@@ -570,7 +570,7 @@ func TestReviewActivityCountsEnabledAngles(t *testing.T) {
 		t.Fatal(err)
 	}
 	sub := h.sched.Subscribe()
-	_, _, err := h.sched.runReview(context.Background(), h.sched.log, pr, h.clone, "review-42-r2", 9, 2)
+	_, _, err := h.sched.runReview(context.Background(), h.sched.log, pr, h.clone, "review-42-r2", 9, 2, "")
 	if err != nil {
 		t.Fatal(err)
 	}

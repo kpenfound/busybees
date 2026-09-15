@@ -1272,3 +1272,16 @@ func TestGHAuthStatusIsAskedOfTheMachineAccount(t *testing.T) {
 		t.Error("`gh auth status` ran through the client that carries github.token")
 	}
 }
+
+func TestChecksIncludeSizeProfileAgents(t *testing.T) {
+	f := setup(t, `[profiles.code]
+agent = "codex"
+[profiles.remote]
+agent = "opencode"
+[roles.qa]
+profile_by_size = { xs = "code", s = "remote" }
+`, nil)
+	if !f.usesCodex() || !f.usesOpenCode() {
+		t.Fatal("doctor skipped an agent selected only by size")
+	}
+}
