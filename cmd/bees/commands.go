@@ -19,6 +19,7 @@ import (
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/mcpserver"
 	"github.com/kpenfound/busybees/internal/prompts"
+	"github.com/kpenfound/busybees/internal/session"
 	"github.com/kpenfound/busybees/internal/state"
 	"github.com/kpenfound/busybees/internal/text"
 	"github.com/kpenfound/busybees/internal/versions"
@@ -355,6 +356,20 @@ func logTUIMode(log *slog.Logger, noTUI bool, stdout *os.File) bool {
 	return on
 }
 
+// refuseInsideSession is the first thing `bees run`, `bees tick` and
+// `bees exec` do: a bee's session (BEES_SESSION_DIR set) starting a factory or
+// a session of its own would run agents no view shows, no budget counts and
+// no stop reaches, as many as the scheduler it started asks for. A session
+// that needs to try the factory out has the fakes the test suite runs it
+// with.
+func refuseInsideSession(command string) error {
+	if dir := os.Getenv(session.EnvSessionDir); dir != "" {
+		return fmt.Errorf("bees %s does not run inside a bee's session (%s=%s): a factory started from a session would run agents nothing watches",
+			command, session.EnvSessionDir, dir)
+	}
+	return nil
+}
+
 func newRunCmd(g *globalFlags) *cobra.Command {
 	var once bool
 	var roles string
@@ -386,6 +401,9 @@ role in the rotation asks for a sandbox bees cannot build here: running that
 role unboxed instead would give it what it was configured to be kept away
 from.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := refuseInsideSession("run"); err != nil {
+				return err
+			}
 			a, err := newApp(cmd.Context(), g)
 			if err != nil {
 				return err
@@ -447,6 +465,9 @@ func newTickCmd(g *globalFlags) *cobra.Command {
 		Use:   "tick",
 		Short: "Do a single scheduler pass (same as run --once)",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := refuseInsideSession("tick"); err != nil {
+				return err
+			}
 			a, err := newApp(cmd.Context(), g)
 			if err != nil {
 				return err
@@ -474,6 +495,9 @@ func newExecCmd(g *globalFlags) *cobra.Command {
 		Short: "Run one session for a role right now (developer/reviewer need --issue or --pr)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := refuseInsideSession("exec"); err != nil {
+				return err
+			}
 			role, err := config.CanonicalRole(args[0])
 			if err != nil {
 				return err

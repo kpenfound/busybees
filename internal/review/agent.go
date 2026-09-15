@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kpenfound/busybees/internal/agentbin"
 	"github.com/kpenfound/busybees/internal/config"
 )
 
@@ -126,6 +127,11 @@ func (a *CLIAgent) Run(ctx context.Context, req AgentRequest) (*AgentResult, err
 	bin, args, err := a.command(req)
 	if err != nil {
 		return nil, err
+	}
+	// The session runs on this host: a test binary is kept from running a
+	// real agent (see internal/agentbin).
+	if bin, err = agentbin.Resolve(bin); err != nil {
+		return nil, fmt.Errorf("%s session: %w", req.Name, err)
 	}
 	timeout := a.Timeout
 	if timeout <= 0 {

@@ -29,6 +29,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kpenfound/busybees/internal/agentbin"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/procs"
 	"github.com/kpenfound/busybees/internal/skills"
@@ -320,6 +321,12 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 			return nil, err
 		}
 		env = box.clientEnv()
+	} else {
+		// The agent runs on this host: resolved here, where a test binary
+		// is kept from running a real one (see internal/agentbin).
+		if bin, err = agentbin.Resolve(bin); err != nil {
+			return nil, fmt.Errorf("%s: %w", req.Role.Name, err)
+		}
 	}
 
 	timeout := req.Role.Timeout

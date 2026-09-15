@@ -73,7 +73,14 @@ the checks, and `dagger check go:test-all` runs one of them.
   and reports `pr-opened`; a reviewer mails feedback once, then approves;
   the singletons report `done`), writes `outcome.json` and prints a
   stream-json `result` line; `Runner.ClaudeBin` is set to `os.Args[0]`. The
-  session tests fake `claude` with a shell script the same way. Git is real:
+  session tests fake `claude` with a shell script the same way. Those two
+  are the only executables a test binary may run as an agent: before a
+  session starts, `internal/agentbin.Resolve` refuses any other one when
+  `testing.Testing()` reports a `go test` build, whether the binary is
+  running its tests or was started again as a command of its own (a test of
+  `bees run` that executes the real command, say). A test that forgets its
+  fake fails with `ErrRealAgent` naming the executable it found on PATH; it
+  never runs the real `claude` on the machine the suite runs on. Git is real:
   tests create a bare origin and a clone with one commit with
   `internal/testutil.SetupRepos`, and the workspace and scheduler tests
   create real worktrees, push to it, then assert the branch history and
