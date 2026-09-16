@@ -1122,7 +1122,7 @@ func TestListSubIssuesRequiresCompletePages(t *testing.T) {
 		want      int
 	}{
 		{name: "empty", raw: `[[]]`},
-		{name: "open and closed pages", raw: `[[{"number":1,"state":"open","repository_url":"https://api.github.com/repos/acme/widgets","user":{"login":"person"},"labels":[{"name":"bees"}]}],[{"number":2,"state":"closed","repository_url":"https://api.github.com/repos/acme/widgets"}]]`, want: 2},
+		{name: "open and closed pages", raw: `[[{"number":1,"state":"open","repository_url":"https://api.github.com/repos/acme/widgets","user":{"login":"person"},"labels":[{"name":"bees"}],"comments":0}],[{"number":2,"state":"closed","repository_url":"https://api.github.com/repos/acme/widgets","comments":0}]]`, want: 2},
 		{name: "other repository", raw: `[[{"number":1,"state":"open","repository_url":"https://api.github.com/repos/other/widgets"}]]`},
 		{name: "missing pages", raw: `null`, fail: true},
 		{name: "partial pages", raw: `[[{"number":1,"state":"open","repository_url":"https://api.github.com/repos/acme/widgets"}],null]`, fail: true},

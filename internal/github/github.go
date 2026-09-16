@@ -1318,10 +1318,24 @@ func (c *Client) ListSubIssues(ctx context.Context, number int) ([]Issue, error)
 	if err != nil {
 		return nil, err
 	}
+	// The sub-issues REST endpoint returns the REST representation of an
+	// issue. Its `comments` field is a count, unlike the comments array in
+	// `gh issue view --json`; decode the fields we use explicitly so the two
+	// representations cannot interfere with one another.
 	var pages [][]struct {
-		Issue
-		User          Author `json:"user"`
-		RepositoryURL string `json:"repository_url"`
+		Number        int           `json:"number"`
+		Title         string        `json:"title"`
+		Body          string        `json:"body"`
+		State         string        `json:"state"`
+		URL           string        `json:"html_url"`
+		Labels        []Label       `json:"labels"`
+		Milestone     *MilestoneRef `json:"milestone"`
+		Assignees     []Author      `json:"assignees"`
+		CreatedAt     time.Time     `json:"created_at"`
+		UpdatedAt     time.Time     `json:"updated_at"`
+		ClosedAt      *time.Time    `json:"closed_at"`
+		User          Author        `json:"user"`
+		RepositoryURL string        `json:"repository_url"`
 	}
 	if err := json.Unmarshal(out, &pages); err != nil {
 		return nil, err
@@ -1348,8 +1362,13 @@ func (c *Client) ListSubIssues(ctx context.Context, number int) ([]Issue, error)
 				return nil, errors.New("repeated sub-issue")
 			}
 			seen[child.Number] = true
-			child.Author = child.User
-			issues = append(issues, child.Issue)
+			issues = append(issues, Issue{
+				Number: child.Number, Title: child.Title, Body: child.Body,
+				State: child.State, URL: child.URL, Labels: child.Labels,
+				Milestone: child.Milestone, Author: child.User,
+				Assignees: child.Assignees, CreatedAt: child.CreatedAt,
+				UpdatedAt: child.UpdatedAt, ClosedAt: child.ClosedAt,
+			})
 		}
 	}
 	return issues, nil
