@@ -21,12 +21,12 @@ import (
 // angles.go) by a container: an Alpine image with git, built here the
 // first time and kept, runs `git fetch` of refs/pull/<number>/head from
 // the pull request's own repository over HTTPS into a bind-mounted host
-// directory, then of the base branch's tip beside it (CheckoutBaseRef),
-// and exits. The head reference resolves a fork's pull request as well as
-// one from a branch of the repository, which the head branch's name would
-// not, and it is the head as it is when the review runs: a pull request
-// that gains a commit during the review is the race every freshly
-// gathered source has. The base is what the diff source diffs the head
+// directory, then of the base branch beside it, points CheckoutBaseRef
+// at the merge base of the two, and exits. The head reference resolves a
+// fork's pull request as well as one from a branch of the repository,
+// which the head branch's name would not, and it is the head as it is
+// when the review runs: a pull request that gains a commit during the
+// review is the race every freshly gathered source has. The base is what the diff source diffs the head
 // against (checkoutDiff): read here, the diff has no limit on the number
 // of files a pull request changes, which GitHub's own diff has.
 //
@@ -70,11 +70,21 @@ const CheckoutTokenVar = "GIT_TOKEN"
 const DefaultCheckoutTimeout = 5 * time.Minute
 
 // CheckoutBaseRef is the reference inside a checkout that points at the
-// tip of the pull request's base branch, fetched beside the head, and
+// merge base of the pull request's head and its base branch (the base
+// branch's tip when they have none, see checkoutNoMergeBase), and
 // what checkoutDiff diffs the checked-out head against. A Clone of the
 // caller's own that sets it lets the diff be read from its checkout too;
 // one that does not leaves the diff to gh.
 const CheckoutBaseRef = "refs/review/base"
+
+// checkoutBaseTipRef is the reference the base branch's tip is fetched
+// into, before its merge base with the head is found.
+const checkoutBaseTipRef = "refs/review/base-tip"
+
+// checkoutNoMergeBase is the file, under the checkout's .git, the script
+// leaves when the head and the base branch have no merge base, and
+// CheckoutBaseRef points at the base branch's tip instead.
+const checkoutNoMergeBase = "bees-review-no-merge-base"
 
 // checkoutHeadRef is the reference the pull request's head is fetched
 // into before it is checked out, detached.
@@ -82,10 +92,12 @@ const checkoutHeadRef = "refs/review/head"
 
 // checkoutScript is what the container runs, through `sh -c`, with the
 // repository's URL as $1, the head reference to fetch as $2 and the base
-// branch's name as $3, or "" for none. The clone is shallow, each tip on
-// its own: the sessions read files and never run git, so the history is
-// nothing they could reach, and the diff is a plain diff of the two trees
-// (checkoutDiff). A base that cannot be fetched costs the diff its read
+// branch's name as $3, or "" for none. Both references are fetched with
+// their history, so the merge base of the two can be found; the diff is
+// a plain diff of the head against it (checkoutDiff), the diff GitHub
+// shows, whether or not the pull request is up to date with its base.
+// Head and base with no merge base leave CheckoutBaseRef at the base
+// branch's tip and a checkoutNoMergeBase file behind. A base that cannot be fetched costs the diff its read
 // from the checkout, not the angles their checkout: the head is checked
 // out first, and the base fetch is allowed to fail. The token is read
 // from the environment by a credential helper, so it is on no command
@@ -95,10 +107,17 @@ const checkoutScript = `set -e
 git init -q .
 git remote add origin "$1"
 helper='!f() { echo username=x-access-token; echo "password=$GIT_TOKEN"; }; f'
-git -c credential.helper="$helper" fetch -q --depth 1 origin "$2:` + checkoutHeadRef + `"
+git -c credential.helper="$helper" fetch -q origin "$2:` + checkoutHeadRef + `"
 git checkout -q --detach ` + checkoutHeadRef + `
 if [ -n "$3" ]; then
-  git -c credential.helper="$helper" fetch -q --depth 1 origin "refs/heads/$3:` + CheckoutBaseRef + `" || true
+  if git -c credential.helper="$helper" fetch -q origin "refs/heads/$3:` + checkoutBaseTipRef + `"; then
+    if base=$(git merge-base HEAD ` + checkoutBaseTipRef + `); then
+      git update-ref ` + CheckoutBaseRef + ` "$base"
+    else
+      git update-ref ` + CheckoutBaseRef + ` ` + checkoutBaseTipRef + `
+      : > .git/` + checkoutNoMergeBase + `
+    fi
+  fi
 fi
 `
 
@@ -126,8 +145,8 @@ type Checkout struct {
 	Timeout time.Duration
 }
 
-// Run clones ref's head into dir, creating it, with the tip of the base
-// branch named base fetched beside it as CheckoutBaseRef, or the head
+// Run clones ref's head into dir, creating it, with its merge base with
+// the base branch named base as CheckoutBaseRef, or the head
 // alone when base is "". An error is a checkout that could not be made:
 // no docker, an image that did not build, a clone that failed; dir is
 // removed again, so nothing is left of a checkout that is not one, and
@@ -258,19 +277,19 @@ func (c *Checkout) clone(ctx context.Context, docker, image string, ref Ref, bas
 }
 
 // checkoutDiff is the pull request's diff as the checkout in dir has it:
-// what changed between the base branch's tip, CheckoutBaseRef, and the
-// head that is checked out, as a plain diff of the two trees. Read here,
+// what changed between CheckoutBaseRef, the merge base of the head and the
+// base branch, and the head that is checked out, the diff GitHub shows.
+// A checkout whose head and base had no merge base is read against the
+// base branch's tip, and the note says so; it is "" otherwise. Read here,
 // on the host and with the host's git, the diff has no limit on the number
 // of files it may touch, which the one gh reads from GitHub has.
-//
-// It is an approximation of the diff GitHub shows, which is the head
-// against the merge base of the two: the checkout is two shallow tips
-// with no history between them to find a merge base in, so a base branch
-// that has moved on since the pull request forked from it shows its own
-// later changes here, reversed, as if the pull request undid them. That
-// is the best-effort reading every source's gathering makes, and a
-// pull request kept up with its base has no such difference.
-func checkoutDiff(ctx context.Context, dir string) (string, error) {
-	out, _, err := gitRun(ctx, dir, "diff", "--no-color", "--no-ext-diff", CheckoutBaseRef, "HEAD")
-	return out, err
+func checkoutDiff(ctx context.Context, dir string) (diff, note string, err error) {
+	diff, _, err = gitRun(ctx, dir, "diff", "--no-color", "--no-ext-diff", CheckoutBaseRef, "HEAD")
+	if err != nil {
+		return "", "", err
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, ".git", checkoutNoMergeBase)); statErr == nil {
+		note = "the head and the base branch have no merge base; the diff is against the base branch's tip"
+	}
+	return diff, note, nil
 }

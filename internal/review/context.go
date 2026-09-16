@@ -112,8 +112,11 @@ func (in *Input) Diff(ctx context.Context) (string, error) {
 	in.gotDiff = true
 	var fromCheckout error
 	if in.Checkout != "" {
-		diff, err := checkoutDiff(ctx, in.Checkout)
+		diff, note, err := checkoutDiff(ctx, in.Checkout)
 		if err == nil {
+			if note != "" {
+				in.Skip("%s: %s", SourceDiff, note)
+			}
 			in.diff = diff
 			return in.diff, nil
 		}
@@ -161,8 +164,8 @@ type Pipeline struct {
 	// source reads; a source the project declares with files of its own is
 	// gathered without one.
 	Collectors []Collector
-	// Checkout clones the pull request's head, with its base branch's tip
-	// beside it, into the artifact directory Gather is given (checkout.go):
+	// Checkout clones the pull request's head, with its merge base with
+	// the base branch beside it, into the artifact directory Gather is given (checkout.go):
 	// the diff source reads the diff from that clone, and the angles run in
 	// it afterwards (Angles.Run). It is nil to attempt none, and the diff
 	// is then read through gh.
