@@ -494,7 +494,9 @@ set, one developer pool of that size.
 `bees run` selects this mode from the active config. Without `--once`, the
 machine stays alive until interrupted, even if all its projects fail.
 SIGHUP validates and reconciles the project list: additions start, removals
-drain their in-flight work, and unchanged projects keep their schedulers.
+drain their in-flight work, and unchanged projects keep their schedulers and
+are handed their `bees.toml` read again (`Scheduler.Reload`, in force from
+the next pass; the live view's `r` key runs the same reload).
 SIGTERM drains every project, including those already being removed; a
 second interrupt hard-stops their sessions. See
 [Running in the background](cli.md#running-in-the-background) for pid and log

@@ -94,7 +94,8 @@ ways to run the factory.
   bee posts on GitHub is to a person, and ends with an invisible marker. See
   [The mailbox](docs/architecture.md#the-mailbox).
 - **Several projects per process.** A machine config lists each project's
-  `bees.toml`. `bees run -d` runs in the background; SIGHUP reloads the list.
+  `bees.toml`. `bees run -d` runs in the background; SIGHUP reloads the list
+  and every project's `bees.toml`.
   See [Running in the background](docs/cli.md#running-in-the-background).
 - **A config per project.** `bees.toml` holds project settings, the visibility filter,
   scheduler limits, agent profiles, and global and per-role prompt/skills/MCP
