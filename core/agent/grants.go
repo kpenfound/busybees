@@ -96,6 +96,9 @@ type Turn struct {
 	// Binds are everything a container session sees of the host; nil for
 	// a host session.
 	Binds []Bind
+	// Confinement is what the operating system enforces for a confined host
+	// session; nil for any other.
+	Confinement *Confinement
 }
 
 // Bind is one host path a container sees, at Destination inside it.
@@ -105,7 +108,15 @@ type Bind struct {
 	Access      Access
 }
 
-// HostBoundary runs a session as a process of this host.
+// HostBoundary runs a session as a process of this host. It has two modes.
+// By default the host enforces nothing of the mounts, so Verify asks for the
+// grants that say so: "/" read-write and VCS without a sandbox, "/" read-only
+// and a writable working directory under SandboxClaude. A profile with Confine
+// set is held to its grants by the operating system instead: it reads the
+// granted mounts and SystemPaths and nothing else, its working directory may
+// be read-only, and without VCS the VCS executables cannot be read or run
+// under any path. Neither host sandbox needs "/" for it, and where nothing
+// can enforce it the request is refused with ErrUnsupported.
 type HostBoundary struct {
 	// Environ is the host environment; nil reads os.Environ.
 	Environ func() []string
@@ -113,6 +124,18 @@ type HostBoundary struct {
 	StripPrefix string
 	// AddDirs are directories the agent is told it may write.
 	AddDirs []string
+	// Confiner enforces a confined turn; nil selects this platform's, which
+	// is Landlock on Linux and none anywhere else.
+	Confiner Confiner
+	// SystemPaths are what a confined turn reaches beyond its mounts; nil
+	// selects DefaultSystemPaths.
+	SystemPaths []Mount
+	// SessionsDir is where a session directory is created for a request
+	// that names none. A confined turn must be granted it.
+	SessionsDir string
+	// SkillDirs hold the prepared skills; a confined turn with skills must
+	// be granted them.
+	SkillDirs []string
 }
 
 // Verify checks the request and builds the host turn. It fails closed: a
@@ -125,8 +148,13 @@ func (h HostBoundary) Verify(req Request) (*Turn, error) {
 	}
 	p := req.Profile
 	root := findMount(turn.Mounts, string(filepath.Separator))
-	switch p.Sandbox {
-	case "", SandboxNone:
+	switch {
+	case p.Sandbox != "" && p.Sandbox != SandboxNone && p.Sandbox != SandboxClaude:
+		return nil, fmt.Errorf("%w: sandbox %q is not a host sandbox", ErrUnsupported, p.Sandbox)
+	case p.Confine:
+		// The operating system holds the turn to its mounts: checked below,
+		// once the environment the executables are searched in is known.
+	case p.Sandbox != SandboxClaude:
 		// An unsandboxed process reaches everything its user can.
 		if root == nil || root.Access != ReadWrite {
 			return nil, fmt.Errorf("%w: a host session without a sandbox reaches the whole filesystem; grant %q %s", ErrUnsupported, "/", ReadWrite)
@@ -134,7 +162,7 @@ func (h HostBoundary) Verify(req Request) (*Turn, error) {
 		if !turn.VCS {
 			return nil, fmt.Errorf("%w: a host session without a sandbox can write VCS metadata; grant VCS or use sandbox %q", ErrUnsupported, SandboxClaude)
 		}
-	case SandboxClaude:
+	default:
 		// Claude's box reads everywhere and writes the working directory
 		// and the directories it is told about.
 		if root == nil || root.Access != ReadOnly {
@@ -143,8 +171,6 @@ func (h HostBoundary) Verify(req Request) (*Turn, error) {
 		if !writable(turn.Mounts, workDir(req)) {
 			return nil, fmt.Errorf("%w: sandbox %q makes the working directory writable; grant it %s", ErrUnsupported, SandboxClaude, ReadWrite)
 		}
-	default:
-		return nil, fmt.Errorf("%w: sandbox %q is not a host sandbox", ErrUnsupported, p.Sandbox)
 	}
 	var addDirs []string
 	for _, d := range h.AddDirs {
@@ -169,6 +195,11 @@ func (h HostBoundary) Verify(req Request) (*Turn, error) {
 	turn.Env = h.env(req, turn)
 	if !turn.VCS {
 		turn.DeniedExecutables = slices.Clone(VCSExecutables)
+	}
+	if p.Confine {
+		if turn.Confinement, err = h.confinement(req, turn); err != nil {
+			return nil, err
+		}
 	}
 	return turn, nil
 }
@@ -490,7 +521,11 @@ func (r *Runner) boundary(req Request) Boundary {
 		}
 		return b
 	}
-	return HostBoundary{StripPrefix: r.EnvironmentPrefix, AddDirs: r.AddDirs}
+	b := HostBoundary{StripPrefix: r.EnvironmentPrefix, AddDirs: r.AddDirs, Confiner: r.Confiner, SystemPaths: r.SystemPaths, SessionsDir: r.SessionsDir}
+	if r.Skills != nil {
+		b.SkillDirs = r.SkillMountDirs
+	}
+	return b
 }
 
 // Verify checks a request against its grants without starting anything.
