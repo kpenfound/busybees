@@ -122,6 +122,24 @@ See [core/README.md](core/README.md) for the execution boundary.
 
   Run it after changing `core/agent/confine*.go`. It is not a check: the
   gate stays `dagger check`.
+- macOS is a confinement platform too: Seatbelt, through
+  `/usr/bin/sandbox-exec`. `dagger check` tests the profile it is given
+  (`confine_seatbelt_test.go`), and nothing in it can test macOS's
+  enforcement. After changing `core/agent/confine*.go`, check it by hand
+  on a Mac, from `core/`:
+
+  ```sh
+  go run ./agent/testdata/seatbelt-check
+  go run ./agent/testdata/seatbelt-check -sandbox claude
+  go run ./agent/testdata/seatbelt-check -vcs
+  ```
+
+  Each run starts one confined turn whose agent is a shell script. The
+  script reads outside its mounts, writes into its read-only working
+  directory and runs `/usr/bin/git`. The program prints one line per
+  attempt and exits 1 when one was allowed that should have been refused,
+  or refused when it should have been allowed. With `-vcs`, `git` is
+  allowed.
 - `skills.Manager.Git` is replaced with a copy of a fixture directory, so
   every supported repository layout is exercised offline.
 - `install.sh` is checked with `shellcheck -s sh install.sh`. No test runs it,
