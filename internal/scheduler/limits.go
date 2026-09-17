@@ -51,7 +51,7 @@ func (s *Scheduler) recordSessionLimit(res *session.Result) bool {
 		return false
 	}
 	now := s.now()
-	until := pauseUntil(now, resets, s.cfg.Scheduler.RateLimitBackoff.Duration)
+	until := pauseUntil(now, resets, s.config().Scheduler.RateLimitBackoff.Duration)
 	until, started := s.capacity.Extend(now, until)
 	if started {
 		s.log.Warn(fmt.Sprintf("⏸ claude session limit reached; starting no new sessions until %s", until.Local().Format("15:04 MST")),

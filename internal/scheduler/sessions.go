@@ -82,7 +82,10 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (_ *sessio
 			s.publish(ev)
 		}
 	}()
-	role, err := s.cfg.Role(spec.role)
+	// One copy of the configuration for the whole start: a reload landing
+	// between two reads here would hand the session half of each.
+	cfg := s.config()
+	role, err := cfg.Role(spec.role)
 	if err != nil {
 		return nil, err
 	}
@@ -146,16 +149,16 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (_ *sessio
 	}
 
 	d := spec.data
-	d.Project = s.cfg.Project
-	d.Filter = s.cfg.Filter
+	d.Project = cfg.Project
+	d.Filter = cfg.Filter
 	d.Labels = s.labels
-	d.AutoMerge = s.cfg.Merge().AutoMerge
-	d.ReportFactoryErrors = s.cfg.Scheduler.ReportFactoryErrors
-	d.FeatureProposals = s.cfg.Scheduler.Proposals()
-	d.MinIssueSize = s.cfg.MinIssueSize()
-	d.CommitFlags = s.cfg.CommitFlags()
-	d.Notify = s.cfg.Mentions()
-	d.MaxSize = s.cfg.MaxSize()
+	d.AutoMerge = cfg.Merge().AutoMerge
+	d.ReportFactoryErrors = cfg.Scheduler.ReportFactoryErrors
+	d.FeatureProposals = cfg.Scheduler.Proposals()
+	d.MinIssueSize = cfg.MinIssueSize()
+	d.CommitFlags = cfg.CommitFlags()
+	d.Notify = cfg.Mentions()
+	d.MaxSize = cfg.MaxSize()
 	d.WorkDir = spec.workspace.Directory()
 	d.Branch = spec.branch
 	d.StateDir = s.store.Dir
@@ -163,7 +166,7 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (_ *sessio
 	d.Sandbox = role.Sandbox
 	d.ConsolidateNotes, d.ConsolidateReason = s.consolidateNotes(spec.role, int(notesSize))
 	if d.MaxRounds == 0 {
-		d.MaxRounds = s.cfg.Scheduler.MaxReviewRounds
+		d.MaxRounds = cfg.Scheduler.MaxReviewRounds
 	}
 	if sessionWork(spec).Key != "" && spec.attempt == 0 {
 		// What a session that never finished on this issue left behind — a
@@ -304,7 +307,8 @@ func endEvent(spec sessionSpec, res *session.Result) Event {
 // to consolidate its notes, and why. Developer workers run
 // concurrently and share one role state file, so the read is locked.
 func (s *Scheduler) consolidateNotes(role string, notesLen int) (bool, string) {
-	every, maxBytes := s.cfg.Scheduler.NotesConsolidateEvery, s.cfg.Scheduler.NotesMaxBytes
+	cfg := s.config()
+	every, maxBytes := cfg.Scheduler.NotesConsolidateEvery, cfg.Scheduler.NotesMaxBytes
 	s.mu.Lock()
 	rs, err := s.store.Role(role)
 	s.mu.Unlock()
@@ -566,7 +570,7 @@ func (s *Scheduler) sentSinceFrom(from, role string, issue, pr int, t time.Time)
 // once with errSessionLimited, spending no retry attempt, because every
 // attempt and every other role would hit the same wall (see limits.go).
 func (s *Scheduler) runSessionWithRetry(ctx context.Context, spec sessionSpec) (*session.Result, error) {
-	policy := s.cfg.Retry()
+	policy := s.config().Retry()
 	for attempt := 1; ; attempt++ {
 		try := spec
 		if attempt > 1 {
@@ -598,11 +602,11 @@ func (s *Scheduler) runSessionWithRetry(ctx context.Context, spec sessionSpec) (
 		if s.recordSessionLimit(res) && !res.HasOutcome {
 			return res, errSessionLimited
 		}
-		if note, over := overSessionBudget(res, s.cfg.Scheduler.MaxCostPerSession); over {
+		if note, over := overSessionBudget(res, s.config().Scheduler.MaxCostPerSession); over {
 			streak := s.overBudgetStreak(budgetKey(spec), true)
 			s.log.Warn("session over its cost budget; treating it as failed",
 				"role", spec.role, "session", try.name, "cost_usd", res.CostUSD,
-				"max_cost_per_session", s.cfg.Scheduler.MaxCostPerSession, "consecutive", streak)
+				"max_cost_per_session", s.config().Scheduler.MaxCostPerSession, "consecutive", streak)
 			if streak >= overBudgetEscalateAfter || !policy.Decide(attempt, true).Retry {
 				return failedResult(res, overBudgetNote(note, streak, spec.role)), nil
 			}
@@ -615,7 +619,7 @@ func (s *Scheduler) runSessionWithRetry(ctx context.Context, spec sessionSpec) (
 			}
 			continue
 		}
-		if s.cfg.Scheduler.MaxCostPerSession > 0 {
+		if s.config().Scheduler.MaxCostPerSession > 0 {
 			s.overBudgetStreak(budgetKey(spec), false)
 		}
 		kind := ops.ClassifyFailure(res)
@@ -651,7 +655,7 @@ func (s *Scheduler) sessionFailure(role string, res *session.Result, status, not
 	if ops.ClassifyFailure(res) != ops.FailureInfra {
 		return fmt.Sprintf("The %s session ended with `%s`: %s", roleTitle(role), status, note)
 	}
-	attempts := s.cfg.Retry().Retries + 1
+	attempts := s.config().Retry().Retries + 1
 	if attempts == 1 {
 		return fmt.Sprintf("The %s session failed for infrastructure reasons (%s): %s", roleTitle(role), ops.InfraReason(res), note)
 	}

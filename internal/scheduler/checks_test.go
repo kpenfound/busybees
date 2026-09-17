@@ -232,7 +232,7 @@ func TestTheWorkerStageNamesTheGate(t *testing.T) {
 			w := &state.Worker{Name: "dev-1", Stage: "checks", Round: 1, Work: ghwork.New(1, 0)}
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			policy := h.sched.cfg.Merge()
+			policy := h.sched.config().Merge()
 			status, _, gate, err := h.sched.awaitChecks(ctx, fakePR, policy, checksWatch{timeout: policy.ChecksTimeout, stage: "checks"}, w, 1)
 			if err != nil {
 				t.Fatal(err)

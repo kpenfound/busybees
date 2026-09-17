@@ -49,8 +49,9 @@ func (o runOptions) projects(projects []daemon.Project) []daemon.Project {
 }
 
 func runMachine(cmd *cobra.Command, g *globalFlags, m *config.Machine, opts runOptions, noTUI bool) error {
-	build := machineProjectFactory(g, m)
-	d := &daemon.Daemon{Logger: slog.Default(), Projects: opts.projects(build(m))}
+	rt := newMachineRuntime(g, m)
+	build := func(next *config.Machine) []daemon.Project { return opts.projects(rt.projects(next)) }
+	d := &daemon.Daemon{Logger: slog.Default(), Projects: build(m)}
 	ctx, cancel := context.WithCancel(cmd.Context())
 	defer cancel()
 	hup := make(chan os.Signal, 1)
@@ -65,13 +66,18 @@ func runMachine(cmd *cobra.Command, g *globalFlags, m *config.Machine, opts runO
 	if !opts.once {
 		changes := make(chan []daemon.Project)
 		d.Reload = changes
-		go reloadMachine(ctx, hup, changes, m.Path, func(next *config.Machine) []daemon.Project {
-			projects := opts.projects(build(next))
-			if view != nil {
-				projects = view.wrap(next, projects)
-			}
-			return projects
-		}, d.Logger)
+		reloader := &machineReloader{path: m.Path, apply: rt.reloadProjects, changes: changes, log: d.Logger,
+			build: func(next *config.Machine) []daemon.Project {
+				projects := build(next)
+				if view != nil {
+					projects = view.wrap(next, projects)
+				}
+				return projects
+			}}
+		go reloader.serve(ctx, hup)
+		if view != nil {
+			view.reload = func() error { return reloader.reload(ctx) }
+		}
 	}
 	// SIGTERM is registered by main; register SIGHUP before exposing the pid.
 	cleanup, err := registerDaemonChild(filepath.Join(filepath.Dir(m.Path), MachinePIDFile))
@@ -84,27 +90,4 @@ func runMachine(cmd *cobra.Command, g *globalFlags, m *config.Machine, opts runO
 		return runPreparedMachineView(ctx, g, cmd.ErrOrStderr(), d, view)
 	}
 	return d.Run(ctx)
-}
-
-// A malformed reload leaves the entire running set untouched. Only membership
-// is reloaded: unchanged projects keep their config and the original pool.
-func reloadMachine(ctx context.Context, hup <-chan os.Signal, changes chan<- []daemon.Project, path string, build func(*config.Machine) []daemon.Project, log *slog.Logger) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-hup:
-			m, err := config.LoadMachine(path)
-			if err != nil {
-				log.Error("reload machine config", "err", err)
-				continue
-			}
-			select {
-			case changes <- build(m):
-				log.Info("reloaded machine projects", "config", path)
-			case <-ctx.Done():
-				return
-			}
-		}
-	}
 }

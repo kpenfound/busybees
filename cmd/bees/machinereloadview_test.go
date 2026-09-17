@@ -133,7 +133,9 @@ func TestMachineViewReloadReconcilesAndReaddsDuringDrain(t *testing.T) {
 	viewSnapshot(t, v.updates, func(ps []tui.Project) bool { return len(ps) == 2 })
 	hup := make(chan os.Signal)
 	reloadDone := make(chan struct{})
-	go func() { defer close(reloadDone); reloadMachine(ctx, hup, reload, m.Path, build, d.Logger) }()
+	r := &machineReloader{path: m.Path, build: build, changes: reload, log: d.Logger,
+		apply: func(context.Context, *config.Machine) error { return nil }}
+	go func() { defer close(reloadDone); r.serve(ctx, hup) }()
 	write := func(body string) {
 		t.Helper()
 		if err := os.WriteFile(m.Path, []byte(body), 0o644); err != nil {

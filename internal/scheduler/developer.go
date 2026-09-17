@@ -35,7 +35,7 @@ const (
 
 // BranchFor returns the developer branch for an issue.
 func (s *Scheduler) BranchFor(issue int) string {
-	return fmt.Sprintf("%sissue-%d", s.cfg.Project.BranchPrefix, issue)
+	return fmt.Sprintf("%sissue-%d", s.config().Project.BranchPrefix, issue)
 }
 
 // workIssue is the developer worker: it owns one issue from ready (or a
@@ -86,7 +86,7 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 	// this pull request's own review has passed, its approval waits for the
 	// one beneath it (awaitStack), and that stage needs the pull request to
 	// tell a predecessor that merged from one that was abandoned.
-	base := s.cfg.Project.DefaultBranch
+	base := s.config().Project.DefaultBranch
 	var stackedOn int
 	var stackPR *github.PR
 	found := map[int]*github.PR{}
@@ -162,12 +162,13 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 	// are read this way: a pull request a person retargeted at some other
 	// branch is theirs.
 	if pr != nil && stackedOn == 0 {
-		if pred, ok := issueForBranch(s.cfg.Project.BranchPrefix, pr.BaseRefName); ok {
+		if pred, ok := issueForBranch(s.config().Project.BranchPrefix, pr.BaseRefName); ok {
 			return s.escalate(ctx, issue.Number, s.deadStackReason(issue.Number, pr, pred))
 		}
 	}
-	maxRounds := s.cfg.Scheduler.MaxReviewRounds
-	policy := s.cfg.Merge()
+	cfg := s.config()
+	maxRounds := cfg.Scheduler.MaxReviewRounds
+	policy := cfg.Merge()
 	// stage is where the worker is; afterDevelop is where a developer session
 	// leads: the first review (through the pre-review checks), or — when the
 	// developer is fixing failing checks — straight back to the stage that
@@ -202,7 +203,7 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 		// session runs: the one that took the issue over its budget has
 		// finished and its work is on the branch for whoever picks it up.
 		if reason, over := s.overIssueBudget(issue.Number); over {
-			log.Warn("issue over its cost budget", "issue", issue.Number, "max_cost_per_issue", s.cfg.Scheduler.MaxCostPerIssue)
+			log.Warn("issue over its cost budget", "issue", issue.Number, "max_cost_per_issue", s.config().Scheduler.MaxCostPerIssue)
 			return s.escalate(ctx, issue.Number, reason)
 		}
 		switch stage {
@@ -963,7 +964,7 @@ func (s *Scheduler) awaitStack(ctx context.Context, issue github.Issue, pr *gith
 				return true, nil
 			}
 			return false, s.escalate(ctx, issue.Number, fmt.Sprintf("Pull request #%d passed its review, but it is stacked on #%d's pull request #%d, and #%d closed without being approved. Merging #%d now would land it on a branch nobody approved. Reopen #%d, or retarget #%d at `%s` and hand it back.",
-				pr.Number, predecessor, predPR.Number, predecessor, pr.Number, predecessor, pr.Number, s.cfg.Project.DefaultBranch))
+				pr.Number, predecessor, predPR.Number, predecessor, pr.Number, predecessor, pr.Number, s.config().Project.DefaultBranch))
 		}
 		if err := sleepCtx(ctx, policy.ChecksPollInterval); err != nil {
 			return false, err
@@ -978,8 +979,8 @@ func (s *Scheduler) awaitStack(ctx context.Context, issue github.Issue, pr *gith
 // scheduler.stacked_prs off nothing is ever stacked, so the only way back is
 // the default branch.
 func (s *Scheduler) deadStackReason(issue int, pr *github.PR, pred int) string {
-	def := s.cfg.Project.DefaultBranch
-	if !s.cfg.Scheduler.StackedPRs {
+	def := s.config().Project.DefaultBranch
+	if !s.config().Scheduler.StackedPRs {
 		return fmt.Sprintf("Pull request #%d targets `%s`, the branch of #%d, but `scheduler.stacked_prs` is off, so #%d is built from `%s` and nothing is going to merge that branch. Retarget #%d at `%s` and hand #%d back.",
 			pr.Number, pr.BaseRefName, pred, issue, def, pr.Number, def, issue)
 	}
@@ -996,7 +997,7 @@ func (s *Scheduler) approve(ctx context.Context, issue int, pr *github.PR) error
 	// An approved pull request waits for a person to merge it. Requesting a
 	// review is best effort: GitHub refuses one from the PR's own author, and
 	// with a shared account the configured login often is the author.
-	if notify := s.cfg.Scheduler.Notify; len(notify) > 0 {
+	if notify := s.config().Scheduler.Notify; len(notify) > 0 {
 		if err := s.gh.RequestReview(ctx, pr.Number, notify...); err != nil {
 			s.log.Warn("could not request a review on the approved pull request", "pr", pr.Number, "err", err)
 		}
@@ -1039,13 +1040,13 @@ func (s *Scheduler) ensureVisible(ctx context.Context, number int, isPR bool, la
 			errs = append(errs, fmt.Errorf("add the %s label: %w", s.labels.Base, err))
 		}
 	}
-	if a := s.cfg.Filter.Assignee; a != "" && !github.HasAssignee(assignees, a) {
+	if a := s.config().Filter.Assignee; a != "" && !github.HasAssignee(assignees, a) {
 		err := s.gh.Assign(ctx, number, a)
 		if s.track("assign", err) {
 			errs = append(errs, fmt.Errorf("assign it to %s: %w", a, err))
 		}
 	}
-	if m := s.cfg.Filter.Milestone; isPR && m != "" && milestone != m {
+	if m := s.config().Filter.Milestone; isPR && m != "" && milestone != m {
 		err := s.gh.SetMilestone(ctx, number, m)
 		if s.track("milestone", err) {
 			errs = append(errs, fmt.Errorf("put it in milestone %s: %w", m, err))

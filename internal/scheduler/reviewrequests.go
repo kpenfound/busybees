@@ -129,7 +129,7 @@ func (s *Scheduler) dispatchRequestedReviews(ctx context.Context, snap *snapshot
 			// again.
 			if err := s.runRequestedReview(ctx, pr, w); err != nil && s.sessionContext(ctx).Err() == nil {
 				s.log.Error("requested review failed", "pr", pr.Number, "err", err)
-				s.setBackoff(key, 5*s.cfg.Scheduler.PollInterval.Duration)
+				s.setBackoff(key, 5*s.config().Scheduler.PollInterval.Duration)
 			}
 		}(pr, w)
 	}
@@ -153,10 +153,10 @@ func reviewTrigger(requested bool) string {
 // cannot answer it: bees and people share one GitHub account unless
 // [github] is set.
 func (s *Scheduler) assignedForReview(pr github.PR) bool {
-	if !s.cfg.Scheduler.ReviewAssignedPRs || pr.IsDraft {
+	if !s.config().Scheduler.ReviewAssignedPRs || pr.IsDraft {
 		return false
 	}
-	if strings.HasPrefix(pr.HeadRefName, s.cfg.Project.BranchPrefix) {
+	if strings.HasPrefix(pr.HeadRefName, s.config().Project.BranchPrefix) {
 		return false
 	}
 	// A head with no SHA says nothing about whether this change has been
@@ -200,7 +200,7 @@ func (s *Scheduler) runRequestedReview(ctx context.Context, pr github.PR, w *sta
 	ws, err := s.ws.Acquire(ctx, vcs.Request{Name: w.Name, Ref: pr.HeadRefName})
 	if err != nil {
 		log.Warn("head branch is not on the remote; reviewing from the default branch", "err", err)
-		if ws, err = s.ws.Acquire(ctx, vcs.Request{Name: w.Name, Ref: s.cfg.Project.DefaultBranch}); err != nil {
+		if ws, err = s.ws.Acquire(ctx, vcs.Request{Name: w.Name, Ref: s.config().Project.DefaultBranch}); err != nil {
 			return fmt.Errorf("workspace: %w", err)
 		}
 	}

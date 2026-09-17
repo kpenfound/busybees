@@ -604,14 +604,20 @@ bees machine reload -c ~/.config/bees/machine.toml
 bees machine stop -c ~/.config/bees/machine.toml
 ```
 
-SIGHUP in machine mode rereads the project list. Added projects start;
-removed projects stop polling and finish their work in flight. Unchanged
-projects keep running with their existing configuration and concurrency pool.
-Re-adding a project while it drains waits for that scheduler to finish before
-starting another. A malformed config leaves the running set untouched and
-logs the error. Restart to apply edits to unchanged projects or the machine's
+SIGHUP in machine mode rereads the machine config and every listed project's
+`bees.toml`. Added projects start; removed projects stop polling and finish
+their work in flight; a project that stays is handed its `bees.toml` read
+again, in force from its scheduler's next pass, the way `r` in
+[the live view](#the-live-view) does for one project, and keeps the shared
+concurrency pool. Re-adding a project while it drains waits for that
+scheduler to finish before starting another. The reload is all or nothing: a
+malformed machine config, a project file that does not load, or one that
+changes a key its running scheduler cannot (the list under the live view's
+keys) leaves every project and the project list untouched and logs the
+error naming the file. Restart to apply those keys or the machine's
 `max_developers`. `--once` exits after every project's one pass and ignores
-reloads. Foreground machine runs accept the same signals.
+reloads. Foreground machine runs accept the same signals, and their live view
+runs the same reload on `r`.
 
 The live selector follows successful reloads in config order, keeping the
 selected project and its accumulated state. Removed projects stay in the
@@ -668,8 +674,8 @@ child publishes its PID and lock ownership, they ask you to retry.
 
 Sends SIGHUP through the same pidfile. A missing daemon is an error. Success
 means the reload was requested; check the daemon log for the result. The
-daemon rereads and reconciles the project list as described under
-[Running in the background](#running-in-the-background). Stop and reload
+daemon rereads the project list and every project's `bees.toml` as described
+under [Running in the background](#running-in-the-background). Stop and reload
 need the active file to identify a machine config, but do not load its
 project files, so a removed project config does not block control.
 
@@ -718,7 +724,7 @@ busybees  acme/widgets                                                          
 │ unread mail   product manager 1, developer 2                                                     │
 │ next poll     in 2m30s                                                                           │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
-↑↓ select · enter watch · o open on GitHub · k stop session · p pause · q or ctrl-c stops (sessions finish)
+↑↓ select · enter watch · k stop session · p pause · r reload · q or ctrl-c stops (sessions finish)
 ```
 
 **Now** lists running sessions and review-pipeline activity. Sessions show
@@ -787,6 +793,7 @@ The keys:
 | `o` | Open the selected issue or pull request on GitHub. |
 | `k` | Stop the selected session and hand its issue to a person. It asks first, naming the session: press `k` again to stop the one it named. |
 | `p` | Pause dispatch, or resume it. Unavailable while the daily budget pause is in force. |
+| `r` | Reload the configuration from disk: `bees.toml`, or a machine config and every project's `bees.toml`. Running sessions keep the settings they started with. |
 | `q`, `ctrl-c` | Stop the factory: nothing new starts and the work in flight finishes. Press again to stop the running sessions now, and a third time to leave the terminal early. |
 
 `q` and Ctrl-C stop the factory exactly as an interrupt does without the
@@ -828,12 +835,63 @@ The session's own worker ends without retrying it. A singleton session
 session and nothing more. Nothing is recorded as run either, so a singleton
 the factory still has work for starts again on the next pass.
 
+`r` reads the configuration again from disk and hands it to the running
+factory, so a profile, a timeout or a budget can be changed without a
+restart. For one project that is its `bees.toml`; for a machine run it is
+what SIGHUP does (see [Running in the background](#running-in-the-background)):
+the machine config, every running project's `bees.toml` and the project
+list. The new settings are in force from the scheduler's next pass, which the
+reload asks for at once: the next session dispatched runs on them, and a
+session already running keeps the model, timeout and prompt it was started
+with. The footer says what came of the reload and the header keeps the time
+of the last one, marked when it was refused. A refused reload changes
+nothing: a file that does not load, or one that changes a key the running
+factory cannot, leaves the previous configuration in force, and the footer
+gives the reason and the file, wrapped over as many lines as it takes:
+
+```
+reload refused, previous configuration kept: project.state_dir cannot change while the factory runs
+(/home/me/widgets/bees.toml); restart bees run to apply it
+```
+
+A `--once` run has no next pass: its view does not reload and its footer
+does not offer `r`.
+
+These keys cannot change while the factory runs, because what they configure
+was built when it started; a reload that changes one is refused naming it,
+and applying it takes a restart:
+
+| Key | Built at start |
+|---|---|
+| `project.repo`, `project.dir`, `project.remote` | the GitHub client, the clone the worktrees are made from |
+| `project.state_dir` | the state directory: mailbox, notes, sessions, ledger |
+| `project.branch_prefix` | the branch every worker and open pull request is found by |
+| `filter.*` | the poll query and the labels |
+| `[github]` | the account the factory acts as |
+| `[notes]` | the notes backend |
+| `[logging]` | the console logger |
+| `scheduler.max_developers`, `scheduler.workspace_root`, `scheduler.keep_workspaces` | the developer slots and the worktree manager |
+| `global.skills_refresh` | the skills cache |
+
+Everything else takes effect on the next pass. The machine config's own
+`max_developers` is the shared pool and is not reloaded either.
+
 The view wants about 30 rows to show every panel at once. In a shorter
 terminal the lists shrink first, each keeping one row and saying how many
 entries did not fit; when even that will not fit, whole panels go, from the
 bottom up — Approved PRs first, then Needs human, then Recent. The header,
 Now, Queues and the footer are the last things to go, and Queues goes on
 counting whatever the panels below it stopped listing.
+
+The footer's hints are one line. A terminal too narrow for all of them goes
+without the ones that only move around the view, in this order: `o`, `↑↓`,
+`enter`, `←→`. The keys that change what the factory does (`k`, `p`, `r`,
+`q`) stay. The example above is 100 columns wide, so it has no `o GitHub`;
+from 111 columns the footer reads:
+
+```
+↑↓ select · enter watch · o GitHub · k stop session · p pause · r reload · q or ctrl-c stops (sessions finish)
+```
 
 Whenever dispatch is paused, the header says so and why, next to the clock —
 so a factory sitting on a full queue with an empty Now panel does not read as

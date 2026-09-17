@@ -90,7 +90,7 @@ func (s *Scheduler) workSpend(ref work.Ref) (float64, int, error) {
 // nobody can vouch for, so the worker stops and the text says what could
 // not be read.
 func (s *Scheduler) overIssueBudget(issue int) (string, bool) {
-	budget := s.cfg.Scheduler.MaxCostPerIssue
+	budget := s.config().Scheduler.MaxCostPerIssue
 	if budget <= 0 {
 		return "", false
 	}
@@ -120,7 +120,7 @@ func (s *Scheduler) overIssueBudget(issue int) (string, bool) {
 // A session that reported no cost counts as a session and adds nothing to
 // the sum, and the sum is reported with how many of those it leaves out.
 func (s *Scheduler) checkDayBudget() {
-	budget := s.cfg.Scheduler.MaxCostPerDay
+	budget := s.config().Scheduler.MaxCostPerDay
 	if budget <= 0 {
 		return
 	}
@@ -142,7 +142,7 @@ func (s *Scheduler) checkDayBudget() {
 		s.log.Info("▶ the ledger reads again; the daily cost budget decides dispatch", logging.SummaryKey, true)
 	}
 	s.mu.Lock()
-	signal := ops.EvaluateWindow(entries, now, dayWindow, budget, s.cfg.Scheduler.MaxCostPerDayResumePercent, s.dayPaused)
+	signal := ops.EvaluateWindow(entries, now, dayWindow, budget, s.config().Scheduler.MaxCostPerDayResumePercent, s.dayPaused)
 	spent, resume, paused := signal.Spent, signal.Resume, signal.Reached
 	hadUnknown := s.dayUnknown > 0
 	s.dayPaused, s.daySpend, s.dayUnknown = paused, spent, signal.Unknown
@@ -253,7 +253,7 @@ func (s *Scheduler) budgetStatus(st *state.Status) {
 	st.BudgetPaused = s.dayPaused
 	st.ManualPaused = s.manualPaused
 	st.DaySpendUSD = s.daySpend
-	st.DayBudgetUSD = s.cfg.Scheduler.MaxCostPerDay
+	st.DayBudgetUSD = s.config().Scheduler.MaxCostPerDay
 	st.DayUnknownSessions = s.dayUnknown
 	if s.ledgerErr != nil {
 		st.LedgerError = oneLine(s.ledgerErr.Error(), escalationNoteLimit)

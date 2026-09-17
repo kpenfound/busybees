@@ -81,7 +81,7 @@ func (s *Scheduler) fillWaiting(ctx context.Context, snap *snapshot, byNumber ma
 			}
 		}
 		w := waitingOn(i, snap.open)
-		if len(w) > 0 && s.cfg.Scheduler.StackedPRs {
+		if len(w) > 0 && s.config().Scheduler.StackedPRs {
 			w = s.notStacked(ctx, snap, i, w)
 		}
 		if len(w) > 0 {
@@ -126,7 +126,7 @@ func (s *Scheduler) notStacked(ctx context.Context, snap *snapshot, issue github
 // never a predecessor, whatever its issue's state: a merged branch is in
 // the default branch already and may have been deleted since.
 func (s *Scheduler) stackPredecessor(ctx context.Context, issue github.Issue, hasOpenPR func(n int) bool) int {
-	if !s.cfg.Scheduler.StackedPRs {
+	if !s.config().Scheduler.StackedPRs {
 		return 0
 	}
 	var parent *github.Parent

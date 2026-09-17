@@ -39,7 +39,7 @@ const filedByABee = "Filed automatically by a bee factory's feedback loop."
 // whose GitHub call fails stays queued for the next pass, and the drafts
 // after it are still filed: one broken report must not hold up the rest.
 func (s *Scheduler) drainFeedbackQueue(ctx context.Context) {
-	if !s.cfg.Scheduler.ReportFactoryErrors {
+	if !s.config().Scheduler.ReportFactoryErrors {
 		return
 	}
 	q := feedback.Open(s.store.FeedbackDir())

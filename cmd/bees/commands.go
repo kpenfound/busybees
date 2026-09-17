@@ -391,7 +391,8 @@ now.
 
 The active config selects one project or every project a machine config lists.
 -d/--daemon backgrounds either mode and prints the child pid. SIGTERM drains
-the work in flight; SIGHUP reloads a machine config's project list.
+the work in flight; SIGHUP reloads a machine config's project list and every
+project's bees.toml. In the live view, r reloads the configuration the same way.
 
 In a terminal it draws a live view of the factory — what is running now and
 what is queued — and logs to ` + "`<state_dir>/bees.log`" + ` instead of the console.

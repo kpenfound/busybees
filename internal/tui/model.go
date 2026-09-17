@@ -66,6 +66,15 @@ type Deps struct {
 	// "queued for the next session" and means it. Nil means the view cannot
 	// send anything and does not offer to.
 	Send func(to string, issue, pr int, subject, body string) error
+	// Reload reads the configuration again from disk and hands it to the
+	// running factory: a project's bees.toml, or a daemon's machine config
+	// and every project's bees.toml, exactly as SIGHUP does. It returns
+	// why the reload was refused — a file that does not load, a key that
+	// cannot change while the factory runs — and then nothing has changed.
+	// It may take a moment (it reads git, and a machine config every
+	// project), so the view runs it off its own goroutine. Nil means the
+	// view cannot reload anything and says so.
+	Reload func() error
 	// Repo is the repository the factory is building, for the header and
 	// for the GitHub links every row can be opened at.
 	Repo string
@@ -207,10 +216,23 @@ type Model struct {
 	notice      string
 	cursor      int
 	confirmKill sessionRef
+	// reload is the last reload of the configuration and how it went, for
+	// the header; reloading says one is in progress, so a second r while
+	// it runs starts no other.
+	reload    reloadState
+	reloading bool
 	// paused is whether p has paused dispatch (Deps.SetPaused). The view is
 	// the only thing that changes it, so it is kept here rather than read
 	// back from status.json, which lags a pass behind.
 	paused bool
+}
+
+// reloadState is what the header says about the configuration: when it
+// was last reloaded, and whether that reload was refused — in which case
+// the configuration in force is still the one before it.
+type reloadState struct {
+	at  time.Time
+	err string
 }
 
 // New builds the model. Nothing is read and no goroutine is started until
@@ -256,6 +278,13 @@ type turnsMsg map[sessionRef]int
 // actedMsg is what a key that did something outside the model reports back:
 // the empty string when it worked, and what went wrong when it did not.
 type actedMsg struct{ note string }
+
+// reloadedMsg is what the r key reports back: when the reload finished and
+// why it was refused, nil when it was not.
+type reloadedMsg struct {
+	at  time.Time
+	err error
+}
 
 // tickMsg redraws the view, so elapsed times and the countdown to the next
 // poll advance between events.
@@ -395,6 +424,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.waitForEvent(msg.project), m.refresh(msg.project))
 	case actedMsg:
 		m.notice = msg.note
+	case reloadedMsg:
+		m.reloading = false
+		m.reload = reloadState{at: msg.at}
+		m.notice = "configuration reloaded"
+		if msg.err != nil {
+			m.reload.err = reasons(msg.err)
+			m.notice = "reload refused, previous configuration kept: " + m.reload.err
+		}
+		// The reload may have changed what the scheduler is about to do;
+		// the numbers it writes are the first place that shows.
+		return m, m.refreshAll()
 	case statusMsg:
 		p := m.projects[msg.project]
 		if p == nil {
@@ -473,7 +513,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // first, the way Ctrl-C does: it is the one key here that throws work away,
 // so it asks about the selected session and then stops the one it named
 // (see kill). p pauses or resumes dispatch across the whole factory (see
-// togglePause). The session view has its own keys (sessionKey), j and k among them —
+// togglePause), and r reloads the configuration from disk (see
+// reloadConfig). The session view has its own keys (sessionKey), j and k among them —
 // they scroll a transcript there, which is where vim keys belong.
 func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	k := msg.String()
@@ -534,8 +575,36 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.kill()
 	case "p":
 		return m.togglePause()
+	case "r":
+		return m.reloadConfig()
 	}
 	return m, nil
+}
+
+// reloadConfig reads the configuration again from disk and hands it to the
+// factory (Deps.Reload), in the background: the read resolves the
+// repository through git and the view must keep drawing while it does. The
+// footer says it is happening, and then what came of it; the header keeps
+// the last reload's time and whether it was refused (see notices). Nothing
+// already running changes either way: a session keeps the settings it was
+// started with, and a refused reload leaves the previous configuration in
+// force.
+func (m Model) reloadConfig() (tea.Model, tea.Cmd) {
+	switch {
+	case m.deps.Reload == nil:
+		m.notice = "this view cannot reload the configuration"
+		return m, nil
+	case m.reloading:
+		m.notice = "reloading the configuration"
+		return m, nil
+	}
+	m.reloading = true
+	m.notice = "reloading the configuration"
+	reload, now := m.deps.Reload, m.deps.Now
+	return m, func() tea.Msg {
+		err := reload()
+		return reloadedMsg{at: now(), err: err}
+	}
 }
 
 // togglePause pauses dispatch, or resumes it, across the whole factory. It is
@@ -583,10 +652,19 @@ func (m Model) pauseHint() string {
 	case m.deps.SetPaused == nil, m.budgetPaused():
 		return ""
 	case m.paused:
-		return "p resume · "
+		return "p resume"
 	default:
-		return "p pause · "
+		return "p pause"
 	}
+}
+
+// reloadHint is the footer's hint for r, "" when the view cannot reload
+// (Deps.Reload is nil: a --once run).
+func (m Model) reloadHint() string {
+	if m.deps.Reload == nil {
+		return ""
+	}
+	return "r reload"
 }
 
 // openOnGitHub shows the selected row's issue or pull request on GitHub.
@@ -956,8 +1034,9 @@ func (m Model) layout() layout {
 	l.rows = make([]int, len(want))
 	// The header, the footer and the Queues panel are always drawn. A list
 	// panel spends three lines on its border and its title and a fourth on
-	// its column header — or, when it has nothing in it, on saying so.
-	fixed := 2 + strings.Count(l.queues, "\n") + 1
+	// its column header — or, when it has nothing in it, on saying so. The
+	// footer is one line unless a notice needs more (see footerLines).
+	fixed := 1 + len(m.footerLines(l.width)) + strings.Count(l.queues, "\n") + 1
 	for l.drawn = len(want); l.drawn > 0; l.drawn-- {
 		avail, floor := m.rows()-fixed-4*l.drawn, 0
 		for _, n := range want[:l.drawn] {
@@ -992,7 +1071,14 @@ func (m Model) View() string {
 		at += l.entries(i, want[i])
 	}
 	b.WriteString(l.queues + "\n")
-	b.WriteString(hintStyle.Render(m.footer()))
+	// Never wider than the terminal: a footer the terminal wrapped itself
+	// would cost the header (see layout, which counts these lines).
+	for i, line := range m.footerLines(l.width) {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(hintStyle.Render(line))
+	}
 	return b.String()
 }
 
@@ -1055,16 +1141,125 @@ func (m Model) footer() string {
 	if m.notice != "" {
 		return m.notice
 	}
-	hints := ""
+	return joinHints(m.hints())
+}
+
+// hint is one key the footer advertises. drop orders the hints a footer too
+// narrow for all of them goes without, lowest first; zero is never dropped.
+type hint struct {
+	text string
+	drop int
+}
+
+// hintSeparator is what stands between two hints.
+const hintSeparator = " · "
+
+func joinHints(hints []hint) string {
+	texts := make([]string, len(hints))
+	for i, h := range hints {
+		texts[i] = h.text
+	}
+	return strings.Join(texts, hintSeparator)
+}
+
+// hints is every key the footer advertises, in the order it draws them. The
+// keys that change what the factory does (k, p, r, q) are never dropped;
+// the ones that only move around the view go first when the terminal is
+// too narrow for all of them, and the keys table in docs/cli.md has them
+// all.
+func (m Model) hints() []hint {
+	var out []hint
 	if m.multi() {
-		hints = "←→ project · "
+		out = append(out, hint{"←→ project", 4})
 	}
-	if slices.ContainsFunc(m.shownSessions(), func(s running) bool { return s.activity == nil }) {
-		return hints + "↑↓ select · enter watch · o open on GitHub · k stop session · " + m.pauseHint() + "q or ctrl-c stops (sessions finish)"
+	out = append(out, hint{"↑↓ select", 2})
+	// enter and k both act on a running session: neither is offered while
+	// there is none in view.
+	session := slices.ContainsFunc(m.shownSessions(), func(s running) bool { return s.activity == nil })
+	if session {
+		out = append(out, hint{"enter watch", 3})
 	}
-	// enter and k both act on a running session, and there are none in
-	// view.
-	return hints + "↑↓ select · o open on GitHub · " + m.pauseHint() + "q or ctrl-c stops (sessions finish)"
+	out = append(out, hint{"o GitHub", 1})
+	if session {
+		out = append(out, hint{"k stop session", 0})
+	}
+	for _, text := range []string{m.pauseHint(), m.reloadHint()} {
+		if text != "" {
+			out = append(out, hint{text, 0})
+		}
+	}
+	return append(out, hint{"q or ctrl-c stops (sessions finish)", 0})
+}
+
+// maxNoticeLines is how many lines a notice may take in the footer: enough
+// for why a reload of several projects was refused, and few enough that
+// the Now panel keeps its rows.
+const maxNoticeLines = 6
+
+// footerLines is the footer as it is drawn in w columns. The hints and the
+// stopping notice are one line: hints that do not fit are dropped in their
+// drop order, and what still does not fit is cut. A notice is wrapped over
+// as many lines as it needs, up to maxNoticeLines, because it is the one
+// place an answer is given — why a reload was refused names a key and a
+// file, and a line cut at the terminal's edge would lose one of them.
+func (m Model) footerLines(w int) []string {
+	if s := m.stoppingNotice(); s != "" {
+		return []string{clip(s, w)}
+	}
+	if m.notice != "" {
+		return wrap(m.notice, w, maxNoticeLines)
+	}
+	hints := m.hints()
+	for lipgloss.Width(joinHints(hints)) > w {
+		at := -1
+		for i, h := range hints {
+			if h.drop > 0 && (at < 0 || h.drop < hints[at].drop) {
+				at = i
+			}
+		}
+		if at < 0 {
+			break
+		}
+		hints = slices.Delete(hints, at, at+1)
+	}
+	return []string{clip(joinHints(hints), w)}
+}
+
+// wrap breaks s at its spaces into lines of at most w columns, and at most
+// max of them: what is left over stays on the last line, cut to fit. A word
+// wider than a line is cut too.
+func wrap(s string, w, max int) []string {
+	var lines []string
+	line := ""
+	for _, word := range strings.Fields(s) {
+		switch {
+		case line == "":
+			line = word
+		case len(lines) == max-1, lipgloss.Width(line)+1+lipgloss.Width(word) <= w:
+			line += " " + word
+		default:
+			lines = append(lines, line)
+			line = word
+		}
+	}
+	lines = append(lines, line)
+	for i := range lines {
+		lines[i] = clip(lines[i], w)
+	}
+	return lines
+}
+
+// reasons renders why something was refused on one line: an error joined
+// from several (one per project of a machine reload) keeps them all,
+// separated, rather than running them together.
+func reasons(err error) string {
+	var parts []string
+	for _, line := range strings.Split(err.Error(), "\n") {
+		if line = oneLine(line); line != "" {
+			parts = append(parts, line)
+		}
+	}
+	return strings.Join(parts, "; ")
 }
 
 // panel draws one titled box around w columns of text, with its title and

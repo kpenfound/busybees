@@ -85,7 +85,8 @@ either kind. A command that works on one project refuses a machine config
 with an error saying which kind of file it found.
 
 You edit the file by hand. `bees run --config /path/to/machine.toml` runs
-every listed project. Add `-d` to detach; SIGHUP reloads the project list.
+every listed project. Add `-d` to detach; SIGHUP reloads the project list and
+every project's `bees.toml`.
 See [Running in the background](cli.md#running-in-the-background).
 
 ## `version`
@@ -1137,8 +1138,10 @@ session with an error naming the path or the build command, not a
 
 Only the contents of `prompt_file` are re-read for every session. Everything
 else, `prompt` included, comes from the `bees.toml` that `bees run` loaded when
-it started, so an edit reaches no session until the scheduler is restarted.
-The built-in role prompts are compiled into the `bees` binary and need a
+it started or last reloaded: `r` in [the live view](cli.md#the-live-view), or
+SIGHUP for a machine run, reads the file again and the next session dispatched
+runs on it; a few keys, listed there, take a restart. The built-in role
+prompts are compiled into the `bees` binary and need a
 rebuild as well as a restart. `bees status` names the build the running
 scheduler was started from, and [`bees doctor`](cli.md#bees-doctor) warns when
 that build is behind the commit the repository has checked out.

@@ -25,14 +25,15 @@
 // from the event stream or from disk: status.json, the mailbox and the
 // per-session transcript.jsonl. Beyond the two stop keys (q and Ctrl-C,
 // which cancel the factory's context and, pressed again, call HardStop), it
-// asks the factory to *do* only three things: stop a session, on the k key,
+// asks the factory to *do* only four things: stop a session, on the k key,
 // and queue a message for the next one, on m — through the row's own
 // project's Kill and Send (Deps.Kill and Deps.Send for a single-project
-// view, Project.Kill and Project.Send for a daemon's) — and pause or resume
-// dispatch across the whole factory, on p (Deps.SetPaused). It is drawn
-// only when `bees run` owns a terminal — `bees run --no-tui`, a redirected
-// stdout and `bees tick` log instead, and their output is exactly what it
-// was before there was a view.
+// view, Project.Kill and Project.Send for a daemon's) — pause or resume
+// dispatch across the whole factory, on p (Deps.SetPaused), and reload the
+// configuration from disk, on r (Deps.Reload). It is drawn only when
+// `bees run` owns a terminal — `bees run --no-tui`, a redirected stdout and
+// `bees tick` log instead, and their output is exactly what it was before
+// there was a view.
 package tui
 
 import (

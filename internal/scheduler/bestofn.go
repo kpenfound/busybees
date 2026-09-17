@@ -108,7 +108,7 @@ func (s *Scheduler) attemptsFor(issue github.Issue, snap *snapshot) int {
 // poolSize is the most slots one claim can ever get: max_developers, or the
 // shared pool's size when that is smaller (SharedPool).
 func (s *Scheduler) poolSize() int {
-	n := s.cfg.Scheduler.MaxDevelopers
+	n := s.config().Scheduler.MaxDevelopers
 	if s.shared != nil && s.shared.Pool().Size() < n {
 		return s.shared.Pool().Size()
 	}
@@ -219,9 +219,9 @@ type attempt struct {
 func (s *Scheduler) runAttempts(ctx context.Context, f fanOut) ([]attempt, []vcs.Workspace, error) {
 	if configured := s.configuredAttempts(f.issue); configured > f.attempts {
 		if f.experts != nil {
-			f.log.Warn("mixture of experts clamped to max_developers", "issue", f.issue.Number, "size", s.sizeOf(f.issue.Labels), "experts", configured, "max_developers", s.cfg.Scheduler.MaxDevelopers, "pool", s.poolSize(), "attempts", f.attempts)
+			f.log.Warn("mixture of experts clamped to max_developers", "issue", f.issue.Number, "size", s.sizeOf(f.issue.Labels), "experts", configured, "max_developers", s.config().Scheduler.MaxDevelopers, "pool", s.poolSize(), "attempts", f.attempts)
 		} else {
-			f.log.Warn("best-of-N clamped to max_developers", "issue", f.issue.Number, "size", s.sizeOf(f.issue.Labels), "best_of_n", configured, "max_developers", s.cfg.Scheduler.MaxDevelopers, "pool", s.poolSize(), "attempts", f.attempts)
+			f.log.Warn("best-of-N clamped to max_developers", "issue", f.issue.Number, "size", s.sizeOf(f.issue.Labels), "best_of_n", configured, "max_developers", s.config().Scheduler.MaxDevelopers, "pool", s.poolSize(), "attempts", f.attempts)
 		}
 	}
 	if f.experts != nil {
@@ -297,7 +297,7 @@ func (s *Scheduler) configuredAttempts(issue github.Issue) int {
 	if experts := s.expertsFor(issue); experts != nil {
 		return len(experts)
 	}
-	role, err := s.cfg.Role(config.RoleDeveloper)
+	role, err := s.config().Role(config.RoleDeveloper)
 	if err != nil {
 		return 1
 	}
@@ -308,7 +308,7 @@ func (s *Scheduler) configuredAttempts(issue github.Issue) int {
 // (fanOut.experts); nil for a size moe_experts_by_size does not name, which
 // is a best-of-N or single-session round.
 func (s *Scheduler) expertsFor(issue github.Issue) []string {
-	role, err := s.cfg.Role(config.RoleDeveloper)
+	role, err := s.config().Role(config.RoleDeveloper)
 	if err != nil {
 		return nil
 	}

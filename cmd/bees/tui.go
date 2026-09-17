@@ -37,7 +37,13 @@ func runWithTUI(ctx context.Context, a *app, s *scheduler.Scheduler, g *globalFl
 	// over the view exactly as the console log would. The log file and the
 	// per-session transcripts still have everything.
 	a.runner.Stream = nil
-	return tui.Run(ctx, tui.Deps{
+	// The r key: bees.toml read again and handed to the scheduler. A --once
+	// run has no next pass to take it, so its view has no reload.
+	var reload func() error
+	if !s.Once {
+		reload = projectReloader(ctx, a, s)
+	}
+	return runView(ctx, tui.Deps{
 		Status: a.store.LoadStatus,
 		Mail:   a.mail.Counts,
 		Now:    time.Now,
@@ -46,11 +52,17 @@ func runWithTUI(ctx context.Context, a *app, s *scheduler.Scheduler, g *globalFl
 			// issue over must finish even when the factory is draining.
 			return s.KillSession(context.WithoutCancel(ctx), name)
 		},
-		Open: openInBrowser,
-		Send: sendFromView(a),
-		Repo: a.cfg.Project.Repo,
+		Open:   openInBrowser,
+		Send:   sendFromView(a),
+		Reload: reload,
+		Repo:   a.cfg.Project.Repo,
 	}, s, give)
 }
+
+// runView draws the view over the scheduler: a variable so a test can stand
+// in for the screen, which needs a terminal to open, and check what
+// runWithTUI wired up around it (as runMachineView is for a daemon).
+var runView = tui.Run
 
 // openInBrowser shows a URL in whatever the person watching reads GitHub in.
 // It starts the platform's opener and does not wait for it: on Linux
