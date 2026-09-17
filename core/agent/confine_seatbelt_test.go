@@ -87,10 +87,10 @@ func sbplAllows(rules []sbplRule, op, path string) bool {
 // seatbeltLayout is a machine in miniature for a profile: a read-only
 // working directory with a writable scratch directory and a read-only
 // directory inside that, a writable session directory, a system directory
-// holding a denied git and a hard link to it, a writable device, and a
-// directory nothing grants.
+// holding a denied git and hard links to it beside it and a directory up, a
+// writable device, and a directory nothing grants.
 type seatbeltLayout struct {
-	work, scratch, pinned, session, system, git, gitLink, gitCore, device, outside string
+	work, scratch, pinned, session, system, git, gitLink, gitLinkUp, gitCore, device, outside string
 }
 
 func newSeatbeltLayout(t *testing.T) (seatbeltLayout, Confinement) {
@@ -107,6 +107,7 @@ func newSeatbeltLayout(t *testing.T) (seatbeltLayout, Confinement) {
 	l.pinned = filepath.Join(l.scratch, "pinned")
 	l.git = filepath.Join(l.system, "bin", "git")
 	l.gitLink = filepath.Join(l.system, "bin", "git-upload-pack")
+	l.gitLinkUp = filepath.Join(l.system, "git-alias")
 	l.gitCore = filepath.Join(l.system, "libexec", "git-core")
 	for _, dir := range []string{l.pinned, l.session, filepath.Dir(l.git), l.gitCore, filepath.Dir(l.device), l.outside} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -116,8 +117,10 @@ func newSeatbeltLayout(t *testing.T) (seatbeltLayout, Confinement) {
 	for _, f := range []string{l.git, filepath.Join(l.system, "bin", "cat"), filepath.Join(l.gitCore, "git-fetch"), l.device} {
 		writeExecutable(t, f, "true\n")
 	}
-	if err := os.Link(l.git, l.gitLink); err != nil {
-		t.Fatal(err)
+	for _, link := range []string{l.gitLink, l.gitLinkUp} {
+		if err := os.Link(l.git, link); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return l, Confinement{
 		Sandbox: SandboxNone,
@@ -222,7 +225,7 @@ func TestSeatbeltProfileDeniesVCSExecutables(t *testing.T) {
 		t.Fatal(err)
 	}
 	rules := parseSBPL(t, profile)
-	for _, path := range []string{l.git, l.gitLink, l.gitCore, filepath.Join(l.gitCore, "git-fetch")} {
+	for _, path := range []string{l.git, l.gitLink, l.gitLinkUp, l.gitCore, filepath.Join(l.gitCore, "git-fetch")} {
 		for _, op := range []string{"file-read-data", "file-read-metadata", "process-exec", "process-exec-interpreter", "file-write-data"} {
 			if sbplAllows(rules, op, path) {
 				t.Errorf("%s %s is allowed\n%s", op, path, profile)
