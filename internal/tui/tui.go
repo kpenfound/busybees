@@ -25,7 +25,7 @@
 // from the event stream or from disk: status.json, the mailbox and the
 // per-session transcript.jsonl. Beyond the two stop keys (q and Ctrl-C,
 // which cancel the factory's context and, pressed again, call HardStop), it
-// asks the factory to *do* only three things: stop a session, on the k key,
+// asks the factory to *do* only four things: stop a session, on the k key,
 // and queue a message for the next one, on m — through the row's own
 // project's Kill and Send (Deps.Kill and Deps.Send for a single-project
 // view, Project.Kill and Project.Send for a daemon's) — pause or resume

@@ -724,7 +724,7 @@ busybees  acme/widgets                                                          
 │ unread mail   product manager 1, developer 2                                                     │
 │ next poll     in 2m30s                                                                           │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
-↑↓ select · enter watch · o GitHub · k stop session · p pause · r reload · q or ctrl-c stops (sessions finish)
+↑↓ select · enter watch · k stop session · p pause · r reload · q or ctrl-c stops (sessions finish)
 ```
 
 **Now** lists running sessions and review-pipeline activity. Sessions show
@@ -846,9 +846,16 @@ session already running keeps the model, timeout and prompt it was started
 with. The footer says what came of the reload and the header keeps the time
 of the last one, marked when it was refused. A refused reload changes
 nothing: a file that does not load, or one that changes a key the running
-factory cannot, leaves the previous configuration in force and the footer
-names the file and the reason. A `--once` run has no next pass and its view
-does not reload.
+factory cannot, leaves the previous configuration in force, and the footer
+gives the reason and the file, wrapped over as many lines as it takes:
+
+```
+reload refused, previous configuration kept: project.state_dir cannot change while the factory runs
+(/home/me/widgets/bees.toml); restart bees run to apply it
+```
+
+A `--once` run has no next pass: its view does not reload and its footer
+does not offer `r`.
 
 These keys cannot change while the factory runs, because what they configure
 was built when it started; a reload that changes one is refused naming it,
@@ -858,6 +865,7 @@ and applying it takes a restart:
 |---|---|
 | `project.repo`, `project.dir`, `project.remote` | the GitHub client, the clone the worktrees are made from |
 | `project.state_dir` | the state directory: mailbox, notes, sessions, ledger |
+| `project.branch_prefix` | the branch every worker and open pull request is found by |
 | `filter.*` | the poll query and the labels |
 | `[github]` | the account the factory acts as |
 | `[notes]` | the notes backend |
@@ -874,6 +882,16 @@ entries did not fit; when even that will not fit, whole panels go, from the
 bottom up — Approved PRs first, then Needs human, then Recent. The header,
 Now, Queues and the footer are the last things to go, and Queues goes on
 counting whatever the panels below it stopped listing.
+
+The footer's hints are one line. A terminal too narrow for all of them goes
+without the ones that only move around the view, in this order: `o`, `↑↓`,
+`enter`, `←→`. The keys that change what the factory does (`k`, `p`, `r`,
+`q`) stay. The example above is 100 columns wide, so it has no `o GitHub`;
+from 111 columns the footer reads:
+
+```
+↑↓ select · enter watch · o GitHub · k stop session · p pause · r reload · q or ctrl-c stops (sessions finish)
+```
 
 Whenever dispatch is paused, the header says so and why, next to the clock —
 so a factory sitting on a full queue with an empty Now panel does not read as

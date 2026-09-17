@@ -129,8 +129,14 @@ func TestARefusalIsReadableInA100ColumnTerminal(t *testing.T) {
 		errors.New("project.branch_prefix cannot change while the factory runs ("+dir+"/gadgets/bees.toml); restart bees run to apply it"),
 	)
 	var view tea.Model = New(Deps{Now: func() time.Time { return fixed }, Reload: func() error { return err }})
-	view, _ = view.Update(tea.WindowSizeMsg{Width: 100, Height: panelHeight})
+	// A terminal every panel just fits in with a one-line footer: the lines
+	// the notice takes have to come out of the panels.
+	const height = 26
+	view, _ = view.Update(tea.WindowSizeMsg{Width: 100, Height: height})
 	view, _ = view.Update(started("developer-issue-12-r1", config.RoleDeveloper, 12, 0, fixed, "opus", false))
+	if n := len(strings.Split(view.View(), "\n")); n != height {
+		t.Fatalf("the view is %d lines before the notice, want the %d the terminal has", n, height)
+	}
 	view, cmd := view.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	view, _ = view.Update(runCmd(t, cmd))
 	got := plain(view.View())
@@ -143,8 +149,8 @@ func TestARefusalIsReadableInA100ColumnTerminal(t *testing.T) {
 		}
 	}
 	lines := strings.Split(got, "\n")
-	if len(lines) > panelHeight {
-		t.Errorf("the wrapped notice made the view %d lines in a %d-line terminal", len(lines), panelHeight)
+	if len(lines) > height {
+		t.Errorf("the wrapped notice made the view %d lines in a %d-line terminal", len(lines), height)
 	}
 	for _, line := range lines {
 		if w := len([]rune(line)); w > 100 {
