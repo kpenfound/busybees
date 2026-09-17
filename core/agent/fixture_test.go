@@ -58,9 +58,43 @@ func (r *testRunner) Run(ctx context.Context, req Request) (*Result, error) {
 	}
 	req.Profile.MCP["tools"] = entry
 	req.HostMCP = &HostMCP{Name: "tools", Entry: entry, ListenArgs: []string{"--listen"}, TokenEnv: EnvMCPToken, ListeningPrefix: "listening on ", Path: "/mcp"}
+	req = grantAll(req)
 	core := *r.Runner
 	if r.StateDir != "" {
 		core.MountDirs = []string{r.StateDir}
 	}
 	return core.Run(ctx, req)
+}
+
+// grantAll grants a request what it asks for, the way a permissive caller
+// would, plus the host variables named in env. Host requests are given VCS,
+// which an unsandboxed host cannot deny.
+func grantAll(req Request, env ...string) Request {
+	if req.Grants != nil {
+		return req
+	}
+	if req.Profile.Sandbox != SandboxContainer {
+		req.Profile.VCSAccess = true
+	}
+	g := &Grants{Env: append([]string{"PATH", "HOME", "TMPDIR"}, env...), Tools: []string{ToolsAll}, VCS: true}
+	for _, v := range sessionVars(req, true) {
+		g.Env = append(g.Env, v.name)
+	}
+	for name, entry := range req.Profile.MCP {
+		g.Tools = append(g.Tools, "mcp__"+name)
+		g.Env = append(g.Env, entry.EnvVars...)
+	}
+	if req.HostMCP != nil {
+		g.Tools = append(g.Tools, "mcp__"+req.HostMCP.Name)
+	}
+	switch req.Profile.Sandbox {
+	case SandboxClaude:
+		g.Mounts = []Mount{{Path: "/", Access: ReadOnly}, {Path: req.workDir(), Access: ReadWrite}}
+	case SandboxContainer:
+		g.Mounts = []Mount{{Path: req.workDir(), Access: ReadWrite}}
+	default:
+		g.Mounts = []Mount{{Path: "/", Access: ReadWrite}}
+	}
+	req.Grants = g
+	return req
 }
