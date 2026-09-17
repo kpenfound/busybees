@@ -11,8 +11,11 @@ wrong for an input it will get, an error dropped or reported as something
 else, a resource not released, a race, a check in the wrong place, code the
 project already has written again, a name that says something the code does
 not do, a line that breaks one of the brief's style rules or does what the
-surrounding code does another way. Name the lines, and for a style rule the
-file it comes from in `sources`.
+surrounding code does another way, code the change leaves dead: a function,
+method, type or constant whose only caller the change removed, or a branch a
+state change made unreachable. For dead code, name the unused symbol or path
+and where its last use was removed; otherwise name the lines, and for a
+style rule the file it comes from in `sources`.
 
 The acceptance criteria, the tests, the comments and documents, and what the
 change breaks outside the diff each have an angle of their own. A preference
