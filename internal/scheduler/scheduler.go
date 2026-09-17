@@ -23,6 +23,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/kpenfound/busybees/core/ops"
@@ -51,6 +52,9 @@ type WorkspaceProvider interface {
 
 // Deps are the collaborators the scheduler needs.
 type Deps struct {
+	// Config is the bees.toml the scheduler starts with. Reload replaces
+	// it while the loop runs, except for the keys the collaborators below
+	// were built from (reload.go).
 	Config     *config.Config
 	GitHub     *github.Client
 	Mail       *mail.Box
@@ -90,7 +94,11 @@ type Deps struct {
 
 // Scheduler runs the factory.
 type Scheduler struct {
-	cfg    *config.Config
+	// cfg is the configuration in force, read through config(). Reload
+	// replaces it at the start of the next pass (reload.go), so every
+	// goroutine reads it without a lock and a session captures the one it
+	// was started under.
+	cfg    atomic.Pointer[config.Config]
 	labels config.Labels
 	query  github.Query
 	gh     *github.Client
@@ -118,8 +126,11 @@ type Scheduler struct {
 	// OnlyRoles restricts which roles may run (nil = all enabled roles).
 	OnlyRoles map[string]bool
 
-	mu       sync.Mutex
-	owned    map[int]*state.Worker
+	mu    sync.Mutex
+	owned map[int]*state.Worker
+	// pending is the configuration Reload accepted and no pass has applied
+	// yet, nil when there is none (reload.go).
+	pending  *config.Config
 	running  map[string]bool
 	backoff  map[string]time.Time
 	lastPoll time.Time
@@ -239,7 +250,6 @@ func New(d Deps) (*Scheduler, error) {
 	upstream := *d.GitHub
 	upstream.Repo = upstreamRepo
 	s := &Scheduler{
-		cfg:          d.Config,
 		labels:       d.Config.Labels(),
 		query:        q,
 		gh:           d.GitHub,
@@ -268,6 +278,7 @@ func New(d Deps) (*Scheduler, error) {
 		events:       ops.NewBus(eventBuffer, d.Now),
 		slots:        make(chan struct{}, d.Config.Scheduler.MaxDevelopers),
 	}
+	s.cfg.Store(d.Config)
 	for i := 0; i < d.Config.Scheduler.MaxDevelopers; i++ {
 		s.slots <- struct{}{}
 	}
@@ -318,9 +329,9 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	if err := s.ensureLabels(ctx); err != nil {
 		s.log.Warn("could not ensure labels", "err", capErrors(err))
 	}
-	started := []any{"repo", s.cfg.Project.Repo, "filter", s.describeQuery(),
-		"max_developers", s.cfg.Scheduler.MaxDevelopers, "poll", s.cfg.Scheduler.PollInterval.Duration,
-		"work_hours", s.cfg.Scheduler.WorkHours, "version", s.version}
+	started := []any{"repo", s.config().Project.Repo, "filter", s.describeQuery(),
+		"max_developers", s.config().Scheduler.MaxDevelopers, "poll", s.config().Scheduler.PollInterval.Duration,
+		"work_hours", s.config().Scheduler.WorkHours, "version", s.version}
 	if s.shared != nil {
 		started = append(started, "shared_max_developers", s.shared.Pool().Size())
 	}
@@ -330,7 +341,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	// setting is not wrong, it just selects nothing a person did not label.
 	// filter.assignee is optional, so this is a warning and not a refusal
 	// to load.
-	if s.cfg.Scheduler.ReviewAssignedPRs && s.cfg.Filter.Assignee == "" {
+	if s.config().Scheduler.ReviewAssignedPRs && s.config().Filter.Assignee == "" {
 		s.log.Warn("scheduler.review_assigned_prs is on with no filter.assignee: only pull requests carrying the filter label are reviewed")
 	}
 	for {
@@ -342,7 +353,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			s.opAs(s.log, slog.LevelError, "poll", err, "poll failed", "err", err)
 			s.setLastErr(err.Error())
 			if isRateLimited(err) {
-				s.log.Warn("GitHub rate limit hit; pausing polling", "for", s.cfg.Scheduler.RateLimitBackoff.Duration)
+				s.log.Warn("GitHub rate limit hit; pausing polling", "for", s.config().Scheduler.RateLimitBackoff.Duration)
 			}
 		} else if full {
 			s.op("poll", nil, "")
@@ -468,7 +479,7 @@ func (s *Scheduler) sessionContext(ctx context.Context) context.Context {
 // exactly what poll_interval and the work-hours window say. The timer is
 // started once and is not restarted by a wake, for the same reason.
 func (s *Scheduler) waitForTick(ctx context.Context) bool {
-	timer := time.NewTimer(s.cfg.Scheduler.PollInterval.Duration)
+	timer := time.NewTimer(s.config().Scheduler.PollInterval.Duration)
 	defer timer.Stop()
 	return s.wake.Wait(ctx, timer.C, func() { s.localPass(ctx); s.writeStatus() })
 }
@@ -893,6 +904,7 @@ func sortReady(issues []github.Issue, order string, sizeOf func([]github.Label) 
 // a local pass otherwise. It reports whether the pass was a full one and the
 // error of a failed poll.
 func (s *Scheduler) tick(ctx context.Context) (bool, error) {
+	s.applyPending()
 	now := s.now()
 	s.mu.Lock()
 	due := s.nextPoll.IsZero() || !now.Before(s.nextPoll)
@@ -905,17 +917,17 @@ func (s *Scheduler) tick(ctx context.Context) (bool, error) {
 	// about to run supersedes it.
 	s.drainWake()
 	err := s.pass(ctx)
-	wait := s.cfg.Scheduler.PollIntervalAt(now)
-	if next := s.cfg.Scheduler.NextWorkHoursStart(now); !next.IsZero() && next.Before(now.Add(wait)) {
+	wait := s.config().Scheduler.PollIntervalAt(now)
+	if next := s.config().Scheduler.NextWorkHoursStart(now); !next.IsZero() && next.Before(now.Add(wait)) {
 		// The window opens before the off-hours interval would elapse: poll
 		// then, so the work day starts on time instead of up to an interval
 		// late.
 		wait = next.Sub(now)
 	}
-	if err != nil && isRateLimited(err) && s.cfg.Scheduler.RateLimitBackoff.Duration > wait {
+	if err != nil && isRateLimited(err) && s.config().Scheduler.RateLimitBackoff.Duration > wait {
 		// A rate limit is a floor, never a speed-up: it wins over the
 		// interval in force only when it is the longer of the two.
-		wait = s.cfg.Scheduler.RateLimitBackoff.Duration
+		wait = s.config().Scheduler.RateLimitBackoff.Duration
 	}
 	s.mu.Lock()
 	s.nextPoll = now.Add(wait)
@@ -967,6 +979,7 @@ func (s *Scheduler) pass(ctx context.Context) error {
 // GitHub: on a local pass a singleton starts only when it has unread mail.
 // Until the first successful poll it does nothing.
 func (s *Scheduler) localPass(ctx context.Context) {
+	s.applyPending()
 	s.mu.Lock()
 	issues, prs, ok := s.lastIssues, s.lastPRs, s.polled
 	s.mu.Unlock()
@@ -1101,7 +1114,7 @@ func (s *Scheduler) reconcile(ctx context.Context, snap *snapshot) error {
 	// developer can land in one pull request, so it never gets dispatched: it
 	// goes back to triage and the project manager splits it on its next run.
 	// The label move is the whole signal; comments on GitHub are for people.
-	limit := sizeRank(s.cfg.MaxSize())
+	limit := sizeRank(s.config().MaxSize())
 	ready := snap.byState["ready"][:0:0]
 	for _, i := range snap.byState["ready"] {
 		size := s.sizeOf(i.Labels)
@@ -1110,7 +1123,7 @@ func (s *Scheduler) reconcile(ctx context.Context, snap *snapshot) error {
 			continue
 		}
 		s.log.Info("ready issue is too big for a developer, back to triage",
-			"issue", i.Number, "size", size, "max_size", s.cfg.MaxSize())
+			"issue", i.Number, "size", size, "max_size", s.config().MaxSize())
 		if err := s.gh.EditLabels(ctx, i.Number, []string{s.labels.Triage}, []string{s.labels.Ready}); err != nil {
 			errs = append(errs, err)
 			ready = append(ready, i)
@@ -1214,9 +1227,9 @@ func (s *Scheduler) dispatchDevelopers(ctx context.Context, snap *snapshot, loca
 		}
 		ready = append(ready, i)
 	}
-	sortReady(ready, s.cfg.Scheduler.DispatchOrder, s.sizeOf, s.hasPriority)
+	sortReady(ready, s.config().Scheduler.DispatchOrder, s.sizeOf, s.hasPriority)
 	candidates = append(candidates, ready...)
-	largeLimit := s.cfg.Scheduler.LargeInFlight()
+	largeLimit := s.config().Scheduler.LargeInFlight()
 	for _, issue := range candidates {
 		s.mu.Lock()
 		_, taken := s.owned[issue.Number]
@@ -1280,7 +1293,7 @@ func (s *Scheduler) dispatchDevelopers(ctx context.Context, snap *snapshot, loca
 			// hard stop that cancels that context makes them noise.
 			if err := s.workIssue(ctx, issue, w, attempts-1); err != nil && s.sessionContext(ctx).Err() == nil {
 				s.log.Error("developer worker failed", "issue", issue.Number, "err", err)
-				s.setBackoff(fmt.Sprintf("issue-%d", issue.Number), 5*s.cfg.Scheduler.PollInterval.Duration)
+				s.setBackoff(fmt.Sprintf("issue-%d", issue.Number), 5*s.config().Scheduler.PollInterval.Duration)
 			}
 		}(issue, w, attempts)
 	}
@@ -1434,10 +1447,10 @@ func (s *Scheduler) dispatchSingletons(ctx context.Context, snap *snapshot, mail
 			err := j.run(ctx, snap)
 			if err != nil && ctx.Err() == nil {
 				s.log.Error("singleton role failed", "role", j.role, "err", err)
-				s.setBackoff(j.role, 5*s.cfg.Scheduler.PollInterval.Duration)
+				s.setBackoff(j.role, 5*s.config().Scheduler.PollInterval.Duration)
 			} else {
 				// Never re-run a singleton faster than the poll interval.
-				s.setBackoff(j.role, s.cfg.Scheduler.PollInterval.Duration)
+				s.setBackoff(j.role, s.config().Scheduler.PollInterval.Duration)
 			}
 		}(j)
 	}
@@ -1447,7 +1460,7 @@ func (s *Scheduler) roleEnabled(role string) bool {
 	if s.OnlyRoles != nil && !s.OnlyRoles[role] {
 		return false
 	}
-	r, err := s.cfg.Role(role)
+	r, err := s.config().Role(role)
 	return err == nil && r.Enabled
 }
 
@@ -1456,7 +1469,7 @@ func (s *Scheduler) roleEnabled(role string) bool {
 // factory, not of one `bees tick --only` or `bees exec` invocation, so it
 // must not change depending on which roles that one tick scoped itself to.
 func (s *Scheduler) configuredRole(role string) bool {
-	r, err := s.cfg.Role(role)
+	r, err := s.config().Role(role)
 	return err == nil && r.Enabled
 }
 
@@ -1520,7 +1533,7 @@ func (s *Scheduler) escalate(ctx context.Context, number int, reason string) err
 	// account, so a comment notifies nobody by itself: mention
 	// scheduler.notify. ([github] gives the factory an account of its own,
 	// but the mention is what makes the escalation reach somebody either way.)
-	if m := s.cfg.Mentions(); m != "" {
+	if m := s.config().Mentions(); m != "" {
 		body = m + "\n\n" + body
 	}
 	return s.gh.Comment(ctx, number, body)
@@ -1530,8 +1543,8 @@ func (s *Scheduler) writeStatus() {
 	s.mu.Lock()
 	st := state.Status{LastPoll: s.lastPoll, NextPoll: s.nextPoll, Version: s.version, Revision: s.revision,
 		Singletons: map[string]string{}, Queues: map[string]int{}, LastError: s.lastErr}
-	if s.cfg.Scheduler.WorkHoursEnabled() {
-		in := s.cfg.Scheduler.InWorkHours(s.now())
+	if s.config().Scheduler.WorkHoursEnabled() {
+		in := s.config().Scheduler.InWorkHours(s.now())
 		st.InWorkHours = &in
 	}
 	for _, w := range s.owned {

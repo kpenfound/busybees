@@ -100,7 +100,7 @@ func (s *Scheduler) runReview(ctx context.Context, log *slog.Logger, pr github.P
 	var progressMu sync.Mutex
 	completed := map[string]bool{}
 
-	role, err := s.cfg.Role(config.RoleReviewer)
+	role, err := s.config().Role(config.RoleReviewer)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -115,7 +115,7 @@ func (s *Scheduler) runReview(ctx context.Context, log *slog.Logger, pr github.P
 	if err != nil {
 		return nil, nil, reviewPipelineFailure{err}
 	}
-	ref := review.Ref{Repo: s.cfg.Project.Repo, Number: pr.Number}
+	ref := review.Ref{Repo: s.config().Project.Repo, Number: pr.Number}
 	// The artifact directory is named by the second the review started, so
 	// a second review of the pull request inside that second — a round
 	// after a fast developer, or a clock a test holds still — would write
@@ -225,7 +225,7 @@ func (s *Scheduler) verifyReview(log *slog.Logger, bk state.WorkState, pr int) (
 	if bk.ReviewArtifact == "" {
 		return nil, false
 	}
-	ref := review.Ref{Repo: s.cfg.Project.Repo, Number: pr}
+	ref := review.Ref{Repo: s.config().Project.Repo, Number: pr}
 	if filepath.Dir(bk.ReviewArtifact) != filepath.Dir(review.ArtifactDir(s.store.ReviewsDir(), ref, time.Time{})) {
 		return nil, false
 	}

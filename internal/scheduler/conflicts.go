@@ -28,7 +28,7 @@ const OrchestratorSender = "orchestrator"
 // GitHub computes mergeability asynchronously: a PR whose state is UNKNOWN
 // (or missing, as with older gh versions) is left alone this poll.
 func (s *Scheduler) checkPRs(ctx context.Context, snap *snapshot) error {
-	fix, keep := s.cfg.Scheduler.FixConflicts(), s.cfg.Scheduler.PRKeepUpdated
+	fix, keep := s.config().Scheduler.FixConflicts(), s.config().Scheduler.PRKeepUpdated
 	if !fix && !keep {
 		return nil
 	}
@@ -67,13 +67,13 @@ func (s *Scheduler) checkPRs(ctx context.Context, snap *snapshot) error {
 		// (scheduler.stacked_prs), and the default branch otherwise.
 		base := pr.BaseRefName
 		if base == "" {
-			base = s.cfg.Project.DefaultBranch
+			base = s.config().Project.DefaultBranch
 		}
 		m := mail.Message{
 			From:    OrchestratorSender,
 			To:      config.RoleDeveloper,
 			Subject: fmt.Sprintf("PR #%d %s %s", pr.Number, reason, base),
-			Body:    updateBranchBody(pr, s.cfg.Project.Remote, base, reason), Work: ghwork.New(issue.Number,
+			Body:    updateBranchBody(pr, s.config().Project.Remote, base, reason), Work: ghwork.New(issue.Number,
 				pr.Number),
 		}
 		if _, err := s.mail.Send(m); err != nil {

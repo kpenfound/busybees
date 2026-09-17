@@ -24,7 +24,7 @@ func (s *Scheduler) projectManagerHasWork(snap *snapshot) bool {
 
 func (s *Scheduler) runProjectManager(ctx context.Context, snap *snapshot) error {
 	triage := snap.byState["triage"]
-	if n := s.cfg.Scheduler.TriageBatchSize; len(triage) > n {
+	if n := s.config().Scheduler.TriageBatchSize; len(triage) > n {
 		triage = triage[:n]
 	}
 	var full []github.Issue
@@ -74,7 +74,7 @@ func (s *Scheduler) productManagerHasWork(ctx context.Context, snap *snapshot) b
 		return true
 	}
 	rs, err := s.store.Role(config.RoleProductManager)
-	if err != nil || rs.LastRun.IsZero() || s.now().Sub(rs.LastRun) >= s.cfg.Scheduler.ProductManagerInterval.Duration {
+	if err != nil || rs.LastRun.IsZero() || s.now().Sub(rs.LastRun) >= s.config().Scheduler.ProductManagerInterval.Duration {
 		return true
 	}
 	if len(s.approvedSince(snap.features, rs.LastRun)) > 0 {
@@ -486,7 +486,7 @@ func (s *Scheduler) qaHasWork(ctx context.Context) bool {
 	if rs.LastRun.IsZero() {
 		return true
 	}
-	interval := s.cfg.Scheduler.QAInterval.Duration
+	interval := s.config().Scheduler.QAInterval.Duration
 	last := rs.LastRun
 	if rs.LastCheck.After(last) {
 		last = rs.LastCheck
@@ -534,7 +534,7 @@ func (s *Scheduler) runSingleton(ctx context.Context, role string, data prompts.
 	if err := s.ws.Fetch(ctx); err != nil {
 		return fmt.Errorf("fetch: %w", err)
 	}
-	ws, err := s.ws.Acquire(ctx, vcs.Request{Name: role, Ref: s.cfg.Project.DefaultBranch})
+	ws, err := s.ws.Acquire(ctx, vcs.Request{Name: role, Ref: s.config().Project.DefaultBranch})
 	if err != nil {
 		return fmt.Errorf("workspace: %w", err)
 	}

@@ -55,7 +55,7 @@ func TestAnEmptyBuildIsNotRecorded(t *testing.T) {
 func rebuildWithBuild(t *testing.T, h *harness, version, revision string) *Scheduler {
 	t.Helper()
 	s, err := New(Deps{
-		Config:     h.sched.cfg,
+		Config:     h.sched.config(),
 		GitHub:     h.sched.gh,
 		Mail:       h.sched.mail,
 		Runner:     h.sched.runner,

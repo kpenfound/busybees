@@ -66,7 +66,7 @@ func (s *Scheduler) deliverHumanFeedback(ctx context.Context, snap *snapshot) er
 			From:    HumanSender,
 			To:      config.RoleDeveloper,
 			Subject: fmt.Sprintf("Feedback on PR #%d from %s", pr.Number, strings.Join(activityAuthors(activity), ", ")),
-			Body:    formatActivity(s.cfg.Project.Repo, pr.Number, activity), Work: ghwork.New(issueNum,
+			Body:    formatActivity(s.config().Project.Repo, pr.Number, activity), Work: ghwork.New(issueNum,
 				pr.Number),
 		}
 		if _, err := s.mail.Send(m); err != nil {

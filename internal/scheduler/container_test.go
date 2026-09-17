@@ -67,7 +67,7 @@ enabled = false
 	h.sched.runner.DockerBin = docker
 	h.sched.runner.BeesBin = bees
 	h.sched.runner.ContainerListen = "127.0.0.1:0"
-	h.sched.runner.GitHub = h.sched.cfg.GitHub
+	h.sched.runner.GitHub = h.sched.config().GitHub
 	seedReady(h, 7, "s", time.Now().Add(-time.Hour))
 	runPass(t, h)
 	h.sched.wg.Wait()

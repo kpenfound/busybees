@@ -262,7 +262,7 @@ func TestAdoptedPRWithOnlyTheBaseLabel(t *testing.T) {
 	h := newHarness(t, filteredTOML)
 	h.gh.milestones = []github.Milestone{{Number: 3, Title: "v0.1.0"}}
 	since, created := adoptTime()
-	pr := createdPR(t, 201, h.sched.cfg.Filter, created)
+	pr := createdPR(t, 201, h.sched.config().Filter, created)
 	for _, l := range pr.Labels {
 		if strings.HasPrefix(l.Name, h.sched.labels.Base+":") {
 			t.Fatalf("a freshly created PR is not supposed to carry %q", l.Name)

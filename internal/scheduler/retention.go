@@ -45,7 +45,7 @@ func (s *Scheduler) sweepRetention(ctx context.Context, snap *snapshot) {
 	s.lastSweep = now
 	s.mu.Unlock()
 	retention := config.DefaultRetentionPeriod
-	if d := s.cfg.Scheduler.RetentionPeriod; d != nil {
+	if d := s.config().Scheduler.RetentionPeriod; d != nil {
 		retention = d.Duration
 	}
 	numbers, err := s.store.IssueNumbers()

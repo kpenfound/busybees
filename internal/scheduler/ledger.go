@@ -11,7 +11,7 @@ import (
 // max_cost_per_day still counts.
 func (s *Scheduler) trimLedger() {
 	keep := config.DefaultRetentionPeriod
-	if d := s.cfg.Scheduler.RetentionPeriod; d != nil {
+	if d := s.config().Scheduler.RetentionPeriod; d != nil {
 		keep = d.Duration
 	}
 	keep = max(keep, dayWindow)

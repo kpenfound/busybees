@@ -47,10 +47,10 @@ func TestWaitingOn(t *testing.T) {
 func TestFillWaitingCycle(t *testing.T) {
 	var buf bytes.Buffer
 	s := &Scheduler{
-		cfg:          &config.Config{},
 		log:          slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})),
 		warnedCycles: map[int]bool{},
 	}
+	s.cfg.Store(&config.Config{})
 	byNumber := map[int]github.Issue{
 		1: issue(1, "Blocked by #2"),
 		2: issue(2, "Blocked by #1"),
