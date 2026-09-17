@@ -13,6 +13,7 @@ import (
 	"github.com/kpenfound/busybees/core/agent"
 	"github.com/kpenfound/busybees/core/vcs"
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/skills"
 )
 
 // A session's environment is its role's grants: the host's shell, toolchain,
@@ -90,20 +91,26 @@ func TestRefusedSessionLeavesNoDirectory(t *testing.T) {
 	}
 }
 
+// gitWorkspace is a worktree whose shared metadata lives elsewhere.
+type gitWorkspace struct{ dir, metadata string }
+
+func (w gitWorkspace) Directory() string { return w.dir }
+func (w gitWorkspace) VCS() *vcs.Access  { return &vcs.Access{Mounts: []string{w.metadata}} }
+
 func TestRoleGrantsFollowTheSandbox(t *testing.T) {
-	work, state := t.TempDir(), t.TempDir()
+	work, state, metadata := t.TempDir(), t.TempDir(), t.TempDir()
 	r := &Runner{StateDir: state, AddDirs: []string{state}}
 	role := config.ResolvedRole{Name: "developer", Agent: agent.AgentClaude, AllowedTools: []string{"mcp__plugin__search"},
 		MCP: map[string]config.MCPServer{"docs": {Command: "docs"}}}
 	for mode, want := range map[string][]agent.Mount{
 		config.SandboxNone:      {{Path: "/", Access: agent.ReadWrite}},
 		config.SandboxClaude:    {{Path: "/", Access: agent.ReadOnly}, {Path: work, Access: agent.ReadWrite}, {Path: state, Access: agent.ReadWrite}},
-		config.SandboxContainer: {{Path: work, Access: agent.ReadWrite}, {Path: state, Access: agent.ReadWrite}},
+		config.SandboxContainer: {{Path: work, Access: agent.ReadWrite}, {Path: state, Access: agent.ReadWrite}, {Path: metadata, Access: agent.ReadWrite}},
 	} {
 		t.Run(mode, func(t *testing.T) {
 			role := role
 			role.Sandbox, role.SandboxImage = mode, "image"
-			req := r.prepare(Request{Profile: ProfileForRole(role), Workspace: vcs.Directory(work)}, t.TempDir())
+			req := r.prepare(Request{Profile: ProfileForRole(role), Workspace: gitWorkspace{dir: work, metadata: metadata}}, t.TempDir())
 			g := req.Grants
 			if !slices.Equal(g.Mounts, want) {
 				t.Errorf("mounts = %v, want %v", g.Mounts, want)
@@ -114,9 +121,45 @@ func TestRoleGrantsFollowTheSandbox(t *testing.T) {
 			if want := []string{agent.ToolsAll, "mcp__bees", "mcp__docs", "mcp__plugin"}; !slices.Equal(g.Tools, want) {
 				t.Errorf("tools = %v, want %v", g.Tools, want)
 			}
-			if _, err := (&agent.Runner{AddDirs: r.AddDirs}).Verify(req); err != nil {
+			if _, err := (&agent.Runner{AddDirs: r.AddDirs, MountDirs: []string{state}}).Verify(req); err != nil {
 				t.Errorf("busybees policy refused: %v", err)
 			}
 		})
+	}
+}
+
+// A container session is granted the sessions directory it is created in
+// and, when its role has skills, the skills cache read-only; the busybees
+// runner verifies and runs it with nothing else of the host.
+func TestContainerGrantsCoverTheRunnersDirectories(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "sk")
+	base := t.TempDir()
+	work := t.TempDir()
+	r := newRunner(t, fakeClaude(t, `echo '{"type":"result","subtype":"success","result":"ok"}'`))
+	r.SessionsDir = filepath.Join(base, "sessions")
+	r.StateDir = t.TempDir()
+	r.Skills = &skills.Manager{CacheDir: filepath.Join(base, "cache")}
+	r.GitHub = config.GitHub{Login: "bot", Token: "t"}
+	role := ProfileForRole(config.ResolvedRole{Name: "developer", Sandbox: config.SandboxContainer, SandboxImage: "image", Skills: []string{"https://example.com/skills"}})
+	req := r.prepare(Request{Profile: role, Workspace: vcs.Directory(work)}, "")
+	want := []agent.Mount{{Path: r.SessionsDir, Access: agent.ReadWrite}, {Path: r.Skills.CacheDir, Access: agent.ReadOnly}}
+	for _, m := range want {
+		if !slices.Contains(req.Grants.Mounts, m) {
+			t.Errorf("mounts %v lack %v", req.Grants.Mounts, m)
+		}
+	}
+	// Neither directory exists yet: Run creates them before verifying.
+	// The built-in server cannot start, which stops the session after
+	// verification and before any skill is fetched.
+	r.BeesBin = filepath.Join(base, "missing", "bees")
+	r.ContainerListen = "127.0.0.1:0"
+	_, err := r.Run(context.Background(), Request{Name: "boxed", Profile: role, Workspace: vcs.Directory(work)})
+	if err == nil || errors.Is(err, agent.ErrNotGranted) || errors.Is(err, agent.ErrUnsupported) || !strings.Contains(err.Error(), "built-in MCP server") {
+		t.Fatalf("run: %v, want the server to fail after verification", err)
+	}
+	for _, d := range []string{r.SessionsDir, r.Skills.CacheDir} {
+		if _, err := os.Stat(d); err != nil {
+			t.Errorf("%s not created: %v", d, err)
+		}
 	}
 }

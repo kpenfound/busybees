@@ -190,10 +190,13 @@ type Runner struct {
 	ContainerLabel         string
 	ContainerHome          string
 	ContainerUseRepository string
-	// MountDirs are additional writable container mounts.
+	// MountDirs are directories a container session writes; each must be
+	// granted read-write.
 	MountDirs []string
 	// Skills prepares generic skill plugin directories.
-	Skills         SkillPreparer
+	Skills SkillPreparer
+	// SkillMountDirs hold the prepared skills; a container session with
+	// skills must be granted them.
 	SkillMountDirs []string
 	// AddDirs are extra directories claude may write (the state dir). Each
 	// must be granted read-write.
@@ -237,6 +240,12 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 		if err != nil {
 			return nil, err
 		}
+		// Verified again now that the directory the container is given exists.
+		req.SessionDir = sessionDir
+		if turn, err = r.Verify(req); err != nil {
+			_ = os.RemoveAll(sessionDir)
+			return nil, fmt.Errorf("%s: %w", req.Profile.Name, err)
+		}
 	}
 	res := &Result{Name: req.Name, Role: req.Profile.Name, SessionDir: sessionDir, StartedAt: started}
 
@@ -252,7 +261,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 	paths := sessionPaths{dir: sessionDir, systemPrompt: systemPromptPath, prompt: promptPath}
 	var box *container
 	if req.Profile.Sandbox == SandboxContainer {
-		box, err = r.startContainer(ctx, req, sessionDir)
+		box, err = r.startContainer(ctx, req, sessionDir, turn)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", req.Profile.Name, err)
 		}
@@ -474,7 +483,7 @@ type envVar struct{ name, value string }
 
 func (r *Runner) env(req Request, _ string) []string {
 	env := hostEnv(r.EnvironmentPrefix)
-	for _, v := range r.sessionVars(req, "") {
+	for _, v := range sessionVars(req, req.Profile.VCSAccess) {
 		env = append(env, v.name+"="+v.value)
 	}
 	return env
@@ -488,10 +497,6 @@ func hostEnv(prefix string) []string {
 		}
 	}
 	return env
-}
-
-func (r *Runner) sessionVars(req Request, _ string) []envVar {
-	return sessionVars(req, req.Profile.VCSAccess)
 }
 
 // NewSessionDir creates a fresh per-session directory under SessionsDir.

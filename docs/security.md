@@ -108,7 +108,9 @@ macOS 26 with Docker Desktop 28.4.0, Claude Code 2.1.263 in
 **Filesystem.** The container sees three things of the host, each mounted at
 its host path: the worktree, the repository's shared `.git`, and the state
 directory. A role with `skills` also gets the skills cache, read-only.
-Nothing else of the host is reachable: no home directory, no other
+These are the session's grants, and bees refuses to start the container
+when a path it would mount is not granted with the access it is mounted
+with. Nothing else of the host is reachable: no home directory, no other
 checkout, no credential store, no keychain. A write outside the three
 mounts is refused (`Permission denied`). The mounted state directory holds
 every role's mail and notes, not only this session's, and the mounted

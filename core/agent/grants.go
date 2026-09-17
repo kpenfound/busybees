@@ -93,6 +93,16 @@ type Turn struct {
 	VCS bool
 	// DeniedExecutables are shadowed on PATH for the session.
 	DeniedExecutables []string
+	// Binds are everything a container session sees of the host; nil for
+	// a host session.
+	Binds []Bind
+}
+
+// Bind is one host path a container sees, at Destination inside it.
+type Bind struct {
+	Source      string
+	Destination string
+	Access      Access
 }
 
 // HostBoundary runs a session as a process of this host.
@@ -103,16 +113,6 @@ type HostBoundary struct {
 	StripPrefix string
 	// AddDirs are directories the agent is told it may write.
 	AddDirs []string
-}
-
-// ContainerBoundary runs a session in a container. It verifies what every
-// boundary verifies; enforcement of mounts and tools inside the container
-// belongs to the container runner.
-type ContainerBoundary struct{}
-
-// Verify checks what does not depend on where the session runs.
-func (ContainerBoundary) Verify(req Request) (*Turn, error) {
-	return verifyCommon(req)
 }
 
 // Verify checks the request and builds the host turn. It fails closed: a
@@ -484,7 +484,11 @@ func workDir(req Request) string {
 // boundary selects what enforces the request's grants.
 func (r *Runner) boundary(req Request) Boundary {
 	if req.Profile.Sandbox == SandboxContainer {
-		return ContainerBoundary{}
+		b := ContainerBoundary{Home: r.containerHome(), SessionsDir: r.SessionsDir, MountDirs: r.MountDirs}
+		if r.Skills != nil {
+			b.SkillMountDirs = r.SkillMountDirs
+		}
+		return b
 	}
 	return HostBoundary{StripPrefix: r.EnvironmentPrefix, AddDirs: r.AddDirs}
 }
@@ -504,14 +508,8 @@ func denyExecutables(dir string, names []string, env []string) ([]string, error)
 	if len(names) == 0 {
 		return env, nil
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := writeDenied(dir, names); err != nil {
 		return nil, err
-	}
-	for _, n := range names {
-		script := "#!/bin/sh\necho \"" + n + ": not granted to this session\" >&2\nexit 126\n"
-		if err := os.WriteFile(filepath.Join(dir, n), []byte(script), 0o755); err != nil {
-			return nil, err
-		}
 	}
 	path := dir
 	out := make([]string, 0, len(env)+1)
@@ -525,4 +523,18 @@ func denyExecutables(dir string, names []string, env []string) ([]string, error)
 		out = append(out, kv)
 	}
 	return append(out, "PATH="+path), nil
+}
+
+// writeDenied writes a stand-in for each denied executable into dir.
+func writeDenied(dir string, names []string) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	for _, n := range names {
+		script := "#!/bin/sh\necho \"" + n + ": not granted to this session\" >&2\nexit 126\n"
+		if err := os.WriteFile(filepath.Join(dir, n), []byte(script), 0o755); err != nil {
+			return err
+		}
+	}
+	return nil
 }

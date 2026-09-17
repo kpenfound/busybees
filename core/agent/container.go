@@ -23,9 +23,10 @@ import (
 )
 
 // A container session runs the backend command unchanged inside the engine.
-// The work directory, session directory, optional shared git metadata,
-// caller mounts and skill cache use host paths so references in prompts
-// also resolve in the container.
+// It sees the granted mounts and nothing else of the host, each at its host
+// path, so references in prompts also resolve in the container; the work
+// directory, session directory, shared VCS metadata, caller mounts and skill
+// cache must lie inside them (ContainerBoundary).
 // The container runs as the host user with a private tmpfs home. Environment
 // values reach the engine by name, never on its command line.
 //
@@ -65,6 +66,8 @@ type container struct {
 	// the session reaches it through.
 	server  *exec.Cmd
 	builtin MCPEntry
+	// turn is what the boundary verified the session may have.
+	turn *Turn
 	// vars is the session's environment inside the container.
 	vars []envVar
 }
@@ -74,10 +77,10 @@ type container struct {
 // before anything else starts, so a failed build leaves nothing to stop),
 // starts the caller-supplied server on the host and builds the session's
 // environment. Run has already asked Profile.Validate what the
-// box needs. The container itself is started by Run, through command;
+// box needs, and the boundary what it is granted. The container itself is started by Run, through command;
 // close stops the server.
-func (r *Runner) startContainer(ctx context.Context, req Request, sessionDir string) (*container, error) {
-	c := &container{r: r, req: req, sessionDir: sessionDir, name: r.namePrefix() + sanitize(req.Name) + "-" + randomHex(4), image: req.Profile.SandboxImage}
+func (r *Runner) startContainer(ctx context.Context, req Request, sessionDir string, turn *Turn) (*container, error) {
+	c := &container{r: r, req: req, sessionDir: sessionDir, turn: turn, name: r.namePrefix() + sanitize(req.Name) + "-" + randomHex(4), image: req.Profile.SandboxImage}
 	if req.Profile.ContainerUseEnvironment != "" {
 		image, err := r.containerUseImage(ctx, req, sessionDir)
 		if err != nil {
@@ -85,7 +88,7 @@ func (r *Runner) startContainer(ctx context.Context, req Request, sessionDir str
 		}
 		c.image = image
 	}
-	c.vars = r.containerVars(req, sessionDir)
+	c.vars = turnVars(turn)
 	if req.HostMCP != nil {
 		if err := c.startServer(ctx); err != nil {
 			return nil, err
@@ -203,36 +206,6 @@ func (r *Runner) containerListen(ctx context.Context) (string, error) {
 	}
 }
 
-// containerVars is the session's environment inside the container, built
-// from nothing: only backend credentials and caller-supplied context are
-// forwarded. HOME is the private tmpfs the container is given.
-func (r *Runner) containerVars(req Request, sessionDir string) []envVar {
-	var vars []envVar
-	agent := req.Profile.Agent
-	if agent == "" {
-		agent = AgentClaude
-	}
-	// The agent's own credential, forwarded from the host when it is
-	// there: inside there is no keychain to hold one. Set before the
-	// role's env so a role can name a different one.
-	for _, name := range AgentCredentials[agent] {
-		if v := os.Getenv(name); v != "" {
-			vars = append(vars, envVar{name, v})
-		}
-	}
-	vars = append(vars, r.sessionVars(req, sessionDir)...)
-	for _, k := range slices.Sorted(maps.Keys(req.ContainerEnv)) {
-		vars = append(vars, envVar{k, req.ContainerEnv[k]})
-	}
-	if req.Profile.VCSAccess {
-		for _, k := range slices.Sorted(maps.Keys(req.VCSContainerEnv)) {
-			vars = append(vars, envVar{k, req.VCSContainerEnv[k]})
-		}
-	}
-	vars = append(vars, envVar{"HOME", r.containerHome()})
-	return vars
-}
-
 // command wraps the backend's command line in the engine's: the container
 // is created removed-on-exit, named, labelled and recorded, given its
 // mounts and its environment, and runs bin with args in the worktree.
@@ -249,11 +222,7 @@ func (c *container) command(ctx context.Context, bin string, args []string) (str
 		"--workdir", req.workDir(),
 		"--mount", "type=tmpfs,destination=" + r.containerHome() + ",tmpfs-mode=1777",
 	}
-	mounts, err := c.mounts(ctx)
-	if err != nil {
-		return "", nil, err
-	}
-	out = append(out, mounts...)
+	out = append(out, c.mounts()...)
 	// The session runs as the host's user, not the image's: claude refuses
 	// --dangerously-skip-permissions as root, and on Linux what the session
 	// writes into the mounts must be the host user's or the host cannot
@@ -275,75 +244,35 @@ func (c *container) command(ctx context.Context, bin string, args []string) (str
 		}
 		out = append(out, "--env", v.name)
 	}
-	out = append(out, c.image, bin)
+	out = append(out, c.image)
+	if denied := c.turn.DeniedExecutables; len(denied) > 0 {
+		// The image's PATH is not known here, so the stand-ins are put in
+		// front of it inside, by a shell that then runs the command.
+		dir := filepath.Join(c.sessionDir, deniedBinDir)
+		if err := writeDenied(dir, denied); err != nil {
+			return "", nil, err
+		}
+		out = append(out, "/bin/sh", "-c", `PATH="$0:$PATH" exec "$@"`, dir)
+	}
+	out = append(out, bin)
 	out = append(out, args...)
 	return r.dockerBin(), out, nil
 }
 
-// mounts are the bind mounts the container gets, each at its host path.
-// A path that goes through a symbolic link is mounted at its real path as
-// well: git records real paths in a linked worktree's pointers (on macOS
-// the temp directory the worktrees live under is one, /var -> /private/var),
-// while the prompts and the environment name the path as the caller knows it,
-// and both must resolve inside.
-func (c *container) mounts(_ context.Context) ([]string, error) {
-	r, req := c.r, c.req
-	destinations := map[string]bool{}
-	bind := func(path string, ro bool) []string {
-		var out []string
-		dests := []string{path}
-		if real, err := filepath.EvalSymlinks(path); err == nil && real != path {
-			dests = append(dests, real)
-		}
-		for _, dst := range dests {
-			if destinations[dst] {
-				continue
-			}
-			destinations[dst] = true
-			spec := "type=bind,source=" + path + ",destination=" + dst
-			if ro {
-				spec += ",readonly"
-			}
-			out = append(out, "--mount", spec)
-		}
-		return out
-	}
+// mounts are the bind mounts the container gets: the turn's binds, parents
+// before what is bound inside them.
+func (c *container) mounts() []string {
+	binds := slices.Clone(c.turn.Binds)
+	slices.SortStableFunc(binds, func(a, b Bind) int { return strings.Compare(a.Destination, b.Destination) })
 	var out []string
-	out = append(out, bind(req.workDir(), false)...)
-	if req.Profile.VCSAccess && req.Workspace != nil {
-		if access := req.Workspace.VCS(); access != nil {
-			for _, dir := range access.Mounts {
-				out = append(out, bind(dir, false)...)
-			}
+	for _, b := range binds {
+		spec := "type=bind,source=" + b.Source + ",destination=" + b.Destination
+		if b.Access == ReadOnly {
+			spec += ",readonly"
 		}
+		out = append(out, "--mount", spec)
 	}
-	for _, dir := range r.MountDirs {
-		out = append(out, bind(dir, false)...)
-	}
-	// Generated prompts and configuration must be reachable even when the
-	// caller keeps session artifacts outside the work directory.
-	covered := func(path string) bool {
-		for dir := range destinations {
-			// Compare actual container paths: mounting a target does not
-			// expose an alias, nor does mounting an alias's parent expose
-			// a target outside that parent.
-			rel, err := filepath.Rel(dir, path)
-			if err == nil && rel != ".." && !strings.HasPrefix(rel, "../") {
-				return true
-			}
-		}
-		return false
-	}
-	real, _ := filepath.EvalSymlinks(c.sessionDir)
-	if c.sessionDir != "" && (!covered(c.sessionDir) || (real != "" && !covered(real))) {
-		out = append(out, bind(c.sessionDir, false)...)
-	}
-	if r.Skills != nil && len(req.Profile.Skills) > 0 {
-		for _, dir := range r.SkillMountDirs {
-			out = append(out, bind(dir, true)...)
-		}
-	}
-	return out, nil
+	return out
 }
 
 // clientEnv is the environment the engine client runs with: the host's,
@@ -414,6 +343,16 @@ func (c *container) close() {
 	procs.RemoveContainerID(c.sessionDir)
 }
 
+// turnVars reads a turn's environment back into name/value pairs.
+func turnVars(turn *Turn) []envVar {
+	vars := make([]envVar, 0, len(turn.Env))
+	for _, kv := range turn.Env {
+		k, v, _ := strings.Cut(kv, "=")
+		vars = append(vars, envVar{k, v})
+	}
+	return vars
+}
+
 func (r *Runner) dockerBin() string {
 	if r.DockerBin != "" {
 		return r.DockerBin
@@ -434,4 +373,219 @@ func randomHex(n int) string {
 		panic(err)
 	}
 	return hex.EncodeToString(b)
+}
+
+// ContainerBoundary runs a session in a container. The container is given
+// the granted mounts, with their access, and nothing else of the host; an
+// environment built from the allowlist alone; and, without VCS, stand-ins
+// for the VCS executables in front of the image's PATH. Verify refuses a
+// request whose own paths the grants do not cover.
+type ContainerBoundary struct {
+	// Environ is the host environment agent credentials are read from; nil
+	// reads os.Environ.
+	Environ func() []string
+	// Home is the container's private HOME.
+	Home string
+	// SessionsDir is where a session directory is created for a request
+	// that names none.
+	SessionsDir string
+	// MountDirs must be granted read-write.
+	MountDirs []string
+	// SkillMountDirs must be granted when the profile has skills.
+	SkillMountDirs []string
+}
+
+// Verify checks the request and builds the container turn. It fails closed:
+// a path the container needs that no grant covers, a mount the engine
+// cannot be given exactly, or a variable outside the allowlist is refused.
+func (b ContainerBoundary) Verify(req Request) (*Turn, error) {
+	turn, err := verifyCommon(req)
+	if err != nil {
+		return nil, err
+	}
+	if err := b.bind(req, turn); err != nil {
+		return nil, err
+	}
+	if turn.Env, err = b.env(req, turn); err != nil {
+		return nil, err
+	}
+	if !turn.VCS {
+		turn.DeniedExecutables = slices.Clone(VCSExecutables)
+	}
+	return turn, nil
+}
+
+// bind builds the turn's binds: every granted mount at its real path and at
+// the path it was granted by, and every path the session is told about at
+// that path too, when a symbolic link makes it differ from its real one.
+func (b ContainerBoundary) bind(req Request, turn *Turn) error {
+	index := map[string]int{}
+	add := func(src, dst string, access Access) error {
+		for _, p := range []string{src, dst} {
+			// --mount is a comma-separated list read as CSV.
+			if strings.ContainsAny(p, ",\"\n\r") {
+				return fmt.Errorf("%w: path %q cannot be passed to %s's --mount", ErrUnsupported, p, ContainerEngine)
+			}
+		}
+		if i, ok := index[dst]; ok {
+			if prev := turn.Binds[i]; prev.Source != src || prev.Access != access {
+				return fmt.Errorf("%w: %s would be bound twice (%s %s and %s %s)", ErrUnsupported, dst, prev.Source, prev.Access, src, access)
+			}
+			return nil
+		}
+		index[dst] = len(turn.Binds)
+		turn.Binds = append(turn.Binds, Bind{Source: src, Destination: dst, Access: access})
+		return nil
+	}
+	for i, m := range req.Grants.Mounts {
+		real := turn.Mounts[i]
+		if real.Path == string(filepath.Separator) {
+			return fmt.Errorf("%w: a container cannot be given the host's root; grant the directories it needs", ErrUnsupported)
+		}
+		if err := add(real.Path, real.Path, real.Access); err != nil {
+			return err
+		}
+		if err := add(real.Path, filepath.Clean(m.Path), real.Access); err != nil {
+			return err
+		}
+	}
+	need := func(what, path string, access Access, resolveFn func(string) (string, error)) error {
+		real, err := resolveFn(path)
+		if err != nil {
+			return fmt.Errorf("%s: %w", what, err)
+		}
+		m := findMount(turn.Mounts, real)
+		if m == nil {
+			return fmt.Errorf("%w: %s %s is outside every mount", ErrNotGranted, what, path)
+		}
+		if access == ReadWrite && m.Access != ReadWrite {
+			return fmt.Errorf("%w: %s %s is writable in the container and granted %s", ErrNotGranted, what, path, m.Access)
+		}
+		alias := filepath.Clean(path)
+		if alias == real {
+			return nil
+		}
+		// The alias shows what the real path shows, including the
+		// grants inside it.
+		if err := add(real, alias, m.Access); err != nil {
+			return err
+		}
+		for _, inner := range turn.Mounts {
+			if rel, err := filepath.Rel(real, inner.Path); err == nil && rel != "." && inside(real, inner.Path) {
+				if err := add(inner.Path, filepath.Join(alias, rel), inner.Access); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	if err := need("working directory", req.workDir(), ReadWrite, resolve); err != nil {
+		return err
+	}
+	if turn.VCS && req.Workspace != nil {
+		if access := req.Workspace.VCS(); access != nil {
+			for _, dir := range access.Mounts {
+				if err := need("VCS mount", dir, ReadWrite, resolve); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	for _, dir := range b.MountDirs {
+		if err := need("mount directory", dir, ReadWrite, resolve); err != nil {
+			return err
+		}
+	}
+	switch {
+	case req.SessionDir != "":
+		if err := need("session directory", req.SessionDir, "", resolve); err != nil {
+			return err
+		}
+	case b.SessionsDir != "":
+		// Not created yet: the runner verifies again once it is.
+		if err := need("sessions directory", b.SessionsDir, "", resolveCreatable); err != nil {
+			return err
+		}
+	}
+	if len(req.Profile.Skills) > 0 {
+		for _, dir := range b.SkillMountDirs {
+			if err := need("skill directory", dir, "", resolve); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// env builds the container environment from nothing: the agent's own
+// credential from the host, when granted (inside there is no keychain to
+// hold one), then the session's variables, then HOME.
+func (b ContainerBoundary) env(req Request, turn *Turn) ([]string, error) {
+	g := req.Grants
+	environ := b.Environ
+	if environ == nil {
+		environ = os.Environ
+	}
+	host := map[string]string{}
+	for _, kv := range environ() {
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			host[k] = v
+		}
+	}
+	agent := req.Profile.Agent
+	if agent == "" {
+		agent = AgentClaude
+	}
+	var vars []envVar
+	// Set before the role's env so a role can name a different one.
+	for _, name := range AgentCredentials[agent] {
+		if v := host[name]; v != "" && envGranted(g.Env, name) && (turn.VCS || !isVCSEnv(name)) {
+			vars = append(vars, envVar{name, v})
+		}
+	}
+	vars = append(vars, sessionVars(req, turn.VCS)...)
+	extra := func(m map[string]string) error {
+		for _, k := range slices.Sorted(maps.Keys(m)) {
+			if !envGranted(g.Env, k) {
+				return fmt.Errorf("%w: variable %s is set in the container but not in the environment allowlist", ErrNotGranted, k)
+			}
+			vars = append(vars, envVar{k, m[k]})
+		}
+		return nil
+	}
+	if err := extra(req.ContainerEnv); err != nil {
+		return nil, err
+	}
+	if turn.VCS {
+		if err := extra(req.VCSContainerEnv); err != nil {
+			return nil, err
+		}
+	}
+	home := b.Home
+	if home == "" {
+		home = "/home/agent"
+	}
+	vars = append(vars, envVar{"HOME", home})
+	var env []string
+	for _, v := range dedupe(vars) {
+		env = append(env, v.name+"="+v.value)
+	}
+	return env, nil
+}
+
+// resolveCreatable resolves a path that may not exist yet: its nearest
+// existing ancestor has its links resolved and the rest is joined on.
+func resolveCreatable(path string) (string, error) {
+	if _, err := os.Lstat(path); err == nil || !os.IsNotExist(err) {
+		return resolve(path)
+	}
+	parent := filepath.Dir(path)
+	if parent == path {
+		return resolve(path)
+	}
+	real, err := resolveCreatable(parent)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(real, filepath.Base(path)), nil
 }

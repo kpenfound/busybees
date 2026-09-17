@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -94,7 +95,7 @@ cat >/dev/null
 }
 
 func TestContainerMountsStandaloneSessionDirectory(t *testing.T) {
-	for _, mode := range []string{"external", "workdir", "parent", "exact", "symlink-parent", "symlink-session", "symlink-in-workdir"} {
+	for _, mode := range []string{"external", "workdir", "parent", "exact", "symlink-parent", "symlink-session", "symlink-in-workdir", "ungranted"} {
 		t.Run(mode, func(t *testing.T) {
 			base, err := filepath.EvalSymlinks(t.TempDir())
 			if err != nil {
@@ -103,28 +104,35 @@ func TestContainerMountsStandaloneSessionDirectory(t *testing.T) {
 			work := filepath.Join(base, "work")
 			session := filepath.Join(base, "sessions", "one")
 			r := &Runner{}
+			var granted []string
 			switch mode {
+			case "external":
+				granted = []string{session}
 			case "workdir":
 				session = filepath.Join(work, "session")
 			case "parent":
 				r.MountDirs = []string{filepath.Dir(session)}
+				granted = r.MountDirs
 			case "exact":
 				r.MountDirs = []string{session, session}
+				granted = r.MountDirs
 			case "symlink-in-workdir":
 				if err := os.MkdirAll(work, 0o755); err != nil {
 					t.Fatal(err)
 				}
-				external := t.TempDir()
+				external, _ := filepath.EvalSymlinks(t.TempDir())
 				session = filepath.Join(work, "session")
 				if err := os.Symlink(external, session); err != nil {
 					t.Fatal(err)
 				}
+				granted = []string{external}
 			case "symlink-session":
 				link := filepath.Join(t.TempDir(), "alias")
 				if err := os.Symlink(base, link); err != nil {
 					t.Fatal(err)
 				}
 				r.MountDirs = []string{filepath.Dir(session)}
+				granted = r.MountDirs
 				session = filepath.Join(link, "sessions", "one")
 			case "symlink-parent":
 				link := filepath.Join(t.TempDir(), "alias")
@@ -132,17 +140,28 @@ func TestContainerMountsStandaloneSessionDirectory(t *testing.T) {
 					t.Fatal(err)
 				}
 				r.MountDirs = []string{filepath.Join(link, "sessions")}
+				granted = r.MountDirs
 			}
 			for _, dir := range []string{work, session} {
 				if err := os.MkdirAll(dir, 0o755); err != nil {
 					t.Fatal(err)
 				}
 			}
-			c := container{r: r, req: Request{Workspace: fakeWorkspace{dir: work}}, sessionDir: session}
-			args, err := c.mounts(context.Background())
+			g := &Grants{Tools: []string{ToolsAll}, Mounts: []Mount{{Path: work, Access: ReadWrite}}}
+			for _, dir := range granted {
+				g.Mounts = append(g.Mounts, Mount{Path: dir, Access: ReadWrite})
+			}
+			c, err := verifiedContainer(t, r, Request{Workspace: fakeWorkspace{dir: work}, Grants: g}, session)
+			if mode == "ungranted" {
+				if !errors.Is(err, ErrNotGranted) {
+					t.Fatalf("session directory outside every grant: %v, want ErrNotGranted", err)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
+			args := c.mounts()
 			covered := false
 			destinations := map[string]bool{}
 			direct := 0

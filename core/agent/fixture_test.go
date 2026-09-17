@@ -58,7 +58,12 @@ func (r *testRunner) Run(ctx context.Context, req Request) (*Result, error) {
 	}
 	req.Profile.MCP["tools"] = entry
 	req.HostMCP = &HostMCP{Name: "tools", Entry: entry, ListenArgs: []string{"--listen"}, TokenEnv: EnvMCPToken, ListeningPrefix: "listening on ", Path: "/mcp"}
-	req = grantAll(req)
+	if req.Grants == nil {
+		req = grantAll(req)
+		if r.StateDir != "" && req.Profile.Sandbox == SandboxContainer {
+			req.Grants.Mounts = append(req.Grants.Mounts, Mount{Path: r.StateDir, Access: ReadWrite})
+		}
+	}
 	core := *r.Runner
 	if r.StateDir != "" {
 		core.MountDirs = []string{r.StateDir}
@@ -67,8 +72,9 @@ func (r *testRunner) Run(ctx context.Context, req Request) (*Result, error) {
 }
 
 // grantAll grants a request what it asks for, the way a permissive caller
-// would, plus the host variables named in env. Host requests are given VCS,
-// which an unsandboxed host cannot deny.
+// would, plus the host variables named in env. A container is granted its
+// working, session and VCS directories and the agents' credentials. Host
+// requests are given VCS, which an unsandboxed host cannot deny.
 func grantAll(req Request, env ...string) Request {
 	if req.Grants != nil {
 		return req
@@ -79,6 +85,12 @@ func grantAll(req Request, env ...string) Request {
 	g := &Grants{Env: append([]string{"PATH", "HOME", "TMPDIR"}, env...), Tools: []string{ToolsAll}, VCS: true}
 	for _, v := range sessionVars(req, true) {
 		g.Env = append(g.Env, v.name)
+	}
+	for k := range req.ContainerEnv {
+		g.Env = append(g.Env, k)
+	}
+	for k := range req.VCSContainerEnv {
+		g.Env = append(g.Env, k)
 	}
 	for name, entry := range req.Profile.MCP {
 		g.Tools = append(g.Tools, "mcp__"+name)
@@ -92,6 +104,17 @@ func grantAll(req Request, env ...string) Request {
 		g.Mounts = []Mount{{Path: "/", Access: ReadOnly}, {Path: req.workDir(), Access: ReadWrite}}
 	case SandboxContainer:
 		g.Mounts = []Mount{{Path: req.workDir(), Access: ReadWrite}}
+		for _, names := range AgentCredentials {
+			g.Env = append(g.Env, names...)
+		}
+		if req.SessionDir != "" {
+			g.Mounts = append(g.Mounts, Mount{Path: req.SessionDir, Access: ReadWrite})
+		}
+		if req.Profile.VCSAccess && req.Workspace != nil && req.Workspace.VCS() != nil {
+			for _, dir := range req.Workspace.VCS().Mounts {
+				g.Mounts = append(g.Mounts, Mount{Path: dir, Access: ReadWrite})
+			}
+		}
 	default:
 		g.Mounts = []Mount{{Path: "/", Access: ReadWrite}}
 	}
