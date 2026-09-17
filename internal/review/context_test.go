@@ -143,10 +143,10 @@ func TestGatherWithoutACheckoutSaysWhatItCouldNotRead(t *testing.T) {
 	if got := bundle.Sources(); !reflect.DeepEqual(got, []string{SourceDiff, SourcePRBody, SourceLinkedIssues}) {
 		t.Fatalf("sources %v, want the ones that read GitHub alone", got)
 	}
-	if len(bundle.Skipped) != 2 {
-		t.Fatalf("skipped %v, want the two sources that read files", bundle.Skipped)
+	if len(bundle.Skipped) != 3 {
+		t.Fatalf("skipped %v, want the generated-file checks and the two sources that read files", bundle.Skipped)
 	}
-	for _, want := range []string{"style files", "callers"} {
+	for _, want := range []string{"generated files: no checkout", "style files", "callers"} {
 		if !strings.Contains(strings.Join(bundle.Skipped, "\n"), want) {
 			t.Fatalf("skipped %v does not name %q", bundle.Skipped, want)
 		}

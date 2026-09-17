@@ -210,3 +210,33 @@ func findingID(f *Finding) string {
 	sum := sha256.Sum256([]byte(strings.Join([]string{f.File, f.Side, f.Lines.String(), f.Title}, "\x00")))
 	return hex.EncodeToString(sum[:4])
 }
+
+// Exclude drops the findings anchored in one of the files the caller took
+// out of the diff (Bundle.Excluded): a session that read past the diff and
+// reported a generated file anyway. It returns the findings kept, in their
+// order, and the ones dropped. A finding about the change as a whole is
+// kept: it is anchored nowhere.
+func Exclude(findings []Finding, excluded []ExcludedFile) (kept, dropped []Finding) {
+	if len(excluded) == 0 {
+		return findings, nil
+	}
+	paths := make(map[string]bool, len(excluded))
+	for _, f := range excluded {
+		paths[cleanPath(f.Path)] = true
+	}
+	kept = findings[:0:0]
+	for _, f := range findings {
+		if f.Anchored() && paths[cleanPath(f.File)] {
+			dropped = append(dropped, f)
+			continue
+		}
+		kept = append(kept, f)
+	}
+	return kept, dropped
+}
+
+// cleanPath is a path as a session or a diff spells it, without the "./"
+// a session sometimes puts in front of one.
+func cleanPath(p string) string {
+	return strings.TrimPrefix(strings.TrimSpace(p), "./")
+}

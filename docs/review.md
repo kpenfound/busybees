@@ -25,15 +25,17 @@ context  ->  brief  ->  angles  ->  findings  ->  triage  ->  end
 1. **Context.** bees gathers the pull request's context from the sources
    `context.toml` enables: the diff, the pull request's conversation, the
    issues it links, the project's style files and the callers of what it
-   changed. A source that cannot read something records what it missed, and
-   the review goes on.
+   changed. [Generated files](#generated-files) are taken out of the diff
+   before anything reads it. A source that cannot read something records
+   what it missed, and the review goes on.
 2. **Brief.** One session, the distiller, reads everything gathered and
    writes the brief: what the change does, its size (`xs`, `s`, `m`, `l` or
    `xl`, judged from how many files and lines it touches and which parts of
    the project those are), its acceptance criteria with the issue or text
    each came from, the style rules that apply to it with the file each is
-   written in, the parts of the project it touches, and what the sources
-   could not read.
+   written in, the parts of the project it touches, the generated files
+   taken out of the diff with the lines each added and removed, and what
+   the sources could not read.
 3. **Angles.** One session per [angle](#angles) the brief's size calls for
    and `context.toml` enables reads the brief and the diff, and answers with
    findings. The angles run at the same time, and at a terminal the
@@ -90,7 +92,7 @@ directory when it is that checkout and gather nothing anywhere else.
 
 | Source | What it gathers |
 |---|---|
-| `diff` | The pull request's diff, read from the checkout made for the review, or with `gh pr diff` when there is none |
+| `diff` | The pull request's diff without its generated files, read from the checkout made for the review, or with `gh pr diff` when there is none |
 | `pr_body` | The title and body, then every comment and submitted review, oldest first |
 | `linked_issues` | The issues the pull request closes, then the others its body mentions, at most 20 |
 | `style_files` | `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `STYLE.md` and `.editorconfig`, plus the files `style_sources` names |
@@ -99,6 +101,26 @@ directory when it is that checkout and gather nothing anywhere else.
 Every one of them runs unless `context.toml` turns it off, and a project adds
 sources of its own that gather the files they name. See
 [`context.toml`](#contexttoml).
+
+### Generated files
+
+A generated file is taken out of the diff before the distiller and the
+angles read it, so a change that regenerates a protobuf binding is sized
+and reviewed by what was written by hand. A file is generated when any of
+these says so:
+
+- a line `// Code generated ... DO NOT EDIT.` in its first 64 lines, on the
+  side the change leaves it (the old side for a file the change deleted);
+- `.gitattributes` in the checkout marks it `linguist-generated`, as git
+  reads the file (`git check-attr`);
+- a pattern in `context.toml`'s `generated` list matches it.
+
+The brief lists every file taken out, with the lines the change added and
+removed there and which of the three said it was generated, and a finding
+an angle anchors in one is dropped. The first two checks read the checkout
+of the pull request's head; without one (no `docker`, or a clone that
+failed) only the patterns are checked, and the brief says so under what
+was not gathered. Triage still shows the whole diff.
 
 ### Angles
 
@@ -335,6 +357,7 @@ built-in source, and pins no category.
 
 ```toml
 style_sources = ["docs/style/*.md"]
+generated = ["*.pb.go", "vendor/**"]
 
 [angles]
 side_effects = false
@@ -357,6 +380,7 @@ files = ["docs/architecture.md", "docs/adr/*.md"]
 |---|---|---|---|
 | `angles.<angle>` | bool | `true` | `false` turns the angle off. `<angle>` is `quick_general`, `general`, `docs`, `test_coverage`, `acceptance_criteria` or `side_effects` |
 | `style_sources` | list of paths or globs | `[]` | Style documents the `style_files` source gathers on top of the built-in names |
+| `generated` | list of paths or globs | `[]` | Files taken out of the diff as [generated](#generated-files), on top of the ones a header or `.gitattributes` marks |
 | `categories.<category>` | string | none | Pins every finding in the category to `info`, `low`, `medium` or `high`, or drops them with `off` |
 | `context_sources` | list of tables | none | Turns a built-in source off, or adds a source of the project's own |
 
@@ -369,7 +393,11 @@ A `[[context_sources]]` entry has a `name`, and:
   matches nothing is reported in the brief as not gathered.
 
 Paths and globs are relative to the directory `context.toml` is in and must
-stay inside it.
+stay inside it. A `generated` pattern is relative to the repository root, as
+the diff names files: `*`, `?` and `[...]` match within one path segment and
+`**` any number of them, a pattern with no `/` matches a file's name in any
+directory, and a pattern that matches a directory matches every file under
+it.
 
 A category is the angle's own word for a kind of problem, lowercased:
 triage shows it next to the severity, and it is the third field of a

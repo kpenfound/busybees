@@ -69,6 +69,11 @@ func (r *Runner[R]) Run(ctx context.Context, dir string, bundle *Bundle[R], diff
 		return nil, fmt.Errorf("every angle failed, so nobody reviewed %s: %w", bundle.Ref, err)
 	}
 	findings := Judge(runs, project, r.Compare)
+	var dropped []Finding
+	findings.Items, dropped = Exclude(findings.Items, bundle.Excluded)
+	if len(dropped) > 0 {
+		r.logf("  %s on generated files dropped", count(len(dropped), "finding"))
+	}
 	findings.Items, findings.Silenced = Filter(findings.Items, r.Rules, bundle.Ref.ReviewScope(), r.Compare)
 	if err := WriteFindings(a.Dir, findings); err != nil {
 		return nil, err

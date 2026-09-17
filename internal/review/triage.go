@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	core "github.com/kpenfound/busybees/core/review"
 	"github.com/kpenfound/busybees/internal/text"
 )
 
@@ -321,6 +322,7 @@ func (q *Queue) requeue(angle, sessionID, text string) (string, *Findings, []Fin
 	}
 	obj, _ := jsonObject(text)
 	text = strings.TrimSpace(emptyFence.ReplaceAllString(strings.Replace(text, obj, "", 1), ""))
+	fresh, _ = core.Exclude(fresh, q.excluded())
 	fresh, silenced := Filter(Merge(fresh, q.Project), q.rules(), q.repo())
 	have := q.Artifact.Findings
 	findings := &Findings{
@@ -380,6 +382,16 @@ func (q *Queue) runOf(angle string) *AngleRun {
 // repo is the repository under review, which a dismissal is filed under and
 // a rule is matched against.
 func (q *Queue) repo() string { return q.Artifact.Brief.Ref.Repo }
+
+// excluded are the generated files the review's diff was read without
+// (Brief.Excluded), which a reopened session's findings are dropped from
+// as the review's own were.
+func (q *Queue) excluded() []ExcludedFile {
+	if q.Artifact == nil || q.Artifact.Brief == nil {
+		return nil
+	}
+	return q.Artifact.Brief.Excluded
+}
 
 // rules are the reviewer notes' rules, and none without notes.
 func (q *Queue) rules() []Rule {

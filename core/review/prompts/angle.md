@@ -15,6 +15,8 @@ what the change does, what it says it does, the style rules that apply to it
 and the areas it touched. After the brief you are told where to read the
 diff, when it was gathered. Read the files the brief names when the diff
 leaves a question open; a finding about a line you did not read is a guess.
+The generated files the brief lists as not reviewed are not in the diff and
+not yours to review: a finding anchored in one is dropped.
 
 Report a finding only when you can point at what shows it: the file and the
 lines, and what you read there. Say what is wrong and why it matters, in the

@@ -31,7 +31,10 @@ Write five things.
    from the change's scope and its risk. Scope is how many files and lines it
    touches. Risk is which parts of the project those are: a few lines in
    authentication or in locking code can break more than the same number of
-   lines in a document, and size the change up for it.
+   lines in a document, and size the change up for it. The files listed
+   under "Generated files not reviewed" are not part of the change you
+   size: they were taken out of the diff before you read it, and no session
+   reviews them.
 
 Say what the context says and no more. A criterion nobody wrote down, a style
 rule no file states, an area no file in the diff belongs to: leave it out. If
