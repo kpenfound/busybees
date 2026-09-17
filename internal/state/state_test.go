@@ -679,6 +679,22 @@ func TestPauseNotice(t *testing.T) {
 			want: "",
 		},
 		{
+			// The spend names the sessions it leaves out, so a pause at
+			// $100.00 does not read as if that were the whole day.
+			name: "budget pause with unknown costs",
+			st:   Status{BudgetPaused: true, DaySpendUSD: 101.2, DayBudgetUSD: 100, DayUnknownSessions: 1},
+			now:  local,
+			want: "daily budget ($101.20 / $100.00, 1 session of unknown cost)",
+		},
+		{
+			// A ledger that cannot be read outranks the budget it was read
+			// for: the spend beside it is stale.
+			name: "ledger unreadable",
+			st:   Status{BudgetPaused: true, DaySpendUSD: 101.2, DayBudgetUSD: 100, LedgerError: "ledger.jsonl line 3 does not parse"},
+			now:  local,
+			want: "ledger unreadable: ledger.jsonl line 3 does not parse",
+		},
+		{
 			// A LimitPausedUntil in the past is not a pause at all — nothing
 			// has looked at it since it lifted — so a budget pause behind it
 			// wins, and with no budget pause either the result is "".
@@ -721,6 +737,11 @@ func TestBudgetNotice(t *testing.T) {
 			name: "no spend yet",
 			st:   Status{DaySpendUSD: 0, DayBudgetUSD: 5},
 			want: "daily budget: $0.00 / $5.00",
+		},
+		{
+			name: "sessions of unknown cost",
+			st:   Status{DaySpendUSD: 0.12, DayBudgetUSD: 5, DayUnknownSessions: 2},
+			want: "daily budget: $0.12 / $5.00, 2 sessions of unknown cost",
 		},
 		{
 			name: "no budget configured",

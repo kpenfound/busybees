@@ -34,11 +34,11 @@ func TestBudgetEdgesAndRollingWindow(t *testing.T) {
 		{Time: now.Add(-24 * time.Hour), Work: work.Ref{Key: "build/A"}, CostUSD: 3},
 		{Time: now, Work: work.Ref{Key: "build/B"}, CostUSD: 2},
 	}
-	if cost, n := Spend(entries, "build/A", time.Time{}); cost != 102 || n != 2 {
-		t.Fatalf("work total = %v across %v", cost, n)
+	if cost, n, unknown := Spend(entries, "build/A", time.Time{}); cost != 102 || n != 2 || unknown != 0 {
+		t.Fatalf("work total = %v across %v, %v unknown", cost, n, unknown)
 	}
-	if cost, n := Spend(entries, "build/A", now.Add(-24*time.Hour)); cost != 3 || n != 1 {
-		t.Fatalf("window total = %v across %v", cost, n)
+	if cost, n, unknown := Spend(entries, "build/A", now.Add(-24*time.Hour)); cost != 3 || n != 1 || unknown != 0 {
+		t.Fatalf("window total = %v across %v, %v unknown", cost, n, unknown)
 	}
 	for _, tc := range []struct {
 		name                            string
@@ -61,6 +61,18 @@ func TestBudgetEdgesAndRollingWindow(t *testing.T) {
 				t.Fatalf("signal = %+v", got)
 			}
 		})
+	}
+	// A session that reported no cost is a session and no dollars, and the
+	// window says how many it left out.
+	unknown := append(entries, LedgerEntry{Time: now, Work: work.Ref{Key: "build/A"}, CostUSD: 50, CostUnknown: true})
+	if cost, n, u := Spend(unknown, "build/A", time.Time{}); cost != 102 || n != 3 || u != 1 {
+		t.Fatalf("with an unknown cost: total = %v across %v, %v unknown", cost, n, u)
+	}
+	if got := EvaluateWindow(unknown, now, 24*time.Hour, 5, 100, false); got.Spent != 5 || got.Unknown != 1 || !got.Reached {
+		t.Fatalf("window with an unknown cost: %+v", got)
+	}
+	if got := EvaluateWindow(entries, now, 24*time.Hour, 5, 100, false); got.Unknown != 0 {
+		t.Fatalf("window without one: %+v", got)
 	}
 	for _, tc := range []struct {
 		cost, limit float64

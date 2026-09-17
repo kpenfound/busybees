@@ -166,7 +166,7 @@ func (a *CLIAgent) Run(ctx context.Context, req AgentRequest) (*AgentResult, err
 	case parseErr != nil:
 		return nil, fmt.Errorf("%s session: %w%s", req.Name, parseErr, tail(stderr.String()))
 	}
-	return &AgentResult{ID: res.id, Text: res.text, Turns: res.turns, CostUSD: res.cost}, nil
+	return &AgentResult{ID: res.id, Text: res.text, Turns: res.turns, CostUSD: res.cost, CostKnown: res.costKnown}, nil
 }
 
 // command is the CLI and the arguments this session runs as, read-only
@@ -253,7 +253,10 @@ type sessionEnd struct {
 	id    string
 	text  string
 	turns int
-	cost  float64
+	// cost is what the CLI reported the session cost, and costKnown
+	// whether it reported one at all.
+	cost      float64
+	costKnown bool
 	// err is what the session failed with, and "" for one that finished.
 	err string
 }
@@ -282,7 +285,7 @@ func readClaude(out []byte) (*sessionEnd, error) {
 	if err := json.Unmarshal(bytes.TrimSpace(out), &res); err != nil {
 		return nil, errors.New("claude printed no result")
 	}
-	end := &sessionEnd{id: res.SessionID, text: res.Result, turns: res.NumTurns, cost: res.TotalCostUSD}
+	end := &sessionEnd{id: res.SessionID, text: res.Result, turns: res.NumTurns, cost: res.TotalCostUSD, costKnown: true}
 	if res.IsError {
 		end.err = failure(res.Subtype, res.Result)
 	}

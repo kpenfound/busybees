@@ -587,14 +587,14 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 			}
 			counts, _ := a.mail.Counts()
 			now := time.Now()
-			today := todayTotal(store, now)
+			today, todayErr := todayTotal(store, now)
 			rows := roleRows(cmd.Context(), store, notesBackendFor(cfg.Notes, store), st)
 			if asJSON {
-				return json.NewEncoder(os.Stdout).Encode(statusJSON(cfg, st, counts, today, rows, now))
+				return json.NewEncoder(os.Stdout).Encode(statusJSON(cfg, st, counts, todayJSON(today, todayErr), rows, now))
 			}
 			fmt.Printf("repo: %s   state: %s%s\n", cfg.Project.Repo, cfg.StateDir(), actingAs(cfg))
 			fmt.Println(schedulerLine(st, now))
-			fmt.Println(todayText(today))
+			fmt.Println(todayText(today, todayErr))
 			fmt.Println(workHoursLine(cfg.Scheduler, st, now))
 			if st.LastError != "" {
 				fmt.Println("last error:", st.LastError)
@@ -685,7 +685,7 @@ type roleRow struct {
 // statusJSON is the object `bees status --json` prints. It is a function so a
 // test can assert what that object carries: the build the scheduler is running
 // rides along inside `status`, and must not gain a second, top-level copy.
-func statusJSON(cfg *config.Config, st state.Status, counts map[string]int, today costGroup, rows []roleRow, now time.Time) map[string]any {
+func statusJSON(cfg *config.Config, st state.Status, counts map[string]int, today todayReport, rows []roleRow, now time.Time) map[string]any {
 	return map[string]any{
 		"status": st, "unread_mail": counts, "today": today, "notes_bytes": notesBytes(rows),
 		"work_hours": workHoursJSON(cfg.Scheduler, now), "acting_as": cfg.GitHub.Login,
