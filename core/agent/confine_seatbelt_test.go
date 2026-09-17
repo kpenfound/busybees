@@ -19,9 +19,10 @@ type sbplRule struct {
 	allow bool
 	ops   []string
 	paths []string // none: every path
+	exact bool     // paths are literals, not subpaths
 }
 
-var sbplSubpath = regexp.MustCompile(`\(subpath "((?:[^"\\]|\\.)*)"\)`)
+var sbplFilter = regexp.MustCompile(`\((subpath|literal) "((?:[^"\\]|\\.)*)"\)`)
 
 // parseSBPL reads the profiles seatbeltProfile writes, one rule a line, and
 // fails on anything else.
@@ -45,8 +46,12 @@ func parseSBPL(t *testing.T, profile string) []sbplRule {
 		}
 		r := sbplRule{allow: fields[0] == "allow", ops: fields[1:]}
 		rest := strings.TrimPrefix(body, head)
-		for _, m := range sbplSubpath.FindAllStringSubmatch(rest, -1) {
-			r.paths = append(r.paths, strings.NewReplacer(`\\`, `\`, `\"`, `"`).Replace(m[1]))
+		for _, m := range sbplFilter.FindAllStringSubmatch(rest, -1) {
+			if len(r.paths) > 0 && r.exact != (m[1] == "literal") {
+				t.Fatalf("rule %q mixes filters", line)
+			}
+			r.exact = m[1] == "literal"
+			r.paths = append(r.paths, strings.NewReplacer(`\\`, `\`, `\"`, `"`).Replace(m[2]))
 			rest = strings.Replace(rest, m[0], "", 1)
 		}
 		if strings.TrimSpace(rest) != "" {
@@ -69,7 +74,9 @@ func sbplAllows(rules []sbplRule, op, path string) bool {
 			prefix, wild := strings.CutSuffix(o, "*")
 			return wild && strings.HasPrefix(op, prefix)
 		})
-		pathMatch := len(r.paths) == 0 || slices.ContainsFunc(r.paths, func(p string) bool { return inside(p, path) })
+		pathMatch := len(r.paths) == 0 || slices.ContainsFunc(r.paths, func(p string) bool {
+			return p == path || (!r.exact && inside(p, path))
+		})
 		if opMatch && pathMatch {
 			allowed = r.allow
 		}
@@ -140,7 +147,6 @@ func TestSeatbeltProfileReadsOnlyMountsAndSystemPaths(t *testing.T) {
 		l.device:                                       true,
 		filepath.Join(l.outside, "secret"):             false,
 		filepath.Dir(l.work):                           false,
-		"/":                                            false,
 		filepath.Join(filepath.Dir(l.device), "disk0"): false,
 	} {
 		for _, op := range []string{"file-read-data", "process-exec"} {
@@ -152,6 +158,19 @@ func TestSeatbeltProfileReadsOnlyMountsAndSystemPaths(t *testing.T) {
 		if !sbplAllows(rules, "file-read-metadata", path) {
 			t.Errorf("file-read-metadata %s refused", path)
 		}
+	}
+	// The root directory can be listed, as every program's loader needs,
+	// and nothing more.
+	if !sbplAllows(rules, "file-read-data", "/") {
+		t.Errorf("the root directory cannot be listed:\n%s", profile)
+	}
+	for _, op := range []string{"file-read-xattr", "process-exec", "file-write-create"} {
+		if sbplAllows(rules, op, "/") {
+			t.Errorf("%s / is allowed:\n%s", op, profile)
+		}
+	}
+	if sbplAllows(rules, "file-read-data", filepath.Join(l.outside, "secret")) {
+		t.Errorf("the root directory's rule reaches below it:\n%s", profile)
 	}
 	// What the profile leaves alone stays as the process has it.
 	if !sbplAllows(rules, "network-outbound", l.outside) || !sbplAllows(rules, "mach-lookup", "") {
@@ -252,6 +271,7 @@ func TestSeatbeltProfileText(t *testing.T) {
 (allow default)
 (deny file-read* file-write* file-link file-clone process-exec*)
 (allow file-read-metadata)
+(allow file-read-data (literal "/"))
 (allow file-read* process-exec* (subpath ` + q + `) (subpath "` + base + `/bin") (subpath "/dev/null"))
 (allow file-write* file-link file-clone (subpath ` + q + `))
 (allow file-write* file-link file-clone (subpath "/dev/null"))
@@ -260,8 +280,8 @@ func TestSeatbeltProfileText(t *testing.T) {
 	if profile != want {
 		t.Errorf("profile =\n%s\nwant\n%s", profile, want)
 	}
-	if rules := parseSBPL(t, profile); !slices.Equal(rules[3].paths, []string{work, filepath.Join(base, "bin"), "/dev/null"}) {
-		t.Errorf("quoted paths read back as %q", rules[3].paths)
+	if rules := parseSBPL(t, profile); !slices.Equal(rules[4].paths, []string{work, filepath.Join(base, "bin"), "/dev/null"}) {
+		t.Errorf("quoted paths read back as %q", rules[4].paths)
 	}
 }
 

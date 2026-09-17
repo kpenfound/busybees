@@ -59,6 +59,8 @@ func (s seatbeltConfiner) Start(cmd *exec.Cmd, c Confinement) error {
 // filesystem, and then allows it back path by path:
 //
 //   - a file's metadata everywhere, as Landlock leaves stat(2) alone;
+//   - the entries of the root directory, which dyld reads before any
+//     program starts (without it every program aborts), and nothing below;
 //   - read and execute below every mount and system path;
 //   - write below the read-write mounts and system paths, a mount inside
 //     another deciding for itself, outermost first;
@@ -81,7 +83,7 @@ func seatbeltProfile(c Confinement) (string, error) {
 	}
 	b.WriteString("(version 1)\n(allow default)\n")
 	fmt.Fprintf(&b, "(deny %s %s %s)\n", seatbeltRead, seatbeltWrite, seatbeltExec)
-	b.WriteString("(allow file-read-metadata)\n")
+	b.WriteString("(allow file-read-metadata)\n(allow file-read-data (literal \"/\"))\n")
 
 	var readable []string
 	for _, m := range append(slices.Clone(c.Mounts), c.System...) {
