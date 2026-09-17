@@ -41,6 +41,10 @@ func (s seatbeltConfiner) Check(Confinement) error {
 
 // Start starts cmd as sandbox-exec's command, under the profile c becomes.
 func (s seatbeltConfiner) Start(cmd *exec.Cmd, c Confinement) error {
+	// A command exec.Cmd has refused is not started, confined or not.
+	if cmd.Err != nil {
+		return cmd.Err
+	}
 	if err := s.Check(c); err != nil {
 		return err
 	}
@@ -49,7 +53,7 @@ func (s seatbeltConfiner) Start(cmd *exec.Cmd, c Confinement) error {
 		return err
 	}
 	args := append([]string{s.bin, "-p", profile, cmd.Path}, cmd.Args[1:]...)
-	cmd.Path, cmd.Args, cmd.Err = s.bin, args, nil
+	cmd.Path, cmd.Args = s.bin, args
 	return cmd.Start()
 }
 
@@ -58,7 +62,8 @@ func (s seatbeltConfiner) Start(cmd *exec.Cmd, c Confinement) error {
 // that matches decides, so the profile allows everything, refuses the
 // filesystem, and then allows it back path by path:
 //
-//   - a file's metadata everywhere, as Landlock leaves stat(2) alone;
+//   - a file's metadata everywhere but on the denied paths below, as
+//     Landlock leaves stat(2) alone;
 //   - the entries of the root directory, which dyld reads before any
 //     program starts (without it every program aborts), and nothing below;
 //   - read and execute below every mount and system path;
@@ -94,9 +99,10 @@ func seatbeltProfile(c Confinement) (string, error) {
 	rule("allow", seatbeltRead+" "+seatbeltExec, readable)
 
 	// Outermost first, so the inner mount's rule comes later and decides.
+	// A mount that encloses another has the shorter path ("/" included).
 	mounts := slices.Clone(c.Mounts)
 	slices.SortStableFunc(mounts, func(a, b Mount) int {
-		return strings.Count(a.Path, string(filepath.Separator)) - strings.Count(b.Path, string(filepath.Separator))
+		return len(a.Path) - len(b.Path)
 	})
 	for _, m := range mounts {
 		verb := "deny"

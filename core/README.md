@@ -144,11 +144,12 @@ req.Grants = &agent.Grants{
   read-only mount inside a read-write one, is allowed entry by entry
   instead of as a whole. It can be listed, and nothing can be created at
   its own level.
-- Under Seatbelt, any file's metadata can be read (`stat(2)`, as under
-  Landlock), and so can the entries of `/`, which the loader lists before
-  any program starts; nothing below `/` comes with it. Hard links to a
-  denied executable are found in every directory above it, up to the
-  mount or system path that allows it.
+- Under Seatbelt, the metadata of any file that is not denied can be read
+  (`stat(2)`, as under Landlock), and so can the entries of `/`, which the
+  loader lists before any program starts; nothing below `/` comes with it.
+  A denied path, and a hard link to a denied executable, cannot even be
+  `stat`ed. Hard links are found in every directory above the denied
+  executable, up to the mount or system path that allows it.
 
 `Confiner` is what enforces it: `Check` says whether it can, `Start` starts
 the process under it. `HostBoundary.Confiner` (`Runner.Confiner`) replaces

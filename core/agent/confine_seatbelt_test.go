@@ -157,7 +157,8 @@ func TestSeatbeltProfileReadsOnlyMountsAndSystemPaths(t *testing.T) {
 				t.Errorf("%s %s = %v, want %v\n%s", op, path, got, want, profile)
 			}
 		}
-		// A file's metadata is readable everywhere, as under Landlock.
+		// A file's metadata is readable wherever nothing is denied, as under
+		// Landlock.
 		if !sbplAllows(rules, "file-read-metadata", path) {
 			t.Errorf("file-read-metadata %s refused", path)
 		}
@@ -288,6 +289,54 @@ func TestSeatbeltProfileText(t *testing.T) {
 	}
 }
 
+func TestSeatbeltCheckAcceptsBothHostSandboxes(t *testing.T) {
+	s := seatbeltConfiner{bin: agenttest.Script(t, "sandbox-exec", "exit 0\n")}
+	for _, sandbox := range []string{SandboxNone, SandboxClaude} {
+		if err := s.Check(Confinement{Sandbox: sandbox}); err != nil {
+			t.Errorf("check sandbox %q = %v, want nil", sandbox, err)
+		}
+	}
+}
+
+func TestSeatbeltStartsNothingExecRefused(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "ran")
+	s := seatbeltConfiner{bin: agenttest.Script(t, "sandbox-exec", "touch "+marker+"\n")}
+	cmd := exec.Command(agenttest.Script(t, "claude", "exit 0\n"))
+	refused := errors.New("exec: not found")
+	cmd.Err = refused
+	if err := s.Start(cmd, Confinement{Sandbox: SandboxNone}); !errors.Is(err, refused) || cmd.Process != nil {
+		t.Fatalf("start = %v, process %v: want the command's own error and nothing started", err, cmd.Process)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("sandbox-exec ran for a command exec.Cmd refused")
+	}
+}
+
+// A mount at "/" and a mount directly below it: the inner one decides,
+// whichever is granted first.
+func TestSeatbeltProfileRootMountEnclosesTopLevelMounts(t *testing.T) {
+	for _, tc := range []struct{ root, inner Access }{
+		{ReadWrite, ReadOnly},
+		{ReadOnly, ReadWrite},
+	} {
+		root := Mount{Path: "/", Access: tc.root}
+		inner := Mount{Path: "/a", Access: tc.inner}
+		for _, mounts := range [][]Mount{{root, inner}, {inner, root}} {
+			profile, err := seatbeltProfile(Confinement{Mounts: mounts})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rules := parseSBPL(t, profile)
+			if got, want := sbplAllows(rules, "file-write-data", "/a/f"), tc.inner == ReadWrite; got != want {
+				t.Errorf("mounts %v: write /a/f = %v, want %v\n%s", mounts, got, want, profile)
+			}
+			if got, want := sbplAllows(rules, "file-write-data", "/b/f"), tc.root == ReadWrite; got != want {
+				t.Errorf("mounts %v: write /b/f = %v, want %v\n%s", mounts, got, want, profile)
+			}
+		}
+	}
+}
+
 func TestSeatbeltRefusesWithoutSandboxExec(t *testing.T) {
 	dir := t.TempDir()
 	notExecutable := filepath.Join(dir, "plain")
@@ -332,7 +381,15 @@ exec "$@"
 	return agenttest.Script(t, "sandbox-exec", body)
 }
 
+// Both host sandboxes are confined on macOS: unlike Landlock, Seatbelt does
+// not refuse claude's.
 func TestSeatbeltStartsTheCommandUnderItsProfile(t *testing.T) {
+	for _, sandbox := range []string{SandboxNone, SandboxClaude} {
+		t.Run(sandbox, func(t *testing.T) { testSeatbeltStart(t, sandbox) })
+	}
+}
+
+func testSeatbeltStart(t *testing.T, sandbox string) {
 	l := newConfinedLayout(t)
 	profileOut := filepath.Join(t.TempDir(), "profile")
 	s := seatbeltConfiner{bin: fakeSandboxExec(t, profileOut, true)}
@@ -346,7 +403,7 @@ echo '{"type":"result","subtype":"success"}'
 		t.Fatal(err)
 	}
 	r := &Runner{ClaudeBin: bin, Confiner: s, SystemPaths: []Mount{{Path: l.system, Access: ReadOnly}}}
-	req := l.request(SandboxNone)
+	req := l.request(sandbox)
 	res, err := r.Run(context.Background(), req)
 	if err != nil || res.IsError {
 		t.Fatalf("run: %+v, %v", res, err)
