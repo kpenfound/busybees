@@ -23,8 +23,11 @@ type Confinement struct {
 	// agent's executable. They add to what the mounts allow.
 	System []Mount
 	// Denied are the files and directories that stay unreadable and
-	// unexecutable inside Mounts and System, under whatever path or shell
-	// reaches them: the VCS executables of a turn without VCS.
+	// unexecutable inside Mounts and System: the VCS executables of a turn
+	// without VCS. A denied file is denied at its own path, whatever shell
+	// or symbolic link leads there, and under a hard link in a directory
+	// that holds a denied path. A hard link to it anywhere else in Mounts or
+	// System is not found.
 	Denied []string
 }
 
@@ -81,8 +84,14 @@ func (h HostBoundary) confinement(req Request, turn *Turn) (*Confinement, error)
 	if !turn.VCS {
 		c.Denied = executablePaths(VCSExecutables, envValue(turn.Env, "PATH"))
 		for i, m := range turn.Mounts {
+			info, err := os.Stat(m.Path)
+			if err != nil {
+				return nil, fmt.Errorf("mount %s: %w", req.Grants.Mounts[i].Path, err)
+			}
 			for _, d := range c.Denied {
-				if inside(d, m.Path) {
+				// By its path, or as a hard link to it under another name.
+				denied, err := os.Stat(d)
+				if inside(d, m.Path) || (err == nil && os.SameFile(info, denied)) {
 					return nil, fmt.Errorf("%w: mount %s is the VCS executable %s and VCS is not granted", ErrNotGranted, req.Grants.Mounts[i].Path, d)
 				}
 			}
@@ -201,7 +210,9 @@ type confineRule struct {
 // itself can be listed and nothing more, so nothing can be created at its
 // own level. Symbolic links are left out, since following one needs no
 // access and its target is decided where the target lies. So is an entry
-// that is a denied file under another name.
+// that is a denied file under another name. Only a directory gone around is
+// read entry by entry: a hard link to a denied file in a directory allowed
+// as a whole is allowed with it.
 func confineRules(c Confinement) ([]confineRule, error) {
 	p := &rulePlan{denied: c.Denied, index: map[string]int{}}
 	for _, d := range c.Denied {

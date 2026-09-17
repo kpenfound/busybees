@@ -129,9 +129,11 @@ req.Grants = &agent.Grants{
   the session's `PATH` and in the usual system directories, cannot be read
   or executed: by name, by absolute path, from a shell, through a symbolic
   link or a hard link beside them, or as a copy. Git's directory of
-  subcommand programs goes with `git`. A mount that is one of them is refused
-  (`ErrNotGranted`). The stand-ins on `PATH` stay. With `VCS` nothing is
-  denied, and `/` is not needed for it.
+  subcommand programs goes with `git`. A mount that is one of them, or a
+  hard link to one, is refused (`ErrNotGranted`). A hard link to one in any
+  other directory of a mount or a system path is not found, and neither is
+  a VCS executable outside the directories searched. The stand-ins on
+  `PATH` stay. With `VCS` nothing is denied, and `/` is not needed for it.
 - The session directory (or `Runner.SessionsDir` before it exists) and, for
   a profile with skills, `Runner.SkillMountDirs` must lie inside a mount.
 - A directory that holds a denied executable, or a read-only mount inside a

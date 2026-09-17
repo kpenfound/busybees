@@ -90,6 +90,7 @@ probe git-by-hard-link {tools}/git-receive-pack --version
 probe git-by-symlink {tools}/git-link --version
 probe git-read cat {tools}/git
 probe git-copy cp {tools}/git {out}/git
+probe git-by-new-hard-link sh -c 'ln {tools}/git {out}/git-hl && {out}/git-hl --version'
 probe system-git-by-path /usr/bin/git --version
 probe system-git-exec-path /usr/lib/git-core/git --version
 probe system-tool-by-path /usr/bin/env true
@@ -190,6 +191,10 @@ func TestLandlockHoldsATurnToItsGrants(t *testing.T) {
 				"git-by-symlink":       git,
 				"git-read":             git,
 				"git-copy":             git,
+				// A link the agent makes itself, out of a directory it may
+				// only read into one it may write, would widen what the file
+				// allows: refused with VCS too.
+				"git-by-new-hard-link": "denied",
 				// What claude's box on Linux is built with: see Check.
 				"mount-in-writable": "denied",
 			}

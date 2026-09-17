@@ -274,10 +274,77 @@ func TestAConfinedTurnMustBeGrantedWhatTheRunnerWritesForIt(t *testing.T) {
 
 func TestAMountCannotGrantADeniedExecutable(t *testing.T) {
 	l := newConfinedLayout(t)
-	req := l.request(SandboxNone)
-	req.Grants.Mounts = append(req.Grants.Mounts, Mount{Path: filepath.Join(l.tools, "git"), Access: ReadOnly})
-	if _, err := l.boundary(&fakeConfiner{}).Verify(req); !errors.Is(err, ErrNotGranted) {
-		t.Fatalf("a mount that is git, without VCS: %v, want ErrNotGranted", err)
+	// Under another name, in a directory nothing else is denied in.
+	link := filepath.Join(l.outside, "not-git")
+	if err := os.Link(filepath.Join(l.tools, "git"), link); err != nil {
+		t.Fatal(err)
+	}
+	for name, path := range map[string]string{"by its path": filepath.Join(l.tools, "git"), "by a hard link": link} {
+		t.Run(name, func(t *testing.T) {
+			req := l.request(SandboxNone)
+			req.Grants.Mounts = append(req.Grants.Mounts, Mount{Path: path, Access: ReadOnly})
+			if _, err := l.boundary(&fakeConfiner{}).Verify(req); !errors.Is(err, ErrNotGranted) {
+				t.Fatalf("a mount that is git, without VCS: %v, want ErrNotGranted", err)
+			}
+			req.Grants.VCS, req.Profile.VCSAccess = true, true
+			if _, err := l.boundary(&fakeConfiner{}).Verify(req); err != nil {
+				t.Fatalf("the same mount with VCS: %v", err)
+			}
+		})
+	}
+}
+
+// The runner hands its own directories to the boundary: a confined turn run
+// through it must be granted where its session directory will be made and,
+// with skills, where they were prepared.
+func TestTheRunnerHoldsAConfinedTurnToItsOwnDirectories(t *testing.T) {
+	l := newConfinedLayout(t)
+	sessions := filepath.Join(l.outside, "sessions")
+	cache := filepath.Join(l.outside, "skills")
+	for _, dir := range []string{sessions, cache} {
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	system := []Mount{{Path: l.system, Access: ReadOnly}}
+	for name, tc := range map[string]struct {
+		runner  *Runner
+		request func(*Request)
+		needs   string
+	}{
+		"sessions directory": {
+			runner:  &Runner{Confiner: &fakeConfiner{}, SystemPaths: system, SessionsDir: sessions},
+			request: func(r *Request) { r.SessionDir = "" },
+			needs:   sessions,
+		},
+		"skill directory": {
+			runner:  &Runner{Confiner: &fakeConfiner{}, SystemPaths: system, Skills: &preparedSkills{dir: cache}, SkillMountDirs: []string{cache}},
+			request: func(r *Request) { r.Profile.Skills = []string{"a-skill"} },
+			needs:   cache,
+		},
+		"skill directory of a runner that prepares none": {
+			runner:  &Runner{Confiner: &fakeConfiner{}, SystemPaths: system, SkillMountDirs: []string{cache}},
+			request: func(r *Request) { r.Profile.Skills = []string{"a-skill"} },
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			req := l.request(SandboxNone)
+			tc.request(&req)
+			_, err := tc.runner.Verify(req)
+			if tc.needs == "" {
+				if err != nil {
+					t.Fatalf("verify: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrNotGranted) {
+				t.Fatalf("ungranted %s: %v, want ErrNotGranted", name, err)
+			}
+			req.Grants.Mounts = append(req.Grants.Mounts, Mount{Path: tc.needs, Access: ReadOnly})
+			if _, err := tc.runner.Verify(req); err != nil {
+				t.Fatalf("granted %s: %v", name, err)
+			}
+		})
 	}
 }
 

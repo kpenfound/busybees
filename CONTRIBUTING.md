@@ -107,9 +107,9 @@ See [core/README.md](core/README.md) for the execution boundary.
   `internal/review` uses its own fake. `core/agent/agenttest` supplies the shared
   session fakes; core's engine and host-server launches use the same guard as
   agent launches. There is no opt-in path to real agents in the test suite.
-- `core/agent`'s Landlock tests (`TestLandlock...`) run a fake agent under
-  the kernel's enforcement, and skip, saying why, on a kernel without
-  Landlock. Docker Desktop's kernel is one, so `dagger check` on a Mac skips
+- `core/agent`'s enforcement tests (`TestLandlockHoldsATurnToItsGrants`,
+  `TestLandlockLeavesTheRunnerUnconfined`) run a fake agent under the
+  kernel's enforcement, and skip, saying why, on a kernel without Landlock. Docker Desktop's kernel is one, so `dagger check` on a Mac skips
   them. This runs them on Debian's kernel under QEMU, inside Dagger, with no
   privileges:
 

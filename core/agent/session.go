@@ -195,8 +195,8 @@ type Runner struct {
 	MountDirs []string
 	// Skills prepares generic skill plugin directories.
 	Skills SkillPreparer
-	// SkillMountDirs hold the prepared skills; a container session with
-	// skills must be granted them.
+	// SkillMountDirs hold the prepared skills; a container session or a
+	// confined host session with skills must be granted them.
 	SkillMountDirs []string
 	// AddDirs are extra directories claude may write (the state dir). Each
 	// must be granted read-write.
