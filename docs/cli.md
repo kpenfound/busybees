@@ -724,7 +724,7 @@ busybees  acme/widgets                                                          
 │ unread mail   product manager 1, developer 2                                                     │
 │ next poll     in 2m30s                                                                           │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
-↑↓ select · enter watch · o GitHub · k stop session · r reload · q or ctrl-c stops (sessions finish)
+↑↓ select · enter watch · o GitHub · k stop session · p pause · r reload · q or ctrl-c stops (sessions finish)
 ```
 
 **Now** lists running sessions and review-pipeline activity. Sessions show
@@ -792,6 +792,7 @@ The keys:
 | `enter` | Watch the selected session's transcript (below). |
 | `o` | Open the selected issue or pull request on GitHub. |
 | `k` | Stop the selected session and hand its issue to a person. It asks first, naming the session: press `k` again to stop the one it named. |
+| `p` | Pause dispatch, or resume it. Unavailable while the daily budget pause is in force. |
 | `r` | Reload the configuration from disk: `bees.toml`, or a machine config and every project's `bees.toml`. Running sessions keep the settings they started with. |
 | `q`, `ctrl-c` | Stop the factory: nothing new starts and the work in flight finishes. Press again to stop the running sessions now, and a third time to leave the terminal early. |
 
@@ -808,6 +809,18 @@ again stops the running sessions now, killed mid-work the way a
 the next `bees run` resumes each issue and tells its next session what was
 interrupted. A third press leaves the terminal and waits out whatever is
 still coming down with the console back.
+
+`p` pauses dispatch without stopping the factory, the way the
+[daily cost budget](configuration.md#cost-budgets) does: nothing new is
+dispatched, the sessions already running finish, and polling, human
+feedback and label reconciliation go on. The footer offers `p pause` or
+`p resume`, the header reads `⏸ paused by hand (p resumes)`, and
+`status.json` carries `manual_paused`. In a daemon's view `p` pauses every
+project, whichever one the selector shows. The pause is kept in memory
+only: a restarted `bees run` starts unpaused. While the daily budget pause
+holds the factory (every project, in a daemon's view) `p` is refused and
+not offered; a pause by hand set before the budget pause stays set when
+the budget pause lifts, and dispatch waits for `p`.
 
 `k` is the key that throws work away, and asks first: the first press names
 the session it would stop and the second stops that one, whatever the cursor
@@ -1121,6 +1134,13 @@ harder stop — it names the time it lifts (`limit_paused_until` in `--json`):
 
 ```
 scheduler: pid 4711, last poll 12s ago   paused: claude session limit until 23:50 (in 37m)   build v0.2.0
+```
+
+A pause from the live view's `p` key comes after both
+(`manual_paused` in `--json`):
+
+```
+scheduler: pid 4711, last poll 12s ago   paused: paused by hand (p resumes)   build v0.2.0
 ```
 
 The `ready` queue also carries a breakdown by [size](workflow.md#sizing)

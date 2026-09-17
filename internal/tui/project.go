@@ -176,7 +176,12 @@ func (m Model) notices() []string {
 		if m.all() {
 			prefix = p.Name + ": "
 		}
-		switch notice := p.status.PauseNotice(m.deps.Now()); {
+		st := p.status
+		if m.deps.SetPaused != nil {
+			// The view's own record of p, which status.json trails.
+			st.ManualPaused = m.paused
+		}
+		switch notice := st.PauseNotice(m.deps.Now()); {
 		case notice != "":
 			out = append(out, warnStyle.Render("⏸ "+prefix+notice))
 		case p.status.BudgetNotice() != "":

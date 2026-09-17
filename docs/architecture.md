@@ -147,7 +147,7 @@ A full pass is:
    is sized in the same pass. Every edit is also written back to the cached
    poll that local passes classify from; without that they would see the old
    labels and repeat the edit.
-6. **Pauses.** Two conditions stop steps 7 and 8 from starting anything;
+6. **Pauses.** Three conditions stop steps 7 and 8 from starting anything;
    workers already running finish their loop either way. Each pause is logged
    once when it starts and once when it lifts, and shown by `bees status` and
    in the live view's header. A cancelled loop context gates the same two
@@ -184,6 +184,12 @@ A full pass is:
      normally. The pause is in memory only: after a restart the first session
      that hits the limit re-establishes it. See
      [The claude session limit](configuration.md#the-claude-session-limit).
+   - **Paused by hand.** The live view's `p` key (`Scheduler.SetPaused`,
+     and for a daemon `Daemon.SetPaused`, which reaches every project and
+     any project a reload starts while it holds) pauses dispatch until `p`
+     is pressed again, whatever the other two pauses do meanwhile. It is
+     `manual_paused` in `status.json` and in memory only: a restarted
+     factory starts unpaused.
 7. **Dispatch developers.** The candidates, in order: issues in `in-progress`
    and `review` that no worker owns (resumed after a restart, never
    reordered); an `approved` issue whose worker was killed in the
@@ -470,8 +476,9 @@ things come from a session's own `transcript.jsonl`, in the directory the
 started event named, because no event carries them: the transcript the session
 view shows, and the turn count the Now panel shows for a session still running
 (an agent reports its turn count in the event that ends its stream and nothing
-before it). Beyond stopping the factory, its `k` key is the one thing it asks
-the scheduler to do: stop one running session by the name the stream
+before it). Beyond stopping the factory, it asks the scheduler to do two
+things: pause or resume dispatch, on `p`, and, on `k`, stop one running
+session by the name the stream
 published, through the same path `bees kill` uses, and escalate the issue it
 was working on. The mark that leaves behind is what keeps the session's own
 worker from retrying it or escalating the issue a second time. The view's one

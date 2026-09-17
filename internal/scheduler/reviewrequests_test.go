@@ -860,3 +860,30 @@ func TestARequestedReviewWhoseReviewContradictsItFails(t *testing.T) {
 		})
 	}
 }
+
+// A pause by hand holds a requested review too: nothing starts and the label
+// stays until the resume, when the review is dispatched.
+func TestManualPauseHoldsARequestedReview(t *testing.T) {
+	h := newHarnessAt(t, reviewOnlyTOML, requestedReviewClock)
+	pushBranch(t, h.clone, "fix-widget")
+	h.gh.prs[42] = personsPR("bees", "bees:review-requested")
+
+	h.sched.SetPaused(true)
+	runPass(t, h)
+	if got := len(h.sessions(config.RoleReviewer)); got != 0 {
+		t.Fatalf("reviewer sessions while paused: %d, want 0", got)
+	}
+	if got := removeLabelCalls(h, "42", "bees:review-requested"); got != 0 {
+		t.Errorf("--remove-label edits while paused: %d, want 0", got)
+	}
+
+	h.sched.SetPaused(false)
+	forcePoll(h)
+	runPass(t, h)
+	if got := len(h.sessions(config.RoleReviewer)); got != 1 {
+		t.Errorf("reviewer sessions after the resume: %d, want 1", got)
+	}
+	if got := removeLabelCalls(h, "42", "bees:review-requested"); got != 1 {
+		t.Errorf("--remove-label edits after the resume: %d, want 1", got)
+	}
+}

@@ -44,6 +44,10 @@ type Deps struct {
 	// is what a second Ctrl-C or q does once Stop has been asked. Nil means
 	// the view can only wait the sessions out.
 	HardStop func()
+	// SetPaused pauses (true) or resumes (false) dispatch across the whole
+	// factory, every project of a daemon included (Scheduler.SetPaused,
+	// Daemon.SetPaused): what p does. Nil means the view cannot pause.
+	SetPaused func(paused bool)
 	// Kill stops one running session by the name the event stream gave it
 	// and hands the issue it was working on to a person
 	// (scheduler.KillSession). Nil means the view cannot stop a session.
@@ -217,6 +221,10 @@ type Model struct {
 	// it runs starts no other.
 	reload    reloadState
 	reloading bool
+	// paused is whether p has paused dispatch (Deps.SetPaused). The view is
+	// the only thing that changes it, so it is kept here rather than read
+	// back from status.json, which lags a pass behind.
+	paused bool
 }
 
 // reloadState is what the header says about the configuration: when it
@@ -504,8 +512,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // GitHub, and k stops a session and hands its issue to a person. k asks
 // first, the way Ctrl-C does: it is the one key here that throws work away,
 // so it asks about the selected session and then stops the one it named
-// (see kill). r reloads the configuration from disk (see reloadConfig). The
-// session view has its own keys (sessionKey), j and k among them —
+// (see kill). p pauses or resumes dispatch across the whole factory (see
+// togglePause), and r reloads the configuration from disk (see
+// reloadConfig). The session view has its own keys (sessionKey), j and k among them —
 // they scroll a transcript there, which is where vim keys belong.
 func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	k := msg.String()
@@ -564,6 +573,8 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.openOnGitHub()
 	case "k":
 		return m.kill()
+	case "p":
+		return m.togglePause()
 	case "r":
 		return m.reloadConfig()
 	}
@@ -593,6 +604,57 @@ func (m Model) reloadConfig() (tea.Model, tea.Cmd) {
 	return m, func() tea.Msg {
 		err := reload()
 		return reloadedMsg{at: now(), err: err}
+	}
+}
+
+// togglePause pauses dispatch, or resumes it, across the whole factory. It is
+// refused while the daily budget pause holds the factory (budgetPaused):
+// that pause lifts on its own, and a manual pause set before it stays set
+// when it does.
+func (m Model) togglePause() (tea.Model, tea.Cmd) {
+	switch {
+	case m.deps.SetPaused == nil:
+		m.notice = "this view cannot pause the factory"
+		return m, nil
+	case m.budgetPaused():
+		m.notice = "p is unavailable while the daily budget pause is in force"
+		return m, nil
+	}
+	m.paused = !m.paused
+	m.deps.SetPaused(m.paused)
+	if m.paused {
+		m.notice = "paused: nothing new is dispatched, running sessions finish (p resumes)"
+	} else {
+		m.notice = "resumed: dispatching again"
+	}
+	return m, nil
+}
+
+// budgetPaused says whether the daily budget pause holds the factory: the
+// one project's, or in a daemon's view every project's, whatever the
+// selector shows, since a pause by hand still stops the others.
+func (m Model) budgetPaused() bool {
+	if len(m.order) == 0 {
+		return false
+	}
+	for _, i := range m.order {
+		if !m.projects[i].status.BudgetPaused {
+			return false
+		}
+	}
+	return true
+}
+
+// pauseHint is the footer's hint for p, "" when the view cannot pause or the
+// daily budget pause makes p unavailable.
+func (m Model) pauseHint() string {
+	switch {
+	case m.deps.SetPaused == nil, m.budgetPaused():
+		return ""
+	case m.paused:
+		return "p resume · "
+	default:
+		return "p pause · "
 	}
 }
 
@@ -1069,11 +1131,11 @@ func (m Model) footer() string {
 		hints = "←→ project · "
 	}
 	if slices.ContainsFunc(m.shownSessions(), func(s running) bool { return s.activity == nil }) {
-		return hints + "↑↓ select · enter watch · o GitHub · k stop session · r reload · q or ctrl-c stops (sessions finish)"
+		return hints + "↑↓ select · enter watch · o GitHub · k stop session · " + m.pauseHint() + "r reload · q or ctrl-c stops (sessions finish)"
 	}
 	// enter and k both act on a running session, and there are none in
 	// view.
-	return hints + "↑↓ select · o GitHub · r reload · q or ctrl-c stops (sessions finish)"
+	return hints + "↑↓ select · o GitHub · " + m.pauseHint() + "r reload · q or ctrl-c stops (sessions finish)"
 }
 
 // panel draws one titled box around w columns of text, with its title and
