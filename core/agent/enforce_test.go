@@ -398,7 +398,10 @@ func TestAdmitComparesEveryPartOfThePolicy(t *testing.T) {
 		turn   func() *Turn
 		change func(*Turn)
 	}{
-		"not confined":       {host, hostTurn, func(u *Turn) { u.Confinement = nil }},
+		"not confined": {host, hostTurn, func(u *Turn) { u.Confinement = nil }},
+		// With no system path and nothing denied, only its confinement tells
+		// a host turn from one that is not held at all.
+		"not confined, and nothing else to tell by": {Policy{Sandbox: SandboxNone, Mounts: host.Mounts}, func() *Turn { return &Turn{Mounts: slices.Clone(host.Mounts)} }, func(*Turn) {}},
 		"another sandbox":    {host, hostTurn, func(u *Turn) { u.Confinement.Sandbox = SandboxClaude }},
 		"every tool":         {host, hostTurn, func(u *Turn) { u.Tools = nil }},
 		"another tool":       {host, hostTurn, func(u *Turn) { u.Tools = []string{"Read", "Bash"} }},
@@ -462,8 +465,12 @@ func TestThePolicyJudgesPathsTheWayTheyAreEnforced(t *testing.T) {
 			}
 		}
 	}
-	// A container runs what its image holds, the masked paths apart.
-	box := Policy{Sandbox: SandboxContainer, Mounts: mounts, Denied: []string{"/usr/bin/git", "/usr/lib/git-core"}}
+	// A container runs what its image holds, the masked paths apart, and a
+	// mask over a path of a mount hides the host's file there.
+	box := Policy{Sandbox: SandboxContainer, Mounts: mounts, Denied: []string{"/usr/bin/git", "/usr/lib/git-core", filepath.Join(rw, "file")}}
+	if box.Reads(filepath.Join(rw, "file")) || box.Writes(filepath.Join(rw, "file")) || !box.Reads(filepath.Join(ro, "file")) {
+		t.Errorf("a masked path of a mount is read or written, or another is not")
+	}
 	for path, want := range map[string]bool{"/usr/bin/env": true, "/usr/bin/git": false, "/usr/lib/git-core/git-upload-pack": false, "usr/bin/env": false} {
 		if got := box.Runs(path); got != want {
 			t.Errorf("container runs %s = %v, want %v", path, got, want)
