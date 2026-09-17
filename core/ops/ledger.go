@@ -58,7 +58,10 @@ func (s *Ledger) LedgerPath() string { return filepath.Join(s.Dir, "ledger.jsonl
 
 // AppendLedger appends one entry to the ledger, creating it if needed. The
 // line is written with a single Write to an O_APPEND file so concurrent
-// workers never interleave.
+// workers never interleave. When the file does not end in a newline (a
+// write torn by a crash), the entry is preceded by one, so it starts a
+// line of its own: the torn tail is left as it is, and once it is a middle
+// line ReadLedger fails closed naming it until a person removes it.
 func (s *Ledger) AppendLedger(e LedgerEntry) error {
 	if e.Time.IsZero() {
 		e.Time = s.now()
@@ -74,15 +77,37 @@ func (s *Ledger) AppendLedger(e LedgerEntry) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	f, err := os.OpenFile(s.LedgerPath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(s.LedgerPath(), os.O_APPEND|os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		return err
+	}
+	torn, err := endsTorn(f)
+	if err != nil {
+		_ = f.Close()
+		return err
+	}
+	if torn {
+		line = append([]byte{'\n'}, line...)
 	}
 	if _, err := f.Write(line); err != nil {
 		_ = f.Close()
 		return err
 	}
 	return f.Close()
+}
+
+// endsTorn reports whether f is non-empty and its last byte is not a
+// newline.
+func endsTorn(f *os.File) (bool, error) {
+	info, err := f.Stat()
+	if err != nil || info.Size() == 0 {
+		return false, err
+	}
+	last := make([]byte, 1)
+	if _, err := f.ReadAt(last, info.Size()-1); err != nil {
+		return false, err
+	}
+	return last[0] != '\n', nil
 }
 
 // LedgerLineError is a ledger line that does not parse, other than the last
