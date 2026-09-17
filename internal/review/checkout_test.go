@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -23,7 +24,10 @@ import (
 // fills the directory mounted at the checkout the way the clone does: a
 // git repository whose CheckoutBaseRef commit holds widget.go and whose
 // checked-out head adds spinner.go, so a diff read from it is spinner.go
-// alone. Every subcommand appends its name to calls.txt.
+// alone. With an origin.txt beside it, run instead runs the real checkout
+// script in the mounted directory, against the repository origin.txt
+// names in place of GitHub's URL. Every subcommand appends its name to
+// calls.txt.
 func fakeDocker(t *testing.T) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "docker")
@@ -67,6 +71,11 @@ run)
     *) shift ;;
     esac
   done
+  if [ -f "$here/origin.txt" ]; then
+    script="$(sed -n '/^-c$/,$p' "$here/run-args.txt" | sed '1d;$d' | sed '$d' | sed '$d' | sed '$d')"
+    set -- $(tail -n 2 "$here/run-args.txt")
+    cd "$src" && exec sh -c "$script" sh "$(cat "$here/origin.txt")" "$1" "$2"
+  fi
   git -C "$src" init -q
   echo "package widgets" > "$src/widget.go"
   git -C "$src" add -A
@@ -165,7 +174,7 @@ func TestTheAnglesRunInACheckoutOfThePullRequestHead(t *testing.T) {
 		"\n--env\nGIT_TERMINAL_PROMPT=0\n",
 		"\n" + checkoutTag() + "\nsh\n-c\n",
 		"\nhttps://github.com/acme/widgets.git\nrefs/pull/7/head\n",
-		"fetch -q --depth 1 origin \"$2:" + checkoutHeadRef + "\"",
+		"fetch -q origin \"$2:" + checkoutHeadRef + "\"",
 		"checkout -q --detach " + checkoutHeadRef,
 		"credential.helper=",
 	} {
@@ -430,9 +439,9 @@ func TestACloneOfTheCallersOwnMakesTheCheckout(t *testing.T) {
 	}
 }
 
-// The checkout the pipeline makes fetches the base branch's tip beside the
-// head, each shallow, and the diff is read from it as the head against
-// that tip, on the host: no number of changed files is too many for it.
+// The checkout the pipeline makes fetches the base branch beside the head,
+// and the diff is read from it as the head against their merge base, on the
+// host: no number of changed files is too many for it.
 func TestTheCheckoutFetchesTheBaseBesideTheHeadAndTheDiffIsReadFromIt(t *testing.T) {
 	docker := fakeDocker(t)
 	dir := filepath.Join(t.TempDir(), CheckoutDir)
@@ -442,8 +451,9 @@ func TestTheCheckoutFetchesTheBaseBesideTheHeadAndTheDiffIsReadFromIt(t *testing
 	run := beside(t, docker, "run-args.txt")
 	for _, arg := range []string{
 		"\nhttps://github.com/acme/widgets.git\nrefs/pull/7/head\nmain\n",
-		"fetch -q --depth 1 origin \"$2:" + checkoutHeadRef + "\"",
-		"fetch -q --depth 1 origin \"refs/heads/$3:" + CheckoutBaseRef + "\" || true",
+		"fetch -q origin \"$2:" + checkoutHeadRef + "\"",
+		"fetch -q origin \"refs/heads/$3:" + checkoutBaseTipRef + "\"",
+		"git update-ref " + CheckoutBaseRef + " \"$base\"",
 	} {
 		if !strings.Contains(run, arg) {
 			t.Errorf("run args missing %q:\n%s", arg, run)
@@ -454,15 +464,123 @@ func TestTheCheckoutFetchesTheBaseBesideTheHeadAndTheDiffIsReadFromIt(t *testing
 	if head, base := strings.Index(run, "checkout -q --detach"), strings.Index(run, "refs/heads/$3"); head < 0 || base < head {
 		t.Errorf("the base is fetched before the head is checked out:\n%s", run)
 	}
-	diff, err := checkoutDiff(context.Background(), dir)
-	if err != nil {
-		t.Fatal(err)
+	diff, note, err := checkoutDiff(context.Background(), dir)
+	if err != nil || note != "" {
+		t.Fatal(err, note)
 	}
 	if !strings.Contains(diff, "+++ b/spinner.go") || !strings.Contains(diff, "+func Spin() {}") || strings.Contains(diff, "widget.go") {
 		t.Errorf("diff read from the checkout:\n%s\nwant spinner.go added and widget.go, in both tips, absent", diff)
 	}
 	// A checkout with no base reference has no diff to read.
-	if _, err := checkoutDiff(context.Background(), gitRepo(t, "")); err == nil {
+	if _, _, err := checkoutDiff(context.Background(), gitRepo(t, "")); err == nil {
 		t.Error("a checkout without the base reference gave a diff")
+	}
+}
+
+// commitFile writes name with content in the repository dir and commits it.
+func commitFile(t *testing.T, dir, name, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", "-A")
+	runGit(t, dir, "-c", "user.name=bees", "-c", "user.email=bees@example.com", "-c", "commit.gpgsign=false", "commit", "-q", "-m", name)
+}
+
+// originFor makes a repository standing in for GitHub's, named in
+// origin.txt beside the fake docker, and returns its working directory: the
+// pull request's head is fetched from refs/pull/7/head and the base from
+// main.
+func originFor(t *testing.T, docker string) string {
+	t.Helper()
+	origin := t.TempDir()
+	runGit(t, origin, "init", "-q", "-b", "main")
+	if err := os.WriteFile(filepath.Join(filepath.Dir(docker), "origin.txt"), []byte(origin), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return origin
+}
+
+// A base branch that moved on after the pull request branched from it does
+// not show its later change in the diff: the diff is the head against the
+// merge base.
+func TestTheDiffIsAgainstTheMergeBaseOfABranchBehindItsBase(t *testing.T) {
+	docker := fakeDocker(t)
+	origin := originFor(t, docker)
+	commitFile(t, origin, "widget.go", "package widgets\n")
+	runGit(t, origin, "checkout", "-q", "-b", "pr")
+	commitFile(t, origin, "spinner.go", "package widgets\n\nfunc Spin() {}\n")
+	runGit(t, origin, "update-ref", "refs/pull/7/head", "HEAD")
+	runGit(t, origin, "checkout", "-q", "main")
+	commitFile(t, origin, "later.go", "package widgets\n\nfunc Later() {}\n")
+
+	dir := filepath.Join(t.TempDir(), CheckoutDir)
+	if err := (&Checkout{DockerBin: docker}).Run(context.Background(), Ref{Repo: testRepo, Number: 7}, "main", dir); err != nil {
+		t.Fatal(err)
+	}
+	diff, note, err := checkoutDiff(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if note != "" {
+		t.Errorf("note = %q, want none: the two have a merge base", note)
+	}
+	if !strings.Contains(diff, "+++ b/spinner.go") || strings.Contains(diff, "later.go") {
+		t.Errorf("diff:\n%s\nwant spinner.go alone, not the base's later.go", diff)
+	}
+}
+
+// A head that shares no history with its base is diffed against the base
+// branch's tip, and the review is told so.
+func TestWithoutAMergeBaseTheDiffIsAgainstTheBaseTipAndSaysSo(t *testing.T) {
+	docker := fakeDocker(t)
+	origin := originFor(t, docker)
+	commitFile(t, origin, "widget.go", "package widgets\n")
+	runGit(t, origin, "checkout", "-q", "--orphan", "pr")
+	runGit(t, origin, "rm", "-q", "-r", "--cached", ".")
+	if err := os.Remove(filepath.Join(origin, "widget.go")); err != nil {
+		t.Fatal(err)
+	}
+	commitFile(t, origin, "spinner.go", "package spinners\n\nfunc Spin() {}\n")
+	runGit(t, origin, "update-ref", "refs/pull/7/head", "HEAD")
+
+	dir := filepath.Join(t.TempDir(), CheckoutDir)
+	if err := (&Checkout{DockerBin: docker}).Run(context.Background(), Ref{Repo: testRepo, Number: 7}, "main", dir); err != nil {
+		t.Fatal(err)
+	}
+	in := &Input{Ref: Ref{Repo: testRepo, Number: 7}, Checkout: dir}
+	diff, err := in.Diff(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(diff, "--- a/widget.go") || !strings.Contains(diff, "+++ b/spinner.go") {
+		t.Errorf("diff:\n%s\nwant the head against the base's tip", diff)
+	}
+	if len(in.skipped) != 1 || !strings.Contains(in.skipped[0], "no merge base") {
+		t.Errorf("skipped = %q, want the missing merge base recorded", in.skipped)
+	}
+}
+
+// A base branch that cannot be fetched leaves the head checked out and no
+// base reference, so the diff is read through gh instead.
+func TestABaseThatCannotBeFetchedLeavesTheHeadCheckedOutAndNoBase(t *testing.T) {
+	docker := fakeDocker(t)
+	origin := originFor(t, docker)
+	commitFile(t, origin, "widget.go", "package widgets\n")
+	runGit(t, origin, "update-ref", "refs/pull/7/head", "HEAD")
+	dir := filepath.Join(t.TempDir(), CheckoutDir)
+	if err := (&Checkout{DockerBin: docker}).Run(context.Background(), Ref{Repo: testRepo, Number: 7}, "gone", dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "widget.go")); err != nil {
+		t.Errorf("the head is not checked out: %v", err)
+	}
+	cmd := exec.Command("git", "rev-parse", "--verify", "-q", CheckoutBaseRef)
+	cmd.Dir = dir
+	if cmd.Run() == nil {
+		t.Errorf("%s exists after a failed base fetch", CheckoutBaseRef)
+	}
+	if _, _, err := checkoutDiff(context.Background(), dir); err == nil {
+		t.Error("a checkout whose base could not be fetched gave a diff")
 	}
 }

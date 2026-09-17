@@ -57,20 +57,19 @@ writes to the repository.
 As the context is gathered, bees checks out the pull request's head, in a
 container: an Alpine image with git, built the first time and kept, clones
 `refs/pull/<number>/head` of the pull request's repository over HTTPS into
-the review's `checkout/` directory, fetches the tip of the base branch
-beside it, and exits. That is the head as it is on GitHub, whatever your
-working tree has checked out, and a fork's pull request as much as one from
-a branch of the repository. The `diff` source reads the diff from that
-checkout, with your machine's git, as the head against the base branch's
-tip: GitHub's own diff is refused for a pull request that changes more than
-300 files, and this one is not. It is a plain diff of the two, not the diff
-against the merge base that GitHub shows: a base branch that has moved on
-since the pull request forked from it shows its later changes in the diff,
-reversed. The angle sessions run in that same directory, on your machine,
-with the same read-only tools; nothing runs in the container after the
-clone. `github.token` authenticates the clone when it is set, handed to the
-container as an environment variable; without it the clone is anonymous,
-which a private repository refuses.
+the review's `checkout/` directory, fetches the base branch beside it, and
+exits. That is the head as it is on GitHub, whatever your working tree has
+checked out, and a fork's pull request as much as one from a branch of the
+repository. The `diff` source reads the diff from that checkout, with your
+machine's git, as the head against its merge base with the base branch, the
+diff GitHub shows: GitHub's own diff is refused for a pull request that
+changes more than 300 files, and this one is not. When the head and the base
+branch have no merge base, the diff is against the base branch's tip and the
+review lists that among the context it skipped. The angle sessions run in
+that same directory, on your machine, with the same read-only tools; nothing
+runs in the container after the clone. `github.token` authenticates the
+clone when it is set, handed to the container as an environment variable;
+without it the clone is anonymous, which a private repository refuses.
 
 The checkout needs `docker`. Without it, or when the image does not build
 or the clone fails, the review says so and goes on: the diff is read with
