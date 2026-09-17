@@ -43,7 +43,8 @@ func (e Endpoint) Via(host string) string {
 // Lease is one turn's hold on a started server. Close stops the server,
 // frees its endpoint and returns the error serving ended with, if any; it
 // is safe to call more than once. Connect returns a client session of the
-// endpoint, presenting its token, for callers that talk to it themselves.
+// endpoint for callers that talk to it themselves; over HTTP it presents the
+// endpoint's token.
 type Lease interface {
 	Connect(ctx context.Context, client mcp.Implementation) (*mcp.ClientSession, error)
 	Close() error
@@ -153,8 +154,9 @@ var memoryTurns atomic.Uint64
 
 // StartMemory is Start without a listener, for tests: the endpoint's URL is
 // a memory:// name nothing outside this process can open, and
-// Lease.Connect reaches the server over an in-memory transport. Closing the
-// lease closes every session it connected and refuses further ones.
+// Lease.Connect reaches the server over an in-memory transport, with no
+// token. Closing the lease, or the end of ctx, closes every session it
+// connected and refuses further ones.
 func StartMemory(ctx context.Context, srv *mcp.Server) (Endpoint, Lease, error) {
 	if srv == nil {
 		return Endpoint{}, nil, errors.New("mcphost: no server to start")
@@ -165,7 +167,10 @@ func StartMemory(ctx context.Context, srv *mcp.Server) (Endpoint, Lease, error) 
 	}
 	name := "turn-" + strconv.FormatUint(memoryTurns.Add(1), 10)
 	ep := Endpoint{URL: "memory://" + name + EndpointPath, Host: name, Token: token}
-	return ep, &memoryLease{ctx: ctx, srv: srv}, nil
+	l := &memoryLease{ctx: ctx, srv: srv}
+	// Like Start, the end of ctx drops every connection.
+	context.AfterFunc(ctx, func() { _ = l.Close() })
+	return ep, l, nil
 }
 
 type memoryLease struct {

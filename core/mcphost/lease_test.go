@@ -139,19 +139,48 @@ func TestStartStopsWhenTheContextEnds(t *testing.T) {
 		t.Fatal(err)
 	}
 	cancel()
-	done := make(chan error, 1)
-	go func() { done <- lease.Close() }()
-	select {
-	case err := <-done:
+	// Only the context: Close would stop the server on its own.
+	addr := net.JoinHostPort(ep.Host, ep.Port)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		conn, err := net.Dial("tcp", addr)
 		if err != nil {
-			t.Fatal(err)
+			break
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("the server did not stop")
-	}
-	if conn, err := net.Dial("tcp", net.JoinHostPort(ep.Host, ep.Port)); err == nil {
 		_ = conn.Close()
-		t.Fatal("the endpoint still accepts connections")
+		if time.Now().After(deadline) {
+			t.Fatal("the endpoint still accepts connections after the context ended")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err := lease.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStartMemoryRefusesAfterTheContextEnds(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_, lease, err := mcphost.StartMemory(ctx, server(t, turnRegistry(), "pilot"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := lease.Connect(ctx, clientInfo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	if _, err := lease.Connect(context.Background(), clientInfo); !errors.Is(err, mcphost.ErrLeaseClosed) {
+		t.Fatalf("connect after the context ended: %v", err)
+	}
+	// The session connected before is closed without Close being called.
+	callCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
+	defer stop()
+	for callEcho(callCtx, c, "pilot_echo") == nil {
+		if callCtx.Err() != nil {
+			t.Fatal("a session outlived the context")
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
