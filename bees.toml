@@ -68,46 +68,98 @@ notes_max_bytes = 18768
 stacked_prs = false
 
 #===============================================================================
-# Profiles
+# Codex Profiles
+#===============================================================================
+
+# [profiles.default]
+# agent = "codex"
+# model = "gpt-5.6-terra"
+# fallback_model = "gpt-5.6-sol"
+# effort = "high"
+# sandbox = "none"
+
+# [profiles.review_fast]
+# agent = "codex"
+# model = "gpt-5.6-luna"
+# fallback_model = "gpt-6-astra"
+# effort = "medium"
+# sandbox = "none"
+
+# [profiles.coder_smart]
+# agent = "codex"
+# model = "gpt-6-astra"
+# fallback_model = "gpt-6-astra"
+# effort = "high"
+
+# [profiles.coder_medium]
+# agent = "codex"
+# model = "gpt-6-sol"
+# fallback_model = "gpt-6-astra"
+# effort = "high"
+
+# [profiles.coder_dumb]
+# agent = "codex"
+# model = "gpt-5.6-luna"
+# fallback_model = "gpt-5.6-sol"
+# effort = "medium"
+
+# [profiles.manager_smart]
+# agent = "codex"
+# model = "gpt-5.6-sol"
+# fallback_model = "gpt-6-astra"
+# effort = "high"
+
+# [profiles.manager_dumb]
+# agent = "codex"
+# model = "gpt-5.6-terra"
+# fallback_model = "gpt-5.6-sol"
+# effort = "medium"
+
+#===============================================================================
+# Claude Profiles
 #===============================================================================
 
 [profiles.default]
-agent = "codex"
-model = "gpt-5.6-terra"
-fallback_model = "gpt-5.6-luna"
-effort = "medium"
+agent = "claude"
+model = "opus"
+fallback_model = "fable"
+effort = "high"
 sandbox = "none"
 
 [profiles.review_fast]
-agent = "codex"
-model = "gpt-5.6-luna"
-fallback_model = "gpt-5.6-luna"
+agent = "claude"
+model = "opus"
+fallback_model = "fable"
 effort = "medium"
 sandbox = "none"
 
 [profiles.coder_smart]
-agent = "codex"
-model = "gpt-6-astra"
+agent = "claude"
+model = "fable"
 effort = "high"
 
 [profiles.coder_medium]
-agent = "codex"
-model = "gpt-6-astra"
+agent = "claude"
+model = "opus"
+fallback_model = "fable"
 effort = "medium"
 
 [profiles.coder_dumb]
-agent = "codex"
-model = "gpt-5.6-luna"
-effort = "medium"
+agent = "claude"
+model = "opus"
+fallback_model = "fable"
+effort = "low"
 
 [profiles.manager_smart]
-agent = "codex"
-model = "gpt-5.6-sol"
-effort = "high"
+agent = "claude"
+model = "opus"
+fallback_model = "fable"
+effort = "medium"
 
 [profiles.manager_dumb]
-agent = "codex"
-model = "gpt-5.6-sol"
+agent = "claude"
+model = "opus"
+fallback_model = "fable"
 effort = "low"
 
 
