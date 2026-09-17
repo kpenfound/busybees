@@ -180,13 +180,13 @@ func TestContainerAgentGuard(t *testing.T) {
 func TestVCSAccessControlsSharedGitMount(t *testing.T) {
 	metadata, worktree := workspaceFixture(t)
 	for _, access := range []bool{true, false} {
-		c := container{r: &Runner{}, req: Request{Workspace: fakeWorkspace{dir: worktree, access: &vcs.Access{Mounts: []string{metadata}}}, Profile: Profile{VCSAccess: access}}}
-		mounts, err := c.mounts(context.Background())
+		c, err := verifiedContainer(t, &Runner{}, grantAll(Request{Workspace: fakeWorkspace{dir: worktree, access: &vcs.Access{Mounts: []string{metadata}}}, Profile: Profile{Sandbox: SandboxContainer, VCSAccess: access}}), "")
 		if err != nil {
 			t.Fatal(err)
 		}
+		mounts := c.mounts()
 		gitDir := metadata
-		exposed := strings.Contains(strings.Join(mounts, " "), "source="+gitDir+",")
+		exposed := strings.Contains(strings.Join(mounts, " ")+" ", ",destination="+gitDir+" ")
 		if exposed != access {
 			t.Errorf("VCSAccess=%v: shared .git exposed=%v", access, exposed)
 		}
@@ -198,9 +198,13 @@ func TestContainerEnvironmentIsIsolated(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "host-credential")
 	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
 	r := Runner{}
-	req := Request{Profile: Profile{Env: map[string]string{"EXPANDED": "$HOST_ONLY", "ANTHROPIC_API_KEY": "profile-credential"}, Shell: "/bin/bash"}, Env: map[string]string{"CONTEXT": "caller"}, ContainerEnv: map[string]string{"CONTEXT": "container"}}
+	req := grantAll(Request{Workspace: fakeWorkspace{dir: t.TempDir()}, Profile: Profile{Sandbox: SandboxContainer, Env: map[string]string{"EXPANDED": "$HOST_ONLY", "ANTHROPIC_API_KEY": "profile-credential"}, Shell: "/bin/bash"}, Env: map[string]string{"CONTEXT": "caller"}, ContainerEnv: map[string]string{"CONTEXT": "container"}}, "USER")
+	c, err := verifiedContainer(t, &r, req, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	env := map[string]string{}
-	for _, v := range r.containerVars(req, "") {
+	for _, v := range c.vars {
 		env[v.name] = v.value
 	}
 	for key, want := range map[string]string{"EXPANDED": "host-value", "ANTHROPIC_API_KEY": "profile-credential", "SHELL": "/bin/bash", "CONTEXT": "container", "HOME": "/home/agent"} {
