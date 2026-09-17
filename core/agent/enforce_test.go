@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -171,10 +172,12 @@ func TestPrepareRefusesWhatNothingEnforces(t *testing.T) {
 			t.Errorf("%s: Prepare = %v, %v, want the confiner's refusal and no session", kind, s, err)
 		}
 	}
-	// No platform's own confiner holds Claude's box: Landlock refuses the
-	// mounts it is built with, and nothing else confines at all.
-	if s, err := NewHostClaude(Runner{}).Prepare(context.Background(), l.grants()); !errors.Is(err, ErrUnsupported) || s != nil {
-		t.Errorf("host/claude under the platform's confiner: %v, %v, want ErrUnsupported", s, err)
+	// Linux's own confiner does not hold Claude's box: Landlock refuses the
+	// mounts it is built with, and a kernel without Landlock holds nothing.
+	if runtime.GOOS == "linux" {
+		if s, err := NewHostClaude(Runner{}).Prepare(context.Background(), l.grants()); !errors.Is(err, ErrUnsupported) || s != nil {
+			t.Errorf("host/claude under Landlock: %v, %v, want ErrUnsupported", s, err)
+		}
 	}
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -426,8 +429,9 @@ func TestAdmitComparesEveryPartOfThePolicy(t *testing.T) {
 	}
 }
 
-// Reads and Writes follow the rules a confiner is handed, where an inner
-// mount decides and a directory gone around takes nothing new.
+// Reads and Writes follow the contract of a confinement: the inner mount
+// decides, links are judged where they land, and a denied file is denied
+// under its other names beside it.
 func TestThePolicyJudgesPathsTheWayTheyAreEnforced(t *testing.T) {
 	base := realTemp(t)
 	rw, ro := filepath.Join(base, "rw"), filepath.Join(base, "rw", "ro")
@@ -455,16 +459,43 @@ func TestThePolicyJudgesPathsTheWayTheyAreEnforced(t *testing.T) {
 			filepath.Join(rw, "escape", "file"): {false, false},
 			filepath.Join(outside, "file"):      {false, false},
 			"rw/file":                           {false, false},
-			// Landlock goes around the read-only mount entry by entry, and
-			// the directory that holds it takes nothing new; a container's
-			// read-write bind does.
-			filepath.Join(rw, "new"): {kind == SandboxContainer, kind == SandboxContainer},
+			// Landlock takes nothing new at this level, around the
+			// read-only mount; the policy says what no confiner exceeds.
+			filepath.Join(rw, "new"): {true, true},
 		} {
 			if got := [2]bool{p.Reads(path), p.Writes(path)}; got != want {
 				t.Errorf("%s %s: reads, writes = %v, want %v", kind, path, got, want)
 			}
 		}
 	}
+	// System paths add to the mounts, and a hard link to a denied file is
+	// denied beside it and nowhere else.
+	denied, beside, elsewhere := filepath.Join(outside, "git"), filepath.Join(outside, "git-upload-pack"), filepath.Join(ro, "git-copy")
+	writeExecutable(t, denied, "exit 0\n")
+	for _, link := range []string{beside, elsewhere} {
+		if err := os.Link(denied, link); err != nil {
+			t.Fatal(err)
+		}
+	}
+	host := Policy{Sandbox: SandboxNone, Mounts: mounts, System: []Mount{{Path: outside, Access: ReadOnly}, {Path: filepath.Join(ro, "file"), Access: ReadWrite}}, Denied: []string{denied}}
+	for path, want := range map[string][2]bool{
+		filepath.Join(outside, "file"): {true, false},
+		filepath.Join(ro, "file"):      {true, true},
+		denied:                         {false, false},
+		beside:                         {false, false},
+		elsewhere:                      {true, false},
+	} {
+		if got := [2]bool{host.Reads(path), host.Writes(path)}; got != want || host.Runs(path) != want[0] {
+			t.Errorf("host %s: reads, writes = %v, runs = %v, want %v", path, got, host.Runs(path), want)
+		}
+	}
+
+	// A mask hides one name, so a container reaches the link beside it.
+	masked := Policy{Sandbox: SandboxContainer, Mounts: []Mount{{Path: outside, Access: ReadOnly}}, Denied: []string{denied}}
+	if masked.Reads(denied) || !masked.Reads(beside) {
+		t.Errorf("container: reads the masked file = %v, the link beside it = %v", masked.Reads(denied), masked.Reads(beside))
+	}
+
 	// A container runs what its image holds, the masked paths apart, and a
 	// mask over a path of a mount hides the host's file there.
 	box := Policy{Sandbox: SandboxContainer, Mounts: mounts, Denied: []string{"/usr/bin/git", "/usr/lib/git-core", filepath.Join(rw, "file")}}

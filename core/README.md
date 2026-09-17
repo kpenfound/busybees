@@ -218,8 +218,8 @@ result, err := session.Run(ctx, request)
 - `Prepare` checks the grants on their own, with no request, and asks the
   platform whether it can enforce them. `NewHostNone` and `NewHostClaude`
   are confined host sessions (above): the same `Confiner`, the same system
-  paths, the same platforms. No platform's own confiner holds `claude`, so
-  `NewHostClaude` prepares only with a `Runner.Confiner` that can.
+  paths, and the platforms of the table above, so `NewHostClaude` prepares
+  on macOS and, on Linux, only with a `Runner.Confiner` that can hold it.
   `NewContainer` binds the mounts as `ContainerBoundary` does. Without
   `VCS` it also runs the image once (`docker run --rm --network none
   --entrypoint /bin/sh <image> -c <script>`, no mounts) to find the files
@@ -239,10 +239,14 @@ result, err := session.Run(ctx, request)
   the names shadowed on `PATH`, the `Denied` paths, and a container's image
   and `Binds`. It holds names and paths, never a variable's value.
   `Reads(path)`, `Writes(path)`, `Runs(path)` and `Allows(tool)` answer for
-  one path or tool. A host session is judged by the rules its confiner is
-  handed, so `Writes` is false for a new entry at the level of a directory
-  Landlock goes around. A container is judged by its mounts, and `Runs` is
-  true for a path of its image that is not under `Denied`.
+  one path or tool: the innermost mount decides, a host session's system
+  paths add to it, and a denied path, or on the host a hard link to a denied
+  file in a directory that holds a denied path, is not reached. A turn gets
+  no more than they say, and under Landlock less in one place: nothing is
+  created, removed or renamed at the level of a directory Landlock goes
+  around. They do not judge metadata (`stat(2)`) or, under Seatbelt, the
+  entries of `/`. A container is judged by its mounts, and `Runs` is true
+  for a path of its image that is not under `Denied`.
 - `Run` takes an ordinary `Request`. The grants, the sandbox, the image and
   the confinement are the session's: `Grants` may be nil or equal to the
   prepared ones, the profile's `Sandbox` and `SandboxImage` may be empty or

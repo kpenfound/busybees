@@ -59,9 +59,9 @@ var ErrPolicyChanged = errors.New("turn differs from the session's policy")
 func NewHostNone(r Runner) Enforcer { return &hostEnforcer{kind: SandboxNone, r: r} }
 
 // NewHostClaude returns the enforcer of host turns under Claude Code's
-// sandbox, confined the same way. Landlock cannot hold Claude's box, which
-// is built with mount(2), so on Linux Prepare refuses unless r.Confiner is
-// one that can.
+// sandbox, confined the same way. Seatbelt holds it on macOS. Landlock
+// cannot hold Claude's box, which is built with mount(2), so on Linux
+// Prepare refuses unless r.Confiner is one that can.
 func NewHostClaude(r Runner) Enforcer { return &hostEnforcer{kind: SandboxClaude, r: r} }
 
 // NewContainer returns the enforcer of turns in a container of image. The
@@ -237,12 +237,19 @@ func (p Policy) Allows(tool string) bool {
 }
 
 // Reads reports whether the turn can read the host's file or directory at
-// path, and Writes whether it can change or create it. A host turn is judged
-// by the rules its confiner is handed, so a directory that holds a denied
-// path, or a read-only mount inside a read-write one, can be listed and
-// nothing created at its own level. A container turn is judged by its mounts,
-// which are all it sees of the host. A path that is not absolute, or whose
-// links cannot be resolved, is neither read nor written.
+// path, and Writes whether it can change or create it. Both follow the
+// contract every confiner and the engine's binds are held to: the innermost
+// mount that covers the path decides, a host turn's system paths add to it,
+// and nothing is reached under a denied path, or on the host through a hard
+// link to a denied file in a directory that holds a denied path. A path
+// that is not absolute, or whose links cannot be resolved, is neither read
+// nor written.
+//
+// A turn is never given more than they say. It can be given less: Landlock
+// lets nothing be created, removed or renamed at the level of a directory
+// that holds a denied path or a read-only mount inside a read-write one.
+// They do not judge a file's metadata, which a host confiner leaves
+// readable, or the entries of "/", which Seatbelt does.
 func (p Policy) Reads(path string) bool {
 	read, _ := p.access(path)
 	return read
@@ -278,20 +285,33 @@ func (p Policy) access(path string) (read, write bool) {
 	if err != nil || p.denied(real) {
 		return false, false
 	}
-	if p.Sandbox == SandboxContainer {
-		m := findMount(p.Mounts, real)
-		return m != nil, m != nil && m.Access == ReadWrite
-	}
-	rules, err := confineRules(Confinement{Sandbox: p.Sandbox, Mounts: p.Mounts, System: p.System, Denied: p.Denied})
-	if err != nil {
+	// A mask hides one name: a container reaches a hard link to it.
+	if p.Sandbox != SandboxContainer && p.deniedLink(real) {
 		return false, false
 	}
-	for _, r := range rules {
-		if r.Path == real || (r.Dir && inside(r.Path, real)) {
-			read, write = read || r.Read, write || r.Write
+	if m := findMount(p.Mounts, real); m != nil {
+		read, write = true, m.Access == ReadWrite
+	}
+	for _, m := range p.System {
+		if inside(m.Path, real) {
+			read, write = true, write || m.Access == ReadWrite
 		}
 	}
 	return read, write
+}
+
+// deniedLink reports whether real is another name of a denied file, in a
+// directory that holds a denied path: where every confiner looks for one.
+func (p Policy) deniedLink(real string) bool {
+	info, err := os.Lstat(real)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	dir := filepath.Dir(real)
+	return slices.ContainsFunc(p.Denied, func(d string) bool {
+		denied, err := os.Stat(d)
+		return err == nil && inside(dir, d) && os.SameFile(info, denied)
+	})
 }
 
 // realPath resolves the links of a path that may not exist yet.
