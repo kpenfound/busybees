@@ -69,8 +69,9 @@ func parseImageVCS(out string) ([]imagePath, error) {
 		if line == "" {
 			continue
 		}
-		kind, path, ok := strings.Cut(line, " ")
-		if !ok || (kind != "f" && kind != "d") || !filepath.IsAbs(path) || filepath.Clean(path) != path || path == string(filepath.Separator) {
+		// A line with no path has an empty one, which is not absolute.
+		kind, path, _ := strings.Cut(line, " ")
+		if (kind != "f" && kind != "d") || !filepath.IsAbs(path) || filepath.Clean(path) != path || path == string(filepath.Separator) {
 			return nil, fmt.Errorf("the image's VCS executables: %q is not a path the probe prints", line)
 		}
 		if p := (imagePath{path: path, dir: kind == "d"}); !slices.Contains(found, p) {

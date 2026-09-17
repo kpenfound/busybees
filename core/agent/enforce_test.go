@@ -517,10 +517,10 @@ func TestThePolicyJudgesPathsTheWayTheyAreEnforced(t *testing.T) {
 	}
 	image := Policy{Sandbox: SandboxContainer, Mounts: mounts, Denied: []string{linked, filepath.Join(base, "missing", "git"), filepath.Join(base, "core")}}
 	for path, want := range map[string]bool{
-		linked:                                false,
-		filepath.Join(base, "missing", "git"): false,
-		filepath.Join(base, "missing", "..", "missing", "git"): false,
-		filepath.Join(base, "core", "git-upload-pack"):         false,
+		linked:                                         false,
+		filepath.Join(base, "missing", "git"):          false,
+		base + "/missing/../missing/git":               false,
+		filepath.Join(base, "core", "git-upload-pack"): false,
 		into:   true,
 		cellar: true,
 	} {
