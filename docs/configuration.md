@@ -479,6 +479,22 @@ first moment the factory can act on it:
 Budgets are money, not turns: `max_turns` already caps how long one session may
 go on.
 
+The ledger is read fail-closed. A session whose agent reported no cost (a
+`codex` session, or one killed before its result event) is entered with
+`cost_unknown` set: it counts as a session, adds nothing to the dollars, and
+while the last 24 hours hold one the budget's log line, `bees status` and the
+live view say how many the sum leaves out ("daily budget: $42.10 / $100.00,
+2 sessions of unknown cost"). A ledger line that does not parse anywhere but
+at its end fails every read of the ledger with the file and the line, and
+that pauses dispatch like a budget reached: nothing the daily budget gates
+starts until the ledger reads again, and `bees status` shows `paused: ledger
+unreadable: <file> line <n> does not parse`. An issue whose spend has to be
+seeded from the ledger at that moment is escalated the same way an issue over
+`max_cost_per_issue` is, with the escalation naming the line. Remove or repair
+the line to resume; a torn final line, what a crash mid-write leaves, is
+ignored. See
+[`bees cost`](cli.md#bees-cost---since-24h---by-roleissueday---json).
+
 ### The claude session limit
 
 Every role shares one Anthropic account, so when one session runs out of

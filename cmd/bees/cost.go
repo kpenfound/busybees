@@ -27,12 +27,16 @@ const (
 // with no issue under `--by issue`.
 const noGroup = "-"
 
-// costGroup is one row of a cost report.
+// costGroup is one row of a cost report. Unknown is how many of its
+// sessions reported no cost: they are in Sessions and Turns, and CostUSD is
+// what the rest cost, so a row with Unknown > 0 is short by what nobody
+// knows.
 type costGroup struct {
 	Group    string  `json:"group"`
 	Sessions int     `json:"sessions"`
 	Turns    int     `json:"turns"`
 	CostUSD  float64 `json:"cost_usd"`
+	Unknown  int     `json:"unknown,omitempty"`
 }
 
 func newCostCmd(g *globalFlags) *cobra.Command {
@@ -100,9 +104,14 @@ func groupCost(entries []state.LedgerEntry, by string) ([]costGroup, costGroup) 
 		}
 		groups[i].Sessions++
 		groups[i].Turns += e.Turns
-		groups[i].CostUSD += e.CostUSD
 		total.Sessions++
 		total.Turns += e.Turns
+		if e.CostUnknown {
+			groups[i].Unknown++
+			total.Unknown++
+			continue
+		}
+		groups[i].CostUSD += e.CostUSD
 		total.CostUSD += e.CostUSD
 	}
 	total.Group = "total"
@@ -142,7 +151,10 @@ func atoi(s string) int {
 	return n
 }
 
-// costText renders the report as a table with a total row.
+// costText renders the report as a table with a total row. A session that
+// reported no cost is never shown as $0.00: a row of nothing else reads
+// `unknown` in the cost column, a row that mixes them marks its known sum
+// with a `+`, and a line under the total says how many there were.
 func costText(by string, groups []costGroup, total costGroup) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%-16s %8s %8s %10s\n", by, "sessions", "turns", "cost")
@@ -150,11 +162,26 @@ func costText(by string, groups []costGroup, total costGroup) string {
 		b.WriteString(costRow(g))
 	}
 	b.WriteString(costRow(total))
+	if total.Unknown > 0 {
+		fmt.Fprintf(&b, "%s reported no cost (+): not in the totals\n", text.Count(total.Unknown, "session"))
+	}
 	return b.String()
 }
 
 func costRow(g costGroup) string {
-	return fmt.Sprintf("%-16s %8d %8d %10s\n", g.Group, g.Sessions, g.Turns, fmt.Sprintf("$%.2f", g.CostUSD))
+	return fmt.Sprintf("%-16s %8d %8d %10s\n", g.Group, g.Sessions, g.Turns, costCell(g))
+}
+
+// costCell is the cost column of one row.
+func costCell(g costGroup) string {
+	switch {
+	case g.Unknown == 0:
+		return fmt.Sprintf("$%.2f", g.CostUSD)
+	case g.Unknown == g.Sessions:
+		return "unknown"
+	default:
+		return fmt.Sprintf("$%.2f+", g.CostUSD)
+	}
 }
 
 // todayTotal sums whatever the ledger recorded since the start of the
@@ -175,8 +202,13 @@ func startOfDay(t time.Time) time.Time {
 	return time.Date(y, m, d, 0, 0, 0, 0, t.Location())
 }
 
-// todayText is the `bees status` line summarising the day so far.
+// todayText is the `bees status` line summarising the day so far. Sessions
+// that reported no cost are counted and named, and not in the dollars.
 func todayText(total costGroup) string {
-	return fmt.Sprintf("today: %s, %s, $%.2f",
+	line := fmt.Sprintf("today: %s, %s, $%.2f",
 		text.Count(total.Sessions, "session"), text.Count(total.Turns, "turn"), total.CostUSD)
+	if total.Unknown > 0 {
+		line += fmt.Sprintf(" (%s of unknown cost)", text.Count(total.Unknown, "session"))
+	}
+	return line
 }

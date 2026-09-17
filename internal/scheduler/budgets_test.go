@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -444,7 +445,10 @@ func TestIssueSpendSeedsFromTheLedger(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	cost, sessions := h.sched.issueSpend(5)
+	cost, sessions, err := h.sched.issueSpend(5)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if cost != 4.5 || sessions != 2 {
 		t.Fatalf("seeded $%v over %d sessions, want $4.50 over 2", cost, sessions)
 	}
@@ -453,8 +457,8 @@ func TestIssueSpendSeedsFromTheLedger(t *testing.T) {
 	if is, _ := h.store.Issue(5); is.Cost != 4.5 || is.Sessions != 2 {
 		t.Errorf("total not stored: %+v", is)
 	}
-	if cost, _ := h.sched.issueSpend(7); cost != 0 {
-		t.Errorf("an issue with no history: $%v", cost)
+	if cost, _, err := h.sched.issueSpend(7); cost != 0 || err != nil {
+		t.Errorf("an issue with no history: $%v, %v", cost, err)
 	}
 }
 
@@ -480,5 +484,219 @@ func TestOverIssueBudgetPluralisesTheSessionCount(t *testing.T) {
 		if !strings.Contains(note, tc.want) {
 			t.Errorf("%d sessions: note %q does not contain %q", tc.sessions, note, tc.want)
 		}
+	}
+}
+
+// corruptLedger puts a line that does not parse in the middle of the
+// ledger, the way a stray edit or a torn write followed by more sessions
+// does, so every read of it fails closed.
+func corruptLedger(t *testing.T, h *harness) {
+	t.Helper()
+	f, err := os.OpenFile(h.store.LedgerPath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("{corrupt\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.AppendLedger(state.LedgerEntry{Time: time.Now(), Role: config.RoleQA, Session: "after", CostUSD: 0.01}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestDailyBudgetCountsUnknownCostsAsSessions: a session that reported no
+// cost adds nothing to the day's dollars, so it cannot reach the budget on
+// its own, and the status and the log say how many the sum leaves out.
+func TestDailyBudgetCountsUnknownCostsAsSessions(t *testing.T) {
+	h := newHarness(t, baseTOML+"max_cost_per_day = 100.0\n")
+	now := time.Now()
+	for _, e := range []state.LedgerEntry{
+		{Time: now.Add(-2 * time.Hour), Role: config.RoleDeveloper, Session: "known", CostUSD: 60, Work: ghwork.New(1, 0)},
+		// Its cost_usd is what a backend that reports no cost leaves: it
+		// must not be counted, whatever the number says.
+		{Time: now.Add(-1 * time.Hour), Role: config.RoleReviewer, Session: "unknown", CostUSD: 41.20, CostUnknown: true, Work: ghwork.New(1, 0)},
+	} {
+		if err := h.store.AppendLedger(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seedReady(h, 1, "s", now)
+
+	runPass(t, h)
+
+	if n := sessionCount(h); n == 0 {
+		t.Error("nothing dispatched: an unknown cost was counted as dollars")
+	}
+	st, err := h.store.LoadStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.BudgetPaused || st.DaySpendUSD != 60 || st.DayUnknownSessions != 1 || st.LedgerError != "" {
+		t.Errorf("status: paused %v, spent %v, %d unknown, ledger error %q", st.BudgetPaused, st.DaySpendUSD, st.DayUnknownSessions, st.LedgerError)
+	}
+	if !strings.Contains(h.logs.String(), "1 session in the last 24h reported no cost; the daily cost budget counts them as $0.00 ($60.00 of $100.00)") {
+		t.Errorf("unknown costs not reported:\n%s", h.logs.String())
+	}
+	if got := strings.Count(h.logs.String(), "reported no cost"); got != 1 {
+		t.Errorf("said %d times, want once", got)
+	}
+}
+
+// TestDailyBudgetPauseNamesUnknownCosts: a pause reached with sessions of
+// unknown cost in the window says so, since the sum it names is short.
+func TestDailyBudgetPauseNamesUnknownCosts(t *testing.T) {
+	h := newHarness(t, baseTOML+"max_cost_per_day = 100.0\n")
+	now := time.Now()
+	for _, e := range []state.LedgerEntry{
+		{Time: now.Add(-2 * time.Hour), Role: config.RoleDeveloper, Session: "known", CostUSD: 100, Work: ghwork.New(1, 0)},
+		{Time: now.Add(-1 * time.Hour), Role: config.RoleReviewer, Session: "unknown", CostUnknown: true, Work: ghwork.New(1, 0)},
+	} {
+		if err := h.store.AppendLedger(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seedReady(h, 1, "s", now)
+
+	runPass(t, h)
+
+	if n := sessionCount(h); n != 0 {
+		t.Errorf("%d sessions started at the budget", n)
+	}
+	if !strings.Contains(h.logs.String(), "daily cost budget reached ($100.00 of $100.00 in the last 24h); 1 session of unknown cost not counted; starting no new sessions") {
+		t.Errorf("pause does not name the unknown costs:\n%s", h.logs.String())
+	}
+}
+
+// TestUnreadableLedgerStopsDispatch: with a daily budget to enforce, a
+// ledger that cannot be read pauses dispatch like a budget reached — the
+// sum it would enforce against cannot be trusted — and says so once; when
+// the ledger reads again, dispatch resumes.
+func TestUnreadableLedgerStopsDispatch(t *testing.T) {
+	h := newHarness(t, baseTOML+"max_cost_per_day = 100.0\n")
+	now := time.Now()
+	if err := h.store.AppendLedger(state.LedgerEntry{Time: now.Add(-time.Hour), Role: config.RoleDeveloper, Session: "before", CostUSD: 1, Work: ghwork.New(1, 0)}); err != nil {
+		t.Fatal(err)
+	}
+	corruptLedger(t, h)
+	seedReady(h, 1, "s", now)
+	h.gh.issues[2] = &github.Issue{Number: 2, Title: "Needs triage", Body: "hi", State: "OPEN",
+		Labels: []github.Label{{Name: "bees"}, {Name: "bees:triage"}}, CreatedAt: now}
+
+	runPass(t, h)
+	forcePoll(h)
+	runPass(t, h)
+
+	if n := sessionCount(h); n != 0 {
+		t.Errorf("%d sessions started while the ledger could not be read", n)
+	}
+	if got := h.gh.history[1]; len(got) != 0 {
+		t.Errorf("issue 1 was picked up: %v", got)
+	}
+	st, err := h.store.LoadStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(st.LedgerError, "line 2 does not parse") || !strings.Contains(st.LedgerError, h.store.LedgerPath()) {
+		t.Errorf("status does not name the file and line: %q", st.LedgerError)
+	}
+	if st.BudgetPaused {
+		t.Error("the budget itself was not reached")
+	}
+	if !strings.Contains(st.PauseNotice(now), "ledger unreadable") {
+		t.Errorf("no pause notice: %q", st.PauseNotice(now))
+	}
+	degraded := false
+	for _, f := range st.Degraded {
+		degraded = degraded || f.Op == "ledger-read"
+	}
+	if !degraded {
+		t.Errorf("ledger-read is not among the degraded operations: %+v", st.Degraded)
+	}
+	logs := h.logs.String()
+	if !strings.Contains(logs, "the ledger cannot be read for the daily cost budget") || !strings.Contains(logs, "line 2 does not parse") {
+		t.Errorf("the pause is not logged with the line:\n%s", logs)
+	}
+	if got := strings.Count(logs, "the ledger cannot be read"); got != 1 {
+		t.Errorf("logged %d times over two passes, want once", got)
+	}
+
+	// A person fixes the ledger: the next pass dispatches again.
+	if err := os.WriteFile(h.store.LedgerPath(), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	forcePoll(h)
+	runPass(t, h)
+	if n := sessionCount(h); n == 0 {
+		t.Error("nothing dispatched once the ledger read again")
+	}
+	if st, _ := h.store.LoadStatus(); st.LedgerError != "" {
+		t.Errorf("status still carries the ledger error: %q", st.LedgerError)
+	}
+	if !strings.Contains(h.logs.String(), "the ledger reads again") {
+		t.Errorf("the release is not logged:\n%s", h.logs.String())
+	}
+}
+
+// TestUnreadableLedgerWithoutADailyBudgetChangesNothing: the ledger is read
+// for the daily budget alone, so without one a corrupt line stops nothing.
+func TestUnreadableLedgerWithoutADailyBudgetChangesNothing(t *testing.T) {
+	h := newHarness(t, baseTOML)
+	corruptLedger(t, h)
+	seedReady(h, 1, "s", time.Now())
+
+	runPass(t, h)
+
+	if n := sessionCount(h); n == 0 {
+		t.Error("nothing dispatched with no daily budget to enforce")
+	}
+	if st, _ := h.store.LoadStatus(); st.LedgerError != "" {
+		t.Errorf("status carries a ledger error: %q", st.LedgerError)
+	}
+}
+
+// TestOverIssueBudgetFailsClosedOnAnUnreadableLedger: an issue whose spend
+// has to be seeded from a ledger that cannot be read is over budget, with
+// the escalation naming what could not be read.
+func TestOverIssueBudgetFailsClosedOnAnUnreadableLedger(t *testing.T) {
+	h := newHarness(t, baseTOML+"max_cost_per_issue = 5\n")
+	corruptLedger(t, h)
+	note, over := h.sched.overIssueBudget(1)
+	if !over {
+		t.Fatal("an unreadable ledger is not over budget")
+	}
+	for _, part := range []string{"Issue #1 cannot be checked against the `max_cost_per_issue` budget of $5.00", "line 1 does not parse"} {
+		if !strings.Contains(note, part) {
+			t.Errorf("note %q does not contain %q", note, part)
+		}
+	}
+	// A stored total needs no ledger.
+	if _, err := h.store.SetIssueCost(2, 1, 1); err != nil {
+		t.Fatal(err)
+	}
+	if note, over := h.sched.overIssueBudget(2); over {
+		t.Errorf("a stored total under budget is over it: %q", note)
+	}
+}
+
+// TestRecordEntersAnUnknownCost: a session whose agent reported no cost is
+// in the ledger as one of unknown cost, not a free one, and a session that
+// reported one is not.
+func TestRecordEntersAnUnknownCost(t *testing.T) {
+	h := newHarness(t, baseTOML)
+	spec := sessionSpec{role: config.RoleQA, name: "qa-r1"}
+	h.sched.record(spec, &session.Result{NumTurns: 3})
+	h.sched.record(spec, &session.Result{NumTurns: 3, CostUSD: 0.5, CostKnown: true})
+	entries, err := h.store.ReadLedger(time.Time{})
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("ledger: %+v, %v", entries, err)
+	}
+	if !entries[0].CostUnknown || entries[0].CostUSD != 0 {
+		t.Errorf("a session that reported no cost: %+v", entries[0])
+	}
+	if entries[1].CostUnknown || entries[1].CostUSD != 0.5 {
+		t.Errorf("a session that reported one: %+v", entries[1])
 	}
 }

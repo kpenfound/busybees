@@ -153,6 +153,13 @@ type Scheduler struct {
 	// dispatching again rather than waiting the pause out.
 	dayPaused bool
 	daySpend  float64
+	// dayUnknown is how many sessions in the window reported no cost, which
+	// daySpend leaves out, and ledgerErr is why the ledger could not be
+	// read for the last daily check, nil when it could. While it is set the
+	// factory dispatches nothing the budget gates: a total the ledger cannot
+	// vouch for is not one to spend against.
+	dayUnknown int
+	ledgerErr  error
 	// capacity tracks when dispatch resumes after a session hit the
 	// account-wide claude session limit; zero when none is in force. It is
 	// in memory only, like dayPaused: after a restart the first session

@@ -53,7 +53,7 @@ func (f *fakeAngleAgent) Run(_ context.Context, req AgentRequest) (*AgentResult,
 	if err := f.fail[req.Name]; err != nil {
 		return nil, err
 	}
-	return &AgentResult{ID: "sess-" + req.Name, Text: `{"findings": []}`, Turns: 2, CostUSD: 0.25}, nil
+	return &AgentResult{ID: "sess-" + req.Name, Text: `{"findings": []}`, Turns: 2, CostUSD: 0.25, CostKnown: true}, nil
 }
 
 const testDiff = "diff --git a/gather.go b/gather.go\n+func Gather() {}\n"

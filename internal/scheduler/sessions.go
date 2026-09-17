@@ -370,7 +370,9 @@ func (s *Scheduler) countSession(role string, consolidated bool) {
 }
 
 // record appends the finished session to the ledger. Accounting must never
-// cost the factory a session, so a failure only warns.
+// cost the factory a session, so a failure only warns. A session whose
+// agent reported no cost (codex, or one that died before its result event)
+// is entered with its cost unknown rather than as a free one.
 func (s *Scheduler) record(spec sessionSpec, res *session.Result) {
 	status, _ := outcomeOf(res)
 	e := state.LedgerEntry{
@@ -379,6 +381,7 @@ func (s *Scheduler) record(spec sessionSpec, res *session.Result) {
 		Session:      spec.name,
 		Turns:        res.NumTurns,
 		CostUSD:      res.CostUSD,
+		CostUnknown:  !res.CostKnown,
 		DurationMS:   res.Duration.Milliseconds(),
 		Outcome:      status,
 		ErrorSubtype: res.ErrorSubtype,

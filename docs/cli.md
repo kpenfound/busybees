@@ -647,8 +647,10 @@ scheduler starts, and no state directory is created.
 Reads each project's `ledger.jsonl` and prints its config path, finished
 session count, turns and cost, followed by a total. `--since` defaults to
 `24h` and accepts a Go duration, as with `bees cost`. A missing ledger counts
-as zero; a read or scan failure (including an overlong line) fails the report
-with the project's path, without printing partial costs.
+as zero; a read or scan failure (an overlong line, or a line that does not
+parse anywhere but at the end) fails the report with the project's path,
+without printing partial costs. Sessions of unknown cost are shown as
+`bees cost` shows them, and counted under the total.
 The report covers retained ledger entries and starts no schedulers.
 
 #### `bees machine stop`
@@ -1042,6 +1044,7 @@ midnight, summed from the
 
 ```
 today: 23 sessions, 412 turns, $8.12
+today: 23 sessions, 412 turns, $8.12 (2 sessions of unknown cost)
 ```
 
 With [`scheduler.max_cost_per_day`](configuration.md#cost-budgets) configured,
@@ -1058,7 +1061,15 @@ While it is paused the scheduler keeps polling and reconciling labels but
 starts no new session; the workers already running finish their loop. Both
 numbers come from `status.json` (`budget_paused`, `day_spend_usd` and
 `day_budget_usd` in `--json`), so they are what the scheduler last computed
-rather than a fresh sum.
+rather than a fresh sum. Sessions that reported no cost are not in the sum,
+and the line says how many it leaves out (`day_unknown_sessions`); a ledger
+the scheduler could not read pauses dispatch too, and the line names why
+(`ledger_error`):
+
+```
+scheduler: pid 4711, last poll 12s ago   daily budget: $42.10 / $100.00, 2 sessions of unknown cost   build v0.2.0
+scheduler: pid 4711, last poll 12s ago   paused: ledger unreadable: .bees/ledger.jsonl line 3 does not parse: invalid character 'c' looking for beginning of value   build v0.2.0
+```
 
 The [claude session limit](configuration.md#the-claude-session-limit) pauses
 the factory the same way, and is reported before the budget because it is the
@@ -1740,6 +1751,30 @@ total                  22      299      $8.12
 number and collects sessions that belong to no issue (the singleton roles)
 under `-`; `--by day` groups by local calendar day. `--json` prints the same
 groups plus the total. An empty ledger prints `no sessions recorded`.
+
+A session whose agent reported no cost (a `codex` session, or one killed
+before its result event) is never a `$0.00`: a group of nothing else reads
+`unknown`, a group that mixes them marks the sum of the rest with a `+`, and
+a line under the total counts them (`unknown` on each group in `--json`):
+
+```
+$ bees cost --by role
+role             sessions    turns       cost
+developer              12      214     $6.10+
+reviewer                9       74    unknown
+total                  21      288     $6.10+
+10 sessions reported no cost (+): not in the totals
+```
+
+The ledger is read fail-closed: a line that does not parse anywhere but at
+the end fails the command, naming the file and the line, rather than
+printing a total that is short of a session. The final line is the one
+exception, since a crash mid-write leaves one, and it is ignored.
+
+```
+$ bees cost
+Error: .bees/ledger.jsonl line 3 does not parse: invalid character 'c' looking for beginning of value
+```
 
 ### `bees version`
 

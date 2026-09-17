@@ -26,7 +26,7 @@ func (f *fakeAgent) Run(_ context.Context, req AgentRequest) (*AgentResult, erro
 	if f.err != nil {
 		return nil, f.err
 	}
-	return &AgentResult{ID: f.id, Text: f.answer, Turns: 2, CostUSD: f.cost}, nil
+	return &AgentResult{ID: f.id, Text: f.answer, Turns: 2, CostUSD: f.cost, CostKnown: true}, nil
 }
 
 func testBundle() *Bundle[testRef] {

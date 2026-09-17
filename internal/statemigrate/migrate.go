@@ -477,8 +477,9 @@ func ledger(path string, after func(string) error) error {
 		if err := json.Unmarshal(line, &legacy); err != nil {
 			// A wrong-typed issue/PR would become an accepted entry if left
 			// as an unknown field in the new schema. Preserve the entire raw
-			// line as a JSON string: both the reader and trimmer reject it,
-			// and an interrupted migration preserves it on its next pass.
+			// line as a JSON string: the trimmer keeps it, the reader fails
+			// closed on it and names the line for a person to fix, and an
+			// interrupted migration preserves it on its next pass.
 			preserved, err := json.Marshal(string(line))
 			if err != nil {
 				return err

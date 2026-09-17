@@ -48,45 +48,55 @@ func (s *Scheduler) recordWorkCost(ref work.Ref, cost float64) {
 // bookkeeping was written before budgets existed, or deleted) is seeded from
 // the ledger once, which is also what makes the total survive a state file
 // that was thrown away but not the ledger, as far as the ledger still reaches
-// back: trimLedger keeps only max(scheduler.retention_period, 24h) of it.
-func (s *Scheduler) issueSpend(issue int) (float64, int) { return s.workSpend(ghwork.New(issue, 0)) }
+// back: trimLedger keeps only max(scheduler.retention_period, 24h) of it. A
+// session that reported no cost counts as a session and adds nothing to the
+// total. The error is a ledger that could not be read when the seed needed
+// it, and it is the caller's to fail closed on.
+func (s *Scheduler) issueSpend(issue int) (float64, int, error) {
+	return s.workSpend(ghwork.New(issue, 0))
+}
 
-func (s *Scheduler) workSpend(ref work.Ref) (float64, int) {
+func (s *Scheduler) workSpend(ref work.Ref) (float64, int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	is, err := s.store.Work(ref)
 	if err != nil {
-		s.log.Warn("could not read what the issue has cost", "work", ref.Key, "err", err)
-		return 0, 0
+		return 0, 0, fmt.Errorf("read what the work has cost: %w", err)
 	}
 	if is.Sessions > 0 || is.Cost > 0 {
-		return is.Cost, is.Sessions
+		return is.Cost, is.Sessions, nil
 	}
 	entries, err := s.store.ReadLedger(time.Time{})
 	if err != nil {
-		s.log.Warn("could not read the ledger", "work", ref.Key, "err", err)
-		return 0, 0
+		return 0, 0, fmt.Errorf("read the ledger: %w", err)
 	}
-	cost, sessions := ops.Spend(entries, ref.Key, time.Time{})
+	cost, sessions, _ := ops.Spend(entries, ref.Key, time.Time{})
 	if sessions == 0 {
-		return 0, 0
+		return 0, 0, nil
 	}
 	if _, err := s.store.SetWorkCost(ref, cost, sessions); err != nil {
 		s.log.Warn("could not seed what the issue has cost", "work", ref.Key, "err", err)
 	}
-	return cost, sessions
+	return cost, sessions, nil
 }
 
 // overIssueBudget reports whether an issue has passed
 // scheduler.max_cost_per_issue, and the escalation text naming the spend.
 // The developer worker calls it between stages, so the session that took the
-// issue over its budget has finished and its work is on the branch.
+// issue over its budget has finished and its work is on the branch. A spend
+// that cannot be read is over budget too: the budget cannot be enforced
+// against a total nobody can vouch for, so the worker stops and the text
+// says what could not be read.
 func (s *Scheduler) overIssueBudget(issue int) (string, bool) {
 	budget := s.cfg.Scheduler.MaxCostPerIssue
 	if budget <= 0 {
 		return "", false
 	}
-	cost, sessions := s.issueSpend(issue)
+	cost, sessions, err := s.issueSpend(issue)
+	if err != nil {
+		return fmt.Sprintf("Issue #%d cannot be checked against the `max_cost_per_issue` budget of $%.2f: %v. Fix the ledger or take it from here.",
+			issue, budget, err), true
+	}
 	if !ops.OverBudget(cost, budget) {
 		return "", false
 	}
@@ -101,6 +111,12 @@ func (s *Scheduler) overIssueBudget(issue int) (string, bool) {
 // it pauses at scheduler.max_cost_per_day and resumes under
 // scheduler.max_cost_per_day_resume_percent of it — so the factory backs off
 // instead of oscillating on the edge of the budget.
+//
+// The ledger is read fail-closed. When it cannot be read the pass dispatches
+// nothing the budget gates, as if the budget were reached, and says so once;
+// the previous sum stays in the status file, stale, until a read succeeds.
+// A session that reported no cost counts as a session and adds nothing to
+// the sum, and the sum is reported with how many of those it leaves out.
 func (s *Scheduler) checkDayBudget() {
 	budget := s.cfg.Scheduler.MaxCostPerDay
 	if budget <= 0 {
@@ -108,35 +124,55 @@ func (s *Scheduler) checkDayBudget() {
 	}
 	now := s.now()
 	entries, err := s.store.ReadLedger(now.Add(-dayWindow))
+	s.track("ledger-read", err)
+	s.mu.Lock()
+	wasUnreadable := s.ledgerErr != nil
+	s.ledgerErr = err
+	s.mu.Unlock()
 	if err != nil {
-		// Accounting must never stop the factory: an unreadable ledger
-		// leaves the previous answer in force.
-		s.log.Warn("could not read the ledger for the daily budget", "err", err)
+		if !wasUnreadable {
+			s.log.Warn(fmt.Sprintf("⏸ the ledger cannot be read for the daily cost budget (%v); starting no new sessions", err),
+				logging.SummaryKey, true, "err", err)
+		}
 		return
+	}
+	if wasUnreadable {
+		s.log.Info("▶ the ledger reads again; the daily cost budget decides dispatch", logging.SummaryKey, true)
 	}
 	s.mu.Lock()
 	signal := ops.EvaluateWindow(entries, now, dayWindow, budget, s.cfg.Scheduler.MaxCostPerDayResumePercent, s.dayPaused)
 	spent, resume, paused := signal.Spent, signal.Resume, signal.Reached
-	s.dayPaused, s.daySpend = paused, spent
+	hadUnknown := s.dayUnknown > 0
+	s.dayPaused, s.daySpend, s.dayUnknown = paused, spent, signal.Unknown
 	s.mu.Unlock()
+	unknown := ""
+	if signal.Unknown > 0 {
+		unknown = fmt.Sprintf("; %s of unknown cost not counted", text.Count(signal.Unknown, "session"))
+	}
 	switch {
 	case signal.Crossed:
-		s.log.Warn(fmt.Sprintf("⏸ daily cost budget reached ($%.2f of $%.2f in the last 24h); starting no new sessions", spent, budget),
-			logging.SummaryKey, true, "cost_usd", spent, "max_cost_per_day", budget)
+		s.log.Warn(fmt.Sprintf("⏸ daily cost budget reached ($%.2f of $%.2f in the last 24h)%s; starting no new sessions", spent, budget, unknown),
+			logging.SummaryKey, true, "cost_usd", spent, "max_cost_per_day", budget, "cost_unknown_sessions", signal.Unknown)
 	case signal.Released:
 		// The threshold is named because it is what the pause was waiting
 		// for: without it a pause that lasted while the window sat between
 		// the two numbers reads as arbitrarily long in bees.log.
-		s.log.Info(fmt.Sprintf("▶ daily cost budget released ($%.2f, back under the $%.2f resume threshold of $%.2f in the last 24h); dispatching again", spent, resume, budget),
-			logging.SummaryKey, true, "cost_usd", spent, "max_cost_per_day", budget, "resume_threshold_usd", resume)
+		s.log.Info(fmt.Sprintf("▶ daily cost budget released ($%.2f, back under the $%.2f resume threshold of $%.2f in the last 24h)%s; dispatching again", spent, resume, budget, unknown),
+			logging.SummaryKey, true, "cost_usd", spent, "max_cost_per_day", budget, "resume_threshold_usd", resume, "cost_unknown_sessions", signal.Unknown)
+	case signal.Unknown > 0 && !hadUnknown:
+		// Said once when the window first holds one, like the pause: the
+		// count is in status.json for as long as it lasts.
+		s.log.Warn(fmt.Sprintf("%s in the last 24h reported no cost; the daily cost budget counts them as $0.00 ($%.2f of $%.2f)", text.Count(signal.Unknown, "session"), spent, budget),
+			logging.SummaryKey, true, "cost_usd", spent, "max_cost_per_day", budget, "cost_unknown_sessions", signal.Unknown)
 	}
 }
 
-// dayBudgetReached reports whether dispatch is paused by the daily budget.
+// dayBudgetReached reports whether dispatch is paused by the daily budget,
+// or by a ledger that could not be read for it.
 func (s *Scheduler) dayBudgetReached() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.dayPaused
+	return s.dayPaused || s.ledgerErr != nil
 }
 
 // overSessionBudget reports whether one finished session cost more than
@@ -186,4 +222,8 @@ func (s *Scheduler) budgetStatus(st *state.Status) {
 	st.BudgetPaused = s.dayPaused
 	st.DaySpendUSD = s.daySpend
 	st.DayBudgetUSD = s.cfg.Scheduler.MaxCostPerDay
+	st.DayUnknownSessions = s.dayUnknown
+	if s.ledgerErr != nil {
+		st.LedgerError = oneLine(s.ledgerErr.Error(), escalationNoteLimit)
+	}
 }

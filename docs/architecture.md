@@ -159,11 +159,18 @@ A full pass is:
      fallen under `max_cost_per_day_resume_percent` of it (default 100, which
      is the plain "under budget" test), so the factory backs off instead of
      oscillating on the edge. The sum is recomputed from the ledger on every
-     pass; a restart loses only the hysteresis. The other two budgets are
-     enforced elsewhere: `max_cost_per_issue` between a developer worker's
-     stages, `max_cost_per_session` after a session ends. A full pass trims
-     the ledger to `scheduler.retention_period` first, and never inside the
-     last 24 hours; a local pass does not trim (see
+     pass; a restart loses only the hysteresis. A session that reported no
+     cost counts as a session and adds nothing to the sum, which is reported
+     with how many it leaves out (`day_unknown_sessions`). A ledger that
+     cannot be read pauses dispatch the same way, once per outage in the
+     log and as `ledger_error` in `status.json`, and lifts when it reads
+     again; the ledger is read for this budget alone, so without one a
+     corrupt ledger stops nothing here. The other two budgets are enforced
+     elsewhere: `max_cost_per_issue` between a developer worker's stages,
+     where a spend that has to be seeded from an unreadable ledger escalates
+     the issue, `max_cost_per_session` after a session ends. A full pass
+     trims the ledger to `scheduler.retention_period` first, and never
+     inside the last 24 hours; a local pass does not trim (see
      [State directory](#state-directory)). See
      [Cost budgets](configuration.md#cost-budgets).
    - **Claude session limit.** Recorded from a finished session rather than
@@ -848,8 +855,8 @@ Most things the scheduler does are best-effort: a failed label edit,
 assignment or mail update warns and the pass carries on. A warning nobody
 reads is silence, though, so each of those sites reports under a short, stable
 operation name (`poll`, `assign`, `label`, `reconcile`, `human-feedback`,
-`check-prs`, `list-created`, `ledger`, `ledger-trim`, `write-status`,
-`project-prompts/<role>`, and so on). The record logs what the site logged
+`check-prs`, `list-created`, `ledger`, `ledger-read`, `ledger-trim`,
+`write-status`, `project-prompts/<role>`, and so on). The record logs what the site logged
 plus `op=<name>`, and keeps a per-operation streak of consecutive failures; a
 success clears the streak. `status.json` carries the streaks as `degraded`, so
 a broken operation is visible in `bees status` and the live view instead of
@@ -1245,7 +1252,8 @@ sessions get `BEES_STATE_DIR`.
   ledger.jsonl                   one JSON line per finished session, trimmed to
                                  scheduler.retention_period
                                  {time, role, session, work, turns, cost_usd,
-                                 duration_ms, outcome, error_subtype, timed_out}
+                                 cost_unknown, duration_ms, outcome,
+                                 error_subtype, timed_out}
   bees.log                       every record of the last scheduler runs as JSON, rotated
                                  at 10 MiB into bees.log.1 and bees.log.2
 ```
@@ -1283,21 +1291,25 @@ encounter both bookkeeping filenames: equal records are coalesced, while a
 conflict keeps the recoverable source and reports an error. Invalid JSON ledger
 lines are preserved byte for byte. Objects rejected by the legacy ledger's field
 types are preserved as JSON strings containing their exact original lines; the
-ledger reader and trimmer skip these strings for accounting. Other malformed
-records block migration; fix the reported record and retry. Completed upgrades
+trimmer keeps these strings, and the reader fails closed on them, naming the
+line, until they are removed. Other malformed records block migration; fix
+the reported record and retry. Completed upgrades
 are a no-op, and ordinary readers and writers use only the new schema. Read-only
 Store and CLI mailbox reads leave a missing state directory absent. Application
 initialization and mailbox sends may create it.
 
 `ledger.jsonl` is the factory's accounting: one line for every session that
-finishes, whatever it reported, and `bees cost` sums it. Lines are written
-with a single append so concurrent workers cannot interleave, and a line that
-does not parse is skipped on read rather than failing it. Every full pass,
-before the daily budget is summed, removes the lines older than
-`scheduler.retention_period`, and never one from the last 24 hours, which the
-daily budget reads. The trim writes the kept lines to a temporary file renamed
-over the ledger, only when there is a line to remove, and keeps a line it
-cannot date.
+finishes, whatever it reported, and `bees cost` sums it. A session whose agent
+reported no cost is entered with `cost_unknown` set rather than as a free one;
+a review's one entry is unknown when any of its sessions was. Lines are
+written with a single append so concurrent workers cannot interleave. The
+ledger is read fail-closed: a line that does not parse fails the read with the
+file and the line, and no entries, unless it is the final line, which a crash
+mid-write leaves and which is ignored. Every full pass, before the daily
+budget is summed, removes the lines older than `scheduler.retention_period`,
+and never one from the last 24 hours, which the daily budget reads. The trim
+writes the kept lines to a temporary file renamed over the ledger, only when
+there is a line to remove, and keeps a line it cannot date where it is.
 
 `<role>.json` carries what the scheduler remembers about a role between runs:
 when the singleton roles last ran (`last_run`) and last looked for work

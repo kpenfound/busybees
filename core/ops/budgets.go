@@ -12,32 +12,43 @@ import (
 func OverBudget(cost, limit float64) bool { return limit > 0 && cost > limit }
 
 // Spend totals sessions at or after since. An empty key selects all work.
-func Spend(entries []LedgerEntry, key work.Key, since time.Time) (cost float64, sessions int) {
+// Every session counts as one, and unknown is how many of them reported no
+// cost (LedgerEntry.CostUnknown): those add nothing to cost, which is only
+// what the sessions that reported one cost, so a caller with unknown > 0
+// has a total that is short by an amount nobody knows.
+func Spend(entries []LedgerEntry, key work.Key, since time.Time) (cost float64, sessions, unknown int) {
 	for _, e := range entries {
 		if (key == "" || e.Work.Key == key) && !e.Time.Before(since) {
-			cost += e.CostUSD
 			sessions++
+			if e.CostUnknown {
+				unknown++
+				continue
+			}
+			cost += e.CostUSD
 		}
 	}
 	return
 }
 
 // BudgetSignal is a rolling-budget evaluation, independent of dispatch policy.
+// Unknown is how many sessions in the window reported no cost, which Spent
+// leaves out.
 type BudgetSignal struct {
 	Reached, Crossed, Released bool
 	Spent, Resume              float64
+	Unknown                    int
 }
 
 // EvaluateWindow preserves hysteresis: reach at limit, release strictly below
 // the resume threshold. previouslyReached is the caller's prior evaluation.
 func EvaluateWindow(entries []LedgerEntry, now time.Time, window time.Duration, limit, resumePercent float64, previouslyReached bool) BudgetSignal {
-	spent, _ := Spend(entries, "", now.Add(-window))
+	spent, _, unknown := Spend(entries, "", now.Add(-window))
 	resume := limit * resumePercent / 100
 	reached := limit > 0 && spent >= limit
 	if previouslyReached {
 		reached = limit > 0 && spent >= resume
 	}
-	return BudgetSignal{Reached: reached, Crossed: reached && !previouslyReached, Released: !reached && previouslyReached, Spent: spent, Resume: resume}
+	return BudgetSignal{Reached: reached, Crossed: reached && !previouslyReached, Released: !reached && previouslyReached, Spent: spent, Resume: resume, Unknown: unknown}
 }
 
 // Streaks counts consecutive crossings per caller-owned subject. Its zero value

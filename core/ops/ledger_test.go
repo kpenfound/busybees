@@ -25,33 +25,19 @@ func TestAppendAndReadLedger(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// A truncated write from a killed session must not break the read.
-	f, err := os.OpenFile(s.LedgerPath(), os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.WriteString("{\"time\":\"not a\n"); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.AppendLedger(LedgerEntry{Time: base.Add(2 * time.Hour), Role: "audit", Session: "qa-r1", Turns: 3, CostUSD: 0.05, Outcome: "reported"}); err != nil {
-		t.Fatal(err)
-	}
+	// A truncated write from a killed session leaves a tail that does not
+	// parse, and that must not break the read.
+	appendRaw(t, s, "{\"time\":\"not a\n")
 
 	got, err := s.ReadLedger(time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 3 {
-		t.Fatalf("read %d entries, want 3: %+v", len(got), got)
+	if len(got) != 2 {
+		t.Fatalf("read %d entries, want 2: %+v", len(got), got)
 	}
 	if !reflect.DeepEqual(got[0], entries[0]) {
 		t.Errorf("first entry: got %+v want %+v", got[0], entries[0])
-	}
-	if got[2].Role != "audit" {
-		t.Errorf("garbage line was not skipped: %+v", got)
 	}
 
 	// since filters, inclusively.
@@ -59,8 +45,131 @@ func TestAppendAndReadLedger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got[0].Role != "checker" {
+	if len(got) != 1 || got[0].Role != "checker" {
 		t.Fatalf("since: %+v", got)
+	}
+
+	// Once a session appends after the truncated tail, the tail is a line
+	// in the middle, and the ledger no longer reads: a total that skipped
+	// it would be quietly short.
+	if err := s.AppendLedger(LedgerEntry{Time: base.Add(2 * time.Hour), Role: "audit", Session: "qa-r1", Turns: 3, CostUSD: 0.05, Outcome: "reported"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.ReadLedger(time.Time{})
+	var lineErr *LedgerLineError
+	if !errors.As(err, &lineErr) || got != nil {
+		t.Fatalf("corrupt line in the middle: got %+v, %v; want no entries and a LedgerLineError", got, err)
+	}
+	if lineErr.Path != s.LedgerPath() || lineErr.Line != 3 {
+		t.Errorf("error names %s line %d, want %s line 3", lineErr.Path, lineErr.Line, s.LedgerPath())
+	}
+	if msg := err.Error(); !strings.Contains(msg, s.LedgerPath()) || !strings.Contains(msg, "line 3") {
+		t.Errorf("error message names neither the file nor the line: %s", msg)
+	}
+}
+
+// appendRaw writes bytes to the ledger as they are, the way a crash or a
+// stray editor would.
+func appendRaw(t *testing.T, s *Ledger, raw string) {
+	t.Helper()
+	f, err := os.OpenFile(s.LedgerPath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(raw); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestReadLedgerFailsClosedOnACorruptMiddleLine: a line that does not parse
+// anywhere but at the end is an error naming the file and the line, with no
+// entries beside it, whatever shape the corruption takes.
+func TestReadLedgerFailsClosedOnACorruptMiddleLine(t *testing.T) {
+	for _, tc := range []struct {
+		name, line string
+	}{
+		{"truncated", "{\"time\":\"not a"},
+		{"not json", "garbage"},
+		{"wrong type", "{\"cost_usd\":\"lots\"}"},
+		// What an upgrade preserved of a record it could not read
+		// (internal/statemigrate) is a JSON string, not an entry.
+		{"preserved string", "\"{\\\"issue\\\":\\\"bad\\\"}\""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := NewLedger(t.TempDir())
+			if err := s.AppendLedger(LedgerEntry{Session: "first", CostUSD: 1}); err != nil {
+				t.Fatal(err)
+			}
+			appendRaw(t, s, tc.line+"\n")
+			if err := s.AppendLedger(LedgerEntry{Session: "last", CostUSD: 2}); err != nil {
+				t.Fatal(err)
+			}
+			got, err := s.ReadLedger(time.Time{})
+			var lineErr *LedgerLineError
+			if !errors.As(err, &lineErr) || got != nil {
+				t.Fatalf("got %+v, %v; want no entries and a LedgerLineError", got, err)
+			}
+			if lineErr.Line != 2 || lineErr.Path != s.LedgerPath() {
+				t.Errorf("error names %s line %d, want %s line 2", lineErr.Path, lineErr.Line, s.LedgerPath())
+			}
+		})
+	}
+}
+
+// TestReadLedgerIgnoresTheTruncatedTail: only the final line may fail to
+// parse, with or without its newline, and blank lines are not corruption.
+func TestReadLedgerIgnoresTheTruncatedTail(t *testing.T) {
+	for _, tail := range []string{"{\"time\":\"not a", "{\"time\":\"not a\n", "garbage\n\n", "\n\n"} {
+		s := NewLedger(t.TempDir())
+		if err := s.AppendLedger(LedgerEntry{Session: "first", CostUSD: 1}); err != nil {
+			t.Fatal(err)
+		}
+		appendRaw(t, s, "\n")
+		if err := s.AppendLedger(LedgerEntry{Session: "second", CostUSD: 2}); err != nil {
+			t.Fatal(err)
+		}
+		appendRaw(t, s, tail)
+		got, err := s.ReadLedger(time.Time{})
+		if err != nil || len(got) != 2 || got[1].Session != "second" {
+			t.Errorf("tail %q: got %+v, %v; want both entries", tail, got, err)
+		}
+	}
+}
+
+// TestLedgerUnknownCostRoundTrip: an entry whose session reported no cost
+// says so on the way back, and a line written before the field existed
+// reads as a known cost.
+func TestLedgerUnknownCostRoundTrip(t *testing.T) {
+	s := NewLedger(t.TempDir())
+	if err := s.AppendLedger(LedgerEntry{Session: "known", CostUSD: 1.5}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AppendLedger(LedgerEntry{Session: "unknown", CostUnknown: true}); err != nil {
+		t.Fatal(err)
+	}
+	appendRaw(t, s, "{\"time\":\"2026-09-15T12:00:00Z\",\"session\":\"old\",\"cost_usd\":0.25}\n")
+	got, err := s.ReadLedger(time.Time{})
+	if err != nil || len(got) != 3 {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+	if got[0].CostUnknown || got[0].CostUSD != 1.5 {
+		t.Errorf("known entry: %+v", got[0])
+	}
+	if !got[1].CostUnknown || got[1].CostUSD != 0 {
+		t.Errorf("unknown entry: %+v", got[1])
+	}
+	if got[2].CostUnknown || got[2].CostUSD != 0.25 {
+		t.Errorf("entry without the field: %+v", got[2])
+	}
+	b, err := os.ReadFile(s.LedgerPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(b), "cost_unknown") != 1 {
+		t.Errorf("the field is written for the unknown entry alone:\n%s", b)
 	}
 }
 
