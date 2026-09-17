@@ -720,6 +720,10 @@ type Status struct {
 	// yet fallen back to scheduler.max_cost_per_day_resume_percent of it, so
 	// DaySpendUSD can be under DayBudgetUSD while this is still true.
 	BudgetPaused bool `json:"budget_paused,omitempty"`
+	// ManualPaused is true while a person has paused dispatch by hand (the
+	// live view's p key). It is independent of BudgetPaused: both can be
+	// true, and dispatch waits for both to clear.
+	ManualPaused bool `json:"manual_paused,omitempty"`
 	// DaySpendUSD is that rolling 24h spend, and DayBudgetUSD the budget it
 	// is measured against (0 when no daily budget is configured).
 	DaySpendUSD  float64 `json:"day_spend_usd,omitempty"`
@@ -761,7 +765,8 @@ type Status struct {
 // do anything about. A LimitPausedUntil in the past is not a pause at all —
 // nothing has looked at it since it lifted, and a budget pause behind it
 // wins instead. A ledger that cannot be read comes before the budget it was
-// read for: the spend behind it is stale.
+// read for: the spend behind it is stale. A pause by hand comes last: it is
+// the one a person already knows about, and the one they can lift.
 func (s Status) PauseNotice(now time.Time) string {
 	switch {
 	case s.LimitPausedUntil.After(now):
@@ -771,6 +776,8 @@ func (s Status) PauseNotice(now time.Time) string {
 		return "ledger unreadable: " + s.LedgerError
 	case s.BudgetPaused:
 		return fmt.Sprintf("daily budget ($%.2f / $%.2f%s)", s.DaySpendUSD, s.DayBudgetUSD, s.unknownCosts())
+	case s.ManualPaused:
+		return "paused by hand (p resumes)"
 	default:
 		return ""
 	}

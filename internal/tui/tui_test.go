@@ -39,6 +39,8 @@ func (f *fakeFactory) Subscribe() <-chan scheduler.Event { return f.events }
 
 func (f *fakeFactory) HardStop() { f.hardStops.Add(1) }
 
+func (f *fakeFactory) SetPaused(bool) {}
+
 func (f *fakeFactory) Run(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
@@ -185,6 +187,8 @@ func (f *drainingFactory) Subscribe() <-chan scheduler.Event { return f.events }
 
 func (f *drainingFactory) HardStop() {}
 
+func (f *drainingFactory) SetPaused(bool) {}
+
 func (f *drainingFactory) Run(ctx context.Context) error {
 	<-ctx.Done()
 	f.drain()
@@ -202,6 +206,8 @@ type fakeMachine struct {
 }
 
 func (f *fakeMachine) HardStop() { f.hardStops.Add(1) }
+
+func (f *fakeMachine) SetPaused(bool) {}
 
 func (f *fakeMachine) Run(ctx context.Context) error {
 	select {

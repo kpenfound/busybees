@@ -705,6 +705,26 @@ func TestPauseNotice(t *testing.T) {
 			want: "daily budget ($101.20 / $100.00)",
 		},
 		{
+			name: "manual pause",
+			st:   Status{ManualPaused: true},
+			now:  local,
+			want: "paused by hand (p resumes)",
+		},
+		{
+			// A pause by hand ranks last: the budget pause lifts on its
+			// own and says why it holds the factory.
+			name: "budget pause over a manual pause",
+			st:   Status{ManualPaused: true, BudgetPaused: true, DaySpendUSD: 101.2, DayBudgetUSD: 100},
+			now:  local,
+			want: "daily budget ($101.20 / $100.00)",
+		},
+		{
+			name: "limit pause over a manual pause",
+			st:   Status{ManualPaused: true, LimitPausedUntil: local.Add(37 * time.Minute)},
+			now:  local,
+			want: "claude session limit until 12:37 (in 37m)",
+		},
+		{
 			name: "the session limit has reset, no budget pause",
 			st:   Status{LimitPausedUntil: local.Add(-time.Minute)},
 			now:  local,

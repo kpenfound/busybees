@@ -700,3 +700,88 @@ func TestRecordEntersAnUnknownCost(t *testing.T) {
 		t.Errorf("a session that reported one: %+v", entries[1])
 	}
 }
+
+// A pause by hand (the live view's p) starts no session of any role while
+// it holds and shows in status.json; a resume dispatches again.
+func TestManualPauseStopsNewSessions(t *testing.T) {
+	h := newHarness(t, baseTOML)
+	now := time.Now()
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN",
+		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: now}
+	h.gh.issues[2] = &github.Issue{Number: 2, Title: "Needs triage", Body: "hi", State: "OPEN",
+		Labels: []github.Label{{Name: "bees"}, {Name: "bees:triage"}}, CreatedAt: now}
+
+	h.sched.SetPaused(true)
+	runPass(t, h)
+	if n := sessionCount(h); n != 0 {
+		t.Errorf("%d sessions started while paused by hand", n)
+	}
+	st, err := h.store.LoadStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st.ManualPaused || st.BudgetPaused {
+		t.Errorf("status while paused by hand: manual %v, budget %v", st.ManualPaused, st.BudgetPaused)
+	}
+	if !strings.Contains(h.logs.String(), "dispatch paused by hand") {
+		t.Errorf("pause not reported:\n%s", h.logs.String())
+	}
+
+	h.sched.SetPaused(false)
+	forcePoll(h)
+	runPass(t, h)
+	if len(h.sessions(config.RoleDeveloper)) == 0 || len(h.sessions(config.RoleProjectManager)) == 0 {
+		t.Errorf("after the resume: %d developer and %d project manager sessions, want both",
+			len(h.sessions(config.RoleDeveloper)), len(h.sessions(config.RoleProjectManager)))
+	}
+	if st, err = h.store.LoadStatus(); err != nil {
+		t.Fatal(err)
+	}
+	if st.ManualPaused {
+		t.Error("status.json still says paused by hand after the resume")
+	}
+}
+
+// A pause by hand set before the daily budget pause outlasts it: the budget
+// lifting leaves dispatch paused until a person resumes it.
+func TestManualPauseOutlastsTheBudgetPause(t *testing.T) {
+	start := time.Date(2026, 3, 4, 12, 0, 0, 0, time.UTC)
+	h := newHarnessAt(t, baseTOML+"max_cost_per_day = 100.0\n"+devAndReviewerTOML, start)
+	if err := h.store.AppendLedger(state.LedgerEntry{Time: start.Add(-23 * time.Hour), Role: config.RoleDeveloper,
+		Session: "a", CostUSD: 100, Work: ghwork.New(9, 0)}); err != nil {
+		t.Fatal(err)
+	}
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN",
+		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: start.Add(-time.Hour)}
+
+	h.sched.SetPaused(true)
+	for _, tc := range []struct {
+		name    string
+		advance time.Duration
+		budget  bool
+	}{
+		{"both pauses", 0, true},
+		{"the budget pause lifted", 2 * time.Hour, false},
+	} {
+		h.clock.advance(tc.advance)
+		forcePoll(h)
+		runPass(t, h)
+		if n := sessionCount(h); n != 0 {
+			t.Fatalf("%s: %d sessions started", tc.name, n)
+		}
+		st, err := h.store.LoadStatus()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st.BudgetPaused != tc.budget || !st.ManualPaused {
+			t.Fatalf("%s: budget %v (want %v), manual %v", tc.name, st.BudgetPaused, tc.budget, st.ManualPaused)
+		}
+	}
+
+	h.sched.SetPaused(false)
+	forcePoll(h)
+	runPass(t, h)
+	if len(h.gh.history[1]) == 0 {
+		t.Error("issue 1 was not picked up after the resume")
+	}
+}

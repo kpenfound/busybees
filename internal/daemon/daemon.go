@@ -27,6 +27,8 @@ type Loop interface {
 	Run(ctx context.Context) error
 	// HardStop stops the loop's running sessions now.
 	HardStop()
+	// SetPaused pauses (true) or resumes (false) the loop's dispatch.
+	SetPaused(paused bool)
 }
 
 // Project is one project the daemon runs.
@@ -85,6 +87,7 @@ type Daemon struct {
 	mu      sync.Mutex
 	loops   []Loop
 	stopped bool
+	paused  bool
 }
 
 // Run starts every project on its own goroutine. Without Reload it returns
@@ -222,13 +225,17 @@ func (d *Daemon) runProject(ctx context.Context, p Project) (err error) {
 	return loop.Run(ctx)
 }
 
-// add records a started loop for HardStop, and reports false when HardStop
-// already ran: a loop that had not started by then is not started at all.
+// add records a started loop for HardStop and SetPaused, and reports false
+// when HardStop already ran: a loop that had not started by then is not
+// started at all. A loop added while the daemon is paused starts paused.
 func (d *Daemon) add(loop Loop) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.stopped {
 		return false
+	}
+	if d.paused {
+		loop.SetPaused(true)
 	}
 	d.loops = append(d.loops, loop)
 	return true
@@ -250,5 +257,16 @@ func (d *Daemon) HardStop() {
 	d.mu.Unlock()
 	for _, l := range loops {
 		l.HardStop()
+	}
+}
+
+// SetPaused pauses (true) or resumes (false) the dispatch of every project
+// that has started, and of every project a reload starts while it is paused.
+func (d *Daemon) SetPaused(paused bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.paused = paused
+	for _, l := range d.loops {
+		l.SetPaused(paused)
 	}
 }
