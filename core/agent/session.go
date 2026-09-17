@@ -195,14 +195,19 @@ type Runner struct {
 	MountDirs []string
 	// Skills prepares generic skill plugin directories.
 	Skills SkillPreparer
-	// SkillMountDirs hold the prepared skills; a container session with
-	// skills must be granted them.
+	// SkillMountDirs hold the prepared skills; a container session or a
+	// confined host session with skills must be granted them.
 	SkillMountDirs []string
 	// AddDirs are extra directories claude may write (the state dir). Each
 	// must be granted read-write.
 	// Codex, which runs without a sandbox, needs no such list, and neither
 	// does opencode, whose --auto approves writing outside the worktree.
 	AddDirs []string
+	// Confiner enforces a confined host session (Profile.Confine); nil
+	// selects this platform's. SystemPaths are what such a session reaches
+	// beyond its mounts; nil selects DefaultSystemPaths.
+	Confiner    Confiner
+	SystemPaths []Mount
 	// Stream, when set, receives every stream-json line (debug output).
 	Stream io.Writer
 	Logger *slog.Logger
@@ -354,8 +359,23 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 		return nil, err
 	}
 
-	r.Logger.Info("session start", "session", req.Name, "role", req.Profile.Name, "agent", req.Profile.Agent, "model", req.Profile.Model, "sandbox", req.Profile.Sandbox, "dir", req.workDir())
-	if err := cmd.Start(); err != nil {
+	// A confined turn is started by what confines it, and by nothing else:
+	// a confiner that cannot enforce the turn leaves it unstarted.
+	start := cmd.Start
+	if box == nil && turn.Confinement != nil {
+		confinement, err := turn.Confinement.withExecutable(bin)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", req.Profile.Name, err)
+		}
+		confiner := r.Confiner
+		if confiner == nil {
+			confiner = platformConfiner()
+		}
+		start = func() error { return confiner.Start(cmd, confinement) }
+	}
+
+	r.Logger.Info("session start", "session", req.Name, "role", req.Profile.Name, "agent", req.Profile.Agent, "model", req.Profile.Model, "sandbox", req.Profile.Sandbox, "confined", turn.Confinement != nil, "dir", req.workDir())
+	if err := start(); err != nil {
 		return nil, fmt.Errorf("start %s: %w", filepath.Base(bin), err)
 	}
 	// Record the pid so orphan cleanup can find the session after a crash.

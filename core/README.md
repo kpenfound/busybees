@@ -84,13 +84,73 @@ req.Grants = &agent.Grants{
 `Runner.Verify(req)` checks a request without starting anything and returns
 the `Turn` it would run: its environment, tools and resolved mounts. `Run`
 calls it first. `HostBoundary` and `ContainerBoundary` implement the
-`Boundary` interface. The host refuses what it cannot enforce
-(`ErrUnsupported`):
+`Boundary` interface. The host enforces nothing of the mounts by itself, so
+it refuses what it cannot enforce (`ErrUnsupported`):
 
 | Sandbox | Mounts it needs |
 |---|---|
 | `none` | `/` read-write, and `VCS`: nothing keeps an unsandboxed process out of VCS metadata |
 | `claude` | `/` read-only and the working directory read-write; every other read-write mount and every `Runner.AddDirs` entry, which must be granted read-write, is passed with `--add-dir` |
+
+### Confined host sessions
+
+`Profile.Confine` has the operating system hold a host session, `none` or
+`claude`, to its mounts. Neither row of the table applies to it:
+
+```go
+req.Profile.Confine = true
+req.Grants = &agent.Grants{
+	Env:   []string{"PATH", "HOME", "TMPDIR", "ANTHROPIC_API_KEY"},
+	Tools: []string{"Read", "Grep", "Bash"},
+	Mounts: []agent.Mount{
+		{Path: pinned, Access: agent.ReadOnly}, // the working directory
+		{Path: sessionDir, Access: agent.ReadWrite},
+		{Path: agentHome, Access: agent.ReadWrite},
+	},
+}
+```
+
+- The session reads, writes and executes inside its mounts, by their access,
+  and reads the system paths. Everything else is refused by the kernel, for
+  the agent and every process it starts, the MCP servers it launches
+  included: grant what they need. A read-only mount inside a read-write one
+  stays read-only.
+- The working directory may be `ReadOnly`.
+- The system paths are `HostBoundary.SystemPaths` (`Runner.SystemPaths`), or
+  `agent.DefaultSystemPaths()`: `/usr` and the directories linked into it,
+  the files under `/etc` a program needs to load libraries, resolve names
+  and verify certificates, `/proc`, the CPU and cgroup information under
+  `/sys`, and `/dev/null`, `/dev/zero`, `/dev/full`, `/dev/random`,
+  `/dev/urandom` and `/dev/tty`. No home directory and no temporary
+  directory: grant the ones the agent needs and point `HOME` and `TMPDIR`
+  at them. The runner adds the agent's executable, and nothing else it
+  loads.
+- Without `VCS`, the files `gh`, `git`, `hg`, `jj` and `svn` resolve to, in
+  the session's `PATH` and in the usual system directories, cannot be read
+  or executed: by name, by absolute path, from a shell, through a symbolic
+  link or a hard link beside them, or as a copy. Git's directory of
+  subcommand programs goes with `git`. A mount that is one of them, or a
+  hard link to one, is refused (`ErrNotGranted`). A hard link to one in any
+  other directory of a mount or a system path is not found, and neither is
+  a VCS executable outside the directories searched. The stand-ins on
+  `PATH` stay. With `VCS` nothing is denied, and `/` is not needed for it.
+- The session directory (or `Runner.SessionsDir` before it exists) and, for
+  a profile with skills, `Runner.SkillMountDirs` must lie inside a mount.
+- A directory that holds a denied executable, or a read-only mount inside a
+  read-write one, is allowed entry by entry instead of as a whole. It can be
+  listed, and nothing can be created at its own level.
+
+`Confiner` is what enforces it: `Check` says whether it can, `Start` starts
+the process under it. `HostBoundary.Confiner` (`Runner.Confiner`) replaces
+the platform's, which is Landlock on Linux and nothing anywhere else. A
+session nothing can confine is refused with `ErrUnsupported` and never run
+with less:
+
+| Platform | Confined `none` | Confined `claude` |
+|---|---|---|
+| Linux, Landlock version 3 or later (kernel 6.2) | enforced | refused: Claude's box is bubblewrap, which needs `mount(2)`, and Landlock refuses every mount |
+| Linux without Landlock, or an earlier version, which cannot refuse `truncate(2)` | refused | refused |
+| macOS and everything else | refused | refused |
 
 `ContainerBoundary` verifies the environment, tools and mounts the same way,
 and the container gets its grants and nothing else:

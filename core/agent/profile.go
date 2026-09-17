@@ -37,13 +37,17 @@ type Profile struct {
 	AllowedTools    []string
 	DisallowedTools []string
 	// MCP contains prepared entries; MCPEntries expands configured references once.
-	MCP                     map[string]MCPEntry
-	Sandbox                 string
+	MCP     map[string]MCPEntry
+	Sandbox string
+	// Confine has the operating system hold a host session (SandboxNone or
+	// SandboxClaude) to its granted mounts: see HostBoundary. A platform
+	// that cannot refuses the session with ErrUnsupported.
+	Confine                 bool
 	SandboxImage            string
 	SandboxDomains          []string
 	ContainerUseEnvironment string
 	// VCSAccess permits workspace VCS mounts and caller-supplied VCS environment.
-	// It is not a security boundary on an unsandboxed host.
+	// It is not a security boundary on an unsandboxed host that is not confined.
 	VCSAccess bool
 	Shell     string
 	Env       map[string]string
@@ -57,6 +61,9 @@ func (p Profile) Validate() error {
 	}
 	if p.Sandbox == SandboxClaude && p.Agent != "" && p.Agent != AgentClaude {
 		return fmt.Errorf("sandbox %q is Claude Code's sandbox and agent %q does not run under it", p.Sandbox, p.Agent)
+	}
+	if p.Sandbox == SandboxContainer && p.Confine {
+		return fmt.Errorf("confine holds a host session to its mounts; sandbox %q binds nothing else already", p.Sandbox)
 	}
 	if p.Sandbox == SandboxContainer && p.SandboxImage == "" && p.ContainerUseEnvironment == "" {
 		return fmt.Errorf("sandbox %q needs sandbox_image or container_use_environment", p.Sandbox)
