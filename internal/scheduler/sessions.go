@@ -307,7 +307,8 @@ func endEvent(spec sessionSpec, res *session.Result) Event {
 // to consolidate its notes, and why. Developer workers run
 // concurrently and share one role state file, so the read is locked.
 func (s *Scheduler) consolidateNotes(role string, notesLen int) (bool, string) {
-	every, maxBytes := s.config().Scheduler.NotesConsolidateEvery, s.config().Scheduler.NotesMaxBytes
+	cfg := s.config()
+	every, maxBytes := cfg.Scheduler.NotesConsolidateEvery, cfg.Scheduler.NotesMaxBytes
 	s.mu.Lock()
 	rs, err := s.store.Role(role)
 	s.mu.Unlock()

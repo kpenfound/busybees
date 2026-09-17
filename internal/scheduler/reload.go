@@ -50,7 +50,9 @@ func (s *Scheduler) CheckReload(next *config.Config) error {
 	if len(keys) == 0 {
 		return nil
 	}
-	return fmt.Errorf("%s: %s cannot change while the factory runs; restart bees run to apply it", next.Path, strings.Join(keys, ", "))
+	// The keys first and the file after them: a view that has to cut the
+	// line keeps what the person has to change.
+	return fmt.Errorf("%s cannot change while the factory runs (%s); restart bees run to apply it", strings.Join(keys, ", "), next.Path)
 }
 
 // applyPending puts the configuration Reload accepted in force. It runs at
@@ -84,6 +86,10 @@ var fixedKeys = []fixedKey{
 	{"project.dir", func(a, b *config.Config) bool { return a.CloneDir() == b.CloneDir() }},
 	{"project.remote", func(a, b *config.Config) bool { return a.Project.Remote == b.Project.Remote }},
 	{"project.state_dir", func(a, b *config.Config) bool { return a.StateDir() == b.StateDir() }},
+	// A worker names its branch again at every stage (BranchFor), and an
+	// open pull request is found by it: a new prefix under a running worker
+	// would name a branch its worktree and its pull request are not on.
+	{"project.branch_prefix", func(a, b *config.Config) bool { return a.Project.BranchPrefix == b.Project.BranchPrefix }},
 	{"filter.label", func(a, b *config.Config) bool { return a.Filter.Label == b.Filter.Label }},
 	{"filter.require_label", func(a, b *config.Config) bool { return a.Filter.LabelRequired() == b.Filter.LabelRequired() }},
 	{"filter.assignee", func(a, b *config.Config) bool { return a.Filter.Assignee == b.Filter.Assignee }},

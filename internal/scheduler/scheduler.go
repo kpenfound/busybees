@@ -335,9 +335,10 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	if err := s.ensureLabels(ctx); err != nil {
 		s.log.Warn("could not ensure labels", "err", capErrors(err))
 	}
-	started := []any{"repo", s.config().Project.Repo, "filter", s.describeQuery(),
-		"max_developers", s.config().Scheduler.MaxDevelopers, "poll", s.config().Scheduler.PollInterval.Duration,
-		"work_hours", s.config().Scheduler.WorkHours, "version", s.version}
+	cfg := s.config()
+	started := []any{"repo", cfg.Project.Repo, "filter", s.describeQuery(),
+		"max_developers", cfg.Scheduler.MaxDevelopers, "poll", cfg.Scheduler.PollInterval.Duration,
+		"work_hours", cfg.Scheduler.WorkHours, "version", s.version}
 	if s.shared != nil {
 		started = append(started, "shared_max_developers", s.shared.Pool().Size())
 	}
@@ -347,7 +348,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	// setting is not wrong, it just selects nothing a person did not label.
 	// filter.assignee is optional, so this is a warning and not a refusal
 	// to load.
-	if s.config().Scheduler.ReviewAssignedPRs && s.config().Filter.Assignee == "" {
+	if cfg.Scheduler.ReviewAssignedPRs && cfg.Filter.Assignee == "" {
 		s.log.Warn("scheduler.review_assigned_prs is on with no filter.assignee: only pull requests carrying the filter label are reviewed")
 	}
 	for {

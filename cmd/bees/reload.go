@@ -23,10 +23,15 @@ func reloadProjectConfig(ctx context.Context, path string) (*config.Config, erro
 		return nil, err
 	}
 	if err := prepareReload(ctx, cfg); err != nil {
-		return nil, err
+		return nil, inFile(err, cfg.Path)
 	}
 	return cfg, nil
 }
+
+// inFile names the bees.toml a reload was refused over, after the reason:
+// a view that has to cut the line keeps what the person has to change (as
+// scheduler.CheckReload's own refusal does).
+func inFile(err error, path string) error { return fmt.Errorf("%w (%s)", err, path) }
 
 // prepareReload resolves a loaded bees.toml for a running scheduler the way
 // its start resolved the one it runs on, so the two compare key by key.
@@ -132,7 +137,7 @@ func (r *machineRuntime) reloadProjects(ctx context.Context, m *config.Machine) 
 			continue
 		}
 		if err := prepareReload(ctx, cfg); err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", cfg.Path, err))
+			errs = append(errs, inFile(err, cfg.Path))
 			continue
 		}
 		if err := loop.CheckReload(cfg); err != nil {

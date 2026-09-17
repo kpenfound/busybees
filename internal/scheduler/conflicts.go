@@ -28,7 +28,8 @@ const OrchestratorSender = "orchestrator"
 // GitHub computes mergeability asynchronously: a PR whose state is UNKNOWN
 // (or missing, as with older gh versions) is left alone this poll.
 func (s *Scheduler) checkPRs(ctx context.Context, snap *snapshot) error {
-	fix, keep := s.config().Scheduler.FixConflicts(), s.config().Scheduler.PRKeepUpdated
+	cfg := s.config()
+	fix, keep := cfg.Scheduler.FixConflicts(), cfg.Scheduler.PRKeepUpdated
 	if !fix && !keep {
 		return nil
 	}

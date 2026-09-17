@@ -118,16 +118,20 @@ func TestReloadRefusesAFixedKeyAndKeepsThePreviousConfig(t *testing.T) {
 
 	changed := loadReload(t, h, strings.NewReplacer(
 		"max_developers = 2", "max_developers = 5\nworkspace_root = \"/tmp/elsewhere\"",
-		`repo = "acme/widgets"`, "repo = \"acme/widgets\"\nstate_dir = \"elsewhere\"",
+		`repo = "acme/widgets"`, "repo = \"acme/widgets\"\nstate_dir = \"elsewhere\"\nbranch_prefix = \"other/\"",
 	).Replace(noRolesTOML))
 	err := h.sched.Reload(changed)
 	if err == nil {
 		t.Fatal("a reload changing the state directory was accepted")
 	}
-	for _, key := range []string{"project.state_dir", "scheduler.max_developers", "scheduler.workspace_root", "restart bees run"} {
+	for _, key := range []string{"project.state_dir", "project.branch_prefix", "scheduler.max_developers", "scheduler.workspace_root", "restart bees run", changed.Path} {
 		if !strings.Contains(err.Error(), key) {
 			t.Errorf("the refusal does not name %s: %v", key, err)
 		}
+	}
+	// The keys come before the file, so a view that cuts the line keeps them.
+	if strings.Index(err.Error(), "project.state_dir") > strings.Index(err.Error(), changed.Path) {
+		t.Errorf("the refusal names the file before the keys: %v", err)
 	}
 	if strings.Contains(err.Error(), "poll_interval") {
 		t.Errorf("the refusal names a key that did not change: %v", err)

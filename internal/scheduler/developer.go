@@ -166,8 +166,9 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 			return s.escalate(ctx, issue.Number, s.deadStackReason(issue.Number, pr, pred))
 		}
 	}
-	maxRounds := s.config().Scheduler.MaxReviewRounds
-	policy := s.config().Merge()
+	cfg := s.config()
+	maxRounds := cfg.Scheduler.MaxReviewRounds
+	policy := cfg.Merge()
 	// stage is where the worker is; afterDevelop is where a developer session
 	// leads: the first review (through the pre-review checks), or — when the
 	// developer is fixing failing checks — straight back to the stage that

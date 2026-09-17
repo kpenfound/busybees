@@ -43,7 +43,7 @@ func runWithTUI(ctx context.Context, a *app, s *scheduler.Scheduler, g *globalFl
 	if !s.Once {
 		reload = projectReloader(ctx, a, s)
 	}
-	return tui.Run(ctx, tui.Deps{
+	return runView(ctx, tui.Deps{
 		Status: a.store.LoadStatus,
 		Mail:   a.mail.Counts,
 		Now:    time.Now,
@@ -58,6 +58,11 @@ func runWithTUI(ctx context.Context, a *app, s *scheduler.Scheduler, g *globalFl
 		Repo:   a.cfg.Project.Repo,
 	}, s, give)
 }
+
+// runView draws the view over the scheduler: a variable so a test can stand
+// in for the screen, which needs a terminal to open, and check what
+// runWithTUI wired up around it (as runMachineView is for a daemon).
+var runView = tui.Run
 
 // openInBrowser shows a URL in whatever the person watching reads GitHub in.
 // It starts the platform's opener and does not wait for it: on Linux
