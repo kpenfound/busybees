@@ -80,14 +80,10 @@ func (h HostBoundary) confinement(req Request, turn *Turn) (*Confinement, error)
 	}
 	if !turn.VCS {
 		c.Denied = executablePaths(VCSExecutables, envValue(turn.Env, "PATH"))
-		for _, m := range req.Grants.Mounts {
-			resolved, err := resolve(m.Path)
-			if err != nil {
-				return nil, fmt.Errorf("mount %s: %w", m.Path, err)
-			}
+		for i, m := range turn.Mounts {
 			for _, d := range c.Denied {
-				if inside(d, resolved) {
-					return nil, fmt.Errorf("%w: mount %s is the VCS executable %s and VCS is not granted", ErrNotGranted, m.Path, d)
+				if inside(d, m.Path) {
+					return nil, fmt.Errorf("%w: mount %s is the VCS executable %s and VCS is not granted", ErrNotGranted, req.Grants.Mounts[i].Path, d)
 				}
 			}
 		}

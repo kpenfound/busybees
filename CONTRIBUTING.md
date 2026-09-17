@@ -107,6 +107,21 @@ See [core/README.md](core/README.md) for the execution boundary.
   `internal/review` uses its own fake. `core/agent/agenttest` supplies the shared
   session fakes; core's engine and host-server launches use the same guard as
   agent launches. There is no opt-in path to real agents in the test suite.
+- `core/agent`'s Landlock tests (`TestLandlock...`) run a fake agent under
+  the kernel's enforcement, and skip, saying why, on a kernel without
+  Landlock. Docker Desktop's kernel is one, so `dagger check` on a Mac skips
+  them. This runs them on Debian's kernel under QEMU, inside Dagger, with no
+  privileges:
+
+  ```sh
+  dagger core container from --address golang:1.26-trixie \
+    with-directory --path /src --source . --exclude .git,.bees \
+    with-exec --args=sh,/src/core/agent/testdata/landlock-vm/run.sh \
+    combined-output
+  ```
+
+  Run it after changing `core/agent/confine*.go`. It is not a check: the
+  gate stays `dagger check`.
 - `skills.Manager.Git` is replaced with a copy of a fixture directory, so
   every supported repository layout is exercised offline.
 - `install.sh` is checked with `shellcheck -s sh install.sh`. No test runs it,

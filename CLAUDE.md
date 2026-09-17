@@ -80,7 +80,10 @@ GitHub repository. Read `docs/architecture.md` before changing the scheduler.
   and streams, sandbox/container execution, timeout/cancellation, result/outcome
   files and interruption inspection. `grants.go` is the capability contract every
   request carries (`Grants`: env allowlist, tools, ro/rw mounts, VCS) and the
-  `Boundary` that verifies it before launch (`HostBoundary`, `ContainerBoundary`). `agenttest` supplies fake agents, Docker
+  `Boundary` that verifies it before launch (`HostBoundary`, `ContainerBoundary`). `confine.go` is the host's
+  confined mode (`Profile.Confine`): the operating system holds the process to its mounts and `SystemPaths` through a
+  `Confiner`, Landlock on Linux (`confine_linux.go`), `ErrUnsupported` where there is none; its enforcement tests skip
+  on a kernel without Landlock and run in the VM `CONTRIBUTING.md` describes. `agenttest` supplies fake agents, Docker
   and a host MCP server; `agentbin` guards all agent and engine launches in tests.
 - `internal/session` — busybees adapter: `ProfileForRole` projects a resolved role
   into execution settings; `grants` turns role policy into `agent.Grants`

@@ -157,7 +157,7 @@ func (h HostBoundary) Verify(req Request) (*Turn, error) {
 	case p.Sandbox != SandboxClaude:
 		// An unsandboxed process reaches everything its user can.
 		if root == nil || root.Access != ReadWrite {
-			return nil, fmt.Errorf("%w: a host session without a sandbox reaches the whole filesystem; grant %q %s", ErrUnsupported, "/", ReadWrite)
+			return nil, fmt.Errorf("%w: a host session without a sandbox reaches the whole filesystem; grant %q %s, or confine it", ErrUnsupported, "/", ReadWrite)
 		}
 		if !turn.VCS {
 			return nil, fmt.Errorf("%w: a host session without a sandbox can write VCS metadata; grant VCS or use sandbox %q", ErrUnsupported, SandboxClaude)
@@ -166,7 +166,7 @@ func (h HostBoundary) Verify(req Request) (*Turn, error) {
 		// Claude's box reads everywhere and writes the working directory
 		// and the directories it is told about.
 		if root == nil || root.Access != ReadOnly {
-			return nil, fmt.Errorf("%w: sandbox %q reads the whole filesystem and writes only named directories; grant %q %s", ErrUnsupported, SandboxClaude, "/", ReadOnly)
+			return nil, fmt.Errorf("%w: sandbox %q reads the whole filesystem and writes only named directories; grant %q %s, or confine it", ErrUnsupported, SandboxClaude, "/", ReadOnly)
 		}
 		if !writable(turn.Mounts, workDir(req)) {
 			return nil, fmt.Errorf("%w: sandbox %q makes the working directory writable; grant it %s", ErrUnsupported, SandboxClaude, ReadWrite)

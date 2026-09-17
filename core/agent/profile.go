@@ -47,7 +47,7 @@ type Profile struct {
 	SandboxDomains          []string
 	ContainerUseEnvironment string
 	// VCSAccess permits workspace VCS mounts and caller-supplied VCS environment.
-	// It is not a security boundary on an unsandboxed host.
+	// It is not a security boundary on an unsandboxed host that is not confined.
 	VCSAccess bool
 	Shell     string
 	Env       map[string]string
