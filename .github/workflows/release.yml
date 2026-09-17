@@ -84,3 +84,24 @@ jobs:
             --title "$GITHUB_REF_NAME" \
             --generate-notes \
             dist/bees_*.tar.gz dist/checksums.txt
+      # core/ is its own Go module, so Go resolves its versions from tags
+      # prefixed with its directory. The tag is created through the API at the
+      # commit this run was triggered for, so no checkout is needed. It does not
+      # start another run: `core/v*` does not match the `v*` filter, and a push
+      # made with GITHUB_TOKEN triggers no workflow anyway.
+      - name: Tag the core module
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="core/${GITHUB_REF_NAME}"
+          if existing=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" --jq .object.sha 2>/dev/null); then
+            if [ "$existing" = "$GITHUB_SHA" ]; then
+              echo "${tag} already points at ${GITHUB_SHA}"
+              exit 0
+            fi
+            echo "::error::${tag} already exists at ${existing}, not ${GITHUB_SHA}"
+            exit 1
+          fi
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f ref="refs/tags/${tag}" -f sha="${GITHUB_SHA}"

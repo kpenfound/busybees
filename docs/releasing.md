@@ -27,7 +27,9 @@ workflow: the project's own gate is `dagger check`, run by hand (see
 3. Watch the run (`gh run watch` or the Actions tab). It builds the four
    platforms in parallel, then a second job writes `checksums.txt`, creates
    the release and uploads everything to it. Release notes are generated from
-   the commits since the previous tag.
+   the commits since the previous tag. The same job tags the commit
+   `core/v0.2.0` for the `core` Go module (see
+   [The core module](#the-core-module)).
 
 There is nothing to do by hand afterwards. To ship a fix, tag again: the
 workflow creates one release per tag and never touches an existing one.
@@ -52,6 +54,20 @@ This naming scheme is a stable interface, not an implementation detail:
 `install.sh` at the root of this repository parses it to pick the right asset,
 and so does every copy of that script already in the wild. Changing it breaks
 them all, so treat it like a public API.
+
+## The core module
+
+`core/` is a Go module of its own, `github.com/kpenfound/busybees/core`, and Go
+reads its versions from tags prefixed with `core/`. The workflow creates
+`core/<version>` on the commit of every `<version>` tag, so another project
+can depend on it:
+
+```sh
+go get github.com/kpenfound/busybees/core@v0.2.0
+```
+
+The `core/v*` tag starts no workflow run. If it already exists on the same
+commit, the step succeeds; on a different commit, it fails.
 
 ## Installing a release
 
