@@ -277,7 +277,8 @@ func (p Policy) Runs(path string) bool {
 	if p.Sandbox != SandboxContainer {
 		return p.Reads(path)
 	}
-	return filepath.IsAbs(path) && !p.denied(filepath.Clean(path))
+	// denied compares cleaned paths: "/usr/bin/../bin/git" is "/usr/bin/git".
+	return filepath.IsAbs(path) && !p.denied(path)
 }
 
 func (p Policy) denied(real string) bool {
