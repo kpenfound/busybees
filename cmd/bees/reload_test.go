@@ -7,8 +7,10 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -252,4 +254,70 @@ func TestTheMachineViewIsWiredToTheReload(t *testing.T) {
 			t.Errorf("the view's reload did not reach the daemon: %v", reloadErr)
 		}
 	}
+}
+
+// SIGHUP to a single-project run reads bees.toml again: an accepted reload
+// and a refused one are both logged with the file, the refusal saying to
+// restart, and the process receiving the real signal stays up through both.
+// A --once run ignores the signal.
+func TestSIGHUPReloadsASingleProject(t *testing.T) {
+	t.Setenv(versions.EnvSkip, "1")
+	path := writeProject(t, "acme/a", "")
+	var console syncBuffer
+	g := &globalFlags{logger: logging.New(logging.Options{Console: &console})}
+	t.Cleanup(func() { _ = g.logger.Close() })
+	loop, err := startProject(context.Background(), g, loadMachine(t, path).Configs[0], nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = loop.Close() }()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP)
+	defer signal.Stop(hup)
+	served := make(chan struct{})
+	go func() {
+		serveProjectReloads(ctx, hup, projectReloader(ctx, loop.app, loop.Scheduler), loop.app.log)
+		close(served)
+	}()
+	base := "version = 2\n[project]\nrepo = \"acme/a\"\ndefault_branch = \"main\"\n"
+	send := func(body, want string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := syscall.Kill(os.Getpid(), syscall.SIGHUP); err != nil {
+			t.Fatal(err)
+		}
+		deadline := time.Now().Add(10 * time.Second)
+		for !strings.Contains(console.String(), want) {
+			if time.Now().After(deadline) {
+				t.Fatalf("no %q in the log after SIGHUP: %q", want, console.String())
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	send(base+"[scheduler]\npoll_interval = \"9m\"\n", "reloaded bees.toml")
+	if !strings.Contains(console.String(), path) {
+		t.Errorf("the accepted reload does not name the file: %q", console.String())
+	}
+	send(base+"[filter]\nlabel = \"other\"\n", "restart bees run")
+	if !strings.Contains(console.String(), "filter.label") {
+		t.Errorf("the refusal does not name the key: %q", console.String())
+	}
+	select {
+	case <-served:
+		t.Fatal("the reload loop stopped after a SIGHUP")
+	default:
+	}
+	cancel()
+	<-served
+
+	// --once: the signal is caught and ignored.
+	ctx, cancel = context.WithCancel(context.Background())
+	defer cancel()
+	go serveProjectReloads(ctx, hup, nil, loop.app.log)
+	send(base, "SIGHUP ignored")
 }

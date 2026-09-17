@@ -726,7 +726,7 @@ prompt_file = "docs/qa-checklist.md"
   base prompt, and `--rendered` the whole system prompt for this project. A
   `prompt_file`'s contents are re-read for each session; `prompt`, like every
   other key in `bees.toml`, is read when `bees run` starts or reloads the
-  configuration (`r` in the live view, SIGHUP for a machine run), so changing
+  configuration (`r` in the live view, or SIGHUP), so changing
   it takes a reload. The base prompt is compiled into the `bees` binary, so
   changing it needs a rebuild and a restart. `bees status` names the build the
   running scheduler was started from, and `bees doctor` warns when it is
