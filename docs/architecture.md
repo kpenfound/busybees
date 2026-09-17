@@ -1023,7 +1023,18 @@ counted from the transcript's assistant messages or completed items instead.
   configured; a second in a row for the same work item (or the same singleton
   role) is reported as `failed`, which escalates a work item and backs a
   singleton off. See [Retries first](workflow.md#retries-first).
-- **Environment.** Every inherited `BEES_*` variable is dropped first, so a
+- **Grants.** Every session carries grants: the variables it may have, its
+  tools (every built-in one, and each MCP server its role configures or
+  names in `allowed_tools`), the paths it may read or write, and whether it
+  may use version control. The runner checks the session against them
+  before anything starts and refuses one that asks for more, or for a grant
+  its sandbox cannot enforce: `sandbox = "none"` reaches the whole
+  filesystem, so it is granted `/` read-write and version control;
+  `sandbox = "claude"` is granted `/` read-only and the worktree and state
+  directory read-write.
+- **Environment.** A session inherits only the host variables its grants
+  list (see [Exported into every session](configuration.md#exported-into-every-session)),
+  and every inherited `BEES_*` variable is dropped, so a
   session started from inside another session cannot pick up a stale issue,
   pull request or branch. Then, in order: the role's configured `env` entries
   (`$VAR`-expanded) and `SHELL` when `shell` is set; `BEES_ROLE`,

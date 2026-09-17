@@ -33,7 +33,7 @@ cat >/dev/null
 			bin := agenttest.Script(t, backend, body)
 			r := Runner{ClaudeBin: bin, CodexBin: bin, OpenCodeBin: bin, DockerBin: agenttest.Docker(t, "image", "RUN_DIR"), ContainerListen: "127.0.0.1:0"}
 			req := Request{SessionDir: dir, Workspace: fakeWorkspace{dir: t.TempDir()}, Env: map[string]string{"RUN_DIR": dir, "PRIVATE_MCP_TOKEN": "stale"}, Profile: Profile{Agent: backend, Sandbox: SandboxContainer, SandboxImage: "image"}, HostMCP: &HostMCP{Name: "tools", Entry: MCPEntry{Command: agenttest.MCPServer(t, "RUN_DIR")}, ListenArgs: []string{"mcp", "serve", "--listen"}, TokenEnv: "PRIVATE_MCP_TOKEN", ListeningPrefix: "listening on ", Path: "/mcp"}}
-			res, err := r.Run(context.Background(), req)
+			res, err := r.Run(context.Background(), grantAll(req))
 			if err != nil || res.IsError {
 				t.Fatalf("run: %+v, %v", res, err)
 			}
@@ -211,7 +211,7 @@ while :; do sleep 1; done`)
 			ctx, cancel := context.WithCancel(context.Background())
 			ended := make(chan error, 1)
 			go func() {
-				_, err := r.Run(ctx, Request{SessionDir: dir, Workspace: fakeWorkspace{dir: sessions}, Profile: Profile{Agent: AgentCodex}})
+				_, err := r.Run(ctx, grantAll(Request{SessionDir: dir, Workspace: fakeWorkspace{dir: sessions}, Profile: Profile{Agent: AgentCodex}}))
 				ended <- err
 			}()
 			defer func() { cancel(); <-ended }()

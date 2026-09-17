@@ -2,12 +2,14 @@ package session
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/kpenfound/busybees/core/agent"
 	"github.com/kpenfound/busybees/core/agent/agenttest"
 	"github.com/kpenfound/busybees/core/vcs"
 	"github.com/kpenfound/busybees/internal/config"
@@ -136,6 +138,7 @@ echo '{"type":"result","subtype":"success","result":"ok"}'`))
 			r.DockerBin = agenttest.Docker(t, "image", EnvSessionDir)
 			r.BeesBin = agenttest.MCPServer(t, EnvSessionDir)
 			r.ContainerListen = "127.0.0.1:0"
+			r.StateDir = t.TempDir()
 			profile := ProfileForRole(config.ResolvedRole{Name: "developer", Sandbox: mode, SandboxImage: "image"})
 			profile.VCSAccess = false
 			req := Request{Name: "denied", Profile: profile, Workspace: vcs.Directory(t.TempDir())}
@@ -151,6 +154,13 @@ echo '{"type":"result","subtype":"success","result":"ok"}'`))
 				t.Fatalf("forwarded VCS credentials: %v", prepared.HostMCP.Entry.EnvVars)
 			}
 			res, err := r.Run(context.Background(), req)
+			if mode == config.SandboxNone {
+				// An unsandboxed host cannot keep VCS metadata unwritable.
+				if !errors.Is(err, agent.ErrUnsupported) {
+					t.Fatalf("unsandboxed session without VCS: %+v, %v", res, err)
+				}
+				return
+			}
 			if err != nil || res.IsError {
 				t.Fatalf("run: %+v, %v", res, err)
 			}

@@ -48,6 +48,8 @@ type sessionPaths struct {
 	// runner decides how that one is reached (a caller-owned server the agent
 	// starts, or the host's HTTP server for a container session).
 	mcp map[string]MCPEntry
+	// turn is the verified request.
+	turn *Turn
 }
 
 // streamEnd is what a backend read off the end of a session's stream, in
@@ -126,8 +128,17 @@ func (claudeBackend) command(ctx context.Context, r *Runner, req Request, paths 
 		// resumed launch makes claude read this round's file.
 		args = append(args, "--resume", req.ResumeID, "--system-prompt-snapshot", "off")
 	}
-	for _, d := range r.AddDirs {
+	addDirs := r.AddDirs
+	if paths.turn != nil && req.Profile.Sandbox != SandboxContainer {
+		addDirs = paths.turn.WriteDirs
+	}
+	for _, d := range addDirs {
 		args = append(args, "--add-dir", d)
+	}
+	if paths.turn != nil && paths.turn.Tools != nil {
+		// --tools is the built-in set the session has at all; the
+		// permission flags below only decide what runs without asking.
+		args = append(args, "--tools", strings.Join(paths.turn.Tools, ","))
 	}
 	if len(req.Profile.AllowedTools) > 0 {
 		args = append(args, "--allowedTools", strings.Join(req.Profile.AllowedTools, ","))
@@ -143,7 +154,11 @@ func (claudeBackend) command(ctx context.Context, r *Runner, req Request, paths 
 	}
 	args = append(args, "--mcp-config", mcpPath, "--strict-mcp-config")
 	if boxed {
-		settings, err := claudeSandboxSettings(sortedKeys(paths.mcp), runtime.GOOS, req.Profile.SandboxDomains)
+		var denied []string
+		if paths.turn != nil {
+			denied = paths.turn.DeniedExecutables
+		}
+		settings, err := claudeSandboxSettings(sortedKeys(paths.mcp), runtime.GOOS, req.Profile.SandboxDomains, denied)
 		if err != nil {
 			return "", nil, "", nil, err
 		}

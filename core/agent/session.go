@@ -53,6 +53,10 @@ type Request struct {
 	// callers that want to reference it in prompts create it first with
 	// Runner.NewSessionDir.
 	SessionDir string
+	// Grants are the session's complete capabilities. Run verifies the
+	// request against them before it starts anything and refuses a request
+	// without them.
+	Grants *Grants
 	// ResumeID, when set, is the agent's own id of an earlier session
 	// (Result.ClaudeID) whose conversation this one continues, so a later
 	// round of the same role starts with the previous round's context
@@ -191,7 +195,8 @@ type Runner struct {
 	// Skills prepares generic skill plugin directories.
 	Skills         SkillPreparer
 	SkillMountDirs []string
-	// AddDirs are extra directories claude may access (the state dir).
+	// AddDirs are extra directories claude may write (the state dir). Each
+	// must be granted read-write.
 	// Codex, which runs without a sandbox, needs no such list, and neither
 	// does opencode, whose --auto approves writing outside the worktree.
 	AddDirs []string
@@ -217,6 +222,12 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 	be, err := backendFor(req.Profile.Agent)
 	if err != nil {
 		return nil, err
+	}
+	// Grants are verified before anything is written or started: a request
+	// that asks for more than it was granted never runs.
+	turn, err := r.Verify(req)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", req.Profile.Name, err)
 	}
 	started := time.Now()
 	sessionDir := req.SessionDir
@@ -256,11 +267,17 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 	} else {
 		paths.mcp = maps.Clone(req.Profile.MCP)
 	}
+	paths.turn = turn
 	bin, args, stdin, extra, err := be.command(ctx, r, req, paths)
 	if err != nil {
 		return nil, err
 	}
-	env := r.env(req, sessionDir)
+	env := turn.Env
+	if box == nil {
+		if env, err = denyExecutables(filepath.Join(sessionDir, deniedBinDir), turn.DeniedExecutables, env); err != nil {
+			return nil, err
+		}
+	}
 	for _, v := range extra {
 		env = append(env, v.name+"="+v.value)
 	}
@@ -474,22 +491,7 @@ func hostEnv(prefix string) []string {
 }
 
 func (r *Runner) sessionVars(req Request, _ string) []envVar {
-	var vars []envVar
-	for _, k := range slices.Sorted(maps.Keys(req.Profile.Env)) {
-		vars = append(vars, envVar{k, os.ExpandEnv(req.Profile.Env[k])})
-	}
-	if req.Profile.Shell != "" {
-		vars = append(vars, envVar{"SHELL", req.Profile.Shell})
-	}
-	for _, k := range slices.Sorted(maps.Keys(req.Env)) {
-		vars = append(vars, envVar{k, req.Env[k]})
-	}
-	if req.Profile.VCSAccess {
-		for _, k := range slices.Sorted(maps.Keys(req.VCSEnv)) {
-			vars = append(vars, envVar{k, req.VCSEnv[k]})
-		}
-	}
-	return vars
+	return sessionVars(req, req.Profile.VCSAccess)
 }
 
 // NewSessionDir creates a fresh per-session directory under SessionsDir.
