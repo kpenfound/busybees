@@ -44,7 +44,7 @@ func runPreparedMachineView(ctx context.Context, g *globalFlags, console io.Writ
 	var once sync.Once
 	give := func() { once.Do(restore) }
 	defer give()
-	return runMachineView(ctx, tui.Deps{Projects: view.initial(), ProjectUpdates: view.updates, Now: time.Now, Open: openInBrowser}, d, give)
+	return runMachineView(ctx, tui.Deps{Projects: view.initial(), ProjectUpdates: view.updates, Now: time.Now, Open: openInBrowser, Reload: view.reload}, d, give)
 }
 
 // runMachineView draws the view over the daemon: a variable so a test can
@@ -72,7 +72,11 @@ func machineView(ctx context.Context, d *daemon.Daemon, m *config.Machine) ([]tu
 // machineViews publishes coalesced full snapshots. Only the daemon's lifecycle
 // callbacks change membership; preparing an unused reload never replaces a source.
 type machineViews struct {
-	ctx     context.Context
+	ctx context.Context
+	// reload is the view's r key (tui.Deps.Reload): the machine's reload,
+	// the one SIGHUP runs (machineReloader), set by runMachine when the
+	// run accepts reloads and nil when it does not (--once).
+	reload  func() error
 	mu      sync.Mutex
 	next    uint64
 	order   []string

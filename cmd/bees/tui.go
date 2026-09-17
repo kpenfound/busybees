@@ -37,6 +37,12 @@ func runWithTUI(ctx context.Context, a *app, s *scheduler.Scheduler, g *globalFl
 	// over the view exactly as the console log would. The log file and the
 	// per-session transcripts still have everything.
 	a.runner.Stream = nil
+	// The r key: bees.toml read again and handed to the scheduler. A --once
+	// run has no next pass to take it, so its view has no reload.
+	var reload func() error
+	if !s.Once {
+		reload = projectReloader(ctx, a, s)
+	}
 	return tui.Run(ctx, tui.Deps{
 		Status: a.store.LoadStatus,
 		Mail:   a.mail.Counts,
@@ -46,9 +52,10 @@ func runWithTUI(ctx context.Context, a *app, s *scheduler.Scheduler, g *globalFl
 			// issue over must finish even when the factory is draining.
 			return s.KillSession(context.WithoutCancel(ctx), name)
 		},
-		Open: openInBrowser,
-		Send: sendFromView(a),
-		Repo: a.cfg.Project.Repo,
+		Open:   openInBrowser,
+		Send:   sendFromView(a),
+		Reload: reload,
+		Repo:   a.cfg.Project.Repo,
 	}, s, give)
 }
 

@@ -17,40 +17,78 @@ import (
 	"github.com/kpenfound/busybees/internal/versions"
 )
 
+// A reload of the machine config — SIGHUP, or the live view's r key — is
+// all or nothing: a machine config that does not load, or a running
+// project's bees.toml that changes a key its scheduler cannot, changes
+// nothing and says why; an accepted one hands every running project its
+// bees.toml read again and the daemon the new project list, on the
+// original shared pool.
 func TestMachineReloadRejectsInvalidConfigAndPreservesPool(t *testing.T) {
 	t.Setenv(versions.EnvSkip, "1")
 	a, b := writeProject(t, "acme/a", ""), writeProject(t, "acme/b", "")
 	m := loadMachineWith(t, "max_developers = 3\n", a)
-	g := &globalFlags{}
-	build := machineProjectFactory(g, m)
-	original, err := build(m)[0].Start(context.Background())
+	var console bytes.Buffer
+	g := &globalFlags{logger: logging.New(logging.Options{Console: &console})}
+	t.Cleanup(func() { _ = g.logger.Close() })
+	rt := newMachineRuntime(g, m)
+	original, err := rt.projects(m)[0].Start(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = original.(*projectLoop).Close() }()
+	if rt.running(a) != original {
+		t.Fatal("the started project is not recorded for reloads")
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	hup := make(chan os.Signal)
-	changes := make(chan []daemon.Project)
+	changes := make(chan []daemon.Project, 1)
 	done := make(chan struct{})
+	r := &machineReloader{path: m.Path, build: rt.projects, apply: rt.reloadProjects, changes: changes, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	go func() {
 		defer close(done)
-		reloadMachine(ctx, hup, changes, m.Path, build, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		r.serve(ctx, hup)
 	}()
-	write := func(body string) {
+	write := func(path, body string) {
 		t.Helper()
-		if err := os.WriteFile(m.Path, []byte(body), 0o644); err != nil {
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	write("projects = [\"missing.toml\"]\n")
-	hup <- syscall.SIGHUP
-	select {
-	case <-changes:
-		t.Fatal("invalid reload changed projects")
-	case <-time.After(50 * time.Millisecond):
+	unchanged := func(what string) {
+		t.Helper()
+		select {
+		case <-changes:
+			t.Fatal(what + " changed the projects")
+		case <-time.After(50 * time.Millisecond):
+		}
 	}
-	write("projects = [\"" + filepath.ToSlash(a) + "\",\"" + filepath.ToSlash(b) + "\"]\nmax_developers = 9\n")
+	write(m.Path, "projects = [\"missing.toml\"]\n")
+	hup <- syscall.SIGHUP
+	unchanged("an invalid machine config")
+
+	// A running project's file that changes a fixed key refuses the whole
+	// reload, naming the file and the key, and no membership changes.
+	aToml := "version = 2\n[project]\nrepo = \"acme/a\"\ndefault_branch = \"main\"\n"
+	write(a, aToml+"state_dir = \"elsewhere\"\n")
+	write(m.Path, "projects = [\""+filepath.ToSlash(a)+"\",\""+filepath.ToSlash(b)+"\"]\nmax_developers = 9\n")
+	if err := r.reload(ctx); err == nil || !strings.Contains(err.Error(), a) || !strings.Contains(err.Error(), "project.state_dir") {
+		t.Fatalf("a fixed key changed in a running project's bees.toml: %v, want the file and the key", err)
+	}
+	unchanged("a refused project reload")
+	if strings.Contains(console.String(), "reload accepted") {
+		t.Fatal("a refused reload reached the scheduler")
+	}
+	// The same file that does not load refuses the reload the same way.
+	write(a, aToml+"[scheduler]\nno_such_key = 1\n")
+	if err := r.reload(ctx); err == nil || !strings.Contains(err.Error(), "no_such_key") {
+		t.Fatalf("an invalid project file: %v", err)
+	}
+	unchanged("an invalid project file")
+
+	// A live key changed reaches the running scheduler, and the project
+	// list reaches the daemon.
+	write(a, aToml+"[scheduler]\npoll_interval = \"9m\"\n")
 	hup <- syscall.SIGHUP
 	var projects []daemon.Project
 	select {
@@ -61,6 +99,9 @@ func TestMachineReloadRejectsInvalidConfigAndPreservesPool(t *testing.T) {
 	if len(projects) != 2 || projects[0].Name != a || projects[1].Name != b {
 		t.Fatalf("projects: %+v", projects)
 	}
+	if !strings.Contains(console.String(), "reload accepted") {
+		t.Errorf("the running project's scheduler was not handed its bees.toml: %q", console.String())
+	}
 	added, err := projects[1].Start(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -69,6 +110,11 @@ func TestMachineReloadRejectsInvalidConfigAndPreservesPool(t *testing.T) {
 	pool := added.(*projectLoop).SharedPool()
 	if pool != original.(*projectLoop).SharedPool() || pool.Size() != 3 {
 		t.Fatal("reload replaced the original shared pool")
+	}
+	// A closed loop is forgotten: the next reload has nothing to hand it.
+	_ = added.(*projectLoop).Close()
+	if rt.running(b) != nil {
+		t.Fatal("a closed project is still recorded for reloads")
 	}
 	cancel()
 	select {

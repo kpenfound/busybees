@@ -33,6 +33,7 @@ func (s *Scheduler) Reload(next *config.Config) error {
 	s.mu.Lock()
 	s.pending = next
 	s.mu.Unlock()
+	s.log.Info("configuration reload accepted; in force from the next pass", "path", next.Path)
 	s.signal()
 	return nil
 }

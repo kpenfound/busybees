@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/daemon"
@@ -27,22 +28,70 @@ func machineDaemon(g *globalFlags, m *config.Machine) *daemon.Daemon {
 
 // The factory keeps the original shared pool across project-list reloads.
 func machineProjectFactory(g *globalFlags, m *config.Machine) func(*config.Machine) []daemon.Project {
-	var shared *scheduler.SharedPool
-	if m.MaxDevelopers > 0 {
-		shared = scheduler.NewSharedPool(m.MaxDevelopers)
-	}
-	return func(next *config.Machine) []daemon.Project { return machineProjects(g, next, shared) }
+	return newMachineRuntime(g, m).projects
 }
 
-func machineProjects(g *globalFlags, m *config.Machine, shared *scheduler.SharedPool) []daemon.Project {
+// machineRuntime builds the projects of one machine run: every project on
+// the one shared pool the machine config sizes, and a record of the
+// projects whose scheduler is running, by the path of their bees.toml, for
+// a reload to hand each its file read again (reloadProjects).
+type machineRuntime struct {
+	g      *globalFlags
+	shared *scheduler.SharedPool
+
+	mu    sync.Mutex
+	loops map[string]*projectLoop
+}
+
+func newMachineRuntime(g *globalFlags, m *config.Machine) *machineRuntime {
+	r := &machineRuntime{g: g, loops: map[string]*projectLoop{}}
+	if m.MaxDevelopers > 0 {
+		r.shared = scheduler.NewSharedPool(m.MaxDevelopers)
+	}
+	return r
+}
+
+// projects is the daemon's project list for m: one entry per project,
+// each started with startProject on the shared pool, and recorded here
+// from its start until its loop's Close.
+func (r *machineRuntime) projects(m *config.Machine) []daemon.Project {
 	var projects []daemon.Project
 	for _, cfg := range m.Configs {
 		projects = append(projects, daemon.Project{
-			Name:  cfg.Path,
-			Start: func(ctx context.Context) (daemon.Loop, error) { return startProject(ctx, g, cfg, shared) },
+			Name: cfg.Path,
+			Start: func(ctx context.Context) (daemon.Loop, error) {
+				loop, err := startProject(ctx, r.g, cfg, r.shared)
+				if err != nil {
+					return nil, err
+				}
+				r.record(cfg.Path, loop)
+				return loop, nil
+			},
 		})
 	}
 	return projects
+}
+
+// record remembers a started loop until it is closed.
+func (r *machineRuntime) record(path string, loop *projectLoop) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.loops[path] = loop
+	loop.onClose = func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if r.loops[path] == loop {
+			delete(r.loops, path)
+		}
+	}
+}
+
+// running is the loop running the project whose bees.toml is at path, nil
+// when none is.
+func (r *machineRuntime) running(path string) *projectLoop {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.loops[path]
 }
 
 // projectLoop is one project's scheduler, closing the project's log file when
@@ -51,6 +100,9 @@ type projectLoop struct {
 	*scheduler.Scheduler
 	app  *app
 	file io.Closer
+	// onClose is told the loop is closed: what the machine runtime uses
+	// to forget it (machineRuntime.record). nil when nothing records it.
+	onClose func()
 }
 
 func (p *projectLoop) Run(ctx context.Context) error {
@@ -60,7 +112,12 @@ func (p *projectLoop) Run(ctx context.Context) error {
 
 // Close releases the project's log file: after Run, or instead of it when
 // the daemon discards a loop it never ran (see daemon.Loop).
-func (p *projectLoop) Close() error { return p.file.Close() }
+func (p *projectLoop) Close() error {
+	if p.onClose != nil {
+		p.onClose()
+	}
+	return p.file.Close()
+}
 
 // The daemon closes a loop it discards unrun only through io.Closer.
 var _ io.Closer = (*projectLoop)(nil)
