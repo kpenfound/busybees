@@ -22,6 +22,8 @@ import (
 type fakeAngleAgent struct {
 	expect int
 	fail   map[string]error
+	// noCost names the sessions that report no cost, the way codex does.
+	noCost map[string]bool
 
 	mu      sync.Mutex
 	reqs    map[string]AgentRequest
@@ -53,7 +55,7 @@ func (f *fakeAngleAgent) Run(_ context.Context, req AgentRequest) (*AgentResult,
 	if err := f.fail[req.Name]; err != nil {
 		return nil, err
 	}
-	return &AgentResult{ID: "sess-" + req.Name, Text: `{"findings": []}`, Turns: 2, CostUSD: 0.25}, nil
+	return &AgentResult{ID: "sess-" + req.Name, Text: `{"findings": []}`, Turns: 2, CostUSD: 0.25, CostKnown: !f.noCost[req.Name]}, nil
 }
 
 const testDiff = "diff --git a/gather.go b/gather.go\n+func Gather() {}\n"
@@ -126,6 +128,29 @@ func TestOneSessionPerEnabledAngleRunsAtOnce(t *testing.T) {
 		}
 		if r.Failed() {
 			t.Errorf("%s run failed: %s", r.Angle, r.Error)
+		}
+	}
+}
+
+// An angle whose session reported no cost is recorded with its cost
+// unknown, and no other angle's run is.
+func TestAnAngleThatReportedNoCostIsRecordedAsUnknown(t *testing.T) {
+	agent := newFakeAngleAgent(4)
+	agent.noCost = map[string]bool{AngleDocs: true}
+	angles := &Angles[testRef]{Agent: agent, Provider: "fake", Model: "opus", Dir: t.TempDir()}
+	runs, err := angles.Run(context.Background(), t.TempDir(), &Settings{}, testBrief(), testDiff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 4 {
+		t.Fatalf("%d runs, want 4", len(runs))
+	}
+	for _, r := range runs {
+		if r.CostUnknown != (r.Angle == AngleDocs) {
+			t.Errorf("%s run: cost unknown %v, want %v", r.Angle, r.CostUnknown, r.Angle == AngleDocs)
+		}
+		if r.CostUSD != 0.25 || r.Turns != 2 {
+			t.Errorf("%s run = %+v, want what its session came to", r.Angle, r)
 		}
 	}
 }

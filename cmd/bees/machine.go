@@ -112,6 +112,7 @@ func newMachineCostCmd(g *globalFlags) *cobra.Command {
 				total.Sessions += row.Sessions
 				total.Turns += row.Turns
 				total.CostUSD += row.CostUSD
+				total.Unknown += row.Unknown
 			}
 			_, err = fmt.Fprint(cmd.OutOrStdout(), costText("project", rows, total))
 			return err

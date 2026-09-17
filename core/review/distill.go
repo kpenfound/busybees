@@ -71,6 +71,7 @@ func (d *Distiller[R]) Distill(ctx context.Context, b *Bundle[R]) (*Brief[R], er
 	brief.NotGathered = b.Skipped
 	brief.SessionID = res.ID
 	brief.CostUSD = res.CostUSD
+	brief.CostUnknown = !res.CostKnown
 	return brief, nil
 }
 

@@ -1,13 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/state"
+	"github.com/kpenfound/busybees/internal/versions"
 )
 
 // fixtureLedger writes a small ledger and reads it back, the way
@@ -141,22 +145,158 @@ func TestTodayTotal(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	total := todayTotal(store, now)
+	total, err := todayTotal(store, now)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if total.Sessions != 2 || total.Turns != 23 || !closeTo(total.CostUSD, 0.50) {
 		t.Fatalf("today: %+v", total)
 	}
-	if got := todayText(total); got != "today: 2 sessions, 23 turns, $0.50" {
+	if got := todayText(total, nil); got != "today: 2 sessions, 23 turns, $0.50" {
 		t.Fatalf("today line: %q", got)
 	}
 	one := costGroup{Group: "today", Sessions: 1, Turns: 1, CostUSD: 0.05}
-	if got := todayText(one); got != "today: 1 session, 1 turn, $0.05" {
+	if got := todayText(one, nil); got != "today: 1 session, 1 turn, $0.05" {
 		t.Fatalf("singular today line: %q", got)
 	}
 }
 
+// TestCostTextUnknownCosts: a session that reported no cost is never a
+// $0.00 row. A group of nothing else reads `unknown`, a mixed group marks
+// its known sum, the counts are in the JSON, and the total says how many.
+func TestCostTextUnknownCosts(t *testing.T) {
+	store := state.New(t.TempDir())
+	now := time.Now()
+	for _, e := range []state.LedgerEntry{
+		{Time: now, Role: "developer", Turns: 18, CostUSD: 0.42, Work: ghwork.New(12, 34)},
+		{Time: now, Role: "developer", Turns: 10, CostUnknown: true, Work: ghwork.New(12, 34)},
+		{Time: now, Role: "reviewer", Turns: 6, CostUnknown: true, Work: ghwork.New(12, 34)},
+		{Time: now, Role: "qa", Turns: 4, CostUSD: 0.03},
+	} {
+		if err := store.AppendLedger(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	entries, err := store.ReadLedger(time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	groups, total := groupCost(entries, byRole)
+	want := []costGroup{
+		{Group: "developer", Sessions: 2, Turns: 28, CostUSD: 0.42, Unknown: 1},
+		{Group: "qa", Sessions: 1, Turns: 4, CostUSD: 0.03},
+		{Group: "reviewer", Sessions: 1, Turns: 6, Unknown: 1},
+	}
+	if len(groups) != len(want) {
+		t.Fatalf("groups: %+v", groups)
+	}
+	for i, g := range groups {
+		if g.Group != want[i].Group || g.Sessions != want[i].Sessions || g.Turns != want[i].Turns || g.Unknown != want[i].Unknown || !closeTo(g.CostUSD, want[i].CostUSD) {
+			t.Errorf("group %d: got %+v want %+v", i, g, want[i])
+		}
+	}
+	if total.Sessions != 4 || total.Unknown != 2 || !closeTo(total.CostUSD, 0.45) {
+		t.Errorf("total: %+v", total)
+	}
+	got := costText(byRole, groups, total)
+	wantText := []string{
+		"role             sessions    turns       cost",
+		"developer               2       28     $0.42+",
+		"qa                      1        4      $0.03",
+		"reviewer                1        6    unknown",
+		"total                   4       38     $0.45+",
+		"2 sessions reported no cost (+): not in the totals",
+	}
+	if got != strings.Join(wantText, "\n")+"\n" {
+		t.Fatalf("cost table:\n%s", got)
+	}
+	b, err := json.Marshal(total)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"unknown":2`) {
+		t.Errorf("JSON total lacks the count: %s", b)
+	}
+	if b, _ := json.Marshal(groups[1]); strings.Contains(string(b), "unknown") {
+		t.Errorf("a group with none carries the field: %s", b)
+	}
+	total.Group = "today"
+	if got := todayText(total, nil); got != "today: 4 sessions, 38 turns, $0.45 (2 sessions of unknown cost)" {
+		t.Fatalf("today line: %q", got)
+	}
+	one := costGroup{Group: "today", Sessions: 1, Turns: 1, Unknown: 1}
+	if got := todayText(one, nil); got != "today: 1 session, 1 turn, $0.00 (1 session of unknown cost)" {
+		t.Fatalf("singular today line: %q", got)
+	}
+}
+
+// TestCostFailsOnACorruptLedger: `bees cost` exits with the file and the
+// line rather than a total that is short of a session, and the `today:`
+// line of `bees status` names the error rather than a day that cost
+// nothing, on screen and in `--json`.
+func TestCostFailsOnACorruptLedger(t *testing.T) {
+	t.Setenv(versions.EnvSkip, "1")
+	path := writeProject(t, "acme/widgets", "")
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := state.New(cfg.StateDir())
+	if err := store.AppendLedger(state.LedgerEntry{Time: time.Now(), Role: "developer", CostUSD: 1}); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(store.LedgerPath(), os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("{corrupt\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendLedger(state.LedgerEntry{Time: time.Now(), Role: "developer", CostUSD: 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	root := newRoot()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"cost", "--config", path})
+	err = root.Execute()
+	if err == nil || !strings.Contains(err.Error(), store.LedgerPath()) || !strings.Contains(err.Error(), "line 2 does not parse") {
+		t.Fatalf("`bees cost` returned %v, want the file and line 2", err)
+	}
+	if out.Len() != 0 {
+		t.Errorf("`bees cost` printed a report:\n%s", out.String())
+	}
+
+	total, err := todayTotal(store, time.Now())
+	if err == nil || total.Sessions != 0 {
+		t.Fatalf("today's total read past the corrupt line: %+v, %v", total, err)
+	}
+	if got := todayText(total, err); !strings.HasPrefix(got, "today: ledger unreadable: ") || !strings.Contains(got, "line 2 does not parse") {
+		t.Errorf("today line: %q", got)
+	}
+	b, err := json.Marshal(todayJSON(total, err))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"error":"`) || !strings.Contains(string(b), "line 2 does not parse") || !strings.Contains(string(b), `"sessions":0`) {
+		t.Errorf("today JSON does not carry the error: %s", b)
+	}
+	if b, _ := json.Marshal(todayJSON(costGroup{Group: "today", Sessions: 1}, nil)); strings.Contains(string(b), "error") {
+		t.Errorf("a readable day carries an error field: %s", b)
+	}
+}
+
 func TestTodayTotalNoLedger(t *testing.T) {
-	total := todayTotal(state.New(t.TempDir()), time.Now())
-	if got := todayText(total); got != "today: 0 sessions, 0 turns, $0.00" {
+	total, err := todayTotal(state.New(t.TempDir()), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := todayText(total, nil); got != "today: 0 sessions, 0 turns, $0.00" {
 		t.Fatalf("today line: %q", got)
 	}
 }

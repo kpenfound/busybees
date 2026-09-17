@@ -315,7 +315,7 @@ func TestWorkersTextReportsTheSandbox(t *testing.T) {
 // here rather than quietly giving a consumer two places to read it from.
 func TestStatusJSONCarriesTheBuildInsideStatus(t *testing.T) {
 	st := state.Status{Version: "dev (abc123def456 modified)", Revision: "abc123def456789"}
-	raw, err := json.Marshal(statusJSON(&config.Config{}, st, map[string]int{}, costGroup{}, nil, time.Now()))
+	raw, err := json.Marshal(statusJSON(&config.Config{}, st, map[string]int{}, todayReport{}, nil, time.Now()))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -27,12 +27,16 @@ const (
 // with no issue under `--by issue`.
 const noGroup = "-"
 
-// costGroup is one row of a cost report.
+// costGroup is one row of a cost report. Unknown is how many of its
+// sessions reported no cost: they are in Sessions and Turns, and CostUSD is
+// what the rest cost, so a row with Unknown > 0 is short by what nobody
+// knows.
 type costGroup struct {
 	Group    string  `json:"group"`
 	Sessions int     `json:"sessions"`
 	Turns    int     `json:"turns"`
 	CostUSD  float64 `json:"cost_usd"`
+	Unknown  int     `json:"unknown,omitempty"`
 }
 
 func newCostCmd(g *globalFlags) *cobra.Command {
@@ -100,9 +104,14 @@ func groupCost(entries []state.LedgerEntry, by string) ([]costGroup, costGroup) 
 		}
 		groups[i].Sessions++
 		groups[i].Turns += e.Turns
-		groups[i].CostUSD += e.CostUSD
 		total.Sessions++
 		total.Turns += e.Turns
+		if e.CostUnknown {
+			groups[i].Unknown++
+			total.Unknown++
+			continue
+		}
+		groups[i].CostUSD += e.CostUSD
 		total.CostUSD += e.CostUSD
 	}
 	total.Group = "total"
@@ -142,7 +151,10 @@ func atoi(s string) int {
 	return n
 }
 
-// costText renders the report as a table with a total row.
+// costText renders the report as a table with a total row. A session that
+// reported no cost is never shown as $0.00: a row of nothing else reads
+// `unknown` in the cost column, a row that mixes them marks its known sum
+// with a `+`, and a line under the total says how many there were.
 func costText(by string, groups []costGroup, total costGroup) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%-16s %8s %8s %10s\n", by, "sessions", "turns", "cost")
@@ -150,23 +162,55 @@ func costText(by string, groups []costGroup, total costGroup) string {
 		b.WriteString(costRow(g))
 	}
 	b.WriteString(costRow(total))
+	if total.Unknown > 0 {
+		fmt.Fprintf(&b, "%s reported no cost (+): not in the totals\n", text.Count(total.Unknown, "session"))
+	}
 	return b.String()
 }
 
 func costRow(g costGroup) string {
-	return fmt.Sprintf("%-16s %8d %8d %10s\n", g.Group, g.Sessions, g.Turns, fmt.Sprintf("$%.2f", g.CostUSD))
+	return fmt.Sprintf("%-16s %8d %8d %10s\n", g.Group, g.Sessions, g.Turns, costCell(g))
+}
+
+// costCell is the cost column of one row.
+func costCell(g costGroup) string {
+	switch g.Unknown {
+	case 0:
+		return fmt.Sprintf("$%.2f", g.CostUSD)
+	case g.Sessions:
+		return "unknown"
+	default:
+		return fmt.Sprintf("$%.2f+", g.CostUSD)
+	}
 }
 
 // todayTotal sums whatever the ledger recorded since the start of the
-// current local day.
-func todayTotal(store *state.Store, now time.Time) costGroup {
+// current local day. A ledger that cannot be read is the error, with an
+// empty total beside it: the line and the JSON report the error rather than
+// a day that cost nothing.
+func todayTotal(store *state.Store, now time.Time) (costGroup, error) {
 	entries, err := store.ReadLedger(startOfDay(now))
 	if err != nil {
-		return costGroup{Group: "today"}
+		return costGroup{Group: "today"}, err
 	}
 	_, total := groupCost(entries, byRole)
 	total.Group = "today"
-	return total
+	return total, nil
+}
+
+// todayReport is the `today` object of `bees status --json`: the total, or
+// why there is none.
+type todayReport struct {
+	costGroup
+	Error string `json:"error,omitempty"`
+}
+
+func todayJSON(total costGroup, err error) todayReport {
+	r := todayReport{costGroup: total}
+	if err != nil {
+		r.Error = err.Error()
+	}
+	return r
 }
 
 func startOfDay(t time.Time) time.Time {
@@ -175,8 +219,17 @@ func startOfDay(t time.Time) time.Time {
 	return time.Date(y, m, d, 0, 0, 0, 0, t.Location())
 }
 
-// todayText is the `bees status` line summarising the day so far.
-func todayText(total costGroup) string {
-	return fmt.Sprintf("today: %s, %s, $%.2f",
+// todayText is the `bees status` line summarising the day so far. Sessions
+// that reported no cost are counted and named, and not in the dollars. A
+// ledger that could not be read is named instead of a total.
+func todayText(total costGroup, err error) string {
+	if err != nil {
+		return "today: ledger unreadable: " + err.Error()
+	}
+	line := fmt.Sprintf("today: %s, %s, $%.2f",
 		text.Count(total.Sessions, "session"), text.Count(total.Turns, "turn"), total.CostUSD)
+	if total.Unknown > 0 {
+		line += fmt.Sprintf(" (%s of unknown cost)", text.Count(total.Unknown, "session"))
+	}
+	return line
 }
