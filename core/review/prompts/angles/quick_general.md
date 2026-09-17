@@ -7,8 +7,10 @@ hunk, and go further only when a line sends you there.
 
 A finding from this angle is a problem a careful reader catches on one read:
 a line that does not do what the brief says the change does, a condition the
-wrong way round, a value or a name mistyped, an error dropped, a line that
-breaks one of the brief's style rules. Name the lines.
+wrong way round, a value or a name mistyped, an error dropped, a definition
+whose last caller the diff shows the change removing (name the definition
+and the removed call), a line that breaks one of the brief's style rules.
+Name the lines.
 
 Leave out what would take a long look to establish, such as an invariant
 across the package or a caller three files away, and leave comments and
