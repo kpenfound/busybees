@@ -174,10 +174,10 @@ func costRow(g costGroup) string {
 
 // costCell is the cost column of one row.
 func costCell(g costGroup) string {
-	switch {
-	case g.Unknown == 0:
+	switch g.Unknown {
+	case 0:
 		return fmt.Sprintf("$%.2f", g.CostUSD)
-	case g.Unknown == g.Sessions:
+	case g.Sessions:
 		return "unknown"
 	default:
 		return fmt.Sprintf("$%.2f+", g.CostUSD)
