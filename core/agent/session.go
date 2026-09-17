@@ -243,6 +243,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 		// Verified again now that the directory the container is given exists.
 		req.SessionDir = sessionDir
 		if turn, err = r.Verify(req); err != nil {
+			_ = os.RemoveAll(sessionDir)
 			return nil, fmt.Errorf("%s: %w", req.Profile.Name, err)
 		}
 	}
@@ -482,7 +483,7 @@ type envVar struct{ name, value string }
 
 func (r *Runner) env(req Request, _ string) []string {
 	env := hostEnv(r.EnvironmentPrefix)
-	for _, v := range r.sessionVars(req, "") {
+	for _, v := range sessionVars(req, req.Profile.VCSAccess) {
 		env = append(env, v.name+"="+v.value)
 	}
 	return env
@@ -496,10 +497,6 @@ func hostEnv(prefix string) []string {
 		}
 	}
 	return env
-}
-
-func (r *Runner) sessionVars(req Request, _ string) []envVar {
-	return sessionVars(req, req.Profile.VCSAccess)
 }
 
 // NewSessionDir creates a fresh per-session directory under SessionsDir.

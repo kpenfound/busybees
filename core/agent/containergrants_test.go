@@ -130,6 +130,7 @@ func TestContainerBindsAreTheGrants(t *testing.T) {
 		"mount dir read-only":      {ContainerBoundary{MountDirs: []string{state}}, []Mount{{Path: base, Access: ReadOnly}, {Path: work, Access: ReadWrite}}, ErrNotGranted},
 		"skill dir not granted":    {ContainerBoundary{SkillMountDirs: []string{cache}}, []Mount{{Path: work, Access: ReadWrite}, {Path: session, Access: ReadWrite}}, ErrNotGranted},
 		"session dir not granted":  {ContainerBoundary{}, []Mount{{Path: work, Access: ReadWrite}}, ErrNotGranted},
+		"work dir read-only":       {ContainerBoundary{}, []Mount{{Path: work, Access: ReadOnly}, {Path: session, Access: ReadWrite}}, ErrNotGranted},
 		"host root":                {ContainerBoundary{}, []Mount{{Path: "/", Access: ReadWrite}}, ErrUnsupported},
 		"sessions dir not granted": {ContainerBoundary{SessionsDir: filepath.Join(state, "new", "sessions")}, []Mount{{Path: work, Access: ReadWrite}}, ErrNotGranted},
 	} {
@@ -143,11 +144,63 @@ func TestContainerBindsAreTheGrants(t *testing.T) {
 		}
 	}
 
+	// The skills cache need not be granted to a profile without skills.
+	req = containerRequest(work, session, &Grants{Tools: []string{ToolsAll}, Mounts: []Mount{{Path: work, Access: ReadWrite}, {Path: session, Access: ReadWrite}}})
+	if _, err := (ContainerBoundary{SkillMountDirs: []string{cache}}).Verify(req); err != nil {
+		t.Errorf("skills cache for a profile without skills: %v", err)
+	}
+
 	// A sessions directory that does not exist yet is checked by where it
 	// would be created.
 	req = containerRequest(work, "", &Grants{Tools: []string{ToolsAll}, Mounts: []Mount{{Path: work, Access: ReadWrite}, {Path: link, Access: ReadWrite}}})
 	if _, err := (ContainerBoundary{SessionsDir: filepath.Join(link, "new", "sessions")}).Verify(req); err != nil {
 		t.Errorf("sessions directory to be created inside a grant: %v", err)
+	}
+}
+
+// A request with no session directory is verified again once the runner
+// has created one, so the container is given that directory under the path
+// the runner uses for it, even when a symbolic link leads there.
+func TestContainerSessionDirIsVerifiedOnceCreated(t *testing.T) {
+	// The fake engine records its arguments in the session directory, found
+	// from the container id file the runner puts there.
+	docker := agenttest.Docker(t, "image", "RUN_DIR")
+	engine := agenttest.Script(t, "docker", `prev=""
+for arg in "$@"; do
+  [ "$prev" = --cidfile ] && RUN_DIR="$(dirname "$arg")" && export RUN_DIR
+  prev="$arg"
+done
+exec `+docker+` "$@"`)
+	claude := agenttest.Script(t, "claude", `cat >/dev/null
+echo '{"type":"result","subtype":"success","result":"ok"}'`)
+	for _, linked := range []bool{false, true} {
+		root, work := realTempDir(t), realTempDir(t)
+		sessions := filepath.Join(root, "sessions")
+		if linked {
+			sessions = filepath.Join(realTempDir(t), "state-link", "sessions")
+			if err := os.Symlink(root, filepath.Dir(sessions)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		r := Runner{ClaudeBin: claude, DockerBin: engine, SessionsDir: sessions}
+		req := containerRequest(work, "", &Grants{Tools: []string{ToolsAll},
+			Mounts: []Mount{{Path: work, Access: ReadWrite}, {Path: root, Access: ReadWrite}}})
+		res, err := r.Run(context.Background(), req)
+		if err != nil || res.IsError {
+			t.Fatalf("linked=%v: %+v, %v", linked, res, err)
+		}
+		if filepath.Dir(res.SessionDir) != sessions {
+			t.Fatalf("linked=%v: session directory %s is not in %s", linked, res.SessionDir, sessions)
+		}
+		real := filepath.Join(root, "sessions", filepath.Base(res.SessionDir))
+		args := strings.Join(lines(t, filepath.Join(real, "docker-args.txt")), " ")
+		bind := "--mount type=bind,source=" + real + ",destination=" + res.SessionDir
+		if linked && !strings.Contains(args, bind) {
+			t.Errorf("session directory behind a link is not bound at its alias (%s): %s", bind, args)
+		}
+		if !strings.Contains(args, "--mount type=bind,source="+root+",destination="+root) {
+			t.Errorf("linked=%v: granted state directory not bound: %s", linked, args)
+		}
 	}
 }
 

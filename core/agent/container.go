@@ -479,7 +479,7 @@ func (b ContainerBoundary) bind(req Request, turn *Turn) error {
 		}
 		return nil
 	}
-	if err := need("working directory", req.workDir(), "", resolve); err != nil {
+	if err := need("working directory", req.workDir(), ReadWrite, resolve); err != nil {
 		return err
 	}
 	if turn.VCS && req.Workspace != nil {
