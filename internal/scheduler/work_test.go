@@ -27,7 +27,7 @@ func TestOpaqueRuntimeIdentity(t *testing.T) {
 	if got := <-ch; !reflect.DeepEqual(got.Work, ref) {
 		t.Fatalf("stage lost work: %+v", got)
 	}
-	h.sched.record(spec, &session.Result{CostUSD: 2, NumTurns: 1})
+	h.sched.record(spec, &session.Result{CostUSD: 2, CostKnown: true, NumTurns: 1})
 	entries, err := h.store.ReadLedger(time.Time{})
 	if err != nil || len(entries) != 1 || !reflect.DeepEqual(entries[0].Work, ref) {
 		t.Fatalf("ledger: %+v %v", entries, err)
@@ -39,7 +39,7 @@ func TestOpaqueRuntimeIdentity(t *testing.T) {
 	if err := h.store.RemoveWork(ref.Key); err != nil {
 		t.Fatal(err)
 	}
-	if cost, count := h.sched.workSpend(ref); cost != 2 || count != 1 {
+	if cost, count, err := h.sched.workSpend(ref); cost != 2 || count != 1 || err != nil {
 		t.Fatalf("opaque ledger seed: %v/%d", cost, count)
 	}
 	if budgetKey(spec) == budgetKey(sessionSpec{role: config.RoleQA}) {

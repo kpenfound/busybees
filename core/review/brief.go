@@ -62,9 +62,10 @@ type Brief[R Reference] struct {
 	// session would be resumed from, and CostUSD what that session cost
 	// when the CLI reported a cost (AgentResult.CostUSD): what the factory
 	// counts against its budgets, since the distiller is no session of its
-	// own runner.
-	SessionID string  `json:"session_id,omitempty"`
-	CostUSD   float64 `json:"cost_usd,omitempty"`
+	// own runner. CostUnknown says the CLI reported none.
+	SessionID   string  `json:"session_id,omitempty"`
+	CostUSD     float64 `json:"cost_usd,omitempty"`
+	CostUnknown bool    `json:"cost_unknown,omitempty"`
 }
 
 // Sizes are the sizes a brief can give a change, smallest first.

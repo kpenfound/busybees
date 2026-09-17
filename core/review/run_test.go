@@ -33,13 +33,13 @@ func TestSyntheticPipelineUsesInjectedPolicyAndPreservesArtifacts(t *testing.T) 
 		mu.Unlock()
 		switch req.Name {
 		case DistillerName:
-			return &AgentResult{ID: "brief-session", Text: answeredBrief, CostUSD: 0.5}, nil
+			return &AgentResult{ID: "brief-session", Text: answeredBrief, CostUSD: 0.5, CostKnown: true}, nil
 		case AngleTests:
 			return nil, errors.New("test angle unavailable")
 		case AngleGeneral:
-			return &AgentResult{ID: "general-session", Turns: 3, CostUSD: 0.25, Text: sessionAnswer(`{"title":"duplicate one","body":"body one","severity":"high","category":"first","sources":["requirement"]}`)}, nil
+			return &AgentResult{ID: "general-session", Turns: 3, CostUSD: 0.25, CostKnown: true, Text: sessionAnswer(`{"title":"duplicate one","body":"body one","severity":"high","category":"first","sources":["requirement"]}`)}, nil
 		case AngleDocs:
-			return &AgentResult{ID: "docs-session", Turns: 4, CostUSD: 0.75, Text: sessionAnswer(`{"title":"duplicate two","body":"body two","severity":"low","category":"second","suggestion":"fix it","sources":["style"]}`)}, nil
+			return &AgentResult{ID: "docs-session", Turns: 4, CostUSD: 0.75, CostKnown: true, Text: sessionAnswer(`{"title":"duplicate two","body":"body two","severity":"low","category":"second","suggestion":"fix it","sources":["style"]}`)}, nil
 		default:
 			return &AgentResult{ID: "criteria-session", Turns: 1, Text: sessionAnswer(`{"title":"unwanted","severity":"medium","category":"noise"}`)}, nil
 		}

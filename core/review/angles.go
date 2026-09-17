@@ -85,9 +85,10 @@ type AngleRun struct {
 	// into findings is the judge's job (judge.go), not this file's.
 	Answer string `json:"answer,omitempty"`
 	// Turns is how many turns the session took and CostUSD what it cost,
-	// when the CLI reported one.
-	Turns   int     `json:"turns,omitempty"`
-	CostUSD float64 `json:"cost_usd,omitempty"`
+	// when the CLI reported one; CostUnknown says it reported none.
+	Turns       int     `json:"turns,omitempty"`
+	CostUSD     float64 `json:"cost_usd,omitempty"`
+	CostUnknown bool    `json:"cost_unknown,omitempty"`
 	// Error is what the session failed with, and "" for one that finished.
 	// A failed angle is kept with the rest so the review can say which
 	// angle nobody looked from.
@@ -222,7 +223,7 @@ func (a *Angles[R]) Run(ctx context.Context, artifact string, project *Settings,
 				run.Error = err.Error()
 				a.progress(angle, AngleFailed)
 			} else {
-				run.SessionID, run.Answer, run.Turns, run.CostUSD = res.ID, res.Text, res.Turns, res.CostUSD
+				run.SessionID, run.Answer, run.Turns, run.CostUSD, run.CostUnknown = res.ID, res.Text, res.Turns, res.CostUSD, !res.CostKnown
 				a.progress(angle, AngleFinished)
 			}
 			runs[i] = run

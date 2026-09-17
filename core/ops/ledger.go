@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -20,8 +21,14 @@ type LedgerEntry struct {
 	Role    string    `json:"role"`
 	Session string    `json:"session"`
 
-	Turns        int     `json:"turns"`
+	Turns int `json:"turns"`
+	// CostUSD is what the session cost, when the agent reported a cost.
+	// CostUnknown says it reported none: the session ran and is counted,
+	// but its cost is not zero, it is not known, and no total it is part
+	// of is complete. An entry written before the field was recorded reads
+	// as known.
 	CostUSD      float64 `json:"cost_usd"`
+	CostUnknown  bool    `json:"cost_unknown,omitempty"`
 	DurationMS   int64   `json:"duration_ms"`
 	Outcome      string  `json:"outcome"`
 	ErrorSubtype string  `json:"error_subtype"`
@@ -78,10 +85,28 @@ func (s *Ledger) AppendLedger(e LedgerEntry) error {
 	return f.Close()
 }
 
+// LedgerLineError is a ledger line that does not parse, other than the last
+// one: which file, which line, and what was wrong with it.
+type LedgerLineError struct {
+	Path string
+	Line int
+	Err  error
+}
+
+func (e *LedgerLineError) Error() string {
+	return fmt.Sprintf("%s line %d does not parse: %v", e.Path, e.Line, e.Err)
+}
+
+func (e *LedgerLineError) Unwrap() error { return e.Err }
+
 // ReadLedger returns the entries recorded at or after since (a zero since
-// returns everything). Lines that do not parse are skipped: a half-written
-// tail must never break accounting. Read and scan failures return an error
-// without entries, so callers cannot report a partial total.
+// returns everything). The ledger is read fail-closed: a line that does not
+// parse is a LedgerLineError naming the file and the line, and no entries
+// are returned, so no caller can report or budget against a total that is
+// quietly short of a session. The one exception is the final line, which is
+// ignored when it does not parse: a session killed mid-write leaves a
+// truncated tail, and that must never break accounting. Blank lines are
+// ignored. Read and scan failures return an error without entries too.
 func (s *Ledger) ReadLedger(since time.Time) ([]LedgerEntry, error) {
 	f, err := os.Open(s.LedgerPath())
 	if errors.Is(err, os.ErrNotExist) {
@@ -93,11 +118,22 @@ func (s *Ledger) ReadLedger(since time.Time) ([]LedgerEntry, error) {
 	defer func() { _ = f.Close() }()
 
 	var out []LedgerEntry
+	// pending is the last line that did not parse. It becomes the error
+	// once a further line follows it, which is what makes it not the tail.
+	var pending *LedgerLineError
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), maxLedgerLine)
-	for sc.Scan() {
+	for n := 1; sc.Scan(); n++ {
+		line := bytes.TrimSpace(sc.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		if pending != nil {
+			return nil, pending
+		}
 		var e LedgerEntry
-		if err := json.Unmarshal(sc.Bytes(), &e); err != nil {
+		if err := json.Unmarshal(line, &e); err != nil {
+			pending = &LedgerLineError{Path: s.LedgerPath(), Line: n, Err: err}
 			continue
 		}
 		if e.Time.Before(since) {
@@ -114,8 +150,8 @@ func (s *Ledger) ReadLedger(since time.Time) ([]LedgerEntry, error) {
 // TrimLedger removes the entries recorded before before and returns how many
 // it removed. The ledger is rewritten through a temporary file renamed over
 // it, so a reader sees either the old ledger or the trimmed one, and only when
-// there is something to remove. A line that does not parse is kept: its age is
-// unknown, and ReadLedger skips it anyway.
+// there is something to remove. A line that does not parse is kept where it
+// is: its age is unknown, and ReadLedger is what reports it.
 func (s *Ledger) TrimLedger(before time.Time) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

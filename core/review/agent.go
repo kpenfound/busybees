@@ -28,10 +28,11 @@ type AgentResult struct {
 	// Text is the session's last message, which is what it was asked for.
 	Text string
 	// Turns is how many turns it took, and CostUSD what it cost when the
-	// CLI reported one: codex reports none, so its cost is zero rather
-	// than known.
-	Turns   int
-	CostUSD float64
+	// CLI reported one, which CostKnown says: codex reports none, so its
+	// cost is unknown rather than zero.
+	Turns     int
+	CostUSD   float64
+	CostKnown bool
 }
 
 // Agent runs one review session. It is the seam every session in the

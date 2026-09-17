@@ -89,7 +89,7 @@ func TestAClaudeSessionsAnswerIsRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Text != "the brief" || res.ID != "sess-1" || res.Turns != 3 || res.CostUSD != 0.5 {
+	if res.Text != "the brief" || res.ID != "sess-1" || res.Turns != 3 || res.CostUSD != 0.5 || !res.CostKnown {
 		t.Errorf("result = %+v", res)
 	}
 }
@@ -221,7 +221,7 @@ func TestACodexReviewSessionRunsInItsReadOnlySandbox(t *testing.T) {
 	if strings.Contains(got, "--resume") {
 		t.Errorf("codex was asked to resume:\n%s", got)
 	}
-	if res.Text != "the brief" || res.ID != "thread-9" || res.Turns != 3 || res.CostUSD != 0 {
+	if res.Text != "the brief" || res.ID != "thread-9" || res.Turns != 3 || res.CostUSD != 0 || res.CostKnown {
 		t.Errorf("result = %+v", res)
 	}
 }

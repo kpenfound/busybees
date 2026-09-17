@@ -42,6 +42,7 @@ import (
 	"github.com/kpenfound/busybees/core/work"
 	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/statemigrate"
+	"github.com/kpenfound/busybees/internal/text"
 )
 
 // Store is a state directory.
@@ -723,6 +724,13 @@ type Status struct {
 	// is measured against (0 when no daily budget is configured).
 	DaySpendUSD  float64 `json:"day_spend_usd,omitempty"`
 	DayBudgetUSD float64 `json:"day_budget_usd,omitempty"`
+	// DayUnknownSessions is how many sessions in that window reported no
+	// cost: they are not in DaySpendUSD, which is short by what they cost.
+	DayUnknownSessions int `json:"day_unknown_sessions,omitempty"`
+	// LedgerError is why the ledger could not be read for the daily budget,
+	// while it cannot be: no new session is dispatched until it can, and
+	// DaySpendUSD is the last sum that could be read.
+	LedgerError string `json:"ledger_error,omitempty"`
 	// LimitPausedUntil is when dispatch resumes after a session hit the
 	// account-wide claude session limit. Zero when no such pause is in
 	// force; a time in the past is one nothing has looked at since it
@@ -752,14 +760,17 @@ type Status struct {
 // and it names the time it lifts because that is the only thing a person can
 // do anything about. A LimitPausedUntil in the past is not a pause at all —
 // nothing has looked at it since it lifted, and a budget pause behind it
-// wins instead.
+// wins instead. A ledger that cannot be read comes before the budget it was
+// read for: the spend behind it is stale.
 func (s Status) PauseNotice(now time.Time) string {
 	switch {
 	case s.LimitPausedUntil.After(now):
 		return fmt.Sprintf("claude session limit until %s (in %s)",
 			s.LimitPausedUntil.Local().Format("15:04"), ShortDur(s.LimitPausedUntil.Sub(now)))
+	case s.LedgerError != "":
+		return "ledger unreadable: " + s.LedgerError
 	case s.BudgetPaused:
-		return fmt.Sprintf("daily budget ($%.2f / $%.2f)", s.DaySpendUSD, s.DayBudgetUSD)
+		return fmt.Sprintf("daily budget ($%.2f / $%.2f%s)", s.DaySpendUSD, s.DayBudgetUSD, s.unknownCosts())
 	default:
 		return ""
 	}
@@ -770,9 +781,18 @@ func (s Status) PauseNotice(now time.Time) string {
 // dispatch is running; PauseNotice is what it shows once the budget stopped it.
 func (s Status) BudgetNotice() string {
 	if s.DayBudgetUSD > 0 {
-		return fmt.Sprintf("daily budget: $%.2f / $%.2f", s.DaySpendUSD, s.DayBudgetUSD)
+		return fmt.Sprintf("daily budget: $%.2f / $%.2f%s", s.DaySpendUSD, s.DayBudgetUSD, s.unknownCosts())
 	}
 	return ""
+}
+
+// unknownCosts is what both notices append when the window holds sessions
+// that reported no cost, and "" when it holds none.
+func (s Status) unknownCosts() string {
+	if s.DayUnknownSessions == 0 {
+		return ""
+	}
+	return fmt.Sprintf(", %s of unknown cost", text.Count(s.DayUnknownSessions, "session"))
 }
 
 // ShortDur renders a duration the way bees.toml writes one ("3h10m", "45s"):

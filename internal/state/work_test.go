@@ -2,6 +2,7 @@ package state
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kpenfound/busybees/core/ops"
 	"github.com/kpenfound/busybees/core/work"
 	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/mail"
@@ -143,7 +145,12 @@ func TestMigrationFailureBlocksWriters(t *testing.T) {
 	}
 }
 
-func TestMigrationSkipsMalformedLegacyLedgerRecords(t *testing.T) {
+// TestMigrationPreservesMalformedLegacyLedgerRecords: a legacy record the
+// upgrade could not read is kept as a JSON string, byte for byte, and the
+// ledger then reads fail-closed on it, naming the line, until a person
+// removes it: what the record cost is not known, so no total is complete
+// without it.
+func TestMigrationPreservesMalformedLegacyLedgerRecords(t *testing.T) {
 	s := New(t.TempDir())
 	bad := []string{`{"issue":"bad","cost_usd":99}`, `{"pr":{},"cost_usd":98}`, `{"issue":12,"turns":"bad","cost_usd":97}`}
 	lines := []string{`{"issue":12,"session":"first","cost_usd":2}`}
@@ -154,11 +161,12 @@ func TestMigrationSkipsMalformedLegacyLedgerRecords(t *testing.T) {
 	}
 	for range 2 {
 		entries, err := s.ReadLedger(time.Time{})
-		if err != nil {
-			t.Fatal(err)
+		var lineErr *ops.LedgerLineError
+		if !errors.As(err, &lineErr) || entries != nil {
+			t.Fatalf("a preserved record was read past: %+v, %v", entries, err)
 		}
-		if len(entries) != 2 || entries[0].CostUSD != 2 || entries[1].CostUSD != 3 || entries[0].Work.Key != ghwork.IssueKey(12) || entries[1].Work.Key != ghwork.PRKey(34) {
-			t.Fatalf("accounting changed: %+v", entries)
+		if lineErr.Line != 2 || lineErr.Path != s.LedgerPath() {
+			t.Fatalf("error names %s line %d, want %s line 2", lineErr.Path, lineErr.Line, s.LedgerPath())
 		}
 	}
 	b, err := os.ReadFile(s.LedgerPath())
@@ -183,11 +191,15 @@ func TestMigrationSkipsMalformedLegacyLedgerRecords(t *testing.T) {
 	if !strings.HasSuffix(string(b), "{truncated") {
 		t.Fatal("lost truncated tail")
 	}
+	// The trim keeps them, at the front now that the dated entries are
+	// gone, and the read still fails closed on them rather than treating
+	// them as entries.
 	if _, err := s.TrimLedger(time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	entries, err := s.ReadLedger(time.Time{})
-	if err != nil || len(entries) != 0 {
+	var lineErr *ops.LedgerLineError
+	if !errors.As(err, &lineErr) || entries != nil || lineErr.Line != 1 {
 		t.Fatalf("malformed records became accounting entries: %+v %v", entries, err)
 	}
 }
