@@ -49,6 +49,24 @@ func workspaceFixture(t *testing.T) (metadata, directory string) {
 	return t.TempDir(), t.TempDir()
 }
 
+// verifiedContainer is the container Run would build for req: the request
+// verified by the runner's container boundary, nothing started.
+func verifiedContainer(t *testing.T, r *Runner, req Request, sessionDir string) (*container, error) {
+	t.Helper()
+	req.Profile.Sandbox = SandboxContainer
+	if req.Profile.SandboxImage == "" {
+		req.Profile.SandboxImage = "image"
+	}
+	if req.SessionDir == "" {
+		req.SessionDir = sessionDir
+	}
+	turn, err := r.Verify(req)
+	if err != nil {
+		return nil, err
+	}
+	return &container{r: r, req: req, sessionDir: sessionDir, turn: turn, name: "task-d-1", image: req.Profile.SandboxImage, vars: turnVars(turn)}, nil
+}
+
 func lines(t *testing.T, path string) []string {
 	t.Helper()
 	b, err := os.ReadFile(path)
@@ -99,6 +117,7 @@ printf '{"status":"submitted","work":{"key":"task/7","tags":{"ticket":"seven"}}}
 		t.Fatal(err)
 	}
 	realWorktree, _ := filepath.EvalSymlinks(worktree)
+	realState, _ := filepath.EvalSymlinks(r.StateDir)
 
 	args := lines(t, filepath.Join(dir, "docker-args.txt"))
 	joined := strings.Join(args, " ")
@@ -108,10 +127,11 @@ printf '{"status":"submitted","work":{"key":"task/7","tags":{"ticket":"seven"}}}
 		"--label " + r.ContainerLabel + "=" + dir,
 		"--workdir " + worktree,
 		"--mount type=tmpfs,destination=/home/task,tmpfs-mode=1777",
-		"--mount type=bind,source=" + worktree + ",destination=" + worktree + " ",
-		"--mount type=bind,source=" + worktree + ",destination=" + realWorktree + " ",
+		"--mount type=bind,source=" + realWorktree + ",destination=" + worktree + " ",
+		"--mount type=bind,source=" + realWorktree + ",destination=" + realWorktree + " ",
 		"--mount type=bind,source=" + realRepo + ",destination=" + realRepo + " ",
-		"--mount type=bind,source=" + r.StateDir + ",destination=" + r.StateDir + " ",
+		"--mount type=bind,source=" + realState + ",destination=" + r.StateDir + " ",
+		"--mount type=bind,source=" + realState + ",destination=" + realState + " ",
 		"--env HOME=/home/task",
 		"--env ACCESS_TOKEN ", "--env ANTHROPIC_API_KEY ", "--env FACTORY_TOKEN ", "--env SHELL ",
 		"--env TASK_SESSION_DIR ", "--env TASK_ISSUE ",
@@ -227,9 +247,12 @@ printf '{"status":"submitted","work":{"key":"task/7","tags":{"ticket":"seven"}}}
 // host user's); only Linux is told how to reach the host.
 func TestContainerCommandPerOS(t *testing.T) {
 	r := newRunner(t, "claude")
-	role := Profile{Name: "builder", Sandbox: SandboxContainer, SandboxImage: "img"}
-	c := &container{r: r.Runner, req: Request{Name: "d", Profile: role, Workspace: fakeWorkspace{dir: t.TempDir()}}, sessionDir: t.TempDir(), name: "task-d-1", image: role.SandboxImage}
-	c.vars = r.containerVars(c.req, c.sessionDir)
+	role := Profile{Name: "builder", Sandbox: SandboxContainer, SandboxImage: "img", VCSAccess: true}
+	sessionDir := t.TempDir()
+	c, err := verifiedContainer(t, r.Runner, grantAll(Request{Name: "d", Profile: role, Workspace: fakeWorkspace{dir: t.TempDir()}, SessionDir: sessionDir}), sessionDir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct {
 		goos    string
 		present []string
@@ -313,6 +336,7 @@ func TestStoppedContainerSessionIsRemoved(t *testing.T) {
 	r := newRunner(t, claude)
 	r.DockerBin = fakeDocker(t, "img")
 	r.ServerBin = fakeBees(t)
+	r.StateDir = t.TempDir()
 	r.ContainerListen = "127.0.0.1:0"
 	role := Profile{Name: "auditor", Model: "opus", MaxTurns: 1, Timeout: 200 * time.Millisecond, Sandbox: SandboxContainer, SandboxImage: "img"}
 	res, err := r.Run(context.Background(), Request{Name: "slow", Profile: role, Workspace: fakeWorkspace{dir: t.TempDir()}})

@@ -237,6 +237,11 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 		if err != nil {
 			return nil, err
 		}
+		// Verified again now that the directory the container is given exists.
+		req.SessionDir = sessionDir
+		if turn, err = r.Verify(req); err != nil {
+			return nil, fmt.Errorf("%s: %w", req.Profile.Name, err)
+		}
 	}
 	res := &Result{Name: req.Name, Role: req.Profile.Name, SessionDir: sessionDir, StartedAt: started}
 
@@ -252,7 +257,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 	paths := sessionPaths{dir: sessionDir, systemPrompt: systemPromptPath, prompt: promptPath}
 	var box *container
 	if req.Profile.Sandbox == SandboxContainer {
-		box, err = r.startContainer(ctx, req, sessionDir)
+		box, err = r.startContainer(ctx, req, sessionDir, turn)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", req.Profile.Name, err)
 		}

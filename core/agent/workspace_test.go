@@ -37,26 +37,34 @@ func TestWorkspaceVCSMountPaths(t *testing.T) {
 	for _, path := range []string{alias, metadata, dir} {
 		for _, allowed := range []bool{false, true} {
 			t.Run(filepath.Base(path)+map[bool]string{false: "/denied", true: "/allowed"}[allowed], func(t *testing.T) {
-				r := Runner{}
-				c := container{r: &r, req: Request{
+				req := Request{
 					Workspace: fakeWorkspace{dir: dir, access: &vcs.Access{Mounts: []string{path, path}}},
 					Profile:   Profile{VCSAccess: allowed},
-				}}
-				args, err := c.mounts(context.Background())
+				}
+				// Without VCS the worktree, which holds .git, can only be
+				// granted read-only.
+				req.Grants = &Grants{Tools: []string{ToolsAll}, Mounts: []Mount{{Path: dir, Access: ReadOnly}}}
+				if allowed {
+					req.Grants = &Grants{Tools: []string{ToolsAll}, VCS: true, Mounts: []Mount{{Path: dir, Access: ReadWrite}, {Path: path, Access: ReadWrite}}}
+				}
+				c, err := verifiedContainer(t, &Runner{}, req, "")
 				if err != nil {
 					t.Fatal(err)
 				}
+				args := c.mounts()
 				mounts := map[string]int{}
 				for i := 0; i < len(args); i += 2 {
 					mounts[args[i+1]]++
 				}
-				want := map[string]int{"type=bind,source=" + dir + ",destination=" + dir: 1}
+				want := map[string]int{"type=bind,source=" + dir + ",destination=" + dir + ",readonly": 1}
 				if allowed {
+					want = map[string]int{"type=bind,source=" + dir + ",destination=" + dir: 1}
 					// Every supplied path must resolve inside, even an alias whose
 					// target is already reachable through the workspace mount.
-					want["type=bind,source="+path+",destination="+path] = 1
+					real, _ := filepath.EvalSymlinks(path)
+					want["type=bind,source="+real+",destination="+path] = 1
 					if path == alias {
-						want["type=bind,source="+path+",destination="+metadata] = 1
+						want["type=bind,source="+metadata+",destination="+metadata] = 1
 					}
 				}
 				if len(mounts) != len(want) {
@@ -98,12 +106,22 @@ pwd > "$CWD_DUMP"
 echo '{"type":"result","subtype":"success","result":"ok"}'`)}
 				if mode == SandboxContainer {
 					// Exercise the actual mount/command/environment construction, with no engine launch.
-					c := container{r: &r, req: req, sessionDir: sessionDir, image: "image", vars: r.containerVars(req, sessionDir)}
+					granted := grantAll(req)
+					if !allowed {
+						// The fixture's directories hold no VCS metadata, so
+						// they may be writable without VCS.
+						granted.Grants.VCS = false
+						granted.Grants.Env = slices.DeleteFunc(granted.Grants.Env, overlapsVCSEnv)
+					}
+					c, err := verifiedContainer(t, &r, granted, sessionDir)
+					if err != nil {
+						t.Fatal(err)
+					}
 					_, args, err := c.command(context.Background(), "claude", nil)
 					if err != nil {
 						t.Fatal(err)
 					}
-					mounted := strings.Contains(strings.Join(args, " "), "source="+metadata+",")
+					mounted := strings.Contains(strings.Join(args, " ")+" ", ",destination="+metadata+" ")
 					if mounted != allowed {
 						t.Fatalf("VCS mount present=%v, allowed=%v: %v", mounted, allowed, args)
 					}
