@@ -1,4 +1,4 @@
-//go:build !linux
+//go:build !linux && !darwin
 
 package agent
 
@@ -14,7 +14,7 @@ func DefaultSystemPaths() []Mount { return nil }
 
 // platformConfiner refuses: nothing on this platform confines a host session.
 func platformConfiner() Confiner {
-	return unsupportedConfiner{reason: "a confined host session needs Landlock, which is Linux's; nothing confines one on " + runtime.GOOS}
+	return unsupportedConfiner{reason: "nothing confines a host session on " + runtime.GOOS}
 }
 
 // unsupportedConfiner is the confiner of a platform that has none.

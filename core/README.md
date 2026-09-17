@@ -117,14 +117,18 @@ req.Grants = &agent.Grants{
   stays read-only.
 - The working directory may be `ReadOnly`.
 - The system paths are `HostBoundary.SystemPaths` (`Runner.SystemPaths`), or
-  `agent.DefaultSystemPaths()`: `/usr` and the directories linked into it,
-  the files under `/etc` a program needs to load libraries, resolve names
-  and verify certificates, `/proc`, the CPU and cgroup information under
-  `/sys`, and `/dev/null`, `/dev/zero`, `/dev/full`, `/dev/random`,
-  `/dev/urandom` and `/dev/tty`. No home directory and no temporary
-  directory: grant the ones the agent needs and point `HOME` and `TMPDIR`
-  at them. The runner adds the agent's executable, and nothing else it
-  loads.
+  `agent.DefaultSystemPaths()`. On Linux: `/usr` and the directories linked
+  into it, the files under `/etc` a program needs to load libraries,
+  resolve names and verify certificates, `/proc`, the CPU and cgroup
+  information under `/sys`, and `/dev/null`, `/dev/zero`, `/dev/full`,
+  `/dev/random`, `/dev/urandom` and `/dev/tty`. On macOS: `/usr`, `/bin`,
+  `/sbin`, `/System`, the files under `/etc` a program needs to resolve
+  names, verify certificates and know the time, the time zone data, and
+  `/dev/null`, `/dev/zero`, `/dev/random`, `/dev/urandom`, `/dev/tty` and
+  `/dev/dtracehelper`. No home directory, no temporary directory, and
+  nothing of `/opt` or Homebrew: grant the ones the agent needs and point
+  `HOME` and `TMPDIR` at them. The runner adds the agent's executable, and
+  nothing else it loads (a `node` the executable runs, for one).
 - Without `VCS`, the files `gh`, `git`, `hg`, `jj` and `svn` resolve to, in
   the session's `PATH` and in the usual system directories, cannot be read
   or executed: by name, by absolute path, from a shell, through a symbolic
@@ -136,21 +140,35 @@ req.Grants = &agent.Grants{
   `PATH` stay. With `VCS` nothing is denied, and `/` is not needed for it.
 - The session directory (or `Runner.SessionsDir` before it exists) and, for
   a profile with skills, `Runner.SkillMountDirs` must lie inside a mount.
-- A directory that holds a denied executable, or a read-only mount inside a
-  read-write one, is allowed entry by entry instead of as a whole. It can be
-  listed, and nothing can be created at its own level.
+- Under Landlock, a directory that holds a denied executable, or a
+  read-only mount inside a read-write one, is allowed entry by entry
+  instead of as a whole. It can be listed, and nothing can be created at
+  its own level.
+- Under Seatbelt, the metadata of any file that is not denied can be read
+  (`stat(2)`, as under Landlock), and so can the entries of `/`, which the
+  loader lists before any program starts; nothing below `/` comes with it.
+  A denied path, and a hard link to a denied executable, cannot even be
+  `stat`ed. Hard links are found in every directory above the denied
+  executable, up to the mount or system path that allows it.
 
 `Confiner` is what enforces it: `Check` says whether it can, `Start` starts
 the process under it. `HostBoundary.Confiner` (`Runner.Confiner`) replaces
-the platform's, which is Landlock on Linux and nothing anywhere else. A
-session nothing can confine is refused with `ErrUnsupported` and never run
-with less:
+the platform's: Landlock on Linux, Seatbelt on macOS (a profile
+`/usr/bin/sandbox-exec` applies before it executes the agent) and nothing
+anywhere else. A session nothing can confine is refused with
+`ErrUnsupported` and never run with less. When `sandbox-exec` cannot apply
+the profile it exits with an error and the agent never starts.
 
 | Platform | Confined `none` | Confined `claude` |
 |---|---|---|
 | Linux, Landlock version 3 or later (kernel 6.2) | enforced | refused: Claude's box is bubblewrap, which needs `mount(2)`, and Landlock refuses every mount |
 | Linux without Landlock, or an earlier version, which cannot refuse `truncate(2)` | refused | refused |
-| macOS and everything else | refused | refused |
+| macOS | enforced | enforced: Seatbelt holds `claude` and its box; macOS refuses to apply a second profile inside the first, so Claude's own box may not start |
+| macOS without `/usr/bin/sandbox-exec` | refused | refused |
+| everything else | refused | refused |
+
+`CONTRIBUTING.md` has the manual check of macOS enforcement, which no test
+runs.
 
 `ContainerBoundary` verifies the environment, tools and mounts the same way,
 and the container gets its grants and nothing else:
