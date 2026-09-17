@@ -10,8 +10,6 @@ GitHub repository. Read `docs/architecture.md` before changing the scheduler.
 - `dagger check` runs `go:lint-all`, `go:test-all` and `go:generate-all` (from the
   official `github.com/dagger/go` module in `dagger.toml`) for both the root and
   `core/` modules. Run it before committing.
-- `go build ./... && go test ./...` works locally too and is faster while iterating,
-  but it runs neither lint nor codegen and is not a substitute for `dagger check`:
   `dagger check` is the only validation a pull request may report as done.
 - `dagger call qa-playground playground terminal` opens a shell with `bees` built
   from the working tree, a test project and stubbed `gh` and `claude`: the QA
@@ -35,6 +33,32 @@ GitHub repository. Read `docs/architecture.md` before changing the scheduler.
   public interface: `cmd/bees/release_test.go` pins them against `docs/releasing.md`.
   It is POSIX `sh`, has no test in the suite by design (it must not reach the
   network), and is checked with `shellcheck -s sh install.sh`.
+
+## Validation
+
+- Run `dagger check` before declaring a change complete. Use the pinned experimental release:
+
+  ```sh
+  DAGGER_X_RELEASE=v1.0.0-beta.13 dagger check
+  ```
+
+- The factory exports `DAGGER_X_RELEASE` for its sessions.
+- Never run `go test` on the host, in any role and for any purpose: iterating, a single test, a mutation check and reproducing a flake included. Tests start processes that leak onto the machine they run on, so they run only inside Dagger. `gofmt`, `go build` and `go vet` are fine on the host; `go vet ./...` type-checks test files without running them.
+- Run one package or one test inside a Dagger container:
+
+  ```sh
+  DAGGER_X_RELEASE=v1.0.0-beta.13 dagger core container from --address golang:1.26-bookworm \
+    with-directory --path /src --source . --exclude .git,.bees \
+    with-workdir --path /src \
+    with-exec --args=go,test,-count=1,-run,'TestA|TestB',-v,./internal/service \
+    combined-output
+  ```
+
+  The arguments after `--args=` are the `go test` command line, separated by commas. Add `-count=5` there to reproduce a flake and `-race` to match the race detector.
+- Add meaningful tests for changed behavior and regressions, especially state transitions, recovery, owner gates and execution boundaries. Use temporary directories and local repositories for filesystem and VCS tests.
+- Tests must use fake agents, GitHub clients, providers and container engines. Never launch real model sessions, the live factory, remote pushes or pull requests from tests.
+- Report the checks actually run and their results. If validation is blocked, state the exact blocker; do not report success.
+- `dagger check` runs automatically on pull requests using Dagger Native CI
 
 ## Layout
 

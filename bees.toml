@@ -169,8 +169,13 @@ effort = "low"
 [global]
 profile = "default"
 # Text appended to every role's base prompt.
-#prompt = """
-#"""
+prompt = """
+NEVER run go test on the host, in any role and for any reason: reproducing a
+flake, a mutation check and a single test included. Tests start processes that
+leak onto the machine the factory runs on. Tests run only inside Dagger: dagger
+check for the suite, and the single-test command in AGENTS.md for one package or
+test. go build, go vet and gofmt are fine on the host; go vet type-checks tests.
+"""
 # File whose contents are appended after prompt (relative to this file).
 #prompt_file = "docs/team-conventions.md"
 # Skills by git URL: <url>[@ref][#sub/dir], cloned and exposed to claude as
@@ -191,7 +196,7 @@ skills = [
 #timeout = "45m"
 # Tool restrictions passed straight to claude.
 #allowed_tools = []
-disallowed_tools = ["Artifact"]
+disallowed_tools = ["Artifact", "Bash(go test *)", "Bash(docker *)"]
 # Shell for claude's Bash tool in sessions (exported as $SHELL).
 #shell = "/bin/bash"
 
