@@ -27,7 +27,8 @@ const BriefFile = "brief.json"
 //
 // Half of it is the distiller's reading of the bundle (Summary, Size,
 // AcceptanceCriteria, StyleRules, TouchedAreas) and half is what the caller
-// already knew (Ref, Title, Author, Sources, NotGathered, SessionID): the
+// already knew (Ref, Title, Author, Sources, NotGathered, Excluded,
+// SessionID): the
 // session is not asked for a fact the gather has, so it cannot get one
 // wrong.
 type Brief[R Reference] struct {
@@ -40,8 +41,9 @@ type Brief[R Reference] struct {
 	// Summary is what the change does, in the distiller's words.
 	Summary string `json:"summary"`
 	// Size is how large the change is, one of Sizes, as the distiller
-	// judged it from the change's scope (the files and lines it touches)
-	// and its risk (which parts of the project those are).
+	// judged it from the change's scope (the files and lines it touches,
+	// the generated files in Excluded not among them) and its risk (which
+	// parts of the project those are).
 	Size string `json:"size"`
 	// AcceptanceCriteria are what the change says it does: the criteria of
 	// the issues it closes, the promises of its own description.
@@ -58,6 +60,11 @@ type Brief[R Reference] struct {
 	// session reading the brief knows what nobody looked at.
 	Sources     []string `json:"sources,omitempty"`
 	NotGathered []string `json:"not_gathered,omitempty"`
+	// Excluded are the generated files the caller took out of the diff
+	// before the distiller read it (Bundle.Excluded): what the change did
+	// there is not in the size, and a finding anchored there is dropped. A
+	// brief written before there were any reads back with none.
+	Excluded []ExcludedFile `json:"excluded,omitempty"`
 	// SessionID is the distiller session's own id, which is what a later
 	// session would be resumed from, and CostUSD what that session cost
 	// when the CLI reported a cost (AgentResult.CostUSD): what the factory
@@ -119,6 +126,7 @@ func (b *Brief[R]) Text() string {
 			}
 		}
 	}
+	excludedFiles(&out, b.Excluded)
 	if len(b.Sources) > 0 {
 		fmt.Fprintf(&out, "\n## Gathered from\n\n%s\n", strings.Join(b.Sources, ", "))
 	}

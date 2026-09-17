@@ -26,6 +26,27 @@ type Item struct {
 	Content string `json:"content"`
 }
 
+// ExcludedFile is one file the caller took out of the diff before the
+// review saw it, a generated one, and what the change did to it: the
+// number of lines it added and removed there, and why the file was
+// excluded, in the caller's words. The brief lists them so every session
+// knows what nobody reviewed, and Exclude drops a finding anchored in one.
+type ExcludedFile struct {
+	Path    string `json:"path"`
+	Added   int    `json:"added"`
+	Removed int    `json:"removed"`
+	Reason  string `json:"reason,omitempty"`
+}
+
+// String renders the file for a list: its path, its line counts and, when
+// there is one, the reason.
+func (f ExcludedFile) String() string {
+	if f.Reason == "" {
+		return fmt.Sprintf("%s (+%d -%d)", f.Path, f.Added, f.Removed)
+	}
+	return fmt.Sprintf("%s (+%d -%d; %s)", f.Path, f.Added, f.Removed, f.Reason)
+}
+
 // Bundle is caller-supplied context, in acquisition order, without truncation.
 type Bundle[R Reference] struct {
 	Ref     R        `json:"ref"`
@@ -33,6 +54,9 @@ type Bundle[R Reference] struct {
 	Author  string   `json:"author,omitempty"`
 	Items   []Item   `json:"items"`
 	Skipped []string `json:"skipped,omitempty"`
+	// Excluded are the generated files the caller took out of the diff,
+	// which is the diff the items hold and the sessions read.
+	Excluded []ExcludedFile `json:"excluded,omitempty"`
 }
 
 // Of returns the items one source contributed, in bundle order.
@@ -70,6 +94,7 @@ func (b *Bundle[R]) Text() string {
 	for _, it := range b.Items {
 		fmt.Fprintf(&out, "\n## %s: %s\n\n%s\n", it.Source, it.Name, fenced(it.Content))
 	}
+	excludedFiles(&out, b.Excluded)
 	if len(b.Skipped) > 0 {
 		out.WriteString("\n## Not gathered\n\n")
 		for _, s := range b.Skipped {
@@ -77,6 +102,18 @@ func (b *Bundle[R]) Text() string {
 		}
 	}
 	return out.String()
+}
+
+// excludedFiles renders the generated files a diff was read without, one
+// line each with its counts, and nothing when there were none.
+func excludedFiles(out *strings.Builder, files []ExcludedFile) {
+	if len(files) == 0 {
+		return
+	}
+	out.WriteString("\n## Generated files not reviewed\n\nThese files are not in the diff: they are generated, and no session reviews them.\n\n")
+	for _, f := range files {
+		fmt.Fprintf(out, "- %s\n", f)
+	}
 }
 
 // backticks matches a run of three or more backticks, the fences a piece of
