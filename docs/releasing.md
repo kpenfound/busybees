@@ -25,11 +25,11 @@ workflow: the project's own gate is `dagger check`, run by hand (see
    ```
 
 3. Watch the run (`gh run watch` or the Actions tab). It builds the four
-   platforms in parallel, then a second job writes `checksums.txt`, creates
-   the release and uploads everything to it. Release notes are generated from
-   the commits since the previous tag. The same job tags the commit
-   `core/v0.2.0` for the `core` Go module (see
-   [The core module](#the-core-module)).
+   platforms in parallel, then a second job writes `checksums.txt`, tags the
+   commit `core/v0.2.0` for the `core` Go module (see
+   [The core module](#the-core-module)), creates the release and uploads
+   everything to it. Release notes are generated from the commits since the
+   previous tag.
 
 There is nothing to do by hand afterwards. To ship a fix, tag again: the
 workflow creates one release per tag and never touches an existing one.

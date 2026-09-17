@@ -74,21 +74,13 @@ jobs:
           cd dist
           sha256sum bees_*.tar.gz > checksums.txt
           cat checksums.txt
-      - name: Create the release and upload the assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          gh release create "$GITHUB_REF_NAME" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "$GITHUB_REF_NAME" \
-            --generate-notes \
-            dist/bees_*.tar.gz dist/checksums.txt
       # core/ is its own Go module, so Go resolves its versions from tags
       # prefixed with its directory. The tag is created through the API at the
       # commit this run was triggered for, so no checkout is needed. It does not
       # start another run: `core/v*` does not match the `v*` filter, and a push
-      # made with GITHUB_TOKEN triggers no workflow anyway.
+      # made with GITHUB_TOKEN triggers no workflow anyway. It runs before the
+      # release is created so that a re-run, which fails once the release
+      # exists, has already passed it.
       - name: Tag the core module
         env:
           GH_TOKEN: ${{ github.token }}
@@ -105,3 +97,13 @@ jobs:
           fi
           gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" \
             -f ref="refs/tags/${tag}" -f sha="${GITHUB_SHA}"
+      - name: Create the release and upload the assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            dist/bees_*.tar.gz dist/checksums.txt
