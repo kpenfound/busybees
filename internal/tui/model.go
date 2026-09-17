@@ -562,7 +562,7 @@ func (m Model) togglePause() (tea.Model, tea.Cmd) {
 }
 
 // budgetPaused says whether the daily budget pause holds the factory: the
-// one project's, or in a daemon's view every project's, whichever the
+// one project's, or in a daemon's view every project's, whatever the
 // selector shows, since a pause by hand still stops the others.
 func (m Model) budgetPaused() bool {
 	if len(m.order) == 0 {

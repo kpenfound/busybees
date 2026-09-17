@@ -33,13 +33,14 @@ type fakeFactory struct {
 	err       error
 	ctxErr    error
 	hardStops atomic.Int32
+	paused    atomic.Bool
 }
 
 func (f *fakeFactory) Subscribe() <-chan scheduler.Event { return f.events }
 
 func (f *fakeFactory) HardStop() { f.hardStops.Add(1) }
 
-func (f *fakeFactory) SetPaused(bool) {}
+func (f *fakeFactory) SetPaused(paused bool) { f.paused.Store(paused) }
 
 func (f *fakeFactory) Run(ctx context.Context) error {
 	select {
@@ -124,6 +125,37 @@ func TestCtrlCInTheViewCancelsTheFactory(t *testing.T) {
 		}
 	case <-time.After(30 * time.Second):
 		t.Fatal("ctrl-c did not stop the factory")
+	}
+	_ = keyboard.Close()
+}
+
+// p in the view reaches the factory's SetPaused: Run wires the key to it.
+func TestPInTheViewPausesTheFactory(t *testing.T) {
+	keys, keyboard := io.Pipe()
+	real := programOptions
+	t.Cleanup(func() { programOptions = real })
+	programOptions = func() []tea.ProgramOption {
+		return []tea.ProgramOption{tea.WithInput(keys), tea.WithOutput(io.Discard), tea.WithoutRenderer()}
+	}
+
+	f := &fakeFactory{events: make(chan scheduler.Event, 1), stop: make(chan struct{})}
+	done := make(chan error, 1)
+	go func() { done <- Run(context.Background(), Deps{Repo: "acme/widgets"}, f, nil) }()
+	if _, err := keyboard.Write([]byte("p")); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for !f.paused.Load() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !f.paused.Load() {
+		t.Error("p did not pause the factory")
+	}
+	close(f.stop)
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("Run did not return after the factory stopped")
 	}
 	_ = keyboard.Close()
 }
