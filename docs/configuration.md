@@ -1364,8 +1364,37 @@ defaults. To give sessions one of them, put it in
 
 ### Exported into every session
 
-A session runs with the `bees` process environment, minus every `BEES_*`
-variable that process inherited, plus:
+A session inherits only the variables of the `bees` process environment its
+role is granted, never a `BEES_*` one:
+
+- the shell's own and the toolchains': `PATH`, `HOME`, `USER`, `LOGNAME`,
+  `SHELL`, `TMPDIR`, `TMP`, `TEMP`, `TERM`, `COLORTERM`, `LANG`, `LANGUAGE`,
+  `LC_*`, `TZ`, `XDG_*`, `__CF_USER_TEXT_ENCODING`, the proxy variables
+  (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `ALL_PROXY`, upper and lower
+  case), `SSL_CERT_FILE`, `SSL_CERT_DIR`, `NODE_EXTRA_CA_CERTS`,
+  `REQUESTS_CA_BUNDLE`, `GOPATH`, `GOROOT`, `GOBIN`, `GOFLAGS`,
+  `GOPROXY`, `GOPRIVATE`, `GONOPROXY`, `GONOSUMDB`, `GONOSUMCHECK`, `GOSUMDB`,
+  `GOINSECURE`, `GOCACHE`, `GOMODCACHE`, `GOTMPDIR`, `GOTOOLCHAIN`, `GOWORK`,
+  `GOENV`, `GOOS`, `GOARCH`, `GOEXPERIMENT`, `GODEBUG`, `GOAMD64`, `GOARM`,
+  `GOARM64`, `GOTELEMETRY`, `GOGC`, `GOMAXPROCS`, `CGO_*`, `DOCKER_*`,
+  `DAGGER_*`, `NODE_*`, `NPM_CONFIG_*`, `NVM_*`, `CARGO_*`, `RUSTUP_*`,
+  `JAVA_HOME`, `PYTHON*`, `VIRTUAL_ENV`, `HOMEBREW_*`, `SDKROOT`,
+  `DEVELOPER_DIR`;
+- its agent's provider variables: `ANTHROPIC_*`, `CLAUDE_*`, `AWS_*`,
+  `GOOGLE_*`, `CLOUD_ML_REGION`, `VERTEX_*`, `DISABLE_*`,
+  `MAX_THINKING_TOKENS` and `MCP_*` for claude; `OPENAI_*` and `CODEX_*` for
+  codex; `OPENCODE_*` and the provider keys opencode reads for opencode;
+- gh's, git's and the SSH agent's: `GH_*`, `GITHUB_*`, `GIT_*`, `GCM_*`,
+  `SSH_AUTH_SOCK`, `SSH_AGENT_PID`, `SSH_ASKPASS`, `SSH_ASKPASS_REQUIRE`.
+
+Any other variable reaches a session only through its role's `env`:
+
+```toml
+[global.env]
+NPM_TOKEN = "$NPM_TOKEN"
+```
+
+On top of those, a session gets:
 
 | Variable | Value |
 |---|---|

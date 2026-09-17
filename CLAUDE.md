@@ -54,10 +54,13 @@ GitHub repository. Read `docs/architecture.md` before changing the scheduler.
 - `internal/testutil` — local bare git remote + clone for tests.
 - `core/agent` — standalone Go module's headless session runner: backend commands
   and streams, sandbox/container execution, timeout/cancellation, result/outcome
-  files and interruption inspection. `agenttest` supplies fake agents, Docker
+  files and interruption inspection. `grants.go` is the capability contract every
+  request carries (`Grants`: env allowlist, tools, ro/rw mounts, VCS) and the
+  `Boundary` that verifies it before launch (`HostBoundary`, `ContainerBoundary`). `agenttest` supplies fake agents, Docker
   and a host MCP server; `agentbin` guards all agent and engine launches in tests.
 - `internal/session` — busybees adapter: `ProfileForRole` projects a resolved role
-  into execution settings; `Runner` supplies the `BEES_*` context, GitHub and git
+  into execution settings; `grants` turns role policy into `agent.Grants`
+  (`HostEnv`, `ProviderEnv`, `VCSEnv`, mounts by sandbox); `Runner` supplies the `BEES_*` context, GitHub and git
   identity, built-in MCP entry and outcome policy. Session work markers use
   core's opaque identity; GitHub touched-issue artifacts stay here. Skills acquisition stays in `internal/skills`, behind
   core's `SkillPreparer` interface.

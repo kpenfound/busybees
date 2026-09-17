@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -121,7 +122,22 @@ echo '{"type":"result","subtype":"success","result":"ok"}'`)}
 						t.Fatalf("container config=%q, want=%q", env["GIT_CONFIG_VALUE_0"], want)
 					}
 				} else {
+					mounts := []Mount{{Path: "/", Access: ReadWrite}}
+					if mode == SandboxClaude {
+						mounts = []Mount{{Path: "/", Access: ReadOnly}, {Path: dir, Access: ReadWrite}}
+					}
+					req.Grants = &Grants{Env: []string{"PATH", "DUMP", "CWD_DUMP", "GIT_*", "GH_TOKEN"}, Tools: []string{ToolsAll}, Mounts: mounts, VCS: allowed}
+					if !allowed {
+						req.Grants.Env = []string{"PATH", "DUMP", "CWD_DUMP"}
+					}
 					res, err := r.Run(context.Background(), req)
+					if mode == SandboxNone && !allowed {
+						// An unsandboxed host cannot keep VCS metadata unwritable.
+						if !errors.Is(err, ErrUnsupported) {
+							t.Fatalf("unsandboxed session without VCS: %v, want ErrUnsupported", err)
+						}
+						return
+					}
 					if err != nil || res.IsError {
 						t.Fatalf("non-git workspace: %+v, %v", res, err)
 					}
