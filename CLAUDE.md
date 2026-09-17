@@ -82,8 +82,10 @@ GitHub repository. Read `docs/architecture.md` before changing the scheduler.
   request carries (`Grants`: env allowlist, tools, ro/rw mounts, VCS) and the
   `Boundary` that verifies it before launch (`HostBoundary`, `ContainerBoundary`). `confine.go` is the host's
   confined mode (`Profile.Confine`): the operating system holds the process to its mounts and `SystemPaths` through a
-  `Confiner`, Landlock on Linux (`confine_linux.go`), `ErrUnsupported` where there is none; its enforcement tests skip
-  on a kernel without Landlock and run in the VM `CONTRIBUTING.md` describes. `agenttest` supplies fake agents, Docker
+  `Confiner`, Landlock on Linux (`confine_linux.go`), Seatbelt on macOS (`confine_seatbelt.go`: the profile and the
+  `sandbox-exec` start, untagged so the gate tests them; `confine_darwin.go` selects it), `ErrUnsupported` where there
+  is none; the Landlock enforcement tests skip on a kernel without Landlock and run in the VM `CONTRIBUTING.md`
+  describes, and Seatbelt enforcement is checked by hand with the recipe there. `agenttest` supplies fake agents, Docker
   and a host MCP server; `agentbin` guards all agent and engine launches in tests.
 - `internal/session` — busybees adapter: `ProfileForRole` projects a resolved role
   into execution settings; `grants` turns role policy into `agent.Grants`

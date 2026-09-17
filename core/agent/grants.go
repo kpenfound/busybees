@@ -125,7 +125,7 @@ type HostBoundary struct {
 	// AddDirs are directories the agent is told it may write.
 	AddDirs []string
 	// Confiner enforces a confined turn; nil selects this platform's, which
-	// is Landlock on Linux and none anywhere else.
+	// is Landlock on Linux, Seatbelt on macOS and none anywhere else.
 	Confiner Confiner
 	// SystemPaths are what a confined turn reaches beyond its mounts; nil
 	// selects DefaultSystemPaths.
