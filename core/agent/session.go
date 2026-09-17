@@ -236,7 +236,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 	}
 	// Grants are verified before anything is written or started: a request
 	// that asks for more than it was granted never runs.
-	turn, err := r.verifyHeld(req)
+	turn, err := r.Verify(req)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", req.Profile.Name, err)
 	}
@@ -250,7 +250,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 		}
 		// Verified again now that the directory the container is given exists.
 		req.SessionDir = sessionDir
-		if turn, err = r.verifyHeld(req); err != nil {
+		if turn, err = r.Verify(req); err != nil {
 			_ = os.RemoveAll(sessionDir)
 			return nil, fmt.Errorf("%s: %w", req.Profile.Name, err)
 		}

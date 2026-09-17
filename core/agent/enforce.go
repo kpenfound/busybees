@@ -445,9 +445,6 @@ func (e *hostEnforcer) Prepare(ctx context.Context, g Grants) (Session, error) {
 		return nil, err
 	}
 	policy.System, policy.Denied = c.System, c.Denied
-	// What a turn is verified with is what was reported, not the list it
-	// was resolved from.
-	r.SystemPaths = append([]Mount{}, c.System...)
 	r.held = &held{policy: policy}
 	return &session{grants: g, r: r}, nil
 }

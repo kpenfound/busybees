@@ -551,15 +551,11 @@ func (r *Runner) boundary(req Request) Boundary {
 	return b
 }
 
-// Verify checks a request against its grants without starting anything.
+// Verify checks a request against its grants without starting anything. The
+// runner of a Session also refuses a turn that is not the one the session's
+// policy describes.
 func (r *Runner) Verify(req Request) (*Turn, error) {
-	return r.boundary(req).Verify(req)
-}
-
-// verifyHeld verifies a request and, for a turn of a Session, refuses a turn
-// that is not the one the session's policy describes.
-func (r *Runner) verifyHeld(req Request) (*Turn, error) {
-	turn, err := r.Verify(req)
+	turn, err := r.boundary(req).Verify(req)
 	if err != nil {
 		return nil, err
 	}
