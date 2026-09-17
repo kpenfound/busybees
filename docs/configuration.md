@@ -1139,7 +1139,7 @@ session with an error naming the path or the build command, not a
 Only the contents of `prompt_file` are re-read for every session. Everything
 else, `prompt` included, comes from the `bees.toml` that `bees run` loaded when
 it started or last reloaded: `r` in [the live view](cli.md#the-live-view), or
-SIGHUP for a machine run, reads the file again and the next session dispatched
+SIGHUP, reads the file again and the next session dispatched
 runs on it; a few keys, listed there, take a restart. The built-in role
 prompts are compiled into the `bees` binary and need a
 rebuild as well as a restart. `bees status` names the build the running

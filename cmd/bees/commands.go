@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -391,8 +393,9 @@ now.
 
 The active config selects one project or every project a machine config lists.
 -d/--daemon backgrounds either mode and prints the child pid. SIGTERM drains
-the work in flight; SIGHUP reloads a machine config's project list and every
-project's bees.toml. In the live view, r reloads the configuration the same way.
+the work in flight. SIGHUP reloads a project's bees.toml, or a machine config's
+project list and every project's bees.toml. In the live view, r reloads the
+configuration the same way.
 
 In a terminal it draws a live view of the factory — what is running now and
 what is queued — and logs to ` + "`<state_dir>/bees.log`" + ` instead of the console.
@@ -427,6 +430,11 @@ from.`,
 			if active.machine != nil {
 				return runMachine(cmd, g, active.machine, runOptions{once: once, roles: roles, skipDoctor: skipDoctor}, noTUI)
 			}
+			// SIGHUP reloads bees.toml; caught before the pid is exposed so
+			// the signal never takes the default action and ends the run.
+			hup := make(chan os.Signal, 1)
+			signal.Notify(hup, syscall.SIGHUP)
+			defer signal.Stop(hup)
 			cleanup, err := registerDaemonChild(active.pidPath())
 			if err != nil {
 				return err
@@ -458,6 +466,11 @@ from.`,
 			if s.OnlyRoles, err = parseRoles(roles); err != nil {
 				return err
 			}
+			var reload func() error
+			if !once {
+				reload = projectReloader(cmd.Context(), a, s)
+			}
+			go serveProjectReloads(cmd.Context(), hup, reload, a.log)
 			if logTUIMode(a.log, noTUI, os.Stdout) {
 				return runWithTUI(cmd.Context(), a, s, g, cmd.ErrOrStderr())
 			}

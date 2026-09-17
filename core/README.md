@@ -226,6 +226,25 @@ including stdio, and treats ordinary client closure as success. `ServeHTTP` owns
 an already-bound listener, requires a bearer token and closes on cancellation.
 The caller owns address announcements and environment variable names.
 
+`Start` serves one server to one turn and returns an `Endpoint` (URL, bound
+host and port, bearer token) and a `Lease`. Each call opens its own loopback
+port with its own token, so one turn cannot reach another's server.
+`Endpoint.Via("host.docker.internal")` is the URL a container uses under
+Docker Desktop; on Linux, where a container reaches the host only on the
+bridge gateway, use `StartOn` with that address and port 0. `Lease.Close`
+stops the server and frees the port; `Lease.Connect` opens a client with the
+token. `StartMemory` has the same shape (`StartFunc`) and opens no listener:
+its `memory://` endpoint is reached only through `Lease.Connect`, for tests.
+
+```go
+ep, lease, err := mcphost.Start(ctx, srv)
+if err != nil {
+	return err
+}
+defer lease.Close()
+// Point the agent's MCP config at ep.URL, with ep.Token in the turn's environment.
+```
+
 `AddDone` registers a generic outcome tool with status and note inputs.
 `DoneOptions` supplies the advertised statuses, description, default `work.Ref`
 and a reporting callback that validates and records `agent.Outcome`. Empty status

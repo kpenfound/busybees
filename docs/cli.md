@@ -604,6 +604,17 @@ bees machine reload -c ~/.config/bees/machine.toml
 bees machine stop -c ~/.config/bees/machine.toml
 ```
 
+SIGHUP to a project run rereads its `bees.toml` and hands it to the running
+scheduler, the same reload as `r` in [the live view](#the-live-view), with or
+without the view; a `--once` run ignores the signal. The log says
+`reloaded bees.toml` with the file, or gives the reason the reload was
+refused, the file and, for a key that cannot change while the factory runs,
+that a restart applies it:
+
+```sh
+kill -HUP "$(cat .bees/bees.pid)"
+```
+
 SIGHUP in machine mode rereads the machine config and every listed project's
 `bees.toml`. Added projects start; removed projects stop polling and finish
 their work in flight; a project that stays is handed its `bees.toml` read
