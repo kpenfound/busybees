@@ -54,14 +54,34 @@ func projectReloader(ctx context.Context, a *app, s *scheduler.Scheduler) func()
 	return func() error {
 		cfg, err := reloadProjectConfig(ctx, a.cfg.Path)
 		if err != nil {
-			a.log.Error("reload bees.toml", "path", a.cfg.Path, "err", err)
+			a.log.Error("reload bees.toml", "config", a.cfg.Path, "err", err)
 			return err
 		}
 		if err := s.Reload(cfg); err != nil {
-			a.log.Error("reload bees.toml", "path", a.cfg.Path, "err", err)
+			a.log.Error("reload bees.toml", "config", a.cfg.Path, "err", err)
 			return err
 		}
+		a.log.Info("reloaded bees.toml", "config", a.cfg.Path)
 		return nil
+	}
+}
+
+// serveProjectReloads runs reload for every SIGHUP a single-project run
+// receives until ctx is cancelled; what each came to is in the log. A nil
+// reload (a --once run, which has no next pass to take one) ignores the
+// signal, so SIGHUP never stops the factory.
+func serveProjectReloads(ctx context.Context, hup <-chan os.Signal, reload func() error, log *slog.Logger) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-hup:
+			if reload == nil {
+				log.Info("SIGHUP ignored: a --once run takes no reload")
+				continue
+			}
+			_ = reload()
+		}
 	}
 }
 
