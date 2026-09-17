@@ -90,6 +90,11 @@ probe git-by-hard-link {tools}/git-receive-pack --version
 probe git-by-symlink {tools}/git-link --version
 probe git-read cat {tools}/git
 probe git-copy cp {tools}/git {out}/git
+probe system-git-by-path /usr/bin/git --version
+probe system-git-exec-path /usr/lib/git-core/git --version
+probe system-tool-by-path /usr/bin/env true
+mkdir {out}/mnt
+probe mount-in-writable mount -t tmpfs none {out}/mnt
 echo '{"type":"result","subtype":"success"}'
 `
 	for name, dir := range map[string]string{"{outside}": l.outside, "{work}": l.work, "{tools}": l.tools, "{out}": out} {
@@ -185,8 +190,19 @@ func TestLandlockHoldsATurnToItsGrants(t *testing.T) {
 				"git-by-symlink":       git,
 				"git-read":             git,
 				"git-copy":             git,
+				// What claude's box on Linux is built with: see Check.
+				"mount-in-writable": "denied",
+			}
+			// The machine's own git, gone around inside the system paths,
+			// where the machine has one.
+			want["system-tool-by-path"] = "allowed"
+			for probe, path := range map[string]string{"system-git-by-path": "/usr/bin/git", "system-git-exec-path": "/usr/lib/git-core/git"} {
+				if _, err := os.Stat(path); err == nil {
+					want[probe] = git
+				}
 			}
 			got := probes(t, out)
+			t.Logf("probes: %v", got)
 			for name, verdict := range want {
 				if got[name] != verdict {
 					t.Errorf("%s: %s, want %s", name, got[name], verdict)
