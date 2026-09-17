@@ -208,6 +208,9 @@ type Runner struct {
 	// beyond its mounts; nil selects DefaultSystemPaths.
 	Confiner    Confiner
 	SystemPaths []Mount
+	// held is set by a Session for its turns: what Prepare reported, which
+	// every turn is checked against before anything starts.
+	held *held
 	// Stream, when set, receives every stream-json line (debug output).
 	Stream io.Writer
 	Logger *slog.Logger
@@ -233,7 +236,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 	}
 	// Grants are verified before anything is written or started: a request
 	// that asks for more than it was granted never runs.
-	turn, err := r.Verify(req)
+	turn, err := r.verifyHeld(req)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", req.Profile.Name, err)
 	}
@@ -247,7 +250,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 		}
 		// Verified again now that the directory the container is given exists.
 		req.SessionDir = sessionDir
-		if turn, err = r.Verify(req); err != nil {
+		if turn, err = r.verifyHeld(req); err != nil {
 			_ = os.RemoveAll(sessionDir)
 			return nil, fmt.Errorf("%s: %w", req.Profile.Name, err)
 		}
@@ -364,6 +367,9 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 	start := cmd.Start
 	if box == nil && turn.Confinement != nil {
 		confinement, err := turn.Confinement.withExecutable(bin)
+		if err == nil && r.held != nil {
+			err = r.held.admitExecutable(bin)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", req.Profile.Name, err)
 		}
