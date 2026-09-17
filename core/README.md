@@ -19,20 +19,66 @@ environment. The caller selects profiles and fallback overrides before running.
 
 The caller also supplies:
 
-- `EnvironmentPrefix` to strip stale inherited variables, and the request's
-  `Env` for session context and credentials. An empty prefix strips nothing.
+- `EnvironmentPrefix` to strip stale inherited variables, even granted ones, and
+  the request's `Env` for session context and credentials. An empty prefix
+  strips nothing.
 - `ValidOutcomes` on each request and when calling `agent.Report`. A nil set
   accepts any status; an empty, non-nil set accepts none. Validation errors list
   the supplied statuses. Workflow-specific requirements belong to the caller.
 - Backend name prefixes, container labels, writable mounts, and optional
   `HostMCP` launch details for a server that runs on the host during a container
   session. A container session without `HostMCP` starts no host server.
-- `SandboxDomains` for Claude's network permissions. `VCSAccess` gates the
+- `SandboxDomains` for Claude's network permissions. `VCSAccess` asks for the
   workspace's VCS mounts and the request's `VCSEnv` / `VCSContainerEnv` identity,
-  credentials and configuration. Generic `Env`, `ContainerEnv` and explicit
-  caller mounts remain caller-controlled. This setting does not remove VCS
-  executables, strip inherited host credentials or hide repository files already
-  inside the working directory; it is not a filesystem security boundary.
+  credentials and configuration; the request's `Grants.VCS` must allow it.
+  `ContainerEnv` and explicit caller mounts remain caller-controlled.
+- `Grants`, the session's complete capabilities (below). A request without
+  them does not run.
+
+## Grants
+
+`agent.Grants` lists everything a session may have:
+
+```go
+req.Grants = &agent.Grants{
+	Env:    []string{"PATH", "HOME", "ANTHROPIC_API_KEY", "LC_*"},
+	Tools:  []string{"Read", "Edit", "mcp__tools"},
+	Mounts: []agent.Mount{{Path: "/", Access: agent.ReadOnly}, {Path: work, Access: agent.ReadWrite}},
+	VCS:    false,
+}
+```
+
+- `Env` is the complete allowlist of variable names; `NAME*` is a prefix. A
+  host variable is inherited only when listed, and a variable the profile or
+  request sets must be listed. Without `VCS`, an entry that could match a gh,
+  git or SSH-agent variable (`GH_*`, `GITHUB_*`, `GIT_*`, `GCM_*`,
+  `SSH_AUTH_SOCK`, ...) is refused.
+- `Tools` are built-in tool names, or `agent.ToolsAll`, and `mcp__<server>`
+  for each MCP server. The profile's `AllowedTools`, `MCP` and `HostMCP` may
+  name less, never more; `DisallowedTools` only narrows. Claude is started
+  with `--tools` when not every built-in tool is granted; codex and opencode
+  cannot restrict their built-in tools and need `ToolsAll`.
+- `Mounts` are absolute, clean, existing paths, `ReadOnly` or `ReadWrite`,
+  judged after their symbolic links are resolved; `Within` confines them all.
+  The working directory must lie inside one. Without `VCS`, a writable mount
+  inside or holding `.git`, `.hg`, `.jj` or `.svn` is refused.
+- `VCS` grants version control. Without it, a host session finds `gh`, `git`,
+  `hg`, `jj` and `svn` shadowed on `PATH` by stand-ins that exit 126, and
+  Claude's sandbox settings deny them.
+
+`Runner.Verify(req)` checks a request without starting anything and returns
+the `Turn` it would run: its environment, tools and resolved mounts. `Run`
+calls it first. `HostBoundary` and `ContainerBoundary` implement the
+`Boundary` interface. The host refuses what it cannot enforce
+(`ErrUnsupported`):
+
+| Sandbox | Mounts it needs |
+|---|---|
+| `none` | `/` read-write, and `VCS`: nothing keeps an unsandboxed process out of VCS metadata |
+| `claude` | `/` read-only and the working directory read-write; every other read-write mount and every `Runner.AddDirs` entry, which must be granted read-write, is passed with `--add-dir` |
+
+`ContainerBoundary` verifies the environment, tools and mounts the same way;
+the container runner does not yet confine the container to the mounts.
 - An optional `SkillPreparer` and read-only skill cache mounts. Acquisition,
   caching and configuration policy stay with the caller.
 

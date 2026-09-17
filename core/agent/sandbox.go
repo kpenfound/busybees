@@ -72,17 +72,24 @@ type claudePermissions struct {
 	// listed is refused: a file write outside the worktree and the state
 	// dir, WebSearch, a fetch elsewhere.
 	Allow []string `json:"allow"`
+	// Deny refuses the executables the session was not granted, ahead of
+	// the Bash allow rule.
+	Deny []string `json:"deny,omitempty"`
 }
 
 // claudeSandboxSettings renders the settings block for a session whose MCP
 // servers are named in servers, on the operating system goos.
-func claudeSandboxSettings(servers []string, goos string, domains []string) ([]byte, error) {
+func claudeSandboxSettings(servers []string, goos string, domains []string, denied []string) ([]byte, error) {
 	allow := []string{"Bash", "Read"}
 	for _, d := range domains {
 		allow = append(allow, "WebFetch(domain:"+d+")")
 	}
 	for _, s := range slices.Sorted(slices.Values(servers)) {
 		allow = append(allow, "mcp__"+s)
+	}
+	var deny []string
+	for _, d := range denied {
+		deny = append(deny, "Bash("+d+":*)")
 	}
 	return json.Marshal(claudeSettings{
 		Sandbox: claudeSandbox{
@@ -96,6 +103,6 @@ func claudeSandboxSettings(servers []string, goos string, domains []string) ([]b
 				StrictAllowlist: true,
 			},
 		},
-		Permissions: claudePermissions{Allow: allow},
+		Permissions: claudePermissions{Allow: allow, Deny: deny},
 	})
 }

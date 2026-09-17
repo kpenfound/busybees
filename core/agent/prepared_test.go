@@ -27,12 +27,12 @@ func TestPreparedInputs(t *testing.T) {
 	skills := &preparedSkills{dir: t.TempDir()}
 	r := Runner{Skills: skills, ClaudeBin: agenttest.Script(t, "claude", `printf '%s\n' "$@" > "$ARGS_FILE"
 echo '{"type":"result","subtype":"success","result":"ok"}'`)}
-	_, err := r.Run(context.Background(), Request{SessionDir: dir, Workspace: fakeWorkspace{dir: dir},
+	_, err := r.Run(context.Background(), grantAll(Request{SessionDir: dir, Workspace: fakeWorkspace{dir: dir},
 		Env: map[string]string{"ARGS_FILE": filepath.Join(dir, "args")},
 		Profile: Profile{Skills: []string{"prepared-source"}, MCP: map[string]MCPEntry{
 			"tools": {Command: "custom-server", Env: map[string]string{"LITERAL": "$EXPAND_ME"}, EnvVars: []string{"PRIVATE_TOKEN"}},
 		}},
-	})
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}

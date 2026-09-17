@@ -27,8 +27,11 @@ than this session.
 
 No sandbox. A session runs with every permission the user running `bees`
 has: it reads and writes anywhere that user can, reaches any host the
-network allows, and can use any credential on the machine, including ones
-that belong to other projects.
+network allows, and can use any credential stored in a file or keychain on
+the machine, including ones that belong to other projects. Its environment
+holds only the variables listed in
+[Exported into every session](configuration.md#exported-into-every-session),
+not every variable of the process that started `bees`.
 
 Choose it when the repository's own tooling is already trusted the way a
 person's shell is, or when `claude`'s or `container`'s gaps below rule them
@@ -149,7 +152,7 @@ ends.
 
 | Mode | Stops a session from | Does not stop a session from |
 |---|---|---|
-| `none` | nothing | reading or writing anywhere the user can, reaching any host, using any credential on the machine |
+| `none` | inheriting a variable outside its grants | reading or writing anywhere the user can, reaching any host, using any credential stored on the machine |
 | `claude` | writing outside the worktree, state directory and shared `.git`; reaching a host other than GitHub | reading anything the user can read; reaching GitHub with whatever it read; `gh` on macOS reopening the trust daemon |
 | `container` | reading or writing anything of the host outside the worktree, `.git` and the state directory; using a credential other than the bot's own (GitHub, and Neo4j Agent Memory with the `neo4j` notes backend) and its agent's | reaching any host; another role reading the shared state directory |
 

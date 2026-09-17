@@ -229,7 +229,92 @@ func (r *Runner) prepare(req Request, dir string) Request {
 	// The server needs the host environment, including BEES_BIN and PATH.
 	req.HostMCP.Env = host
 	req.ValidOutcomes = ValidOutcomes(req.Profile.Name)
+	req.Grants = r.grants(req)
 	return req
+}
+
+// HostEnv are the host variables every session inherits: the shell's own,
+// locale, proxies and certificates, and the toolchains a role's build and
+// test commands run. A trailing "*" is a prefix. Anything else of the host
+// environment reaches a session only through its role's env.
+var HostEnv = []string{
+	"PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TMP", "TEMP", "TERM", "COLORTERM",
+	"LANG", "LANGUAGE", "LC_*", "TZ", "XDG_*", "__CF_USER_TEXT_ENCODING",
+	"http_proxy", "https_proxy", "no_proxy", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY",
+	"SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE",
+	"GO*", "CGO_*", "DOCKER_*", "DAGGER_*", "NODE_*", "NPM_CONFIG_*", "NVM_*", "CARGO_*", "RUSTUP_*",
+	"JAVA_HOME", "PYTHON*", "VIRTUAL_ENV", "HOMEBREW_*", "SDKROOT", "DEVELOPER_DIR",
+}
+
+// ProviderEnv are the variables each agent is configured and authenticated
+// through: its provider's credentials and settings.
+var ProviderEnv = map[string][]string{
+	agent.AgentClaude:   {"ANTHROPIC_*", "CLAUDE_*", "AWS_*", "GOOGLE_*", "CLOUD_ML_REGION", "VERTEX_*", "DISABLE_*", "MAX_THINKING_TOKENS", "MCP_*"},
+	agent.AgentCodex:    {"OPENAI_*", "CODEX_*"},
+	agent.AgentOpenCode: {"OPENCODE_*", "ANTHROPIC_*", "OPENAI_*", "GEMINI_*", "GOOGLE_*", "AWS_*", "OPENROUTER_*", "GROQ_*", "MISTRAL_*", "XAI_*", "DEEPSEEK_*", "AZURE_*"},
+}
+
+// VCSEnv are the host variables a session with VCS access inherits: gh's
+// and git's credentials and configuration and the SSH agent.
+var VCSEnv = []string{"GH_*", "GITHUB_*", "GIT_*", "GCM_*", "SSH_AUTH_SOCK", "SSH_AGENT_PID", "SSH_ASKPASS", "SSH_ASKPASS_REQUIRE"}
+
+// grants turns busybees policy into the session's complete capabilities:
+// the variables it inherits and is given, every built-in tool and the MCP
+// servers its role configures, and the filesystem its sandbox reaches.
+func (r *Runner) grants(req Request) *agent.Grants {
+	p := req.Profile
+	backend := p.Agent
+	if backend == "" {
+		backend = agent.AgentClaude
+	}
+	g := &agent.Grants{VCS: p.VCSAccess, Tools: []string{agent.ToolsAll}}
+	g.Env = append(slices.Clone(HostEnv), ProviderEnv[backend]...)
+	g.Env = append(g.Env, beesEnvPrefix+"*")
+	if p.VCSAccess {
+		g.Env = append(g.Env, VCSEnv...)
+		g.Env = append(g.Env, slices.Collect(maps.Keys(req.VCSEnv))...)
+	}
+	g.Env = append(g.Env, slices.Collect(maps.Keys(p.Env))...)
+	g.Env = append(g.Env, slices.Collect(maps.Keys(req.Env))...)
+	servers := map[string]bool{}
+	for name, entry := range p.MCP {
+		servers[name] = true
+		g.Env = append(g.Env, entry.EnvVars...)
+	}
+	// An allowed tool may name a server a skill's plugin brings, which the
+	// role's mcp table does not list.
+	for _, t := range p.AllowedTools {
+		if rest, ok := strings.CutPrefix(t, "mcp__"); ok {
+			if server, _, _ := strings.Cut(rest, "__"); server != "" {
+				servers[strings.SplitN(server, "(", 2)[0]] = true
+			}
+		}
+	}
+	for _, s := range slices.Sorted(maps.Keys(servers)) {
+		g.Tools = append(g.Tools, "mcp__"+s)
+	}
+	slices.Sort(g.Env)
+	g.Env = slices.Compact(g.Env)
+	dir := ""
+	if req.Workspace != nil {
+		dir = req.Workspace.Directory()
+	}
+	switch p.Sandbox {
+	case agent.SandboxClaude:
+		g.Mounts = []agent.Mount{{Path: "/", Access: agent.ReadOnly}, {Path: dir, Access: agent.ReadWrite}}
+		for _, d := range r.AddDirs {
+			g.Mounts = append(g.Mounts, agent.Mount{Path: d, Access: agent.ReadWrite})
+		}
+	case agent.SandboxContainer:
+		g.Mounts = []agent.Mount{{Path: dir, Access: agent.ReadWrite}}
+		if r.StateDir != "" {
+			g.Mounts = append(g.Mounts, agent.Mount{Path: r.StateDir, Access: agent.ReadWrite})
+		}
+	default:
+		// No sandbox: the session reaches whatever its user can.
+		g.Mounts = []agent.Mount{{Path: "/", Access: agent.ReadWrite}}
+	}
+	return g
 }
 
 var containerGitConfig = []envVar{

@@ -48,6 +48,9 @@ func TestMain(m *testing.M) {
 		fakeClaude()
 		os.Exit(0)
 	}
+	// The fake agent is configured through FAKE_* variables of this process,
+	// which a session inherits only when granted.
+	session.HostEnv = append(session.HostEnv, "FAKE_*")
 	// The runner drops inherited BEES_* variables, but the tests run this
 	// binary directly too (and read the environment themselves), so clear the
 	// ones a bees session would have exported: `go test` run from inside a

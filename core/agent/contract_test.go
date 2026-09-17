@@ -25,12 +25,13 @@ func TestCallerDefinedEnvironmentPrefix(t *testing.T) {
 			stale := prefix + "STALE"
 			t.Setenv(stale, "outer")
 			t.Setenv("UNRELATED_VALUE", "preserved")
+			t.Setenv("UNGRANTED_VALUE", "dropped")
 			dir := t.TempDir()
 			bin := agenttest.Script(t, "claude", `env > "$DUMP"
 echo '{"type":"result","subtype":"success","result":"ok"}'`)
 			r := Runner{ClaudeBin: bin, EnvironmentPrefix: prefix}
 			req := Request{SessionDir: dir, Workspace: fakeWorkspace{dir: t.TempDir()}, Profile: Profile{Name: "custom", Shell: "/bin/sh", Env: map[string]string{"SETTING": "profile"}}, Env: map[string]string{"DUMP": filepath.Join(dir, "env"), "SETTING": "request"}}
-			res, err := r.Run(context.Background(), req)
+			res, err := r.Run(context.Background(), grantAll(req, stale, "UNRELATED_VALUE"))
 			if err != nil || res.IsError {
 				t.Fatalf("run: %+v, %v", res, err)
 			}
@@ -41,6 +42,9 @@ echo '{"type":"result","subtype":"success","result":"ok"}'`)
 			env := strings.Split(string(data), "\n")
 			if got := slices.Contains(env, stale+"=outer"); got != (prefix == "") {
 				t.Errorf("inherited %s present=%v", stale, got)
+			}
+			if slices.Contains(env, "UNGRANTED_VALUE=dropped") {
+				t.Error("inherited a variable outside the allowlist")
 			}
 			for _, want := range []string{"UNRELATED_VALUE=preserved", "SETTING=request", "SHELL=/bin/sh"} {
 				if !slices.Contains(env, want) {
@@ -69,7 +73,7 @@ func TestCallerDefinedOutcomes(t *testing.T) {
 		accept bool
 	}{{valid, true}, {[]string{"deferred"}, false}, {nil, true}, {[]string{}, false}} {
 		r := Runner{ClaudeBin: agenttest.Script(t, "claude", `echo '{"type":"result","subtype":"success","result":"ok"}'`)}
-		res, err := r.Run(context.Background(), Request{Profile: Profile{Name: "publisher"}, Workspace: fakeWorkspace{dir: t.TempDir()}, SessionDir: dir, ValidOutcomes: tc.valid})
+		res, err := r.Run(context.Background(), grantAll(Request{Profile: Profile{Name: "publisher"}, Workspace: fakeWorkspace{dir: t.TempDir()}, SessionDir: dir, ValidOutcomes: tc.valid}))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -87,7 +91,7 @@ func TestCanceledSessionRemainsInterrupted(t *testing.T) {
 exec sleep 60`)}
 	ended := make(chan error, 1)
 	go func() {
-		_, err := r.Run(ctx, Request{SessionDir: dir, Workspace: fakeWorkspace{dir: dir}, Profile: Profile{Name: "custom"}})
+		_, err := r.Run(ctx, grantAll(Request{SessionDir: dir, Workspace: fakeWorkspace{dir: dir}, Profile: Profile{Name: "custom"}}))
 		ended <- err
 	}()
 	deadline := time.Now().Add(5 * time.Second)
@@ -126,7 +130,7 @@ echo '{"type":"step_finish","part":{"reason":"stop"}}'`
 			}
 			bin := agenttest.Script(t, backend, body)
 			r := Runner{ClaudeBin: bin, CodexBin: bin, OpenCodeBin: bin, DockerBin: agenttest.Docker(t, "image", "RUN_DIR"), ContainerLabel: "custom.session"}
-			res, err := r.Run(context.Background(), Request{SessionDir: dir, Workspace: fakeWorkspace{dir: t.TempDir()}, Profile: Profile{Name: "custom", Agent: backend, Sandbox: SandboxContainer, SandboxImage: "image"}, Env: map[string]string{"RUN_DIR": dir}})
+			res, err := r.Run(context.Background(), grantAll(Request{SessionDir: dir, Workspace: fakeWorkspace{dir: t.TempDir()}, Profile: Profile{Name: "custom", Agent: backend, Sandbox: SandboxContainer, SandboxImage: "image"}, Env: map[string]string{"RUN_DIR": dir}}))
 			if err != nil || res.IsError {
 				t.Fatalf("container: %+v, %v", res, err)
 			}
@@ -151,7 +155,7 @@ func TestContainerEngineGuard(t *testing.T) {
 	}
 	dir := t.TempDir()
 	r := Runner{DockerBin: real}
-	_, err = r.Run(context.Background(), Request{SessionDir: dir, Workspace: fakeWorkspace{dir: dir}, Profile: Profile{Sandbox: SandboxContainer, SandboxImage: "image"}})
+	_, err = r.Run(context.Background(), grantAll(Request{SessionDir: dir, Workspace: fakeWorkspace{dir: dir}, Profile: Profile{Sandbox: SandboxContainer, SandboxImage: "image"}}))
 	if !errors.Is(err, agentbin.ErrRealAgent) {
 		t.Fatalf("unguarded engine: %v", err)
 	}
@@ -164,10 +168,10 @@ func TestContainerAgentGuard(t *testing.T) {
 	}
 	dir := t.TempDir()
 	r := Runner{ClaudeBin: real, DockerBin: agenttest.Docker(t, "image", "RUN_DIR")}
-	_, err = r.Run(context.Background(), Request{SessionDir: dir, Workspace: fakeWorkspace{dir: dir},
+	_, err = r.Run(context.Background(), grantAll(Request{SessionDir: dir, Workspace: fakeWorkspace{dir: dir},
 		Env:     map[string]string{"RUN_DIR": dir},
 		Profile: Profile{Sandbox: SandboxContainer, SandboxImage: "image"},
-	})
+	}))
 	if !errors.Is(err, agentbin.ErrRealAgent) {
 		t.Fatalf("unguarded container agent: %v", err)
 	}

@@ -704,11 +704,11 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
 // The one key that differs by operating system: macOS needs the trust
 // daemon reachable for gh to verify TLS, Linux does not have the key.
 func TestClaudeSandboxSettingsPerOS(t *testing.T) {
-	darwin, err := claudeSandboxSettings([]string{"b", "a"}, "darwin", testDomains)
+	darwin, err := claudeSandboxSettings([]string{"b", "a"}, "darwin", testDomains, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	linux, err := claudeSandboxSettings([]string{"b", "a"}, "linux", testDomains)
+	linux, err := claudeSandboxSettings([]string{"b", "a"}, "linux", testDomains, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
