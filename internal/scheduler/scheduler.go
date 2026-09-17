@@ -160,6 +160,12 @@ type Scheduler struct {
 	// vouch for is not one to spend against.
 	dayUnknown int
 	ledgerErr  error
+	// manualPaused is true while a person has paused dispatch by hand
+	// (SetPaused, the live view's p key). It gates exactly what the daily
+	// budget gates, independently of it, so a manual pause outlasts a budget
+	// pause that lifts under it. In memory only: a restarted factory starts
+	// unpaused.
+	manualPaused bool
 	// capacity tracks when dispatch resumes after a session hit the
 	// account-wide claude session limit; zero when none is in force. It is
 	// in memory only, like dayPaused: after a restart the first session
@@ -1187,7 +1193,7 @@ func (s *Scheduler) dispatchDevelopers(ctx context.Context, snap *snapshot, loca
 	// ctx.Err() is the stop key: sessions run under their own context, so a
 	// pass that is still finishing when the loop's context is cancelled
 	// would otherwise start work the cool-down promised not to.
-	if ctx.Err() != nil || !s.roleEnabled(config.RoleDeveloper) || s.limitPaused() || s.dayBudgetReached() {
+	if ctx.Err() != nil || !s.roleEnabled(config.RoleDeveloper) || s.limitPaused() || s.dayBudgetReached() || s.manuallyPaused() {
 		return
 	}
 	var candidates []github.Issue
@@ -1399,7 +1405,7 @@ func (s *Scheduler) dispatchSingletons(ctx context.Context, snap *snapshot, mail
 	// The same three gates as dispatchDevelopers, ctx.Err() included: a
 	// cancelled loop context means the factory is stopping and no singleton
 	// may start.
-	if ctx.Err() != nil || s.limitPaused() || s.dayBudgetReached() {
+	if ctx.Err() != nil || s.limitPaused() || s.dayBudgetReached() || s.manuallyPaused() {
 		return
 	}
 	for _, j := range jobs {

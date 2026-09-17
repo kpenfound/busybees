@@ -177,6 +177,35 @@ func (s *Scheduler) dayBudgetReached() bool {
 	return s.dayPaused || s.ledgerErr != nil
 }
 
+// SetPaused pauses dispatch by hand (true) or resumes it (false): while it
+// is paused no developer worker, requested review or singleton is started,
+// the sessions already running finish, and polling, human feedback and label
+// reconciliation go on, as they do under the daily budget pause. It wakes the
+// loop, so the change reaches status.json, and a resume dispatches, without
+// waiting for the next poll.
+func (s *Scheduler) SetPaused(paused bool) {
+	s.mu.Lock()
+	changed := s.manualPaused != paused
+	s.manualPaused = paused
+	s.mu.Unlock()
+	if !changed {
+		return
+	}
+	if paused {
+		s.log.Info("⏸ dispatch paused by hand; starting no new sessions", logging.SummaryKey, true)
+	} else {
+		s.log.Info("▶ dispatch resumed by hand", logging.SummaryKey, true)
+	}
+	s.signal()
+}
+
+// manuallyPaused reports whether a person has paused dispatch (SetPaused).
+func (s *Scheduler) manuallyPaused() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.manualPaused
+}
+
 // overSessionBudget reports whether one finished session cost more than
 // scheduler.max_cost_per_session, and the note that says so.
 func overSessionBudget(res *session.Result, budget float64) (string, bool) {
@@ -222,6 +251,7 @@ func failedResult(res *session.Result, note string) *session.Result {
 // budgetStatus fills the cost-budget fields of the status file.
 func (s *Scheduler) budgetStatus(st *state.Status) {
 	st.BudgetPaused = s.dayPaused
+	st.ManualPaused = s.manualPaused
 	st.DaySpendUSD = s.daySpend
 	st.DayBudgetUSD = s.cfg.Scheduler.MaxCostPerDay
 	st.DayUnknownSessions = s.dayUnknown

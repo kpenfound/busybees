@@ -16,6 +16,7 @@ import (
 type fakeLoop struct {
 	run      func(ctx context.Context) error
 	hardStop atomic.Int32
+	paused   atomic.Bool
 }
 
 func (f *fakeLoop) Run(ctx context.Context) error {
@@ -27,6 +28,8 @@ func (f *fakeLoop) Run(ctx context.Context) error {
 }
 
 func (f *fakeLoop) HardStop() { f.hardStop.Add(1) }
+
+func (f *fakeLoop) SetPaused(paused bool) { f.paused.Store(paused) }
 
 func project(name string, loop Loop, startErr error) Project {
 	return Project{Name: name, Start: func(context.Context) (Loop, error) { return loop, startErr }}
@@ -239,5 +242,59 @@ func TestALoopDiscardedUnrunIsClosed(t *testing.T) {
 	}
 	if n := late.closed.Load(); n != 1 {
 		t.Errorf("the discarded loop was closed %d times, want 1", n)
+	}
+}
+
+// waitLoops waits until n loops have started.
+func waitLoops(t *testing.T, d *Daemon, n int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		d.mu.Lock()
+		got := len(d.loops)
+		d.mu.Unlock()
+		if got == n {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d loops started, want %d", got, n)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// A pause reaches every started project, and a project that starts while the
+// daemon is paused starts paused; a resume reaches all of them.
+func TestSetPausedReachesEveryProject(t *testing.T) {
+	a, b, late := &fakeLoop{}, &fakeLoop{}, &fakeLoop{}
+	release := make(chan struct{})
+	log, _ := quietLogger()
+	d := &Daemon{Projects: []Project{project("a", a, nil), project("b", b, nil), {Name: "late", Start: func(context.Context) (Loop, error) {
+		<-release
+		return late, nil
+	}}}, Logger: log}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := runAsync(ctx, d)
+
+	waitLoops(t, d, 2)
+	d.SetPaused(true)
+	if !a.paused.Load() || !b.paused.Load() {
+		t.Errorf("after the pause: a paused %v, b paused %v, want both", a.paused.Load(), b.paused.Load())
+	}
+	close(release)
+	waitLoops(t, d, 3)
+	if !late.paused.Load() {
+		t.Error("a project started while paused was not paused")
+	}
+	d.SetPaused(false)
+	for name, l := range map[string]*fakeLoop{"a": a, "b": b, "late": late} {
+		if l.paused.Load() {
+			t.Errorf("%s still paused after the resume", name)
+		}
+	}
+	cancel()
+	if err := wait(t, done); err != nil {
+		t.Fatal(err)
 	}
 }

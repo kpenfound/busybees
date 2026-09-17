@@ -66,7 +66,7 @@ func requestedReviewKey(pr int) string { return fmt.Sprintf("requested-review-pr
 // been removed on GitHub, and would dispatch the same review twice.
 func (s *Scheduler) dispatchRequestedReviews(ctx context.Context, snap *snapshot) {
 	// The same gates as dispatchDevelopers, for the same reasons.
-	if ctx.Err() != nil || !s.roleEnabled(config.RoleReviewer) || s.limitPaused() || s.dayBudgetReached() {
+	if ctx.Err() != nil || !s.roleEnabled(config.RoleReviewer) || s.limitPaused() || s.dayBudgetReached() || s.manuallyPaused() {
 		return
 	}
 	// The poll lists open pull requests only, so there is no state to check.
