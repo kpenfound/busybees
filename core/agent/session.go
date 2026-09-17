@@ -208,6 +208,9 @@ type Runner struct {
 	// beyond its mounts; nil selects DefaultSystemPaths.
 	Confiner    Confiner
 	SystemPaths []Mount
+	// held is set by a Session for its turns: what Prepare reported, which
+	// every turn is checked against before anything starts.
+	held *held
 	// Stream, when set, receives every stream-json line (debug output).
 	Stream io.Writer
 	Logger *slog.Logger
@@ -364,6 +367,9 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 	start := cmd.Start
 	if box == nil && turn.Confinement != nil {
 		confinement, err := turn.Confinement.withExecutable(bin)
+		if err == nil && r.held != nil {
+			err = r.held.admitExecutable(bin)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", req.Profile.Name, err)
 		}

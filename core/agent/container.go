@@ -23,7 +23,8 @@ import (
 )
 
 // A container session runs the backend command unchanged inside the engine.
-// It sees the granted mounts and nothing else of the host, each at its host
+// It sees the granted mounts and, of the host, nothing else but the runner's
+// own stand-ins (ContainerBoundary.Masks), each mount at its host
 // path, so references in prompts also resolve in the container; the work
 // directory, session directory, shared VCS metadata, caller mounts and skill
 // cache must lie inside them (ContainerBoundary).
@@ -378,7 +379,8 @@ func randomHex(n int) string {
 // ContainerBoundary runs a session in a container. The container is given
 // the granted mounts, with their access, and nothing else of the host; an
 // environment built from the allowlist alone; and, without VCS, stand-ins
-// for the VCS executables in front of the image's PATH. Verify refuses a
+// for the VCS executables in front of the image's PATH, which deny them by
+// name, and Masks over the paths the caller found them at. Verify refuses a
 // request whose own paths the grants do not cover.
 type ContainerBoundary struct {
 	// Environ is the host environment agent credentials are read from; nil
@@ -393,6 +395,11 @@ type ContainerBoundary struct {
 	MountDirs []string
 	// SkillMountDirs must be granted when the profile has skills.
 	SkillMountDirs []string
+	// Masks are read-only binds the runner owns, laid over paths of the
+	// image for a turn without VCS: a stand-in over each VCS executable the
+	// image has (see NewContainer). Their sources need no grant: they show
+	// the container nothing of the host but the stand-ins themselves.
+	Masks []Bind
 }
 
 // Verify checks the request and builds the container turn. It fails closed:
@@ -415,39 +422,63 @@ func (b ContainerBoundary) Verify(req Request) (*Turn, error) {
 	return turn, nil
 }
 
-// bind builds the turn's binds: every granted mount at its real path and at
-// the path it was granted by, and every path the session is told about at
-// that path too, when a symbolic link makes it differ from its real one.
-func (b ContainerBoundary) bind(req Request, turn *Turn) error {
-	index := map[string]int{}
-	add := func(src, dst string, access Access) error {
-		for _, p := range []string{src, dst} {
-			// --mount is a comma-separated list read as CSV.
-			if strings.ContainsAny(p, ",\"\n\r") {
-				return fmt.Errorf("%w: path %q cannot be passed to %s's --mount", ErrUnsupported, p, ContainerEngine)
-			}
+// bindSet collects binds, one per destination.
+type bindSet struct {
+	binds []Bind
+	index map[string]int
+}
+
+// add binds src at dst. A destination bound twice must be bound the same way
+// both times.
+func (s *bindSet) add(src, dst string, access Access) error {
+	for _, p := range []string{src, dst} {
+		// --mount is a comma-separated list read as CSV.
+		if strings.ContainsAny(p, ",\"\n\r") {
+			return fmt.Errorf("%w: path %q cannot be passed to %s's --mount", ErrUnsupported, p, ContainerEngine)
 		}
-		if i, ok := index[dst]; ok {
-			if prev := turn.Binds[i]; prev.Source != src || prev.Access != access {
-				return fmt.Errorf("%w: %s would be bound twice (%s %s and %s %s)", ErrUnsupported, dst, prev.Source, prev.Access, src, access)
-			}
-			return nil
+	}
+	if i, ok := s.index[dst]; ok {
+		if prev := s.binds[i]; prev.Source != src || prev.Access != access {
+			return fmt.Errorf("%w: %s would be bound twice (%s %s and %s %s)", ErrUnsupported, dst, prev.Source, prev.Access, src, access)
 		}
-		index[dst] = len(turn.Binds)
-		turn.Binds = append(turn.Binds, Bind{Source: src, Destination: dst, Access: access})
 		return nil
 	}
-	for i, m := range req.Grants.Mounts {
-		real := turn.Mounts[i]
+	if s.index == nil {
+		s.index = map[string]int{}
+	}
+	s.index[dst] = len(s.binds)
+	s.binds = append(s.binds, Bind{Source: src, Destination: dst, Access: access})
+	return nil
+}
+
+// mounts binds every granted mount at its real path and at the path it was
+// granted by. resolved are the granted mounts with their links resolved.
+func (s *bindSet) mounts(granted, resolved []Mount) error {
+	for i, m := range granted {
+		real := resolved[i]
 		if real.Path == string(filepath.Separator) {
 			return fmt.Errorf("%w: a container cannot be given the host's root; grant the directories it needs", ErrUnsupported)
 		}
-		if err := add(real.Path, real.Path, real.Access); err != nil {
+		if err := s.add(real.Path, real.Path, real.Access); err != nil {
 			return err
 		}
-		if err := add(real.Path, filepath.Clean(m.Path), real.Access); err != nil {
+		if err := s.add(real.Path, filepath.Clean(m.Path), real.Access); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// bind builds the turn's binds: every granted mount at its real path and at
+// the path it was granted by, every path the session is told about at that
+// path too, when a symbolic link makes it differ from its real one, and,
+// without VCS, the masks.
+func (b ContainerBoundary) bind(req Request, turn *Turn) error {
+	set := &bindSet{}
+	defer func() { turn.Binds = set.binds }()
+	add := set.add
+	if err := set.mounts(req.Grants.Mounts, turn.Mounts); err != nil {
+		return err
 	}
 	need := func(what, path string, access Access, resolveFn func(string) (string, error)) error {
 		real, err := resolveFn(path)
@@ -479,7 +510,8 @@ func (b ContainerBoundary) bind(req Request, turn *Turn) error {
 		}
 		return nil
 	}
-	if err := need("working directory", req.workDir(), ReadWrite, resolve); err != nil {
+	// Read-only when granted so: the engine binds it that way.
+	if err := need("working directory", req.workDir(), "", resolve); err != nil {
 		return err
 	}
 	if turn.VCS && req.Workspace != nil {
@@ -510,6 +542,13 @@ func (b ContainerBoundary) bind(req Request, turn *Turn) error {
 	if len(req.Profile.Skills) > 0 {
 		for _, dir := range b.SkillMountDirs {
 			if err := need("skill directory", dir, "", resolve); err != nil {
+				return err
+			}
+		}
+	}
+	if !turn.VCS {
+		for _, m := range b.Masks {
+			if err := add(m.Source, m.Destination, ReadOnly); err != nil {
 				return err
 			}
 		}

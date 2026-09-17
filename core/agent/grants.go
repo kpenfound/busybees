@@ -250,13 +250,8 @@ func verifyCommon(req Request) (*Turn, error) {
 	}
 	turn := &Turn{VCS: p.VCSAccess && g.VCS}
 
-	for _, name := range g.Env {
-		if err := checkEnvPattern(name); err != nil {
-			return nil, err
-		}
-		if !g.VCS && overlapsVCSEnv(name) {
-			return nil, fmt.Errorf("%w: variable %s carries VCS credentials or configuration and VCS is not granted", ErrNotGranted, name)
-		}
+	if err := checkEnvGrants(g); err != nil {
+		return nil, err
 	}
 	for _, v := range sessionVars(req, turn.VCS) {
 		if !envGranted(g.Env, v.name) {
@@ -304,29 +299,8 @@ func verifyCommon(req Request) (*Turn, error) {
 		}
 	}
 
-	var within string
-	if g.Within != "" {
-		if within, err = resolve(g.Within); err != nil {
-			return nil, fmt.Errorf("within: %w", err)
-		}
-	}
-	for _, m := range g.Mounts {
-		if m.Access != ReadOnly && m.Access != ReadWrite {
-			return nil, fmt.Errorf("mount %s: unknown access %q (want %s or %s)", m.Path, m.Access, ReadOnly, ReadWrite)
-		}
-		resolved, err := resolve(m.Path)
-		if err != nil {
-			return nil, fmt.Errorf("mount %s: %w", m.Path, err)
-		}
-		if within != "" && !inside(within, resolved) {
-			return nil, fmt.Errorf("%w: mount %s resolves to %s, outside %s", ErrNotGranted, m.Path, resolved, g.Within)
-		}
-		if m.Access == ReadWrite && !turn.VCS {
-			if meta, ok := vcsMetadata(resolved); ok {
-				return nil, fmt.Errorf("%w: mount %s is writable and holds VCS metadata %s", ErrNotGranted, m.Path, meta)
-			}
-		}
-		turn.Mounts = append(turn.Mounts, Mount{Path: resolved, Access: m.Access})
+	if turn.Mounts, err = resolveMounts(g, turn.VCS); err != nil {
+		return nil, err
 	}
 	dir := req.workDir()
 	if dir == "" {
@@ -340,6 +314,52 @@ func verifyCommon(req Request) (*Turn, error) {
 		return nil, fmt.Errorf("%w: working directory %s is outside every mount", ErrNotGranted, dir)
 	}
 	return turn, nil
+}
+
+// checkEnvGrants checks the environment allowlist on its own.
+func checkEnvGrants(g *Grants) error {
+	for _, name := range g.Env {
+		if err := checkEnvPattern(name); err != nil {
+			return err
+		}
+		if !g.VCS && overlapsVCSEnv(name) {
+			return fmt.Errorf("%w: variable %s carries VCS credentials or configuration and VCS is not granted", ErrNotGranted, name)
+		}
+	}
+	return nil
+}
+
+// resolveMounts checks the mounts on their own and returns them with their
+// symbolic links resolved, in the order they were granted. vcs is whether
+// the turn has version control.
+func resolveMounts(g *Grants, vcs bool) ([]Mount, error) {
+	var within string
+	var err error
+	if g.Within != "" {
+		if within, err = resolve(g.Within); err != nil {
+			return nil, fmt.Errorf("within: %w", err)
+		}
+	}
+	var mounts []Mount
+	for _, m := range g.Mounts {
+		if m.Access != ReadOnly && m.Access != ReadWrite {
+			return nil, fmt.Errorf("mount %s: unknown access %q (want %s or %s)", m.Path, m.Access, ReadOnly, ReadWrite)
+		}
+		resolved, err := resolve(m.Path)
+		if err != nil {
+			return nil, fmt.Errorf("mount %s: %w", m.Path, err)
+		}
+		if within != "" && !inside(within, resolved) {
+			return nil, fmt.Errorf("%w: mount %s resolves to %s, outside %s", ErrNotGranted, m.Path, resolved, g.Within)
+		}
+		if m.Access == ReadWrite && !vcs {
+			if meta, ok := vcsMetadata(resolved); ok {
+				return nil, fmt.Errorf("%w: mount %s is writable and holds VCS metadata %s", ErrNotGranted, m.Path, meta)
+			}
+		}
+		mounts = append(mounts, Mount{Path: resolved, Access: m.Access})
+	}
+	return mounts, nil
 }
 
 // sessionVars are the variables the request sets, in the order they are set.
@@ -516,6 +536,9 @@ func workDir(req Request) string {
 func (r *Runner) boundary(req Request) Boundary {
 	if req.Profile.Sandbox == SandboxContainer {
 		b := ContainerBoundary{Home: r.containerHome(), SessionsDir: r.SessionsDir, MountDirs: r.MountDirs}
+		if r.held != nil {
+			b.Masks = r.held.masks
+		}
 		if r.Skills != nil {
 			b.SkillMountDirs = r.SkillMountDirs
 		}
@@ -528,9 +551,20 @@ func (r *Runner) boundary(req Request) Boundary {
 	return b
 }
 
-// Verify checks a request against its grants without starting anything.
+// Verify checks a request against its grants without starting anything. The
+// runner of a Session also refuses a turn that is not the one the session's
+// policy describes.
 func (r *Runner) Verify(req Request) (*Turn, error) {
-	return r.boundary(req).Verify(req)
+	turn, err := r.boundary(req).Verify(req)
+	if err != nil {
+		return nil, err
+	}
+	if r.held != nil {
+		if err := r.held.admit(turn); err != nil {
+			return nil, err
+		}
+	}
+	return turn, nil
 }
 
 // deniedBinDir is the session subdirectory holding denied executables' stand-ins.

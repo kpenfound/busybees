@@ -85,8 +85,13 @@ GitHub repository. Read `docs/architecture.md` before changing the scheduler.
   `Confiner`, Landlock on Linux (`confine_linux.go`), Seatbelt on macOS (`confine_seatbelt.go`: the profile and the
   `sandbox-exec` start, untagged so the gate tests them; `confine_darwin.go` selects it), `ErrUnsupported` where there
   is none; the Landlock enforcement tests skip on a kernel without Landlock and run in the VM `CONTRIBUTING.md`
-  describes, and Seatbelt enforcement is checked by hand with the recipe there. `agenttest` supplies fake agents, Docker
-  and a host MCP server; `agentbin` guards all agent and engine launches in tests.
+  describes, and Seatbelt enforcement is checked by hand with the recipe there. `enforce.go` is the runner an embedder
+  takes a held turn from (`Enforcer`: `NewHostNone`, `NewHostClaude`, `NewContainer`; `Prepare(ctx, grants)` → `Session`
+  with `Policy`, `Run` and `Release`): host kinds are confined turns, a container session binds stand-ins over its
+  image's VCS executables (`containermask.go`, `ContainerBoundary.Masks`), and `Run` refuses a turn the reported policy
+  does not describe (`ErrPolicyChanged`). Busybees' own sessions go through `Runner.Run`. `agenttest` supplies fake
+  agents, Docker and a host MCP server, and `agenttest/enforcertest` an `Enforcer` that starts no process; `agentbin`
+  guards all agent and engine launches in tests.
 - `internal/session` — busybees adapter: `ProfileForRole` projects a resolved role
   into execution settings; `grants` turns role policy into `agent.Grants`
   (`HostEnv`, `ProviderEnv`, `VCSEnv`, mounts by sandbox); `Runner` supplies the `BEES_*` context, GitHub and git

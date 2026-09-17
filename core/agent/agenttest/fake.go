@@ -8,12 +8,31 @@ import (
 	"testing"
 )
 
+// Docker writes a fake container engine. It answers `network`, `rm`, `image`
+// and `build`, and runs what `run` is given on this machine, recording its
+// arguments and environment in the directory sessionVariable names. A `run`
+// with --entrypoint is the look an agent.NewContainer session takes into its
+// image before any turn: its arguments are recorded in docker-probe.txt
+// beside the script, and it prints image-vcs.txt from there, the VCS
+// executables the image is to have ("f <path>" or "d <path>" a line; none
+// without the file), or fails when a file named fail-probe is there.
 func Docker(t *testing.T, image, sessionVariable string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "docker")
 	script := `#!/bin/sh
 set -e
 here="$(dirname "$0")"
+for arg in "$@"; do
+  if [ "$arg" = --entrypoint ]; then
+    printf '%s\n' "$@" > "$here/docker-probe.txt"
+    if [ -f "$here/fail-probe" ]; then
+      echo "Unable to find image locally" >&2
+      exit 125
+    fi
+    [ ! -f "$here/image-vcs.txt" ] || cat "$here/image-vcs.txt"
+    exit 0
+  fi
+done
 case "$1" in
 network)
   echo 172.17.0.1

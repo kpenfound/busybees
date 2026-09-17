@@ -254,3 +254,94 @@ func TestLandlockLeavesTheRunnerUnconfined(t *testing.T) {
 		}
 	}
 }
+
+// The same turn through the exported API: what the session's policy says of
+// a path after Prepare is what the kernel does to the agent that tries it.
+func TestLandlockEnforcesWhatASessionReports(t *testing.T) {
+	needLandlock(t)
+	l := newConfinedLayout(t)
+	out := filepath.Join(filepath.Dir(l.work), "out")
+	if err := os.Mkdir(out, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	readme, secret := filepath.Join(l.work, "readme.txt"), filepath.Join(l.outside, "secret.txt")
+	for path, text := range map[string]string{readme: "pinned\n", secret: "secret\n"} {
+		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git := filepath.Join(l.tools, "git")
+	writeExecutable(t, filepath.Join(l.tools, "other"), "exit 0\n")
+	if err := os.Link(git, filepath.Join(l.tools, "git-receive-pack")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("git", filepath.Join(l.tools, "git-link")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", l.tools+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	s, err := NewHostNone(Runner{ClaudeBin: probeScript(t, l, out)}).Prepare(context.Background(), Grants{
+		Env:   []string{"PATH"},
+		Tools: []string{ToolsAll},
+		Mounts: []Mount{
+			{Path: l.work, Access: ReadOnly},
+			{Path: l.tools, Access: ReadOnly},
+			{Path: l.session, Access: ReadWrite},
+			{Path: out, Access: ReadWrite},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Release(context.Background()) }()
+	p := s.Policy()
+	// What the policy says before anything runs, by the probe that tries it.
+	said := map[string]bool{
+		"read-mount":           p.Reads(readme),
+		"list-mount":           p.Reads(l.work),
+		"read-outside":         p.Reads(secret),
+		"list-outside":         p.Reads(l.outside),
+		"create-in-workdir":    p.Writes(filepath.Join(l.work, "new.txt")),
+		"overwrite-in-workdir": p.Writes(readme),
+		"truncate-in-workdir":  p.Writes(readme),
+		"remove-in-workdir":    p.Writes(readme),
+		"mkdir-in-workdir":     p.Writes(filepath.Join(l.work, "sub")),
+		"create-in-writable":   p.Writes(filepath.Join(out, "new.txt")),
+		"create-outside":       p.Writes(filepath.Join(l.outside, "new.txt")),
+		"tool-by-path":         p.Runs(filepath.Join(l.tools, "other")),
+		"git-by-path":          p.Runs(git),
+		"git-by-shell":         p.Runs(git),
+		"git-by-env":           p.Runs(git),
+		"git-by-hard-link":     p.Runs(filepath.Join(l.tools, "git-receive-pack")),
+		"git-by-symlink":       p.Runs(filepath.Join(l.tools, "git-link")),
+		"git-read":             p.Reads(git),
+		"system-tool-by-path":  p.Runs("/usr/bin/env"),
+	}
+	for probe, path := range map[string]string{"system-git-by-path": "/usr/bin/git", "system-git-exec-path": "/usr/lib/git-core/git"} {
+		if _, err := os.Stat(path); err == nil {
+			said[probe] = p.Runs(path)
+		}
+	}
+	// The three an embedder refuses to run without.
+	for _, probe := range []string{"read-outside", "create-in-workdir", "git-by-path", "git-by-shell"} {
+		if said[probe] {
+			t.Errorf("the policy allows %s", probe)
+		}
+	}
+
+	res, err := s.Run(context.Background(), Request{Workspace: vcs.Directory(l.work), SessionDir: l.session, Profile: Profile{Name: "reviewer"}})
+	if err != nil || res.IsError {
+		t.Fatalf("run: %+v, %v", res, err)
+	}
+	got := probes(t, out)
+	t.Logf("probes: %v", got)
+	for probe, allowed := range said {
+		want := "denied"
+		if allowed {
+			want = "allowed"
+		}
+		if got[probe] != want {
+			t.Errorf("%s: the kernel %s it, and the policy said %s", probe, got[probe], want)
+		}
+	}
+}

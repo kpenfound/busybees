@@ -44,24 +44,6 @@ type Confiner interface {
 // handed. The grants alone decide what the turn reaches: no "/" is asked for
 // and none is implied.
 func (h HostBoundary) confinement(req Request, turn *Turn) (*Confinement, error) {
-	c := &Confinement{Sandbox: req.Profile.Sandbox, Mounts: slices.Clone(turn.Mounts)}
-	if c.Sandbox == "" {
-		c.Sandbox = SandboxNone
-	}
-	system := h.SystemPaths
-	if system == nil {
-		system = DefaultSystemPaths()
-	}
-	for _, m := range system {
-		if m.Access != ReadOnly && m.Access != ReadWrite {
-			return nil, fmt.Errorf("system path %s: unknown access %q (want %s or %s)", m.Path, m.Access, ReadOnly, ReadWrite)
-		}
-		// A system path this machine does not have is not an error: the
-		// list names what a distribution may have.
-		if resolved, err := filepath.EvalSymlinks(m.Path); err == nil {
-			c.System = append(c.System, Mount{Path: resolved, Access: m.Access})
-		}
-	}
 	// The files the runner writes for the agent must be ones it can read.
 	switch {
 	case req.SessionDir != "":
@@ -81,18 +63,44 @@ func (h HostBoundary) confinement(req Request, turn *Turn) (*Confinement, error)
 			}
 		}
 	}
+	return h.confine(req.Profile.Sandbox, req.Grants.Mounts, turn)
+}
+
+// confine is the part of the confined contract the grants decide on their
+// own, with no request: what the confiner is handed for a turn with these
+// mounts and this environment, and whether the platform can enforce it.
+// granted are the mounts as they were granted, for an error to name.
+func (h HostBoundary) confine(sandbox string, granted []Mount, turn *Turn) (*Confinement, error) {
+	c := &Confinement{Sandbox: sandbox, Mounts: slices.Clone(turn.Mounts)}
+	if c.Sandbox == "" {
+		c.Sandbox = SandboxNone
+	}
+	system := h.SystemPaths
+	if system == nil {
+		system = DefaultSystemPaths()
+	}
+	for _, m := range system {
+		if m.Access != ReadOnly && m.Access != ReadWrite {
+			return nil, fmt.Errorf("system path %s: unknown access %q (want %s or %s)", m.Path, m.Access, ReadOnly, ReadWrite)
+		}
+		// A system path this machine does not have is not an error: the
+		// list names what a distribution may have.
+		if resolved, err := filepath.EvalSymlinks(m.Path); err == nil {
+			c.System = append(c.System, Mount{Path: resolved, Access: m.Access})
+		}
+	}
 	if !turn.VCS {
 		c.Denied = executablePaths(VCSExecutables, envValue(turn.Env, "PATH"))
 		for i, m := range turn.Mounts {
 			info, err := os.Stat(m.Path)
 			if err != nil {
-				return nil, fmt.Errorf("mount %s: %w", req.Grants.Mounts[i].Path, err)
+				return nil, fmt.Errorf("mount %s: %w", granted[i].Path, err)
 			}
 			for _, d := range c.Denied {
 				// By its path, or as a hard link to it under another name.
 				denied, err := os.Stat(d)
 				if inside(d, m.Path) || (err == nil && os.SameFile(info, denied)) {
-					return nil, fmt.Errorf("%w: mount %s is the VCS executable %s and VCS is not granted", ErrNotGranted, req.Grants.Mounts[i].Path, d)
+					return nil, fmt.Errorf("%w: mount %s is the VCS executable %s and VCS is not granted", ErrNotGranted, granted[i].Path, d)
 				}
 			}
 		}
