@@ -140,8 +140,8 @@ func TestPInADaemonsViewPausesTheMachine(t *testing.T) {
 	got.calls = nil
 	fooBudget := in(0, statusMsg{status: state.Status{BudgetPaused: true}})
 	m = update(t, d, fooBudget, pKey())
-	if !slices.Equal(got.calls, []bool{true}) {
-		t.Errorf("p with only foo under its budget pause: SetPaused calls %v, want [true]", got.calls)
+	if !slices.Equal(got.calls, []bool{true}) || !m.paused {
+		t.Errorf("p with only foo under its budget pause: SetPaused calls %v, paused %v", got.calls, m.paused)
 	}
 
 	got.calls = nil
