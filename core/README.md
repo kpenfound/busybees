@@ -216,7 +216,9 @@ status and logs, maps work to GitHub and decides what operational signals do.
 
 `review.Runner[R].Run` takes an artifact directory, `review.Bundle[R]` and a
 supplied diff. Context items retain their source names, content and order;
-skipped-source reasons pass through to the brief. `R` is the caller's reference
+skipped-source reasons and the generated files the caller took out of the
+diff (`Bundle.Excluded`) pass through to the brief, and `Exclude` drops a
+finding anchored in one of those files after the judge. `R` is the caller's reference
 type, with display text, a URL and an opaque scope for reviewer-note rules.
 Its JSON representation is preserved in `brief.json`; it must support decoding
 when artifacts are read back. Core does not interpret tracker identity.

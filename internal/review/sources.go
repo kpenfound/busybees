@@ -34,9 +34,10 @@ const (
 )
 
 // diffSource gathers the pull request's diff: from the checkout made for
-// the review when there is one, else through gh (Input.Diff). A diff that
-// could be read neither way is context the review goes on without, not a
-// failure, the way every other source treats what it could not read.
+// the review when there is one, else through gh, without its generated
+// files (Input.Diff). A diff that could be read neither way is context the
+// review goes on without, not a failure, the way every other source treats
+// what it could not read.
 type diffSource struct{}
 
 func (diffSource) Name() string { return SourceDiff }
@@ -48,7 +49,11 @@ func (diffSource) Collect(ctx context.Context, in *Input) ([]Item, error) {
 		return nil, nil
 	}
 	if strings.TrimSpace(diff) == "" {
-		in.Skip("the diff of %s is empty", in.Ref)
+		if len(in.Excluded()) > 0 {
+			in.Skip("the diff of %s has nothing left once its generated files are taken out", in.Ref)
+		} else {
+			in.Skip("the diff of %s is empty", in.Ref)
+		}
 		return nil, nil
 	}
 	return []Item{{Source: SourceDiff, Name: in.Ref.String(), Content: diff}}, nil

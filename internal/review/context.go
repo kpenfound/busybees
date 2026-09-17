@@ -30,6 +30,10 @@ type Bundle struct {
 	// failure — a review runs on the context there is — and it travels in
 	// the bundle so the distiller can say what it did not see.
 	Skipped []string `json:"skipped,omitempty"`
+	// Excluded are the generated files taken out of the diff before it
+	// entered the bundle (generated.go), with what the change did to
+	// them: the brief lists them, and a finding anchored in one is dropped.
+	Excluded []ExcludedFile `json:"excluded,omitempty"`
 }
 
 // core preserves source ordering, labels, complete content and skipped reasons.
@@ -37,7 +41,7 @@ func (b *Bundle) core() *core.Bundle[Ref] {
 	if b == nil {
 		return nil
 	}
-	return &core.Bundle[Ref]{Ref: b.Ref, Title: b.PR.Title, Author: b.PR.Author.Login, Items: b.Items, Skipped: b.Skipped}
+	return &core.Bundle[Ref]{Ref: b.Ref, Title: b.PR.Title, Author: b.PR.Author.Login, Items: b.Items, Skipped: b.Skipped, Excluded: b.Excluded}
 }
 func (b *Bundle) Of(source string) []Item { return b.core().Of(source) }
 func (b *Bundle) Sources() []string       { return b.core().Sources() }
@@ -79,10 +83,11 @@ type Input struct {
 	// Project is the repository's context.toml, never nil.
 	Project *Project
 
-	diff    string
-	gotDiff bool
-	diffErr error
-	skipped []string
+	diff     string
+	gotDiff  bool
+	diffErr  error
+	excluded []ExcludedFile
+	skipped  []string
 }
 
 // Root is the directory the files named in context.toml are read from: the
@@ -105,11 +110,35 @@ func (in *Input) Root() string {
 // which GitHub refuses for a pull request past its limit on changed
 // files. An error is a diff that could be read neither way, and says
 // what each way said.
+//
+// The diff is the pull request's without its generated files
+// (excludeGenerated): what was taken out is Excluded, and a detection
+// that could only be partial, on a machine with no checkout, is among what
+// was skipped.
 func (in *Input) Diff(ctx context.Context) (string, error) {
 	if in.gotDiff {
 		return in.diff, in.diffErr
 	}
 	in.gotDiff = true
+	diff, err := in.rawDiff(ctx)
+	if err != nil {
+		in.diffErr = err
+		return "", err
+	}
+	var patterns []string
+	if in.Project != nil {
+		patterns = in.Project.Generated
+	}
+	var partial string
+	in.diff, in.excluded, partial = excludeGenerated(ctx, diff, in.Checkout, patterns)
+	if partial != "" {
+		in.Skip("%s", partial)
+	}
+	return in.diff, nil
+}
+
+// rawDiff is the diff as it was read, from the checkout or through gh.
+func (in *Input) rawDiff(ctx context.Context) (string, error) {
 	var fromCheckout error
 	if in.Checkout != "" {
 		diff, note, err := checkoutDiff(ctx, in.Checkout)
@@ -117,22 +146,24 @@ func (in *Input) Diff(ctx context.Context) (string, error) {
 			if note != "" {
 				in.Skip("%s: %s", SourceDiff, note)
 			}
-			in.diff = diff
-			return in.diff, nil
+			return diff, nil
 		}
 		fromCheckout = err
 	}
 	diff, err := in.Client.PRDiff(ctx, in.Ref.Number)
 	switch {
 	case err == nil:
-		in.diff = diff
+		return diff, nil
 	case fromCheckout != nil:
-		in.diffErr = fmt.Errorf("the diff of %s could not be read from the checkout (%v) or through gh (%w)", in.Ref, fromCheckout, err)
+		return "", fmt.Errorf("the diff of %s could not be read from the checkout (%v) or through gh (%w)", in.Ref, fromCheckout, err)
 	default:
-		in.diffErr = fmt.Errorf("the diff of %s could not be read through gh: %w", in.Ref, err)
+		return "", fmt.Errorf("the diff of %s could not be read through gh: %w", in.Ref, err)
 	}
-	return in.diff, in.diffErr
 }
+
+// Excluded are the generated files Diff took out of the diff, and none
+// before Diff has been asked for it.
+func (in *Input) Excluded() []ExcludedFile { return in.excluded }
 
 // Skip records context this source asked for and did not get. It reaches the
 // person as Bundle.Skipped, and the review goes on without it.
@@ -220,6 +251,7 @@ func (p *Pipeline) Gather(ctx context.Context, number int, artifact string) (*Bu
 		bundle.Items = append(bundle.Items, items...)
 	}
 	bundle.Skipped = in.skipped
+	bundle.Excluded = in.excluded
 	return bundle, nil
 }
 

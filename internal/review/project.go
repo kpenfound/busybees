@@ -51,7 +51,7 @@ var Severities = core.Severities
 // Project is the per-project configuration, context.toml, read from the
 // repository under review. Every table is an override: a project that has no
 // context.toml gets every angle its change's size calls for, every built-in
-// context source and no category rules.
+// context source, no category rules and no generated patterns of its own.
 type Project struct {
 	// Path is the file this configuration was read from, absolute, and set
 	// even when that file does not exist (Loaded says which). Style sources
@@ -76,6 +76,11 @@ type Project struct {
 	// (a name from BuiltinSources, turned off with `enabled = false`) or a
 	// source of the project's own, which gathers the files it names.
 	Sources []Source `toml:"context_sources"`
+	// Generated are paths or globs, relative to the repository root, of
+	// files the review treats as generated (matchGenerated), on top of the
+	// ones a generated header or .gitattributes marks: taken out of the
+	// diff before any session reads it.
+	Generated []string `toml:"generated"`
 }
 
 // Source is one [[context_sources]] entry.
@@ -172,6 +177,7 @@ func (p *Project) Validate() error {
 		}
 	}
 	errs = append(errs, patternErrs("style_sources", p.StyleSources)...)
+	errs = append(errs, generatedErrs(p.Generated)...)
 	for _, name := range sortedNames(p.Categories) {
 		if !slices.Contains(Severities, p.Categories[name]) {
 			errs = append(errs, fmt.Sprintf("categories.%s %q must be one of %s", name, p.Categories[name], strings.Join(Severities, ", ")))

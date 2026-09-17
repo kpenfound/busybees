@@ -69,6 +69,7 @@ func (d *Distiller[R]) Distill(ctx context.Context, b *Bundle[R]) (*Brief[R], er
 	brief.Author = b.Author
 	brief.Sources = b.Sources()
 	brief.NotGathered = b.Skipped
+	brief.Excluded = b.Excluded
 	brief.SessionID = res.ID
 	brief.CostUSD = res.CostUSD
 	brief.CostUnknown = !res.CostKnown
