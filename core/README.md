@@ -34,6 +34,21 @@ The caller also supplies:
   `ContainerEnv` and explicit caller mounts remain caller-controlled.
 - `Grants`, the session's complete capabilities (below). A request without
   them does not run.
+- An optional `SkillPreparer` and read-only skill cache mounts. Acquisition,
+  caching and configuration policy stay with the caller.
+
+MCP entries contain public context in `Env` and credential names in `EnvVars`.
+Pass credential values in the request environment. `MCPEntries` can expand
+configured environment references before entries are passed to the runner;
+prepared entries are not expanded again. `BearerTokenEnv` names the process
+variable holding a remote server's bearer token; each backend writes its native
+environment reference. `HostMCP` uses this field for its generated token.
+
+Codex receives the session directory through
+`-c shell_environment_policy.set.<prefix>SESSION_DIR=...` even without MCP.
+Orphan scans use `procs.CodexMarker(prefix)` with the same environment prefix;
+`LegacyCodex` can also match a caller's older MCP-based marker. With the default
+empty prefix, `procs.Find` needs no marker overrides.
 
 ## Grants
 
@@ -78,22 +93,7 @@ calls it first. `HostBoundary` and `ContainerBoundary` implement the
 | `claude` | `/` read-only and the working directory read-write; every other read-write mount and every `Runner.AddDirs` entry, which must be granted read-write, is passed with `--add-dir` |
 
 `ContainerBoundary` verifies the environment, tools and mounts the same way;
-the container runner does not yet confine the container to the mounts.
-- An optional `SkillPreparer` and read-only skill cache mounts. Acquisition,
-  caching and configuration policy stay with the caller.
-
-MCP entries contain public context in `Env` and credential names in `EnvVars`.
-Pass credential values in the request environment. `MCPEntries` can expand
-configured environment references before entries are passed to the runner;
-prepared entries are not expanded again. `BearerTokenEnv` names the process
-variable holding a remote server's bearer token; each backend writes its native
-environment reference. `HostMCP` uses this field for its generated token.
-
-Codex receives the session directory through
-`-c shell_environment_policy.set.<prefix>SESSION_DIR=...` even without MCP.
-Orphan scans use `procs.CodexMarker(prefix)` with the same environment prefix;
-`LegacyCodex` can also match a caller's older MCP-based marker. With the default
-empty prefix, `procs.Find` needs no marker overrides.
+the container runner does not confine the container to the mounts.
 
 ## Workspaces
 

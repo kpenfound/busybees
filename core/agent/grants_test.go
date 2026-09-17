@@ -390,3 +390,54 @@ echo '{"type":"result","subtype":"success","result":"ok"}'`), CodexBin: agenttes
 		t.Fatalf("no grants: %v", err)
 	}
 }
+
+// A container request is checked against its grants too, and a refused one
+// starts no container.
+func TestContainerRequestsAreVerified(t *testing.T) {
+	containerRequest := func(t *testing.T) Request {
+		dir := realTemp(t)
+		return Request{
+			Workspace: vcs.Directory(dir),
+			Profile:   Profile{Name: "worker", Sandbox: SandboxContainer, SandboxImage: "image"},
+			Grants:    &Grants{Env: []string{"PATH"}, Tools: []string{ToolsAll}, Mounts: []Mount{{Path: dir, Access: ReadWrite}}},
+		}
+	}
+	for name, tc := range map[string]struct {
+		mutate func(*Request)
+		want   error
+	}{
+		"no grants":         {func(r *Request) { r.Grants = nil }, ErrNoGrants},
+		"request variable":  {func(r *Request) { r.Env = map[string]string{"EXTRA": "x"} }, ErrNotGranted},
+		"mcp server":        {func(r *Request) { r.Profile.MCP = map[string]MCPEntry{"docs": {Command: "x"}} }, ErrNotGranted},
+		"vcs env entry":     {func(r *Request) { r.Grants.Env = append(r.Grants.Env, "GH_*") }, ErrNotGranted},
+		"codex narrowed":    {func(r *Request) { r.Profile.Agent = AgentCodex; r.Grants.Tools = []string{"Read"} }, ErrUnsupported},
+		"opencode narrowed": {func(r *Request) { r.Profile.Agent = AgentOpenCode; r.Grants.Tools = []string{"Read"} }, ErrUnsupported},
+	} {
+		t.Run(name, func(t *testing.T) {
+			req := containerRequest(t)
+			if _, err := (&Runner{}).Verify(req); err != nil {
+				t.Fatalf("baseline refused: %v", err)
+			}
+			tc.mutate(&req)
+			if _, err := (&Runner{}).Verify(req); !errors.Is(err, tc.want) {
+				t.Fatalf("verify: %v, want %v", err, tc.want)
+			}
+		})
+	}
+
+	req := containerRequest(t)
+	dir := realTemp(t)
+	req.SessionDir = dir
+	req.Env = map[string]string{"RUN_DIR": dir}
+	docker := agenttest.Docker(t, "image", "RUN_DIR")
+	r := Runner{ClaudeBin: agenttest.Script(t, "claude", `echo '{"type":"result","subtype":"success","result":"ok"}'`), DockerBin: docker}
+	if _, err := r.Run(context.Background(), req); !errors.Is(err, ErrNotGranted) {
+		t.Fatalf("run: %v, want ErrNotGranted", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "docker-args.txt")); !os.IsNotExist(err) {
+		t.Fatal("a container was started for a refused request")
+	}
+	if entries, _ := os.ReadDir(filepath.Dir(docker)); len(entries) != 1 {
+		t.Fatalf("the engine was called: %v", entries)
+	}
+}

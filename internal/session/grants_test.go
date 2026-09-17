@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -48,6 +49,44 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
 				t.Errorf("inherited ungranted %s", l)
 			}
 		}
+	}
+}
+
+// Another provider's credentials never reach an agent through a toolchain
+// entry: GOOGLE_* is claude's and opencode's, not codex's.
+func TestCodexDoesNotInheritGoogleCredentials(t *testing.T) {
+	t.Setenv("GOOGLE_API_KEY", "google-secret")
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "/creds.json")
+	t.Setenv("GOPATH", "/go")
+	r := &Runner{StateDir: t.TempDir()}
+	role := config.ResolvedRole{Name: "developer", Agent: agent.AgentCodex}
+	req := r.prepare(Request{Profile: ProfileForRole(role), Workspace: vcs.Directory(t.TempDir())}, t.TempDir())
+	turn, err := (&agent.Runner{}).Verify(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(turn.Env, "GOPATH=/go") {
+		t.Error("GOPATH missing")
+	}
+	for _, kv := range turn.Env {
+		if strings.HasPrefix(kv, "GOOGLE_") {
+			t.Errorf("codex inherited %s", kv)
+		}
+	}
+}
+
+// A request its grants refuse leaves no session directory behind.
+func TestRefusedSessionLeavesNoDirectory(t *testing.T) {
+	r := newRunner(t, fakeClaude(t, `touch "$BEES_SESSION_DIR/ran"`))
+	role := config.ResolvedRole{Name: "developer", Agent: agent.AgentCodex, Sandbox: config.SandboxNone}
+	profile := ProfileForRole(role)
+	profile.VCSAccess = false
+	_, err := r.Run(context.Background(), Request{Name: "refused", Profile: profile, Workspace: vcs.Directory(t.TempDir())})
+	if !errors.Is(err, agent.ErrUnsupported) {
+		t.Fatalf("run: %v, want ErrUnsupported", err)
+	}
+	if entries, _ := os.ReadDir(r.SessionsDir); len(entries) != 0 {
+		t.Fatalf("refused session left %v", entries)
 	}
 }
 

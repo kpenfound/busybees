@@ -152,6 +152,11 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 		return nil, fmt.Errorf("%s: %w", p.Name, err)
 	}
 	core := r.coreRunner()
+	// Verified before the session directory exists, so a refused request
+	// leaves nothing behind; core.Run verifies the final request again.
+	if _, err := core.Verify(r.prepare(req, req.SessionDir)); err != nil {
+		return nil, fmt.Errorf("%s: %w", p.Name, err)
+	}
 	if req.SessionDir == "" {
 		dir, err := core.NewSessionDir(req.Name)
 		if err != nil {
@@ -242,7 +247,9 @@ var HostEnv = []string{
 	"LANG", "LANGUAGE", "LC_*", "TZ", "XDG_*", "__CF_USER_TEXT_ENCODING",
 	"http_proxy", "https_proxy", "no_proxy", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY",
 	"SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE",
-	"GO*", "CGO_*", "DOCKER_*", "DAGGER_*", "NODE_*", "NPM_CONFIG_*", "NVM_*", "CARGO_*", "RUSTUP_*",
+	"GOPATH", "GOROOT", "GOBIN", "GOFLAGS", "GOPROXY", "GOPRIVATE", "GONOPROXY", "GONOSUMDB", "GONOSUMCHECK",
+	"GOSUMDB", "GOINSECURE", "GOCACHE", "GOMODCACHE", "GOTMPDIR", "GOTOOLCHAIN", "GOWORK", "GOENV", "GOOS", "GOARCH",
+	"GOEXPERIMENT", "GODEBUG", "GOAMD64", "GOARM", "GOARM64", "GOTELEMETRY", "GOGC", "GOMAXPROCS", "CGO_*", "DOCKER_*", "DAGGER_*", "NODE_*", "NPM_CONFIG_*", "NVM_*", "CARGO_*", "RUSTUP_*",
 	"JAVA_HOME", "PYTHON*", "VIRTUAL_ENV", "HOMEBREW_*", "SDKROOT", "DEVELOPER_DIR",
 }
 

@@ -124,9 +124,6 @@ func (h HostBoundary) Verify(req Request) (*Turn, error) {
 		return nil, err
 	}
 	p := req.Profile
-	if turn.Tools != nil && p.Agent != "" && p.Agent != AgentClaude {
-		return nil, fmt.Errorf("%w: agent %q cannot restrict its built-in tools; grant %q", ErrUnsupported, p.Agent, ToolsAll)
-	}
 	root := findMount(turn.Mounts, string(filepath.Separator))
 	switch p.Sandbox {
 	case "", SandboxNone:
@@ -267,6 +264,9 @@ func verifyCommon(req Request) (*Turn, error) {
 		}
 	}
 	if !all {
+		if p.Agent != "" && p.Agent != AgentClaude {
+			return nil, fmt.Errorf("%w: agent %q cannot restrict its built-in tools; grant %q", ErrUnsupported, p.Agent, ToolsAll)
+		}
 		turn.Tools = tools
 		if turn.Tools == nil {
 			turn.Tools = []string{}
