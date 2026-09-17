@@ -98,11 +98,12 @@ and the container gets its grants and nothing else:
 - Binds: every granted mount at its real path and at the path it was
   granted by, `--mount ...,readonly` for `ReadOnly`. `/` is refused, and so
   is a path the engine's `--mount` cannot take (a comma, quote or newline).
-- Paths the runner uses must lie inside a grant: the working directory, the
-  session directory (or `Runner.SessionsDir` before it exists),
-  `Runner.MountDirs` and the workspace's `VCS()` mounts read-write, and
-  `Runner.SkillMountDirs` for a profile with skills. Otherwise the request
-  is refused with `ErrNotGranted`.
+- Paths the runner uses must lie inside a grant, or the request is refused
+  with `ErrNotGranted`:
+  - read-write: the working directory, `Runner.MountDirs` and the
+    workspace's `VCS()` mounts;
+  - any access: the session directory (or `Runner.SessionsDir` before it
+    exists) and, for a profile with skills, `Runner.SkillMountDirs`.
 - Environment: the agent's credential (`AgentCredentials`) from the host
   when granted, the variables the request sets, `ContainerEnv` and, with
   `VCS`, `VCSContainerEnv`, each of which must be granted, then `HOME`. No

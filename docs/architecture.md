@@ -1039,9 +1039,10 @@ counted from the transcript's assistant messages or completed items instead.
   filesystem, so it is granted `/` read-write and version control;
   `sandbox = "claude"` is granted `/` read-only and the worktree and state
   directory read-write; `sandbox = "container"` is granted the worktree,
-  the state directory, the sessions directory and the repository's `.git`
-  read-write and, for a role with skills, the skills cache read-only; the
-  container is given those paths and nothing else of the host.
+  the state directory and the sessions directory read-write, the
+  repository's `.git` read-write for a role with version control and, for
+  a role with skills, the skills cache read-only; the container is given
+  those paths and nothing else of the host.
 - **Environment.** A session inherits only the host variables its grants
   list (see [Exported into every session](configuration.md#exported-into-every-session)),
   and every inherited `BEES_*` variable is dropped, so a
