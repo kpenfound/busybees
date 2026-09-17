@@ -185,15 +185,32 @@ func costCell(g costGroup) string {
 }
 
 // todayTotal sums whatever the ledger recorded since the start of the
-// current local day.
-func todayTotal(store *state.Store, now time.Time) costGroup {
+// current local day. A ledger that cannot be read is the error, with an
+// empty total beside it: the line and the JSON report the error rather than
+// a day that cost nothing.
+func todayTotal(store *state.Store, now time.Time) (costGroup, error) {
 	entries, err := store.ReadLedger(startOfDay(now))
 	if err != nil {
-		return costGroup{Group: "today"}
+		return costGroup{Group: "today"}, err
 	}
 	_, total := groupCost(entries, byRole)
 	total.Group = "today"
-	return total
+	return total, nil
+}
+
+// todayReport is the `today` object of `bees status --json`: the total, or
+// why there is none.
+type todayReport struct {
+	costGroup
+	Error string `json:"error,omitempty"`
+}
+
+func todayJSON(total costGroup, err error) todayReport {
+	r := todayReport{costGroup: total}
+	if err != nil {
+		r.Error = err.Error()
+	}
+	return r
 }
 
 func startOfDay(t time.Time) time.Time {
@@ -203,8 +220,12 @@ func startOfDay(t time.Time) time.Time {
 }
 
 // todayText is the `bees status` line summarising the day so far. Sessions
-// that reported no cost are counted and named, and not in the dollars.
-func todayText(total costGroup) string {
+// that reported no cost are counted and named, and not in the dollars. A
+// ledger that could not be read is named instead of a total.
+func todayText(total costGroup, err error) string {
+	if err != nil {
+		return "today: ledger unreadable: " + err.Error()
+	}
 	line := fmt.Sprintf("today: %s, %s, $%.2f",
 		text.Count(total.Sessions, "session"), text.Count(total.Turns, "turn"), total.CostUSD)
 	if total.Unknown > 0 {

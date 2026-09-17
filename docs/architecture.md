@@ -1301,15 +1301,16 @@ initialization and mailbox sends may create it.
 `ledger.jsonl` is the factory's accounting: one line for every session that
 finishes, whatever it reported, and `bees cost` sums it. A session whose agent
 reported no cost is entered with `cost_unknown` set rather than as a free one;
-a review's one entry is unknown when any of its sessions was. Lines are
-written with a single append so concurrent workers cannot interleave. The
-ledger is read fail-closed: a line that does not parse fails the read with the
-file and the line, and no entries, unless it is the final line, which a crash
-mid-write leaves and which is ignored. Every full pass, before the daily
-budget is summed, removes the lines older than `scheduler.retention_period`,
-and never one from the last 24 hours, which the daily budget reads. The trim
-writes the kept lines to a temporary file renamed over the ledger, only when
-there is a line to remove, and keeps a line it cannot date where it is.
+a review's one entry is unknown when any of its sessions was, or when it
+failed without a brief. Lines are written with a single append so concurrent
+workers cannot interleave. The ledger is read fail-closed: a line that does
+not parse fails the read with the file and the line, and no entries, unless
+it is the final line, which a crash mid-write leaves and which is ignored.
+Every full pass, before the daily budget is summed, removes the lines older
+than `scheduler.retention_period`, and never one from the last 24 hours,
+which the daily budget reads. The trim writes the kept lines to a temporary
+file renamed over the ledger, only when there is a line to remove, and keeps
+a line it cannot date where it is.
 
 `<role>.json` carries what the scheduler remembers about a role between runs:
 when the singleton roles last ran (`last_run`) and last looked for work

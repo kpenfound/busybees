@@ -1045,7 +1045,11 @@ midnight, summed from the
 ```
 today: 23 sessions, 412 turns, $8.12
 today: 23 sessions, 412 turns, $8.12 (2 sessions of unknown cost)
+today: ledger unreadable: .bees/ledger.jsonl line 3 does not parse: invalid character 'c' looking for beginning of value
 ```
+
+The last form is a ledger `bees cost` would fail on (`error` under `today` in
+`--json`); the rest of the status is printed as usual.
 
 With [`scheduler.max_cost_per_day`](configuration.md#cost-budgets) configured,
 the scheduler line itself carries the rolling 24-hour spend against that

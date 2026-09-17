@@ -50,8 +50,9 @@ func (s *Scheduler) recordWorkCost(ref work.Ref, cost float64) {
 // that was thrown away but not the ledger, as far as the ledger still reaches
 // back: trimLedger keeps only max(scheduler.retention_period, 24h) of it. A
 // session that reported no cost counts as a session and adds nothing to the
-// total. The error is a ledger that could not be read when the seed needed
-// it, and it is the caller's to fail closed on.
+// total. The error is the work's bookkeeping, or the ledger when the seed
+// needed it, that could not be read, and it is the caller's to fail closed
+// on.
 func (s *Scheduler) issueSpend(issue int) (float64, int, error) {
 	return s.workSpend(ghwork.New(issue, 0))
 }
@@ -84,9 +85,10 @@ func (s *Scheduler) workSpend(ref work.Ref) (float64, int, error) {
 // scheduler.max_cost_per_issue, and the escalation text naming the spend.
 // The developer worker calls it between stages, so the session that took the
 // issue over its budget has finished and its work is on the branch. A spend
-// that cannot be read is over budget too: the budget cannot be enforced
-// against a total nobody can vouch for, so the worker stops and the text
-// says what could not be read.
+// that cannot be read, from the bookkeeping or the ledger it is seeded
+// from, is over budget too: the budget cannot be enforced against a total
+// nobody can vouch for, so the worker stops and the text says what could
+// not be read.
 func (s *Scheduler) overIssueBudget(issue int) (string, bool) {
 	budget := s.cfg.Scheduler.MaxCostPerIssue
 	if budget <= 0 {
@@ -94,7 +96,7 @@ func (s *Scheduler) overIssueBudget(issue int) (string, bool) {
 	}
 	cost, sessions, err := s.issueSpend(issue)
 	if err != nil {
-		return fmt.Sprintf("Issue #%d cannot be checked against the `max_cost_per_issue` budget of $%.2f: %v. Fix the ledger or take it from here.",
+		return fmt.Sprintf("Issue #%d cannot be checked against the `max_cost_per_issue` budget of $%.2f: %v. Repair what could not be read or take it from here.",
 			issue, budget, err), true
 	}
 	if !ops.OverBudget(cost, budget) {

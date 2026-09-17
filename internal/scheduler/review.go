@@ -242,11 +242,12 @@ func (s *Scheduler) verifyReview(log *slog.Logger, bk state.WorkState, pr int) (
 // recordReview enters what the review's sessions cost in the ledger, as one
 // entry under name, and charges it to the issue: the distiller's cost from
 // the brief and each angle's from its run, which are what the CLIs
-// reported. A review that failed before the brief cost nothing that can be
-// known, and is entered with an outcome of failed and no cost. A session
-// that reported no cost, or an angle that failed and so reported nothing,
-// leaves the entry's cost unknown: what the entry holds is then only what
-// the other sessions cost.
+// reported. A session that reported no cost, or an angle that failed and
+// so reported nothing, leaves the entry's cost unknown: what the entry
+// holds is then only what the other sessions cost. A review that failed
+// without a brief is entered as failed with its cost unknown too: the
+// distiller may have run and spent before it failed, and nothing says
+// whether it did.
 func (s *Scheduler) recordReview(name string, issue, pr int, artifact string, started time.Time, a *review.Artifact, runErr error) {
 	e := state.LedgerEntry{
 		Time:       s.now(),
@@ -263,6 +264,8 @@ func (s *Scheduler) recordReview(name string, issue, pr int, artifact string, st
 	if brief != nil {
 		e.CostUSD += brief.CostUSD
 		e.CostUnknown = brief.CostUnknown
+	} else if runErr != nil {
+		e.CostUnknown = true
 	}
 	for _, run := range runs {
 		e.CostUSD += run.CostUSD

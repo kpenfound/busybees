@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"maps"
 	"os"
@@ -362,19 +363,67 @@ func TestAFailedAngleIsSkippedAndAFailedReviewEscalates(t *testing.T) {
 	if len(comments) != 1 || !strings.Contains(comments[0], "The review of pull request #201 could not run: every angle failed, so nobody reviewed acme/widgets#201") || !strings.Contains(comments[0], "`roles.reviewer`") {
 		t.Errorf("escalation comment: %v", comments)
 	}
-	// What the sessions cost before the review failed is in the ledger.
+	// What the sessions cost before the review failed is in the ledger,
+	// and the entry's cost is unknown: the angles that failed reported
+	// nothing, so the brief's cost is not what the review cost.
 	ledger, err := h.store.ReadLedger(time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var failed int
 	for _, e := range ledger {
-		if e.Session == "reviewer-pr-201-r1" && e.Outcome == OutcomeFailed && e.CostUSD == 0.25 && ghwork.Issue(e.Work) == 1 {
+		if e.Session == "reviewer-pr-201-r1" && e.Outcome == OutcomeFailed && e.CostUSD == 0.25 && e.CostUnknown && ghwork.Issue(e.Work) == 1 {
 			failed++
 		}
 	}
 	if failed != 1 {
-		t.Errorf("ledger holds %d failed review entries with the brief's cost, want 1:\n%+v", failed, ledger)
+		t.Errorf("ledger holds %d failed review entries with the brief's cost and the cost unknown, want 1:\n%+v", failed, ledger)
+	}
+}
+
+// TestRecordReviewEntersAnUnknownCost: a review's one ledger entry is known
+// only when every session of it reported a cost; the distiller or an angle
+// reporting none, an angle failing, or the review failing without a brief
+// leaves it unknown, with the costs that were reported still summed.
+func TestRecordReviewEntersAnUnknownCost(t *testing.T) {
+	known := func(angle string) review.AngleRun {
+		return review.AngleRun{Angle: angle, SessionID: "sess-" + angle, Turns: 2, CostUSD: 0.25}
+	}
+	for _, tc := range []struct {
+		name    string
+		a       *review.Artifact
+		runErr  error
+		cost    float64
+		unknown bool
+		outcome string
+	}{
+		{"every session reported a cost",
+			&review.Artifact{Brief: &review.Brief{CostUSD: 0.5}, Runs: []review.AngleRun{known("general"), known("docs")}},
+			nil, 1.0, false, "reviewed"},
+		{"the distiller reported none",
+			&review.Artifact{Brief: &review.Brief{CostUnknown: true}, Runs: []review.AngleRun{known("general"), known("docs")}},
+			nil, 0.5, true, "reviewed"},
+		{"one angle reported none",
+			&review.Artifact{Brief: &review.Brief{CostUSD: 0.5}, Runs: []review.AngleRun{known("general"), {Angle: "docs", SessionID: "sess-docs", Turns: 3, CostUnknown: true}}},
+			nil, 0.75, true, "reviewed"},
+		{"one angle failed",
+			&review.Artifact{Brief: &review.Brief{CostUSD: 0.5}, Runs: []review.AngleRun{known("general"), {Angle: "docs", Error: "the model is overloaded"}}},
+			nil, 0.75, true, "reviewed"},
+		{"the review failed without a brief",
+			nil, errors.New("the distiller session produced no brief"), 0, true, OutcomeFailed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, baseTOML)
+			h.sched.recordReview("reviewer-pr-201-r1", 1, 201, t.TempDir(), h.sched.now(), tc.a, tc.runErr)
+			entries, err := h.store.ReadLedger(time.Time{})
+			if err != nil || len(entries) != 1 {
+				t.Fatalf("ledger: %+v, %v", entries, err)
+			}
+			e := entries[0]
+			if e.CostUSD != tc.cost || e.CostUnknown != tc.unknown || e.Outcome != tc.outcome || e.Role != config.RoleReviewer {
+				t.Errorf("entry = %+v, want $%.2f, unknown %v, %s", e, tc.cost, tc.unknown, tc.outcome)
+			}
+		})
 	}
 }
 

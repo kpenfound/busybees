@@ -15,6 +15,8 @@ type fakeAgent struct {
 	answer string
 	id     string
 	cost   float64
+	// noCost makes the session report no cost, the way codex does.
+	noCost bool
 	err    error
 	req    AgentRequest
 	runs   int
@@ -26,7 +28,7 @@ func (f *fakeAgent) Run(_ context.Context, req AgentRequest) (*AgentResult, erro
 	if f.err != nil {
 		return nil, f.err
 	}
-	return &AgentResult{ID: f.id, Text: f.answer, Turns: 2, CostUSD: f.cost, CostKnown: true}, nil
+	return &AgentResult{ID: f.id, Text: f.answer, Turns: 2, CostUSD: f.cost, CostKnown: !f.noCost}, nil
 }
 
 func testBundle() *Bundle[testRef] {
@@ -73,6 +75,19 @@ func TestTheDistillerReadsTheBundleAndWritesTheBrief(t *testing.T) {
 	}
 	if !reflect.DeepEqual(brief, want) {
 		t.Errorf("brief =\n%+v\nwant\n%+v", brief, want)
+	}
+}
+
+// A distiller session that reported no cost leaves the brief's cost
+// unknown, so nothing counts it as a free session.
+func TestADistillerThatReportedNoCostLeavesTheBriefUnknown(t *testing.T) {
+	agent := &fakeAgent{id: "sess-1", answer: answeredBrief, noCost: true}
+	brief, err := (&Distiller[testRef]{Agent: agent, Dir: t.TempDir()}).Distill(context.Background(), testBundle())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !brief.CostUnknown || brief.CostUSD != 0 {
+		t.Errorf("brief cost = $%.2f, unknown %v; want unknown", brief.CostUSD, brief.CostUnknown)
 	}
 }
 
