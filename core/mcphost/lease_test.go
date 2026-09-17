@@ -177,10 +177,10 @@ func TestStartMemoryRefusesAfterTheContextEnds(t *testing.T) {
 	callCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
 	defer stop()
 	for callEcho(callCtx, c, "pilot_echo") == nil {
-		if callCtx.Err() != nil {
-			t.Fatal("a session outlived the context")
-		}
 		time.Sleep(20 * time.Millisecond)
+	}
+	if callCtx.Err() != nil {
+		t.Fatal("a session outlived the context")
 	}
 }
 
