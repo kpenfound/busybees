@@ -109,8 +109,9 @@ angles read it, so a change that regenerates a protobuf binding is sized
 and reviewed by what was written by hand. A file is generated when any of
 these says so:
 
-- a line `// Code generated ... DO NOT EDIT.` in its first 64 lines, on the
-  side the change leaves it (the old side for a file the change deleted);
+- a line `// Code generated ... DO NOT EDIT.` in its first 64 lines (and
+  its first 16 KiB), on the side the change leaves it (the old side for a
+  file the change deleted);
 - `.gitattributes` in the checkout marks it `linguist-generated`, as git
   reads the file (`git check-attr`);
 - a pattern in `context.toml`'s `generated` list matches it.

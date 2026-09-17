@@ -9,6 +9,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	core "github.com/kpenfound/busybees/core/review"
@@ -20,8 +21,9 @@ import (
 // them and sizes the change by them. Before the distiller sees the diff,
 // excludeGenerated takes the generated files' sections out of it, and
 // what was taken out travels with the bundle (Bundle.Excluded) into the
-// brief, where every session reads what was not reviewed and the judge
-// drops a finding anchored there (core/review's Exclude).
+// brief, where every session reads what was not reviewed, and Exclude
+// (core/review's) drops a finding anchored there once the judge has
+// merged the angles' findings.
 //
 // A file is generated when any of three things says so:
 //
@@ -185,29 +187,48 @@ func splitDiff(diff string) []diffSection {
 }
 
 // headerPaths reads the two paths out of a `diff --git a/old b/new` line.
-// The paths are the same for a file that was not renamed, which is where
-// the line splits; a renamed file's split is the last " b/", which a path
-// with " b/" in it can put in the wrong place, and the "---"/"+++" lines
-// that follow set the paths right when the section has hunks.
+// A path git quoted (core.quotePath: a character outside ASCII, a space
+// escaped, a quote) is between double quotes with its escapes, and each
+// side is quoted on its own (unquotePath). Unquoted, the paths are the
+// same for a file that was not renamed, which is where the line splits; a
+// renamed file's split is the last " b/", which a path with " b/" in it
+// can put in the wrong place, and the "---"/"+++" lines that follow set
+// the paths right when the section has hunks.
 func headerPaths(rest string) (oldPath, newPath string) {
 	rest = strings.TrimSpace(rest)
-	if !strings.HasPrefix(rest, "a/") {
+	var first, second string
+	switch {
+	case strings.HasPrefix(rest, `"`):
+		quoted, err := strconv.QuotedPrefix(rest)
+		if err != nil {
+			return "", ""
+		}
+		first, second = unquotePath(quoted), unquotePath(strings.TrimSpace(rest[len(quoted):]))
+	case strings.HasSuffix(rest, `"`):
+		i := strings.LastIndex(rest, ` "`)
+		if i < 0 {
+			return "", ""
+		}
+		first, second = rest[:i], unquotePath(rest[i+1:])
+	default:
+		if mid := len(rest) / 2; len(rest)%2 == 1 && rest[mid] == ' ' && rest[:mid] == "a"+rest[mid+2:] {
+			first, second = rest[:mid], rest[mid+1:]
+			break
+		}
+		i := strings.LastIndex(rest, " b/")
+		if i < 0 {
+			return "", ""
+		}
+		first, second = rest[:i], rest[i+1:]
+	}
+	if !strings.HasPrefix(first, "a/") || !strings.HasPrefix(second, "b/") {
 		return "", ""
 	}
-	if mid := len(rest) / 2; len(rest)%2 == 1 && rest[mid] == ' ' && strings.HasPrefix(rest[mid+1:], "b/") && rest[2:mid] == rest[mid+3:] {
-		return rest[2:mid], rest[2:mid]
-	}
-	i := strings.LastIndex(rest, " b/")
-	if i < 0 {
-		return "", ""
-	}
-	return rest[2:i], rest[i+len(" b/"):]
+	return first[len("a/"):], second[len("b/"):]
 }
 
 // sidePath is the path on a "---" or "+++" line without its prefix, and ""
-// for /dev/null, the side a file added or deleted does not exist on. A
-// path git quoted, for a character it escapes, is left as it is between
-// its quotes.
+// for /dev/null, the side a file added or deleted does not exist on.
 func sidePath(s, prefix string) string {
 	s = strings.TrimSpace(s)
 	if i := strings.Index(s, "\t"); i >= 0 {
@@ -216,18 +237,39 @@ func sidePath(s, prefix string) string {
 	if s == "/dev/null" {
 		return ""
 	}
-	s = strings.Trim(s, `"`)
-	return strings.TrimPrefix(s, prefix)
+	return strings.TrimPrefix(unquotePath(s), prefix)
+}
+
+// unquotePath is a path as git spells it with its quotes and escapes
+// undone: git quotes a path with a character it escapes the way C does
+// (`"gen/\303\251.pb.go"`), which is the syntax a Go string literal has.
+// A quoted path Go cannot read is returned without its quotes and with its
+// escapes as they were, and an unquoted one as it is.
+func unquotePath(s string) string {
+	if !strings.HasPrefix(s, `"`) {
+		return s
+	}
+	if u, err := strconv.Unquote(s); err == nil {
+		return u
+	}
+	return strings.Trim(s, `"`)
 }
 
 // hasGeneratedHeader reports whether the file s is about has generatedHeader
 // in its head: read from the checkout on the new side, and from the
-// removed lines the diff holds for a file the change deleted.
+// removed lines the diff holds for a file the change deleted. Only a
+// regular file is read: the path comes out of the pull request under
+// review, and a symlink it adds can point anywhere on the machine, a FIFO
+// would block the read, and neither is a generated file.
 func hasGeneratedHeader(checkout string, s *diffSection) bool {
 	if s.newPath == "" {
 		return headerIn(s.removedLines)
 	}
-	f, err := os.Open(filepath.Join(checkout, filepath.FromSlash(s.newPath)))
+	name := filepath.Join(checkout, filepath.FromSlash(s.newPath))
+	if st, err := os.Lstat(name); err != nil || !st.Mode().IsRegular() {
+		return false
+	}
+	f, err := os.Open(name)
 	if err != nil {
 		return false
 	}
@@ -252,9 +294,9 @@ func headerIn(lines []string) bool {
 }
 
 // generatedAttributes asks git which of paths the checkout's attributes
-// mark generated: linguist-generated set, or set to true. It runs git once
-// for every path, and an error is git failing to answer at all, which a
-// directory that is not a checkout does.
+// mark generated: linguist-generated set, or set to true. It runs git
+// once, with every path on its standard input, and an error is git failing
+// to answer at all, which a directory that is not a checkout does.
 func generatedAttributes(ctx context.Context, checkout string, paths []string) (map[string]bool, error) {
 	marked := map[string]bool{}
 	if len(paths) == 0 {
@@ -329,14 +371,25 @@ func matchSegments(pattern, segments []string) bool {
 	return len(segments) == 0
 }
 
-// generatedErrs checks context.toml's generated list: each entry a
-// relative path or glob inside the repository (patternErrs) that
-// path.Match can read.
+// generatedErrs checks context.toml's generated list: each entry a path
+// or glob relative to the repository root, staying inside the repository,
+// that path.Match can read. The list is not checked by patternErrs
+// because its entries are relative to the repository root, not to the
+// directory context.toml is in, and the messages say which.
 func generatedErrs(patterns []string) []string {
-	errs := patternErrs("generated", patterns)
+	var errs []string
 	for i, pattern := range patterns {
-		if _, err := path.Match(pattern, ""); err != nil {
-			errs = append(errs, fmt.Sprintf("generated[%d] %q is not a valid pattern: %v", i, pattern, err))
+		switch {
+		case strings.TrimSpace(pattern) == "":
+			errs = append(errs, fmt.Sprintf("generated[%d] is empty: give it a path or a glob, or drop the entry", i))
+		case filepath.IsAbs(pattern):
+			errs = append(errs, fmt.Sprintf("generated[%d] %q must be relative to the repository root", i, pattern))
+		case !filepath.IsLocal(pattern):
+			errs = append(errs, fmt.Sprintf("generated[%d] %q must stay inside the repository", i, pattern))
+		default:
+			if _, err := path.Match(pattern, ""); err != nil {
+				errs = append(errs, fmt.Sprintf("generated[%d] %q is not a valid pattern: %v", i, pattern, err))
+			}
 		}
 	}
 	return errs

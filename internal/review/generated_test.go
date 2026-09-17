@@ -2,9 +2,13 @@ package review
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // section is one file's part of a diff for these tests: a header and one
@@ -39,7 +43,11 @@ func TestSplitDiffNamesEachFileAndCountsItsLines(t *testing.T) {
 		section("", "added.go", "+package added") +
 		section("gone.go", "", "-"+generatedLine, "-package gone") +
 		"diff --git a/old name.go b/new name.go\nsimilarity index 100%\nrename from old name.go\nrename to new name.go\n" +
-		"diff --git a/img.png b/img.png\nBinary files a/img.png and b/img.png differ\n"
+		"diff --git a/img.png b/img.png\nBinary files a/img.png and b/img.png differ\n" +
+		// A path with a character outside ASCII, as git quotes it with
+		// core.quotePath on: escaped, between quotes, each side on its own.
+		"diff --git \"a/gen/\\303\\251.pb.go\" \"b/gen/\\303\\251.pb.go\"\n--- \"a/gen/\\303\\251.pb.go\"\n+++ \"b/gen/\\303\\251.pb.go\"\n@@ -1 +1 @@\n-old\n+new\n" +
+		"diff --git a/plain.go \"b/caf\\303\\251 bar.go\"\nsimilarity index 100%\nrename from plain.go\nrename to \"caf\\303\\251 bar.go\"\n"
 	got := splitDiff(diff)
 	type want struct {
 		oldPath, newPath string
@@ -51,6 +59,8 @@ func TestSplitDiffNamesEachFileAndCountsItsLines(t *testing.T) {
 		{"gone.go", "", 0, 2},
 		{"old name.go", "new name.go", 0, 0},
 		{"img.png", "img.png", 0, 0},
+		{"gen/é.pb.go", "gen/é.pb.go", 1, 1},
+		{"plain.go", "café bar.go", 0, 0},
 	}
 	if len(got) != len(wants) {
 		t.Fatalf("%d sections, want %d: %+v", len(got), len(wants), got)
@@ -64,7 +74,11 @@ func TestSplitDiffNamesEachFileAndCountsItsLines(t *testing.T) {
 	if got[2].removedLines[0] != generatedLine {
 		t.Errorf("a deleted file's removed lines %q, want its old head", got[2].removedLines)
 	}
-	if joined := got[0].text + got[1].text + got[2].text + got[3].text + got[4].text; joined != diff {
+	var joined string
+	for _, s := range got {
+		joined += s.text
+	}
+	if joined != diff {
 		t.Errorf("the sections do not add up to the diff:\n%s", joined)
 	}
 }
@@ -158,13 +172,50 @@ func TestWithoutACheckoutOnlyThePatternsAreCheckedAndTheReviewSaysSo(t *testing.
 		t.Errorf("filtered diff:\n%s", filtered)
 	}
 	// A checkout that is not a git repository costs the attributes check,
-	// not the review, and the header check still runs.
-	filtered, excluded, partial = excludeGenerated(context.Background(), diff, t.TempDir(), nil)
+	// not the review, and the header check still runs over its files.
+	notGit := t.TempDir()
+	writeFile(t, notGit, "widget.pb.go", generatedLine+"\npackage widget\n")
+	filtered, excluded, partial = excludeGenerated(context.Background(), diff, notGit, nil)
 	if !strings.Contains(partial, ".gitattributes of the checkout could not be read") {
 		t.Errorf("partial = %q, want the attributes read failure", partial)
 	}
-	if len(excluded) != 0 || !strings.Contains(filtered, "schema.sql") {
-		t.Errorf("excluded %+v with no checkout files to read", excluded)
+	want := []ExcludedFile{{Path: "widget.pb.go", Added: 2, Reason: ReasonHeader}}
+	if !reflect.DeepEqual(excluded, want) {
+		t.Errorf("excluded %+v, want the header file alone: %+v", excluded, want)
+	}
+	if strings.Contains(filtered, "widget.pb.go") || !strings.Contains(filtered, "schema.sql") {
+		t.Errorf("filtered diff:\n%s", filtered)
+	}
+}
+
+// The path of a file the diff adds comes out of the pull request under
+// review: a symlink is not followed, wherever it points, and a FIFO is not
+// opened, which would block the review for good.
+func TestTheHeaderCheckReadsRegularFilesAlone(t *testing.T) {
+	dir := checkoutWithGenerated(t)
+	if err := os.Symlink(filepath.Join(dir, "widget.pb.go"), filepath.Join(dir, "link.go")); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(dir, "fifo.go"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	diff := section("", "link.go", "+widget.pb.go") + section("", "fifo.go", "+")
+	type result struct {
+		filtered string
+		excluded []ExcludedFile
+	}
+	done := make(chan result, 1)
+	go func() {
+		filtered, excluded, _ := excludeGenerated(context.Background(), diff, dir, nil)
+		done <- result{filtered, excluded}
+	}()
+	select {
+	case got := <-done:
+		if len(got.excluded) != 0 || got.filtered != diff {
+			t.Errorf("excluded %+v, filtered:\n%s\nwant neither file excluded", got.excluded, got.filtered)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("excludeGenerated did not return: a FIFO or a symlink was opened")
 	}
 }
 
@@ -235,7 +286,7 @@ func TestGeneratedPatternsAreValidated(t *testing.T) {
 	if err == nil {
 		t.Fatal("bad patterns parsed")
 	}
-	for _, want := range []string{"generated[0] is empty", "generated[1] \"/abs/*.go\" must be relative", "generated[2] \"../*.go\" must stay inside", "generated[3] \"[\" is not a valid pattern"} {
+	for _, want := range []string{"generated[0] is empty", "generated[1] \"/abs/*.go\" must be relative to the repository root", "generated[2] \"../*.go\" must stay inside the repository", "generated[3] \"[\" is not a valid pattern"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not say %q", err, want)
 		}

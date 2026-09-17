@@ -16,6 +16,9 @@ func Judge(runs []AngleRun, project *Project) *Findings {
 func Merge(findings []Finding, project *Project) []Finding {
 	return core.Merge(findings, project.core(), compareFindingsText)
 }
+func Exclude(findings []Finding, excluded []ExcludedFile) (kept, dropped []Finding) {
+	return core.Exclude(findings, excluded)
+}
 func sameFinding(a, b *Finding) bool { return core.SameFinding(a, b, compareFindingsText) }
 
 var compareFindings = core.CompareFindings

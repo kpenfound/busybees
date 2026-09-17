@@ -8,7 +8,6 @@ import (
 	"slices"
 	"strings"
 
-	core "github.com/kpenfound/busybees/core/review"
 	"github.com/kpenfound/busybees/internal/text"
 )
 
@@ -322,7 +321,7 @@ func (q *Queue) requeue(angle, sessionID, text string) (string, *Findings, []Fin
 	}
 	obj, _ := jsonObject(text)
 	text = strings.TrimSpace(emptyFence.ReplaceAllString(strings.Replace(text, obj, "", 1), ""))
-	fresh, _ = core.Exclude(fresh, q.excluded())
+	fresh, _ = Exclude(fresh, q.excluded())
 	fresh, silenced := Filter(Merge(fresh, q.Project), q.rules(), q.repo())
 	have := q.Artifact.Findings
 	findings := &Findings{

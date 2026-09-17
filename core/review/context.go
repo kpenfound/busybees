@@ -30,7 +30,7 @@ type Item struct {
 // review saw it, a generated one, and what the change did to it: the
 // number of lines it added and removed there, and why the file was
 // excluded, in the caller's words. The brief lists them so every session
-// knows what nobody reviewed, and the judge drops a finding anchored in one.
+// knows what nobody reviewed, and Exclude drops a finding anchored in one.
 type ExcludedFile struct {
 	Path    string `json:"path"`
 	Added   int    `json:"added"`
