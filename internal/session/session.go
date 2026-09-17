@@ -152,6 +152,19 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 		return nil, fmt.Errorf("%s: %w", p.Name, err)
 	}
 	core := r.coreRunner()
+	if p.Sandbox == agent.SandboxContainer {
+		// A granted directory must exist to be verified; the runner and
+		// the skills fill these later.
+		dirs := nonempty(r.SessionsDir)
+		if r.Skills != nil && len(p.Skills) > 0 {
+			dirs = append(dirs, r.Skills.CacheDir)
+		}
+		for _, d := range dirs {
+			if err := os.MkdirAll(d, 0o755); err != nil {
+				return nil, err
+			}
+		}
+	}
 	// Verified before the session directory exists, so a refused request
 	// leaves nothing behind; core.Run verifies the final request again.
 	if _, err := core.Verify(r.prepare(req, req.SessionDir)); err != nil {
@@ -313,9 +326,22 @@ func (r *Runner) grants(req Request) *agent.Grants {
 			g.Mounts = append(g.Mounts, agent.Mount{Path: d, Access: agent.ReadWrite})
 		}
 	case agent.SandboxContainer:
+		// The container sees these and nothing else of the host.
 		g.Mounts = []agent.Mount{{Path: dir, Access: agent.ReadWrite}}
-		if r.StateDir != "" {
-			g.Mounts = append(g.Mounts, agent.Mount{Path: r.StateDir, Access: agent.ReadWrite})
+		for _, d := range []string{r.StateDir, r.SessionsDir} {
+			if d != "" {
+				g.Mounts = append(g.Mounts, agent.Mount{Path: d, Access: agent.ReadWrite})
+			}
+		}
+		if p.VCSAccess && req.Workspace != nil {
+			if access := req.Workspace.VCS(); access != nil {
+				for _, d := range access.Mounts {
+					g.Mounts = append(g.Mounts, agent.Mount{Path: d, Access: agent.ReadWrite})
+				}
+			}
+		}
+		if r.Skills != nil && len(p.Skills) > 0 {
+			g.Mounts = append(g.Mounts, agent.Mount{Path: r.Skills.CacheDir, Access: agent.ReadOnly})
 		}
 	default:
 		// No sandbox: the session reaches whatever its user can.
