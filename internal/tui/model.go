@@ -472,7 +472,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // GitHub, and k stops a session and hands its issue to a person. k asks
 // first, the way Ctrl-C does: it is the one key here that throws work away,
 // so it asks about the selected session and then stops the one it named
-// (see kill). The session view has its own keys (sessionKey), j and k among them —
+// (see kill). p pauses or resumes dispatch across the whole factory (see
+// togglePause). The session view has its own keys (sessionKey), j and k among them —
 // they scroll a transcript there, which is where vim keys belong.
 func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	k := msg.String()
