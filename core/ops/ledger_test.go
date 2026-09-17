@@ -139,6 +139,47 @@ func TestReadLedgerIgnoresTheTruncatedTail(t *testing.T) {
 	}
 }
 
+// TestAppendLedgerAfterATornTail: an append starts a fresh line after a
+// tail with no newline, leaving the tail as a line that reads fail closed;
+// a file already ending in a newline gets no blank line.
+func TestAppendLedgerAfterATornTail(t *testing.T) {
+	s := NewLedger(t.TempDir())
+	if err := s.AppendLedger(LedgerEntry{Session: "first", CostUSD: 1}); err != nil {
+		t.Fatal(err)
+	}
+	appendRaw(t, s, "{\"time\":\"2026-09-1")
+	if err := s.AppendLedger(LedgerEntry{Session: "next", CostUSD: 2}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(s.LedgerPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
+	if len(lines) != 3 || lines[1] != "{\"time\":\"2026-09-1" || !strings.Contains(lines[2], "\"session\":\"next\"") {
+		t.Fatalf("ledger lines = %q; want first, the torn tail, next", lines)
+	}
+	got, err := s.ReadLedger(time.Time{})
+	var lineErr *LedgerLineError
+	if !errors.As(err, &lineErr) || lineErr.Line != 2 || got != nil {
+		t.Fatalf("got %+v, %v; want a LedgerLineError on line 2", got, err)
+	}
+
+	clean := NewLedger(t.TempDir())
+	for _, name := range []string{"a", "b"} {
+		if err := clean.AppendLedger(LedgerEntry{Session: name}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw, err = os.ReadFile(clean.LedgerPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "\n\n") || strings.Count(string(raw), "\n") != 2 || strings.HasPrefix(string(raw), "\n") {
+		t.Errorf("ledger = %q; want two lines and no blank one", raw)
+	}
+}
+
 // TestLedgerUnknownCostRoundTrip: an entry whose session reported no cost
 // says so on the way back, and a line written before the field existed
 // reads as a known cost.
