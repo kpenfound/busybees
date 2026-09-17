@@ -164,11 +164,11 @@ type Pipeline struct {
 	// source reads; a source the project declares with files of its own is
 	// gathered without one.
 	Collectors []Collector
-	// Checkout clones the pull request's head, with its merge base with
-	// the base branch beside it, into the artifact directory Gather is given (checkout.go):
-	// the diff source reads the diff from that clone, and the angles run in
-	// it afterwards (Angles.Run). It is nil to attempt none, and the diff
-	// is then read through gh.
+	// Checkout clones the pull request's head, with its merge base with the
+	// base branch beside it, into the artifact directory Gather is given
+	// (checkout.go): the diff source reads the diff from that clone, and
+	// the angles run in it afterwards (Angles.Run). It is nil to attempt
+	// none, and the diff is then read through gh.
 	Checkout *Checkout
 	// Log is where a checkout that was made, or could not be, is reported,
 	// and nowhere when nil.

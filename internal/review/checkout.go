@@ -18,17 +18,17 @@ import (
 // The checkout the diff is read from and the angle sessions read. As the
 // context is gathered (Pipeline.Gather, context.go), the pull request's
 // head is cloned into the review's artifact directory (CheckoutDir,
-// angles.go) by a container: an Alpine image with git, built here the
-// first time and kept, runs `git fetch` of refs/pull/<number>/head from
-// the pull request's own repository over HTTPS into a bind-mounted host
-// directory, then of the base branch beside it, points CheckoutBaseRef
-// at the merge base of the two, and exits. The head reference resolves a
-// fork's pull request as well as one from a branch of the repository,
-// which the head branch's name would not, and it is the head as it is
-// when the review runs: a pull request that gains a commit during the
-// review is the race every freshly gathered source has. The base is what the diff source diffs the head
-// against (checkoutDiff): read here, the diff has no limit on the number
-// of files a pull request changes, which GitHub's own diff has.
+// angles.go) by a container: an Alpine image with git, built here the first
+// time and kept, runs `git fetch` of refs/pull/<number>/head from the pull
+// request's own repository over HTTPS into a bind-mounted host directory,
+// then of the base branch beside it, points CheckoutBaseRef at the merge
+// base of the two, and exits. The head reference resolves a fork's pull
+// request as well as one from a branch of the repository, which the head
+// branch's name would not, and it is the head as it is when the review
+// runs: a pull request that gains a commit during the review is the race
+// every freshly gathered source has. The base is what the diff source diffs
+// the head against (checkoutDiff): read here, the diff has no limit on the
+// number of files a pull request changes, which GitHub's own diff has.
 //
 // Nothing runs inside the container after the clone: the diff is read on
 // the host with the host's git, and the angle sessions run on the host
@@ -93,16 +93,17 @@ const checkoutHeadRef = "refs/review/head"
 // checkoutScript is what the container runs, through `sh -c`, with the
 // repository's URL as $1, the head reference to fetch as $2 and the base
 // branch's name as $3, or "" for none. Both references are fetched with
-// their history, so the merge base of the two can be found; the diff is
-// a plain diff of the head against it (checkoutDiff), the diff GitHub
-// shows, whether or not the pull request is up to date with its base.
-// Head and base with no merge base leave CheckoutBaseRef at the base
-// branch's tip and a checkoutNoMergeBase file behind. A base that cannot be fetched costs the diff its read
-// from the checkout, not the angles their checkout: the head is checked
-// out first, and the base fetch is allowed to fail. The token is read
-// from the environment by a credential helper, so it is on no command
-// line inside the container either; with no token the helper answers an
-// empty password and a repository that wants one refuses the fetch.
+// their history, so the merge base of the two can be found; the diff is a
+// plain diff of the head against it (checkoutDiff), the diff GitHub shows,
+// whether or not the pull request is up to date with its base. Head and
+// base with no merge base leave CheckoutBaseRef at the base branch's tip
+// and a checkoutNoMergeBase file behind. A base that cannot be fetched
+// costs the diff its read from the checkout, not the angles their checkout:
+// the head is checked out first, and the base fetch is allowed to fail. The
+// token is read from the environment by a credential helper, so it is on no
+// command line inside the container either; with no token the helper
+// answers an empty password and a repository that wants one refuses the
+// fetch.
 const checkoutScript = `set -e
 git init -q .
 git remote add origin "$1"

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -438,8 +439,9 @@ func TestACloneOfTheCallersOwnMakesTheCheckout(t *testing.T) {
 	}
 }
 
-// The checkout the pipeline makes fetches the base branch beside the
-// head, and the diff is read from it as the head against their merge base, on the host: no number of changed files is too many for it.
+// The checkout the pipeline makes fetches the base branch beside the head,
+// and the diff is read from it as the head against their merge base, on the
+// host: no number of changed files is too many for it.
 func TestTheCheckoutFetchesTheBaseBesideTheHeadAndTheDiffIsReadFromIt(t *testing.T) {
 	docker := fakeDocker(t)
 	dir := filepath.Join(t.TempDir(), CheckoutDir)
@@ -556,5 +558,29 @@ func TestWithoutAMergeBaseTheDiffIsAgainstTheBaseTipAndSaysSo(t *testing.T) {
 	}
 	if len(in.skipped) != 1 || !strings.Contains(in.skipped[0], "no merge base") {
 		t.Errorf("skipped = %q, want the missing merge base recorded", in.skipped)
+	}
+}
+
+// A base branch that cannot be fetched leaves the head checked out and no
+// base reference, so the diff is read through gh instead.
+func TestABaseThatCannotBeFetchedLeavesTheHeadCheckedOutAndNoBase(t *testing.T) {
+	docker := fakeDocker(t)
+	origin := originFor(t, docker)
+	commitFile(t, origin, "widget.go", "package widgets\n")
+	runGit(t, origin, "update-ref", "refs/pull/7/head", "HEAD")
+	dir := filepath.Join(t.TempDir(), CheckoutDir)
+	if err := (&Checkout{DockerBin: docker}).Run(context.Background(), Ref{Repo: testRepo, Number: 7}, "gone", dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "widget.go")); err != nil {
+		t.Errorf("the head is not checked out: %v", err)
+	}
+	cmd := exec.Command("git", "rev-parse", "--verify", "-q", CheckoutBaseRef)
+	cmd.Dir = dir
+	if cmd.Run() == nil {
+		t.Errorf("%s exists after a failed base fetch", CheckoutBaseRef)
+	}
+	if _, _, err := checkoutDiff(context.Background(), dir); err == nil {
+		t.Error("a checkout whose base could not be fetched gave a diff")
 	}
 }
