@@ -77,9 +77,10 @@ func NewHostClaude(r Runner) Enforcer { return &hostEnforcer{kind: SandboxClaude
 // Release removes them.
 func NewContainer(r Runner, image string) Enforcer { return &containerEnforcer{r: r, image: image} }
 
-// Policy is what a session enforces. Every path has its symbolic links
-// resolved. It carries names and paths and no values: the environment's
-// values are the turn's.
+// Policy is what a session enforces. Every path of the host has its symbolic
+// links resolved, a bind's destination apart, which is also the path a mount
+// was granted by. It carries names and paths and no values: the
+// environment's values are the turn's.
 type Policy struct {
 	// Sandbox is the kind: SandboxNone, SandboxClaude or SandboxContainer.
 	Sandbox string
