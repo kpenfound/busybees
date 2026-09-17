@@ -92,14 +92,29 @@ calls it first. `HostBoundary` and `ContainerBoundary` implement the
 | `none` | `/` read-write, and `VCS`: nothing keeps an unsandboxed process out of VCS metadata |
 | `claude` | `/` read-only and the working directory read-write; every other read-write mount and every `Runner.AddDirs` entry, which must be granted read-write, is passed with `--add-dir` |
 
-`ContainerBoundary` verifies the environment, tools and mounts the same way;
-the container runner does not confine the container to the mounts.
+`ContainerBoundary` verifies the environment, tools and mounts the same way,
+and the container gets its grants and nothing else:
+
+- Binds: every granted mount at its real path and at the path it was
+  granted by, `--mount ...,readonly` for `ReadOnly`. `/` is refused, and so
+  is a path the engine's `--mount` cannot take (a comma, quote or newline).
+- Paths the runner uses must lie inside a grant: the working directory, the
+  session directory (or `Runner.SessionsDir` before it exists),
+  `Runner.MountDirs` and the workspace's `VCS()` mounts read-write, and
+  `Runner.SkillMountDirs` for a profile with skills. Otherwise the request
+  is refused with `ErrNotGranted`.
+- Environment: the agent's credential (`AgentCredentials`) from the host
+  when granted, the variables the request sets, `ContainerEnv` and, with
+  `VCS`, `VCSContainerEnv`, each of which must be granted, then `HOME`. No
+  other host variable is inherited, granted or not.
+- Without `VCS`, the command runs through `/bin/sh -c` with the stand-ins'
+  directory in front of the image's `PATH`.
 
 ## Workspaces
 
 `agent.Request.Workspace` implements `vcs.Workspace`: `Directory()` is where the
 agent runs and `VCS()` optionally describes additional writable container mounts
-at host paths. `vcs.Directory(path)` supplies a directory without VCS metadata.
+at host paths, which must be granted read-write. `vcs.Directory(path)` supplies a directory without VCS metadata.
 The runner performs no git discovery. A denied profile never reads `VCS()`.
 
 `vcs.Provider` acquires a workspace from caller-defined name/ref/branch values,

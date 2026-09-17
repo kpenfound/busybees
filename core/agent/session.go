@@ -190,10 +190,13 @@ type Runner struct {
 	ContainerLabel         string
 	ContainerHome          string
 	ContainerUseRepository string
-	// MountDirs are additional writable container mounts.
+	// MountDirs are directories a container session writes; each must be
+	// granted read-write.
 	MountDirs []string
 	// Skills prepares generic skill plugin directories.
-	Skills         SkillPreparer
+	Skills SkillPreparer
+	// SkillMountDirs hold the prepared skills; a container session with
+	// skills must be granted them.
 	SkillMountDirs []string
 	// AddDirs are extra directories claude may write (the state dir). Each
 	// must be granted read-write.

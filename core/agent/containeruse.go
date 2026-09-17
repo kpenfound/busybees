@@ -45,7 +45,7 @@ import (
 //   - secrets: container-use resolves them through Dagger's secret
 //     providers (env://, file://, op://) in its pipeline; the runner has no
 //     pipeline to resolve them in, and the sandbox already forwards the
-//     credentials a session needs (containerVars, AgentCredentials).
+//     credentials a session needs (ContainerBoundary, AgentCredentials).
 //   - services: other containers; the sandbox is one container.
 //
 // The image is tagged after a hash of the Dockerfile, so a definition
