@@ -154,6 +154,23 @@ func TestContainerBindsAreTheGrants(t *testing.T) {
 		t.Errorf("read-only working directory: binds %v", turn.Binds)
 	}
 
+	// Masks are bound, read-only, for a turn without VCS and for no other.
+	mask := Bind{Source: filepath.Join(cache, "denied"), Destination: "/usr/bin/git", Access: ReadWrite}
+	masked := ContainerBoundary{Masks: []Bind{mask}}
+	if turn, err = masked.Verify(req); err != nil {
+		t.Fatalf("masks without VCS: %v", err)
+	}
+	if !slices.Contains(turn.Binds, Bind{Source: mask.Source, Destination: mask.Destination, Access: ReadOnly}) {
+		t.Errorf("masks without VCS: binds %v, want the mask read-only", turn.Binds)
+	}
+	req.Grants.VCS, req.Profile.VCSAccess = true, true
+	if turn, err = masked.Verify(req); err != nil {
+		t.Fatalf("masks with VCS: %v", err)
+	}
+	if slices.ContainsFunc(turn.Binds, func(b Bind) bool { return b.Destination == mask.Destination }) {
+		t.Errorf("masks with VCS: binds %v, want no mask", turn.Binds)
+	}
+
 	// The skills cache need not be granted to a profile without skills.
 	req = containerRequest(work, session, &Grants{Tools: []string{ToolsAll}, Mounts: []Mount{{Path: work, Access: ReadWrite}, {Path: session, Access: ReadWrite}}})
 	if _, err := (ContainerBoundary{SkillMountDirs: []string{cache}}).Verify(req); err != nil {

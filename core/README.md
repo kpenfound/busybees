@@ -245,12 +245,17 @@ result, err := session.Run(ctx, request)
   no more than they say, and under Landlock less in one place: nothing is
   created, removed or renamed at the level of a directory Landlock goes
   around. They do not judge metadata (`stat(2)`) or, under Seatbelt, the
-  entries of `/`. A container is judged by its mounts, and `Runs` is true
-  for a path of its image that is not under `Denied`.
+  entries of `/`. A container's `Reads` and `Writes` are judged by its
+  mounts. Its `Runs` takes a path as the container sees it and judges it as
+  written: cleaned, with no link followed on the host or in the image, it
+  runs unless it lies under `Denied`. A name the image links to a denied
+  path (`/bin/git` where `/bin` links to `usr/bin`) is said to run, and the
+  stand-in over the path it leads to refuses it all the same.
 - `Run` takes an ordinary `Request`. The grants, the sandbox, the image and
   the confinement are the session's: `Grants` may be nil or equal to the
   prepared ones, the profile's `Sandbox` and `SandboxImage` may be empty or
-  name the session's, and `ContainerUseEnvironment` is refused. A host turn
+  name the session's, and `ContainerUseEnvironment` is refused. A host
+  session has no image, so it refuses a profile that names one. A host turn
   runs confined whatever `Profile.Confine` says. Granted `VCS` is the
   turn's, and a profile that asks for `VCS` that was not granted is refused.
   `agent.Admit` is that step alone.

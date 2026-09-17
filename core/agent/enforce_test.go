@@ -257,11 +257,15 @@ func TestASessionRunsEveryRequestUnderItsOwnGrants(t *testing.T) {
 			g.Mounts = append(g.Mounts, Mount{Path: l.outside, Access: ReadWrite})
 			r.Grants = &g
 		}, ErrNotGranted},
-		"another sandbox":          {func(r *Request) { r.Profile.Sandbox = SandboxContainer; r.Profile.SandboxImage = "image" }, ErrUnsupported},
-		"VCS that was not granted": {func(r *Request) { r.Profile.VCSAccess = true }, ErrNotGranted},
-		"a server not granted":     {func(r *Request) { r.Profile.MCP = map[string]MCPEntry{"other": {Command: "x"}} }, ErrNotGranted},
-		"a variable not granted":   {func(r *Request) { r.Env["EXTRA"] = "x" }, ErrNotGranted},
-		"a directory not granted":  {func(r *Request) { r.Workspace = vcs.Directory(l.outside) }, ErrNotGranted},
+		"another sandbox": {func(r *Request) { r.Profile.Sandbox = SandboxContainer }, ErrUnsupported},
+		// A host session has no image: one the profile names is not dropped.
+		"an image":                      {func(r *Request) { r.Profile.SandboxImage = "image" }, ErrUnsupported},
+		"an environment to build":       {func(r *Request) { r.Profile.ContainerUseEnvironment = "env" }, ErrUnsupported},
+		"its own sandbox, and an image": {func(r *Request) { r.Profile.Sandbox = SandboxNone; r.Profile.SandboxImage = "image" }, ErrUnsupported},
+		"VCS that was not granted":      {func(r *Request) { r.Profile.VCSAccess = true }, ErrNotGranted},
+		"a server not granted":          {func(r *Request) { r.Profile.MCP = map[string]MCPEntry{"other": {Command: "x"}} }, ErrNotGranted},
+		"a variable not granted":        {func(r *Request) { r.Env["EXTRA"] = "x" }, ErrNotGranted},
+		"a directory not granted":       {func(r *Request) { r.Workspace = vcs.Directory(l.outside) }, ErrNotGranted},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, confiner := newSession(t, l.grants())
@@ -494,6 +498,35 @@ func TestThePolicyJudgesPathsTheWayTheyAreEnforced(t *testing.T) {
 	masked := Policy{Sandbox: SandboxContainer, Mounts: []Mount{{Path: outside, Access: ReadOnly}}, Denied: []string{denied}}
 	if masked.Reads(denied) || !masked.Reads(beside) {
 		t.Errorf("container: reads the masked file = %v, the link beside it = %v", masked.Reads(denied), masked.Reads(beside))
+	}
+
+	// A container's path is the image's, whatever this machine has there: a
+	// link here out of a masked path, or nothing here at all, changes nothing,
+	// and neither does a link here into one.
+	cellar, linked, into := filepath.Join(outside, "cellar-git"), filepath.Join(base, "bin-git"), filepath.Join(base, "bin-env")
+	writeExecutable(t, cellar, "exit 0\n")
+	if err := os.Symlink(cellar, linked); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(base, "core"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeExecutable(t, filepath.Join(base, "core", "tool"), "exit 0\n")
+	if err := os.Symlink(filepath.Join(base, "core", "tool"), into); err != nil {
+		t.Fatal(err)
+	}
+	image := Policy{Sandbox: SandboxContainer, Mounts: mounts, Denied: []string{linked, filepath.Join(base, "missing", "git"), filepath.Join(base, "core")}}
+	for path, want := range map[string]bool{
+		linked:                                false,
+		filepath.Join(base, "missing", "git"): false,
+		filepath.Join(base, "missing", "..", "missing", "git"): false,
+		filepath.Join(base, "core", "git-upload-pack"):         false,
+		into:   true,
+		cellar: true,
+	} {
+		if got := image.Runs(path); got != want {
+			t.Errorf("container runs %s = %v, want %v", path, got, want)
+		}
 	}
 
 	// A container runs what its image holds, the masked paths apart, and a

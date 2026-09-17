@@ -286,3 +286,29 @@ func TestTheImageProbeFindsVCSExecutables(t *testing.T) {
 		}
 	}
 }
+
+// What the probe prints is read strictly: a line that is not a kind and a
+// clean absolute path below the root is an image not looked into, not a
+// path left unmasked.
+func TestTheImageProbeIsReadStrictly(t *testing.T) {
+	found, err := parseImageVCS("f /usr/bin/git\n\nd /usr/lib/git-core\nf /usr/bin/git\n")
+	if err != nil || !slices.Equal(found, []imagePath{{path: "/usr/bin/git"}, {path: "/usr/lib/git-core", dir: true}}) {
+		t.Fatalf("parse = %v, %v", found, err)
+	}
+	if found, err := parseImageVCS(""); err != nil || len(found) != 0 {
+		t.Errorf("an image with no VCS executables: %v, %v", found, err)
+	}
+	for name, out := range map[string]string{
+		"an unknown kind":    "x /usr/bin/git\n",
+		"a relative path":    "f usr/bin/git\n",
+		"a path not clean":   "f /usr/bin/../bin/git\n",
+		"a trailing slash":   "d /usr/lib/git-core/\n",
+		"the root":           "d /\n",
+		"a kind and no path": "f\n",
+		"a good line first":  "f /usr/bin/git\nnonsense\n",
+	} {
+		if found, err := parseImageVCS(out); err == nil {
+			t.Errorf("%s: parsed as %v, want a refusal", name, found)
+		}
+	}
+}

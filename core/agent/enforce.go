@@ -163,12 +163,13 @@ func sandboxKind(sandbox string) (string, error) {
 
 // Admit returns req as a session with policy p, prepared with g, runs it, or
 // the reason it does not: the grants are the session's, and a request that
-// carries others is refused; the profile's sandbox and, for a container,
-// image are the session's, and a profile that names another, or a
-// container-use environment to build one from, is refused; a host turn is
-// confined; granted VCS is given to the turn, and a profile that asks for
-// VCS that was not granted is refused. The request is then checked against
-// the grants the way every boundary checks it.
+// carries others is refused; the profile's sandbox and image are the
+// session's, a host session's image being none, and a profile that names
+// another, or a container-use environment to build one from, is refused
+// whatever the kind; a host turn is confined; granted VCS is given to the
+// turn, and a profile that asks for VCS that was not granted is refused. The
+// request is then checked against the grants the way every boundary checks
+// it.
 func Admit(p Policy, g Grants, req Request) (Request, error) {
 	req, err := admit(p, g, req)
 	if err != nil {
@@ -198,11 +199,12 @@ func admit(p Policy, g Grants, req Request) (Request, error) {
 	}
 	req.Profile.Sandbox = kind
 	req.Profile.Confine = kind != SandboxContainer
+	// The image is the one Prepare looked into, and a host session has none:
+	// a profile that names another is not run with the name dropped.
+	if req.Profile.ContainerUseEnvironment != "" || (req.Profile.SandboxImage != "" && req.Profile.SandboxImage != p.Image) {
+		return Request{}, fmt.Errorf("%w: the session was prepared for sandbox %q and image %q, and the profile names another image or an environment to build one from", ErrUnsupported, kind, p.Image)
+	}
 	if kind == SandboxContainer {
-		// The image is the one Prepare looked into.
-		if req.Profile.ContainerUseEnvironment != "" || (req.Profile.SandboxImage != "" && req.Profile.SandboxImage != p.Image) {
-			return Request{}, fmt.Errorf("%w: the session was prepared for image %q, and the profile names another or an environment to build one from", ErrUnsupported, p.Image)
-		}
 		req.Profile.SandboxImage = p.Image
 	}
 	if g.VCS {
@@ -263,18 +265,19 @@ func (p Policy) Writes(path string) bool {
 }
 
 // Runs reports whether the turn can execute the file at path, a path as the
-// turn sees it. A host turn executes what it can read. A container turn
-// executes what it can read of the host and whatever its image holds, except
-// under Denied.
+// turn sees it. A host turn executes what it can read. A container turn sees
+// its image, whose links the host knows nothing of, so its path is judged as
+// it is written, cleaned and with no link followed on the host or in the
+// image: it runs unless it lies under Denied, whether it is a path of the
+// image or one a mount is bound at. A name the image links to a denied path
+// ("/bin/git" where "/bin" is a link to "usr/bin") is therefore said to run,
+// and the stand-in over the path it leads to still refuses it. A path that
+// is not absolute does not run.
 func (p Policy) Runs(path string) bool {
 	if p.Sandbox != SandboxContainer {
 		return p.Reads(path)
 	}
-	real, err := realPath(path)
-	if err != nil || p.denied(real) {
-		return false
-	}
-	return true
+	return filepath.IsAbs(path) && !p.denied(filepath.Clean(path))
 }
 
 func (p Policy) denied(real string) bool {

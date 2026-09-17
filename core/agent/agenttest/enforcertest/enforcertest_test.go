@@ -174,11 +174,12 @@ func TestTheFakeRefusesWhatARealEnforcerRefuses(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, change := range map[string]func(*agent.Request){
-		"another sandbox":     func(r *agent.Request) { r.Profile.Sandbox = agent.SandboxClaude },
-		"grants of its own":   func(r *agent.Request) { r.Grants = &agent.Grants{Tools: []string{agent.ToolsAll}} },
-		"VCS not granted":     func(r *agent.Request) { r.Profile.VCSAccess = true },
-		"a tool not granted":  func(r *agent.Request) { r.Profile.AllowedTools = []string{"Bash"} },
-		"a directory outside": func(r *agent.Request) { r.Workspace = vcs.Directory(l.outside) },
+		"another sandbox":          func(r *agent.Request) { r.Profile.Sandbox = agent.SandboxClaude },
+		"an image for a host turn": func(r *agent.Request) { r.Profile.SandboxImage = "image" },
+		"grants of its own":        func(r *agent.Request) { r.Grants = &agent.Grants{Tools: []string{agent.ToolsAll}} },
+		"VCS not granted":          func(r *agent.Request) { r.Profile.VCSAccess = true },
+		"a tool not granted":       func(r *agent.Request) { r.Profile.AllowedTools = []string{"Bash"} },
+		"a directory outside":      func(r *agent.Request) { r.Workspace = vcs.Directory(l.outside) },
 	} {
 		req := l.request()
 		change(&req)

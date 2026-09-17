@@ -89,7 +89,7 @@ GitHub repository. Read `docs/architecture.md` before changing the scheduler.
   takes a held turn from (`Enforcer`: `NewHostNone`, `NewHostClaude`, `NewContainer`; `Prepare(ctx, grants)` → `Session`
   with `Policy`, `Run` and `Release`): host kinds are confined turns, a container session binds stand-ins over its
   image's VCS executables (`containermask.go`, `ContainerBoundary.Masks`), and `Run` refuses a turn the reported policy
-  does not describe (`ErrPolicyChanged`). Busybees' own sessions still go through `Runner.Run`. `agenttest` supplies fake
+  does not describe (`ErrPolicyChanged`). Busybees' own sessions go through `Runner.Run`. `agenttest` supplies fake
   agents, Docker and a host MCP server, and `agenttest/enforcertest` an `Enforcer` that starts no process; `agentbin`
   guards all agent and engine launches in tests.
 - `internal/session` — busybees adapter: `ProfileForRole` projects a resolved role
