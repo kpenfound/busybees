@@ -1321,6 +1321,9 @@ failed without a brief. Lines are written with a single append so concurrent
 workers cannot interleave. The ledger is read fail-closed: a line that does
 not parse fails the read with the file and the line, and no entries, unless
 it is the final line, which a crash mid-write leaves and which is ignored.
+An append after such a tail starts on a new line, so the tail stays a line
+of its own and never fuses with the new entry; once another line follows
+it, reads fail on it until a person removes it.
 Every full pass, before the daily budget is summed, removes the lines older
 than `scheduler.retention_period`, and never one from the last 24 hours,
 which the daily budget reads. The trim writes the kept lines to a temporary
