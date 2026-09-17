@@ -62,6 +62,15 @@ type Deps struct {
 	// "queued for the next session" and means it. Nil means the view cannot
 	// send anything and does not offer to.
 	Send func(to string, issue, pr int, subject, body string) error
+	// Reload reads the configuration again from disk and hands it to the
+	// running factory: a project's bees.toml, or a daemon's machine config
+	// and every project's bees.toml, exactly as SIGHUP does. It returns
+	// why the reload was refused — a file that does not load, a key that
+	// cannot change while the factory runs — and then nothing has changed.
+	// It may take a moment (it reads git, and a machine config every
+	// project), so the view runs it off its own goroutine. Nil means the
+	// view cannot reload anything and says so.
+	Reload func() error
 	// Repo is the repository the factory is building, for the header and
 	// for the GitHub links every row can be opened at.
 	Repo string
@@ -203,6 +212,19 @@ type Model struct {
 	notice      string
 	cursor      int
 	confirmKill sessionRef
+	// reload is the last reload of the configuration and how it went, for
+	// the header; reloading says one is in progress, so a second r while
+	// it runs starts no other.
+	reload    reloadState
+	reloading bool
+}
+
+// reloadState is what the header says about the configuration: when it
+// was last reloaded, and whether that reload was refused — in which case
+// the configuration in force is still the one before it.
+type reloadState struct {
+	at  time.Time
+	err string
 }
 
 // New builds the model. Nothing is read and no goroutine is started until
@@ -248,6 +270,13 @@ type turnsMsg map[sessionRef]int
 // actedMsg is what a key that did something outside the model reports back:
 // the empty string when it worked, and what went wrong when it did not.
 type actedMsg struct{ note string }
+
+// reloadedMsg is what the r key reports back: when the reload finished and
+// why it was refused, nil when it was not.
+type reloadedMsg struct {
+	at  time.Time
+	err error
+}
 
 // tickMsg redraws the view, so elapsed times and the countdown to the next
 // poll advance between events.
@@ -387,6 +416,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.waitForEvent(msg.project), m.refresh(msg.project))
 	case actedMsg:
 		m.notice = msg.note
+	case reloadedMsg:
+		m.reloading = false
+		m.reload = reloadState{at: msg.at}
+		m.notice = "configuration reloaded"
+		if msg.err != nil {
+			m.reload.err = oneLine(msg.err.Error())
+			m.notice = "reload refused, previous configuration kept: " + m.reload.err
+		}
+		// The reload may have changed what the scheduler is about to do;
+		// the numbers it writes are the first place that shows.
+		return m, m.refreshAll()
 	case statusMsg:
 		p := m.projects[msg.project]
 		if p == nil {
@@ -464,7 +504,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // GitHub, and k stops a session and hands its issue to a person. k asks
 // first, the way Ctrl-C does: it is the one key here that throws work away,
 // so it asks about the selected session and then stops the one it named
-// (see kill). The session view has its own keys (sessionKey), j and k among them —
+// (see kill). r reloads the configuration from disk (see reloadConfig). The
+// session view has its own keys (sessionKey), j and k among them —
 // they scroll a transcript there, which is where vim keys belong.
 func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	k := msg.String()
@@ -523,8 +564,36 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.openOnGitHub()
 	case "k":
 		return m.kill()
+	case "r":
+		return m.reloadConfig()
 	}
 	return m, nil
+}
+
+// reloadConfig reads the configuration again from disk and hands it to the
+// factory (Deps.Reload), in the background: the read resolves the
+// repository through git and the view must keep drawing while it does. The
+// footer says it is happening, and then what came of it; the header keeps
+// the last reload's time and whether it was refused (see notices). Nothing
+// already running changes either way: a session keeps the settings it was
+// started with, and a refused reload leaves the previous configuration in
+// force.
+func (m Model) reloadConfig() (tea.Model, tea.Cmd) {
+	switch {
+	case m.deps.Reload == nil:
+		m.notice = "this view cannot reload the configuration"
+		return m, nil
+	case m.reloading:
+		m.notice = "reloading the configuration"
+		return m, nil
+	}
+	m.reloading = true
+	m.notice = "reloading the configuration"
+	reload, now := m.deps.Reload, m.deps.Now
+	return m, func() tea.Msg {
+		err := reload()
+		return reloadedMsg{at: now(), err: err}
+	}
 }
 
 // openOnGitHub shows the selected row's issue or pull request on GitHub.
@@ -930,7 +999,9 @@ func (m Model) View() string {
 		at += l.entries(i, want[i])
 	}
 	b.WriteString(l.queues + "\n")
-	b.WriteString(hintStyle.Render(m.footer()))
+	// One line, whatever the terminal's width: a footer that wrapped would
+	// cost the header (see layout).
+	b.WriteString(hintStyle.Render(clip(m.footer(), l.width)))
 	return b.String()
 }
 
@@ -998,11 +1069,11 @@ func (m Model) footer() string {
 		hints = "←→ project · "
 	}
 	if slices.ContainsFunc(m.shownSessions(), func(s running) bool { return s.activity == nil }) {
-		return hints + "↑↓ select · enter watch · o open on GitHub · k stop session · q or ctrl-c stops (sessions finish)"
+		return hints + "↑↓ select · enter watch · o GitHub · k stop session · r reload · q or ctrl-c stops (sessions finish)"
 	}
 	// enter and k both act on a running session, and there are none in
 	// view.
-	return hints + "↑↓ select · o open on GitHub · q or ctrl-c stops (sessions finish)"
+	return hints + "↑↓ select · o GitHub · r reload · q or ctrl-c stops (sessions finish)"
 }
 
 // panel draws one titled box around w columns of text, with its title and

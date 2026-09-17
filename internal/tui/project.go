@@ -186,6 +186,16 @@ func (m Model) notices() []string {
 			out = append(out, warnStyle.Render("status: "+prefix+oneLine(p.statusErr)))
 		}
 	}
+	// The last reload of the configuration is the factory's, not a
+	// project's: one notice, whatever is in view. A refused one is a
+	// standing condition — the file on disk is not what is running.
+	switch r := m.reload; {
+	case r.at.IsZero():
+	case r.err != "":
+		out = append(out, warnStyle.Render("config reload refused "+r.at.Format("15:04:05")))
+	default:
+		out = append(out, headerStyle.Render("config reloaded "+r.at.Format("15:04:05")))
+	}
 	return out
 }
 
