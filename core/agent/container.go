@@ -23,7 +23,8 @@ import (
 )
 
 // A container session runs the backend command unchanged inside the engine.
-// It sees the granted mounts and nothing else of the host, each at its host
+// It sees the granted mounts and, of the host, nothing else but the runner's
+// own stand-ins (ContainerBoundary.Masks), each mount at its host
 // path, so references in prompts also resolve in the container; the work
 // directory, session directory, shared VCS metadata, caller mounts and skill
 // cache must lie inside them (ContainerBoundary).
@@ -378,7 +379,8 @@ func randomHex(n int) string {
 // ContainerBoundary runs a session in a container. The container is given
 // the granted mounts, with their access, and nothing else of the host; an
 // environment built from the allowlist alone; and, without VCS, stand-ins
-// for the VCS executables in front of the image's PATH. Verify refuses a
+// for the VCS executables in front of the image's PATH, which deny them by
+// name, and Masks over the paths the caller found them at. Verify refuses a
 // request whose own paths the grants do not cover.
 type ContainerBoundary struct {
 	// Environ is the host environment agent credentials are read from; nil

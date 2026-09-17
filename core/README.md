@@ -160,16 +160,90 @@ and the container gets its grants and nothing else:
   is a path the engine's `--mount` cannot take (a comma, quote or newline).
 - Paths the runner uses must lie inside a grant, or the request is refused
   with `ErrNotGranted`:
-  - read-write: the working directory, `Runner.MountDirs` and the
-    workspace's `VCS()` mounts;
-  - any access: the session directory (or `Runner.SessionsDir` before it
-    exists) and, for a profile with skills, `Runner.SkillMountDirs`.
+  - read-write: `Runner.MountDirs` and the workspace's `VCS()` mounts;
+  - any access: the working directory, which is bound `readonly` when it is
+    granted `ReadOnly`, the session directory (or `Runner.SessionsDir`
+    before it exists) and, for a profile with skills,
+    `Runner.SkillMountDirs`.
 - Environment: the agent's credential (`AgentCredentials`) from the host
   when granted, the variables the request sets, `ContainerEnv` and, with
   `VCS`, `VCSContainerEnv`, each of which must be granted, then `HOME`. No
   other host variable is inherited, granted or not.
 - Without `VCS`, the command runs through `/bin/sh -c` with the stand-ins'
-  directory in front of the image's `PATH`.
+  directory in front of the image's `PATH`. That denies a VCS executable by
+  its name. `ContainerBoundary.Masks` are read-only binds laid over paths of
+  the image for such a turn; `Runner.Run` sets none, and a `NewContainer`
+  session (below) sets one over each VCS executable its image holds.
+
+## Enforced turns
+
+`Runner.Run` verifies a request and runs it under whatever its profile asks
+for, which on the host may be nothing. An `Enforcer` runs only turns that
+something other than the agent holds to their grants. There is one
+constructor per sandbox kind, each taking the `Runner` whose fields it uses:
+
+```go
+// or NewHostClaude(runner), NewContainer(runner, image)
+enforcer := agent.NewHostNone(runner)
+session, err := enforcer.Prepare(ctx, grants)
+if err != nil {
+	return err // wraps ErrUnsupported where nothing enforces the kind
+}
+defer session.Release(ctx)
+p := session.Policy()
+if p.Reads("/home") || p.Writes(pinned) || p.Runs("/usr/bin/git") {
+	return errors.New("not the policy this role was meant to have")
+}
+result, err := session.Run(ctx, request)
+```
+
+- `Prepare` checks the grants on their own, with no request, and asks the
+  platform whether it can enforce them. `NewHostNone` and `NewHostClaude`
+  are confined host sessions (above): the same `Confiner`, the same system
+  paths, the same platforms. No platform's own confiner holds `claude`, so
+  `NewHostClaude` prepares only with a `Runner.Confiner` that can.
+  `NewContainer` binds the mounts as `ContainerBoundary` does. Without
+  `VCS` it also runs the image once (`docker run --rm --network none
+  --entrypoint /bin/sh <image> -c <script>`, no mounts) to find the files
+  `gh`, `git`, `hg`, `jj` and `svn` resolve to in the image's `PATH` and the
+  usual system directories, and git's directory of subcommand programs, and
+  binds a stand-in that exits 126 over each file and an empty directory over
+  that directory. A VCS executable is then denied by absolute path and from
+  a shell too. One anywhere else in the image, a hard link to one, or one
+  the turn downloads is not found. The stand-ins are the runner's own files
+  under the temporary directory, which the engine must be able to bind;
+  `Release` removes them. An image the engine cannot look into is not
+  prepared.
+- `Policy` is what the session enforces: the sandbox kind, the environment
+  allowlist, the built-in tools the agent is started with (`nil` is all) and
+  the MCP servers it may be given, the mounts, `System` (a host session's
+  system paths and the executables of the agents the runner names), `VCS`,
+  the names shadowed on `PATH`, the `Denied` paths, and a container's image
+  and `Binds`. It holds names and paths, never a variable's value.
+  `Reads(path)`, `Writes(path)`, `Runs(path)` and `Allows(tool)` answer for
+  one path or tool. A host session is judged by the rules its confiner is
+  handed, so `Writes` is false for a new entry at the level of a directory
+  Landlock goes around. A container is judged by its mounts, and `Runs` is
+  true for a path of its image that is not under `Denied`.
+- `Run` takes an ordinary `Request`. The grants, the sandbox, the image and
+  the confinement are the session's: `Grants` may be nil or equal to the
+  prepared ones, the profile's `Sandbox` and `SandboxImage` may be empty or
+  name the session's, and `ContainerUseEnvironment` is refused. A host turn
+  runs confined whatever `Profile.Confine` says. Granted `VCS` is the
+  turn's, and a profile that asks for `VCS` that was not granted is refused.
+  `agent.Admit` is that step alone.
+- Before anything starts, `Run` compares the verified turn with the policy:
+  tools, mounts, system paths, denied names and paths, binds. A difference
+  is refused with `ErrPolicyChanged`. It happens when what the policy was
+  read from has changed since `Prepare`: the request sets another `PATH`
+  with another `git` on it, a granted symbolic link points elsewhere, an
+  agent was installed. A container turn adds only a granted mount again,
+  under the name a symbolic link gives a directory of the request.
+- Tools are held by the agent's own flags, not by the prompt: `claude` is
+  started with `--tools` and `--strict-mcp-config`, and a request for codex
+  or opencode with anything less than `ToolsAll` is refused.
+- A session runs any number of turns. After `Release`, `Run` returns
+  `ErrReleased`.
 
 ## Workspaces
 
@@ -208,8 +282,40 @@ GitHub environment parameters and touched-issue files stay in its adapter.
 `agenttest` provides fake executable scripts for agents, Docker and a host MCP
 server. `agentbin` refuses real agent and engine executables from test binaries.
 The container fake records commands and simulates lifecycle operations without
-starting Docker. Busybees adapter tests use these same fakes for its environment,
-identity and MCP contracts.
+starting Docker. It answers a `NewContainer` session's look into its image
+from `image-vcs.txt` beside the script (`f <path>` or `d <path>` a line, no
+VCS executables without the file), records that command in
+`docker-probe.txt`, and fails it when a file named `fail-probe` is there.
+Busybees adapter tests use these same fakes for its environment, identity and
+MCP contracts.
+
+`agenttest/enforcertest` is an `agent.Enforcer` that starts no process. It
+checks grants and requests with `agent.NewPolicy` and `agent.Admit`, the code
+the real enforcers use, and hands each turn to a Go function that plays the
+agent:
+
+```go
+e := &enforcertest.Enforcer{Sandbox: agent.SandboxNone}
+e.Agent = func(ctx context.Context, turn *enforcertest.Turn) (*agent.Result, error) {
+	err := turn.WriteFile(filepath.Join(pinned, "x"), nil)
+	if !errors.Is(err, fs.ErrPermission) {
+		t.Errorf("the reviewer wrote its pinned revision: %v", err)
+	}
+	if err := turn.Exec("git"); err == nil {
+		t.Error("the reviewer ran git")
+	}
+	return &agent.Result{ResultText: "done"}, nil
+}
+```
+
+`Turn.ReadFile`, `WriteFile`, `Exec` and `UseTool` are judged by the
+session's policy, and a refusal wraps `fs.ErrPermission`. The fake has no
+platform: its policy has no system paths and no denied paths, a denied name
+is denied under every path that ends in it, and `Exec` runs nothing.
+`PrepareErr` stands in for a platform that cannot enforce the kind, and
+`Sessions`, `Session.Requests` and `Session.Released` say what the caller did.
+It is a package of its own because it imports `agent`, whose tests import
+`agenttest`.
 
 ## MCP host
 

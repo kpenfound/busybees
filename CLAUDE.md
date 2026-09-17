@@ -83,8 +83,13 @@ GitHub repository. Read `docs/architecture.md` before changing the scheduler.
   `Boundary` that verifies it before launch (`HostBoundary`, `ContainerBoundary`). `confine.go` is the host's
   confined mode (`Profile.Confine`): the operating system holds the process to its mounts and `SystemPaths` through a
   `Confiner`, Landlock on Linux (`confine_linux.go`), `ErrUnsupported` where there is none; its enforcement tests skip
-  on a kernel without Landlock and run in the VM `CONTRIBUTING.md` describes. `agenttest` supplies fake agents, Docker
-  and a host MCP server; `agentbin` guards all agent and engine launches in tests.
+  on a kernel without Landlock and run in the VM `CONTRIBUTING.md` describes. `enforce.go` is the runner an embedder
+  takes a held turn from (`Enforcer`: `NewHostNone`, `NewHostClaude`, `NewContainer`; `Prepare(ctx, grants)` → `Session`
+  with `Policy`, `Run` and `Release`): host kinds are confined turns, a container session binds stand-ins over its
+  image's VCS executables (`containermask.go`, `ContainerBoundary.Masks`), and `Run` refuses a turn the reported policy
+  does not describe (`ErrPolicyChanged`). Busybees' own sessions still go through `Runner.Run`. `agenttest` supplies fake
+  agents, Docker and a host MCP server, and `agenttest/enforcertest` an `Enforcer` that starts no process; `agentbin`
+  guards all agent and engine launches in tests.
 - `internal/session` — busybees adapter: `ProfileForRole` projects a resolved role
   into execution settings; `grants` turns role policy into `agent.Grants`
   (`HostEnv`, `ProviderEnv`, `VCSEnv`, mounts by sandbox); `Runner` supplies the `BEES_*` context, GitHub and git
