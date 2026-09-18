@@ -172,6 +172,12 @@ A finding is one problem, as the review keeps it in `findings.json`:
 }
 ```
 
+`body` is two or three sentences: what is wrong and why it matters. What
+the angle read that shows it is in `evidence`, and where a rule or a
+requirement comes from is in `sources`. Triage shows the evidence under the
+body; a posted comment and a report carry the body and the suggestion
+without it.
+
 `file`, `lines` and `side` are absent on a finding about the change as a
 whole. `side` is `new` for the file as the change leaves it and `old` for
 lines the change removed. `suggestion`, present when the angle could write

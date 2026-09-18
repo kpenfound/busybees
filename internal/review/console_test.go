@@ -269,6 +269,10 @@ func TestTheConsoleShowsWhatTheFindingIsAnchoredTo(t *testing.T) {
 	if strings.Contains(out, "\nQ: ") {
 		t.Errorf("an exchange was printed for a finding never asked about:\n%s", out)
 	}
+	// The short body comes first; the evidence follows where there is room.
+	if body, evidence := strings.Index(out, a.Findings.Items[0].Body), strings.Index(out, "Evidence: "); body < 0 || evidence < body {
+		t.Errorf("the evidence is not printed after the body:\n%s", out)
+	}
 }
 
 // brokenPipe is an output nothing can be written to.

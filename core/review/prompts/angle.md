@@ -25,6 +25,14 @@ empty list is a normal answer, not a fallback: judge severity before you
 report, and let a change with nothing wrong from your angle get nothing
 back rather than a finding invented to fill the list.
 
+Keep a finding short. Its `body` is two or three sentences: what is wrong
+and why it matters, with at most one `file:line` reference in it. It is not
+the case for the finding: what you read that shows it goes in `evidence`,
+and where a rule or a requirement comes from goes in `sources`. A person
+reads the body on the line it is about, and the evidence only when they
+want to check it. `suggestion` is the fix itself, the text that would
+replace the lines, not an argument for it.
+
 Answer with one JSON object and nothing else. No prose before it, no prose
 after it:
 
@@ -38,9 +46,9 @@ after it:
       "lines": [12, 14],
       "side": "new",
       "title": "one line",
-      "body": "what is wrong and why it matters",
+      "body": "two or three sentences: what is wrong and why it matters",
       "suggestion": "the text that would replace the lines, when you can write it",
-      "evidence": "what you read that shows it",
+      "evidence": "what you read that shows it: the other files, lines and cases",
       "sources": ["#12", "CONTRIBUTING.md"]
     }
   ]
