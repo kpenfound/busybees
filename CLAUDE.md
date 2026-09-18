@@ -39,7 +39,7 @@ GitHub repository. Read `docs/architecture.md` before changing the scheduler.
 - Run `dagger check` before declaring a change complete. Use the pinned experimental release:
 
   ```sh
-  DAGGER_X_RELEASE=v1.0.0-beta.13 dagger check
+dagger check
   ```
 
 - The factory exports `DAGGER_X_RELEASE` for its sessions.
@@ -47,7 +47,7 @@ GitHub repository. Read `docs/architecture.md` before changing the scheduler.
 - Run one package or one test inside a Dagger container:
 
   ```sh
-  DAGGER_X_RELEASE=v1.0.0-beta.13 dagger core container from --address golang:1.26-bookworm \
+dagger core container from --address golang:1.26-bookworm \
     with-directory --path /src --source . --exclude .git,.bees \
     with-workdir --path /src \
     with-exec --args=go,test,-count=1,-run,'TestA|TestB',-v,./internal/service \

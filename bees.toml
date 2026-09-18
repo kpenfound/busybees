@@ -211,7 +211,7 @@ disallowed_tools = ["Artifact", "Bash(go test *)", "Bash(docker *)"]
 # MCP servers, git). $VARS are expanded from the bees environment. Roles can
 # add or override entries in [roles.<name>.env].
 [global.env]
-DAGGER_X_RELEASE = "v1.0.0-beta.13"
+DAGGER_X_RELEASE = "v1.0.0-beta.14"
 
 # MCP servers available to every role, one table per server. stdio servers
 # use command/args/env; remote servers use url (+ type = "http" | "sse",
@@ -252,7 +252,7 @@ skills = [
 [roles.developer.mcp.dagger]
 command = "dagger"
 args = ["mcp", "--progress", "plain", "-m", "dagger.io/go@main"]
-env = { DAGGER_X_RELEASE = "v1.0.0-beta.13" }
+env = { DAGGER_X_RELEASE = "v1.0.0-beta.14" }
 
 # Reviews pull requests and, optionally, merges them once checks are green.
 [roles.reviewer]
