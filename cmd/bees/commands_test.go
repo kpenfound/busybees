@@ -38,20 +38,20 @@ func TestQueuesTextDependencies(t *testing.T) {
 	}
 }
 
-// TestCLAUDEMdListsEveryCommand pins the `cmd/bees` bullet in CLAUDE.md — the map
+// TestAGENTSMdListsEveryCommand pins the `cmd/bees` bullet in AGENTS.md — the map
 // every session reads before touching this repo — against the commands actually
 // registered in newRootWithFlags. It compares sets, not order: the order in the
 // bullet is a readability choice, not something to fail a test on.
-func TestCLAUDEMdListsEveryCommand(t *testing.T) {
+func TestAGENTSMdListsEveryCommand(t *testing.T) {
 	// Go runs a test with its package directory as cwd, so the repo file is
 	// two levels up. Reading it (rather than embedding a copy) is the point:
 	// the doc is what has to stay true.
-	const claudeMd = "../../CLAUDE.md"
+	const agentsMd = "../../AGENTS.md"
 	const bullet = "- `cmd/bees`"
 
-	data, err := os.ReadFile(claudeMd)
+	data, err := os.ReadFile(agentsMd)
 	if err != nil {
-		t.Fatalf("read %s: %v", claudeMd, err)
+		t.Fatalf("read %s: %v", agentsMd, err)
 	}
 	line := ""
 	for _, l := range strings.Split(string(data), "\n") {
@@ -61,7 +61,7 @@ func TestCLAUDEMdListsEveryCommand(t *testing.T) {
 		}
 	}
 	if line == "" {
-		t.Fatalf("CLAUDE.md: no line starts with %q. That bullet lists the CLI commands and is kept in sync with cmd/bees/main.go; restore it (or update this test) rather than leaving the layout map without one.", bullet)
+		t.Fatalf("AGENTS.md: no line starts with %q. That bullet lists the CLI commands and is kept in sync with cmd/bees/main.go; restore it (or update this test) rather than leaving the layout map without one.", bullet)
 	}
 
 	documented := map[string]bool{}
@@ -97,11 +97,11 @@ func TestCLAUDEMdListsEveryCommand(t *testing.T) {
 	sort.Strings(extra)
 
 	if len(missing) > 0 {
-		t.Errorf("CLAUDE.md: the %q line does not list %s, registered in newRootWithFlags (cmd/bees/main.go). Add the missing names to that line:\n%s",
+		t.Errorf("AGENTS.md: the %q line does not list %s, registered in newRootWithFlags (cmd/bees/main.go). Add the missing names to that line:\n%s",
 			bullet, strings.Join(missing, ", "), line)
 	}
 	if len(extra) > 0 {
-		t.Errorf("CLAUDE.md: the %q line lists %s, no longer a bees command. Drop the stale names from that line:\n%s",
+		t.Errorf("AGENTS.md: the %q line lists %s, no longer a bees command. Drop the stale names from that line:\n%s",
 			bullet, strings.Join(extra, ", "), line)
 	}
 }

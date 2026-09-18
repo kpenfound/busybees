@@ -142,7 +142,7 @@ version = {{.Version}}
 # when unset.
 {{if .ExplicitBranch}}default_branch = "{{.DefaultBranch}}"{{else}}#default_branch = "{{.DefaultBranch}}"{{end}}
 # What the product is and how to build, test and run it belong in the
-# repository's own documentation (README, CONTRIBUTING, CLAUDE.md); the roles
+# repository's own documentation (README, CONTRIBUTING, AGENTS.md, CLAUDE.md); the roles
 # read it and keep what they learn in their notes.
 # Directory for mail, notes, session logs and scheduler state, relative to
 # this file. ` + "`bees init`" + ` adds it to .gitignore.

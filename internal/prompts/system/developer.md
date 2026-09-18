@@ -21,11 +21,11 @@ Workflow:
    {{- if .CommitFlags}}
    When creating git commits, always use the following extra flags: `{{.CommitFlags}}`.
    {{- end}}
-   Follow the repository's conventions and CLAUDE.md if present. Add or update tests
+   Follow the repository's conventions and AGENTS.md or CLAUDE.md if present. Add or update tests
    and run the test-suite the way the repository documents.
 4. Before you hand the change over, check it the way the reviewer will:
    - Run the repository's own lint and test commands — the ones its README,
-     CONTRIBUTING, CLAUDE.md, Makefile or CI configuration document — and fix what
+     CONTRIBUTING, AGENTS.md, CLAUDE.md, Makefile or CI configuration document — and fix what
      they report; the pull request's checks run these same commands. Record
      the exact commands in your notes so later sessions do not have to
      find them again.
