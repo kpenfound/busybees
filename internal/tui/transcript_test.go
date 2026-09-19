@@ -311,3 +311,67 @@ func TestAnOpenCodeStepThatEndsForAnUnknownReasonFailsTheSession(t *testing.T) {
 		t.Errorf("the running cost = %v, want the step's cost added to what came in", cost)
 	}
 }
+
+// A pi transcript renders the way a claude one does: what the session said
+// and called, how each tool answered, the prompt cut short like a typed
+// turn, the end of the session, and the cost pi reports per response summed
+// into a running total. The header, turn and message starts and streamed
+// deltas render nothing.
+func TestAPiTranscriptRendersTheSameWay(t *testing.T) {
+	transcript := strings.Join([]string{
+		`{"type":"session","version":3,"id":"pi-1","cwd":"/w"}`,
+		`{"type":"agent_start"}`,
+		`{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"Build it"}]}}`,
+		`{"type":"turn_start"}`,
+		`{"type":"message_start","message":{"role":"assistant","content":[]}}`,
+		`{"type":"message_update","usage":{},"assistantMessageEvent":{"type":"text_delta","delta":"I'll"}}`,
+		`{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"hm"},{"type":"text","text":"I'll list the files"},{"type":"toolCall","id":"c1","name":"bash","arguments":{"command":"ls -la"}}],"stopReason":"toolUse","usage":{"cost":{"total":0.03}}}}`,
+		`{"type":"tool_execution_start","toolCallId":"c1","toolName":"bash","args":{"command":"ls -la"}}`,
+		`{"type":"message_end","message":{"role":"toolResult","toolCallId":"c1","toolName":"bash","content":[{"type":"text","text":"a.go\nb.go"}],"isError":false}}`,
+		`{"type":"message_end","message":{"role":"toolResult","toolCallId":"c2","toolName":"bees_done","content":[{"type":"text","text":"no such status"}],"isError":true}}`,
+		`{"type":"turn_end","message":{"role":"assistant"},"toolResults":[]}`,
+		`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Done"}],"stopReason":"stop","usage":{"cost":{"total":0.04}}}}`,
+		`{"type":"agent_end","messages":[{"role":"assistant","stopReason":"toolUse"},{"role":"toolResult"},{"role":"assistant","stopReason":"stop"}]}`,
+	}, "\n") + "\n"
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, session.TranscriptFile), []byte(transcript), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lines, _, cost, err := readTranscript(dir, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"› Build it",
+		"✻ thinking",
+		"● I'll list the files",
+		"● bash(command=ls -la)",
+		"  ⎿ a.go (+1 line)",
+		"  ⎿ error: no such status",
+		"● Done",
+		"● session ended: ok, $0.07",
+	}
+	if got := strings.Join(lines, "\n"); got != strings.Join(want, "\n") {
+		t.Errorf("the rendered transcript =\n%s\nwant\n%s", got, strings.Join(want, "\n"))
+	}
+	if cost != 0.07 {
+		t.Errorf("the running cost = %v, want the two responses summed to 0.07", cost)
+	}
+}
+
+// A pi session's end says how its last assistant message stopped: an error
+// with its message, a cut-off or aborted response named after its reason,
+// the same names core/agent's piBackend.consume gives them.
+func TestAPiSessionsEndLineSaysHowItEnded(t *testing.T) {
+	for _, tc := range []struct{ line, want string }{
+		{`{"type":"agent_end","messages":[{"role":"assistant","stopReason":"error","errorMessage":"429 usage limit"}]}`, "● session ended: failed: 429 usage limit"},
+		{`{"type":"agent_end","messages":[{"role":"assistant","stopReason":"error"}]}`, "● session ended: failed"},
+		{`{"type":"agent_end","messages":[{"role":"assistant","stopReason":"length"}]}`, "● session ended: stop_length"},
+		{`{"type":"agent_end","messages":[{"role":"assistant","stopReason":"stop"},{"role":"assistant","stopReason":"aborted"}]}`, "● session ended: stop_aborted"},
+		{`{"type":"agent_end","messages":[]}`, "● session ended"},
+	} {
+		if got, _ := renderTranscriptLine([]byte(tc.line), 0); len(got) != 1 || got[0] != tc.want {
+			t.Errorf("renderTranscriptLine(%q) = %q, want [%q]", tc.line, got, tc.want)
+		}
+	}
+}
