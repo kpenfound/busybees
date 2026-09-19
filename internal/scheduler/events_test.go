@@ -592,9 +592,9 @@ enabled = false
 func TestARetryRunsOnTheFallbackProfilesAgent(t *testing.T) {
 	t.Setenv("FAKE_DEV_HANG", "1")
 	h := newHarness(t, fallbackAgentTOML)
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", State: "OPEN",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Build the thing", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now().Add(-time.Hour)}
-	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
+	h.gh.PRs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
 	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true}
 
 	sub := h.sched.Subscribe()
@@ -660,9 +660,9 @@ enabled = false
 func TestEachRetryMovesOneStepDownTheFallbackChain(t *testing.T) {
 	t.Setenv("FAKE_DEV_HANG", "2")
 	h := newHarness(t, fallbackChainTOML)
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", State: "OPEN",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Build the thing", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now().Add(-time.Hour)}
-	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
+	h.gh.PRs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
 	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true}
 
 	sub := h.sched.Subscribe()

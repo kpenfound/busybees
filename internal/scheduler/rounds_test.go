@@ -200,8 +200,8 @@ func TestARoundAfterARetryOnAnotherAgentIsNotResumed(t *testing.T) {
 	if got := resumeOf(t, h, "developer-issue-1-r2"); got != "" {
 		t.Errorf("round 2 of the developer resumed %q, a codex thread, want a fresh claude session", got)
 	}
-	if last := h.gh.history[1][len(h.gh.history[1])-1]; last != "bees:approved" {
-		t.Fatalf("history: %v", h.gh.history[1])
+	if last := h.gh.History[1][len(h.gh.History[1])-1]; last != "bees:approved" {
+		t.Fatalf("history: %v", h.gh.History[1])
 	}
 }
 
