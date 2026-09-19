@@ -71,7 +71,20 @@ type container struct {
 	turn *Turn
 	// vars is the session's environment inside the container.
 	vars []envVar
+	// listen is the address the caller-supplied server listens on, as the
+	// box reaches the host: containerListen for a container, the loopback
+	// for a Docker Sandbox (sandboxListen).
+	listen func(context.Context) (string, error)
 }
+
+// builtinEntry is the entry the session reaches the caller-supplied server
+// by, once startServer has run.
+func (c *container) builtinEntry() MCPEntry { return c.builtin }
+
+// add lays the backend's own variables over the session's: they reach the
+// box the way the session's do, by name, with the value in the client's
+// environment.
+func (c *container) add(vars []envVar) { c.vars = append(c.vars, vars...) }
 
 // startContainer prepares a container session: it settles the image
 // (building it from the role's container_use_environment when that is set,
@@ -81,7 +94,7 @@ type container struct {
 // box needs, and the boundary what it is granted. The container itself is started by Run, through command;
 // close stops the server.
 func (r *Runner) startContainer(ctx context.Context, req Request, sessionDir string, turn *Turn) (*container, error) {
-	c := &container{r: r, req: req, sessionDir: sessionDir, turn: turn, name: r.namePrefix() + sanitize(req.Name) + "-" + randomHex(4), image: req.Profile.SandboxImage}
+	c := &container{r: r, req: req, sessionDir: sessionDir, turn: turn, name: r.namePrefix() + sanitize(req.Name) + "-" + randomHex(4), image: req.Profile.SandboxImage, listen: r.containerListen}
 	if req.Profile.ContainerUseEnvironment != "" {
 		image, err := r.containerUseImage(ctx, req, sessionDir)
 		if err != nil {
@@ -104,7 +117,7 @@ func (r *Runner) startContainer(ctx context.Context, req Request, sessionDir str
 // host's alias, the port, and a token this session alone holds.
 func (c *container) startServer(ctx context.Context) error {
 	r := c.r
-	addr, err := r.containerListen(ctx)
+	addr, err := c.listen(ctx)
 	if err != nil {
 		return err
 	}
@@ -575,13 +588,27 @@ func (b ContainerBoundary) env(req Request, turn *Turn) ([]string, error) {
 	if agent == "" {
 		agent = AgentClaude
 	}
-	var vars []envVar
+	var credential []envVar
 	// Set before the role's env so a role can name a different one.
 	for _, name := range AgentCredentials[agent] {
 		if v := host[name]; v != "" && envGranted(g.Env, name) && (turn.VCS || !isVCSEnv(name)) {
-			vars = append(vars, envVar{name, v})
+			credential = append(credential, envVar{name, v})
 		}
 	}
+	home := b.Home
+	if home == "" {
+		home = "/home/agent"
+	}
+	return isolatedEnv(req, turn, credential, home)
+}
+
+// isolatedEnv builds the environment of a session that inherits nothing of
+// the host: first, the variables the boundary forwards on its own account,
+// then the session's variables, ContainerEnv and, with VCS, VCSContainerEnv,
+// each of which must be granted, then HOME when the box needs one set.
+func isolatedEnv(req Request, turn *Turn, first []envVar, home string) ([]string, error) {
+	g := req.Grants
+	vars := slices.Clone(first)
 	vars = append(vars, sessionVars(req, turn.VCS)...)
 	extra := func(m map[string]string) error {
 		for _, k := range slices.Sorted(maps.Keys(m)) {
@@ -600,11 +627,9 @@ func (b ContainerBoundary) env(req Request, turn *Turn) ([]string, error) {
 			return nil, err
 		}
 	}
-	home := b.Home
-	if home == "" {
-		home = "/home/agent"
+	if home != "" {
+		vars = append(vars, envVar{"HOME", home})
 	}
-	vars = append(vars, envVar{"HOME", home})
 	var env []string
 	for _, v := range dedupe(vars) {
 		env = append(env, v.name+"="+v.value)

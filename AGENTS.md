@@ -15,10 +15,10 @@ GitHub repository. Read `docs/architecture.md` before changing the scheduler.
   from the working tree, a test project and stubbed `gh` and `claude`: the QA
   playground, a dang module in `.dagger/modules/qa-playground` described in
   `CONTRIBUTING.md`. It contributes no checks.
-- Tests must never call the real `claude`, `codex`, `opencode`, `gh` or `docker`. `gh` is faked through
+- Tests must never call the real `claude`, `codex`, `opencode`, `gh`, `docker` or `sbx`. `gh` is faked through
   `github.Client.Exec`; `claude`, `codex` and `opencode` are faked by the test binary itself (see `TestMain` in
   `internal/scheduler/scheduler_test.go`) or a shell script (`core/agent/agenttest`), and so is
-  `docker` (`fakeDocker` in `core/agent` and, separately, in `internal/review`).
+  `docker` (`fakeDocker` in `core/agent` and, separately, in `internal/review`) and `sbx` (`agenttest.Sbx`).
   `core/agent/agentbin.Resolve`, which every session and review agent goes through, refuses any other executable
   from a test binary (`testing.Testing()`), so a test that forgets its fake, or a test binary re-executed as
   `bees.test run`, fails with `ErrRealAgent` instead of running the real `claude` on the host. `bees run`, `tick`
@@ -81,7 +81,9 @@ dagger core container from --address golang:1.26-bookworm \
   and streams, sandbox/container execution, timeout/cancellation, result/outcome
   files and interruption inspection. `grants.go` is the capability contract every
   request carries (`Grants`: env allowlist, tools, ro/rw mounts, VCS) and the
-  `Boundary` that verifies it before launch (`HostBoundary`, `ContainerBoundary`). `confine.go` is the host's
+  `Boundary` that verifies it before launch (`HostBoundary`, `ContainerBoundary`, and `SandboxBoundary` in `sbx.go`,
+  the Docker Sandbox mode `sandbox = "sbx"`: `sbx create` with the binds as workspaces, `sbx exec` around the claude
+  command, `sbx rm` at the end, the agent's credential left to the sbx proxy). `confine.go` is the host's
   confined mode (`Profile.Confine`): the operating system holds the process to its mounts and `SystemPaths` through a
   `Confiner`, Landlock on Linux (`confine_linux.go`), Seatbelt on macOS (`confine_seatbelt.go`: the profile and the
   `sandbox-exec` start, untagged so the gate tests them; `confine_darwin.go` selects it), `ErrUnsupported` where there

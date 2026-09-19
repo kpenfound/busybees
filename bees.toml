@@ -213,7 +213,7 @@ disallowed_tools = ["Artifact", "Bash(go test *)", "Bash(docker *)"]
 #shell = "/bin/bash"
 
 
-# How much of the machine a session can reach: none, claude or container.
+# How much of the machine a session can reach: none, claude, container or sbx.
 # Set it per role in [roles.<name>] to box the roles that run untrusted code
 # harder than the ones that only read the repository.
 # Agent settings moved to profiles (version 3).

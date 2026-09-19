@@ -5,7 +5,7 @@
 ```
 core/agent/         standalone session runner, backends, sandbox and result artifacts
 core/agent/agentbin/ fake-executable guard
-core/agent/agenttest/ shared fake agents, Docker and host MCP server
+core/agent/agenttest/ shared fake agents, Docker, sbx and host MCP server
 core/agent/agenttest/enforcertest/ an agent.Enforcer that starts no process
 core/agent/procs/    finding and stopping sessions (processes and containers)
 core/ops/            retry, ledger/budgets, pause/degraded signals, events, slots and wakes
@@ -101,9 +101,11 @@ See [core/README.md](core/README.md) for the execution boundary.
   `internal/testutil.SetupRepos`, and the workspace and scheduler tests
   create real worktrees, push to it, then assert the branch history and
   that no worktree is left behind.
-- Tests never call the real `docker` either. The session tests fake the
-  container engine with a shell script that records its arguments and runs
-  the command after the image on the host, and the built-in server's
+- Tests never call the real `docker` or `sbx` either. The session tests fake
+  the container engine with a shell script that records its arguments and
+  runs the command after the image on the host, the Docker Sandboxes CLI with
+  one that records `create` and `rm` and runs the command after the sandbox
+  name (`agenttest.Sbx`), and the built-in server's
   `bees mcp serve --listen` with one that reports an address. The review
   tests fake it with a script of their own that records the build and the
   run and writes a file into the mounted directory in place of the clone;

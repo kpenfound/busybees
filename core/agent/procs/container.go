@@ -112,6 +112,31 @@ func ContainerID(dir string) string {
 // RemoveContainerID deletes a session's container id file.
 func RemoveContainerID(dir string) { _ = os.Remove(filepath.Join(dir, ContainerIDFile)) }
 
+// SandboxNameFile is the file in a session directory the runner writes the
+// name of the Docker Sandbox (sbx) a sandbox-backed session runs in. It is
+// removed with the sandbox when the session ends, so a session directory
+// holding one is a session whose sandbox may still exist: `sbx rm --force
+// <name>` removes it. Orphan inspection does not read it.
+const SandboxNameFile = "sandbox-name"
+
+// WriteSandboxName records the name of a session's Docker Sandbox.
+func WriteSandboxName(dir, name string) error {
+	return os.WriteFile(filepath.Join(dir, SandboxNameFile), []byte(name+"\n"), 0o644)
+}
+
+// SandboxName returns the name of the Docker Sandbox a session directory
+// records, empty when the session does not run in one.
+func SandboxName(dir string) string {
+	b, err := os.ReadFile(filepath.Join(dir, SandboxNameFile))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// RemoveSandboxName deletes a session's sandbox name file.
+func RemoveSandboxName(dir string) { _ = os.Remove(filepath.Join(dir, SandboxNameFile)) }
+
 // FromContainers returns the container-backed sessions of the factory whose
 // sessions live in sessionsDir, by asking the engine which of its running
 // containers carry ContainerLabel with a session directory of this factory.

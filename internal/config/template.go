@@ -331,7 +331,7 @@ label = "{{.Label}}"
 #model = "opus"
 #fallback = ""          # another profile's name
 #effort = ""            # low | medium | high | max (empty: agent default)
-#sandbox = "none"       # none | claude | container
+#sandbox = "none"       # none | claude | container | sbx
 
 #===============================================================================
 # Global role settings — apply to every role, merged with [roles.<name>]:
@@ -367,6 +367,8 @@ label = "{{.Label}}"
 #shell = "/bin/bash"
 # Image a container session runs in (sandbox = "container"): it must hold
 # the agent, git and gh. Name one per role for a role that runs the product.
+# For sandbox = "sbx" it is the sandbox's template, built on
+# docker/sandbox-templates:claude-code; empty selects sbx's own.
 #sandbox_image = "ghcr.io/acme/widgets-bees:latest"
 # Path, relative to this file, to a dagger/container-use environment
 # definition the container sandbox builds and runs instead of sandbox_image.

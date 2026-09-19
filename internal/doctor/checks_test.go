@@ -103,6 +103,17 @@ func fakeCodex(t *testing.T, output string) string {
 	return p
 }
 
+// fakeSbx writes a shell script standing in for the sbx CLI, answering
+// `sbx version` with output.
+func fakeSbx(t *testing.T, output string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "sbx")
+	if err := os.WriteFile(p, []byte("#!/bin/sh\n[ \"$1\" = version ] || exit 2\nprintf '%s\\n' '"+output+"'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
 // fakeOpenCode writes a shell script standing in for the opencode binary,
 // the same way fakeClaude stands in for claude.
 func fakeOpenCode(t *testing.T, output string) string {
@@ -392,6 +403,56 @@ func TestChecksIncludeOpenCodeOnlyWhenConfigured(t *testing.T) {
 	disabled := setup(t, "[roles.developer]\nagent = \"opencode\"\nenabled = false\n", nil)
 	if got := len(disabled.Checks()); got != base {
 		t.Errorf("got %d checks with the opencode role disabled, want %d", got, base)
+	}
+}
+
+func TestCheckSbx(t *testing.T) {
+	t.Run("runnable", func(t *testing.T) {
+		f := setup(t, "", nil)
+		sbx := fakeSbx(t, "sbx version 0.42.0")
+		f.LookPath = func(file string) (string, error) {
+			if file == "sbx" {
+				return sbx, nil
+			}
+			return "", fmt.Errorf("%s: not found", file)
+		}
+		wantResult(t, f.run(t, f.checkSbx), Pass, "sbx version 0.42.0", sbx)
+	})
+
+	t.Run("not on PATH", func(t *testing.T) {
+		f := setup(t, "", nil)
+		wantResult(t, f.run(t, f.checkSbx), Fail, "not found on PATH", "docs.docker.com/ai/sandboxes/install")
+	})
+
+	t.Run("not runnable", func(t *testing.T) {
+		f := setup(t, "", nil)
+		gone := filepath.Join(t.TempDir(), "sbx")
+		f.LookPath = func(string) (string, error) { return gone, nil }
+		wantResult(t, f.run(t, f.checkSbx), Fail, "version failed", "sbx login")
+	})
+}
+
+// TestChecksIncludeSbxOnlyWhenConfigured pins usesSbx the way
+// TestChecksIncludeCodexOnlyWhenConfigured pins usesCodex: Checks() carries
+// one extra check the moment an enabled role is boxed with sandbox = "sbx".
+func TestChecksIncludeSbxOnlyWhenConfigured(t *testing.T) {
+	base := len(setup(t, "", nil).Checks())
+
+	with := setup(t, "[roles.developer]\nsandbox = \"sbx\"\n", nil)
+	if got := len(with.Checks()); got != base+1 {
+		t.Errorf("got %d checks with an sbx role configured, want %d (base %d + the sbx check)", got, base+1, base)
+	}
+
+	disabled := setup(t, "[roles.developer]\nsandbox = \"sbx\"\nenabled = false\n", nil)
+	if got := len(disabled.Checks()); got != base {
+		t.Errorf("got %d checks with the sbx role disabled, want %d", got, base)
+	}
+
+	// The reviewer's judge profile is a session of its own, boxed on its
+	// own terms, and counts the way it does for `bees run`.
+	judge := setup(t, "[roles.reviewer]\njudge_profile = \"boxed\"\n[profiles.boxed]\nsandbox = \"sbx\"\n", nil)
+	if got := len(judge.Checks()); got != base+1 {
+		t.Errorf("got %d checks with an sbx judge profile, want %d", got, base+1)
 	}
 }
 
