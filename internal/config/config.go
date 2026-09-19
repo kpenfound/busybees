@@ -35,6 +35,7 @@ import (
 	_ "time/tzdata"
 
 	"github.com/BurntSushi/toml"
+	"github.com/kpenfound/busybees/core/agent"
 	"github.com/kpenfound/busybees/core/ops"
 	"github.com/kpenfound/busybees/internal/logging"
 )
@@ -160,15 +161,15 @@ const (
 var DispatchOrders = []string{DispatchSmallFirst, DispatchOldest, DispatchLargeFirst}
 
 // Session backends accepted by the agent key: which CLI a role's sessions
-// run as. internal/session builds the command line for each.
+// run as. core/agent builds the command line for each.
 const (
-	AgentClaude   = "claude"
-	AgentCodex    = "codex"
-	AgentOpenCode = "opencode"
+	AgentClaude   = agent.AgentClaude
+	AgentCodex    = agent.AgentCodex
+	AgentOpenCode = agent.AgentOpenCode
 )
 
 // Agents lists the accepted agent values.
-var Agents = []string{AgentClaude, AgentCodex, AgentOpenCode}
+var Agents = agent.Agents
 
 // Notes backends accepted by notes.backend: where role notes live.
 const (

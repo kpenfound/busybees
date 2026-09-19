@@ -18,6 +18,12 @@ const (
 	DefaultTimeout   = 45 * time.Minute
 )
 
+// Agents lists the backends the runner builds a command line for.
+var Agents = []string{AgentClaude, AgentCodex, AgentOpenCode}
+
+// Sandboxes lists the sandbox kinds the runner implements, weakest first.
+var Sandboxes = []string{SandboxNone, SandboxClaude, SandboxContainer}
+
 // AgentCredentials names credentials forwarded into an isolated container.
 var AgentCredentials = map[string][]string{
 	AgentClaude: {"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"},
@@ -56,7 +62,7 @@ type Profile struct {
 
 // Validate rejects modes that would silently run without the requested box.
 func (p Profile) Validate() error {
-	if p.Sandbox != "" && !slices.Contains([]string{SandboxNone, SandboxClaude, SandboxContainer}, p.Sandbox) {
+	if p.Sandbox != "" && !slices.Contains(Sandboxes, p.Sandbox) {
 		return fmt.Errorf("sandbox %q is not implemented (agent can run none, claude, container)", p.Sandbox)
 	}
 	if p.Sandbox == SandboxClaude && p.Agent != "" && p.Agent != AgentClaude {
