@@ -47,6 +47,10 @@ const (
 	GradeDir = "grade"
 )
 
+// FixturesDir, directly under evals/, is not a case: it holds fixture
+// repositories several cases share, each case's SetupScript copying one in.
+const FixturesDir = "fixtures"
+
 // Defaults for the keys a case leaves out.
 const (
 	DefaultTimeout = time.Hour
@@ -105,7 +109,8 @@ type Mail struct {
 
 // LoadCases reads the cases under dir, in name order: every one, or only
 // the one called name. A directory named after a role is left out: it holds
-// that role's cases, which a whole-factory run does not take.
+// that role's cases, which a whole-factory run does not take. So is
+// FixturesDir.
 func LoadCases(dir, name string) ([]Case, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -114,7 +119,7 @@ func LoadCases(dir, name string) ([]Case, error) {
 	var cases []Case
 	var names []string
 	for _, e := range entries {
-		if !e.IsDir() || slices.Contains(config.Roles, e.Name()) {
+		if !e.IsDir() || e.Name() == FixturesDir || slices.Contains(config.Roles, e.Name()) {
 			continue
 		}
 		names = append(names, e.Name())

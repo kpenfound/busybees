@@ -6,12 +6,14 @@ import (
 	"time"
 )
 
-func TestLoadCasesSkipsRoleDirectories(t *testing.T) {
+func TestLoadCasesSkipsRoleAndFixturesDirectories(t *testing.T) {
 	root := t.TempDir()
 	writeCase(t, root, "b-case", answerCase, answerFiles())
 	writeCase(t, root, "a-case", answerCase, answerFiles())
 	// evals/<role>/ holds that role's cases, for a run of that role.
 	writeCase(t, root, "developer", "not = a case", map[string]string{})
+	// evals/fixtures/ holds the fixtures cases share.
+	writeCase(t, root, FixturesDir, "not = a case", map[string]string{})
 
 	cases, err := LoadCases(root, "")
 	if err != nil {

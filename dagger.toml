@@ -15,10 +15,11 @@ base = "golang:1.26-bookworm"
 # the workspace does not read .gitignore. A session may leave a copy of go.mod
 # in its own directory under .bees/ (factory state, never source), where
 # `otelgotest ./...` finds no packages and fails the check. Keep state out of
-# the module selection.
-lint = ["**", "!.bees/**"]
-test = ["**", "!.bees/**"]
-generate = ["**", "!.bees/**"]
+# the module selection. The eval fixtures under evals/ are Go modules too,
+# with bugs in them on purpose: internal/eval's tests run their tests.
+lint = ["**", "!.bees/**", "!evals/**"]
+test = ["**", "!.bees/**", "!evals/**"]
+generate = ["**", "!.bees/**", "!evals/**"]
 
 # The built-in Go patterns mount only Go sources, so tests that read a repo
 # file need it listed here: bees.example.toml is a golden file compared against

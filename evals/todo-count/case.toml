@@ -1,0 +1,26 @@
+# A small feature in the shared todo fixture (evals/fixtures/todo): a new
+# subcommand, seeded for triage so the project manager refines it first.
+# docs/evals.md describes every key.
+description = "add todo count, which prints how many items are pending and done"
+test = "go test ./..."
+timeout = "1h"
+max_cost = 10
+
+[[issues]]
+number = 1
+title = "todo count: how many items are left"
+labels = ["bees:triage"]
+body = """
+I want to see how much is left on my list without reading all of it. Add a
+`count` command to `todo` that prints one line with the number of pending
+items and the number of done items:
+
+```
+$ todo count
+2 pending, 1 done
+```
+
+An empty list, or a file that does not exist yet, prints `0 pending, 0 done`.
+`todo count` takes no arguments; `todo count extra` is an error. The usage
+line and the command's doc comment in `cmd/todo/main.go` should list it.
+"""
