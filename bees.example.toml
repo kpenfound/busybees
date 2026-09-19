@@ -200,15 +200,16 @@ label = "bees"
 #neo4j_api_key = "$BEES_NEO4J_API_KEY"
 
 # Agent profiles bundle backend, models, effort and sandbox. Each profile uses
-# its own defaults; codex and opencode have no default model or fallback model.
+# its own defaults; codex, opencode and pi have no default model or fallback
+# model.
 # No declaration is required when using the built-in defaults. Uncomment this
 # example to name those defaults explicitly.
 #[profiles.default]
-#agent = "claude"        # claude | codex | opencode
+#agent = "claude"        # claude | codex | opencode | pi
 #model = "opus"
 #fallback_model = "sonnet"
 #effort = ""            # low | medium | high | max (empty: agent default)
-#sandbox = "none"       # none | claude | container
+#sandbox = "none"       # none | claude | container (pi: none | container)
 
 #===============================================================================
 # Global role settings — apply to every role, merged with [roles.<name>]:
@@ -230,6 +231,10 @@ label = "bees"
 # How stale a skill clone may get before it is pulled: never, always or a
 # duration. Global only; see "bees skills".
 #skills_refresh = "24h"
+# Pi packages a pi session loads on top of pi-mcp-adapter, which every pi
+# session loads: npm:<name>[@version], git:<repo>[@ref], a URL or a path.
+# Global and role lists are unioned; other agents ignore them.
+#pi_packages = ["npm:@acme/pi-tools@1.2.3"]
 # Choose a named agent profile. Unset: claude, opus, sonnet fallback, no sandbox.
 #profile = "default"
 # Size overrides apply to every role. A role's profile overrides this table.

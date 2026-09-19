@@ -13,7 +13,7 @@
 //	              developer, reviewer, qa)
 //
 // Role settings are resolved by merging [global] with [roles.<name>]:
-// prompts are concatenated, skills are unioned, MCP servers are unioned with
+// prompts are concatenated, skills and pi packages are unioned, MCP servers are unioned with
 // the role winning on name conflicts, and scalar values fall back to the
 // global value and then to a built-in default.
 package config
@@ -166,7 +166,16 @@ const (
 	AgentClaude   = agent.AgentClaude
 	AgentCodex    = agent.AgentCodex
 	AgentOpenCode = agent.AgentOpenCode
+	AgentPi       = agent.AgentPi
 )
+
+// PiMCPAdapter is the pi package every pi session loads, before the ones
+// pi_packages names.
+const PiMCPAdapter = agent.PiMCPAdapter
+
+// PiSandboxes are the sandbox modes a pi session runs in: pi has no
+// sandbox of its own, so Claude Code's is not one of them.
+var PiSandboxes = []string{SandboxNone, SandboxContainer}
 
 // Agents lists the accepted agent values.
 var Agents = agent.Agents
@@ -446,6 +455,11 @@ type RoleSettings struct {
 	// Skills are git URLs of skill or plugin repositories. Optional "#sub/dir"
 	// selects a directory inside the repo; optional "@ref" pins a branch/tag.
 	Skills []string `toml:"skills"`
+	// PiPackages are pi package sources (npm:<name>, git:<repo>, a URL or a
+	// local path) a pi session loads with -e on top of pi-mcp-adapter, which
+	// every pi session loads and this list cannot remove. Sessions of any
+	// other agent ignore it.
+	PiPackages []string `toml:"pi_packages"`
 	// MCP servers keyed by name.
 	MCP map[string]MCPServer `toml:"mcp"`
 	// Profile names an entry in Config.Profiles. Empty inherits the global
@@ -1226,8 +1240,10 @@ type ResolvedRole struct {
 	Name   string
 	Prompt string // global prompt + role prompt (+ prompt files)
 	Skills []string
-	MCP    map[string]MCPServer
-	Model  string
+	// PiPackages is pi_packages, global then role, each source once.
+	PiPackages []string
+	MCP        map[string]MCPServer
+	Model      string
 	// ProfilesBySize holds fully resolved profiles for work item sizes.
 	ProfilesBySize map[string]AgentProfile
 	// BestOfNBySize, the best-of-N attempt count per work item size, and the
@@ -1700,6 +1716,11 @@ func (c *Config) Validate() error {
 		if scope != "roles."+RoleProductManager && rs.MinIssueSize != "" {
 			errs = append(errs, fmt.Sprintf("%s: min_issue_size is only valid under roles.product_manager", scope))
 		}
+		for _, pkg := range rs.PiPackages {
+			if err := checkPiPackage(pkg); err != nil {
+				errs = append(errs, fmt.Sprintf("%s.pi_packages: %v", scope, err))
+			}
+		}
 		if rs.MinIssueSize != "" && !slices.Contains(Sizes, rs.MinIssueSize) {
 			errs = append(errs, fmt.Sprintf("%s.min_issue_size must be one of %s", scope, strings.Join(Sizes, ", ")))
 		}
@@ -1847,6 +1868,8 @@ func (c *Config) Validate() error {
 		// about the machine, and CheckSandbox asks it once at `bees run`.
 		if p.Sandbox != "" && !slices.Contains(SandboxModes, p.Sandbox) {
 			errs = append(errs, fmt.Sprintf("%s.sandbox must be one of %s", scope, strings.Join(SandboxModes, ", ")))
+		} else if r := p.resolved(); r.Agent == AgentPi && !slices.Contains(PiSandboxes, r.Sandbox) {
+			errs = append(errs, fmt.Sprintf("%s.sandbox %q does not run agent %q: pi has no sandbox of its own and runs with sandbox %s", scope, r.Sandbox, AgentPi, strings.Join(PiSandboxes, " or ")))
 		}
 	}
 	check("global", c.Global)
@@ -1994,6 +2017,15 @@ func (c *Config) Role(name string) (ResolvedRole, error) {
 		}
 		seen[s] = true
 		r.Skills = append(r.Skills, s)
+	}
+	// Pi packages: union, order preserved, global first.
+	seen = map[string]bool{}
+	for _, s := range append(slices.Clone(g.PiPackages), rs.PiPackages...) {
+		if seen[s] {
+			continue
+		}
+		seen[s] = true
+		r.PiPackages = append(r.PiPackages, s)
 	}
 
 	// MCP: union, role overrides global on name conflict.

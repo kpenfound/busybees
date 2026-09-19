@@ -185,7 +185,7 @@ func TestViewUsesTOMLKeyNamesAndDurationStrings(t *testing.T) {
 	}
 	// Empty collections are [] / {}, never null.
 	dev := roleOf(t, out, RoleDeveloper)
-	for _, k := range []string{"skills", "allowed_tools", "disallowed_tools", "mcp", "env"} {
+	for _, k := range []string{"skills", "pi_packages", "allowed_tools", "disallowed_tools", "mcp", "env"} {
 		if dev[k] == nil {
 			t.Errorf("role %s renders as null, want an empty collection", k)
 		}

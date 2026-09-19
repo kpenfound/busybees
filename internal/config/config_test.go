@@ -786,8 +786,8 @@ func TestOpenCodeRoleHasNoDefaultModel(t *testing.T) {
 // An unknown agent is a load error naming the scope and the accepted values.
 func TestAgentValidation(t *testing.T) {
 	for body, want := range map[string]string{
-		"version = 1\n[project]\nrepo = \"a/b\"\n[global]\nagent = \"gpt\"\n":          "global.agent must be one of claude, codex, opencode",
-		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nagent = \"gpt\"\n": "profiles.developer.agent must be one of claude, codex, opencode",
+		"version = 1\n[project]\nrepo = \"a/b\"\n[global]\nagent = \"gpt\"\n":          "global.agent must be one of claude, codex, opencode, pi",
+		"version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nagent = \"gpt\"\n": "profiles.developer.agent must be one of claude, codex, opencode, pi",
 	} {
 		_, err := Load(writeConfig(t, body))
 		if err == nil {
