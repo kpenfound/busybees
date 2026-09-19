@@ -646,7 +646,7 @@ profile_by_size = { xs = "bar", s = "bar", l = "foo", xl = "foo" }
 |---|---|---|---|
 | `agent` | string | `"claude"` | CLI a session runs as: `claude` (`claude -p`), `codex` (`codex exec`) or `opencode`. An unknown value is a load error. See [Running a session](architecture.md#running-a-session). |
 | `model` | string | `"opus"` for `claude`, `""` otherwise | Model alias or full id, passed to the selected agent (`provider/model` for opencode). An empty value lets codex or opencode use its own configured model. |
-| `fallback` | string | `""` | The profile a retry runs on instead, agent included: a session that failed for infrastructure reasons (a timeout, exhausted turns, a crash, a rate limit) is retried on it when [`scheduler.retry_with_fallback`](#scheduler) is on, the next retry on that profile's own `fallback`, and so on; a brief or angle review session refused for want of capacity runs again on it. Must name a profile; a profile that names itself, or a longer cycle (`a` → `b` → `a`), is a load error. When both profiles run `claude`, the fallback's model is also passed as `claude --fallback-model`, so claude switches to it within a session; codex and opencode have no such flag, and a fallback on another agent is a new session. |
+| `fallback` | string | `""` | The profile a retry runs on instead, agent included: a session that failed for infrastructure reasons (a timeout, exhausted turns, a crash, a rate limit) is retried on it when [`scheduler.retry_with_fallback`](#scheduler) is on, the next retry on that profile's own `fallback`, and so on; a brief or angle review session refused for want of capacity runs again on it. Must name a profile; a profile that names itself, or a longer cycle (`a` → `b` → `a`), is a load error. When both profiles run `claude`, the fallback's model is also passed as `claude --fallback-model`, so claude switches to it within a session; codex and opencode have no such flag, and a fallback on another agent is a new session. A fallback in a sandbox other than `sbx` runs without the role's [Dagger engine](#dagger-in-the-sandbox). |
 | `effort` | string | `""` | Passed as `claude --effort` when set: `low`, `medium`, `high` or `max`. Codex receives it as `model_reasoning_effort`; `max` maps to `high`. Opencode receives it as the default `build` agent's `variant`; variants are names the model defines, not levels. |
 | `sandbox` | string | `"none"` | How much of the machine a session can reach: `none`, `claude`, `container` or `sbx`. See [Sandboxing](#sandboxing). |
 
@@ -1230,7 +1230,9 @@ does not remove a sandbox a crash left behind; `sbx rm --force <name>` does.
 `sandbox_dagger_version` the Dagger CLI release installed in the sandbox to
 reach it, so that a developer session can run `dagger check`. It is off
 unless set, and valid only when the role's resolved profile, at every size,
-selects `sbx`; one key without the other is a load error.
+selects `sbx`; one key without the other is a load error. A `fallback` or
+`judge_profile` that selects another sandbox loads, and its sessions run
+without the Dagger CLI or the engine.
 
 ```toml
 [roles.developer]

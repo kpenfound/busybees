@@ -221,9 +221,10 @@ name, removes the sandbox with `sbx rm --force` when the session ends, and
 records its name in `procs.SandboxNameFile` meanwhile. With
 `Profile.Dagger`, it installs the Dagger CLI at `Dagger.Version` with a
 setup `sbx exec` once the sandbox exists, forwards a socket engine from a
-loopback port for the session's lifetime, and sets `EnvDaggerRunnerHost`
-to the engine's address at `host.docker.internal`. No `Enforcer` prepares
-this kind.
+port on `127.0.0.1` for the session's lifetime, and sets
+`EnvDaggerRunnerHost` to the engine's address: at `host.docker.internal`
+for a socket or a loopback TCP engine, and as written for a TCP engine on
+any other host. No `Enforcer` prepares this kind.
 
 ## Enforced turns
 

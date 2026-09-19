@@ -817,6 +817,8 @@ func TestSandboxDaggerKeys(t *testing.T) {
 			"roles.qa: sandbox_dagger_version needs sandbox_dagger_engine"},
 		"engine": {"[global]\nsandbox = \"sbx\"\nsandbox_dagger_engine = \"/run/dagger.sock\"\nsandbox_dagger_version = \"v0.20.5\"\n",
 			`global.sandbox_dagger_engine: the Dagger engine "/run/dagger.sock" must be unix://<absolute path of its socket> or tcp://<host>:<port>`},
+		"tcp port": {"[global]\nsandbox = \"sbx\"\nsandbox_dagger_engine = \"tcp://127.0.0.1:dagger\"\nsandbox_dagger_version = \"v0.20.5\"\n",
+			`global.sandbox_dagger_engine: the Dagger engine "tcp://127.0.0.1:dagger" must be`},
 		"version": {"[global]\nsandbox = \"sbx\"\n[roles.developer]\nsandbox_dagger_engine = \"unix:///s\"\nsandbox_dagger_version = \"latest\"\n",
 			`roles.developer.sandbox_dagger_version: the Dagger CLI version "latest" must be a release such as v0.20.5`},
 	} {

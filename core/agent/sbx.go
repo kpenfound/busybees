@@ -33,10 +33,12 @@ import (
 // for it unless the profile names one. A profile that asks for Dagger also
 // gets the Dagger CLI and the host's engine (sbxdagger.go).
 //
-// The session is three sbx commands: `sbx create` before the server starts
-// (a failed create leaves nothing to stop), `sbx exec` with the backend's
-// command line, its prompt on stdin, and `sbx rm --force` when the session
-// ends, because a sandbox outlives the command it ran. The sandbox's name is
+// The session is three sbx commands, four with Dagger: `sbx create` before
+// the server starts (a failed create leaves nothing to stop), with Dagger a
+// setup `sbx exec` that installs the Dagger CLI, `sbx exec --interactive`
+// with the backend's command line, its prompt on stdin, and `sbx rm
+// --force` when the session ends, because a sandbox outlives the command it
+// ran. The sandbox's name is
 // recorded in the session directory while it exists (procs.SandboxNameFile).
 
 // sandbox is one session's Docker Sandbox: the container fields it shares

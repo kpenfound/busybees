@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"strings"
 	"sync"
@@ -37,7 +38,7 @@ func (s *sandbox) startDagger(ctx context.Context) error {
 	if err := s.installDagger(ctx, d.Version); err != nil {
 		return err
 	}
-	addr, err := s.daggerAddress(ctx, s.turn.DaggerEngine)
+	addr, err := s.daggerAddress(s.turn.DaggerEngine)
 	if err != nil {
 		return err
 	}
@@ -65,18 +66,14 @@ func (s *sandbox) installDagger(ctx context.Context, version string) error {
 // socket through a forward this session alone has, a TCP engine on the
 // host's loopback at host.docker.internal, and any other TCP engine as it
 // is.
-func (s *sandbox) daggerAddress(ctx context.Context, engine string) (string, error) {
+func (s *sandbox) daggerAddress(engine string) (string, error) {
 	scheme, rest, _ := strings.Cut(engine, "://")
 	if scheme == "unix" {
-		listen, err := s.r.sandboxListen(ctx)
-		if err != nil {
-			return "", err
-		}
-		host, _, err := net.SplitHostPort(listen)
-		if err != nil {
-			return "", fmt.Errorf("forward the Dagger engine: listen address %q: %w", listen, err)
-		}
-		f, err := forwardUnix(net.JoinHostPort(host, "0"), rest)
+		// Always the loopback, whatever ContainerListen says: the forward
+		// has no token, unlike the caller's server, and whoever connects
+		// to it drives the engine, which is root on the host. The
+		// sandbox's proxy reaches it there as host.docker.internal.
+		f, err := forwardUnix("127.0.0.1:0", rest, s.r.Logger)
 		if err != nil {
 			return "", fmt.Errorf("forward the Dagger engine %s: %w", engine, err)
 		}
@@ -113,15 +110,20 @@ type forward struct {
 	conns  map[net.Conn]bool
 	closed bool
 	wg     sync.WaitGroup
+	log    *slog.Logger
 }
 
-// forwardUnix listens on listen and forwards every connection to socket.
-func forwardUnix(listen, socket string) (*forward, error) {
+// forwardUnix listens on listen and forwards every connection to socket,
+// logging a connection the socket refuses to log (nil: slog.Default).
+func forwardUnix(listen, socket string, log *slog.Logger) (*forward, error) {
+	if log == nil {
+		log = slog.Default()
+	}
 	ln, err := net.Listen("tcp", listen)
 	if err != nil {
 		return nil, err
 	}
-	f := &forward{ln: ln, socket: socket, conns: map[net.Conn]bool{}}
+	f := &forward{ln: ln, socket: socket, conns: map[net.Conn]bool{}, log: log}
 	f.wg.Add(1)
 	go f.serve()
 	return f, nil
@@ -138,6 +140,7 @@ func (f *forward) serve() {
 		}
 		out, err := net.Dial("unix", f.socket)
 		if err != nil {
+			f.log.Warn("forward to the Dagger engine", "socket", f.socket, "err", err)
 			_ = in.Close()
 			continue
 		}
@@ -167,13 +170,24 @@ func (f *forward) track(conns ...net.Conn) bool {
 	return true
 }
 
-// pipe copies one direction, then closes both ends: either side hanging up
-// ends the connection.
+// pipe copies one direction, then closes both ends and forgets them:
+// either side hanging up ends the connection.
 func (f *forward) pipe(dst, src net.Conn) {
 	defer f.wg.Done()
 	_, _ = io.Copy(dst, src)
 	_ = dst.Close()
 	_ = src.Close()
+	f.mu.Lock()
+	delete(f.conns, dst)
+	delete(f.conns, src)
+	f.mu.Unlock()
+}
+
+// open is how many connections the forward holds, both ends counted.
+func (f *forward) open() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.conns)
 }
 
 // close stops accepting, closes every connection and waits for the

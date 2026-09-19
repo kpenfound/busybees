@@ -2,13 +2,16 @@ package agent
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -216,7 +219,8 @@ func TestSandboxDaggerInstallFailure(t *testing.T) {
 
 // A TCP engine on the host's loopback is reached at host.docker.internal,
 // and any other at its own address; a socket is forwarded from the
-// loopback.
+// loopback, whatever address the runner's own server listens on: the
+// forward has no token, and the engine is root on the host.
 func TestSandboxDaggerAddress(t *testing.T) {
 	s := &sandbox{container: container{r: &Runner{}}}
 	for engine, want := range map[string]string{
@@ -226,7 +230,7 @@ func TestSandboxDaggerAddress(t *testing.T) {
 		"tcp://engine.example:1234": "tcp://engine.example:1234",
 		"tcp://10.0.0.5:8080":       "tcp://10.0.0.5:8080",
 	} {
-		got, err := s.daggerAddress(context.Background(), engine)
+		got, err := s.daggerAddress(engine)
 		if err != nil || got != want {
 			t.Errorf("%s: %q, %v; want %q", engine, got, err, want)
 		}
@@ -235,8 +239,8 @@ func TestSandboxDaggerAddress(t *testing.T) {
 		t.Error("a TCP engine was forwarded")
 	}
 	sock := echoEngine(t)
-	s.r.ContainerListen = "127.0.0.1:0"
-	got, err := s.daggerAddress(context.Background(), "unix://"+sock)
+	s.r.ContainerListen = "0.0.0.0:0"
+	got, err := s.daggerAddress("unix://" + sock)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +259,7 @@ func TestSandboxDaggerAddress(t *testing.T) {
 
 // Closing a forward ends the connections it carries, not only new ones.
 func TestForwardCloseEndsOpenConnections(t *testing.T) {
-	f, err := forwardUnix("127.0.0.1:0", echoEngine(t))
+	f, err := forwardUnix("127.0.0.1:0", echoEngine(t), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -342,6 +346,10 @@ func TestDaggerProfileValidation(t *testing.T) {
 		{"relative socket", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "unix://run/s", Version: "v0.20.5"}}, "unix://<absolute path"},
 		{"no scheme", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "/run/s", Version: "v0.20.5"}}, "unix://<absolute path"},
 		{"no port", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "tcp://127.0.0.1", Version: "v0.20.5"}}, "tcp://<host>:<port>"},
+		{"named port", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "tcp://127.0.0.1:dagger", Version: "v0.20.5"}}, "tcp://<host>:<port>"},
+		{"path after the port", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "tcp://h:1234/path", Version: "v0.20.5"}}, "tcp://<host>:<port>"},
+		{"port out of range", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "tcp://h:99999", Version: "v0.20.5"}}, "tcp://<host>:<port>"},
+		{"port zero", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "tcp://h:0", Version: "v0.20.5"}}, "tcp://<host>:<port>"},
 		{"docker image", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "docker-image://registry.dagger.io/engine", Version: "v0.20.5"}}, "unix://"},
 		{"no version", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "unix:///s"}}, "Dagger CLI version"},
 		{"shell in version", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "unix:///s", Version: "0.20.5; rm -rf /"}}, "Dagger CLI version"},
@@ -359,4 +367,66 @@ func TestDaggerProfileValidation(t *testing.T) {
 			t.Errorf("agent %s has no sbx template", a)
 		}
 	}
+}
+
+// A connection that ends is forgotten at once, not kept until the session
+// ends.
+func TestForwardForgetsClosedConnections(t *testing.T) {
+	f, err := forwardUnix("127.0.0.1:0", echoEngine(t), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.close()
+	for i := 0; i < 3; i++ {
+		if got, err := echo(t, f.addr(), "ping"); err != nil || got != "ping" {
+			t.Fatalf("echo %d: %q, %v", i, got, err)
+		}
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for f.open() > 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n := f.open(); n != 0 {
+		t.Errorf("%d closed connections are still held", n)
+	}
+}
+
+// A connection the engine's socket refuses is logged with the socket's
+// path, and the forward goes on accepting.
+func TestForwardLogsARefusedSocket(t *testing.T) {
+	var buf safeBuffer
+	missing := filepath.Join(t.TempDir(), "gone.sock")
+	f, err := forwardUnix("127.0.0.1:0", missing, slog.New(slog.NewTextHandler(&buf, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.close()
+	if _, err := echo(t, f.addr(), "ping"); err == nil {
+		t.Fatal("a connection to a missing socket was answered")
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(buf.String(), missing) && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if out := buf.String(); !strings.Contains(out, "Dagger engine") || !strings.Contains(out, missing) {
+		t.Errorf("log does not name the socket: %q", out)
+	}
+}
+
+// safeBuffer is a bytes.Buffer the forward's goroutine and the test share.
+type safeBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *safeBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *safeBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
 }

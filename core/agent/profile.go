@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -150,7 +151,8 @@ func CheckDaggerEngine(engine string) error {
 	case scheme == "unix" && filepath.IsAbs(rest):
 		return nil
 	case scheme == "tcp":
-		if host, port, err := net.SplitHostPort(rest); err == nil && host != "" && port != "" {
+		host, port, err := net.SplitHostPort(rest)
+		if n, perr := strconv.Atoi(port); err == nil && host != "" && perr == nil && n >= 1 && n <= 65535 {
 			return nil
 		}
 	}
