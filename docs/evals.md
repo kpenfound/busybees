@@ -57,8 +57,8 @@ machine that runs `bees eval`.
 | `todo-overdue` | feature | a `List.Overdue(today)` method: the pending items due before today's date | `Overdue` compares dates, not times, and leaves out done items, items due today or later and items with no due date |
 | `todo-count` | feature, seeded for triage | a `todo count` command printing `2 pending, 1 done` | the line printed for a list and for a missing file, and an error for an extra argument |
 
-The grading tests are in each case's `grade/`, so the sessions do not see
-them.
+The `todo-*` grading tests are only in each case's `grade/`, so the sessions
+do not see them.
 
 ### Which profile the sessions run on
 
