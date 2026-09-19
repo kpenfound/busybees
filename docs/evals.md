@@ -198,12 +198,3 @@ before the change and passes after it.
 
 A directory under `evals/` named after a role (`evals/developer/`) is not a
 case. Those names are reserved for per-role cases.
-
-### Checking the shipped cases
-
-Every case under `evals/` in the busybees repository also has a
-`solution/`: the files a fix changes, as the developer would write them.
-`bees eval` does not read it. `dagger check` builds each shipped fixture with
-no agent involved, runs the case's test on it and expects it to fail, then
-copies `solution/` over it and expects the test to pass. A fixture that
-does not build, or a test that cannot pass, fails the check.
