@@ -100,6 +100,9 @@ func grantAll(req Request, env ...string) Request {
 	if req.HostMCP != nil {
 		g.Tools = append(g.Tools, "mcp__"+req.HostMCP.Name)
 	}
+	if req.Profile.Dagger != nil {
+		g.DaggerEngine = req.Profile.Dagger.Engine
+	}
 	switch req.Profile.Sandbox {
 	case SandboxClaude:
 		g.Mounts = []Mount{{Path: "/", Access: ReadOnly}, {Path: req.workDir(), Access: ReadWrite}}

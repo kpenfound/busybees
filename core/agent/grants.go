@@ -51,6 +51,10 @@ type Grants struct {
 	// environment, VCS executables, and writable VCS metadata. Without it
 	// all three are denied.
 	VCS bool
+	// DaggerEngine grants the Dagger engine at this address (Dagger.Engine)
+	// to a session whose profile asks for it, and only in SandboxSbx. A
+	// profile that asks for another engine, or none, is refused.
+	DaggerEngine string
 }
 
 // ErrNoGrants is returned for a request that carries no grants.
@@ -99,6 +103,9 @@ type Turn struct {
 	// Confinement is what the operating system enforces for a confined host
 	// session; nil for any other.
 	Confinement *Confinement
+	// DaggerEngine is the Dagger engine the session reaches; empty for
+	// none.
+	DaggerEngine string
 }
 
 // Bind is one host path a container sees, at Destination inside it.
@@ -249,6 +256,12 @@ func verifyCommon(req Request) (*Turn, error) {
 		return nil, fmt.Errorf("%w: profile asks for VCS access", ErrNotGranted)
 	}
 	turn := &Turn{VCS: p.VCSAccess && g.VCS}
+	if err := verifyDagger(p, g); err != nil {
+		return nil, err
+	}
+	if p.Dagger != nil {
+		turn.DaggerEngine = g.DaggerEngine
+	}
 
 	if err := checkEnvGrants(g); err != nil {
 		return nil, err
@@ -314,6 +327,24 @@ func verifyCommon(req Request) (*Turn, error) {
 		return nil, fmt.Errorf("%w: working directory %s is outside every mount", ErrNotGranted, dir)
 	}
 	return turn, nil
+}
+
+// verifyDagger checks the Dagger engine against its grant: given only in
+// SandboxSbx, only to a profile that asks for it, and only the engine
+// granted. The engine widens what a session reaches, so it is refused
+// rather than handed to a session that did not ask.
+func verifyDagger(p Profile, g *Grants) error {
+	switch {
+	case p.Dagger == nil && g.DaggerEngine != "":
+		return fmt.Errorf("%w: the Dagger engine %s is granted and the profile does not ask for it", ErrUnsupported, g.DaggerEngine)
+	case p.Dagger == nil:
+		return nil
+	case p.Sandbox != SandboxSbx:
+		return fmt.Errorf("%w: sandbox %q cannot give a session the Dagger engine; only %q can", ErrUnsupported, p.Sandbox, SandboxSbx)
+	case g.DaggerEngine != p.Dagger.Engine:
+		return fmt.Errorf("%w: profile asks for the Dagger engine %s", ErrNotGranted, p.Dagger.Engine)
+	}
+	return nil
 }
 
 // checkEnvGrants checks the environment allowlist on its own.

@@ -493,8 +493,58 @@ func TestSandboxGuard(t *testing.T) {
 	}
 }
 
-// The sbx sandbox runs claude only, holds a session to its mounts by itself,
-// and takes a template rather than a container-use environment.
+// Every agent runs in a sandbox created for it: `sbx create <agent>`, from
+// sbx's own template for the agent when the profile names none, with the
+// agent's ordinary command inside `sbx exec`.
+func TestSandboxSessionRunsEveryAgent(t *testing.T) {
+	for _, tc := range []struct {
+		agent, stream string
+		want          []string // in the command inside
+	}{
+		{AgentCodex, `echo '{"type":"thread.started","thread_id":"t1"}'
+echo '{"type":"item.completed","item":{"type":"agent_message","text":"boxed"}}'
+echo '{"type":"turn.completed"}'`, []string{"exec --json --dangerously-bypass-approvals-and-sandbox", "mcp_servers.tools.url=\"http://host.docker.internal:45678/mcp\""}},
+		{AgentOpenCode, `echo '{"type":"text","sessionID":"s1","part":{"type":"text","text":"boxed"}}'
+echo '{"type":"step_finish","sessionID":"s1","part":{"type":"step-finish","reason":"stop","cost":0}}'`, []string{"run --format json --auto"}},
+	} {
+		t.Run(tc.agent, func(t *testing.T) {
+			bin := agenttest.Script(t, tc.agent, `printf '%s\n' "$@" > "$TASK_SESSION_DIR/args.txt"
+cat > /dev/null
+`+tc.stream+"\n")
+			r := newRunner(t, "")
+			r.CodexBin, r.OpenCodeBin = bin, bin
+			r.SbxBin = fakeSbx(t)
+			r.ServerBin = fakeBees(t)
+			r.StateDir = t.TempDir()
+			role := Profile{Name: "builder", Agent: tc.agent, Timeout: time.Minute, Sandbox: SandboxSbx}
+			res, err := r.Run(context.Background(), Request{Name: "boxed", Profile: role, Workspace: fakeWorkspace{dir: t.TempDir()}, Prompt: "TASK"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res.IsError || res.ResultText != "boxed" {
+				t.Fatalf("result: %+v", res)
+			}
+			create := lines(t, filepath.Join(filepath.Dir(r.SbxBin), "sbx-create.txt"))
+			if len(create) < 7 || strings.Join(create[4:7], " ") != "--skills off "+tc.agent {
+				t.Errorf("sbx create args: %v, want the sandbox created for %s from its own template", create, tc.agent)
+			}
+			execArgs := strings.Join(lines(t, filepath.Join(res.SessionDir, "sbx-exec-args.txt")), " ")
+			if !strings.Contains(execArgs, " "+bin+" ") {
+				t.Errorf("sbx exec does not run %s: %s", tc.agent, execArgs)
+			}
+			inside := strings.Join(lines(t, filepath.Join(res.SessionDir, "args.txt")), " ")
+			for _, want := range tc.want {
+				if !strings.Contains(inside, want) {
+					t.Errorf("%s args missing %q: %s", tc.agent, want, inside)
+				}
+			}
+		})
+	}
+}
+
+// The sbx sandbox runs an agent sbx has a template for, holds a session to
+// its mounts by itself, and takes a template rather than a container-use
+// environment.
 func TestSandboxProfileValidation(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -504,8 +554,9 @@ func TestSandboxProfileValidation(t *testing.T) {
 		{"claude", Profile{Sandbox: SandboxSbx, Agent: AgentClaude}, ""},
 		{"default agent", Profile{Sandbox: SandboxSbx}, ""},
 		{"template", Profile{Sandbox: SandboxSbx, SandboxImage: "acme/template:1"}, ""},
-		{"codex", Profile{Sandbox: SandboxSbx, Agent: AgentCodex}, "codex"},
-		{"opencode", Profile{Sandbox: SandboxSbx, Agent: AgentOpenCode}, "opencode"},
+		{"codex", Profile{Sandbox: SandboxSbx, Agent: AgentCodex}, ""},
+		{"opencode", Profile{Sandbox: SandboxSbx, Agent: AgentOpenCode}, ""},
+		{"an agent without a template", Profile{Sandbox: SandboxSbx, Agent: "pi"}, `no template for agent "pi"`},
 		{"confine", Profile{Sandbox: SandboxSbx, Confine: true}, "confine"},
 		{"container-use", Profile{Sandbox: SandboxSbx, ContainerUseEnvironment: "dagger/env"}, "container_use_environment"},
 	} {

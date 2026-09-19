@@ -29,6 +29,10 @@ import (
 // server on the host, reached at host.docker.internal over HTTP with a
 // per-session token.
 //
+// The sandbox is created for the profile's agent, from sbx's own template
+// for it unless the profile names one. A profile that asks for Dagger also
+// gets the Dagger CLI and the host's engine (sbxdagger.go).
+//
 // The session is three sbx commands: `sbx create` before the server starts
 // (a failed create leaves nothing to stop), `sbx exec` with the backend's
 // command line, its prompt on stdin, and `sbx rm --force` when the session
@@ -43,6 +47,9 @@ type sandbox struct {
 	// created is whether `sbx create` succeeded, so that close removes
 	// what exists and nothing else.
 	created bool
+	// forward carries the session's connections to a Dagger engine on a
+	// host socket; nil without one (sbxdagger.go).
+	forward *forward
 }
 
 // startSandbox creates the sandbox and starts the caller-supplied server on
@@ -58,6 +65,12 @@ func (r *Runner) startSandbox(ctx context.Context, req Request, sessionDir strin
 	if err := procs.WriteSandboxName(sessionDir, s.name); err != nil {
 		s.close()
 		return nil, fmt.Errorf("record the sandbox's name: %w", err)
+	}
+	if req.Profile.Dagger != nil {
+		if err := s.startDagger(ctx); err != nil {
+			s.close()
+			return nil, err
+		}
 	}
 	if req.HostMCP != nil {
 		if err := s.startServer(ctx); err != nil {
@@ -79,10 +92,11 @@ func (r *Runner) sandboxListen(context.Context) (string, error) {
 	return "127.0.0.1:0", nil
 }
 
-// create runs `sbx create`: the sandbox is named, given the turn's binds as
-// its workspaces with the working directory first (the primary workspace,
-// where `sbx exec` starts), created from the profile's template when it
-// names one, and without the shared skills store.
+// create runs `sbx create` for the profile's agent: the sandbox is named,
+// given the turn's binds as its workspaces with the working directory first
+// (the primary workspace, where `sbx exec` starts), created from the
+// profile's template when it names one and from sbx's own for the agent
+// otherwise (SbxTemplates), and without the shared skills store.
 func (s *sandbox) create(ctx context.Context) error {
 	workspaces, err := s.workspaces()
 	if err != nil {
@@ -92,11 +106,13 @@ func (s *sandbox) create(ctx context.Context) error {
 	if s.image != "" {
 		args = append(args, "--template", s.image)
 	}
-	args = append(args, AgentClaude)
+	agent := s.req.Profile.Agent
+	if agent == "" {
+		agent = AgentClaude
+	}
+	args = append(args, agent)
 	args = append(args, workspaces...)
-	cmd := agentbin.CommandContext(ctx, s.r.sbxBin(), args...)
-	cmd.Env = hostEnv(s.r.EnvironmentPrefix)
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if out, err := s.r.sbxCommand(ctx, args...).CombinedOutput(); err != nil {
 		if msg := bytes.TrimSpace(out); len(msg) > 0 {
 			err = fmt.Errorf("%w: %s", err, msg)
 		}
@@ -178,9 +194,7 @@ func (s *sandbox) remove() {
 	s.created = false
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	cmd := agentbin.CommandContext(ctx, s.r.sbxBin(), "rm", "--force", s.name)
-	cmd.Env = hostEnv(s.r.EnvironmentPrefix)
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if out, err := s.r.sbxCommand(ctx, "rm", "--force", s.name).CombinedOutput(); err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) || len(out) > 0 {
 			err = fmt.Errorf("%w: %s", err, bytes.TrimSpace(out))
@@ -189,10 +203,14 @@ func (s *sandbox) remove() {
 	}
 }
 
-// close stops the caller-supplied server, removes the sandbox and forgets
-// both records.
+// close stops the caller-supplied server and the Dagger engine's forward,
+// removes the sandbox and forgets both records.
 func (s *sandbox) close() {
 	s.container.close()
+	if s.forward != nil {
+		s.forward.close()
+		s.forward = nil
+	}
 	s.remove()
 	procs.RemoveSandboxName(s.sessionDir)
 }
@@ -217,6 +235,14 @@ func sandboxName(s string) string {
 	return name
 }
 
+// sbxCommand is an sbx CLI command outside the session's own `sbx exec`,
+// run with the host's environment.
+func (r *Runner) sbxCommand(ctx context.Context, args ...string) *exec.Cmd {
+	cmd := agentbin.CommandContext(ctx, r.sbxBin(), args...)
+	cmd.Env = hostEnv(r.EnvironmentPrefix)
+	return cmd
+}
+
 func (r *Runner) sbxBin() string {
 	if r.SbxBin != "" {
 		return r.SbxBin
@@ -233,7 +259,8 @@ func (r *Runner) sbxBin() string {
 // executable of the sandbox's image reached by its path is not masked.
 // Verify refuses a request whose own paths the grants do not cover, the way
 // ContainerBoundary does, and a workspace sbx cannot be handed: the host's
-// root, or a path holding a colon.
+// root, or a path holding a colon. The Dagger engine is given only to a
+// profile that asks for it and is granted it (verifyDagger).
 type SandboxBoundary struct {
 	// SessionsDir is where a session directory is created for a request
 	// that names none.
