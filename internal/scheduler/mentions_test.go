@@ -29,7 +29,7 @@ func seedMentionIssue(h *harness, n int, now time.Time, labels ...string) {
 	for _, l := range labels {
 		ls = append(ls, github.Label{Name: l})
 	}
-	h.gh.issues[n] = &github.Issue{Number: n, Title: "Seeded", State: "OPEN",
+	h.gh.Issues[n] = &github.Issue{Number: n, Title: "Seeded", State: "OPEN",
 		Labels: ls, CreatedAt: now.Add(-2 * time.Hour), UpdatedAt: now.Add(-time.Hour)}
 }
 
@@ -58,7 +58,7 @@ func TestAMentionOnAPreFlightIssueReachesTheProjectManager(t *testing.T) {
 	h.clock.advance(time.Minute)
 	said := now.Add(time.Minute)
 	for _, n := range []int{1, 2, 3} {
-		h.gh.issues[n].UpdatedAt = said
+		h.gh.Issues[n].UpdatedAt = said
 	}
 	seedIssueComments(h, 1,
 		issueComment(900, "kyle", "@busybees-bot from before the factory looked", now.Add(-90*time.Minute)),
@@ -118,7 +118,7 @@ func TestAMentionOnAFeatureOrFeedbackIssueReachesTheProductManager(t *testing.T)
 	h.clock.advance(time.Minute)
 	said := now.Add(time.Minute)
 	for _, n := range []int{1, 2, 3} {
-		h.gh.issues[n].UpdatedAt = said
+		h.gh.Issues[n].UpdatedAt = said
 	}
 	seedIssueComments(h, 1, issueComment(901, "kyle", "@busybees-bot break this one up now", said))
 	seedIssueComments(h, 2, issueComment(902, "robin", "@busybees-bot worth a feature?", said))
@@ -161,7 +161,7 @@ func TestWithoutAConfiguredLoginNoMentionIsDelivered(t *testing.T) {
 
 	h.clock.advance(time.Minute)
 	said := now.Add(time.Minute)
-	h.gh.issues[1].UpdatedAt, h.gh.issues[2].UpdatedAt = said, said
+	h.gh.Issues[1].UpdatedAt, h.gh.Issues[2].UpdatedAt = said, said
 	seedIssueComments(h, 1, issueComment(901, "kyle", "@busybees-bot and @kyle, look at this", said))
 	seedIssueComments(h, 2, issueComment(902, "robin", "@busybees-bot too", said))
 
@@ -172,7 +172,7 @@ func TestWithoutAConfiguredLoginNoMentionIsDelivered(t *testing.T) {
 			t.Errorf("%s was mailed a mention with no factory account configured: %+v", role, msgs)
 		}
 	}
-	if n := h.gh.callCount("api --paginate"); n != 0 {
+	if n := h.gh.CallCount("api --paginate"); n != 0 {
 		t.Errorf("%d comment fetches with no factory account configured, want none", n)
 	}
 	if got := len(h.sched.wake); got != 0 {
@@ -193,7 +193,7 @@ func TestAnInFlightIssueStillDeliversEveryComment(t *testing.T) {
 
 	h.clock.advance(time.Minute)
 	said := now.Add(time.Minute)
-	h.gh.issues[1].UpdatedAt = said
+	h.gh.Issues[1].UpdatedAt = said
 	seedIssueComments(h, 1, issueComment(901, "kyle", "drop the second argument", said))
 
 	deliverIssueCommentsOnce(t, h)

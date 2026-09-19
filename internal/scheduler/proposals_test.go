@@ -35,19 +35,19 @@ func seedFeature(h *harness, n int, title string, created time.Time, labels ...s
 	for _, l := range labels {
 		i.Labels = append(i.Labels, github.Label{Name: l})
 	}
-	h.gh.issues[n] = i
+	h.gh.Issues[n] = i
 }
 
 // dropProposal removes bees:proposal from a seeded issue, the way a person
 // approving it does. It is the only way the label ever comes off.
 func dropProposal(h *harness, n int) {
 	var kept []github.Label
-	for _, l := range h.gh.issues[n].Labels {
+	for _, l := range h.gh.Issues[n].Labels {
 		if l.Name != "bees:proposal" {
 			kept = append(kept, l)
 		}
 	}
-	h.gh.issues[n].Labels = kept
+	h.gh.Issues[n].Labels = kept
 }
 
 // section returns what stands under a heading of the product manager's task
@@ -165,8 +165,8 @@ func TestACommentOnAProposalWakesTheProductManager(t *testing.T) {
 	// The comment, and the update it caused, sit a minute in the past: the
 	// freshness pre-filter compares them strictly against the last run, so
 	// both runs below need real margin rather than a lucky ordering.
-	h.gh.issues[6].UpdatedAt = now.Add(-time.Minute)
-	h.gh.issues[6].Comments = []github.Comment{{Author: github.Author{Login: "kyle"},
+	h.gh.Issues[6].UpdatedAt = now.Add(-time.Minute)
+	h.gh.Issues[6].Comments = []github.Comment{{Author: github.Author{Login: "kyle"},
 		Body: "what about X?", CreatedAt: now.Add(-time.Minute)}}
 	if err := h.store.SaveRole(config.RoleProductManager, state.RoleState{LastRun: now.Add(-2 * time.Minute)}); err != nil {
 		t.Fatal(err)
@@ -202,7 +202,7 @@ func TestABeeCommentOnAProposalDoesNotWakeTheProductManager(t *testing.T) {
 	h := newHarness(t, pmOnlyTOML)
 	now := time.Now()
 	seedFeature(h, 6, "Bee-written idea", now.Add(-time.Hour), "bees:proposal")
-	h.gh.issues[6].Comments = []github.Comment{
+	h.gh.Issues[6].Comments = []github.Comment{
 		{Author: github.Author{Login: "kyle"}, Body: "what about X?", CreatedAt: now.Add(-2 * time.Minute)},
 		{Author: github.Author{Login: "kyle"}, Body: "X is out of scope\n\n<!-- bees:product_manager -->", CreatedAt: now.Add(-time.Minute)},
 	}
@@ -230,7 +230,7 @@ func TestApprovingAProposalIsNoticed(t *testing.T) {
 	seedFeature(h, 6, "Bee-written idea", now.Add(-3*time.Hour), "bees:proposal")
 	// A bee comment newer than every human one: the feature is not "fresh"
 	// by any comment-based measure, before or after the approval.
-	h.gh.issues[6].Comments = []github.Comment{{Author: github.Author{Login: "kyle"},
+	h.gh.Issues[6].Comments = []github.Comment{{Author: github.Author{Login: "kyle"},
 		Body: "refined this\n\n<!-- bees:product_manager -->", CreatedAt: now.Add(-time.Hour)}}
 	// The product manager ran a minute ago (product_manager_interval is an
 	// hour), so only the approval can bring the feature back to it.

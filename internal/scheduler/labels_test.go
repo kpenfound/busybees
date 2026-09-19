@@ -14,10 +14,10 @@ import (
 
 // createdLabels lists the names passed to `gh label create`, in order.
 func createdLabels(h *harness) []string {
-	h.gh.mu.Lock()
-	defer h.gh.mu.Unlock()
+	h.gh.Lock()
+	defer h.gh.Unlock()
 	var out []string
-	for _, c := range h.gh.calls {
+	for _, c := range h.gh.Calls {
 		if len(c) >= 3 && c[0] == "label" && c[1] == "create" {
 			out = append(out, c[2])
 		}
@@ -28,9 +28,9 @@ func createdLabels(h *harness) []string {
 // dropLabel removes a label from the repository, as if it had been
 // initialised by a build that did not know about it yet.
 func dropLabel(h *harness, name string) {
-	h.gh.mu.Lock()
-	defer h.gh.mu.Unlock()
-	h.gh.labels = slices.DeleteFunc(h.gh.labels, func(l string) bool { return l == name })
+	h.gh.Lock()
+	defer h.gh.Unlock()
+	h.gh.Labels = slices.DeleteFunc(h.gh.Labels, func(l string) bool { return l == name })
 }
 
 func TestMissingLabelsAreCreatedAtStart(t *testing.T) {
@@ -65,7 +65,7 @@ func TestMissingLabelsAreCreatedAtStart(t *testing.T) {
 func TestExistingLabelIsMatchedCaseInsensitively(t *testing.T) {
 	h := newHarness(t, noRolesTOML)
 	dropLabel(h, "bees:size/m")
-	h.gh.labels = append(h.gh.labels, "Bees:Size/M")
+	h.gh.Labels = append(h.gh.Labels, "Bees:Size/M")
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
@@ -87,8 +87,8 @@ func TestLabelFailuresDoNotStopThePass(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			h := newHarness(t, noRolesTOML)
 			dropLabel(h, "bees:size/m")
-			h.gh.errFor[c.command] = errors.New("gh: no write access to labels")
-			h.gh.issues[1] = &github.Issue{Number: 1, Title: "Work", State: "OPEN",
+			h.gh.ErrFor[c.command] = errors.New("gh: no write access to labels")
+			h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Work", State: "OPEN",
 				Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now()}
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
@@ -99,7 +99,7 @@ func TestLabelFailuresDoNotStopThePass(t *testing.T) {
 			if !strings.Contains(h.logs.String(), c.want) {
 				t.Fatalf("no warning about the labels:\n%s", h.logs.String())
 			}
-			if n := h.gh.callCount("issue list"); n == 0 {
+			if n := h.gh.CallCount("issue list"); n == 0 {
 				t.Fatalf("the pass did not poll GitHub:\n%s", h.logs.String())
 			}
 			st, err := h.store.LoadStatus()
@@ -119,10 +119,10 @@ func TestLabelFailuresDoNotStopThePass(t *testing.T) {
 func TestReconcileErrorsAreCappedInTheLog(t *testing.T) {
 	h := newHarness(t, noRolesTOML)
 	for n := 1; n <= 10; n++ {
-		h.gh.issues[n] = &github.Issue{Number: n, Title: fmt.Sprintf("Issue %d", n), State: "OPEN",
+		h.gh.Issues[n] = &github.Issue{Number: n, Title: fmt.Sprintf("Issue %d", n), State: "OPEN",
 			Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}}, CreatedAt: time.Now()}
 	}
-	h.gh.errFor["issue edit"] = errors.New("'bees:size/m' boom")
+	h.gh.ErrFor["issue edit"] = errors.New("'bees:size/m' boom")
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/fakegh"
 	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/logging"
@@ -619,185 +620,58 @@ func fakeClaude() {
 	fmt.Printf(`{"type":"result","subtype":"success","is_error":false,"result":%q,"session_id":%q,"num_turns":2,"total_cost_usd":%v}`+"\n", text, sessionID, cost)
 }
 
-// fakeGH is an in-memory GitHub backing the gh wrapper.
+// fakeGH is the in-memory GitHub backing the gh wrapper (internal/fakegh)
+// plus what only these tests use: pull requests that stay hidden until a
+// developer session opened them.
 type fakeGH struct {
-	mu       sync.Mutex
-	issues   map[int]*github.Issue
-	prs      map[int]*github.PR
+	*fakegh.GitHub
+	// prMarker is the file a developer session leaves when it opened
+	// fakePR, and the prefix of the one it leaves for a hidden PR.
 	prMarker string
-	// stateDir is where session processes leave the writes they want this
-	// fake to make (ghEdit): they run in another process and cannot reach it.
-	stateDir string
 	// hidden lists PRs that do not exist until a developer session opened
 	// one on their head branch (bees/issue-N), like fakePR.
-	hidden   map[int]bool
-	history  map[int][]string // label additions per number, in order
-	comments map[int][]string
-	merged   []int
-	// activity is raw JSON served for api pulls/N/reviews, pulls/N/comments, issues/N/comments
-	activity map[string]string
-	// reviews are the reviews sessions submitted, per pull request, served
-	// from the reviews endpoint alongside any activity fixture for it.
-	reviews map[int][]submittedReview
-	// checks is a queue of responses for `pr checks --required`; the last one
-	// repeats. checksAll is the same for the unrequired call, which the
-	// scheduler only makes when the required list came back empty.
-	checks    []checksResponse
-	checksAll []checksResponse
-	mergeArgs [][]string
-	// calls logs every gh invocation, in order.
-	calls [][]string
-	// labels are the label names that exist in the repository.
-	labels []string
-	// milestones are the open milestones of the repository.
-	milestones []github.Milestone
-	// parents maps a work item to the feature it is a sub-issue of, for the
-	// ParentIssue query. Empty means "use the hardcoded answer below": issue
-	// 1 is a sub-issue of feature 5 while that feature exists.
-	parents map[int]int
-	// subIssues overrides the sub-issue summary the REST issue-details call
-	// answers for one issue. Absent means the shared default (3 sub-issues,
-	// 1 closed), which is what most tests want; a test about an issue that
-	// has not been broken down yet sets an empty summary for it.
-	subIssues map[int]github.SubIssueSummary
-	// parentErr makes the ParentIssue query fail for one work item, which is
-	// how a partial parent lookup is expressed: the other items still answer.
-	parentErr map[int]error
-	// childResponse overrides a complete paginated relationship response.
-	childResponse map[int]string
-	childErr      map[int]error
-	// errFor makes a command fail: it is keyed by the command name, either
-	// the first two arguments ("label list") or the first one ("label"), or
-	// by "requested_reviewers" and "assignees" for the review-request and
-	// assignee REST calls.
-	errFor map[string]error
+	hidden map[int]bool
 }
 
-// callCount counts logged gh calls whose first two arguments are cmd
-// ("issue list", "pr list", ...).
-func (f *fakeGH) callCount(cmd string) int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	n := 0
-	for _, c := range f.calls {
-		if len(c) >= 2 && c[0]+" "+c[1] == cmd {
-			n++
-		}
+// visible hides fakePR until a developer session opened it, and a hidden PR
+// until one opened it on its head branch. Called with the lock held.
+func (f *fakeGH) visible(p *github.PR) bool {
+	if p.Number == fakePR {
+		_, err := os.Stat(f.prMarker)
+		return err == nil
 	}
-	return n
+	if f.hidden[p.Number] {
+		issue := strings.TrimPrefix(p.HeadRefName, "bees/issue-")
+		_, err := os.Stat(f.prMarker + "-issue-" + issue)
+		return err == nil
+	}
+	return true
 }
 
-// total counts every logged gh call, whatever it was: what a test asserting
-// that a code path costs no GitHub call measures.
-func (f *fakeGH) total() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return len(f.calls)
+// implicitParent makes issue 1 a sub-issue of feature 5 while that feature
+// exists, which is what most tests want. Called with the lock held.
+func (f *fakeGH) implicitParent(n int) (int, string) {
+	if n == 1 && f.Issues[5] != nil {
+		return 5, "Exports"
+	}
+	return 0, ""
 }
 
-// ghEdit is a write a session process asks the fake GitHub to make: the fake
+type (
+	ghEdit          = fakegh.Edit
+	submittedReview = fakegh.Review
+	checksResponse  = fakegh.ChecksResponse
+)
+
+// reviewStates maps a gh review event to the state GitHub records for it.
+var reviewStates = fakegh.ReviewStates
+
+// requestGHEdit records one edit for the fake GitHub to apply: the fake
 // claude runs in its own process, exactly as `bees mcp serve` does, so a
 // session-side `gh` write cannot reach the harness's in-memory fake and
 // travels through the state directory instead.
-type ghEdit struct {
-	Number int      `json:"number"`
-	Create bool     `json:"create,omitempty"`
-	Title  string   `json:"title,omitempty"`
-	Add    []string `json:"add,omitempty"`
-	Remove []string `json:"remove,omitempty"`
-	// Review is the state of a review the session submitted on the pull
-	// request — APPROVED, CHANGES_REQUESTED or COMMENTED — which the fake
-	// serves from the reviews endpoint. A review edit changes no labels.
-	Review string `json:"review,omitempty"`
-}
-
-// submittedReview is one review the fake GitHub holds on a pull request: the
-// state and when it was submitted, which is all the scheduler reads.
-type submittedReview struct {
-	State string
-	At    time.Time
-}
-
-// reviewsPath matches the reviews endpoint of a pull request and returns its
-// number.
-func reviewsPath(path string) (int, bool) {
-	var n int
-	if _, err := fmt.Sscanf(path, "repos/acme/widgets/pulls/%d/reviews", &n); err != nil {
-		return 0, false
-	}
-	return n, true
-}
-
-// reviewStates maps a gh review event to the state GitHub records for it.
-var reviewStates = map[string]string{"approve": "APPROVED", "request-changes": "CHANGES_REQUESTED", "comment": "COMMENTED"}
-
-// requestGHEdit records one edit for the fake GitHub to apply. The file name
-// carries the time so edits are applied in the order they were asked for.
 func requestGHEdit(stateDir string, e ghEdit) error {
-	dir := filepath.Join(stateDir, "gh-edits")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	f, err := os.CreateTemp(dir, fmt.Sprintf("%020d-*.json", time.Now().UnixNano()))
-	if err != nil {
-		return err
-	}
-	if err := json.NewEncoder(f).Encode(e); err != nil {
-		_ = f.Close()
-		return err
-	}
-	return f.Close()
-}
-
-// applyGHEdits applies every edit a session process has asked for and forgets
-// it, so the next call the scheduler makes sees what the session did. Called
-// with f.mu held.
-func (f *fakeGH) applyGHEdits() {
-	entries, err := os.ReadDir(filepath.Join(f.stateDir, "gh-edits"))
-	if err != nil {
-		return
-	}
-	for _, entry := range entries {
-		path := filepath.Join(f.stateDir, "gh-edits", entry.Name())
-		b, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		_ = os.Remove(path)
-		var e ghEdit
-		if err := json.Unmarshal(b, &e); err != nil {
-			continue
-		}
-		if e.Review != "" {
-			// Stamped as it is applied, which is after the session submitted
-			// it and before the scheduler reads it back.
-			f.reviews[e.Number] = append(f.reviews[e.Number], submittedReview{State: e.Review, At: time.Now()})
-			continue
-		}
-		i, ok := f.issues[e.Number]
-		if !ok {
-			if !e.Create {
-				continue
-			}
-			i = &github.Issue{Number: e.Number, Title: e.Title, Body: "please", State: "OPEN"}
-			f.issues[e.Number] = i
-		}
-		for _, l := range e.Remove {
-			var kept []github.Label
-			for _, have := range i.Labels {
-				if have.Name != l {
-					kept = append(kept, have)
-				}
-			}
-			i.Labels = kept
-		}
-		for _, l := range e.Add {
-			if !github.HasLabel(i.Labels, l) {
-				i.Labels = append(i.Labels, github.Label{Name: l})
-			}
-			f.history[e.Number] = append(f.history[e.Number], l)
-		}
-	}
+	return fakegh.RequestEdit(filepath.Join(stateDir, "gh-edits"), e)
 }
 
 // fakeClock is a settable clock for tests that drive the scheduler loop.
@@ -816,324 +690,6 @@ func (c *fakeClock) advance(d time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.t = c.t.Add(d)
-}
-
-type checksResponse struct {
-	json string
-	err  error
-}
-
-func (f *fakeGH) exec(ctx context.Context, args ...string) ([]byte, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.applyGHEdits()
-	f.calls = append(f.calls, append([]string(nil), args...))
-	if len(args) >= 2 {
-		if err, ok := f.errFor[args[0]+" "+args[1]]; ok {
-			return nil, err
-		}
-	}
-	if err, ok := f.errFor[args[0]]; ok {
-		return nil, err
-	}
-	flag := func(name string) string {
-		for i, a := range args {
-			if a == name && i+1 < len(args) {
-				return args[i+1]
-			}
-		}
-		return ""
-	}
-	flags := func(name string) []string {
-		var out []string
-		for i, a := range args {
-			if a == name && i+1 < len(args) {
-				out = append(out, args[i+1])
-			}
-		}
-		return out
-	}
-	num := func() int {
-		n, _ := strconv.Atoi(args[2])
-		return n
-	}
-	prVisible := func(p *github.PR) bool {
-		if p.Number == fakePR {
-			_, err := os.Stat(f.prMarker)
-			return err == nil
-		}
-		if f.hidden[p.Number] {
-			issue := strings.TrimPrefix(p.HeadRefName, "bees/issue-")
-			_, err := os.Stat(f.prMarker + "-issue-" + issue)
-			return err == nil
-		}
-		return true
-	}
-	setAssignee := func(n int, login string) {
-		if i, ok := f.issues[n]; ok {
-			i.Assignees = append(i.Assignees, github.Author{Login: login})
-		} else if p, ok := f.prs[n]; ok {
-			p.Assignees = append(p.Assignees, github.Author{Login: login})
-		}
-		f.history[n] = append(f.history[n], "assignee:"+login)
-	}
-	if args[0] == "api" {
-		// Assignees and milestones go to the REST endpoints: `gh issue edit
-		// --add-assignee` fails against GitHub with a Projects (classic)
-		// GraphQL error when the number is a pull request.
-		if i := slices.IndexFunc(args, func(a string) bool { return strings.HasSuffix(a, "/assignees") }); i >= 0 {
-			if err, ok := f.errFor["assignees"]; ok {
-				return nil, err
-			}
-			var n int
-			if _, err := fmt.Sscanf(args[i], "repos/acme/widgets/issues/%d/assignees", &n); err != nil {
-				return nil, fmt.Errorf("fake gh: bad assignees path %q", args[i])
-			}
-			for _, v := range flags("-f") {
-				if login, ok := strings.CutPrefix(v, "assignees[]="); ok {
-					setAssignee(n, login)
-				}
-			}
-			return []byte("{}"), nil
-		}
-		if flag("--method") == "PATCH" {
-			var n int
-			if _, err := fmt.Sscanf(args[3], "repos/acme/widgets/issues/%d", &n); err != nil {
-				return nil, fmt.Errorf("fake gh: bad issue path %q", args[3])
-			}
-			for _, v := range flags("-F") {
-				number, ok := strings.CutPrefix(v, "milestone=")
-				if !ok {
-					continue
-				}
-				k, _ := strconv.Atoi(number)
-				title := ""
-				for _, m := range f.milestones {
-					if m.Number == k {
-						title = m.Title
-					}
-				}
-				if title == "" {
-					return nil, fmt.Errorf("fake gh: no milestone %s", number)
-				}
-				if i, ok := f.issues[n]; ok {
-					i.Milestone = &github.MilestoneRef{Title: title}
-				} else if p, ok := f.prs[n]; ok {
-					p.Milestone = &github.MilestoneRef{Title: title}
-				}
-				f.history[n] = append(f.history[n], "milestone:"+title)
-			}
-			return []byte("{}"), nil
-		}
-		// Review requests go to the REST endpoint: `gh pr edit --add-reviewer`
-		// fails against GitHub with a Projects (classic) GraphQL error.
-		if slices.ContainsFunc(args, func(a string) bool { return strings.HasSuffix(a, "/requested_reviewers") }) {
-			if err, ok := f.errFor["requested_reviewers"]; ok {
-				return nil, err
-			}
-			return []byte("{}"), nil
-		}
-		if path := args[len(args)-1]; strings.Contains(path, "/sub_issues?per_page=") {
-			var parent int
-			if _, err := fmt.Sscanf(path, "repos/acme/widgets/issues/%d/sub_issues?per_page=100", &parent); err != nil {
-				return nil, err
-			}
-			if err := f.childErr[parent]; err != nil {
-				return nil, err
-			}
-			if raw, ok := f.childResponse[parent]; ok {
-				return []byte(raw), nil
-			}
-			children := []map[string]any{}
-			for n, child := range f.issues {
-				p := f.parents[n]
-				if n == 1 && p == 0 && f.issues[5] != nil {
-					p = 5
-				}
-				if p == parent {
-					children = append(children, map[string]any{"repository_url": "https://api.github.com/repos/acme/widgets", "number": n, "state": strings.ToLower(child.State), "user": child.Author, "labels": child.Labels, "assignees": child.Assignees, "milestone": child.Milestone})
-				}
-			}
-			return json.Marshal([]any{children})
-		}
-		if args[1] == "graphql" {
-			n := 0
-			for _, a := range args {
-				if v, ok := strings.CutPrefix(a, "number="); ok {
-					n, _ = strconv.Atoi(v)
-				}
-			}
-			if err, ok := f.parentErr[n]; ok {
-				return nil, err
-			}
-			if p, ok := f.parents[n]; ok {
-				title := "Feature"
-				if i, ok := f.issues[p]; ok {
-					title = i.Title
-				}
-				return fmt.Appendf(nil, `{"data":{"repository":{"issue":{"parent":{"number":%d,"title":%q}}}}}`, p, title), nil
-			}
-			// parent lookup: issue 1 has parent 5 when it exists
-			if n == 1 {
-				if _, ok := f.issues[5]; ok {
-					return []byte(`{"data":{"repository":{"issue":{"parent":{"number":5,"title":"Exports"}}}}}`), nil
-				}
-			}
-			return []byte(`{"data":{"repository":{"issue":{"parent":null}}}}`), nil
-		}
-		path := args[len(args)-1]
-		if n, ok := reviewsPath(path); ok && len(f.reviews[n]) > 0 {
-			// One page per source, which --slurp flattens: the fixture, if the
-			// test wrote one, and the reviews sessions have submitted.
-			pages := []string{}
-			if body, ok := f.activity[path]; ok {
-				pages = append(pages, body)
-			}
-			var out []string
-			for i, r := range f.reviews[n] {
-				out = append(out, fmt.Sprintf(`{"id":%d,"user":{"login":"kyle"},"body":"reviewed\n\n<!-- bees:reviewer -->","state":%q,"submitted_at":%q}`,
-					9000+i, r.State, r.At.Format(time.RFC3339)))
-			}
-			pages = append(pages, "["+strings.Join(out, ",")+"]")
-			return []byte("[" + strings.Join(pages, ",") + "]"), nil
-		}
-		if body, ok := f.activity[path]; ok {
-			return []byte("[" + body + "]"), nil // --slurp wraps pages in an array
-		}
-		// REST issue details: repos/acme/widgets/issues/N
-		var n int
-		if _, err := fmt.Sscanf(path, "repos/acme/widgets/issues/%d", &n); err == nil && !strings.Contains(path, "/comments") {
-			sum := github.SubIssueSummary{Total: 3, Completed: 1}
-			if s, ok := f.subIssues[n]; ok {
-				sum = s
-			}
-			return []byte(fmt.Sprintf(`{"id": %d, "milestone": null, "sub_issues_summary": {"total": %d, "completed": %d}}`, 1000+n, sum.Total, sum.Completed)), nil
-		}
-		if strings.Contains(path, "/pulls/") || strings.Contains(path, "/issues/") {
-			return []byte("[[]]"), nil
-		}
-	}
-	switch args[0] + " " + args[1] {
-	case "issue list":
-		var out []github.Issue
-		label, state, author := flag("--label"), flag("--state"), flag("--author")
-		for _, i := range f.issues {
-			if author != "" && !strings.EqualFold(i.Author.Login, author) {
-				continue
-			}
-			if (state == "all" || i.State == "OPEN") && (label == "" || github.HasLabel(i.Labels, label)) {
-				out = append(out, *i)
-			}
-		}
-		sort.Slice(out, func(a, b int) bool { return out[a].Number < out[b].Number })
-		return json.Marshal(out)
-	case "issue view":
-		i, ok := f.issues[num()]
-		if !ok {
-			return nil, fmt.Errorf("no issue %d", num())
-		}
-		return json.Marshal(i)
-	case "issue edit":
-		n := num()
-		var labels *[]github.Label
-		if i, ok := f.issues[n]; ok {
-			labels = &i.Labels
-		} else if p, ok := f.prs[n]; ok {
-			labels = &p.Labels
-		} else {
-			return nil, fmt.Errorf("no item %d", n)
-		}
-		for _, l := range flags("--remove-label") {
-			var kept []github.Label
-			for _, have := range *labels {
-				if have.Name != l {
-					kept = append(kept, have)
-				}
-			}
-			*labels = kept
-		}
-		for _, l := range flags("--add-label") {
-			if !github.HasLabel(*labels, l) {
-				*labels = append(*labels, github.Label{Name: l})
-			}
-			f.history[n] = append(f.history[n], l)
-		}
-		if a := flag("--add-assignee"); a != "" {
-			// The factory must never build this: it fails against GitHub.
-			return nil, fmt.Errorf("fake gh: issue edit --add-assignee is deprecated by GitHub, use the REST endpoint")
-		}
-		return nil, nil
-	case "issue comment":
-		f.comments[num()] = append(f.comments[num()], flag("--body"))
-		return nil, nil
-	case "pr list":
-		var out []github.PR
-		head, state, author := flag("--head"), flag("--state"), flag("--author")
-		for _, p := range f.prs {
-			if !prVisible(p) {
-				continue
-			}
-			if author != "" && !strings.EqualFold(p.Author.Login, author) {
-				continue
-			}
-			if head != "" && p.HeadRefName != head {
-				continue
-			}
-			if state == "open" && p.State != "OPEN" {
-				continue
-			}
-			if state == "all" && p.State != "OPEN" && p.MergedAt == nil {
-				continue
-			}
-			if state == "merged" && p.MergedAt == nil {
-				continue
-			}
-			out = append(out, *p)
-		}
-		return json.Marshal(out)
-	case "pr view":
-		p, ok := f.prs[num()]
-		if !ok || !prVisible(p) {
-			return nil, fmt.Errorf("no pr %d", num())
-		}
-		return json.Marshal(p)
-	case "pr diff":
-		if _, ok := f.prs[num()]; !ok {
-			return nil, fmt.Errorf("no pr %d", num())
-		}
-		return []byte(fakeDiff), nil
-	case "pr merge":
-		f.merged = append(f.merged, num())
-		f.mergeArgs = append(f.mergeArgs, args)
-		return nil, nil
-	case "pr checks":
-		queue := &f.checks
-		if !slices.Contains(args, "--required") {
-			queue = &f.checksAll
-		}
-		if len(*queue) == 0 {
-			return nil, fmt.Errorf("no checks reported on the 'bees/issue-1' branch")
-		}
-		r := (*queue)[0]
-		if len(*queue) > 1 {
-			*queue = (*queue)[1:]
-		}
-		return []byte(r.json), r.err
-	case "label list":
-		out := make([]github.Label, 0, len(f.labels))
-		for _, l := range f.labels {
-			out = append(out, github.Label{Name: l})
-		}
-		return json.Marshal(out)
-	case "label create":
-		if !slices.Contains(f.labels, args[2]) {
-			f.labels = append(f.labels, args[2])
-		}
-		return nil, nil
-	case "api repos/acme/widgets/milestones?state=open&per_page=100":
-		return json.Marshal(f.milestones)
-	}
-	return nil, fmt.Errorf("fake gh: unsupported %v", args)
 }
 
 type harness struct {
@@ -1214,24 +770,22 @@ func newHarnessAt(t *testing.T, toml string, now time.Time, opts ...func(*Deps))
 		t.Fatal(err)
 	}
 	gh := &fakeGH{
-		issues:    map[int]*github.Issue{},
-		prs:       map[int]*github.PR{},
-		prMarker:  filepath.Join(store.Dir, "fake-pr-created"),
-		stateDir:  store.Dir,
-		hidden:    map[int]bool{},
-		history:   map[int][]string{},
-		comments:  map[int][]string{},
-		activity:  map[string]string{},
-		reviews:   map[int][]submittedReview{},
-		subIssues: map[int]github.SubIssueSummary{},
-		errFor:    map[string]error{},
+		GitHub:   fakegh.New(cfg.Project.Repo),
+		prMarker: filepath.Join(store.Dir, "fake-pr-created"),
+		hidden:   map[int]bool{},
 	}
+	gh.Login = "kyle"
+	gh.Diff = fakeDiff
+	gh.EditsDir = filepath.Join(store.Dir, "gh-edits")
+	gh.DefaultSubIssues = github.SubIssueSummary{Total: 3, Completed: 1}
+	gh.Visible = gh.visible
+	gh.ImplicitParent = gh.implicitParent
 	// Like a repository `bees init` has just set up: every label exists.
 	for _, l := range cfg.Labels().All() {
-		gh.labels = append(gh.labels, l.Name)
+		gh.Labels = append(gh.Labels, l.Name)
 	}
 	client := github.New(cfg.Project.Repo)
-	client.Exec = gh.exec
+	client.Exec = gh.Exec
 
 	t.Setenv("FAKE_CLAUDE", "1")
 	// Log through the real logging package so tests see the summary lines a
@@ -1275,9 +829,9 @@ func newHarnessAt(t *testing.T, toml string, now time.Time, opts ...func(*Deps))
 // stateOfIssue is the workflow state label the fake GitHub now carries for an
 // issue, which is what a restarted scheduler would read.
 func (h *harness) stateOfIssue(n int) string {
-	h.gh.mu.Lock()
-	defer h.gh.mu.Unlock()
-	return h.sched.stateOf(h.gh.issues[n].Labels)
+	h.gh.Lock()
+	defer h.gh.Unlock()
+	return h.sched.stateOf(h.gh.Issues[n].Labels)
 }
 
 func (h *harness) sessions(role string) []string {
@@ -1365,10 +919,10 @@ max_review_rounds = 3
 
 func TestFullDeveloperReviewLoop(t *testing.T) {
 	h := newHarness(t, baseTOML)
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now()}
-	h.gh.issues[2] = &github.Issue{Number: 2, Title: "Human filed this", Body: "hi", State: "OPEN", Labels: []github.Label{{Name: "bees"}}, CreatedAt: time.Now()}
-	h.gh.issues[3] = &github.Issue{Number: 3, Title: "Spec me", Body: "vague", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:triage"}}, CreatedAt: time.Now()}
-	h.gh.prs[fakePR] = &github.PR{Number: fakePR, Title: "Build the thing", State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now()}
+	h.gh.Issues[2] = &github.Issue{Number: 2, Title: "Human filed this", Body: "hi", State: "OPEN", Labels: []github.Label{{Name: "bees"}}, CreatedAt: time.Now()}
+	h.gh.Issues[3] = &github.Issue{Number: 3, Title: "Spec me", Body: "vague", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:triage"}}, CreatedAt: time.Now()}
+	h.gh.PRs[fakePR] = &github.PR{Number: fakePR, Title: "Build the thing", State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -1378,22 +932,22 @@ func TestFullDeveloperReviewLoop(t *testing.T) {
 
 	// Issue 1 walked the whole loop: in-progress -> review -> in-progress -> review -> approved.
 	want := []string{"bees:in-progress", "bees:review", "bees:in-progress", "bees:review", "bees:approved"}
-	if got := h.gh.history[1]; strings.Join(got, ",") != strings.Join(want, ",") {
+	if got := h.gh.History[1]; strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("issue 1 label history: %v", got)
 	}
-	if !github.HasLabel(h.gh.prs[fakePR].Labels, "bees:approved") {
-		t.Fatalf("PR labels: %v", h.gh.prs[fakePR].Labels)
+	if !github.HasLabel(h.gh.PRs[fakePR].Labels, "bees:approved") {
+		t.Fatalf("PR labels: %v", h.gh.PRs[fakePR].Labels)
 	}
-	if len(h.gh.merged) != 0 {
+	if len(h.gh.Merged) != 0 {
 		t.Fatal("auto_merge is off; nothing should be merged")
 	}
-	if len(h.gh.comments[1]) != 0 {
-		t.Fatalf("no escalation expected: %v", h.gh.comments[1])
+	if len(h.gh.Comments[1]) != 0 {
+		t.Fatalf("no escalation expected: %v", h.gh.Comments[1])
 	}
 	// Issue 2 had no state label and neither bees:feature nor bees:feedback:
 	// it is an idea a person handed the factory, so it goes to the product
 	// manager as feedback.
-	if got := h.gh.history[2]; strings.Join(got, ",") != "bees:feedback" {
+	if got := h.gh.History[2]; strings.Join(got, ",") != "bees:feedback" {
 		t.Fatalf("issue 2 label history: %v", got)
 	}
 	// Sessions: 2 developer, 2 reviewer, and each singleton once.
@@ -1531,12 +1085,12 @@ func TestFullDeveloperReviewLoop(t *testing.T) {
 
 func TestQuestionBlocksAndAnswerUnblocks(t *testing.T) {
 	h := newHarness(t, baseTOML+"\n[roles.product_manager]\nenabled = false\n[roles.qa]\nenabled = false\n")
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Vague", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:blocked"}}}
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Vague", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:blocked"}}}
 	// The developer asked earlier; now the project manager's answer is waiting.
 	if _, err := h.box.Send(mail.Message{From: config.RoleProjectManager, To: config.RoleDeveloper, Subject: "Re: Vague", Body: "do X", Work: ghwork.New(1, 0)}); err != nil {
 		t.Fatal(err)
 	}
-	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
+	h.gh.PRs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
 	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true} // reviewer disabled: PR auto-approved
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
@@ -1546,7 +1100,7 @@ func TestQuestionBlocksAndAnswerUnblocks(t *testing.T) {
 	// The size backstop runs after the unblock, so the issue is sized in the
 	// same pass that made it ready.
 	want := "bees:ready,bees:size/m,bees:in-progress,bees:approved"
-	if got := strings.Join(h.gh.history[1], ","); got != want {
+	if got := strings.Join(h.gh.History[1], ","); got != want {
 		t.Fatalf("history: %s want %s", got, want)
 	}
 	dev := h.sessions(config.RoleDeveloper)
@@ -1558,26 +1112,26 @@ func TestQuestionBlocksAndAnswerUnblocks(t *testing.T) {
 
 func TestEscalationWhenNoPR(t *testing.T) {
 	h := newHarness(t, baseTOML+"\n[roles.product_manager]\nenabled = false\n[roles.qa]\nenabled = false\n[roles.project_manager]\nenabled = false\n")
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "x", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}}
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "x", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}}
 	// No PR 101 registered: the developer claims pr-opened but nothing exists.
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	if err := h.sched.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(h.gh.history[1], ","); got != "bees:in-progress,bees:needs-human" {
+	if got := strings.Join(h.gh.History[1], ","); got != "bees:in-progress,bees:needs-human" {
 		t.Fatalf("history: %s", got)
 	}
-	if len(h.gh.comments[1]) != 1 || !strings.Contains(h.gh.comments[1][0], "needs a human") {
-		t.Fatalf("comments: %v", h.gh.comments[1])
+	if len(h.gh.Comments[1]) != 1 || !strings.Contains(h.gh.Comments[1][0], "needs a human") {
+		t.Fatalf("comments: %v", h.gh.Comments[1])
 	}
 }
 
 func TestHumanFeedbackReopensApprovedPR(t *testing.T) {
 	h := newHarness(t, baseTOML+"\n[roles.product_manager]\nenabled = false\n[roles.qa]\nenabled = false\n[roles.project_manager]\nenabled = false\n")
 	created := time.Now().Add(-time.Hour)
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Done already", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:approved"}, {Name: "bees:size/s"}}, CreatedAt: created}
-	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Done already", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:approved"}, {Name: "bees:size/s"}}, CreatedAt: created}
+	h.gh.PRs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:approved"}}, CreatedAt: created, UpdatedAt: time.Now(),
 		Body: "Closes #1"}
 	// The PR "exists" from the start for this test.
@@ -1594,12 +1148,12 @@ func TestHumanFeedbackReopensApprovedPR(t *testing.T) {
 		}
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	h.gh.activity["repos/acme/widgets/pulls/101/comments"] = fmt.Sprintf(`[
+	h.gh.Activity["repos/acme/widgets/pulls/101/comments"] = fmt.Sprintf(`[
 		{"id": 555, "user": {"login": "kyle"}, "body": "please rename this", "path": "seed.txt", "line": 1, "html_url": "https://x/555", "created_at": %q},
 		{"id": 556, "user": {"login": "kyle"}, "body": "will do\n\n<!-- bees:developer -->", "path": "seed.txt", "line": 1, "html_url": "https://x/556", "created_at": %q},
 		{"id": 557, "user": {"login": "kyle"}, "body": "Replying to the bot:\n> <!-- bees:developer -->\n\nActually, hold off on merging.", "path": "seed.txt", "line": 1, "html_url": "https://x/557", "created_at": %q}
 	]`, now, now, now)
-	h.gh.activity["repos/acme/widgets/pulls/101/reviews"] = fmt.Sprintf(`[
+	h.gh.Activity["repos/acme/widgets/pulls/101/reviews"] = fmt.Sprintf(`[
 		{"id": 777, "user": {"login": "kyle"}, "body": "", "state": "APPROVED", "html_url": "https://x/777", "submitted_at": %q}
 	]`, now)
 
@@ -1609,7 +1163,7 @@ func TestHumanFeedbackReopensApprovedPR(t *testing.T) {
 		t.Fatal(err)
 	}
 	// approved -> ready (human feedback) -> in-progress -> review -> ... -> approved
-	hist := strings.Join(h.gh.history[1], ",")
+	hist := strings.Join(h.gh.History[1], ",")
 	if !strings.HasPrefix(hist, "bees:ready,bees:in-progress,bees:review") || !strings.HasSuffix(hist, "bees:approved") {
 		t.Fatalf("history: %s", hist)
 	}
@@ -1637,26 +1191,26 @@ func TestLabelBackstop(t *testing.T) {
 	h := newHarness(t, baseTOML+"\n[filter]\nassignee = \"kyle\"\n[roles.product_manager]\nenabled = false\n[roles.qa]\nenabled = false\n[roles.developer]\nenabled = false\n")
 	// A triage issue so the project manager runs; and an issue "created by a
 	// bee" with a kind label but no base label and no assignee.
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "triage me", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:triage"}}, Assignees: []github.Author{{Login: "kyle"}}, CreatedAt: time.Now().Add(-time.Hour)}
-	h.gh.issues[7] = &github.Issue{Number: 7, Title: "bug from a bee", State: "OPEN", Labels: []github.Label{{Name: "bees:bug"}, {Name: "bees:triage"}}, CreatedAt: time.Now()}
-	h.gh.issues[8] = &github.Issue{Number: 8, Title: "unrelated", State: "OPEN", Labels: nil, CreatedAt: time.Now()}
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "triage me", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:triage"}}, Assignees: []github.Author{{Login: "kyle"}}, CreatedAt: time.Now().Add(-time.Hour)}
+	h.gh.Issues[7] = &github.Issue{Number: 7, Title: "bug from a bee", State: "OPEN", Labels: []github.Label{{Name: "bees:bug"}, {Name: "bees:triage"}}, CreatedAt: time.Now()}
+	h.gh.Issues[8] = &github.Issue{Number: 8, Title: "unrelated", State: "OPEN", Labels: nil, CreatedAt: time.Now()}
 	// A pull request opened outside a developer worker, with a factory label
 	// but neither the base label nor the assignee: unassigned it would be
 	// invisible to a factory filtering on one.
-	h.gh.prs[9] = &github.PR{Number: 9, Title: "pr from a bee", State: "OPEN", HeadRefName: "bees/issue-7", BaseRefName: "main",
+	h.gh.PRs[9] = &github.PR{Number: 9, Title: "pr from a bee", State: "OPEN", HeadRefName: "bees/issue-7", BaseRefName: "main",
 		Labels: []github.Label{{Name: "bees:review"}}, CreatedAt: time.Now()}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	if err := h.sched.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(h.gh.history[7], ","); got != "bees,assignee:kyle" {
+	if got := strings.Join(h.gh.History[7], ","); got != "bees,assignee:kyle" {
 		t.Fatalf("issue 7 history: %s", got)
 	}
-	if len(h.gh.history[8]) != 0 {
-		t.Fatalf("unrelated issue touched: %v", h.gh.history[8])
+	if len(h.gh.History[8]) != 0 {
+		t.Fatalf("unrelated issue touched: %v", h.gh.History[8])
 	}
-	if got := strings.Join(h.gh.history[9], ","); got != "bees,assignee:kyle" {
+	if got := strings.Join(h.gh.History[9], ","); got != "bees,assignee:kyle" {
 		t.Fatalf("PR 9 history: %s", got)
 	}
 	// The project manager is told the size it must not exceed when it sizes
@@ -1689,34 +1243,34 @@ max_check_fix_rounds = 2
 # This test pins the post-approval gate; prereview_test.go owns the other one.
 pre_review_checks = false
 `)
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Ship it", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now()}
-	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Ship it", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now()}
+	h.gh.PRs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
 	pending := `[{"name":"go / test","bucket":"pending","state":"PENDING","link":"https://ci.example.com/run/1","workflow":"CI"}]`
 	failing := `[{"name":"go / test","bucket":"fail","state":"FAILURE","link":"https://ci.example.com/run/1","description":"1 test failed","workflow":"CI"},{"name":"lint","bucket":"pass","state":"SUCCESS"}]`
 	passing := `[{"name":"go / test","bucket":"pass","state":"SUCCESS"},{"name":"lint","bucket":"pass","state":"SUCCESS"}]`
-	h.gh.checks = []checksResponse{
-		{pending, fmt.Errorf("exit status 8")}, // still running: gh exits 8
-		{failing, fmt.Errorf("exit status 1")}, // failed: gh exits 1
-		{pending, fmt.Errorf("exit status 8")}, // after the fix push
-		{passing, nil},
+	h.gh.Checks = []checksResponse{
+		{JSON: pending, Err: fmt.Errorf("exit status 8")}, // still running: gh exits 8
+		{JSON: failing, Err: fmt.Errorf("exit status 1")}, // failed: gh exits 1
+		{JSON: pending, Err: fmt.Errorf("exit status 8")}, // after the fix push
+		{JSON: passing, Err: nil},
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	if err := h.sched.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if len(h.gh.merged) != 1 || h.gh.merged[0] != fakePR {
-		t.Fatalf("merged: %v", h.gh.merged)
+	if len(h.gh.Merged) != 1 || h.gh.Merged[0] != fakePR {
+		t.Fatalf("merged: %v", h.gh.Merged)
 	}
-	if got := strings.Join(h.gh.mergeArgs[0], " "); !strings.Contains(got, "--rebase") || !strings.Contains(got, "--delete-branch") {
+	if got := strings.Join(h.gh.MergeArgs[0], " "); !strings.Contains(got, "--rebase") || !strings.Contains(got, "--delete-branch") {
 		t.Fatalf("merge args: %s", got)
 	}
 	want := "bees:in-progress,bees:review,bees:in-progress,bees:review,bees:approved,bees:in-progress"
-	if got := strings.Join(h.gh.history[1], ","); got != want {
+	if got := strings.Join(h.gh.History[1], ","); got != want {
 		t.Fatalf("history: %s\nwant    %s", got, want)
 	}
-	if len(h.gh.comments[1]) != 0 {
-		t.Fatalf("unexpected escalation: %v", h.gh.comments[1])
+	if len(h.gh.Comments[1]) != 0 {
+		t.Fatalf("unexpected escalation: %v", h.gh.Comments[1])
 	}
 	// developer: initial, review fix, checks fix = 3; reviewer: 2 reviews + 1 checks diagnosis
 	if n := len(h.sessions(config.RoleDeveloper)); n != 3 {
@@ -1766,31 +1320,31 @@ checks_poll_interval = "10ms"
 checks_timeout = "1ms"
 pre_review_checks = false
 `)
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Slow CI", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now()}
-	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
-	h.gh.checks = []checksResponse{{`[{"name":"slow","bucket":"pending","state":"PENDING"}]`, fmt.Errorf("exit status 8")}}
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Slow CI", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now()}
+	h.gh.PRs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
+	h.gh.Checks = []checksResponse{{JSON: `[{"name":"slow","bucket":"pending","state":"PENDING"}]`, Err: fmt.Errorf("exit status 8")}}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	if err := h.sched.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if len(h.gh.merged) != 0 {
+	if len(h.gh.Merged) != 0 {
 		t.Fatal("must not merge with pending checks")
 	}
-	if got := h.gh.history[1]; got[len(got)-1] != "bees:needs-human" {
+	if got := h.gh.History[1]; got[len(got)-1] != "bees:needs-human" {
 		t.Fatalf("history: %v", got)
 	}
-	if len(h.gh.comments[1]) != 1 || !strings.Contains(h.gh.comments[1][0], "still pending") {
-		t.Fatalf("comments: %v", h.gh.comments[1])
+	if len(h.gh.Comments[1]) != 1 || !strings.Contains(h.gh.Comments[1][0], "still pending") {
+		t.Fatalf("comments: %v", h.gh.Comments[1])
 	}
 }
 
 func TestFeedbackGoesToProductManager(t *testing.T) {
 	h := newHarness(t, baseTOML+"\n[roles.qa]\nenabled = false\n[roles.developer]\nenabled = false\n[roles.project_manager]\nenabled = false\n")
 	now := time.Now()
-	h.gh.issues[3] = &github.Issue{Number: 3, Title: "Dark mode please", Body: "idea", State: "OPEN", Author: github.Author{Login: "kyle"},
+	h.gh.Issues[3] = &github.Issue{Number: 3, Title: "Dark mode please", Body: "idea", State: "OPEN", Author: github.Author{Login: "kyle"},
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:feedback"}}, CreatedAt: now.Add(-time.Hour), UpdatedAt: now}
-	h.gh.issues[4] = &github.Issue{Number: 4, Title: "Already answered", Body: "old idea", State: "OPEN", Author: github.Author{Login: "kyle"},
+	h.gh.Issues[4] = &github.Issue{Number: 4, Title: "Already answered", Body: "old idea", State: "OPEN", Author: github.Author{Login: "kyle"},
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:feedback"}}, CreatedAt: now.Add(-2 * time.Hour), UpdatedAt: now,
 		Comments: []github.Comment{{Author: github.Author{Login: "kyle"}, Body: "filed #10 for this\n\n<!-- bees:product_manager -->", CreatedAt: now.Add(-time.Hour)}}}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -1799,8 +1353,8 @@ func TestFeedbackGoesToProductManager(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Feedback issues never enter the workflow state machine.
-	if len(h.gh.history[3]) != 0 || len(h.gh.history[4]) != 0 {
-		t.Fatalf("feedback issues were relabelled: %v %v", h.gh.history[3], h.gh.history[4])
+	if len(h.gh.History[3]) != 0 || len(h.gh.History[4]) != 0 {
+		t.Fatalf("feedback issues were relabelled: %v %v", h.gh.History[3], h.gh.History[4])
 	}
 	pm := h.sessions(config.RoleProductManager)
 	if len(pm) != 1 {
@@ -1821,11 +1375,11 @@ func TestFeedbackGoesToProductManager(t *testing.T) {
 	if h.sched.productManagerHasWork(ctx, snap) {
 		t.Fatal("product manager should be idle: no fresh feedback, interval not elapsed")
 	}
-	h.gh.issues[3].Comments = []github.Comment{
+	h.gh.Issues[3].Comments = []github.Comment{
 		{Author: github.Author{Login: "kyle"}, Body: "created #11\n\n<!-- bees:product_manager -->", CreatedAt: now.Add(time.Second)},
 		{Author: github.Author{Login: "kyle"}, Body: "also on mobile please", CreatedAt: now.Add(2 * time.Second)},
 	}
-	h.gh.issues[3].UpdatedAt = now.Add(2 * time.Second)
+	h.gh.Issues[3].UpdatedAt = now.Add(2 * time.Second)
 	snap, _ = h.sched.poll(ctx)
 	if !h.sched.productManagerHasWork(ctx, snap) {
 		t.Fatal("a new human comment on feedback should wake the product manager")
@@ -1836,17 +1390,17 @@ func TestFeatureIssuesBelongToProductManager(t *testing.T) {
 	h := newHarness(t, baseTOML+"\n[roles.qa]\nenabled = false\n[roles.developer]\nenabled = false\n[roles.project_manager]\nenabled = false\n")
 	now := time.Now()
 	// A feature filed by a person, never touched by the PM: fresh.
-	h.gh.issues[5] = &github.Issue{Number: 5, Title: "Exports", Body: "csv please", State: "OPEN", Author: github.Author{Login: "kyle"},
+	h.gh.Issues[5] = &github.Issue{Number: 5, Title: "Exports", Body: "csv please", State: "OPEN", Author: github.Author{Login: "kyle"},
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:feature"}}, CreatedAt: now.Add(-time.Hour), UpdatedAt: now}
 	// A feature where the PM asked a question and the person just answered.
-	h.gh.issues[6] = &github.Issue{Number: 6, Title: "Search", Body: "find things", State: "OPEN", Author: github.Author{Login: "kyle"},
+	h.gh.Issues[6] = &github.Issue{Number: 6, Title: "Search", Body: "find things", State: "OPEN", Author: github.Author{Login: "kyle"},
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:feature"}, {Name: "bees:question"}}, CreatedAt: now.Add(-3 * time.Hour), UpdatedAt: now,
 		Comments: []github.Comment{
 			{Author: github.Author{Login: "kyle"}, Body: "Fuzzy or exact?\n\n<!-- bees:product_manager -->", CreatedAt: now.Add(-2 * time.Hour)},
 			{Author: github.Author{Login: "kyle"}, Body: "fuzzy", CreatedAt: now.Add(-time.Minute)},
 		}}
 	// A feature already broken down: the PM commented last.
-	h.gh.issues[7] = &github.Issue{Number: 7, Title: "Done planning", Body: "x", State: "OPEN", Author: github.Author{Login: "kyle"},
+	h.gh.Issues[7] = &github.Issue{Number: 7, Title: "Done planning", Body: "x", State: "OPEN", Author: github.Author{Login: "kyle"},
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:feature"}}, CreatedAt: now.Add(-3 * time.Hour), UpdatedAt: now,
 		Comments: []github.Comment{{Author: github.Author{Login: "kyle"}, Body: "work items: #8 #9\n\n<!-- bees:product_manager -->", CreatedAt: now.Add(-time.Hour)}}}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -1855,13 +1409,13 @@ func TestFeatureIssuesBelongToProductManager(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, n := range []int{5, 6, 7} {
-		for _, l := range h.gh.history[n] {
+		for _, l := range h.gh.History[n] {
 			if strings.HasPrefix(l, "bees:") && l != "bees:question" {
-				t.Fatalf("feature issue #%d was put in the state machine: %v", n, h.gh.history[n])
+				t.Fatalf("feature issue #%d was put in the state machine: %v", n, h.gh.History[n])
 			}
 		}
 	}
-	if github.HasLabel(h.gh.issues[6].Labels, "bees:question") {
+	if github.HasLabel(h.gh.Issues[6].Labels, "bees:question") {
 		t.Fatal("answered question should have lost the question label")
 	}
 	pm := h.sessions(config.RoleProductManager)
@@ -1898,8 +1452,8 @@ enabled = false
 [roles.project_manager]
 enabled = false
 `)
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}}
-	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Build the thing", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}}
+	h.gh.PRs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
 	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true} // reviewer disabled: PR auto-approved
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -1908,11 +1462,11 @@ enabled = false
 		t.Fatal(err)
 	}
 
-	if got := strings.Join(h.gh.history[1], ","); got != "bees:in-progress,bees:approved" {
+	if got := strings.Join(h.gh.History[1], ","); got != "bees:in-progress,bees:approved" {
 		t.Fatalf("history: %s", got)
 	}
-	if len(h.gh.comments[1]) != 0 {
-		t.Fatalf("no escalation expected: %v", h.gh.comments[1])
+	if len(h.gh.Comments[1]) != 0 {
+		t.Fatalf("no escalation expected: %v", h.gh.Comments[1])
 	}
 	dev := h.sessions(config.RoleDeveloper)
 	if len(dev) != 2 {
@@ -1946,7 +1500,7 @@ enabled = false
 [roles.project_manager]
 enabled = false
 `)
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}}
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Build the thing", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
@@ -1954,14 +1508,14 @@ enabled = false
 		t.Fatal(err)
 	}
 
-	if got := strings.Join(h.gh.history[1], ","); got != "bees:in-progress,bees:needs-human" {
+	if got := strings.Join(h.gh.History[1], ","); got != "bees:in-progress,bees:needs-human" {
 		t.Fatalf("history: %s", got)
 	}
 	if got := len(h.sessions(config.RoleDeveloper)); got != 1 {
 		t.Fatalf("developer sessions: got %d want 1", got)
 	}
-	if len(h.gh.comments[1]) != 1 || !strings.Contains(h.gh.comments[1][0], "ended with `failed`") {
-		t.Fatalf("comments: %v", h.gh.comments[1])
+	if len(h.gh.Comments[1]) != 1 || !strings.Contains(h.gh.Comments[1][0], "ended with `failed`") {
+		t.Fatalf("comments: %v", h.gh.Comments[1])
 	}
 }
 
@@ -1987,15 +1541,15 @@ enabled = false
 func TestOffHoursPollingIsThrottled(t *testing.T) {
 	// 2026-08-29 12:00 UTC is a Saturday: outside the window.
 	h := newHarnessAt(t, workHoursTOML, time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC))
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Later", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}}
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Later", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}}
 	ctx := context.Background()
 
 	full, err := h.sched.tick(ctx)
 	if err != nil || !full {
 		t.Fatalf("first tick: full=%v err=%v", full, err)
 	}
-	if h.gh.callCount("issue list") != 1 || h.gh.callCount("pr list") != 1 {
-		t.Fatalf("first tick should poll once: %v", h.gh.calls)
+	if h.gh.CallCount("issue list") != 1 || h.gh.CallCount("pr list") != 1 {
+		t.Fatalf("first tick should poll once: %v", h.gh.Calls)
 	}
 	// The loop keeps ticking every poll_interval, but off hours the next
 	// GitHub poll is an hour out, so the second pass is local.
@@ -2004,8 +1558,8 @@ func TestOffHoursPollingIsThrottled(t *testing.T) {
 	if err != nil || full {
 		t.Fatalf("second tick: full=%v err=%v", full, err)
 	}
-	if h.gh.callCount("issue list") != 1 || h.gh.callCount("pr list") != 1 {
-		t.Fatalf("a local pass must not poll GitHub: %v", h.gh.calls)
+	if h.gh.CallCount("issue list") != 1 || h.gh.CallCount("pr list") != 1 {
+		t.Fatalf("a local pass must not poll GitHub: %v", h.gh.Calls)
 	}
 
 	h.sched.writeStatus()
@@ -2025,8 +1579,8 @@ func TestOffHoursPollingIsThrottled(t *testing.T) {
 	if full, err := h.sched.tick(ctx); err != nil || !full {
 		t.Fatalf("tick after the off-hours interval: full=%v err=%v", full, err)
 	}
-	if h.gh.callCount("issue list") != 2 {
-		t.Fatalf("expected a second poll: %v", h.gh.calls)
+	if h.gh.CallCount("issue list") != 2 {
+		t.Fatalf("expected a second poll: %v", h.gh.Calls)
 	}
 }
 
@@ -2040,8 +1594,8 @@ func TestInWorkHoursPollsEveryTick(t *testing.T) {
 		}
 		h.clock.advance(h.cfg.Scheduler.PollInterval.Duration)
 	}
-	if h.gh.callCount("issue list") != 3 || h.gh.callCount("pr list") != 3 {
-		t.Fatalf("every tick should poll in work hours: %v", h.gh.calls)
+	if h.gh.CallCount("issue list") != 3 || h.gh.CallCount("pr list") != 3 {
+		t.Fatalf("every tick should poll in work hours: %v", h.gh.Calls)
 	}
 	h.sched.writeStatus()
 	if st, _ := h.store.LoadStatus(); st.InWorkHours == nil || !*st.InWorkHours {
@@ -2051,13 +1605,13 @@ func TestInWorkHoursPollsEveryTick(t *testing.T) {
 
 func TestLocalPassUnblocksIssueOffHours(t *testing.T) {
 	h := newHarnessAt(t, workHoursTOML, time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC))
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Vague", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:blocked"}, {Name: "bees:size/s"}}}
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Vague", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:blocked"}, {Name: "bees:size/s"}}}
 	ctx := context.Background()
 	if _, err := h.sched.tick(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if len(h.gh.history[1]) != 0 {
-		t.Fatalf("nothing has answered the question yet: %v", h.gh.history[1])
+	if len(h.gh.History[1]) != 0 {
+		t.Fatalf("nothing has answered the question yet: %v", h.gh.History[1])
 	}
 	// The project manager answers by mail; the next local pass picks it up
 	// without polling GitHub.
@@ -2068,11 +1622,11 @@ func TestLocalPassUnblocksIssueOffHours(t *testing.T) {
 	if full, err := h.sched.tick(ctx); err != nil || full {
 		t.Fatalf("second tick: full=%v err=%v", full, err)
 	}
-	if got := strings.Join(h.gh.history[1], ","); got != "bees:ready" {
-		t.Fatalf("history: %v", h.gh.history[1])
+	if got := strings.Join(h.gh.History[1], ","); got != "bees:ready" {
+		t.Fatalf("history: %v", h.gh.History[1])
 	}
-	if h.gh.callCount("issue list") != 1 || h.gh.callCount("pr list") != 1 {
-		t.Fatalf("the local pass polled GitHub: %v", h.gh.calls)
+	if h.gh.CallCount("issue list") != 1 || h.gh.CallCount("pr list") != 1 {
+		t.Fatalf("the local pass polled GitHub: %v", h.gh.Calls)
 	}
 	// The new state label reached the cached poll, so the local passes until
 	// the next one classify the issue as ready and do not move it again.
@@ -2084,8 +1638,8 @@ func TestLocalPassUnblocksIssueOffHours(t *testing.T) {
 	if full, err := h.sched.tick(ctx); err != nil || full {
 		t.Fatalf("third tick: full=%v err=%v", full, err)
 	}
-	if got := strings.Join(h.gh.history[1], ","); got != "bees:ready" {
-		t.Fatalf("a local pass moved the label again: %v", h.gh.history[1])
+	if got := strings.Join(h.gh.History[1], ","); got != "bees:ready" {
+		t.Fatalf("a local pass moved the label again: %v", h.gh.History[1])
 	}
 }
 
@@ -2108,8 +1662,8 @@ func TestLocalPassDoesNotRedispatchFinishedIssues(t *testing.T) {
 	// Saturday: off hours, so the tick after the first one is local and its
 	// snapshot still carries the issue's pre-work labels.
 	h := newHarnessAt(t, workHoursDevTOML, time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC))
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now()}
-	h.gh.prs[fakePR] = &github.PR{Number: fakePR, Title: "Build the thing", State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now()}
+	h.gh.PRs[fakePR] = &github.PR{Number: fakePR, Title: "Build the thing", State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -2118,43 +1672,43 @@ func TestLocalPassDoesNotRedispatchFinishedIssues(t *testing.T) {
 	}
 	h.sched.wg.Wait()
 	want := "bees:in-progress,bees:review,bees:in-progress,bees:review,bees:approved"
-	before := strings.Join(h.gh.history[1], ",")
+	before := strings.Join(h.gh.History[1], ",")
 	if before != want {
 		t.Fatalf("first pass history: %s, want %s", before, want)
 	}
 
-	lists, views := h.gh.callCount("issue list")+h.gh.callCount("pr list"), h.gh.callCount("issue view")
+	lists, views := h.gh.CallCount("issue list")+h.gh.CallCount("pr list"), h.gh.CallCount("issue view")
 
 	h.clock.advance(h.cfg.Scheduler.PollInterval.Duration)
 	if full, err := h.sched.tick(ctx); err != nil || full {
 		t.Fatalf("second tick: full=%v err=%v", full, err)
 	}
 	h.sched.wg.Wait()
-	if got := strings.Join(h.gh.history[1], ","); got != before {
+	if got := strings.Join(h.gh.History[1], ","); got != before {
 		t.Fatalf("local pass restarted a finished issue: %s", got)
 	}
 	if n := len(h.sessions(config.RoleDeveloper)); n != 2 {
 		t.Fatalf("developer sessions: %d, want 2", n)
 	}
 	// The candidate cost one live issue view, not a poll.
-	if n := h.gh.callCount("issue list") + h.gh.callCount("pr list"); n != lists {
-		t.Fatalf("a local pass must not poll GitHub: %v", h.gh.calls)
+	if n := h.gh.CallCount("issue list") + h.gh.CallCount("pr list"); n != lists {
+		t.Fatalf("a local pass must not poll GitHub: %v", h.gh.Calls)
 	}
-	if n := h.gh.callCount("issue view"); n != views+1 {
+	if n := h.gh.CallCount("issue view"); n != views+1 {
 		t.Fatalf("live checks: %d, want 1", n-views)
 	}
 	// The refreshed issue replaces the stale cached one, so the next local
 	// pass classifies it as approved and does not check it again.
-	views = h.gh.callCount("issue view")
+	views = h.gh.CallCount("issue view")
 	h.clock.advance(h.cfg.Scheduler.PollInterval.Duration)
 	if full, err := h.sched.tick(ctx); err != nil || full {
 		t.Fatalf("third tick: full=%v err=%v", full, err)
 	}
 	h.sched.wg.Wait()
-	if h.gh.callCount("issue view") != views {
-		t.Fatalf("an issue the cache already knows is approved was checked again: %v", h.gh.calls)
+	if h.gh.CallCount("issue view") != views {
+		t.Fatalf("an issue the cache already knows is approved was checked again: %v", h.gh.Calls)
 	}
-	if got := strings.Join(h.gh.history[1], ","); got != before {
+	if got := strings.Join(h.gh.History[1], ","); got != before {
 		t.Fatalf("local pass restarted a finished issue: %s", got)
 	}
 }
@@ -2185,24 +1739,24 @@ enabled = false
 	// temp directory when it is removed. OnlyRoles scopes dispatch without
 	// touching the routing, which reads the configured factory.
 	h.sched.OnlyRoles = map[string]bool{}
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Filed from the GitHub UI", State: "OPEN", Labels: []github.Label{{Name: "bees"}}}
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Filed from the GitHub UI", State: "OPEN", Labels: []github.Label{{Name: "bees"}}}
 	ctx := context.Background()
 
 	if full, err := h.sched.tick(ctx); err != nil || !full {
 		t.Fatalf("first tick: full=%v err=%v", full, err)
 	}
-	lists := h.gh.callCount("issue list")
+	lists := h.gh.CallCount("issue list")
 	for i := 0; i < 2; i++ {
 		h.clock.advance(h.cfg.Scheduler.PollInterval.Duration)
 		if full, err := h.sched.tick(ctx); err != nil || full {
 			t.Fatalf("local tick %d: full=%v err=%v", i, full, err)
 		}
 	}
-	if got := strings.Join(h.gh.history[1], ","); got != "bees:feedback" {
+	if got := strings.Join(h.gh.History[1], ","); got != "bees:feedback" {
 		t.Fatalf("label history: %q, want bees:feedback once", got)
 	}
-	if n := h.gh.callCount("issue list"); n != lists {
-		t.Fatalf("a local pass polled GitHub: %v", h.gh.calls)
+	if n := h.gh.CallCount("issue list"); n != lists {
+		t.Fatalf("a local pass polled GitHub: %v", h.gh.Calls)
 	}
 }
 
@@ -2224,22 +1778,22 @@ func TestReadyIssueWithoutASizeGetsTheDefault(t *testing.T) {
 	h := newHarness(t, noRolesTOML)
 	// 1 was fast-tracked to ready by a human and has no size; 2 was sized
 	// by the project manager.
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Fast-tracked", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}}, CreatedAt: time.Now()}
-	h.gh.issues[2] = &github.Issue{Number: 2, Title: "Sized", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/xs"}}, CreatedAt: time.Now()}
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Fast-tracked", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}}, CreatedAt: time.Now()}
+	h.gh.Issues[2] = &github.Issue{Number: 2, Title: "Sized", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/xs"}}, CreatedAt: time.Now()}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
 	if err := h.sched.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(h.gh.history[1], ","); got != "bees:size/m" {
+	if got := strings.Join(h.gh.History[1], ","); got != "bees:size/m" {
 		t.Fatalf("issue 1 label history: %q, want bees:size/m", got)
 	}
-	if got := h.gh.history[2]; len(got) != 0 {
+	if got := h.gh.History[2]; len(got) != 0 {
 		t.Fatalf("issue 2 was already sized and must be left alone: %v", got)
 	}
-	if !github.HasLabel(h.gh.issues[1].Labels, "bees:ready") {
-		t.Fatalf("issue 1 lost its state label: %v", h.gh.issues[1].Labels)
+	if !github.HasLabel(h.gh.Issues[1].Labels, "bees:ready") {
+		t.Fatalf("issue 1 lost its state label: %v", h.gh.Issues[1].Labels)
 	}
 	if !strings.Contains(h.logs.String(), "ready issue without a size gets the default") {
 		t.Fatalf("no log line about the default size:\n%s", h.logs.String())
@@ -2259,7 +1813,7 @@ func TestReadyIssueWithoutASizeGetsTheDefault(t *testing.T) {
 	if err := h.sched.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(h.gh.history[1], ","); got != "bees:size/m" {
+	if got := strings.Join(h.gh.History[1], ","); got != "bees:size/m" {
 		t.Fatalf("size added twice: %q", got)
 	}
 	st, err = h.store.LoadStatus()
@@ -2275,7 +1829,7 @@ func TestReadyIssueWithoutASizeGetsTheDefault(t *testing.T) {
 // has run, so the size backstop has to come last to size it in the same pass.
 func TestUnblockedIssueIsSizedInTheSamePass(t *testing.T) {
 	h := newHarness(t, noRolesTOML)
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Vague", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:blocked"}}}
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Vague", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:blocked"}}}
 	// The answer the developer asked for is waiting in the mailbox.
 	if _, err := h.box.Send(mail.Message{From: config.RoleProjectManager, To: config.RoleDeveloper, Subject: "Re: Vague", Body: "do X", Work: ghwork.New(1, 0)}); err != nil {
 		t.Fatal(err)
@@ -2285,7 +1839,7 @@ func TestUnblockedIssueIsSizedInTheSamePass(t *testing.T) {
 	if err := h.sched.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(h.gh.history[1], ","); got != "bees:ready,bees:size/m" {
+	if got := strings.Join(h.gh.History[1], ","); got != "bees:ready,bees:size/m" {
 		t.Fatalf("label history: %q, want bees:ready,bees:size/m", got)
 	}
 	// Both edits reached the cached poll, so the local passes until the next
@@ -2295,15 +1849,15 @@ func TestUnblockedIssueIsSizedInTheSamePass(t *testing.T) {
 		t.Fatalf("cached issue: %v", h.sched.lastIssues)
 	}
 	h.sched.localPass(ctx)
-	if got := strings.Join(h.gh.history[1], ","); got != "bees:ready,bees:size/m" {
+	if got := strings.Join(h.gh.History[1], ","); got != "bees:ready,bees:size/m" {
 		t.Fatalf("a local pass repeated the edits: %q", got)
 	}
 }
 
 func TestSizeSurvivesTheStateMachine(t *testing.T) {
 	h := newHarness(t, baseTOML+"\n[roles.product_manager]\nenabled = false\n[roles.qa]\nenabled = false\n[roles.project_manager]\nenabled = false\n")
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/xs"}}, CreatedAt: time.Now()}
-	h.gh.prs[fakePR] = &github.PR{Number: fakePR, Title: "Build the thing", State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/xs"}}, CreatedAt: time.Now()}
+	h.gh.PRs[fakePR] = &github.PR{Number: fakePR, Title: "Build the thing", State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	if err := h.sched.Run(ctx); err != nil {
@@ -2312,11 +1866,11 @@ func TestSizeSurvivesTheStateMachine(t *testing.T) {
 
 	// ready -> in-progress -> review -> ... -> approved, and the size label
 	// is still there: state transitions only touch the state labels.
-	if got := strings.Join(h.gh.history[1], ","); got != "bees:in-progress,bees:review,bees:in-progress,bees:review,bees:approved" {
+	if got := strings.Join(h.gh.History[1], ","); got != "bees:in-progress,bees:review,bees:in-progress,bees:review,bees:approved" {
 		t.Fatalf("label history: %s", got)
 	}
-	if !github.HasLabel(h.gh.issues[1].Labels, "bees:size/xs") {
-		t.Fatalf("size label lost: %v", h.gh.issues[1].Labels)
+	if !github.HasLabel(h.gh.Issues[1].Labels, "bees:size/xs") {
+		t.Fatalf("size label lost: %v", h.gh.Issues[1].Labels)
 	}
 	// The reviewer's judge session is told the brief's size, which the
 	// review pipeline sized itself, not the label's.
@@ -2337,10 +1891,10 @@ func TestSizeSurvivesTheStateMachine(t *testing.T) {
 func TestNoStateQueueIsNamedAndRecountedAfterReconcile(t *testing.T) {
 	h := newHarness(t, baseTOML)
 	h.sched.OnlyRoles = map[string]bool{}
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Filed from the GitHub UI", State: "OPEN", Labels: []github.Label{{Name: "bees"}}}
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Filed from the GitHub UI", State: "OPEN", Labels: []github.Label{{Name: "bees"}}}
 	// A blocked issue whose question reconcile is about to answer: it must
 	// leave the blocked bucket, not be counted in both.
-	h.gh.issues[2] = &github.Issue{Number: 2, Title: "Vague", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:blocked"}}}
+	h.gh.Issues[2] = &github.Issue{Number: 2, Title: "Vague", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:blocked"}}}
 	if _, err := h.box.Send(mail.Message{From: config.RoleProjectManager, To: config.RoleDeveloper, Subject: "Re: Vague", Body: "do X", Work: ghwork.New(2, 0)}); err != nil {
 		t.Fatal(err)
 	}
@@ -2380,8 +1934,8 @@ func TestNoStateQueueIsNamedAndRecountedAfterReconcile(t *testing.T) {
 	if st.Queues["triage"] != 0 {
 		t.Errorf("after reconcile: triage = %d, want 0 (%+v)", st.Queues["triage"], st.Queues)
 	}
-	if !github.HasLabel(h.gh.issues[1].Labels, "bees:feedback") {
-		t.Errorf("issue 1 labels %v, want bees:feedback", h.gh.issues[1].Labels)
+	if !github.HasLabel(h.gh.Issues[1].Labels, "bees:feedback") {
+		t.Errorf("issue 1 labels %v, want bees:feedback", h.gh.Issues[1].Labels)
 	}
 	// The unblocked issue moved to ready; counting it in both buckets would
 	// make `bees status` report more issues than exist.
@@ -2400,13 +1954,13 @@ func TestProductManagerSeesEachWorkItemsParent(t *testing.T) {
 	h := newHarness(t, baseTOML+"\n[roles.qa]\nenabled = false\n[roles.developer]\nenabled = false\n[roles.project_manager]\nenabled = false\n")
 	now := time.Now()
 	// The fake answers the parent query for issue 1 with feature #5.
-	h.gh.issues[5] = &github.Issue{Number: 5, Title: "Exports", Body: "csv please", State: "OPEN", Author: github.Author{Login: "kyle"},
+	h.gh.Issues[5] = &github.Issue{Number: 5, Title: "Exports", Body: "csv please", State: "OPEN", Author: github.Author{Login: "kyle"},
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:feature"}}, CreatedAt: now.Add(-time.Hour), UpdatedAt: now,
 		Comments: []github.Comment{{Author: github.Author{Login: "kyle"}, Body: "work items: #1\n\n<!-- bees:product_manager -->", CreatedAt: now}}}
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Export to CSV", State: "OPEN", Author: github.Author{Login: "kyle"},
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Export to CSV", State: "OPEN", Author: github.Author{Login: "kyle"},
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: now.Add(-time.Hour), UpdatedAt: now}
 	// A bug QA filed: attached to nothing, which is what the column is for.
-	h.gh.issues[2] = &github.Issue{Number: 2, Title: "Header is wrong", State: "OPEN", Author: github.Author{Login: "kyle"},
+	h.gh.Issues[2] = &github.Issue{Number: 2, Title: "Header is wrong", State: "OPEN", Author: github.Author{Login: "kyle"},
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:triage"}, {Name: "bees:bug"}, {Name: "bees:size/s"}}, CreatedAt: now.Add(-time.Hour), UpdatedAt: now}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
@@ -2435,7 +1989,7 @@ func TestProductManagerSeesEachWorkItemsParent(t *testing.T) {
 func TestQAReceivesHumanMail(t *testing.T) {
 	h := newHarnessAt(t, baseTOML+"\n[roles.developer]\nenabled = false\n[roles.project_manager]\nenabled = false\n[roles.product_manager]\nenabled = false\n", time.Now())
 	merged := h.clock.now().Add(-time.Minute)
-	h.gh.prs[300] = &github.PR{Number: 300, Title: "Merged", State: "MERGED", HeadRefName: "bees/issue-9",
+	h.gh.PRs[300] = &github.PR{Number: 300, Title: "Merged", State: "MERGED", HeadRefName: "bees/issue-9",
 		Labels: []github.Label{{Name: "bees"}}, MergedAt: &merged}
 	if _, err := h.box.Send(mail.Message{From: HumanSender, To: config.RoleQA,
 		Subject: "Focus", Body: "test the mail commands by hand this time"}); err != nil {
@@ -2462,7 +2016,7 @@ func TestQAReceivesHumanMail(t *testing.T) {
 	// The next run, once the interval has passed and something else merged,
 	// is not told the same thing again.
 	next := h.clock.now().Add(time.Hour)
-	h.gh.prs[300].MergedAt = &next
+	h.gh.PRs[300].MergedAt = &next
 	h.clock.advance(2 * time.Hour)
 	forcePoll(h)
 	if err := h.sched.Run(ctx); err != nil {

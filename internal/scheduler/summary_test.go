@@ -109,7 +109,7 @@ func TestFormatSummaryIsValidUTF8(t *testing.T) {
 func TestASignalledSessionIsReportedWithItsSignal(t *testing.T) {
 	t.Setenv("FAKE_SIGNAL", "9")
 	h := newHarness(t, strings.Replace(devOnlyTOML, "[scheduler]\n", "[scheduler]\nretries = 0\n", 1))
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", State: "OPEN",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Build the thing", State: "OPEN",
 		CreatedAt: time.Now().Add(-time.Hour),
 		Labels:    []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}}
 

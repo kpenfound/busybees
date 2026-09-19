@@ -21,8 +21,8 @@ import (
 func seedApprovedPR(t *testing.T, h *harness, mergeable, mergeState, sha string) {
 	t.Helper()
 	created := time.Now().Add(-time.Hour)
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Done already", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:approved"}, {Name: "bees:size/s"}}, CreatedAt: created}
-	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", URL: "https://x/pull/101",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Done already", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:approved"}, {Name: "bees:size/s"}}, CreatedAt: created}
+	h.gh.PRs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", URL: "https://x/pull/101",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:approved"}}, CreatedAt: created, UpdatedAt: created,
 		Body: "Closes #1", Mergeable: mergeable, MergeStateStatus: mergeState, HeadSHA: sha}
 	if err := os.WriteFile(h.gh.prMarker, nil, 0o644); err != nil {
@@ -58,7 +58,7 @@ func TestConflictingPRGoesBackToTheDeveloper(t *testing.T) {
 		t.Fatal(err)
 	}
 	// approved -> ready (conflict) -> in-progress -> review -> ... -> approved
-	hist := strings.Join(h.gh.history[1], ",")
+	hist := strings.Join(h.gh.History[1], ",")
 	if !strings.HasPrefix(hist, "bees:ready,bees:in-progress,bees:review") || !strings.HasSuffix(hist, "bees:approved") {
 		t.Fatalf("history: %s", hist)
 	}
@@ -118,11 +118,11 @@ func TestConflictIsNotifiedOncePerHead(t *testing.T) {
 	if n := len(developerMail(t, h)); n != 1 {
 		t.Fatalf("after the first check: %d messages, want 1", n)
 	}
-	if github.HasLabel(h.gh.issues[1].Labels, "bees:approved") || !github.HasLabel(h.gh.issues[1].Labels, "bees:ready") {
-		t.Fatalf("issue 1 labels: %v, want ready instead of approved", h.gh.issues[1].Labels)
+	if github.HasLabel(h.gh.Issues[1].Labels, "bees:approved") || !github.HasLabel(h.gh.Issues[1].Labels, "bees:ready") {
+		t.Fatalf("issue 1 labels: %v, want ready instead of approved", h.gh.Issues[1].Labels)
 	}
-	if github.HasLabel(h.gh.prs[fakePR].Labels, "bees:approved") {
-		t.Fatalf("PR kept bees:approved: %v", h.gh.prs[fakePR].Labels)
+	if github.HasLabel(h.gh.PRs[fakePR].Labels, "bees:approved") {
+		t.Fatalf("PR kept bees:approved: %v", h.gh.PRs[fakePR].Labels)
 	}
 
 	// Same head, still conflicting: the developer is not nagged.
@@ -133,8 +133,8 @@ func TestConflictIsNotifiedOncePerHead(t *testing.T) {
 
 	// The developer pushed (new head, issue back in review) but it still
 	// conflicts: told again.
-	h.gh.prs[fakePR].HeadSHA = "bbb"
-	h.gh.issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:review"}, {Name: "bees:size/s"}}
+	h.gh.PRs[fakePR].HeadSHA = "bbb"
+	h.gh.Issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:review"}, {Name: "bees:size/s"}}
 	checkOnce(t, h)
 	if n := len(developerMail(t, h)); n != 2 {
 		t.Fatalf("after a push that still conflicts: %d messages, want 2", n)
@@ -167,7 +167,7 @@ func TestPRCheckHonoursTheSettings(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t, strings.Replace(devOnlyTOML, "[scheduler]\n", "[scheduler]\n"+tc.toml, 1))
 			seedApprovedPR(t, h, tc.mergeable, tc.mergeState, "abc")
-			h.gh.issues[1].Labels = []github.Label{{Name: "bees"}, {Name: tc.state}, {Name: "bees:size/s"}}
+			h.gh.Issues[1].Labels = []github.Label{{Name: "bees"}, {Name: tc.state}, {Name: "bees:size/s"}}
 			checkOnce(t, h)
 			msgs := developerMail(t, h)
 			if len(msgs) != tc.want {
@@ -178,9 +178,9 @@ func TestPRCheckHonoursTheSettings(t *testing.T) {
 			}
 			// Only an approved issue that was notified moves; review stays
 			// with its worker and everything else is untouched.
-			moved := len(h.gh.history[1]) > 0
+			moved := len(h.gh.History[1]) > 0
 			if wantMove := tc.want > 0 && tc.state == "bees:approved"; moved != wantMove {
-				t.Fatalf("label history %v, want moved=%v", h.gh.history[1], wantMove)
+				t.Fatalf("label history %v, want moved=%v", h.gh.History[1], wantMove)
 			}
 		})
 	}
@@ -245,7 +245,7 @@ func TestConflictMailUsesTheConfiguredRemote(t *testing.T) {
 func TestConflictMailNamesTheBranchThePRTargets(t *testing.T) {
 	h := newHarness(t, devOnlyTOML)
 	seedApprovedPR(t, h, github.MergeableConflicting, "DIRTY", "abc123def456")
-	h.gh.prs[fakePR].BaseRefName = "bees/issue-2"
+	h.gh.PRs[fakePR].BaseRefName = "bees/issue-2"
 
 	checkOnce(t, h)
 	msgs := developerMail(t, h)

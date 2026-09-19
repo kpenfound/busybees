@@ -98,7 +98,7 @@ enabled = false
 			t.Errorf("the reviewer ran in the engine: %s", dir)
 		}
 	}
-	if !strings.Contains(strings.Join(h.gh.history[7], ","), "bees:approved") {
-		t.Errorf("issue 7 did not reach approved: %v", h.gh.history[7])
+	if !strings.Contains(strings.Join(h.gh.History[7], ","), "bees:approved") {
+		t.Errorf("issue 7 did not reach approved: %v", h.gh.History[7])
 	}
 }

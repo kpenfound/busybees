@@ -19,16 +19,16 @@ func TestFilterCreatorKeepsTheFactoryOwnItemsVisible(t *testing.T) {
 	h := newHarness(t, devOnlyTOML+"\n[filter]\ncreator = \"kyle\"\n")
 	h.sched.query.Self = "bot" // what cmd/bees resolves from github.login
 	seed := func(n int, author string) {
-		h.gh.issues[n] = &github.Issue{Number: n, Title: fmt.Sprintf("Issue %d", n), State: "OPEN",
+		h.gh.Issues[n] = &github.Issue{Number: n, Title: fmt.Sprintf("Issue %d", n), State: "OPEN",
 			Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}},
 			Author: github.Author{Login: author}, CreatedAt: time.Now().Add(-time.Hour)}
 	}
 	seed(1, "kyle")
 	seed(2, "bot")
 	seed(3, "someone-else")
-	h.gh.prs[201] = &github.PR{Number: 201, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main",
+	h.gh.PRs[201] = &github.PR{Number: 201, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main",
 		Labels: []github.Label{{Name: "bees"}}, Author: github.Author{Login: "bot"}}
-	h.gh.prs[202] = &github.PR{Number: 202, State: "OPEN", HeadRefName: "other", BaseRefName: "main",
+	h.gh.PRs[202] = &github.PR{Number: 202, State: "OPEN", HeadRefName: "other", BaseRefName: "main",
 		Labels: []github.Label{{Name: "bees"}}, Author: github.Author{Login: "someone-else"}}
 
 	snap, err := h.sched.poll(context.Background())

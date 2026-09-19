@@ -25,7 +25,7 @@ import (
 func TestNeedsHumanHoldsAnIssueThatKeepsItsStateLabel(t *testing.T) {
 	h := newHarness(t, devOnlyTOML)
 	seedReady(h, 1, "s", time.Now().Add(-time.Hour))
-	h.gh.issues[1].Labels = append(h.gh.issues[1].Labels, github.Label{Name: "bees:needs-human"})
+	h.gh.Issues[1].Labels = append(h.gh.Issues[1].Labels, github.Label{Name: "bees:needs-human"})
 
 	runPass(t, h)
 
@@ -35,7 +35,7 @@ func TestNeedsHumanHoldsAnIssueThatKeepsItsStateLabel(t *testing.T) {
 	if got := h.sessions(config.RoleDeveloper); len(got) != 0 {
 		t.Errorf("%d developer sessions ran for a held issue, want none: %v", len(got), got)
 	}
-	if got := h.gh.history[1]; len(got) != 0 {
+	if got := h.gh.History[1]; len(got) != 0 {
 		t.Errorf("the held issue was relabelled: %v", got)
 	}
 
@@ -54,15 +54,15 @@ func TestNeedsHumanHoldsAnIssueThatKeepsItsStateLabel(t *testing.T) {
 	}
 
 	// A person lifts the hold by removing the one label, and nothing else.
-	h.gh.mu.Lock()
+	h.gh.Lock()
 	var kept []github.Label
-	for _, l := range h.gh.issues[1].Labels {
+	for _, l := range h.gh.Issues[1].Labels {
 		if l.Name != "bees:needs-human" {
 			kept = append(kept, l)
 		}
 	}
-	h.gh.issues[1].Labels = kept
-	h.gh.mu.Unlock()
+	h.gh.Issues[1].Labels = kept
+	h.gh.Unlock()
 
 	if got := h.stateOfIssue(1); got != "ready" {
 		t.Fatalf("state after the hold was lifted: %q, want ready", got)
@@ -90,13 +90,13 @@ func TestNeedsHumanHoldsAnIssueThatKeepsItsStateLabel(t *testing.T) {
 func TestExecReviewerOnAHeldIssueStillReviews(t *testing.T) {
 	h := newHarness(t, prereviewTOML)
 	seedPreReviewIssue(t, h, "Review what is already pushed")
-	h.gh.issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:in-progress"},
+	h.gh.Issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:in-progress"},
 		{Name: "bees:size/s"}, {Name: "bees:needs-human"}}
 	if err := os.WriteFile(h.gh.prMarker, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	seedCounter(t, h, "review", 1) // approve straight away
-	h.gh.checks = []checksResponse{{passingJSON, nil}}
+	h.gh.Checks = []checksResponse{{JSON: passingJSON, Err: nil}}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	if err := h.sched.RunRole(ctx, config.RoleReviewer, 1, 0); err != nil {

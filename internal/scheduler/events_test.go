@@ -155,7 +155,7 @@ func TestSchedulerPublishesSessionStageAndPollEvents(t *testing.T) {
 func TestSessionEndedEventCarriesWhetherTheCostIsKnown(t *testing.T) {
 	t.Setenv("FAKE_SIGNAL", "9")
 	h := newHarness(t, strings.Replace(devOnlyTOML, "[scheduler]\n", "[scheduler]\nretries = 0\n", 1))
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", State: "OPEN",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Build the thing", State: "OPEN",
 		CreatedAt: time.Now().Add(-time.Hour),
 		Labels:    []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}}
 
@@ -268,9 +268,9 @@ enabled = false
 func TestSessionEventsNameTheModelTheFallbackAndTheTurns(t *testing.T) {
 	t.Setenv("FAKE_DEV_HANG", "1")
 	h := newHarness(t, fallbackTOML)
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", State: "OPEN",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Build the thing", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now().Add(-time.Hour)}
-	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
+	h.gh.PRs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
 	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true} // reviewer disabled: the PR is approved without one
 
 	sub := h.sched.Subscribe()
@@ -373,7 +373,7 @@ func TestReviewActivityLifecycleAndJudgeHandoff(t *testing.T) {
 				issue, pr, id := 1, 201, "reviewer-pr-201-r1"
 				if requested {
 					pushBranch(t, h.clone, "fix-widget")
-					h.gh.prs[42] = personsPR("bees", "bees:review-requested")
+					h.gh.PRs[42] = personsPR("bees", "bees:review-requested")
 					issue, pr, id = 0, 42, "reviewer-requested-pr-42"
 				} else {
 					seedReady(h, 1, "s", requestedReviewClock.Add(-time.Hour))
@@ -447,7 +447,7 @@ func TestReviewActivityFailureAndCancellation(t *testing.T) {
 		t.Run(failure, func(t *testing.T) {
 			h := newHarness(t, devOnlyTOML)
 			pr := github.PR{Number: 42, BaseRefName: "main"}
-			h.gh.prs[42] = &pr
+			h.gh.PRs[42] = &pr
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			total := -1
@@ -536,7 +536,7 @@ func TestReviewActivityCountsEnabledAngles(t *testing.T) {
 			t.Setenv("FAKE_REVIEW_SIZE", "m")
 			h := newHarness(t, anglesReviewerTOML)
 			pr := github.PR{Number: 42, BaseRefName: "main"}
-			h.gh.prs[42] = &pr
+			h.gh.PRs[42] = &pr
 			switches, total := "[angles]\ngeneral = false\n", 1
 			if allDisabled {
 				switches += "docs = false\n"
