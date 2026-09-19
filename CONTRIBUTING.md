@@ -73,7 +73,7 @@ See [core/README.md](core/README.md) for the execution boundary.
 
 ### Testing rules
 
-- Tests never call the real `claude`, `codex`, `opencode` or `gh`. `gh` is faked through
+- Tests never call the real `claude`, `codex`, `opencode`, `pi` or `gh`. `gh` is faked through
   `github.Client.Exec`: the scheduler tests replace it with
   `internal/fakegh`, an in-memory GitHub that understands the `gh`
   invocations the wrapper makes (`issue list`, including `--state all

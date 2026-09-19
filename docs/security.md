@@ -125,8 +125,9 @@ outbound connections inside the container.
 
 **Credentials.** The container's environment is built from nothing rather
 than inherited from the host process: the agent's credential
-(`ANTHROPIC_API_KEY`/`CLAUDE_CODE_OAUTH_TOKEN` or the codex equivalents) when
-the bees environment or the role's `env` has one, the `[github]` token and
+(`ANTHROPIC_API_KEY`/`CLAUDE_CODE_OAUTH_TOKEN`, the codex equivalents, or
+[the provider keys pi reads](configuration.md#pi)) when the bees environment
+or the role's `env` has one, the `[github]` token and
 git identity, the Neo4j Agent Memory API key with the `neo4j` notes backend,
 and the role's own `env`. Values reach the engine by variable
 name, never on a command line that a process listing could read. The
@@ -149,6 +150,18 @@ ends.
   instead, so a session that shells out to `bees` directly has nothing to
   run.
 - Linux is written for but was not run for this page.
+
+## Pi packages
+
+A `pi` session runs the third-party
+[`pi-mcp-adapter`](configuration.md#pi) and the role's `pi_packages` inside
+pi, with every permission the session has, in every mode. Pi installs them
+from npm or git the first time a machine loads them, and in a container at
+every session, since its home directory starts empty. The adapter is loaded
+as `npm:pi-mcp-adapter`, unpinned: the version pi installed first on the
+host, the newest one in a container. Pin a `pi_packages` entry
+(`npm:<name>@<version>`, `git:<repo>@<ref>`) whose updates you want to read
+before they run.
 
 ## Choosing a mode
 

@@ -15,8 +15,8 @@ GitHub repository. Read `docs/architecture.md` before changing the scheduler.
   from the working tree, a test project and stubbed `gh` and `claude`: the QA
   playground, a dang module in `.dagger/modules/qa-playground` described in
   `CONTRIBUTING.md`. It contributes no checks.
-- Tests must never call the real `claude`, `codex`, `opencode`, `gh` or `docker`. `gh` is faked through
-  `github.Client.Exec`; `claude`, `codex` and `opencode` are faked by the test binary itself (see `TestMain` in
+- Tests must never call the real `claude`, `codex`, `opencode`, `pi`, `gh` or `docker`. `gh` is faked through
+  `github.Client.Exec`; `claude`, `codex`, `opencode` and `pi` are faked by the test binary itself (see `TestMain` in
   `internal/scheduler/scheduler_test.go`) or a shell script (`core/agent/agenttest`), and so is
   `docker` (`fakeDocker` in `core/agent` and, separately, in `internal/review`).
   `core/agent/agentbin.Resolve`, which every session and review agent goes through, refuses any other executable

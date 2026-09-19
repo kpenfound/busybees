@@ -73,7 +73,8 @@ ways to run the factory.
   role-specific prompt and its own model. A role runs as
   [Claude Code](https://claude.com/claude-code) — with skills and a fallback model
   for when the primary hits its usage limit — or as
-  [Codex](https://github.com/openai/codex) or [opencode](https://opencode.ai).
+  [Codex](https://github.com/openai/codex), [opencode](https://opencode.ai) or
+  [pi](https://pi.dev) (with [`pi-mcp-adapter`](docs/configuration.md#pi)).
   See [Roles](docs/roles.md).
 - **Features become GitHub sub-issues.** The product manager turns a feedback or
   feature issue into work items tracked as native sub-issues, and can discuss a

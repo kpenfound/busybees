@@ -680,7 +680,8 @@ stateDiagram-v2
   that review read, which is all it verifies; checks mode; a requested
   review.
   Codex has no resume: every round of a codex role is a new thread. An
-  opencode role's later round continues the session with `--session`.
+  opencode role's later round continues the session with `--session`, and
+  a pi role's with `--session-id`.
 - **Bookkeeping.** `<state_dir>/issues/work-<hash>.json` records the review round,
   pull request number, branch, `check_fix_rounds`, the three resume fields,
   and the full review's artifact directory and the head commit it read
@@ -977,11 +978,43 @@ cost, the last `text` event is the result text, and a `step_finish` whose
 reason is `stop`, or an `error` event, says how it ended. The costs add up
 to the session's, a known cost even when a local model makes it zero.
 
+With `agent = "pi"` it is one `pi -p`:
+
+```
+PI_MCP_CONFIG_MODE=exclusive \
+pi -p --mode json --no-extensions -e npm:pi-mcp-adapter [-e <package>]... \
+  --mcp-config <session>/pi-mcp.json --name bees-<session name> \
+  [--append-system-prompt <session>/system-prompt.md] [--model <model>] \
+  [--thinking <effort>] [--session-id <session id>]
+```
+
+The task prompt is written to stdin, which pi reads as the prompt in print
+mode, and the system prompt file is appended to pi's own. Pi has no MCP
+support: the third-party `pi-mcp-adapter` extension, loaded with `-e` on
+every session, reads the MCP servers from the file its `--mcp-config` flag
+names, `<session>/pi-mcp.json`, and nothing else with
+`PI_MCP_CONFIG_MODE=exclusive`. The file holds every MCP server, the built-in
+one included, each connected at startup and with its tools registered as pi
+tools of their own rather than behind the adapter's single proxy tool.
+`--no-extensions` keeps out every extension pi would discover; the role's
+[`pi_packages`](configuration.md#pi) follow the adapter, each with `-e`. Pi
+asks about nothing, so it needs no counterpart of
+`--dangerously-skip-permissions`. `--session-id` continues an earlier
+session of the worktree's project, and starts one under that id when there
+is none. It has no fallback model, turn limit, tool allow-list or plugin
+directories. Its stream is appended to `transcript.jsonl` the same way: the
+`session` header supplies the session id, each `turn_end` is one turn, each
+assistant `message_end` carries what the response cost, the last assistant
+text is the result text, and the last assistant message's `stopReason` says
+how it ended: `stop` well, `error` (with its `errorMessage`), `length` or
+`aborted` not. The costs add up to the session's.
+
 For every agent, stderr is saved to `stderr.log` when non-empty, and
 `result.json` summarises the run. A session that ended without a final event
 (a signalled process, most often) has no known cost: `bees status`, the live
 view and the summary line say so rather than printing zero, and its turns are
-counted from the transcript's assistant messages or completed items instead.
+counted from the transcript's assistant messages, completed items, finished
+steps or ended turns instead.
 
 - **Sandbox.** The role's resolved
   [`sandbox`](configuration.md#sandboxing) says how much of the machine the
@@ -1072,9 +1105,10 @@ counted from the transcript's assistant messages or completed items instead.
   error, so that one name survives the drop); and, unless `GIT_CONFIG_COUNT`
   is already set, the `GIT_CONFIG_*` entries below. The `BEES_*` variables are
   also written into the built-in MCP server's entry in `mcp.json` (for
-  codex, its overrides) rather than left to inheritance; the token variable
+  codex, its overrides; for opencode and pi, their configuration files)
+  rather than left to inheritance; the token variable
   deliberately is not, because that file sits in the session directory on
-  disk. Claude and opencode pass their own environment on to the servers
+  disk. Claude, opencode and pi pass their own environment on to the servers
   they start. Codex filters that environment, so the built-in server's
   `env_vars` override names the GitHub credential variables and, with the
   Neo4j notes backend, the variable `notes.neo4j_api_key` reads. Codex copies
@@ -1115,8 +1149,8 @@ counted from the transcript's assistant messages or completed items instead.
   concurrently and share one cache, so preparation is serialised and a wrapper
   that already points at the right target is left alone. Clones are refreshed
   according to `global.skills_refresh`; `bees skills` inspects the cache.
-  Plugin directories are Claude Code's: a `codex` or `opencode` session is
-  passed none, whatever its role configures. See
+  Plugin directories are Claude Code's: a `codex`, `opencode` or `pi`
+  session is passed none, whatever its role configures. See
   [Skills](configuration.md#skills).
 - **MCP.** A claude session gets `mcp.json`, always passed with
   `--strict-mcp-config`, so it sees exactly two things: the servers of the
@@ -1126,7 +1160,8 @@ counted from the transcript's assistant messages or completed items instead.
   codex session gets the same two things as `mcp_servers` overrides on its
   command line, next to whatever its own configuration file names, and an
   opencode session as the `mcp` table of the configuration file
-  `OPENCODE_CONFIG` names, next to the project's own. That
+  `OPENCODE_CONFIG` names, next to the project's own, and a pi session in
+  `pi-mcp.json`, read by `pi-mcp-adapter` alone. That
   server serves the factory's own operations as tools backed by the same code
   the CLI uses, so a session calls a schema instead of composing a command
   line: `mail_send`, `mail_list`, `issue_create`, `issue_link`, `issue_view`,
@@ -1374,7 +1409,8 @@ files against the scan so a reused pid is discarded rather than killed. The
 scan also recognizes the older
 `mcp_servers.bees.env.BEES_SESSION_DIR=` marker. An opencode session is found
 through its pid file alone: its argv carries no path of the state directory,
-so the scan does not know it. Both
+so the scan does not know it. Nor does it know a pi session: pi renames its
+process to `pi` as it starts, which hides its argv. Both
 sources are scoped to one factory: a scanned process counts only when its
 command line also references this state directory's `sessions/` (a claude
 session's argv carries `--append-system-prompt-file <sessions
