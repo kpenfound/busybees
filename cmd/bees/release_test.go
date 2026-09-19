@@ -14,7 +14,7 @@ import (
 // releaseWorkflow is the one workflow file this repository has. Tests read it
 // from disk rather than embedding a copy: the file is what has to stay true.
 // It is listed in dagger.toml's includeExtraFiles so the check container sees
-// it, like CLAUDE.md and bees.example.toml.
+// it, like AGENTS.md and bees.example.toml.
 const releaseWorkflow = "../../.github/workflows/release.yml"
 
 // releasingDoc documents the assets the workflow publishes.

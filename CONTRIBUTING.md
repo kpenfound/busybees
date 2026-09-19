@@ -219,7 +219,7 @@ runtime and needs no generated files.
 ### Go and markdown style
 
 Match the style of the surrounding code. For markdown, follow the rules in
-[CLAUDE.md](CLAUDE.md#documentation).
+[AGENTS.md](AGENTS.md#documentation).
 
 ## Contributor workflow
 

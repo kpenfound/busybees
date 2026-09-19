@@ -205,7 +205,7 @@ orchestrator uses it to tell your comments apart from a human's.
 ### Learning the project
 
 busybees tells you nothing about how to build, test or run the project on purpose:
-that knowledge belongs to the repository. Read its README, CONTRIBUTING, CLAUDE.md,
+that knowledge belongs to the repository. Read its README, CONTRIBUTING, AGENTS.md, CLAUDE.md,
 Makefile, CI configuration and similar files to find out, and record in your notes what
 took finding out (commands, ports, fixtures, gotchas) so future sessions start faster.
 Do not copy into them what a document already states plainly.

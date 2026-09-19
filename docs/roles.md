@@ -55,7 +55,7 @@ your comments reach a session is under
 
 **Learning the project.** busybees tells a role nothing about how to build,
 test or run the product. The role reads the repository's README, CONTRIBUTING,
-CLAUDE.md, Makefile and CI configuration, and records in its notes file the
+AGENTS.md, CLAUDE.md, Makefile and CI configuration, and records in its notes file the
 commands and gotchas that took finding out, without copying what a document
 already states. The prompt adds that documentation which is missing or wrong
 is worth an issue.
