@@ -658,9 +658,8 @@ func (f *fakeGH) implicitParent(n int) (int, string) {
 }
 
 type (
-	ghEdit          = fakegh.Edit
-	submittedReview = fakegh.Review
-	checksResponse  = fakegh.ChecksResponse
+	ghEdit         = fakegh.Edit
+	checksResponse = fakegh.ChecksResponse
 )
 
 // reviewStates maps a gh review event to the state GitHub records for it.
