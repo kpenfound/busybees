@@ -71,10 +71,24 @@ var WriteMCPConfig = agent.WriteMCPConfig
 var ClaudeSandboxDomains = []string{"github.com", "*.github.com"}
 var ProcessMarkers = procs.Markers{Session: "--name bees-", Codex: procs.CodexMarker(beesEnvPrefix), LegacyCodex: "mcp_servers.bees.env.BEES_SESSION_DIR=", Container: "bees.session"}
 
-// ProfileForRole strips workflow settings after size and fallback selection.
+// ProfileForRole strips workflow settings after size and phase selection,
+// with the role's fallback chain behind it (Profile.Fallback): each fallback
+// profile's execution settings under the same role settings, so a session
+// that falls back keeps its tools, turn limit and timeout.
 func ProfileForRole(role config.ResolvedRole) Profile {
-	return Profile{
-		Name: role.Name, Agent: role.Agent, Model: role.Model, FallbackModel: role.FallbackModel,
+	p := profileForRole(role)
+	at := &p
+	for _, f := range role.Fallbacks() {
+		next := profileForRole(f)
+		at.Fallback = &next
+		at = &next
+	}
+	return p
+}
+
+func profileForRole(role config.ResolvedRole) Profile {
+	p := Profile{
+		Name: role.Name, Agent: role.Agent, Model: role.Model,
 		Effort: role.Effort, MaxTurns: role.MaxTurns, Timeout: role.Timeout,
 		AllowedTools: slices.Clone(role.AllowedTools), DisallowedTools: slices.Clone(role.DisallowedTools),
 		MCP: MCPEntries(role.MCP), Sandbox: role.Sandbox, SandboxImage: role.SandboxImage,
@@ -83,6 +97,13 @@ func ProfileForRole(role config.ResolvedRole) Profile {
 		Env: maps.Clone(role.Env), Skills: slices.Clone(role.Skills),
 		PiPackages: slices.Clone(role.PiPackages),
 	}
+	// The Dagger engine is an sbx option: a judge or fallback profile in
+	// another sandbox runs without it, as it runs without the container
+	// settings the role keeps.
+	if role.SandboxDaggerEngine != "" && role.Sandbox == agent.SandboxSbx {
+		p.Dagger = &agent.Dagger{Engine: role.SandboxDaggerEngine, Version: role.SandboxDaggerVersion}
+	}
+	return p
 }
 
 func MCPEntries(servers map[string]config.MCPServer) map[string]MCPEntry {
@@ -109,9 +130,12 @@ type Runner struct {
 	// DockerBin is the container engine a container session is run with.
 	// Default config.ContainerEngine.
 	DockerBin string
+	// SbxBin is the Docker Sandboxes CLI an sbx session is run with.
+	// Default config.SandboxCLI.
+	SbxBin string
 	// ContainerListen is the address the built-in MCP server listens on
-	// for a container session. Empty picks the address the container
-	// reaches the host by (see containerListen).
+	// for a container or sbx session. Empty picks the address the box
+	// reaches the host by (see containerListen and sandboxListen).
 	ContainerListen string
 	// BeesBin is the path of the bees executable, made available on PATH so
 	// sessions can run `bees mail` and `bees done`.
@@ -157,7 +181,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 		return nil, fmt.Errorf("%s: %w", p.Name, err)
 	}
 	core := r.coreRunner()
-	if p.Sandbox == agent.SandboxContainer {
+	if isolated(p.Sandbox) {
 		// A granted directory must exist to be verified; the runner and
 		// the skills fill these later.
 		dirs := nonempty(r.SessionsDir)
@@ -194,13 +218,21 @@ func (r *Runner) coreRunner() *agent.Runner {
 		preparer = r.Skills
 	}
 	return &agent.Runner{
-		ClaudeBin: r.ClaudeBin, CodexBin: r.CodexBin, OpenCodeBin: r.OpenCodeBin, PiBin: r.PiBin, DockerBin: r.DockerBin,
+		ClaudeBin: r.ClaudeBin, CodexBin: r.CodexBin, OpenCodeBin: r.OpenCodeBin, PiBin: r.PiBin, DockerBin: r.DockerBin, SbxBin: r.SbxBin,
 		ContainerListen: r.ContainerListen, SessionsDir: r.SessionsDir, Skills: preparer, SkillMountDirs: skillDirs,
 		EnvironmentPrefix: beesEnvPrefix, NamePrefix: "bees-", ContainerLabel: ProcessMarkers.Container,
 		ContainerHome: "/home/bees", ContainerUseRepository: "bees-container-use",
 		MountDirs: nonempty(r.StateDir), AddDirs: r.AddDirs, Stream: r.Stream, Logger: r.Logger,
 	}
 }
+
+// isolated reports whether a sandbox mode runs the session somewhere other
+// than this host, in a container or a Docker Sandbox, where it sees the
+// mounts it is granted and nothing else and has no bees binary.
+func isolated(mode string) bool {
+	return mode == agent.SandboxContainer || mode == agent.SandboxSbx
+}
+
 func nonempty(s string) []string {
 	if s == "" {
 		return nil
@@ -244,7 +276,7 @@ func (r *Runner) prepare(req Request, dir string) Request {
 	req.VCSEnv = vcsHost
 	req.VCSContainerEnv = vcsContainer
 	req.Env = host
-	if req.Profile.Sandbox == agent.SandboxContainer {
+	if isolated(req.Profile.Sandbox) {
 		req.Env = container
 	}
 	req.ContainerEnv = container
@@ -294,6 +326,11 @@ func (r *Runner) grants(req Request) *agent.Grants {
 		backend = agent.AgentClaude
 	}
 	g := &agent.Grants{VCS: p.VCSAccess, Tools: []string{agent.ToolsAll}}
+	if p.Dagger != nil {
+		// Granted to the profile that asks for it and to no other; the
+		// boundary refuses it outside sbx.
+		g.DaggerEngine = p.Dagger.Engine
+	}
 	g.Env = append(slices.Clone(HostEnv), ProviderEnv[backend]...)
 	g.Env = append(g.Env, beesEnvPrefix+"*")
 	if p.VCSAccess {
@@ -331,8 +368,8 @@ func (r *Runner) grants(req Request) *agent.Grants {
 		for _, d := range r.AddDirs {
 			g.Mounts = append(g.Mounts, agent.Mount{Path: d, Access: agent.ReadWrite})
 		}
-	case agent.SandboxContainer:
-		// The container sees these and nothing else of the host.
+	case agent.SandboxContainer, agent.SandboxSbx:
+		// The container or sandbox sees these and nothing else of the host.
 		g.Mounts = []agent.Mount{{Path: dir, Access: agent.ReadWrite}}
 		for _, d := range []string{r.StateDir, r.SessionsDir} {
 			if d != "" {

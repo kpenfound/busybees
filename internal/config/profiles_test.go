@@ -9,7 +9,7 @@ import (
 )
 
 func profileOf(r ResolvedRole) AgentProfile {
-	return AgentProfile{Agent: r.Agent, Model: r.Model, FallbackModel: r.FallbackModel, Effort: r.Effort, Sandbox: r.Sandbox}
+	return AgentProfile{Agent: r.Agent, Model: r.Model, Fallback: r.Fallback, Effort: r.Effort, Sandbox: r.Sandbox}
 }
 
 func TestProfileResolution(t *testing.T) {
@@ -51,7 +51,7 @@ angle_profiles = { quick_general = "claude", general = "claude", docs = "claude"
 					t.Fatal(err)
 				}
 				want := map[string]AgentProfile{
-					"claude": {Agent: "claude", Model: "opus", FallbackModel: "sonnet", Sandbox: "none"},
+					"claude": {Agent: "claude", Model: "opus", Sandbox: "none"},
 					"remote": {Agent: "opencode", Effort: "custom-variant", Sandbox: "none"},
 					"code":   {Agent: "codex", Model: "code-model", Sandbox: "container"},
 				}[tc.want]
@@ -63,32 +63,36 @@ angle_profiles = { quick_general = "claude", general = "claude", docs = "claude"
 	}
 }
 
+// A version 2 file migrates through 3 and 4 to 5: the fallback model every
+// claude scope had then, "sonnet" unless it named one, is a fallback profile
+// of the scope's profile now, one per profile (count is the profiles the
+// migrated file declares), and a codex or opencode scope has none.
 func TestProfileMigration(t *testing.T) {
-	defaults := AgentProfile{Agent: "claude", Model: "opus", FallbackModel: "sonnet", Sandbox: "none"}
+	defaults := AgentProfile{Agent: "claude", Model: "opus", Sandbox: "none"}
 	for _, tc := range []struct {
 		name, body, role, size string
 		want                   AgentProfile
 		count                  int
 	}{
 		{"implicit", "[global]\n#model = \"opus\"\n[roles.developer]\nprompt = \"keep\"\n", RoleDeveloper, "", defaults, 0},
-		{"global", "[global]\nmodel = \"haiku\"\neffort = \"high\"\n", RoleQA, "", AgentProfile{Agent: "claude", Model: "haiku", FallbackModel: "sonnet", Effort: "high", Sandbox: "none"}, 1},
-		{"role", "[roles.developer]\nsandbox = \"claude\"\n", RoleDeveloper, "", AgentProfile{Agent: "claude", Model: "opus", FallbackModel: "sonnet", Sandbox: "claude"}, 1},
-		{"inherit explicit global model", "[global]\nmodel = \"custom\"\neffort = \"high\"\n[roles.developer]\nagent = \"codex\"\n", RoleDeveloper, "", AgentProfile{Agent: "codex", Model: "custom", Effort: "high", Sandbox: "none"}, 2},
+		{"global", "[global]\nmodel = \"haiku\"\neffort = \"high\"\n", RoleQA, "", AgentProfile{Agent: "claude", Model: "haiku", Fallback: "global_fallback", Effort: "high", Sandbox: "none"}, 2},
+		{"role", "[roles.developer]\nsandbox = \"claude\"\n", RoleDeveloper, "", AgentProfile{Agent: "claude", Model: "opus", Fallback: "developer_fallback", Sandbox: "claude"}, 2},
+		{"inherit explicit global model", "[global]\nmodel = \"custom\"\neffort = \"high\"\n[roles.developer]\nagent = \"codex\"\n", RoleDeveloper, "", AgentProfile{Agent: "codex", Model: "custom", Effort: "high", Sandbox: "none"}, 3},
 		{"codex empty defaults", "[roles.developer]\nagent = \"codex\"\n", RoleDeveloper, "", AgentProfile{Agent: "codex", Sandbox: "none"}, 1},
 		{"opencode empty defaults", "[roles.developer]\nagent = \"opencode\"\n", RoleDeveloper, "", AgentProfile{Agent: "opencode", Sandbox: "none"}, 1},
-		{"global agent role override", "[global]\nagent = \"opencode\"\n[roles.reviewer]\nenabled = false\n[roles.developer]\nagent = \"claude\"\n", RoleDeveloper, "", defaults, 2},
-		{"size only", "[roles.developer]\nmodel_by_size = { xs = \"haiku\" }\n", RoleDeveloper, "xs", AgentProfile{Agent: "claude", Model: "haiku", FallbackModel: "sonnet", Sandbox: "none"}, 2},
-		{"size subtable", "[roles.developer.model_by_size]\nxs = \"haiku\"\n", RoleDeveloper, "xs", AgentProfile{Agent: "claude", Model: "haiku", FallbackModel: "sonnet", Sandbox: "none"}, 2},
-		{"quoted dotted keys", "roles.\"developer\".model = \"haiku\"\n", RoleDeveloper, "", AgentProfile{Agent: "claude", Model: "haiku", FallbackModel: "sonnet", Sandbox: "none"}, 1},
+		{"global agent role override", "[global]\nagent = \"opencode\"\n[roles.reviewer]\nenabled = false\n[roles.developer]\nagent = \"claude\"\n", RoleDeveloper, "", AgentProfile{Agent: "claude", Model: "opus", Fallback: "developer_fallback", Sandbox: "none"}, 3},
+		{"size only", "[roles.developer]\nmodel_by_size = { xs = \"haiku\" }\n", RoleDeveloper, "xs", AgentProfile{Agent: "claude", Model: "haiku", Fallback: "developer_xs_fallback", Sandbox: "none"}, 4},
+		{"size subtable", "[roles.developer.model_by_size]\nxs = \"haiku\"\n", RoleDeveloper, "xs", AgentProfile{Agent: "claude", Model: "haiku", Fallback: "developer_xs_fallback", Sandbox: "none"}, 4},
+		{"quoted dotted keys", "roles.\"developer\".model = \"haiku\"\n", RoleDeveloper, "", AgentProfile{Agent: "claude", Model: "haiku", Fallback: "developer_fallback", Sandbox: "none"}, 2},
 		{"inline global", `global = { model = "haiku", prompt = "keep", env = { model = "env" } }
-`, RoleQA, "", AgentProfile{Agent: "claude", Model: "haiku", FallbackModel: "sonnet", Sandbox: "none"}, 1},
+`, RoleQA, "", AgentProfile{Agent: "claude", Model: "haiku", Fallback: "global_fallback", Sandbox: "none"}, 2},
 		{"inline role", `[roles]
 developer = { model = "haiku", skills = ["a", "b"] }
-`, RoleDeveloper, "", AgentProfile{Agent: "claude", Model: "haiku", FallbackModel: "sonnet", Sandbox: "none"}, 1},
+`, RoleDeveloper, "", AgentProfile{Agent: "claude", Model: "haiku", Fallback: "developer_fallback", Sandbox: "none"}, 2},
 		{"inline roles", `roles = { developer = { model = "haiku" }, qa = { agent = "codex" } }
-`, RoleDeveloper, "", AgentProfile{Agent: "claude", Model: "haiku", FallbackModel: "sonnet", Sandbox: "none"}, 2},
+`, RoleDeveloper, "", AgentProfile{Agent: "claude", Model: "haiku", Fallback: "developer_fallback", Sandbox: "none"}, 3},
 
-		{"collision", "[profiles.developer]\nmodel = \"keep\"\n[roles.developer]\nmodel = \"haiku\"\n", RoleDeveloper, "", AgentProfile{Agent: "claude", Model: "haiku", FallbackModel: "sonnet", Sandbox: "none"}, 2},
+		{"collision", "[profiles.developer]\nmodel = \"keep\"\n[roles.developer]\nmodel = \"haiku\"\n", RoleDeveloper, "", AgentProfile{Agent: "claude", Model: "haiku", Fallback: "developer_2_fallback", Sandbox: "none"}, 3},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			orig := "# user's comment\nversion = 2\n" + tc.body
@@ -106,6 +110,13 @@ developer = { model = "haiku", skills = ["a", "b"] }
 			}
 			if len(cfg.Profiles) != tc.count {
 				t.Fatalf("profiles: %+v", cfg.Profiles)
+			}
+			if tc.want.Fallback != "" {
+				want := tc.want
+				want.Model, want.Fallback = "sonnet", ""
+				if f := r.ForSize(tc.size).Fallbacks(); len(f) != 1 || profileOf(f[0]) != want {
+					t.Fatalf("fallback chain %+v, want one profile %+v", f, want)
+				}
 			}
 			backup, err := cfg.Rewrite()
 			if err != nil {

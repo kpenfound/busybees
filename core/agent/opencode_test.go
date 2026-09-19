@@ -52,7 +52,7 @@ printf '{"status":"submitted","work":{"key":"task/12","tags":{"ticket":"twelve"}
 	r := newRunner(t, "")
 	r.OpenCodeBin = bin
 	role := opencodeRole("ollama/llama3")
-	role.FallbackModel = "sonnet"
+	role.Fallback = &Profile{Agent: AgentClaude, Model: "sonnet"}
 	role.Effort = "custom-variant"
 	role.AllowedTools = []string{"Bash"}
 	role.MCP = map[string]MCPEntry{

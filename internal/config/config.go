@@ -80,17 +80,16 @@ func CanonicalRole(name string) (string, error) {
 
 // Defaults used when neither the role nor [global] sets a value.
 const (
-	DefaultModel         = "opus"
-	DefaultFallbackModel = "sonnet"
-	DefaultAgent         = AgentClaude
-	DefaultSandbox       = SandboxNone
-	DefaultMaxTurns      = 200
-	DefaultTimeout       = 45 * time.Minute
-	DefaultLabel         = "bees"
-	DefaultRemote        = "origin"
-	DefaultStateDir      = ".bees"
-	DefaultBranchPrefix  = "bees/"
-	DefaultPollInterval  = 5 * time.Minute
+	DefaultModel        = "opus"
+	DefaultAgent        = AgentClaude
+	DefaultSandbox      = SandboxNone
+	DefaultMaxTurns     = 200
+	DefaultTimeout      = 45 * time.Minute
+	DefaultLabel        = "bees"
+	DefaultRemote       = "origin"
+	DefaultStateDir     = ".bees"
+	DefaultBranchPrefix = "bees/"
+	DefaultPollInterval = 5 * time.Minute
 	// DefaultRetries and friends govern retrying a session that failed for
 	// infrastructure reasons; see Config.Retry.
 	DefaultRetries           = 1
@@ -214,7 +213,7 @@ func (d Duration) MarshalText() ([]byte, error) { return []byte(d.String()), nil
 // natively. Bump it (and add a migration) when a change to the schema cannot
 // be read by older files as-is: renamed or removed keys, changed semantics.
 // Adding optional keys is not a breaking change.
-const CurrentVersion = 4
+const CurrentVersion = 5
 
 // migration rewrites the text of a bees.toml from one format version to the
 // next. Migrations work on the text, not the decoded tree, so the user's
@@ -230,6 +229,7 @@ var migrations = map[int]migration{
 	1: dropReviewStages,
 	2: migrateAgentProfiles,
 	3: migrateReviewProfiles,
+	4: migrateFallbackProfiles,
 }
 
 type Config struct {
@@ -490,8 +490,21 @@ type RoleSettings struct {
 	// role's value replaces the global one, so a role that runs the product
 	// itself can name an image that carries the product's toolchain. There
 	// is no default: a container role without one, or a
-	// ContainerUseEnvironment to build one from, is refused.
+	// ContainerUseEnvironment to build one from, is refused. When the
+	// profile selects SandboxSbx it is the sandbox's template instead, an
+	// image built on sbx's image for the agent (agent.SbxTemplates), and
+	// empty selects sbx's own.
 	SandboxImage string `toml:"sandbox_image"`
+	// SandboxDaggerEngine is the host's Dagger engine a SandboxSbx session
+	// is given, with the Dagger CLI at SandboxDaggerVersion installed in
+	// the sandbox: "unix://<path>" for the engine's socket, or
+	// "tcp://<host>:<port>". Empty (the default) gives neither. A role's
+	// value replaces the global one; only valid when the profile selects
+	// SandboxSbx, and it needs SandboxDaggerVersion.
+	SandboxDaggerEngine string `toml:"sandbox_dagger_engine"`
+	// SandboxDaggerVersion is the Dagger CLI release installed in the
+	// sandbox for SandboxDaggerEngine: the engine's own, e.g. "v0.20.5".
+	SandboxDaggerVersion string `toml:"sandbox_dagger_version"`
 	// ContainerUseEnvironment is the path, relative to the project repo
 	// root, to a dagger/container-use environment definition the container
 	// sandbox builds and runs instead of SandboxImage. A role's value
@@ -857,8 +870,8 @@ type Scheduler struct {
 	Retries *int `toml:"retries" json:"retries"`
 	// RetryDelay is how long to wait before a retry. Default 10m.
 	RetryDelay *Duration `toml:"retry_delay" json:"retry_delay"`
-	// RetryWithFallback runs a retry with the role's fallback_model as its
-	// primary model. Default true.
+	// RetryWithFallback runs a retry on the profile the role's profile names
+	// as its fallback, the next retry on that one's own. Default true.
 	RetryWithFallback *bool `toml:"retry_with_fallback" json:"retry_with_fallback"`
 	// MaxCostPerIssue caps what every session run for one work item may cost
 	// in total, in USD. The total is checked between stages, never mid
@@ -1266,11 +1279,14 @@ type ResolvedRole struct {
 	// Sizes filled in; BriefProfile, JudgeProfile and AngleProfiles hold
 	// resolved overrides, with nil/absent meaning the size-resolved profile.
 	// Reviewer only.
-	Angles          map[string][]string
-	BriefProfile    *AgentProfile
-	JudgeProfile    *AgentProfile
-	AngleProfiles   map[string]AgentProfile
-	FallbackModel   string
+	Angles        map[string][]string
+	BriefProfile  *AgentProfile
+	JudgeProfile  *AgentProfile
+	AngleProfiles map[string]AgentProfile
+	// Fallback names the profile a session runs on instead when the selected
+	// one has no capacity, empty when there is none; Fallbacks resolves the
+	// chain it starts.
+	Fallback        string
 	Agent           string
 	Effort          string
 	MaxTurns        int
@@ -1282,13 +1298,23 @@ type ResolvedRole struct {
 	Env             map[string]string
 	// Sandbox is the resolved sandbox mode, one of SandboxModes.
 	Sandbox string
-	// SandboxImage is the image a SandboxContainer session runs in, empty
+	// SandboxImage is the image a SandboxContainer session runs in, or the
+	// template a SandboxSbx session is created from, empty
 	// when none was configured.
 	SandboxImage string
 	// ContainerUseEnvironment is the path to a dagger/container-use
 	// environment definition a SandboxContainer session builds and runs
 	// instead of SandboxImage, empty when none was configured.
 	ContainerUseEnvironment string
+	// SandboxDaggerEngine and SandboxDaggerVersion are the Dagger engine
+	// a SandboxSbx session is given and the CLI release installed for it,
+	// both empty when none was configured.
+	SandboxDaggerEngine  string
+	SandboxDaggerVersion string
+	// profiles is the table Fallback names into, every entry resolved, so
+	// that a role handed on without its Config can still be moved down its
+	// fallback chain.
+	profiles map[string]AgentProfile
 }
 
 // Load reads and validates the bees.toml at path.
@@ -1832,6 +1858,16 @@ func (c *Config) Validate() error {
 		} else if filepath.IsAbs(rs.ContainerUseEnvironment) {
 			errs = append(errs, fmt.Sprintf("%s.container_use_environment %q must be relative to the project repository root", scope, rs.ContainerUseEnvironment))
 		}
+		if rs.SandboxDaggerEngine != "" {
+			if err := agent.CheckDaggerEngine(rs.SandboxDaggerEngine); err != nil {
+				errs = append(errs, fmt.Sprintf("%s.sandbox_dagger_engine: %v", scope, err))
+			}
+		}
+		if rs.SandboxDaggerVersion != "" {
+			if err := agent.CheckDaggerVersion(rs.SandboxDaggerVersion); err != nil {
+				errs = append(errs, fmt.Sprintf("%s.sandbox_dagger_version: %v", scope, err))
+			}
+		}
 		if rs.PromptFile != "" {
 			if _, err := os.Stat(c.resolvePath(rs.PromptFile)); err != nil {
 				errs = append(errs, fmt.Sprintf("%s.prompt_file: %v", scope, err))
@@ -1848,30 +1884,7 @@ func (c *Config) Validate() error {
 			}
 		}
 	}
-	for _, name := range slices.Sorted(maps.Keys(c.Profiles)) {
-		p, scope := c.Profiles[name], "profiles."+name
-		if name == "" {
-			errs = append(errs, "profiles: profile name must not be empty")
-		}
-		if p.resolved().Agent != AgentOpenCode {
-			switch p.Effort {
-			case "", "low", "medium", "high", "max":
-			default:
-				errs = append(errs, fmt.Sprintf("%s.effort must be low, medium, high or max", scope))
-			}
-		}
-		if p.Agent != "" && !slices.Contains(Agents, p.Agent) {
-			errs = append(errs, fmt.Sprintf("%s.agent must be one of %s", scope, strings.Join(Agents, ", ")))
-		}
-		// Every mode of SandboxModes loads, including the ones no session
-		// can run in yet: whether a mode works on this machine is a question
-		// about the machine, and CheckSandbox asks it once at `bees run`.
-		if p.Sandbox != "" && !slices.Contains(SandboxModes, p.Sandbox) {
-			errs = append(errs, fmt.Sprintf("%s.sandbox must be one of %s", scope, strings.Join(SandboxModes, ", ")))
-		} else if r := p.resolved(); r.Agent == AgentPi && !slices.Contains(PiSandboxes, r.Sandbox) {
-			errs = append(errs, fmt.Sprintf("%s.sandbox %q does not run agent %q: pi has no sandbox of its own and runs with sandbox %s", scope, r.Sandbox, AgentPi, strings.Join(PiSandboxes, " or ")))
-		}
-	}
+	errs = append(errs, ValidateProfiles(c.Profiles)...)
 	check("global", c.Global)
 	for name, rs := range c.Roles {
 		check("roles."+name, rs)
@@ -1899,11 +1912,48 @@ func (c *Config) Validate() error {
 			}
 		}
 	}
+	errs = append(errs, c.validateDagger()...)
 	errs = append(errs, c.validateReviewProfiles()...)
 	if len(errs) > 0 {
 		return fmt.Errorf("invalid bees.toml:\n  - %s", strings.Join(errs, "\n  - "))
 	}
 	return nil
+}
+
+// validateDagger checks the Dagger keys on every role as resolved, since
+// they and the sandbox can be set on different scopes: the engine is given
+// to an sbx session alone, so every size profile of a role with one must
+// select sbx, and the engine and the CLI release go together. Like
+// container_use_environment, a judge profile that selects another sandbox
+// is not asked: a session outside sbx does not take the engine.
+func (c *Config) validateDagger() []string {
+	var errs []string
+	for _, name := range Roles {
+		r, err := c.Role(name)
+		if err != nil {
+			continue
+		}
+		switch {
+		case r.SandboxDaggerEngine == "" && r.SandboxDaggerVersion != "":
+			errs = append(errs, fmt.Sprintf("roles.%s: sandbox_dagger_version needs sandbox_dagger_engine, the engine the CLI runs against", name))
+			continue
+		case r.SandboxDaggerEngine == "":
+			continue
+		case r.SandboxDaggerVersion == "":
+			errs = append(errs, fmt.Sprintf("roles.%s: sandbox_dagger_engine needs sandbox_dagger_version, the Dagger CLI release installed in the sandbox (the engine's own)", name))
+		}
+		for _, size := range append([]string{""}, slices.Sorted(maps.Keys(r.ProfilesBySize))...) {
+			if r := r.ForSize(size); r.Sandbox != SandboxSbx {
+				where := "sandbox"
+				if size != "" {
+					where = "the " + size + " profile's sandbox"
+				}
+				errs = append(errs, fmt.Sprintf("roles.%s: sandbox_dagger_engine is only valid when sandbox is %q; %s is %q", name, SandboxSbx, where, r.Sandbox))
+				break
+			}
+		}
+	}
+	return errs
 }
 
 func mustCanonical(name string) string {
@@ -1966,7 +2016,7 @@ func (c *Config) Role(name string) (ResolvedRole, error) {
 		MoEAssemblerPrompt:      strings.TrimSpace(rs.MoEAssemblerPrompt),
 		BriefProfile:            c.reviewProfile(rs.BriefProfile),
 		JudgeProfile:            c.reviewProfile(rs.JudgeProfile),
-		FallbackModel:           p.FallbackModel,
+		Fallback:                p.Fallback,
 		Agent:                   p.Agent,
 		Effort:                  p.Effort,
 		MaxTurns:                firstPositive(rs.MaxTurns, g.MaxTurns, DefaultMaxTurns),
@@ -1976,8 +2026,11 @@ func (c *Config) Role(name string) (ResolvedRole, error) {
 		Sandbox:                 p.Sandbox,
 		SandboxImage:            firstNonEmpty(rs.SandboxImage, g.SandboxImage),
 		ContainerUseEnvironment: firstNonEmpty(rs.ContainerUseEnvironment, g.ContainerUseEnvironment),
+		SandboxDaggerEngine:     firstNonEmpty(rs.SandboxDaggerEngine, g.SandboxDaggerEngine),
+		SandboxDaggerVersion:    firstNonEmpty(rs.SandboxDaggerVersion, g.SandboxDaggerVersion),
 		MCP:                     map[string]MCPServer{},
 		Env:                     map[string]string{},
+		profiles:                c.resolvedProfiles(),
 	}
 	for k, v := range g.Env {
 		r.Env[k] = v
@@ -2055,9 +2108,57 @@ func (r ResolvedRole) MCPNames() []string {
 // the role's base profile. The returned value can be customized for a session.
 func (r ResolvedRole) ForSize(size string) ResolvedRole {
 	if p, ok := r.ProfilesBySize[size]; ok {
-		r.Agent, r.Model, r.FallbackModel, r.Effort, r.Sandbox = p.Agent, p.Model, p.FallbackModel, p.Effort, p.Sandbox
+		r = r.withProfile(p)
 	}
 	return r
+}
+
+// withProfile is the role as it runs on p: the five execution settings from
+// the profile, everything else the role's own.
+func (r ResolvedRole) withProfile(p AgentProfile) ResolvedRole {
+	r.Agent, r.Model, r.Fallback, r.Effort, r.Sandbox = p.Agent, p.Model, p.Fallback, p.Effort, p.Sandbox
+	return r
+}
+
+// Fallbacks is the role as it runs on each profile of its fallback chain, in
+// order: the profile Fallback names, then that one's fallback, until a
+// profile with none. Empty when the selected profile has no fallback. Every
+// other setting of the role is carried unchanged; a session that falls back
+// keeps its prompt, tools, turn limit and timeout.
+func (r ResolvedRole) Fallbacks() []ResolvedRole {
+	var out []ResolvedRole
+	for _, name := range fallbackChain(r.profiles, profileNamed(r.profiles, r.AgentProfile()), r.Fallback) {
+		out = append(out, r.withProfile(r.profiles[name]))
+	}
+	return out
+}
+
+// profileNamed is the name p has in resolved, a table with every entry's
+// defaults filled in (resolvedProfiles): the first in name order whose five
+// fields are p's, or "" for the implicit built-in profile, which is in no
+// table. A fallback chain starts at whatever p's Fallback names, so which
+// of two equal profiles is found only matters for ending a cycle, and two
+// profiles equal in all five fields start the same chain.
+func profileNamed(resolved map[string]AgentProfile, p AgentProfile) string {
+	for _, name := range slices.Sorted(maps.Keys(resolved)) {
+		if resolved[name] == p {
+			return name
+		}
+	}
+	return ""
+}
+
+// resolvedProfiles is the profile table with every entry's defaults filled
+// in, what a ResolvedRole carries to resolve its fallback chain from.
+func (c *Config) resolvedProfiles() map[string]AgentProfile {
+	if len(c.Profiles) == 0 {
+		return nil
+	}
+	out := make(map[string]AgentProfile, len(c.Profiles))
+	for name, p := range c.Profiles {
+		out[name] = p.resolved()
+	}
+	return out
 }
 
 // ModelFor returns the model from the profile selected for size.

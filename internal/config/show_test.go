@@ -168,7 +168,7 @@ func TestViewUsesTOMLKeyNamesAndDurationStrings(t *testing.T) {
 			t.Errorf("scheduler is missing %s: %v", k, sched)
 		}
 	}
-	for _, k := range []string{"fallback_model", "max_turns", "allowed_tools", "disallowed_tools"} {
+	for _, k := range []string{"fallback", "max_turns", "allowed_tools", "disallowed_tools"} {
 		if _, ok := roleOf(t, out, RoleQA)[k]; !ok {
 			t.Errorf("role is missing %s", k)
 		}
@@ -292,5 +292,15 @@ func TestViewCoversTemplateKeys(t *testing.T) {
 				t.Errorf("%s.%s does not appear in the output", sec, key)
 			}
 		}
+	}
+}
+
+// The Dagger keys, which the uncommented template leaves out because they
+// need sbx, are shown per role under their own names.
+func TestViewShowsTheDaggerKeys(t *testing.T) {
+	out := viewJSON(t, "version = 1\n[project]\nrepo = \"a/b\"\n[global]\nsandbox = \"sbx\"\nsandbox_dagger_engine = \"unix:///s\"\nsandbox_dagger_version = \"v0.20.5\"\n")
+	dev, _ := out["roles"].(map[string]any)[RoleDeveloper].(map[string]any)
+	if dev["sandbox_dagger_engine"] != "unix:///s" || dev["sandbox_dagger_version"] != "v0.20.5" {
+		t.Errorf("developer view: engine %v, version %v", dev["sandbox_dagger_engine"], dev["sandbox_dagger_version"])
 	}
 }

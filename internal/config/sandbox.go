@@ -32,10 +32,17 @@ const (
 	// else of the host: the built-in MCP server stays on the host and is
 	// reached over HTTP.
 	SandboxContainer = agent.SandboxContainer
+	// SandboxSbx runs it inside a Docker Sandbox (sbx): a microVM holding
+	// the worktree, the repository's .git and the state directory, and
+	// nothing else of the host, with its network held to the sbx policy and
+	// the agent's credential injected by the sbx proxy. The built-in MCP
+	// server stays on the host and is reached over HTTP. Runs every agent
+	// sbx has a template for (agent.SbxTemplates).
+	SandboxSbx = agent.SandboxSbx
 )
 
 // SandboxModes lists the accepted sandbox values, weakest first.
-var SandboxModes = []string{SandboxNone, SandboxClaude, SandboxContainer}
+var SandboxModes = []string{SandboxNone, SandboxClaude, SandboxContainer, SandboxSbx}
 
 // sandboxImplemented are the modes a session can actually run in. The rest
 // load from bees.toml but no session runs in them; CheckSandbox refuses them
@@ -47,6 +54,12 @@ var sandboxImplemented = agent.Sandboxes
 // (podman's docker shim) does.
 const ContainerEngine = agent.ContainerEngine
 
+// SandboxCLI is the command SandboxSbx runs on: the sbx CLI, found on PATH.
+const SandboxCLI = agent.SandboxCLI
+
+// sbxTemplates are sbx's own templates, per agent it can run.
+var sbxTemplates = agent.SbxTemplates
+
 // AgentCredentials are the variables an agent reads its credential from,
 // per agent. A container session has no keychain and no home directory of
 // the host, so the credential has to be handed in through the environment:
@@ -54,10 +67,10 @@ const ContainerEngine = agent.ContainerEngine
 // entry of that name.
 var AgentCredentials = agent.AgentCredentials
 
-// hostOS, lookPath, getenv and engineCommand are what the sandbox checks ask
-// of the machine, as variables so a test can describe a machine it is not
-// running on. engineCommand runs the container engine with the arguments and
-// returns its combined output.
+// hostOS, lookPath, getenv, engineCommand and sbxCommand are what the
+// sandbox checks ask of the machine, as variables so a test can describe a
+// machine it is not running on. engineCommand runs the container engine, and
+// sbxCommand the sbx CLI, with the arguments and returns the combined output.
 var (
 	hostOS        = runtime.GOOS
 	lookPath      = exec.LookPath
@@ -66,6 +79,11 @@ var (
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		return exec.CommandContext(ctx, ContainerEngine, args...).CombinedOutput()
+	}
+	sbxCommand = func(args ...string) ([]byte, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		return exec.CommandContext(ctx, SandboxCLI, args...).CombinedOutput()
 	}
 )
 
@@ -132,24 +150,30 @@ func CheckSandboxMode(mode string) error {
 }
 
 // CheckSandboxContainer reports whether one resolved role has what a
-// container session needs from its configuration: an image to run in (or
-// a container_use_environment to build one from at session start), a
-// GitHub credential the session's gh and pushes can use inside it, and a
-// credential for its agent. Inside the container there is no keychain, no
-// home directory and no gh login of the machine owner, so each of these
-// must be handed in, and a session missing one fails at its first command
-// rather than at start. `bees run` asks this once for every role in the
-// rotation and the session runner asks it again, so `bees exec` and `bees
-// tick` refuse the same session.
+// container or sbx session needs from its configuration. A container needs
+// an image to run in (or a container_use_environment to build one from at
+// session start), a GitHub credential the session's gh and pushes can use
+// inside it, and a credential for its agent. Inside the container there is
+// no keychain, no home directory and no gh login of the machine owner, so
+// each of these must be handed in, and a session missing one fails at its
+// first command rather than at start. An sbx session needs the GitHub
+// credential for the same reason and nothing else: its template is
+// optional, and its agent's credential is the sbx secret store's to
+// supply, which bees does not read. `bees run` asks this once for every
+// role in the rotation and the session runner asks it again, so `bees
+// exec` and `bees tick` refuse the same session.
 func CheckSandboxContainer(r ResolvedRole, gh GitHub) error {
-	if r.Sandbox != SandboxContainer {
+	if r.Sandbox != SandboxContainer && r.Sandbox != SandboxSbx {
 		return nil
 	}
-	if r.SandboxImage == "" && r.ContainerUseEnvironment == "" {
+	if r.Sandbox == SandboxContainer && r.SandboxImage == "" && r.ContainerUseEnvironment == "" {
 		return fmt.Errorf("sandbox %q needs sandbox_image (the image the session runs in, holding the agent, git and gh) or container_use_environment (a definition to build one from)", r.Sandbox)
 	}
 	if gh.ResolvedToken() == "" && r.Env[EnvGHToken] == "" {
-		return fmt.Errorf("sandbox %q needs [github] (login and token) or %s in the role's env: inside the container gh and git push have no other credentials", r.Sandbox, EnvGHToken)
+		return fmt.Errorf("sandbox %q needs [github] (login and token) or %s in the role's env: inside the sandbox gh and git push have no other credentials", r.Sandbox, EnvGHToken)
+	}
+	if r.Sandbox == SandboxSbx {
+		return nil
 	}
 	names := AgentCredentials[r.Agent]
 	if r.Agent == "" {
@@ -175,8 +199,20 @@ const EnvGHToken = "GH_TOKEN"
 // deliberately, not by the factory at the first session. An empty image is
 // a role with container_use_environment instead: the session runner builds
 // that image at session start, and the engine pulls its base image then, so
-// only the engine is asked about. A mode other than container asks nothing.
+// only the engine is asked about. For sbx the question is whether the sbx
+// CLI is on PATH and answers `sbx version`; the template sandbox_image may
+// name is pulled by sbx at session start, so it is not asked about. A mode
+// other than container or sbx asks nothing.
 func CheckSandboxEngine(mode, image string) error {
+	if mode == SandboxSbx {
+		if _, err := lookPath(SandboxCLI); err != nil {
+			return fmt.Errorf("sandbox %q needs %s on PATH: install Docker Sandboxes (https://docs.docker.com/ai/sandboxes/install/)", mode, SandboxCLI)
+		}
+		if out, err := sbxCommand("version"); err != nil {
+			return fmt.Errorf("sandbox %q: %s is installed but does not answer: %s", mode, SandboxCLI, oneLine(out, err))
+		}
+		return nil
+	}
 	if mode != SandboxContainer {
 		return nil
 	}
@@ -207,12 +243,19 @@ func oneLine(out []byte, err error) string {
 // CheckSandboxAgent reports whether the role's agent can run under one
 // mode. SandboxClaude is Claude Code's own sandbox, so a codex, opencode or
 // pi role asking for it would run with nothing boxing it (codex's and
-// opencode's approvals are switched off, and pi has none); that is refused, both here and by the runner,
-// rather than run unboxed. None asks nothing of the agent, and container
-// asks its own question of the agent's credential in CheckSandboxContainer.
+// opencode's approvals are switched off, and pi has none); that is refused,
+// both here and by the runner, rather than run unboxed. SandboxSbx runs an
+// agent sbx has a template for (agent.SbxTemplates), since the sandbox is
+// created for its agent. None asks nothing of the agent, and container asks
+// its own question of the agent's credential in CheckSandboxContainer.
+// Loading refuses the same profiles naming the key; this is what the runner
+// asks of a role built by hand.
 func CheckSandboxAgent(mode, agent string) error {
 	if mode == SandboxClaude && (agent == AgentCodex || agent == AgentOpenCode || agent == AgentPi) {
 		return fmt.Errorf("sandbox %q is Claude Code's sandbox and agent %q does not run under it", mode, agent)
+	}
+	if mode == SandboxSbx && agent != "" && sbxTemplates[agent] == "" {
+		return fmt.Errorf("sandbox %q has no template for agent %q", mode, agent)
 	}
 	return nil
 }

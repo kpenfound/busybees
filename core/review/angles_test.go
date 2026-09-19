@@ -24,6 +24,8 @@ type fakeAngleAgent struct {
 	fail   map[string]error
 	// noCost names the sessions that report no cost, the way codex does.
 	noCost map[string]bool
+	// answeredBy names the provider and model a session says answered it.
+	answeredBy map[string][2]string
 
 	mu      sync.Mutex
 	reqs    map[string]AgentRequest
@@ -55,7 +57,33 @@ func (f *fakeAngleAgent) Run(_ context.Context, req AgentRequest) (*AgentResult,
 	if err := f.fail[req.Name]; err != nil {
 		return nil, err
 	}
-	return &AgentResult{ID: "sess-" + req.Name, Text: `{"findings": []}`, Turns: 2, CostUSD: 0.25, CostKnown: !f.noCost[req.Name]}, nil
+	res := &AgentResult{ID: "sess-" + req.Name, Text: `{"findings": []}`, Turns: 2, CostUSD: 0.25, CostKnown: !f.noCost[req.Name]}
+	if f.answeredBy != nil {
+		res.Provider, res.Model = f.answeredBy[req.Name][0], f.answeredBy[req.Name][1]
+	}
+	return res, nil
+}
+
+// An angle's run records the agent that answered when the session says
+// which, an agent that fell back to another one, and what was configured
+// when it says nothing.
+func TestAnAngleAnsweredByAnotherAgentIsRecordedAsIt(t *testing.T) {
+	agent := newFakeAngleAgent(4)
+	agent.answeredBy = map[string][2]string{AngleDocs: {"codex", "gpt-cheap"}, AngleTests: {"", ""}}
+	angles := &Angles[testRef]{Agent: agent, Provider: "fake", Model: "opus", Dir: t.TempDir()}
+	runs, err := angles.Run(context.Background(), t.TempDir(), &Settings{}, testBrief(), testDiff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range runs {
+		provider, model := "fake", "opus"
+		if r.Angle == AngleDocs {
+			provider, model = "codex", "gpt-cheap"
+		}
+		if r.Provider != provider || r.Model != model {
+			t.Errorf("%s run recorded as %s/%s, want %s/%s", r.Angle, r.Provider, r.Model, provider, model)
+		}
+	}
 }
 
 const testDiff = "diff --git a/gather.go b/gather.go\n+func Gather() {}\n"

@@ -33,9 +33,10 @@ type Request struct {
 	Profile Profile
 	// ValidOutcomes is nil to accept any status; an empty non-nil set accepts none.
 	ValidOutcomes []string
-	// HostMCP optionally starts a caller-owned stdio server on the host for container sessions.
+	// HostMCP optionally starts a caller-owned stdio server on the host for
+	// container and sandbox sessions.
 	HostMCP *HostMCP
-	// ContainerEnv overrides Env only inside the container.
+	// ContainerEnv overrides Env only inside a container or a sandbox.
 	ContainerEnv map[string]string
 	// Workspace supplies the working directory and optional VCS resources.
 	Workspace vcs.Workspace
@@ -83,8 +84,11 @@ type Result struct {
 	Signal int `json:"signal,omitempty"`
 	// ClaudeID is the id the agent gave the session: claude's, opencode's
 	// or pi's session id, or codex's thread id. The JSON name is kept for
-	// readers of result.json that predate codex.
+	// readers of result.json that predate codex. Agent is the backend that
+	// gave it (AgentClaude when the profile named none), the only one that
+	// can resume it.
 	ClaudeID     string  `json:"claude_session_id,omitempty"`
+	Agent        string  `json:"agent,omitempty"`
 	ResultText   string  `json:"result_text,omitempty"`
 	IsError      bool    `json:"is_error"`
 	ErrorSubtype string  `json:"error_subtype,omitempty"`
@@ -180,9 +184,12 @@ type Runner struct {
 	// DockerBin is the container engine a container session is run with.
 	// Default ContainerEngine.
 	DockerBin string
+	// SbxBin is the Docker Sandboxes CLI a SandboxSbx session is run with.
+	// Default SandboxCLI.
+	SbxBin string
 	// ContainerListen is the address the caller-supplied MCP server listens on
-	// for a container session. Empty picks the address the container
-	// reaches the host by (see containerListen).
+	// for a container or sandbox session. Empty picks the address the box
+	// reaches the host by (see containerListen and sandboxListen).
 	ContainerListen string
 	SessionsDir     string
 	// EnvironmentPrefix is removed from the inherited host environment.
@@ -193,12 +200,12 @@ type Runner struct {
 	ContainerLabel         string
 	ContainerHome          string
 	ContainerUseRepository string
-	// MountDirs are directories a container session writes; each must be
+	// MountDirs are directories a container or sandbox session writes; each must be
 	// granted read-write.
 	MountDirs []string
 	// Skills prepares generic skill plugin directories.
 	Skills SkillPreparer
-	// SkillMountDirs hold the prepared skills; a container session or a
+	// SkillMountDirs hold the prepared skills; a container or sandbox session or a
 	// confined host session with skills must be granted them.
 	SkillMountDirs []string
 	// AddDirs are extra directories claude may write (the state dir). Each
@@ -252,14 +259,17 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 		if err != nil {
 			return nil, err
 		}
-		// Verified again now that the directory the container is given exists.
+		// Verified again now that the directory the box is given exists.
 		req.SessionDir = sessionDir
 		if turn, err = r.Verify(req); err != nil {
 			_ = os.RemoveAll(sessionDir)
 			return nil, fmt.Errorf("%s: %w", req.Profile.Name, err)
 		}
 	}
-	res := &Result{Name: req.Name, Role: req.Profile.Name, SessionDir: sessionDir, StartedAt: started}
+	res := &Result{Name: req.Name, Role: req.Profile.Name, SessionDir: sessionDir, StartedAt: started, Agent: req.Profile.Agent}
+	if res.Agent == "" {
+		res.Agent = AgentClaude
+	}
 
 	systemPromptPath := filepath.Join(sessionDir, "system-prompt.md")
 	if err := os.WriteFile(systemPromptPath, []byte(req.SystemPrompt), 0o644); err != nil {
@@ -271,22 +281,25 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 	}
 
 	paths := sessionPaths{dir: sessionDir, systemPrompt: systemPromptPath, prompt: promptPath}
-	var box *container
-	if req.Profile.Sandbox == SandboxContainer {
+	paths.mcp = maps.Clone(req.Profile.MCP)
+	var box box
+	switch req.Profile.Sandbox {
+	case SandboxContainer:
 		box, err = r.startContainer(ctx, req, sessionDir, turn)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", req.Profile.Name, err)
-		}
+	case SandboxSbx:
+		box, err = r.startSandbox(ctx, req, sessionDir, turn)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", req.Profile.Name, err)
+	}
+	if box != nil {
 		defer box.close()
-		paths.mcp = maps.Clone(req.Profile.MCP)
 		if req.HostMCP != nil {
 			if paths.mcp == nil {
 				paths.mcp = map[string]MCPEntry{}
 			}
-			paths.mcp[req.HostMCP.Name] = box.builtin
+			paths.mcp[req.HostMCP.Name] = box.builtinEntry()
 		}
-	} else {
-		paths.mcp = maps.Clone(req.Profile.MCP)
 	}
 	paths.turn = turn
 	bin, args, stdin, extra, err := be.command(ctx, r, req, paths)
@@ -309,10 +322,10 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 		if _, err := agentbin.Resolve(bin); err != nil {
 			return nil, err
 		}
-		// The backend's variables reach the container the way the
-		// session's own do: by name on the engine's command line, with the
-		// value in the client's environment.
-		box.vars = append(box.vars, extra...)
+		// The backend's variables reach the box the way the session's
+		// own do: by name on the client's command line, with the value in
+		// the client's environment.
+		box.add(extra)
 		bin, args, err = box.command(ctx, bin, args)
 		if err != nil {
 			return nil, err
@@ -343,7 +356,8 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
 		// Kill the whole process group so MCP servers die with the agent.
-		// A container outlives its engine client, so it is removed first.
+		// A container or sandbox outlives its client, so it is removed
+		// first.
 		if box != nil {
 			box.remove()
 		}
@@ -665,4 +679,24 @@ func (req Request) workDir() string {
 		return ""
 	}
 	return req.Workspace.Directory()
+}
+
+// box is where an isolated session runs (Profile.isolated): a container or
+// a Docker Sandbox. The runner starts it before the backend's command is
+// built, wraps that command in the box's client command, runs the client
+// on the host, and closes the box when the session ends.
+type box interface {
+	// builtinEntry is how the session reaches the caller-supplied server.
+	builtinEntry() MCPEntry
+	// add lays the backend's variables over the session's.
+	add(vars []envVar)
+	// command wraps the backend's command line in the client's.
+	command(ctx context.Context, bin string, args []string) (string, []string, error)
+	// clientEnv is the environment the client runs with.
+	clientEnv() []string
+	// remove stops and removes the box, for a session that is being
+	// stopped.
+	remove()
+	// close stops what the box started and forgets its records.
+	close()
 }

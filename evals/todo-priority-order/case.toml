@@ -1,0 +1,32 @@
+# A bug fix in the shared todo fixture (evals/fixtures/todo): List.ByPriority
+# ranks the items without a priority first. docs/evals.md describes every key.
+description = "ByPriority puts the items with no priority before (A)"
+test = "go test ./..."
+timeout = "45m"
+max_cost = 8
+
+[[issues]]
+number = 1
+title = "Items without a priority sort before (A) items"
+labels = ["bees:ready", "bees:size/xs", "bees:bug"]
+body = """
+`List.ByPriority` in `todo/list.go` sorts the list by priority, `(A)` first.
+An item with no priority is stored with `Priority` 0, which sorts before
+`'A'`, so the items without a priority come first:
+
+```go
+l, _ := todo.Read(strings.NewReader("buy milk\\n(B) pay rent\\n(A) file taxes\\n"))
+l.ByPriority() // buy milk, (A) file taxes, (B) pay rent
+```
+
+It should give `(A) file taxes`, `(B) pay rent`, `buy milk`.
+
+## Acceptance criteria
+
+- `ByPriority` puts every item with a priority before every item without
+  one, `(A)` first and `(Z)` last.
+- Items of the same priority, and the items without one, keep their list
+  order.
+- `ByPriority` does not change the list it is called on.
+- `go test ./...` passes, with a test for items without a priority.
+"""

@@ -81,7 +81,7 @@ printf '{"status":"submitted","work":{"key":"task/12","tags":{"ticket":"twelve"}
 	r := newRunner(t, "")
 	r.PiBin = bin
 	role := piRole("anthropic/claude-sonnet-5")
-	role.FallbackModel = "sonnet"
+	role.Fallback = &Profile{Agent: AgentClaude, Model: "sonnet"}
 	role.Effort = "high"
 	role.AllowedTools = []string{"Bash"}
 	role.PiPackages = []string{"npm:@acme/pi-tools@1.2.3", "git:github.com/acme/pi-extras"}

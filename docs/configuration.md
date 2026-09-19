@@ -92,11 +92,11 @@ See [Running in the background](cli.md#running-in-the-background).
 ## `version`
 
 ```toml
-version = 4
+version = 5
 ```
 
 The format version of the file, not of bees. `bees init` writes the current
-one, `4`. A file without the key is version 0.
+one, `5`. A file without the key is version 0.
 
 - A file newer than the running bees understands is refused with `upgrade
   bees`.
@@ -118,7 +118,14 @@ one, `4`. A file without the key is version 0.
   phase model overrides to named phase profiles, cloning the ordinary
   reviewer fallback profile's five fields and replacing its model. Equal
   profiles are reused; size-specific fallback still applies to phases with
-  no override.
+  no override. The migration from 4 to 5 replaces `fallback_model`, a model
+  of the profile's own agent, with `fallback`, the name of another profile:
+  each profile with `fallback_model = "X"` gets `fallback =
+  "<name>_fallback"` and a new `[profiles.<name>_fallback]`, the profile
+  with `model = "X"` and no fallback of its own, so the migrated file
+  behaves as it did. A profile that named no `fallback_model` has no
+  fallback afterwards, where a `claude` profile fell back to `sonnet`
+  before; name one to keep that.
 
 Adding an optional key never bumps the version. Renaming or removing a key, or
 changing what one means, does, and the release notes of the bees version that
@@ -324,7 +331,7 @@ assignee = "busybees-bot"
 | `max_review_rounds` | int | `3` | Developer and reviewer rounds before an issue is escalated with `bees:needs-human`. `0` means the default; a negative value is rejected. |
 | `retries` | int | `1` | Extra attempts a session gets after failing for infrastructure reasons: it timed out, ran out of turns, hit an API error or rate limit, or the agent crashed. A session that ran and reported with `bees done`, `failed` included, is not retried, and neither is one that hit the claude session limit. `0` disables retrying; `0` to `5`. See [Escalation](workflow.md#escalation-beesneeds-human). |
 | `retry_delay` | duration | `"10m"` | Wait before a retry. `"0s"` retries at once; a negative value is rejected. |
-| `retry_with_fallback` | bool | `true` | Run the retry with the fallback model from the role's resolved profile as its primary model. A profile without one reruns as it was. |
+| `retry_with_fallback` | bool | `true` | Run the retry on the profile the role's resolved profile names as its `fallback`, agent included; a second retry runs on that profile's own fallback, and so on down the chain. A profile without one reruns as it was. |
 | `triage_batch_size` | int | `5` | Most issues handed to the project manager in one session. `0` means the default. |
 | `notes_consolidate_every` | int | `10` | Sessions a role runs between two in which it is also asked to consolidate its [notes](roles.md#notes-files). `0` means the default; a negative value is rejected. |
 | `notes_max_bytes` | int | `32768` | Ask for consolidation early, whatever the session count, once a role's notes are larger than this. Measured in the backend [`notes.backend`](#notes) names. `0` means the default; a negative value is rejected. |
@@ -472,8 +479,8 @@ first moment the factory can act on it:
   rather than at $99.99. The pause is logged once, the release names the
   threshold it crossed, and `bees status` names the pause while it lasts.
 - Per session, after the session ended. An over-budget session is treated as
-  failed whatever it reported, so it is retried once, with the resolved
-  profile's fallback model when `retry_with_fallback` is on. Two over-budget sessions
+  failed whatever it reported, so it is retried once, on the resolved
+  profile's `fallback` when `retry_with_fallback` is on. Two over-budget sessions
   in a row for one work item escalate it: the role's `max_turns` or `timeout`
   is the wrong shape for that work.
 
@@ -599,17 +606,21 @@ The CLI accepts aliases such as `pm` and `dev`; the TOML keys do not.
 | `allowed_tools` | string list | `[]` | Passed as `claude --allowedTools`. A `codex`, `opencode` or `pi` role ignores it. |
 | `disallowed_tools` | string list | `[]` | Passed as `claude --disallowedTools`. A `codex`, `opencode` or `pi` role ignores it. |
 | `shell` | string | the shell bees runs under | Exported into sessions as `$SHELL`. Claude Code discovers its Bash tool's shell from `$SHELL`, so this is the lever, without being a guarantee. Must be an existing file. |
-| `sandbox_image` | string | `""` | The image a `container` session runs in: it must hold the role's agent, `git` and `gh`. A `container` role without one or `container_use_environment` is refused at `bees run`. See [The container mode](#the-container-mode). |
+| `sandbox_image` | string | `""` | The image a `container` session runs in: it must hold the role's agent, `git` and `gh`. A `container` role without one or `container_use_environment` is refused at `bees run`. See [The container mode](#the-container-mode). For an `sbx` session it is the sandbox's template instead, an image built on sbx's image for the agent (`docker/sandbox-templates:claude-code`, `:codex` or `:opencode`); empty selects sbx's own. See [The sbx mode](#the-sbx-mode). |
 | `container_use_environment` | string | `""` | Path, relative to the project repository root, to a `dagger/container-use` environment definition to build the `container` profile's image from, instead of `sandbox_image`. Requires the resolved profile's `sandbox = "container"` and is a load error together with `sandbox_image` on the same resolved role. See [Building from container-use](#building-from-container-use). |
+| `sandbox_dagger_engine` | string | `""` | The host's Dagger engine an `sbx` session is given, `unix://<socket path>` or `tcp://<host>:<port>`, with the Dagger CLI installed in the sandbox. Empty gives neither. Requires the resolved profile's `sandbox = "sbx"` at every size and `sandbox_dagger_version`. See [Dagger in the sandbox](#dagger-in-the-sandbox). |
+| `sandbox_dagger_version` | string | `""` | The Dagger CLI release installed in the sandbox for `sandbox_dagger_engine`, the engine's own, such as `"v0.20.5"`. Requires `sandbox_dagger_engine`. |
 | `env` | table | `{}` | Environment variables exported into every session: the agent, its shell tool and git see them, and so do MCP servers under `claude`, `opencode` and `pi` (codex starts a server with only the variables its entry names). A `$VAR` value is expanded from the bees process environment when the session starts. A name may not be empty or contain `=` or a space. See [Exported into every session](#exported-into-every-session) for how it meets the variables bees sets itself. |
 | `enabled` | bool | `true` | Roles only. `false` takes a role out of the rotation. Disabling `reviewer` makes a developer's pull request count as approved the moment it is opened, and with `auto_merge` it goes straight to the checks stage. Under `[global]` the key is an error. A named set of these decisions is a [config template](templates.md). |
 
 ## `[profiles.<name>]`
 
-A profile bundles the agent, model, fallback model, effort and sandbox for a
+A profile bundles the agent, model, fallback, effort and sandbox for a
 session. Profiles are named globally, then selected by `[global]` or a role.
 Values omitted from a profile use its built-in defaults; a profile configured
-for `codex`, `opencode` or `pi` has no default model or fallback model.
+for `codex`, `opencode` or `pi` has no default model. `fallback` names the profile
+a retry runs on instead after a session on this one failed: that profile's
+agent, model, effort and sandbox, which can be a different agent entirely.
 
 ```toml
 [global]
@@ -618,7 +629,7 @@ profile = "bar"
 [profiles.foo]
 agent = "claude"
 model = "fable"
-fallback_model = "opus"
+fallback = "bar"
 effort = "max"
 sandbox = "claude"
 
@@ -636,9 +647,9 @@ profile_by_size = { xs = "bar", s = "bar", l = "foo", xl = "foo" }
 |---|---|---|---|
 | `agent` | string | `"claude"` | CLI a session runs as: `claude` (`claude -p`), `codex` (`codex exec`), `opencode` or `pi` (`pi -p`, see [Pi](#pi)). An unknown value is a load error. See [Running a session](architecture.md#running-a-session). |
 | `model` | string | `"opus"` for `claude`, `""` otherwise | Model alias or full id, passed to the selected agent (`provider/model` for opencode and pi). An empty value lets codex, opencode or pi use its own configured model. |
-| `fallback_model` | string | `"sonnet"` for `claude`, `""` otherwise | Passed as `claude --fallback-model` when it differs from `model`. Codex, opencode and pi have no fallback-model flag. |
+| `fallback` | string | `""` | The profile a retry runs on instead, agent included: a session that failed for infrastructure reasons (a timeout, exhausted turns, a crash, a rate limit) is retried on it when [`scheduler.retry_with_fallback`](#scheduler) is on, the next retry on that profile's own `fallback`, and so on; a brief or angle review session refused for want of capacity runs again on it. Must name a profile; a profile that names itself, or a longer cycle (`a` → `b` → `a`), is a load error. When both profiles run `claude`, the fallback's model is also passed as `claude --fallback-model`, so claude switches to it within a session; codex and opencode have no such flag, and a fallback on another agent is a new session. A fallback in a sandbox other than `sbx` runs without the role's [Dagger engine](#dagger-in-the-sandbox). |
 | `effort` | string | `""` | Passed as `claude --effort` when set: `low`, `medium`, `high` or `max`. Codex receives it as `model_reasoning_effort`; `max` maps to `high`. Opencode receives it as the default `build` agent's `variant`; variants are names the model defines, not levels. Pi receives it as `--thinking`. |
-| `sandbox` | string | `"none"` | How much of the machine a session can reach: `none`, `claude` or `container`. A `pi` profile runs with `none` or `container`: with `claude` it is a load error. See [Sandboxing](#sandboxing). |
+| `sandbox` | string | `"none"` | How much of the machine a session can reach: `none`, `claude`, `container` or `sbx`. A `pi` profile runs with `none` or `container`: any other mode is a load error. See [Sandboxing](#sandboxing). |
 
 The effective profile follows this order for a work item size:
 role `profile_by_size[size]`, role `profile`, global
@@ -723,11 +734,14 @@ Like the checks keys, they are accepted only under `[roles.reviewer]`.
 Phase overrides resolve through `[profiles.*]` after ordinary role and
 `profile_by_size` selection. An unspecified angle uses the size-resolved
 reviewer profile. Brief and angle sessions select `agent`, `model`,
-`fallback_model` and `effort`, subject to backend support (fallback model is
-Claude-only; Codex maps `max` effort to `high`). They ignore the profile's
-`sandbox` and use the host adapter's mandatory read-only checkout policy:
-no commands, writes, web/network tools, MCP, factory identity, or writable
-or shared VCS access. Claude and Codex are the supported host agents.
+`fallback` and `effort`, subject to backend support (Codex maps `max` effort
+to `high`). They ignore the profile's `sandbox` and use the host adapter's
+mandatory read-only checkout policy: no commands, writes, web/network tools,
+MCP, factory identity, or writable or shared VCS access. Claude and Codex are
+the supported host agents, on every profile of the `fallback` chain too: a
+brief or angle session refused for want of capacity runs again as its
+fallback, under the same policy, and a chain that reaches an `opencode` or
+`pi` profile is a load error.
 
 The judge applies all five profile fields, including `sandbox`, through an
 ordinary factory reviewer session. Its prompt, tools, permissions and ability
@@ -737,8 +751,9 @@ shell, timeout, turn limit or VCS settings; those remain role/phase-owned.
 
 An angle that fails is named in the judge's task and the rest are judged;
 a review where the brief or every angle failed escalates the issue instead.
-The standalone `bees review` configuration is separate and model-based; see
-[Review configuration](review.md).
+The standalone `bees review` configuration is a separate file: it takes the
+same `[profiles.*]` tables, selected by top-level `brief_profile`,
+`angle_profiles` and `judge_profile`; see [Review configuration](review.md).
 
 ```toml
 [profiles.review_quick]
@@ -906,14 +921,16 @@ profile = "boxed"
 | `none` | Everything the user running `bees` can: the home directory, credentials, the network and every other checkout on the machine. |
 | `claude` | Claude Code's own sandbox: writes to the worktree and the state directory, network to GitHub. See [The claude mode](#the-claude-mode) and [Security](security.md#claude). |
 | `container` | A container holding the worktree, the repository's `.git` and the state directory, and nothing else of the host. See [The container mode](#the-container-mode) and [Security](security.md#container). |
+| `sbx` | A Docker Sandbox: a microVM holding the same three directories and nothing else of the host, its network held to the sbx policy, the agent's credential injected by the sbx proxy. See [The sbx mode](#the-sbx-mode) and [Security](security.md#sbx). |
 
 `none` is the default. `bees run` checks before it starts that every role in
 the rotation can have the box it asks for (the programs a `claude` box needs
-on Linux, an agent that runs under it, and a `container` role's image,
-credentials and engine) and refuses to start while one cannot, naming the
-role: a factory that fell back to running that role unboxed would give it
-exactly what it was configured to be kept away from. `bees exec` and
-`bees tick` refuse the same session for the same reason.
+on Linux, an agent that runs under it, a `container` role's image,
+credentials and engine, and an `sbx` role's CLI and GitHub credential) and
+refuses to start while one cannot, naming the role: a factory that fell back
+to running that role unboxed would give it exactly what it was configured to
+be kept away from. `bees exec` and `bees tick` refuse the same session for
+the same reason.
 
 `bees config show` prints the resolved mode per role, and
 [`bees status`](cli.md#bees-status---json) the mode of the session each worker
@@ -1119,6 +1136,150 @@ A missing or malformed `environment.json`, or a failing build, fails that
 session with an error naming the path or the build command, not a
 `bees.toml` load error.
 
+#### The sbx mode
+
+An `sbx` session is the agent's command line, unchanged, run inside a
+[Docker Sandbox](https://docs.docker.com/ai/sandboxes/): a microVM with its
+own kernel, filesystem, Docker daemon and network, which the `sbx` CLI
+creates and removes. It needs `sbx` on `PATH` and signed in (`sbx login`),
+and runs `claude`, `codex` and `opencode`; sbx has no template for `pi`, and
+a `pi` profile with `sandbox = "sbx"` does not load. `bees run` checks that `sbx`
+answers ahead of the doctor, whatever `--skip-doctor` says, and
+`bees doctor` reports it when a role uses the mode.
+
+The sandbox is given the same three directories a container is, as its
+workspaces, each mounted at its host path: the worktree, the repository's
+`.git` and the state directory (mail, notes, the session directory), and the
+skills cache read-only for a role with `skills`. Nothing else of the host:
+the shared skills store sbx mounts by default is switched off. The session
+runs as the sandbox's own user, with the sandbox's own home directory, and
+inside it the agent has `sudo`, package managers and a private Docker
+daemon: everything it installs stays in the sandbox, which is removed when
+the session ends.
+
+```toml
+[profiles.sandboxed]
+agent = "codex"
+sandbox = "sbx"
+
+[roles.developer]
+profile = "sandboxed"
+sandbox_image = "ghcr.io/acme/widgets-sbx-codex:1"   # optional template
+```
+
+The sandbox is created for the role's agent (`sbx create <agent>`), from
+sbx's own template for it unless `sandbox_image` names one. sbx's own is
+the `-docker` variant of the agent's image below, which adds the private
+Docker daemon:
+
+| Agent | Image | Credential to store once |
+|---|---|---|
+| `claude` | `docker/sandbox-templates:claude-code` | `sbx secret set anthropic` |
+| `codex` | `docker/sandbox-templates:codex` | `sbx secret set openai` (`--oauth` for a ChatGPT sign-in) |
+| `opencode` | `docker/sandbox-templates:opencode` | `sbx secret set <provider>` for each provider its model uses (`anthropic`, `openai`, `google`, ...) |
+
+`sandbox_image` is passed as `sbx create --template`: an image built `FROM`
+the agent's image in that table, or its `-docker` variant to keep the
+Docker daemon, with the product's toolchain added. sbx requires a template
+built for the agent it runs. sbx's own templates hold the agent, `git` and
+`gh`. `container_use_environment` is a load error
+alongside `sbx`.
+
+Its environment is built from nothing and holds the role's `env`, `SHELL`,
+the `BEES_*` variables, the [`[github]`](#github) token and git identity,
+and the git configuration every session runs with plus `safe.directory = *`
+and the https `insteadOf`. Values reach `sbx` by variable name, never on a
+command line. The agent's own credential is not forwarded: store it once
+with `sbx secret set`, as the table says, and the sandbox's proxy injects
+it into the agent's requests without the value entering the sandbox. An
+`sbx` role therefore needs `[github]` (or `GH_TOKEN` in its `env`), because
+inside the sandbox `gh` and `git push` have no other credentials, and no
+agent credential in the bees environment; `bees run` refuses the role
+without the former. Do not also store a `github` secret with
+`sbx secret set`: the proxy would replace the bot's token with it on every
+request to GitHub. The sandbox does not read the operator's `~/.codex` or
+`~/.config/opencode`; bees passes a session's MCP servers and settings on
+the command line (codex) or in the session's own `opencode.json`
+(opencode), as it does on the host.
+
+The `bees` binary is not in the sandbox. The built-in MCP server runs on the
+host as `bees mcp serve --listen` on the loopback, and the session reaches
+it over HTTP at `host.docker.internal` with a bearer token of its own, the
+way a container session does. The sandbox's proxy forwards that name to the
+host's `localhost`, and its network policy must allow it: run
+`sbx policy allow network localhost` once. The server listens on a port
+the operating system picks for each session, so the rule cannot name one,
+and it lets a session reach every service listening on the host's
+loopback; see [Security](security.md#sbx). The same policy decides which
+other hosts the session reaches: the Balanced preset allows GitHub and the
+AI provider APIs; add a module proxy or a package registry with
+`sbx policy allow network`.
+A stdio MCP server configured in `bees.toml` starts inside the sandbox, so
+its command must be in the template; a remote one is reached as configured,
+and `sbx mcp add` registrations are not used.
+
+Written to the sbx CLI reference and not run for this page: the sandbox is
+created with `sbx create --quiet --name <session> --skills off <agent>`,
+the command runs through
+`sbx exec --interactive --workdir <worktree> --env <name>...` with the
+prompt on stdin, and `sbx rm --force` removes the sandbox when the session
+ends. `<session>/sandbox-name` holds the sandbox's name while it exists.
+[`bees kill`](cli.md#bees-kill---dry-run---scheduler---grace-5s)
+does not remove a sandbox a crash left behind; `sbx rm --force <name>` does.
+
+##### Dagger in the sandbox
+
+`sandbox_dagger_engine` gives an `sbx` session the host's Dagger engine, and
+`sandbox_dagger_version` the Dagger CLI release installed in the sandbox to
+reach it, so that a developer session can run `dagger check`. It is off
+unless set, and valid only when the role's resolved profile, at every size,
+selects `sbx`; one key without the other is a load error. A `fallback` or
+`judge_profile` that selects another sandbox loads, and its sessions run
+without the Dagger CLI or the engine.
+
+```toml
+[roles.developer]
+profile = "sandboxed"
+sandbox_dagger_engine = "unix:///run/dagger/engine.sock"
+sandbox_dagger_version = "v0.20.5"
+```
+
+The engine is one bees can reach on this machine:
+
+- `unix://<path>`: the engine's socket. A sandbox cannot mount a socket, so
+  for each session bees listens on a port of the host's loopback and
+  forwards every connection to the socket until the session ends.
+- `tcp://<host>:<port>`: an engine listening on TCP. One on the loopback
+  (`127.0.0.1`, `localhost`, `::1`) is reached at `host.docker.internal`;
+  any other host as written.
+
+The engine must be running and of `sandbox_dagger_version`'s release: the
+Dagger CLI refuses an engine it is not compatible with. Start one on a
+socket, for example:
+
+```sh
+docker run -d --name dagger-engine --privileged \
+  -v /run/dagger:/run/dagger registry.dagger.io/engine:v0.20.5 \
+  --addr unix:///run/dagger/engine.sock
+```
+
+On macOS the socket stays inside Docker Desktop's VM; publish a TCP port
+there instead (`-p 127.0.0.1:1234:1234` and `--addr tcp://0.0.0.0:1234`)
+and set `sandbox_dagger_engine = "tcp://127.0.0.1:1234"`.
+
+Once the sandbox exists, bees installs the CLI into `/usr/local/bin`
+with the install script at `https://dl.dagger.io/dagger/install.sh`, as
+root, before the agent starts; the sbx network policy must allow
+`dl.dagger.io`. A failed install fails the session and removes the sandbox.
+The session reaches the engine through `_EXPERIMENTAL_DAGGER_RUNNER_HOST`,
+which bees sets to the address above, and the network policy must allow
+it too: the `localhost` rule the built-in server needs covers the loopback.
+
+This widens what a session reaches: the engine runs containers outside the
+sandbox, with the engine's own network and cache, not the sandbox's policy.
+See [Security](security.md#sbx). Written to the sbx CLI and Dagger
+references and not run for this page.
+
 ### How global and role settings merge
 
 | Setting | Rule |
@@ -1127,7 +1288,7 @@ session with an error naming the path or the build command, not a
 | `skills` | Union, global first, order kept, duplicates dropped. |
 | `mcp` | Union by name; a role server replaces a global one of the same name. |
 | `env` | Union by name; the role wins. |
-| `max_turns`, `timeout`, `shell`, `sandbox_image`, `container_use_environment` | Role value if set, else global, else the built-in default. |
+| `max_turns`, `timeout`, `shell`, `sandbox_image`, `container_use_environment`, `sandbox_dagger_engine`, `sandbox_dagger_version` | Role value if set, else global, else the built-in default. |
 | `profile`, `profile_by_size` | For a work item size: role `profile_by_size[size]`, role `profile`, global `profile_by_size[size]`, global `profile`, then the implicit built-in profile. |
 | `allowed_tools`, `disallowed_tools` | Global list followed by the role list. |
 | `enabled` | Role only. |
@@ -1319,8 +1480,8 @@ profile = "pi"
 pi_packages = ["npm:@acme/pi-tools@1.2.3"]
 ```
 
-Pi runs every tool without asking and has no sandbox of its own: it runs with
-`sandbox = "none"` or `"container"`. In a container its home directory is a
+Pi runs every tool without asking and has no sandbox of its own, and sbx has
+no template for it: it runs with `sandbox = "none"` or `"container"`. In a container its home directory is a
 fresh tmpfs, so pi installs the adapter and the packages again at every
 session: the image needs `pi`, `npm` and access to the npm registry (and to
 the git hosts of `git:` packages), next to `git` and `gh`. Add pi to the image

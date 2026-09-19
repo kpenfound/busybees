@@ -317,7 +317,7 @@ printf '{"status":"submitted","work":{"key":"task/12","tags":{"ticket":"twelve"}
 	r := newRunner(t, "")
 	r.CodexBin = bin
 	role := codexRole("gpt-5-codex")
-	role.FallbackModel = "sonnet"
+	role.Fallback = &Profile{Agent: AgentClaude, Model: "sonnet"}
 	role.Effort = "max"
 	role.AllowedTools = []string{"Bash"}
 	role.MCP = map[string]MCPEntry{"x": {Command: "srv", Args: []string{"--port", "1"}, Env: map[string]string{"K": "$HOME"}}}
@@ -817,5 +817,46 @@ func TestCodexCommandIgnoresResume(t *testing.T) {
 	}
 	if !slices.Equal(got[0], got[1]) {
 		t.Errorf("the resume id changed codex's command line:\n%q\n%q", got[0], got[1])
+	}
+}
+
+// A claude session is told the model of a claude fallback, so claude can
+// switch to it itself within the session; a fallback on another agent is a
+// new session, the caller's to start (ops.SelectProfile), and claude is
+// told nothing of it.
+func TestClaudeFallbackModelIsAClaudeFallbacksAlone(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		fallback *Profile
+		want     string
+	}{
+		{"none", nil, ""},
+		{"claude", &Profile{Agent: AgentClaude, Model: "sonnet"}, "sonnet"},
+		{"unnamed agent", &Profile{Model: "haiku"}, "haiku"},
+		{"same model", &Profile{Agent: AgentClaude, Model: "opus"}, ""},
+		{"no model", &Profile{Agent: AgentClaude}, ""},
+		{"codex", &Profile{Agent: AgentCodex, Model: "gpt"}, ""},
+		{"opencode", &Profile{Agent: AgentOpenCode, Model: "ollama/x"}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bin := fakeClaude(t, `
+printf '%s\n' "$@" > "$TASK_SESSION_DIR/args.txt"
+echo '{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"s","num_turns":1}'
+`)
+			r := newRunner(t, bin)
+			res, err := r.Run(context.Background(), Request{Name: "f", Profile: Profile{Name: "auditor", Model: "opus", MaxTurns: 1, Fallback: tc.fallback}, Workspace: fakeWorkspace{dir: t.TempDir()}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			b, _ := os.ReadFile(filepath.Join(res.SessionDir, "args.txt"))
+			args := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
+			got := ""
+			if i := slices.Index(args, "--fallback-model"); i >= 0 && i+1 < len(args) {
+				got = args[i+1]
+			}
+			if got != tc.want {
+				t.Errorf("--fallback-model %q, want %q:\n%s", got, tc.want, b)
+			}
+		})
 	}
 }

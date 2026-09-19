@@ -50,7 +50,7 @@ type RoleView struct {
 	SkillsRefresh           string               `json:"skills_refresh"`
 	MCP                     map[string]MCPServer `json:"mcp"`
 	Model                   string               `json:"model"`
-	FallbackModel           string               `json:"fallback_model"`
+	Fallback                string               `json:"fallback"`
 	Agent                   string               `json:"agent"`
 	Effort                  string               `json:"effort"`
 	MaxTurns                int                  `json:"max_turns"`
@@ -63,6 +63,8 @@ type RoleView struct {
 	Sandbox                 string               `json:"sandbox"`
 	SandboxImage            string               `json:"sandbox_image"`
 	ContainerUseEnvironment string               `json:"container_use_environment"`
+	SandboxDaggerEngine     string               `json:"sandbox_dagger_engine"`
+	SandboxDaggerVersion    string               `json:"sandbox_dagger_version"`
 
 	// ProfilesBySize describes the effective size overrides for every role.
 	ProfilesBySize map[string]AgentProfile `json:"profiles_by_size"`
@@ -138,7 +140,7 @@ func (c *Config) View(roles []string) (View, error) {
 			SkillsRefresh:           c.SkillsRefreshPolicy(),
 			MCP:                     rr.MCP,
 			Model:                   rr.Model,
-			FallbackModel:           rr.FallbackModel,
+			Fallback:                rr.Fallback,
 			Agent:                   rr.Agent,
 			Effort:                  rr.Effort,
 			MaxTurns:                rr.MaxTurns,
@@ -151,6 +153,8 @@ func (c *Config) View(roles []string) (View, error) {
 			Sandbox:                 rr.Sandbox,
 			SandboxImage:            rr.SandboxImage,
 			ContainerUseEnvironment: rr.ContainerUseEnvironment,
+			SandboxDaggerEngine:     rr.SandboxDaggerEngine,
+			SandboxDaggerVersion:    rr.SandboxDaggerVersion,
 		}
 		if rv.ProfilesBySize == nil {
 			rv.ProfilesBySize = map[string]AgentProfile{}

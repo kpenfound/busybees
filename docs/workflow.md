@@ -1200,9 +1200,11 @@ classifies what went wrong:
 - **Infrastructure.** The session timed out, ran out of turns, hit an API
   error or a rate limit, or the agent exited without producing a result.
   These are retried up to `scheduler.retries` times (default `1`), after
-  `scheduler.retry_delay` (default 10 minutes), and with the role's
-  `fallback_model` as the primary model when `scheduler.retry_with_fallback`
-  is on. Each attempt gets its own directory under `<state_dir>/sessions/`,
+  `scheduler.retry_delay` (default 10 minutes), and on the profile the
+  role's profile names as its `fallback`, agent included, when
+  `scheduler.retry_with_fallback` is on; a second retry runs on that
+  profile's own fallback. Each attempt gets its own directory under
+  `<state_dir>/sessions/`,
   the retry suffixed `-retry1`, and a retried developer session is told its
   previous attempt was interrupted, so it continues from whatever is on the
   branch instead of starting over. A developer's second or later round

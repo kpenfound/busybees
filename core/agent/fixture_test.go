@@ -40,7 +40,7 @@ func (r *testRunner) Run(ctx context.Context, req Request) (*Result, error) {
 		req.Env = map[string]string{}
 	}
 	req.Env[EnvSessionDir] = req.SessionDir
-	if req.Profile.Sandbox != SandboxContainer {
+	if !req.Profile.isolated() {
 		req.Env[EnvBin] = r.ServerBin
 	}
 	req.Env[EnvRole] = req.Profile.Name
@@ -60,7 +60,7 @@ func (r *testRunner) Run(ctx context.Context, req Request) (*Result, error) {
 	req.HostMCP = &HostMCP{Name: "tools", Entry: entry, ListenArgs: []string{"--listen"}, TokenEnv: EnvMCPToken, ListeningPrefix: "listening on ", Path: "/mcp"}
 	if req.Grants == nil {
 		req = grantAll(req)
-		if r.StateDir != "" && req.Profile.Sandbox == SandboxContainer {
+		if r.StateDir != "" && req.Profile.isolated() {
 			req.Grants.Mounts = append(req.Grants.Mounts, Mount{Path: r.StateDir, Access: ReadWrite})
 		}
 	}
@@ -72,14 +72,15 @@ func (r *testRunner) Run(ctx context.Context, req Request) (*Result, error) {
 }
 
 // grantAll grants a request what it asks for, the way a permissive caller
-// would, plus the host variables named in env. A container is granted its
-// working, session and VCS directories and the agents' credentials. Host
-// requests are given VCS, which an unsandboxed host cannot deny.
+// would, plus the host variables named in env. A container or a sandbox is
+// granted its working, session and VCS directories and the agents'
+// credentials. Host requests are given VCS, which an unsandboxed host cannot
+// deny.
 func grantAll(req Request, env ...string) Request {
 	if req.Grants != nil {
 		return req
 	}
-	if req.Profile.Sandbox != SandboxContainer {
+	if !req.Profile.isolated() {
 		req.Profile.VCSAccess = true
 	}
 	g := &Grants{Env: append([]string{"PATH", "HOME", "TMPDIR"}, env...), Tools: []string{ToolsAll}, VCS: true}
@@ -99,10 +100,13 @@ func grantAll(req Request, env ...string) Request {
 	if req.HostMCP != nil {
 		g.Tools = append(g.Tools, "mcp__"+req.HostMCP.Name)
 	}
+	if req.Profile.Dagger != nil {
+		g.DaggerEngine = req.Profile.Dagger.Engine
+	}
 	switch req.Profile.Sandbox {
 	case SandboxClaude:
 		g.Mounts = []Mount{{Path: "/", Access: ReadOnly}, {Path: req.workDir(), Access: ReadWrite}}
-	case SandboxContainer:
+	case SandboxContainer, SandboxSbx:
 		g.Mounts = []Mount{{Path: req.workDir(), Access: ReadWrite}}
 		for _, names := range AgentCredentials {
 			g.Env = append(g.Env, names...)

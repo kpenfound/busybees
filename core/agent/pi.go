@@ -39,7 +39,8 @@ import (
 //     reads in print mode as the initial prompt.
 //   - The model goes as --model when the role resolved one (provider/id):
 //     with agent = "pi" the model keys default to empty, and an empty model
-//     leaves the choice to pi's own settings. There is no fallback model.
+//     leaves the choice to pi's own settings. There is no fallback-model
+//     flag: a fallback profile is the caller's to run.
 //   - Effort goes as --thinking, whose levels include claude's four.
 //   - Request.ResumeID goes as --session-id, which opens the session of that
 //     id in the working directory's project and creates a new one under

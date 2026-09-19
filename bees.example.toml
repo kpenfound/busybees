@@ -7,7 +7,7 @@
 # Format version of this file. bees refuses files newer than it understands and
 # upgrades older ones in memory. Leave it alone; bees releases that change the
 # format say what to do.
-version = 4
+version = 5
 
 #===============================================================================
 # Project
@@ -93,7 +93,7 @@ label = "bees"
 #retries = 1
 # How long to wait before retrying a session.
 #retry_delay = "10m"
-# Run the retry with the role's fallback_model as its primary model.
+# Run the retry on the profile the role's profile names as its fallback.
 #retry_with_fallback = true
 # Issues handed to the project manager per session.
 #triage_batch_size = 5
@@ -199,17 +199,18 @@ label = "bees"
 #neo4j_url = "https://memory.neo4jlabs.com/v1"
 #neo4j_api_key = "$BEES_NEO4J_API_KEY"
 
-# Agent profiles bundle backend, models, effort and sandbox. Each profile uses
-# its own defaults; codex, opencode and pi have no default model or fallback
-# model.
+# Agent profiles bundle agent, model, fallback, effort and sandbox. Each
+# profile uses its own defaults; codex, opencode and pi have no default model.
 # No declaration is required when using the built-in defaults. Uncomment this
-# example to name those defaults explicitly.
+# example to name those defaults explicitly. fallback names another profile,
+# the one a retry runs on instead, agent included, after a session on this
+# one failed; empty is none.
 #[profiles.default]
 #agent = "claude"        # claude | codex | opencode | pi
 #model = "opus"
-#fallback_model = "sonnet"
+#fallback = ""          # another profile's name
 #effort = ""            # low | medium | high | max (empty: agent default)
-#sandbox = "none"       # none | claude | container (pi: none | container)
+#sandbox = "none"       # none | claude | container | sbx (pi: none | container)
 
 #===============================================================================
 # Global role settings — apply to every role, merged with [roles.<name>]:
@@ -249,10 +250,18 @@ label = "bees"
 #shell = "/bin/bash"
 # Image a container session runs in (sandbox = "container"): it must hold
 # the agent, git and gh. Name one per role for a role that runs the product.
+# For sandbox = "sbx" it is the sandbox's template, built on sbx's image for
+# the agent (docker/sandbox-templates:claude-code, :codex or :opencode);
+# empty selects sbx's own.
 #sandbox_image = "ghcr.io/acme/widgets-bees:latest"
 # Path, relative to this file, to a dagger/container-use environment
 # definition the container sandbox builds and runs instead of sandbox_image.
 #container_use_environment = "dagger/container-use"
+# The host's Dagger engine an sbx session is given (sandbox = "sbx" only),
+# with the Dagger CLI at sandbox_dagger_version, the engine's own release,
+# installed in the sandbox. Off unless set: it widens what a session reaches.
+#sandbox_dagger_engine = "unix:///run/dagger/engine.sock"
+#sandbox_dagger_version = "v0.20.5"
 
 # Environment variables exported into every session (claude, its Bash tool,
 # MCP servers, git). $VARS are expanded from the bees environment. Roles can

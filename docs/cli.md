@@ -92,7 +92,7 @@ prints what it found grouped by area:
 
 | Group | Checks |
 |---|---|
-| `toolchain` | `git` on `PATH`; `gh` on `PATH`, authenticated and holding the `repo` token scope; `claude` (or `$BEES_CLAUDE_BIN`) runnable and new enough; `codex` (or `$BEES_CODEX_BIN`) runnable, when a role is configured with `agent = "codex"`; `opencode` (or `$BEES_OPENCODE_BIN`) runnable, when a role is configured with `agent = "opencode"`; `pi` (or `$BEES_PI_BIN`) runnable, when a role is configured with `agent = "pi"`. |
+| `toolchain` | `git` on `PATH`; `gh` on `PATH`, authenticated and holding the `repo` token scope; `claude` (or `$BEES_CLAUDE_BIN`) runnable and new enough; `codex` (or `$BEES_CODEX_BIN`) runnable, when a role is configured with `agent = "codex"`; `opencode` (or `$BEES_OPENCODE_BIN`) runnable, when a role is configured with `agent = "opencode"`; `pi` (or `$BEES_PI_BIN`) runnable, when a role is configured with `agent = "pi"`; `sbx` on `PATH` and answering `sbx version`, when a role is configured with `sandbox = "sbx"`. |
 | `config` | `bees.toml` loads and validates; `project.repo` and `project.default_branch` are set or derivable; the remote answers; the state directory is ignored by git; the notes directory is writable; the sessions directory is writable, when a role is configured with `agent = "opencode"`; every configured `prompt_file` exists; the repository's `bees/prompts/` files are all readable and named after a role; a running scheduler is serving a build of the commit that is checked out. |
 | `github` | The repository is readable and writable (`viewerPermission`); with `[github]` set, that `github.token` belongs to `github.login`; every workflow label exists; with `[github]` set, that the account can actually write issues, issue comments and labels; with `[github]` set, that the account can actually push branches; the visibility filter matches at least one open issue; with `auto_merge` on, what a merge is actually gated on. |
 | `workspace` | A worktree can be created under `workspace_root` and removed again. |
@@ -348,7 +348,7 @@ same migration automatically on startup.
 
 Prints the resolved configuration as JSON: project, filter, github, scheduler
 and — for every role, or the one given — the effective prompt, skills, MCP
-servers, model, fallback model, limits, `sandbox` and `enabled` after merging
+servers, model, fallback, limits, `sandbox` and `enabled` after merging
 `[global]` with `[roles.<name>]`. The global-only `skills_refresh` is printed
 under every role, since it governs how each role's skills are refreshed. `github.token` is
 never printed resolved: a `"$VAR"` value is shown as written and anything else
@@ -377,7 +377,7 @@ bees config show developer
 ```json
 {
   "path": "/src/widgets/bees.toml",
-  "version": 4,
+  "version": 5,
   "filter": { "label": "bees", "require_label": true, "assignee": "@me", "milestone": "", "creator": "" },
   "github": { "login": "busybees-bot", "token": "$BEES_GITHUB_TOKEN", "git_name": "", "git_email": "" },
   "scheduler": { "poll_interval": "5m0s", "max_developers": 1, "max_review_rounds": 3, "...": "" },
@@ -385,7 +385,7 @@ bees config show developer
     "reviewer": {
       "name": "reviewer",
       "model": "opus",
-      "fallback_model": "sonnet",
+      "fallback": "",
       "max_turns": 200,
       "timeout": "45m0s",
       "enabled": true,
@@ -397,9 +397,9 @@ bees config show developer
         "l": ["general", "docs", "test_coverage", "acceptance_criteria"],
         "xl": ["general", "docs", "test_coverage", "acceptance_criteria", "side_effects"]
       },
-      "brief_profile": { "agent": "claude", "model": "opus", "fallback_model": "sonnet", "effort": "", "sandbox": "none" },
-      "judge_profile": { "agent": "claude", "model": "opus", "fallback_model": "sonnet", "effort": "", "sandbox": "none" },
-      "angle_profiles": { "docs": { "agent": "claude", "model": "opus", "fallback_model": "sonnet", "effort": "", "sandbox": "none" }, "...": {} },
+      "brief_profile": { "agent": "claude", "model": "opus", "fallback": "", "effort": "", "sandbox": "none" },
+      "judge_profile": { "agent": "claude", "model": "opus", "fallback": "", "effort": "", "sandbox": "none" },
+      "angle_profiles": { "docs": { "agent": "claude", "model": "opus", "fallback": "", "effort": "", "sandbox": "none" }, "...": {} },
       "review_profiles_by_size": { "...": {} },
       "host_review_policy": "brief/angles: sandbox ignored; read-only checkout; no commands, writes, web/network tools, MCP, factory identity or writable/shared VCS",
       "auto_merge": false,
@@ -741,7 +741,7 @@ busybees  acme/widgets                                                          
 **Now** lists running sessions and review-pipeline activity. Sessions show
 the role, the issue and pull request, the developer worker's stage and round,
 how long the session has been going, and its model: `(fallback)`
-when a retry is running on the role's `fallback_model`. `↑`/`↓` move the
+when a retry is running on a profile its profile names as `fallback`. `↑`/`↓` move the
 cursor down the list and Enter opens
 [the session view](#watching-one-session) on the session it is on.
 
@@ -904,6 +904,8 @@ from 111 columns the footer reads:
 ```
 ↑↓ select · enter watch · o GitHub · k stop session · p pause · r reload · q or ctrl-c stops (sessions finish)
 ```
+
+Between the repository name and the clock, the header scrolls a row of 🐝.
 
 Whenever dispatch is paused, the header says so and why, next to the clock —
 so a factory sitting on a full queue with an empty Now panel does not read as
@@ -1311,6 +1313,14 @@ removes its container. Such a session also leaves the pid of the MCP server
 bees runs on the host for it in `mcp-server-pid`, and that server is stopped
 with it. A container, an engine client or a server whose session is
 otherwise gone is stopped on its own.
+
+A session in the [sbx sandbox](configuration.md#the-sbx-mode) is found only
+through the MCP server bees runs on the host for it: its `sbx exec` client
+is not recognised as a session, so the pid file naming the client is
+discarded as a reused pid and the client is never stopped. A server still
+running is stopped and the session marked; the sandbox is left running
+either way. `<session dir>/sandbox-name` names it, and
+`sbx rm --force <name>` stops and removes it.
 
 Each session it stops through a pid file or through its container is also
 marked as stopped, by an `interrupted` file in the session's directory. The
@@ -1820,6 +1830,29 @@ only part of it bees writes. Nothing in the block is deleted or reworded: a
 rule you rewrote, or whose action you changed, stays as you wrote it and only
 its count moves. `--notes` works on a file other than the configured one, and
 `--dry-run` prints what consolidation would write without writing it.
+
+## Evals
+
+### `bees eval [--case name] [--profile name]`
+
+Runs the whole factory against each case under `./evals/`, with an in-memory
+GitHub and a local origin, and grades the result with the case's test. It
+prints one row per case (result, why the run stopped, cost, turns, duration,
+profile), writes `<state_dir>/evals/<timestamp>/report.json`, and exits
+non-zero when any case fails. The sessions are real agent sessions.
+
+`--case` runs one case. `--profile` runs every role on one profile from
+`bees.toml` or `~/.config/bees/config.toml`. Without it the eval uses the
+profiles `bees.toml` selects, or the `provider` and `model` of
+`~/.config/bees/config.toml` when there is no `bees.toml`, or the built-in
+profile when there is neither. Like `bees run`, it refuses to run inside a
+session.
+
+```sh
+bees eval --case hello --profile fast
+```
+
+[Evals](evals.md) describes the case layout and the grading.
 
 ## Misc
 

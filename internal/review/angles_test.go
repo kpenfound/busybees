@@ -400,3 +400,24 @@ func (p *progressRecorder) record(angle string, event AngleEvent) {
 	defer p.mu.Unlock()
 	p.events[angle] = append(p.events[angle], event)
 }
+
+// An angle whose session fell back to another agent is recorded under the
+// agent and model that answered, so the artifact names the session that
+// exists, and a resume of it is refused the way a codex session's is rather
+// than run as claude with a codex thread id.
+func TestAnAngleThatFellBackIsRecordedUnderTheAgentThatAnswered(t *testing.T) {
+	limited, _ := fakeCLI(t, `echo '{"type":"result","subtype":"error","is_error":true,"result":"Rate limit reached for opus","session_id":"sess-0","num_turns":0}'`)
+	answering, _ := fakeCLI(t, codexAnswer)
+	agent := &CLIAgent{ClaudeBin: limited, Model: "opus", Fallback: &CLIAgent{Provider: config.AgentCodex, CodexBin: answering, Model: "gpt-cheap"}}
+	angles := &Angles{Agent: agent, Provider: config.AgentClaude, Model: "opus", Dir: t.TempDir()}
+	runs, err := angles.Run(context.Background(), t.TempDir(), onlyAngle(t, AngleDocs), testBrief(), testDiff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 || runs[0].Provider != config.AgentCodex || runs[0].Model != "gpt-cheap" || runs[0].SessionID != "thread-9" {
+		t.Fatalf("runs = %+v, want the docs run recorded as codex on gpt-cheap with its thread id", runs)
+	}
+	if _, err := angles.Resume(context.Background(), runs[0], "why?"); err == nil || !strings.Contains(err.Error(), "codex, which cannot resume") {
+		t.Fatalf("resume of a fallen-back angle: %v, want it refused as a codex session", err)
+	}
+}

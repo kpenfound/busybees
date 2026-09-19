@@ -709,9 +709,11 @@ stateDiagram-v2
   looks for problems from that angle alone, and the judge, deterministic
   code, merges what they found into one list. The brief and the angle
   sessions are `internal/review`'s read-only host sessions. `brief_profile`
-  and `angle_profiles` select agent, model, fallback model and effort after
+  and `angle_profiles` select agent, model, fallback and effort after
   the role's size-resolved profile; unspecified phases retain that fallback.
-  Only Claude and Codex are supported. Profile sandbox is ignored: no
+  Only Claude and Codex are supported, on the fallback chain too, and a
+  session refused for want of capacity runs again as its fallback under the
+  same restrictions. Profile sandbox is ignored: no
   commands, writes, web/network tools, MCP/factory identity or writable/shared
   VCS are available. Both phases read an independent clone of the worker's checkout
   under the review's artifact, which the diff is read from too (the branch
@@ -906,7 +908,7 @@ claude -p \
   --dangerously-skip-permissions \
   --append-system-prompt-file <session>/system-prompt.md \
   --model <model> --max-turns <n> --name bees-<session name> \
-  [--fallback-model <fallback>] [--effort <level>] \
+  [--fallback-model <the fallback profile's model, when it runs claude>] [--effort <level>] \
   [--resume <session id> --system-prompt-snapshot off] \
   --add-dir <state_dir> \
   [--allowedTools ...] [--disallowedTools ...] \
@@ -936,7 +938,7 @@ codex exec --json \
 Codex has no flag to append to its system prompt, so the system prompt is
 written to stdin ahead of the task prompt, separated by a rule; it has no
 `--mcp-config`, so every MCP server, the built-in one included, is passed as
-configuration overrides, one per key; and it has no fallback model, turn
+configuration overrides, one per key; and it has no fallback-model flag, turn
 limit, tool allow-list or plugin directories, so those settings are not
 passed (see [`agent`](configuration.md#global-and-rolesname)). Its stream is
 appended to `transcript.jsonl` the same way: `thread.started` supplies the
@@ -967,7 +969,7 @@ counterpart of `--dangerously-skip-permissions`; an explicit `deny` in the
 project's configuration still holds. `--session` continues an earlier
 session the way `--resume` does for claude, and there is no snapshot to
 switch off: opencode reads the instruction files again on every request.
-It has no fallback model, turn limit, tool allow-list or plugin
+It has no fallback-model flag, turn limit, tool allow-list or plugin
 directories. When configured, `effort` is written as the default build
 agent's `variant`; it is a name the model defines, not a level, so the value
 is passed through without bees-side validation. Those other settings are not
@@ -1001,7 +1003,7 @@ tools of their own rather than behind the adapter's single proxy tool.
 asks about nothing, so it needs no counterpart of
 `--dangerously-skip-permissions`. `--session-id` continues an earlier
 session of the worktree's project, and starts one under that id when there
-is none. It has no fallback model, turn limit, tool allow-list or plugin
+is none. It has no fallback-model flag, turn limit, tool allow-list or plugin
 directories. Its stream is appended to `transcript.jsonl` the same way: the
 `session` header supplies the session id, each `turn_end` is one turn, each
 assistant `message_end` carries what the response cost, the last assistant
@@ -1036,12 +1038,22 @@ steps or ended turns instead.
   built-in MCP server started on the host as `bees mcp serve --listen` and
   reached over HTTP with a per-session token; `<session>/container-id`
   holds the container's id while it runs, and `<session>/mcp-server-pid`
-  that server's pid, so a crash leaves both findable. The runner refuses a session whose
-  role asks for a mode it cannot build, one its agent cannot run under, or a
-  container mode missing its image or credentials, and `bees run` refuses to
+  that server's pid, so a crash leaves both findable.
+  [`sbx`](configuration.md#the-sbx-mode) is the same command inside a
+  Docker Sandbox: `sbx create` for the role's agent with the same three
+  directories as workspaces at their host paths and no shared skills
+  store, the Dagger CLI installed and the host's engine reached over TCP
+  when the role sets `sandbox_dagger_engine`, `sbx exec`
+  with the session's variables by name and the prompt on stdin, the
+  built-in server on the host's loopback reached at `host.docker.internal`,
+  and `sbx rm` when the session ends; `<session>/sandbox-name` holds the
+  sandbox's name while it exists. The runner refuses a session whose
+  role asks for a mode it cannot build, one its agent cannot run under, a
+  container mode missing its image or credentials, or an sbx mode missing
+  its GitHub credential, and `bees run` refuses to
   start at all while a role in the rotation does. See
-  [Security](security.md) for what `claude` and `container` protect and what
-  they do not.
+  [Security](security.md) for what `claude`, `container` and `sbx` protect
+  and what they do not.
 - **Outcome.** The session ends by calling the `done` tool (or, outside a
   container, running `bees done <status>`), which writes
   `<session>/outcome.json` through one shared validation: the status must be
@@ -1058,8 +1070,10 @@ steps or ended turns instead.
   reported an outcome, `failed` included, or exited cleanly without
   reporting). Only infrastructure failures are retried, `scheduler.retries`
   times (default 1), waiting `scheduler.retry_delay` (default 10m) between
-  attempts and running with the role's fallback model when
-  `scheduler.retry_with_fallback` is set (on by default). Each attempt has its
+  attempts and running on the profile the role's profile names as its
+  fallback, agent included, when `scheduler.retry_with_fallback` is set (on
+  by default); a second retry runs on that profile's own fallback. Each
+  attempt has its
   own session directory (`<name>-retry<n>`), a retried developer session
   is told its previous attempt was interrupted so it continues from the
   branch, and a retry of a session that was launched resuming an earlier one
@@ -1068,8 +1082,8 @@ steps or ended turns instead.
   reaches the classification: a session that died on it returns to its worker
   at once (see step 6 of the loop). A session that cost more than
   `scheduler.max_cost_per_session` is treated as failed. One such session is
-  retried like an infrastructure failure, with the fallback model when that is
-  configured; a second in a row for the same work item (or the same singleton
+  retried like an infrastructure failure, on the profile's fallback when that
+  is configured; a second in a row for the same work item (or the same singleton
   role) is reported as `failed`, which escalates a work item and backs a
   singleton off. See [Retries first](workflow.md#retries-first).
 - **Grants.** Every session carries grants: the variables it may have, its
@@ -1083,8 +1097,9 @@ steps or ended turns instead.
   directory read-write; `sandbox = "container"` is granted the worktree,
   the state directory and the sessions directory read-write, the
   repository's `.git` read-write for a role with version control and, for
-  a role with skills, the skills cache read-only; the container is given
-  those paths and nothing else of the host.
+  a role with skills, the skills cache read-only, and `sandbox = "sbx"` the
+  same, plus the Dagger engine for a role that names one; the container or
+  sandbox is given those paths and nothing else of the host.
 - **Environment.** A session inherits only the host variables its grants
   list (see [Exported into every session](configuration.md#exported-into-every-session)),
   and every inherited `BEES_*` variable is dropped, so a
@@ -1096,8 +1111,8 @@ steps or ended turns instead.
   when they apply and `BEES_REVIEW_MODE=checks` for the
   reviewer's checks-mode sessions; the directory holding the `bees` binary
   prepended to `PATH`, so `bees mail`, `bees issue` and `bees done` resolve
-  inside the session (a container session gets neither `BEES_BIN` nor the
-  `PATH` entry: the binary stays on the host); the factory's own
+  inside the session (a container or sbx session gets neither `BEES_BIN`
+  nor the `PATH` entry: the binary stays on the host); the factory's own
   [GitHub identity](configuration.md#github) when `[github]` configures one:
   `GH_TOKEN`, `GIT_AUTHOR_*` and `GIT_COMMITTER_*`, plus the variable a
   `"$VAR"` `github.token` names, holding the token bees resolved (a session
@@ -1446,6 +1461,16 @@ session for that issue is told the session was stopped rather than left to
 guess that the machine crashed (see *An interrupted session* under
 [The developer worker](#the-developer-worker)). A process found only in the
 process table names no directory and is killed unmarked.
+
+A session in the [sbx sandbox](configuration.md#the-sbx-mode) is found only
+through its built-in MCP server. The process table does not recognise its
+`sbx exec` client as a session, so the pid file naming the client is
+discarded as a reused pid, and the client is never stopped. When the
+server `mcp-server-pid` names is still running, it is stopped and the
+session marked, as a container session's server is; otherwise nothing of
+the session is found. Either way its sandbox is left running:
+`<session dir>/sandbox-name` names it, and `sbx rm --force <name>` stops
+and removes it.
 
 The kill sends SIGTERM to the process group (sessions are started in a group
 of their own, so MCP servers and shells belong to it), waits `--grace`

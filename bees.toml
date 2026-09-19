@@ -1,5 +1,5 @@
 # bees.toml — configuration for a busybees software factory.
-version = 4
+version = 5
 
 #===============================================================================
 # Project
@@ -68,51 +68,45 @@ notes_max_bytes = 18768
 stacked_prs = false
 
 #===============================================================================
-# Codex Profiles
+# Codex Profiles. A profile's fallback names the profile a retry runs on
+# instead after a session on it failed, as the Claude profiles below do.
 #===============================================================================
 
 # [profiles.default]
 # agent = "codex"
 # model = "gpt-5.6-terra"
-# fallback_model = "gpt-5.6-sol"
 # effort = "high"
 # sandbox = "none"
 
 # [profiles.review_fast]
 # agent = "codex"
 # model = "gpt-5.6-luna"
-# fallback_model = "gpt-6-astra"
 # effort = "medium"
 # sandbox = "none"
 
 # [profiles.coder_smart]
 # agent = "codex"
 # model = "gpt-6-astra"
-# fallback_model = "gpt-6-astra"
 # effort = "high"
 
 # [profiles.coder_medium]
 # agent = "codex"
 # model = "gpt-6-sol"
-# fallback_model = "gpt-6-astra"
 # effort = "high"
 
 # [profiles.coder_dumb]
 # agent = "codex"
 # model = "gpt-5.6-luna"
-# fallback_model = "gpt-5.6-sol"
 # effort = "medium"
 
 # [profiles.manager_smart]
 # agent = "codex"
 # model = "gpt-5.6-sol"
-# fallback_model = "gpt-6-astra"
 # effort = "high"
 
 # [profiles.manager_dumb]
 # agent = "codex"
 # model = "gpt-5.6-terra"
-# fallback_model = "gpt-5.6-sol"
 # effort = "medium"
 
 #===============================================================================
@@ -122,44 +116,62 @@ stacked_prs = false
 [profiles.default]
 agent = "claude"
 model = "opus"
-fallback_model = "fable"
+fallback = "coder_smart"
 effort = "high"
 sandbox = "none"
 
 [profiles.review_fast]
 agent = "claude"
 model = "opus"
-fallback_model = "fable"
+fallback = "fable_medium"
 effort = "medium"
 sandbox = "none"
 
 [profiles.coder_smart]
 agent = "claude"
-model = "fable"
+model = "opus"
+fallback = "fable_medium"
 effort = "high"
 
 [profiles.coder_medium]
 agent = "claude"
 model = "opus"
-fallback_model = "fable"
+fallback = "fable_medium"
 effort = "medium"
 
 [profiles.coder_dumb]
 agent = "claude"
 model = "opus"
-fallback_model = "fable"
+fallback = "fable_low"
 effort = "low"
 
 [profiles.manager_smart]
 agent = "claude"
 model = "opus"
-fallback_model = "fable"
+fallback = "fable_medium"
 effort = "medium"
 
 [profiles.manager_dumb]
 agent = "claude"
 model = "opus"
-fallback_model = "fable"
+fallback = "fable_low"
+effort = "low"
+
+# The profiles the ones above fall back to: fable at the same effort, and
+# for coder_smart, which runs fable itself, sonnet.
+[profiles.sonnet_high]
+agent = "claude"
+model = "sonnet"
+effort = "high"
+
+[profiles.fable_medium]
+agent = "claude"
+model = "fable"
+effort = "medium"
+
+[profiles.fable_low]
+agent = "claude"
+model = "fable"
 effort = "low"
 
 
@@ -188,7 +200,7 @@ skills = [
 # Agent settings moved to profiles (version 3).
 # Previous: agent = "codex"
 # Configure model through profile / profile_by_size and [profiles.<name>].
-# Configure fallback_model through profile / profile_by_size and [profiles.<name>].
+# Configure fallback through profile / profile_by_size and [profiles.<name>].
 # Effort level: low, medium, high or max.
 # Configure effort through profile / profile_by_size and [profiles.<name>].
 # Agentic turns per session and wall-clock limit.
@@ -201,7 +213,7 @@ disallowed_tools = ["Artifact", "Bash(go test *)", "Bash(docker *)"]
 #shell = "/bin/bash"
 
 
-# How much of the machine a session can reach: none, claude or container.
+# How much of the machine a session can reach: none, claude, container or sbx.
 # Set it per role in [roles.<name>] to box the roles that run untrusted code
 # harder than the ones that only read the repository.
 # Agent settings moved to profiles (version 3).
@@ -251,7 +263,7 @@ skills = [
 ]
 [roles.developer.mcp.dagger]
 command = "dagger"
-args = ["mcp", "--progress", "plain", "-m", "dagger.io/go@main"]
+args = ["mcp", "--progress", "plain", "-m", "dagger.io/go@do-not-merge-hack"]
 env = { DAGGER_X_RELEASE = "v1.0.0-beta.14" }
 
 # Reviews pull requests and, optionally, merges them once checks are green.

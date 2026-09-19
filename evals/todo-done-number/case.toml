@@ -1,0 +1,38 @@
+# A bug fix in the shared todo fixture (evals/fixtures/todo): an off-by-one
+# in List.Complete. docs/evals.md describes every key.
+description = "todo done <n> marks the item after the one numbered n"
+test = "go test ./..."
+timeout = "45m"
+max_cost = 8
+
+[[issues]]
+number = 1
+title = "todo done 1 marks the second item done"
+labels = ["bees:ready", "bees:size/xs", "bees:bug"]
+body = """
+`todo list` numbers the items from 1, but `todo done <n>` marks the item
+after the one numbered `n`:
+
+```
+$ todo list
+1 buy milk
+2 call the plumber
+$ todo done 1
+$ todo list
+1 buy milk
+2 x call the plumber
+```
+
+`todo done 2` on that list fails with `no item 2`.
+
+`List.Complete` in `todo/list.go` says it numbers items from 1, and does not.
+
+## Acceptance criteria
+
+- `List.Complete(n)` marks the item numbered `n`, counting from 1, and
+  nothing else.
+- `List.Complete` returns an error for 0, a negative number, or a number
+  past the last item, and changes nothing.
+- `todo done 1` marks the first item of the list done.
+- `go test ./...` passes, with a test for the numbering.
+"""

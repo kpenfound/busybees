@@ -15,7 +15,11 @@ The root module consumes this one through its `replace ... => ./core` entry.
 
 `agent.Runner.Run` takes an `agent.Request` with an execution-only `Profile`:
 backend, models, effort, tools, prepared MCP entries, sandbox, shell and
-environment. The caller selects profiles and fallback overrides before running.
+environment. The caller selects profiles before running; `Profile.Fallback`
+is the profile the session runs on instead when it has no capacity, agent
+included, with its own fallback after it: `ops.SelectProfile` walks the
+chain for a retry, and the claude backend passes a claude fallback's model as
+`--fallback-model` so claude switches to it within the session.
 
 The caller also supplies:
 
@@ -85,11 +89,17 @@ req.Grants = &agent.Grants{
 - `VCS` grants version control. Without it, a host session finds `gh`, `git`,
   `hg`, `jj` and `svn` shadowed on `PATH` by stand-ins that exit 126, and
   Claude's sandbox settings deny them.
+- `DaggerEngine` grants a Dagger engine, `unix://<socket>` or
+  `tcp://<host>:<port>`, to a `SandboxSbx` session whose `Profile.Dagger`
+  asks for that engine. Every boundary refuses it otherwise: granted to a
+  profile that does not ask (`ErrUnsupported`), asked for without the grant
+  or with another engine granted (`ErrNotGranted`), or in any other mode
+  (`ErrUnsupported`).
 
 `Runner.Verify(req)` checks a request without starting anything and returns
 the `Turn` it would run: its environment, tools and resolved mounts. `Run`
-calls it first. `HostBoundary` and `ContainerBoundary` implement the
-`Boundary` interface. The host enforces nothing of the mounts by itself, so
+calls it first. `HostBoundary`, `ContainerBoundary` and `SandboxBoundary`
+implement the `Boundary` interface. The host enforces nothing of the mounts by itself, so
 it refuses what it cannot enforce (`ErrUnsupported`):
 
 | Sandbox | Mounts it needs |
@@ -197,6 +207,29 @@ and the container gets its grants and nothing else:
   its name. `ContainerBoundary.Masks` are read-only binds laid over paths of
   the image for such a turn; `Runner.Run` sets none, and a `NewContainer`
   session (below) sets one over each VCS executable its image holds.
+
+`SandboxBoundary` (`sandbox = "sbx"`, a Docker Sandbox the `sbx` CLI
+creates for the profile's agent, from `SbxTemplates[agent]` unless
+`SandboxImage` names a template) binds what `ContainerBoundary` binds, each bind a
+workspace of `sbx create` at its destination (`:ro` for `ReadOnly`). `/`
+is refused, and so is a destination holding a colon, which sbx would read
+as the access; the source is never passed to sbx, and commas and quotes
+are accepted. It builds the environment the same way with two
+differences: no agent credential is forwarded, because the sandbox's proxy
+injects the one stored with `sbx secret set`, and no `HOME` of its own is
+set, because the sandbox has one; a `HOME` the request sets is passed by
+value. Without `VCS` the command runs behind the same `/bin/sh -c`
+stand-in wrapper; nothing masks a VCS executable of the template reached
+by its path. The runner creates the sandbox before the host server starts,
+runs the command through `sbx exec --interactive` with the variables by
+name, removes the sandbox with `sbx rm --force` when the session ends, and
+records its name in `procs.SandboxNameFile` meanwhile. With
+`Profile.Dagger`, it installs the Dagger CLI at `Dagger.Version` with a
+setup `sbx exec` once the sandbox exists, forwards a socket engine from a
+port on `127.0.0.1` for the session's lifetime, and sets
+`EnvDaggerRunnerHost` to the engine's address: at `host.docker.internal`
+for a socket or a loopback TCP engine, and as written for a TCP engine on
+any other host. No `Enforcer` prepares this kind.
 
 ## Enforced turns
 
@@ -399,7 +432,7 @@ requirements outside core.
 `ops` contains reusable pieces for caller-owned reconcile loops. It does not
 poll a tracker, choose a workflow, log, or escalate work:
 
-- `ClassifyFailure`, `RetryPolicy.Decide`, `SelectModel` and `Sleep` preserve
+- `ClassifyFailure`, `RetryPolicy.Decide`, `SelectProfile` and `Sleep` preserve
   reported-outcome precedence, retry counts, delays and fallback selection.
 - `Ledger` appends, reads and atomically trims JSONL accounting. Share one
   instance per file to serialize append/trim. `Now` supplies timestamps for
