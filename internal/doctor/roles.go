@@ -67,6 +67,9 @@ func (d *Deps) roleChecks() []Check {
 		if role.Shell != "" {
 			roleChecks = append(roleChecks, Check{Expensive: true, Run: d.checkRoleShell(role)})
 		}
+		if roleUses(role, config.AgentPi) {
+			roleChecks = append(roleChecks, Check{Expensive: true, Timeout: PiPackagesTimeout, Run: d.checkRolePiPackages(role)})
+		}
 		if len(roleChecks) == 0 {
 			// Still one row, so the group never looks like it did not run.
 			roleChecks = append(roleChecks, Check{Expensive: true, Run: func(context.Context) Result {

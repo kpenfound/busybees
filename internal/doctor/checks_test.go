@@ -137,7 +137,7 @@ func setupIn(t *testing.T, clone, extra string, replies map[string]ghReply) *fix
 	if err := os.WriteFile(path, []byte(baseTOML+extra), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	d := New(context.Background(), path, fakeClaude(t, "2.9.0 (Claude Code)"), "", "")
+	d := New(context.Background(), path, fakeClaude(t, "2.9.0 (Claude Code)"), "", "", "")
 	if d.ConfigErr != nil {
 		t.Fatalf("load bees.toml: %v", d.ConfigErr)
 	}
@@ -424,7 +424,7 @@ func TestCheckConfigLoads(t *testing.T) {
 	if err := os.WriteFile(path, []byte("version = 1\n[project]\nnonsense = true\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	d := New(context.Background(), path, "claude", "codex", "opencode")
+	d := New(context.Background(), path, "claude", "codex", "opencode", "pi")
 	if d.Config != nil {
 		t.Fatal("an invalid bees.toml must not load")
 	}
@@ -1116,7 +1116,7 @@ func TestChecksWithoutAResolvedRepo(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A local origin: config.Resolve cannot derive a GitHub repository.
-	d := New(context.Background(), path, fakeClaude(t, "2.9.0 (Claude Code)"), "", "")
+	d := New(context.Background(), path, fakeClaude(t, "2.9.0 (Claude Code)"), "", "", "")
 	gh := &fakeGH{t: t, replies: map[string]ghReply{"auth status": {out: "- Token scopes: 'repo'"}}}
 	gh.installAll(d)
 	d.LookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
