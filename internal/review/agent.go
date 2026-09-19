@@ -63,8 +63,9 @@ type CLIAgent struct {
 	Provider string
 	Model    string
 	// Fallback is the agent the session runs as instead when this one has
-	// no capacity: the CLI answered that the model is rate limited or
-	// overloaded (ops.RateLimitedText). An agent of its own, so it is held
+	// no capacity: the CLI answered, or died saying on stderr, that the
+	// model is rate limited or overloaded (ops.RateLimitedText). An agent
+	// of its own, so it is held
 	// to the same read-only floor whatever CLI it runs, and it may have a
 	// fallback of its own. When both run claude its model is also passed as
 	// --fallback-model, so claude switches to it within the session. Nil
@@ -179,8 +180,10 @@ func (a *CLIAgent) Run(ctx context.Context, req AgentRequest) (*AgentResult, err
 		return &AgentResult{ID: res.id, Text: res.text, Turns: res.turns, CostUSD: res.cost, CostKnown: res.costKnown, Provider: a.provider(), Model: a.Model}, nil
 	}
 	// A session refused for want of capacity is run again as the fallback
-	// agent, which answers for itself, its own fallback included.
-	if a.Fallback != nil && (ops.RateLimitedText(failure.Error()) || ops.RateLimitedText(stderr.String())) {
+	// agent, which answers for itself, its own fallback included. A CLI that
+	// died saying so on stderr alone is caught too: the error carries the
+	// tail of what it said.
+	if a.Fallback != nil && ops.RateLimitedText(failure.Error()) {
 		return a.Fallback.Run(ctx, req)
 	}
 	return nil, failure
