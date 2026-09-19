@@ -361,7 +361,7 @@ func TestIssueToolsWithoutABackend(t *testing.T) {
 	}
 }
 
-// TestCLAUDEMdListsEveryTool pins the `internal/mcpserver` bullet in CLAUDE.md —
+// TestAGENTSMdListsEveryTool pins the `internal/mcpserver` bullet in AGENTS.md —
 // the map every session reads before touching this repo — against the tools the
 // server actually registers. It compares sets, not order: the order in the bullet
 // is a readability choice, not something to fail a test on.
@@ -374,16 +374,16 @@ func TestIssueToolsWithoutABackend(t *testing.T) {
 // name. Everything else is compared as a tool name, so a bare backticked word
 // added to the line fails this test loudly instead of going unchecked. That is
 // deliberate: backtick it as part of a longer phrase, or expect to hear about it.
-func TestCLAUDEMdListsEveryTool(t *testing.T) {
+func TestAGENTSMdListsEveryTool(t *testing.T) {
 	// Go runs a test with its package directory as cwd, so the repo file is
 	// two levels up. Reading it (rather than embedding a copy) is the point:
 	// the doc is what has to stay true.
-	const claudeMd = "../../CLAUDE.md"
+	const agentsMd = "../../AGENTS.md"
 	const bullet = "- `internal/mcpserver`"
 
-	data, err := os.ReadFile(claudeMd)
+	data, err := os.ReadFile(agentsMd)
 	if err != nil {
-		t.Fatalf("read %s: %v", claudeMd, err)
+		t.Fatalf("read %s: %v", agentsMd, err)
 	}
 	line := ""
 	for _, l := range strings.Split(string(data), "\n") {
@@ -393,7 +393,7 @@ func TestCLAUDEMdListsEveryTool(t *testing.T) {
 		}
 	}
 	if line == "" {
-		t.Fatalf("CLAUDE.md: no line starts with %q. That bullet lists the built-in MCP tools and is kept in sync with internal/mcpserver; restore it (or update this test) rather than leaving the layout map without one.", bullet)
+		t.Fatalf("AGENTS.md: no line starts with %q. That bullet lists the built-in MCP tools and is kept in sync with internal/mcpserver; restore it (or update this test) rather than leaving the layout map without one.", bullet)
 	}
 
 	documented := map[string]bool{}
@@ -430,11 +430,11 @@ func TestCLAUDEMdListsEveryTool(t *testing.T) {
 	slices.Sort(extra)
 
 	if len(missing) > 0 {
-		t.Errorf("CLAUDE.md: the %q line does not list %s, registered by the server for at least one role (internal/mcpserver/mcpserver.go). Add the missing names to that line:\n%s",
+		t.Errorf("AGENTS.md: the %q line does not list %s, registered by the server for at least one role (internal/mcpserver/mcpserver.go). Add the missing names to that line:\n%s",
 			bullet, strings.Join(missing, ", "), line)
 	}
 	if len(extra) > 0 {
-		t.Errorf("CLAUDE.md: the %q line lists %s, not a tool the server registers for any role. Drop the stale names from that line — or, if one is a word that merely happens to be backticked there, unbacktick it:\n%s",
+		t.Errorf("AGENTS.md: the %q line lists %s, not a tool the server registers for any role. Drop the stale names from that line — or, if one is a word that merely happens to be backticked there, unbacktick it:\n%s",
 			bullet, strings.Join(extra, ", "), line)
 	}
 }
