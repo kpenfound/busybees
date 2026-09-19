@@ -616,8 +616,8 @@ A profile bundles the agent, model, fallback, effort and sandbox for a
 session. Profiles are named globally, then selected by `[global]` or a role.
 Values omitted from a profile use its built-in defaults; a profile configured
 for `codex` or `opencode` has no default model. `fallback` names the profile
-a session runs on instead when its own has no capacity: that profile's agent,
-model, effort and sandbox, which can be a different agent entirely.
+a retry runs on instead after a session on this one failed: that profile's
+agent, model, effort and sandbox, which can be a different agent entirely.
 
 ```toml
 [global]
@@ -644,7 +644,7 @@ profile_by_size = { xs = "bar", s = "bar", l = "foo", xl = "foo" }
 |---|---|---|---|
 | `agent` | string | `"claude"` | CLI a session runs as: `claude` (`claude -p`), `codex` (`codex exec`) or `opencode`. An unknown value is a load error. See [Running a session](architecture.md#running-a-session). |
 | `model` | string | `"opus"` for `claude`, `""` otherwise | Model alias or full id, passed to the selected agent (`provider/model` for opencode). An empty value lets codex or opencode use its own configured model. |
-| `fallback` | string | `""` | The profile a session runs on instead when this one has no capacity: a retry of a session that failed for want of capacity runs on it when [`scheduler.retry_with_fallback`](#scheduler) is on, the next retry on that profile's own `fallback`, and so on. Must name a profile; a profile that names itself, or a longer cycle (`a` → `b` → `a`), is a load error. When both profiles run `claude`, the fallback's model is also passed as `claude --fallback-model`, so claude switches to it within a session; codex and opencode have no such flag, and a fallback on another agent is a new session. |
+| `fallback` | string | `""` | The profile a retry runs on instead, agent included: a session that failed for infrastructure reasons (a timeout, exhausted turns, a crash, a rate limit) is retried on it when [`scheduler.retry_with_fallback`](#scheduler) is on, the next retry on that profile's own `fallback`, and so on; a brief or angle review session refused for want of capacity runs again on it. Must name a profile; a profile that names itself, or a longer cycle (`a` → `b` → `a`), is a load error. When both profiles run `claude`, the fallback's model is also passed as `claude --fallback-model`, so claude switches to it within a session; codex and opencode have no such flag, and a fallback on another agent is a new session. |
 | `effort` | string | `""` | Passed as `claude --effort` when set: `low`, `medium`, `high` or `max`. Codex receives it as `model_reasoning_effort`; `max` maps to `high`. Opencode receives it as the default `build` agent's `variant`; variants are names the model defines, not levels. |
 | `sandbox` | string | `"none"` | How much of the machine a session can reach: `none`, `claude` or `container`. See [Sandboxing](#sandboxing). |
 

@@ -560,7 +560,8 @@ func TestReviewActivityCountsEnabledAngles(t *testing.T) {
 }
 
 // fallbackAgentTOML: the developer's profile falls back to a profile on
-// another agent, and its first attempt hangs until its timeout kills it.
+// another agent, in another sandbox, and its first attempt hangs until its
+// timeout kills it.
 const fallbackAgentTOML = baseTOML + `
 retries = 1
 retry_delay = "0s"
@@ -568,9 +569,11 @@ retry_delay = "0s"
 agent = "claude"
 model = "opus"
 fallback = "cheap"
+sandbox = "claude"
 [profiles.cheap]
 agent = "codex"
 model = "gpt-cheap"
+sandbox = "none"
 [roles.developer]
 profile = "main"
 timeout = "3s"
@@ -583,9 +586,9 @@ enabled = false
 `
 
 // A retry runs on the profile the role's profile names as its fallback,
-// agent included: the attempt was a claude session, the retry is a codex
-// one, and the claude session was not told a fallback model it cannot
-// switch to itself.
+// agent and sandbox included: the attempt was a claude session in claude's
+// sandbox, the retry is an unboxed codex one, and the claude session was not
+// told a fallback model it cannot switch to itself.
 func TestARetryRunsOnTheFallbackProfilesAgent(t *testing.T) {
 	t.Setenv("FAKE_DEV_HANG", "1")
 	h := newHarness(t, fallbackAgentTOML)
@@ -609,11 +612,11 @@ func TestARetryRunsOnTheFallbackProfilesAgent(t *testing.T) {
 	if len(starts) != 2 {
 		t.Fatalf("%d developer session-started events, want the attempt and its retry: %v", len(starts), starts)
 	}
-	if starts[0].Model != "opus" || starts[0].Fallback {
-		t.Errorf("first attempt ran on model %q (fallback %v), want opus and no fallback", starts[0].Model, starts[0].Fallback)
+	if starts[0].Model != "opus" || starts[0].Fallback || starts[0].Sandbox != "claude" {
+		t.Errorf("first attempt ran on model %q (fallback %v) in sandbox %q, want opus and no fallback in claude's sandbox", starts[0].Model, starts[0].Fallback, starts[0].Sandbox)
 	}
-	if starts[1].Model != "gpt-cheap" || !starts[1].Fallback {
-		t.Errorf("the retry ran on model %q (fallback %v), want gpt-cheap and the fallback marked", starts[1].Model, starts[1].Fallback)
+	if starts[1].Model != "gpt-cheap" || !starts[1].Fallback || starts[1].Sandbox != "none" {
+		t.Errorf("the retry ran on model %q (fallback %v) in sandbox %q, want gpt-cheap, the fallback marked and no sandbox", starts[1].Model, starts[1].Fallback, starts[1].Sandbox)
 	}
 	first := argsOfNamed(t, h, "developer-issue-1-r1")
 	if first[1] != "-p" || slices.Contains(first, "--fallback-model") {
@@ -621,5 +624,74 @@ func TestARetryRunsOnTheFallbackProfilesAgent(t *testing.T) {
 	}
 	if retry := argsOfNamed(t, h, "developer-issue-1-r1-retry1"); retry[1] != "exec" || argValue(retry, "--model") != "gpt-cheap" {
 		t.Errorf("the retry was not a codex session on gpt-cheap: %v", retry)
+	}
+}
+
+// fallbackChainTOML: a chain of three profiles on three agents, two retries,
+// and the first two attempts hang until their timeout kills them.
+const fallbackChainTOML = baseTOML + `
+retries = 2
+retry_delay = "0s"
+[profiles.main]
+agent = "claude"
+model = "opus"
+fallback = "mid"
+[profiles.mid]
+agent = "codex"
+model = "gpt-mid"
+fallback = "last"
+[profiles.last]
+agent = "opencode"
+model = "ollama/last"
+[roles.developer]
+profile = "main"
+timeout = "3s"
+[roles.product_manager]
+enabled = false
+[roles.project_manager]
+enabled = false
+[roles.qa]
+enabled = false
+`
+
+// Retry k runs k steps down the fallback chain: the first retry on the
+// profile's fallback, the second on that one's own, each marked as a
+// fallback and each run as its own agent.
+func TestEachRetryMovesOneStepDownTheFallbackChain(t *testing.T) {
+	t.Setenv("FAKE_DEV_HANG", "2")
+	h := newHarness(t, fallbackChainTOML)
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", State: "OPEN",
+		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now().Add(-time.Hour)}
+	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
+	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true}
+
+	sub := h.sched.Subscribe()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if err := h.sched.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var starts []Event
+	for _, ev := range drain(sub) {
+		if ev.Kind == EventSessionStarted && ev.Role == config.RoleDeveloper {
+			starts = append(starts, ev)
+		}
+	}
+	if len(starts) != 3 {
+		t.Fatalf("%d developer session-started events, want the attempt and two retries: %v", len(starts), starts)
+	}
+	for i, want := range []struct {
+		model    string
+		fallback bool
+	}{{"opus", false}, {"gpt-mid", true}, {"ollama/last", true}} {
+		if starts[i].Model != want.model || starts[i].Fallback != want.fallback {
+			t.Errorf("attempt %d ran on model %q (fallback %v), want %q %v", i+1, starts[i].Model, starts[i].Fallback, want.model, want.fallback)
+		}
+	}
+	if retry := argsOfNamed(t, h, "developer-issue-1-r1-retry1"); retry[1] != "exec" || argValue(retry, "--model") != "gpt-mid" {
+		t.Errorf("the first retry was not a codex session on gpt-mid: %v", retry)
+	}
+	if retry := argsOfNamed(t, h, "developer-issue-1-r1-retry2"); retry[1] != "run" || argValue(retry, "--model") != "ollama/last" {
+		t.Errorf("the second retry was not an opencode session on ollama/last: %v", retry)
 	}
 }

@@ -739,8 +739,8 @@ prompt_file = "docs/qa-checklist.md"
 - **profile / profile_by_size** select an agent profile: role size override,
   role profile, global size override, global profile, then built-in defaults.
   A profile bundles `agent`, `model`, `fallback`, `effort` and `sandbox`.
-  `fallback` names the profile a session runs on instead when its own has
-  no capacity, agent included (see
+  `fallback` names the profile a retry runs on instead after a session on
+  this one failed for infrastructure reasons, agent included (see
   [Retries](workflow.md#retries-first)). `agent` is the CLI
   a session runs as, `claude`, `codex` or `opencode`; a `codex` or `opencode`
   role has no default `model`, and ignores `max_turns`,

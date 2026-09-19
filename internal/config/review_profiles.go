@@ -61,12 +61,13 @@ func (c *Config) validateReviewProfiles() []string {
 	var errs []string
 	// The read-only floor holds on whatever profile a fallback lands on, so
 	// the chain a profile starts is held to the same agents it is.
+	resolved := c.resolvedProfiles()
 	check := func(path string, p AgentProfile) {
 		if p.Agent != AgentClaude && p.Agent != AgentCodex {
 			errs = append(errs, fmt.Sprintf("%s: brief and angle sessions require agent claude or codex, got %q", path, p.Agent))
 		}
-		for _, name := range fallbackChain(c.resolvedProfiles(), c.profileNamed(p), p.Fallback) {
-			if f := c.Profiles[name].resolved(); f.Agent != AgentClaude && f.Agent != AgentCodex {
+		for _, name := range fallbackChain(resolved, profileNamed(resolved, p), p.Fallback) {
+			if f := resolved[name]; f.Agent != AgentClaude && f.Agent != AgentCodex {
 				errs = append(errs, fmt.Sprintf("%s: brief and angle sessions require agent claude or codex, and fallback profile %q runs %q", path, name, f.Agent))
 			}
 		}
@@ -86,17 +87,6 @@ func (c *Config) validateReviewProfiles() []string {
 		}
 	}
 	return errs
-}
-
-// profileNamed is the name of the profile p is in the table, or "" for the
-// implicit built-in profile, which is in no table.
-func (c *Config) profileNamed(p AgentProfile) string {
-	for _, name := range slices.Sorted(maps.Keys(c.Profiles)) {
-		if c.Profiles[name].resolved() == p {
-			return name
-		}
-	}
-	return ""
 }
 
 // migrateReviewProfiles is version 3 -> 4. Rewrite complete TOML statements so

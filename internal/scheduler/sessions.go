@@ -38,9 +38,14 @@ type sessionSpec struct {
 	fallbacks int
 	// resumeID continues the conversation of this role's previous session
 	// on the same work item (its Result.ClaudeID), so the model keeps the
-	// context it built there. A retry never carries it: an id the agent no
-	// longer knows is the one way a resumed launch fails.
-	resumeID string
+	// context it built there, and resumeAgent is the agent that gave the
+	// id (Result.Agent): the session runs resumed only when it runs as that
+	// agent, since a retry down the fallback chain can have left an id of
+	// another agent's, which the profile's own agent would fail on. A retry
+	// never carries it: an id the agent no longer knows is the one way a
+	// resumed launch fails.
+	resumeID    string
+	resumeAgent string
 	// worker, when set, is updated with the attempt number so `bees status`
 	// shows that a session is being retried.
 	worker *state.Worker
@@ -132,6 +137,10 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (_ *sessio
 	// the profile the retry lands on.
 	profile, fallback := ops.SelectProfile(session.ProfileForRole(role), spec.fallbacks)
 	s.setWorkerSandbox(spec.worker, profile.Sandbox)
+	resumeID := spec.resumeID
+	if spec.resumeAgent != profile.Agent {
+		resumeID = ""
+	}
 	if err := s.store.EnsureNotes(spec.role); err != nil {
 		return nil, err
 	}
@@ -260,7 +269,7 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (_ *sessio
 		Prompt:       task,
 		Env:          env,
 		SessionDir:   sessionDir,
-		ResumeID:     spec.resumeID,
+		ResumeID:     resumeID,
 	})
 	// Whatever the session changed on GitHub through the MCP server — an
 	// issue it triaged, a sub-issue it filed — goes into the cached poll

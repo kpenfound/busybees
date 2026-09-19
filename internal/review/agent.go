@@ -176,7 +176,7 @@ func (a *CLIAgent) Run(ctx context.Context, req AgentRequest) (*AgentResult, err
 		failure = fmt.Errorf("%s session: %w%s", req.Name, parseErr, tail(stderr.String()))
 	}
 	if failure == nil {
-		return &AgentResult{ID: res.id, Text: res.text, Turns: res.turns, CostUSD: res.cost, CostKnown: res.costKnown}, nil
+		return &AgentResult{ID: res.id, Text: res.text, Turns: res.turns, CostUSD: res.cost, CostKnown: res.costKnown, Provider: a.provider(), Model: a.Model}, nil
 	}
 	// A session refused for want of capacity is run again as the fallback
 	// agent, which answers for itself, its own fallback included.
@@ -184,6 +184,14 @@ func (a *CLIAgent) Run(ctx context.Context, req AgentRequest) (*AgentResult, err
 		return a.Fallback.Run(ctx, req)
 	}
 	return nil, failure
+}
+
+// provider is the CLI this agent runs, claude when none was named.
+func (a *CLIAgent) provider() string {
+	if a.Provider == "" {
+		return config.AgentClaude
+	}
+	return a.Provider
 }
 
 // command is the CLI and the arguments this session runs as, read-only

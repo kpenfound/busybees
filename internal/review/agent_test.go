@@ -470,8 +470,8 @@ func TestAReviewSessionWithoutCapacityRunsAsItsFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Text != "the brief" || res.ID != "thread-9" {
-		t.Errorf("answer: %+v", res)
+	if res.Text != "the brief" || res.ID != "thread-9" || res.Provider != config.AgentCodex || res.Model != "gpt-last" {
+		t.Errorf("answer: %+v, want the last fallback's answer, named as its own", res)
 	}
 	if got := args(t, limitedRecord); strings.Contains(got, "--fallback-model") {
 		t.Errorf("the claude session was told a fallback model it cannot switch to:%s", got)
@@ -486,6 +486,20 @@ func TestAReviewSessionWithoutCapacityRunsAsItsFallback(t *testing.T) {
 	}
 	if got := args(t, answeringRecord); !strings.Contains(got, "\n--model\ngpt-last\n") {
 		t.Errorf("the last fallback ran another model:%s", got)
+	}
+
+	// A CLI that says so on stderr alone and exits without a result event.
+	quiet, quietRecord := fakeCLI(t, `echo 'API Error: 429 rate limit reached' >&2; exit 1`)
+	answering, answeringRecord = fakeCLI(t, claudeAnswer)
+	a = &CLIAgent{ClaudeBin: quiet, Model: "opus", Fallback: &CLIAgent{ClaudeBin: answering, Model: "sonnet"}}
+	if res, err := a.Run(context.Background(), AgentRequest{Name: "distiller", Prompt: "do it", Dir: t.TempDir()}); err != nil || res.Text != "the brief" {
+		t.Fatalf("a capacity failure on stderr: %v %+v", err, res)
+	}
+	if got := args(t, quietRecord); !strings.Contains(got, "\n--fallback-model\nsonnet\n") {
+		t.Errorf("a claude fallback's model was not passed to claude:%s", got)
+	}
+	if got := args(t, answeringRecord); !strings.Contains(got, "\n--model\nsonnet\n") {
+		t.Errorf("the fallback ran another model:%s", got)
 	}
 
 	failing, _ := fakeCLI(t, `echo '{"type":"result","subtype":"error","is_error":true,"result":"the prompt was refused","session_id":"sess-0","num_turns":1}'`)

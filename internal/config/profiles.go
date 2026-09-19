@@ -15,9 +15,11 @@ import (
 type AgentProfile struct {
 	Agent string `toml:"agent" json:"agent"`
 	Model string `toml:"model" json:"model"`
-	// Fallback names the profile a session runs on instead when this one
-	// has no capacity: its agent, model, effort and sandbox, and after it
-	// that profile's own fallback. Empty is no fallback. Validate refuses a
+	// Fallback names the profile a retry runs on instead after a session
+	// on this one failed for infrastructure reasons (or a brief or angle
+	// review session was refused for want of capacity): its agent, model,
+	// effort and sandbox, and after it that profile's own fallback. Empty
+	// is no fallback. Validate refuses a
 	// name that is not a profile and a chain that comes back to a profile
 	// it has been through, so the chain always ends.
 	Fallback string `toml:"fallback" json:"fallback"`

@@ -68,8 +68,8 @@ notes_max_bytes = 18768
 stacked_prs = false
 
 #===============================================================================
-# Codex Profiles. A profile's fallback names the profile a session runs on
-# instead when its own has no capacity, as the Claude profiles below do.
+# Codex Profiles. A profile's fallback names the profile a retry runs on
+# instead after a session on it failed, as the Claude profiles below do.
 #===============================================================================
 
 # [profiles.default]
@@ -130,6 +130,7 @@ sandbox = "none"
 [profiles.coder_smart]
 agent = "claude"
 model = "fable"
+fallback = "sonnet_high"
 effort = "high"
 
 [profiles.coder_medium]
@@ -156,7 +157,13 @@ model = "opus"
 fallback = "fable_low"
 effort = "low"
 
-# The profiles the ones above fall back to: fable at the same effort.
+# The profiles the ones above fall back to: fable at the same effort, and
+# for coder_smart, which runs fable itself, sonnet.
+[profiles.sonnet_high]
+agent = "claude"
+model = "sonnet"
+effort = "high"
+
 [profiles.fable_medium]
 agent = "claude"
 model = "fable"

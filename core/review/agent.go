@@ -33,6 +33,12 @@ type AgentResult struct {
 	Turns     int
 	CostUSD   float64
 	CostKnown bool
+	// Provider and Model are the agent that answered, when the
+	// implementation says: one that fell back to another agent reports that
+	// one, so the run records the session that exists and Resume knows what
+	// to reopen it with. Empty keeps what the angles were configured with.
+	Provider string
+	Model    string
 }
 
 // Agent runs one review session. It is the seam every session in the

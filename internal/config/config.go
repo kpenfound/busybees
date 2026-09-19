@@ -842,8 +842,8 @@ type Scheduler struct {
 	Retries *int `toml:"retries" json:"retries"`
 	// RetryDelay is how long to wait before a retry. Default 10m.
 	RetryDelay *Duration `toml:"retry_delay" json:"retry_delay"`
-	// RetryWithFallback runs a retry on the profile the role's profile names as its
-	// primary model. Default true.
+	// RetryWithFallback runs a retry on the profile the role's profile names
+	// as its fallback, the next retry on that one's own. Default true.
 	RetryWithFallback *bool `toml:"retry_with_fallback" json:"retry_with_fallback"`
 	// MaxCostPerIssue caps what every session run for one work item may cost
 	// in total, in USD. The total is checked between stages, never mid
@@ -2081,21 +2081,21 @@ func (r ResolvedRole) withProfile(p AgentProfile) ResolvedRole {
 // keeps its prompt, tools, turn limit and timeout.
 func (r ResolvedRole) Fallbacks() []ResolvedRole {
 	var out []ResolvedRole
-	for _, name := range fallbackChain(r.profiles, r.profileName(), r.Fallback) {
+	for _, name := range fallbackChain(r.profiles, profileNamed(r.profiles, r.AgentProfile()), r.Fallback) {
 		out = append(out, r.withProfile(r.profiles[name]))
 	}
 	return out
 }
 
-// profileName is the name the role's current profile has in its table: the
-// one whose five fields the role carries, or "" for the implicit built-in
-// profile, which is in no table. The chain starts at whatever Fallback
-// names, so the current profile only matters for ending a cycle; two
-// profiles equal in all five fields name the same fallback and start the
-// same chain.
-func (r ResolvedRole) profileName() string {
-	for name, p := range r.profiles {
-		if r.AgentProfile() == p {
+// profileNamed is the name p has in resolved, a table with every entry's
+// defaults filled in (resolvedProfiles): the first in name order whose five
+// fields are p's, or "" for the implicit built-in profile, which is in no
+// table. A fallback chain starts at whatever p's Fallback names, so which
+// of two equal profiles is found only matters for ending a cycle, and two
+// profiles equal in all five fields start the same chain.
+func profileNamed(resolved map[string]AgentProfile, p AgentProfile) string {
+	for _, name := range slices.Sorted(maps.Keys(resolved)) {
+		if resolved[name] == p {
 			return name
 		}
 	}

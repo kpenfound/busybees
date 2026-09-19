@@ -324,8 +324,8 @@ label = "{{.Label}}"
 # profile uses its own defaults; codex and opencode have no default model. No
 # declaration is required when using the built-in defaults. Uncomment this
 # example to name those defaults explicitly. fallback names another profile,
-# the one a session runs on instead, agent included, when its own has no
-# capacity; empty is none.
+# the one a retry runs on instead, agent included, after a session on this
+# one failed; empty is none.
 #[profiles.default]
 #agent = "claude"        # claude | codex | opencode
 #model = "opus"

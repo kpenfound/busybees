@@ -131,8 +131,10 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 	// conversation refers to, and a worker started after a restart has a
 	// new worktree and starts fresh. The reviewer's judge session is not
 	// resumed: a later round is told the first review's findings and the
-	// commit it read, which is all it needs to verify them.
-	var developerSessionID string
+	// commit it read, which is all it needs to verify them. The agent that
+	// gave the id goes with it: a retry that fell back to another agent
+	// leaves an id only that agent can resume (sessionSpec.resumeAgent).
+	var developerSessionID, developerSessionAgent string
 
 	// A session this issue's bookkeeping still records as running, whose
 	// process is gone, was interrupted: a scheduler dying while it worked,
@@ -263,7 +265,7 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 				log.Info("developer session", "round", bookkeeping.Round, "mail", len(inbox))
 				started = s.now()
 				res, err = s.runSessionWithRetry(ctx, sessionSpec{
-					role: config.RoleDeveloper, name: name, workspace: ws, branch: branch, worker: w, resumeID: developerSessionID,
+					role: config.RoleDeveloper, name: name, workspace: ws, branch: branch, worker: w, resumeID: developerSessionID, resumeAgent: developerSessionAgent,
 					data: prompts.Data{Issue: &fresh, PR: pr, Inbox: inbox, Round: bookkeeping.Round, MaxRounds: maxRounds, Parent: parent, BaseBranch: base},
 				})
 				if err != nil {
@@ -271,7 +273,7 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 				}
 			}
 			if res.ClaudeID != "" {
-				developerSessionID = res.ClaudeID
+				developerSessionID, developerSessionAgent = res.ClaudeID, res.Agent
 			}
 			readErr := s.mail.MarkRead(inbox...)
 			s.opAs(log, slog.LevelWarn, "mail", readErr, "mark mail read", "err", readErr)
