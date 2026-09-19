@@ -187,16 +187,29 @@ GitHub token and the role's `env`, and nothing else of the host's secrets.
 than inherited: the `[github]` token and git identity, the role's own
 `env`, and the `BEES_*` variables. Values reach `sbx` by variable name,
 never on a command line. The agent's own credential is not handed in at
-all: the sandbox's proxy injects the one stored with `sbx secret set
-anthropic` into requests to the Anthropic API, and a compromised session
-cannot read it. That proxy injects a stored `github` secret the same way,
+all: the sandbox's proxy injects the one stored with `sbx secret set`
+(`anthropic`, `openai` or another provider's) into requests to that
+provider's API, and a compromised session cannot read it. That proxy injects a stored `github` secret the same way,
 which would replace the bot's token with the person's: do not store one on
 a machine that runs the factory.
+
+**Dagger.** A role with [`sandbox_dagger_engine`](configuration.md#dagger-in-the-sandbox)
+reaches the host's Dagger engine from the sandbox, and nothing else of the
+sort: bees refuses to run a session that is granted the engine without its
+profile asking for it, or in any mode but `sbx`. What the session hands the
+engine runs outside the sandbox: its containers reach the network the
+engine can, not what the sbx policy allows, and they share the engine's
+cache with every other client of that engine. The Dagger CLI is installed
+from `dl.dagger.io` into each sandbox as root.
 
 **Does not hold, or costs something:**
 
 - The `localhost` network rule opens every service on the host's loopback
   to the session, for as long as the rule stands.
+- With `sandbox_dagger_engine`, the session runs containers outside the
+  sandbox's network policy, through the engine. The engine's forward is
+  open on the host's loopback while the session runs, so another sandbox
+  allowed `localhost` can reach it too.
 - The template is the operator's responsibility; sbx pulls it, and bees
   does not verify it.
 - A `github` secret stored with `sbx secret set` overrides the bot's
@@ -218,7 +231,7 @@ a machine that runs the factory.
 | `none` | inheriting a variable outside its grants | reading or writing anywhere the user can, reaching any host, using any credential stored on the machine |
 | `claude` | writing outside the worktree, state directory and shared `.git`; reaching a host other than GitHub | reading anything the user can read; reaching GitHub with whatever it read; `gh` on macOS reopening the trust daemon |
 | `container` | reading or writing anything of the host outside the worktree, `.git` and the state directory; using a credential other than the bot's own (GitHub, and Neo4j Agent Memory with the `neo4j` notes backend) and its agent's | reaching any host; another role reading the shared state directory |
-| `sbx` | reading or writing anything of the host outside the worktree, `.git` and the state directory; reaching a host the sbx policy does not allow; reading its agent's credential at all; using a credential other than the bot's own | reaching any service on the host's loopback once `localhost` is allowed; another role reading the shared state directory |
+| `sbx` | reading or writing anything of the host outside the worktree, `.git` and the state directory; reaching a host the sbx policy does not allow, except through the Dagger engine of a role with `sandbox_dagger_engine`; reading its agent's credential at all; using a credential other than the bot's own | reaching any service on the host's loopback once `localhost` is allowed; another role reading the shared state directory; running containers through the host's Dagger engine, outside the sbx policy, with `sandbox_dagger_engine` |
 
 A role that only reads the repository and calls the factory's own tools is
 no safer in `claude`, `container` or `sbx` than in `none`: the risk

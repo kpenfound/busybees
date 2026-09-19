@@ -29,7 +29,7 @@ func TestContainerSessionRefusedWithoutWhatItNeeds(t *testing.T) {
 		{"no github", config.ResolvedRole{Name: "developer", Sandbox: config.SandboxContainer, SandboxImage: "img"}, config.GitHub{}, "[github]"},
 		{"no credential", config.ResolvedRole{Name: "developer", Sandbox: config.SandboxContainer, SandboxImage: "img"}, config.GitHub{Login: "bot", Token: "t"}, "ANTHROPIC_API_KEY"},
 		{"sbx without github", config.ResolvedRole{Name: "developer", Sandbox: config.SandboxSbx}, config.GitHub{}, "[github]"},
-		{"sbx for codex", config.ResolvedRole{Name: "developer", Agent: config.AgentCodex, Sandbox: config.SandboxSbx}, config.GitHub{Login: "bot", Token: "t"}, "codex"},
+		{"sbx for an agent without a template", config.ResolvedRole{Name: "developer", Agent: "pi", Sandbox: config.SandboxSbx}, config.GitHub{Login: "bot", Token: "t"}, `sandbox "sbx" has no template for agent "pi"`},
 	} {
 		r := newRunner(t, claude)
 		r.GitHub = tc.gh
@@ -240,5 +240,77 @@ func TestSbxIdentityContract(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(res.SessionDir, "server-env.txt")); err != nil {
 		t.Errorf("the built-in server did not run on the host: %v", err)
+	}
+}
+
+// A role's Dagger keys reach an sbx session of any agent as the profile's
+// Dagger option and its grant: the CLI is installed at the role's release
+// and the engine address reaches the sandbox by name. A fallback profile
+// in another sandbox runs without it.
+func TestSbxDaggerContract(t *testing.T) {
+	t.Setenv("BEES_GITHUB_KEY", "github-secret")
+	codex := agenttest.Script(t, "codex", `cat > /dev/null
+echo '{"type":"thread.started","thread_id":"t1"}'
+echo '{"type":"turn.completed"}'
+`)
+	r := newRunner(t, "")
+	r.CodexBin = codex
+	r.SbxBin = agenttest.Sbx(t, EnvSessionDir)
+	r.BeesBin = agenttest.MCPServer(t, EnvSessionDir)
+	r.StateDir = t.TempDir()
+	r.GitHub = config.GitHub{Login: "bot", Token: "$BEES_GITHUB_KEY"}
+	cfg, err := config.Parse(`version = 5
+[profiles.boxed]
+agent = "codex"
+sandbox = "sbx"
+fallback = "open"
+[profiles.open]
+agent = "codex"
+[roles.developer]
+profile = "boxed"
+sandbox_dagger_engine = "tcp://127.0.0.1:1234"
+sandbox_dagger_version = "v0.20.5"
+`, filepath.Join(t.TempDir(), "bees.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	role, err := cfg.Role(config.RoleDeveloper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := ProfileForRole(role)
+	if profile.Dagger == nil || *profile.Dagger != (agent.Dagger{Engine: "tcp://127.0.0.1:1234", Version: "v0.20.5"}) {
+		t.Fatalf("profile Dagger: %+v", profile.Dagger)
+	}
+	if profile.Fallback == nil || profile.Fallback.Dagger != nil {
+		t.Errorf("the unboxed fallback profile was given Dagger: %+v", profile.Fallback)
+	}
+	if g := r.grants(r.prepare(Request{Profile: profile, Workspace: vcs.Directory(t.TempDir())}, "/session")); g.DaggerEngine != "tcp://127.0.0.1:1234" {
+		t.Errorf("grant: %q", g.DaggerEngine)
+	}
+	if g := r.grants(r.prepare(Request{Profile: *profile.Fallback, Workspace: vcs.Directory(t.TempDir())}, "/session")); g.DaggerEngine != "" {
+		t.Errorf("the fallback was granted the engine %q", g.DaggerEngine)
+	}
+
+	res, err := r.Run(context.Background(), Request{Name: "dagger", Profile: profile, Workspace: vcs.Directory(t.TempDir())})
+	if err != nil || res.IsError {
+		t.Fatalf("run: %+v, %v", res, err)
+	}
+	engine := filepath.Dir(r.SbxBin)
+	create, _ := os.ReadFile(filepath.Join(engine, "sbx-create.txt"))
+	if !strings.Contains(string(create), "--skills\noff\ncodex\n") {
+		t.Errorf("sbx create is not for codex:\n%s", create)
+	}
+	setup, _ := os.ReadFile(filepath.Join(engine, "sbx-setup.txt"))
+	if !strings.Contains(string(setup), "\nDAGGER_VERSION=0.20.5\n") {
+		t.Errorf("the Dagger CLI was not installed at the role's release:\n%s", setup)
+	}
+	args, _ := os.ReadFile(filepath.Join(res.SessionDir, "sbx-exec-args.txt"))
+	if !strings.Contains(string(args), "--env\n"+agent.EnvDaggerRunnerHost+"\n") {
+		t.Errorf("sbx exec args lack the engine address:\n%s", args)
+	}
+	env, _ := os.ReadFile(filepath.Join(res.SessionDir, "sbx-exec-env.txt"))
+	if !strings.Contains(string(env), agent.EnvDaggerRunnerHost+"=tcp://host.docker.internal:1234\n") {
+		t.Errorf("sbx client env lacks the engine address:\n%s", env)
 	}
 }
