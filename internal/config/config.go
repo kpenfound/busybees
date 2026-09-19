@@ -1834,33 +1834,7 @@ func (c *Config) Validate() error {
 			}
 		}
 	}
-	for _, name := range slices.Sorted(maps.Keys(c.Profiles)) {
-		p, scope := c.Profiles[name], "profiles."+name
-		if name == "" {
-			errs = append(errs, "profiles: profile name must not be empty")
-		}
-		if p.resolved().Agent != AgentOpenCode {
-			switch p.Effort {
-			case "", "low", "medium", "high", "max":
-			default:
-				errs = append(errs, fmt.Sprintf("%s.effort must be low, medium, high or max", scope))
-			}
-		}
-		if p.Agent != "" && !slices.Contains(Agents, p.Agent) {
-			errs = append(errs, fmt.Sprintf("%s.agent must be one of %s", scope, strings.Join(Agents, ", ")))
-		}
-		// Every mode of SandboxModes loads, including the ones no session
-		// can run in yet: whether a mode works on this machine is a question
-		// about the machine, and CheckSandbox asks it once at `bees run`.
-		if p.Sandbox != "" && !slices.Contains(SandboxModes, p.Sandbox) {
-			errs = append(errs, fmt.Sprintf("%s.sandbox must be one of %s", scope, strings.Join(SandboxModes, ", ")))
-		}
-		if p.Fallback != "" {
-			if err := c.validateFallback(name); err != nil {
-				errs = append(errs, fmt.Sprintf("%s.fallback: %v", scope, err))
-			}
-		}
-	}
+	errs = append(errs, ValidateProfiles(c.Profiles)...)
 	check("global", c.Global)
 	for name, rs := range c.Roles {
 		check("roles."+name, rs)
@@ -1891,33 +1865,6 @@ func (c *Config) Validate() error {
 	errs = append(errs, c.validateReviewProfiles()...)
 	if len(errs) > 0 {
 		return fmt.Errorf("invalid bees.toml:\n  - %s", strings.Join(errs, "\n  - "))
-	}
-	return nil
-}
-
-// validateFallback checks the fallback chain that starts at profile name:
-// every link names a profile, and none comes back to one the chain has been
-// through, itself included. The error says which link is wrong and what to
-// change.
-func (c *Config) validateFallback(name string) error {
-	seen := []string{name}
-	for at, next := name, c.Profiles[name].Fallback; next != ""; at, next = next, c.Profiles[next].Fallback {
-		if _, ok := c.Profiles[next]; !ok {
-			if at == name {
-				return fmt.Errorf("unknown profile %q (declare it under [profiles.%s])", next, next)
-			}
-			return fmt.Errorf("profiles.%s.fallback: unknown profile %q (declare it under [profiles.%s])", at, next, next)
-		}
-		if next == at {
-			if at == name {
-				return fmt.Errorf("a profile cannot be its own fallback (name another profile, or remove the key)")
-			}
-			return fmt.Errorf("profiles.%s.fallback: a profile cannot be its own fallback (name another profile, or remove the key)", at)
-		}
-		if slices.Contains(seen, next) {
-			return fmt.Errorf("fallback chain %s comes back to %q (end the chain at a profile without a fallback)", strings.Join(append(seen, next), " -> "), next)
-		}
-		seen = append(seen, next)
 	}
 	return nil
 }
