@@ -106,6 +106,7 @@ func TestRoleGrantsFollowTheSandbox(t *testing.T) {
 		config.SandboxNone:      {{Path: "/", Access: agent.ReadWrite}},
 		config.SandboxClaude:    {{Path: "/", Access: agent.ReadOnly}, {Path: work, Access: agent.ReadWrite}, {Path: state, Access: agent.ReadWrite}},
 		config.SandboxContainer: {{Path: work, Access: agent.ReadWrite}, {Path: state, Access: agent.ReadWrite}, {Path: metadata, Access: agent.ReadWrite}},
+		config.SandboxSbx:       {{Path: work, Access: agent.ReadWrite}, {Path: state, Access: agent.ReadWrite}, {Path: metadata, Access: agent.ReadWrite}},
 	} {
 		t.Run(mode, func(t *testing.T) {
 			role := role

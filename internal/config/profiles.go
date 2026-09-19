@@ -571,6 +571,12 @@ func ValidateProfiles(profiles map[string]AgentProfile) []string {
 		if p.Sandbox != "" && !slices.Contains(SandboxModes, p.Sandbox) {
 			errs = append(errs, fmt.Sprintf("%s.sandbox must be one of %s", scope, strings.Join(SandboxModes, ", ")))
 		}
+		// The sbx sandbox is created for claude, and bees builds no other
+		// agent's command for it: refused at load, naming the profile, rather
+		// than at the first session.
+		if p.Sandbox == SandboxSbx && p.resolved().Agent != AgentClaude {
+			errs = append(errs, fmt.Sprintf("%s.sandbox = %q runs agent %q only; %s.agent is %q", scope, SandboxSbx, AgentClaude, scope, p.resolved().Agent))
+		}
 		if p.Fallback != "" {
 			if err := validateFallback(profiles, name); err != nil {
 				errs = append(errs, fmt.Sprintf("%s.fallback: %v", scope, err))

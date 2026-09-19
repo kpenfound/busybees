@@ -28,6 +28,8 @@ func TestContainerSessionRefusedWithoutWhatItNeeds(t *testing.T) {
 		{"no image", config.ResolvedRole{Name: "developer", Sandbox: config.SandboxContainer}, config.GitHub{Login: "bot", Token: "t"}, "sandbox_image"},
 		{"no github", config.ResolvedRole{Name: "developer", Sandbox: config.SandboxContainer, SandboxImage: "img"}, config.GitHub{}, "[github]"},
 		{"no credential", config.ResolvedRole{Name: "developer", Sandbox: config.SandboxContainer, SandboxImage: "img"}, config.GitHub{Login: "bot", Token: "t"}, "ANTHROPIC_API_KEY"},
+		{"sbx without github", config.ResolvedRole{Name: "developer", Sandbox: config.SandboxSbx}, config.GitHub{}, "[github]"},
+		{"sbx for codex", config.ResolvedRole{Name: "developer", Agent: config.AgentCodex, Sandbox: config.SandboxSbx}, config.GitHub{Login: "bot", Token: "t"}, "codex"},
 	} {
 		r := newRunner(t, claude)
 		r.GitHub = tc.gh
@@ -174,5 +176,69 @@ echo '{"type":"result","subtype":"success","result":"ok"}'`))
 				}
 			}
 		})
+	}
+}
+
+// An sbx session is the container contract run through the sbx CLI: the
+// factory's identity and BEES_* context reach the sandbox by name, the bees
+// binary and PATH do not (it is not in the sandbox), no agent credential
+// of bees' own is required or forwarded, and the built-in server runs on
+// the host.
+func TestSbxIdentityContract(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
+	t.Setenv("HOST_ONLY", "not-sandbox-context")
+	t.Setenv("BEES_GITHUB_KEY", "github-secret")
+	r := newRunner(t, fakeClaude(t, `echo '{"type":"result","subtype":"success","result":"ok"}'`))
+	r.SbxBin = agenttest.Sbx(t, EnvSessionDir)
+	r.BeesBin = agenttest.MCPServer(t, EnvSessionDir)
+	r.StateDir = t.TempDir()
+	r.GitHub = config.GitHub{Login: "bot", Token: "$BEES_GITHUB_KEY", GitName: "Bot", GitEmail: "bot@example.com"}
+	profile := ProfileForRole(config.ResolvedRole{Name: "developer", Sandbox: config.SandboxSbx, SandboxImage: "ghcr.io/acme/template:1"})
+	req := Request{Name: "contract", Profile: profile, Workspace: vcs.Directory(t.TempDir()), Env: map[string]string{EnvIssue: "799"}}
+	prepared := r.prepare(req, "/session")
+	for _, name := range []string{"PATH", "USER", "HOST_ONLY", EnvBin} {
+		if _, ok := prepared.Env[name]; ok {
+			t.Errorf("%s included in sandbox context", name)
+		}
+	}
+	res, err := r.Run(context.Background(), req)
+	if err != nil || res.IsError {
+		t.Fatalf("run: %+v, %v", res, err)
+	}
+	args, err := os.ReadFile(filepath.Join(res.SessionDir, "sbx-exec-args.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"--env\n" + EnvGHToken + "\n", "--env\n" + EnvRole + "\n", "--env\n" + EnvIssue + "\n", "--env\n" + EnvMCPToken + "\n"} {
+		if !strings.Contains(string(args), want) {
+			t.Errorf("sbx exec args lack %q:\n%s", want, args)
+		}
+	}
+	for _, absent := range []string{"--env\n" + EnvBin + "\n", "--env\nPATH\n", "--env\nANTHROPIC_API_KEY\n", "github-secret"} {
+		if strings.Contains(string(args), absent) {
+			t.Errorf("sbx exec args carry %q:\n%s", absent, args)
+		}
+	}
+	env, err := os.ReadFile(filepath.Join(res.SessionDir, "sbx-exec-env.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{EnvGHToken + "=github-secret", "GIT_AUTHOR_NAME=Bot", EnvRole + "=developer"} {
+		if !strings.Contains(string(env), want) {
+			t.Errorf("sbx client env lacks %s", want)
+		}
+	}
+	create, err := os.ReadFile(filepath.Join(filepath.Dir(r.SbxBin), "sbx-create.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"--name\nbees-contract-", "--template\nghcr.io/acme/template:1\n", "--skills\noff\n"} {
+		if !strings.Contains(string(create), want) {
+			t.Errorf("sbx create args lack %q:\n%s", want, create)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(res.SessionDir, "server-env.txt")); err != nil {
+		t.Errorf("the built-in server did not run on the host: %v", err)
 	}
 }

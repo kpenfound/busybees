@@ -86,7 +86,8 @@ func under(dir, path string) bool {
 }
 
 // CommandContext applies the fake-executable guard to helper processes as well
-// as agents, notably the container engine and caller-owned host MCP server.
+// as agents, notably the container engine, the Docker Sandboxes CLI and the
+// caller-owned host MCP server.
 func CommandContext(ctx context.Context, bin string, args ...string) *exec.Cmd {
 	path, err := Resolve(bin)
 	if err != nil {

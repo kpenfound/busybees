@@ -92,7 +92,7 @@ prints what it found grouped by area:
 
 | Group | Checks |
 |---|---|
-| `toolchain` | `git` on `PATH`; `gh` on `PATH`, authenticated and holding the `repo` token scope; `claude` (or `$BEES_CLAUDE_BIN`) runnable and new enough; `codex` (or `$BEES_CODEX_BIN`) runnable, when a role is configured with `agent = "codex"`; `opencode` (or `$BEES_OPENCODE_BIN`) runnable, when a role is configured with `agent = "opencode"`. |
+| `toolchain` | `git` on `PATH`; `gh` on `PATH`, authenticated and holding the `repo` token scope; `claude` (or `$BEES_CLAUDE_BIN`) runnable and new enough; `codex` (or `$BEES_CODEX_BIN`) runnable, when a role is configured with `agent = "codex"`; `opencode` (or `$BEES_OPENCODE_BIN`) runnable, when a role is configured with `agent = "opencode"`; `sbx` on `PATH` and answering `sbx version`, when a role is configured with `sandbox = "sbx"`. |
 | `config` | `bees.toml` loads and validates; `project.repo` and `project.default_branch` are set or derivable; the remote answers; the state directory is ignored by git; the notes directory is writable; the sessions directory is writable, when a role is configured with `agent = "opencode"`; every configured `prompt_file` exists; the repository's `bees/prompts/` files are all readable and named after a role; a running scheduler is serving a build of the commit that is checked out. |
 | `github` | The repository is readable and writable (`viewerPermission`); with `[github]` set, that `github.token` belongs to `github.login`; every workflow label exists; with `[github]` set, that the account can actually write issues, issue comments and labels; with `[github]` set, that the account can actually push branches; the visibility filter matches at least one open issue; with `auto_merge` on, what a merge is actually gated on. |
 | `workspace` | A worktree can be created under `workspace_root` and removed again. |
@@ -1310,6 +1310,14 @@ removes its container. Such a session also leaves the pid of the MCP server
 bees runs on the host for it in `mcp-server-pid`, and that server is stopped
 with it. A container, an engine client or a server whose session is
 otherwise gone is stopped on its own.
+
+A session in the [sbx sandbox](configuration.md#the-sbx-mode) is found only
+through the MCP server bees runs on the host for it: its `sbx exec` client
+is not recognised as a session, so the pid file naming the client is
+discarded as a reused pid and the client is never stopped. A server still
+running is stopped and the session marked; the sandbox is left running
+either way. `<session dir>/sandbox-name` names it, and
+`sbx rm --force <name>` stops and removes it.
 
 Each session it stops through a pid file or through its container is also
 marked as stopped, by an `interrupted` file in the session's directory. The

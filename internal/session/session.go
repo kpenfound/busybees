@@ -119,9 +119,12 @@ type Runner struct {
 	// DockerBin is the container engine a container session is run with.
 	// Default config.ContainerEngine.
 	DockerBin string
+	// SbxBin is the Docker Sandboxes CLI an sbx session is run with.
+	// Default config.SandboxCLI.
+	SbxBin string
 	// ContainerListen is the address the built-in MCP server listens on
-	// for a container session. Empty picks the address the container
-	// reaches the host by (see containerListen).
+	// for a container or sbx session. Empty picks the address the box
+	// reaches the host by (see containerListen and sandboxListen).
 	ContainerListen string
 	// BeesBin is the path of the bees executable, made available on PATH so
 	// sessions can run `bees mail` and `bees done`.
@@ -166,7 +169,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 		return nil, fmt.Errorf("%s: %w", p.Name, err)
 	}
 	core := r.coreRunner()
-	if p.Sandbox == agent.SandboxContainer {
+	if isolated(p.Sandbox) {
 		// A granted directory must exist to be verified; the runner and
 		// the skills fill these later.
 		dirs := nonempty(r.SessionsDir)
@@ -203,13 +206,21 @@ func (r *Runner) coreRunner() *agent.Runner {
 		preparer = r.Skills
 	}
 	return &agent.Runner{
-		ClaudeBin: r.ClaudeBin, CodexBin: r.CodexBin, OpenCodeBin: r.OpenCodeBin, DockerBin: r.DockerBin,
+		ClaudeBin: r.ClaudeBin, CodexBin: r.CodexBin, OpenCodeBin: r.OpenCodeBin, DockerBin: r.DockerBin, SbxBin: r.SbxBin,
 		ContainerListen: r.ContainerListen, SessionsDir: r.SessionsDir, Skills: preparer, SkillMountDirs: skillDirs,
 		EnvironmentPrefix: beesEnvPrefix, NamePrefix: "bees-", ContainerLabel: ProcessMarkers.Container,
 		ContainerHome: "/home/bees", ContainerUseRepository: "bees-container-use",
 		MountDirs: nonempty(r.StateDir), AddDirs: r.AddDirs, Stream: r.Stream, Logger: r.Logger,
 	}
 }
+
+// isolated reports whether a sandbox mode runs the session somewhere other
+// than this host, in a container or a Docker Sandbox, where it sees the
+// mounts it is granted and nothing else and has no bees binary.
+func isolated(mode string) bool {
+	return mode == agent.SandboxContainer || mode == agent.SandboxSbx
+}
+
 func nonempty(s string) []string {
 	if s == "" {
 		return nil
@@ -253,7 +264,7 @@ func (r *Runner) prepare(req Request, dir string) Request {
 	req.VCSEnv = vcsHost
 	req.VCSContainerEnv = vcsContainer
 	req.Env = host
-	if req.Profile.Sandbox == agent.SandboxContainer {
+	if isolated(req.Profile.Sandbox) {
 		req.Env = container
 	}
 	req.ContainerEnv = container
@@ -339,8 +350,8 @@ func (r *Runner) grants(req Request) *agent.Grants {
 		for _, d := range r.AddDirs {
 			g.Mounts = append(g.Mounts, agent.Mount{Path: d, Access: agent.ReadWrite})
 		}
-	case agent.SandboxContainer:
-		// The container sees these and nothing else of the host.
+	case agent.SandboxContainer, agent.SandboxSbx:
+		// The container or sandbox sees these and nothing else of the host.
 		g.Mounts = []agent.Mount{{Path: dir, Access: agent.ReadWrite}}
 		for _, d := range []string{r.StateDir, r.SessionsDir} {
 			if d != "" {

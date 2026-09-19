@@ -87,8 +87,8 @@ req.Grants = &agent.Grants{
 
 `Runner.Verify(req)` checks a request without starting anything and returns
 the `Turn` it would run: its environment, tools and resolved mounts. `Run`
-calls it first. `HostBoundary` and `ContainerBoundary` implement the
-`Boundary` interface. The host enforces nothing of the mounts by itself, so
+calls it first. `HostBoundary`, `ContainerBoundary` and `SandboxBoundary`
+implement the `Boundary` interface. The host enforces nothing of the mounts by itself, so
 it refuses what it cannot enforce (`ErrUnsupported`):
 
 | Sandbox | Mounts it needs |
@@ -196,6 +196,23 @@ and the container gets its grants and nothing else:
   its name. `ContainerBoundary.Masks` are read-only binds laid over paths of
   the image for such a turn; `Runner.Run` sets none, and a `NewContainer`
   session (below) sets one over each VCS executable its image holds.
+
+`SandboxBoundary` (`sandbox = "sbx"`, a Docker Sandbox the `sbx` CLI
+creates, claude only) binds what `ContainerBoundary` binds, each bind a
+workspace of `sbx create` at its destination (`:ro` for `ReadOnly`). `/`
+is refused, and so is a destination holding a colon, which sbx would read
+as the access; the source is never passed to sbx, and commas and quotes
+are accepted. It builds the environment the same way with two
+differences: no agent credential is forwarded, because the sandbox's proxy
+injects the one stored with `sbx secret set`, and no `HOME` of its own is
+set, because the sandbox has one; a `HOME` the request sets is passed by
+value. Without `VCS` the command runs behind the same `/bin/sh -c`
+stand-in wrapper; nothing masks a VCS executable of the template reached
+by its path. The runner creates the sandbox before the host server starts,
+runs the command through `sbx exec --interactive` with the variables by
+name, removes the sandbox with `sbx rm --force` when the session ends, and
+records its name in `procs.SandboxNameFile` meanwhile. No `Enforcer`
+prepares this kind.
 
 ## Enforced turns
 

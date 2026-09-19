@@ -29,7 +29,8 @@ type backend interface {
 	// command builds the executable and its arguments, what to write to its
 	// stdin, and the variables to add to the session's environment: the
 	// ones a CLI is configured through when it has no flag, laid over the
-	// environment the runner builds (on the host or in a container). paths
+	// environment the runner builds (on the host, in a container or in a
+	// sandbox). paths
 	// tells it where the runner wrote the session's files.
 	command(ctx context.Context, r *Runner, req Request, paths sessionPaths) (bin string, args []string, stdin string, env []envVar, err error)
 	// consume reads the CLI's stdout to its end, copying every line to the
@@ -46,7 +47,7 @@ type sessionPaths struct {
 	prompt       string
 	// mcp are the session's MCP servers, the built-in one included: the
 	// runner decides how that one is reached (a caller-owned server the agent
-	// starts, or the host's HTTP server for a container session).
+	// starts, or the host's HTTP server for a container or sandbox session).
 	mcp map[string]MCPEntry
 	// turn is the verified request.
 	turn *Turn
@@ -131,7 +132,7 @@ func (claudeBackend) command(ctx context.Context, r *Runner, req Request, paths 
 		args = append(args, "--resume", req.ResumeID, "--system-prompt-snapshot", "off")
 	}
 	addDirs := r.AddDirs
-	if paths.turn != nil && req.Profile.Sandbox != SandboxContainer {
+	if paths.turn != nil && !req.Profile.isolated() {
 		addDirs = paths.turn.WriteDirs
 	}
 	for _, d := range addDirs {

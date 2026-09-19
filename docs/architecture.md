@@ -1005,12 +1005,20 @@ counted from the transcript's assistant messages or completed items instead.
   built-in MCP server started on the host as `bees mcp serve --listen` and
   reached over HTTP with a per-session token; `<session>/container-id`
   holds the container's id while it runs, and `<session>/mcp-server-pid`
-  that server's pid, so a crash leaves both findable. The runner refuses a session whose
-  role asks for a mode it cannot build, one its agent cannot run under, or a
-  container mode missing its image or credentials, and `bees run` refuses to
+  that server's pid, so a crash leaves both findable.
+  [`sbx`](configuration.md#the-sbx-mode) is the same command inside a
+  Docker Sandbox: `sbx create` with the same three directories as
+  workspaces at their host paths and no shared skills store, `sbx exec`
+  with the session's variables by name and the prompt on stdin, the
+  built-in server on the host's loopback reached at `host.docker.internal`,
+  and `sbx rm` when the session ends; `<session>/sandbox-name` holds the
+  sandbox's name while it exists. The runner refuses a session whose
+  role asks for a mode it cannot build, one its agent cannot run under, a
+  container mode missing its image or credentials, or an sbx mode missing
+  its GitHub credential, and `bees run` refuses to
   start at all while a role in the rotation does. See
-  [Security](security.md) for what `claude` and `container` protect and what
-  they do not.
+  [Security](security.md) for what `claude`, `container` and `sbx` protect
+  and what they do not.
 - **Outcome.** The session ends by calling the `done` tool (or, outside a
   container, running `bees done <status>`), which writes
   `<session>/outcome.json` through one shared validation: the status must be
@@ -1054,8 +1062,9 @@ counted from the transcript's assistant messages or completed items instead.
   directory read-write; `sandbox = "container"` is granted the worktree,
   the state directory and the sessions directory read-write, the
   repository's `.git` read-write for a role with version control and, for
-  a role with skills, the skills cache read-only; the container is given
-  those paths and nothing else of the host.
+  a role with skills, the skills cache read-only, and `sandbox = "sbx"` the
+  same; the container or sandbox is given those paths and nothing else of
+  the host.
 - **Environment.** A session inherits only the host variables its grants
   list (see [Exported into every session](configuration.md#exported-into-every-session)),
   and every inherited `BEES_*` variable is dropped, so a
@@ -1067,8 +1076,8 @@ counted from the transcript's assistant messages or completed items instead.
   when they apply and `BEES_REVIEW_MODE=checks` for the
   reviewer's checks-mode sessions; the directory holding the `bees` binary
   prepended to `PATH`, so `bees mail`, `bees issue` and `bees done` resolve
-  inside the session (a container session gets neither `BEES_BIN` nor the
-  `PATH` entry: the binary stays on the host); the factory's own
+  inside the session (a container or sbx session gets neither `BEES_BIN`
+  nor the `PATH` entry: the binary stays on the host); the factory's own
   [GitHub identity](configuration.md#github) when `[github]` configures one:
   `GH_TOKEN`, `GIT_AUTHOR_*` and `GIT_COMMITTER_*`, plus the variable a
   `"$VAR"` `github.token` names, holding the token bees resolved (a session
@@ -1414,6 +1423,16 @@ session for that issue is told the session was stopped rather than left to
 guess that the machine crashed (see *An interrupted session* under
 [The developer worker](#the-developer-worker)). A process found only in the
 process table names no directory and is killed unmarked.
+
+A session in the [sbx sandbox](configuration.md#the-sbx-mode) is found only
+through its built-in MCP server. The process table does not recognise its
+`sbx exec` client as a session, so the pid file naming the client is
+discarded as a reused pid, and the client is never stopped. When the
+server `mcp-server-pid` names is still running, it is stopped and the
+session marked, as a container session's server is; otherwise nothing of
+the session is found. Either way its sandbox is left running:
+`<session dir>/sandbox-name` names it, and `sbx rm --force <name>` stops
+and removes it.
 
 The kill sends SIGTERM to the process group (sessions are started in a group
 of their own, so MCP servers and shells belong to it), waits `--grace`

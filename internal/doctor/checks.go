@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/kpenfound/busybees/core/agent/agentbin"
 	"github.com/kpenfound/busybees/core/agent/procs"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/github"
@@ -115,6 +116,9 @@ func (d *Deps) Checks() []Check {
 	if d.usesOpenCode() {
 		checks = append(checks, Check{Run: d.checkOpenCode}, Check{Run: d.checkOpenCodeConfigWritable})
 	}
+	if d.usesSbx() {
+		checks = append(checks, Check{Run: d.checkSbx})
+	}
 	checks = append(checks, Check{Run: d.checkProject}, Check{Run: d.checkRemote},
 		Check{Run: d.checkStateDirIgnored}, Check{Run: d.checkNotesWritable}, Check{Run: d.checkPromptFiles},
 		Check{Run: d.checkProjectPrompts}, Check{Run: d.checkSchedulerBuild})
@@ -161,6 +165,25 @@ func (d *Deps) usesOpenCode() bool {
 		}
 		for _, size := range append([]string{""}, config.Sizes...) {
 			if role.ForSize(size).Agent == config.AgentOpenCode {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// usesSbx reports whether any enabled role resolves to sandbox = "sbx",
+// the way usesCodex gates checkCodex: the judge profile counts, as it does
+// for `bees run`'s own sandbox check.
+func (d *Deps) usesSbx() bool {
+	for _, name := range config.Roles {
+		role, err := d.Config.Role(name)
+		if err != nil || !role.Enabled {
+			continue
+		}
+		for _, size := range append([]string{""}, config.Sizes...) {
+			r := role.ForSize(size)
+			if r.Sandbox == config.SandboxSbx || (name == config.RoleReviewer && r.JudgeProfile != nil && r.ForJudge().Sandbox == config.SandboxSbx) {
 				return true
 			}
 		}
@@ -434,6 +457,26 @@ func (d *Deps) checkCodex(ctx context.Context) Result {
 			"check that "+path+" is a working Codex CLI installation")
 	}
 	return pass(name, GroupToolchain, fmt.Sprintf("codex %s at %s", oneLine(string(out)), path))
+}
+
+// checkSbx only runs when usesSbx found a role boxed with Docker Sandboxes:
+// the sbx CLI is on PATH and answers `sbx version`. It is the machine
+// question `bees run` asks of the mode too; the credentials the sandbox's
+// proxy injects (`sbx secret ls`) and the network rule the built-in MCP
+// server needs are not asked about.
+func (d *Deps) checkSbx(ctx context.Context) Result {
+	const name = "sbx runnable"
+	path, err := d.lookPath(config.SandboxCLI)
+	if err != nil {
+		return fail(name, GroupToolchain, config.SandboxCLI+" not found on PATH",
+			"install Docker Sandboxes (https://docs.docker.com/ai/sandboxes/install/): a role with sandbox = \"sbx\" runs in one")
+	}
+	out, err := agentbin.CommandContext(ctx, path, "version").CombinedOutput()
+	if err != nil {
+		return fail(name, GroupToolchain, fmt.Sprintf("%s version failed: %s", path, oneLine(string(out)+" "+err.Error())),
+			"check that "+path+" is a working Docker Sandboxes installation and that you are signed in (`sbx login`)")
+	}
+	return pass(name, GroupToolchain, fmt.Sprintf("%s at %s", oneLine(string(out)), path))
 }
 
 // checkOpenCode only runs when usesOpenCode found a role configured for it:

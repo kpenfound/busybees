@@ -93,8 +93,8 @@ type Turn struct {
 	VCS bool
 	// DeniedExecutables are shadowed on PATH for the session.
 	DeniedExecutables []string
-	// Binds are everything a container session sees of the host; nil for
-	// a host session.
+	// Binds are everything a container or Docker Sandbox session sees of
+	// the host; nil for a host session.
 	Binds []Bind
 	// Confinement is what the operating system enforces for a confined host
 	// session; nil for any other.
@@ -534,6 +534,13 @@ func workDir(req Request) string {
 
 // boundary selects what enforces the request's grants.
 func (r *Runner) boundary(req Request) Boundary {
+	if req.Profile.Sandbox == SandboxSbx {
+		b := SandboxBoundary{SessionsDir: r.SessionsDir, MountDirs: r.MountDirs}
+		if r.Skills != nil {
+			b.SkillMountDirs = r.SkillMountDirs
+		}
+		return b
+	}
 	if req.Profile.Sandbox == SandboxContainer {
 		b := ContainerBoundary{Home: r.containerHome(), SessionsDir: r.SessionsDir, MountDirs: r.MountDirs}
 		if r.held != nil {

@@ -476,7 +476,10 @@ type RoleSettings struct {
 	// role's value replaces the global one, so a role that runs the product
 	// itself can name an image that carries the product's toolchain. There
 	// is no default: a container role without one, or a
-	// ContainerUseEnvironment to build one from, is refused.
+	// ContainerUseEnvironment to build one from, is refused. When the
+	// profile selects SandboxSbx it is the sandbox's template instead, an
+	// image built on docker/sandbox-templates:claude-code, and empty
+	// selects sbx's own.
 	SandboxImage string `toml:"sandbox_image"`
 	// ContainerUseEnvironment is the path, relative to the project repo
 	// root, to a dagger/container-use environment definition the container
@@ -1269,7 +1272,8 @@ type ResolvedRole struct {
 	Env             map[string]string
 	// Sandbox is the resolved sandbox mode, one of SandboxModes.
 	Sandbox string
-	// SandboxImage is the image a SandboxContainer session runs in, empty
+	// SandboxImage is the image a SandboxContainer session runs in, or the
+	// template a SandboxSbx session is created from, empty
 	// when none was configured.
 	SandboxImage string
 	// ContainerUseEnvironment is the path to a dagger/container-use
