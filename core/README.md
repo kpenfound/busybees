@@ -199,17 +199,20 @@ and the container gets its grants and nothing else:
 
 `SandboxBoundary` (`sandbox = "sbx"`, a Docker Sandbox the `sbx` CLI
 creates, claude only) binds what `ContainerBoundary` binds, each bind a
-workspace of `sbx create` at its destination (`:ro` for `ReadOnly`; a path
-with a colon is refused), and builds the environment the same way with two
+workspace of `sbx create` at its destination (`:ro` for `ReadOnly`). `/`
+is refused, and so is a destination holding a colon, which sbx would read
+as the access; the source is never passed to sbx, and commas and quotes
+are accepted. It builds the environment the same way with two
 differences: no agent credential is forwarded, because the sandbox's proxy
-injects the one stored with `sbx secret set`, and no `HOME` is set, because
-the sandbox has its own. Without `VCS` the command runs behind the same
-`/bin/sh -c` stand-in wrapper; nothing masks a VCS executable of the
-template reached by its path. The runner creates the sandbox before the
-host server starts, runs the command through `sbx exec --interactive` with
-the variables by name, removes the sandbox with `sbx rm --force` when the
-session ends, and records its name in `procs.SandboxNameFile` meanwhile.
-No `Enforcer` prepares this kind.
+injects the one stored with `sbx secret set`, and no `HOME` of its own is
+set, because the sandbox has one; a `HOME` the request sets is passed by
+value. Without `VCS` the command runs behind the same `/bin/sh -c`
+stand-in wrapper; nothing masks a VCS executable of the template reached
+by its path. The runner creates the sandbox before the host server starts,
+runs the command through `sbx exec --interactive` with the variables by
+name, removes the sandbox with `sbx rm --force` when the session ends, and
+records its name in `procs.SandboxNameFile` meanwhile. No `Enforcer`
+prepares this kind.
 
 ## Enforced turns
 

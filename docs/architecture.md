@@ -1424,6 +1424,16 @@ guess that the machine crashed (see *An interrupted session* under
 [The developer worker](#the-developer-worker)). A process found only in the
 process table names no directory and is killed unmarked.
 
+A session in the [sbx sandbox](configuration.md#the-sbx-mode) is found only
+through its built-in MCP server. The process table does not recognise its
+`sbx exec` client as a session, so the pid file naming the client is
+discarded as a reused pid, and the client is never stopped. When the
+server `mcp-server-pid` names is still running, it is stopped and the
+session marked, as a container session's server is; otherwise nothing of
+the session is found. Either way its sandbox is left running:
+`<session dir>/sandbox-name` names it, and `sbx rm --force <name>` stops
+and removes it.
+
 The kill sends SIGTERM to the process group (sessions are started in a group
 of their own, so MCP servers and shells belong to it), waits `--grace`
 (default 5s), then SIGKILL. A container is removed first, with `docker rm

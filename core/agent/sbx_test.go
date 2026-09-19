@@ -211,14 +211,136 @@ func TestSandboxWorkspacesFollowTheTurn(t *testing.T) {
 		t.Errorf("workspaces = %v, want %v", got, want)
 	}
 
-	s.req.Workspace = fakeWorkspace{dir: "/elsewhere"}
-	if _, err := s.workspaces(); !errors.Is(err, ErrNotGranted) {
-		t.Errorf("a working directory outside the binds: %v", err)
+	// The primary workspace is the working directory itself: one inside a
+	// bind without being one is refused.
+	for _, dir := range []string{"/elsewhere", "/w/sub"} {
+		s.req.Workspace = fakeWorkspace{dir: dir}
+		if _, err := s.workspaces(); !errors.Is(err, ErrNotGranted) {
+			t.Errorf("working directory %s: %v", dir, err)
+		}
 	}
-	s.req.Workspace = fakeWorkspace{dir: "/w"}
-	s.turn.Binds = append(slices.Clone(binds), Bind{Source: "/a:b", Destination: "/a:b", Access: ReadOnly})
-	if _, err := s.workspaces(); !errors.Is(err, ErrUnsupported) {
-		t.Errorf("a path with a colon: %v", err)
+}
+
+// A HOME the session sets reaches the sandbox by value: the client keeps
+// the operator's own HOME to find its configuration, so passed by name it
+// would be the operator's.
+func TestSandboxSessionPassesTheSessionsHOME(t *testing.T) {
+	t.Setenv("HOME", "/Users/operator")
+	r := newRunner(t, fakeClaude(t, `echo '{"type":"result","subtype":"success","result":"ok"}'`))
+	r.SbxBin = fakeSbx(t)
+	r.ServerBin = fakeBees(t)
+	r.StateDir = t.TempDir()
+	role := Profile{Name: "builder", Sandbox: SandboxSbx, Env: map[string]string{"HOME": "/home/role"}}
+	res, err := r.Run(context.Background(), Request{Name: "home", Profile: role, Workspace: fakeWorkspace{dir: t.TempDir()}})
+	if err != nil || res.IsError {
+		t.Fatalf("run: %+v, %v", res, err)
+	}
+	args := strings.Join(lines(t, filepath.Join(res.SessionDir, "sbx-exec-args.txt")), "\n") + "\n"
+	if !strings.Contains(args, "--env\nHOME=/home/role\n") {
+		t.Errorf("sbx exec args do not pass the session's HOME by value:\n%s", args)
+	}
+	if strings.Contains(args, "--env\nHOME\n") {
+		t.Errorf("sbx exec args pass HOME by name, which the client holds as the operator's:\n%s", args)
+	}
+	if env := lines(t, filepath.Join(res.SessionDir, "sbx-exec-env.txt")); !slices.Contains(env, "HOME=/Users/operator") {
+		t.Error("the sbx client lost its own HOME")
+	}
+}
+
+// A refusal of the sandbox boundary names the sandbox and what sbx cannot
+// take, not a container's: sbx is handed each workspace as one argument,
+// path[:ro], so a colon is refused and a comma or a quote is not, and the
+// host's root is refused as a container's is.
+func TestSandboxBoundaryRefusesWhatSbxCannotTake(t *testing.T) {
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := func(name string) string {
+		p := filepath.Join(base, name)
+		if err := os.MkdirAll(p, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	work, state := dir("work"), dir("state")
+	for _, tc := range []struct {
+		name     string
+		mount    Mount
+		sandbox  []string // nil: the sandbox accepts it
+		inBox    []string // what the container boundary says of the same grant; nil: it accepts it
+		mountDir bool     // the mount is a directory the runner needs read-write
+	}{
+		{"colon", Mount{Path: dir("a:b"), Access: ReadOnly}, []string{"sbx", "workspace", "colon"}, nil, false},
+		{"comma", Mount{Path: dir("a,b"), Access: ReadOnly}, nil, []string{"docker's --mount"}, false},
+		{"quote", Mount{Path: dir(`a"b`), Access: ReadOnly}, nil, []string{"docker's --mount"}, false},
+		{"root", Mount{Path: "/", Access: ReadOnly}, []string{"a sandbox cannot be given the host's root"}, []string{"a container cannot be given the host's root"}, false},
+		{"read-only runner directory", Mount{Path: state, Access: ReadOnly}, []string{"writable in the sandbox"}, []string{"writable in the container"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := grantAll(Request{Workspace: fakeWorkspace{dir: work}, SessionDir: work, Profile: Profile{Sandbox: SandboxSbx}})
+			req.Grants.Mounts = append(req.Grants.Mounts, tc.mount)
+			var mountDirs []string
+			if tc.mountDir {
+				mountDirs = []string{tc.mount.Path}
+			}
+			_, err := SandboxBoundary{MountDirs: mountDirs}.Verify(req)
+			check(t, "sandbox", err, tc.sandbox)
+			req.Profile.Sandbox = SandboxContainer
+			_, err = ContainerBoundary{MountDirs: mountDirs}.Verify(req)
+			check(t, "container", err, tc.inBox)
+		})
+	}
+}
+
+// check asserts err is nil when want is, and otherwise a refusal naming
+// every word of want.
+func check(t *testing.T, box string, err error, want []string) {
+	t.Helper()
+	if want == nil {
+		if err != nil {
+			t.Errorf("%s refused: %v", box, err)
+		}
+		return
+	}
+	if !errors.Is(err, ErrUnsupported) && !errors.Is(err, ErrNotGranted) {
+		t.Fatalf("%s accepted, or refused for another reason: %v", box, err)
+	}
+	for _, w := range want {
+		if !strings.Contains(err.Error(), w) {
+			t.Errorf("%s refusal %q does not say %q", box, err, w)
+		}
+	}
+	if box == "sandbox" && strings.Contains(err.Error(), "container") {
+		t.Errorf("sandbox refusal speaks of a container: %v", err)
+	}
+}
+
+// A profile with skills needs the skills directory granted: refused when it
+// is not, and a read-only workspace of the sandbox when it is.
+func TestSandboxBoundaryGrantsTheSkills(t *testing.T) {
+	work, skills := t.TempDir(), t.TempDir()
+	req := grantAll(Request{Workspace: fakeWorkspace{dir: work}, SessionDir: work, Profile: Profile{Sandbox: SandboxSbx, Skills: []string{"https://example.com/skills"}}})
+	b := SandboxBoundary{SkillMountDirs: []string{skills}}
+	if _, err := b.Verify(req); !errors.Is(err, ErrNotGranted) || !strings.Contains(err.Error(), "skill directory") {
+		t.Errorf("an ungranted skills directory: %v", err)
+	}
+	// The runner hands its skills directories to the sandbox boundary.
+	r := &Runner{Skills: &preparedSkills{dir: skills}, SkillMountDirs: []string{skills}}
+	if _, err := r.Verify(req); !errors.Is(err, ErrNotGranted) || !strings.Contains(err.Error(), "skill directory") {
+		t.Errorf("the runner verified an sbx request without its skills directory: %v", err)
+	}
+	req.Grants.Mounts = append(req.Grants.Mounts, Mount{Path: skills, Access: ReadOnly})
+	turn, err := b.Verify(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := (&sandbox{container: container{req: req, turn: turn}}).workspaces()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(got, skills+":ro") {
+		t.Errorf("workspaces %v lack the skills directory read-only", got)
 	}
 }
 

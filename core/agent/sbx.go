@@ -109,7 +109,9 @@ func (s *sandbox) create(ctx context.Context) error {
 // workspaces are the turn's binds as `sbx create` takes them: each bind's
 // destination, which sbx mounts the host directory at that path at, ":ro"
 // when it is read-only; the working directory first, the rest in path
-// order. A bind is one path to sbx, so a path it cannot take is refused.
+// order. SandboxBoundary has refused a destination sbx cannot take. A
+// working directory that lies inside a bind without being one is refused:
+// it is the sandbox's primary workspace.
 func (s *sandbox) workspaces() ([]string, error) {
 	work := s.req.workDir()
 	binds := slices.Clone(s.turn.Binds)
@@ -127,9 +129,6 @@ func (s *sandbox) workspaces() ([]string, error) {
 	}
 	var out []string
 	for _, b := range binds {
-		if strings.ContainsAny(b.Destination, ":\n\r") || b.Destination != b.Source && strings.ContainsAny(b.Source, ":\n\r") {
-			return nil, fmt.Errorf("%w: path %q cannot be passed to %s as a workspace", ErrUnsupported, b.Destination, SandboxCLI)
-		}
 		w := b.Destination
 		if b.Access == ReadOnly {
 			w += ":ro"
@@ -147,6 +146,13 @@ func (s *sandbox) workspaces() ([]string, error) {
 func (s *sandbox) command(_ context.Context, bin string, args []string) (string, []string, error) {
 	out := []string{"exec", "--interactive", "--workdir", s.req.workDir()}
 	for _, v := range dedupe(s.vars) {
+		if v.name == "HOME" {
+			// The client keeps its own HOME to find its configuration
+			// (clientEnv), so a HOME the session sets is passed by value:
+			// by name it would be the operator's.
+			out = append(out, "--env", v.name+"="+v.value)
+			continue
+		}
 		out = append(out, "--env", v.name)
 	}
 	out = append(out, s.name)
@@ -192,8 +198,8 @@ func (s *sandbox) close() {
 }
 
 // sandboxName makes a name sbx accepts out of a session name: letters,
-// digits, hyphens and periods, at least two characters, the first one a
-// letter or a digit.
+// digits, hyphens and periods, the first one a letter or a digit. The
+// caller's random suffix makes it long enough.
 func sandboxName(s string) string {
 	var b strings.Builder
 	for _, r := range s {
@@ -221,12 +227,13 @@ func (r *Runner) sbxBin() string {
 // SandboxBoundary runs a session in a Docker Sandbox. The sandbox is given
 // the granted mounts as its workspaces, with their access, and nothing else
 // of the host; an environment built from the allowlist alone, with no HOME
-// (the sandbox has its own) and no agent credential (the sandbox's proxy
-// supplies it); and, without VCS, stand-ins for the VCS executables in front
+// of its own (the sandbox has one; a HOME the session sets is passed) and
+// no agent credential (the sandbox's proxy supplies it); and, without VCS, stand-ins for the VCS executables in front
 // of the sandbox's PATH, which deny them by name and by nothing else: a VCS
 // executable of the sandbox's image reached by its path is not masked.
 // Verify refuses a request whose own paths the grants do not cover, the way
-// ContainerBoundary does.
+// ContainerBoundary does, and a workspace sbx cannot be handed: the host's
+// root, or a path holding a colon.
 type SandboxBoundary struct {
 	// SessionsDir is where a session directory is created for a request
 	// that names none.
@@ -238,15 +245,15 @@ type SandboxBoundary struct {
 }
 
 // Verify checks the request and builds the sandbox turn. It fails closed: a
-// path the sandbox needs that no grant covers, or a variable outside the
-// allowlist, is refused.
+// path the sandbox needs that no grant covers, a workspace sbx cannot take,
+// or a variable outside the allowlist, is refused.
 func (b SandboxBoundary) Verify(req Request) (*Turn, error) {
 	turn, err := verifyCommon(req)
 	if err != nil {
 		return nil, err
 	}
 	binds := ContainerBoundary{SessionsDir: b.SessionsDir, MountDirs: b.MountDirs, SkillMountDirs: b.SkillMountDirs}
-	if err := binds.bind(req, turn); err != nil {
+	if err := binds.bind(&bindSet{sbx: true}, req, turn); err != nil {
 		return nil, err
 	}
 	if turn.Env, err = isolatedEnv(req, turn, nil, ""); err != nil {

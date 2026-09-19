@@ -1311,6 +1311,14 @@ bees runs on the host for it in `mcp-server-pid`, and that server is stopped
 with it. A container, an engine client or a server whose session is
 otherwise gone is stopped on its own.
 
+A session in the [sbx sandbox](configuration.md#the-sbx-mode) is found only
+through the MCP server bees runs on the host for it: its `sbx exec` client
+is not recognised as a session, so the pid file naming the client is
+discarded as a reused pid and the client is never stopped. A server still
+running is stopped and the session marked; the sandbox is left running
+either way. `<session dir>/sandbox-name` names it, and
+`sbx rm --force <name>` stops and removes it.
+
 Each session it stops through a pid file or through its container is also
 marked as stopped, by an `interrupted` file in the session's directory. The
 next session for that issue is then told the session before it was stopped on

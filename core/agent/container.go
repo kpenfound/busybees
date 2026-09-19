@@ -72,8 +72,8 @@ type container struct {
 	// vars is the session's environment inside the container.
 	vars []envVar
 	// listen is the address the caller-supplied server listens on, as the
-	// box reaches the host: containerListen for a container, the loopback
-	// for a Docker Sandbox (sandboxListen).
+	// box reaches the host: containerListen for a container, sandboxListen
+	// (ContainerListen when set, else the loopback) for a Docker Sandbox.
 	listen func(context.Context) (string, error)
 }
 
@@ -423,7 +423,7 @@ func (b ContainerBoundary) Verify(req Request) (*Turn, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := b.bind(req, turn); err != nil {
+	if err := b.bind(&bindSet{}, req, turn); err != nil {
 		return nil, err
 	}
 	if turn.Env, err = b.env(req, turn); err != nil {
@@ -439,16 +439,45 @@ func (b ContainerBoundary) Verify(req Request) (*Turn, error) {
 type bindSet struct {
 	binds []Bind
 	index map[string]int
+	// sbx is whether the binds are a Docker Sandbox's workspaces rather
+	// than a container's --mount values: it decides which paths can be
+	// passed and how a refusal names the box.
+	sbx bool
+}
+
+// box names what the binds are given to, for a refusal.
+func (s *bindSet) box() string {
+	if s.sbx {
+		return "sandbox"
+	}
+	return "container"
+}
+
+// passable refuses a path the box's client cannot be handed. A container's
+// --mount is a comma-separated list read as CSV, holding both paths. sbx is
+// handed only the destination, as one `sbx create` argument of the form
+// path[:ro], so a colon in it would be read as the access; the source is
+// never passed to sbx, which mounts the destination at itself.
+func (s *bindSet) passable(src, dst string) error {
+	if s.sbx {
+		if strings.Contains(dst, ":") {
+			return fmt.Errorf("%w: path %q cannot be passed to %s as a workspace: it holds a colon", ErrUnsupported, dst, SandboxCLI)
+		}
+		return nil
+	}
+	for _, p := range []string{src, dst} {
+		if strings.ContainsAny(p, ",\"\n\r") {
+			return fmt.Errorf("%w: path %q cannot be passed to %s's --mount", ErrUnsupported, p, ContainerEngine)
+		}
+	}
+	return nil
 }
 
 // add binds src at dst. A destination bound twice must be bound the same way
 // both times.
 func (s *bindSet) add(src, dst string, access Access) error {
-	for _, p := range []string{src, dst} {
-		// --mount is a comma-separated list read as CSV.
-		if strings.ContainsAny(p, ",\"\n\r") {
-			return fmt.Errorf("%w: path %q cannot be passed to %s's --mount", ErrUnsupported, p, ContainerEngine)
-		}
+	if err := s.passable(src, dst); err != nil {
+		return err
 	}
 	if i, ok := s.index[dst]; ok {
 		if prev := s.binds[i]; prev.Source != src || prev.Access != access {
@@ -470,7 +499,7 @@ func (s *bindSet) mounts(granted, resolved []Mount) error {
 	for i, m := range granted {
 		real := resolved[i]
 		if real.Path == string(filepath.Separator) {
-			return fmt.Errorf("%w: a container cannot be given the host's root; grant the directories it needs", ErrUnsupported)
+			return fmt.Errorf("%w: a %s cannot be given the host's root; grant the directories it needs", ErrUnsupported, s.box())
 		}
 		if err := s.add(real.Path, real.Path, real.Access); err != nil {
 			return err
@@ -485,9 +514,8 @@ func (s *bindSet) mounts(granted, resolved []Mount) error {
 // bind builds the turn's binds: every granted mount at its real path and at
 // the path it was granted by, every path the session is told about at that
 // path too, when a symbolic link makes it differ from its real one, and,
-// without VCS, the masks.
-func (b ContainerBoundary) bind(req Request, turn *Turn) error {
-	set := &bindSet{}
+// without VCS, the masks. set says what the binds are given to.
+func (b ContainerBoundary) bind(set *bindSet, req Request, turn *Turn) error {
 	defer func() { turn.Binds = set.binds }()
 	add := set.add
 	if err := set.mounts(req.Grants.Mounts, turn.Mounts); err != nil {
@@ -503,7 +531,7 @@ func (b ContainerBoundary) bind(req Request, turn *Turn) error {
 			return fmt.Errorf("%w: %s %s is outside every mount", ErrNotGranted, what, path)
 		}
 		if access == ReadWrite && m.Access != ReadWrite {
-			return fmt.Errorf("%w: %s %s is writable in the container and granted %s", ErrNotGranted, what, path, m.Access)
+			return fmt.Errorf("%w: %s %s is writable in the %s and granted %s", ErrNotGranted, what, path, set.box(), m.Access)
 		}
 		alias := filepath.Clean(path)
 		if alias == real {
