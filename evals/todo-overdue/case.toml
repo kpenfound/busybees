@@ -1,0 +1,32 @@
+# A small feature in the shared todo fixture (evals/fixtures/todo): a new
+# List method. docs/evals.md describes every key.
+description = "add List.Overdue, the pending items past their due date"
+test = "go test ./..."
+timeout = "45m"
+max_cost = 8
+
+[[issues]]
+number = 1
+title = "List the overdue items"
+labels = ["bees:ready", "bees:size/s"]
+body = """
+Add a method to `todo.List` that gives the items past their due date:
+
+```go
+// Overdue is the pending items due before today's date, in list order.
+func (l List) Overdue(today time.Time) List
+```
+
+Compare calendar dates, not times: an item due on today's date is not
+overdue, whatever the time of day in `today`. Take the calendar date of
+`today` in its own location; a due date (`due:2026-03-01`) is a date with no
+time of day.
+
+## Acceptance criteria
+
+- `Overdue` returns the items that are not done and have a due date before
+  today's date, in list order.
+- An item due today, due later, with no due date, or done is left out.
+- `Overdue` does not change the list it is called on.
+- `go test ./...` passes, with tests for `Overdue`.
+"""

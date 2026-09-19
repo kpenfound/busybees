@@ -42,6 +42,24 @@ case ended:
 
 A `COST` ending in `+?` counts sessions that reported no cost.
 
+### The shipped cases
+
+The busybees repository ships these cases. The `todo-*` cases share one
+fixture, `evals/fixtures/todo`: a small Go module with a to-do list library
+and a `todo` command. Their test is `go test ./...`, so they need Go on the
+machine that runs `bees eval`.
+
+| Case | Kind | The issue asks | The grading test checks |
+|---|---|---|---|
+| `hello` | bug | `greet.sh` prints `Hello, Ada!`, not `Hello Ada` | `test.sh` compares the output of `sh greet.sh Ada` |
+| `todo-done-number` | bug | `todo done <n>` marks item `n`, counting from 1, not the one after it | `List.Complete` marks the numbered item and refuses 0, negative and out-of-range numbers; `todo done 1` marks the first line |
+| `todo-priority-order` | bug | `List.ByPriority` puts the items without a priority last, not before `(A)` | `ByPriority` orders `(A)` to `(Z)`, then the items without one, each group in list order, and leaves the list as it was |
+| `todo-overdue` | feature | a `List.Overdue(today)` method: the pending items due before today's date | `Overdue` compares dates, not times, and leaves out done items, items due today or later and items with no due date |
+| `todo-count` | feature, seeded for triage | a `todo count` command printing `2 pending, 1 done` | the line printed for a list and for a missing file, and an error for an extra argument |
+
+The `todo-*` grading tests are only in each case's `grade/`, so the sessions
+do not see them.
+
 ### Which profile the sessions run on
 
 `--profile <name>` runs every role on that profile. bees looks it up in the
@@ -126,9 +144,23 @@ evals/hello/
 Instead of `repo/`, a case can have a `setup.sh`, which bees runs with `sh` in
 an empty clone and then commits. A case has one or the other.
 
-Put the files that grade the case in `grade/` as well as in `repo/`. The
-developer can run the tests in `repo/`, but a session that edits them does not
-change what grades it.
+Cases can share a fixture. Put it under `evals/fixtures/<name>/` and have
+each case's `setup.sh` copy it in:
+
+```sh
+cp -R "$(dirname "$0")/../fixtures/todo/." .
+```
+
+`evals/fixtures/` is not a case.
+
+Put the files that grade the case in `grade/`, where a session that edits
+the fixture's tests does not change what grades it. A copy in `repo/` as well
+lets the developer run them, as in `hello`. Left out of `repo/`, as in the
+`todo-*` cases, they stay hidden the way SWE-bench hides its tests, and the
+issue has to state the behaviour they check. Give them names the developer
+is unlikely to pick (`eval_count_test.go`, `TestEvalCount`): a file copied
+over the checkout replaces one with the same path, and a Go test declared
+twice does not build.
 
 `evals/hello/case.toml`:
 
