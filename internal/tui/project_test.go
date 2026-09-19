@@ -147,7 +147,7 @@ func TestASingleProjectViewHasNoSelector(t *testing.T) {
 		statusMsg{status: state.Status{NeedsHuman: []state.Escalated{escalated(44, "Parser", "gave up", fixed)}}},
 	}
 	view := drive(t, Deps{Repo: "acme/widgets"}, msgs...)
-	if !strings.HasPrefix(header(view), "busybees  acme/widgets  ") {
+	if !strings.HasPrefix(header(view), "busybees  acme/widgets ") {
 		t.Errorf("the header is %q", header(view))
 	}
 	for _, absent := range []string{"[all]", "project", "←→"} { // the column, and the footer's "←→ project"

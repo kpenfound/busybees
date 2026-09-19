@@ -199,6 +199,9 @@ type Model struct {
 	width  int
 	height int
 	ticks  int
+	// beeStep counts beeInterval ticks: how far the header's bees have
+	// moved.
+	beeStep int
 	// stopping is set by the first Ctrl-C or q: the factory has been asked
 	// to stop polling and start nothing new, the work in flight finishes,
 	// and the view stays up until it has. hardStopped is the second
@@ -290,6 +293,16 @@ type reloadedMsg struct {
 // poll advance between events.
 type tickMsg time.Time
 
+// beeMsg moves the header's bees one cell (see bees).
+type beeMsg struct{}
+
+// beeInterval is how often the header's bees move: fast enough to read as
+// scrolling, and on its own tick so nothing else is recomputed more often.
+const beeInterval = 200 * time.Millisecond
+
+// beeGap is the spaces after each bee in the header.
+const beeGap = 8
+
 // Stopped tells the view the factory has stopped and drained, which is the
 // one thing that ends the program on its own. The wiring in Run sends it,
 // and carries nothing: Run returns the factory's error itself.
@@ -306,7 +319,7 @@ const redrawInterval = time.Second
 const refreshEvery = 5
 
 func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{m.countTurns(), redraw(), m.waitForProjects()}
+	cmds := []tea.Cmd{m.countTurns(), redraw(), flyBees(), m.waitForProjects()}
 	for p := range m.projects {
 		cmds = append(cmds, m.waitForEvent(p), m.refresh(p))
 	}
@@ -399,6 +412,10 @@ func (m Model) countTurns() tea.Cmd {
 	}
 }
 
+func flyBees() tea.Cmd {
+	return tea.Tick(beeInterval, func(time.Time) tea.Msg { return beeMsg{} })
+}
+
 func redraw() tea.Cmd {
 	return tea.Tick(redrawInterval, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
@@ -480,6 +497,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(redraw(), m.refreshAll(), m.countTurns())
 		}
 		return m, redraw()
+	case beeMsg:
+		m.beeStep++
+		return m, flyBees()
 	case Stopped:
 		// The factory is done and Run returns its error; the view has
 		// nothing left to draw.
@@ -1099,7 +1119,34 @@ func (m Model) header(w int) string {
 	if gap < 1 {
 		gap = 1
 	}
-	return left + strings.Repeat(" ", gap) + right
+	return left + bees(gap, m.beeStep) + right
+}
+
+// bees fills a header gap of gap cells with 🐝, each followed by beeGap
+// spaces, shifted step cells to the right, and a plain space at each end so
+// no bee touches the title or the notices. A gap too narrow for one bee is
+// plain spaces. The result is always gap cells wide.
+func bees(gap, step int) string {
+	bee := "🐝"
+	bw := lipgloss.Width(bee)
+	inner := gap - 2
+	if inner < bw {
+		return strings.Repeat(" ", gap)
+	}
+	period := bw + beeGap
+	var b strings.Builder
+	b.WriteString(" ")
+	for i := 0; i < inner; {
+		if ((i-step)%period+period)%period == 0 && i+bw <= inner {
+			b.WriteString(bee)
+			i += bw
+			continue
+		}
+		b.WriteString(" ")
+		i++
+	}
+	b.WriteString(" ")
+	return b.String()
 }
 
 // stoppingNotice is the footer both screens show once the factory has been
