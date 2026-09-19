@@ -57,6 +57,8 @@ type Deps struct {
 	CodexBin string
 	// OpenCodeBin is the opencode executable. Default "opencode".
 	OpenCodeBin string
+	// PiBin is the pi executable. Default "pi".
+	PiBin string
 
 	// MachineGitHub runs the one gh command that is about the machine's own
 	// authentication rather than the repository: `gh auth status`. It never
@@ -75,8 +77,8 @@ type Deps struct {
 // checks run against. It never fails: a configuration that does not load or
 // does not resolve is reported by the config checks instead, so the toolchain
 // checks still run on a machine that has no bees.toml yet.
-func New(ctx context.Context, configPath, claudeBin, codexBin, openCodeBin string) *Deps {
-	d := &Deps{ConfigPath: configPath, ClaudeBin: claudeBin, CodexBin: codexBin, OpenCodeBin: openCodeBin, MachineGitHub: github.New("")}
+func New(ctx context.Context, configPath, claudeBin, codexBin, openCodeBin, piBin string) *Deps {
+	d := &Deps{ConfigPath: configPath, ClaudeBin: claudeBin, CodexBin: codexBin, OpenCodeBin: openCodeBin, PiBin: piBin, MachineGitHub: github.New("")}
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		d.ConfigErr = err
@@ -115,6 +117,9 @@ func (d *Deps) Checks() []Check {
 	}
 	if d.usesOpenCode() {
 		checks = append(checks, Check{Run: d.checkOpenCode}, Check{Run: d.checkOpenCodeConfigWritable})
+	}
+	if d.usesAgent(config.AgentPi) {
+		checks = append(checks, Check{Run: d.checkPi})
 	}
 	if d.usesSbx() {
 		checks = append(checks, Check{Run: d.checkSbx})
@@ -157,16 +162,28 @@ func (d *Deps) usesCodex() bool {
 
 // usesOpenCode reports whether any enabled role resolves to agent =
 // "opencode", the same way usesCodex gates checkCodex.
-func (d *Deps) usesOpenCode() bool {
+func (d *Deps) usesOpenCode() bool { return d.usesAgent(config.AgentOpenCode) }
+
+// usesAgent reports whether any enabled role resolves to agent at some
+// work item size.
+func (d *Deps) usesAgent(agent string) bool {
 	for _, name := range config.Roles {
 		role, err := d.Config.Role(name)
 		if err != nil || !role.Enabled {
 			continue
 		}
-		for _, size := range append([]string{""}, config.Sizes...) {
-			if role.ForSize(size).Agent == config.AgentOpenCode {
-				return true
-			}
+		if roleUses(role, agent) {
+			return true
+		}
+	}
+	return false
+}
+
+// roleUses reports whether role resolves to agent at some work item size.
+func roleUses(role config.ResolvedRole, agent string) bool {
+	for _, size := range append([]string{""}, config.Sizes...) {
+		if role.ForSize(size).Agent == agent {
+			return true
 		}
 	}
 	return false
@@ -271,6 +288,13 @@ func (d *Deps) openCodeBin() string {
 		return d.OpenCodeBin
 	}
 	return "opencode"
+}
+
+func (d *Deps) piBin() string {
+	if d.PiBin != "" {
+		return d.PiBin
+	}
+	return "pi"
 }
 
 // ---- toolchain -------------------------------------------------------------
@@ -500,6 +524,39 @@ func (d *Deps) checkOpenCode(ctx context.Context) Result {
 			"check that "+path+" is a working opencode installation")
 	}
 	return pass(name, GroupToolchain, fmt.Sprintf("opencode %s at %s", oneLine(string(out)), path))
+}
+
+// checkPi only runs when a role is configured with agent = "pi": pi is
+// opt-in the same way codex is. bees pins no minimum version for pi yet, so
+// this only asks that it is installed and runs; whether the packages a pi
+// session loads are there is a question per role (checkRolePiPackages).
+func (d *Deps) checkPi(ctx context.Context) Result {
+	const name = "pi runnable"
+	path, res := d.piPath(name)
+	if path == "" {
+		return res
+	}
+	out, err := exec.CommandContext(ctx, path, "--version").CombinedOutput()
+	if err != nil {
+		return fail(name, GroupToolchain, fmt.Sprintf("%s --version failed: %s", path, oneLine(string(out)+" "+err.Error())),
+			"check that "+path+" is a working pi installation")
+	}
+	return pass(name, GroupToolchain, fmt.Sprintf("pi %s at %s", oneLine(string(out)), path))
+}
+
+// piPath finds pi the way a session does, or returns the failed result a
+// check named name reports when it cannot.
+func (d *Deps) piPath(name string) (string, Result) {
+	bin := d.piBin()
+	if strings.ContainsRune(bin, filepath.Separator) {
+		return bin, Result{}
+	}
+	p, err := d.lookPath(bin)
+	if err != nil {
+		return "", fail(name, GroupToolchain, fmt.Sprintf("%s not found on PATH", bin),
+			"install pi (https://pi.dev), or set $BEES_PI_BIN to its path")
+	}
+	return p, Result{}
 }
 
 // ---- config ----------------------------------------------------------------

@@ -362,7 +362,15 @@ func TestDaggerProfileValidation(t *testing.T) {
 			t.Errorf("%s: error %v does not mention %q", tc.name, err, tc.want)
 		}
 	}
+	// Every agent but pi, which sbx has no template for (#800): Validate
+	// refuses pi in sbx for that reason.
 	for _, a := range Agents {
+		if a == AgentPi {
+			if SbxTemplates[a] != "" {
+				t.Errorf("agent pi has an sbx template %q, and the pi sandbox rules say it has none", SbxTemplates[a])
+			}
+			continue
+		}
 		if SbxTemplates[a] == "" {
 			t.Errorf("agent %s has no sbx template", a)
 		}

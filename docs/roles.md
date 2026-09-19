@@ -351,8 +351,8 @@ fixed in passing. It never changes labels and never pushes to the default
 branch.
 
 **A later round.** The second and later developer sessions of one worker
-continue the conversation of the previous one (`claude --resume`, or
-`--session` for `opencode`), so the developer handed feedback still knows the
+continue the conversation of the previous one (`claude --resume`,
+`--session` for `opencode`, or `--session-id` for `pi`), so the developer handed feedback still knows the
 codebase and its own change. The task prompt is rebuilt for the round all the
 same. A worker started after a restart of `bees run` begins a fresh
 conversation, and so does every round of a `codex` role, which has no resume.
@@ -732,8 +732,11 @@ prompt_file = "docs/qa-checklist.md"
   running scheduler was started from, and `bees doctor` warns when it is
   behind the repository.
 - **skills** are unioned, global first, and exposed to the session as plugin
-  directories. They are Claude Code's: a `codex` or `opencode` session is
-  passed none.
+  directories. They are Claude Code's: a `codex`, `opencode` or `pi` session
+  is passed none.
+- **pi_packages** are unioned, global first, and loaded by a `pi` session on
+  top of `pi-mcp-adapter`, which every `pi` session loads (see
+  [Pi](configuration.md#pi)). Other agents ignore them.
 - **mcp** servers are unioned; a role's server replaces a global one with the
   same name. The name `bees` is reserved for the built-in server.
 - **profile / profile_by_size** select an agent profile: role size override,
@@ -742,8 +745,8 @@ prompt_file = "docs/qa-checklist.md"
   `fallback` names the profile a retry runs on instead after a session on
   this one failed for infrastructure reasons, agent included (see
   [Retries](workflow.md#retries-first)). `agent` is the CLI
-  a session runs as, `claude`, `codex` or `opencode`; a `codex` or `opencode`
-  role has no default `model`, and ignores `max_turns`,
+  a session runs as, `claude`, `codex`, `opencode` or `pi`; a `codex`,
+  `opencode` or `pi` role has no default `model`, and ignores `max_turns`,
   `allowed_tools` and `disallowed_tools`; an `opencode` role ignores
   `effort` too (see [Running a
   session](architecture.md#running-a-session)).

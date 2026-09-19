@@ -16,7 +16,7 @@ import (
 )
 
 // A session's transcript is what its agent writes as it works — claude's
-// stream-json, codex's event stream, or opencode's — one JSON object per
+// stream-json, codex's event stream, opencode's or pi's — one JSON object per
 // line, teed to transcript.jsonl by the runner. The view reads that file
 // rather than the stream: it is already on disk, one line per event, and
 // reading it needs nothing of the scheduler.
@@ -31,9 +31,12 @@ import (
 // "text" events are what the session said, and a "step_finish" whose
 // reason is "stop" is the session's end, with the cost opencode reports per
 // step summed into a running total — unlike codex, which never reports
-// one. A line the view cannot parse is dropped too: half a JSON object is
-// what a transcript being written *right now* ends with, and it is worth
-// nothing to a reader.
+// one. A pi transcript's ended messages are read like claude's messages —
+// what the assistant said and called, how each tool answered — with the
+// cost pi reports per response summed the way opencode's is, and its
+// "agent_end" is the session's end. A line the view cannot parse is dropped
+// too: half a JSON object is what a transcript being written *right now*
+// ends with, and it is worth nothing to a reader.
 
 // Markers each kind of transcript line is prefixed with. They are the ones
 // Claude Code's own output uses, so a person who has watched a session in a
@@ -87,6 +90,10 @@ type transcriptEntry struct {
 			Message string `json:"message"`
 		} `json:"data"`
 	} `json:"error"`
+	// Messages are pi's "agent_end" event's: every message of the run, the
+	// last assistant one saying how it ended. A pi "message_end" event's
+	// message is Message, read by piMessageOf.
+	Messages []json.RawMessage `json:"messages"`
 	// Part is opencode's: the part of a "text" or "step_finish" event,
 	// mirroring opencodeEvent in internal/session.
 	Part struct {
@@ -108,13 +115,32 @@ type transcriptBlock struct {
 	Input   json.RawMessage `json:"input"`
 	Content json.RawMessage `json:"content"`
 	IsError bool            `json:"is_error"`
+	// Arguments are a pi "toolCall" block's, its counterpart of Input.
+	Arguments json.RawMessage `json:"arguments"`
+}
+
+// piMessage is a message of pi's event stream, as the view reads it: whose
+// it is, its content blocks and, for an assistant message, how it stopped
+// and what it cost; a tool result says whether it failed.
+type piMessage struct {
+	Role         string          `json:"role"`
+	Content      json.RawMessage `json:"content"`
+	StopReason   string          `json:"stopReason"`
+	ErrorMessage string          `json:"errorMessage"`
+	IsError      bool            `json:"isError"`
+	Usage        struct {
+		Cost struct {
+			Total float64 `json:"total"`
+		} `json:"cost"`
+	} `json:"usage"`
 }
 
 // readTranscript reads whatever has been appended to a session's transcript
 // since byte offset off, and returns the lines to show for it, the offset
 // to continue from and the running cost to carry into the next read — an
-// opencode transcript reports cost per step rather than once at the end, so
-// it is threaded through the same way off is.
+// opencode transcript reports cost per step and a pi one per response,
+// rather than once at the end, so it is threaded through the same way off
+// is.
 //
 // Only whole lines are consumed: the runner is writing this file as the
 // view reads it, so the last line is regularly half an object. Leaving it
@@ -154,8 +180,8 @@ func readTranscript(dir string, off int64, cost float64) (lines []string, next i
 
 // renderTranscriptLine turns one stream-json line into the lines the view
 // shows for it, or none at all, and the running cost to carry forward — an
-// opencode "step_finish" event adds to it, everything else passes it
-// through unchanged.
+// opencode "step_finish" event and a pi assistant "message_end" add to it,
+// everything else passes it through unchanged.
 func renderTranscriptLine(line []byte, cost float64) ([]string, float64) {
 	line = bytes.TrimSpace(line)
 	if len(line) == 0 {
@@ -180,14 +206,71 @@ func renderTranscriptLine(line []byte, cost float64) ([]string, float64) {
 		return prefixed(sayMark, e.Part.Text, 0), cost
 	case "step_finish":
 		return stepFinishLines(e, cost)
+	case "message_end":
+		return piMessageLines(e, cost)
+	case "agent_end":
+		return []string{piEndLine(e, cost)}, cost
 	}
 	// "system" (init, thinking-token bookkeeping, task notifications) and
 	// "rate_limit_event" are the runner's business, not a reader's; so are
 	// codex's "thread.started", "turn.started" and "item.started". So is
 	// opencode's "tool_use": internal/session.opencodeBackend.consume does
 	// not decode a tool call either, and there is no verified field shape
-	// to render one from yet.
+	// to render one from yet. Pi's "session" header, its turn and message
+	// starts and its streamed deltas say nothing its ended messages do not.
 	return nil, cost
+}
+
+// piMessageOf reads the message of a pi "message_end" event.
+func piMessageOf(raw json.RawMessage) (piMessage, bool) {
+	var m piMessage
+	return m, json.Unmarshal(raw, &m) == nil
+}
+
+// piMessageLines renders one message pi finished: an assistant message the
+// way claude's is, with its cost added to the running total; a tool's answer
+// the way claude's tool results are; the prompt the way a typed user turn
+// is. Anything else pi records (a bash execution, a summary) renders nothing.
+func piMessageLines(e transcriptEntry, cost float64) ([]string, float64) {
+	m, ok := piMessageOf(e.Message)
+	if !ok {
+		return nil, cost
+	}
+	switch m.Role {
+	case "assistant":
+		return assistantLines(blocksOf(e)), cost + m.Usage.Cost.Total
+	case "toolResult":
+		return []string{resultMark + toolResult(transcriptBlock{Content: m.Content, IsError: m.IsError})}, cost
+	case "user":
+		return userLines(blocksOf(e)), cost
+	}
+	return nil, cost
+}
+
+// piEndLine renders pi's "agent_end": the session is over, and how it ended
+// is how its last assistant message stopped, the same reading
+// core/agent's piBackend.consume makes of it, with the cost summed so
+// far.
+func piEndLine(e transcriptEntry, cost float64) string {
+	var last piMessage
+	for _, raw := range e.Messages {
+		if m, ok := piMessageOf(raw); ok && m.Role == "assistant" {
+			last = m
+		}
+	}
+	switch last.StopReason {
+	case "stop":
+		return fmt.Sprintf("%ssession ended: ok, $%.2f", sayMark, cost)
+	case "error":
+		how := "failed"
+		if last.ErrorMessage != "" {
+			how += ": " + oneLine(last.ErrorMessage)
+		}
+		return sayMark + "session ended: " + how
+	case "":
+		return sayMark + "session ended"
+	}
+	return sayMark + "session ended: stop_" + last.StopReason
 }
 
 // stepFinishLines renders one opencode step's end, the same event
@@ -306,6 +389,8 @@ func assistantLines(blocks []transcriptBlock) []string {
 			out = append(out, thinkMark+"thinking")
 		case "tool_use":
 			out = append(out, sayMark+b.Name+"("+toolSummary(b.Name, b.Input)+")")
+		case "toolCall":
+			out = append(out, sayMark+b.Name+"("+toolSummary(b.Name, b.Arguments)+")")
 		}
 	}
 	return out

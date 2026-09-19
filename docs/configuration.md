@@ -596,20 +596,21 @@ The CLI accepts aliases such as `pm` and `dev`; the TOML keys do not.
 | `prompt` | string | `""` | Text appended to the role's built-in prompt. |
 | `prompt_file` | string | `""` | Path, relative to `bees.toml`, whose contents are appended after `prompt`. The file must exist when the file loads. |
 | `skills` | string list | `[]` | Skills by git URL. See [Skills](#skills). |
+| `pi_packages` | string list | `[]` | Pi packages a `pi` session loads with `pi -e` on top of `pi-mcp-adapter`, which it always loads: `npm:<name>[@version]`, `git:<repo>[@ref]`, a URL, or a path (a relative one from the session's worktree). `[global]` and role lists are unioned. Sessions of other agents ignore it. An empty entry, one starting with `-` and one naming `pi-mcp-adapter` are load errors. See [Pi](#pi). |
 | `skills_refresh` | string | `"24h"` | `[global]` only. How stale a skill clone may get before it is pulled when a session needs it: `never`, `always` or a duration. |
 | `mcp.<name>` | table | | MCP servers keyed by name. See [MCP servers](#mcp-servers). |
 | `profile` | string | `""` | Profile name. Under `[global]`, the default profile for every role; under a role, that role's profile override. An empty value uses the implicit built-in profile. |
 | `profile_by_size` | table | `{}` | Profile name per work item size, keyed by `xs`, `s`, `m`, `l` or `xl`. Accepted under `[global]` and every role. |
-| `max_turns` | int | `200` | Agentic turns per session (`claude --max-turns`). `0` means the default. Codex and opencode have no such limit and a `codex` or `opencode` role ignores it. |
+| `max_turns` | int | `200` | Agentic turns per session (`claude --max-turns`). `0` means the default. Codex, opencode and pi have no such limit and a `codex`, `opencode` or `pi` role ignores it. |
 | `timeout` | duration | `"45m"` | Wall-clock limit for one session; the session's process group is killed when it expires. `"0s"` means the default. |
-| `allowed_tools` | string list | `[]` | Passed as `claude --allowedTools`. A `codex` or `opencode` role ignores it. |
-| `disallowed_tools` | string list | `[]` | Passed as `claude --disallowedTools`. A `codex` or `opencode` role ignores it. |
+| `allowed_tools` | string list | `[]` | Passed as `claude --allowedTools`. A `codex`, `opencode` or `pi` role ignores it. |
+| `disallowed_tools` | string list | `[]` | Passed as `claude --disallowedTools`. A `codex`, `opencode` or `pi` role ignores it. |
 | `shell` | string | the shell bees runs under | Exported into sessions as `$SHELL`. Claude Code discovers its Bash tool's shell from `$SHELL`, so this is the lever, without being a guarantee. Must be an existing file. |
 | `sandbox_image` | string | `""` | The image a `container` session runs in: it must hold the role's agent, `git` and `gh`. A `container` role without one or `container_use_environment` is refused at `bees run`. See [The container mode](#the-container-mode). For an `sbx` session it is the sandbox's template instead, an image built on sbx's image for the agent (`docker/sandbox-templates:claude-code`, `:codex` or `:opencode`); empty selects sbx's own. See [The sbx mode](#the-sbx-mode). |
 | `container_use_environment` | string | `""` | Path, relative to the project repository root, to a `dagger/container-use` environment definition to build the `container` profile's image from, instead of `sandbox_image`. Requires the resolved profile's `sandbox = "container"` and is a load error together with `sandbox_image` on the same resolved role. See [Building from container-use](#building-from-container-use). |
 | `sandbox_dagger_engine` | string | `""` | The host's Dagger engine an `sbx` session is given, `unix://<socket path>` or `tcp://<host>:<port>`, with the Dagger CLI installed in the sandbox. Empty gives neither. Requires the resolved profile's `sandbox = "sbx"` at every size and `sandbox_dagger_version`. See [Dagger in the sandbox](#dagger-in-the-sandbox). |
 | `sandbox_dagger_version` | string | `""` | The Dagger CLI release installed in the sandbox for `sandbox_dagger_engine`, the engine's own, such as `"v0.20.5"`. Requires `sandbox_dagger_engine`. |
-| `env` | table | `{}` | Environment variables exported into every session: the agent, its shell tool and git see them, and so do MCP servers under `claude` and `opencode` (codex starts a server with only the variables its entry names). A `$VAR` value is expanded from the bees process environment when the session starts. A name may not be empty or contain `=` or a space. See [Exported into every session](#exported-into-every-session) for how it meets the variables bees sets itself. |
+| `env` | table | `{}` | Environment variables exported into every session: the agent, its shell tool and git see them, and so do MCP servers under `claude`, `opencode` and `pi` (codex starts a server with only the variables its entry names). A `$VAR` value is expanded from the bees process environment when the session starts. A name may not be empty or contain `=` or a space. See [Exported into every session](#exported-into-every-session) for how it meets the variables bees sets itself. |
 | `enabled` | bool | `true` | Roles only. `false` takes a role out of the rotation. Disabling `reviewer` makes a developer's pull request count as approved the moment it is opened, and with `auto_merge` it goes straight to the checks stage. Under `[global]` the key is an error. A named set of these decisions is a [config template](templates.md). |
 
 ## `[profiles.<name>]`
@@ -617,7 +618,7 @@ The CLI accepts aliases such as `pm` and `dev`; the TOML keys do not.
 A profile bundles the agent, model, fallback, effort and sandbox for a
 session. Profiles are named globally, then selected by `[global]` or a role.
 Values omitted from a profile use its built-in defaults; a profile configured
-for `codex` or `opencode` has no default model. `fallback` names the profile
+for `codex`, `opencode` or `pi` has no default model. `fallback` names the profile
 a retry runs on instead after a session on this one failed: that profile's
 agent, model, effort and sandbox, which can be a different agent entirely.
 
@@ -644,11 +645,11 @@ profile_by_size = { xs = "bar", s = "bar", l = "foo", xl = "foo" }
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `agent` | string | `"claude"` | CLI a session runs as: `claude` (`claude -p`), `codex` (`codex exec`) or `opencode`. An unknown value is a load error. See [Running a session](architecture.md#running-a-session). |
-| `model` | string | `"opus"` for `claude`, `""` otherwise | Model alias or full id, passed to the selected agent (`provider/model` for opencode). An empty value lets codex or opencode use its own configured model. |
+| `agent` | string | `"claude"` | CLI a session runs as: `claude` (`claude -p`), `codex` (`codex exec`), `opencode` or `pi` (`pi -p`, see [Pi](#pi)). An unknown value is a load error. See [Running a session](architecture.md#running-a-session). |
+| `model` | string | `"opus"` for `claude`, `""` otherwise | Model alias or full id, passed to the selected agent (`provider/model` for opencode and pi). An empty value lets codex, opencode or pi use its own configured model. |
 | `fallback` | string | `""` | The profile a retry runs on instead, agent included: a session that failed for infrastructure reasons (a timeout, exhausted turns, a crash, a rate limit) is retried on it when [`scheduler.retry_with_fallback`](#scheduler) is on, the next retry on that profile's own `fallback`, and so on; a brief or angle review session refused for want of capacity runs again on it. Must name a profile; a profile that names itself, or a longer cycle (`a` → `b` → `a`), is a load error. When both profiles run `claude`, the fallback's model is also passed as `claude --fallback-model`, so claude switches to it within a session; codex and opencode have no such flag, and a fallback on another agent is a new session. A fallback in a sandbox other than `sbx` runs without the role's [Dagger engine](#dagger-in-the-sandbox). |
-| `effort` | string | `""` | Passed as `claude --effort` when set: `low`, `medium`, `high` or `max`. Codex receives it as `model_reasoning_effort`; `max` maps to `high`. Opencode receives it as the default `build` agent's `variant`; variants are names the model defines, not levels. |
-| `sandbox` | string | `"none"` | How much of the machine a session can reach: `none`, `claude`, `container` or `sbx`. See [Sandboxing](#sandboxing). |
+| `effort` | string | `""` | Passed as `claude --effort` when set: `low`, `medium`, `high` or `max`. Codex receives it as `model_reasoning_effort`; `max` maps to `high`. Opencode receives it as the default `build` agent's `variant`; variants are names the model defines, not levels. Pi receives it as `--thinking`. |
+| `sandbox` | string | `"none"` | How much of the machine a session can reach: `none`, `claude`, `container` or `sbx`. A `pi` profile runs with `none` or `container`: any other mode is a load error. See [Sandboxing](#sandboxing). |
 
 The effective profile follows this order for a work item size:
 role `profile_by_size[size]`, role `profile`, global
@@ -739,8 +740,8 @@ mandatory read-only checkout policy: no commands, writes, web/network tools,
 MCP, factory identity, or writable or shared VCS access. Claude and Codex are
 the supported host agents, on every profile of the `fallback` chain too: a
 brief or angle session refused for want of capacity runs again as its
-fallback, under the same policy, and a chain that reaches an `opencode`
-profile is a load error.
+fallback, under the same policy, and a chain that reaches an `opencode` or
+`pi` profile is a load error.
 
 The judge applies all five profile fields, including `sandbox`, through an
 ordinary factory reviewer session. Its prompt, tools, permissions and ability
@@ -973,7 +974,8 @@ What the session can reach:
 On macOS nothing needs installing. On Linux the box needs `bubblewrap` and
 `socat` on `PATH`, which `bees run` checks before it starts. The box is
 Claude Code's, so a role whose resolved profile's `agent` is `codex` or
-`opencode` cannot use it: `bees run` refuses to start, naming the role.
+`opencode` cannot use it: `bees run` refuses to start, naming the role. A
+profile with `agent = "pi"` and `sandbox = "claude"` does not load.
 Commit signing
 through `gpg` does not work inside the box, because `gpg` writes under
 `~/.gnupg`.
@@ -1022,7 +1024,7 @@ Its environment is built from nothing rather than from the one `bees` runs
 in, and holds, in this order: the agent's credential forwarded from the bees
 environment when it is set there (`ANTHROPIC_API_KEY` or
 `CLAUDE_CODE_OAUTH_TOKEN` for claude, `OPENAI_API_KEY` or `CODEX_API_KEY` for
-codex), the role's `env` (which may name the credential itself), `SHELL`, the
+codex, the provider keys listed under [Pi](#pi) for pi), the role's `env` (which may name the credential itself), `SHELL`, the
 `BEES_*` variables, the [`[github]`](#github) token and git identity, the git
 configuration every session runs with plus `safe.directory = *` and an
 `insteadOf` that pushes an ssh remote over https (the container has no ssh
@@ -1140,7 +1142,8 @@ An `sbx` session is the agent's command line, unchanged, run inside a
 [Docker Sandbox](https://docs.docker.com/ai/sandboxes/): a microVM with its
 own kernel, filesystem, Docker daemon and network, which the `sbx` CLI
 creates and removes. It needs `sbx` on `PATH` and signed in (`sbx login`),
-and runs `claude`, `codex` and `opencode`. `bees run` checks that `sbx`
+and runs `claude`, `codex` and `opencode`; sbx has no template for `pi`, and
+a `pi` profile with `sandbox = "sbx"` does not load. `bees run` checks that `sbx`
 answers ahead of the doctor, whatever `--skip-doctor` says, and
 `bees doctor` reports it when a role uses the mode.
 
@@ -1403,7 +1406,9 @@ out of the generated MCP configuration and command arguments. Configured
 servers receive their entry's `env` values. An `opencode` session is given
 the same servers as the `mcp` table of a per-session `opencode.json`, handed to it
 through `OPENCODE_CONFIG`, next to whatever its global configuration and
-the project's own `opencode.json` name.
+the project's own `opencode.json` name. A `pi` session is given the same
+servers in a per-session `pi-mcp.json` that `pi-mcp-adapter` reads alone;
+see [Pi](#pi).
 
 `bees` is reserved. Every session gets a server called `bees` carrying the
 factory's own tools; see [`bees mcp serve`](cli.md#bees-mcp-serve-sessions).
@@ -1433,6 +1438,64 @@ type = "http"
 url = "https://mcp.example.com/browser"
 headers = { Authorization = "Bearer $BROWSER_MCP_TOKEN" }
 ```
+
+### Pi
+
+A profile with `agent = "pi"` runs its sessions as
+[pi](https://pi.dev/docs/latest). Pi has no MCP support of its own, so every
+pi session loads the third-party
+[`pi-mcp-adapter`](https://github.com/nicobailon/pi-mcp-adapter) extension,
+which gives it the `bees` tools and the role's MCP servers:
+
+```sh
+pi -p --mode json --no-extensions \
+  -e npm:pi-mcp-adapter [-e <pi_packages entry>]... \
+  --mcp-config <session>/pi-mcp.json --name bees-<session name> ...
+```
+
+- `--no-extensions` keeps pi from loading the packages in its own
+  `settings.json` and the extensions it would discover: a session loads the
+  adapter and the role's `pi_packages`, nothing else.
+- The adapter is not installed with `pi install`. Pi installs
+  `npm:pi-mcp-adapter` and every `npm:` or `git:` entry of `pi_packages` into
+  its own extension cache the first time a session loads it, which needs
+  `npm` and network access. `bees doctor` loads them the way a session does
+  and installs what is missing; to do it by hand, run
+  `pi --no-extensions -e npm:pi-mcp-adapter --help` and look for
+  `--mcp-config` in the output.
+- `<session>/pi-mcp.json` holds the `bees` server and the role's servers,
+  each connected at startup and with its tools registered as pi tools of
+  their own. `PI_MCP_CONFIG_MODE=exclusive` makes it the only MCP
+  configuration the adapter reads: no `~/.config/mcp/mcp.json`, no project
+  `.mcp.json`.
+
+```toml
+[profiles.pi]
+agent = "pi"
+model = "anthropic/claude-sonnet-5"
+effort = "high"
+
+[roles.developer]
+profile = "pi"
+pi_packages = ["npm:@acme/pi-tools@1.2.3"]
+```
+
+Pi runs every tool without asking and has no sandbox of its own, and sbx has
+no template for it: it runs with `sandbox = "none"` or `"container"`. In a container its home directory is a
+fresh tmpfs, so pi installs the adapter and the packages again at every
+session: the image needs `pi`, `npm` and access to the npm registry (and to
+the git hosts of `git:` packages), next to `git` and `gh`. Add pi to the image
+of [The container mode](#the-container-mode):
+
+```dockerfile
+RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent
+```
+
+A container session is handed its provider key from the bees environment
+when one of these is set there: `ANTHROPIC_API_KEY`, `ANTHROPIC_OAUTH_TOKEN`,
+`OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `GROQ_API_KEY`,
+`XAI_API_KEY`, `MISTRAL_API_KEY`, `DEEPSEEK_API_KEY` or `CEREBRAS_API_KEY`.
+Another provider's key goes in the role's `env`.
 
 ## Examples
 
@@ -1511,8 +1574,9 @@ missing or too old; `bees init` checks `gh`.
 The Claude Code check only runs when at least one enabled role resolves to an
 agent profile whose `agent` is `"claude"`, the default (see
 [`[profiles.<name>]`](#profilesname)). A factory where every enabled role
-resolves to `"codex"` or `"opencode"` never runs it, so `claude` does not
-need to be installed.
+resolves to `"codex"`, `"opencode"` or `"pi"` never runs it, so `claude`
+does not need to be installed. Pi needs the
+[`pi-mcp-adapter`](#pi) package, which pi installs itself.
 
 Set `BEES_SKIP_VERSION_CHECK=1` to run with an unsupported version anyway.
 
@@ -1526,6 +1590,7 @@ Set `BEES_SKIP_VERSION_CHECK=1` to run with an unsupported version anyway.
 | `BEES_CLAUDE_BIN` | The `claude` executable to run. Default `claude` on `PATH`. |
 | `BEES_CODEX_BIN` | The `codex` executable to run for a role whose `agent` is `codex`. Default `codex` on `PATH`. |
 | `BEES_OPENCODE_BIN` | The `opencode` executable to run for a role whose `agent` is `opencode`. Default `opencode` on `PATH`. |
+| `BEES_PI_BIN` | The `pi` executable to run for a role whose `agent` is `pi`. Default `pi` on `PATH`. |
 | `BEES_CACHE_DIR` | Cache directory for skill clones and generated plugins. Default `~/.cache/bees` on Linux, `~/Library/Caches/bees` on macOS. |
 | `BEES_SKIP_VERSION_CHECK` | When non-empty, skip the `gh` and `claude` version checks. |
 | `BEES_STATE_DIR` | `bees mail` and `bees notes` use this state directory without loading `bees.toml`, unless `--config` is given, in which case that file's state directory wins. Set inside sessions. |
@@ -1536,7 +1601,7 @@ Set `BEES_SKIP_VERSION_CHECK=1` to run with an unsupported version anyway.
 
 The variables marked *set inside sessions* are the only ones a session
 inherits. `BEES_CLAUDE_BIN`, `BEES_CODEX_BIN`, `BEES_OPENCODE_BIN`,
-`BEES_CACHE_DIR`, `BEES_SKIP_VERSION_CHECK`, `BEES_LOG_FORMAT` and
+`BEES_PI_BIN`, `BEES_CACHE_DIR`, `BEES_SKIP_VERSION_CHECK`, `BEES_LOG_FORMAT` and
 `BEES_LOG_LEVEL` configure
 the `bees` process you start
 and are not passed on, so a `bees` command a session runs itself sees their
@@ -1565,6 +1630,9 @@ role is granted, never a `BEES_*` one:
   `GOOGLE_*`, `CLOUD_ML_REGION`, `VERTEX_*`, `DISABLE_*`,
   `MAX_THINKING_TOKENS` and `MCP_*` for claude; `OPENAI_*` and `CODEX_*` for
   codex; `OPENCODE_*` and the provider keys opencode reads for opencode;
+  `PI_*`, `MCP_*` and the provider keys pi reads (`ANTHROPIC_*`, `OPENAI_*`,
+  `GEMINI_*`, `GOOGLE_*`, `AWS_*`, `OPENROUTER_*`, `GROQ_*`, `MISTRAL_*`,
+  `XAI_*`, `DEEPSEEK_*`, `AZURE_*`, `CEREBRAS_*`) for pi;
 - gh's, git's and the SSH agent's: `GH_*`, `GITHUB_*`, `GIT_*`, `GCM_*`,
   `SSH_AUTH_SOCK`, `SSH_AGENT_PID`, `SSH_ASKPASS`, `SSH_ASKPASS_REQUIRE`.
 
