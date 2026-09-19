@@ -17,6 +17,7 @@ internal/config/     bees.toml and the machine config: schema, defaults, validat
 internal/daemon/     several projects' schedulers in one process, one goroutine each, a failure kept to its project
 internal/doctor/     the checks `bees doctor` runs
 internal/duplicates/ the existing issues a new title and body would duplicate: a local word-overlap score over every issue, open and closed
+internal/fakegh/     an in-memory GitHub behind github.Client.Exec: seeded with Load, read back with Snapshot, for tests that drive the factory
 internal/feedback/   the queue of factory-error drafts report_factory_error writes: JSON under <state_dir>/feedback/
 internal/github/     thin wrapper around the gh CLI: issues, PRs, labels, milestones, sub-issues, checks, merge, activity
 internal/issues/     `bees issue create/link`: filter labels, kind and state labels, sub-issue of --parent, inherited milestone
@@ -73,15 +74,16 @@ See [core/README.md](core/README.md) for the execution boundary.
 ### Testing rules
 
 - Tests never call the real `claude`, `codex`, `opencode` or `gh`. `gh` is faked through
-  `github.Client.Exec`: the scheduler tests replace it with an in-memory
-  implementation that understands the `gh` invocations the wrapper makes
-  (`issue list`, including `--state all --search` for the visibility
-  backstop; `issue view/edit/comment`; `pr list/view/merge/checks`, with a
-  queue of scripted check results; the `api` calls for milestones, issue
-  details, the parent lookup and human PR activity) and records label
-  history, comments and merges for assertions. `claude` is faked by the
-  test binary itself: `TestMain` in `internal/scheduler/scheduler_test.go`
-  checks `FAKE_CLAUDE=1` (not `BEES_FAKE_CLAUDE`: the runner strips every
+  `github.Client.Exec`: the scheduler tests replace it with
+  `internal/fakegh`, an in-memory GitHub that understands the `gh`
+  invocations the wrapper makes (`issue list`, including `--state all
+  --search` for the visibility backstop; `issue view/edit/comment/close`;
+  `pr create/list/view/diff/comment/merge/checks`, with a queue of scripted
+  check results; the `api` calls for milestones, issue details, the parent
+  lookup and human PR activity) and records label history, comments and
+  merges for assertions. `claude` is faked by the test binary itself:
+  `TestMain` in `internal/scheduler/scheduler_test.go` checks
+  `FAKE_CLAUDE=1` (not `BEES_FAKE_CLAUDE`: the runner strips every
   inherited `BEES_*` variable, so a flag in that namespace would never reach
   the fake) and, when set, runs a scripted role (a developer commits, pushes
   and reports `pr-opened`; a reviewer mails feedback once, then approves;

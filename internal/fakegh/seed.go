@@ -44,9 +44,11 @@ type SeedReview struct {
 	At    time.Time
 }
 
-// Load adds s to the state, replacing any issue or pull request with the
-// same number. Comments are served as issue view's comments and from the
-// REST comments endpoint, reviews from the REST reviews endpoint.
+// Load adds s to the state. An issue or pull request with the number of one
+// already there replaces it whole: its parent, seeded comments and seeded
+// reviews go with it. Comments are served from the REST comments endpoint,
+// an issue's also as issue view's comments; reviews from the REST reviews
+// endpoint.
 func (f *GitHub) Load(s Seed) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -60,6 +62,7 @@ func (f *GitHub) Load(s Seed) error {
 		}
 		i.Labels = slices.Clone(i.Labels)
 		i.Comments = slices.Clone(i.Comments)
+		f.forget(i.Number)
 		f.Issues[i.Number] = &i
 		if si.Parent != 0 {
 			f.Parents[i.Number] = si.Parent
@@ -77,6 +80,7 @@ func (f *GitHub) Load(s Seed) error {
 			p.State = "OPEN"
 		}
 		p.Labels = slices.Clone(p.Labels)
+		f.forget(p.Number)
 		f.PRs[p.Number] = &p
 		if err := f.seedComments(p.Number, sp.Comments); err != nil {
 			return err
@@ -108,6 +112,16 @@ func (f *GitHub) Load(s Seed) error {
 		}
 	}
 	return nil
+}
+
+// forget drops what Load seeded for number n, before it is seeded again.
+// Called with f.mu held.
+func (f *GitHub) forget(n int) {
+	delete(f.Issues, n)
+	delete(f.PRs, n)
+	delete(f.Parents, n)
+	delete(f.Activity, fmt.Sprintf("repos/%s/issues/%d/comments", f.Repo, n))
+	delete(f.Activity, fmt.Sprintf("repos/%s/pulls/%d/reviews", f.Repo, n))
 }
 
 // seedComments serves comments from the REST comments endpoint of n.
@@ -145,7 +159,8 @@ type Snapshot struct {
 	PRs    []github.PR
 	// Comments are the bodies posted on each number through Exec.
 	Comments map[int][]string
-	// History lists the label additions per number, in order.
+	// History lists the label additions per number, in order, with
+	// "assignee:<login>" and "milestone:<title>" entries for those writes.
 	History map[int][]string
 	Merged  []int
 	Labels  []string
@@ -165,6 +180,8 @@ func (f *GitHub) Snapshot() Snapshot {
 		c.Labels = slices.Clone(i.Labels)
 		c.Assignees = slices.Clone(i.Assignees)
 		c.Comments = slices.Clone(i.Comments)
+		c.Milestone = clonePtr(i.Milestone)
+		c.ClosedAt = clonePtr(i.ClosedAt)
 		s.Issues = append(s.Issues, c)
 	}
 	sort.Slice(s.Issues, func(a, b int) bool { return s.Issues[a].Number < s.Issues[b].Number })
@@ -172,6 +189,9 @@ func (f *GitHub) Snapshot() Snapshot {
 		c := *p
 		c.Labels = slices.Clone(p.Labels)
 		c.Assignees = slices.Clone(p.Assignees)
+		c.Milestone = clonePtr(p.Milestone)
+		c.MergedAt = clonePtr(p.MergedAt)
+		c.MergeCommit = clonePtr(p.MergeCommit)
 		s.PRs = append(s.PRs, c)
 	}
 	sort.Slice(s.PRs, func(a, b int) bool { return s.PRs[a].Number < s.PRs[b].Number })
@@ -182,6 +202,15 @@ func (f *GitHub) Snapshot() Snapshot {
 		s.History[n] = slices.Clone(h)
 	}
 	return s
+}
+
+// clonePtr returns a pointer to a copy of what p points to, or nil.
+func clonePtr[T any](p *T) *T {
+	if p == nil {
+		return nil
+	}
+	c := *p
+	return &c
 }
 
 // Issue returns issue n from the snapshot.

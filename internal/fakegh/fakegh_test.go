@@ -190,6 +190,17 @@ func TestExecWritesShowInTheSnapshot(t *testing.T) {
 	if again, _ := f.Snapshot().Issue(s.Issues[0].Number); again.Labels[0].Name == "changed" {
 		t.Fatal("the snapshot shares labels with the fake")
 	}
+	s7, _ := s.Issue(7)
+	s7.Milestone.Title = "changed"
+	s5, _ := s.Issue(5)
+	*s5.ClosedAt = t0.Add(time.Hour)
+	after := f.Snapshot()
+	if again, _ := after.Issue(7); again.MilestoneTitle() != "v1" {
+		t.Fatalf("the snapshot shares the milestone with the fake: %q", again.MilestoneTitle())
+	}
+	if again, _ := after.Issue(5); !again.ClosedAt.Equal(t0) {
+		t.Fatalf("the snapshot shares ClosedAt with the fake: %v", again.ClosedAt)
+	}
 	if f.CallCount("pr create") != 2 || f.Total() != f.Snapshot().Calls {
 		t.Fatalf("calls: pr create %d, total %d", f.CallCount("pr create"), f.Total())
 	}
@@ -231,6 +242,66 @@ func TestErrForFailsTheCommand(t *testing.T) {
 	}
 	if _, err := f.Exec(context.Background(), "repo", "delete"); err == nil || !strings.Contains(err.Error(), "unsupported") {
 		t.Fatalf("an unknown command answered %v", err)
+	}
+}
+
+func TestSnapshotCopiesPullRequestPointers(t *testing.T) {
+	f, _ := seeded(t)
+	merged := t0
+	f.Lock()
+	f.PRs[8].Milestone = &github.MilestoneRef{Title: "v1"}
+	f.PRs[8].MergedAt = &merged
+	f.PRs[8].MergeCommit = &struct {
+		OID string `json:"oid"`
+	}{OID: "abc"}
+	f.Unlock()
+	p, _ := f.Snapshot().PR(8)
+	p.Milestone.Title = "changed"
+	*p.MergedAt = t0.Add(time.Hour)
+	p.MergeCommit.OID = "changed"
+	again, _ := f.Snapshot().PR(8)
+	if again.MilestoneTitle() != "v1" || !again.MergedAt.Equal(t0) || again.MergeCommit.OID != "abc" {
+		t.Fatalf("the snapshot shares pointers with the fake: %+v", again)
+	}
+}
+
+func TestLoadReplacesAnItemWhole(t *testing.T) {
+	f, c := seeded(t)
+	ctx := context.Background()
+	err := f.Load(Seed{
+		Issues: []SeedIssue{{Issue: github.Issue{Number: 7, Title: "CSV export, again"}}},
+		PRs:    []SeedPR{{PR: github.PR{Number: 8, Title: "Add a thing, again", HeadRefName: "feature", BaseRefName: "main"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parent, err := c.ParentIssue(ctx, 7); err != nil || parent != nil {
+		t.Fatalf("issue 7 kept its old parent: %+v, %v", parent, err)
+	}
+	if comments, err := c.CommentsSince(ctx, 7, time.Time{}); err != nil || len(comments) != 0 {
+		t.Fatalf("issue 7 kept its old comments: %+v, %v", comments, err)
+	}
+	if comments, err := c.CommentsSince(ctx, 8, time.Time{}); err != nil || len(comments) != 0 {
+		t.Fatalf("pull request 8 kept its old comments: %+v, %v", comments, err)
+	}
+	if reviews, err := c.ReviewsSince(ctx, 8, time.Time{}); err != nil || len(reviews) != 0 {
+		t.Fatalf("pull request 8 kept its old reviews: %+v, %v", reviews, err)
+	}
+	if i, _ := f.Snapshot().Issue(7); i.Title != "CSV export, again" {
+		t.Fatalf("issue 7: %+v", i)
+	}
+}
+
+func TestPRChecksWithNothingQueuedNamesTheHeadBranch(t *testing.T) {
+	f, _ := seeded(t)
+	ctx := context.Background()
+	_, err := f.Exec(ctx, "pr", "checks", "8", "-R", repo, "--required")
+	if err == nil || !strings.Contains(err.Error(), "no checks reported on the 'feature' branch") {
+		t.Fatalf("pr checks on pull request 8: %v", err)
+	}
+	_, err = f.Exec(ctx, "pr", "checks", "99", "-R", repo, "--required")
+	if err == nil || !strings.Contains(err.Error(), "no checks reported on the 'bees/issue-1' branch") {
+		t.Fatalf("pr checks on an unknown pull request: %v", err)
 	}
 }
 
