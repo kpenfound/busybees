@@ -312,6 +312,28 @@ func TestWithoutADiffTheSessionIsToldSo(t *testing.T) {
 	}
 }
 
+// Every angle session is asked for a short body, with what supports it
+// kept in evidence and sources, and a suggestion that is the fix alone.
+func TestEveryAngleIsAskedForAShortFinding(t *testing.T) {
+	for _, angle := range BuiltinAngles {
+		prompt, err := anglePrompt(angle, testBrief(), "diff.patch", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		prompt = strings.Join(strings.Fields(prompt), " ")
+		for _, want := range []string{
+			"Its `body` is two or three sentences: what is wrong and why it matters, with at most one `file:line` reference in it.",
+			"what you read that shows it goes in `evidence`, and where a rule or a requirement comes from goes in `sources`.",
+			"`suggestion` is the fix itself, the text that would replace the lines, not an argument for it.",
+			`"body": "two or three sentences: what is wrong and why it matters"`,
+		} {
+			if !strings.Contains(prompt, want) {
+				t.Errorf("%s's prompt lacks %q", angle, want)
+			}
+		}
+	}
+}
+
 func TestEveryBuiltinAngleHasInstructions(t *testing.T) {
 	for _, angle := range BuiltinAngles {
 		got, err := angleInstructions(angle)
