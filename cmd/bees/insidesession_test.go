@@ -27,13 +27,14 @@ func TestMain(m *testing.M) {
 
 // The commands that start sessions refuse to do so from inside one: a
 // factory a bee started would run agents nothing watches.
-func TestRunTickAndExecRefuseInsideASession(t *testing.T) {
+func TestRunTickExecAndEvalRefuseInsideASession(t *testing.T) {
 	t.Setenv(session.EnvSessionDir, "/state/sessions/developer-issue-1-r1")
 	for _, args := range [][]string{
 		{"run"},
 		{"run", "--no-tui", "--skip-doctor", "--config", "/nowhere/bees.toml"},
 		{"tick"},
 		{"exec", "developer", "--issue", "1"},
+		{"eval", "--case", "one"},
 	} {
 		err := runRoot(t, args...)
 		if err == nil || !strings.Contains(err.Error(), "inside a bee's session") {

@@ -359,8 +359,8 @@ func logTUIMode(log *slog.Logger, noTUI bool, stdout *os.File) bool {
 	return on
 }
 
-// refuseInsideSession is the first thing `bees run`, `bees tick` and
-// `bees exec` do: a bee's session (BEES_SESSION_DIR set) starting a factory or
+// refuseInsideSession is the first thing `bees run`, `bees tick`,
+// `bees exec` and `bees eval` do: a bee's session (BEES_SESSION_DIR set) starting a factory or
 // a session of its own would run agents no view shows, no budget counts and
 // no stop reaches, as many as the scheduler it started asks for. A session
 // that needs to try the factory out has the fakes the test suite runs it

@@ -1,0 +1,19 @@
+# The trivial case: a one-line fix in a shell script, so the runner has
+# something to run. docs/evals.md describes every key.
+description = "greet.sh leaves out the comma and the exclamation mark"
+test = "sh test.sh"
+timeout = "30m"
+max_cost = 5
+
+[[issues]]
+number = 1
+title = "greet.sh prints the greeting without punctuation"
+labels = ["bees:ready", "bees:size/xs"]
+body = """
+`sh greet.sh Ada` prints `Hello Ada`. It should print `Hello, Ada!`.
+
+## Acceptance criteria
+
+- `sh greet.sh Ada` prints exactly `Hello, Ada!`.
+- `sh test.sh` passes.
+"""
