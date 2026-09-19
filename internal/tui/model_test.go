@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"github.com/charmbracelet/lipgloss"
 	"regexp"
 	"slices"
 	"strings"
@@ -1457,5 +1458,42 @@ func TestReviewActivityFitsCompactLayout(t *testing.T) {
 		if width >= 80 && !strings.Contains(view, "review: angles 1/3 done") {
 			t.Errorf("progress clipped at width %d:\n%s", width, view)
 		}
+	}
+}
+
+// The header's 🐝 fill the gap between the title and the clock, each
+// followed by beeGap spaces, and move one cell per beeMsg; the header stays
+// exactly the terminal's width at every width and step.
+func TestHeaderBeesScrollAcrossTheGap(t *testing.T) {
+	deps := Deps{Repo: "acme/widgets", Now: func() time.Time { return fixed }}
+	for _, w := range []int{33, 45, 80, 133} {
+		for step := 0; step < 12; step++ {
+			m := New(deps)
+			m.beeStep = step
+			h := m.header(w)
+			if got := lipgloss.Width(h); got != w {
+				t.Errorf("width %d step %d: header is %d cells:\n%q", w, step, got, h)
+			}
+			if strings.Contains(h, "\n") {
+				t.Errorf("width %d: header wraps", w)
+			}
+		}
+	}
+	m := New(deps)
+	if h := m.header(33); strings.Contains(h, "🐝") {
+		t.Errorf("a gap too narrow for a bee shows one:\n%q", h)
+	}
+	var tm tea.Model = New(deps)
+	before := tm.(Model).header(80)
+	if !strings.Contains(before, "🐝"+strings.Repeat(" ", beeGap)+"🐝") {
+		t.Errorf("the bees are not spaced %d apart:\n%q", beeGap, before)
+	}
+	tm, _ = tm.Update(beeMsg{})
+	after := tm.(Model).header(80)
+	if before == after {
+		t.Errorf("the bees did not move between two steps:\n%q", before)
+	}
+	if strings.Index(after, "🐝") != strings.Index(before, "🐝")+1 {
+		t.Errorf("the first bee did not move one cell right:\n%q\n%q", before, after)
 	}
 }

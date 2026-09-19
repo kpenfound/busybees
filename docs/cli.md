@@ -904,6 +904,8 @@ from 111 columns the footer reads:
 ↑↓ select · enter watch · o GitHub · k stop session · p pause · r reload · q or ctrl-c stops (sessions finish)
 ```
 
+Between the repository name and the clock, the header scrolls a row of 🐝.
+
 Whenever dispatch is paused, the header says so and why, next to the clock —
 so a factory sitting on a full queue with an empty Now panel does not read as
 idle. See [`bees status`](#bees-status---json) for what the numbers mean and
