@@ -64,10 +64,10 @@ func pushBranch(t *testing.T, clone, branch string) {
 // removeLabelCalls counts the `gh issue edit` calls that removed the label
 // from the pull request.
 func removeLabelCalls(h *harness, pr string, label string) int {
-	h.gh.mu.Lock()
-	defer h.gh.mu.Unlock()
+	h.gh.Lock()
+	defer h.gh.Unlock()
 	n := 0
-	for _, c := range h.gh.calls {
+	for _, c := range h.gh.Calls {
 		if len(c) >= 3 && c[0] == "issue" && c[1] == "edit" && c[2] == pr {
 			for i, a := range c {
 				if a == "--remove-label" && i+1 < len(c) && c[i+1] == label {
@@ -80,15 +80,15 @@ func removeLabelCalls(h *harness, pr string, label string) int {
 }
 
 func prHasLabel(h *harness, n int, label string) bool {
-	h.gh.mu.Lock()
-	defer h.gh.mu.Unlock()
-	return github.HasLabel(h.gh.prs[n].Labels, label)
+	h.gh.Lock()
+	defer h.gh.Unlock()
+	return github.HasLabel(h.gh.PRs[n].Labels, label)
 }
 
 func addPRLabel(h *harness, n int, label string) {
-	h.gh.mu.Lock()
-	defer h.gh.mu.Unlock()
-	h.gh.prs[n].Labels = append(h.gh.prs[n].Labels, github.Label{Name: label})
+	h.gh.Lock()
+	defer h.gh.Unlock()
+	h.gh.PRs[n].Labels = append(h.gh.PRs[n].Labels, github.Label{Name: label})
 }
 
 // A pull request the factory did not write, carrying bees:review-requested,
@@ -97,7 +97,7 @@ func addPRLabel(h *harness, n int, label string) {
 func TestReviewRequestedLabelDispatchesOneReviewer(t *testing.T) {
 	h := newHarnessAt(t, reviewOnlyTOML, requestedReviewClock)
 	pushBranch(t, h.clone, "fix-widget")
-	h.gh.prs[42] = personsPR("bees", "bees:review-requested")
+	h.gh.PRs[42] = personsPR("bees", "bees:review-requested")
 	runPass(t, h)
 
 	if got := len(h.sessions(config.RoleReviewer)); got != 1 {
@@ -208,7 +208,7 @@ func TestARequestedReviewsVerdictIsTheEvent(t *testing.T) {
 			if tc.changes {
 				t.Setenv("FAKE_REVIEW_ALWAYS_CHANGES", "1")
 			}
-			h.gh.prs[42] = personsPR("bees", "bees:review-requested")
+			h.gh.PRs[42] = personsPR("bees", "bees:review-requested")
 			runPass(t, h)
 			dirs := h.sessions(config.RoleReviewer)
 			if len(dirs) != 1 {
@@ -224,7 +224,7 @@ func TestARequestedReviewsVerdictIsTheEvent(t *testing.T) {
 			if !strings.Contains(h.logs.String(), "requested review finished") || strings.Contains(h.logs.String(), "requested review failed") {
 				t.Errorf("outcome log:\n%s", h.logs.String())
 			}
-			if got := h.gh.callCount("issue comment"); got != 0 {
+			if got := h.gh.CallCount("issue comment"); got != 0 {
 				t.Errorf("%d comments posted; a requested review escalates nothing", got)
 			}
 		})
@@ -242,16 +242,16 @@ func TestAPersonsPullRequestIsNeverHumanFeedback(t *testing.T) {
 	// person or from the factory, either of which would be mailed to a
 	// developer if the pull request were the factory's.
 	pr.UpdatedAt = time.Date(2026, 9, 2, 9, 0, 0, 0, time.UTC)
-	h.gh.prs[42] = pr
+	h.gh.PRs[42] = pr
 	at := pr.UpdatedAt.Format(time.RFC3339)
-	h.gh.activity["repos/acme/widgets/pulls/42/reviews"] = `[
+	h.gh.Activity["repos/acme/widgets/pulls/42/reviews"] = `[
 		{"id": 1, "user": {"login": "kyle"}, "body": "looks wrong", "state": "CHANGES_REQUESTED", "html_url": "https://x/1", "submitted_at": "` + at + `"},
 		{"id": 2, "user": {"login": "kyle"}, "body": "implementation: pass\n\n<!-- bees:reviewer -->", "state": "APPROVED", "html_url": "https://x/2", "submitted_at": "` + at + `"}
 	]`
-	h.gh.activity["repos/acme/widgets/pulls/42/comments"] = `[
+	h.gh.Activity["repos/acme/widgets/pulls/42/comments"] = `[
 		{"id": 3, "user": {"login": "kyle"}, "body": "and this", "path": "a.go", "line": 1, "html_url": "https://x/3", "created_at": "` + at + `"}
 	]`
-	h.gh.activity["repos/acme/widgets/issues/42/comments"] = `[
+	h.gh.Activity["repos/acme/widgets/issues/42/comments"] = `[
 		{"id": 4, "user": {"login": "kyle"}, "body": "ping", "html_url": "https://x/4", "created_at": "` + at + `"}
 	]`
 	runPass(t, h)
@@ -259,9 +259,9 @@ func TestAPersonsPullRequestIsNeverHumanFeedback(t *testing.T) {
 	if msgs, err := h.box.List(mail.Filter{From: HumanSender}); err != nil || len(msgs) != 0 {
 		t.Errorf("human feedback mailed for a person's pull request: %+v %v", msgs, err)
 	}
-	h.gh.mu.Lock()
-	defer h.gh.mu.Unlock()
-	for _, c := range h.gh.calls {
+	h.gh.Lock()
+	defer h.gh.Unlock()
+	for _, c := range h.gh.Calls {
 		if len(c) >= 2 && c[0] == "api" && strings.Contains(c[1], "/42/") {
 			t.Errorf("the activity of a person's pull request was read: gh %s", strings.Join(c, " "))
 		}
@@ -275,7 +275,7 @@ func TestAPersonsPullRequestIsNeverHumanFeedback(t *testing.T) {
 func TestNoReviewForAPullRequestWithoutTheLabel(t *testing.T) {
 	h := newHarnessAt(t, reviewOnlyTOML, requestedReviewClock)
 	pushBranch(t, h.clone, "fix-widget")
-	h.gh.prs[42] = personsPR("bees")
+	h.gh.PRs[42] = personsPR("bees")
 	runPass(t, h)
 
 	if got := sessionCount(h); got != 0 {
@@ -292,7 +292,7 @@ func TestNoReviewForAPullRequestWithoutTheLabel(t *testing.T) {
 func TestALocalPassNeverDispatchesARequestedReview(t *testing.T) {
 	h := newHarnessAt(t, reviewOnlyTOML, requestedReviewClock)
 	pushBranch(t, h.clone, "fix-widget")
-	h.gh.prs[42] = personsPR("bees", "bees:review-requested")
+	h.gh.PRs[42] = personsPR("bees", "bees:review-requested")
 	runPass(t, h)
 	if got := len(h.sessions(config.RoleReviewer)); got != 1 {
 		t.Fatalf("reviewer sessions after the poll: %d, want 1", got)
@@ -328,7 +328,7 @@ func TestARequestedReviewInFlightIsNotDispatchedTwice(t *testing.T) {
 	pushBranch(t, h.clone, "fix-widget")
 	release := filepath.Join(t.TempDir(), "release")
 	t.Setenv("FAKE_WAIT_FOR", release)
-	h.gh.prs[42] = personsPR("bees", "bees:review-requested")
+	h.gh.PRs[42] = personsPR("bees", "bees:review-requested")
 	ctx := context.Background()
 	if err := h.sched.pass(ctx); err != nil {
 		t.Fatal(err)
@@ -372,7 +372,7 @@ func TestAFailedRequestedReviewStillRemovesTheLabel(t *testing.T) {
 	h := newHarnessAt(t, reviewOnlyTOML, requestedReviewClock)
 	pushBranch(t, h.clone, "fix-widget")
 	t.Setenv("FAKE_REVIEW_FAIL", "1")
-	h.gh.prs[42] = personsPR("bees", "bees:review-requested")
+	h.gh.PRs[42] = personsPR("bees", "bees:review-requested")
 	runPass(t, h)
 
 	if got := len(h.sessions(config.RoleReviewer)); got != 1 {
@@ -384,7 +384,7 @@ func TestAFailedRequestedReviewStillRemovesTheLabel(t *testing.T) {
 	if !strings.Contains(h.logs.String(), "requested review failed") {
 		t.Errorf("the failure was not logged:\n%s", h.logs.String())
 	}
-	if got := h.gh.callCount("issue comment"); got != 0 {
+	if got := h.gh.CallCount("issue comment"); got != 0 {
 		t.Errorf("a failed requested review commented %d times; there is no issue to escalate", got)
 	}
 	if until, ok := h.sched.backoffUntil(requestedReviewKey(42)); !ok || !until.After(h.clock.now()) {
@@ -396,7 +396,7 @@ func TestAFailedRequestedReviewStillRemovesTheLabel(t *testing.T) {
 func TestReAddingTheLabelAsksForAnotherReview(t *testing.T) {
 	h := newHarnessAt(t, reviewOnlyTOML, requestedReviewClock)
 	pushBranch(t, h.clone, "fix-widget")
-	h.gh.prs[42] = personsPR("bees", "bees:review-requested")
+	h.gh.PRs[42] = personsPR("bees", "bees:review-requested")
 	runPass(t, h)
 	if got := len(h.sessions(config.RoleReviewer)); got != 1 {
 		t.Fatalf("reviewer sessions after the first request: %d, want 1", got)
@@ -437,8 +437,8 @@ func TestARequestedReviewFallsBackToTheDefaultBranch(t *testing.T) {
 	h := newHarnessAt(t, reviewOnlyTOML, requestedReviewClock)
 	// No pushBranch: origin/fix-widget does not exist, and the head commit
 	// GitHub names is nothing the remote has either.
-	h.gh.prs[42] = personsPR("bees", "bees:review-requested")
-	h.gh.prs[42].HeadSHA = "aaa1111"
+	h.gh.PRs[42] = personsPR("bees", "bees:review-requested")
+	h.gh.PRs[42].HeadSHA = "aaa1111"
 	runPass(t, h)
 
 	if got := len(h.sessions(config.RoleReviewer)); got != 1 {
@@ -452,7 +452,7 @@ func TestARequestedReviewFallsBackToTheDefaultBranch(t *testing.T) {
 	if p := byKind(reviewSessions(t, logPath))["brief"].Prompt; !strings.Contains(p, "func Widget() {}") {
 		t.Errorf("the brief was not given gh's diff of the fork's pull request:\n%s", p)
 	}
-	if n := h.gh.callCount("pr diff"); n != 1 {
+	if n := h.gh.CallCount("pr diff"); n != 1 {
 		t.Errorf("gh pr diff ran %d times, want once for a checkout that is not the head", n)
 	}
 	if prHasLabel(h, 42, "bees:review-requested") {
@@ -503,7 +503,7 @@ func reviewedSHA(t *testing.T, h *harness, n int) string {
 func TestAnAssignedPullRequestIsNotReviewedByDefault(t *testing.T) {
 	h := newHarnessAt(t, assignedAbsentTOML, requestedReviewClock)
 	pushBranch(t, h.clone, "fix-widget")
-	h.gh.prs[42] = assignedPR("bees")
+	h.gh.PRs[42] = assignedPR("bees")
 	runPass(t, h)
 
 	if got := sessionCount(h); got != 0 {
@@ -519,7 +519,7 @@ func TestAnAssignedPullRequestIsNotReviewedByDefault(t *testing.T) {
 func TestReviewAssignedPRsExplicitlyOffDispatchesNothing(t *testing.T) {
 	h := newHarnessAt(t, assignedOffTOML, requestedReviewClock)
 	pushBranch(t, h.clone, "fix-widget")
-	h.gh.prs[42] = assignedPR("bees")
+	h.gh.PRs[42] = assignedPR("bees")
 	runPass(t, h)
 
 	if got := sessionCount(h); got != 0 {
@@ -534,7 +534,7 @@ func TestReviewAssignedPRsExplicitlyOffDispatchesNothing(t *testing.T) {
 func TestAnAssignedPullRequestIsReviewedOncePerHead(t *testing.T) {
 	h := newHarnessAt(t, assignedReviewTOML, requestedReviewClock)
 	pushBranch(t, h.clone, "fix-widget")
-	h.gh.prs[42] = assignedPR("bees")
+	h.gh.PRs[42] = assignedPR("bees")
 	runPass(t, h)
 
 	dirs := h.sessions(config.RoleReviewer)
@@ -572,15 +572,15 @@ func TestAnAssignedPullRequestIsReviewedOncePerHead(t *testing.T) {
 func TestAPushToAnAssignedPullRequestEarnsAnotherReview(t *testing.T) {
 	h := newHarnessAt(t, assignedReviewTOML, requestedReviewClock)
 	pushBranch(t, h.clone, "fix-widget")
-	h.gh.prs[42] = assignedPR("bees")
+	h.gh.PRs[42] = assignedPR("bees")
 	runPass(t, h)
 	if got := len(h.sessions(config.RoleReviewer)); got != 1 {
 		t.Fatalf("reviewer sessions: %d, want 1", got)
 	}
 
-	h.gh.mu.Lock()
-	h.gh.prs[42].HeadSHA = "bbb2222"
-	h.gh.mu.Unlock()
+	h.gh.Lock()
+	h.gh.PRs[42].HeadSHA = "bbb2222"
+	h.gh.Unlock()
 	h.clock.advance(time.Hour)
 	forcePoll(h)
 	runPass(t, h)
@@ -605,7 +605,7 @@ func TestAPushToAnAssignedPullRequestEarnsAnotherReview(t *testing.T) {
 func TestARecordedHeadSurvivesARestart(t *testing.T) {
 	h := newHarnessAt(t, assignedReviewTOML, requestedReviewClock)
 	pushBranch(t, h.clone, "fix-widget")
-	h.gh.prs[42] = assignedPR("bees")
+	h.gh.PRs[42] = assignedPR("bees")
 	if err := h.store.SetWorkReviewedSHA(ghwork.New(0, 42), "aaa1111"); err != nil {
 		t.Fatal(err)
 	}
@@ -624,7 +624,7 @@ func TestTheFactorysOwnPullRequestIsNotReviewedByAssignment(t *testing.T) {
 	pushBranch(t, h.clone, "bees/issue-7")
 	pr := assignedPR("bees")
 	pr.HeadRefName = "bees/issue-7"
-	h.gh.prs[42] = pr
+	h.gh.PRs[42] = pr
 	runPass(t, h)
 
 	if got := sessionCount(h); got != 0 {
@@ -642,15 +642,15 @@ func TestADraftAssignedPullRequestIsNotReviewedUntilItIsReady(t *testing.T) {
 	pushBranch(t, h.clone, "fix-widget")
 	pr := assignedPR("bees")
 	pr.IsDraft = true
-	h.gh.prs[42] = pr
+	h.gh.PRs[42] = pr
 	runPass(t, h)
 	if got := len(h.sessions(config.RoleReviewer)); got != 0 {
 		t.Fatalf("reviewer sessions on a draft: %d, want 0", got)
 	}
 
-	h.gh.mu.Lock()
-	h.gh.prs[42].IsDraft = false
-	h.gh.mu.Unlock()
+	h.gh.Lock()
+	h.gh.PRs[42].IsDraft = false
+	h.gh.Unlock()
 	h.clock.advance(time.Hour)
 	forcePoll(h)
 	runPass(t, h)
@@ -666,7 +666,7 @@ func TestADraftAssignedPullRequestIsNotReviewedUntilItIsReady(t *testing.T) {
 func TestTheLabelIsDispatchedOverAnAlreadyReviewedHead(t *testing.T) {
 	h := newHarnessAt(t, assignedReviewTOML, requestedReviewClock)
 	pushBranch(t, h.clone, "fix-widget")
-	h.gh.prs[42] = assignedPR("bees", "bees:review-requested")
+	h.gh.PRs[42] = assignedPR("bees", "bees:review-requested")
 	if err := h.store.SetWorkReviewedSHA(ghwork.New(0, 42), "aaa1111"); err != nil {
 		t.Fatal(err)
 	}
@@ -685,7 +685,7 @@ func TestTheLabelIsDispatchedOverAnAlreadyReviewedHead(t *testing.T) {
 func TestTheLabelTriggerRecordsTheHeadWithTheKeyOff(t *testing.T) {
 	h := newHarnessAt(t, reviewOnlyTOML, requestedReviewClock)
 	pushBranch(t, h.clone, "fix-widget")
-	h.gh.prs[42] = assignedPR("bees", "bees:review-requested")
+	h.gh.PRs[42] = assignedPR("bees", "bees:review-requested")
 	runPass(t, h)
 
 	if got := len(h.sessions(config.RoleReviewer)); got != 1 {
@@ -704,7 +704,7 @@ func TestTheLabelTriggerRecordsTheHeadWithTheKeyOff(t *testing.T) {
 func TestALocalPassNeverDispatchesAnAssignedReview(t *testing.T) {
 	h := newHarnessAt(t, assignedReviewTOML, requestedReviewClock)
 	pushBranch(t, h.clone, "fix-widget")
-	h.gh.prs[42] = assignedPR("bees")
+	h.gh.PRs[42] = assignedPR("bees")
 	runPass(t, h)
 	if got := len(h.sessions(config.RoleReviewer)); got != 1 {
 		t.Fatalf("reviewer sessions after the poll: %d, want 1", got)
@@ -728,7 +728,7 @@ func TestALocalPassNeverDispatchesAnAssignedReview(t *testing.T) {
 func TestAnUnreadableRecordDoesNotReviewOnEveryPoll(t *testing.T) {
 	h := newHarnessAt(t, assignedReviewTOML, requestedReviewClock)
 	pushBranch(t, h.clone, "fix-widget")
-	h.gh.prs[42] = assignedPR("bees")
+	h.gh.PRs[42] = assignedPR("bees")
 	p := h.store.WorkPath(ghwork.PRKey(42))
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		t.Fatal(err)
@@ -745,9 +745,9 @@ func TestAnUnreadableRecordDoesNotReviewOnEveryPoll(t *testing.T) {
 		t.Errorf("reviewer sessions over three polls with an unreadable record: %d, want 0 — the head cannot be recorded either, so every poll pays for the same review", got)
 	}
 	// A person still gets a pass: the label short-circuits the record.
-	h.gh.mu.Lock()
-	h.gh.prs[42].Labels = []github.Label{{Name: "bees"}, {Name: "bees:review-requested"}}
-	h.gh.mu.Unlock()
+	h.gh.Lock()
+	h.gh.PRs[42].Labels = []github.Label{{Name: "bees"}, {Name: "bees:review-requested"}}
+	h.gh.Unlock()
 	forcePoll(h)
 	runPass(t, h)
 	if got := len(h.sessions(config.RoleReviewer)); got != 1 {
@@ -763,7 +763,7 @@ func TestAnAssignedPullRequestWithNoHeadCommitIsSkipped(t *testing.T) {
 	pushBranch(t, h.clone, "fix-widget")
 	pr := assignedPR("bees")
 	pr.HeadSHA = ""
-	h.gh.prs[42] = pr
+	h.gh.PRs[42] = pr
 	// A head was remembered before: without the guard the comparison with
 	// the empty head asks for one more review and then records the empty
 	// head over the real one.
@@ -794,7 +794,7 @@ func TestARequestedReviewWithoutTheReviewFails(t *testing.T) {
 			if changes {
 				t.Setenv("FAKE_REVIEW_ALWAYS_CHANGES", "1")
 			}
-			h.gh.prs[42] = personsPR("bees", "bees:review-requested")
+			h.gh.PRs[42] = personsPR("bees", "bees:review-requested")
 			runPass(t, h)
 
 			if got := len(h.sessions(config.RoleReviewer)); got != 1 {
@@ -822,8 +822,8 @@ func TestAReviewOlderThanTheSessionDoesNotConfirmIt(t *testing.T) {
 	h := newHarnessAt(t, reviewOnlyTOML, requestedReviewClock)
 	pushBranch(t, h.clone, "fix-widget")
 	t.Setenv("FAKE_REVIEW_NO_SUBMIT", "1")
-	h.gh.prs[42] = personsPR("bees", "bees:review-requested")
-	h.gh.activity["repos/acme/widgets/pulls/42/reviews"] = `[{"id":1,"user":{"login":"kyle"},"body":"looks fine to me",` +
+	h.gh.PRs[42] = personsPR("bees", "bees:review-requested")
+	h.gh.Activity["repos/acme/widgets/pulls/42/reviews"] = `[{"id":1,"user":{"login":"kyle"},"body":"looks fine to me",` +
 		`"state":"APPROVED","submitted_at":"` + requestedReviewClock.Add(-time.Hour).Format(time.RFC3339) + `"}]`
 	runPass(t, h)
 
@@ -848,7 +848,7 @@ func TestARequestedReviewWhoseReviewContradictsItFails(t *testing.T) {
 			if changes {
 				t.Setenv("FAKE_REVIEW_ALWAYS_CHANGES", "1")
 			}
-			h.gh.prs[42] = personsPR("bees", "bees:review-requested")
+			h.gh.PRs[42] = personsPR("bees", "bees:review-requested")
 			runPass(t, h)
 
 			if got := len(h.sessions(config.RoleReviewer)); got != 1 {
@@ -866,7 +866,7 @@ func TestARequestedReviewWhoseReviewContradictsItFails(t *testing.T) {
 func TestManualPauseHoldsARequestedReview(t *testing.T) {
 	h := newHarnessAt(t, reviewOnlyTOML, requestedReviewClock)
 	pushBranch(t, h.clone, "fix-widget")
-	h.gh.prs[42] = personsPR("bees", "bees:review-requested")
+	h.gh.PRs[42] = personsPR("bees", "bees:review-requested")
 
 	h.sched.SetPaused(true)
 	runPass(t, h)

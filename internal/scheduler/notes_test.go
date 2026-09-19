@@ -54,9 +54,9 @@ func TestConsolidateReason(t *testing.T) {
 // consolidate its notes, and the ask is recorded so the next one is not.
 func TestNotesConsolidationIsAskedForOnSchedule(t *testing.T) {
 	h := newHarness(t, baseTOML+"notes_consolidate_every = 2\n")
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now()}
-	h.gh.prs[fakePR] = &github.PR{Number: fakePR, Title: "Build the thing", State: "OPEN",
+	h.gh.PRs[fakePR] = &github.PR{Number: fakePR, Title: "Build the thing", State: "OPEN",
 		HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)

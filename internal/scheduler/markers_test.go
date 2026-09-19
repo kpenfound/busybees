@@ -20,7 +20,7 @@ const markerWarning = "a comment the factory posted is missing its bees marker"
 // seedComments serves comments for an issue or pull request from the fake
 // GitHub, in the shape the REST comments endpoint returns them.
 func seedComments(h *harness, number int, comments ...string) {
-	h.gh.activity[fmt.Sprintf("repos/acme/widgets/issues/%d/comments", number)] =
+	h.gh.Activity[fmt.Sprintf("repos/acme/widgets/issues/%d/comments", number)] =
 		"[" + strings.Join(comments, ",\n") + "]"
 }
 
@@ -92,11 +92,11 @@ func TestASessionsCommentsAreCheckedWhenItEnds(t *testing.T) {
 func TestASharedAccountIsNotAudited(t *testing.T) {
 	h := newHarness(t, noRolesTOML)
 	seedComments(h, 1, commentJSON(42, "kyle", "Closing this.", time.Now().Add(time.Minute)))
-	before := h.gh.total()
+	before := h.gh.Total()
 
 	h.sched.auditMarkers(context.Background(), devSpec(1), nil, 0, time.Now())
 
-	if got := h.gh.total(); got != before {
+	if got := h.gh.Total(); got != before {
 		t.Errorf("the audit made %d gh calls without a [github] login, want 0", got-before)
 	}
 	if logs := h.logs.String(); strings.Contains(logs, markerWarning) {
@@ -178,7 +178,7 @@ func TestTheTouchedIssuesAreAuditedToo(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t, noRolesTOML)
 	h.sched.gh.ActsAs = "busybees-bot"
-	h.gh.issues[9] = &github.Issue{Number: 9, Title: "Filed by the session", State: "OPEN",
+	h.gh.Issues[9] = &github.Issue{Number: 9, Title: "Filed by the session", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:triage"}}, CreatedAt: time.Now()}
 	seedComments(h, 9, commentJSON(42, "busybees-bot", "Filed as #9.", time.Now().Add(time.Minute)))
 	dir := t.TempDir()

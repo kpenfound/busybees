@@ -74,8 +74,8 @@ func TestASecondRoundResumesTheFirstRoundsSession(t *testing.T) {
 	if got := resumeOf(t, h, "reviewer-pr-201-r2"); got != "" {
 		t.Errorf("round 2 of the reviewer resumed %q, want a fresh judge session", got)
 	}
-	if last := h.gh.history[1][len(h.gh.history[1])-1]; last != "bees:approved" {
-		t.Fatalf("history: %v", h.gh.history[1])
+	if last := h.gh.History[1][len(h.gh.History[1])-1]; last != "bees:approved" {
+		t.Fatalf("history: %v", h.gh.History[1])
 	}
 }
 
@@ -129,11 +129,11 @@ func TestAFailedResumeIsRetriedFresh(t *testing.T) {
 	}
 	// The failure was classified as infrastructure: the loop finished
 	// instead of escalating, and the issue was approved.
-	if last := h.gh.history[1][len(h.gh.history[1])-1]; last != "bees:approved" {
-		t.Fatalf("history: %v", h.gh.history[1])
+	if last := h.gh.History[1][len(h.gh.History[1])-1]; last != "bees:approved" {
+		t.Fatalf("history: %v", h.gh.History[1])
 	}
-	if len(h.gh.comments[1]) != 0 {
-		t.Fatalf("unexpected escalation: %v", h.gh.comments[1])
+	if len(h.gh.Comments[1]) != 0 {
+		t.Fatalf("unexpected escalation: %v", h.gh.Comments[1])
 	}
 }
 
@@ -173,8 +173,8 @@ func TestAWorkerStartedAfterARestartResumesNoSession(t *testing.T) {
 	if got := resumeOf(t, h, "reviewer-pr-201-r2"); got != "" {
 		t.Errorf("the reviewer of a restarted worker resumed %q, want a fresh session", got)
 	}
-	if !slices.Contains(h.gh.history[1], "bees:approved") {
-		t.Fatalf("history: %v", h.gh.history[1])
+	if !slices.Contains(h.gh.History[1], "bees:approved") {
+		t.Fatalf("history: %v", h.gh.History[1])
 	}
 }
 

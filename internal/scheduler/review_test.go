@@ -145,7 +145,7 @@ func TestAReviewRunsBriefAnglesAndJudgeFromTheReviewerRole(t *testing.T) {
 	if p := got["brief"].Prompt; !strings.Contains(p, "+++ b/work-1.txt") || strings.Contains(p, "func Widget() {}") {
 		t.Errorf("the brief was not given the clone's diff:\n%s", p)
 	}
-	if n := h.gh.callCount("pr diff"); n != 0 {
+	if n := h.gh.CallCount("pr diff"); n != 0 {
 		t.Errorf("gh pr diff ran %d times, want the diff read from the clone", n)
 	}
 	for _, kind := range []string{"documentation accuracy", "general"} {
@@ -252,7 +252,7 @@ func TestTheFactorysDiffIsReadFromTheCloneUnderTheConfiguredRemote(t *testing.T)
 	if p := byKind(reviewSessions(t, logPath))["brief"].Prompt; !strings.Contains(p, "+++ b/work-1.txt") || strings.Contains(p, "func Widget() {}") {
 		t.Errorf("the brief was not given the clone's diff:\n%s", p)
 	}
-	if n := h.gh.callCount("pr diff"); n != 0 {
+	if n := h.gh.CallCount("pr diff"); n != 0 {
 		t.Errorf("gh pr diff ran %d times, want the diff read from the clone", n)
 	}
 }
@@ -320,8 +320,8 @@ func TestACodexReviewerRunsTheReviewSessionsReadOnly(t *testing.T) {
 	if !strings.Contains(promptOf(t, h, 1), "### quick general: Widget does nothing") {
 		t.Errorf("the judge's task lacks the findings codex answered with:\n%s", promptOf(t, h, 1))
 	}
-	if last := h.gh.history[1][len(h.gh.history[1])-1]; last != "bees:approved" {
-		t.Errorf("history: %v", h.gh.history[1])
+	if last := h.gh.History[1][len(h.gh.History[1])-1]; last != "bees:approved" {
+		t.Errorf("history: %v", h.gh.History[1])
 	}
 }
 
@@ -346,8 +346,8 @@ func TestAFailedAngleIsSkippedAndAFailedReviewEscalates(t *testing.T) {
 	if strings.Contains(prompt, "### documentation accuracy") {
 		t.Errorf("the failed angle contributed a finding:\n%s", prompt)
 	}
-	if last := h.gh.history[1][len(h.gh.history[1])-1]; last != "bees:approved" {
-		t.Errorf("history: %v", h.gh.history[1])
+	if last := h.gh.History[1][len(h.gh.History[1])-1]; last != "bees:approved" {
+		t.Errorf("history: %v", h.gh.History[1])
 	}
 
 	t.Setenv("FAKE_ANGLE_FAIL", "all")
@@ -356,10 +356,10 @@ func TestAFailedAngleIsSkippedAndAFailedReviewEscalates(t *testing.T) {
 	runPass(t, h)
 
 	h.wantOrder("developer-issue-1-r1")
-	if last := h.gh.history[1][len(h.gh.history[1])-1]; last != "bees:needs-human" {
-		t.Errorf("history: %v", h.gh.history[1])
+	if last := h.gh.History[1][len(h.gh.History[1])-1]; last != "bees:needs-human" {
+		t.Errorf("history: %v", h.gh.History[1])
 	}
-	comments := h.gh.comments[1]
+	comments := h.gh.Comments[1]
 	if len(comments) != 1 || !strings.Contains(comments[0], "The review of pull request #201 could not run: every angle failed, so nobody reviewed acme/widgets#201") || !strings.Contains(comments[0], "`roles.reviewer`") {
 		t.Errorf("escalation comment: %v", comments)
 	}
@@ -447,8 +447,8 @@ func TestAReviewWithNoFindingsIsPostedAndApproved(t *testing.T) {
 	if rev := reviewOf(t, dirs[0]); !strings.Contains(rev.body, "The judge's list is empty") {
 		t.Errorf("the review posted:\n%s", rev.body)
 	}
-	if last := h.gh.history[1][len(h.gh.history[1])-1]; last != "bees:approved" {
-		t.Errorf("history: %v", h.gh.history[1])
+	if last := h.gh.History[1][len(h.gh.History[1])-1]; last != "bees:approved" {
+		t.Errorf("history: %v", h.gh.History[1])
 	}
 }
 
@@ -463,8 +463,8 @@ func TestAJudgeThatPostedNoReviewIsADegradedOperation(t *testing.T) {
 	seedCounter(t, h, "review", 1)
 	runPass(t, h)
 
-	if last := h.gh.history[1][len(h.gh.history[1])-1]; last != "bees:approved" {
-		t.Errorf("history: %v", h.gh.history[1])
+	if last := h.gh.History[1][len(h.gh.History[1])-1]; last != "bees:approved" {
+		t.Errorf("history: %v", h.gh.History[1])
 	}
 	if !strings.Contains(h.logs.String(), "the reviewer posted no review on the pull request") {
 		t.Errorf("no warning about the missing review:\n%s", h.logs.String())
@@ -582,8 +582,8 @@ func TestALaterReviewRoundVerifiesTheFirstRoundsFindings(t *testing.T) {
 	if !slices.Equal(reviewed, []string{"reviewer-pr-201-r1"}) {
 		t.Errorf("reviews in the ledger: %v, want round 1's alone", reviewed)
 	}
-	if last := h.gh.history[1][len(h.gh.history[1])-1]; last != "bees:approved" {
-		t.Errorf("history: %v", h.gh.history[1])
+	if last := h.gh.History[1][len(h.gh.History[1])-1]; last != "bees:approved" {
+		t.Errorf("history: %v", h.gh.History[1])
 	}
 }
 

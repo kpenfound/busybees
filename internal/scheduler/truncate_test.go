@@ -87,7 +87,7 @@ func TestOneLine(t *testing.T) {
 // detail is useful, keeps the reason in full.
 func TestEscalationSummaryIsOneLine(t *testing.T) {
 	h := newHarness(t, baseTOML)
-	h.gh.issues[12] = &github.Issue{Number: 12, Title: "Build the thing", State: "OPEN",
+	h.gh.Issues[12] = &github.Issue{Number: 12, Title: "Build the thing", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:in-progress"}}}
 
 	res := &session.Result{IsError: true, ErrorSubtype: "error_during_execution",
@@ -113,10 +113,10 @@ func TestEscalationSummaryIsOneLine(t *testing.T) {
 		t.Errorf("the escalation spilled onto a second console line:\n%s", h.logs.String())
 	}
 
-	if len(h.gh.comments[12]) != 1 {
-		t.Fatalf("comments: %v", h.gh.comments[12])
+	if len(h.gh.Comments[12]) != 1 {
+		t.Fatalf("comments: %v", h.gh.Comments[12])
 	}
-	body := h.gh.comments[12][0]
+	body := h.gh.Comments[12][0]
 	if !strings.Contains(body, "step one failed") || !strings.Contains(body, "step two failed") {
 		t.Errorf("the comment lost part of the reason:\n%s", body)
 	}

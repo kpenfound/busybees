@@ -2,9 +2,22 @@ package config
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/kpenfound/busybees/core/agent"
 )
+
+// Every sandbox kind core/agent implements loads from bees.toml, so a mode
+// the runner learns reaches a role through the sandbox key.
+func TestSandboxModesCoverCore(t *testing.T) {
+	for _, mode := range agent.Sandboxes {
+		if !slices.Contains(SandboxModes, mode) {
+			t.Errorf("SandboxModes %v lacks %q, which core/agent implements", SandboxModes, mode)
+		}
+	}
+}
 
 // sandbox resolves like model: the role's value if it set one, else the
 // global one, else none.

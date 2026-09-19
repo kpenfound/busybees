@@ -107,11 +107,11 @@ func TestDependencyHoldsReadyIssue(t *testing.T) {
 	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true} // reviewer disabled: PR auto-approved
 	// #1 is older, so it is first in the ready queue: skipping it must not
 	// cost #2 its pool slot.
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Dependent", Body: "Blocked by #2\n\nDo the thing.", State: "OPEN",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Dependent", Body: "Blocked by #2\n\nDo the thing.", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/m"}}, CreatedAt: time.Now().Add(-time.Hour)}
-	h.gh.issues[2] = &github.Issue{Number: 2, Title: "Prerequisite", State: "OPEN",
+	h.gh.Issues[2] = &github.Issue{Number: 2, Title: "Prerequisite", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/m"}}, CreatedAt: time.Now()}
-	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-2", BaseRefName: "main",
+	h.gh.PRs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-2", BaseRefName: "main",
 		Labels: []github.Label{{Name: "bees"}}}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -119,10 +119,10 @@ func TestDependencyHoldsReadyIssue(t *testing.T) {
 	if err := h.sched.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := h.gh.history[1]; len(got) != 0 {
+	if got := h.gh.History[1]; len(got) != 0 {
 		t.Fatalf("#1 is blocked by open #2 and must not be touched: %v", got)
 	}
-	if got := strings.Join(h.gh.history[2], ","); got != "bees:in-progress,bees:approved" {
+	if got := strings.Join(h.gh.History[2], ","); got != "bees:in-progress,bees:approved" {
 		t.Fatalf("#2 history: %s", got)
 	}
 	if n := len(h.sessions(config.RoleDeveloper)); n != 1 {
@@ -138,12 +138,12 @@ func TestDependencyHoldsReadyIssue(t *testing.T) {
 
 	// #2 closes: #1 is dispatched on the next poll, with no label change in
 	// between. A local pass in the meantime still sees the cached, open #2.
-	h.gh.issues[2].State = "CLOSED"
+	h.gh.Issues[2].State = "CLOSED"
 	h.clock.advance(h.cfg.Scheduler.PollInterval.Duration)
 	if err := h.sched.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := h.gh.history[1]; len(got) == 0 || got[0] != "bees:in-progress" {
+	if got := h.gh.History[1]; len(got) == 0 || got[0] != "bees:in-progress" {
 		t.Fatalf("#1 should have been dispatched once #2 closed: %v", got)
 	}
 	if st, err = h.store.LoadStatus(); err != nil {
@@ -158,9 +158,9 @@ func TestDependencyHoldsReadyIssue(t *testing.T) {
 func TestInvisibleBlockerDoesNotHold(t *testing.T) {
 	h := newHarness(t, devOnlyTOML)
 	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true}
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Dependent", Body: "Blocked by #404", State: "OPEN",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Dependent", Body: "Blocked by #404", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/m"}}, CreatedAt: time.Now()}
-	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main",
+	h.gh.PRs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main",
 		Labels: []github.Label{{Name: "bees"}}}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -168,7 +168,7 @@ func TestInvisibleBlockerDoesNotHold(t *testing.T) {
 	if err := h.sched.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(h.gh.history[1], ","); got != "bees:in-progress,bees:approved" {
+	if got := strings.Join(h.gh.History[1], ","); got != "bees:in-progress,bees:approved" {
 		t.Fatalf("#1 history: %s", got)
 	}
 	st, err := h.store.LoadStatus()
@@ -184,9 +184,9 @@ func TestInvisibleBlockerDoesNotHold(t *testing.T) {
 func TestProjectManagerSeesBlockers(t *testing.T) {
 	h := newHarness(t, baseTOML+"\n[roles.product_manager]\nenabled = false\n[roles.qa]\nenabled = false\n[roles.developer]\nenabled = false\n")
 	h.sched.OnlyRoles = map[string]bool{config.RoleProjectManager: true}
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Needs triage", Body: "Blocked by #2\n\nvague", State: "OPEN",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Needs triage", Body: "Blocked by #2\n\nvague", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:triage"}}, CreatedAt: time.Now()}
-	h.gh.issues[2] = &github.Issue{Number: 2, Title: "Prerequisite", State: "OPEN",
+	h.gh.Issues[2] = &github.Issue{Number: 2, Title: "Prerequisite", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/m"}}, CreatedAt: time.Now()}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -262,9 +262,9 @@ func TestStackedPRsRelaxTheHold(t *testing.T) {
 				toml = stackedTOML
 			}
 			h := newHarness(t, toml)
-			h.gh.parents = tc.parents
+			h.gh.Parents = tc.parents
 			if tc.err != nil {
-				h.gh.parentErr = map[int]error{1: tc.err}
+				h.gh.ParentErr = map[int]error{1: tc.err}
 			}
 			issues := []github.Issue{
 				{Number: 1, Body: "Blocked by #2", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}}},
@@ -278,7 +278,7 @@ func TestStackedPRsRelaxTheHold(t *testing.T) {
 			if got := len(snap.waiting[1]) > 0; got != tc.waits {
 				t.Fatalf("waiting[1] = %v, want waits=%v", snap.waiting[1], tc.waits)
 			}
-			if got := h.gh.callCount("api graphql"); got != tc.lookups {
+			if got := h.gh.CallCount("api graphql"); got != tc.lookups {
 				t.Fatalf("parent lookups: %d, want %d", got, tc.lookups)
 			}
 		})
@@ -293,25 +293,25 @@ func TestStackedPRsRelaxTheHold(t *testing.T) {
 func TestStackedPRsBuildOnThePredecessorBranch(t *testing.T) {
 	h := newHarnessAt(t, stackedTOML, time.Now())
 	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true} // reviewer disabled: PR auto-approved
-	h.gh.parents = map[int]int{1: 5, 2: 5}
+	h.gh.Parents = map[int]int{1: 5, 2: 5}
 	// #1 is older, so it is first in the ready queue and would go out first
 	// if the hold were relaxed before #2 has a pull request.
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Second step", Body: "Blocked by #2\n\nBuild on it.", State: "OPEN",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Second step", Body: "Blocked by #2\n\nBuild on it.", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/m"}}, CreatedAt: time.Now().Add(-time.Hour)}
-	h.gh.issues[2] = &github.Issue{Number: 2, Title: "First step", State: "OPEN",
+	h.gh.Issues[2] = &github.Issue{Number: 2, Title: "First step", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/m"}}, CreatedAt: time.Now()}
-	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-2", BaseRefName: "main",
+	h.gh.PRs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-2", BaseRefName: "main",
 		Labels: []github.Label{{Name: "bees"}}}
-	h.gh.prs[201] = &github.PR{Number: 201, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "bees/issue-2",
+	h.gh.PRs[201] = &github.PR{Number: 201, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "bees/issue-2",
 		Labels: []github.Label{{Name: "bees"}}}
 	h.gh.hidden[201] = true // opened by #1's developer session
 
 	// Pass 1: #2 has no pull request yet, so #1 waits and #2 goes out.
 	runPass(t, h)
-	if got := h.gh.history[1]; len(got) != 0 {
+	if got := h.gh.History[1]; len(got) != 0 {
 		t.Fatalf("#1 has nothing to stack on yet and must wait: %v", got)
 	}
-	if got := strings.Join(h.gh.history[2], ","); got != "bees:in-progress,bees:approved" {
+	if got := strings.Join(h.gh.History[2], ","); got != "bees:in-progress,bees:approved" {
 		t.Fatalf("#2 history: %s", got)
 	}
 	if !strings.Contains(systemPromptOf(t, h, 0), "--base main --head bees/issue-2") {
@@ -322,7 +322,7 @@ func TestStackedPRsBuildOnThePredecessorBranch(t *testing.T) {
 	// exists, so #1 is dispatched and stacked on bees/issue-2.
 	forcePoll(h)
 	runPass(t, h)
-	if got := strings.Join(h.gh.history[1], ","); got != "bees:in-progress,bees:approved" {
+	if got := strings.Join(h.gh.History[1], ","); got != "bees:in-progress,bees:approved" {
 		t.Fatalf("#1 should have been dispatched once #2's PR opened: %s", got)
 	}
 	if n := len(h.sessions(config.RoleDeveloper)); n != 2 {
@@ -372,18 +372,18 @@ func TestStackedPRsBuildOnThePredecessorBranch(t *testing.T) {
 func TestStackedPRsFallBackToTheDefaultBranchOnceThePredecessorMerged(t *testing.T) {
 	h := newHarnessAt(t, stackedTOML, time.Now())
 	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true}
-	h.gh.parents = map[int]int{1: 5, 2: 5}
+	h.gh.Parents = map[int]int{1: 5, 2: 5}
 	// #2 is closed: not in the poll, so it holds #1 back no longer; its
 	// branch was deleted on merge, and no open pull request names it.
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Second step", Body: "Blocked by #2\n\nBuild on it.", State: "OPEN",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Second step", Body: "Blocked by #2\n\nBuild on it.", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/m"}}, CreatedAt: time.Now()}
-	h.gh.issues[2] = &github.Issue{Number: 2, Title: "First step", State: "CLOSED",
+	h.gh.Issues[2] = &github.Issue{Number: 2, Title: "First step", State: "CLOSED",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:approved"}, {Name: "bees:size/m"}}, CreatedAt: time.Now()}
-	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main",
+	h.gh.PRs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main",
 		Labels: []github.Label{{Name: "bees"}}}
 
 	runPass(t, h)
-	if got := strings.Join(h.gh.history[1], ","); got != "bees:in-progress,bees:approved" {
+	if got := strings.Join(h.gh.History[1], ","); got != "bees:in-progress,bees:approved" {
 		t.Fatalf("#1 history: %s", got)
 	}
 	if sys := systemPromptOf(t, h, 0); !strings.Contains(sys, "--base main --head bees/issue-1") {
@@ -402,18 +402,18 @@ const stackedPR = 201
 // on bees/issue-2.
 func seedStack(t *testing.T, h *harness) {
 	t.Helper()
-	h.gh.parents = map[int]int{1: 5, 2: 5}
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Second step", Body: "Blocked by #2\n\nBuild on it.", State: "OPEN",
+	h.gh.Parents = map[int]int{1: 5, 2: 5}
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Second step", Body: "Blocked by #2\n\nBuild on it.", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/m"}}, CreatedAt: time.Now().Add(-time.Hour)}
-	h.gh.issues[2] = &github.Issue{Number: 2, Title: "First step", State: "OPEN",
+	h.gh.Issues[2] = &github.Issue{Number: 2, Title: "First step", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:blocked"}, {Name: "bees:size/m"}}, CreatedAt: time.Now()}
-	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-2", BaseRefName: "main",
+	h.gh.PRs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-2", BaseRefName: "main",
 		Labels: []github.Label{{Name: "bees"}}}
 	if err := os.WriteFile(h.gh.prMarker, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	pushBranch(t, h.clone, "bees/issue-2") // #2's developer pushed its branch
-	h.gh.prs[stackedPR] = &github.PR{Number: stackedPR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "bees/issue-2",
+	h.gh.PRs[stackedPR] = &github.PR{Number: stackedPR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "bees/issue-2",
 		Labels: []github.Label{{Name: "bees"}}}
 	h.gh.hidden[stackedPR] = true
 }
@@ -452,9 +452,9 @@ func waitWorkers(t *testing.T, h *harness, cancel context.CancelFunc, d time.Dur
 // labelApproved gives an issue the label approve() would, as the
 // predecessor's own worker does when its review passes.
 func labelApproved(h *harness, n int) {
-	h.gh.mu.Lock()
-	defer h.gh.mu.Unlock()
-	h.gh.issues[n].Labels = append(h.gh.issues[n].Labels, github.Label{Name: "bees:approved"})
+	h.gh.Lock()
+	defer h.gh.Unlock()
+	h.gh.Issues[n].Labels = append(h.gh.Issues[n].Labels, github.Label{Name: "bees:approved"})
 }
 
 // A stacked pull request whose own review passed is not approved — no label
@@ -474,14 +474,14 @@ func TestAStackedPullRequestWaitsForThePredecessorsApproval(t *testing.T) {
 	waitForStage(t, h, "stack-wait")
 
 	h.wantOrder("developer-issue-1-r1", "reviewer-pr-201-r1")
-	if got := strings.Join(h.gh.history[1], ","); got != "bees:in-progress,bees:review" {
+	if got := strings.Join(h.gh.History[1], ","); got != "bees:in-progress,bees:review" {
 		t.Fatalf("#1 must not be approved while #2 is not: %s", got)
 	}
-	h.gh.mu.Lock()
-	prLabels := append([]github.Label(nil), h.gh.prs[stackedPR].Labels...)
-	issues := []github.Issue{*h.gh.issues[1], *h.gh.issues[2]}
-	prs := []github.PR{*h.gh.prs[fakePR], *h.gh.prs[stackedPR]}
-	h.gh.mu.Unlock()
+	h.gh.Lock()
+	prLabels := append([]github.Label(nil), h.gh.PRs[stackedPR].Labels...)
+	issues := []github.Issue{*h.gh.Issues[1], *h.gh.Issues[2]}
+	prs := []github.PR{*h.gh.PRs[fakePR], *h.gh.PRs[stackedPR]}
+	h.gh.Unlock()
 	if github.HasLabel(prLabels, "bees:approved") {
 		t.Fatalf("the stacked pull request is labelled approved: %v", prLabels)
 	}
@@ -491,16 +491,16 @@ func TestAStackedPullRequestWaitsForThePredecessorsApproval(t *testing.T) {
 
 	labelApproved(h, 2)
 	waitWorkers(t, h, cancel, 10*time.Second)
-	if got := strings.Join(h.gh.history[1], ","); got != "bees:in-progress,bees:review,bees:approved" {
+	if got := strings.Join(h.gh.History[1], ","); got != "bees:in-progress,bees:review,bees:approved" {
 		t.Fatalf("#1 history after #2's approval: %s", got)
 	}
-	if !github.HasLabel(h.gh.prs[stackedPR].Labels, "bees:approved") {
-		t.Fatalf("the stacked pull request was not labelled: %v", h.gh.prs[stackedPR].Labels)
+	if !github.HasLabel(h.gh.PRs[stackedPR].Labels, "bees:approved") {
+		t.Fatalf("the stacked pull request was not labelled: %v", h.gh.PRs[stackedPR].Labels)
 	}
 	// The wait ended in an approval, not a fresh review round.
 	h.wantOrder("developer-issue-1-r1", "reviewer-pr-201-r1")
-	if len(h.gh.merged) != 0 {
-		t.Fatalf("auto_merge is off; nothing should be merged: %v", h.gh.merged)
+	if len(h.gh.Merged) != 0 {
+		t.Fatalf("auto_merge is off; nothing should be merged: %v", h.gh.Merged)
 	}
 }
 
@@ -518,11 +518,11 @@ func TestAStackedPullRequestWhosePredecessorClosesUnapproved(t *testing.T) {
 		want   string
 	}{
 		{"the predecessor's pull request is still open", func(h *harness) {}, "bees:in-progress,bees:needs-human"},
-		{"the predecessor's pull request closed unmerged", func(h *harness) { h.gh.prs[fakePR].State = "CLOSED" }, "bees:in-progress,bees:needs-human"},
+		{"the predecessor's pull request closed unmerged", func(h *harness) { h.gh.PRs[fakePR].State = "CLOSED" }, "bees:in-progress,bees:needs-human"},
 		{"the predecessor's pull request merged", func(h *harness) {
 			now := time.Now()
-			h.gh.prs[fakePR].State = "MERGED"
-			h.gh.prs[fakePR].MergedAt = &now
+			h.gh.PRs[fakePR].State = "MERGED"
+			h.gh.PRs[fakePR].MergedAt = &now
 		}, "bees:in-progress,bees:approved"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -535,24 +535,24 @@ func TestAStackedPullRequestWhosePredecessorClosesUnapproved(t *testing.T) {
 				t.Fatal(err)
 			}
 			waitForStage(t, h, "stack-wait")
-			if got := strings.Join(h.gh.history[1], ","); got != "bees:in-progress" {
+			if got := strings.Join(h.gh.History[1], ","); got != "bees:in-progress" {
 				t.Fatalf("#1 must not be approved while #2 is not: %s", got)
 			}
 
-			h.gh.mu.Lock()
-			h.gh.issues[2].State = "CLOSED"
+			h.gh.Lock()
+			h.gh.Issues[2].State = "CLOSED"
 			tc.closed(h)
-			h.gh.mu.Unlock()
+			h.gh.Unlock()
 			waitWorkers(t, h, cancel, 10*time.Second)
-			if got := strings.Join(h.gh.history[1], ","); got != tc.want {
+			if got := strings.Join(h.gh.History[1], ","); got != tc.want {
 				t.Fatalf("#1 history: %s, want %s", got, tc.want)
 			}
 			if tc.want == "bees:in-progress,bees:needs-human" {
-				if c := h.gh.comments[1]; len(c) != 1 || !strings.Contains(c[0], "stacked on #2's pull request #101") || !strings.Contains(c[0], "#2 closed without being approved") {
+				if c := h.gh.Comments[1]; len(c) != 1 || !strings.Contains(c[0], "stacked on #2's pull request #101") || !strings.Contains(c[0], "#2 closed without being approved") {
 					t.Fatalf("escalation comment: %v", c)
 				}
-			} else if len(h.gh.comments[1]) != 0 {
-				t.Fatalf("no escalation expected: %v", h.gh.comments[1])
+			} else if len(h.gh.Comments[1]) != 0 {
+				t.Fatalf("no escalation expected: %v", h.gh.Comments[1])
 			}
 			h.wantOrder("developer-issue-1-r1")
 		})
@@ -574,13 +574,13 @@ func TestAWorkerKilledInStackWaitResumesInIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForStage(t, h, "stack-wait")
-	h.gh.mu.Lock()
-	h.gh.errFor["issue view"] = fmt.Errorf("gh: could not reach github") // the poll the scheduler dies on
-	h.gh.mu.Unlock()
+	h.gh.Lock()
+	h.gh.ErrFor["issue view"] = fmt.Errorf("gh: could not reach github") // the poll the scheduler dies on
+	h.gh.Unlock()
 	waitWorkers(t, h, cancel, 10*time.Second)
-	h.gh.mu.Lock()
-	delete(h.gh.errFor, "issue view")
-	h.gh.mu.Unlock()
+	h.gh.Lock()
+	delete(h.gh.ErrFor, "issue view")
+	h.gh.Unlock()
 
 	h.wantOrder("developer-issue-1-r1", "reviewer-pr-201-r1")
 	bk, err := h.store.Issue(1)
@@ -604,13 +604,13 @@ func TestAWorkerKilledInStackWaitResumesInIt(t *testing.T) {
 	}
 	waitForStage(t, h, "stack-wait")
 	h.wantOrder("developer-issue-1-r1", "reviewer-pr-201-r1")
-	if got := strings.Join(h.gh.history[1], ","); got != "bees:in-progress,bees:review" {
+	if got := strings.Join(h.gh.History[1], ","); got != "bees:in-progress,bees:review" {
 		t.Fatalf("#1 history after the restart: %s", got)
 	}
 
 	labelApproved(h, 2)
 	waitWorkers(t, h, cancel, 10*time.Second)
-	if got := strings.Join(h.gh.history[1], ","); got != "bees:in-progress,bees:review,bees:approved" {
+	if got := strings.Join(h.gh.History[1], ","); got != "bees:in-progress,bees:review,bees:approved" {
 		t.Fatalf("#1 history after #2's approval: %s", got)
 	}
 	// Not one extra session: the review has already happened and is paid for.
@@ -630,30 +630,30 @@ func TestAWorkerResumedIntoStackWaitAfterThePredecessorMergedApproves(t *testing
 		t.Fatal(err)
 	}
 	waitForStage(t, h, "stack-wait")
-	h.gh.mu.Lock()
-	h.gh.errFor["issue view"] = fmt.Errorf("gh: could not reach github")
-	h.gh.mu.Unlock()
+	h.gh.Lock()
+	h.gh.ErrFor["issue view"] = fmt.Errorf("gh: could not reach github")
+	h.gh.Unlock()
 	waitWorkers(t, h, cancel, 10*time.Second)
 
 	// While the scheduler was down a person merged #2 by hand and its issue
 	// closed, never labelled approved; GitHub retargeted #201 at main.
-	h.gh.mu.Lock()
-	delete(h.gh.errFor, "issue view")
+	h.gh.Lock()
+	delete(h.gh.ErrFor, "issue view")
 	now := time.Now()
-	h.gh.issues[2].State = "CLOSED"
-	h.gh.prs[fakePR].State, h.gh.prs[fakePR].MergedAt = "MERGED", &now
-	h.gh.prs[stackedPR].BaseRefName = "main"
-	h.gh.mu.Unlock()
+	h.gh.Issues[2].State = "CLOSED"
+	h.gh.PRs[fakePR].State, h.gh.PRs[fakePR].MergedAt = "MERGED", &now
+	h.gh.PRs[stackedPR].BaseRefName = "main"
+	h.gh.Unlock()
 
 	h.clock.advance(6 * h.cfg.Scheduler.PollInterval.Duration)
 	forcePoll(h)
 	runPass(t, h)
-	if got := strings.Join(h.gh.history[1], ","); got != "bees:in-progress,bees:review,bees:approved" {
+	if got := strings.Join(h.gh.History[1], ","); got != "bees:in-progress,bees:review,bees:approved" {
 		t.Fatalf("#1 history: %s", got)
 	}
 	h.wantOrder("developer-issue-1-r1", "reviewer-pr-201-r1")
-	if len(h.gh.comments[1]) != 0 {
-		t.Fatalf("no escalation expected: %v", h.gh.comments[1])
+	if len(h.gh.Comments[1]) != 0 {
+		t.Fatalf("no escalation expected: %v", h.gh.Comments[1])
 	}
 }
 
@@ -672,10 +672,10 @@ func TestStackWaitPollsAtTheChecksPollInterval(t *testing.T) {
 	}
 	waitForStage(t, h, "stack-wait")
 	polls := func() int {
-		h.gh.mu.Lock()
-		defer h.gh.mu.Unlock()
+		h.gh.Lock()
+		defer h.gh.Unlock()
 		n := 0
-		for _, c := range h.gh.calls {
+		for _, c := range h.gh.Calls {
 			if len(c) >= 3 && c[0] == "issue" && c[1] == "view" && c[2] == "2" {
 				n++
 			}
@@ -689,7 +689,7 @@ func TestStackWaitPollsAtTheChecksPollInterval(t *testing.T) {
 	if got := polls(); got != before {
 		t.Fatalf("#2 was polled %d more times inside checks_poll_interval", got-before)
 	}
-	if got := strings.Join(h.gh.history[1], ","); got != "bees:in-progress" {
+	if got := strings.Join(h.gh.History[1], ","); got != "bees:in-progress" {
 		t.Fatalf("#1 was approved between polls: %s", got)
 	}
 	// The wait ends with the context, as a hard stop ends it.
@@ -755,9 +755,9 @@ func TestAStackedPullRequestWhosePredecessorClosedUnmergedWhileNoWorkerRan(t *te
 			h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true} // reviewer disabled: a review would approve at once
 			seedStack(t, h)
 			delete(h.gh.hidden, stackedPR) // opened before the restart
-			h.gh.issues[1].Labels = []github.Label{{Name: "bees"}, {Name: tc.label}, {Name: "bees:size/m"}}
-			h.gh.issues[2].State = tc.pred
-			h.gh.prs[fakePR].State = "CLOSED" // #2's pull request closed unmerged
+			h.gh.Issues[1].Labels = []github.Label{{Name: "bees"}, {Name: tc.label}, {Name: "bees:size/m"}}
+			h.gh.Issues[2].State = tc.pred
+			h.gh.PRs[fakePR].State = "CLOSED" // #2's pull request closed unmerged
 			if tc.stage != "" {
 				bk, err := h.store.Issue(1)
 				if err != nil {
@@ -770,10 +770,10 @@ func TestAStackedPullRequestWhosePredecessorClosedUnmergedWhileNoWorkerRan(t *te
 			}
 
 			runPass(t, h)
-			if got := strings.Join(h.gh.history[1], ","); got != "bees:needs-human" {
+			if got := strings.Join(h.gh.History[1], ","); got != "bees:needs-human" {
 				t.Fatalf("#1 history: %s, want bees:needs-human", got)
 			}
-			c := h.gh.comments[1]
+			c := h.gh.Comments[1]
 			if len(c) != 1 {
 				t.Fatalf("escalation comments: %v", c)
 			}
@@ -785,8 +785,8 @@ func TestAStackedPullRequestWhosePredecessorClosedUnmergedWhileNoWorkerRan(t *te
 			if n := len(h.sessions(config.RoleDeveloper)); n != 0 {
 				t.Fatalf("developer sessions: %d, want none", n)
 			}
-			if github.HasLabel(h.gh.prs[stackedPR].Labels, "bees:approved") || len(h.gh.merged) != 0 {
-				t.Fatalf("the stacked pull request was approved or merged: %v %v", h.gh.prs[stackedPR].Labels, h.gh.merged)
+			if github.HasLabel(h.gh.PRs[stackedPR].Labels, "bees:approved") || len(h.gh.Merged) != 0 {
+				t.Fatalf("the stacked pull request was approved or merged: %v %v", h.gh.PRs[stackedPR].Labels, h.gh.Merged)
 			}
 			bk, err := h.store.Issue(1)
 			if err != nil {
@@ -818,18 +818,18 @@ func TestAWorkerStartsOnAPullRequestTargetingSomeOtherBranch(t *testing.T) {
 			seedStack(t, h)
 			delete(h.gh.hidden, stackedPR)
 			seedCounter(t, h, "review", 1)
-			h.gh.issues[2].State = "CLOSED"
-			h.gh.prs[fakePR].State = "CLOSED"
-			h.gh.prs[stackedPR].BaseRefName = tc.base
+			h.gh.Issues[2].State = "CLOSED"
+			h.gh.PRs[fakePR].State = "CLOSED"
+			h.gh.PRs[stackedPR].BaseRefName = tc.base
 
 			runPass(t, h)
 			// The developer round ran and the pull request went to review: the
 			// worker did not escalate at start.
-			if got := strings.Join(h.gh.history[1], ","); !strings.HasPrefix(got, tc.want) {
+			if got := strings.Join(h.gh.History[1], ","); !strings.HasPrefix(got, tc.want) {
 				t.Fatalf("#1 history: %s, want a prefix of %s", got, tc.want)
 			}
-			if len(h.gh.comments[1]) != 0 {
-				t.Fatalf("no escalation expected: %v", h.gh.comments[1])
+			if len(h.gh.Comments[1]) != 0 {
+				t.Fatalf("no escalation expected: %v", h.gh.Comments[1])
 			}
 			if n := len(h.sessions(config.RoleDeveloper)); n != 1 {
 				t.Fatalf("developer sessions: %d, want 1", n)
@@ -846,13 +846,13 @@ func TestAPullRequestTargetingAWorkItemBranchWithStackingOff(t *testing.T) {
 	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true}
 	seedStack(t, h)
 	delete(h.gh.hidden, stackedPR)
-	h.gh.issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:review"}, {Name: "bees:size/m"}}
+	h.gh.Issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:review"}, {Name: "bees:size/m"}}
 
 	runPass(t, h)
-	if got := strings.Join(h.gh.history[1], ","); got != "bees:needs-human" {
+	if got := strings.Join(h.gh.History[1], ","); got != "bees:needs-human" {
 		t.Fatalf("#1 history: %s", got)
 	}
-	c := h.gh.comments[1]
+	c := h.gh.Comments[1]
 	if len(c) != 1 || !strings.Contains(c[0], "`scheduler.stacked_prs` is off") || !strings.Contains(c[0], "Retarget #201 at `main` and hand #1 back") || strings.Contains(c[0], "Reopen") {
 		t.Fatalf("escalation comment: %v", c)
 	}

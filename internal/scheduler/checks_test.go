@@ -43,18 +43,18 @@ const (
 // approving straight away so the run reaches the checks stage in one round.
 func seedChecksIssue(t *testing.T, h *harness) {
 	t.Helper()
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Ship it", State: "OPEN",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Ship it", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now()}
-	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main",
+	h.gh.PRs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main",
 		Labels: []github.Label{{Name: "bees"}}}
 	seedCounter(t, h, "review", 1)
 }
 
 // checksCalls counts the two `gh pr checks` flavours separately.
 func checksCalls(h *harness) (required, reported int) {
-	h.gh.mu.Lock()
-	defer h.gh.mu.Unlock()
-	for _, c := range h.gh.calls {
+	h.gh.Lock()
+	defer h.gh.Unlock()
+	for _, c := range h.gh.Calls {
 		if len(c) < 2 || c[0] != "pr" || c[1] != "checks" {
 			continue
 		}
@@ -82,12 +82,12 @@ func runChecksLoop(t *testing.T, h *harness) {
 func TestRequiredChecksAreTheWholeGate(t *testing.T) {
 	h := newHarness(t, checksTOML)
 	seedChecksIssue(t, h)
-	h.gh.checks = []checksResponse{{passingJSON, nil}}
-	h.gh.checksAll = []checksResponse{{failingJSON, fmt.Errorf("exit status 1")}}
+	h.gh.Checks = []checksResponse{{JSON: passingJSON, Err: nil}}
+	h.gh.ChecksAll = []checksResponse{{JSON: failingJSON, Err: fmt.Errorf("exit status 1")}}
 	runChecksLoop(t, h)
 
-	if len(h.gh.merged) != 1 || h.gh.merged[0] != fakePR {
-		t.Fatalf("merged: %v", h.gh.merged)
+	if len(h.gh.Merged) != 1 || h.gh.Merged[0] != fakePR {
+		t.Fatalf("merged: %v", h.gh.Merged)
 	}
 	required, reported := checksCalls(h)
 	if required == 0 || reported != 0 {
@@ -103,11 +103,11 @@ func TestRequiredChecksAreTheWholeGate(t *testing.T) {
 func TestReportedChecksGateTheMergeWhenNothingIsRequired(t *testing.T) {
 	h := newHarness(t, checksTOML)
 	seedChecksIssue(t, h)
-	h.gh.checksAll = []checksResponse{{passingJSON, nil}}
+	h.gh.ChecksAll = []checksResponse{{JSON: passingJSON, Err: nil}}
 	runChecksLoop(t, h)
 
-	if len(h.gh.merged) != 1 || h.gh.merged[0] != fakePR {
-		t.Fatalf("merged: %v", h.gh.merged)
+	if len(h.gh.Merged) != 1 || h.gh.Merged[0] != fakePR {
+		t.Fatalf("merged: %v", h.gh.Merged)
 	}
 	logs := h.logs.String()
 	if !strings.Contains(logs, "no required checks; 1 reported checks passed; merging") {
@@ -124,24 +124,24 @@ func TestReportedChecksGateTheMergeWhenNothingIsRequired(t *testing.T) {
 func TestFailingReportedCheckBlocksTheMerge(t *testing.T) {
 	h := newHarness(t, checksTOML)
 	seedChecksIssue(t, h)
-	h.gh.checksAll = []checksResponse{{failingJSON, fmt.Errorf("exit status 1")}}
+	h.gh.ChecksAll = []checksResponse{{JSON: failingJSON, Err: fmt.Errorf("exit status 1")}}
 	runChecksLoop(t, h)
 
-	if len(h.gh.merged) != 0 {
-		t.Fatalf("merged with a failing check: %v", h.gh.merged)
+	if len(h.gh.Merged) != 0 {
+		t.Fatalf("merged with a failing check: %v", h.gh.Merged)
 	}
-	if got := h.gh.history[1]; got[len(got)-1] != "bees:needs-human" {
+	if got := h.gh.History[1]; got[len(got)-1] != "bees:needs-human" {
 		t.Fatalf("history: %v", got)
 	}
 	// max_check_fix_rounds = 1: one diagnosis, then the escalation.
 	if n := len(h.sessions(config.RoleReviewer)); n != 2 {
 		t.Fatalf("reviewer sessions: %d, want 2 (one review, one checks diagnosis)", n)
 	}
-	if len(h.gh.comments[1]) != 1 || !strings.Contains(h.gh.comments[1][0], "go / test") {
-		t.Fatalf("the escalation must name the failing check: %v", h.gh.comments[1])
+	if len(h.gh.Comments[1]) != 1 || !strings.Contains(h.gh.Comments[1][0], "go / test") {
+		t.Fatalf("the escalation must name the failing check: %v", h.gh.Comments[1])
 	}
-	if !strings.Contains(h.gh.comments[1][0], "still fail after 1 fix rounds") {
-		t.Fatalf("comment: %v", h.gh.comments[1])
+	if !strings.Contains(h.gh.Comments[1][0], "still fail after 1 fix rounds") {
+		t.Fatalf("comment: %v", h.gh.Comments[1])
 	}
 }
 
@@ -151,17 +151,17 @@ func TestFailingReportedCheckBlocksTheMerge(t *testing.T) {
 func TestPendingReportedCheckIsWaitedForNotIgnored(t *testing.T) {
 	h := newHarness(t, strings.Replace(checksTOML, `checks_timeout = "5s"`, `checks_timeout = "50ms"`, 1))
 	seedChecksIssue(t, h)
-	h.gh.checksAll = []checksResponse{{pendingJSON, fmt.Errorf("exit status 8")}}
+	h.gh.ChecksAll = []checksResponse{{JSON: pendingJSON, Err: fmt.Errorf("exit status 8")}}
 	runChecksLoop(t, h)
 
-	if len(h.gh.merged) != 0 {
-		t.Fatalf("merged with a pending check: %v", h.gh.merged)
+	if len(h.gh.Merged) != 0 {
+		t.Fatalf("merged with a pending check: %v", h.gh.Merged)
 	}
-	if got := h.gh.history[1]; got[len(got)-1] != "bees:needs-human" {
+	if got := h.gh.History[1]; got[len(got)-1] != "bees:needs-human" {
 		t.Fatalf("history: %v", got)
 	}
-	if len(h.gh.comments[1]) != 1 || !strings.Contains(h.gh.comments[1][0], "still pending") {
-		t.Fatalf("comments: %v", h.gh.comments[1])
+	if len(h.gh.Comments[1]) != 1 || !strings.Contains(h.gh.Comments[1][0], "still pending") {
+		t.Fatalf("comments: %v", h.gh.Comments[1])
 	}
 	if _, reported := checksCalls(h); reported < 2 {
 		t.Fatalf("a pending reported check must be polled, not read once: %d reads", reported)
@@ -177,8 +177,8 @@ func TestNoChecksAtAllMergesAndSaysSo(t *testing.T) {
 	// Both queues stay empty: the fake answers gh's "no checks reported".
 	runChecksLoop(t, h)
 
-	if len(h.gh.merged) != 1 || h.gh.merged[0] != fakePR {
-		t.Fatalf("merged: %v", h.gh.merged)
+	if len(h.gh.Merged) != 1 || h.gh.Merged[0] != fakePR {
+		t.Fatalf("merged: %v", h.gh.Merged)
 	}
 	required, reported := checksCalls(h)
 	if required < 2 || reported < 2 {
@@ -198,16 +198,16 @@ func TestNoChecksAtAllMergesAndSaysSo(t *testing.T) {
 func TestACheckAppearingOnTheSecondPollIsHonoured(t *testing.T) {
 	h := newHarness(t, checksTOML)
 	seedChecksIssue(t, h)
-	h.gh.checksAll = []checksResponse{
-		{"", fmt.Errorf("no checks reported on the 'bees/issue-1' branch")},
-		{failingJSON, fmt.Errorf("exit status 1")},
+	h.gh.ChecksAll = []checksResponse{
+		{JSON: "", Err: fmt.Errorf("no checks reported on the 'bees/issue-1' branch")},
+		{JSON: failingJSON, Err: fmt.Errorf("exit status 1")},
 	}
 	runChecksLoop(t, h)
 
-	if len(h.gh.merged) != 0 {
-		t.Fatalf("a check that appeared on the second poll was raced past: %v", h.gh.merged)
+	if len(h.gh.Merged) != 0 {
+		t.Fatalf("a check that appeared on the second poll was raced past: %v", h.gh.Merged)
 	}
-	if got := h.gh.history[1]; got[len(got)-1] != "bees:needs-human" {
+	if got := h.gh.History[1]; got[len(got)-1] != "bees:needs-human" {
 		t.Fatalf("history: %v", got)
 	}
 }
@@ -222,13 +222,13 @@ func TestTheWorkerStageNamesTheGate(t *testing.T) {
 		wantGate          checksGate
 		wantChecksSummary github.ChecksStatus
 	}{
-		{"required", []checksResponse{{passingJSON, nil}}, nil, "checks (required)", gateRequired, github.ChecksPassed},
-		{"reported", nil, []checksResponse{{passingJSON, nil}}, "checks (reported)", gateReported, github.ChecksPassed},
+		{"required", []checksResponse{{JSON: passingJSON, Err: nil}}, nil, "checks (required)", gateRequired, github.ChecksPassed},
+		{"reported", nil, []checksResponse{{JSON: passingJSON, Err: nil}}, "checks (reported)", gateReported, github.ChecksPassed},
 		{"none", nil, nil, "checks (none)", gateNone, github.ChecksNone},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t, checksTOML)
-			h.gh.checks, h.gh.checksAll = tc.required, tc.all
+			h.gh.Checks, h.gh.ChecksAll = tc.required, tc.all
 			w := &state.Worker{Name: "dev-1", Stage: "checks", Round: 1, Work: ghwork.New(1, 0)}
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()

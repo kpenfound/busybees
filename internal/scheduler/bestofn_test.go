@@ -175,7 +175,7 @@ func TestBestOfNRunsOneAttemptPerSlot(t *testing.T) {
 		t.Errorf("issue #1 pull request: got %d want 201", ghwork.PR(bk.Work))
 	}
 	if got := h.stateOfIssue(1); got != "approved" {
-		t.Errorf("issue #1 state: got %q want approved (comments: %v)", got, h.gh.comments[1])
+		t.Errorf("issue #1 state: got %q want approved (comments: %v)", got, h.gh.Comments[1])
 	}
 	if !strings.Contains(h.logs.String(), "best-of-N: running the assembler") {
 		t.Errorf("the assembler is not logged:\n%s", h.logs.String())
@@ -278,7 +278,7 @@ func TestBestOfNAssemblerIsToldTheAttempts(t *testing.T) {
 		t.Errorf("attempt branches left in the clone: %v", got)
 	}
 	if got := h.stateOfIssue(1); got != "approved" {
-		t.Errorf("issue #1 state: got %q want approved (comments: %v)", got, h.gh.comments[1])
+		t.Errorf("issue #1 state: got %q want approved (comments: %v)", got, h.gh.Comments[1])
 	}
 }
 
@@ -301,7 +301,7 @@ func TestBestOfNWithNothingToAssembleEscalates(t *testing.T) {
 	if got := h.stateOfIssue(1); got != "needs-human" {
 		t.Errorf("issue #1 state: got %q want needs-human", got)
 	}
-	comments := strings.Join(h.gh.comments[1], "\n")
+	comments := strings.Join(h.gh.Comments[1], "\n")
 	if !strings.Contains(comments, "Best of N ran 3 developer attempts on this issue and none of them pushed a commit") {
 		t.Errorf("the escalation does not say what happened:\n%s", comments)
 	}
@@ -337,7 +337,7 @@ func TestBestOfNCleansUpAfterAFailedAssembler(t *testing.T) {
 	if got := h.stateOfIssue(1); got != "needs-human" {
 		t.Errorf("issue #1 state: got %q want needs-human", got)
 	}
-	if comments := strings.Join(h.gh.comments[1], "\n"); !strings.Contains(comments, "The developer session ended with `failed`: no attempt builds") {
+	if comments := strings.Join(h.gh.Comments[1], "\n"); !strings.Contains(comments, "The developer session ended with `failed`: no attempt builds") {
 		t.Errorf("the escalation does not carry the assembler's note:\n%s", comments)
 	}
 	if got, want := remoteBranches(t, h), []string{"main"}; !slices.Equal(got, want) {
@@ -402,7 +402,7 @@ func TestBestOfNLeavesOtherSizesAlone(t *testing.T) {
 		t.Errorf("remote branches: got %v want %v", got, want)
 	}
 	if got := h.stateOfIssue(1); got == "needs-human" {
-		t.Errorf("a single session was handed to a person: %v", h.gh.comments[1])
+		t.Errorf("a single session was handed to a person: %v", h.gh.Comments[1])
 	}
 }
 
@@ -640,9 +640,9 @@ func TestBestOfNReleasesTheSlotsOfAVanishedCandidate(t *testing.T) {
 		t.Fatal("could not hold the pool")
 	}
 	runPass(t, h)
-	h.gh.mu.Lock()
-	h.gh.issues[1].State = "CLOSED"
-	h.gh.mu.Unlock()
+	h.gh.Lock()
+	h.gh.Issues[1].State = "CLOSED"
+	h.gh.Unlock()
 	h.sched.releaseSlots(3)
 	// The second, inside poll_interval, is a local pass over the cached
 	// snapshot, in which #1 is still ready.
@@ -730,7 +730,7 @@ func TestBestOfNKeepsAttemptBranchesWhenTheAssemblerHitsTheLimit(t *testing.T) {
 	if got := h.stateOfIssue(1); got == "needs-human" {
 		t.Error("issue #1 was escalated for the account's limit")
 	}
-	if comments := strings.Join(h.gh.comments[1], "\n"); comments != "" {
+	if comments := strings.Join(h.gh.Comments[1], "\n"); comments != "" {
 		t.Errorf("issue #1 was commented on for the account's limit:\n%s", comments)
 	}
 	if got, want := remoteBranches(t, h), []string{"bees/issue-1-attempt-1", "bees/issue-1-attempt-2", "bees/issue-1-attempt-3", "main"}; !slices.Equal(got, want) {
@@ -989,7 +989,7 @@ func TestMoERunsOneSessionPerExpert(t *testing.T) {
 		t.Errorf("issue #1 pull request: got %d want 201", ghwork.PR(bk.Work))
 	}
 	if got := h.stateOfIssue(1); got != "approved" {
-		t.Errorf("issue #1 state: got %q want approved (comments: %v)", got, h.gh.comments[1])
+		t.Errorf("issue #1 state: got %q want approved (comments: %v)", got, h.gh.Comments[1])
 	}
 	logs := h.logs.String()
 	if !strings.Contains(logs, "mixture of experts: running the attempts") || strings.Contains(logs, "best-of-N: running the attempts") {
@@ -1033,7 +1033,7 @@ func TestMoEAttemptsCarryTheirExpert(t *testing.T) {
 	seedSized(h, 1, "l")
 	ctx := context.Background()
 	f := fanOut{
-		issue: *h.gh.issues[1], worker: &state.Worker{Name: "dev-1", Work: ghwork.New(1, 0)}, attempts: 2,
+		issue: *h.gh.Issues[1], worker: &state.Worker{Name: "dev-1", Work: ghwork.New(1, 0)}, attempts: 2,
 		experts: []string{"backend", "frontend", "tests"}, base: "main", log: h.sched.log,
 	}
 	attempts, wss, err := h.sched.runAttempts(ctx, f)
@@ -1091,7 +1091,7 @@ func TestMoELeavesBestOfNAndSingleSessionsAlone(t *testing.T) {
 		issue    int
 		attempts int
 	}{{1, 3}, {2, 1}} {
-		issue := *h.gh.issues[tc.issue]
+		issue := *h.gh.Issues[tc.issue]
 		if got := h.sched.expertsFor(issue); got != nil {
 			t.Errorf("expertsFor(#%d): got %v want none", tc.issue, got)
 		}

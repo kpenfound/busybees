@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/kpenfound/busybees/core/agent"
 )
 
 // Sandbox modes accepted by the sandbox key, weakest first: how much of the
@@ -18,18 +20,18 @@ const (
 	// SandboxNone runs claude directly, as the user bees runs as, with
 	// everything that user can reach: the home directory, credentials, the
 	// network and every other checkout on the machine.
-	SandboxNone = "none"
+	SandboxNone = agent.SandboxNone
 	// SandboxClaude runs it inside Claude Code's own sandbox: shell commands
 	// are boxed by the operating system (Seatbelt on macOS, bubblewrap on
 	// Linux) and the built-in tools by Claude Code's permission rules, so
 	// the session writes only to the worktree and the state directory and
 	// reaches only GitHub.
-	SandboxClaude = "claude"
+	SandboxClaude = agent.SandboxClaude
 	// SandboxContainer runs it inside a container (docker) holding the
 	// worktree, the repository's .git and the state directory, and nothing
 	// else of the host: the built-in MCP server stays on the host and is
 	// reached over HTTP.
-	SandboxContainer = "container"
+	SandboxContainer = agent.SandboxContainer
 )
 
 // SandboxModes lists the accepted sandbox values, weakest first.
@@ -38,22 +40,19 @@ var SandboxModes = []string{SandboxNone, SandboxClaude, SandboxContainer}
 // sandboxImplemented are the modes a session can actually run in. The rest
 // load from bees.toml but no session runs in them; CheckSandbox refuses them
 // before the first one starts.
-var sandboxImplemented = []string{SandboxNone, SandboxClaude, SandboxContainer}
+var sandboxImplemented = agent.Sandboxes
 
 // ContainerEngine is the container engine SandboxContainer runs on: the
 // docker CLI, found on PATH. Anything answering to the same command line
 // (podman's docker shim) does.
-const ContainerEngine = "docker"
+const ContainerEngine = agent.ContainerEngine
 
 // AgentCredentials are the variables an agent reads its credential from,
 // per agent. A container session has no keychain and no home directory of
 // the host, so the credential has to be handed in through the environment:
 // one of these on the host, forwarded into the container, or a role env
 // entry of that name.
-var AgentCredentials = map[string][]string{
-	AgentClaude: {"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"},
-	AgentCodex:  {"OPENAI_API_KEY", "CODEX_API_KEY"},
-}
+var AgentCredentials = agent.AgentCredentials
 
 // hostOS, lookPath, getenv and engineCommand are what the sandbox checks ask
 // of the machine, as variables so a test can describe a machine it is not

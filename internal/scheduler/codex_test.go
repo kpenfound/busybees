@@ -47,8 +47,8 @@ func resultOf(t *testing.T, dir string) session.Result {
 // apart from the fake claude by the `exec` the runner starts codex with.
 func TestACodexDeveloperWalksTheWholeLoop(t *testing.T) {
 	h := newHarness(t, baseTOML+"\n[roles.developer]\nagent = \"codex\"\n[roles.product_manager]\nenabled = false\n[roles.qa]\nenabled = false\n[roles.project_manager]\nenabled = false\n")
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now()}
-	h.gh.prs[fakePR] = &github.PR{Number: fakePR, Title: "Build the thing", State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now()}
+	h.gh.PRs[fakePR] = &github.PR{Number: fakePR, Title: "Build the thing", State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -57,14 +57,14 @@ func TestACodexDeveloperWalksTheWholeLoop(t *testing.T) {
 	}
 
 	want := []string{"bees:in-progress", "bees:review", "bees:in-progress", "bees:review", "bees:approved"}
-	if got := h.gh.history[1]; strings.Join(got, ",") != strings.Join(want, ",") {
+	if got := h.gh.History[1]; strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("issue 1 label history: %v", got)
 	}
-	if !github.HasLabel(h.gh.prs[fakePR].Labels, "bees:approved") {
-		t.Fatalf("PR labels: %v", h.gh.prs[fakePR].Labels)
+	if !github.HasLabel(h.gh.PRs[fakePR].Labels, "bees:approved") {
+		t.Fatalf("PR labels: %v", h.gh.PRs[fakePR].Labels)
 	}
-	if len(h.gh.comments[1]) != 0 {
-		t.Fatalf("no escalation expected: %v", h.gh.comments[1])
+	if len(h.gh.Comments[1]) != 0 {
+		t.Fatalf("no escalation expected: %v", h.gh.Comments[1])
 	}
 	dev, rev := h.sessions(config.RoleDeveloper), h.sessions(config.RoleReviewer)
 	if len(dev) != 2 || len(rev) != 2 {
@@ -145,7 +145,7 @@ func TestACodexDeveloperWalksTheWholeLoop(t *testing.T) {
 // session is a codex one.
 func TestAGlobalCodexAgentRunsEveryRoleAsCodex(t *testing.T) {
 	h := newHarness(t, strings.Replace(baseTOML, "[scheduler]", "[global]\nagent = \"codex\"\n[scheduler]", 1)+"\n[roles.developer]\nenabled = false\n[roles.reviewer]\nenabled = false\n")
-	h.gh.issues[3] = &github.Issue{Number: 3, Title: "Spec me", Body: "vague", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:triage"}}, CreatedAt: time.Now()}
+	h.gh.Issues[3] = &github.Issue{Number: 3, Title: "Spec me", Body: "vague", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:triage"}}, CreatedAt: time.Now()}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	if err := h.sched.Run(ctx); err != nil {

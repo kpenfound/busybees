@@ -26,7 +26,7 @@ func TestSessionLimitPausesDeveloperDispatch(t *testing.T) {
 	if n := sessionCount(h); n != 1 {
 		t.Errorf("%d sessions ran, want exactly 1: the limit must not be retried", n)
 	}
-	if got := h.gh.history[1]; strings.Contains(strings.Join(got, ","), "bees:needs-human") {
+	if got := h.gh.History[1]; strings.Contains(strings.Join(got, ","), "bees:needs-human") {
 		t.Errorf("issue 1 was escalated for the account's limit: %v", got)
 	}
 	st, err := h.store.LoadStatus()
@@ -50,7 +50,7 @@ func TestSessionLimitPausesDeveloperDispatch(t *testing.T) {
 	if n := sessionCount(h); n != 1 {
 		t.Errorf("%d sessions after the pause started, want the same 1", n)
 	}
-	if got := h.gh.history[2]; len(got) != 0 {
+	if got := h.gh.History[2]; len(got) != 0 {
 		t.Errorf("issue 2 was picked up while paused: %v", got)
 	}
 
@@ -82,7 +82,7 @@ func TestSessionLimitPausesSingletonDispatch(t *testing.T) {
 	toml := strings.Replace(baseTOML, "[scheduler]\n", "[scheduler]\nrate_limit_backoff = \"20m\"\n", 1)
 	h := newHarnessAt(t, toml, now)
 	h.sched.OnlyRoles = map[string]bool{config.RoleProjectManager: true}
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Needs triage", Body: "hi", State: "OPEN",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Needs triage", Body: "hi", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:triage"}}, CreatedAt: now}
 
 	runPass(t, h)
@@ -152,8 +152,8 @@ func TestResultTextIsNotACapacityReport(t *testing.T) {
 	if !st.LimitPausedUntil.IsZero() {
 		t.Errorf("a successful session's prose paused the factory until %s", st.LimitPausedUntil)
 	}
-	if got := strings.Join(h.gh.history[1], ","); !strings.Contains(got, "bees:review") {
-		t.Errorf("issue 1 label history %v: the developer's outcome was thrown away", h.gh.history[1])
+	if got := strings.Join(h.gh.History[1], ","); !strings.Contains(got, "bees:review") {
+		t.Errorf("issue 1 label history %v: the developer's outcome was thrown away", h.gh.History[1])
 	}
 }
 
@@ -178,7 +178,7 @@ func TestSessionLimitFromAFinishedSessionKeepsItsOutcome(t *testing.T) {
 	if !st.LimitPausedUntil.Equal(resets) {
 		t.Errorf("status limit_paused_until = %s, want %s: the account's report was dropped", st.LimitPausedUntil, resets)
 	}
-	if got := strings.Join(h.gh.history[1], ","); !strings.Contains(got, "bees:review") {
-		t.Errorf("issue 1 label history %v: the developer opened a PR and its outcome was thrown away", h.gh.history[1])
+	if got := strings.Join(h.gh.History[1], ","); !strings.Contains(got, "bees:review") {
+		t.Errorf("issue 1 label history %v: the developer opened a PR and its outcome was thrown away", h.gh.History[1])
 	}
 }

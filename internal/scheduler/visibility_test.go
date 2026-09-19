@@ -25,7 +25,7 @@ milestone = "v0.1.0"
 // item: the base label, the assignee and the milestone.
 func visibilityFixes(h *harness, number int) []string {
 	var out []string
-	for _, e := range h.gh.history[number] {
+	for _, e := range h.gh.History[number] {
 		if e == "bees" || strings.HasPrefix(e, "assignee:") || strings.HasPrefix(e, "milestone:") {
 			out = append(out, e)
 		}
@@ -40,12 +40,12 @@ func visibilityFixes(h *harness, number int) []string {
 func TestPROpenedIsMadeVisible(t *testing.T) {
 	h := newHarness(t, filteredTOML)
 	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true} // reviewer disabled: PR auto-approved
-	h.gh.milestones = []github.Milestone{{Number: 3, Title: "v0.1.0"}}
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", State: "OPEN",
+	h.gh.Milestones = []github.Milestone{{Number: 3, Title: "v0.1.0"}}
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Build the thing", State: "OPEN",
 		Labels:    []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}},
 		Assignees: []github.Author{{Login: "kyle"}}, CreatedAt: time.Now().Add(-time.Hour)}
 	// The PR the session opened carries none of the three.
-	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main"}
+	h.gh.PRs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main"}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
@@ -54,10 +54,10 @@ func TestPROpenedIsMadeVisible(t *testing.T) {
 	}
 	want := "bees,assignee:kyle,milestone:v0.1.0"
 	if got := strings.Join(visibilityFixes(h, fakePR), ","); got != want {
-		t.Fatalf("PR visibility fixes: got %q want %q (history %v)", got, want, h.gh.history[fakePR])
+		t.Fatalf("PR visibility fixes: got %q want %q (history %v)", got, want, h.gh.History[fakePR])
 	}
-	if !github.HasAssignee(h.gh.prs[fakePR].Assignees, "kyle") {
-		t.Fatalf("PR assignees: %v", h.gh.prs[fakePR].Assignees)
+	if !github.HasAssignee(h.gh.PRs[fakePR].Assignees, "kyle") {
+		t.Fatalf("PR assignees: %v", h.gh.PRs[fakePR].Assignees)
 	}
 }
 
@@ -66,11 +66,11 @@ func TestPROpenedIsMadeVisible(t *testing.T) {
 func TestVisiblePRIsLeftAlone(t *testing.T) {
 	h := newHarness(t, filteredTOML)
 	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true}
-	h.gh.milestones = []github.Milestone{{Number: 3, Title: "v0.1.0"}}
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", State: "OPEN",
+	h.gh.Milestones = []github.Milestone{{Number: 3, Title: "v0.1.0"}}
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Build the thing", State: "OPEN",
 		Labels:    []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}},
 		Assignees: []github.Author{{Login: "kyle"}}, CreatedAt: time.Now().Add(-time.Hour)}
-	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main",
+	h.gh.PRs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main",
 		Labels: []github.Label{{Name: "bees"}}, Assignees: []github.Author{{Login: "Kyle"}},
 		Milestone: &github.MilestoneRef{Title: "v0.1.0"}}
 
@@ -83,7 +83,7 @@ func TestVisiblePRIsLeftAlone(t *testing.T) {
 		t.Fatalf("an already visible PR was edited: %v", got)
 	}
 	// The milestone was not even looked up.
-	if n := h.gh.callCount("api repos/acme/widgets/milestones?state=open&per_page=100"); n != 0 {
+	if n := h.gh.CallCount("api repos/acme/widgets/milestones?state=open&per_page=100"); n != 0 {
 		t.Fatalf("milestones listed %d times for a PR already in the milestone", n)
 	}
 }
@@ -93,10 +93,10 @@ func TestVisiblePRIsLeftAlone(t *testing.T) {
 func TestPRVisibilityWithoutAMilestoneFilter(t *testing.T) {
 	h := newHarness(t, devOnlyTOML+"\n[filter]\nassignee = \"kyle\"\n")
 	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true}
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", State: "OPEN",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Build the thing", State: "OPEN",
 		Labels:    []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}},
 		Assignees: []github.Author{{Login: "kyle"}}, CreatedAt: time.Now().Add(-time.Hour)}
-	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main"}
+	h.gh.PRs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main"}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
@@ -114,13 +114,13 @@ func TestPRVisibilityWithoutAMilestoneFilter(t *testing.T) {
 func TestPRVisibilityFailureIsWarnedWithThePRNumber(t *testing.T) {
 	h := newHarness(t, filteredTOML)
 	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true}
-	h.gh.milestones = []github.Milestone{{Number: 3, Title: "v0.1.0"}}
+	h.gh.Milestones = []github.Milestone{{Number: 3, Title: "v0.1.0"}}
 	// Both REST calls (assign, milestone) fail.
-	h.gh.errFor["api --method"] = errors.New("boom")
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", State: "OPEN",
+	h.gh.ErrFor["api --method"] = errors.New("boom")
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Build the thing", State: "OPEN",
 		Labels:    []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}},
 		Assignees: []github.Author{{Login: "kyle"}}, CreatedAt: time.Now().Add(-time.Hour)}
-	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main"}
+	h.gh.PRs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main"}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
@@ -134,7 +134,7 @@ func TestPRVisibilityFailureIsWarnedWithThePRNumber(t *testing.T) {
 		}
 	}
 	// The worker carried on: the issue still reached its next state.
-	if got := strings.Join(h.gh.history[1], ","); got != "bees:in-progress,bees:approved" {
+	if got := strings.Join(h.gh.History[1], ","); got != "bees:in-progress,bees:approved" {
 		t.Fatalf("issue 1 history: %s", got)
 	}
 }
@@ -153,18 +153,18 @@ func adoptTime() (time.Time, time.Time) {
 // stays invisible under filter.milestone and strands its issue just the same.
 func TestAdoptedPRGetsTheWholeFilter(t *testing.T) {
 	h := newHarness(t, filteredTOML)
-	h.gh.milestones = []github.Milestone{{Number: 3, Title: "v0.1.0"}}
+	h.gh.Milestones = []github.Milestone{{Number: 3, Title: "v0.1.0"}}
 	since, created := adoptTime()
-	h.gh.prs[201] = &github.PR{Number: 201, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main",
+	h.gh.PRs[201] = &github.PR{Number: 201, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main",
 		Labels: []github.Label{{Name: "bees:review"}}, CreatedAt: created}
 
 	h.sched.adoptCreated(context.Background(), since)
 
 	want := "bees,assignee:kyle,milestone:v0.1.0"
 	if got := strings.Join(visibilityFixes(h, 201), ","); got != want {
-		t.Fatalf("adopted PR fixes: got %q want %q (history %v)", got, want, h.gh.history[201])
+		t.Fatalf("adopted PR fixes: got %q want %q (history %v)", got, want, h.gh.History[201])
 	}
-	if got := h.gh.prs[201].MilestoneTitle(); got != "v0.1.0" {
+	if got := h.gh.PRs[201].MilestoneTitle(); got != "v0.1.0" {
 		t.Fatalf("adopted PR milestone: %q", got)
 	}
 }
@@ -174,9 +174,9 @@ func TestAdoptedPRGetsTheWholeFilter(t *testing.T) {
 // it repeats forever.
 func TestAdoptedPRAlreadyVisibleIsLeftAlone(t *testing.T) {
 	h := newHarness(t, filteredTOML)
-	h.gh.milestones = []github.Milestone{{Number: 3, Title: "v0.1.0"}}
+	h.gh.Milestones = []github.Milestone{{Number: 3, Title: "v0.1.0"}}
 	since, created := adoptTime()
-	h.gh.prs[201] = &github.PR{Number: 201, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main",
+	h.gh.PRs[201] = &github.PR{Number: 201, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:review"}}, Assignees: []github.Author{{Login: "kyle"}},
 		Milestone: &github.MilestoneRef{Title: "v0.1.0"}, CreatedAt: created}
 
@@ -185,7 +185,7 @@ func TestAdoptedPRAlreadyVisibleIsLeftAlone(t *testing.T) {
 	if got := visibilityFixes(h, 201); len(got) != 0 {
 		t.Fatalf("an already visible PR was edited: %v", got)
 	}
-	if n := h.gh.callCount("api repos/acme/widgets/milestones?state=open&per_page=100"); n != 0 {
+	if n := h.gh.CallCount("api repos/acme/widgets/milestones?state=open&per_page=100"); n != 0 {
 		t.Fatalf("milestones listed %d times for a PR already in the milestone", n)
 	}
 }
@@ -195,7 +195,7 @@ func TestAdoptedPRAlreadyVisibleIsLeftAlone(t *testing.T) {
 func TestAdoptedPRWithoutAMilestoneFilter(t *testing.T) {
 	h := newHarness(t, devOnlyTOML+"\n[filter]\nassignee = \"kyle\"\n")
 	since, created := adoptTime()
-	h.gh.prs[201] = &github.PR{Number: 201, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main",
+	h.gh.PRs[201] = &github.PR{Number: 201, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main",
 		Labels: []github.Label{{Name: "bees:review"}}, CreatedAt: created}
 
 	h.sched.adoptCreated(context.Background(), since)
@@ -212,19 +212,19 @@ func TestAdoptedPRWithoutAMilestoneFilter(t *testing.T) {
 // milestone a person left it out of.
 func TestAdoptedIssueDoesNotGetAMilestone(t *testing.T) {
 	h := newHarness(t, filteredTOML)
-	h.gh.milestones = []github.Milestone{{Number: 3, Title: "v0.1.0"}}
+	h.gh.Milestones = []github.Milestone{{Number: 3, Title: "v0.1.0"}}
 	since, created := adoptTime()
-	h.gh.issues[7] = &github.Issue{Number: 7, Title: "Filed by a session", State: "OPEN",
+	h.gh.Issues[7] = &github.Issue{Number: 7, Title: "Filed by a session", State: "OPEN",
 		Labels: []github.Label{{Name: "bees:triage"}}, CreatedAt: created}
 
 	h.sched.adoptCreated(context.Background(), since)
 
 	want := "bees,assignee:kyle"
 	if got := strings.Join(visibilityFixes(h, 7), ","); got != want {
-		t.Fatalf("adopted issue fixes: got %q want %q (history %v)", got, want, h.gh.history[7])
+		t.Fatalf("adopted issue fixes: got %q want %q (history %v)", got, want, h.gh.History[7])
 	}
-	if h.gh.issues[7].Milestone != nil {
-		t.Fatalf("the backstop put an issue into milestone %q", h.gh.issues[7].MilestoneTitle())
+	if h.gh.Issues[7].Milestone != nil {
+		t.Fatalf("the backstop put an issue into milestone %q", h.gh.Issues[7].MilestoneTitle())
 	}
 }
 
@@ -260,7 +260,7 @@ func createdPR(t *testing.T, number int, f config.Filter, created time.Time) *gi
 // filter.milestone it is invisible until the backstop puts it in one.
 func TestAdoptedPRWithOnlyTheBaseLabel(t *testing.T) {
 	h := newHarness(t, filteredTOML)
-	h.gh.milestones = []github.Milestone{{Number: 3, Title: "v0.1.0"}}
+	h.gh.Milestones = []github.Milestone{{Number: 3, Title: "v0.1.0"}}
 	since, created := adoptTime()
 	pr := createdPR(t, 201, h.sched.config().Filter, created)
 	for _, l := range pr.Labels {
@@ -268,15 +268,15 @@ func TestAdoptedPRWithOnlyTheBaseLabel(t *testing.T) {
 			t.Fatalf("a freshly created PR is not supposed to carry %q", l.Name)
 		}
 	}
-	h.gh.prs[201] = pr
+	h.gh.PRs[201] = pr
 
 	h.sched.adoptCreated(context.Background(), since)
 
 	want := "milestone:v0.1.0"
 	if got := strings.Join(visibilityFixes(h, 201), ","); got != want {
-		t.Fatalf("adopted PR fixes: got %q want %q (history %v)", got, want, h.gh.history[201])
+		t.Fatalf("adopted PR fixes: got %q want %q (history %v)", got, want, h.gh.History[201])
 	}
-	if got := h.gh.prs[201].MilestoneTitle(); got != "v0.1.0" {
+	if got := h.gh.PRs[201].MilestoneTitle(); got != "v0.1.0" {
 		t.Fatalf("adopted PR milestone: %q", got)
 	}
 }
@@ -287,12 +287,12 @@ func TestAdoptedPRWithOnlyTheBaseLabel(t *testing.T) {
 // gh calls the backstop makes.
 func TestItemWithoutAFactoryLabelIsNotAdopted(t *testing.T) {
 	h := newHarness(t, filteredTOML)
-	h.gh.milestones = []github.Milestone{{Number: 3, Title: "v0.1.0"}}
+	h.gh.Milestones = []github.Milestone{{Number: 3, Title: "v0.1.0"}}
 	since, created := adoptTime()
 	// "beeswax" shares a prefix with the base label but is not one of ours.
-	h.gh.prs[201] = &github.PR{Number: 201, State: "OPEN", HeadRefName: "wip", BaseRefName: "main",
+	h.gh.PRs[201] = &github.PR{Number: 201, State: "OPEN", HeadRefName: "wip", BaseRefName: "main",
 		Labels: []github.Label{{Name: "beeswax"}}, CreatedAt: created}
-	h.gh.issues[7] = &github.Issue{Number: 7, Title: "Filed by a person", State: "OPEN",
+	h.gh.Issues[7] = &github.Issue{Number: 7, Title: "Filed by a person", State: "OPEN",
 		Labels: []github.Label{{Name: "documentation"}}, CreatedAt: created}
 
 	h.sched.adoptCreated(context.Background(), since)
@@ -302,7 +302,7 @@ func TestItemWithoutAFactoryLabelIsNotAdopted(t *testing.T) {
 			t.Errorf("item %d was adopted: %v", n, got)
 		}
 	}
-	for _, c := range h.gh.calls {
+	for _, c := range h.gh.Calls {
 		if cmd := strings.Join(c[:2], " "); cmd != "issue list" && cmd != "pr list" {
 			t.Errorf("the backstop made a gh call for an item it does not own: %v", c)
 		}

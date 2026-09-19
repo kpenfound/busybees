@@ -33,7 +33,7 @@ func seedQAFirstRun(t *testing.T) *harness {
 	t.Helper()
 	h := newHarnessAt(t, qaMailTOML, time.Now())
 	merged := h.clock.now().Add(-time.Minute)
-	h.gh.prs[300] = &github.PR{Number: 300, Title: "Merged", State: "MERGED", HeadRefName: "bees/issue-9",
+	h.gh.PRs[300] = &github.PR{Number: 300, Title: "Merged", State: "MERGED", HeadRefName: "bees/issue-9",
 		Labels: []github.Label{{Name: "bees"}}, MergedAt: &merged}
 	runPass(t, h)
 	if got := len(h.sessions(config.RoleQA)); got != 1 {
@@ -86,7 +86,7 @@ func TestQAIntervalStillBoundsUnpromptedRuns(t *testing.T) {
 	// Something new to test, but nobody asked QA for anything.
 	h.clock.advance(5 * time.Minute)
 	merged := h.clock.now()
-	h.gh.prs[300].MergedAt = &merged
+	h.gh.PRs[300].MergedAt = &merged
 
 	forcePoll(h)
 	runPass(t, h) // inside qa_interval, empty mailbox
@@ -118,7 +118,7 @@ func TestAQASessionWithoutItsReportFails(t *testing.T) {
 			}
 			h := newHarnessAt(t, qaMailTOML, time.Now())
 			merged := h.clock.now().Add(-time.Minute)
-			h.gh.prs[300] = &github.PR{Number: 300, Title: "Merged", State: "MERGED", HeadRefName: "bees/issue-9",
+			h.gh.PRs[300] = &github.PR{Number: 300, Title: "Merged", State: "MERGED", HeadRefName: "bees/issue-9",
 				Labels: []github.Label{{Name: "bees"}}, MergedAt: &merged}
 			runPass(t, h)
 

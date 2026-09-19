@@ -141,12 +141,12 @@ func TestKillingASingletonSessionEscalatesNothing(t *testing.T) {
 	cmd := liveProcess(t, dir)
 	h.sched.recordLiveSession("product-manager-1", liveSession{role: config.RoleProductManager, dir: dir})
 
-	before := h.gh.total()
+	before := h.gh.Total()
 	if err := h.sched.KillSession(context.Background(), "product-manager-1"); err != nil {
 		t.Fatalf("KillSession: %v", err)
 	}
 	wantExited(t, cmd)
-	if got := h.gh.total(); got != before {
+	if got := h.gh.Total(); got != before {
 		t.Errorf("stopping a singleton cost %d gh calls, want none", got-before)
 	}
 }
@@ -197,10 +197,10 @@ func TestKillingAContainerSessionRemovesItsContainer(t *testing.T) {
 
 // commentOn returns everything the fake gh was asked to comment on an issue.
 func commentOn(h *harness, n int) string {
-	h.gh.mu.Lock()
-	defer h.gh.mu.Unlock()
+	h.gh.Lock()
+	defer h.gh.Unlock()
 	var b strings.Builder
-	for _, c := range h.gh.calls {
+	for _, c := range h.gh.Calls {
 		if len(c) >= 3 && c[0] == "issue" && c[1] == "comment" && c[2] == strconv.Itoa(n) {
 			b.WriteString(strings.Join(c, " ") + "\n")
 		}
@@ -224,8 +224,8 @@ func TestTheNeedsHumanAndApprovedQueuesCarryTheirDetail(t *testing.T) {
 	// The later issue holds the older pull request, so the wanted order
 	// contradicts the order the issues themselves come in: only a list
 	// really sorted by the pull request's age passes.
-	h.gh.prs[203].CreatedAt = time.Now().Add(-24 * time.Hour)
-	h.gh.prs[204].CreatedAt = time.Now().Add(-48 * time.Hour)
+	h.gh.PRs[203].CreatedAt = time.Now().Add(-24 * time.Hour)
+	h.gh.PRs[204].CreatedAt = time.Now().Add(-48 * time.Hour)
 	// #2 was escalated by the factory; #1 carries the label from a person.
 	if err := h.store.SetEscalation(2, "3 review rounds and no approval", time.Now().Add(-time.Hour)); err != nil {
 		t.Fatal(err)
@@ -236,9 +236,9 @@ func TestTheNeedsHumanAndApprovedQueuesCarryTheirDetail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	before := h.gh.total()
+	before := h.gh.Total()
 	h.sched.setQueues(snap)
-	if got := h.gh.total(); got != before {
+	if got := h.gh.Total(); got != before {
 		t.Errorf("building the two lists cost %d gh calls, want none", got-before)
 	}
 	h.sched.writeStatus()
@@ -279,7 +279,7 @@ func TestTheNeedsHumanAndApprovedQueuesCarryTheirDetail(t *testing.T) {
 func TestAnApprovedIssueWithNoOpenPullRequestIsNotListed(t *testing.T) {
 	h := newHarness(t, noRolesTOML)
 	seedIssue(h, 1, "bees:approved", "m", time.Now().Add(-time.Hour))
-	delete(h.gh.prs, 201)
+	delete(h.gh.PRs, 201)
 
 	snap, err := h.sched.poll(context.Background())
 	if err != nil {

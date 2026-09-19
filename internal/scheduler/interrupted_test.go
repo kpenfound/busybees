@@ -326,7 +326,7 @@ func TestAnInterruptionSurvivesAWorkerThatRanNoSession(t *testing.T) {
 		session.TranscriptFile: twoTurns,
 	})
 	h.sched.alive = func(int) bool { return false }
-	h.gh.errFor["issue edit"] = errors.New("gh: API rate limit exceeded")
+	h.gh.ErrFor["issue edit"] = errors.New("gh: API rate limit exceeded")
 	runPass(t, h)
 
 	if names := h.sessionNames(); len(names) != 0 {
