@@ -478,9 +478,19 @@ type RoleSettings struct {
 	// is no default: a container role without one, or a
 	// ContainerUseEnvironment to build one from, is refused. When the
 	// profile selects SandboxSbx it is the sandbox's template instead, an
-	// image built on docker/sandbox-templates:claude-code, and empty
-	// selects sbx's own.
+	// image built on sbx's image for the agent (agent.SbxTemplates), and
+	// empty selects sbx's own.
 	SandboxImage string `toml:"sandbox_image"`
+	// SandboxDaggerEngine is the host's Dagger engine a SandboxSbx session
+	// is given, with the Dagger CLI at SandboxDaggerVersion installed in
+	// the sandbox: "unix://<path>" for the engine's socket, or
+	// "tcp://<host>:<port>". Empty (the default) gives neither. A role's
+	// value replaces the global one; only valid when the profile selects
+	// SandboxSbx, and it needs SandboxDaggerVersion.
+	SandboxDaggerEngine string `toml:"sandbox_dagger_engine"`
+	// SandboxDaggerVersion is the Dagger CLI release installed in the
+	// sandbox for SandboxDaggerEngine: the engine's own, e.g. "v0.20.5".
+	SandboxDaggerVersion string `toml:"sandbox_dagger_version"`
 	// ContainerUseEnvironment is the path, relative to the project repo
 	// root, to a dagger/container-use environment definition the container
 	// sandbox builds and runs instead of SandboxImage. A role's value
@@ -1280,6 +1290,11 @@ type ResolvedRole struct {
 	// environment definition a SandboxContainer session builds and runs
 	// instead of SandboxImage, empty when none was configured.
 	ContainerUseEnvironment string
+	// SandboxDaggerEngine and SandboxDaggerVersion are the Dagger engine
+	// a SandboxSbx session is given and the CLI release installed for it,
+	// both empty when none was configured.
+	SandboxDaggerEngine  string
+	SandboxDaggerVersion string
 	// profiles is the table Fallback names into, every entry resolved, so
 	// that a role handed on without its Config can still be moved down its
 	// fallback chain.
@@ -1822,6 +1837,16 @@ func (c *Config) Validate() error {
 		} else if filepath.IsAbs(rs.ContainerUseEnvironment) {
 			errs = append(errs, fmt.Sprintf("%s.container_use_environment %q must be relative to the project repository root", scope, rs.ContainerUseEnvironment))
 		}
+		if rs.SandboxDaggerEngine != "" {
+			if err := agent.CheckDaggerEngine(rs.SandboxDaggerEngine); err != nil {
+				errs = append(errs, fmt.Sprintf("%s.sandbox_dagger_engine: %v", scope, err))
+			}
+		}
+		if rs.SandboxDaggerVersion != "" {
+			if err := agent.CheckDaggerVersion(rs.SandboxDaggerVersion); err != nil {
+				errs = append(errs, fmt.Sprintf("%s.sandbox_dagger_version: %v", scope, err))
+			}
+		}
 		if rs.PromptFile != "" {
 			if _, err := os.Stat(c.resolvePath(rs.PromptFile)); err != nil {
 				errs = append(errs, fmt.Sprintf("%s.prompt_file: %v", scope, err))
@@ -1866,11 +1891,48 @@ func (c *Config) Validate() error {
 			}
 		}
 	}
+	errs = append(errs, c.validateDagger()...)
 	errs = append(errs, c.validateReviewProfiles()...)
 	if len(errs) > 0 {
 		return fmt.Errorf("invalid bees.toml:\n  - %s", strings.Join(errs, "\n  - "))
 	}
 	return nil
+}
+
+// validateDagger checks the Dagger keys on every role as resolved, since
+// they and the sandbox can be set on different scopes: the engine is given
+// to an sbx session alone, so every size profile of a role with one must
+// select sbx, and the engine and the CLI release go together. Like
+// container_use_environment, a judge profile that selects another sandbox
+// is not asked: a session outside sbx does not take the engine.
+func (c *Config) validateDagger() []string {
+	var errs []string
+	for _, name := range Roles {
+		r, err := c.Role(name)
+		if err != nil {
+			continue
+		}
+		switch {
+		case r.SandboxDaggerEngine == "" && r.SandboxDaggerVersion != "":
+			errs = append(errs, fmt.Sprintf("roles.%s: sandbox_dagger_version needs sandbox_dagger_engine, the engine the CLI runs against", name))
+			continue
+		case r.SandboxDaggerEngine == "":
+			continue
+		case r.SandboxDaggerVersion == "":
+			errs = append(errs, fmt.Sprintf("roles.%s: sandbox_dagger_engine needs sandbox_dagger_version, the Dagger CLI release installed in the sandbox (the engine's own)", name))
+		}
+		for _, size := range append([]string{""}, slices.Sorted(maps.Keys(r.ProfilesBySize))...) {
+			if r := r.ForSize(size); r.Sandbox != SandboxSbx {
+				where := "sandbox"
+				if size != "" {
+					where = "the " + size + " profile's sandbox"
+				}
+				errs = append(errs, fmt.Sprintf("roles.%s: sandbox_dagger_engine is only valid when sandbox is %q; %s is %q", name, SandboxSbx, where, r.Sandbox))
+				break
+			}
+		}
+	}
+	return errs
 }
 
 func mustCanonical(name string) string {
@@ -1943,6 +2005,8 @@ func (c *Config) Role(name string) (ResolvedRole, error) {
 		Sandbox:                 p.Sandbox,
 		SandboxImage:            firstNonEmpty(rs.SandboxImage, g.SandboxImage),
 		ContainerUseEnvironment: firstNonEmpty(rs.ContainerUseEnvironment, g.ContainerUseEnvironment),
+		SandboxDaggerEngine:     firstNonEmpty(rs.SandboxDaggerEngine, g.SandboxDaggerEngine),
+		SandboxDaggerVersion:    firstNonEmpty(rs.SandboxDaggerVersion, g.SandboxDaggerVersion),
 		MCP:                     map[string]MCPServer{},
 		Env:                     map[string]string{},
 		profiles:                c.resolvedProfiles(),

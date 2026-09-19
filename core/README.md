@@ -84,6 +84,12 @@ req.Grants = &agent.Grants{
 - `VCS` grants version control. Without it, a host session finds `gh`, `git`,
   `hg`, `jj` and `svn` shadowed on `PATH` by stand-ins that exit 126, and
   Claude's sandbox settings deny them.
+- `DaggerEngine` grants a Dagger engine, `unix://<socket>` or
+  `tcp://<host>:<port>`, to a `SandboxSbx` session whose `Profile.Dagger`
+  asks for that engine. Every boundary refuses it otherwise: granted to a
+  profile that does not ask (`ErrUnsupported`), asked for without the grant
+  or with another engine granted (`ErrNotGranted`), or in any other mode
+  (`ErrUnsupported`).
 
 `Runner.Verify(req)` checks a request without starting anything and returns
 the `Turn` it would run: its environment, tools and resolved mounts. `Run`
@@ -198,7 +204,8 @@ and the container gets its grants and nothing else:
   session (below) sets one over each VCS executable its image holds.
 
 `SandboxBoundary` (`sandbox = "sbx"`, a Docker Sandbox the `sbx` CLI
-creates, claude only) binds what `ContainerBoundary` binds, each bind a
+creates for the profile's agent, from `SbxTemplates[agent]` unless
+`SandboxImage` names a template) binds what `ContainerBoundary` binds, each bind a
 workspace of `sbx create` at its destination (`:ro` for `ReadOnly`). `/`
 is refused, and so is a destination holding a colon, which sbx would read
 as the access; the source is never passed to sbx, and commas and quotes
@@ -211,8 +218,13 @@ stand-in wrapper; nothing masks a VCS executable of the template reached
 by its path. The runner creates the sandbox before the host server starts,
 runs the command through `sbx exec --interactive` with the variables by
 name, removes the sandbox with `sbx rm --force` when the session ends, and
-records its name in `procs.SandboxNameFile` meanwhile. No `Enforcer`
-prepares this kind.
+records its name in `procs.SandboxNameFile` meanwhile. With
+`Profile.Dagger`, it installs the Dagger CLI at `Dagger.Version` with a
+setup `sbx exec` once the sandbox exists, forwards a socket engine from a
+port on `127.0.0.1` for the session's lifetime, and sets
+`EnvDaggerRunnerHost` to the engine's address: at `host.docker.internal`
+for a socket or a loopback TCP engine, and as written for a TCP engine on
+any other host. No `Enforcer` prepares this kind.
 
 ## Enforced turns
 

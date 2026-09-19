@@ -103,9 +103,12 @@ exec sleep 60
 
 // Sbx writes a fake Docker Sandboxes CLI. `create` records its arguments in
 // sbx-create.txt beside the script and fails when a file named fail-create
-// is there; `exec` records its arguments and the client's environment in
-// the directory sessionVariable names (sbx-exec-args.txt, sbx-exec-env.txt)
-// and runs the command after the sandbox name on this machine; `rm` records
+// is there; `exec --interactive`, the session's command, records its
+// arguments and the client's environment in the directory sessionVariable
+// names (sbx-exec-args.txt, sbx-exec-env.txt) and runs the command after the
+// sandbox name on this machine; any other `exec`, a setup command, is
+// appended to sbx-setup.txt beside the script, one argument per line, runs
+// nothing and fails when a file named fail-setup is there; `rm` records
 // its arguments in sbx-rm.txt beside the script; `version` prints one.
 func Sbx(t *testing.T, sessionVariable string) string {
 	t.Helper()
@@ -131,6 +134,14 @@ rm)
   exit 0
   ;;
 exec)
+  if [ "$2" != "--interactive" ]; then
+    printf '%s\n' "$@" >> "$here/sbx-setup.txt"
+    if [ -f "$here/fail-setup" ]; then
+      echo "curl: (6) Could not resolve host: dl.dagger.io" >&2
+      exit 1
+    fi
+    exit 0
+  fi
   printf '%s\n' "$@" > "$SESSION_DIRECTORY/sbx-exec-args.txt"
   env > "$SESSION_DIRECTORY/sbx-exec-env.txt"
   shift

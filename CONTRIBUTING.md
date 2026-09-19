@@ -104,8 +104,8 @@ See [core/README.md](core/README.md) for the execution boundary.
 - Tests never call the real `docker` or `sbx` either. The session tests fake
   the container engine with a shell script that records its arguments and
   runs the command after the image on the host, the Docker Sandboxes CLI with
-  one that records `create` and `rm` and runs the command after the sandbox
-  name (`agenttest.Sbx`), and the built-in server's
+  one that records `create`, `rm` and setup `exec`s (the Dagger install) and
+  runs the session's command after the sandbox name (`agenttest.Sbx`), and the built-in server's
   `bees mcp serve --listen` with one that reports an address. The review
   tests fake it with a script of their own that records the build and the
   run and writes a file into the mounted directory in place of the clone;
