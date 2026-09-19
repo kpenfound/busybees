@@ -923,7 +923,7 @@ func TestVersion(t *testing.T) {
 			t.Errorf("newer: %v", err)
 		}
 	}
-	cfg, err := Load(writeConfig(t, "version = 4\n[project]\nrepo = \"a/b\"\n"))
+	cfg, err := Load(writeConfig(t, "version = 5\n[project]\nrepo = \"a/b\"\n"))
 	if err != nil || cfg.Version != CurrentVersion || cfg.NeedsRewrite() {
 		t.Fatalf("current: %+v %v", cfg, err)
 	}
@@ -948,7 +948,7 @@ func TestMigrateUnversionedFile(t *testing.T) {
 	}
 	data, _ := os.ReadFile(path)
 	text := string(data)
-	want := "# my factory\n\n# Format version of this file (see docs/configuration.md).\nversion = 4\n\n[project]\n# keep this comment\nrepo = \"a/b\"\n#branch_prefix = \"bees/\"\n"
+	want := "# my factory\n\n# Format version of this file (see docs/configuration.md).\nversion = 5\n\n[project]\n# keep this comment\nrepo = \"a/b\"\n#branch_prefix = \"bees/\"\n"
 	if text != want {
 		t.Fatalf("rewritten file:\n%s\nwant:\n%s", text, want)
 	}
@@ -1661,7 +1661,7 @@ func TestNotesSettings(t *testing.T) {
 		t.Fatalf("default: %q, want %q", cfg.Notes.Backend, NotesBackendFile)
 	}
 
-	path := writeConfig(t, "version = 4\n[project]\nrepo = \"a/b\"\n"+neo4jNotesTOML)
+	path := writeConfig(t, "version = 5\n[project]\nrepo = \"a/b\"\n"+neo4jNotesTOML)
 	cfg, err = Load(path)
 	if err != nil {
 		t.Fatal(err)

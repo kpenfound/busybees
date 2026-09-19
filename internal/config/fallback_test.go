@@ -57,14 +57,19 @@ model = "ollama/x"
 agent = "claude"
 model = "haiku"
 fallback = "last"
+[profiles.code]
+agent = "codex"
+[profiles.review]
+agent = "claude"
+fallback = "code"
 [roles.developer]
 profile = "main"
 profile_by_size = { xs = "sized" }
 max_turns = 7
 prompt = "developer prompt"
 [roles.reviewer]
-profile = "main"
-brief_profile = "sized"
+profile = "code"
+brief_profile = "review"
 judge_profile = "last"
 `
 
@@ -105,7 +110,7 @@ func TestFallbackChainResolution(t *testing.T) {
 	}
 	// So does a phase's, and a profile without a fallback has no chain.
 	rev, _ := cfg.Role(RoleReviewer)
-	if b := rev.ForBrief(); b.Fallback != "last" || len(b.Fallbacks()) != 1 {
+	if b := rev.ForBrief(); b.Fallback != "code" || len(b.Fallbacks()) != 1 || b.Fallbacks()[0].Agent != AgentCodex {
 		t.Errorf("brief chain: %q %+v", b.Fallback, b.Fallbacks())
 	}
 	if j := rev.ForJudge(); j.Fallback != "" || j.Fallbacks() != nil {
@@ -234,10 +239,9 @@ fallback_model = "example"
 			t.Errorf("missing %q in:\n%s", kept, text)
 		}
 	}
-	for _, line := range strings.Split(text, "\n") {
-		if strings.HasPrefix(line, "fallback_model") {
-			t.Errorf("a fallback_model survived: %s", line)
-		}
+	// The one fallback_model left is the example inside the prompt.
+	if n := strings.Count(text, "\nfallback_model"); n != 1 {
+		t.Errorf("%d fallback_model lines survived:\n%s", n, text)
 	}
 	again, err := Load(path)
 	if err != nil || again.NeedsRewrite() {
