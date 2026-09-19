@@ -324,3 +324,60 @@ func TestFallbackProfileMigrationRefusesBothKeys(t *testing.T) {
 		t.Fatalf("error: %v", err)
 	}
 }
+
+// ValidateProfiles is bees.toml's check of [profiles] on a table of its own,
+// for another file that describes sessions with profiles: the same problems,
+// named by the same keys, and nothing about roles.
+func TestValidateProfilesOnATableOfItsOwn(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		profiles map[string]AgentProfile
+		want     string
+	}{
+		{"effort", map[string]AgentProfile{"a": {Effort: "huge"}}, "profiles.a.effort must be low, medium, high or max"},
+		{"agent", map[string]AgentProfile{"a": {Agent: "gemini"}}, "profiles.a.agent must be one of"},
+		{"sandbox", map[string]AgentProfile{"a": {Sandbox: "jail"}}, "profiles.a.sandbox must be one of"},
+		{"unknown fallback", map[string]AgentProfile{"a": {Fallback: "b"}}, `profiles.a.fallback: unknown profile "b"`},
+		{"cycle", map[string]AgentProfile{"a": {Fallback: "b"}, "b": {Fallback: "a"}}, `comes back to "a"`},
+		{"empty name", map[string]AgentProfile{"": {}}, "profiles: profile name must not be empty"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			errs := ValidateProfiles(tc.profiles)
+			if len(errs) == 0 || !strings.Contains(strings.Join(errs, "\n"), tc.want) {
+				t.Fatalf("want %q, got %q", tc.want, errs)
+			}
+		})
+	}
+	if errs := ValidateProfiles(map[string]AgentProfile{"a": {Agent: AgentCodex, Effort: "max", Sandbox: SandboxNone, Fallback: "b"}, "b": {}}); len(errs) != 0 {
+		t.Fatalf("a valid table: %q", errs)
+	}
+}
+
+// ProfileChain is the named profile and every profile its fallback chain
+// runs through, each resolved.
+func TestProfileChain(t *testing.T) {
+	cfg, err := Load(writeConfig(t, fallbackChainTOML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, p := range ProfileChain(cfg.Profiles, "main") {
+		got = append(got, p.Agent+"/"+p.Model+"/"+p.Effort+"/"+p.Sandbox)
+	}
+	want := []string{"claude/opus/high/claude", "codex/gpt/low/" + DefaultSandbox, "opencode/ollama/x//" + DefaultSandbox}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("chain = %q, want %q", got, want)
+	}
+	// Resolved: a claude profile that names no model gets the default one.
+	if chain := ProfileChain(cfg.Profiles, "review"); len(chain) != 2 || chain[0].Model != DefaultModel || chain[1].Agent != AgentCodex {
+		t.Fatalf("review chain = %+v", chain)
+	}
+	if chain := ProfileChain(cfg.Profiles, "missing"); chain != nil {
+		t.Fatalf("a profile that is not there has no chain: %+v", chain)
+	}
+	// A cycle ends where validation would have refused it.
+	cyclic := map[string]AgentProfile{"a": {Fallback: "b"}, "b": {Fallback: "a"}}
+	if chain := ProfileChain(cyclic, "a"); len(chain) != 2 {
+		t.Fatalf("cyclic chain = %+v", chain)
+	}
+}

@@ -157,6 +157,7 @@ func TestConfigInvalid(t *testing.T) {
 		{"unknown angle model", "[angle_models]\nstyle = \"haiku\"\n", []string{"angle_models.style", "\"style\" is not an angle"}},
 		{"empty angle model", "[angle_models]\ndocs = \"\"\n", []string{"angle_models.docs must name a model"}},
 		{"token expands to nothing", "[github]\ntoken = \"$REVIEW_UNSET_TOKEN$REVIEW_UNSET_TOKEN\"\n", []string{"expands to nothing"}},
+		{"sbx sandbox on a codex profile", "[profiles.boxed]\nagent = \"codex\"\nsandbox = \"sbx\"\n", []string{"profiles.boxed.sandbox = \"sbx\" runs agent \"claude\" only"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), ConfigFile)

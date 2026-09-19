@@ -748,8 +748,9 @@ shell, timeout, turn limit or VCS settings; those remain role/phase-owned.
 
 An angle that fails is named in the judge's task and the rest are judged;
 a review where the brief or every angle failed escalates the issue instead.
-The standalone `bees review` configuration is separate and model-based; see
-[Review configuration](review.md).
+The standalone `bees review` configuration is a separate file: it takes the
+same `[profiles.*]` tables, selected by top-level `brief_profile`,
+`angle_profiles` and `judge_profile`; see [Review configuration](review.md).
 
 ```toml
 [profiles.review_quick]
