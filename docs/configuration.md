@@ -148,7 +148,7 @@ the value is yours and bees cannot guess the replacement. The MCP server name
 | `dir` | string | `bees.toml`'s directory | The git clone the factory works in, when it differs from the directory holding `bees.toml`. A relative path is resolved against the directory holding `bees.toml`. |
 
 What the product is and how to build, test and run it are not configuration.
-Every role reads the repository's own README, CONTRIBUTING and CLAUDE.md, and
+Every role reads the repository's own README, CONTRIBUTING, AGENTS.md and CLAUDE.md, and
 keeps what it learns in its notes file.
 
 The main checkout is `dir` when set, else the clone holding `bees.toml`.
