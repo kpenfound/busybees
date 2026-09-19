@@ -174,13 +174,17 @@ repo   = 'a/b' # exact formatting
 				t.Fatal(err)
 			}
 			r, _ := c.Role(RoleReviewer)
-			for phase, got := range map[string]AgentProfile{"brief": r.ForBrief().AgentProfile(), "judge": r.ForJudge().AgentProfile(), "docs": r.ForAngle("docs").AgentProfile(), "base": r.ForAngle("side_effects").AgentProfile()} {
-				want := AgentProfile{Agent: "codex", Model: phase, FallbackModel: "fallback", Effort: "max", Sandbox: "container"}
-				if got != want {
-					t.Errorf("%s: got %+v want %+v", phase, got, want)
+			for phase, got := range map[string]ResolvedRole{"brief": r.ForBrief(), "judge": r.ForJudge(), "docs": r.ForAngle("docs"), "base": r.ForAngle("side_effects")} {
+				want := AgentProfile{Agent: "codex", Model: phase, Fallback: got.Fallback, Effort: "max", Sandbox: "container"}
+				if got.AgentProfile() != want || got.Fallback == "" {
+					t.Errorf("%s: got %+v want %+v", phase, got.AgentProfile(), want)
+				}
+				// Version 5 made the fallback model a profile of its own.
+				if f := got.Fallbacks(); len(f) != 1 || f[0].AgentProfile() != (AgentProfile{Agent: "codex", Model: "fallback", Effort: "max", Sandbox: "container"}) {
+					t.Errorf("%s: fallback chain %+v", phase, f)
 				}
 			}
-			if c.Roles[RoleReviewer].BriefProfile != "reuse" || c.Roles[RoleReviewer].AngleProfiles["general"] != "reuse" || len(c.Profiles) != 4 {
+			if c.Roles[RoleReviewer].BriefProfile != "reuse" || c.Roles[RoleReviewer].AngleProfiles["general"] != "reuse" || len(c.Profiles) != 8 {
 				t.Fatalf("did not reuse equal profiles: %+v", c.Profiles)
 			}
 			if _, err := c.Rewrite(); err != nil {
@@ -222,10 +226,13 @@ judge_model = "judge-choice"
 		t.Fatal(err)
 	}
 	r, _ := c.Role(RoleReviewer)
-	for model, p := range map[string]AgentProfile{"brief-choice": r.ForBrief().AgentProfile(), "judge-choice": r.ForJudge().AgentProfile()} {
-		want := AgentProfile{Agent: "codex", Model: model, FallbackModel: "role-fallback", Effort: "high", Sandbox: "container"}
-		if p != want {
-			t.Errorf("got %+v want %+v", p, want)
+	for model, p := range map[string]ResolvedRole{"brief-choice": r.ForBrief(), "judge-choice": r.ForJudge()} {
+		want := AgentProfile{Agent: "codex", Model: model, Fallback: p.Fallback, Effort: "high", Sandbox: "container"}
+		if p.AgentProfile() != want || p.Fallback == "" {
+			t.Errorf("got %+v want %+v", p.AgentProfile(), want)
+		}
+		if f := p.Fallbacks(); len(f) != 1 || f[0].AgentProfile() != (AgentProfile{Agent: "codex", Model: "role-fallback", Effort: "high", Sandbox: "container"}) {
+			t.Errorf("%s: fallback chain %+v", model, f)
 		}
 	}
 	if !strings.Contains(c.migrated, "# preserve choice") || !strings.Contains(c.migrated, "#angle_profiles") || !strings.Contains(c.migrated, "# preserve explanation") {

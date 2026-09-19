@@ -214,7 +214,7 @@ label = "{{.Label}}"
 #retries = 1
 # How long to wait before retrying a session.
 #retry_delay = "10m"
-# Run the retry with the role's fallback_model as its primary model.
+# Run the retry on the profile the role's profile names as its fallback.
 #retry_with_fallback = true
 # Issues handed to the project manager per session.
 #triage_batch_size = 5
@@ -320,16 +320,20 @@ label = "{{.Label}}"
 #neo4j_url = "https://memory.neo4jlabs.com/v1"
 #neo4j_api_key = "$BEES_NEO4J_API_KEY"
 
-# Agent profiles bundle backend, models, effort and sandbox. Each profile uses
-# its own defaults; codex and opencode have no default model or fallback model.
-# No declaration is required when using the built-in defaults. Uncomment this
-# example to name those defaults explicitly.
+# Agent profiles bundle agent, model, fallback, effort and sandbox. Each
+# profile uses its own defaults; codex and opencode have no default model. No
+# declaration is required when using the built-in defaults. Uncomment this
+# example to name those defaults explicitly, with a fallback: the profile a
+# session runs on instead, agent included, when its own has no capacity.
 #[profiles.default]
 #agent = "claude"        # claude | codex | opencode
 #model = "opus"
-#fallback_model = "sonnet"
+#fallback = "default_fallback"
 #effort = ""            # low | medium | high | max (empty: agent default)
 #sandbox = "none"       # none | claude | container
+#[profiles.default_fallback]
+#agent = "claude"
+#model = "sonnet"
 
 #===============================================================================
 # Global role settings — apply to every role, merged with [roles.<name>]:

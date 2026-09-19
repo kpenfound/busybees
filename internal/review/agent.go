@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/core/agent/agentbin"
+	"github.com/kpenfound/busybees/core/ops"
 	core "github.com/kpenfound/busybees/core/review"
 	"github.com/kpenfound/busybees/internal/config"
 )
@@ -61,9 +62,16 @@ type CLIAgent struct {
 	// model it runs. An empty model leaves the choice to the CLI.
 	Provider string
 	Model    string
-	// FallbackModel is Claude-only; Effort maps to each backend's reasoning setting.
-	FallbackModel string
-	Effort        string
+	// Fallback is the agent the session runs as instead when this one has
+	// no capacity: the CLI answered that the model is rate limited or
+	// overloaded (ops.RateLimitedText). An agent of its own, so it is held
+	// to the same read-only floor whatever CLI it runs, and it may have a
+	// fallback of its own. When both run claude its model is also passed as
+	// --fallback-model, so claude switches to it within the session. Nil
+	// is no fallback.
+	Fallback *CLIAgent
+	// Effort maps to each backend's reasoning setting.
+	Effort string
 	// ClaudeBin and CodexBin are the executables, "claude" and "codex" when
 	// they are empty.
 	ClaudeBin string
@@ -158,15 +166,24 @@ func (a *CLIAgent) Run(ctx context.Context, req AgentRequest) (*AgentResult, err
 	runErr := cmd.Run()
 
 	res, parseErr := a.read(stdout.Bytes())
+	var failure error
 	switch {
 	case res != nil && res.err != "":
-		return nil, fmt.Errorf("%s session: %s", req.Name, res.err)
+		failure = fmt.Errorf("%s session: %s", req.Name, res.err)
 	case runErr != nil:
-		return nil, fmt.Errorf("%s session: %w%s", req.Name, runErr, tail(stderr.String()))
+		failure = fmt.Errorf("%s session: %w%s", req.Name, runErr, tail(stderr.String()))
 	case parseErr != nil:
-		return nil, fmt.Errorf("%s session: %w%s", req.Name, parseErr, tail(stderr.String()))
+		failure = fmt.Errorf("%s session: %w%s", req.Name, parseErr, tail(stderr.String()))
 	}
-	return &AgentResult{ID: res.id, Text: res.text, Turns: res.turns, CostUSD: res.cost, CostKnown: res.costKnown}, nil
+	if failure == nil {
+		return &AgentResult{ID: res.id, Text: res.text, Turns: res.turns, CostUSD: res.cost, CostKnown: res.costKnown}, nil
+	}
+	// A session refused for want of capacity is run again as the fallback
+	// agent, which answers for itself, its own fallback included.
+	if a.Fallback != nil && (ops.RateLimitedText(failure.Error()) || ops.RateLimitedText(stderr.String())) {
+		return a.Fallback.Run(ctx, req)
+	}
+	return nil, failure
 }
 
 // command is the CLI and the arguments this session runs as, read-only
@@ -204,8 +221,10 @@ func (a *CLIAgent) command(req AgentRequest) (string, []string, error) {
 		if a.Model != "" {
 			args = append(args, "--model", a.Model)
 		}
-		if a.FallbackModel != "" {
-			args = append(args, "--fallback-model", a.FallbackModel)
+		// Claude can switch to another claude model itself; a fallback on
+		// another CLI is a new session, Run's to start.
+		if f := a.Fallback; f != nil && (f.Provider == "" || f.Provider == config.AgentClaude) && f.Model != "" && f.Model != a.Model {
+			args = append(args, "--fallback-model", f.Model)
 		}
 		if a.Effort != "" {
 			args = append(args, "--effort", a.Effort)

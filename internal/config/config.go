@@ -79,17 +79,16 @@ func CanonicalRole(name string) (string, error) {
 
 // Defaults used when neither the role nor [global] sets a value.
 const (
-	DefaultModel         = "opus"
-	DefaultFallbackModel = "sonnet"
-	DefaultAgent         = AgentClaude
-	DefaultSandbox       = SandboxNone
-	DefaultMaxTurns      = 200
-	DefaultTimeout       = 45 * time.Minute
-	DefaultLabel         = "bees"
-	DefaultRemote        = "origin"
-	DefaultStateDir      = ".bees"
-	DefaultBranchPrefix  = "bees/"
-	DefaultPollInterval  = 5 * time.Minute
+	DefaultModel        = "opus"
+	DefaultAgent        = AgentClaude
+	DefaultSandbox      = SandboxNone
+	DefaultMaxTurns     = 200
+	DefaultTimeout      = 45 * time.Minute
+	DefaultLabel        = "bees"
+	DefaultRemote       = "origin"
+	DefaultStateDir     = ".bees"
+	DefaultBranchPrefix = "bees/"
+	DefaultPollInterval = 5 * time.Minute
 	// DefaultRetries and friends govern retrying a session that failed for
 	// infrastructure reasons; see Config.Retry.
 	DefaultRetries           = 1
@@ -204,7 +203,7 @@ func (d Duration) MarshalText() ([]byte, error) { return []byte(d.String()), nil
 // natively. Bump it (and add a migration) when a change to the schema cannot
 // be read by older files as-is: renamed or removed keys, changed semantics.
 // Adding optional keys is not a breaking change.
-const CurrentVersion = 4
+const CurrentVersion = 5
 
 // migration rewrites the text of a bees.toml from one format version to the
 // next. Migrations work on the text, not the decoded tree, so the user's
@@ -220,6 +219,7 @@ var migrations = map[int]migration{
 	1: dropReviewStages,
 	2: migrateAgentProfiles,
 	3: migrateReviewProfiles,
+	4: migrateFallbackProfiles,
 }
 
 type Config struct {
@@ -842,7 +842,7 @@ type Scheduler struct {
 	Retries *int `toml:"retries" json:"retries"`
 	// RetryDelay is how long to wait before a retry. Default 10m.
 	RetryDelay *Duration `toml:"retry_delay" json:"retry_delay"`
-	// RetryWithFallback runs a retry with the role's fallback_model as its
+	// RetryWithFallback runs a retry on the profile the role's profile names as its
 	// primary model. Default true.
 	RetryWithFallback *bool `toml:"retry_with_fallback" json:"retry_with_fallback"`
 	// MaxCostPerIssue caps what every session run for one work item may cost
@@ -1249,11 +1249,14 @@ type ResolvedRole struct {
 	// Sizes filled in; BriefProfile, JudgeProfile and AngleProfiles hold
 	// resolved overrides, with nil/absent meaning the size-resolved profile.
 	// Reviewer only.
-	Angles          map[string][]string
-	BriefProfile    *AgentProfile
-	JudgeProfile    *AgentProfile
-	AngleProfiles   map[string]AgentProfile
-	FallbackModel   string
+	Angles        map[string][]string
+	BriefProfile  *AgentProfile
+	JudgeProfile  *AgentProfile
+	AngleProfiles map[string]AgentProfile
+	// Fallback names the profile a session runs on instead when the selected
+	// one has no capacity, empty when there is none; Fallbacks resolves the
+	// chain it starts.
+	Fallback        string
 	Agent           string
 	Effort          string
 	MaxTurns        int
@@ -1272,6 +1275,10 @@ type ResolvedRole struct {
 	// environment definition a SandboxContainer session builds and runs
 	// instead of SandboxImage, empty when none was configured.
 	ContainerUseEnvironment string
+	// profiles is the table Fallback names into, every entry resolved, so
+	// that a role handed on without its Config can still be moved down its
+	// fallback chain.
+	profiles map[string]AgentProfile
 }
 
 // Load reads and validates the bees.toml at path.
@@ -1847,6 +1854,11 @@ func (c *Config) Validate() error {
 		if p.Sandbox != "" && !slices.Contains(SandboxModes, p.Sandbox) {
 			errs = append(errs, fmt.Sprintf("%s.sandbox must be one of %s", scope, strings.Join(SandboxModes, ", ")))
 		}
+		if p.Fallback != "" {
+			if err := c.validateFallback(name); err != nil {
+				errs = append(errs, fmt.Sprintf("%s.fallback: %v", scope, err))
+			}
+		}
 	}
 	check("global", c.Global)
 	for name, rs := range c.Roles {
@@ -1878,6 +1890,33 @@ func (c *Config) Validate() error {
 	errs = append(errs, c.validateReviewProfiles()...)
 	if len(errs) > 0 {
 		return fmt.Errorf("invalid bees.toml:\n  - %s", strings.Join(errs, "\n  - "))
+	}
+	return nil
+}
+
+// validateFallback checks the fallback chain that starts at profile name:
+// every link names a profile, and none comes back to one the chain has been
+// through, itself included. The error says which link is wrong and what to
+// change.
+func (c *Config) validateFallback(name string) error {
+	seen := []string{name}
+	for at, next := name, c.Profiles[name].Fallback; next != ""; at, next = next, c.Profiles[next].Fallback {
+		if _, ok := c.Profiles[next]; !ok {
+			if at == name {
+				return fmt.Errorf("unknown profile %q (declare it under [profiles.%s])", next, next)
+			}
+			return fmt.Errorf("profiles.%s.fallback: unknown profile %q (declare it under [profiles.%s])", at, next, next)
+		}
+		if next == at {
+			if at == name {
+				return fmt.Errorf("a profile cannot be its own fallback (name another profile, or remove the key)")
+			}
+			return fmt.Errorf("profiles.%s.fallback: a profile cannot be its own fallback (name another profile, or remove the key)", at)
+		}
+		if slices.Contains(seen, next) {
+			return fmt.Errorf("fallback chain %s comes back to %q (end the chain at a profile without a fallback)", strings.Join(append(seen, next), " -> "), next)
+		}
+		seen = append(seen, next)
 	}
 	return nil
 }
@@ -1942,7 +1981,7 @@ func (c *Config) Role(name string) (ResolvedRole, error) {
 		MoEAssemblerPrompt:      strings.TrimSpace(rs.MoEAssemblerPrompt),
 		BriefProfile:            c.reviewProfile(rs.BriefProfile),
 		JudgeProfile:            c.reviewProfile(rs.JudgeProfile),
-		FallbackModel:           p.FallbackModel,
+		Fallback:                p.Fallback,
 		Agent:                   p.Agent,
 		Effort:                  p.Effort,
 		MaxTurns:                firstPositive(rs.MaxTurns, g.MaxTurns, DefaultMaxTurns),
@@ -1954,6 +1993,7 @@ func (c *Config) Role(name string) (ResolvedRole, error) {
 		ContainerUseEnvironment: firstNonEmpty(rs.ContainerUseEnvironment, g.ContainerUseEnvironment),
 		MCP:                     map[string]MCPServer{},
 		Env:                     map[string]string{},
+		profiles:                c.resolvedProfiles(),
 	}
 	for k, v := range g.Env {
 		r.Env[k] = v
@@ -2022,9 +2062,57 @@ func (r ResolvedRole) MCPNames() []string {
 // the role's base profile. The returned value can be customized for a session.
 func (r ResolvedRole) ForSize(size string) ResolvedRole {
 	if p, ok := r.ProfilesBySize[size]; ok {
-		r.Agent, r.Model, r.FallbackModel, r.Effort, r.Sandbox = p.Agent, p.Model, p.FallbackModel, p.Effort, p.Sandbox
+		r = r.withProfile(p)
 	}
 	return r
+}
+
+// withProfile is the role as it runs on p: the five execution settings from
+// the profile, everything else the role's own.
+func (r ResolvedRole) withProfile(p AgentProfile) ResolvedRole {
+	r.Agent, r.Model, r.Fallback, r.Effort, r.Sandbox = p.Agent, p.Model, p.Fallback, p.Effort, p.Sandbox
+	return r
+}
+
+// Fallbacks is the role as it runs on each profile of its fallback chain, in
+// order: the profile Fallback names, then that one's fallback, until a
+// profile with none. Empty when the selected profile has no fallback. Every
+// other setting of the role is carried unchanged; a session that falls back
+// keeps its prompt, tools, turn limit and timeout.
+func (r ResolvedRole) Fallbacks() []ResolvedRole {
+	var out []ResolvedRole
+	for _, name := range fallbackChain(r.profiles, r.profileName(), r.Fallback) {
+		out = append(out, r.withProfile(r.profiles[name]))
+	}
+	return out
+}
+
+// profileName is the name the role's current profile has in its table: the
+// one whose five fields the role carries, or "" for the implicit built-in
+// profile, which is in no table. The chain starts at whatever Fallback
+// names, so the current profile only matters for ending a cycle; two
+// profiles equal in all five fields name the same fallback and start the
+// same chain.
+func (r ResolvedRole) profileName() string {
+	for name, p := range r.profiles {
+		if r.AgentProfile() == p {
+			return name
+		}
+	}
+	return ""
+}
+
+// resolvedProfiles is the profile table with every entry's defaults filled
+// in, what a ResolvedRole carries to resolve its fallback chain from.
+func (c *Config) resolvedProfiles() map[string]AgentProfile {
+	if len(c.Profiles) == 0 {
+		return nil
+	}
+	out := make(map[string]AgentProfile, len(c.Profiles))
+	for name, p := range c.Profiles {
+		out[name] = p.resolved()
+	}
+	return out
 }
 
 // ModelFor returns the model from the profile selected for size.

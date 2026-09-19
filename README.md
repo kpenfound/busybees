@@ -71,7 +71,7 @@ ways to run the factory.
 - **A role per session.** The product manager, project manager, developers,
   reviewers and QA each run as a fresh headless session in its own worktree, with a
   role-specific prompt and its own model. A role runs as
-  [Claude Code](https://claude.com/claude-code) — with skills and a fallback model
+  [Claude Code](https://claude.com/claude-code) — with skills and a fallback profile
   for when the primary hits its usage limit — or as
   [Codex](https://github.com/openai/codex) or [opencode](https://opencode.ai).
   See [Roles](docs/roles.md).

@@ -113,8 +113,10 @@ func (claudeBackend) command(ctx context.Context, r *Runner, req Request, paths 
 		"--max-turns", strconv.Itoa(req.Profile.MaxTurns),
 		"--name", r.namePrefix()+req.Name,
 	)
-	if req.Profile.FallbackModel != "" && req.Profile.FallbackModel != req.Profile.Model {
-		args = append(args, "--fallback-model", req.Profile.FallbackModel)
+	// Claude can switch to another claude model itself; a fallback on
+	// another agent is a new session, the caller's to run.
+	if f := req.Profile.Fallback; f != nil && (f.Agent == "" || f.Agent == AgentClaude) && f.Model != "" && f.Model != req.Profile.Model {
+		args = append(args, "--fallback-model", f.Model)
 	}
 	if req.Profile.Effort != "" {
 		args = append(args, "--effort", req.Profile.Effort)
@@ -270,7 +272,8 @@ func (claudeBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer) 
 //     built-in server sees only what the override names.
 //   - The model goes as -m when the role resolved one: with agent = "codex"
 //     the model keys default to empty (config), and an empty model leaves
-//     the choice to codex's own configuration. There is no fallback model.
+//     the choice to codex's own configuration. There is no fallback-model
+//     flag: a fallback profile is the caller's to run.
 //   - Effort goes as the model_reasoning_effort configuration key. Codex's
 //     levels stop at high, so "max" is passed as "high".
 //   - max_turns, allowed_tools, disallowed_tools, skills and the --add-dir
@@ -488,7 +491,7 @@ func makeSuccessEnd(sessionID, result string, turns int, cost float64, costKnown
 //   - The model goes as --model when the role resolved one: with agent =
 //     "opencode" the model keys default to empty (config), and an empty
 //     model leaves the choice to opencode's own configuration. There is no
-//     fallback model.
+//     fallback-model flag: a fallback profile is the caller's to run.
 //   - Request.ResumeID goes as --session, opencode's way of continuing an
 //     earlier session; opencode reads the instruction files again on each
 //     request, so the round's own system prompt is what a resumed session

@@ -34,7 +34,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"all done",
 printf '{"status":"pr-opened","work":{"key":"pr-12","tags":{"github.pr":"12"}},"note":"hi"}' > "$BEES_SESSION_DIR/outcome.json"
 `)
 	r := newRunner(t, bin)
-	role := config.ResolvedRole{Name: "developer", Model: "opus", FallbackModel: "sonnet", MaxTurns: 10, Timeout: time.Minute,
+	role := config.ResolvedRole{Name: "developer", Model: "opus", MaxTurns: 10, Timeout: time.Minute,
 		MCP:   map[string]config.MCPServer{"x": {Command: "srv", Env: map[string]string{"K": "$HOME"}}},
 		Shell: "/bin/sh", Env: map[string]string{"FACTORY_TOKEN": "abc", "CACHE": "$HOME/cache"}}
 	res, err := r.Run(context.Background(), Request{Name: "t1", Profile: ProfileForRole(role), Workspace: vcs.Directory(t.TempDir()), SystemPrompt: "SYS", Prompt: "TASK", Env: map[string]string{"EXTRA": "1", EnvIssue: "12"}})

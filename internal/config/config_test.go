@@ -108,8 +108,13 @@ FOO = "dev"
 	if got := strings.Join(dev.Skills, ","); got != "https://github.com/a/one,https://github.com/a/two,https://github.com/a/three" {
 		t.Fatalf("skills union: %s", got)
 	}
-	if dev.Model != "sonnet" || dev.FallbackModel != "sonnet" || dev.MaxTurns != 99 || dev.Timeout != 10*time.Minute {
+	if dev.Model != "sonnet" || dev.MaxTurns != 99 || dev.Timeout != 10*time.Minute {
 		t.Fatalf("scalars: %+v", dev)
+	}
+	// The global fallback_model of a version 1 file is a fallback profile of
+	// the developer's own after migration.
+	if f := dev.Fallbacks(); len(f) != 1 || f[0].Model != "sonnet" || f[0].Agent != AgentClaude || dev.Fallback != "developer_fallback" {
+		t.Fatalf("fallback: %q %+v", dev.Fallback, f)
 	}
 	if dev.MCP["overridden"].Command != "new" || dev.MCP["shared"].Command != "srv" || dev.MCP["mine"].URL == "" {
 		t.Fatalf("mcp merge: %+v", dev.MCP)
@@ -146,7 +151,7 @@ func TestDefaults(t *testing.T) {
 		t.Fatalf("remote default: %q", cfg.Project.Remote)
 	}
 	dev, _ := cfg.Role(RoleDeveloper)
-	if dev.Model != DefaultModel || dev.FallbackModel != DefaultFallbackModel || dev.MaxTurns != DefaultMaxTurns || dev.Timeout != DefaultTimeout {
+	if dev.Model != DefaultModel || dev.Fallback != "" || dev.MaxTurns != DefaultMaxTurns || dev.Timeout != DefaultTimeout {
 		t.Fatalf("defaults: %+v", dev)
 	}
 	if cfg.StateDir() != filepath.Join(cfg.Dir(), ".bees") {
@@ -711,28 +716,29 @@ func TestAgentDefaultAndMerge(t *testing.T) {
 
 // The model defaults are claude's: a codex role that names no model resolves
 // to none, so codex runs with its own configured model rather than "opus",
-// and to no fallback model, because codex has no such flag and a retry with
-// the fallback is then a retry with the same model. A model the role or
-// [global] names is kept, whichever the agent.
+// and to no fallback, because a version 1 file's codex role had no fallback
+// model to become one. A model the role or [global] names is kept, whichever
+// the agent, and a fallback model it named is a fallback profile of the
+// same agent.
 func TestCodexRoleHasNoDefaultModel(t *testing.T) {
 	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nagent = \"codex\"\n[roles.qa]\nagent = \"codex\"\nmodel = \"gpt-5-codex\"\nfallback_model = \"o3\"\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	dev, _ := cfg.Role(RoleDeveloper)
-	if dev.Model != "" || dev.FallbackModel != "" {
-		t.Errorf("codex role with no model: model %q fallback %q, want both empty", dev.Model, dev.FallbackModel)
+	if dev.Model != "" || dev.Fallback != "" {
+		t.Errorf("codex role with no model: model %q fallback %q, want both empty", dev.Model, dev.Fallback)
 	}
 	if dev.ModelFor("s") != "" {
 		t.Errorf("ModelFor on a codex role with no model = %q, want empty", dev.ModelFor("s"))
 	}
 	qa, _ := cfg.Role(RoleQA)
-	if qa.Model != "gpt-5-codex" || qa.FallbackModel != "o3" {
-		t.Errorf("codex role with a model: %q / %q", qa.Model, qa.FallbackModel)
+	if f := qa.Fallbacks(); qa.Model != "gpt-5-codex" || len(f) != 1 || f[0].Agent != AgentCodex || f[0].Model != "o3" {
+		t.Errorf("codex role with a model: %q / %+v", qa.Model, f)
 	}
 	// The other roles still run claude with claude's defaults.
 	rev, _ := cfg.Role(RoleReviewer)
-	if rev.Agent != AgentClaude || rev.Model != DefaultModel || rev.FallbackModel != DefaultFallbackModel {
+	if rev.Agent != AgentClaude || rev.Model != DefaultModel || rev.Fallback != "" {
 		t.Errorf("claude role: %+v", rev)
 	}
 	// A global model applies to a codex role too.
@@ -741,8 +747,8 @@ func TestCodexRoleHasNoDefaultModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	dev, _ = cfg.Role(RoleDeveloper)
-	if dev.Model != "gpt-5" || dev.FallbackModel != "" {
-		t.Errorf("global model on a codex role: %q / %q", dev.Model, dev.FallbackModel)
+	if dev.Model != "gpt-5" || dev.Fallback != "" {
+		t.Errorf("global model on a codex role: %q / %q", dev.Model, dev.Fallback)
 	}
 }
 
@@ -761,12 +767,12 @@ func TestOpenCodeRoleHasNoDefaultModel(t *testing.T) {
 	if dev.Agent != AgentOpenCode {
 		t.Fatalf("agent: got %q want %q", dev.Agent, AgentOpenCode)
 	}
-	if dev.Model != "" || dev.FallbackModel != "" {
-		t.Errorf("opencode role with no model: model %q fallback %q, want both empty", dev.Model, dev.FallbackModel)
+	if dev.Model != "" || dev.Fallback != "" {
+		t.Errorf("opencode role with no model: model %q fallback %q, want both empty", dev.Model, dev.Fallback)
 	}
 	qa, _ := cfg.Role(RoleQA)
-	if qa.Model != "ollama/llama3" || qa.FallbackModel != "" {
-		t.Errorf("opencode role with a model: %q / %q", qa.Model, qa.FallbackModel)
+	if qa.Model != "ollama/llama3" || qa.Fallback != "" {
+		t.Errorf("opencode role with a model: %q / %q", qa.Model, qa.Fallback)
 	}
 	// A role overrides an opencode global the same way it does codex.
 	cfg, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[global]\nagent = \"opencode\"\n[roles.reviewer]\nagent = \"claude\"\n[roles.developer]\nagent = \"claude\"\n"))
@@ -832,7 +838,7 @@ func TestTemplateUncommented(t *testing.T) {
 	for _, r := range Roles {
 		a, _ := base.Role(r)
 		b, _ := cfg.Role(r)
-		if a.Model != b.Model || a.MaxTurns != b.MaxTurns || a.Timeout != b.Timeout || a.FallbackModel != b.FallbackModel {
+		if a.Model != b.Model || a.MaxTurns != b.MaxTurns || a.Timeout != b.Timeout || a.Fallback != b.Fallback {
 			t.Errorf("%s: commented defaults %+v differ from explicit %+v", r, a, b)
 		}
 	}

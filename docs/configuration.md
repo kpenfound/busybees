@@ -92,11 +92,11 @@ See [Running in the background](cli.md#running-in-the-background).
 ## `version`
 
 ```toml
-version = 4
+version = 5
 ```
 
 The format version of the file, not of bees. `bees init` writes the current
-one, `4`. A file without the key is version 0.
+one, `5`. A file without the key is version 0.
 
 - A file newer than the running bees understands is refused with `upgrade
   bees`.
@@ -118,7 +118,14 @@ one, `4`. A file without the key is version 0.
   phase model overrides to named phase profiles, cloning the ordinary
   reviewer fallback profile's five fields and replacing its model. Equal
   profiles are reused; size-specific fallback still applies to phases with
-  no override.
+  no override. The migration from 4 to 5 replaces `fallback_model`, a model
+  of the profile's own agent, with `fallback`, the name of another profile:
+  each profile with `fallback_model = "X"` gets `fallback =
+  "<name>_fallback"` and a new `[profiles.<name>_fallback]`, the profile
+  with `model = "X"` and no fallback of its own, so the migrated file
+  behaves as it did. A profile that named no `fallback_model` has no
+  fallback afterwards, where a `claude` profile fell back to `sonnet`
+  before; name one to keep that.
 
 Adding an optional key never bumps the version. Renaming or removing a key, or
 changing what one means, does, and the release notes of the bees version that
@@ -324,7 +331,7 @@ assignee = "busybees-bot"
 | `max_review_rounds` | int | `3` | Developer and reviewer rounds before an issue is escalated with `bees:needs-human`. `0` means the default; a negative value is rejected. |
 | `retries` | int | `1` | Extra attempts a session gets after failing for infrastructure reasons: it timed out, ran out of turns, hit an API error or rate limit, or the agent crashed. A session that ran and reported with `bees done`, `failed` included, is not retried, and neither is one that hit the claude session limit. `0` disables retrying; `0` to `5`. See [Escalation](workflow.md#escalation-beesneeds-human). |
 | `retry_delay` | duration | `"10m"` | Wait before a retry. `"0s"` retries at once; a negative value is rejected. |
-| `retry_with_fallback` | bool | `true` | Run the retry with the fallback model from the role's resolved profile as its primary model. A profile without one reruns as it was. |
+| `retry_with_fallback` | bool | `true` | Run the retry on the profile the role's resolved profile names as its `fallback`, agent included; a second retry runs on that profile's own fallback, and so on down the chain. A profile without one reruns as it was. |
 | `triage_batch_size` | int | `5` | Most issues handed to the project manager in one session. `0` means the default. |
 | `notes_consolidate_every` | int | `10` | Sessions a role runs between two in which it is also asked to consolidate its [notes](roles.md#notes-files). `0` means the default; a negative value is rejected. |
 | `notes_max_bytes` | int | `32768` | Ask for consolidation early, whatever the session count, once a role's notes are larger than this. Measured in the backend [`notes.backend`](#notes) names. `0` means the default; a negative value is rejected. |
@@ -472,8 +479,8 @@ first moment the factory can act on it:
   rather than at $99.99. The pause is logged once, the release names the
   threshold it crossed, and `bees status` names the pause while it lasts.
 - Per session, after the session ended. An over-budget session is treated as
-  failed whatever it reported, so it is retried once, with the resolved
-  profile's fallback model when `retry_with_fallback` is on. Two over-budget sessions
+  failed whatever it reported, so it is retried once, on the resolved
+  profile's `fallback` when `retry_with_fallback` is on. Two over-budget sessions
   in a row for one work item escalate it: the role's `max_turns` or `timeout`
   is the wrong shape for that work.
 
@@ -605,10 +612,12 @@ The CLI accepts aliases such as `pm` and `dev`; the TOML keys do not.
 
 ## `[profiles.<name>]`
 
-A profile bundles the agent, model, fallback model, effort and sandbox for a
+A profile bundles the agent, model, fallback, effort and sandbox for a
 session. Profiles are named globally, then selected by `[global]` or a role.
 Values omitted from a profile use its built-in defaults; a profile configured
-for `codex` or `opencode` has no default model or fallback model.
+for `codex` or `opencode` has no default model. `fallback` names the profile
+a session runs on instead when its own has no capacity: that profile's agent,
+model, effort and sandbox, which can be a different agent entirely.
 
 ```toml
 [global]
@@ -617,7 +626,7 @@ profile = "bar"
 [profiles.foo]
 agent = "claude"
 model = "fable"
-fallback_model = "opus"
+fallback = "bar"
 effort = "max"
 sandbox = "claude"
 
@@ -635,7 +644,7 @@ profile_by_size = { xs = "bar", s = "bar", l = "foo", xl = "foo" }
 |---|---|---|---|
 | `agent` | string | `"claude"` | CLI a session runs as: `claude` (`claude -p`), `codex` (`codex exec`) or `opencode`. An unknown value is a load error. See [Running a session](architecture.md#running-a-session). |
 | `model` | string | `"opus"` for `claude`, `""` otherwise | Model alias or full id, passed to the selected agent (`provider/model` for opencode). An empty value lets codex or opencode use its own configured model. |
-| `fallback_model` | string | `"sonnet"` for `claude`, `""` otherwise | Passed as `claude --fallback-model` when it differs from `model`. Codex and opencode have no fallback-model flag. |
+| `fallback` | string | `""` | The profile a session runs on instead when this one has no capacity: a retry of a session that failed for want of capacity runs on it when [`scheduler.retry_with_fallback`](#scheduler) is on, the next retry on that profile's own `fallback`, and so on. Must name a profile; a profile that names itself, or a longer cycle (`a` → `b` → `a`), is a load error. When both profiles run `claude`, the fallback's model is also passed as `claude --fallback-model`, so claude switches to it within a session; codex and opencode have no such flag, and a fallback on another agent is a new session. |
 | `effort` | string | `""` | Passed as `claude --effort` when set: `low`, `medium`, `high` or `max`. Codex receives it as `model_reasoning_effort`; `max` maps to `high`. Opencode receives it as the default `build` agent's `variant`; variants are names the model defines, not levels. |
 | `sandbox` | string | `"none"` | How much of the machine a session can reach: `none`, `claude` or `container`. See [Sandboxing](#sandboxing). |
 
@@ -722,11 +731,14 @@ Like the checks keys, they are accepted only under `[roles.reviewer]`.
 Phase overrides resolve through `[profiles.*]` after ordinary role and
 `profile_by_size` selection. An unspecified angle uses the size-resolved
 reviewer profile. Brief and angle sessions select `agent`, `model`,
-`fallback_model` and `effort`, subject to backend support (fallback model is
-Claude-only; Codex maps `max` effort to `high`). They ignore the profile's
-`sandbox` and use the host adapter's mandatory read-only checkout policy:
-no commands, writes, web/network tools, MCP, factory identity, or writable
-or shared VCS access. Claude and Codex are the supported host agents.
+`fallback` and `effort`, subject to backend support (Codex maps `max` effort
+to `high`). They ignore the profile's `sandbox` and use the host adapter's
+mandatory read-only checkout policy: no commands, writes, web/network tools,
+MCP, factory identity, or writable or shared VCS access. Claude and Codex are
+the supported host agents, on every profile of the `fallback` chain too: a
+brief or angle session refused for want of capacity runs again as its
+fallback, under the same policy, and a chain that reaches an `opencode`
+profile is a load error.
 
 The judge applies all five profile fields, including `sandbox`, through an
 ordinary factory reviewer session. Its prompt, tools, permissions and ability

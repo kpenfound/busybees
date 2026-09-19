@@ -31,9 +31,11 @@ type sessionSpec struct {
 	env       map[string]string
 	// task selects a task template other than the role's default.
 	task string
-	// useFallback runs this attempt with the role's fallback model as its
-	// primary model (scheduler.retry_with_fallback).
-	useFallback bool
+	// fallbacks is how many steps down its profile's fallback chain this
+	// attempt runs (scheduler.retry_with_fallback): the first retry on the
+	// profile's fallback, the second on that one's own, and so on. 0 is
+	// the profile itself.
+	fallbacks int
 	// resumeID continues the conversation of this role's previous session
 	// on the same work item (its Result.ClaudeID), so the model keeps the
 	// context it built there. A retry never carries it: an id the agent no
@@ -125,9 +127,11 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (_ *sessio
 	if spec.judge {
 		role = role.ForJudge()
 	}
-	model, fallback := ops.SelectModel(role.Model, role.FallbackModel, spec.useFallback)
-	role.Model = model
-	s.setWorkerSandbox(spec.worker, role.Sandbox)
+	// The profile the session runs, moved down its fallback chain as far as
+	// the retry asks: its agent, model, effort and sandbox all come from
+	// the profile the retry lands on.
+	profile, fallback := ops.SelectProfile(session.ProfileForRole(role), spec.fallbacks)
+	s.setWorkerSandbox(spec.worker, profile.Sandbox)
 	if err := s.store.EnsureNotes(spec.role); err != nil {
 		return nil, err
 	}
@@ -163,7 +167,7 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (_ *sessio
 	d.Branch = spec.branch
 	d.StateDir = s.store.Dir
 	d.SessionDir = sessionDir
-	d.Sandbox = role.Sandbox
+	d.Sandbox = profile.Sandbox
 	d.ConsolidateNotes, d.ConsolidateReason = s.consolidateNotes(spec.role, int(notesSize))
 	if d.MaxRounds == 0 {
 		d.MaxRounds = cfg.Scheduler.MaxReviewRounds
@@ -236,7 +240,7 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (_ *sessio
 		}()
 	}
 	start := sessionEvent(EventSessionStarted, spec)
-	start.Model, start.Fallback, start.Sandbox = role.Model, fallback, role.Sandbox
+	start.Model, start.Fallback, start.Sandbox = profile.Model, fallback, profile.Sandbox
 	start.Dir = sessionDir
 	// Remembered under the same name the event carries, so a view that sees
 	// the session start can name it back to KillSession (kill.go). The event
@@ -250,7 +254,7 @@ func (s *Scheduler) runSession(ctx context.Context, spec sessionSpec) (_ *sessio
 	startedActivity = true
 	res, err := s.runner.Run(sctx, session.Request{
 		Name:         spec.name,
-		Profile:      session.ProfileForRole(role),
+		Profile:      profile,
 		Workspace:    spec.workspace,
 		SystemPrompt: system,
 		Prompt:       task,
@@ -577,7 +581,9 @@ func (s *Scheduler) runSessionWithRetry(ctx context.Context, spec sessionSpec) (
 			// Its own name, so <state_dir>/sessions/ keeps both transcripts.
 			try.name = fmt.Sprintf("%s-retry%d", spec.name, attempt-1)
 			try.data.Retry = attempt - 1
-			try.useFallback = policy.Decide(attempt-1, true).UseFallback
+			if policy.Decide(attempt-1, true).UseFallback {
+				try.fallbacks = attempt - 1
+			}
 			// A resumed launch that failed may have failed on the resume
 			// itself (an id claude no longer has): the retry starts fresh.
 			try.resumeID = ""
@@ -611,8 +617,8 @@ func (s *Scheduler) runSessionWithRetry(ctx context.Context, spec sessionSpec) (
 				return failedResult(res, overBudgetNote(note, streak, spec.role)), nil
 			}
 			// One expensive session can be bad luck, so it is retried like
-			// an infrastructure failure — with the role's fallback model
-			// when scheduler.retry_with_fallback is on, which is usually the
+			// an infrastructure failure — on the profile's fallback when
+			// scheduler.retry_with_fallback is on, which is usually the
 			// cheaper one.
 			if err := ops.Sleep(ctx, policy.Decide(attempt, true).Delay); err != nil {
 				return failedResult(res, note), err

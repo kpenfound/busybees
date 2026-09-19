@@ -27,10 +27,16 @@ var AgentCredentials = map[string][]string{
 // Profile contains only agent execution settings. Workflow and identity policy
 // belong to the caller. Skills are generic plugin sources, prepared by Skills.
 type Profile struct {
-	Name            string
-	Agent           string
-	Model           string
-	FallbackModel   string
+	Name  string
+	Agent string
+	Model string
+	// Fallback is the profile a caller runs the session on instead when
+	// this one has no capacity (ops.SelectProfile), agent included, and it
+	// may have a fallback of its own. The claude backend also passes a
+	// claude fallback's model as --fallback-model, so claude switches to it
+	// within the session; a fallback on another agent is the caller's to
+	// run. Nil is no fallback.
+	Fallback        *Profile
 	Effort          string
 	MaxTurns        int
 	Timeout         time.Duration

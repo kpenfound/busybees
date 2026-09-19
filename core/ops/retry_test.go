@@ -127,17 +127,26 @@ func TestRetryExhaustionAndFallback(t *testing.T) {
 			}
 		}
 	}
+	// A chain of two: the first step lands on the fallback, agent included,
+	// the second on the fallback's own, and a step past the end stays there.
+	last := agent.Profile{Agent: "opencode", Model: "last"}
+	cheap := agent.Profile{Agent: "codex", Model: "cheap", Fallback: &last}
+	primary := agent.Profile{Agent: "claude", Model: "primary", Fallback: &cheap}
 	for _, tc := range []struct {
-		fallback string
-		use      bool
+		profile  agent.Profile
+		steps    int
 		want     string
 		selected bool
 	}{
-		{"cheap", true, "cheap", true}, {"cheap", false, "primary", false}, {"", true, "primary", false},
+		{primary, 0, "primary", false}, {primary, -1, "primary", false}, {primary, 1, "cheap", true}, {primary, 2, "last", true}, {primary, 3, "last", true},
+		{agent.Profile{Model: "alone"}, 1, "alone", false},
 	} {
-		got, selected := SelectModel("primary", tc.fallback, tc.use)
-		if got != tc.want || selected != tc.selected {
-			t.Fatalf("model=%q fallback=%v", got, selected)
+		got, selected := SelectProfile(tc.profile, tc.steps)
+		if got.Model != tc.want || selected != tc.selected {
+			t.Fatalf("%d steps: model=%q fallback=%v, want %q %v", tc.steps, got.Model, selected, tc.want, tc.selected)
+		}
+		if selected && got.Agent == tc.profile.Agent {
+			t.Fatalf("%d steps: the fallback kept the agent %q", tc.steps, got.Agent)
 		}
 	}
 	for _, phrase := range []string{"RATE LIMIT", "Abuse Detection", "Secondary rate", "Overloaded", "Usage limit", "Session limit"} {

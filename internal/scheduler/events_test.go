@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -555,5 +556,70 @@ func TestReviewActivityCountsEnabledAngles(t *testing.T) {
 			}
 			assertReviewLifecycle(t, drain(sub), "review-42-r2", 9, 42, 2, total, true)
 		})
+	}
+}
+
+// fallbackAgentTOML: the developer's profile falls back to a profile on
+// another agent, and its first attempt hangs until its timeout kills it.
+const fallbackAgentTOML = baseTOML + `
+retries = 1
+retry_delay = "0s"
+[profiles.main]
+agent = "claude"
+model = "opus"
+fallback = "cheap"
+[profiles.cheap]
+agent = "codex"
+model = "gpt-cheap"
+[roles.developer]
+profile = "main"
+timeout = "3s"
+[roles.product_manager]
+enabled = false
+[roles.project_manager]
+enabled = false
+[roles.qa]
+enabled = false
+`
+
+// A retry runs on the profile the role's profile names as its fallback,
+// agent included: the attempt was a claude session, the retry is a codex
+// one, and the claude session was not told a fallback model it cannot
+// switch to itself.
+func TestARetryRunsOnTheFallbackProfilesAgent(t *testing.T) {
+	t.Setenv("FAKE_DEV_HANG", "1")
+	h := newHarness(t, fallbackAgentTOML)
+	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", State: "OPEN",
+		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now().Add(-time.Hour)}
+	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
+	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true}
+
+	sub := h.sched.Subscribe()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if err := h.sched.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var starts []Event
+	for _, ev := range drain(sub) {
+		if ev.Kind == EventSessionStarted && ev.Role == config.RoleDeveloper {
+			starts = append(starts, ev)
+		}
+	}
+	if len(starts) != 2 {
+		t.Fatalf("%d developer session-started events, want the attempt and its retry: %v", len(starts), starts)
+	}
+	if starts[0].Model != "opus" || starts[0].Fallback {
+		t.Errorf("first attempt ran on model %q (fallback %v), want opus and no fallback", starts[0].Model, starts[0].Fallback)
+	}
+	if starts[1].Model != "gpt-cheap" || !starts[1].Fallback {
+		t.Errorf("the retry ran on model %q (fallback %v), want gpt-cheap and the fallback marked", starts[1].Model, starts[1].Fallback)
+	}
+	first := argsOfNamed(t, h, "developer-issue-1-r1")
+	if first[1] != "-p" || slices.Contains(first, "--fallback-model") {
+		t.Errorf("the attempt was not a plain claude session: %v", first)
+	}
+	if retry := argsOfNamed(t, h, "developer-issue-1-r1-retry1"); retry[1] != "exec" || argValue(retry, "--model") != "gpt-cheap" {
+		t.Errorf("the retry was not a codex session on gpt-cheap: %v", retry)
 	}
 }

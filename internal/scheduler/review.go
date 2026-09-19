@@ -181,18 +181,28 @@ func (s *Scheduler) runReview(ctx context.Context, log *slog.Logger, pr github.P
 // reviewAgent is the agent the brief and angle sessions run as: the
 // selected profile's execution fields (sandbox ignored), held to the role's
 // timeout and turn limit and given its environment, using the executables the
-// role's own sessions are.
+// role's own sessions are, with the profile's fallback chain behind it
+// (CLIAgent.Fallback), every profile of it held to the same floor.
 func (s *Scheduler) reviewAgent(role config.ResolvedRole) *review.CLIAgent {
+	a := s.reviewAgentFor(role)
+	at := a
+	for _, f := range role.Fallbacks() {
+		at.Fallback = s.reviewAgentFor(f)
+		at = at.Fallback
+	}
+	return a
+}
+
+func (s *Scheduler) reviewAgentFor(role config.ResolvedRole) *review.CLIAgent {
 	return &review.CLIAgent{
-		Provider:      role.Agent,
-		Model:         role.Model,
-		FallbackModel: role.FallbackModel,
-		Effort:        role.Effort,
-		ClaudeBin:     s.runner.ClaudeBin,
-		CodexBin:      s.runner.CodexBin,
-		Timeout:       role.Timeout,
-		MaxTurns:      role.MaxTurns,
-		Env:           role.Env,
+		Provider:  role.Agent,
+		Model:     role.Model,
+		Effort:    role.Effort,
+		ClaudeBin: s.runner.ClaudeBin,
+		CodexBin:  s.runner.CodexBin,
+		Timeout:   role.Timeout,
+		MaxTurns:  role.MaxTurns,
+		Env:       role.Env,
 	}
 }
 

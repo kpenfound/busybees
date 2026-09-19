@@ -333,7 +333,7 @@ func TestReviewExecutionSettingsAndSafety(t *testing.T) {
 				answer = codexAnswer
 			}
 			bin, record := fakeCLI(t, answer)
-			a := &CLIAgent{Provider: provider, ClaudeBin: bin, CodexBin: bin, Model: "chosen", FallbackModel: "fallback", Effort: "max"}
+			a := &CLIAgent{Provider: provider, ClaudeBin: bin, CodexBin: bin, Model: "chosen", Fallback: &CLIAgent{Provider: config.AgentClaude, Model: "fallback"}, Effort: "max"}
 			if _, err := a.Run(context.Background(), AgentRequest{Dir: t.TempDir()}); err != nil {
 				t.Fatal(err)
 			}
@@ -450,5 +450,51 @@ func TestCodexReviewMCPInventoryFailsClosed(t *testing.T) {
 				t.Fatalf("session ran after inventory failure: %v", err)
 			}
 		})
+	}
+}
+
+// A session refused for want of capacity runs again as the fallback agent,
+// down the chain until one answers, and the one that answers is a review
+// session like any other: the codex fallback of a claude session runs in
+// codex's read-only sandbox, and the claude session was told no
+// --fallback-model, since claude cannot switch to codex itself. Any other
+// failure is the session's own, and the fallback never runs.
+func TestAReviewSessionWithoutCapacityRunsAsItsFallback(t *testing.T) {
+	limited, limitedRecord := fakeCLI(t, `echo '{"type":"result","subtype":"error","is_error":true,"result":"Rate limit reached for opus","session_id":"sess-0","num_turns":0}'`)
+	overloaded, overloadedRecord := fakeCLI(t, `echo '{"type":"error","message":"the model is overloaded"}'`)
+	answering, answeringRecord := fakeCLI(t, codexAnswer)
+	a := &CLIAgent{ClaudeBin: limited, Model: "opus", Fallback: &CLIAgent{
+		Provider: config.AgentCodex, CodexBin: overloaded, Model: "gpt-first", Fallback: &CLIAgent{
+			Provider: config.AgentCodex, CodexBin: answering, Model: "gpt-last"}}}
+	res, err := a.Run(context.Background(), AgentRequest{Name: "distiller", Prompt: "do it", Dir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Text != "the brief" || res.ID != "thread-9" {
+		t.Errorf("answer: %+v", res)
+	}
+	if got := args(t, limitedRecord); strings.Contains(got, "--fallback-model") {
+		t.Errorf("the claude session was told a fallback model it cannot switch to:%s", got)
+	}
+	for _, record := range []string{overloadedRecord, answeringRecord} {
+		got := args(t, record)
+		for _, want := range []string{"\nexec\n", "\n--sandbox\nread-only\n", "\nfeatures.shell_tool=false\n"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("the fallback escaped the floor, missing %q:%s", want, got)
+			}
+		}
+	}
+	if got := args(t, answeringRecord); !strings.Contains(got, "\n--model\ngpt-last\n") {
+		t.Errorf("the last fallback ran another model:%s", got)
+	}
+
+	failing, _ := fakeCLI(t, `echo '{"type":"result","subtype":"error","is_error":true,"result":"the prompt was refused","session_id":"sess-0","num_turns":1}'`)
+	never, neverRecord := fakeCLI(t, claudeAnswer)
+	a = &CLIAgent{ClaudeBin: failing, Model: "opus", Fallback: &CLIAgent{ClaudeBin: never, Model: "sonnet"}}
+	if _, err := a.Run(context.Background(), AgentRequest{Name: "distiller", Prompt: "do it", Dir: t.TempDir()}); err == nil || !strings.Contains(err.Error(), "the prompt was refused") {
+		t.Fatalf("a failure that is not about capacity: %v", err)
+	}
+	if _, err := os.Stat(neverRecord + ".args"); err == nil {
+		t.Error("the fallback ran for a failure that is not about capacity")
 	}
 }

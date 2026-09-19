@@ -15,7 +15,11 @@ The root module consumes this one through its `replace ... => ./core` entry.
 
 `agent.Runner.Run` takes an `agent.Request` with an execution-only `Profile`:
 backend, models, effort, tools, prepared MCP entries, sandbox, shell and
-environment. The caller selects profiles and fallback overrides before running.
+environment. The caller selects profiles before running; `Profile.Fallback`
+is the profile the session runs on instead when it has no capacity, agent
+included, with its own fallback after it: `ops.SelectProfile` walks the
+chain for a retry, and the claude backend passes a claude fallback's model as
+`--fallback-model` so claude switches to it within the session.
 
 The caller also supplies:
 
@@ -394,7 +398,7 @@ requirements outside core.
 `ops` contains reusable pieces for caller-owned reconcile loops. It does not
 poll a tracker, choose a workflow, log, or escalate work:
 
-- `ClassifyFailure`, `RetryPolicy.Decide`, `SelectModel` and `Sleep` preserve
+- `ClassifyFailure`, `RetryPolicy.Decide`, `SelectProfile` and `Sleep` preserve
   reported-outcome precedence, retry counts, delays and fallback selection.
 - `Ledger` appends, reads and atomically trims JSONL accounting. Share one
   instance per file to serialize append/trim. `Now` supplies timestamps for

@@ -71,10 +71,24 @@ var WriteMCPConfig = agent.WriteMCPConfig
 var ClaudeSandboxDomains = []string{"github.com", "*.github.com"}
 var ProcessMarkers = procs.Markers{Session: "--name bees-", Codex: procs.CodexMarker(beesEnvPrefix), LegacyCodex: "mcp_servers.bees.env.BEES_SESSION_DIR=", Container: "bees.session"}
 
-// ProfileForRole strips workflow settings after size and fallback selection.
+// ProfileForRole strips workflow settings after size and phase selection,
+// with the role's fallback chain behind it (Profile.Fallback): each fallback
+// profile's execution settings under the same role settings, so a session
+// that falls back keeps its tools, turn limit and timeout.
 func ProfileForRole(role config.ResolvedRole) Profile {
+	p := profileForRole(role)
+	at := &p
+	for _, f := range role.Fallbacks() {
+		next := profileForRole(f)
+		at.Fallback = &next
+		at = &next
+	}
+	return p
+}
+
+func profileForRole(role config.ResolvedRole) Profile {
 	return Profile{
-		Name: role.Name, Agent: role.Agent, Model: role.Model, FallbackModel: role.FallbackModel,
+		Name: role.Name, Agent: role.Agent, Model: role.Model,
 		Effort: role.Effort, MaxTurns: role.MaxTurns, Timeout: role.Timeout,
 		AllowedTools: slices.Clone(role.AllowedTools), DisallowedTools: slices.Clone(role.DisallowedTools),
 		MCP: MCPEntries(role.MCP), Sandbox: role.Sandbox, SandboxImage: role.SandboxImage,
