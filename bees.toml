@@ -129,8 +129,8 @@ sandbox = "none"
 
 [profiles.coder_smart]
 agent = "claude"
-model = "fable"
-fallback = "sonnet_high"
+model = "opus"
+fallback = "fable_medium"
 effort = "high"
 
 [profiles.coder_medium]
@@ -263,7 +263,7 @@ skills = [
 ]
 [roles.developer.mcp.dagger]
 command = "dagger"
-args = ["mcp", "--progress", "plain", "-m", "dagger.io/go@main"]
+args = ["mcp", "--progress", "plain", "-m", "dagger.io/go@do-not-merge-hack"]
 env = { DAGGER_X_RELEASE = "v1.0.0-beta.14" }
 
 # Reviews pull requests and, optionally, merges them once checks are green.
