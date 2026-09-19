@@ -222,6 +222,19 @@ func TestRunStopsAtTheTimeout(t *testing.T) {
 	}
 }
 
+// An issue the factory gives up on is held for a person: nothing is left
+// to wait for, and the case fails on it.
+func TestRunStopsWhenTheFactoryGivesUp(t *testing.T) {
+	t.Setenv("FAKE_DEV_FAIL", "1")
+	_, res := runOne(t, answerCase, answerFiles())
+	if res.Pass || res.Stop != StopDone {
+		t.Fatalf("result: %+v", res)
+	}
+	if c := checkNamed(t, res, "#1 closed"); c.Pass || c.Detail != "held for a person: bees:needs-human" {
+		t.Fatalf("check: %+v", c)
+	}
+}
+
 func TestCloses(t *testing.T) {
 	got := closes("Closes #1, fixes: #2 and Resolved #3.\nsee #4, reclosed #5")
 	if !slices.Equal(got, []int{1, 2, 3}) {

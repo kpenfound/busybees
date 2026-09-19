@@ -28,7 +28,8 @@ import (
 // request with `gh pr create`, the reviewer submits its review with `gh pr review`, both
 // through the gh on its PATH, and every other role reports done. The review
 // pipeline's brief and angle sessions answer a brief and no findings.
-// FAKE_COST is each session's cost, FAKE_DEV_HANG makes the developer hang.
+// FAKE_COST is each session's cost, FAKE_DEV_HANG makes the developer hang
+// and FAKE_DEV_FAIL makes it report failed.
 func TestMain(m *testing.M) {
 	if len(os.Args) > 3 && slices.Equal(os.Args[1:3], ShimCommand) {
 		dir, _ := os.Getwd()
@@ -91,6 +92,10 @@ func fakeClaude() {
 	case config.RoleDeveloper:
 		if hang, _ := strconv.Atoi(os.Getenv("FAKE_DEV_HANG")); hang > 0 {
 			time.Sleep(time.Duration(hang) * time.Second)
+		}
+		if os.Getenv("FAKE_DEV_FAIL") == "1" {
+			outcome = session.Outcome{Status: "failed", Note: "cannot build"}
+			break
 		}
 		file, content := "answer.txt", "fixed\n"
 		if os.Getenv("FAKE_DEV_NOFIX") == "1" {
