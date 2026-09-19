@@ -187,16 +187,29 @@ GitHub token and the role's `env`, and nothing else of the host's secrets.
 than inherited: the `[github]` token and git identity, the role's own
 `env`, and the `BEES_*` variables. Values reach `sbx` by variable name,
 never on a command line. The agent's own credential is not handed in at
-all: the sandbox's proxy injects the one stored with `sbx secret set
-anthropic` into requests to the Anthropic API, and a compromised session
-cannot read it. That proxy injects a stored `github` secret the same way,
+all: the sandbox's proxy injects the one stored with `sbx secret set`
+(`anthropic`, `openai` or another provider's) into requests to that
+provider's API, and a compromised session cannot read it. That proxy injects a stored `github` secret the same way,
 which would replace the bot's token with the person's: do not store one on
 a machine that runs the factory.
+
+**Dagger.** A role with [`sandbox_dagger_engine`](configuration.md#dagger-in-the-sandbox)
+reaches the host's Dagger engine from the sandbox, and nothing else of the
+sort: bees refuses to run a session that is granted the engine without its
+profile asking for it, or in any mode but `sbx`. What the session hands the
+engine runs outside the sandbox: its containers reach the network the
+engine can, not what the sbx policy allows, and they share the engine's
+cache with every other client of that engine. The Dagger CLI is installed
+from `dl.dagger.io` into each sandbox as root.
 
 **Does not hold, or costs something:**
 
 - The `localhost` network rule opens every service on the host's loopback
   to the session, for as long as the rule stands.
+- With `sandbox_dagger_engine`, the session runs containers outside the
+  sandbox's network policy, through the engine. The engine's forward is
+  open on the host's loopback while the session runs, so another sandbox
+  allowed `localhost` can reach it too.
 - The template is the operator's responsibility; sbx pulls it, and bees
   does not verify it.
 - A `github` secret stored with `sbx secret set` overrides the bot's

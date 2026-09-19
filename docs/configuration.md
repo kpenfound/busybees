@@ -605,8 +605,10 @@ The CLI accepts aliases such as `pm` and `dev`; the TOML keys do not.
 | `allowed_tools` | string list | `[]` | Passed as `claude --allowedTools`. A `codex` or `opencode` role ignores it. |
 | `disallowed_tools` | string list | `[]` | Passed as `claude --disallowedTools`. A `codex` or `opencode` role ignores it. |
 | `shell` | string | the shell bees runs under | Exported into sessions as `$SHELL`. Claude Code discovers its Bash tool's shell from `$SHELL`, so this is the lever, without being a guarantee. Must be an existing file. |
-| `sandbox_image` | string | `""` | The image a `container` session runs in: it must hold the role's agent, `git` and `gh`. A `container` role without one or `container_use_environment` is refused at `bees run`. See [The container mode](#the-container-mode). For an `sbx` session it is the sandbox's template instead, an image built on `docker/sandbox-templates:claude-code`; empty selects sbx's own. See [The sbx mode](#the-sbx-mode). |
+| `sandbox_image` | string | `""` | The image a `container` session runs in: it must hold the role's agent, `git` and `gh`. A `container` role without one or `container_use_environment` is refused at `bees run`. See [The container mode](#the-container-mode). For an `sbx` session it is the sandbox's template instead, an image built on sbx's image for the agent (`docker/sandbox-templates:claude-code`, `:codex` or `:opencode`); empty selects sbx's own. See [The sbx mode](#the-sbx-mode). |
 | `container_use_environment` | string | `""` | Path, relative to the project repository root, to a `dagger/container-use` environment definition to build the `container` profile's image from, instead of `sandbox_image`. Requires the resolved profile's `sandbox = "container"` and is a load error together with `sandbox_image` on the same resolved role. See [Building from container-use](#building-from-container-use). |
+| `sandbox_dagger_engine` | string | `""` | The host's Dagger engine an `sbx` session is given, `unix://<socket path>` or `tcp://<host>:<port>`, with the Dagger CLI installed in the sandbox. Empty gives neither. Requires the resolved profile's `sandbox = "sbx"` at every size and `sandbox_dagger_version`. See [Dagger in the sandbox](#dagger-in-the-sandbox). |
+| `sandbox_dagger_version` | string | `""` | The Dagger CLI release installed in the sandbox for `sandbox_dagger_engine`, the engine's own, such as `"v0.20.5"`. Requires `sandbox_dagger_engine`. |
 | `env` | table | `{}` | Environment variables exported into every session: the agent, its shell tool and git see them, and so do MCP servers under `claude` and `opencode` (codex starts a server with only the variables its entry names). A `$VAR` value is expanded from the bees process environment when the session starts. A name may not be empty or contain `=` or a space. See [Exported into every session](#exported-into-every-session) for how it meets the variables bees sets itself. |
 | `enabled` | bool | `true` | Roles only. `false` takes a role out of the rotation. Disabling `reviewer` makes a developer's pull request count as approved the moment it is opened, and with `auto_merge` it goes straight to the checks stage. Under `[global]` the key is an error. A named set of these decisions is a [config template](templates.md). |
 
@@ -646,7 +648,7 @@ profile_by_size = { xs = "bar", s = "bar", l = "foo", xl = "foo" }
 | `model` | string | `"opus"` for `claude`, `""` otherwise | Model alias or full id, passed to the selected agent (`provider/model` for opencode). An empty value lets codex or opencode use its own configured model. |
 | `fallback` | string | `""` | The profile a retry runs on instead, agent included: a session that failed for infrastructure reasons (a timeout, exhausted turns, a crash, a rate limit) is retried on it when [`scheduler.retry_with_fallback`](#scheduler) is on, the next retry on that profile's own `fallback`, and so on; a brief or angle review session refused for want of capacity runs again on it. Must name a profile; a profile that names itself, or a longer cycle (`a` → `b` → `a`), is a load error. When both profiles run `claude`, the fallback's model is also passed as `claude --fallback-model`, so claude switches to it within a session; codex and opencode have no such flag, and a fallback on another agent is a new session. |
 | `effort` | string | `""` | Passed as `claude --effort` when set: `low`, `medium`, `high` or `max`. Codex receives it as `model_reasoning_effort`; `max` maps to `high`. Opencode receives it as the default `build` agent's `variant`; variants are names the model defines, not levels. |
-| `sandbox` | string | `"none"` | How much of the machine a session can reach: `none`, `claude`, `container` or `sbx`. `sbx` runs `claude` only: a profile that selects it for another agent is a load error. See [Sandboxing](#sandboxing). |
+| `sandbox` | string | `"none"` | How much of the machine a session can reach: `none`, `claude`, `container` or `sbx`. See [Sandboxing](#sandboxing). |
 
 The effective profile follows this order for a work item size:
 role `profile_by_size[size]`, role `profile`, global
@@ -918,7 +920,7 @@ profile = "boxed"
 | `none` | Everything the user running `bees` can: the home directory, credentials, the network and every other checkout on the machine. |
 | `claude` | Claude Code's own sandbox: writes to the worktree and the state directory, network to GitHub. See [The claude mode](#the-claude-mode) and [Security](security.md#claude). |
 | `container` | A container holding the worktree, the repository's `.git` and the state directory, and nothing else of the host. See [The container mode](#the-container-mode) and [Security](security.md#container). |
-| `sbx` | A Docker Sandbox: a microVM holding the same three directories and nothing else of the host, its network held to the sbx policy, the agent's credential injected by the sbx proxy. `claude` only. See [The sbx mode](#the-sbx-mode) and [Security](security.md#sbx). |
+| `sbx` | A Docker Sandbox: a microVM holding the same three directories and nothing else of the host, its network held to the sbx policy, the agent's credential injected by the sbx proxy. See [The sbx mode](#the-sbx-mode) and [Security](security.md#sbx). |
 
 `none` is the default. `bees run` checks before it starts that every role in
 the rotation can have the box it asks for (the programs a `claude` box needs
@@ -1137,11 +1139,10 @@ session with an error naming the path or the build command, not a
 An `sbx` session is the agent's command line, unchanged, run inside a
 [Docker Sandbox](https://docs.docker.com/ai/sandboxes/): a microVM with its
 own kernel, filesystem, Docker daemon and network, which the `sbx` CLI
-creates and removes. It needs `sbx` on `PATH`, signed in (`sbx login`), and
-runs `claude` only: a profile that selects it for `codex` or `opencode` is a
-load error naming the profile. `bees run` checks that `sbx` answers ahead of
-the doctor, whatever `--skip-doctor` says, and `bees doctor` reports it when
-a role uses the mode.
+creates and removes. It needs `sbx` on `PATH` and signed in (`sbx login`),
+and runs `claude`, `codex` and `opencode`. `bees run` checks that `sbx`
+answers ahead of the doctor, whatever `--skip-doctor` says, and
+`bees doctor` reports it when a role uses the mode.
 
 The sandbox is given the same three directories a container is, as its
 workspaces, each mounted at its host path: the worktree, the repository's
@@ -1155,31 +1156,48 @@ the session ends.
 
 ```toml
 [profiles.sandboxed]
+agent = "codex"
 sandbox = "sbx"
-sandbox_image = "ghcr.io/acme/widgets-sbx:1"   # optional template
 
 [roles.developer]
 profile = "sandboxed"
+sandbox_image = "ghcr.io/acme/widgets-sbx-codex:1"   # optional template
 ```
 
-`sandbox_image` is optional and names the sandbox's template, passed as
-`sbx create --template`: an image built `FROM
-docker/sandbox-templates:claude-code`, with the product's toolchain added.
-Empty selects sbx's own claude template, which holds `claude`, `git` and
-`gh`. `container_use_environment` is a load error alongside `sbx`.
+The sandbox is created for the role's agent (`sbx create <agent>`), from
+sbx's own template for it unless `sandbox_image` names one. sbx's own is
+the `-docker` variant of the agent's image below, which adds the private
+Docker daemon:
+
+| Agent | Image | Credential to store once |
+|---|---|---|
+| `claude` | `docker/sandbox-templates:claude-code` | `sbx secret set anthropic` |
+| `codex` | `docker/sandbox-templates:codex` | `sbx secret set openai` (`--oauth` for a ChatGPT sign-in) |
+| `opencode` | `docker/sandbox-templates:opencode` | `sbx secret set <provider>` for each provider its model uses (`anthropic`, `openai`, `google`, ...) |
+
+`sandbox_image` is passed as `sbx create --template`: an image built `FROM`
+the agent's image in that table, or its `-docker` variant to keep the
+Docker daemon, with the product's toolchain added. sbx requires a template
+built for the agent it runs. sbx's own templates hold the agent, `git` and
+`gh`. `container_use_environment` is a load error
+alongside `sbx`.
 
 Its environment is built from nothing and holds the role's `env`, `SHELL`,
 the `BEES_*` variables, the [`[github]`](#github) token and git identity,
 and the git configuration every session runs with plus `safe.directory = *`
 and the https `insteadOf`. Values reach `sbx` by variable name, never on a
 command line. The agent's own credential is not forwarded: store it once
-with `sbx secret set anthropic`, and the sandbox's proxy injects it into the
-agent's requests without the value entering the sandbox. An `sbx` role
-therefore needs `[github]` (or `GH_TOKEN` in its `env`), because inside the
-sandbox `gh` and `git push` have no other credentials, and no agent
-credential in the bees environment; `bees run` refuses the role without the
-former. Do not also store a `github` secret with `sbx secret set`: the proxy
-would replace the bot's token with it on every request to GitHub.
+with `sbx secret set`, as the table says, and the sandbox's proxy injects
+it into the agent's requests without the value entering the sandbox. An
+`sbx` role therefore needs `[github]` (or `GH_TOKEN` in its `env`), because
+inside the sandbox `gh` and `git push` have no other credentials, and no
+agent credential in the bees environment; `bees run` refuses the role
+without the former. Do not also store a `github` secret with
+`sbx secret set`: the proxy would replace the bot's token with it on every
+request to GitHub. The sandbox does not read the operator's `~/.codex` or
+`~/.config/opencode`; bees passes a session's MCP servers and settings on
+the command line (codex) or in the session's own `opencode.json`
+(opencode), as it does on the host.
 
 The `bees` binary is not in the sandbox. The built-in MCP server runs on the
 host as `bees mcp serve --listen` on the loopback, and the session reaches
@@ -1191,19 +1209,71 @@ the operating system picks for each session, so the rule cannot name one,
 and it lets a session reach every service listening on the host's
 loopback; see [Security](security.md#sbx). The same policy decides which
 other hosts the session reaches: the Balanced preset allows GitHub and the
-Anthropic API; add a module proxy or a package registry with
+AI provider APIs; add a module proxy or a package registry with
 `sbx policy allow network`.
 A stdio MCP server configured in `bees.toml` starts inside the sandbox, so
 its command must be in the template; a remote one is reached as configured,
 and `sbx mcp add` registrations are not used.
 
 Written to the sbx CLI reference and not run for this page: the sandbox is
-created with `sbx create --quiet --name <session> --skills off`, the command
-runs through `sbx exec --interactive --workdir <worktree> --env <name>...`
-with the prompt on stdin, and `sbx rm --force` removes the sandbox when the
-session ends. `<session>/sandbox-name` holds the sandbox's name while it
-exists. [`bees kill`](cli.md#bees-kill---dry-run---scheduler---grace-5s)
+created with `sbx create --quiet --name <session> --skills off <agent>`,
+the command runs through
+`sbx exec --interactive --workdir <worktree> --env <name>...` with the
+prompt on stdin, and `sbx rm --force` removes the sandbox when the session
+ends. `<session>/sandbox-name` holds the sandbox's name while it exists.
+[`bees kill`](cli.md#bees-kill---dry-run---scheduler---grace-5s)
 does not remove a sandbox a crash left behind; `sbx rm --force <name>` does.
+
+##### Dagger in the sandbox
+
+`sandbox_dagger_engine` gives an `sbx` session the host's Dagger engine, and
+`sandbox_dagger_version` the Dagger CLI release installed in the sandbox to
+reach it, so that a developer session can run `dagger check`. It is off
+unless set, and valid only when the role's resolved profile, at every size,
+selects `sbx`; one key without the other is a load error.
+
+```toml
+[roles.developer]
+profile = "sandboxed"
+sandbox_dagger_engine = "unix:///run/dagger/engine.sock"
+sandbox_dagger_version = "v0.20.5"
+```
+
+The engine is one bees can reach on this machine:
+
+- `unix://<path>`: the engine's socket. A sandbox cannot mount a socket, so
+  for each session bees listens on a port of the host's loopback and
+  forwards every connection to the socket until the session ends.
+- `tcp://<host>:<port>`: an engine listening on TCP. One on the loopback
+  (`127.0.0.1`, `localhost`, `::1`) is reached at `host.docker.internal`;
+  any other host as written.
+
+The engine must be running and of `sandbox_dagger_version`'s release: the
+Dagger CLI refuses an engine it is not compatible with. Start one on a
+socket, for example:
+
+```sh
+docker run -d --name dagger-engine --privileged \
+  -v /run/dagger:/run/dagger registry.dagger.io/engine:v0.20.5 \
+  --addr unix:///run/dagger/engine.sock
+```
+
+On macOS the socket stays inside Docker Desktop's VM; publish a TCP port
+there instead (`-p 127.0.0.1:1234:1234` and `--addr tcp://0.0.0.0:1234`)
+and set `sandbox_dagger_engine = "tcp://127.0.0.1:1234"`.
+
+Once the sandbox exists, bees installs the CLI into `/usr/local/bin`
+with the install script at `https://dl.dagger.io/dagger/install.sh`, as
+root, before the agent starts; the sbx network policy must allow
+`dl.dagger.io`. A failed install fails the session and removes the sandbox.
+The session reaches the engine through `_EXPERIMENTAL_DAGGER_RUNNER_HOST`,
+which bees sets to the address above, and the network policy must allow
+it too: the `localhost` rule the built-in server needs covers the loopback.
+
+This widens what a session reaches: the engine runs containers outside the
+sandbox, with the engine's own network and cache, not the sandbox's policy.
+See [Security](security.md#sbx). Written to the sbx CLI and Dagger
+references and not run for this page.
 
 ### How global and role settings merge
 
@@ -1213,7 +1283,7 @@ does not remove a sandbox a crash left behind; `sbx rm --force <name>` does.
 | `skills` | Union, global first, order kept, duplicates dropped. |
 | `mcp` | Union by name; a role server replaces a global one of the same name. |
 | `env` | Union by name; the role wins. |
-| `max_turns`, `timeout`, `shell`, `sandbox_image`, `container_use_environment` | Role value if set, else global, else the built-in default. |
+| `max_turns`, `timeout`, `shell`, `sandbox_image`, `container_use_environment`, `sandbox_dagger_engine`, `sandbox_dagger_version` | Role value if set, else global, else the built-in default. |
 | `profile`, `profile_by_size` | For a work item size: role `profile_by_size[size]`, role `profile`, global `profile_by_size[size]`, global `profile`, then the implicit built-in profile. |
 | `allowed_tools`, `disallowed_tools` | Global list followed by the role list. |
 | `enabled` | Role only. |

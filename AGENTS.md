@@ -82,8 +82,9 @@ dagger core container from --address golang:1.26-bookworm \
   files and interruption inspection. `grants.go` is the capability contract every
   request carries (`Grants`: env allowlist, tools, ro/rw mounts, VCS) and the
   `Boundary` that verifies it before launch (`HostBoundary`, `ContainerBoundary`, and `SandboxBoundary` in `sbx.go`,
-  the Docker Sandbox mode `sandbox = "sbx"`: `sbx create` with the binds as workspaces, `sbx exec` around the claude
-  command, `sbx rm` at the end, the agent's credential left to the sbx proxy). `confine.go` is the host's
+  the Docker Sandbox mode `sandbox = "sbx"`: `sbx create <agent>` with the binds as workspaces, `sbx exec` around the agent's
+  command, `sbx rm` at the end, the agent's credential left to the sbx proxy; `sbxdagger.go`, the opt-in Dagger CLI and
+  host engine forward, `Profile.Dagger` and `Grants.DaggerEngine`). `confine.go` is the host's
   confined mode (`Profile.Confine`): the operating system holds the process to its mounts and `SystemPaths` through a
   `Confiner`, Landlock on Linux (`confine_linux.go`), Seatbelt on macOS (`confine_seatbelt.go`: the profile and the
   `sandbox-exec` start, untagged so the gate tests them; `confine_darwin.go` selects it), `ErrUnsupported` where there

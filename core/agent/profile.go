@@ -117,10 +117,10 @@ func (p Profile) Validate() error {
 	return nil
 }
 
-// SbxTemplates are the sbx CLI's own templates, per agent: what `sbx
-// create <agent>` creates the sandbox from when the profile names no
-// template, and what a template of the operator's is built on. An agent
-// without one cannot run in SandboxSbx.
+// SbxTemplates are the sbx CLI's template images, per agent: what a
+// template of the operator's is built on (sbx's own default for `sbx
+// create <agent>` is the image's "-docker" variant). An agent without one
+// cannot run in SandboxSbx.
 var SbxTemplates = map[string]string{
 	AgentClaude:   "docker/sandbox-templates:claude-code",
 	AgentCodex:    "docker/sandbox-templates:codex",

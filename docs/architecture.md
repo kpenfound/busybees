@@ -1007,8 +1007,10 @@ counted from the transcript's assistant messages or completed items instead.
   holds the container's id while it runs, and `<session>/mcp-server-pid`
   that server's pid, so a crash leaves both findable.
   [`sbx`](configuration.md#the-sbx-mode) is the same command inside a
-  Docker Sandbox: `sbx create` with the same three directories as
-  workspaces at their host paths and no shared skills store, `sbx exec`
+  Docker Sandbox: `sbx create` for the role's agent with the same three
+  directories as workspaces at their host paths and no shared skills
+  store, the Dagger CLI installed and the host's engine reached over TCP
+  when the role sets `sandbox_dagger_engine`, `sbx exec`
   with the session's variables by name and the prompt on stdin, the
   built-in server on the host's loopback reached at `host.docker.internal`,
   and `sbx rm` when the session ends; `<session>/sandbox-name` holds the
@@ -1063,8 +1065,8 @@ counted from the transcript's assistant messages or completed items instead.
   the state directory and the sessions directory read-write, the
   repository's `.git` read-write for a role with version control and, for
   a role with skills, the skills cache read-only, and `sandbox = "sbx"` the
-  same; the container or sandbox is given those paths and nothing else of
-  the host.
+  same, plus the Dagger engine for a role that names one; the container or
+  sandbox is given those paths and nothing else of the host.
 - **Environment.** A session inherits only the host variables its grants
   list (see [Exported into every session](configuration.md#exported-into-every-session)),
   and every inherited `BEES_*` variable is dropped, so a

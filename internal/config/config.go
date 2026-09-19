@@ -478,8 +478,8 @@ type RoleSettings struct {
 	// is no default: a container role without one, or a
 	// ContainerUseEnvironment to build one from, is refused. When the
 	// profile selects SandboxSbx it is the sandbox's template instead, an
-	// image built on sbx's own template for the agent
-	// (agent.SbxTemplates), and empty selects sbx's own.
+	// image built on sbx's image for the agent (agent.SbxTemplates), and
+	// empty selects sbx's own.
 	SandboxImage string `toml:"sandbox_image"`
 	// SandboxDaggerEngine is the host's Dagger engine a SandboxSbx session
 	// is given, with the Dagger CLI at SandboxDaggerVersion installed in

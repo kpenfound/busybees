@@ -246,7 +246,7 @@ label = "bees"
 #shell = "/bin/bash"
 # Image a container session runs in (sandbox = "container"): it must hold
 # the agent, git and gh. Name one per role for a role that runs the product.
-# For sandbox = "sbx" it is the sandbox's template, built on sbx's own for
+# For sandbox = "sbx" it is the sandbox's template, built on sbx's image for
 # the agent (docker/sandbox-templates:claude-code, :codex or :opencode);
 # empty selects sbx's own.
 #sandbox_image = "ghcr.io/acme/widgets-bees:latest"
