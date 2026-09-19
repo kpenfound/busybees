@@ -69,9 +69,11 @@ func parseConfig(t *testing.T, text string) *Config {
 	return cfg
 }
 
-// A bees.toml reviewer section pasted into config.toml gives every step the
-// agent, model, effort and fallback chain the factory gives it.
-func TestAReviewerSectionOfBeesTomlCopiesAcross(t *testing.T) {
+// A bees.toml reviewer setup moved into config.toml, its [profiles.*] tables
+// as they are and its three selectors taken out of [roles.reviewer] to the
+// top level, gives every step the agent, model, effort and fallback chain
+// the factory gives it.
+func TestBeesTomlReviewerProfilesMovedToConfigToml(t *testing.T) {
 	bees, err := config.Parse("version = 5\n"+reviewerSection+"\n[roles.reviewer]\n"+reviewerSelection, filepath.Join(t.TempDir(), "bees.toml"))
 	if err != nil {
 		t.Fatal(err)

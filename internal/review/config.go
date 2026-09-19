@@ -147,7 +147,8 @@ type Config struct {
 	// a profile ignores its flat keys (provider, model, brief_model,
 	// angle_models). Sandbox is checked and not used: every review session
 	// keeps its read-only floor. JudgeProfile, like JudgeModel, is accepted
-	// so a reviewer section of bees.toml copies across, and has no effect.
+	// so the selectors of a bees.toml reviewer section move across as they
+	// are, and has no effect.
 	Profiles      map[string]config.AgentProfile `toml:"profiles"`
 	BriefProfile  string                         `toml:"brief_profile"`
 	JudgeProfile  string                         `toml:"judge_profile"`

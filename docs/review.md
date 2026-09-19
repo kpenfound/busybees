@@ -355,8 +355,11 @@ as `provider`.
 A step with a profile runs as the profile's agent, model and effort, with
 its `fallback` chain behind it, and ignores `provider`, `model`,
 `brief_model` and `angle_models`. The profiles are checked the way
-`bees.toml` checks them, so the reviewer section of a `bees.toml` copies
-across unchanged:
+`bees.toml` checks them. To reuse a `bees.toml` reviewer setup, copy its
+`[profiles.*]` tables unchanged and move `brief_profile`, `angle_profiles`
+and `judge_profile` out of `[roles.reviewer]` to the top of `config.toml`.
+The other `roles.reviewer` keys, `profile` among them, are not
+`config.toml` keys and fail as unknown:
 
 ```toml
 brief_profile = "default"

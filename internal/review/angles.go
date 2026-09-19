@@ -29,8 +29,8 @@ type Angles struct {
 	Sized map[string][]string
 	// Models is the model of each angle it names, config.toml's
 	// angle_models: that angle's session runs as a copy of Agent with the
-	// model replaced, when Agent is the CLI agent. Factory Agents overrides
-	// take precedence and can select a different provider.
+	// model replaced, when Agent is the CLI agent. Agents overrides take
+	// precedence and can select a different provider.
 	Models map[string]string
 	// Agents is the agent of each angle it names, which may run another
 	// provider: the factory's roles.reviewer.angle_profiles, or config.toml's
