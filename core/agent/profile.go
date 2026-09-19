@@ -11,6 +11,7 @@ const (
 	AgentClaude      = "claude"
 	AgentCodex       = "codex"
 	AgentOpenCode    = "opencode"
+	AgentPi          = "pi"
 	SandboxNone      = "none"
 	SandboxClaude    = "claude"
 	SandboxContainer = "container"
@@ -19,7 +20,7 @@ const (
 )
 
 // Agents lists the backends the runner builds a command line for.
-var Agents = []string{AgentClaude, AgentCodex, AgentOpenCode}
+var Agents = []string{AgentClaude, AgentCodex, AgentOpenCode, AgentPi}
 
 // Sandboxes lists the sandbox kinds the runner implements, weakest first.
 var Sandboxes = []string{SandboxNone, SandboxClaude, SandboxContainer}
@@ -28,6 +29,10 @@ var Sandboxes = []string{SandboxNone, SandboxClaude, SandboxContainer}
 var AgentCredentials = map[string][]string{
 	AgentClaude: {"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"},
 	AgentCodex:  {"OPENAI_API_KEY", "CODEX_API_KEY"},
+	// Pi talks to whichever provider its model names; these are the keys of
+	// the providers it reads one from the environment for.
+	AgentPi: {"ANTHROPIC_API_KEY", "ANTHROPIC_OAUTH_TOKEN", "OPENAI_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY",
+		"GROQ_API_KEY", "XAI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY", "CEREBRAS_API_KEY"},
 }
 
 // Profile contains only agent execution settings. Workflow and identity policy
@@ -58,6 +63,9 @@ type Profile struct {
 	Shell     string
 	Env       map[string]string
 	Skills    []string
+	// PiPackages are pi package sources (npm:, git:, a URL or a local path)
+	// a pi session loads after PiMCPAdapter, which it always loads.
+	PiPackages []string
 }
 
 // Validate rejects modes that would silently run without the requested box.
