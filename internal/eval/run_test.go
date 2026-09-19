@@ -10,6 +10,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kpenfound/busybees/internal/ghwork"
+	"github.com/kpenfound/busybees/internal/github"
+	"github.com/kpenfound/busybees/internal/mail"
 )
 
 // writeCase writes a case directory under root: its case.toml and the
@@ -240,4 +244,66 @@ func TestCloses(t *testing.T) {
 	if !slices.Equal(got, []int{1, 2, 3}) {
 		t.Fatalf("closes: %v", got)
 	}
+}
+
+// The factory a case starts with: its issues carrying the factory's label
+// on top of their own, with their authors and comments, and its mail.
+func TestFactorySeedsTheCase(t *testing.T) {
+	root := t.TempDir()
+	c, err := LoadCase(writeCase(t, root, "seeded", `test = "false"
+[[issues]]
+number = 3
+title = "Untriaged"
+author = "kyle"
+[[issues.comments]]
+body = "more detail"
+[[issues]]
+number = 4
+title = "Ready"
+labels = ["bees:ready", "bees"]
+[[mail]]
+to = "pjm"
+subject = "Look at #3"
+issue = 3
+`, map[string]string{"repo/README.md": "x\n"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	dir := filepath.Join(root, "out")
+	fx, err := buildFixture(ctx, c, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, _ := testRunner(t)
+	f, err := r.factory(ctx, c, builtIn(t), dir, fx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.close()
+	s := f.gh.Snapshot()
+	i3, _ := s.Issue(3)
+	i4, _ := s.Issue(4)
+	if names := labelNames(i3); !slices.Equal(names, []string{"bees"}) || i3.Author.Login != "kyle" ||
+		len(i3.Comments) != 1 || i3.Comments[0].Author.Login != DefaultAuthor || i3.Comments[0].Body != "more detail" {
+		t.Fatalf("issue 3: %+v", i3)
+	}
+	if names := labelNames(i4); !slices.Equal(names, []string{"bees", "bees:ready"}) || i4.Author.Login != DefaultAuthor {
+		t.Fatalf("issue 4: %+v", i4)
+	}
+	msgs, err := mail.Open(f.store.MailDir()).List(mail.Filter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 1 || msgs[0].To != "project_manager" || msgs[0].From != DefaultAuthor || msgs[0].Subject != "Look at #3" || ghwork.Issue(msgs[0].Work) != 3 {
+		t.Fatalf("mail: %+v", msgs)
+	}
+}
+
+func labelNames(i github.Issue) []string {
+	var out []string
+	for _, l := range i.Labels {
+		out = append(out, l.Name)
+	}
+	return out
 }
