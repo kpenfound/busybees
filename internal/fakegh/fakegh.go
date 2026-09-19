@@ -7,13 +7,15 @@
 //
 // A session runs in its own process and cannot reach the fake; it asks for
 // its writes through a directory instead (RequestEdit), which Exec applies
-// before it answers the next call.
+// before it answers the next call, or reaches it through a gh of its own
+// that forwards every call to Exec or ExecStdin (internal/eval).
 package fakegh
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -89,6 +91,9 @@ type GitHub struct {
 	Visible func(p *github.PR) bool
 	// Diff is what `pr diff` answers for any pull request that exists.
 	Diff string
+	// DiffFor, when set, answers `pr diff` instead of Diff, from the pull
+	// request. Called with the lock held.
+	DiffFor func(p github.PR) (string, error)
 	// EditsDir is where session processes leave the edits they ask for
 	// (RequestEdit); empty means none are read.
 	EditsDir string
@@ -259,6 +264,63 @@ func removeLabels(labels []github.Label, remove []string) []github.Label {
 
 // Exec answers one gh invocation; assign it to github.Client.Exec.
 func (f *GitHub) Exec(ctx context.Context, args ...string) ([]byte, error) {
+	return f.exec(args, nil)
+}
+
+// ExecStdin answers one gh invocation with stdin on its standard input, read
+// where the arguments name "-" as a file: --body-file and --input, and an
+// "@-" field value. Assign it to github.Client.ExecStdin.
+func (f *GitHub) ExecStdin(ctx context.Context, stdin string, args ...string) ([]byte, error) {
+	return f.exec(args, &stdin)
+}
+
+// readArg is the content of a file argument: stdin for "-", else the file.
+func readArg(file string, stdin *string) (string, error) {
+	if file == "-" {
+		if stdin == nil {
+			return "", fmt.Errorf("fake gh: %q reads standard input, and the call has none", file)
+		}
+		return *stdin, nil
+	}
+	b, err := os.ReadFile(file)
+	return string(b), err
+}
+
+// bodyOf is the text --body or --body-file gives; ok is false when the call
+// has neither.
+func bodyOf(args []string, stdin *string) (body string, ok bool, err error) {
+	if i := slices.Index(args, "--body"); i >= 0 && i+1 < len(args) {
+		return args[i+1], true, nil
+	}
+	file := flagValue(args, "--body-file")
+	if file == "" {
+		return "", false, nil
+	}
+	body, err = readArg(file, stdin)
+	return body, err == nil, err
+}
+
+// fields are the -f and -F values of an api call, "@file" values read.
+func fields(args []string, stdin *string) (map[string]string, error) {
+	out := map[string]string{}
+	for i, a := range args {
+		if (a != "-f" && a != "-F" && a != "--field" && a != "--raw-field") || i+1 >= len(args) {
+			continue
+		}
+		k, v, _ := strings.Cut(args[i+1], "=")
+		if file, ok := strings.CutPrefix(v, "@"); ok && a != "-f" && a != "--raw-field" {
+			content, err := readArg(file, stdin)
+			if err != nil {
+				return nil, err
+			}
+			v = content
+		}
+		out[k] = v
+	}
+	return out, nil
+}
+
+func (f *GitHub) exec(args []string, stdin *string) ([]byte, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.applyEdits()
@@ -278,7 +340,7 @@ func (f *GitHub) Exec(ctx context.Context, args ...string) ([]byte, error) {
 		return nil, fmt.Errorf("fake gh: unsupported %v", args)
 	}
 	if args[0] == "api" {
-		if out, err, ok := f.api(args); ok {
+		if out, err, ok := f.api(args, stdin); ok {
 			return out, err
 		}
 	}
@@ -311,15 +373,28 @@ func (f *GitHub) Exec(ctx context.Context, args ...string) ([]byte, error) {
 			return nil, fmt.Errorf("no issue %d", num())
 		}
 		return json.Marshal(i)
-	case "issue edit":
+	case "issue create":
+		return f.createIssue(args, stdin)
+	case "issue edit", "pr edit":
 		n := num()
 		var labels *[]github.Label
-		if i, ok := f.Issues[n]; ok {
-			labels = &i.Labels
+		var title, body *string
+		if i, ok := f.Issues[n]; ok && args[0] == "issue" {
+			labels, title, body = &i.Labels, &i.Title, &i.Body
 		} else if p, ok := f.PRs[n]; ok {
-			labels = &p.Labels
+			labels, title, body = &p.Labels, &p.Title, &p.Body
 		} else {
 			return nil, fmt.Errorf("no item %d", n)
+		}
+		text, ok, err := bodyOf(args, stdin)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			*body = text
+		}
+		if t := flag("--title"); t != "" {
+			*title = t
 		}
 		*labels = removeLabels(*labels, flags("--remove-label"))
 		for _, l := range flags("--add-label") {
@@ -334,7 +409,11 @@ func (f *GitHub) Exec(ctx context.Context, args ...string) ([]byte, error) {
 		}
 		return nil, nil
 	case "issue comment", "pr comment":
-		f.Comments[num()] = append(f.Comments[num()], flag("--body"))
+		text, _, err := bodyOf(args, stdin)
+		if err != nil {
+			return nil, err
+		}
+		f.Comments[num()] = append(f.Comments[num()], text)
 		return nil, nil
 	case "issue close":
 		i, ok := f.Issues[num()]
@@ -348,7 +427,7 @@ func (f *GitHub) Exec(ctx context.Context, args ...string) ([]byte, error) {
 		i.State, i.ClosedAt = "CLOSED", &at
 		return nil, nil
 	case "pr create":
-		return f.createPR(args)
+		return f.createPR(args, stdin)
 	case "pr list":
 		var out []github.PR
 		head, state, author := flag("--head"), flag("--state"), flag("--author")
@@ -381,10 +460,29 @@ func (f *GitHub) Exec(ctx context.Context, args ...string) ([]byte, error) {
 		}
 		return json.Marshal(p)
 	case "pr diff":
+		p, ok := f.PRs[num()]
+		if !ok {
+			return nil, fmt.Errorf("no pr %d", num())
+		}
+		if f.DiffFor != nil {
+			diff, err := f.DiffFor(*p)
+			return []byte(diff), err
+		}
+		return []byte(f.Diff), nil
+	case "pr review":
 		if _, ok := f.PRs[num()]; !ok {
 			return nil, fmt.Errorf("no pr %d", num())
 		}
-		return []byte(f.Diff), nil
+		if _, _, err := bodyOf(args, stdin); err != nil {
+			return nil, err
+		}
+		for _, event := range slices.Sorted(maps.Keys(ReviewStates)) {
+			if slices.Contains(args, "--"+event) {
+				f.Reviews[num()] = append(f.Reviews[num()], Review{State: ReviewStates[event], At: f.now()})
+				return nil, nil
+			}
+		}
+		return nil, fmt.Errorf("fake gh: pr review needs --approve, --request-changes or --comment")
 	case "pr merge":
 		f.Merged = append(f.Merged, num())
 		f.MergeArgs = append(f.MergeArgs, args)
@@ -427,9 +525,36 @@ func (f *GitHub) visible(p *github.PR) bool {
 	return f.Visible == nil || f.Visible(p)
 }
 
+// createIssue opens an issue numbered after every issue and pull request
+// there is, authored by Login, and answers its URL as gh does.
+func (f *GitHub) createIssue(args []string, stdin *string) ([]byte, error) {
+	title := flagValue(args, "--title")
+	if title == "" {
+		return nil, fmt.Errorf("fake gh: issue create needs --title")
+	}
+	body, _, err := bodyOf(args, stdin)
+	if err != nil {
+		return nil, err
+	}
+	n := f.nextNumber()
+	i := &github.Issue{Number: n, Title: title, Body: body, State: "OPEN",
+		Author: github.Author{Login: f.Login}, CreatedAt: f.now()}
+	for _, l := range flagValues(args, "--label") {
+		i.Labels = append(i.Labels, github.Label{Name: l})
+	}
+	for _, a := range flagValues(args, "--assignee") {
+		i.Assignees = append(i.Assignees, github.Author{Login: a})
+	}
+	if m := flagValue(args, "--milestone"); m != "" {
+		i.Milestone = &github.MilestoneRef{Title: m}
+	}
+	f.Issues[n] = i
+	return fmt.Appendf(nil, "https://github.com/%s/issues/%d\n", f.Repo, n), nil
+}
+
 // createPR opens a pull request numbered after every issue and pull request
 // there is, and answers its URL as gh does.
-func (f *GitHub) createPR(args []string) ([]byte, error) {
+func (f *GitHub) createPR(args []string, stdin *string) ([]byte, error) {
 	head, base := flagValue(args, "--head"), flagValue(args, "--base")
 	if head == "" || base == "" {
 		return nil, fmt.Errorf("fake gh: pr create needs --head and --base")
@@ -439,13 +564,9 @@ func (f *GitHub) createPR(args []string) ([]byte, error) {
 			return nil, fmt.Errorf("a pull request for branch %q into branch %q already exists", head, base)
 		}
 	}
-	body := flagValue(args, "--body")
-	if file := flagValue(args, "--body-file"); file != "" {
-		b, err := os.ReadFile(file)
-		if err != nil {
-			return nil, err
-		}
-		body = string(b)
+	body, _, err := bodyOf(args, stdin)
+	if err != nil {
+		return nil, err
 	}
 	n := f.nextNumber()
 	url := fmt.Sprintf("https://github.com/%s/pull/%d", f.Repo, n)
@@ -472,8 +593,70 @@ func (f *GitHub) nextNumber() int {
 
 // api answers a REST or GraphQL call it recognises; ok is false for one it
 // leaves to the command switch.
-func (f *GitHub) api(args []string) (out []byte, err error, ok bool) {
+func (f *GitHub) api(args []string, stdin *string) (out []byte, err error, ok bool) {
 	repo := "repos/" + f.Repo + "/"
+	method := flagValue(args, "--method")
+	if method == "" {
+		method = flagValue(args, "-X")
+	}
+	var target string
+	if i := slices.IndexFunc(args, func(a string) bool { return strings.HasPrefix(a, repo) }); i >= 0 {
+		target = args[i]
+	}
+	var n int
+	switch {
+	case method == "POST" && sscanfAll(target, repo+"pulls/%d/reviews", &n):
+		// A review with its comments, the way github.Client.PostReview
+		// submits one: the JSON request on --input.
+		raw, err := readArg(flagValue(args, "--input"), stdin)
+		if err != nil {
+			return nil, err, true
+		}
+		var r struct {
+			Event string `json:"event"`
+		}
+		if err := json.Unmarshal([]byte(raw), &r); err != nil {
+			return nil, fmt.Errorf("fake gh: review request: %w", err), true
+		}
+		state, known := map[string]string{"APPROVE": "APPROVED", "REQUEST_CHANGES": "CHANGES_REQUESTED", "COMMENT": "COMMENTED"}[r.Event]
+		if !known {
+			return nil, fmt.Errorf("fake gh: unknown review event %q", r.Event), true
+		}
+		if _, ok := f.PRs[n]; !ok {
+			return nil, fmt.Errorf("no pr %d", n), true
+		}
+		f.Reviews[n] = append(f.Reviews[n], Review{State: state, At: f.now()})
+		return []byte("{}"), nil, true
+	case method == "POST" && sscanfAll(target, repo+"issues/%d/sub_issues", &n):
+		// The child is named by the id the issue-details call answers,
+		// 1000 more than its number.
+		fs, err := fields(args, stdin)
+		if err != nil {
+			return nil, err, true
+		}
+		id, err := strconv.Atoi(fs["sub_issue_id"])
+		if err != nil {
+			return nil, fmt.Errorf("fake gh: sub_issue_id: %w", err), true
+		}
+		f.Parents[id-1000] = n
+		return []byte("{}"), nil, true
+	case method == "PATCH" && sscanfAll(target, repo+"pulls/%d", &n):
+		p, ok := f.PRs[n]
+		if !ok {
+			return nil, fmt.Errorf("no pr %d", n), true
+		}
+		fs, err := fields(args, stdin)
+		if err != nil {
+			return nil, err, true
+		}
+		if v, ok := fs["body"]; ok {
+			p.Body = v
+		}
+		if v, ok := fs["title"]; ok {
+			p.Title = v
+		}
+		return []byte("{}"), nil, true
+	}
 	// Assignees and milestones go to the REST endpoints: `gh issue edit
 	// --add-assignee` fails against GitHub with a Projects (classic)
 	// GraphQL error when the number is a pull request.
@@ -492,8 +675,7 @@ func (f *GitHub) api(args []string) (out []byte, err error, ok bool) {
 		}
 		return []byte("{}"), nil, true
 	}
-	if flagValue(args, "--method") == "PATCH" && len(args) > 3 {
-		var n int
+	if method == "PATCH" && len(args) > 3 {
 		if _, err := fmt.Sscanf(args[3], repo+"issues/%d", &n); err != nil {
 			return nil, fmt.Errorf("fake gh: bad issue path %q", args[3]), true
 		}
@@ -584,7 +766,6 @@ func (f *GitHub) api(args []string) (out []byte, err error, ok bool) {
 		return []byte("[" + body + "]"), nil, true // --slurp wraps pages in an array
 	}
 	// REST issue details: repos/<repo>/issues/N
-	var n int
 	if _, err := fmt.Sscanf(path, repo+"issues/%d", &n); err == nil && !strings.Contains(path, "/comments") {
 		sum := f.DefaultSubIssues
 		if s, ok := f.SubIssues[n]; ok {
@@ -631,6 +812,15 @@ func (f *GitHub) reviewsPath(path string) (int, bool) {
 		return 0, false
 	}
 	return n, true
+}
+
+// sscanfAll reports whether path is exactly format with its one number
+// filled in, which it stores in n.
+func sscanfAll(path, format string, n *int) bool {
+	if _, err := fmt.Sscanf(path, format, n); err != nil {
+		return false
+	}
+	return path == fmt.Sprintf(format, *n)
 }
 
 func flagValue(args []string, name string) string {

@@ -1829,6 +1829,29 @@ rule you rewrote, or whose action you changed, stays as you wrote it and only
 its count moves. `--notes` works on a file other than the configured one, and
 `--dry-run` prints what consolidation would write without writing it.
 
+## Evals
+
+### `bees eval [--case name] [--profile name]`
+
+Runs the whole factory against each case under `./evals/`, with an in-memory
+GitHub and a local origin, and grades the result with the case's test. It
+prints one row per case (result, why the run stopped, cost, turns, duration,
+profile), writes `<state_dir>/evals/<timestamp>/report.json`, and exits
+non-zero when any case fails. The sessions are real agent sessions.
+
+`--case` runs one case. `--profile` runs every role on one profile from
+`bees.toml` or `~/.config/bees/config.toml`. Without it the eval uses the
+profiles `bees.toml` selects, or the `provider` and `model` of
+`~/.config/bees/config.toml` when there is no `bees.toml`, or the built-in
+profile when there is neither. Like `bees run`, it refuses to run inside a
+session.
+
+```sh
+bees eval --case hello --profile fast
+```
+
+[Evals](evals.md) describes the case layout and the grading.
+
 ## Misc
 
 ### `bees cost [--since 24h] [--by role|issue|day] [--json]`

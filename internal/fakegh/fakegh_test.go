@@ -312,3 +312,78 @@ func labelNames(labels []github.Label) []string {
 	}
 	return out
 }
+
+// The writes a session makes through its own gh, which reaches the fake
+// through Exec and ExecStdin (internal/eval): creating an issue, rewriting
+// a body, reviewing, attaching a sub-issue.
+func TestSessionWritesThroughTheClient(t *testing.T) {
+	f, c := seeded(t)
+	c.ExecStdin = f.ExecStdin
+	ctx := context.Background()
+
+	n, err := c.CreateIssue(ctx, github.NewIssue{Title: "Found a bug", Body: "it breaks", Labels: []string{"bees", "bees:bug"}, Assignees: []string{"kyle"}, Milestone: "v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 9 {
+		t.Fatalf("created issue %d, want 9", n)
+	}
+	if err := c.EditBody(ctx, 7, "a better body"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SubmitReview(ctx, 8, "approve", "lgtm"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.PostReview(ctx, 8, github.ReviewRequest{Event: "REQUEST_CHANGES", Body: "no"}); err != nil {
+		t.Fatal(err)
+	}
+	d, err := c.GetIssueDetails(ctx, n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.AddSubIssue(ctx, 5, d.ID); err != nil {
+		t.Fatal(err)
+	}
+	body := filepath.Join(t.TempDir(), "pr.md")
+	if err := os.WriteFile(body, []byte("Closes #7 and more"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Exec(ctx, "api", "-X", "PATCH", "repos/"+repo+"/pulls/8", "-F", "body=@"+body); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Exec(ctx, "pr", "edit", "8", "-R", repo, "--title", "Add the thing"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Exec(ctx, "issue", "edit", "7", "-R", repo, "--body-file", "-"); err == nil {
+		t.Fatal("--body-file - with no standard input was accepted")
+	}
+
+	s := f.Snapshot()
+	i, _ := s.Issue(n)
+	if i.Title != "Found a bug" || i.Body != "it breaks" || i.Author.Login != "bees-bot" || i.MilestoneTitle() != "v1" ||
+		!slices.Equal(labelNames(i.Labels), []string{"bees", "bees:bug"}) || len(i.Assignees) != 1 || i.Assignees[0].Login != "kyle" {
+		t.Fatalf("created issue: %+v", i)
+	}
+	if i, _ := s.Issue(7); i.Body != "a better body" {
+		t.Fatalf("issue 7 body: %q", i.Body)
+	}
+	if p, _ := s.PR(8); p.Body != "Closes #7 and more" || p.Title != "Add the thing" {
+		t.Fatalf("pull request 8: %+v", p)
+	}
+	if got := f.Reviews[8]; len(got) != 2 || got[0].State != "APPROVED" || got[1].State != "CHANGES_REQUESTED" {
+		t.Fatalf("reviews: %+v", got)
+	}
+	if p, err := c.ParentIssue(ctx, n); err != nil || p == nil || p.Number != 5 {
+		t.Fatalf("parent of %d: %+v, %v", n, p, err)
+	}
+}
+
+func TestDiffForAnswersPRDiff(t *testing.T) {
+	f, c := seeded(t)
+	f.Diff = "the static diff"
+	f.DiffFor = func(p github.PR) (string, error) { return "diff of " + p.HeadRefName, nil }
+	got, err := c.PRDiff(context.Background(), 8)
+	if err != nil || got != "diff of feature" {
+		t.Fatalf("PRDiff: %q, %v", got, err)
+	}
+}
