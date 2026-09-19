@@ -119,8 +119,8 @@ type Config struct {
 	// that is every default.
 	Loaded bool `toml:"-"`
 
-	// Provider is the agent the review sessions run as, one of
-	// SupportedProviders, and Model the model they use.
+	// Provider is the agent a review session without a profile runs as,
+	// one of SupportedProviders, and Model the model it uses.
 	Provider string `toml:"provider"`
 	Model    string `toml:"model"`
 	// Angles replaces, for each size it names, the angles a change of that
@@ -131,8 +131,8 @@ type Config struct {
 	Angles map[string][]string `toml:"angles"`
 	// BriefModel is the model the distiller session uses, and AngleModels
 	// the model of each angle session it names; a step with none uses Model.
-	// The provider is never overridden per step: every session runs as
-	// Provider.
+	// They change the model only: a step runs as another provider through a
+	// profile (Profiles).
 	BriefModel  string            `toml:"brief_model"`
 	AngleModels map[string]string `toml:"angle_models"`
 	// JudgeModel is accepted and validated so the file has the shape of

@@ -327,11 +327,15 @@ token = "$REVIEW_GH_TOKEN"
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `provider` | string | `"claude"` | The agent every session runs as: `claude` or `codex` |
-| `model` | string | `"opus"` | The model every session uses unless a key below names another |
+| `provider` | string | `"claude"` | The agent a session without a profile runs as: `claude` or `codex` |
+| `model` | string | `"opus"` | The model a session without a profile uses, unless a key below names another |
 | `brief_model` | string | `model` | The model of the distiller session that writes the brief |
 | `angle_models.<angle>` | string | `model` | The model of that angle's session |
 | `judge_model` | string | none | Accepted and checked, and has no effect: the judge is not a session |
+| `profiles.<name>` | table | none | A profile: `agent`, `model`, `fallback`, `effort` and `sandbox`, as in [`bees.toml`](configuration.md) |
+| `brief_profile` | string | none | The profile the distiller session runs on |
+| `angle_profiles.<angle>` | string | none | The profile that angle's session runs on |
+| `judge_profile` | string | none | Accepted and checked, and has no effect: the judge is not a session |
 | `angles.<size>` | list | the built-in list | The angles a change of that size is reviewed from |
 | `notes_path` | path | `"reviewer-notes.md"` | Your reviewer notes |
 | `storage_path` | path | `"reviews"` | The directory review directories are created in |
@@ -344,11 +348,44 @@ A path is absolute, starts with `~`, or is relative to the directory
 
 `angles.<size>` replaces the list [Angles](#angles) gives that size;
 `<size>` is `xs`, `s`, `m`, `l` or `xl`, and the list names at least one
-angle. `context.toml` still turns angles off on top of it. Every session
-runs as `provider`: `brief_model` and `angle_models` change the model only.
-`judge_model` gives the file the shape of `roles.reviewer` in `bees.toml`,
-where the judge is a session; in `bees review` the judge is code and uses
-no model.
+angle. `context.toml` still turns angles off on top of it. `brief_model`
+and `angle_models` change the model only; a session without a profile runs
+as `provider`.
+
+A step with a profile runs as the profile's agent, model and effort, with
+its `fallback` chain behind it, and ignores `provider`, `model`,
+`brief_model` and `angle_models`. The profiles are checked the way
+`bees.toml` checks them, so the reviewer section of a `bees.toml` copies
+across unchanged:
+
+```toml
+brief_profile = "default"
+judge_profile = "default"
+angle_profiles = { quick_general = "review_fast", docs = "review_fast" }
+
+[profiles.default]
+agent = "claude"
+model = "opus"
+fallback = "spare"
+effort = "high"
+
+[profiles.review_fast]
+agent = "claude"
+model = "opus"
+effort = "medium"
+
+[profiles.spare]
+agent = "codex"
+model = "gpt-5"
+```
+
+The distiller and the angles run as `claude` or `codex`, and so does every
+profile of their fallback chains. `sandbox` is checked and not used: every
+review session is read-only whatever the profile says.
+
+`judge_model` and `judge_profile` give the file the shape of
+`roles.reviewer` in `bees.toml`, where the judge is a session; in
+`bees review` the judge is code and uses neither.
 
 `github.token` takes a `$VAR` or `${VAR}` reference, expanded from the
 environment, so the secret stays out of the file. A reference to a variable
