@@ -117,13 +117,13 @@ func TestAnchorsAreEveryLineOfEveryHunkOnBothSides(t *testing.T) {
 func selections(edited string) []Selection {
 	a := &Artifact{Findings: &Findings{Items: Merge([]Finding{
 		{Angle: AngleTests, Category: "missing test", Severity: SeverityHigh, File: "gather.go", Lines: LineRange{Start: 12, End: 13}, Side: SideNew,
-			Title: "c has no test for its argument", Body: "nothing exercises c(1)", Suggestion: "\tc(1) // tested\n\td()"},
+			Title: "c has no test for its argument", Body: "nothing exercises c(1)", Suggestion: "\tc(1) // tested\n\td()", Evidence: "evidence: gather_test.go:40 calls c() alone"},
 		{Angle: AngleGeneral, Category: "naming", Severity: SeverityMedium, File: "old.go", Lines: LineRange{Start: 1, End: 1}, Side: SideOld,
-			Title: "The package was the last of its name", Body: "nothing else was called old", Suggestion: "package older"},
+			Title: "The package was the last of its name", Body: "nothing else was called old", Suggestion: "package older", Evidence: "evidence: no other file declares package old"},
 		{Angle: AngleGeneral, Category: "docs", Severity: SeverityLow, File: "README.md", Lines: LineRange{Start: 3, End: 3}, Side: SideNew,
-			Title: "The README still names c()", Body: "the sentence the change made false is still there"},
+			Title: "The README still names c()", Body: "the sentence the change made false is still there", Evidence: "evidence: README.md:3 names c()"},
 		{Angle: AngleAcceptance, Category: "scope", Severity: SeverityLow,
-			Title: "The change renames Gather, which the issue did not ask for", Body: "every caller moves"},
+			Title: "The change renames Gather, which the issue did not ask for", Body: "every caller moves", Evidence: "evidence: #7 asks for no rename"},
 	}, nil)}, Triage: &Triage{}}
 	q := &Queue{Artifact: a}
 	for i, f := range a.Findings.Items {
@@ -180,6 +180,13 @@ func TestComposeAnchorsWhatTheDiffHasAndFoldsTheRest(t *testing.T) {
 	}
 	if strings.Contains(req.Body, "c has no test") || strings.Contains(req.Body, "gather.go") {
 		t.Errorf("an anchored finding is in the body too:\n%s", req.Body)
+	}
+	// The evidence stays in the artifact and the triage screen: a posted
+	// comment is the finding's short text and its fix.
+	for _, posted := range append([]string{req.Body}, req.Comments[0].Body, req.Comments[1].Body) {
+		if strings.Contains(posted, "evidence:") {
+			t.Errorf("the posted review holds a finding's evidence:\n%s", posted)
+		}
 	}
 	if req.CommitID != "" {
 		t.Errorf("Compose set the commit %q: Post reads it", req.CommitID)
@@ -342,6 +349,9 @@ func TestTheReportIsEverySelectionAsMarkdown(t *testing.T) {
 			t.Errorf("the report lacks %q:\n%s", want, got)
 		}
 	}
+	if strings.Contains(got, "evidence:") {
+		t.Errorf("the report holds a finding's evidence:\n%s", got)
+	}
 	if strings.Contains(got, "suggestion") {
 		t.Errorf("the report holds a suggestion block, which nothing outside GitHub applies:\n%s", got)
 	}
@@ -378,7 +388,7 @@ func TestPostsNamesTheModesThatSubmitAReview(t *testing.T) {
 func TestRenderFindingsIsTheJudgesListAsMarkdown(t *testing.T) {
 	items := Merge([]Finding{
 		{Angle: AngleGeneral, Category: "naming", Severity: SeverityMedium, File: "old.go", Lines: LineRange{Start: 1, End: 1}, Side: SideOld,
-			Title: "The package was the last of its name", Body: "nothing else was called old", Suggestion: "package older", Sources: []string{"CONTRIBUTING.md"}},
+			Title: "The package was the last of its name", Body: "nothing else was called old", Suggestion: "package older", Evidence: "no other file declares package old", Sources: []string{"CONTRIBUTING.md"}},
 		{Angle: AngleTests, Category: "missing test", Severity: SeverityHigh, File: "gather.go", Lines: LineRange{Start: 12, End: 13}, Side: SideNew,
 			Title: "c has no test for its argument", Body: "nothing exercises c(1)"},
 		{Angle: AngleQuickGeneral, Category: "missing test", Severity: SeverityLow, File: "gather.go", Lines: LineRange{Start: 12, End: 12}, Side: SideNew,

@@ -61,13 +61,15 @@ type Finding struct {
 	Lines LineRange `json:"lines,omitzero"`
 	Side  string    `json:"side,omitempty"`
 	// Title is the finding in one line and Body what is wrong and why it
-	// matters.
+	// matters, in the two or three sentences prompts/angle.md asks for:
+	// what is posted on the lines, where Evidence is not.
 	Title string `json:"title"`
 	Body  string `json:"body"`
 	// Suggestion is the text that would replace the lines, when the angle
 	// could write it.
 	Suggestion string `json:"suggestion,omitempty"`
-	// Evidence is what the angle read that shows the problem.
+	// Evidence is what the angle read that shows the problem. Triage shows
+	// it after the body; a posted review and a report leave it out.
 	Evidence string `json:"evidence,omitempty"`
 	// Sources are where the rule or the requirement the finding is about
 	// was read: "#12", "CONTRIBUTING.md".
