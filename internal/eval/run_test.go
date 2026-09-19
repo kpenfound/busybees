@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kpenfound/busybees/internal/fakegh"
 	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/mail"
@@ -214,6 +215,21 @@ func TestRunStopsAtTheBudget(t *testing.T) {
 	}
 }
 
+// The budget is watched while a pass runs: the developer's session spends
+// it, and the reviewer's, still running, is stopped rather than waited for.
+func TestRunStopsAtTheBudgetWhileASessionRuns(t *testing.T) {
+	t.Setenv("FAKE_COST", "5")
+	t.Setenv("FAKE_REVIEW_HANG", "60")
+	start := time.Now()
+	_, res := runOne(t, answerCase, answerFiles())
+	if res.Pass || res.Stop != StopBudget {
+		t.Fatalf("result: %+v", res)
+	}
+	if d := time.Since(start); d > 30*time.Second {
+		t.Fatalf("the running review was waited for: the run took %s", d)
+	}
+}
+
 func TestRunStopsAtTheTimeout(t *testing.T) {
 	t.Setenv("FAKE_DEV_HANG", "60")
 	start := time.Now()
@@ -306,4 +322,87 @@ func labelNames(i github.Issue) []string {
 		out = append(out, l.Name)
 	}
 	return out
+}
+
+// An approved pull request that no longer merges stays open, marked the
+// way GitHub marks it, which is what sends it back to the developer: the
+// next pass mails them and moves the issue out of approved.
+func TestMergeApprovedLeavesAConflictToTheDeveloper(t *testing.T) {
+	t.Setenv("FAKE_DEV_FAIL", "1")
+	root := t.TempDir()
+	c, err := LoadCase(writeCase(t, root, "conflict", answerCase, answerFiles()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	dir := filepath.Join(root, "out")
+	fx, err := buildFixture(ctx, c, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit := func(content string, push ...string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(fx.project, "answer.txt"), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for _, args := range [][]string{{"add", "-A"}, append(append([]string{}, gitIdentity...), "commit", "-q", "-m", content), append([]string{"push", "-q", "origin"}, push...)} {
+			if _, err := git(ctx, fx.project, args...); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if _, err := git(ctx, fx.project, "checkout", "-q", "-b", "bees/issue-1"); err != nil {
+		t.Fatal(err)
+	}
+	commit("fixed\n", "bees/issue-1")
+	head, _ := git(ctx, fx.project, "rev-parse", "HEAD")
+	if _, err := git(ctx, fx.project, "checkout", "-q", "main"); err != nil {
+		t.Fatal(err)
+	}
+	commit("changed on main\n", "main")
+	mainBefore, _ := git(ctx, fx.origin, "rev-parse", "main")
+
+	r, _ := testRunner(t)
+	f, err := r.factory(ctx, c, builtIn(t), dir, fx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.close()
+	approved := []github.Label{{Name: "bees"}, {Name: "bees:approved"}}
+	if err := f.gh.Load(fakegh.Seed{
+		Issues: []fakegh.SeedIssue{{Issue: github.Issue{Number: 1, Title: "Fix the answer", Labels: approved}}},
+		PRs: []fakegh.SeedPR{{PR: github.PR{Number: 2, Title: "Fix the answer", Body: "Closes #1", Labels: approved,
+			HeadRefName: "bees/issue-1", BaseRefName: "main", URL: "https://github.com/" + f.cfg.Project.Repo + "/pull/2"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := f.mergeApproved(ctx); err == nil {
+		t.Fatal("a conflicting merge reported no error")
+	}
+	s := f.gh.Snapshot()
+	p, _ := s.PR(2)
+	if p.State != "OPEN" || p.MergedAt != nil || p.Mergeable != github.MergeableConflicting || p.HeadSHA != strings.TrimSpace(head) {
+		t.Fatalf("pull request after the failed merge: %+v", p)
+	}
+	if i, _ := s.Issue(1); i.State != "OPEN" {
+		t.Fatalf("issue 1 closed by a merge that did not happen: %+v", i)
+	}
+	if mainAfter, _ := git(ctx, fx.origin, "rev-parse", "main"); mainAfter != mainBefore {
+		t.Fatal("main moved")
+	}
+
+	if err := f.sched.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	msgs, err := mail.Open(f.store.MailDir()).List(mail.Filter{To: "developer", From: "orchestrator"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 1 || !strings.Contains(msgs[0].Subject, "PR #2 conflicts with main") {
+		t.Fatalf("mail to the developer: %+v", msgs)
+	}
+	if i, _ := f.gh.Snapshot().Issue(1); github.HasLabel(i.Labels, "bees:approved") {
+		t.Fatalf("issue 1 is still approved: %+v", i.Labels)
+	}
 }

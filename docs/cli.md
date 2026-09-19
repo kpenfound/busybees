@@ -1838,8 +1838,10 @@ profile), writes `<state_dir>/evals/<timestamp>/report.json`, and exits
 non-zero when any case fails. The sessions are real agent sessions.
 
 `--case` runs one case. `--profile` runs every role on one profile from
-`bees.toml` or `~/.config/bees/config.toml`; without it the eval uses the
-profiles `bees.toml` selects. Like `bees run`, it refuses to run inside a
+`bees.toml` or `~/.config/bees/config.toml`. Without it the eval uses the
+profiles `bees.toml` selects, or the `provider` and `model` of
+`~/.config/bees/config.toml` when there is no `bees.toml`, or the built-in
+profile when there is neither. Like `bees run`, it refuses to run inside a
 session.
 
 ```sh

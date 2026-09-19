@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -329,17 +330,20 @@ func (r *Runner) factory(ctx context.Context, c Case, sel Selection, dir string,
 		seed.Issues = append(seed.Issues, fakegh.SeedIssue{Issue: issue})
 	}
 	if err := f.gh.Load(seed); err != nil {
+		f.close()
 		return nil, err
 	}
 	box := mail.Open(f.store.MailDir(), f.store.Migrate)
 	for _, m := range c.Mail {
 		to, _ := config.CanonicalRole(m.To)
 		if _, err := box.Send(mail.Message{From: m.From, To: to, Subject: m.Subject, Body: m.Body, Work: ghwork.New(m.Issue, 0)}); err != nil {
+			f.close()
 			return nil, err
 		}
 	}
 
 	if f.srv, err = serve(f.gh); err != nil {
+		f.close()
 		return nil, err
 	}
 	bin := filepath.Join(dir, "bin")
@@ -525,20 +529,26 @@ func closes(body string) []int {
 // mergeApproved merges every open pull request the reviewer approved, as
 // the person the fake GitHub does not have would: into its base branch on
 // the origin, closing the issues its body names with a closing keyword. A
-// pull request that does not merge cleanly is marked conflicting and left
-// open.
+// pull request whose head does not merge cleanly is left open and marked
+// the way GitHub marks it: CONFLICTING, with the head it was tried at as its
+// HeadSHA. That is what the scheduler's conflict check (checkPRs) needs to
+// mail the developer once per head and send the approved issue back, so the
+// next pass fixes the branch and the merge after the next approval tries
+// the new head.
 func (f *caseFactory) mergeApproved(ctx context.Context) error {
 	var errs []error
 	for _, p := range f.gh.Snapshot().PRs {
 		if p.State != "OPEN" || !github.HasLabel(p.Labels, f.labels.Approved) {
 			continue
 		}
-		err := f.merge(ctx, p)
+		head, err := f.merge(ctx, p)
 		now := time.Now()
 		f.gh.Lock()
 		live := f.gh.PRs[p.Number]
 		if err != nil {
-			live.Mergeable = github.MergeableConflicting
+			if head != "" {
+				live.Mergeable, live.HeadSHA = github.MergeableConflicting, head
+			}
 			errs = append(errs, fmt.Errorf("pull request #%d: %w", p.Number, err))
 		} else {
 			live.State, live.MergedAt, live.Mergeable = "MERGED", &now, ""
@@ -558,27 +568,33 @@ func (f *caseFactory) mergeApproved(ctx context.Context) error {
 }
 
 // merge merges p's head into its base on the origin, in the runner's own
-// clone.
-func (f *caseFactory) merge(ctx context.Context, p github.PR) error {
+// clone. conflict is the head commit when that merge is what failed: the
+// head does not merge cleanly into the base. It is empty when the merge
+// succeeded or something else failed.
+func (f *caseFactory) merge(ctx context.Context, p github.PR) (conflict string, err error) {
 	m := f.fx.merger
 	if _, err := os.Stat(m); err != nil {
 		if _, err := git(ctx, filepath.Dir(m), "clone", "-q", f.fx.origin, m); err != nil {
-			return err
+			return "", err
 		}
 	}
 	if _, err := git(ctx, m, "fetch", "-q", "origin"); err != nil {
-		return err
+		return "", err
 	}
 	if _, err := git(ctx, m, "checkout", "-q", "-B", p.BaseRefName, "origin/"+p.BaseRefName); err != nil {
-		return err
+		return "", err
+	}
+	head, err := git(ctx, m, "rev-parse", "origin/"+p.HeadRefName)
+	if err != nil {
+		return "", err
 	}
 	msg := fmt.Sprintf("Merge pull request #%d from %s\n\n%s", p.Number, p.HeadRefName, p.Title)
 	if _, err := git(ctx, m, append(append([]string{}, gitIdentity...), "merge", "-q", "--no-ff", "-m", msg, "origin/"+p.HeadRefName)...); err != nil {
 		_, _ = git(ctx, m, "merge", "--abort")
-		return err
+		return strings.TrimSpace(head), err
 	}
-	_, err := git(ctx, m, "push", "-q", "origin", p.BaseRefName)
-	return err
+	_, err = git(ctx, m, "push", "-q", "origin", p.BaseRefName)
+	return "", err
 }
 
 // grade checks the end state: each seeded issue closed, with a pull request
@@ -594,7 +610,7 @@ func (f *caseFactory) grade(ctx context.Context, c Case, dest string) []Check {
 		}
 		checks = append(checks, closed)
 		pr := Check{Name: fmt.Sprintf("#%d has a pull request", seeded.Number)}
-		branch := fmt.Sprintf("%sissue-%d", f.cfg.Project.BranchPrefix, seeded.Number)
+		branch := f.sched.BranchFor(seeded.Number)
 		for _, p := range snap.PRs {
 			if p.HeadRefName == branch || slices.Contains(closes(p.Body), seeded.Number) {
 				pr.Pass, pr.Detail = true, fmt.Sprintf("#%d", p.Number)

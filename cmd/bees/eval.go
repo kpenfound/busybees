@@ -88,19 +88,7 @@ there is no bees.toml. Nothing else of bees.toml is used. See docs/evals.md.`,
 			if err != nil {
 				return err
 			}
-			if !rep.Pass() {
-				failed := 0
-				for _, c := range rep.Cases {
-					if !c.Pass {
-						failed++
-					}
-				}
-				if len(rep.Cases) < len(cases) {
-					return fmt.Errorf("the eval was stopped after %s", text.Count(len(rep.Cases), "case"))
-				}
-				return fmt.Errorf("%s of %d failed", text.Count(failed, "case"), len(rep.Cases))
-			}
-			return nil
+			return evalExit(rep, len(cases))
 		},
 	}
 	cmd.Flags().StringVar(&caseName, "case", "", "run only the case in evals/<name>")
@@ -129,6 +117,25 @@ there is no bees.toml. Nothing else of bees.toml is used. See docs/evals.md.`,
 	}
 	cmd.AddCommand(gh)
 	return cmd
+}
+
+// evalExit is the error bees eval exits with for a run of total cases: one
+// when the run stopped before every case ran, whatever the cases that ran
+// came to, and one when a case failed.
+func evalExit(rep *eval.Report, total int) error {
+	if len(rep.Cases) < total {
+		return fmt.Errorf("the eval was stopped after %s of %d", text.Count(len(rep.Cases), "case"), total)
+	}
+	failed := 0
+	for _, c := range rep.Cases {
+		if !c.Pass {
+			failed++
+		}
+	}
+	if failed > 0 {
+		return fmt.Errorf("%s of %d failed", text.Count(failed, "case"), len(rep.Cases))
+	}
+	return nil
 }
 
 // evalLocalConfig is the bees.toml a normal run in this directory would

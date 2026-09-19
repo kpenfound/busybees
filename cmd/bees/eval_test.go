@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -11,6 +12,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/kpenfound/busybees/internal/eval"
 )
 
 // evalHome keeps the person's own ~/.config/bees/config.toml out of a test.
@@ -28,13 +31,12 @@ func TestEvalProfileMustExist(t *testing.T) {
 	}
 }
 
-func TestEvalCaseMustExist(t *testing.T) {
-	evalHome(t)
-	dir := t.TempDir()
-	t.Chdir(dir)
+// evalCase writes evals/<name>/ in the current directory, graded by test.
+func evalCase(t *testing.T, name, test string) {
+	t.Helper()
 	for rel, content := range map[string]string{
-		"evals/one/case.toml":      "test = \"false\"\n[[issues]]\nnumber = 1\ntitle = \"x\"\n",
-		"evals/one/repo/README.md": "x\n",
+		"evals/" + name + "/case.toml":      "test = \"" + test + "\"\n[[issues]]\nnumber = 1\ntitle = \"x\"\n",
+		"evals/" + name + "/repo/README.md": "x\n",
 	} {
 		if err := os.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
 			t.Fatal(err)
@@ -43,6 +45,12 @@ func TestEvalCaseMustExist(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+}
+
+func TestEvalCaseMustExist(t *testing.T) {
+	evalHome(t)
+	t.Chdir(t.TempDir())
+	evalCase(t, "one", "false")
 	err := runRoot(t, "eval", "--case", "two")
 	if err == nil || !strings.Contains(err.Error(), `no case "two" under evals (cases: one)`) {
 		t.Fatalf("got %v", err)
@@ -76,5 +84,61 @@ func TestEvalGHForwardsEveryArgument(t *testing.T) {
 	}
 	if out.String() != "answered\n" {
 		t.Fatalf("printed %q", out.String())
+	}
+}
+
+// A case whose test already passes on its fixture is invalid and fails: no
+// session runs, the table is printed and bees eval exits non-zero.
+func TestEvalExitsNonZeroOnAFailedCase(t *testing.T) {
+	evalHome(t)
+	t.Chdir(t.TempDir())
+	evalCase(t, "passes-already", "true")
+	root := newRoot()
+	var out bytes.Buffer
+	root.SetArgs([]string{"eval"})
+	root.SetOut(&out)
+	root.SetErr(&bytes.Buffer{})
+	err := root.Execute()
+	if err == nil || err.Error() != "1 case of 1 failed" {
+		t.Fatalf("got %v", err)
+	}
+	if !strings.Contains(out.String(), "passes-already") || !strings.Contains(out.String(), "invalid") || !strings.Contains(out.String(), "report: ") {
+		t.Fatalf("output:\n%s", out.String())
+	}
+}
+
+// An eval stopped before its cases ran exits non-zero.
+func TestEvalExitsNonZeroWhenStopped(t *testing.T) {
+	evalHome(t)
+	t.Chdir(t.TempDir())
+	evalCase(t, "one", "false")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	root := newRoot()
+	root.SetArgs([]string{"eval"})
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	err := root.ExecuteContext(ctx)
+	if err == nil || !strings.Contains(err.Error(), "the eval was stopped after 0 cases of 1") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+// Stopped after cases that passed is still a failure.
+func TestEvalExit(t *testing.T) {
+	passed := eval.CaseResult{Case: "a", Pass: true}
+	for _, tc := range []struct {
+		cases []eval.CaseResult
+		total int
+		want  string
+	}{
+		{[]eval.CaseResult{passed}, 1, ""},
+		{[]eval.CaseResult{passed}, 2, "the eval was stopped after 1 case of 2"},
+		{[]eval.CaseResult{passed, {Case: "b"}}, 2, "1 case of 2 failed"},
+	} {
+		err := evalExit(&eval.Report{Cases: tc.cases}, tc.total)
+		if (err == nil && tc.want != "") || (err != nil && err.Error() != tc.want) {
+			t.Errorf("%d of %d: got %v, want %q", len(tc.cases), tc.total, err, tc.want)
+		}
 	}
 }

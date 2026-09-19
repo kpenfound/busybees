@@ -9,9 +9,9 @@
 // pass, merging the pull requests it approved the way a person would, until
 // every seeded issue is closed or held for a person, or the case's budget or
 // timeout runs out. Sessions reach that GitHub through a gh of their own on
-// PATH (shim.go). Grading (grade.go) runs the test command on the default
-// branch and checks that every seeded issue closed with a pull request, and
-// the report (report.go) is a table and a JSON file per run.
+// PATH (shim.go). Grading (run.go's grade) runs the test command on the
+// default branch and checks that every seeded issue closed with a pull
+// request, and the report (report.go) is a table and a JSON file per run.
 //
 // Which agent profiles the sessions run on is profile.go's: --profile, or
 // the profiles bees.toml selects, or the person's global config.toml.
