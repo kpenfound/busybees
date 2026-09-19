@@ -722,13 +722,17 @@ func TestCheckSandboxAgent(t *testing.T) {
 	}
 }
 
-// The sbx sandbox runs every agent: a profile that selects it loads for
-// claude, codex and opencode, under a role's legacy keys and under
-// [profiles.<name>] alike, and an agent bees does not know is refused by
-// the agent key.
+// The sbx sandbox runs every agent it has a template for: a profile that
+// selects it loads for claude, codex and opencode, under a role's legacy
+// keys and under [profiles.<name>] alike; pi, which it has no template for,
+// is refused by the sandbox key, and an agent bees does not know by the
+// agent key.
 func TestSbxProfileRunsEveryAgent(t *testing.T) {
-	if _, err := Load(writeConfig(t, "version = 3\n[project]\nrepo = \"a/b\"\n[profiles.boxed]\nagent = \"pi\"\nsandbox = \"sbx\"\n[roles.qa]\nprofile = \"boxed\"\n")); err == nil || !strings.Contains(err.Error(), "profiles.boxed.agent must be one of claude, codex, opencode") {
+	if _, err := Load(writeConfig(t, "version = 3\n[project]\nrepo = \"a/b\"\n[profiles.boxed]\nagent = \"pi\"\nsandbox = \"sbx\"\n[roles.qa]\nprofile = \"boxed\"\n")); err == nil || !strings.Contains(err.Error(), `profiles.boxed.sandbox "sbx" does not run agent "pi"`) {
 		t.Errorf("pi in sbx: %v", err)
+	}
+	if _, err := Load(writeConfig(t, "version = 3\n[project]\nrepo = \"a/b\"\n[profiles.boxed]\nagent = \"gpt\"\nsandbox = \"sbx\"\n[roles.qa]\nprofile = \"boxed\"\n")); err == nil || !strings.Contains(err.Error(), "profiles.boxed.agent must be one of claude, codex, opencode, pi") {
+		t.Errorf("an unknown agent in sbx: %v", err)
 	}
 	for name, body := range map[string]string{
 		"claude":   "version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nagent = \"claude\"\nsandbox = \"sbx\"\n",
