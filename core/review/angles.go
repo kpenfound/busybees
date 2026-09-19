@@ -224,6 +224,14 @@ func (a *Angles[R]) Run(ctx context.Context, artifact string, project *Settings,
 				a.progress(angle, AngleFailed)
 			} else {
 				run.SessionID, run.Answer, run.Turns, run.CostUSD, run.CostUnknown = res.ID, res.Text, res.Turns, res.CostUSD, !res.CostKnown
+				// The session that answered may not be the one configured:
+				// an agent that fell back says so.
+				if res.Provider != "" {
+					run.Provider = res.Provider
+				}
+				if res.Model != "" {
+					run.Model = res.Model
+				}
 				a.progress(angle, AngleFinished)
 			}
 			runs[i] = run

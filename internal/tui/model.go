@@ -1390,7 +1390,7 @@ func sandboxCell(s running) string {
 // modelCell renders the last column: the model the session runs on, and
 // whether it is the role's fallback. The model *name* is what gets shortened
 // when the row does not fit, never the marker — a session running on the
-// fallback model is the thing a person watching wants to see, and a name
+// fallback profile is the thing a person watching wants to see, and a name
 // long enough to crowd it out is the least surprising part of the row.
 //
 // lead is what the row starts with (Model.leadHeader), which the project

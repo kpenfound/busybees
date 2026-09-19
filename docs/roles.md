@@ -689,7 +689,7 @@ Everything is in `bees.toml`. `[global]` applies to every role and
 ```toml
 [profiles.standard]
 model = "opus"
-fallback_model = "sonnet"
+fallback = "review"
 [profiles.review]
 model = "sonnet"
 
@@ -738,11 +738,12 @@ prompt_file = "docs/qa-checklist.md"
   same name. The name `bees` is reserved for the built-in server.
 - **profile / profile_by_size** select an agent profile: role size override,
   role profile, global size override, global profile, then built-in defaults.
-  A profile bundles `agent`, `model`, `fallback_model`, `effort` and `sandbox`.
-  `fallback_model` is what a `claude` session
-  switches to when `model` has reached its usage limit. `agent` is the CLI
+  A profile bundles `agent`, `model`, `fallback`, `effort` and `sandbox`.
+  `fallback` names the profile a retry runs on instead after a session on
+  this one failed for infrastructure reasons, agent included (see
+  [Retries](workflow.md#retries-first)). `agent` is the CLI
   a session runs as, `claude`, `codex` or `opencode`; a `codex` or `opencode`
-  role has no default `model` or `fallback_model`, and ignores `max_turns`,
+  role has no default `model`, and ignores `max_turns`,
   `allowed_tools` and `disallowed_tools`; an `opencode` role ignores
   `effort` too (see [Running a
   session](architecture.md#running-a-session)).

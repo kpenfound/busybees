@@ -13,19 +13,70 @@ import (
 // Profiles are independent: omitted values use built-in defaults, never
 // settings from another profile. Model defaults depend on this profile's agent.
 type AgentProfile struct {
-	Agent         string `toml:"agent" json:"agent"`
-	Model         string `toml:"model" json:"model"`
-	FallbackModel string `toml:"fallback_model" json:"fallback_model"`
-	Effort        string `toml:"effort" json:"effort"`
-	Sandbox       string `toml:"sandbox" json:"sandbox"`
+	Agent string `toml:"agent" json:"agent"`
+	Model string `toml:"model" json:"model"`
+	// Fallback names the profile a retry runs on instead after a session
+	// on this one failed for infrastructure reasons (or a brief or angle
+	// review session was refused for want of capacity): its agent, model,
+	// effort and sandbox, and after it that profile's own fallback. Empty
+	// is no fallback. Validate refuses a
+	// name that is not a profile and a chain that comes back to a profile
+	// it has been through, so the chain always ends.
+	Fallback string `toml:"fallback" json:"fallback"`
+	Effort   string `toml:"effort" json:"effort"`
+	Sandbox  string `toml:"sandbox" json:"sandbox"`
 }
 
 func (p AgentProfile) resolved() AgentProfile {
 	p.Agent = firstNonEmpty(p.Agent, DefaultAgent)
 	p.Sandbox = firstNonEmpty(p.Sandbox, DefaultSandbox)
+	if p.Agent == AgentClaude {
+		p.Model = firstNonEmpty(p.Model, DefaultModel)
+	}
+	return p
+}
+
+// fallbackChain is the profiles a session on profile from, whose fallback
+// names first, falls back to, in order: first, then the one its fallback
+// names, until a profile with none. A name that is not in the table ends the
+// chain, and so does a name already in it, so that a table Validate refused
+// still ends.
+func fallbackChain(profiles map[string]AgentProfile, from, first string) []string {
+	var chain []string
+	seen := map[string]bool{from: true}
+	for next := first; next != ""; next = profiles[next].Fallback {
+		if _, ok := profiles[next]; !ok || seen[next] {
+			break
+		}
+		seen[next] = true
+		chain = append(chain, next)
+	}
+	return chain
+}
+
+// legacyAgentProfile is a profile as versions 3 and 4 wrote it, with a
+// fallback model instead of a fallback profile; version 5 turns the model
+// into a profile of its own (migrateFallbackProfiles). The migrations before
+// it write this shape so that a chain of migrations ends with the same
+// profiles a file already at version 4 has.
+type legacyAgentProfile struct {
+	Agent         string `toml:"agent"`
+	Model         string `toml:"model"`
+	FallbackModel string `toml:"fallback_model"`
+	Effort        string `toml:"effort"`
+	Sandbox       string `toml:"sandbox"`
+}
+
+// legacyDefaultFallbackModel was the fallback model of a claude profile that
+// named none, in versions 3 and 4.
+const legacyDefaultFallbackModel = "sonnet"
+
+func (p legacyAgentProfile) resolved() legacyAgentProfile {
+	p.Agent = firstNonEmpty(p.Agent, DefaultAgent)
+	p.Sandbox = firstNonEmpty(p.Sandbox, DefaultSandbox)
 	model, fallback := "", ""
 	if p.Agent == AgentClaude {
-		model, fallback = DefaultModel, DefaultFallbackModel
+		model, fallback = DefaultModel, legacyDefaultFallbackModel
 	}
 	p.Model = firstNonEmpty(p.Model, model)
 	p.FallbackModel = firstNonEmpty(p.FallbackModel, fallback)
@@ -36,12 +87,12 @@ func (p AgentProfile) resolved() AgentProfile {
 // settings. Resolve them before creating profiles so an agent override does
 // not accidentally inherit Claude's implicit model defaults.
 type legacyProfileScope struct {
-	AgentProfile
+	legacyAgentProfile
 	ModelBySize map[string]string `toml:"model_by_size"`
 }
 
-func legacyProfile(role, global legacyProfileScope) AgentProfile {
-	return (AgentProfile{
+func legacyProfile(role, global legacyProfileScope) legacyAgentProfile {
+	return (legacyAgentProfile{
 		Agent:         firstNonEmpty(role.Agent, global.Agent),
 		Model:         firstNonEmpty(role.Model, global.Model),
 		FallbackModel: firstNonEmpty(role.FallbackModel, global.FallbackModel),
@@ -59,7 +110,7 @@ func migrateAgentProfiles(text string) (string, error) {
 	var old struct {
 		Global   legacyProfileScope            `toml:"global"`
 		Roles    map[string]legacyProfileScope `toml:"roles"`
-		Profiles map[string]AgentProfile       `toml:"profiles"`
+		Profiles map[string]legacyAgentProfile `toml:"profiles"`
 	}
 	md, err := toml.Decode(text, &old)
 	if err != nil {
@@ -67,7 +118,7 @@ func migrateAgentProfiles(text string) (string, error) {
 	}
 	profiles := maps.Clone(old.Profiles)
 	if profiles == nil {
-		profiles = map[string]AgentProfile{}
+		profiles = map[string]legacyAgentProfile{}
 	}
 	refs := map[string]string{}
 	var blocks strings.Builder
@@ -92,7 +143,7 @@ func migrateAgentProfiles(text string) (string, error) {
 		if len(rs.ModelBySize) > 0 && scope != "roles.developer" {
 			return "", fmt.Errorf("%s: model_by_size is only valid under roles.developer", scope)
 		}
-		add := func(base string, p AgentProfile) string {
+		add := func(base string, p legacyAgentProfile) string {
 			name := base
 			for n := 2; ; n++ {
 				if _, exists := profiles[name]; !exists {
@@ -318,4 +369,170 @@ func inlineProfileValue(value any) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(strings.TrimPrefix(b.String(), "v = ")), nil
+}
+
+// migrateFallbackProfiles is version 4 -> 5: fallback_model, a model of the
+// profile's own agent, becomes fallback, the name of another profile. Every
+// profile with fallback_model = "X" gets fallback = "<name>_fallback" and a
+// new [profiles.<name>_fallback] that is the profile with model X and no
+// fallback of its own, so the migrated file behaves as it did. Complete TOML
+// statements are rewritten, so dotted keys, inline tables and prompts
+// containing examples survive; a commented-out fallback_model is told what
+// replaced it and kept.
+func migrateFallbackProfiles(text string) (string, error) {
+	var old struct {
+		Profiles map[string]legacyAgentProfile `toml:"profiles"`
+	}
+	md, err := toml.Decode(text, &old)
+	if err != nil {
+		return "", err
+	}
+	// The name each migrated profile's fallback profile gets, and the
+	// profile itself. A profile whose fallback_model resolves to nothing
+	// (codex or opencode with an empty value) had no fallback, and loses
+	// the key.
+	names := map[string]string{}
+	added := map[string]map[string]any{}
+	taken := maps.Clone(old.Profiles)
+	for _, name := range slices.Sorted(maps.Keys(old.Profiles)) {
+		p := old.Profiles[name]
+		if !md.IsDefined("profiles", name, "fallback_model") {
+			continue
+		}
+		if md.IsDefined("profiles", name, "fallback") {
+			return "", fmt.Errorf("profiles.%s: cannot mix fallback_model and fallback; remove fallback_model", name)
+		}
+		model := p.resolved().FallbackModel
+		if model == "" {
+			continue
+		}
+		fname := name + "_fallback"
+		for n := 2; ; n++ {
+			if _, exists := taken[fname]; !exists {
+				break
+			}
+			fname = fmt.Sprintf("%s_fallback_%d", name, n)
+		}
+		taken[fname] = legacyAgentProfile{}
+		names[name] = fname
+		added[fname] = map[string]any{}
+		for _, kv := range []struct{ key, value string }{{"agent", p.Agent}, {"model", model}, {"effort", p.Effort}, {"sandbox", p.Sandbox}} {
+			if kv.value != "" {
+				added[fname][kv.key] = kv.value
+			}
+		}
+	}
+	statements, err := profileStatements(text)
+	if err != nil {
+		return "", err
+	}
+	isFallbackModel := func(path []string) bool {
+		return len(path) == 3 && path[0] == "profiles" && path[2] == "fallback_model"
+	}
+	rename := func(path []string) []string {
+		if isFallbackModel(path) {
+			path = slices.Clone(path)
+			path[2] = "fallback"
+		}
+		return path
+	}
+	// The new profiles go after the last statement as tables of their own,
+	// except into a profiles = { ... } inline table, which no later table
+	// header may extend.
+	inlined := map[string]bool{}
+	// rewrite returns the value with every fallback_model under it renamed
+	// and pointed at the new profile, whether it changed, and whether the
+	// value itself is a fallback_model to drop.
+	var rewrite func(path []string, value any) (any, bool, bool, error)
+	rewrite = func(path []string, value any) (any, bool, bool, error) {
+		if table, ok := value.(map[string]any); ok {
+			changed := false
+			out := map[string]any{}
+			for _, key := range slices.Sorted(maps.Keys(table)) {
+				child := append(slices.Clone(path), key)
+				v, did, drop, err := rewrite(child, table[key])
+				if err != nil {
+					return nil, false, false, err
+				}
+				changed = changed || did || drop
+				if drop {
+					continue
+				}
+				out[rename(child)[len(child)-1]] = v
+			}
+			if len(path) == 1 && path[0] == "profiles" {
+				for _, fname := range slices.Sorted(maps.Keys(added)) {
+					out[fname], inlined[fname], changed = added[fname], true, true
+				}
+			}
+			return out, changed, false, nil
+		}
+		if !isFallbackModel(path) {
+			return value, false, false, nil
+		}
+		if _, ok := value.(string); !ok {
+			return nil, false, false, fmt.Errorf("%s must name a model", strings.Join(path, "."))
+		}
+		fname, ok := names[path[1]]
+		if !ok {
+			return nil, true, true, nil
+		}
+		return fname, true, false, nil
+	}
+	const guidance = "# fallback_model was replaced by fallback, which names another profile (version 5)."
+	var out strings.Builder
+	last := ""
+	for _, st := range statements {
+		if st.raw == nil {
+			// A commented-out fallback_model, wherever it is: at version 4
+			// the key was a profile's alone.
+			if len(st.path) > 0 && st.path[len(st.path)-1] == "fallback_model" && last != guidance {
+				fmt.Fprintln(&out, guidance)
+			}
+			out.WriteString(st.text)
+			last = strings.TrimSuffix(st.text, "\n")
+			continue
+		}
+		last = ""
+		if st.header {
+			out.WriteString(st.text)
+			continue
+		}
+		key := st.path[st.sectionDepth:]
+		var assigned any = st.raw
+		for _, part := range key {
+			assigned = assigned.(map[string]any)[part]
+		}
+		value, changed, dropped, err := rewrite(st.path, assigned)
+		if err != nil {
+			return "", err
+		}
+		if !changed {
+			out.WriteString(st.text)
+			continue
+		}
+		for _, line := range strings.Split(strings.TrimSuffix(st.text, "\n"), "\n") {
+			fmt.Fprintln(&out, "# Previous: "+line)
+		}
+		if dropped {
+			continue
+		}
+		encoded, err := inlineProfileValue(value)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(&out, "%s = %s\n", toml.Key(rename(st.path)[st.sectionDepth:]).String(), encoded)
+	}
+	for _, fname := range slices.Sorted(maps.Keys(added)) {
+		if inlined[fname] {
+			continue
+		}
+		fmt.Fprintf(&out, "\n[%s]\n", toml.Key{"profiles", fname}.String())
+		for _, key := range []string{"agent", "model", "effort", "sandbox"} {
+			if v, ok := added[fname][key]; ok {
+				fmt.Fprintf(&out, "%s = %s\n", key, tomlQuote(v.(string)))
+			}
+		}
+	}
+	return out.String(), nil
 }

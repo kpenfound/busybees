@@ -106,10 +106,15 @@ func (p RetryPolicy) Decide(attempt int, retryable bool) RetryDecision {
 	return RetryDecision{Retry: true, Delay: p.Delay, UseFallback: p.WithFallback}
 }
 
-// SelectModel applies the fallback only when requested and configured.
-func SelectModel(primary, fallback string, useFallback bool) (string, bool) {
-	if useFallback && fallback != "" {
-		return fallback, true
+// SelectProfile walks n steps down a profile's fallback chain, the way a
+// caller retrying a session that had no capacity moves on: the first retry
+// runs the profile's fallback, the second that one's own, and a chain that
+// ends sooner stays on its last profile. It reports whether the profile
+// returned is a fallback; n <= 0 is the profile itself.
+func SelectProfile(p agent.Profile, n int) (agent.Profile, bool) {
+	moved := false
+	for ; n > 0 && p.Fallback != nil; n-- {
+		p, moved = *p.Fallback, true
 	}
-	return primary, false
+	return p, moved
 }

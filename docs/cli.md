@@ -348,7 +348,7 @@ same migration automatically on startup.
 
 Prints the resolved configuration as JSON: project, filter, github, scheduler
 and — for every role, or the one given — the effective prompt, skills, MCP
-servers, model, fallback model, limits, `sandbox` and `enabled` after merging
+servers, model, fallback, limits, `sandbox` and `enabled` after merging
 `[global]` with `[roles.<name>]`. The global-only `skills_refresh` is printed
 under every role, since it governs how each role's skills are refreshed. `github.token` is
 never printed resolved: a `"$VAR"` value is shown as written and anything else
@@ -377,7 +377,7 @@ bees config show developer
 ```json
 {
   "path": "/src/widgets/bees.toml",
-  "version": 4,
+  "version": 5,
   "filter": { "label": "bees", "require_label": true, "assignee": "@me", "milestone": "", "creator": "" },
   "github": { "login": "busybees-bot", "token": "$BEES_GITHUB_TOKEN", "git_name": "", "git_email": "" },
   "scheduler": { "poll_interval": "5m0s", "max_developers": 1, "max_review_rounds": 3, "...": "" },
@@ -385,7 +385,7 @@ bees config show developer
     "reviewer": {
       "name": "reviewer",
       "model": "opus",
-      "fallback_model": "sonnet",
+      "fallback": "",
       "max_turns": 200,
       "timeout": "45m0s",
       "enabled": true,
@@ -397,9 +397,9 @@ bees config show developer
         "l": ["general", "docs", "test_coverage", "acceptance_criteria"],
         "xl": ["general", "docs", "test_coverage", "acceptance_criteria", "side_effects"]
       },
-      "brief_profile": { "agent": "claude", "model": "opus", "fallback_model": "sonnet", "effort": "", "sandbox": "none" },
-      "judge_profile": { "agent": "claude", "model": "opus", "fallback_model": "sonnet", "effort": "", "sandbox": "none" },
-      "angle_profiles": { "docs": { "agent": "claude", "model": "opus", "fallback_model": "sonnet", "effort": "", "sandbox": "none" }, "...": {} },
+      "brief_profile": { "agent": "claude", "model": "opus", "fallback": "", "effort": "", "sandbox": "none" },
+      "judge_profile": { "agent": "claude", "model": "opus", "fallback": "", "effort": "", "sandbox": "none" },
+      "angle_profiles": { "docs": { "agent": "claude", "model": "opus", "fallback": "", "effort": "", "sandbox": "none" }, "...": {} },
       "review_profiles_by_size": { "...": {} },
       "host_review_policy": "brief/angles: sandbox ignored; read-only checkout; no commands, writes, web/network tools, MCP, factory identity or writable/shared VCS",
       "auto_merge": false,
@@ -741,7 +741,7 @@ busybees  acme/widgets                                                          
 **Now** lists running sessions and review-pipeline activity. Sessions show
 the role, the issue and pull request, the developer worker's stage and round,
 how long the session has been going, and its model: `(fallback)`
-when a retry is running on the role's `fallback_model`. `↑`/`↓` move the
+when a retry is running on a profile its profile names as `fallback`. `↑`/`↓` move the
 cursor down the list and Enter opens
 [the session view](#watching-one-session) on the session it is on.
 

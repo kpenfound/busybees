@@ -49,7 +49,7 @@ type RoleView struct {
 	SkillsRefresh           string               `json:"skills_refresh"`
 	MCP                     map[string]MCPServer `json:"mcp"`
 	Model                   string               `json:"model"`
-	FallbackModel           string               `json:"fallback_model"`
+	Fallback                string               `json:"fallback"`
 	Agent                   string               `json:"agent"`
 	Effort                  string               `json:"effort"`
 	MaxTurns                int                  `json:"max_turns"`
@@ -136,7 +136,7 @@ func (c *Config) View(roles []string) (View, error) {
 			SkillsRefresh:           c.SkillsRefreshPolicy(),
 			MCP:                     rr.MCP,
 			Model:                   rr.Model,
-			FallbackModel:           rr.FallbackModel,
+			Fallback:                rr.Fallback,
 			Agent:                   rr.Agent,
 			Effort:                  rr.Effort,
 			MaxTurns:                rr.MaxTurns,

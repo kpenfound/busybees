@@ -34,7 +34,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"all done",
 printf '{"status":"pr-opened","work":{"key":"pr-12","tags":{"github.pr":"12"}},"note":"hi"}' > "$BEES_SESSION_DIR/outcome.json"
 `)
 	r := newRunner(t, bin)
-	role := config.ResolvedRole{Name: "developer", Model: "opus", FallbackModel: "sonnet", MaxTurns: 10, Timeout: time.Minute,
+	role := config.ResolvedRole{Name: "developer", Model: "opus", MaxTurns: 10, Timeout: time.Minute,
 		MCP:   map[string]config.MCPServer{"x": {Command: "srv", Env: map[string]string{"K": "$HOME"}}},
 		Shell: "/bin/sh", Env: map[string]string{"FACTORY_TOKEN": "abc", "CACHE": "$HOME/cache"}}
 	res, err := r.Run(context.Background(), Request{Name: "t1", Profile: ProfileForRole(role), Workspace: vcs.Directory(t.TempDir()), SystemPrompt: "SYS", Prompt: "TASK", Env: map[string]string{"EXTRA": "1", EnvIssue: "12"}})
@@ -48,7 +48,7 @@ printf '{"status":"pr-opened","work":{"key":"pr-12","tags":{"github.pr":"12"}},"
 		t.Fatalf("outcome: %+v", res.Outcome)
 	}
 	args, _ := os.ReadFile(filepath.Join(res.SessionDir, "args.txt"))
-	for _, want := range []string{"-p", "--model", "opus", "--fallback-model", "sonnet", "--max-turns", "10", "--dangerously-skip-permissions", "--mcp-config", "--strict-mcp-config", "--append-system-prompt-file"} {
+	for _, want := range []string{"-p", "--model", "opus", "--max-turns", "10", "--dangerously-skip-permissions", "--mcp-config", "--strict-mcp-config", "--append-system-prompt-file"} {
 		if !strings.Contains(string(args), want) {
 			t.Errorf("args missing %s: %s", want, args)
 		}
@@ -218,5 +218,48 @@ func TestConfiguredSkillsNeedAPreparer(t *testing.T) {
 	_, err := r.Run(context.Background(), Request{Workspace: vcs.Directory(t.TempDir()), Profile: ProfileForRole(config.ResolvedRole{Name: "developer", Skills: []string{"https://example.com/skills"}})})
 	if err == nil || !strings.Contains(err.Error(), "no skills manager") {
 		t.Fatalf("missing preparer: %v", err)
+	}
+}
+
+// ProfileForRole carries the role's fallback chain, each profile of it under
+// the role's own settings, so a retry that moves down the chain
+// (ops.SelectProfile) keeps the tools, turn limit and timeout it had; a
+// claude session with a claude fallback is told its model.
+func TestProfileForRoleCarriesTheFallbackChain(t *testing.T) {
+	cfg, err := config.Parse(`version = 5
+[profiles.main]
+agent = "claude"
+model = "opus"
+fallback = "cheap"
+[profiles.cheap]
+agent = "codex"
+model = "gpt"
+fallback = "last"
+[profiles.last]
+agent = "opencode"
+model = "ollama/x"
+[roles.developer]
+profile = "main"
+max_turns = 9
+allowed_tools = ["Bash"]
+`, filepath.Join(t.TempDir(), "bees.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	role, err := cfg.Role(config.RoleDeveloper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := ProfileForRole(role)
+	if p.Agent != "claude" || p.Fallback == nil || p.Fallback.Agent != "codex" || p.Fallback.Model != "gpt" || p.Fallback.Fallback == nil || p.Fallback.Fallback.Agent != "opencode" || p.Fallback.Fallback.Fallback != nil {
+		t.Fatalf("chain: %+v", p)
+	}
+	for _, step := range []Profile{p, *p.Fallback, *p.Fallback.Fallback} {
+		if step.MaxTurns != 9 || !slices.Equal(step.AllowedTools, []string{"Bash"}) || step.Name != config.RoleDeveloper {
+			t.Errorf("a step of the chain lost the role's settings: %+v", step)
+		}
+	}
+	if ProfileForRole(config.ResolvedRole{Name: "qa"}).Fallback != nil {
+		t.Error("a role without a fallback has a chain")
 	}
 }

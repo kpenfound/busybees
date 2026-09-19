@@ -375,9 +375,10 @@ func fakeClaude() {
 			break
 		}
 		n := counter("dev")
-		// Infrastructure failures, on the first attempt only: hang until the
-		// role timeout kills the session, or report `failed` outright.
-		if n == 1 && os.Getenv("FAKE_DEV_HANG") == "1" {
+		// Infrastructure failures: FAKE_DEV_HANG=N hangs the first N
+		// attempts until the role timeout kills them; FAKE_DEV_FAIL reports
+		// `failed` outright.
+		if hang, _ := strconv.Atoi(os.Getenv("FAKE_DEV_HANG")); n <= hang {
 			time.Sleep(time.Minute)
 		}
 		if os.Getenv("FAKE_DEV_FAIL") == "1" {

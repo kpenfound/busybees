@@ -177,3 +177,42 @@ func TestAWorkerStartedAfterARestartResumesNoSession(t *testing.T) {
 		t.Fatalf("history: %v", h.gh.History[1])
 	}
 }
+
+// A session id is resumed on the agent that gave it alone. Round 1's retry
+// fell back to codex, so its thread id is what the worker knows; round 2
+// runs on the role's own profile, claude, which cannot resume it, and starts
+// fresh. When the retry stayed on claude (a claude fallback), round 2
+// resumes the retry's session like any other.
+func TestARoundAfterARetryOnAnotherAgentIsNotResumed(t *testing.T) {
+	t.Setenv("FAKE_DEV_HANG", "1")
+	h := newHarness(t, fallbackAgentTOML)
+	seedReady(h, 1, "s", time.Now().Add(-time.Hour))
+	runPass(t, h)
+
+	h.wantOrder("developer-issue-1-r1", "developer-issue-1-r1-retry1", "reviewer-pr-201-r1", "developer-issue-1-r2", "reviewer-pr-201-r2")
+	if retry := argsOfNamed(t, h, "developer-issue-1-r1-retry1"); retry[1] != "exec" {
+		t.Fatalf("the retry did not run codex: %v", retry)
+	}
+	r2 := argsOfNamed(t, h, "developer-issue-1-r2")
+	if r2[1] != "-p" {
+		t.Fatalf("round 2 did not run claude: %v", r2)
+	}
+	if got := resumeOf(t, h, "developer-issue-1-r2"); got != "" {
+		t.Errorf("round 2 of the developer resumed %q, a codex thread, want a fresh claude session", got)
+	}
+	if last := h.gh.History[1][len(h.gh.History[1])-1]; last != "bees:approved" {
+		t.Fatalf("history: %v", h.gh.History[1])
+	}
+}
+
+func TestARoundAfterARetryOnTheSameAgentIsResumed(t *testing.T) {
+	t.Setenv("FAKE_DEV_HANG", "1")
+	h := newHarness(t, fallbackTOML)
+	seedReady(h, 1, "s", time.Now().Add(-time.Hour))
+	runPass(t, h)
+
+	h.wantOrder("developer-issue-1-r1", "developer-issue-1-r1-retry1", "reviewer-pr-201-r1", "developer-issue-1-r2", "reviewer-pr-201-r2")
+	if got, want := resumeOf(t, h, "developer-issue-1-r2"), "sid-developer-issue-1-r1-retry1"; got != want {
+		t.Errorf("round 2 of the developer resumed %q, want the retry's session %q", got, want)
+	}
+}

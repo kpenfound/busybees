@@ -708,9 +708,11 @@ stateDiagram-v2
   looks for problems from that angle alone, and the judge, deterministic
   code, merges what they found into one list. The brief and the angle
   sessions are `internal/review`'s read-only host sessions. `brief_profile`
-  and `angle_profiles` select agent, model, fallback model and effort after
+  and `angle_profiles` select agent, model, fallback and effort after
   the role's size-resolved profile; unspecified phases retain that fallback.
-  Only Claude and Codex are supported. Profile sandbox is ignored: no
+  Only Claude and Codex are supported, on the fallback chain too, and a
+  session refused for want of capacity runs again as its fallback under the
+  same restrictions. Profile sandbox is ignored: no
   commands, writes, web/network tools, MCP/factory identity or writable/shared
   VCS are available. Both phases read an independent clone of the worker's checkout
   under the review's artifact, which the diff is read from too (the branch
@@ -905,7 +907,7 @@ claude -p \
   --dangerously-skip-permissions \
   --append-system-prompt-file <session>/system-prompt.md \
   --model <model> --max-turns <n> --name bees-<session name> \
-  [--fallback-model <fallback>] [--effort <level>] \
+  [--fallback-model <the fallback profile's model, when it runs claude>] [--effort <level>] \
   [--resume <session id> --system-prompt-snapshot off] \
   --add-dir <state_dir> \
   [--allowedTools ...] [--disallowedTools ...] \
@@ -935,7 +937,7 @@ codex exec --json \
 Codex has no flag to append to its system prompt, so the system prompt is
 written to stdin ahead of the task prompt, separated by a rule; it has no
 `--mcp-config`, so every MCP server, the built-in one included, is passed as
-configuration overrides, one per key; and it has no fallback model, turn
+configuration overrides, one per key; and it has no fallback-model flag, turn
 limit, tool allow-list or plugin directories, so those settings are not
 passed (see [`agent`](configuration.md#global-and-rolesname)). Its stream is
 appended to `transcript.jsonl` the same way: `thread.started` supplies the
@@ -966,7 +968,7 @@ counterpart of `--dangerously-skip-permissions`; an explicit `deny` in the
 project's configuration still holds. `--session` continues an earlier
 session the way `--resume` does for claude, and there is no snapshot to
 switch off: opencode reads the instruction files again on every request.
-It has no fallback model, turn limit, tool allow-list or plugin
+It has no fallback-model flag, turn limit, tool allow-list or plugin
 directories. When configured, `effort` is written as the default build
 agent's `variant`; it is a name the model defines, not a level, so the value
 is passed through without bees-side validation. Those other settings are not
@@ -1025,8 +1027,10 @@ counted from the transcript's assistant messages or completed items instead.
   reported an outcome, `failed` included, or exited cleanly without
   reporting). Only infrastructure failures are retried, `scheduler.retries`
   times (default 1), waiting `scheduler.retry_delay` (default 10m) between
-  attempts and running with the role's fallback model when
-  `scheduler.retry_with_fallback` is set (on by default). Each attempt has its
+  attempts and running on the profile the role's profile names as its
+  fallback, agent included, when `scheduler.retry_with_fallback` is set (on
+  by default); a second retry runs on that profile's own fallback. Each
+  attempt has its
   own session directory (`<name>-retry<n>`), a retried developer session
   is told its previous attempt was interrupted so it continues from the
   branch, and a retry of a session that was launched resuming an earlier one
@@ -1035,8 +1039,8 @@ counted from the transcript's assistant messages or completed items instead.
   reaches the classification: a session that died on it returns to its worker
   at once (see step 6 of the loop). A session that cost more than
   `scheduler.max_cost_per_session` is treated as failed. One such session is
-  retried like an infrastructure failure, with the fallback model when that is
-  configured; a second in a row for the same work item (or the same singleton
+  retried like an infrastructure failure, on the profile's fallback when that
+  is configured; a second in a row for the same work item (or the same singleton
   role) is reported as `failed`, which escalates a work item and backs a
   singleton off. See [Retries first](workflow.md#retries-first).
 - **Grants.** Every session carries grants: the variables it may have, its

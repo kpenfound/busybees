@@ -168,7 +168,7 @@ func TestViewUsesTOMLKeyNamesAndDurationStrings(t *testing.T) {
 			t.Errorf("scheduler is missing %s: %v", k, sched)
 		}
 	}
-	for _, k := range []string{"fallback_model", "max_turns", "allowed_tools", "disallowed_tools"} {
+	for _, k := range []string{"fallback", "max_turns", "allowed_tools", "disallowed_tools"} {
 		if _, ok := roleOf(t, out, RoleQA)[k]; !ok {
 			t.Errorf("role is missing %s", k)
 		}

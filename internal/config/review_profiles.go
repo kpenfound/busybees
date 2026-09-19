@@ -27,12 +27,12 @@ func (c *Config) reviewAngleProfiles(names map[string]string) map[string]AgentPr
 
 // AgentProfile returns only the five execution settings, never role permissions.
 func (r ResolvedRole) AgentProfile() AgentProfile {
-	return AgentProfile{Agent: r.Agent, Model: r.Model, FallbackModel: r.FallbackModel, Effort: r.Effort, Sandbox: r.Sandbox}
+	return AgentProfile{Agent: r.Agent, Model: r.Model, Fallback: r.Fallback, Effort: r.Effort, Sandbox: r.Sandbox}
 }
 
 func (r ResolvedRole) withReviewProfile(p *AgentProfile) ResolvedRole {
 	if p != nil {
-		r.Agent, r.Model, r.FallbackModel, r.Effort, r.Sandbox = p.Agent, p.Model, p.FallbackModel, p.Effort, p.Sandbox
+		r = r.withProfile(*p)
 	}
 	return r
 }
@@ -59,9 +59,17 @@ func (c *Config) validateReviewProfiles() []string {
 		return nil
 	}
 	var errs []string
+	// The read-only floor holds on whatever profile a fallback lands on, so
+	// the chain a profile starts is held to the same agents it is.
+	resolved := c.resolvedProfiles()
 	check := func(path string, p AgentProfile) {
 		if p.Agent != AgentClaude && p.Agent != AgentCodex {
 			errs = append(errs, fmt.Sprintf("%s: brief and angle sessions require agent claude or codex, got %q", path, p.Agent))
+		}
+		for _, name := range fallbackChain(resolved, profileNamed(resolved, p), p.Fallback) {
+			if f := resolved[name]; f.Agent != AgentClaude && f.Agent != AgentCodex {
+				errs = append(errs, fmt.Sprintf("%s: brief and angle sessions require agent claude or codex, and fallback profile %q runs %q", path, name, f.Agent))
+			}
 		}
 	}
 	if r.BriefProfile != nil {
@@ -86,7 +94,14 @@ func (c *Config) validateReviewProfiles() []string {
 // The ordinary (unsized) reviewer profile supplies the five fallback fields;
 // phase model overrides become independent profiles, like ordinary profiles.
 func migrateReviewProfiles(text string) (string, error) {
-	var c Config
+	type scope struct {
+		Profile string `toml:"profile"`
+	}
+	var c struct {
+		Global   scope                         `toml:"global"`
+		Roles    map[string]scope              `toml:"roles"`
+		Profiles map[string]legacyAgentProfile `toml:"profiles"`
+	}
 	md, err := toml.Decode(text, &c)
 	if err != nil {
 		return "", err
@@ -99,7 +114,7 @@ func migrateReviewProfiles(text string) (string, error) {
 	fallback := c.Profiles[firstNonEmpty(c.Roles[RoleReviewer].Profile, c.Global.Profile)].resolved()
 	profiles := maps.Clone(c.Profiles)
 	if profiles == nil {
-		profiles = map[string]AgentProfile{}
+		profiles = map[string]legacyAgentProfile{}
 	}
 	var blocks strings.Builder
 	add := func(base, model string) string {

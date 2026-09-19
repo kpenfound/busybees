@@ -83,8 +83,11 @@ type Result struct {
 	Signal int `json:"signal,omitempty"`
 	// ClaudeID is the id the agent gave the session: claude's session id,
 	// OpenCode's session id, or codex's thread id. The JSON name is kept for
-	// readers of result.json that predate codex.
+	// readers of result.json that predate codex. Agent is the backend that
+	// gave it (AgentClaude when the profile named none), the only one that
+	// can resume it.
 	ClaudeID     string  `json:"claude_session_id,omitempty"`
+	Agent        string  `json:"agent,omitempty"`
 	ResultText   string  `json:"result_text,omitempty"`
 	IsError      bool    `json:"is_error"`
 	ErrorSubtype string  `json:"error_subtype,omitempty"`
@@ -255,7 +258,10 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 			return nil, fmt.Errorf("%s: %w", req.Profile.Name, err)
 		}
 	}
-	res := &Result{Name: req.Name, Role: req.Profile.Name, SessionDir: sessionDir, StartedAt: started}
+	res := &Result{Name: req.Name, Role: req.Profile.Name, SessionDir: sessionDir, StartedAt: started, Agent: req.Profile.Agent}
+	if res.Agent == "" {
+		res.Agent = AgentClaude
+	}
 
 	systemPromptPath := filepath.Join(sessionDir, "system-prompt.md")
 	if err := os.WriteFile(systemPromptPath, []byte(req.SystemPrompt), 0o644); err != nil {
