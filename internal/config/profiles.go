@@ -536,3 +536,90 @@ func migrateFallbackProfiles(text string) (string, error) {
 	}
 	return out.String(), nil
 }
+
+// Resolved is the profile with the built-in defaults filled in for what it
+// leaves out: the default agent and sandbox, and claude's default model.
+func (p AgentProfile) Resolved() AgentProfile { return p.resolved() }
+
+// ValidateProfiles checks a table of profiles on its own, each problem
+// naming its key as profiles.<name>.<key>: an empty name, an effort, agent
+// or sandbox outside its values, and a fallback chain that names a profile
+// the table does not have or comes back to one it has been through. It is
+// how bees.toml's [profiles] is checked, and how any other file that
+// describes sessions with profiles (`bees review`'s config.toml) checks its
+// own.
+func ValidateProfiles(profiles map[string]AgentProfile) []string {
+	var errs []string
+	for _, name := range slices.Sorted(maps.Keys(profiles)) {
+		p, scope := profiles[name], "profiles."+name
+		if name == "" {
+			errs = append(errs, "profiles: profile name must not be empty")
+		}
+		if p.resolved().Agent != AgentOpenCode {
+			switch p.Effort {
+			case "", "low", "medium", "high", "max":
+			default:
+				errs = append(errs, fmt.Sprintf("%s.effort must be low, medium, high or max", scope))
+			}
+		}
+		if p.Agent != "" && !slices.Contains(Agents, p.Agent) {
+			errs = append(errs, fmt.Sprintf("%s.agent must be one of %s", scope, strings.Join(Agents, ", ")))
+		}
+		// Every mode of SandboxModes loads, including the ones no session
+		// can run in yet: whether a mode works on this machine is a question
+		// about the machine, and CheckSandbox asks it once at `bees run`.
+		if p.Sandbox != "" && !slices.Contains(SandboxModes, p.Sandbox) {
+			errs = append(errs, fmt.Sprintf("%s.sandbox must be one of %s", scope, strings.Join(SandboxModes, ", ")))
+		}
+		if p.Fallback != "" {
+			if err := validateFallback(profiles, name); err != nil {
+				errs = append(errs, fmt.Sprintf("%s.fallback: %v", scope, err))
+			}
+		}
+	}
+	return errs
+}
+
+// validateFallback checks the fallback chain that starts at profile name:
+// every link names a profile, and none comes back to one the chain has been
+// through, itself included. The error says which link is wrong and what to
+// change.
+func validateFallback(profiles map[string]AgentProfile, name string) error {
+	seen := []string{name}
+	for at, next := name, profiles[name].Fallback; next != ""; at, next = next, profiles[next].Fallback {
+		if _, ok := profiles[next]; !ok {
+			if at == name {
+				return fmt.Errorf("unknown profile %q (declare it under [profiles.%s])", next, next)
+			}
+			return fmt.Errorf("profiles.%s.fallback: unknown profile %q (declare it under [profiles.%s])", at, next, next)
+		}
+		if next == at {
+			if at == name {
+				return fmt.Errorf("a profile cannot be its own fallback (name another profile, or remove the key)")
+			}
+			return fmt.Errorf("profiles.%s.fallback: a profile cannot be its own fallback (name another profile, or remove the key)", at)
+		}
+		if slices.Contains(seen, next) {
+			return fmt.Errorf("fallback chain %s comes back to %q (end the chain at a profile without a fallback)", strings.Join(append(seen, next), " -> "), next)
+		}
+		seen = append(seen, next)
+	}
+	return nil
+}
+
+// ProfileChain is the profile called name followed by every profile its
+// fallback chain runs through, in order, each one resolved; nil when
+// profiles has no profile called name. A chain that names a profile the
+// table does not have, or comes back round, ends where ValidateProfiles
+// would have refused it.
+func ProfileChain(profiles map[string]AgentProfile, name string) []AgentProfile {
+	p, ok := profiles[name]
+	if !ok {
+		return nil
+	}
+	chain := []AgentProfile{p.resolved()}
+	for _, next := range fallbackChain(profiles, name, p.Fallback) {
+		chain = append(chain, profiles[next].resolved())
+	}
+	return chain
+}

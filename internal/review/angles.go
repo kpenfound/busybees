@@ -32,7 +32,9 @@ type Angles struct {
 	// model replaced, when Agent is the CLI agent. Factory Agents overrides
 	// take precedence and can select a different provider.
 	Models map[string]string
-	// Agents supplies factory phase overrides, already restricted to host adapters.
+	// Agents is the agent of each angle it names, which may run another
+	// provider: the factory's roles.reviewer.angle_profiles, or config.toml's
+	// angle_profiles. It takes precedence over Models.
 	Agents map[string]*CLIAgent
 	// Checkout clones the pull request's head into the artifact directory
 	// for the sessions to run in (checkout.go), which is where they run
@@ -78,7 +80,7 @@ const (
 
 // NewAngles is the angle runner of a review, as the global configuration
 // says: cfg's provider and model, the angles and per-angle models cfg sets,
-// a checkout of the pull request's head
+// the profile of each angle cfg's angle_profiles names, a checkout of the pull request's head
 // authenticated by cfg's github.token, and dir the checkout Open was given
 // for when that one cannot be made.
 func NewAngles(cfg *Config, dir string) *Angles {
@@ -90,11 +92,17 @@ func NewAngles(cfg *Config, dir string) *Angles {
 	a := &Angles{Agent: agent, Provider: agent.Provider, Model: agent.Model, Checkout: checkout, Dir: dir}
 	if cfg != nil {
 		a.Sized, a.Models = cfg.Angles, cfg.AngleModels
+		for angle, name := range cfg.AngleProfiles {
+			if a.Agents == nil {
+				a.Agents = map[string]*CLIAgent{}
+			}
+			a.Agents[angle] = cfg.profileAgent(name)
+		}
 	}
 	return a
 }
 
-// agentFor selects a factory Agents override first, then a standalone Models
+// agentFor selects an Agents override first, then a Models
 // override on a copy of the CLI agent, then the default Agent and Model.
 func (a *Angles) agentFor(angle string) (Agent, string) {
 	if agent := a.Agents[angle]; agent != nil {
@@ -168,8 +176,8 @@ func (a *Angles) Resume(ctx context.Context, run AngleRun, question string) (*Ag
 		return nil, fmt.Errorf("the %s angle's session did not finish, so there is nothing to resume: run the review again", run.Angle)
 	case run.Provider == config.AgentCodex:
 		return nil, fmt.Errorf("the %s angle ran as codex, which cannot resume a session", run.Angle)
-	case run.Provider != a.Provider:
-		return nil, fmt.Errorf("the %s angle ran as %s and the configured provider is %s, which cannot resume its session", run.Angle, run.Provider, a.Provider)
+	case run.Provider != a.providerFor(run.Angle):
+		return nil, fmt.Errorf("the %s angle ran as %s and the configured provider is %s, which cannot resume its session", run.Angle, run.Provider, a.providerFor(run.Angle))
 	}
 	agent, _ := a.agentFor(run.Angle)
 	return agent.Run(ctx, AgentRequest{Name: run.Angle, Prompt: core.ResumePrompt(run, question), Dir: run.Dir, ResumeID: run.SessionID})
@@ -179,14 +187,17 @@ func (a *Angles) Resume(ctx context.Context, run AngleRun, question string) (*Ag
 func (a *Angles) core(ref Ref) *core.Angles[Ref] {
 	return &core.Angles[Ref]{Agent: a.Agent, Provider: a.Provider, Model: a.Model, Sized: a.Sized,
 		Dir: a.Dir, Log: a.Log, Rules: coreRules(a.Rules), Progress: a.Progress, AgentFor: a.agentFor,
-		ProviderFor: func(angle string) string {
-			if agent := a.Agents[angle]; agent != nil {
-				return agent.Provider
-			}
-			return a.Provider
-		},
-		Prepare: func(ctx context.Context, artifact string) (string, error) { return a.dir(ctx, artifact, ref) },
+		ProviderFor: a.providerFor,
+		Prepare:     func(ctx context.Context, artifact string) (string, error) { return a.dir(ctx, artifact, ref) },
 	}
+}
+
+// providerFor is the provider the angle's session runs as.
+func (a *Angles) providerFor(angle string) string {
+	if agent := a.Agents[angle]; agent != nil {
+		return agent.provider()
+	}
+	return a.Provider
 }
 
 func (a *Angles) Run(ctx context.Context, artifact string, project *Project, brief *Brief, diff string) ([]AngleRun, error) {

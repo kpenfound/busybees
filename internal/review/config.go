@@ -7,7 +7,7 @@
 //
 //	~/.config/bees/config.toml   the person's own settings (this file):
 //	                             provider and model, the angles of each size
-//	                             and the model of each step, where reviewer
+//	                             and the model or profile of each step, where reviewer
 //	                             notes and review artifacts live, the default
 //	                             output mode, GitHub authentication
 //	context.toml                 the project's settings (project.go): which
@@ -139,6 +139,19 @@ type Config struct {
 	// bees.toml's roles.reviewer, and has no effect here: the judge of
 	// `bees review` is deterministic code (core/review/judge.go), not a session.
 	JudgeModel string `toml:"judge_model"`
+	// Profiles are named session settings, bees.toml's [profiles.*] with the
+	// same keys and the same checks (config.ValidateProfiles): agent, model,
+	// fallback, effort and sandbox. BriefProfile selects the distiller's and
+	// AngleProfiles each named angle's, which then runs as that profile's
+	// agent, model and effort, with its fallback chain behind it; a step with
+	// a profile ignores its flat keys (provider, model, brief_model,
+	// angle_models). Sandbox is checked and not used: every review session
+	// keeps its read-only floor. JudgeProfile, like JudgeModel, is accepted
+	// so a reviewer section of bees.toml copies across, and has no effect.
+	Profiles      map[string]config.AgentProfile `toml:"profiles"`
+	BriefProfile  string                         `toml:"brief_profile"`
+	JudgeProfile  string                         `toml:"judge_profile"`
+	AngleProfiles map[string]string              `toml:"angle_profiles"`
 	// NotesPath is where the reviewer notes a dismissal appends to live,
 	// StoragePath the directory review artifact directories are created in.
 	// Both take `~`, an absolute path, or a path relative to Path's
@@ -301,6 +314,20 @@ func (c *Config) Validate() error {
 			errs = append(errs, fmt.Sprintf("angle_models.%s must name a model: remove the key to use model", angle))
 		}
 	}
+	errs = append(errs, config.ValidateProfiles(c.Profiles)...)
+	if c.BriefProfile != "" {
+		errs = append(errs, c.checkProfile("brief_profile", c.BriefProfile, true)...)
+	}
+	if c.JudgeProfile != "" {
+		errs = append(errs, c.checkProfile("judge_profile", c.JudgeProfile, false)...)
+	}
+	for _, angle := range slices.Sorted(maps.Keys(c.AngleProfiles)) {
+		if !slices.Contains(BuiltinAngles, angle) {
+			errs = append(errs, fmt.Sprintf("angle_profiles.%s: %q is not an angle, which is one of %s", angle, angle, strings.Join(BuiltinAngles, ", ")))
+			continue
+		}
+		errs = append(errs, c.checkProfile("angle_profiles."+angle, c.AngleProfiles[angle], true)...)
+	}
 	if c.GitHub.Token != "" && c.GitHub.ResolvedToken() == "" {
 		where := fmt.Sprintf("github.token %q expands to nothing", c.GitHub.Token)
 		if v := config.TokenVar(c.GitHub.Token); v != "" {
@@ -309,6 +336,52 @@ func (c *Config) Validate() error {
 		errs = append(errs, where+": set it in the environment, or remove github.token to use your own gh authentication")
 	}
 	return invalid(c.Path, errs)
+}
+
+// checkProfile checks the profile key selects: that Profiles has it, and
+// for a session's profile, that it and every profile of its fallback chain
+// run an agent a review session can run as, one of SupportedProviders.
+func (c *Config) checkProfile(key, name string, session bool) []string {
+	if _, ok := c.Profiles[name]; !ok {
+		return []string{fmt.Sprintf("%s: unknown profile %q (declare it under [profiles.%s])", key, name, name)}
+	}
+	if !session {
+		return nil
+	}
+	var errs []string
+	at := name
+	for i, p := range config.ProfileChain(c.Profiles, name) {
+		if i > 0 {
+			at = c.Profiles[at].Fallback
+		}
+		if slices.Contains(SupportedProviders, p.Agent) {
+			continue
+		}
+		which := fmt.Sprintf("profile %q", at)
+		if i > 0 {
+			which = fmt.Sprintf("its fallback profile %q", at)
+		}
+		errs = append(errs, fmt.Sprintf("%s: review sessions run as one of %s, and %s runs %q", key, strings.Join(SupportedProviders, ", "), which, p.Agent))
+	}
+	return errs
+}
+
+// profileAgent is the agent a session on the profile called name runs as:
+// the profile's agent, model and effort, and behind it, as its Fallback,
+// the agent of each profile its fallback chain runs through. The profile's
+// sandbox is not used: a review session is read-only whatever it says.
+func (c *Config) profileAgent(name string) *CLIAgent {
+	var head, at *CLIAgent
+	for _, p := range config.ProfileChain(c.Profiles, name) {
+		a := &CLIAgent{Provider: p.Agent, Model: p.Model, Effort: p.Effort}
+		if head == nil {
+			head = a
+		} else {
+			at.Fallback = a
+		}
+		at = a
+	}
+	return head
 }
 
 // Dir is the directory the configuration file lives in, which relative paths
