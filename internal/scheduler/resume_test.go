@@ -22,11 +22,11 @@ import (
 func TestAWorkerKilledInTheChecksStageResumesInIt(t *testing.T) {
 	h := newHarnessAt(t, checksTOML, time.Now())
 	seedChecksIssue(t, h)
-	h.gh.issues[1].CreatedAt = time.Now().Add(-time.Hour)
-	h.gh.checks = []checksResponse{
-		{failingJSON, fmt.Errorf("exit status 1")},     // the post-approval gate: a check failed
-		{"", fmt.Errorf("gh: could not reach github")}, // the read the scheduler dies on
-		{passingJSON, nil},                             // green again by the time it comes back
+	h.gh.Issues[1].CreatedAt = time.Now().Add(-time.Hour)
+	h.gh.Checks = []checksResponse{
+		{JSON: failingJSON, Err: fmt.Errorf("exit status 1")},     // the post-approval gate: a check failed
+		{JSON: "", Err: fmt.Errorf("gh: could not reach github")}, // the read the scheduler dies on
+		{JSON: passingJSON, Err: nil},                             // green again by the time it comes back
 	}
 	runPass(t, h)
 
@@ -40,8 +40,8 @@ func TestAWorkerKilledInTheChecksStageResumesInIt(t *testing.T) {
 	if bk.WorkerStage != "checks" || bk.AfterDevelop != "checks" {
 		t.Fatalf("bookkeeping after the crash: %+v", bk)
 	}
-	if len(h.gh.merged) != 0 {
-		t.Fatalf("nothing was merged yet, got %v", h.gh.merged)
+	if len(h.gh.Merged) != 0 {
+		t.Fatalf("nothing was merged yet, got %v", h.gh.Merged)
 	}
 	// The label a restart would otherwise infer the stage from says only that
 	// a developer is on it, which is where the old inference would restart.
@@ -55,8 +55,8 @@ func TestAWorkerKilledInTheChecksStageResumesInIt(t *testing.T) {
 	forcePoll(h)
 	runPass(t, h)
 
-	if len(h.gh.merged) != 1 || h.gh.merged[0] != fakePR {
-		t.Fatalf("the resumed checks stage did not merge: %v", h.gh.merged)
+	if len(h.gh.Merged) != 1 || h.gh.Merged[0] != fakePR {
+		t.Fatalf("the resumed checks stage did not merge: %v", h.gh.Merged)
 	}
 	// The whole saving: not one session. Re-deriving the stage from the label
 	// would have started a developer, and then a second review.
@@ -72,7 +72,7 @@ func TestAWorkerKilledInTheChecksStageResumesInIt(t *testing.T) {
 func TestAResumedWorkerDoesNotReadTheChecksAgain(t *testing.T) {
 	h := newHarness(t, prereviewTOML)
 	seedPreReviewIssue(t, h, "Restarted between rounds")
-	h.gh.issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:review"}, {Name: "bees:size/s"}}
+	h.gh.Issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:review"}, {Name: "bees:size/s"}}
 	// The pull request exists from the start: this worker is a resumption.
 	if err := os.WriteFile(h.gh.prMarker, nil, 0o644); err != nil {
 		t.Fatal(err)
@@ -85,11 +85,11 @@ func TestAResumedWorkerDoesNotReadTheChecksAgain(t *testing.T) {
 		t.Fatal(err)
 	}
 	seedCounter(t, h, "review", 1) // approve on the first round
-	h.gh.checks = []checksResponse{{passingJSON, nil}}
+	h.gh.Checks = []checksResponse{{JSON: passingJSON, Err: nil}}
 	runPreReviewLoop(t, h)
 
 	h.wantOrder("reviewer-pr-101-r2")
-	if n := h.gh.callCount("pr checks"); n != 0 {
+	if n := h.gh.CallCount("pr checks"); n != 0 {
 		t.Fatalf("a resumed worker read the checks %d times, want none: the read was already made", n)
 	}
 	if review := promptOf(t, h, 0); strings.Contains(review, "## Required checks") {
@@ -113,7 +113,7 @@ func TestARememberedStageThatContradictsTheLabelLosesToIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	seedCounter(t, h, "review", 1) // approve the round that does happen
-	h.gh.checks = []checksResponse{{passingJSON, nil}}
+	h.gh.Checks = []checksResponse{{JSON: passingJSON, Err: nil}}
 	runPreReviewLoop(t, h)
 
 	// A developer runs first, and the pre-review read the remembered state
@@ -124,7 +124,7 @@ func TestARememberedStageThatContradictsTheLabelLosesToIt(t *testing.T) {
 	}
 	// The sub-state goes with the stage: the remembered "the checks have been
 	// read" is dropped too, so this pull request gets its pre-review read.
-	if n := h.gh.callCount("pr checks"); n != 1 {
+	if n := h.gh.CallCount("pr checks"); n != 1 {
 		t.Fatalf("the checks were read %d times, want 1: the dropped stage takes its sub-state with it", n)
 	}
 }
@@ -137,7 +137,7 @@ func TestARememberedStageThatContradictsTheLabelLosesToIt(t *testing.T) {
 func TestAResumedDeveloperReturnsToTheStageThatSentIt(t *testing.T) {
 	h := newHarness(t, checksTOML)
 	seedChecksIssue(t, h)
-	h.gh.issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:in-progress"}, {Name: "bees:size/s"}}
+	h.gh.Issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:in-progress"}, {Name: "bees:size/s"}}
 	if err := os.WriteFile(h.gh.prMarker, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -147,14 +147,14 @@ func TestAResumedDeveloperReturnsToTheStageThatSentIt(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	h.gh.checks = []checksResponse{{passingJSON, nil}}
+	h.gh.Checks = []checksResponse{{JSON: passingJSON, Err: nil}}
 	runChecksLoop(t, h)
 
 	// The developer session is named as the check-fix round it is, and the
 	// pull request goes straight back to the gate that sent it: no reviewer.
 	h.wantOrder("developer-issue-1-r1-checkfix1")
-	if len(h.gh.merged) != 1 || h.gh.merged[0] != fakePR {
-		t.Fatalf("the fixed pull request was not merged: %v", h.gh.merged)
+	if len(h.gh.Merged) != 1 || h.gh.Merged[0] != fakePR {
+		t.Fatalf("the fixed pull request was not merged: %v", h.gh.Merged)
 	}
 }
 
@@ -167,7 +167,7 @@ func TestAResumedDeveloperReturnsToTheStageThatSentIt(t *testing.T) {
 func TestAResumedDeveloperRoundDoesNotPayForTheReadAgain(t *testing.T) {
 	h := newHarness(t, prereviewTOML)
 	seedPreReviewIssue(t, h, "Killed between the rounds")
-	h.gh.issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:review"}, {Name: "bees:size/s"}}
+	h.gh.Issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:review"}, {Name: "bees:size/s"}}
 	if err := os.WriteFile(h.gh.prMarker, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -179,11 +179,11 @@ func TestAResumedDeveloperRoundDoesNotPayForTheReadAgain(t *testing.T) {
 		t.Fatal(err)
 	}
 	seedCounter(t, h, "review", 1) // approve the round that follows
-	h.gh.checks = []checksResponse{{passingJSON, nil}}
+	h.gh.Checks = []checksResponse{{JSON: passingJSON, Err: nil}}
 	runPreReviewLoop(t, h)
 
 	h.wantOrder("developer-issue-1-r2", "reviewer-pr-101-r2")
-	if n := h.gh.callCount("pr checks"); n != 0 {
+	if n := h.gh.CallCount("pr checks"); n != 0 {
 		t.Fatalf("the resumed round read the checks %d times, want none", n)
 	}
 }
@@ -282,7 +282,7 @@ func TestResumeStage(t *testing.T) {
 func TestExecReviewerForgetsARecordedStage(t *testing.T) {
 	h := newHarness(t, prereviewTOML)
 	seedPreReviewIssue(t, h, "Review this now")
-	h.gh.issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:review"}, {Name: "bees:size/s"}}
+	h.gh.Issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:review"}, {Name: "bees:size/s"}}
 	if err := os.WriteFile(h.gh.prMarker, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +293,7 @@ func TestExecReviewerForgetsARecordedStage(t *testing.T) {
 		t.Fatal(err)
 	}
 	seedCounter(t, h, "review", 1) // approve straight away
-	h.gh.checks = []checksResponse{{passingJSON, nil}}
+	h.gh.Checks = []checksResponse{{JSON: passingJSON, Err: nil}}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	if err := h.sched.RunRole(ctx, config.RoleReviewer, 1, 0); err != nil {
@@ -303,7 +303,7 @@ func TestExecReviewerForgetsARecordedStage(t *testing.T) {
 	h.wantOrder("reviewer-pr-101-r1")
 	// The forced review is a first review, so it pays for the read the
 	// forgotten state claimed had already happened.
-	if n := h.gh.callCount("pr checks"); n != 1 {
+	if n := h.gh.CallCount("pr checks"); n != 1 {
 		t.Fatalf("the checks were read %d times, want 1", n)
 	}
 }
@@ -327,14 +327,14 @@ func TestASubStateDoesNotSurviveTheIssueGoingBackToReady(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	h.gh.checks = []checksResponse{{passingJSON, nil}}
+	h.gh.Checks = []checksResponse{{JSON: passingJSON, Err: nil}}
 	runChecksLoop(t, h)
 
 	// The label says ready, so this is a first round: the developer's push is
 	// reviewed before the checks gate merges it.
 	h.wantOrder("developer-issue-1-r1", "reviewer-pr-101-r1")
-	if len(h.gh.merged) != 1 || h.gh.merged[0] != fakePR {
-		t.Fatalf("merged %v", h.gh.merged)
+	if len(h.gh.Merged) != 1 || h.gh.Merged[0] != fakePR {
+		t.Fatalf("merged %v", h.gh.Merged)
 	}
 }
 
@@ -349,12 +349,12 @@ func TestASubStateDoesNotSurviveTheIssueGoingBackToReady(t *testing.T) {
 func TestExecReviewerReviewsAnIssueThatIsNotYetInReview(t *testing.T) {
 	h := newHarness(t, prereviewTOML)
 	seedPreReviewIssue(t, h, "Review what is already pushed")
-	h.gh.issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:in-progress"}, {Name: "bees:size/s"}}
+	h.gh.Issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:in-progress"}, {Name: "bees:size/s"}}
 	if err := os.WriteFile(h.gh.prMarker, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	seedCounter(t, h, "review", 1) // approve straight away
-	h.gh.checks = []checksResponse{{passingJSON, nil}}
+	h.gh.Checks = []checksResponse{{JSON: passingJSON, Err: nil}}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	if err := h.sched.RunRole(ctx, config.RoleReviewer, 1, 0); err != nil {
@@ -377,10 +377,10 @@ func TestExecReviewerReviewsAnIssueThatIsNotYetInReview(t *testing.T) {
 func TestAWorkerKilledInThePostApprovalChecksIsResumed(t *testing.T) {
 	h := newHarnessAt(t, checksTOML, time.Now())
 	seedChecksIssue(t, h)
-	h.gh.issues[1].CreatedAt = time.Now().Add(-time.Hour)
-	h.gh.checks = []checksResponse{
-		{"", fmt.Errorf("gh: could not reach github")}, // the post-approval read the scheduler dies on
-		{passingJSON, nil}, // green by the time it comes back
+	h.gh.Issues[1].CreatedAt = time.Now().Add(-time.Hour)
+	h.gh.Checks = []checksResponse{
+		{JSON: "", Err: fmt.Errorf("gh: could not reach github")}, // the post-approval read the scheduler dies on
+		{JSON: passingJSON, Err: nil},                             // green by the time it comes back
 	}
 	runPass(t, h)
 
@@ -395,8 +395,8 @@ func TestAWorkerKilledInThePostApprovalChecksIsResumed(t *testing.T) {
 	if bk.WorkerStage != "checks" {
 		t.Fatalf("bookkeeping after the crash: %+v", bk)
 	}
-	if len(h.gh.merged) != 0 {
-		t.Fatalf("nothing was merged yet, got %v", h.gh.merged)
+	if len(h.gh.Merged) != 0 {
+		t.Fatalf("nothing was merged yet, got %v", h.gh.Merged)
 	}
 
 	// Restart. The failed worker set a backoff on the issue; a real restart is
@@ -405,8 +405,8 @@ func TestAWorkerKilledInThePostApprovalChecksIsResumed(t *testing.T) {
 	forcePoll(h)
 	runPass(t, h)
 
-	if len(h.gh.merged) != 1 || h.gh.merged[0] != fakePR {
-		t.Fatalf("the resumed checks stage did not merge: %v", h.gh.merged)
+	if len(h.gh.Merged) != 1 || h.gh.Merged[0] != fakePR {
+		t.Fatalf("the resumed checks stage did not merge: %v", h.gh.Merged)
 	}
 	// Not one extra session: the review has already happened and is paid for.
 	h.wantOrder("developer-issue-1-r1", "reviewer-pr-101-r1")
@@ -447,7 +447,7 @@ func TestAnApprovedIssueThatIsNotAResumptionIsNotDispatched(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t, checksTOML)
 			seedChecksIssue(t, h)
-			h.gh.issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:approved"}, {Name: "bees:size/s"}}
+			h.gh.Issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:approved"}, {Name: "bees:size/s"}}
 			if tc.openPR {
 				if err := os.WriteFile(h.gh.prMarker, nil, 0o644); err != nil {
 					t.Fatal(err)
@@ -458,7 +458,7 @@ func TestAnApprovedIssueThatIsNotAResumptionIsNotDispatched(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			h.gh.checks = []checksResponse{{passingJSON, nil}}
+			h.gh.Checks = []checksResponse{{JSON: passingJSON, Err: nil}}
 			runPass(t, h)
 
 			if n := sessionCount(h); n != 0 {
@@ -467,10 +467,10 @@ func TestAnApprovedIssueThatIsNotAResumptionIsNotDispatched(t *testing.T) {
 			if got := h.stateOfIssue(1); got != "approved" {
 				t.Fatalf("the issue was relabelled %q", got)
 			}
-			if len(h.gh.merged) != 0 {
-				t.Fatalf("an approved pull request was merged behind a person's back: %v", h.gh.merged)
+			if len(h.gh.Merged) != 0 {
+				t.Fatalf("an approved pull request was merged behind a person's back: %v", h.gh.Merged)
 			}
-			if n := h.gh.callCount("pr checks"); n != 0 {
+			if n := h.gh.CallCount("pr checks"); n != 0 {
 				t.Fatalf("the checks were read %d times, want none: no worker was resumed", n)
 			}
 		})
@@ -485,8 +485,8 @@ func TestAnApprovedIssueThatIsNotAResumptionIsNotDispatched(t *testing.T) {
 func TestWithoutAutoMergeAnApprovedIssueStaysWithThePerson(t *testing.T) {
 	h := newHarnessAt(t, strings.Replace(checksTOML, "auto_merge = true", "auto_merge = false", 1), time.Now())
 	seedChecksIssue(t, h)
-	h.gh.issues[1].CreatedAt = time.Now().Add(-time.Hour)
-	h.gh.checks = []checksResponse{{passingJSON, nil}}
+	h.gh.Issues[1].CreatedAt = time.Now().Add(-time.Hour)
+	h.gh.Checks = []checksResponse{{JSON: passingJSON, Err: nil}}
 	runPass(t, h)
 
 	h.wantOrder("developer-issue-1-r1", "reviewer-pr-101-r1")
@@ -506,10 +506,10 @@ func TestWithoutAutoMergeAnApprovedIssueStaysWithThePerson(t *testing.T) {
 	if got := h.stateOfIssue(1); got != "approved" {
 		t.Fatalf("the issue was relabelled %q", got)
 	}
-	if len(h.gh.merged) != 0 {
-		t.Fatalf("a pull request was merged with auto_merge off: %v", h.gh.merged)
+	if len(h.gh.Merged) != 0 {
+		t.Fatalf("a pull request was merged with auto_merge off: %v", h.gh.Merged)
 	}
-	if n := h.gh.callCount("pr checks"); n != 0 {
+	if n := h.gh.CallCount("pr checks"); n != 0 {
 		t.Fatalf("the checks were read %d times with auto_merge off, want none", n)
 	}
 }
@@ -523,10 +523,10 @@ func TestWithoutAutoMergeAnApprovedIssueStaysWithThePerson(t *testing.T) {
 func TestALocalPassResumesThePostApprovalChecks(t *testing.T) {
 	h := newHarnessAt(t, checksTOML, time.Now())
 	seedChecksIssue(t, h)
-	h.gh.issues[1].CreatedAt = time.Now().Add(-time.Hour)
-	h.gh.checks = []checksResponse{
-		{"", fmt.Errorf("gh: could not reach github")},
-		{passingJSON, nil},
+	h.gh.Issues[1].CreatedAt = time.Now().Add(-time.Hour)
+	h.gh.Checks = []checksResponse{
+		{JSON: "", Err: fmt.Errorf("gh: could not reach github")},
+		{JSON: passingJSON, Err: nil},
 	}
 	runPass(t, h)
 	h.wantOrder("developer-issue-1-r1", "reviewer-pr-101-r1")
@@ -537,8 +537,8 @@ func TestALocalPassResumesThePostApprovalChecks(t *testing.T) {
 	forcePoll(h)
 	runPass(t, h)
 	h.wantOrder("developer-issue-1-r1", "reviewer-pr-101-r1")
-	if len(h.gh.merged) != 0 {
-		t.Fatalf("dispatched while backed off: %v", h.gh.merged)
+	if len(h.gh.Merged) != 0 {
+		t.Fatalf("dispatched while backed off: %v", h.gh.Merged)
 	}
 
 	// The backoff expires. The next pass is a local one — nextPoll is set —
@@ -549,8 +549,8 @@ func TestALocalPassResumesThePostApprovalChecks(t *testing.T) {
 	if n := polls(h); n != 2 {
 		t.Fatalf("%d polls, want 2: the resumption must come from a local pass", n)
 	}
-	if len(h.gh.merged) != 1 || h.gh.merged[0] != fakePR {
-		t.Fatalf("the local pass did not resume the checks stage: %v", h.gh.merged)
+	if len(h.gh.Merged) != 1 || h.gh.Merged[0] != fakePR {
+		t.Fatalf("the local pass did not resume the checks stage: %v", h.gh.Merged)
 	}
 	h.wantOrder("developer-issue-1-r1", "reviewer-pr-101-r1")
 }
@@ -565,7 +565,7 @@ func TestALocalPassResumesThePostApprovalChecks(t *testing.T) {
 func TestASubStateRecordedForAnotherPullRequestIsDropped(t *testing.T) {
 	h := newHarness(t, checksTOML)
 	seedChecksIssue(t, h)
-	h.gh.issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:review"}, {Name: "bees:size/s"}}
+	h.gh.Issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:review"}, {Name: "bees:size/s"}}
 	if err := os.WriteFile(h.gh.prMarker, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -576,7 +576,7 @@ func TestASubStateRecordedForAnotherPullRequestIsDropped(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	h.gh.checks = []checksResponse{{passingJSON, nil}}
+	h.gh.Checks = []checksResponse{{JSON: passingJSON, Err: nil}}
 	runChecksLoop(t, h)
 
 	// A first round on this pull request: the developer session is not a
@@ -585,8 +585,8 @@ func TestASubStateRecordedForAnotherPullRequestIsDropped(t *testing.T) {
 	if n := len(h.sessions(config.RoleReviewer)); n != 1 {
 		t.Fatalf("%d reviewer sessions ran, want 1: pull request %d has never been reviewed", n, fakePR)
 	}
-	if len(h.gh.merged) != 1 || h.gh.merged[0] != fakePR {
-		t.Fatalf("merged %v", h.gh.merged)
+	if len(h.gh.Merged) != 1 || h.gh.Merged[0] != fakePR {
+		t.Fatalf("merged %v", h.gh.Merged)
 	}
 }
 
@@ -599,7 +599,7 @@ func TestASubStateRecordedForAnotherPullRequestIsDropped(t *testing.T) {
 func TestAStageRecordedForAnotherPullRequestIsDropped(t *testing.T) {
 	h := newHarness(t, checksTOML)
 	seedChecksIssue(t, h)
-	h.gh.issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:review"}, {Name: "bees:size/s"}}
+	h.gh.Issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:review"}, {Name: "bees:size/s"}}
 	if err := os.WriteFile(h.gh.prMarker, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -608,15 +608,15 @@ func TestAStageRecordedForAnotherPullRequestIsDropped(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	h.gh.checks = []checksResponse{{passingJSON, nil}}
+	h.gh.Checks = []checksResponse{{JSON: passingJSON, Err: nil}}
 	runChecksLoop(t, h)
 
 	h.wantOrder("reviewer-pr-101-r1")
 	if !strings.Contains(h.logs.String(), "the remembered stage belongs to another pull request") {
 		t.Fatalf("the stale record was not logged:\n%s", h.logs.String())
 	}
-	if len(h.gh.merged) != 1 || h.gh.merged[0] != fakePR {
-		t.Fatalf("merged %v", h.gh.merged)
+	if len(h.gh.Merged) != 1 || h.gh.Merged[0] != fakePR {
+		t.Fatalf("merged %v", h.gh.Merged)
 	}
 }
 
@@ -631,8 +631,8 @@ func TestAStageRecordedForAnotherPullRequestIsDropped(t *testing.T) {
 func TestAWorkerKilledInAPostApprovalFixRoundIsResumed(t *testing.T) {
 	h := newHarnessAt(t, checksTOML, time.Now())
 	seedChecksIssue(t, h)
-	h.gh.issues[1].CreatedAt = time.Now().Add(-time.Hour)
-	h.gh.issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:approved"}, {Name: "bees:size/s"}}
+	h.gh.Issues[1].CreatedAt = time.Now().Add(-time.Hour)
+	h.gh.Issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:approved"}, {Name: "bees:size/s"}}
 	if err := os.WriteFile(h.gh.prMarker, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -643,13 +643,13 @@ func TestAWorkerKilledInAPostApprovalFixRoundIsResumed(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	h.gh.checks = []checksResponse{
-		{failingJSON, fmt.Errorf("exit status 1")}, // the gate: a check failed
-		{passingJSON, nil},                         // green once the fix is pushed
+	h.gh.Checks = []checksResponse{
+		{JSON: failingJSON, Err: fmt.Errorf("exit status 1")}, // the gate: a check failed
+		{JSON: passingJSON, Err: nil},                         // green once the fix is pushed
 	}
 	// GitHub answers the relabel to bees:in-progress with a 502 — the same
 	// window a kill lands in, and the one the reporter measured.
-	h.gh.errFor["issue edit"] = fmt.Errorf("gh: 502 Bad Gateway")
+	h.gh.ErrFor["issue edit"] = fmt.Errorf("gh: 502 Bad Gateway")
 	runPass(t, h)
 
 	h.wantOrder("reviewer-pr-101-checks1")
@@ -663,13 +663,13 @@ func TestAWorkerKilledInAPostApprovalFixRoundIsResumed(t *testing.T) {
 	if bk.WorkerStage != "develop" || bk.AfterDevelop != "checks" {
 		t.Fatalf("bookkeeping after the crash: %+v", bk)
 	}
-	if len(h.gh.merged) != 0 {
-		t.Fatalf("nothing was merged yet, got %v", h.gh.merged)
+	if len(h.gh.Merged) != 0 {
+		t.Fatalf("nothing was merged yet, got %v", h.gh.Merged)
 	}
 
 	// GitHub is healthy again. The failed worker set a backoff on the issue;
 	// a real restart is a new process, so step over it.
-	delete(h.gh.errFor, "issue edit")
+	delete(h.gh.ErrFor, "issue edit")
 	h.clock.advance(6 * h.cfg.Scheduler.PollInterval.Duration)
 	forcePoll(h)
 	runPass(t, h)
@@ -677,8 +677,8 @@ func TestAWorkerKilledInAPostApprovalFixRoundIsResumed(t *testing.T) {
 	if got := h.stateOfIssue(1); got != "in-progress" {
 		t.Fatalf("the resumed round left the issue at %q, want in-progress", got)
 	}
-	if len(h.gh.merged) != 1 || h.gh.merged[0] != fakePR {
-		t.Fatalf("the resumed fix round did not merge: %v", h.gh.merged)
+	if len(h.gh.Merged) != 1 || h.gh.Merged[0] != fakePR {
+		t.Fatalf("the resumed fix round did not merge: %v", h.gh.Merged)
 	}
 	// The developer's fix goes straight back to the gate that asked for it.
 	// The reviewer diagnosed the failure in checks mode and has nothing left

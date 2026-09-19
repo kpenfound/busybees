@@ -148,7 +148,7 @@ func TestNoSessionStartsAfterTheLoopIsCancelled(t *testing.T) {
 	h := newHarness(t, baseTOML)
 	seedReady(h, 1, "s", time.Now().Add(-time.Hour))
 	// Work for a singleton too: a triage issue is the project manager's.
-	h.gh.issues[3] = &github.Issue{Number: 3, Title: "Refine me", State: "OPEN",
+	h.gh.Issues[3] = &github.Issue{Number: 3, Title: "Refine me", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:triage"}}, CreatedAt: time.Now().Add(-time.Hour)}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -182,7 +182,7 @@ func TestACooldownCarriesTheWorkerIntoItsReview(t *testing.T) {
 	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true, config.RoleReviewer: true}
 	// The pre-review read has an answer, and the first review approves
 	// rather than asking for a round the cool-down would have to carry too.
-	h.gh.checks = []checksResponse{{`[{"name":"go / test","bucket":"pass","state":"SUCCESS"}]`, nil}}
+	h.gh.Checks = []checksResponse{{JSON: `[{"name":"go / test","bucket":"pass","state":"SUCCESS"}]`, Err: nil}}
 	seedCounter(t, h, "review", 1)
 	_, release, cancel, done := startHeldSession(t, h, func(dir string) bool {
 		_, err := os.Stat(filepath.Join(dir, "args.txt"))
@@ -201,7 +201,7 @@ func TestACooldownCarriesTheWorkerIntoItsReview(t *testing.T) {
 	if n := len(h.sessions(config.RoleReviewer)); n != 1 {
 		t.Fatalf("%d reviewer sessions after the loop was cancelled, want 1: the worker must run the stages its issue has left", n)
 	}
-	if got := h.gh.history[1]; len(got) == 0 || got[len(got)-1] != "bees:approved" {
+	if got := h.gh.History[1]; len(got) == 0 || got[len(got)-1] != "bees:approved" {
 		t.Errorf("issue 1 label history %v, want it to end at bees:approved", got)
 	}
 }
@@ -236,7 +236,7 @@ func TestAHardStopEndsTheWorkerBeforeItsReview(t *testing.T) {
 func TestACooldownStillEscalatesAtTheRoundLimit(t *testing.T) {
 	h := newHarness(t, strings.Replace(prereviewTOML, "max_review_rounds = 3", "max_review_rounds = 1", 1))
 	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true, config.RoleReviewer: true}
-	h.gh.checks = []checksResponse{{`[{"name":"go / test","bucket":"pass","state":"SUCCESS"}]`, nil}}
+	h.gh.Checks = []checksResponse{{JSON: `[{"name":"go / test","bucket":"pass","state":"SUCCESS"}]`, Err: nil}}
 	// The one round this issue has requests changes, which is the round
 	// limit reached.
 	_, release, cancel, done := startHeldSession(t, h, func(dir string) bool {
@@ -256,10 +256,10 @@ func TestACooldownStillEscalatesAtTheRoundLimit(t *testing.T) {
 	if n := len(h.sessions(config.RoleReviewer)); n != 1 {
 		t.Fatalf("%d reviewer sessions, want 1: the round limit must end the loop, not the cool-down", n)
 	}
-	if got := h.gh.history[1]; len(got) == 0 || got[len(got)-1] != "bees:needs-human" {
+	if got := h.gh.History[1]; len(got) == 0 || got[len(got)-1] != "bees:needs-human" {
 		t.Errorf("issue 1 label history %v, want it to end at bees:needs-human", got)
 	}
-	if c := strings.Join(h.gh.comments[1], "\n"); !strings.Contains(c, "review round") {
+	if c := strings.Join(h.gh.Comments[1], "\n"); !strings.Contains(c, "review round") {
 		t.Errorf("the escalation does not say the pull request ran out of review rounds: %q", c)
 	}
 }
@@ -310,7 +310,7 @@ func TestACooldownBetweenTwoStagesSaysWhatItIsWaitingFor(t *testing.T) {
 	// construction rather than by timing.
 	h := newHarness(t, prereviewTOML+"[roles.reviewer]\nchecks_wait = \"2s\"\nchecks_poll_interval = \"10ms\"\n")
 	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true, config.RoleReviewer: true}
-	h.gh.checks = []checksResponse{{`[{"name":"go / test","bucket":"pass","state":"SUCCESS"}]`, nil}}
+	h.gh.Checks = []checksResponse{{JSON: `[{"name":"go / test","bucket":"pass","state":"SUCCESS"}]`, Err: nil}}
 	seedCounter(t, h, "review", 1)
 	_, release, cancel, done := startHeldSession(t, h, func(dir string) bool {
 		_, err := os.Stat(filepath.Join(dir, "args.txt"))

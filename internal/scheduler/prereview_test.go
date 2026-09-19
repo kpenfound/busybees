@@ -28,9 +28,9 @@ enabled = false
 
 func seedPreReviewIssue(t *testing.T, h *harness, title string) {
 	t.Helper()
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: title, State: "OPEN",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: title, State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now()}
-	h.gh.prs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main",
+	h.gh.PRs[fakePR] = &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main",
 		Labels: []github.Label{{Name: "bees"}}}
 }
 
@@ -65,10 +65,10 @@ func TestPreReviewChecksFailBeforeTheFirstReview(t *testing.T) {
 	pending := `[{"name":"go / test","bucket":"pending","state":"PENDING","link":"https://ci.example.com/run/1","workflow":"CI"}]`
 	failing := `[{"name":"go / test","bucket":"fail","state":"FAILURE","link":"https://ci.example.com/run/1","description":"1 test failed","workflow":"CI"}]`
 	passing := `[{"name":"go / test","bucket":"pass","state":"SUCCESS","link":"https://ci.example.com/run/2"}]`
-	h.gh.checks = []checksResponse{
-		{pending, fmt.Errorf("exit status 8")},
-		{failing, fmt.Errorf("exit status 1")},
-		{passing, nil},
+	h.gh.Checks = []checksResponse{
+		{JSON: pending, Err: fmt.Errorf("exit status 8")},
+		{JSON: failing, Err: fmt.Errorf("exit status 1")},
+		{JSON: passing, Err: nil},
 	}
 	runPreReviewLoop(t, h)
 
@@ -77,11 +77,11 @@ func TestPreReviewChecksFailBeforeTheFirstReview(t *testing.T) {
 	// check-fix round just because round 1 came back through the checks.
 	h.wantOrder("developer-issue-1-r1", "reviewer-pr-101-checks1", "developer-issue-1-r1-checkfix1",
 		"reviewer-pr-101-r1", "developer-issue-1-r2", "reviewer-pr-101-r2")
-	if last := h.gh.history[1][len(h.gh.history[1])-1]; last != "bees:approved" {
-		t.Fatalf("history: %v", h.gh.history[1])
+	if last := h.gh.History[1][len(h.gh.History[1])-1]; last != "bees:approved" {
+		t.Fatalf("history: %v", h.gh.History[1])
 	}
-	if len(h.gh.comments[1]) != 0 {
-		t.Fatalf("unexpected escalation: %v", h.gh.comments[1])
+	if len(h.gh.Comments[1]) != 0 {
+		t.Fatalf("unexpected escalation: %v", h.gh.Comments[1])
 	}
 	if diagnose := promptOf(t, h, 1); !strings.Contains(diagnose, "**go / test** (CI) — fail: 1 test failed") {
 		t.Fatalf("checks prompt missing the failing check:\n%s", diagnose)
@@ -105,13 +105,13 @@ func TestPreReviewChecksFailBeforeTheFirstReview(t *testing.T) {
 func TestPreReviewChecksReadOncePerPullRequest(t *testing.T) {
 	h := newHarness(t, prereviewTOML)
 	seedPreReviewIssue(t, h, "Two rounds")
-	h.gh.checks = []checksResponse{{`[{"name":"go / test","bucket":"pass","state":"SUCCESS"}]`, nil}}
+	h.gh.Checks = []checksResponse{{JSON: `[{"name":"go / test","bucket":"pass","state":"SUCCESS"}]`, Err: nil}}
 	runPreReviewLoop(t, h)
 
 	// Round 1 requests changes, round 2 approves; the prereview stage runs
 	// once, between the first developer session and the first review.
 	h.wantOrder("developer-issue-1-r1", "reviewer-pr-101-r1", "developer-issue-1-r2", "reviewer-pr-101-r2")
-	if n := h.gh.callCount("pr checks"); n != 1 {
+	if n := h.gh.CallCount("pr checks"); n != 1 {
 		t.Fatalf("the checks were read %d times for one pull request, want 1", n)
 	}
 	if review := promptOf(t, h, 1); !strings.Contains(review, "CI is green") {
@@ -128,16 +128,16 @@ func TestPreReviewChecksReadOnceAcrossThreeRounds(t *testing.T) {
 	t.Setenv("FAKE_REVIEW_ALWAYS_CHANGES", "1")
 	h := newHarness(t, prereviewTOML)
 	seedPreReviewIssue(t, h, "Never approved")
-	h.gh.checks = []checksResponse{{`[{"name":"go / test","bucket":"pass","state":"SUCCESS"}]`, nil}}
+	h.gh.Checks = []checksResponse{{JSON: `[{"name":"go / test","bucket":"pass","state":"SUCCESS"}]`, Err: nil}}
 	runPreReviewLoop(t, h)
 
 	h.wantOrder("developer-issue-1-r1", "reviewer-pr-101-r1", "developer-issue-1-r2", "reviewer-pr-101-r2",
 		"developer-issue-1-r3", "reviewer-pr-101-r3")
-	if n := h.gh.callCount("pr checks"); n != 1 {
+	if n := h.gh.CallCount("pr checks"); n != 1 {
 		t.Fatalf("the checks were read %d times over three review rounds, want 1", n)
 	}
-	if len(h.gh.comments[1]) != 1 {
-		t.Fatalf("want the max_review_rounds escalation, got: %v", h.gh.comments[1])
+	if len(h.gh.Comments[1]) != 1 {
+		t.Fatalf("want the max_review_rounds escalation, got: %v", h.gh.Comments[1])
 	}
 }
 
@@ -149,17 +149,17 @@ func TestPreReviewChecksReadOnceAcrossThreeRounds(t *testing.T) {
 func TestPreReviewChecksOnAResumedWorker(t *testing.T) {
 	h := newHarness(t, prereviewTOML)
 	seedPreReviewIssue(t, h, "Restarted mid-review")
-	h.gh.issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:review"}, {Name: "bees:size/s"}}
+	h.gh.Issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:review"}, {Name: "bees:size/s"}}
 	// The pull request exists from the start: this worker is a resumption.
 	if err := os.WriteFile(h.gh.prMarker, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	seedCounter(t, h, "review", 1) // approve on the first round
-	h.gh.checks = []checksResponse{{`[{"name":"go / test","bucket":"pass","state":"SUCCESS"}]`, nil}}
+	h.gh.Checks = []checksResponse{{JSON: `[{"name":"go / test","bucket":"pass","state":"SUCCESS"}]`, Err: nil}}
 	runPreReviewLoop(t, h)
 
 	h.wantOrder("reviewer-pr-101-r1")
-	if n := h.gh.callCount("pr checks"); n != 1 {
+	if n := h.gh.CallCount("pr checks"); n != 1 {
 		t.Fatalf("a resumed worker read the checks %d times, want 1", n)
 	}
 	if review := promptOf(t, h, 0); !strings.Contains(review, "CI is green") {
@@ -173,12 +173,12 @@ func TestPreReviewChecksPendingReviewsAnyway(t *testing.T) {
 	h := newHarness(t, prereviewTOML+"[roles.reviewer]\npre_review_checks_timeout = \"1ms\"\n")
 	seedPreReviewIssue(t, h, "Slow CI")
 	seedCounter(t, h, "review", 1)
-	h.gh.checks = []checksResponse{{`[{"name":"slow","bucket":"pending","state":"PENDING"}]`, fmt.Errorf("exit status 8")}}
+	h.gh.Checks = []checksResponse{{JSON: `[{"name":"slow","bucket":"pending","state":"PENDING"}]`, Err: fmt.Errorf("exit status 8")}}
 	runPreReviewLoop(t, h)
 
 	h.wantOrder("developer-issue-1-r1", "reviewer-pr-101-r1")
-	if len(h.gh.comments[1]) != 0 {
-		t.Fatalf("pending checks must not escalate before the review: %v", h.gh.comments[1])
+	if len(h.gh.Comments[1]) != 0 {
+		t.Fatalf("pending checks must not escalate before the review: %v", h.gh.Comments[1])
 	}
 	review := promptOf(t, h, 1)
 	for _, want := range []string{"## Required checks", "slow — pending", "still pending after `1ms`", "say in your note that CI had not reported"} {
@@ -194,12 +194,12 @@ func TestPreReviewChecksErrorReviewsAnyway(t *testing.T) {
 	h := newHarness(t, prereviewTOML)
 	seedPreReviewIssue(t, h, "Broken gh")
 	seedCounter(t, h, "review", 1)
-	h.gh.errFor["pr checks"] = fmt.Errorf("HTTP 503: Service Unavailable")
+	h.gh.ErrFor["pr checks"] = fmt.Errorf("HTTP 503: Service Unavailable")
 	runPreReviewLoop(t, h)
 
 	h.wantOrder("developer-issue-1-r1", "reviewer-pr-101-r1")
-	if len(h.gh.comments[1]) != 0 {
-		t.Fatalf("a failed checks read must not escalate: %v", h.gh.comments[1])
+	if len(h.gh.Comments[1]) != 0 {
+		t.Fatalf("a failed checks read must not escalate: %v", h.gh.Comments[1])
 	}
 	if review := promptOf(t, h, 1); strings.Contains(review, "## Required checks") {
 		t.Fatalf("reviewer prompt has a checks section after a failed read:\n%s", review)
@@ -224,12 +224,12 @@ func TestPreReviewChecksErrorReviewsAnyway(t *testing.T) {
 func TestPreReviewChecksDisabled(t *testing.T) {
 	h := newHarness(t, prereviewTOML+"[roles.reviewer]\npre_review_checks = false\n")
 	seedPreReviewIssue(t, h, "No pre-review")
-	h.gh.checks = []checksResponse{{`[{"name":"go / test","bucket":"fail","state":"FAILURE"}]`, fmt.Errorf("exit status 1")}}
+	h.gh.Checks = []checksResponse{{JSON: `[{"name":"go / test","bucket":"fail","state":"FAILURE"}]`, Err: fmt.Errorf("exit status 1")}}
 	runPreReviewLoop(t, h)
 
 	// Today's sequence: review round 1 requests changes, round 2 approves.
 	h.wantOrder("developer-issue-1-r1", "reviewer-pr-101-r1", "developer-issue-1-r2", "reviewer-pr-101-r2")
-	if n := h.gh.callCount("pr checks"); n != 0 {
+	if n := h.gh.CallCount("pr checks"); n != 0 {
 		t.Fatalf("the checks were read %d times with pre_review_checks = false", n)
 	}
 	for i := range h.sessionOrder() {
@@ -245,7 +245,7 @@ func TestPreReviewChecksDisabled(t *testing.T) {
 func TestPreReviewChecksRecoverClearsTheDegradedEntry(t *testing.T) {
 	h := newHarness(t, prereviewTOML)
 	seedPreReviewIssue(t, h, "Flaky gh")
-	h.gh.checks = []checksResponse{{"", fmt.Errorf("HTTP 503: Service Unavailable")}}
+	h.gh.Checks = []checksResponse{{JSON: "", Err: fmt.Errorf("HTTP 503: Service Unavailable")}}
 	runPreReviewLoop(t, h)
 
 	// Issue 1: the read failed, so its review has no checks section.
@@ -262,13 +262,13 @@ func TestPreReviewChecksRecoverClearsTheDegradedEntry(t *testing.T) {
 	}
 	// A failed read is still one read: the failure does not buy the next
 	// round another attempt.
-	if n := h.gh.callCount("pr checks"); n != 1 {
+	if n := h.gh.CallCount("pr checks"); n != 1 {
 		t.Fatalf("a failed read was made %d times for one pull request, want 1", n)
 	}
 
 	// A second issue, whose read works, clears the streak.
 	seedReady(h, 2, "s", time.Now())
-	h.gh.checks = []checksResponse{{`[{"name":"go / test","bucket":"pass","state":"SUCCESS"}]`, nil}}
+	h.gh.Checks = []checksResponse{{JSON: `[{"name":"go / test","bucket":"pass","state":"SUCCESS"}]`, Err: nil}}
 	forcePoll(h)
 	runPreReviewLoop(t, h)
 
@@ -332,7 +332,7 @@ func mailSection(t *testing.T, prompt string) string {
 func TestReviewerReceivesHumanMail(t *testing.T) {
 	h := newHarness(t, prereviewTOML)
 	seedPreReviewIssue(t, h, "Two rounds")
-	h.gh.checks = []checksResponse{{`[{"name":"go / test","bucket":"pass","state":"SUCCESS"}]`, nil}}
+	h.gh.Checks = []checksResponse{{JSON: `[{"name":"go / test","bucket":"pass","state":"SUCCESS"}]`, Err: nil}}
 	if _, err := h.box.Send(mail.Message{From: HumanSender, To: config.RoleReviewer,
 		Subject: "Naming", Body: "leave the flag names alone", Work: ghwork.New(1, 0)}); err != nil {
 		t.Fatal(err)
@@ -366,7 +366,7 @@ func TestReviewerChecksSessionReceivesMail(t *testing.T) {
 	seedPreReviewIssue(t, h, "Ship it")
 	failing := `[{"name":"go / test","bucket":"fail","state":"FAILURE","link":"https://ci.example.com/run/1","workflow":"CI"}]`
 	passing := `[{"name":"go / test","bucket":"pass","state":"SUCCESS","link":"https://ci.example.com/run/2"}]`
-	h.gh.checks = []checksResponse{{failing, fmt.Errorf("exit status 1")}, {passing, nil}}
+	h.gh.Checks = []checksResponse{{JSON: failing, Err: fmt.Errorf("exit status 1")}, {JSON: passing, Err: nil}}
 	if _, err := h.box.Send(mail.Message{From: HumanSender, To: config.RoleReviewer,
 		Subject: "That check", Body: "the CI runner is being replaced", Work: ghwork.New(0, fakePR)}); err != nil {
 		t.Fatal(err)
@@ -395,10 +395,10 @@ func TestReviewerChecksSessionReceivesMail(t *testing.T) {
 func TestAReviewCostsNoParentLookup(t *testing.T) {
 	h := newHarness(t, prereviewTOML)
 	seedPreReviewIssue(t, h, "Ship it")
-	h.gh.issues[5] = &github.Issue{Number: 5, Title: "Exports", State: "OPEN",
+	h.gh.Issues[5] = &github.Issue{Number: 5, Title: "Exports", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:feature"}}, CreatedAt: time.Now()}
-	h.gh.parents = map[int]int{1: 5}
-	h.gh.checks = []checksResponse{{`[{"name":"go / test","bucket":"pass","state":"SUCCESS"}]`, nil}}
+	h.gh.Parents = map[int]int{1: 5}
+	h.gh.Checks = []checksResponse{{JSON: `[{"name":"go / test","bucket":"pass","state":"SUCCESS"}]`, Err: nil}}
 	seedCounter(t, h, "review", 1) // approve the first review
 	runPreReviewLoop(t, h)
 
@@ -407,7 +407,7 @@ func TestAReviewCostsNoParentLookup(t *testing.T) {
 		t.Errorf("the reviewer's task carries no findings:\n%s", review)
 	}
 	// One query for the developer session, none for the review.
-	if n := h.gh.callCount("api graphql"); n != 1 {
+	if n := h.gh.CallCount("api graphql"); n != 1 {
 		t.Errorf("%d ParentIssue queries, want 1 (the developer's)", n)
 	}
 }

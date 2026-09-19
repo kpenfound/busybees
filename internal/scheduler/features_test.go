@@ -21,7 +21,7 @@ import (
 // seedWorkItem seeds an open work item, ready and sized so reconcile leaves
 // it alone (no developer runs in these tests).
 func seedWorkItem(h *harness, n int, title string, created time.Time) {
-	h.gh.issues[n] = &github.Issue{Number: n, Title: title, State: "OPEN",
+	h.gh.Issues[n] = &github.Issue{Number: n, Title: title, State: "OPEN",
 		Author: github.Author{Login: "kyle"}, CreatedAt: created, UpdatedAt: created,
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}}
 }
@@ -42,8 +42,8 @@ func nextPass(t *testing.T, h *harness) {
 // run, so freshIssues does not even fetch it. Nothing but the completeness
 // check can bring it back to the product manager.
 func quietFeature(h *harness, n int, at time.Time) {
-	h.gh.issues[n].UpdatedAt = at
-	h.gh.issues[n].Comments = []github.Comment{{Author: github.Author{Login: "kyle"},
+	h.gh.Issues[n].UpdatedAt = at
+	h.gh.Issues[n].Comments = []github.Comment{{Author: github.Author{Login: "kyle"},
 		Body: "work items listed\n\n<!-- bees:product_manager -->", CreatedAt: at}}
 }
 
@@ -95,7 +95,7 @@ func TestAFeatureWhoseWorkIsDoneWakesTheProductManagerOnce(t *testing.T) {
 
 	// The last work item closes. Nothing else changes: the feature is stale
 	// and the product manager ran a moment ago.
-	h.gh.issues[1].State = "CLOSED"
+	h.gh.Issues[1].State = "CLOSED"
 	nextPass(t, h)
 	if n := len(h.sessions(config.RoleProductManager)); n != 2 {
 		t.Fatalf("closing the last sub-issue did not wake the product manager: %d sessions, want 2", n)
@@ -145,11 +145,11 @@ func TestTheCompletedFeatureCheckCostsNoGitHubCalls(t *testing.T) {
 	}
 
 	// Nothing recorded: the pass gh makes are the ones it made before #239.
-	before := h.gh.total()
+	before := h.gh.Total()
 	if h.sched.productManagerHasWork(ctx, snap) {
 		t.Fatal("a stale feature with no recorded sub-issues woke the product manager")
 	}
-	base := h.gh.total() - before
+	base := h.gh.Total() - before
 
 	// A recorded sub-issue that is still open: the same calls, no more.
 	// Seeded through the owner of the two fields — SaveIssue writes the
@@ -157,11 +157,11 @@ func TestTheCompletedFeatureCheckCostsNoGitHubCalls(t *testing.T) {
 	if err := h.store.SetOpenChildren(5, []int{1}, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
-	before = h.gh.total()
+	before = h.gh.Total()
 	if h.sched.productManagerHasWork(ctx, snap) {
 		t.Fatal("a feature with an open sub-issue woke the product manager")
 	}
-	if got := h.gh.total() - before; got != base {
+	if got := h.gh.Total() - before; got != base {
 		t.Errorf("the completeness check added %d gh calls to the polling path (%d, was %d)", got-base, got, base)
 	}
 
@@ -169,12 +169,12 @@ func TestTheCompletedFeatureCheckCostsNoGitHubCalls(t *testing.T) {
 	if err := h.store.SetOpenChildren(5, []int{77}, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
-	before = h.gh.total()
+	before = h.gh.Total()
 	if !h.sched.productManagerHasWork(ctx, snap) {
 		t.Fatal("a feature whose recorded sub-issue is gone did not wake the product manager")
 	}
-	if got := h.gh.total() - before; got != 0 {
-		t.Errorf("reporting a completed feature made %d gh calls, want 0: %v", got, h.gh.calls[len(h.gh.calls)-got:])
+	if got := h.gh.Total() - before; got != 0 {
+		t.Errorf("reporting a completed feature made %d gh calls, want 0: %v", got, h.gh.Calls[len(h.gh.Calls)-got:])
 	}
 }
 
@@ -185,13 +185,13 @@ func TestTheCompletedFeatureCheckCostsNoGitHubCalls(t *testing.T) {
 func TestAFeatureThatGainsASubIssueIsReportedAgain(t *testing.T) {
 	now := time.Now()
 	h := newHarnessAt(t, pmOnlyTOML, now)
-	h.gh.parents = map[int]int{1: 5, 7: 5}
+	h.gh.Parents = map[int]int{1: 5, 7: 5}
 	seedFeature(h, 5, "Exports", now.Add(-2*time.Hour))
 	quietFeature(h, 5, now.Add(-time.Hour))
 	seedWorkItem(h, 1, "Export to CSV", now.Add(-time.Hour))
 
 	runPass(t, h)
-	h.gh.issues[1].State = "CLOSED"
+	h.gh.Issues[1].State = "CLOSED"
 	nextPass(t, h)
 	if n := len(h.sessions(config.RoleProductManager)); n != 2 {
 		t.Fatalf("closing the last sub-issue did not wake the product manager: %d sessions, want 2", n)
@@ -218,7 +218,7 @@ func TestAFeatureThatGainsASubIssueIsReportedAgain(t *testing.T) {
 	}
 
 	// Closing that one reports the feature complete a second time.
-	h.gh.issues[7].State = "CLOSED"
+	h.gh.Issues[7].State = "CLOSED"
 	nextPass(t, h)
 	if n := len(h.sessions(config.RoleProductManager)); n != 4 {
 		t.Fatalf("the re-armed feature did not wake the product manager: %d sessions, want 4", n)
@@ -245,7 +245,7 @@ func TestAnEmptyParentLookupKeepsTheRecordedSubIssues(t *testing.T) {
 	// The sub-issue query fails from here on. The product manager still runs
 	// (the Parent column just shows `-` for everything), and the numbers it
 	// recorded before survive the run.
-	h.gh.errFor["api graphql"] = errors.New("sub-issue query is down")
+	h.gh.ErrFor["api graphql"] = errors.New("sub-issue query is down")
 	if _, err := h.box.Send(mail.Message{From: HumanSender, To: config.RoleProductManager,
 		Subject: "how is Exports going", Body: "?"}); err != nil {
 		t.Fatal(err)
@@ -264,7 +264,7 @@ func TestAnEmptyParentLookupKeepsTheRecordedSubIssues(t *testing.T) {
 
 	// So the last work item closing is still noticed, without any GitHub call
 	// to notice it with.
-	h.gh.issues[1].State = "CLOSED"
+	h.gh.Issues[1].State = "CLOSED"
 	nextPass(t, h)
 	if n := len(h.sessions(config.RoleProductManager)); n != 3 {
 		t.Fatalf("the finished feature did not wake the product manager: %d sessions, want 3", n)
@@ -290,7 +290,7 @@ func TestAFailedProductManagerSessionDoesNotSpendTheReport(t *testing.T) {
 	// session dies without reporting an outcome, the way one that could not
 	// start does.
 	t.Setenv("FAKE_LIMIT", strconv.FormatInt(now.Add(time.Hour).Unix(), 10))
-	h.gh.issues[1].State = "CLOSED"
+	h.gh.Issues[1].State = "CLOSED"
 	nextPass(t, h)
 	is, err := h.store.Issue(5)
 	if err != nil {
@@ -318,7 +318,7 @@ func TestAFailedProductManagerSessionDoesNotSpendTheReport(t *testing.T) {
 func TestAPartialParentLookupKeepsTheRecordedSubIssues(t *testing.T) {
 	now := time.Now()
 	h := newHarnessAt(t, pmOnlyTOML, now)
-	h.gh.parents = map[int]int{1: 5, 7: 5}
+	h.gh.Parents = map[int]int{1: 5, 7: 5}
 	seedFeature(h, 5, "Exports", now.Add(-2*time.Hour))
 	quietFeature(h, 5, now.Add(-time.Hour))
 	seedWorkItem(h, 1, "Export to CSV", now.Add(-time.Hour))
@@ -334,7 +334,7 @@ func TestAPartialParentLookupKeepsTheRecordedSubIssues(t *testing.T) {
 
 	// #7's query fails on the next run: #1 still answers, so the lookup is
 	// non-empty but short of one child.
-	h.gh.parentErr = map[int]error{7: errors.New("sub-issue query is down")}
+	h.gh.ParentErr = map[int]error{7: errors.New("sub-issue query is down")}
 	if _, err := h.box.Send(mail.Message{From: HumanSender, To: config.RoleProductManager,
 		Subject: "how is Exports going", Body: "?"}); err != nil {
 		t.Fatal(err)
@@ -352,7 +352,7 @@ func TestAPartialParentLookupKeepsTheRecordedSubIssues(t *testing.T) {
 	}
 
 	// So closing #1 while #7 is still open reports nothing.
-	h.gh.issues[1].State = "CLOSED"
+	h.gh.Issues[1].State = "CLOSED"
 	nextPass(t, h)
 	if n := len(h.sessions(config.RoleProductManager)); n != 2 {
 		t.Errorf("a feature with an open sub-issue was reported complete: %d sessions, want 2", n)
@@ -367,12 +367,12 @@ func TestAPartialParentLookupKeepsTheRecordedSubIssues(t *testing.T) {
 func TestAFailedProductManagerSessionStillRecordsTheSubIssues(t *testing.T) {
 	now := time.Now()
 	h := newHarnessAt(t, pmOnlyTOML, now)
-	h.gh.parents = map[int]int{1: 5, 7: 5}
+	h.gh.Parents = map[int]int{1: 5, 7: 5}
 	seedFeature(h, 5, "Exports", now.Add(-2*time.Hour))
 	quietFeature(h, 5, now.Add(-time.Hour))
 	seedWorkItem(h, 1, "Export to CSV", now.Add(-time.Hour))
 	runPass(t, h)
-	h.gh.issues[1].State = "CLOSED"
+	h.gh.Issues[1].State = "CLOSED"
 	nextPass(t, h)
 	if is, err := h.store.Issue(5); err != nil || is.CompleteReportedAt.IsZero() {
 		t.Fatalf("the feature was not reported complete: %+v (%v)", is, err)
@@ -402,7 +402,7 @@ func TestAFailedProductManagerSessionStillRecordsTheSubIssues(t *testing.T) {
 	// product_manager_interval so nothing but the trigger can be the wake.
 	t.Setenv("FAKE_LIMIT", "")
 	h.clock.advance(15 * time.Minute)
-	h.gh.issues[7].State = "CLOSED"
+	h.gh.Issues[7].State = "CLOSED"
 	forcePoll(h)
 	runPass(t, h)
 	if !strings.Contains(section(t, lastPMPrompt(t, h), "## Features whose work is done"), "#5: Exports") {
@@ -433,7 +433,7 @@ func TestFeatureRelationshipsRefreshAfterProductManager(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			now := time.Now()
 			h := newHarnessAt(t, pmOnlyTOML, now)
-			h.gh.parents = map[int]int{1: 5}
+			h.gh.Parents = map[int]int{1: 5}
 			seedFeature(h, 5, "Exports", now.Add(-2*time.Hour))
 			quietFeature(h, 5, now.Add(-time.Hour))
 			seedWorkItem(h, 1, "CSV", now.Add(-time.Hour))
@@ -441,10 +441,10 @@ func TestFeatureRelationshipsRefreshAfterProductManager(t *testing.T) {
 				seedWorkItem(h, 7, "XLSX", now.Add(-time.Hour))
 			}
 			runPass(t, h)
-			h.gh.issues[1].State = "CLOSED"
+			h.gh.Issues[1].State = "CLOSED"
 			if tc.parentFailure {
 				seedWorkItem(h, 9, "Unrelated work", now.Add(-time.Hour))
-				h.gh.parentErr = map[int]error{9: errors.New("unrelated parent lookup failed")}
+				h.gh.ParentErr = map[int]error{9: errors.New("unrelated parent lookup failed")}
 			}
 
 			release := filepath.Join(t.TempDir(), "release")
@@ -456,30 +456,30 @@ func TestFeatureRelationshipsRefreshAfterProductManager(t *testing.T) {
 			waitFor(t, 30*time.Second, "completion session to start", func() bool {
 				return len(h.sessionOrder()) == 2
 			})
-			h.gh.mu.Lock()
+			h.gh.Lock()
 			if tc.name != "unchanged" {
 				if !tc.attach {
 					seedWorkItem(h, 7, "XLSX", now)
 				}
-				h.gh.parents[7] = 5
+				h.gh.Parents[7] = 5
 				switch tc.excluded {
 				case "label":
-					h.gh.issues[7].Labels = nil
+					h.gh.Issues[7].Labels = nil
 				case "bees:feature", "bees:feedback":
-					h.gh.issues[7].Labels = []github.Label{{Name: "bees"}, {Name: tc.excluded}}
+					h.gh.Issues[7].Labels = []github.Label{{Name: "bees"}, {Name: tc.excluded}}
 					quietFeature(h, 7, now.Add(-time.Hour))
 				}
 				if tc.closed {
-					h.gh.issues[7].State = "CLOSED"
+					h.gh.Issues[7].State = "CLOSED"
 				}
 			}
 			switch tc.failure {
 			case "failed":
-				h.gh.childErr = map[int]error{5: errors.New("relationship lookup failed")}
+				h.gh.ChildErr = map[int]error{5: errors.New("relationship lookup failed")}
 			case "incomplete":
-				h.gh.childResponse = map[int]string{5: `[[{"repository_url":"https://api.github.com/repos/acme/widgets","number":7,"state":"open"}],null]`}
+				h.gh.ChildResponse = map[int]string{5: `[[{"repository_url":"https://api.github.com/repos/acme/widgets","number":7,"state":"open"}],null]`}
 			}
-			h.gh.mu.Unlock()
+			h.gh.Unlock()
 			if err := os.WriteFile(release, nil, 0600); err != nil {
 				t.Fatal(err)
 			}
@@ -505,7 +505,7 @@ func TestFeatureRelationshipsRefreshAfterProductManager(t *testing.T) {
 					t.Fatalf("unchanged feature ran again: %d", n)
 				}
 				if tc.excluded != "" {
-					h.gh.issues[7].State = "CLOSED"
+					h.gh.Issues[7].State = "CLOSED"
 					nextPass(t, h)
 					if n := len(h.sessions(config.RoleProductManager)); n != 2 {
 						t.Fatalf("excluded child's closure triggered completion: %d", n)
@@ -531,7 +531,7 @@ func TestFeatureRelationshipsRefreshAfterProductManager(t *testing.T) {
 				if n := len(h.sessions(config.RoleProductManager)); n != 2 {
 					t.Fatalf("open child triggered completion: %d", n)
 				}
-				h.gh.issues[7].State = "CLOSED"
+				h.gh.Issues[7].State = "CLOSED"
 			}
 			nextPass(t, h)
 			if n := len(h.sessions(config.RoleProductManager)); n != 3 {

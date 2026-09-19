@@ -52,10 +52,10 @@ func runLoop(t *testing.T, h *harness) func() {
 // only issue list that asks for open issues: the visibility backstop after
 // every session lists --state all, and nothing else lists issues at all.
 func polls(h *harness) int {
-	h.gh.mu.Lock()
-	defer h.gh.mu.Unlock()
+	h.gh.Lock()
+	defer h.gh.Unlock()
 	n := 0
-	for _, c := range h.gh.calls {
+	for _, c := range h.gh.Calls {
 		if len(c) < 2 || c[0] != "issue" || c[1] != "list" {
 			continue
 		}
@@ -167,12 +167,12 @@ enabled = false
 func TestABurstOfSignalsCostsOneLocalPass(t *testing.T) {
 	now := time.Date(2026, 3, 2, 10, 0, 0, 0, time.UTC)
 	h := newHarnessAt(t, wakeTOML+rolesOffTOML, now)
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "An idea", Body: "please", State: "OPEN",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "An idea", Body: "please", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}}, CreatedAt: now.Add(-24 * time.Hour)}
-	h.gh.errFor["issue edit"] = errors.New("boom")
+	h.gh.ErrFor["issue edit"] = errors.New("boom")
 
 	runPass(t, h)
-	before := h.gh.callCount("issue edit")
+	before := h.gh.CallCount("issue edit")
 	if before != 1 {
 		t.Fatalf("the full pass made %d label edits, want 1: the fixture cannot count passes", before)
 	}
@@ -197,11 +197,11 @@ func TestABurstOfSignalsCostsOneLocalPass(t *testing.T) {
 	waited := make(chan bool, 1)
 	go func() { waited <- h.sched.waitForTick(ctx) }()
 	waitFor(t, 30*time.Second, "the local pass the wake asked for", func() bool {
-		return h.gh.callCount("issue edit") > before
+		return h.gh.CallCount("issue edit") > before
 	})
 	// Ten passes would all have run by now; the poll timer is an hour away.
 	time.Sleep(200 * time.Millisecond)
-	if got := h.gh.callCount("issue edit") - before; got != 1 {
+	if got := h.gh.CallCount("issue edit") - before; got != 1 {
 		t.Fatalf("ten signals ran %d local passes, want 1", got)
 	}
 	cancel()
@@ -260,9 +260,9 @@ func TestTheSchedulersOwnMailSignalsTheWake(t *testing.T) {
 	t.Run("human feedback", func(t *testing.T) {
 		h := newHarness(t, devOnlyTOML)
 		seedApprovedPR(t, h, "MERGEABLE", "CLEAN", "aaa")
-		h.gh.prs[fakePR].UpdatedAt = time.Now()
+		h.gh.PRs[fakePR].UpdatedAt = time.Now()
 		when := time.Now().UTC().Format(time.RFC3339)
-		h.gh.activity["repos/acme/widgets/pulls/101/comments"] = fmt.Sprintf(`[
+		h.gh.Activity["repos/acme/widgets/pulls/101/comments"] = fmt.Sprintf(`[
 			{"id": 555, "user": {"login": "kyle"}, "body": "please rename this", "path": "seed.txt", "line": 1, "html_url": "https://x/555", "created_at": %q}
 		]`, when)
 
@@ -284,7 +284,7 @@ func TestTheSchedulersOwnMailSignalsTheWake(t *testing.T) {
 	t.Run("issue comment", func(t *testing.T) {
 		now := time.Now()
 		h := newHarnessAt(t, devOnlyTOML, now)
-		h.gh.issues[1] = &github.Issue{Number: 1, Title: "Under way", State: "OPEN",
+		h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Under way", State: "OPEN",
 			Labels:    []github.Label{{Name: "bees"}, {Name: "bees:in-progress"}, {Name: "bees:size/s"}},
 			CreatedAt: now.Add(-2 * time.Hour), UpdatedAt: now}
 		if err := h.store.SetIssueHumanSeenAt(1, now.Add(-time.Hour)); err != nil {

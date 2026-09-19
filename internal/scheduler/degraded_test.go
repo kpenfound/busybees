@@ -25,12 +25,12 @@ assignee = "kpenfound"
 // brokenAssign seeds an item the backstop wants to assign and makes the
 // assignment fail.
 func brokenAssign(h *harness, err error) {
-	h.gh.issues[7] = &github.Issue{
+	h.gh.Issues[7] = &github.Issue{
 		Number: 7, Title: "Filed by a session", State: "OPEN",
 		Labels:    []github.Label{{Name: "bees"}, {Name: "bees:bug"}, {Name: "bees:triage"}},
 		CreatedAt: time.Now(),
 	}
-	h.gh.errFor["assignees"] = err
+	h.gh.ErrFor["assignees"] = err
 }
 
 // records decodes the records written to a JSON log buffer.
@@ -154,7 +154,7 @@ func TestADegradedOperationEscalatesOncePerStreak(t *testing.T) {
 
 	// A success clears the streak: nothing degraded, and the next streak
 	// escalates again.
-	delete(h.gh.errFor, "assignees")
+	delete(h.gh.ErrFor, "assignees")
 	h.sched.adoptCreated(ctx, since)
 	h.sched.writeStatus()
 	if st, err = h.store.LoadStatus(); err != nil {
@@ -230,13 +230,13 @@ func TestDegradedEntriesAreSortedAndNamed(t *testing.T) {
 	buf := jsonLog(h)
 	// An item with neither the base label nor the assignee fails both of the
 	// backstop's mutations, so two operations are degraded at once.
-	h.gh.issues[7] = &github.Issue{
+	h.gh.Issues[7] = &github.Issue{
 		Number: 7, Title: "Filed by a session", State: "OPEN",
 		Labels:    []github.Label{{Name: "bees:bug"}, {Name: "bees:triage"}},
 		CreatedAt: time.Now(),
 	}
-	h.gh.errFor["issue edit"] = errors.New("gh: HTTP 403")
-	h.gh.errFor["assignees"] = errors.New("gh: HTTP 403")
+	h.gh.ErrFor["issue edit"] = errors.New("gh: HTTP 403")
+	h.gh.ErrFor["assignees"] = errors.New("gh: HTTP 403")
 
 	h.sched.adoptCreated(context.Background(), time.Now().Add(-time.Hour))
 	h.sched.writeStatus()
@@ -273,7 +273,7 @@ func TestDegradedEntriesAreSortedAndNamed(t *testing.T) {
 func TestALoggedOperationCarriesItsName(t *testing.T) {
 	h := newHarness(t, degradedTOML)
 	buf := jsonLog(h)
-	h.gh.errFor["issue list"] = errors.New("gh: HTTP 500")
+	h.gh.ErrFor["issue list"] = errors.New("gh: HTTP 500")
 
 	h.sched.adoptCreated(context.Background(), time.Now().Add(-time.Hour))
 	h.sched.writeStatus()

@@ -21,7 +21,7 @@ const notifyTOML = baseTOML + "notify = [\"kpenfound\"]\n"
 // requestedReviewers returns the review-request calls the fake gh recorded.
 func requestedReviewers(h *harness) [][]string {
 	var out [][]string
-	for _, c := range h.gh.calls {
+	for _, c := range h.gh.Calls {
 		if len(c) > 0 && c[0] == "api" && strings.Contains(strings.Join(c, " "), "/requested_reviewers") {
 			out = append(out, c)
 		}
@@ -33,7 +33,7 @@ func requestedReviewers(h *harness) [][]string {
 // works for share one GitHub account, so a comment notifies nobody by itself.
 func TestEscalationMentionsNotify(t *testing.T) {
 	h := newHarness(t, notifyTOML)
-	h.gh.issues[12] = &github.Issue{Number: 12, Title: "Build the thing", State: "OPEN",
+	h.gh.Issues[12] = &github.Issue{Number: 12, Title: "Build the thing", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:in-progress"}}}
 
 	res := &session.Result{IsError: true, ErrorSubtype: "error_during_execution", ResultText: "it broke"}
@@ -42,10 +42,10 @@ func TestEscalationMentionsNotify(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(h.gh.comments[12]) != 1 {
-		t.Fatalf("comments: %v", h.gh.comments[12])
+	if len(h.gh.Comments[12]) != 1 {
+		t.Fatalf("comments: %v", h.gh.Comments[12])
 	}
-	body := h.gh.comments[12][0]
+	body := h.gh.Comments[12][0]
 	if !strings.HasPrefix(body, "@kpenfound\n\n🐝 **busybees needs a human.**") {
 		t.Errorf("escalation comment does not start with the mentions:\n%s", body)
 	}
@@ -57,17 +57,17 @@ func TestEscalationMentionsNotify(t *testing.T) {
 // With notify unset the comment is exactly what it always was.
 func TestEscalationWithoutNotify(t *testing.T) {
 	h := newHarness(t, baseTOML)
-	h.gh.issues[12] = &github.Issue{Number: 12, Title: "Build the thing", State: "OPEN",
+	h.gh.Issues[12] = &github.Issue{Number: 12, Title: "Build the thing", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:in-progress"}}}
 
 	if err := h.sched.escalate(context.Background(), 12, "it broke"); err != nil {
 		t.Fatal(err)
 	}
-	if len(h.gh.comments[12]) != 1 || !strings.HasPrefix(h.gh.comments[12][0], "🐝 **busybees needs a human.**") {
-		t.Fatalf("comments: %v", h.gh.comments[12])
+	if len(h.gh.Comments[12]) != 1 || !strings.HasPrefix(h.gh.Comments[12][0], "🐝 **busybees needs a human.**") {
+		t.Fatalf("comments: %v", h.gh.Comments[12])
 	}
-	if strings.Contains(h.gh.comments[12][0], "@") {
-		t.Errorf("notify is unset but the comment mentions somebody:\n%s", h.gh.comments[12][0])
+	if strings.Contains(h.gh.Comments[12][0], "@") {
+		t.Errorf("notify is unset but the comment mentions somebody:\n%s", h.gh.Comments[12][0])
 	}
 }
 
@@ -78,7 +78,7 @@ func TestEscalationWithoutNotify(t *testing.T) {
 // state file.
 func TestEscalationDoesNotRaceRecordIssueCost(t *testing.T) {
 	h := newHarness(t, baseTOML)
-	h.gh.issues[12] = &github.Issue{Number: 12, Title: "Build the thing", State: "OPEN",
+	h.gh.Issues[12] = &github.Issue{Number: 12, Title: "Build the thing", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:in-progress"}}}
 
 	var wg sync.WaitGroup
@@ -114,9 +114,9 @@ func TestEscalationDoesNotRaceRecordIssueCost(t *testing.T) {
 // scheduler.notify is asked to review it.
 func TestApprovedPRRequestsAReview(t *testing.T) {
 	h := newHarness(t, baseTOML+"notify = [\"kpenfound\", \"myorg/bees-team\"]\n")
-	h.gh.issues[1] = &github.Issue{Number: 1, State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:review"}}}
+	h.gh.Issues[1] = &github.Issue{Number: 1, State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:review"}}}
 	pr := &github.PR{Number: 101, State: "OPEN", HeadRefName: "bees/issue-1", Labels: []github.Label{{Name: "bees"}}}
-	h.gh.prs[101] = pr
+	h.gh.PRs[101] = pr
 
 	if err := h.sched.approve(context.Background(), 1, pr); err != nil {
 		t.Fatal(err)
@@ -133,8 +133,8 @@ func TestApprovedPRRequestsAReview(t *testing.T) {
 			t.Errorf("review request %q does not contain %q", got, want)
 		}
 	}
-	if !github.HasLabel(h.gh.issues[1].Labels, "bees:approved") {
-		t.Errorf("issue labels: %v", h.gh.issues[1].Labels)
+	if !github.HasLabel(h.gh.Issues[1].Labels, "bees:approved") {
+		t.Errorf("issue labels: %v", h.gh.Issues[1].Labels)
 	}
 }
 
@@ -143,19 +143,19 @@ func TestApprovedPRRequestsAReview(t *testing.T) {
 // is the author. A failure must not hold the approval back.
 func TestFailedReviewRequestStillApproves(t *testing.T) {
 	h := newHarness(t, notifyTOML)
-	h.gh.errFor["requested_reviewers"] = errors.New("HTTP 422: Review cannot be requested from pull request author")
-	h.gh.issues[1] = &github.Issue{Number: 1, State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:review"}}}
+	h.gh.ErrFor["requested_reviewers"] = errors.New("HTTP 422: Review cannot be requested from pull request author")
+	h.gh.Issues[1] = &github.Issue{Number: 1, State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:review"}}}
 	pr := &github.PR{Number: 101, State: "OPEN", HeadRefName: "bees/issue-1", Labels: []github.Label{{Name: "bees"}}}
-	h.gh.prs[101] = pr
+	h.gh.PRs[101] = pr
 
 	if err := h.sched.approve(context.Background(), 1, pr); err != nil {
 		t.Fatalf("a failed review request must not fail the approval: %v", err)
 	}
-	if !github.HasLabel(h.gh.issues[1].Labels, "bees:approved") {
-		t.Errorf("issue labels: %v", h.gh.issues[1].Labels)
+	if !github.HasLabel(h.gh.Issues[1].Labels, "bees:approved") {
+		t.Errorf("issue labels: %v", h.gh.Issues[1].Labels)
 	}
-	if !github.HasLabel(h.gh.prs[101].Labels, "bees:approved") {
-		t.Errorf("pr labels: %v", h.gh.prs[101].Labels)
+	if !github.HasLabel(h.gh.PRs[101].Labels, "bees:approved") {
+		t.Errorf("pr labels: %v", h.gh.PRs[101].Labels)
 	}
 	if !strings.Contains(h.logs.String(), "could not request a review") {
 		t.Errorf("the failure was not warned about:\n%s", h.logs.String())
@@ -165,9 +165,9 @@ func TestFailedReviewRequestStillApproves(t *testing.T) {
 // With notify unset nobody is asked to review.
 func TestApprovedPRWithoutNotify(t *testing.T) {
 	h := newHarness(t, baseTOML)
-	h.gh.issues[1] = &github.Issue{Number: 1, State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:review"}}}
+	h.gh.Issues[1] = &github.Issue{Number: 1, State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:review"}}}
 	pr := &github.PR{Number: 101, State: "OPEN", HeadRefName: "bees/issue-1", Labels: []github.Label{{Name: "bees"}}}
-	h.gh.prs[101] = pr
+	h.gh.PRs[101] = pr
 
 	if err := h.sched.approve(context.Background(), 1, pr); err != nil {
 		t.Fatal(err)
@@ -175,8 +175,8 @@ func TestApprovedPRWithoutNotify(t *testing.T) {
 	if calls := requestedReviewers(h); len(calls) != 0 {
 		t.Errorf("notify is unset but a review was requested: %v", calls)
 	}
-	if !github.HasLabel(h.gh.issues[1].Labels, "bees:approved") {
-		t.Errorf("issue labels: %v", h.gh.issues[1].Labels)
+	if !github.HasLabel(h.gh.Issues[1].Labels, "bees:approved") {
+		t.Errorf("issue labels: %v", h.gh.Issues[1].Labels)
 	}
 }
 
@@ -186,7 +186,7 @@ func TestApprovedPRWithoutNotify(t *testing.T) {
 func TestProductManagerSessionIsToldTheMentions(t *testing.T) {
 	h := newHarness(t, notifyTOML+"\n[roles.qa]\nenabled = false\n[roles.developer]\nenabled = false\n[roles.project_manager]\nenabled = false\n")
 	now := time.Now()
-	h.gh.issues[3] = &github.Issue{Number: 3, Title: "Dark mode please", Body: "idea", State: "OPEN", Author: github.Author{Login: "kyle"},
+	h.gh.Issues[3] = &github.Issue{Number: 3, Title: "Dark mode please", Body: "idea", State: "OPEN", Author: github.Author{Login: "kyle"},
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:feedback"}}, CreatedAt: now.Add(-time.Hour), UpdatedAt: now}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
@@ -213,9 +213,9 @@ func TestProductManagerSessionIsToldTheMentions(t *testing.T) {
 // labelled that issue bees:needs-human by hand.
 func TestAFailedEscalationRecordsNoReason(t *testing.T) {
 	h := newHarness(t, baseTOML)
-	h.gh.issues[12] = &github.Issue{Number: 12, Title: "Build the thing", State: "OPEN",
+	h.gh.Issues[12] = &github.Issue{Number: 12, Title: "Build the thing", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:in-progress"}}}
-	h.gh.errFor["issue edit"] = errors.New("HTTP 502")
+	h.gh.ErrFor["issue edit"] = errors.New("HTTP 502")
 
 	if err := h.sched.escalate(context.Background(), 12, "3 review rounds and no approval"); err == nil {
 		t.Fatal("the escalation reported no error although the label edit failed")

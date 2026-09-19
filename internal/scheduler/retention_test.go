@@ -71,12 +71,12 @@ func TestRetentionRemovesAClosedIssuesStateOnceRetentionPeriodHasPassed(t *testi
 	// 7 closed with no pull request; 9 closed, and its pull request merged
 	// two hours later; 10 closed with a session still recorded; 8 is open.
 	for _, n := range []int{7, 9, 10} {
-		h.gh.issues[n] = &github.Issue{Number: n, Title: "done", State: "CLOSED", ClosedAt: &closed,
+		h.gh.Issues[n] = &github.Issue{Number: n, Title: "done", State: "CLOSED", ClosedAt: &closed,
 			Labels: []github.Label{{Name: "bees"}}}
 	}
-	h.gh.issues[8] = &github.Issue{Number: 8, Title: "open", State: "OPEN",
+	h.gh.Issues[8] = &github.Issue{Number: 8, Title: "open", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:needs-human"}}}
-	h.gh.prs[209] = &github.PR{Number: 209, State: "MERGED", MergedAt: &merged, HeadRefName: "bees/issue-9"}
+	h.gh.PRs[209] = &github.PR{Number: 209, State: "MERGED", MergedAt: &merged, HeadRefName: "bees/issue-9"}
 
 	for _, is := range []state.WorkState{{Round: 2, Work: ghwork.New(7, 0)}, {Round: 1, Work: ghwork.New(8, 0)}, {Work: ghwork.New(9, 209)}, {Work: ghwork.New(10, 0)}} {
 		if err := h.store.SaveIssue(is); err != nil {
@@ -158,14 +158,14 @@ func TestRetentionSweepsAtMostOncePerInterval(t *testing.T) {
 	// 7 closed inside the retention period, so its close time is remembered;
 	// 301 is bookkeeping gh cannot view (a requested review's pull request),
 	// asked about again on every sweep.
-	h.gh.issues[7] = &github.Issue{Number: 7, State: "CLOSED", ClosedAt: &closed}
+	h.gh.Issues[7] = &github.Issue{Number: 7, State: "CLOSED", ClosedAt: &closed}
 	for _, n := range []int{7, 301} {
 		if err := h.store.SaveIssue(state.WorkState{Work: ghwork.New(n, 0)}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	runPass(t, h)
-	if got := h.gh.callCount("issue view"); got != 2 {
+	if got := h.gh.CallCount("issue view"); got != 2 {
 		t.Fatalf("issue view calls after the first sweep = %d, want 2", got)
 	}
 	// A poll is due, a sweep is not.
@@ -174,13 +174,13 @@ func TestRetentionSweepsAtMostOncePerInterval(t *testing.T) {
 	h.sched.nextPoll = time.Time{}
 	h.sched.mu.Unlock()
 	runPass(t, h)
-	if got := h.gh.callCount("issue view"); got != 2 {
+	if got := h.gh.CallCount("issue view"); got != 2 {
 		t.Fatalf("issue view calls after a second pass inside the interval = %d, want 2", got)
 	}
 	// Due again: 301 is asked about again, 7's close is remembered.
 	h.clock.advance(time.Hour)
 	runPass(t, h)
-	if got := h.gh.callCount("issue view"); got != 3 {
+	if got := h.gh.CallCount("issue view"); got != 3 {
 		t.Fatalf("issue view calls after a later sweep = %d, want 3 (7's close time is remembered)", got)
 	}
 	for _, n := range []int{7, 301} {

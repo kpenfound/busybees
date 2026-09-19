@@ -16,8 +16,8 @@ import (
 // the issue's own update with it: freshIssues' pre-filter compares UpdatedAt
 // strictly against the last run, so both need real margin.
 func humanComment(h *harness, n int, body string, at time.Time) {
-	h.gh.issues[n].UpdatedAt = at
-	h.gh.issues[n].Comments = append(h.gh.issues[n].Comments,
+	h.gh.Issues[n].UpdatedAt = at
+	h.gh.Issues[n].Comments = append(h.gh.Issues[n].Comments,
 		github.Comment{Author: github.Author{Login: "kyle"}, Body: body, CreatedAt: at})
 }
 
@@ -95,7 +95,7 @@ func TestAPlannedFeatureIsBrokenDownOnceAndNotAgain(t *testing.T) {
 	seedFeature(h, 6, "Offline mode", now.Add(-time.Hour), "bees:planned")
 	// Nothing has been broken down from it yet, and a bee had the last word
 	// in the planning conversation, so only the planned label presents it.
-	h.gh.subIssues[6] = github.SubIssueSummary{}
+	h.gh.SubIssues[6] = github.SubIssueSummary{}
 	quietFeature(h, 6, now.Add(-30*time.Minute))
 
 	runPass(t, h)
@@ -111,7 +111,7 @@ func TestAPlannedFeatureIsBrokenDownOnceAndNotAgain(t *testing.T) {
 	// Nothing about the agreed feature wakes the product manager — an agreed
 	// issue waits for it rather than starting it — so the next run is the one
 	// product_manager_interval brings round.
-	h.gh.subIssues[6] = github.SubIssueSummary{Total: 2}
+	h.gh.SubIssues[6] = github.SubIssueSummary{Total: 2}
 	h.clock.advance(h.cfg.Scheduler.ProductManagerInterval.Duration + time.Minute)
 	forcePoll(h)
 	runPass(t, h)
@@ -174,9 +174,9 @@ func TestAPlannedFeatureIsNotRePresentedWhenItsProgressIsUnknown(t *testing.T) {
 	now := time.Now()
 	h := newHarnessAt(t, pmOnlyTOML, now)
 	seedFeature(h, 6, "Offline mode", now.Add(-time.Hour), "bees:planned")
-	h.gh.subIssues[6] = github.SubIssueSummary{Total: 2}
+	h.gh.SubIssues[6] = github.SubIssueSummary{Total: 2}
 	quietFeature(h, 6, now.Add(-30*time.Minute))
-	h.gh.errFor["api repos/acme/widgets/issues/6"] = errors.New("gh: HTTP 502")
+	h.gh.ErrFor["api repos/acme/widgets/issues/6"] = errors.New("gh: HTTP 502")
 
 	runPass(t, h)
 
@@ -195,7 +195,7 @@ func TestAnAgreedIssueLeavesTheFreshLists(t *testing.T) {
 	h := newHarnessAt(t, pmOnlyTOML, now)
 	seedFeature(h, 5, "Exports", now.Add(-time.Hour))
 	seedFeature(h, 6, "Offline mode", now.Add(-time.Hour), "bees:planned")
-	h.gh.subIssues[6] = github.SubIssueSummary{}
+	h.gh.SubIssues[6] = github.SubIssueSummary{}
 	humanComment(h, 6, "agreed, go ahead", now.Add(-time.Minute))
 
 	runPass(t, h)
@@ -223,7 +223,7 @@ func TestAPlannedProposalIsStillAProposal(t *testing.T) {
 	now := time.Now()
 	h := newHarnessAt(t, pmOnlyTOML, now)
 	seedFeature(h, 6, "Offline mode", now.Add(-time.Hour), "bees:proposal", "bees:planned")
-	h.gh.subIssues[6] = github.SubIssueSummary{}
+	h.gh.SubIssues[6] = github.SubIssueSummary{}
 	humanComment(h, 6, "what about conflicts?", now.Add(-time.Minute))
 
 	runPass(t, h)

@@ -21,7 +21,7 @@ import (
 // (repos/.../issues/<pr>/comments), which is what lets one test drive both
 // streams on one work item.
 func seedIssueComments(h *harness, n int, comments ...string) {
-	h.gh.activity[fmt.Sprintf("repos/acme/widgets/issues/%d/comments", n)] = strings.Join(comments, ",\n")
+	h.gh.Activity[fmt.Sprintf("repos/acme/widgets/issues/%d/comments", n)] = strings.Join(comments, ",\n")
 }
 
 // issueComment renders one comment as the fake gh serves it.
@@ -63,7 +63,7 @@ func deliverIssueCommentsOnce(t *testing.T, h *harness) *snapshot {
 func TestAnIssueSeenInFlightForTheFirstTimeDeliversNothing(t *testing.T) {
 	now := time.Now()
 	h := newHarnessAt(t, noRolesTOML, now)
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Under way", State: "OPEN",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Under way", State: "OPEN",
 		Labels:    []github.Label{{Name: "bees"}, {Name: "bees:in-progress"}, {Name: "bees:size/s"}},
 		CreatedAt: now.Add(-2 * time.Hour), UpdatedAt: now.Add(-time.Hour)}
 	seedIssueComments(h, 1, issueComment(901, "kyle", "this was said during triage", now.Add(-90*time.Minute)))
@@ -81,13 +81,13 @@ func TestAnIssueSeenInFlightForTheFirstTimeDeliversNothing(t *testing.T) {
 		t.Fatalf("issue_human_seen_at is %v, want the poll time %v", bk.IssueHumanSeenAt, now.UTC())
 	}
 	// Seeding costs no GitHub call either: the comments were never fetched.
-	if n := h.gh.callCount("api --paginate"); n != 0 {
+	if n := h.gh.CallCount("api --paginate"); n != 0 {
 		t.Fatalf("%d comment fetches on the first observation, want none", n)
 	}
 
 	// A comment written after the seed does reach the developer, and a quiet
 	// issue still costs no call.
-	h.gh.issues[1].UpdatedAt = now.Add(time.Minute)
+	h.gh.Issues[1].UpdatedAt = now.Add(time.Minute)
 	seedIssueComments(h, 1,
 		issueComment(901, "kyle", "this was said during triage", now.Add(-90*time.Minute)),
 		issueComment(902, "kyle", "use the flag names the issue already lists", now.Add(time.Minute)))
@@ -111,7 +111,7 @@ func TestAnIssueSeenInFlightForTheFirstTimeDeliversNothing(t *testing.T) {
 func TestAQuietIssueCostsNoCommentFetch(t *testing.T) {
 	now := time.Now()
 	h := newHarnessAt(t, noRolesTOML, now)
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Quiet", State: "OPEN",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Quiet", State: "OPEN",
 		Labels:    []github.Label{{Name: "bees"}, {Name: "bees:review"}, {Name: "bees:size/s"}},
 		CreatedAt: now.Add(-2 * time.Hour), UpdatedAt: now.Add(-time.Hour)}
 	if err := h.store.SetIssueHumanSeenAt(1, now.Add(-30*time.Minute)); err != nil {
@@ -121,7 +121,7 @@ func TestAQuietIssueCostsNoCommentFetch(t *testing.T) {
 
 	deliverIssueCommentsOnce(t, h)
 
-	if n := h.gh.callCount("api --paginate"); n != 0 {
+	if n := h.gh.CallCount("api --paginate"); n != 0 {
 		t.Fatalf("%d comment fetches for a quiet issue, want none", n)
 	}
 	if msgs := developerMail(t, h); len(msgs) != 0 {
@@ -159,7 +159,7 @@ func TestACommentOnABlockedIssueGoesToWhoeverIsWaiting(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			now := time.Now()
 			h := newHarnessAt(t, noRolesTOML, now)
-			h.gh.issues[1] = &github.Issue{Number: 1, Title: "Waiting on an answer", State: "OPEN",
+			h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Waiting on an answer", State: "OPEN",
 				Labels:    []github.Label{{Name: "bees"}, {Name: "bees:blocked"}, {Name: "bees:size/s"}},
 				CreatedAt: now.Add(-2 * time.Hour), UpdatedAt: now}
 			if tc.bk != nil {
@@ -218,13 +218,13 @@ func TestPRAndIssueCommentsAreBothDelivered(t *testing.T) {
 	now := time.Now()
 	h := newHarnessAt(t, noRolesTOML, now)
 	seedApprovedPR(t, h, "MERGEABLE", "CLEAN", "aaa")
-	h.gh.issues[1].UpdatedAt = now
-	h.gh.prs[fakePR].UpdatedAt = now
+	h.gh.Issues[1].UpdatedAt = now
+	h.gh.PRs[fakePR].UpdatedAt = now
 	if err := h.store.SetIssueHumanSeenAt(1, now.Add(-time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	seedIssueComments(h, 1, issueComment(901, "kyle", "hold off, the API is changing", now))
-	h.gh.activity["repos/acme/widgets/pulls/101/comments"] = issueComment(555, "kyle", "and rename this variable", now)
+	h.gh.Activity["repos/acme/widgets/pulls/101/comments"] = issueComment(555, "kyle", "and rename this variable", now)
 
 	if err := h.sched.pass(ctx); err != nil {
 		t.Fatal(err)
@@ -266,8 +266,8 @@ func TestACommentOnAnIssueInReviewReachesTheDeveloperAndTheReviewer(t *testing.T
 	now := time.Now()
 	h := newHarness(t, prereviewTOML)
 	seedPreReviewIssue(t, h, "Steered mid-review")
-	h.gh.issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:review"}, {Name: "bees:size/s"}}
-	h.gh.issues[1].UpdatedAt = now
+	h.gh.Issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:review"}, {Name: "bees:size/s"}}
+	h.gh.Issues[1].UpdatedAt = now
 	// The pull request exists from the start: this worker is a resumption.
 	if err := os.WriteFile(h.gh.prMarker, nil, 0o644); err != nil {
 		t.Fatal(err)
@@ -285,7 +285,7 @@ func TestACommentOnAnIssueInReviewReachesTheDeveloperAndTheReviewer(t *testing.T
 		issueComment(902, "kyle", "on it\n\n<!-- bees:developer -->", now),
 		issueComment(903, "kyle", "Quoting the bot:\n> <!-- bees:developer -->\n\nand ship it behind a flag", now))
 	seedCounter(t, h, "review", 1) // approve on the first round
-	h.gh.checks = []checksResponse{{passingJSON, nil}}
+	h.gh.Checks = []checksResponse{{JSON: passingJSON, Err: nil}}
 
 	runPreReviewLoop(t, h)
 
@@ -338,7 +338,7 @@ func TestACommentOnAnIssueInReviewReachesTheDeveloperAndTheReviewer(t *testing.T
 func TestADeliveredCommentIsNotDeliveredAgain(t *testing.T) {
 	now := time.Now()
 	h := newHarnessAt(t, noRolesTOML, now)
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Under way", State: "OPEN",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Under way", State: "OPEN",
 		Labels:    []github.Label{{Name: "bees"}, {Name: "bees:in-progress"}, {Name: "bees:size/s"}},
 		CreatedAt: now.Add(-2 * time.Hour), UpdatedAt: now}
 	if err := h.store.SetIssueHumanSeenAt(1, now.Add(-time.Hour)); err != nil {
@@ -352,7 +352,7 @@ func TestADeliveredCommentIsNotDeliveredAgain(t *testing.T) {
 	}
 
 	// Something else touches the issue, so the updatedAt gate opens again.
-	h.gh.issues[1].UpdatedAt = now.Add(time.Minute)
+	h.gh.Issues[1].UpdatedAt = now.Add(time.Minute)
 	deliverIssueCommentsOnce(t, h)
 
 	if msgs := developerMail(t, h); len(msgs) != 1 {
@@ -401,7 +401,7 @@ func TestActivityAuthorsAreListedOnceInTheOrderTheyWrote(t *testing.T) {
 func TestAnAnswerToATriageQuestionSurvivesTheSeed(t *testing.T) {
 	now := time.Now()
 	h := newHarnessAt(t, noRolesTOML, now)
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Needs refining", State: "OPEN",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Needs refining", State: "OPEN",
 		Labels:    []github.Label{{Name: "bees"}, {Name: "bees:triage"}, {Name: "bees:size/s"}},
 		CreatedAt: now.Add(-2 * time.Hour), UpdatedAt: now.Add(-time.Hour)}
 
@@ -417,7 +417,7 @@ func TestAnAnswerToATriageQuestionSurvivesTheSeed(t *testing.T) {
 	if !bk.IssueHumanSeenAt.Equal(now.UTC()) {
 		t.Fatalf("issue_human_seen_at after the triage pass is %v, want the poll time %v", bk.IssueHumanSeenAt, now.UTC())
 	}
-	if n := h.gh.callCount("api --paginate"); n != 0 {
+	if n := h.gh.CallCount("api --paginate"); n != 0 {
 		t.Fatalf("%d comment fetches for an issue in triage, want none", n)
 	}
 
@@ -427,8 +427,8 @@ func TestAnAnswerToATriageQuestionSurvivesTheSeed(t *testing.T) {
 	// manager.
 	h.clock.advance(time.Minute)
 	answered := now.Add(time.Minute)
-	h.gh.issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:blocked"}, {Name: "bees:size/s"}}
-	h.gh.issues[1].UpdatedAt = answered
+	h.gh.Issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:blocked"}, {Name: "bees:size/s"}}
+	h.gh.Issues[1].UpdatedAt = answered
 	seedIssueComments(h, 1, issueComment(901, "kyle", "yes, both flags, and keep the old one working", answered))
 
 	snap := deliverIssueCommentsOnce(t, h)
@@ -471,7 +471,7 @@ func TestAnAnswerToATriageQuestionSurvivesTheSeed(t *testing.T) {
 func TestATriageConversationIsNotReplayedOnceTheIssueBlocks(t *testing.T) {
 	now := time.Now()
 	h := newHarnessAt(t, noRolesTOML, now)
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Long-standing", State: "OPEN",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Long-standing", State: "OPEN",
 		Labels:    []github.Label{{Name: "bees"}, {Name: "bees:triage"}, {Name: "bees:size/s"}},
 		CreatedAt: now.Add(-3 * time.Hour), UpdatedAt: now.Add(-2 * time.Hour)}
 	seedIssueComments(h, 1,
@@ -487,7 +487,7 @@ func TestATriageConversationIsNotReplayedOnceTheIssueBlocks(t *testing.T) {
 	// A pass later the issue is still in triage and the conversation has
 	// gone on. That comment is history too, and the clock moves with it.
 	h.clock.advance(time.Minute)
-	h.gh.issues[1].UpdatedAt = now.Add(time.Minute)
+	h.gh.Issues[1].UpdatedAt = now.Add(time.Minute)
 	seedIssueComments(h, 1,
 		issueComment(901, "kyle", "we discussed this weeks ago", now.Add(-2*time.Hour)),
 		issueComment(902, "robin", "and settled on the second option", now.Add(-90*time.Minute)),
@@ -498,8 +498,8 @@ func TestATriageConversationIsNotReplayedOnceTheIssueBlocks(t *testing.T) {
 	// The issue blocks, and something touches it so the updatedAt gate opens:
 	// every comment is older than the clock, so every one is still history.
 	h.clock.advance(time.Minute)
-	h.gh.issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:blocked"}, {Name: "bees:size/s"}}
-	h.gh.issues[1].UpdatedAt = now.Add(2 * time.Minute)
+	h.gh.Issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:blocked"}, {Name: "bees:size/s"}}
+	h.gh.Issues[1].UpdatedAt = now.Add(2 * time.Minute)
 
 	deliverIssueCommentsOnce(t, h)
 
@@ -524,7 +524,7 @@ func TestATriageConversationIsNotReplayedOnceTheIssueBlocks(t *testing.T) {
 func TestTheReadyQueueDoesNotBankCommentsForTheDeveloper(t *testing.T) {
 	now := time.Now()
 	h := newHarnessAt(t, noRolesTOML, now)
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Waiting its turn", State: "OPEN",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Waiting its turn", State: "OPEN",
 		Labels:    []github.Label{{Name: "bees"}, {Name: "bees:triage"}, {Name: "bees:size/s"}},
 		CreatedAt: now.Add(-3 * time.Hour), UpdatedAt: now.Add(-2 * time.Hour)}
 
@@ -535,8 +535,8 @@ func TestTheReadyQueueDoesNotBankCommentsForTheDeveloper(t *testing.T) {
 	// person comments while it waits; nobody is working on it, so nothing is
 	// delivered and the clock moves past the comment.
 	h.clock.advance(time.Hour)
-	h.gh.issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}
-	h.gh.issues[1].UpdatedAt = now.Add(30 * time.Minute)
+	h.gh.Issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}
+	h.gh.Issues[1].UpdatedAt = now.Add(30 * time.Minute)
 	seedIssueComments(h, 1, issueComment(901, "kyle", "while you are in there, rename the flag", now.Add(30*time.Minute)))
 
 	deliverIssueCommentsOnce(t, h)
@@ -557,8 +557,8 @@ func TestTheReadyQueueDoesNotBankCommentsForTheDeveloper(t *testing.T) {
 	// developer has not had a chance to read as history.
 	h.clock.advance(time.Hour)
 	fresh := now.Add(90 * time.Minute)
-	h.gh.issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:in-progress"}, {Name: "bees:size/s"}}
-	h.gh.issues[1].UpdatedAt = fresh
+	h.gh.Issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:in-progress"}, {Name: "bees:size/s"}}
+	h.gh.Issues[1].UpdatedAt = fresh
 	seedIssueComments(h, 1,
 		issueComment(901, "kyle", "while you are in there, rename the flag", now.Add(30*time.Minute)),
 		issueComment(902, "robin", "and drop the second argument", fresh))

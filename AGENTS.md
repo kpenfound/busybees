@@ -76,6 +76,7 @@ dagger core container from --address golang:1.26-bookworm \
 - `core/agent/procs` — PID files, process-table inspection and container cleanup.
   Busybees supplies its command markers and `bees.session` container label.
 - `internal/testutil` — local bare git remote + clone for tests.
+- `internal/fakegh` — an in-memory GitHub behind `github.Client.Exec` (`New`, `GitHub.Exec`): seeded from data (`Load`: issues with labels, milestone, parent, author and comments; pull requests with comments and reviews; milestones; labels) or through its exported fields, read back with `Snapshot` (issues, pull requests, comments posted, label history, merges) and `CallCount`/`Total`; writes a session process asks for arrive through a directory (`RequestEdit`, `EditsDir`). The scheduler tests drive the factory against it (`fakeGH` in `internal/scheduler/scheduler_test.go` adds their PR visibility and implicit parent).
 - `core/agent` — standalone Go module's headless session runner: backend commands
   and streams, sandbox/container execution, timeout/cancellation, result/outcome
   files and interruption inspection. `grants.go` is the capability contract every

@@ -31,14 +31,14 @@ func cachedIssue(t *testing.T, h *harness, n int) (github.Issue, bool) {
 func TestTheIssuesASessionChangedAreRefreshedIntoTheCache(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t, noRolesTOML)
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Spec me", State: "OPEN",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Spec me", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:triage"}}, CreatedAt: time.Now()}
 	if _, err := h.sched.poll(ctx); err != nil {
 		t.Fatal(err)
 	}
 	// What the session did on GitHub, which the cache knows nothing about.
-	h.gh.issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}
-	h.gh.issues[2] = &github.Issue{Number: 2, Title: "A sub-issue it filed", State: "OPEN",
+	h.gh.Issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}
+	h.gh.Issues[2] = &github.Issue{Number: 2, Title: "A sub-issue it filed", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:triage"}}, CreatedAt: time.Now()}
 	dir := t.TempDir()
 	for _, n := range []int{1, 2} {
@@ -71,9 +71,9 @@ func TestTheIssuesASessionChangedAreRefreshedIntoTheCache(t *testing.T) {
 func TestARefreshDropsWhatAPollWouldNotReturn(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t, noRolesTOML)
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Closed since", State: "CLOSED",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Closed since", State: "CLOSED",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now()}
-	h.gh.issues[2] = &github.Issue{Number: 2, Title: "Not the factory's", State: "OPEN",
+	h.gh.Issues[2] = &github.Issue{Number: 2, Title: "Not the factory's", State: "OPEN",
 		Labels: []github.Label{{Name: "bees:ready"}}, CreatedAt: time.Now()}
 	if _, err := h.sched.poll(ctx); err != nil {
 		t.Fatal(err)
@@ -99,11 +99,11 @@ func TestARefreshDropsWhatAPollWouldNotReturn(t *testing.T) {
 // from the session directory and makes no GitHub call at all.
 func TestASessionThatTouchedNoIssueCostsNoCall(t *testing.T) {
 	h := newHarness(t, noRolesTOML)
-	before := h.gh.total()
+	before := h.gh.Total()
 
 	h.sched.refreshTouched(context.Background(), t.TempDir())
 
-	if got := h.gh.total(); got != before {
+	if got := h.gh.Total(); got != before {
 		t.Fatalf("the refresh made %d gh calls for a session that touched nothing, want 0", got-before)
 	}
 }
@@ -161,7 +161,7 @@ func TestAnIssueASessionFiledIsTriageWorkOnTheNextLocalPass(t *testing.T) {
 	t.Setenv("FAKE_FILE_ISSUE", "7")
 	now := time.Date(2026, 3, 2, 10, 0, 0, 0, time.UTC)
 	h := newHarnessAt(t, pmOnlyTOML, now) // the product manager alone: one session in the pass
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "An idea", Body: "please", State: "OPEN",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "An idea", Body: "please", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:feedback"}}, CreatedAt: now.Add(-24 * time.Hour)}
 
 	runPass(t, h)
@@ -195,7 +195,7 @@ func triageQueue(h *harness) int {
 func TestARefreshDoesNotWriteIntoTheListAPassIsClassifying(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t, noRolesTOML)
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Spec me", State: "OPEN",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Spec me", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:triage"}}, CreatedAt: time.Now()}
 	if _, err := h.sched.poll(ctx); err != nil {
 		t.Fatal(err)
@@ -205,7 +205,7 @@ func TestARefreshDoesNotWriteIntoTheListAPassIsClassifying(t *testing.T) {
 	inFlight := h.sched.lastIssues
 	h.sched.mu.Unlock()
 
-	h.gh.issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}
+	h.gh.Issues[1].Labels = []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}
 	dir := t.TempDir()
 	if err := session.RecordTouched(dir, 1); err != nil {
 		t.Fatal(err)

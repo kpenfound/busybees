@@ -53,8 +53,8 @@ func TestDeveloperModelBySize(t *testing.T) {
 			if tc.size != "" {
 				labels = append(labels, github.Label{Name: tc.size})
 			}
-			h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN", Labels: labels, CreatedAt: time.Now()}
-			h.gh.prs[fakePR] = &github.PR{Number: fakePR, Title: "Build the thing", State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
+			h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN", Labels: labels, CreatedAt: time.Now()}
+			h.gh.PRs[fakePR] = &github.PR{Number: fakePR, Title: "Build the thing", State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
 			seedCounter(t, h, "review", 1) // the reviewer approves its first review
 
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -89,8 +89,8 @@ enabled = false
 [roles.qa]
 enabled = false
 `)
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now()}
-	h.gh.prs[fakePR] = &github.PR{Number: fakePR, Title: "Build", State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Build", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now()}
+	h.gh.PRs[fakePR] = &github.PR{Number: fakePR, Title: "Build", State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
 	seedCounter(t, h, "review", 1)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()

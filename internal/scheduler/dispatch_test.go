@@ -114,8 +114,8 @@ func seedIssue(h *harness, n int, state, size string, created time.Time) {
 	if size != "" {
 		labels = append(labels, github.Label{Name: "bees:size/" + size})
 	}
-	h.gh.issues[n] = &github.Issue{Number: n, Title: fmt.Sprintf("Issue %d", n), Body: "please", State: "OPEN", Labels: labels, CreatedAt: created}
-	h.gh.prs[200+n] = &github.PR{Number: 200 + n, Title: fmt.Sprintf("Issue %d", n), State: "OPEN", Body: fmt.Sprintf("Closes #%d", n),
+	h.gh.Issues[n] = &github.Issue{Number: n, Title: fmt.Sprintf("Issue %d", n), Body: "please", State: "OPEN", Labels: labels, CreatedAt: created}
+	h.gh.PRs[200+n] = &github.PR{Number: 200 + n, Title: fmt.Sprintf("Issue %d", n), State: "OPEN", Body: fmt.Sprintf("Closes #%d", n),
 		HeadRefName: fmt.Sprintf("bees/issue-%d", n), BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
 }
 
@@ -134,10 +134,10 @@ func hasSessionFor(names []string, issue int) bool {
 // dispatched lists the issues a developer worker picked up, smallest number
 // first.
 func dispatched(h *harness) []int {
-	h.gh.mu.Lock()
-	defer h.gh.mu.Unlock()
+	h.gh.Lock()
+	defer h.gh.Unlock()
 	var out []int
-	for n, labels := range h.gh.history {
+	for n, labels := range h.gh.History {
 		for _, l := range labels {
 			if l == "bees:in-progress" {
 				out = append(out, n)
@@ -256,17 +256,17 @@ func TestOversizedReadyIssueGoesBackToTriage(t *testing.T) {
 	if err := h.sched.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(h.gh.history[1], ","); got != "bees:triage" {
+	if got := strings.Join(h.gh.History[1], ","); got != "bees:triage" {
 		t.Fatalf("issue 1 label history: %q, want bees:triage", got)
 	}
-	if github.HasLabel(h.gh.issues[1].Labels, "bees:ready") {
-		t.Fatalf("issue 1 kept bees:ready: %v", h.gh.issues[1].Labels)
+	if github.HasLabel(h.gh.Issues[1].Labels, "bees:ready") {
+		t.Fatalf("issue 1 kept bees:ready: %v", h.gh.Issues[1].Labels)
 	}
-	if !github.HasLabel(h.gh.issues[1].Labels, "bees:size/xl") {
-		t.Fatalf("issue 1 lost its size: %v", h.gh.issues[1].Labels)
+	if !github.HasLabel(h.gh.Issues[1].Labels, "bees:size/xl") {
+		t.Fatalf("issue 1 lost its size: %v", h.gh.Issues[1].Labels)
 	}
-	if len(h.gh.comments[1]) != 0 {
-		t.Fatalf("the label move must not be commented on: %v", h.gh.comments[1])
+	if len(h.gh.Comments[1]) != 0 {
+		t.Fatalf("the label move must not be commented on: %v", h.gh.Comments[1])
 	}
 	// An issue exactly at max_size is still dispatched.
 	if got := dispatched(h); fmt.Sprint(got) != "[2]" {
@@ -294,11 +294,11 @@ max_size = "m"
 		t.Fatal(err)
 	}
 	for _, n := range []int{1, 2} {
-		if got := strings.Join(h.gh.history[n], ","); got != "bees:triage" {
+		if got := strings.Join(h.gh.History[n], ","); got != "bees:triage" {
 			t.Fatalf("issue %d label history: %q, want bees:triage", n, got)
 		}
 	}
-	if got := h.gh.history[3]; len(got) != 0 {
+	if got := h.gh.History[3]; len(got) != 0 {
 		t.Fatalf("issue 3 is within max_size and must be left alone: %v", got)
 	}
 
@@ -306,7 +306,7 @@ max_size = "m"
 	// cacheIssue it would ask GitHub to move the labels again.
 	h.sched.localPass(ctx)
 	for _, n := range []int{1, 2} {
-		if got := strings.Join(h.gh.history[n], ","); got != "bees:triage" {
+		if got := strings.Join(h.gh.History[n], ","); got != "bees:triage" {
 			t.Fatalf("issue %d relabelled twice: %q", n, got)
 		}
 	}
@@ -394,9 +394,9 @@ dispatch_order = "oldest"
 // markPriority puts bees:priority on a seeded issue, the way a person does
 // from the GitHub UI.
 func markPriority(h *harness, n int) {
-	h.gh.mu.Lock()
-	defer h.gh.mu.Unlock()
-	h.gh.issues[n].Labels = append(h.gh.issues[n].Labels, github.Label{Name: "bees:priority"})
+	h.gh.Lock()
+	defer h.gh.Unlock()
+	h.gh.Issues[n].Labels = append(h.gh.Issues[n].Labels, github.Label{Name: "bees:priority"})
 }
 
 func TestPriorityIssueIsDispatchedBeforeOlderReadyWork(t *testing.T) {
@@ -415,8 +415,8 @@ func TestPriorityIssueIsDispatchedBeforeOlderReadyWork(t *testing.T) {
 		t.Fatalf("dispatched %v, want the priority issue [2]", got)
 	}
 	// The label is a person's, not the factory's: nothing removes it.
-	if !github.HasLabel(h.gh.issues[2].Labels, "bees:priority") {
-		t.Fatalf("issue 2 lost bees:priority: %v", h.gh.issues[2].Labels)
+	if !github.HasLabel(h.gh.Issues[2].Labels, "bees:priority") {
+		t.Fatalf("issue 2 lost bees:priority: %v", h.gh.Issues[2].Labels)
 	}
 	st, err := h.store.LoadStatus()
 	if err != nil {
@@ -460,7 +460,7 @@ func TestReconcileKeepsThePriorityLabel(t *testing.T) {
 	// that a person marked priority: reconcile hands it to the product manager
 	// as bees:feedback, and the priority label rides along onto whatever it
 	// becomes.
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Urgent", Body: "main does not build", State: "OPEN",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Urgent", Body: "main does not build", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:priority"}}, CreatedAt: base}
 	// A ready priority issue without a size: reconcile sizes it.
 	seedReady(h, 2, "", base.Add(time.Hour))
@@ -472,14 +472,14 @@ func TestReconcileKeepsThePriorityLabel(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, n := range []int{1, 2} {
-		if !github.HasLabel(h.gh.issues[n].Labels, "bees:priority") {
-			t.Fatalf("issue %d lost bees:priority: %v", n, h.gh.issues[n].Labels)
+		if !github.HasLabel(h.gh.Issues[n].Labels, "bees:priority") {
+			t.Fatalf("issue %d lost bees:priority: %v", n, h.gh.Issues[n].Labels)
 		}
 	}
-	if !github.HasLabel(h.gh.issues[1].Labels, "bees:feedback") {
-		t.Fatalf("issue 1 did not go to the product manager: %v", h.gh.issues[1].Labels)
+	if !github.HasLabel(h.gh.Issues[1].Labels, "bees:feedback") {
+		t.Fatalf("issue 1 did not go to the product manager: %v", h.gh.Issues[1].Labels)
 	}
-	if !github.HasLabel(h.gh.issues[2].Labels, "bees:size/m") {
-		t.Fatalf("issue 2 was not sized: %v", h.gh.issues[2].Labels)
+	if !github.HasLabel(h.gh.Issues[2].Labels, "bees:size/m") {
+		t.Fatalf("issue 2 was not sized: %v", h.gh.Issues[2].Labels)
 	}
 }

@@ -47,9 +47,9 @@ func TestUnapprovedEscalationSaysOneReviewRound(t *testing.T) {
 			// The reviewer never approves, so the loop runs out of rounds.
 			t.Setenv("FAKE_REVIEW_ALWAYS_CHANGES", "1")
 			h := newHarness(t, reviewRoundsTOML(c.rounds))
-			h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", State: "OPEN",
+			h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Build the thing", State: "OPEN",
 				Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now()}
-			h.gh.prs[fakePR] = &github.PR{Number: fakePR, Title: "Build the thing", State: "OPEN",
+			h.gh.PRs[fakePR] = &github.PR{Number: fakePR, Title: "Build the thing", State: "OPEN",
 				HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
 
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -58,14 +58,14 @@ func TestUnapprovedEscalationSaysOneReviewRound(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			hist := h.gh.history[1]
+			hist := h.gh.History[1]
 			if len(hist) == 0 || hist[len(hist)-1] != "bees:needs-human" {
 				t.Fatalf("history: %v", hist)
 			}
-			if len(h.gh.comments[1]) != 1 {
-				t.Fatalf("comments: %v", h.gh.comments[1])
+			if len(h.gh.Comments[1]) != 1 {
+				t.Fatalf("comments: %v", h.gh.Comments[1])
 			}
-			body := h.gh.comments[1][0]
+			body := h.gh.Comments[1][0]
 			if !strings.Contains(body, c.want) {
 				t.Fatalf("comment does not say %q:\n%s", c.want, body)
 			}

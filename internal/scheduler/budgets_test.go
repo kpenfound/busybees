@@ -62,9 +62,9 @@ func sessionCount(h *harness) int {
 func TestIssueOverItsCostBudgetIsEscalated(t *testing.T) {
 	t.Setenv("FAKE_COST", "1.0")
 	h := newHarness(t, baseTOML+"max_cost_per_issue = 1.5\n"+devAndReviewerTOML)
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now()}
-	h.gh.prs[fakePR] = &github.PR{Number: fakePR, Title: "Build the thing", State: "OPEN",
+	h.gh.PRs[fakePR] = &github.PR{Number: fakePR, Title: "Build the thing", State: "OPEN",
 		HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
 
 	runPass(t, h)
@@ -79,10 +79,10 @@ func TestIssueOverItsCostBudgetIsEscalated(t *testing.T) {
 		}
 	}
 	want := "bees:in-progress,bees:review,bees:needs-human"
-	if got := strings.Join(h.gh.history[1], ","); got != want {
+	if got := strings.Join(h.gh.History[1], ","); got != want {
 		t.Errorf("issue 1 label history: %q want %q", got, want)
 	}
-	comments := h.gh.comments[1]
+	comments := h.gh.Comments[1]
 	if len(comments) != 1 {
 		t.Fatalf("want one escalation comment, got %v", comments)
 	}
@@ -102,19 +102,19 @@ func TestIssueOverItsCostBudgetIsEscalated(t *testing.T) {
 func TestIssueCostBudgetOffChangesNothing(t *testing.T) {
 	t.Setenv("FAKE_COST", "1.0")
 	h := newHarness(t, baseTOML+devAndReviewerTOML)
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now()}
-	h.gh.prs[fakePR] = &github.PR{Number: fakePR, Title: "Build the thing", State: "OPEN",
+	h.gh.PRs[fakePR] = &github.PR{Number: fakePR, Title: "Build the thing", State: "OPEN",
 		HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
 
 	runPass(t, h)
 
 	want := "bees:in-progress,bees:review,bees:in-progress,bees:review,bees:approved"
-	if got := strings.Join(h.gh.history[1], ","); got != want {
+	if got := strings.Join(h.gh.History[1], ","); got != want {
 		t.Errorf("issue 1 label history: %q want %q", got, want)
 	}
-	if len(h.gh.comments[1]) != 0 {
-		t.Errorf("no escalation expected: %v", h.gh.comments[1])
+	if len(h.gh.Comments[1]) != 0 {
+		t.Errorf("no escalation expected: %v", h.gh.Comments[1])
 	}
 }
 
@@ -134,9 +134,9 @@ func TestDailyBudgetStopsNewSessions(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: now}
-	h.gh.issues[2] = &github.Issue{Number: 2, Title: "Needs triage", Body: "hi", State: "OPEN",
+	h.gh.Issues[2] = &github.Issue{Number: 2, Title: "Needs triage", Body: "hi", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:triage"}}, CreatedAt: now}
 
 	runPass(t, h)
@@ -177,9 +177,9 @@ func TestDailyBudgetResumesAtTheResumeThreshold(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: start.Add(-time.Hour)}
-	h.gh.prs[fakePR] = &github.PR{Number: fakePR, Title: "Build the thing", State: "OPEN",
+	h.gh.PRs[fakePR] = &github.PR{Number: fakePR, Title: "Build the thing", State: "OPEN",
 		HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
 
 	for _, tc := range []struct {
@@ -202,7 +202,7 @@ func TestDailyBudgetResumesAtTheResumeThreshold(t *testing.T) {
 		if n := sessionCount(h); n != 0 {
 			t.Fatalf("%s ($%.2f of $100.00): %d sessions started", tc.name, tc.spend, n)
 		}
-		if got := h.gh.history[1]; len(got) != 0 {
+		if got := h.gh.History[1]; len(got) != 0 {
 			t.Fatalf("%s: issue 1 was picked up: %v", tc.name, got)
 		}
 		st, err := h.store.LoadStatus()
@@ -221,7 +221,7 @@ func TestDailyBudgetResumesAtTheResumeThreshold(t *testing.T) {
 	if n := sessionCount(h); n == 0 {
 		t.Error("nothing dispatched below the resume threshold")
 	}
-	if got := h.gh.history[1]; len(got) == 0 {
+	if got := h.gh.History[1]; len(got) == 0 {
 		t.Error("issue 1 was not picked up below the resume threshold")
 	}
 	if !strings.Contains(h.logs.String(), "daily cost budget released ($79.00, back under the $80.00 resume threshold of $100.00 in the last 24h)") {
@@ -245,9 +245,9 @@ func TestTheDefaultResumePercentKeepsTodaysBehaviour(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN",
+		h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN",
 			Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: start.Add(-time.Hour)}
-		h.gh.prs[fakePR] = &github.PR{Number: fakePR, Title: "Build the thing", State: "OPEN",
+		h.gh.PRs[fakePR] = &github.PR{Number: fakePR, Title: "Build the thing", State: "OPEN",
 			HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
 		return h
 	}
@@ -292,16 +292,16 @@ func TestDailyBudgetDoesNotInterruptARunningWorker(t *testing.T) {
 	t.Setenv("FAKE_COST", "1.0")
 	h := newHarness(t, baseTOML+"max_cost_per_day = 1.5\n"+devAndReviewerTOML)
 	seedCounter(t, h, "review", 1) // the reviewer approves its first review
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now()}
-	h.gh.prs[fakePR] = &github.PR{Number: fakePR, Title: "Build the thing", State: "OPEN",
+	h.gh.PRs[fakePR] = &github.PR{Number: fakePR, Title: "Build the thing", State: "OPEN",
 		HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
 
 	// Pass one: the developer session already spends $1 of the $1.50 and the
 	// reviewer session takes it over, but the worker runs to the end.
 	runPass(t, h)
 	want := "bees:in-progress,bees:review,bees:approved"
-	if got := strings.Join(h.gh.history[1], ","); got != want {
+	if got := strings.Join(h.gh.History[1], ","); got != want {
 		t.Fatalf("issue 1 label history: %q want %q", got, want)
 	}
 	if n := sessionCount(h); n != 2 {
@@ -315,7 +315,7 @@ func TestDailyBudgetDoesNotInterruptARunningWorker(t *testing.T) {
 	if n := sessionCount(h); n != 2 {
 		t.Errorf("%d sessions after the budget was reached, want the same 2", n)
 	}
-	if got := h.gh.history[2]; len(got) != 0 {
+	if got := h.gh.History[2]; len(got) != 0 {
 		t.Errorf("issue 2 was picked up: %v", got)
 	}
 	// The day's spend counts the review's sessions ($0.75) with the two
@@ -331,9 +331,9 @@ func TestDailyBudgetDoesNotInterruptARunningWorker(t *testing.T) {
 func TestSessionOverItsBudgetIsTreatedAsFailed(t *testing.T) {
 	t.Setenv("FAKE_COST", "1.0")
 	h := newHarness(t, baseTOML+"max_cost_per_session = 0.5\nretries = 0\n"+devAndReviewerTOML)
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now()}
-	h.gh.prs[fakePR] = &github.PR{Number: fakePR, Title: "Build the thing", State: "OPEN",
+	h.gh.PRs[fakePR] = &github.PR{Number: fakePR, Title: "Build the thing", State: "OPEN",
 		HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
 
 	runPass(t, h)
@@ -345,10 +345,10 @@ func TestSessionOverItsBudgetIsTreatedAsFailed(t *testing.T) {
 		t.Errorf("over-budget session not logged:\n%s", h.logs.String())
 	}
 	want := "bees:in-progress,bees:needs-human"
-	if got := strings.Join(h.gh.history[1], ","); got != want {
+	if got := strings.Join(h.gh.History[1], ","); got != want {
 		t.Errorf("issue 1 label history: %q want %q", got, want)
 	}
-	comments := h.gh.comments[1]
+	comments := h.gh.Comments[1]
 	if len(comments) != 1 || !strings.Contains(comments[0], "the session cost $1.00, over the `max_cost_per_session` budget of $0.50") {
 		t.Fatalf("escalation comment: %v", comments)
 	}
@@ -360,9 +360,9 @@ func TestSessionOverItsBudgetIsTreatedAsFailed(t *testing.T) {
 func TestTwoOverBudgetSessionsInARowEscalate(t *testing.T) {
 	t.Setenv("FAKE_COST", "1.0")
 	h := newHarness(t, baseTOML+"max_cost_per_session = 0.5\nretries = 1\nretry_delay = \"0s\"\n"+devAndReviewerTOML)
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now()}
-	h.gh.prs[fakePR] = &github.PR{Number: fakePR, Title: "Build the thing", State: "OPEN",
+	h.gh.PRs[fakePR] = &github.PR{Number: fakePR, Title: "Build the thing", State: "OPEN",
 		HeadRefName: "bees/issue-1", BaseRefName: "main", Labels: []github.Label{{Name: "bees"}}}
 
 	runPass(t, h)
@@ -370,7 +370,7 @@ func TestTwoOverBudgetSessionsInARowEscalate(t *testing.T) {
 	if got := len(h.sessions(config.RoleDeveloper)); got != 2 {
 		t.Errorf("developer sessions: got %d want 2 (one retry)", got)
 	}
-	comments := h.gh.comments[1]
+	comments := h.gh.Comments[1]
 	if len(comments) != 1 {
 		t.Fatalf("want one escalation comment, got %v", comments)
 	}
@@ -582,7 +582,7 @@ func TestUnreadableLedgerStopsDispatch(t *testing.T) {
 	}
 	corruptLedger(t, h)
 	seedReady(h, 1, "s", now)
-	h.gh.issues[2] = &github.Issue{Number: 2, Title: "Needs triage", Body: "hi", State: "OPEN",
+	h.gh.Issues[2] = &github.Issue{Number: 2, Title: "Needs triage", Body: "hi", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:triage"}}, CreatedAt: now}
 
 	runPass(t, h)
@@ -592,7 +592,7 @@ func TestUnreadableLedgerStopsDispatch(t *testing.T) {
 	if n := sessionCount(h); n != 0 {
 		t.Errorf("%d sessions started while the ledger could not be read", n)
 	}
-	if got := h.gh.history[1]; len(got) != 0 {
+	if got := h.gh.History[1]; len(got) != 0 {
 		t.Errorf("issue 1 was picked up: %v", got)
 	}
 	st, err := h.store.LoadStatus()
@@ -706,9 +706,9 @@ func TestRecordEntersAnUnknownCost(t *testing.T) {
 func TestManualPauseStopsNewSessions(t *testing.T) {
 	h := newHarness(t, baseTOML)
 	now := time.Now()
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: now}
-	h.gh.issues[2] = &github.Issue{Number: 2, Title: "Needs triage", Body: "hi", State: "OPEN",
+	h.gh.Issues[2] = &github.Issue{Number: 2, Title: "Needs triage", Body: "hi", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:triage"}}, CreatedAt: now}
 
 	h.sched.SetPaused(true)
@@ -751,7 +751,7 @@ func TestManualPauseOutlastsTheBudgetPause(t *testing.T) {
 		Session: "a", CostUSD: 100, Work: ghwork.New(9, 0)}); err != nil {
 		t.Fatal(err)
 	}
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN",
 		Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: start.Add(-time.Hour)}
 
 	h.sched.SetPaused(true)
@@ -781,7 +781,7 @@ func TestManualPauseOutlastsTheBudgetPause(t *testing.T) {
 	h.sched.SetPaused(false)
 	forcePoll(h)
 	runPass(t, h)
-	if len(h.gh.history[1]) == 0 {
+	if len(h.gh.History[1]) == 0 {
 		t.Error("issue 1 was not picked up after the resume")
 	}
 }

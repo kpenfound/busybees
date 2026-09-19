@@ -70,7 +70,7 @@ func TestPollIsScheduledForTheStartOfTheWorkDay(t *testing.T) {
 		if full, err := h.sched.tick(ctx); err != nil || !full {
 			t.Fatalf("tick %d: full=%v err=%v", i, full, err)
 		}
-		if got := h.gh.callCount("issue list"); got != want {
+		if got := h.gh.CallCount("issue list"); got != want {
 			t.Fatalf("polls after tick %d: %d, want %d", i, got, want)
 		}
 	}
@@ -91,7 +91,7 @@ func TestRateLimitNeverShortensTheWait(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			h := newHarnessAt(t, workHoursIntervals("5m", "8h", "15m"), c.now)
-			h.gh.errFor["issue list"] = errors.New("gh: API rate limit exceeded for user")
+			h.gh.ErrFor["issue list"] = errors.New("gh: API rate limit exceeded for user")
 			full, err := h.sched.tick(context.Background())
 			if !full || err == nil {
 				t.Fatalf("tick: full=%v err=%v", full, err)

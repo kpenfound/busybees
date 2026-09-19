@@ -29,7 +29,7 @@ enabled = false
 // specced by the project manager on the way.
 func TestUnlabelledIssueGoesToTheProductManager(t *testing.T) {
 	h := newHarness(t, managersTOML)
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Filed from the GitHub UI", Body: "exports would be nice",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Filed from the GitHub UI", Body: "exports would be nice",
 		State: "OPEN", Author: github.Author{Login: "kyle"},
 		Labels: []github.Label{{Name: "bees"}}, CreatedAt: time.Now().Add(-time.Hour)}
 
@@ -39,11 +39,11 @@ func TestUnlabelledIssueGoesToTheProductManager(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := strings.Join(h.gh.history[1], ","); got != "bees:feedback" {
+	if got := strings.Join(h.gh.History[1], ","); got != "bees:feedback" {
 		t.Fatalf("issue 1 label history: %q, want bees:feedback", got)
 	}
-	if github.HasLabel(h.gh.issues[1].Labels, "bees:triage") {
-		t.Fatalf("issue 1 was triaged: %v", h.gh.issues[1].Labels)
+	if github.HasLabel(h.gh.Issues[1].Labels, "bees:triage") {
+		t.Fatalf("issue 1 was triaged: %v", h.gh.Issues[1].Labels)
 	}
 	// The relabel and the product manager's run happen in the same pass: the
 	// issue is appended to the feedback list the prompt renders, so nothing
@@ -81,7 +81,7 @@ func TestUnlabelledIssueWithoutTheBaseLabel(t *testing.T) {
 assignee = "kyle"
 require_label = false
 `)
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Filed from the GitHub UI", State: "OPEN",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Filed from the GitHub UI", State: "OPEN",
 		Assignees: []github.Author{{Login: "kyle"}}, CreatedAt: time.Now().Add(-time.Hour)}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -90,10 +90,10 @@ require_label = false
 		t.Fatal(err)
 	}
 
-	if got := strings.Join(h.gh.history[1], ","); got != "bees:feedback,bees" {
+	if got := strings.Join(h.gh.History[1], ","); got != "bees:feedback,bees" {
 		t.Fatalf("issue 1 label history: %q, want bees:feedback,bees", got)
 	}
-	if n := h.gh.callCount("issue edit"); n != 1 {
+	if n := h.gh.CallCount("issue edit"); n != 1 {
 		t.Fatalf("issue edit called %d times, want one edit for both labels", n)
 	}
 }
@@ -106,7 +106,7 @@ require_label = false
 // the project manager. Decided on #221 rather than changed: see that issue.
 func TestBugIssueWithNoStateLabelGoesToTheProductManager(t *testing.T) {
 	h := newHarness(t, managersTOML)
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Export writes an empty file", Body: "bees export gives me 0 bytes",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Export writes an empty file", Body: "bees export gives me 0 bytes",
 		State: "OPEN", Author: github.Author{Login: "kyle"},
 		Labels:    []github.Label{{Name: "bees"}, {Name: "bees:bug"}},
 		CreatedAt: time.Now().Add(-time.Hour)}
@@ -117,15 +117,15 @@ func TestBugIssueWithNoStateLabelGoesToTheProductManager(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := strings.Join(h.gh.history[1], ","); got != "bees:feedback" {
+	if got := strings.Join(h.gh.History[1], ","); got != "bees:feedback" {
 		t.Fatalf("issue 1 label history: %q, want bees:feedback", got)
 	}
 	// The kind label survives the relabel: the issue is still a bug report.
-	if !github.HasLabel(h.gh.issues[1].Labels, "bees:bug") {
-		t.Fatalf("issue 1 lost bees:bug: %v", h.gh.issues[1].Labels)
+	if !github.HasLabel(h.gh.Issues[1].Labels, "bees:bug") {
+		t.Fatalf("issue 1 lost bees:bug: %v", h.gh.Issues[1].Labels)
 	}
-	if github.HasLabel(h.gh.issues[1].Labels, "bees:triage") {
-		t.Fatalf("issue 1 was triaged: %v", h.gh.issues[1].Labels)
+	if github.HasLabel(h.gh.Issues[1].Labels, "bees:triage") {
+		t.Fatalf("issue 1 was triaged: %v", h.gh.Issues[1].Labels)
 	}
 	pdm := h.sessions(config.RoleProductManager)
 	if len(pdm) != 1 {
@@ -170,7 +170,7 @@ enabled = false
 func TestUnlabelledIssueGoesToTheProjectManagerWhenProductManagerDisabled(t *testing.T) {
 	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
 	h := newHarnessAt(t, projectManagerOnlyTOML, now)
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Filed from the GitHub UI", Body: "exports would be nice",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Filed from the GitHub UI", Body: "exports would be nice",
 		State: "OPEN", Author: github.Author{Login: "kyle"},
 		Labels: []github.Label{{Name: "bees"}}, CreatedAt: now.Add(-time.Hour)}
 
@@ -180,11 +180,11 @@ func TestUnlabelledIssueGoesToTheProjectManagerWhenProductManagerDisabled(t *tes
 		t.Fatal(err)
 	}
 
-	if got := strings.Join(h.gh.history[1], ","); got != "bees:triage" {
+	if got := strings.Join(h.gh.History[1], ","); got != "bees:triage" {
 		t.Fatalf("issue 1 label history: %q, want bees:triage", got)
 	}
-	if github.HasLabel(h.gh.issues[1].Labels, "bees:feedback") {
-		t.Fatalf("issue 1 got bees:feedback with the product manager disabled: %v", h.gh.issues[1].Labels)
+	if github.HasLabel(h.gh.Issues[1].Labels, "bees:feedback") {
+		t.Fatalf("issue 1 got bees:feedback with the product manager disabled: %v", h.gh.Issues[1].Labels)
 	}
 	// The relabel and the project manager's run happen in the same pass.
 	pjm := h.sessions(config.RoleProjectManager)
@@ -223,7 +223,7 @@ enabled = false
 func TestUnlabelledIssueGoesStraightToReadyWhenBothManagersDisabled(t *testing.T) {
 	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
 	h := newHarnessAt(t, noManagersTOML, now)
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Filed from the GitHub UI", Body: "exports would be nice",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Filed from the GitHub UI", Body: "exports would be nice",
 		State: "OPEN", Author: github.Author{Login: "kyle"},
 		Labels: []github.Label{{Name: "bees"}}, CreatedAt: now.Add(-time.Hour)}
 
@@ -233,11 +233,11 @@ func TestUnlabelledIssueGoesStraightToReadyWhenBothManagersDisabled(t *testing.T
 		t.Fatal(err)
 	}
 
-	if got := strings.Join(h.gh.history[1], ","); got != "bees:ready,bees:size/m" {
+	if got := strings.Join(h.gh.History[1], ","); got != "bees:ready,bees:size/m" {
 		t.Fatalf("issue 1 label history: %q, want bees:ready,bees:size/m", got)
 	}
-	if github.HasLabel(h.gh.issues[1].Labels, "bees:feedback") || github.HasLabel(h.gh.issues[1].Labels, "bees:triage") {
-		t.Fatalf("issue 1 was routed to a manager with both disabled: %v", h.gh.issues[1].Labels)
+	if github.HasLabel(h.gh.Issues[1].Labels, "bees:feedback") || github.HasLabel(h.gh.Issues[1].Labels, "bees:triage") {
+		t.Fatalf("issue 1 was routed to a manager with both disabled: %v", h.gh.Issues[1].Labels)
 	}
 	if got := h.sessions(config.RoleProjectManager); len(got) != 0 {
 		t.Fatalf("the project manager ran with both managers disabled: %v", got)
@@ -254,7 +254,7 @@ func TestUnlabelledIssueRoutingIgnoresOnlyRoles(t *testing.T) {
 	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
 	h := newHarnessAt(t, managersTOML, now)
 	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true}
-	h.gh.issues[1] = &github.Issue{Number: 1, Title: "Filed from the GitHub UI", Body: "exports would be nice",
+	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Filed from the GitHub UI", Body: "exports would be nice",
 		State: "OPEN", Author: github.Author{Login: "kyle"},
 		Labels: []github.Label{{Name: "bees"}}, CreatedAt: now.Add(-time.Hour)}
 
@@ -267,7 +267,7 @@ func TestUnlabelledIssueRoutingIgnoresOnlyRoles(t *testing.T) {
 	// Both managers are enabled in the config: the product manager is
 	// excluded from this one tick by OnlyRoles, but that must not make the
 	// routing fall through to the project manager or straight to ready.
-	if got := strings.Join(h.gh.history[1], ","); got != "bees:feedback" {
+	if got := strings.Join(h.gh.History[1], ","); got != "bees:feedback" {
 		t.Fatalf("issue 1 label history: %q, want bees:feedback (OnlyRoles must not change routing)", got)
 	}
 }
@@ -291,7 +291,7 @@ func TestTheFactorysOwnLoginIsNotAPersonWaitingForAnAnswer(t *testing.T) {
 			{Author: github.Author{Login: "kyle"}, Body: "any news?", CreatedAt: now.Add(-30 * time.Minute)},
 			{Author: github.Author{Login: "busybees-bot"}, Body: "🐝 **busybees needs a human.**", CreatedAt: now.Add(-20 * time.Minute)},
 		}}
-	h.gh.issues[3] = issue
+	h.gh.Issues[3] = issue
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
