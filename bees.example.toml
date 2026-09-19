@@ -246,12 +246,18 @@ label = "bees"
 #shell = "/bin/bash"
 # Image a container session runs in (sandbox = "container"): it must hold
 # the agent, git and gh. Name one per role for a role that runs the product.
-# For sandbox = "sbx" it is the sandbox's template, built on
-# docker/sandbox-templates:claude-code; empty selects sbx's own.
+# For sandbox = "sbx" it is the sandbox's template, built on sbx's own for
+# the agent (docker/sandbox-templates:claude-code, :codex or :opencode);
+# empty selects sbx's own.
 #sandbox_image = "ghcr.io/acme/widgets-bees:latest"
 # Path, relative to this file, to a dagger/container-use environment
 # definition the container sandbox builds and runs instead of sandbox_image.
 #container_use_environment = "dagger/container-use"
+# The host's Dagger engine an sbx session is given (sandbox = "sbx" only),
+# with the Dagger CLI at sandbox_dagger_version, the engine's own release,
+# installed in the sandbox. Off unless set: it widens what a session reaches.
+#sandbox_dagger_engine = "unix:///run/dagger/engine.sock"
+#sandbox_dagger_version = "v0.20.5"
 
 # Environment variables exported into every session (claude, its Bash tool,
 # MCP servers, git). $VARS are expanded from the bees environment. Roles can

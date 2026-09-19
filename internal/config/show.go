@@ -62,6 +62,8 @@ type RoleView struct {
 	Sandbox                 string               `json:"sandbox"`
 	SandboxImage            string               `json:"sandbox_image"`
 	ContainerUseEnvironment string               `json:"container_use_environment"`
+	SandboxDaggerEngine     string               `json:"sandbox_dagger_engine"`
+	SandboxDaggerVersion    string               `json:"sandbox_dagger_version"`
 
 	// ProfilesBySize describes the effective size overrides for every role.
 	ProfilesBySize map[string]AgentProfile `json:"profiles_by_size"`
@@ -149,6 +151,8 @@ func (c *Config) View(roles []string) (View, error) {
 			Sandbox:                 rr.Sandbox,
 			SandboxImage:            rr.SandboxImage,
 			ContainerUseEnvironment: rr.ContainerUseEnvironment,
+			SandboxDaggerEngine:     rr.SandboxDaggerEngine,
+			SandboxDaggerVersion:    rr.SandboxDaggerVersion,
 		}
 		if rv.ProfilesBySize == nil {
 			rv.ProfilesBySize = map[string]AgentProfile{}

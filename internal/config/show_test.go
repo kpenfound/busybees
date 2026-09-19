@@ -294,3 +294,13 @@ func TestViewCoversTemplateKeys(t *testing.T) {
 		}
 	}
 }
+
+// The Dagger keys, which the uncommented template leaves out because they
+// need sbx, are shown per role under their own names.
+func TestViewShowsTheDaggerKeys(t *testing.T) {
+	out := viewJSON(t, "version = 1\n[project]\nrepo = \"a/b\"\n[global]\nsandbox = \"sbx\"\nsandbox_dagger_engine = \"unix:///s\"\nsandbox_dagger_version = \"v0.20.5\"\n")
+	dev, _ := out["roles"].(map[string]any)[RoleDeveloper].(map[string]any)
+	if dev["sandbox_dagger_engine"] != "unix:///s" || dev["sandbox_dagger_version"] != "v0.20.5" {
+		t.Errorf("developer view: engine %v, version %v", dev["sandbox_dagger_engine"], dev["sandbox_dagger_version"])
+	}
+}

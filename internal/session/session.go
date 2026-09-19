@@ -87,7 +87,7 @@ func ProfileForRole(role config.ResolvedRole) Profile {
 }
 
 func profileForRole(role config.ResolvedRole) Profile {
-	return Profile{
+	p := Profile{
 		Name: role.Name, Agent: role.Agent, Model: role.Model,
 		Effort: role.Effort, MaxTurns: role.MaxTurns, Timeout: role.Timeout,
 		AllowedTools: slices.Clone(role.AllowedTools), DisallowedTools: slices.Clone(role.DisallowedTools),
@@ -96,6 +96,13 @@ func profileForRole(role config.ResolvedRole) Profile {
 		ContainerUseEnvironment: role.ContainerUseEnvironment, Shell: role.Shell,
 		Env: maps.Clone(role.Env), Skills: slices.Clone(role.Skills),
 	}
+	// The Dagger engine is an sbx option: a judge or fallback profile in
+	// another sandbox runs without it, as it runs without the container
+	// settings the role keeps.
+	if role.SandboxDaggerEngine != "" && role.Sandbox == agent.SandboxSbx {
+		p.Dagger = &agent.Dagger{Engine: role.SandboxDaggerEngine, Version: role.SandboxDaggerVersion}
+	}
+	return p
 }
 
 func MCPEntries(servers map[string]config.MCPServer) map[string]MCPEntry {
@@ -313,6 +320,11 @@ func (r *Runner) grants(req Request) *agent.Grants {
 		backend = agent.AgentClaude
 	}
 	g := &agent.Grants{VCS: p.VCSAccess, Tools: []string{agent.ToolsAll}}
+	if p.Dagger != nil {
+		// Granted to the profile that asks for it and to no other; the
+		// boundary refuses it outside sbx.
+		g.DaggerEngine = p.Dagger.Engine
+	}
 	g.Env = append(slices.Clone(HostEnv), ProviderEnv[backend]...)
 	g.Env = append(g.Env, beesEnvPrefix+"*")
 	if p.VCSAccess {

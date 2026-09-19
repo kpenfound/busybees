@@ -696,21 +696,13 @@ func TestCheckSandboxAgent(t *testing.T) {
 			}
 		}
 	}
-	for _, agent := range []string{AgentCodex, AgentOpenCode} {
-		if err := CheckSandboxAgent(SandboxSbx, agent); err == nil {
-			t.Errorf("a %s role was given the sbx sandbox", agent)
-		} else {
-			for _, want := range []string{"sbx", "claude", agent} {
-				if !strings.Contains(err.Error(), want) {
-					t.Errorf("error %q does not mention %q", err, want)
-				}
-			}
-		}
+	if err := CheckSandboxAgent(SandboxSbx, "pi"); err == nil || !strings.Contains(err.Error(), `sandbox "sbx" has no template for agent "pi"`) {
+		t.Errorf("an agent sbx has no template for was given the sbx sandbox: %v", err)
 	}
 	for _, tc := range []struct{ mode, agent string }{
 		{SandboxClaude, AgentClaude}, {SandboxClaude, ""}, {SandboxNone, AgentCodex}, {"", AgentCodex}, {SandboxContainer, AgentCodex},
 		{SandboxNone, AgentOpenCode}, {"", AgentOpenCode}, {SandboxContainer, AgentOpenCode},
-		{SandboxSbx, AgentClaude}, {SandboxSbx, ""},
+		{SandboxSbx, AgentClaude}, {SandboxSbx, ""}, {SandboxSbx, AgentCodex}, {SandboxSbx, AgentOpenCode},
 	} {
 		if err := CheckSandboxAgent(tc.mode, tc.agent); err != nil {
 			t.Errorf("sandbox %q with agent %q refused: %v", tc.mode, tc.agent, err)
@@ -730,23 +722,19 @@ func TestCheckSandboxAgent(t *testing.T) {
 	}
 }
 
-// The sbx sandbox runs claude only: a profile that selects it for codex or
-// opencode is a load error naming the profile, under a role's legacy keys
-// and under [profiles.<name>] alike, and one for claude loads.
-func TestSbxProfileRunsClaudeOnly(t *testing.T) {
-	cases := map[string]struct{ body, want string }{
-		"role":    {"version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nagent = \"codex\"\nsandbox = \"sbx\"\n", "profiles.developer.sandbox = \"sbx\" runs agent \"claude\" only; profiles.developer.agent is \"codex\""},
-		"profile": {"version = 3\n[project]\nrepo = \"a/b\"\n[profiles.boxed]\nagent = \"opencode\"\nsandbox = \"sbx\"\n[roles.qa]\nprofile = \"boxed\"\n", "profiles.boxed.sandbox = \"sbx\" runs agent \"claude\" only; profiles.boxed.agent is \"opencode\""},
-	}
-	for name, c := range cases {
-		_, err := Load(writeConfig(t, c.body))
-		if err == nil || !strings.Contains(err.Error(), c.want) {
-			t.Errorf("%s: error = %v, want it to contain %q", name, err, c.want)
-		}
+// The sbx sandbox runs every agent: a profile that selects it loads for
+// claude, codex and opencode, under a role's legacy keys and under
+// [profiles.<name>] alike, and an agent bees does not know is refused by
+// the agent key.
+func TestSbxProfileRunsEveryAgent(t *testing.T) {
+	if _, err := Load(writeConfig(t, "version = 3\n[project]\nrepo = \"a/b\"\n[profiles.boxed]\nagent = \"pi\"\nsandbox = \"sbx\"\n[roles.qa]\nprofile = \"boxed\"\n")); err == nil || !strings.Contains(err.Error(), "profiles.boxed.agent must be one of claude, codex, opencode") {
+		t.Errorf("pi in sbx: %v", err)
 	}
 	for name, body := range map[string]string{
-		"claude":  "version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nagent = \"claude\"\nsandbox = \"sbx\"\n",
-		"default": "version = 1\n[project]\nrepo = \"a/b\"\n[global]\nsandbox = \"sbx\"\n",
+		"claude":   "version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nagent = \"claude\"\nsandbox = \"sbx\"\n",
+		"default":  "version = 1\n[project]\nrepo = \"a/b\"\n[global]\nsandbox = \"sbx\"\n",
+		"codex":    "version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nagent = \"codex\"\nsandbox = \"sbx\"\n",
+		"opencode": "version = 3\n[project]\nrepo = \"a/b\"\n[profiles.boxed]\nagent = \"opencode\"\nsandbox = \"sbx\"\n[roles.developer]\nprofile = \"boxed\"\n",
 	} {
 		cfg, err := Load(writeConfig(t, body))
 		if err != nil {
@@ -789,5 +777,56 @@ sandbox_image = "ghcr.io/acme/bees-template:1"
 	err = cfg.CheckSandbox()
 	if err == nil || !strings.Contains(err.Error(), "roles.developer") || !strings.Contains(err.Error(), "sbx on PATH") {
 		t.Errorf("an sbx developer started without the CLI, or the refusal does not name the role: %v", err)
+	}
+}
+
+// The Dagger keys give an sbx role the host's engine and the CLI release:
+// a role's value replaces the global one, and a role without them has
+// neither. A key outside sbx, one without the other, or a value the
+// sandbox cannot use is a load error naming the key.
+func TestSandboxDaggerKeys(t *testing.T) {
+	const head = "version = 1\n[project]\nrepo = \"a/b\"\n"
+	cfg, err := Load(writeConfig(t, head+"[global]\nsandbox = \"sbx\"\nsandbox_dagger_engine = \"unix:///run/dagger/engine.sock\"\nsandbox_dagger_version = \"v0.20.5\"\n[roles.qa]\nsandbox_dagger_engine = \"tcp://127.0.0.1:1234\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev, _ := cfg.Role(RoleDeveloper)
+	qa, _ := cfg.Role(RoleQA)
+	if dev.SandboxDaggerEngine != "unix:///run/dagger/engine.sock" || dev.SandboxDaggerVersion != "v0.20.5" {
+		t.Errorf("developer: %q %q", dev.SandboxDaggerEngine, dev.SandboxDaggerVersion)
+	}
+	if qa.SandboxDaggerEngine != "tcp://127.0.0.1:1234" || qa.SandboxDaggerVersion != "v0.20.5" {
+		t.Errorf("qa: %q %q", qa.SandboxDaggerEngine, qa.SandboxDaggerVersion)
+	}
+	cfg, err = Load(writeConfig(t, head+"[global]\nsandbox = \"sbx\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dev, _ := cfg.Role(RoleDeveloper); dev.SandboxDaggerEngine != "" || dev.SandboxDaggerVersion != "" {
+		t.Errorf("Dagger without the keys: %q %q", dev.SandboxDaggerEngine, dev.SandboxDaggerVersion)
+	}
+
+	for name, tc := range map[string]struct{ body, want string }{
+		"container": {"[global]\nsandbox = \"container\"\nsandbox_image = \"img\"\n[roles.developer]\nsandbox_dagger_engine = \"unix:///s\"\nsandbox_dagger_version = \"v0.20.5\"\n",
+			`roles.developer: sandbox_dagger_engine is only valid when sandbox is "sbx"; sandbox is "container"`},
+		"size profile": {"version = 3\n[profiles.box]\nsandbox = \"sbx\"\n[profiles.open]\nsandbox = \"none\"\n[roles.developer]\nprofile = \"box\"\nprofile_by_size = { xl = \"open\" }\nsandbox_dagger_engine = \"unix:///s\"\nsandbox_dagger_version = \"v0.20.5\"\n",
+			`roles.developer: sandbox_dagger_engine is only valid when sandbox is "sbx"; the xl profile's sandbox is "none"`},
+		"no version": {"[global]\nsandbox = \"sbx\"\nsandbox_dagger_engine = \"unix:///s\"\n",
+			"roles.developer: sandbox_dagger_engine needs sandbox_dagger_version"},
+		"no engine": {"[global]\nsandbox = \"sbx\"\n[roles.qa]\nsandbox_dagger_version = \"v0.20.5\"\n",
+			"roles.qa: sandbox_dagger_version needs sandbox_dagger_engine"},
+		"engine": {"[global]\nsandbox = \"sbx\"\nsandbox_dagger_engine = \"/run/dagger.sock\"\nsandbox_dagger_version = \"v0.20.5\"\n",
+			`global.sandbox_dagger_engine: the Dagger engine "/run/dagger.sock" must be unix://<absolute path of its socket> or tcp://<host>:<port>`},
+		"version": {"[global]\nsandbox = \"sbx\"\n[roles.developer]\nsandbox_dagger_engine = \"unix:///s\"\nsandbox_dagger_version = \"latest\"\n",
+			`roles.developer.sandbox_dagger_version: the Dagger CLI version "latest" must be a release such as v0.20.5`},
+	} {
+		body := tc.body
+		if !strings.HasPrefix(body, "version") {
+			body = "version = 1\n" + body
+		}
+		_, err := Load(writeConfig(t, strings.Replace(body, "\n", "\n[project]\nrepo = \"a/b\"\n", 1)))
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: error = %v, want it to contain %q", name, err, tc.want)
+		}
 	}
 }

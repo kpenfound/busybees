@@ -36,7 +36,8 @@ const (
 	// the worktree, the repository's .git and the state directory, and
 	// nothing else of the host, with its network held to the sbx policy and
 	// the agent's credential injected by the sbx proxy. The built-in MCP
-	// server stays on the host and is reached over HTTP. Runs claude only.
+	// server stays on the host and is reached over HTTP. Runs every agent
+	// sbx has a template for (agent.SbxTemplates).
 	SandboxSbx = agent.SandboxSbx
 )
 
@@ -55,6 +56,9 @@ const ContainerEngine = agent.ContainerEngine
 
 // SandboxCLI is the command SandboxSbx runs on: the sbx CLI, found on PATH.
 const SandboxCLI = agent.SandboxCLI
+
+// sbxTemplates are sbx's own templates, per agent it can run.
+var sbxTemplates = agent.SbxTemplates
 
 // AgentCredentials are the variables an agent reads its credential from,
 // per agent. A container session has no keychain and no home directory of
@@ -240,18 +244,18 @@ func oneLine(out []byte, err error) string {
 // mode. SandboxClaude is Claude Code's own sandbox, so a codex or opencode
 // role asking for it would run with its own approvals and sandbox switched
 // off and nothing boxing it; that is refused, both here and by the runner,
-// rather than run unboxed. SandboxSbx runs claude only: the sandbox is
-// created for that agent, and bees builds no other agent's command for it.
-// None asks nothing of the agent, and container asks its own question of
-// the agent's credential in CheckSandboxContainer. Loading refuses the same
-// sbx profiles naming the key; this is what the runner asks of a role built
-// by hand.
+// rather than run unboxed. SandboxSbx runs an agent sbx has a template for
+// (agent.SbxTemplates), since the sandbox is created for its agent. None
+// asks nothing of the agent, and container asks its own question of the
+// agent's credential in CheckSandboxContainer. Loading refuses the same
+// profiles naming the key; this is what the runner asks of a role built by
+// hand.
 func CheckSandboxAgent(mode, agent string) error {
 	if mode == SandboxClaude && (agent == AgentCodex || agent == AgentOpenCode) {
 		return fmt.Errorf("sandbox %q is Claude Code's sandbox and agent %q does not run under it", mode, agent)
 	}
-	if mode == SandboxSbx && agent != "" && agent != AgentClaude {
-		return fmt.Errorf("sandbox %q runs agent %q only, not %q", mode, AgentClaude, agent)
+	if mode == SandboxSbx && agent != "" && sbxTemplates[agent] == "" {
+		return fmt.Errorf("sandbox %q has no template for agent %q", mode, agent)
 	}
 	return nil
 }
