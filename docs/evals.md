@@ -71,7 +71,11 @@ These are the per-role cases:
 | Case | The role is given | The case checks |
 |---|---|---|
 | `developer/done-number` | one ready issue on the shared `todo` fixture | the outcome `pr-opened`, a pull request for the issue, `bees:ready` gone from it, and a rubric on the change and the pull request's description |
+| `developer/ask-first` | a ready issue whose acceptance criteria contradict each other about the numbering | the outcome `question`, `bees:blocked` on the issue, mail to the project manager, no issue created, and rubrics on the question and on having built nothing |
+| `developer/out-of-scope-bug` | a ready issue in a file that holds a second, unrelated fault | the outcome, a pull request for the issue, one issue created, and rubrics on the fault being filed rather than fixed and on the change itself |
 | `project_manager/thin-issue` | a triage queue of two, a blocked issue and the developer's question about it | the outcome, `bees:triage` → `bees:ready` on the thin issue, the invalid one closed, mail to the developer, and rubrics on the refined issue and the answer |
+| `project_manager/split-in-two` | one triage item that is two pull requests | the outcome, two issues created, the original closed, and rubrics on the split and on not rewriting the original instead |
+| `project_manager/escalate` | a triage item whose first deliverable is a product decision, and one to refine | the outcome, `bees:blocked` on it, mail to the product manager, no issue created, the other item ready, and rubrics on the question and on inventing no criteria |
 | `qa/broken-greeting` | a default branch whose `test.sh` fails, and one bug already filed | the outcome, one issue created, the report mailed to the product manager, and a rubric on the bug report |
 | `qa/clean-pass` | a default branch that does what its README says, and a bug report that does not reproduce | the outcome, no issue created, the report mailed to the product manager, and a rubric on reporting a clean pass rather than inventing a defect |
 | `qa/already-filed` | a default branch with one defect, already reported as #1 | the outcome, no issue created, the report mailed to the product manager, and a rubric on commenting on #1 after `file_bug` refuses the duplicate |

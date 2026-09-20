@@ -1,0 +1,78 @@
+# The project manager alone, with a triage item whose first deliverable is a
+# product decision: the pass is to send it to the product manager and block
+# it, not to invent acceptance criteria. docs/evals.md describes every key.
+#
+# Nothing in the fixture says what a repeating item is — the file format has
+# no room for one and the README does not mention them — so the shape of the
+# answer is a product call and not a reading of the code. The second item is
+# there so that a pass is triaging one and escalating the other, rather than
+# an empty queue.
+description = "a triage item that is really a direction, for the product manager to decide"
+timeout = "30m"
+max_cost = 5
+
+[[issues]]
+number = 1
+title = "Do something about the chores I retype every week"
+labels = ["bees:triage"]
+body = """
+Half my list is the same chores every week — bins out, laundry, water the
+plants. I cross them off on Sunday and type them in again on Monday. There
+has to be a better way to do this.
+"""
+
+[[issues]]
+number = 2
+title = "todo list should print the due date in a column"
+labels = ["bees:triage", "bees:size/s"]
+body = """
+`todo list` prints the raw line, `due:2026-03-01` and all. Print the due
+date in a column of its own, after the number and before the text, and leave
+the column empty for an item that has none.
+"""
+
+[expect]
+outcome = "done"
+issues_created = 0
+
+[[expect.mail]]
+to = "product_manager"
+issue = 1
+
+[[expect.labels]]
+issue = 1
+has = ["bees:blocked"]
+missing = ["bees:triage", "bees:ready"]
+
+[[expect.labels]]
+issue = 2
+has = ["bees:ready"]
+missing = ["bees:triage"]
+
+[[expect.graded]]
+name = "the escalation asks the product manager what to build"
+rubric = """
+The mail the project manager sent the product manager about #1 says that the
+first deliverable is a decision about what a repeating chore is in `todo` —
+a tag on the line that recreates the item when it is crossed off, a second
+file of templates, something else — and that the file format the README
+documents has no room for one today. It asks what shape the product should
+take, in a question a person could answer in a line or two, and it does not
+hand the decision back by listing everything that is unspecified.
+
+Do not judge which option was recommended, or whether one was. Do not judge
+the wording, and do not expect the question to be phrased as the rubric
+phrases it.
+"""
+
+[[expect.graded]]
+name = "no acceptance criteria were invented for #1"
+rubric = """
+#1 as it stands is still the direction a person wrote. The session did not
+rewrite its body into scope and acceptance criteria of its own invention,
+pick a design for repeating items, or split it into work items. A line added
+to the body saying what the issue is waiting on is fine.
+
+Judge #1's body as it is at the end, not how it was written. Do not judge
+what the session did with #2.
+"""
