@@ -71,6 +71,10 @@ These are the per-role cases:
 | Case | The role is given | The case checks |
 |---|---|---|
 | `developer/done-number` | one ready issue on the shared `todo` fixture | the outcome `pr-opened`, a pull request for the issue, `bees:ready` gone from it, and a rubric on the change and the pull request's description |
+| `reviewer/approve-a-good-pr` | a pull request that meets its issue's acceptance criteria and is tested | the outcome `approved`, `bees:approved` on the issue, and rubrics on approving without demanding a change and on saying what was checked |
+| `reviewer/catch-a-real-bug` | a pull request whose new method reports an item due today as overdue, with green tests | the outcome `changes-requested`, mail to the developer, `bees:needs-human` on the issue, and rubrics on naming the fault and on blocking on nothing else |
+| `reviewer/no-nitpicking` | a correct pull request written in a style the fixture does not use | the outcome `approved`, `bees:approved` on the issue, and rubrics on not sending the style differences back and on judging the change against the issue |
+| `reviewer/final-round-honesty` | the last round on a pull request that still panics, and a developer asking for it to be let through | the outcome `changes-requested`, mail to the developer, `bees:needs-human` on the issue, and rubrics on refusing to approve it and on what the feedback says |
 | `project_manager/thin-issue` | a triage queue of two, a blocked issue and the developer's question about it | the outcome, `bees:triage` → `bees:ready` on the thin issue, the invalid one closed, mail to the developer, and rubrics on the refined issue and the answer |
 | `qa/broken-greeting` | a default branch whose `test.sh` fails, and one bug already filed | the outcome, one issue created, the report mailed to the product manager, and a rubric on the bug report |
 | `qa/clean-pass` | a default branch that does what its README says, and a bug report that does not reproduce | the outcome, no issue created, the report mailed to the product manager, and a rubric on reporting a clean pass rather than inventing a defect |
@@ -80,6 +84,16 @@ These are the per-role cases:
 | `product_manager/break-down` | an approved feature with three outcomes in it | the outcome, three issues created, `bees:question` not added, and rubrics on the split and on leaving milestones alone |
 | `product_manager/ask-a-person` | a feature whose scope turns on a decision only a person can make | the outcome, `bees:question` on the feature, no issue created, and a rubric on the question |
 | `product_manager/answer-a-question` | the project manager's question by mail, and nothing on GitHub to do | the outcome, mail back about the issue, no issue created, and a rubric on the answer and on leaving GitHub alone |
+
+The reviewer cases score the whole review, not the judge session alone.
+`bees eval reviewer` runs the review loop's review stage, so the brief
+session and the angle sessions run first, on the profiles `bees.toml` or
+`--profile` select for the reviewer (`brief_profile`, `angle_profiles`,
+`profile`), and the session that posts the findings and reports the verdict
+is the last of them. A fault the angles miss is a fault the case scores
+against the reviewer. The project's `context.toml` still decides which
+angles are enabled and which context sources are gathered; the fixtures ship
+none, so every built-in one runs.
 
 ### Which profile the sessions run on
 
@@ -247,6 +261,14 @@ against a workflow that does not exist.
 A per-role case has no `test`. It is graded by what it declares under
 `[expect]`, and it passes when every one of those checks passes.
 
+A reviewer case runs with `max_review_rounds = 1`. The review loop answers
+"changes requested" by starting a developer session, which a per-role run
+must not do: the scheduler's role scope gates dispatch, not the stage a
+worker moves to next. With one round the worker escalates the issue instead,
+so the run ends on the reviewer's verdict — `bees:approved` on the issue
+after an approval, `bees:needs-human` after changes requested. The session is
+told it is the final review round, which every reviewer case therefore is.
+
 `evals/project_manager/thin-issue/case.toml`, cut down:
 
 ```toml
@@ -394,4 +416,12 @@ request with no change is nothing for a session to read.
 
 A developer case gives its pull request the branch of the issue it names
 (`bees/issue-<n>`): that is the branch the developer's session works on, and
-the pull request it is handed to update.
+the pull request it is handed to update. A reviewer case does the same: its
+session reviews the pull request on the branch of the issue it names.
+
+The review reads that branch against its base, so the fault a reviewer case
+is about has to be in the change itself, and the issue's acceptance criteria
+have to settle it: a comparison that includes a boundary the issue excludes,
+a bounds check that lets a number through. Leave the branch's own tests
+passing, or the case measures whoever runs `go test` rather than the
+reviewer.
