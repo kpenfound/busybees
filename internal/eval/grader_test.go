@@ -37,13 +37,35 @@ func TestParseGrade(t *testing.T) {
 	}
 }
 
-// A rubric that names no pass score passes at DefaultPassScore.
+// A rubric that names no pass score passes at DefaultPassScore, and one
+// that names 0 records the score without failing the case: the two are not
+// the same rubric, so the key is a pointer.
 func TestRubricPassScore(t *testing.T) {
-	if s := (Rubric{}).PassScore(); s != DefaultPassScore {
-		t.Fatalf("default: %v", s)
+	half, none := 0.5, 0.0
+	for _, tc := range []struct {
+		name string
+		pass *float64
+		want float64
+	}{
+		{"unset", nil, DefaultPassScore},
+		{"named", &half, 0.5},
+		{"zero", &none, 0},
+	} {
+		if s := (Rubric{Pass: tc.pass}).PassScore(); s != tc.want {
+			t.Errorf("%s: %v, want %v", tc.name, s, tc.want)
+		}
 	}
-	if s := (Rubric{Pass: 0.5}).PassScore(); s != 0.5 {
-		t.Fatalf("named: %v", s)
+}
+
+// A pass score of 0 is a rubric that only reports: every score meets it.
+func TestRubricPassScoreZeroNeverFails(t *testing.T) {
+	zero := 0.0
+	r := Rubric{Name: "n", Rubric: "r", Pass: &zero}
+	if errs := r.validate(); len(errs) != 0 {
+		t.Fatalf("pass = 0 was refused: %v", errs)
+	}
+	if 0 < r.PassScore() {
+		t.Fatalf("a score of 0 does not reach %v", r.PassScore())
 	}
 }
 

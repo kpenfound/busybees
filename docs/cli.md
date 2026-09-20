@@ -1851,8 +1851,9 @@ duration, profile), writes `<state_dir>/evals/<timestamp>/report.json`, and
 exits non-zero when any case fails. The sessions are real agent sessions.
 
 With a role, it runs that role in isolation against the cases under
-`./evals/<role>/`, the way `bees exec` runs one session: every other role is
-disabled and the seeded GitHub state and mailbox stand in for them. Such a
+`./evals/<role>/`, the way `bees exec` runs one session: the scheduler is
+scoped to that role and the seeded GitHub state and mailbox stand in for the
+rest of the factory, which stays configured so that routing does not move. Such a
 case is graded by the checks it declares — the outcome, labels moved, mail
 sent, issues created or closed, a pull request opened — and by rubrics a
 grader session scores, which fills the `SCORE` column.

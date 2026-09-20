@@ -16,11 +16,12 @@ import (
 )
 
 // Expect is how a per-role case is graded: what the state has to look like
-// once the role's session has run. Every key a case sets becomes one Check
-// in the report, and the case passes when all of them pass. A case declares
-// only the ones it is about; the rubrics under Graded are decided by a
-// session of their own (grader.go), the rest are read off the end state
-// here.
+// once the role's session has run, and the case passes when every check it
+// declared passes. A case declares only the keys it is about. Most become
+// one Check each; the ones that take a list become one per entry, so that
+// each label, each closed issue and each pull request stands or falls on
+// its own. The rubrics under Graded are decided by a session of their own
+// (grader.go); the rest are read off the end state here.
 type Expect struct {
 	// Outcome is the status the session had to report with `done`.
 	Outcome string `toml:"outcome"`

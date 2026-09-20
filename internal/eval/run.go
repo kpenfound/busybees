@@ -312,7 +312,7 @@ func (r *Runner) factory(ctx context.Context, c Case, sel Selection, dir string,
 	repo := "bees-eval/" + c.Name
 	stateDir := filepath.Join(dir, "state")
 	text := sel.configText(settings{Repo: repo, StateDir: stateDir, Workspaces: filepath.Join(dir, "worktrees"),
-		PassInterval: r.passInterval(), Only: c.Role})
+		PassInterval: r.passInterval()})
 	path := filepath.Join(fx.project, "bees.toml")
 	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
 		return nil, err
@@ -410,6 +410,16 @@ func (r *Runner) factory(ctx context.Context, c Case, sel Selection, dir string,
 		return nil, err
 	}
 	f.sched.Once = true
+	if c.Role != "" {
+		// A per-role case runs that role and nothing else. The scope is the
+		// scheduler's own (`bees exec`'s), not `roles.<name>.enabled` in the
+		// eval's bees.toml: reconcile routes a new issue by the roles the
+		// configuration has (`configuredRole`), so disabling four of them
+		// would send unlabelled issues somewhere the real factory never
+		// would, and the eval would be measuring the role against a
+		// workflow that does not exist.
+		f.sched.OnlyRoles = map[string]bool{c.Role: true}
+	}
 	return f, nil
 }
 
@@ -533,8 +543,8 @@ func (f *caseFactory) loop(ctx context.Context, c Case) string {
 }
 
 // runRole runs the one session a per-role case is about, the way
-// `bees exec <role>` runs it: every other role is disabled, so the seeded
-// GitHub state and mailbox are all the role has to go on. Nothing is
+// `bees exec <role>` runs it: the scheduler is scoped to that role, so the
+// seeded GitHub state and mailbox are all it has to go on. Nothing is
 // merged and no second pass runs; the case is graded on what the session
 // left behind.
 func (f *caseFactory) runRole(ctx context.Context, c Case) string {

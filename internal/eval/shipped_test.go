@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/kpenfound/busybees/internal/config"
@@ -101,14 +102,15 @@ func TestShippedRoleCasesLoad(t *testing.T) {
 			})
 		}
 	}
-	// A run of the whole factory does not take them.
+	// A run of the whole factory does not take them: no case it loads is
+	// named after a role.
 	whole, err := LoadCases("../../evals", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, c := range whole {
-		if c.Role != "" {
-			t.Errorf("%s is the %s's case", c.Name, c.Role)
+		if slices.Contains(config.Roles, c.Name) {
+			t.Errorf("%s is a role directory, taken as a whole-factory case", c.Name)
 		}
 	}
 	if roles == 0 {

@@ -39,8 +39,9 @@ request of its own. The table goes to stdout and the JSON report to
 and test output. It exits non-zero when any case fails.
 
 With a role, eval runs that role in isolation against the cases under
-./evals/<role>/, the way bees exec runs one session: every other role is
-disabled, so the seeded GitHub state and mailbox stand in for them. Such a
+./evals/<role>/, the way bees exec runs one session: the scheduler is scoped
+to that role, so the seeded GitHub state and mailbox stand in for the rest of
+the factory, which stays configured so that routing does not move. Such a
 case is graded by the checks it declares — the outcome the session reported,
 labels moved, mail sent, issues created or closed, a pull request opened —
 and by the rubrics a grader session scores, whose score is the table's SCORE

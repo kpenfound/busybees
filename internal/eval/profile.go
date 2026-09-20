@@ -160,10 +160,6 @@ func checkHostOnly(cfg *config.Config) error {
 type settings struct {
 	Repo, StateDir, Workspaces string
 	PassInterval               string
-	// Only is the role a per-role eval runs: every other role is disabled,
-	// so nothing but that role's session runs and the seeded GitHub state
-	// and mailbox stand in for the rest. Empty runs the whole factory.
-	Only string
 }
 
 // The bees.toml an eval writes into its fixture's clone.
@@ -199,10 +195,6 @@ type roleTable struct {
 	// wait for.
 	ChecksWait         string `toml:"checks_wait,omitempty"`
 	ChecksPollInterval string `toml:"checks_poll_interval,omitempty"`
-	// Enabled takes the role out of the rotation, which is how a per-role
-	// eval leaves every role but one unrun. A nil pointer is left out of
-	// the file; a pointer to false is written.
-	Enabled *bool `toml:"enabled,omitempty"`
 }
 
 func (t roleTable) empty() bool {
@@ -232,15 +224,6 @@ func (s Selection) configText(set settings) string {
 	reviewer := f.Roles[config.RoleReviewer]
 	reviewer.ChecksWait, reviewer.ChecksPollInterval = "1s", "1s"
 	f.Roles[config.RoleReviewer] = reviewer
-	off := false
-	for _, role := range config.Roles {
-		if set.Only == "" || role == set.Only {
-			continue
-		}
-		t := f.Roles[role]
-		t.Enabled = &off
-		f.Roles[role] = t
-	}
 	for name, p := range s.profiles {
 		if f.Profiles == nil {
 			f.Profiles = map[string]profileTable{}

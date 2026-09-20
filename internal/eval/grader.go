@@ -47,16 +47,18 @@ type Rubric struct {
 	Name string `toml:"name"`
 	// Rubric is what the grader is told to judge the session by.
 	Rubric string `toml:"rubric"`
-	// Pass is the score the check passes at, DefaultPassScore when unset.
-	Pass float64 `toml:"pass"`
+	// Pass is the score the check passes at: DefaultPassScore when the
+	// rubric leaves it out, and 0 when it asks for 0, which records the
+	// score without ever failing the case.
+	Pass *float64 `toml:"pass"`
 }
 
 // PassScore is the score the check passes at.
 func (r Rubric) PassScore() float64 {
-	if r.Pass <= 0 {
+	if r.Pass == nil {
 		return DefaultPassScore
 	}
-	return r.Pass
+	return *r.Pass
 }
 
 func (r Rubric) validate() []error {
@@ -67,8 +69,8 @@ func (r Rubric) validate() []error {
 	if strings.TrimSpace(r.Rubric) == "" {
 		errs = append(errs, fmt.Errorf("expect.graded: rubric: %q has nothing for the grader to judge by", r.Name))
 	}
-	if r.Pass < 0 || r.Pass > 1 {
-		errs = append(errs, fmt.Errorf("expect.graded: pass: %q asks for %v, which is not a score between 0 and 1", r.Name, r.Pass))
+	if r.Pass != nil && (*r.Pass < 0 || *r.Pass > 1) {
+		errs = append(errs, fmt.Errorf("expect.graded: pass: %q asks for %v, which is not a score between 0 and 1", r.Name, *r.Pass))
 	}
 	return errs
 }
@@ -212,14 +214,20 @@ func (f *caseFactory) transcript() string {
 }
 
 // endState is what the run left behind, for a grader to read: every issue
-// there is now with the comments posted on it, the pull requests opened,
-// and the mail the role sent.
+// there is now with its comments — the ones the case seeded and the ones
+// the run posted — the pull requests opened, and the mail the role sent.
 func (f *caseFactory) endState(c Case) string {
 	snap := f.gh.Snapshot()
 	var b strings.Builder
 	b.WriteString("### Issues\n")
 	for _, i := range snap.Issues {
 		fmt.Fprintf(&b, "\n#%d %s [%s] %s\n\n%s\n", i.Number, i.Title, i.State, strings.Join(labelNames(i), ", "), cut(i.Body, MaxBodyBytes))
+		// The seeded comments first, then the ones the run posted: the
+		// snapshot keeps them apart, and only both together are the issue
+		// as it stands.
+		for _, comment := range i.Comments {
+			fmt.Fprintf(&b, "\ncomment on #%d by %s:\n\n%s\n", i.Number, comment.Author.Login, cut(comment.Body, MaxBodyBytes))
+		}
 		for _, comment := range snap.Comments[i.Number] {
 			fmt.Fprintf(&b, "\ncomment on #%d:\n\n%s\n", i.Number, cut(comment, MaxBodyBytes))
 		}

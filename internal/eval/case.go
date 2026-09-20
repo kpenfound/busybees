@@ -15,9 +15,9 @@
 // file per run.
 //
 // `bees eval <role>` runs one role instead, against the cases under
-// evals/<role>/: every other role is disabled, the seeded GitHub state and
-// mailbox stand in for them, and one session runs the way `bees exec` runs
-// it (run.go's runRole). Such a case is graded by what it declares
+// evals/<role>/: the scheduler is scoped to that role, the seeded GitHub
+// state and mailbox stand in for the others, and one session runs the way
+// `bees exec` runs it (run.go's runRole). Such a case is graded by what it declares
 // (expect.go): the outcome the session reported, labels moved, mail sent,
 // issues created or closed, a pull request opened, and rubrics a grader
 // session of its own scores (grader.go).

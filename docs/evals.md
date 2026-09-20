@@ -70,7 +70,7 @@ These are the per-role cases, one per kind of check:
 
 | Case | The role is given | The case checks |
 |---|---|---|
-| `developer/done-number` | one ready issue on the shared `todo` fixture | the outcome `pr-opened`, a pull request for the issue, and a rubric on the change and the pull request's description |
+| `developer/done-number` | one ready issue on the shared `todo` fixture | the outcome `pr-opened`, a pull request for the issue, `bees:ready` gone from it, and a rubric on the change and the pull request's description |
 | `project_manager/thin-issue` | a triage queue of two, a blocked issue and the developer's question about it | the outcome, `bees:triage` → `bees:ready` on the thin issue, the invalid one closed, mail to the developer, and rubrics on the refined issue and the answer |
 | `qa/broken-greeting` | a default branch whose `test.sh` fails, and one bug already filed | the outcome, one issue created, the report mailed to the product manager, and a rubric on the bug report |
 
@@ -87,9 +87,9 @@ role's `profile` and `profile_by_size`, and the reviewer's `brief_profile`,
 the built-in profile.
 
 The eval takes nothing else from `bees.toml`: no prompts, skills, MCP
-servers, limits or timings, and every role runs — except in a per-role run,
-where the role under eval is the only one enabled. Two runs differ only by
-their profiles. A fixture can carry its own `bees/prompts/`, as any project
+servers, limits or timings, and every role is configured — a per-role run
+scopes the scheduler to one role rather than configuring the rest away. Two
+runs differ only by their profiles. A fixture can carry its own `bees/prompts/`, as any project
 can. A profile whose sandbox is `container` or `sbx` is refused: those
 sessions cannot reach the fake GitHub described below.
 
@@ -222,10 +222,16 @@ takes.
 ## Per-role cases
 
 `bees eval <role>` runs one role against the cases under `evals/<role>/`, the
-way `bees exec <role>` runs one session. Every other role is disabled, so
-nothing but that role runs: the seeded GitHub state and mailbox stand in for
-the rest of the factory, and the run ends when the session does. Nothing is
+way `bees exec <role>` runs one session: the scheduler is scoped to that
+role, so nothing else runs, and the seeded GitHub state and mailbox stand in
+for the rest of the factory. The run ends when the session does. Nothing is
 merged and no second pass runs.
+
+The rest of the factory is still *configured*, and that is deliberate: the
+scheduler routes a new issue by the roles the configuration has, so a run
+that configured four roles away would label an unlabelled issue somewhere
+the real factory never would, and the case would be measuring the role
+against a workflow that does not exist.
 
 A per-role case has no `test`. It is graded by what it declares under
 `[expect]`, and it passes when every one of those checks passes.
@@ -279,7 +285,7 @@ mean what they mean for a whole-factory case. These are the rest:
 
 | Check | Passes when |
 |---|---|
-| `outcome = "done"` | The role's session reported that status with `done`. It has to be one the role may report. A session the factory treats as a failure ends the run as `error`, which fails the case whatever it declared. |
+| `outcome = "done"` | The role's session reported that status with `done`. It has to be one the role may report. `failed` is declarable for a developer or reviewer case, where the factory hands the issue to a person and the run still ends as `done`; for the other three roles a failed session ends the run as `error`, which fails the case whatever it declared. |
 | `issues_created = 1` | That many issues exist at the end that the case did not seed. |
 | `issues_closed = [3]` | Each of those seeded issues is closed. |
 | `pull_requests = [1]` | Each of those issues has a pull request: one on its branch, or one whose body closes it. |
@@ -308,10 +314,12 @@ issue's body as it is at the end, not how it was written.
 """
 ```
 
-`name` is what the report calls the check, and `pass` the score it passes at
-(0.7 by default). Write the rubric as what the grader should see, and say
-what not to judge: a rubric that leaves the bar to the grader's taste scores
-differently from run to run, which is the one thing an eval must not do.
+`name` is what the report calls the check, and `pass` the score it passes at:
+0.7 when the rubric leaves it out, and `pass = 0` to record the score in the
+report without ever failing the case. Write the rubric as what the grader
+should see, and say what not to judge: a rubric that leaves the bar to the
+grader's taste scores differently from run to run, which is the one thing an
+eval must not do.
 
 The grader is **not** the agent `--profile` selects. It is the read-only
 session agent from `~/.config/bees/config.toml` — the one `bees review` runs

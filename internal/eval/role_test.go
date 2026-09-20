@@ -8,8 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/BurntSushi/toml"
-
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/review"
 )
@@ -172,27 +170,14 @@ func TestRoleCaseRunsTheDeveloperAlone(t *testing.T) {
 	if res.Sessions != 2 {
 		t.Errorf("sessions: %+v", res)
 	}
-	// Nothing but the developer was enabled, so no other role could run.
-	var written struct {
-		Roles map[string]struct {
-			Enabled *bool `toml:"enabled"`
-		} `toml:"roles"`
-	}
-	path := filepath.Join(res.Dir, "project", "bees.toml")
-	if _, err := toml.DecodeFile(path, &written); err != nil {
+	// Nothing but the developer ran: one session directory, and it is the
+	// developer's. The reviewer never saw the pull request.
+	sessions, err := filepath.Glob(filepath.Join(res.Dir, "state", "sessions", "*"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	for _, role := range config.Roles {
-		enabled := written.Roles[role].Enabled
-		if role == config.RoleDeveloper {
-			if enabled != nil {
-				t.Fatalf("the role under eval carries enabled = %v", *enabled)
-			}
-			continue
-		}
-		if enabled == nil || *enabled {
-			t.Errorf("the %s is not disabled in %s", role, path)
-		}
+	if len(sessions) != 1 || !strings.Contains(filepath.Base(sessions[0]), config.RoleDeveloper) {
+		t.Fatalf("sessions: %v", sessions)
 	}
 	// A per-role run merges nothing and takes no second pass: the default
 	// branch is still the one commit the fixture was built with.
@@ -367,5 +352,101 @@ func TestGradedCheckFailsWithoutAGrader(t *testing.T) {
 	}
 	if c := checkNamed(t, res, "#1 has a pull request"); !c.Pass {
 		t.Errorf("the mechanical check did not stand: %+v", c)
+	}
+}
+
+// routingCase seeds an issue nobody has labelled, which the scheduler
+// routes on the first pass.
+const routingCase = `
+description = "an issue nobody has labelled"
+timeout = "2m"
+max_cost = 3
+
+[[issues]]
+number = 1
+title = "Something is off"
+body = "no labels at all"
+
+[expect]
+outcome = "done"
+
+[[expect.labels]]
+issue = 1
+has = ["bees:feedback"]
+missing = ["bees:triage", "bees:ready"]
+`
+
+// Running one role does not move the workflow the rest of the factory
+// would follow: a new issue is routed to the product manager, the way the
+// configured factory routes it, even though only the project manager runs.
+// Scoping with roles.<name>.enabled instead would send it to the ready
+// queue, because reconcile reads the configuration and not the scope.
+func TestRoleCaseLeavesTheFactorysRoutingAlone(t *testing.T) {
+	_, res := runRoleCase(t, config.RoleProjectManager, routingCase, answerRepo(), nil)
+	if !res.Pass || res.Stop != StopDone || res.Error != "" {
+		t.Fatalf("result: %+v", res)
+	}
+	for _, name := range []string{"#1 carries bees:feedback", "#1 no longer carries bees:ready"} {
+		if c := checkNamed(t, res, name); !c.Pass {
+			t.Errorf("check %q failed: %+v", name, c)
+		}
+	}
+}
+
+// The case's timeout bounds a per-role run the way it bounds a
+// whole-factory one: the session still running is stopped, not waited for.
+func TestRoleCaseStopsAtTheTimeout(t *testing.T) {
+	t.Setenv("FAKE_DEV_HANG", "60")
+	start := time.Now()
+	_, res := runRoleCase(t, config.RoleDeveloper,
+		strings.Replace(developerCase, `timeout = "2m"`, `timeout = "3s"`, 1), answerRepo(), nil)
+	if res.Pass || res.Stop != StopTimeout {
+		t.Fatalf("result: %+v", res)
+	}
+	if d := time.Since(start); d > 45*time.Second {
+		t.Fatalf("the hung session was not stopped: the run took %s", d)
+	}
+	// Nothing was graded off a session that never finished.
+	if c := checkNamed(t, res, `the session reported "pr-opened"`); c.Pass {
+		t.Fatalf("outcome check: %+v", c)
+	}
+}
+
+// The case's budget bounds it too: the session's cost passes max_cost and
+// the run stops there.
+func TestRoleCaseStopsAtTheBudget(t *testing.T) {
+	t.Setenv("FAKE_COST", "5")
+	_, res := runRoleCase(t, config.RoleProjectManager,
+		strings.Replace(projectManagerCase, "max_cost = 3", "max_cost = 1", 1), answerRepo(), nil)
+	if res.Pass || res.Stop != StopBudget || res.CostUSD < 1 {
+		t.Fatalf("result: %+v", res)
+	}
+}
+
+// A developer that gives up reports `failed`, the factory hands the issue
+// to a person, and the run still ends as done: a case can declare that
+// outcome and pass on it.
+func TestRoleCaseCanExpectAFailedDeveloper(t *testing.T) {
+	t.Setenv("FAKE_DEV_FAIL", "1")
+	_, res := runRoleCase(t, config.RoleDeveloper, `
+issue = 1
+timeout = "2m"
+max_cost = 3
+
+[[issues]]
+number = 1
+title = "Fix the answer"
+body = "answer.txt should say fixed."
+labels = ["bees:ready", "bees:size/xs"]
+
+[expect]
+outcome = "failed"
+
+[[expect.labels]]
+issue = 1
+has = ["bees:needs-human"]
+`, answerRepo(), nil)
+	if !res.Pass || res.Stop != StopDone || res.Error != "" {
+		t.Fatalf("result: %+v", res)
 	}
 }
