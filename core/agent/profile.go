@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/kpenfound/busybees/core/agent/procs"
 )
 
 const (
@@ -29,8 +31,11 @@ const (
 	DefaultTimeout = 45 * time.Minute
 )
 
-// Agents lists the backends the runner builds a command line for.
-var Agents = []string{AgentClaude, AgentCodex, AgentOpenCode, AgentPi}
+// Agents lists the backends the runner builds a command line for. It is
+// procs' list of agent executables: procs recognizes a running session in
+// the process table by the command it runs and cannot import this package,
+// so the two are one list and an agent added to it is known to both.
+var Agents = procs.AgentExecutables
 
 // Sandboxes lists the sandbox kinds the runner implements, weakest first.
 var Sandboxes = []string{SandboxNone, SandboxClaude, SandboxContainer, SandboxSbx}

@@ -1292,18 +1292,27 @@ them together with their process groups (MCP servers, shells), removes stale
 pid files, removes the temporary worktrees bees created under the workspace
 root, and resets the worker list in `status.json`.
 
-Sessions are found two ways: from the `pid` file each running session keeps in
-its `<state_dir>/sessions/<id>/` directory, and from the process table, limited
-to sessions of this state directory — a `claude` or `codex` process counts
-only when it carries a session marker (the `--name bees-…` argument every
-claude session is started with, or the
-`shell_environment_policy.set.BEES_SESSION_DIR=` override every codex session
-gets; the older `mcp_servers.bees.env.BEES_SESSION_DIR=` marker also counts)
-*and* its command line references
-`<state_dir>/sessions/`. Another project's factory
-running on the same machine is never touched, whichever config you point
-`bees kill` at. Pid files are cross-checked against that scan, so a pid reused
-by an unrelated process after a reboot is discarded, never killed.
+Sessions are found two ways: from the `pid` file each running session keeps
+in its `<state_dir>/sessions/<id>/` directory, and from the process table,
+limited to sessions of this state directory — a `claude` or `codex` process
+counts only when it carries a session marker (the `--name bees-…` argument
+every claude session is started with, or the
+`shell_environment_policy.set.BEES_SESSION_DIR=` override every codex
+session gets; the older `mcp_servers.bees.env.BEES_SESSION_DIR=` marker also
+counts) *and* its command line references `<state_dir>/sessions/`. An
+opencode session carries no such marker — it is given its session directory
+through `OPENCODE_CONFIG`, which the process table does not show — and a pi
+session shows nothing but `pi`, because pi renames its process as it starts;
+both are found through their pid file. The scan reports no session of
+another project's factory, whichever config you point `bees kill` at.
+
+Pid files are cross-checked against that scan: a pid the scan did not match
+is kept only when the process table says it runs an agent, so a pid reused
+by an unrelated process after a reboot is discarded, never killed. A pid
+file is scoped by where it lies, though, not by what the process says:
+nothing in an agent's command line names a state directory, so a reused pid
+that happens to be another factory's opencode or pi session is stopped along
+with the session the file was written for.
 
 A session in the [container sandbox](configuration.md#sandboxing) is found a
 third way, because its agent runs in the container rather than on the host:

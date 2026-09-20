@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -21,9 +22,11 @@ func psLine(pid, pgid int, sessionsDir, name string) string {
 		pid, pgid, sessionsDir, name, name)
 }
 
-func TestParsePS(t *testing.T) {
-	scope := "/a/.agent/sessions"
-	text := strings.Join([]string{
+// psTable is a process table holding one factory's sessions among other
+// processes: what parsePS keeps and what commandsOf reads are the two
+// answers taken from it.
+func psTable(scope string) string {
+	return strings.Join([]string{
 		psLine(100, 100, scope, "developer-issue-1-r1"),
 		"  101   100 npx -y some-mcp",
 		"  200   200 agent kill",
@@ -47,11 +50,15 @@ func TestParsePS(t *testing.T) {
 		// An opencode session: no --name and no session-directory override in
 		// its argv (it gets one through OPENCODE_CONFIG, an environment
 		// variable the ps scan cannot see), so it carries no marker and is
-		// never matched. It is found through its pid file alone.
+		// never matched here. It is found through its pid file, which the
+		// table says names an agent (TestFindKeepsTheSessionOfAnUnmarkedAgent).
 		`  1400   1400 opencode run --format json --auto --title agent-developer-issue-5-r1`,
 	}, "\n") + "\n"
+}
 
-	got := parsePS(text, 300, scope)
+func TestParsePS(t *testing.T) {
+	scope := "/a/.agent/sessions"
+	got := parsePS(psTable(scope), 300, scope)
 	var pids []int
 	for _, p := range got {
 		pids = append(pids, p.PID)
@@ -59,6 +66,28 @@ func TestParsePS(t *testing.T) {
 	want := []int{100, 400, 700, 1000, 1100}
 	if !slices.Equal(pids, want) {
 		t.Fatalf("parsePS: got pids %v want %v (%+v)", pids, want, got)
+	}
+}
+
+// commandsOf keeps every process the table lists, whatever it runs and
+// whichever factory it belongs to: it is what a pid file the scan did not
+// match is read against, and the unmarked agent is the process only it has.
+func TestCommandsOf(t *testing.T) {
+	got := commandsOf(psTable("/a/.agent/sessions"))
+	for pid, want := range map[int]string{
+		1400: "opencode run --format json --auto --title agent-developer-issue-5-r1",
+		300:  "vim --name agent-foo.txt",
+		101:  "npx -y some-mcp",
+	} {
+		if got[pid] != want {
+			t.Errorf("commandsOf[%d] = %q, want %q", pid, got[pid], want)
+		}
+	}
+	// The pid and pgid columns are not part of a command line.
+	for pid, command := range got {
+		if strings.HasPrefix(command, strconv.Itoa(pid)) {
+			t.Errorf("commandsOf[%d] = %q, want the command without its columns", pid, command)
+		}
 	}
 }
 
@@ -140,7 +169,8 @@ func TestPIDFilesAndKill(t *testing.T) {
 	reused := filepath.Join(sessions, "20260829-pm-z")
 	_ = os.MkdirAll(reused, 0o755)
 	_ = WritePID(reused, os.Getpid())
-	fromFiles, err := FromPIDFiles(sessions, map[int]Proc{cmd.Process.Pid: {PID: cmd.Process.Pid}})
+	scan := &Scan{Sessions: map[int]Proc{cmd.Process.Pid: {PID: cmd.Process.Pid}}}
+	fromFiles, err := FromPIDFiles(sessions, scan)
 	if err != nil || len(fromFiles) != 1 || fromFiles[0].PID != cmd.Process.Pid {
 		t.Fatalf("cross-check: %+v %v", fromFiles, err)
 	}
@@ -173,5 +203,116 @@ func TestPIDFilesAndKill(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, PIDFile)); !os.IsNotExist(err) {
 		t.Fatal("pid file should be removed after kill")
+	}
+}
+
+// agentProcess starts a live process the process table shows running the
+// named agent executable: a shell reached through a symbolic link of that
+// name, which is what ps reports and what actually runs. No agent is
+// installed or started.
+func agentProcess(t *testing.T, name string, argv ...string) *exec.Cmd {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), name)
+	if err := os.Symlink(shPath(t), bin); err != nil {
+		t.Skipf("cannot name a shell %s to stand in for an agent: %v", name, err)
+	}
+	cmd := exec.Command(bin, append([]string{"-c", "sleep 60 & wait"}, argv...)...)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _, _ = cmd.Process.Wait() })
+	return cmd
+}
+
+// An opencode session carries no marker the ps scan can match, so its pid
+// file is all that records it. Find keeps it, because the process table
+// says the pid runs an agent, and leaves the file where it is: a session
+// bees kill did not find would be stopped by nothing, and CheckInterrupted
+// would read a running session as interrupted once the file was gone.
+func TestFindKeepsTheSessionOfAnUnmarkedAgent(t *testing.T) {
+	sessions := t.TempDir()
+	dir := filepath.Join(sessions, "20260920-developer-issue-5-r1")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := agentProcess(t, "opencode", "run", "--format", "json", "--auto", "--title", "agent-developer-issue-5-r1")
+	if err := WritePID(dir, cmd.Process.Pid); err != nil {
+		t.Fatal(err)
+	}
+	// A live process that is no agent at all, recorded in another session
+	// directory: the pid a reboot handed to something else.
+	reused := filepath.Join(sessions, "20260920-qa-z")
+	if err := os.MkdirAll(reused, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := WritePID(reused, os.Getpid()); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := FromPS(context.Background(), sessions); err != nil {
+		t.Skipf("no process table to scan: %v", err)
+	}
+	found, err := Find(context.Background(), sessions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(found) != 1 || found[0].PID != cmd.Process.Pid || found[0].SessionDir != dir {
+		t.Fatalf("Find: %+v, want the opencode session alone", found)
+	}
+	if _, err := os.Stat(filepath.Join(dir, PIDFile)); err != nil {
+		t.Errorf("the pid file of a live agent must survive Find: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(reused, PIDFile)); !os.IsNotExist(err) {
+		t.Errorf("the pid file of a live process that is no agent must be deleted: %v", err)
+	}
+}
+
+// What the process table says of a pid decides it: the command line, not
+// the pid file, is what tells an agent from a process that reused its pid,
+// and only the agent executable itself counts.
+func TestAPIDFileIsTrustedForAnAgentCommandAlone(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		command string
+		want    bool
+	}{
+		{"opencode", "opencode run --format json --auto --title agent-qa-1", true},
+		// All a pi session shows: it renames its process as it starts.
+		{"pi", "pi", true},
+		{"through an interpreter", "/usr/bin/node /opt/claude/bin/claude -p", true},
+		{"a shell naming one", "/bin/zsh -c opencode", false},
+		// The check reads the first two words only, so a command naming an
+		// agent as its bare first argument passes it (isAgentCommand).
+		{"an agent as a bare argument", "/usr/bin/vim opencode", true},
+		{"grep", "grep -r opencode /src", false},
+		{"unlisted by the table", "", false},
+		{"another program", "/usr/bin/vim notes.md", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sessions := t.TempDir()
+			dir := filepath.Join(sessions, "20260920-developer-issue-5-r1")
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			pid := os.Getpid()
+			if err := WritePID(dir, pid); err != nil {
+				t.Fatal(err)
+			}
+			scan := &Scan{Sessions: map[int]Proc{}, Commands: map[int]string{}}
+			if tc.command != "" {
+				scan.Commands[pid] = tc.command
+			}
+			got, err := FromPIDFiles(sessions, scan)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (len(got) == 1) != tc.want {
+				t.Fatalf("FromPIDFiles for %q: %+v, want kept=%v", tc.command, got, tc.want)
+			}
+			_, statErr := os.Stat(filepath.Join(dir, PIDFile))
+			if kept := statErr == nil; kept != tc.want {
+				t.Errorf("pid file kept=%v for %q, want %v", kept, tc.command, tc.want)
+			}
+		})
 	}
 }

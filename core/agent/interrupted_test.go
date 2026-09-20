@@ -1,7 +1,9 @@
 package agent
 
 import (
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -181,5 +183,50 @@ func TestCountTurnsReadsACodexTranscript(t *testing.T) {
 	}
 	if got := CountTurns(path); got != 2 {
 		t.Errorf("CountTurns on a codex transcript = %d, want 2", got)
+	}
+}
+
+// An opencode session carries no marker the process-table scan can match,
+// so `bees kill`'s search reaches it through its pid file alone. It must
+// leave that file where it is: CheckInterrupted reads the same file, and a
+// running session whose pid file the search deleted reads as interrupted.
+func TestARunningUnmarkedAgentSurvivesTheSearchForOrphans(t *testing.T) {
+	sessions := t.TempDir()
+	dir := filepath.Join(sessions, "20260920-081500-developer-issue-5-r1-ab")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A shell reached through a symbolic link named opencode: the process
+	// table shows what a session of that agent shows, and no agent runs.
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skipf("no shell: %v", err)
+	}
+	bin := filepath.Join(t.TempDir(), "opencode")
+	if err := os.Symlink(sh, bin); err != nil {
+		t.Skipf("cannot name a shell opencode: %v", err)
+	}
+	cmd := exec.Command(bin, "-c", "sleep 60 & wait", "run", "--format", "json")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _, _ = cmd.Process.Wait() })
+	if err := procs.WritePID(dir, cmd.Process.Pid); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	if _, err := procs.FromPS(ctx, sessions); err != nil {
+		t.Skipf("no process table to scan: %v", err)
+	}
+	found, err := procs.Find(ctx, sessions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(found) != 1 || found[0].PID != cmd.Process.Pid {
+		t.Fatalf("Find: %+v, want the running session", found)
+	}
+	if in, running := CheckInterrupted("developer", dir, nil); in != nil || !running {
+		t.Fatalf("CheckInterrupted: %+v %v, want the session reported as running", in, running)
 	}
 }

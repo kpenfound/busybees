@@ -1418,22 +1418,25 @@ bees-<session>` a claude session is started with; for a codex session, the
 `shell_environment_policy.set.BEES_SESSION_DIR=` override that gives shell
 commands the session directory, independently of MCP configuration), let
 `bees kill` find the orphans: it merges the pid files with a `ps` scan
-restricted to processes whose executable is
-`claude` or `codex` (directly or through an interpreter), cross-checking pid
-files against the scan so a reused pid is discarded rather than killed. The
-scan also recognizes the older
-`mcp_servers.bees.env.BEES_SESSION_DIR=` marker. An opencode session is found
-through its pid file alone: its argv carries no path of the state directory,
-so the scan does not know it. Nor does it know a pi session: pi renames its
-process to `pi` as it starts, which hides its argv. Both
-sources are scoped to one factory: a scanned process counts only when its
-command line also references this state directory's `sessions/` (a claude
-session's argv carries `--append-system-prompt-file <sessions
+restricted to processes whose executable is an agent (directly or through an
+interpreter), cross-checking pid files against the scan so a reused pid is
+discarded rather than killed. The scan also recognizes the older
+`mcp_servers.bees.env.BEES_SESSION_DIR=` marker. An opencode session is
+found through its pid file alone: its argv carries no path of the state
+directory, so the scan does not match it. Nor does it match a pi session: pi
+renames its process as it starts, so the table shows nothing but `pi`. Both
+pid files are trusted because what the table does show is an agent
+executable; a pid file naming anything else is the reused pid it looks like,
+and it is deleted. The scan is scoped to one factory: a process counts only
+when its command line also references this state directory's `sessions/` (a
+claude session's argv carries `--append-system-prompt-file <sessions
 dir>/<session>/system-prompt.md`, a codex session's the session directory in
 that override, matched as a path prefix and also in its symlink-resolved
-form). Sessions of
-another project's factory are never reported, so `bees kill` run with one
-project's config cannot strand another project's issues.
+form), so no session of another project's factory is scanned and `bees kill`
+run with one project's config cannot strand another project's issues. A pid
+file is scoped by where it lies instead, so the pid a reboot handed to
+another factory's opencode or pi session is stopped with the session the
+file was written for.
 
 A session in the container sandbox is found through its container, because
 its agent runs in the container's own pid namespace where neither source
