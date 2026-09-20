@@ -45,9 +45,22 @@ type CaseResult struct {
 // Check is one mechanical check of a case, and where to look when it
 // failed.
 type Check struct {
-	Name   string `json:"name"`
-	Pass   bool   `json:"pass"`
-	Detail string `json:"detail,omitempty"`
+	// Name is the requirement the check stands for.
+	Name string `json:"name"`
+	// Failure says what was observed instead, and is what a failing
+	// check is reported as. A check with no Failure is reported by its
+	// Name, which then has to read as a failure on its own.
+	Failure string `json:"failure,omitempty"`
+	Pass    bool   `json:"pass"`
+	Detail  string `json:"detail,omitempty"`
+}
+
+// Failed is the line a failing check is reported as.
+func (c Check) Failed() string {
+	if c.Failure != "" {
+		return c.Failure
+	}
+	return c.Name
 }
 
 // Pass reports whether every case passed.
@@ -102,7 +115,7 @@ func (r *Report) Table() string {
 			if check.Pass {
 				continue
 			}
-			fmt.Fprintf(&b, "\n%s: failed: %s", c.Case, check.Name)
+			fmt.Fprintf(&b, "\n%s: %s", c.Case, check.Failed())
 			if check.Detail != "" {
 				fmt.Fprintf(&b, " (%s)", check.Detail)
 			}
