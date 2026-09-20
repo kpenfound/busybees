@@ -184,7 +184,8 @@ type fileProject struct {
 type fileScheduler struct {
 	PollInterval  string `toml:"poll_interval"`
 	WorkspaceRoot string `toml:"workspace_root"`
-	// MaxReviewRounds is left out of a whole-factory eval, which runs the
+	// MaxReviewRounds is set only for a per-role reviewer case
+	// (reviewRounds); every other case leaves the key out and runs the
 	// review loop the configured default number of times.
 	MaxReviewRounds int `toml:"max_review_rounds,omitempty"`
 }

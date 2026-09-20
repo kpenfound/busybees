@@ -92,13 +92,19 @@ These are the per-role cases:
 
 The reviewer cases score the whole review, not the judge session alone.
 `bees eval reviewer` runs the review loop's review stage, so the brief
-session and the angle sessions run first, on the profiles `bees.toml` or
-`--profile` select for the reviewer (`brief_profile`, `angle_profiles`,
-`profile`), and the session that posts the findings and reports the verdict
-is the last of them. A fault the angles miss is a fault the case scores
-against the reviewer. The project's `context.toml` still decides which
-angles are enabled and which context sources are gathered; the fixtures ship
-none, so every built-in one runs.
+session and the angle sessions run first, and the session that posts the
+findings and reports the verdict is the last of them. All of them run on the
+profiles `bees.toml` or `--profile` select for the reviewer (`profile`,
+`brief_profile`, `angle_profiles`, `judge_profile`). A fault the angles miss
+is a fault the case scores against the reviewer.
+
+Which angles run follows the size the brief gives the change, not the size
+label on the issue: a change the brief calls `xs` or `s` is read from
+`quick_general` and `docs`, and `test_coverage`, `acceptance_criteria` and
+`side_effects` run from `m` up. The criteria of the issues the pull request
+closes reach every angle whatever the size, because the brief carries them.
+A project's `context.toml` can turn angles and context sources off; the
+fixtures ship none, so every built-in context source is gathered.
 
 ### Which profile the sessions run on
 

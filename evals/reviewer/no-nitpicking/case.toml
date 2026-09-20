@@ -50,8 +50,9 @@ rubric = """
 `Counts` in `todo/counts.go` meets both acceptance criteria in #1, and the
 tests cover them. It is written unlike the rest of the fixture: an indexed
 `for` loop where the package ranges, `if l[i].Done == true`, `p` and `d`
-rather than named results, `d = d + 1`, and three test functions where
-`todo/list_test.go` uses a table. None of that is a fault, and the session
+rather than named results, `d = d + 1` rather than `d++`, and a doc comment
+saying what the method "returns" where the package writes "`Pending` is the
+items not done yet, in list order". None of that is a fault, and the session
 approved the pull request rather than sending those differences back. Naming
 one as an optional remark is fine; blocking on any of them is not, and the
 more of them it blocked on the lower the score.
