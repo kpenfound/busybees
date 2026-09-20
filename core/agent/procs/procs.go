@@ -18,8 +18,11 @@
 // its argv carries no path-bearing token to scope a ps-scan match to one
 // factory's state directory the way the claude and codex markers do, and
 // reading a process's environment to recover it is not portable across the
-// platforms this package runs on. A crashed opencode session with no live
-// pid file is therefore not found by orphan cleanup.
+// platforms this package runs on. Its pid file is trusted because the
+// process it names runs an agent executable (AgentExecutables), which the
+// process table does say; a pid file naming anything else is a pid reused
+// by an unrelated process and is deleted. A crashed opencode session with
+// no live pid file is not found by orphan cleanup.
 //
 // Every source is scoped to one factory: a process only counts when its
 // command line also references this state directory's sessions directory
@@ -39,6 +42,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -62,6 +66,16 @@ const CodexSessionMarker = "shell_environment_policy.set.SESSION_DIR="
 func CodexMarker(prefix string) string {
 	return "shell_environment_policy.set." + prefix + "SESSION_DIR="
 }
+
+// AgentExecutables are the basenames of the agent commands a session runs.
+// A process running one of them is an agent session of some factory, which
+// is what tells a pid file whose session the ps scan cannot match (an
+// opencode session carries no marker, and an agent that rewrites its argv
+// carries nothing at all) from a pid reused by an unrelated process.
+//
+// The runner's agent list is this one (agent.Agents), so an agent added
+// there is recognized here.
+var AgentExecutables = []string{"claude", "codex", "opencode"}
 
 // Proc is a process that looks like an agent session.
 type Proc struct {
@@ -104,6 +118,41 @@ func Alive(pid int) bool {
 // DefaultGrace is the time allowed for exit after SIGTERM before SIGKILL.
 const DefaultGrace = 5 * time.Second
 
+// Scan is what one reading of the process table said: the sessions of this
+// factory found in it, keyed by pid, and the command line of every process
+// it listed. The commands answer what the sessions cannot: whether the
+// process a pid file names is an agent the scan's markers do not match.
+//
+// A nil *Scan means no reading of the process table was available, and a
+// pid file is then trusted on its own.
+type Scan struct {
+	Sessions map[int]Proc
+	Commands map[int]string
+}
+
+// isAgent reports whether the process table showed pid running an agent
+// executable. A pid the table did not list is not one.
+func (s *Scan) isAgent(pid int) bool {
+	if s == nil {
+		return false
+	}
+	return isAgentCommand(strings.Fields(s.Commands[pid]))
+}
+
+// sessions returns the sessions the scan found, ordered by pid; none when
+// there was no scan.
+func (s *Scan) sessions() []Proc {
+	if s == nil {
+		return nil
+	}
+	out := make([]Proc, 0, len(s.Sessions))
+	for _, p := range s.Sessions {
+		out = append(out, p)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].PID < out[j].PID })
+	return out
+}
+
 // FromPIDFile returns the live session recorded in one session directory:
 // the process its pid file names, the container it runs in and the
 // host-side MCP server it left, the last two for a container-backed session
@@ -114,9 +163,9 @@ const DefaultGrace = 5 * time.Second
 // running is still reported — with PID 0, because there is no process to
 // signal and the server is stopped in its own right. That is what a crash
 // leaves behind.
-func FromPIDFile(dir string, known map[int]Proc) (Proc, bool) {
+func FromPIDFile(dir string, scan *Scan) (Proc, bool) {
 	server := liveServer(dir)
-	pid, ok := livePID(dir, known)
+	pid, ok := livePID(dir, scan)
 	if !ok && server == 0 {
 		return Proc{}, false
 	}
@@ -130,10 +179,11 @@ func FromPIDFile(dir string, known map[int]Proc) (Proc, bool) {
 // livePID returns the pid of a session's main command from its pid file.
 // It reports false when the directory holds no pid file, when the process
 // the file names is gone — in which case the stale file is deleted — and,
-// when known is non-nil (the ps scan), when the pid is alive but is not an
-// agent session: a pid reused by an unrelated process after a reboot, which
-// must never be killed.
-func livePID(dir string, known map[int]Proc) (int, bool) {
+// when scan is non-nil (the ps scan), when the pid is alive but is neither
+// a session the scan matched nor a process running an agent executable: a
+// pid reused by an unrelated process after a reboot, which must never be
+// killed.
+func livePID(dir string, scan *Scan) (int, bool) {
 	b, err := os.ReadFile(filepath.Join(dir, PIDFile))
 	if err != nil {
 		return 0, false
@@ -143,8 +193,9 @@ func livePID(dir string, known map[int]Proc) (int, bool) {
 		RemovePID(dir)
 		return 0, false
 	}
-	if known != nil {
-		if _, ok := known[pid]; !ok {
+	if scan != nil {
+		_, matched := scan.Sessions[pid]
+		if !matched && !scan.isAgent(pid) {
 			RemovePID(dir) // alive, but not an agent session: pid reused
 			return 0, false
 		}
@@ -155,7 +206,7 @@ func livePID(dir string, known map[int]Proc) (int, bool) {
 // FromPIDFiles returns live sessions recorded under sessionsDir and deletes
 // pid files of processes that no longer exist, by asking FromPIDFile about
 // every session directory in turn.
-func FromPIDFiles(sessionsDir string, known map[int]Proc) ([]Proc, error) {
+func FromPIDFiles(sessionsDir string, scan *Scan) ([]Proc, error) {
 	entries, err := os.ReadDir(sessionsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -168,7 +219,7 @@ func FromPIDFiles(sessionsDir string, known map[int]Proc) ([]Proc, error) {
 		if !e.IsDir() {
 			continue
 		}
-		if p, ok := FromPIDFile(filepath.Join(sessionsDir, e.Name()), known); ok {
+		if p, ok := FromPIDFile(filepath.Join(sessionsDir, e.Name()), scan); ok {
 			out = append(out, p)
 		}
 	}
@@ -176,17 +227,51 @@ func FromPIDFiles(sessionsDir string, known map[int]Proc) ([]Proc, error) {
 }
 
 // FromPS scans the process table for agent sessions: processes whose
-// executable is claude or codex, whose arguments carry a session marker and
-// whose command line references sessionsDir, the sessions directory of this
-// factory's state directory.
+// executable is one of AgentExecutables, whose arguments carry a session
+// marker and whose command line references sessionsDir, the sessions
+// directory of this factory's state directory.
 func FromPS(ctx context.Context, sessionsDir string, markers ...Markers) ([]Proc, error) {
+	scan, err := scanPS(ctx, sessionsDir, markers...)
+	if err != nil {
+		return nil, err
+	}
+	return scan.sessions(), nil
+}
+
+// scanPS reads the process table once and keeps both of the answers it
+// holds: the sessions of this factory, and the command line of every
+// process, which is how a pid file naming an unmarked agent is told from
+// one naming a reused pid.
+func scanPS(ctx context.Context, sessionsDir string, markers ...Markers) (*Scan, error) {
 	cmd := exec.CommandContext(ctx, "ps", "-axo", "pid=,pgid=,command=")
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 	if err := cmd.Run(); err != nil {
 		return nil, err
 	}
-	return parsePS(stdout.String(), os.Getpid(), sessionsDir, markers...), nil
+	scan := &Scan{Sessions: map[int]Proc{}, Commands: commandsOf(stdout.String())}
+	for _, p := range parsePS(stdout.String(), os.Getpid(), sessionsDir, markers...) {
+		scan.Sessions[p.PID] = p
+	}
+	return scan, nil
+}
+
+// commandsOf reads the command line of every process the table lists,
+// whatever it runs and whichever factory it belongs to.
+func commandsOf(text string) map[int]string {
+	out := map[int]string{}
+	for _, line := range strings.Split(text, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		pid, err := strconv.Atoi(fields[0])
+		if err != nil {
+			continue
+		}
+		out[pid] = strings.Join(fields[2:], " ")
+	}
+	return out
 }
 
 // parsePS keeps the agent processes of the factory whose sessions live in
@@ -263,20 +348,37 @@ func hasMarker(command string, markers ...Markers) bool {
 }
 
 // isSessionProcess reports whether argv starts a process that runs a
-// session: the claude or codex executable, directly or through an
-// interpreter (node/bun/sh script), or the container engine running a
-// container-backed session, whose agent is in the container and never in
-// the process table. The engine counts only when the command line carries
-// the label the caller puts on a session's container, so another container of
-// the machine is never taken for one.
+// session: an agent executable, directly or through an interpreter
+// (node/bun/sh script), or the container engine running a container-backed
+// session, whose agent is in the container and never in the process table.
+// The engine counts only when the command line carries the label the caller
+// puts on a session's container, so another container of the machine is
+// never taken for one.
 func isSessionProcess(argv []string, command string, markers ...Markers) bool {
 	engine := filepath.Base(Engine)
 	for i, a := range argv[:min(2, len(argv))] {
-		switch base := filepath.Base(a); base {
-		case "claude", "codex":
+		switch base := filepath.Base(a); {
+		case slices.Contains(AgentExecutables, base):
 			return true
-		case engine:
+		case base == engine:
 			return strings.Contains(command, " --label "+markerSet(markers).Container+"=")
+		}
+		if i == 0 && strings.HasPrefix(a, "-") {
+			return false
+		}
+	}
+	return false
+}
+
+// isAgentCommand reports whether argv runs an agent executable, directly or
+// through an interpreter: the same discrimination isSessionProcess makes,
+// without the markers and the container engine, which is all a pid file
+// needs. A shell or an editor whose arguments merely name an agent is not
+// one.
+func isAgentCommand(argv []string) bool {
+	for i, a := range argv[:min(2, len(argv))] {
+		if slices.Contains(AgentExecutables, filepath.Base(a)) {
+			return true
 		}
 		if i == 0 && strings.HasPrefix(a, "-") {
 			return false
@@ -290,20 +392,16 @@ func isSessionProcess(argv []string, command string, markers ...Markers) bool {
 // the process table when it is available.
 func Find(ctx context.Context, sessionsDir string, markers ...Markers) ([]Proc, error) {
 	byPID := map[int]Proc{}
-	fromPS, psErr := FromPS(ctx, sessionsDir, markers...)
-	var known map[int]Proc
-	if psErr == nil {
-		known = map[int]Proc{}
-		for _, p := range fromPS {
-			known[p.PID] = p
-		}
+	scan, err := scanPS(ctx, sessionsDir, markers...)
+	if err != nil {
+		scan = nil // no process table to cross-check against
 	}
 	// The engine's containers are asked for before the pid files, because
 	// asking clears the id file of a session whose container has gone. A
 	// machine with no container engine has no container session either, so
 	// the error is the empty answer.
 	fromContainers, _ := FromContainers(ctx, sessionsDir, markers...)
-	fromFiles, err := FromPIDFiles(sessionsDir, known)
+	fromFiles, err := FromPIDFiles(sessionsDir, scan)
 	if err != nil {
 		return nil, err
 	}
@@ -318,7 +416,7 @@ func Find(ctx context.Context, sessionsDir string, markers ...Markers) ([]Proc, 
 		}
 		serverOnly = append(serverOnly, p)
 	}
-	for _, p := range fromPS {
+	for _, p := range scan.sessions() {
 		if existing, ok := byPID[p.PID]; ok {
 			existing.Command = p.Command
 			byPID[p.PID] = existing

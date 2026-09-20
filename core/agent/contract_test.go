@@ -218,3 +218,14 @@ func TestContainerEnvironmentIsIsolated(t *testing.T) {
 		}
 	}
 }
+
+// Agents is procs' list of agent executables, so an agent this package
+// names must be in it: a backend missing from the list is one no caller
+// accepts in its configuration and procs takes for a stranger's process.
+func TestAgentsHoldsEveryAgentThisPackageNames(t *testing.T) {
+	for _, a := range []string{AgentClaude, AgentCodex, AgentOpenCode} {
+		if !slices.Contains(Agents, a) {
+			t.Errorf("agent %s is not in Agents (%v)", a, Agents)
+		}
+	}
+}
