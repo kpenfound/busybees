@@ -1022,8 +1022,11 @@ Its environment is built from nothing rather than from the one `bees` runs
 in, and holds, in this order: the agent's credential forwarded from the bees
 environment when it is set there (`ANTHROPIC_API_KEY` or
 `CLAUDE_CODE_OAUTH_TOKEN` for claude, `OPENAI_API_KEY` or `CODEX_API_KEY` for
-codex), the role's `env` (which may name the credential itself), `SHELL`, the
-`BEES_*` variables, the [`[github]`](#github) token and git identity, the git
+codex, and for opencode the key of whichever provider it is configured for:
+`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`,
+`OPENROUTER_API_KEY`, `GROQ_API_KEY`, `MISTRAL_API_KEY`, `XAI_API_KEY` or
+`DEEPSEEK_API_KEY`), the role's `env` (which may name the credential
+itself), `SHELL`, the `BEES_*` variables, the [`[github]`](#github) token and git identity, the git
 configuration every session runs with plus `safe.directory = *` and an
 `insteadOf` that pushes an ssh remote over https (the container has no ssh
 keys), and `HOME`. Values reach the engine by variable name, never on a

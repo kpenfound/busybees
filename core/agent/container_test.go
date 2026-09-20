@@ -351,3 +351,34 @@ func TestStoppedContainerSessionIsRemoved(t *testing.T) {
 		t.Errorf("container not removed: %q, %v", rm, err)
 	}
 }
+
+// opencode is authenticated through whichever provider it is configured
+// for, so every provider key it reads is a credential: the ones the host
+// has are forwarded into the container by name, and the rest are not there
+// to forward.
+func TestContainerForwardsOpenCodeProviderCredential(t *testing.T) {
+	t.Setenv("OPENROUTER_API_KEY", "or-host")
+	t.Setenv("DEEPSEEK_API_KEY", "")
+	fakeContainerHost(t, "linux")
+	r := newRunner(t, "opencode")
+	sessionDir := t.TempDir()
+	role := Profile{Name: "builder", Agent: AgentOpenCode, Sandbox: SandboxContainer, SandboxImage: "img"}
+	c, err := verifiedContainer(t, r.Runner, grantAll(Request{Name: "d", Profile: role, Workspace: fakeWorkspace{dir: t.TempDir()}, SessionDir: sessionDir}), sessionDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, args, err := c.command(context.Background(), "opencode", []string{"run"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(args, " ") + " "
+	if !strings.Contains(joined, "--env OPENROUTER_API_KEY ") {
+		t.Errorf("the provider credential was not forwarded: %s", joined)
+	}
+	if strings.Contains(joined, "or-host") {
+		t.Errorf("docker args carry the credential's value: %s", joined)
+	}
+	if strings.Contains(joined, "--env DEEPSEEK_API_KEY ") {
+		t.Errorf("an unset provider key was forwarded: %s", joined)
+	}
+}
