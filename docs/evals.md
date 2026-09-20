@@ -71,6 +71,7 @@ These are the per-role cases:
 | Case | The role is given | The case checks |
 |---|---|---|
 | `developer/done-number` | one ready issue on the shared `todo` fixture | the outcome `pr-opened`, a pull request for the issue, `bees:ready` gone from it, and a rubric on the change and the pull request's description |
+| `developer/review-feedback` | an open pull request on the shared `todo` fixture and the reviewer's mail raising three findings | the outcome `pr-updated`, and rubrics on each finding and on the rewritten pull request description |
 | `project_manager/thin-issue` | a triage queue of two, a blocked issue and the developer's question about it | the outcome, `bees:triage` → `bees:ready` on the thin issue, the invalid one closed, mail to the developer, and rubrics on the refined issue and the answer |
 | `qa/broken-greeting` | a default branch whose `test.sh` fails, and one bug already filed | the outcome, one issue created, the report mailed to the product manager, and a rubric on the bug report |
 | `product_manager/feedback-idea` | one `bees:feedback` issue holding a vague idea | the outcome, one issue created, the feedback issue closed, and a rubric on the feature issue and the reply |
