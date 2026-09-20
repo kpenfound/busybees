@@ -1,0 +1,45 @@
+# QA alone, on a default branch whose one defect is already reported. The
+# bug is `greet.sh` with no name, and #1 is that bug: `file_bug` scores the
+# report against every issue in the repository and refuses a duplicate, so
+# the case measures what QA does when it is refused. docs/evals.md describes
+# every key.
+description = "the one defect on the default branch is already filed as #1"
+timeout = "30m"
+max_cost = 5
+
+[[issues]]
+number = 1
+# The title and body are the ones a QA session filing this bug would write,
+# so that `internal/duplicates` scores its report against them over the
+# threshold and `file_bug` refuses it.
+title = "greet.sh prints no usage line when it is run with no name"
+labels = ["bees:bug", "bees:triage"]
+body = """
+Running `sh greet.sh` with no argument prints `Hello, !` and exits 0. The
+README documents the usage line `usage: greet.sh <name>` and exit status 1.
+
+Steps to reproduce:
+
+    $ sh greet.sh
+    Hello, !
+"""
+
+[expect]
+outcome = "done"
+issues_created = 0
+
+[[expect.mail]]
+to = "product_manager"
+
+[[expect.graded]]
+name = "the defect goes on #1 instead of into a second report"
+rubric = """
+The session reproduced the no-name case itself — it ran `sh greet.sh` and
+saw what it printed — found that `file_bug` refused it as a duplicate of #1,
+read #1, and commented on #1 with what it had rather than filing a second
+copy or overriding the refusal. Its report to the product manager says the
+bug was already filed. Judge the decision, not the wording of the comment:
+adding nothing new to #1 is fine as long as nothing was filed twice. Score
+low if the session filed the bug again with `override`, or if it dropped the
+defect without saying anywhere that #1 already has it.
+"""
