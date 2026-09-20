@@ -1,0 +1,47 @@
+# The product manager alone, with one piece of product feedback: a direction
+# rather than an ask, so it becomes a feature issue. docs/evals.md describes
+# every key.
+#
+# issues_created is 1 and not 4: a feature the product manager creates carries
+# bees:proposal, and issue_create refuses a parent on a proposal, so the
+# breakdown is a person's to unlock and not part of this case.
+description = "a vague idea from a person that has to become a feature issue"
+timeout = "30m"
+max_cost = 5
+
+[[issues]]
+number = 1
+title = "I can't see what to do next"
+labels = ["bees:feedback"]
+body = """
+My `todo.txt` has about eighty lines in it now. Every morning I run `todo
+list`, read the whole thing, and put off deciding. The priorities and the
+due dates are already in the file — the tool just prints them back at me in
+file order and leaves the deciding to me.
+
+I don't know what the right shape for this is. Something that tells me what
+to do next, rather than everything I have ever written down.
+"""
+
+[expect]
+outcome = "done"
+issues_created = 1
+issues_closed = [1]
+
+[[expect.graded]]
+name = "the feedback became a feature issue and the person got an answer"
+rubric = """
+The issue the session created is a feature issue: it says what the problem
+is, who it is for, what "done" looks like and what the constraints are, in
+enough detail that it could be broken into work items once a person approves
+it. It is about the person's problem — deciding what to do next out of a long
+list — and not a restatement of the feedback's words.
+
+The reply posted on #1 says what the session did and names the issue it
+created, and #1 is closed.
+
+Do not judge which product direction was chosen, the wording, or whether it
+is the feature you would have written. Do not expect work items: a feature
+the product manager creates is a proposal until a person approves it, so
+there are none to expect here.
+"""

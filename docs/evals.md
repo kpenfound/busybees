@@ -66,17 +66,20 @@ machine that runs `bees eval`.
 The `todo-*` grading tests are only in each case's `grade/`, so the sessions
 do not see them.
 
-These are the per-role cases. Each measures something the ones beside it
-do not:
+These are the per-role cases:
 
 | Case | The role is given | The case checks |
 |---|---|---|
 | `developer/done-number` | one ready issue on the shared `todo` fixture | the outcome `pr-opened`, a pull request for the issue, `bees:ready` gone from it, and a rubric on the change and the pull request's description |
 | `project_manager/thin-issue` | a triage queue of two, a blocked issue and the developer's question about it | the outcome, `bees:triage` → `bees:ready` on the thin issue, the invalid one closed, mail to the developer, and rubrics on the refined issue and the answer |
 | `qa/broken-greeting` | a default branch whose `test.sh` fails, and one bug already filed | the outcome, one issue created, the report mailed to the product manager, and a rubric on the bug report |
-| `qa/clean-pass` | a default branch that does what its README says, and no seeded issue | the outcome, no issue created, the report mailed to the product manager, and a rubric on reporting a clean pass rather than inventing a defect |
+| `qa/clean-pass` | a default branch that does what its README says, and a bug report that does not reproduce | the outcome, no issue created, the report mailed to the product manager, and a rubric on reporting a clean pass rather than inventing a defect |
 | `qa/already-filed` | a default branch with one defect, already reported as #1 | the outcome, no issue created, the report mailed to the product manager, and a rubric on commenting on #1 after `file_bug` refuses the duplicate |
 | `qa/wrong-run-command` | a default branch whose README documents a command that is not there | the outcome, one issue created, the report mailed to the product manager, and a rubric on filing the documentation defect and saying so in the outcome |
+| `product_manager/feedback-idea` | one `bees:feedback` issue holding a vague idea | the outcome, one issue created, the feedback issue closed, and a rubric on the feature issue and the reply |
+| `product_manager/break-down` | an approved feature with three outcomes in it | the outcome, three issues created, `bees:question` not added, and rubrics on the split and on leaving milestones alone |
+| `product_manager/ask-a-person` | a feature whose scope turns on a decision only a person can make | the outcome, `bees:question` on the feature, no issue created, and a rubric on the question |
+| `product_manager/answer-a-question` | the project manager's question by mail, and nothing on GitHub to do | the outcome, mail back about the issue, no issue created, and a rubric on the answer and on leaving GitHub alone |
 
 ### Which profile the sessions run on
 
