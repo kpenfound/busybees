@@ -26,6 +26,10 @@ title = "Fix the answer"
 body = "answer.txt should say fixed."
 labels = ["bees:ready", "bees:size/xs"]
 
+[[issues.comments]]
+author = "kpenfound"
+body = "Lowercase, on one line, nothing else."
+
 [expect]
 outcome = "pr-opened"
 pull_requests = [1]
@@ -319,11 +323,12 @@ func TestGraderSessionSeesTheTranscriptAndTheEndState(t *testing.T) {
 	prompt := g.prompts[0]
 	for _, want := range []string{
 		"The pull request body says what changed and closes the issue.",
-		"the answer is wrong",            // the case description
-		"What the developer session did", // the transcript's heading
-		`"type":"result"`,                // a line of the session's own stream
-		"#1 Fix the answer",              // the end state
-		"Closes #1",                      // the pull request the developer opened
+		"the answer is wrong",                   // the case description
+		"What the developer session did",        // the transcript's heading
+		`"type":"result"`,                       // a line of the session's own stream
+		"#1 Fix the answer",                     // the end state
+		"Lowercase, on one line, nothing else.", // a comment the case seeded on the issue
+		"Closes #1",                             // the pull request the developer opened
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("no %q in the grader's prompt:\n%s", want, prompt)
