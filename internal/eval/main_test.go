@@ -31,6 +31,9 @@ import (
 // through the gh on its PATH, and every other role reports done. The review
 // pipeline's brief and angle sessions answer a brief and no findings, and a
 // grader session answers FAKE_SCORE.
+// FAKE_DEV_SEES_PR makes the developer write what the GitHub it was given
+// says about the pull request it was handed into seen-pr.txt in the state
+// directory, which is how a test reads what a session saw.
 // FAKE_COST is each session's cost, FAKE_DEV_HANG and FAKE_REVIEW_HANG make
 // the developer or the reviewer hang that many seconds, and FAKE_DEV_FAIL
 // makes the developer report failed. FAKE_PM and FAKE_QA make those two
@@ -116,6 +119,16 @@ func fakeClaude() {
 		if os.Getenv("FAKE_DEV_FAIL") == "1" {
 			outcome = session.Outcome{Status: "failed", Note: "cannot build"}
 			break
+		}
+		if os.Getenv("FAKE_DEV_SEES_PR") == "1" && pr != 0 {
+			n := strconv.Itoa(pr)
+			seen := gh("", "pr", "view", n, "-R", repo, "--json", "title,body,headRefName,baseRefName,labels") +
+				gh("", "pr", "diff", n, "-R", repo) +
+				gh("", "api", fmt.Sprintf("repos/%s/issues/%s/comments", repo, n)) +
+				gh("", "api", fmt.Sprintf("repos/%s/pulls/%s/reviews", repo, n))
+			if err := os.WriteFile(filepath.Join(os.Getenv(session.EnvStateDir), "seen-pr.txt"), []byte(seen), 0o644); err != nil {
+				fail(err)
+			}
 		}
 		file, content := "answer.txt", "fixed\n"
 		if os.Getenv("FAKE_DEV_NOFIX") == "1" {

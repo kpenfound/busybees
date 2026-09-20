@@ -407,3 +407,103 @@ func TestMergeApprovedLeavesAConflictToTheDeveloper(t *testing.T) {
 		t.Fatalf("issue 1 is still approved: %+v", i.Labels)
 	}
 }
+
+// A seeded pull request gets a branch of its own in the fixture, off its
+// base and pushed to the origin: the files its tree names are the tree's,
+// the rest are the base's, and the clone the factory works in is left on
+// the default branch.
+func TestBuildFixtureBranchesEachSeededPullRequest(t *testing.T) {
+	c, err := LoadRoleCase(writeCase(t, t.TempDir(), "pr", prCase, prFiles()), "developer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	fx, err := buildFixture(ctx, c, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Git's output comes back trimmed.
+	show := func(ref string) string {
+		out, err := git(ctx, fx.origin, "show", ref)
+		if err != nil {
+			t.Fatalf("%s: %v", ref, err)
+		}
+		return out
+	}
+	if got := show("bees/issue-1:answer.txt"); got != "half fixed" {
+		t.Errorf("answer.txt on the branch: %q", got)
+	}
+	// A file the tree leaves out is unchanged from the base.
+	if got := show("bees/issue-1:README.md"); got != "the answer" {
+		t.Errorf("README.md on the branch: %q", got)
+	}
+	// The branch is off the base, not a root of its own.
+	parent, err := git(ctx, fx.origin, "rev-parse", "bees/issue-1^")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := git(ctx, fx.origin, "rev-parse", DefaultBranch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(parent) != strings.TrimSpace(base) {
+		t.Errorf("the branch is off %q, not %q", parent, base)
+	}
+	head, err := git(ctx, fx.origin, "rev-parse", "bees/issue-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fx.heads[2] != strings.TrimSpace(head) {
+		t.Errorf("head of #2 is %q, on the origin %q", fx.heads[2], strings.TrimSpace(head))
+	}
+	// The clone is the factory's checkout, and a worktree cannot take a
+	// branch that is checked out in it.
+	branch, err := git(ctx, fx.project, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(branch) != DefaultBranch {
+		t.Errorf("the clone is on %q, not %q", strings.TrimSpace(branch), DefaultBranch)
+	}
+}
+
+// What the fake GitHub is seeded with for a declared pull request: the
+// factory's own label on top of the case's, the declared author, and the
+// commit the head branch was pushed at, which is what the scheduler's
+// conflict check compares a pull request against.
+func TestFactorySeedsAPullRequest(t *testing.T) {
+	root := t.TempDir()
+	c, err := LoadRoleCase(writeCase(t, root, "pr", prCase, prFiles()), "developer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	dir := filepath.Join(root, "out")
+	fx, err := buildFixture(ctx, c, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, _ := testRunner(t)
+	f, err := r.factory(ctx, c, builtIn(t), dir, fx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.close()
+	p, ok := f.gh.Snapshot().PR(2)
+	if !ok {
+		t.Fatal("#2 was not seeded")
+	}
+	var names []string
+	for _, l := range p.Labels {
+		names = append(names, l.Name)
+	}
+	if !slices.Equal(names, []string{"bees", "bees:wip"}) {
+		t.Errorf("labels: %v", names)
+	}
+	if p.Author.Login != DefaultAuthor {
+		t.Errorf("author: %q", p.Author.Login)
+	}
+	if p.HeadSHA == "" || p.HeadSHA != fx.heads[2] {
+		t.Errorf("head SHA %q, pushed at %q", p.HeadSHA, fx.heads[2])
+	}
+}
