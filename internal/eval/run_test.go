@@ -407,3 +407,62 @@ func TestMergeApprovedLeavesAConflictToTheDeveloper(t *testing.T) {
 		t.Fatalf("issue 1 is still approved: %+v", i.Labels)
 	}
 }
+
+// A seeded pull request gets a branch of its own in the fixture, off its
+// base and pushed to the origin: the files its tree names are the tree's,
+// the rest are the base's, and the clone the factory works in is left on
+// the default branch.
+func TestBuildFixtureBranchesEachSeededPullRequest(t *testing.T) {
+	c, err := LoadRoleCase(writeCase(t, t.TempDir(), "pr", prCase, prFiles()), "developer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	fx, err := buildFixture(ctx, c, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Git's output comes back trimmed.
+	show := func(ref string) string {
+		out, err := git(ctx, fx.origin, "show", ref)
+		if err != nil {
+			t.Fatalf("%s: %v", ref, err)
+		}
+		return out
+	}
+	if got := show("bees/issue-1:answer.txt"); got != "half fixed" {
+		t.Errorf("answer.txt on the branch: %q", got)
+	}
+	// A file the tree leaves out is unchanged from the base.
+	if got := show("bees/issue-1:README.md"); got != "the answer" {
+		t.Errorf("README.md on the branch: %q", got)
+	}
+	// The branch is off the base, not a root of its own.
+	parent, err := git(ctx, fx.origin, "rev-parse", "bees/issue-1^")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := git(ctx, fx.origin, "rev-parse", DefaultBranch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(parent) != strings.TrimSpace(base) {
+		t.Errorf("the branch is off %q, not %q", parent, base)
+	}
+	head, err := git(ctx, fx.origin, "rev-parse", "bees/issue-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fx.heads[2] != strings.TrimSpace(head) {
+		t.Errorf("head of #2 is %q, on the origin %q", fx.heads[2], strings.TrimSpace(head))
+	}
+	// The clone is the factory's checkout, and a worktree cannot take a
+	// branch that is checked out in it.
+	branch, err := git(ctx, fx.project, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(branch) != DefaultBranch {
+		t.Errorf("the clone is on %q, not %q", strings.TrimSpace(branch), DefaultBranch)
+	}
+}

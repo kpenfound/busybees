@@ -55,6 +55,9 @@ const (
 	// in, before the run and after it, so a session cannot change the tests
 	// that grade it.
 	GradeDir = "grade"
+	// PRDir holds one directory per seeded pull request, named after its
+	// head branch: the working tree of that branch.
+	PRDir = "pr"
 )
 
 // FixturesDir, directly under evals/, is not a case: it holds fixture
@@ -96,6 +99,9 @@ type Case struct {
 	MaxCost float64         `toml:"max_cost"`
 	Issues  []Issue         `toml:"issues"`
 	Mail    []Mail          `toml:"mail"`
+	// PullRequests are the pull requests to seed: a branch of their own in
+	// the fixture, and the pull request GitHub shows for it.
+	PullRequests []PullRequest `toml:"pull_requests"`
 	// Expect is how a per-role case is graded (expect.go).
 	Expect Expect `toml:"expect"`
 }
@@ -118,6 +124,51 @@ type Comment struct {
 	Author string `toml:"author"`
 	Body   string `toml:"body"`
 }
+
+// PullRequest is one seeded pull request: the change on a branch of the
+// fixture, and what the fake GitHub answers about it.
+type PullRequest struct {
+	Number int    `toml:"number"`
+	Title  string `toml:"title"`
+	Body   string `toml:"body"`
+	// Head is the branch the change is on, and Base the branch it is
+	// against (DefaultBranch by default). Head is branched off Base.
+	Head string `toml:"head"`
+	Base string `toml:"base"`
+	// Files is the directory holding the head branch's working tree,
+	// relative to the case directory; PRDir/<head> by default. It is
+	// copied over the fixture and committed on Head, so a file it leaves
+	// out is the one Base has.
+	Files string `toml:"files"`
+	// Labels are the labels beside the factory's own, and Author who
+	// opened the pull request (default DefaultAuthor).
+	Labels   []string  `toml:"labels"`
+	Author   string    `toml:"author"`
+	Comments []Comment `toml:"comments"`
+	Reviews  []Review  `toml:"reviews"`
+}
+
+// FilesDir is where the case keeps the head branch's working tree.
+func (p PullRequest) FilesDir(c Case) string {
+	if p.Files != "" {
+		return filepath.Join(c.Dir, p.Files)
+	}
+	return filepath.Join(c.Dir, PRDir, p.Head)
+}
+
+// Review is one review left on a seeded pull request.
+type Review struct {
+	Author string `toml:"author"`
+	// State is one of ReviewStates; DefaultReviewState by default.
+	State string `toml:"state"`
+	Body  string `toml:"body"`
+}
+
+// ReviewStates are the states a seeded review can be in, and
+// DefaultReviewState the one a review that names none is in.
+var ReviewStates = []string{"APPROVED", "CHANGES_REQUESTED", "COMMENTED"}
+
+const DefaultReviewState = "COMMENTED"
 
 // Mail is one message in a role's mailbox when the run starts.
 type Mail struct {
@@ -222,6 +273,18 @@ func loadCase(dir, role string) (Case, error) {
 	for i := range c.Mail {
 		c.Mail[i].From = firstNonEmpty(c.Mail[i].From, DefaultAuthor)
 	}
+	for i := range c.PullRequests {
+		p := &c.PullRequests[i]
+		p.Author = firstNonEmpty(p.Author, DefaultAuthor)
+		p.Base = firstNonEmpty(p.Base, DefaultBranch)
+		for j := range p.Comments {
+			p.Comments[j].Author = firstNonEmpty(p.Comments[j].Author, DefaultAuthor)
+		}
+		for j := range p.Reviews {
+			p.Reviews[j].Author = firstNonEmpty(p.Reviews[j].Author, DefaultAuthor)
+			p.Reviews[j].State = firstNonEmpty(p.Reviews[j].State, DefaultReviewState)
+		}
+	}
 	if err := c.validate(); err != nil {
 		return Case{}, fmt.Errorf("%s: %w", path, err)
 	}
@@ -257,6 +320,44 @@ func (c Case) validate() error {
 			errs = append(errs, fmt.Errorf("issues: #%d has no title", i.Number))
 		}
 	}
+	seededPR := map[int]bool{}
+	for _, p := range c.PullRequests {
+		switch {
+		case p.Number <= 0:
+			errs = append(errs, fmt.Errorf("pull_requests: %q has no number", p.Title))
+		case seeded[p.Number] || seededPR[p.Number]:
+			// GitHub numbers issues and pull requests together, and so does
+			// the GitHub the eval seeds.
+			errs = append(errs, fmt.Errorf("pull_requests: #%d is already a seeded issue or pull request", p.Number))
+		}
+		seededPR[p.Number] = true
+		if strings.TrimSpace(p.Title) == "" {
+			errs = append(errs, fmt.Errorf("pull_requests: #%d has no title", p.Number))
+		}
+		if strings.TrimSpace(p.Head) == "" {
+			errs = append(errs, fmt.Errorf("pull_requests: #%d has no head branch", p.Number))
+		} else if p.Head == p.Base {
+			errs = append(errs, fmt.Errorf("pull_requests: #%d is from %s into itself", p.Number, p.Head))
+		}
+		if p.Head != "" {
+			if info, err := os.Stat(p.FilesDir(c)); err != nil || !info.IsDir() {
+				errs = append(errs, fmt.Errorf("pull_requests: #%d: %s is not a directory: it holds the working tree of the %s branch",
+					p.Number, p.FilesDir(c), p.Head))
+			}
+		}
+		for _, r := range p.Reviews {
+			if !slices.Contains(ReviewStates, r.State) {
+				errs = append(errs, fmt.Errorf("pull_requests: #%d: review state %q is not one of %s", p.Number, r.State, strings.Join(ReviewStates, ", ")))
+			}
+		}
+	}
+	for i, p := range c.PullRequests {
+		for _, q := range c.PullRequests[i+1:] {
+			if p.Head != "" && p.Head == q.Head {
+				errs = append(errs, fmt.Errorf("pull_requests: #%d and #%d are both from %s", p.Number, q.Number, p.Head))
+			}
+		}
+	}
 	for _, m := range c.Mail {
 		if _, err := config.CanonicalRole(m.To); err != nil {
 			errs = append(errs, fmt.Errorf("mail: to: %w", err))
@@ -268,7 +369,7 @@ func (c Case) validate() error {
 	if c.Role == "" {
 		return errors.Join(append(errs, c.validateFactory()...)...)
 	}
-	return errors.Join(append(errs, c.validateRole(seeded)...)...)
+	return errors.Join(append(errs, c.validateRole(seeded, seededPR)...)...)
 }
 
 // validateFactory checks the keys of a whole-factory case: it is graded by
@@ -290,7 +391,7 @@ func (c Case) validateFactory() []error {
 // validateRole checks the keys of a per-role case: it is graded by what it
 // declares under expect, and the session it runs has to have a subject the
 // role can work on.
-func (c Case) validateRole(seeded map[int]bool) []error {
+func (c Case) validateRole(seeded, seededPR map[int]bool) []error {
 	var errs []error
 	if strings.TrimSpace(c.Test) != "" {
 		errs = append(errs, fmt.Errorf("test belongs to a whole-factory case: a %s case is graded by what it declares under expect", c.Role))
@@ -310,6 +411,9 @@ func (c Case) validateRole(seeded map[int]bool) []error {
 	}
 	if c.Issue != 0 && !seeded[c.Issue] {
 		errs = append(errs, fmt.Errorf("issue: #%d is not a seeded issue", c.Issue))
+	}
+	if c.PR != 0 && !seededPR[c.PR] {
+		errs = append(errs, fmt.Errorf("pr: #%d is not a seeded pull request", c.PR))
 	}
 	for _, n := range c.Expect.issues() {
 		if !seeded[n] {

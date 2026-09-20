@@ -168,6 +168,9 @@ func (r *Runner) runCase(ctx context.Context, c Case, sel Selection, dir string)
 // the clone it works in, and the clone the runner merges in.
 type fixture struct {
 	origin, project, merger string
+	// heads is the commit each seeded pull request's head branch was
+	// pushed at, by pull request number.
+	heads map[int]string
 }
 
 // gitIdentity is the author of the fixture's commit and of every merge.
@@ -178,9 +181,11 @@ func git(ctx context.Context, dir string, args ...string) (string, error) {
 }
 
 // buildFixture creates the case's origin with one commit on DefaultBranch,
-// from its repo/ directory or what its setup.sh builds, and a clone of it.
+// from its repo/ directory or what its setup.sh builds, a branch per seeded
+// pull request, and a clone of it.
 func buildFixture(ctx context.Context, c Case, dir string) (fixture, error) {
-	fx := fixture{origin: filepath.Join(dir, "origin.git"), project: filepath.Join(dir, "project"), merger: filepath.Join(dir, "merger")}
+	fx := fixture{origin: filepath.Join(dir, "origin.git"), project: filepath.Join(dir, "project"), merger: filepath.Join(dir, "merger"),
+		heads: map[int]string{}}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fx, err
 	}
@@ -216,7 +221,44 @@ func buildFixture(ctx context.Context, c Case, dir string) (fixture, error) {
 			return fx, err
 		}
 	}
+	for _, p := range c.PullRequests {
+		if err := buildPRBranch(ctx, c, p, fx); err != nil {
+			return fx, fmt.Errorf("pull request #%d: %w", p.Number, err)
+		}
+	}
+	// The clone is the factory's checkout: leave it on the default branch,
+	// whatever branches were built in it.
+	if _, err := git(ctx, fx.project, "checkout", "-q", DefaultBranch); err != nil {
+		return fx, err
+	}
 	return fx, nil
+}
+
+// buildPRBranch commits p's tree on its head branch, off its base, and
+// pushes it to the origin. A file the tree leaves out is the base's.
+func buildPRBranch(ctx context.Context, c Case, p PullRequest, fx fixture) error {
+	if _, err := git(ctx, fx.project, "checkout", "-q", "-B", p.Head, p.Base); err != nil {
+		return err
+	}
+	if err := copyTree(p.FilesDir(c), fx.project); err != nil {
+		return err
+	}
+	msg := fmt.Sprintf("%s\n\nSeeded for pull request #%d", p.Title, p.Number)
+	for _, args := range [][]string{
+		{"add", "-A"},
+		append(append([]string{}, gitIdentity...), "commit", "-q", "--allow-empty", "-m", msg),
+		{"push", "-q", "-u", "origin", p.Head},
+	} {
+		if _, err := git(ctx, fx.project, args...); err != nil {
+			return err
+		}
+	}
+	head, err := git(ctx, fx.project, "rev-parse", "HEAD")
+	if err != nil {
+		return err
+	}
+	fx.heads[p.Number] = strings.TrimSpace(head)
+	return nil
 }
 
 // copyTree copies the regular files, directories and links under src into
@@ -358,6 +400,27 @@ func (r *Runner) factory(ctx context.Context, c Case, sel Selection, dir string,
 			issue.Comments = append(issue.Comments, github.Comment{Author: github.Author{Login: cm.Author}, Body: cm.Body, CreatedAt: now})
 		}
 		seed.Issues = append(seed.Issues, fakegh.SeedIssue{Issue: issue})
+	}
+	for _, p := range c.PullRequests {
+		pr := github.PR{Number: p.Number, Title: p.Title, Body: p.Body, State: "OPEN",
+			URL:         fmt.Sprintf("https://github.com/%s/pull/%d", repo, p.Number),
+			HeadRefName: p.Head, BaseRefName: p.Base, HeadSHA: fx.heads[p.Number],
+			Author:    github.Author{Login: p.Author},
+			CreatedAt: now, UpdatedAt: now,
+			Labels: []github.Label{{Name: cfg.Filter.Label}}}
+		for _, l := range p.Labels {
+			if !github.HasLabel(pr.Labels, l) {
+				pr.Labels = append(pr.Labels, github.Label{Name: l})
+			}
+		}
+		sp := fakegh.SeedPR{PR: pr}
+		for _, cm := range p.Comments {
+			sp.Comments = append(sp.Comments, github.Comment{Author: github.Author{Login: cm.Author}, Body: cm.Body, CreatedAt: now})
+		}
+		for _, rv := range p.Reviews {
+			sp.Reviews = append(sp.Reviews, fakegh.SeedReview{Author: rv.Author, State: rv.State, Body: rv.Body, At: now})
+		}
+		seed.PRs = append(seed.PRs, sp)
 	}
 	if err := f.gh.Load(seed); err != nil {
 		f.close()
