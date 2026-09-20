@@ -2,8 +2,9 @@
 
 `bees eval` runs the whole factory against a fixture repository and grades the
 result with the fixture's own test, the way SWE-bench Lite grades a coding
-agent. Use it to compare a prompt, model or profile change against a baseline
-run.
+agent. `bees eval <role>` runs one role instead, against cases that grade that
+role's session on its own. Use either to compare a prompt, model or profile
+change against a baseline run.
 
 Evals run real agent sessions and cost money. They are not part of
 `dagger check`.
@@ -17,26 +18,31 @@ ships one):
 bees eval                          # every case under evals/
 bees eval --case hello             # only evals/hello
 bees eval --profile fast           # every role on the profile named fast
+bees eval developer                # every case under evals/developer/
+bees eval qa --case broken-greeting
 ```
 
 The output is one row per case, then what failed:
 
 ```
-CASE   RESULT  STOP  COST   TURNS  DURATION  PROFILE
-hello  pass    done  $0.84  41     6m12s     default (bees.toml)
+CASE   RESULT  SCORE  STOP  COST   TURNS  DURATION  PROFILE
+hello  pass    -      done  $0.84  41     6m12s     default (bees.toml)
 
 report: /home/me/src/busybees/.bees/evals/20260918-190412/report.json
 ```
+
+`SCORE` is the mean of the case's graded checks, and `-` for a case with
+none.
 
 `bees eval` exits non-zero when any case fails. `STOP` says why the run of a
 case ended:
 
 | Stop | Meaning |
 |---|---|
-| `done` | Every seeded issue is closed or carries `bees:needs-human`. |
+| `done` | Every seeded issue is closed or carries `bees:needs-human`; for a per-role run, the role's session finished. |
 | `timeout` | The case's `timeout` ran out. The running sessions were stopped. |
 | `budget` | The sessions cost the case's `max_cost`. The running sessions were stopped. |
-| `invalid` | The test passed on the fixture before the run, so the case proves nothing. No session ran. |
+| `invalid` | The test passed on the fixture before the run, so the case proves nothing. No session ran. Whole-factory cases only. |
 | `interrupted` | You stopped `bees eval`. |
 | `error` | The case could not be set up, or the scheduler failed. The error follows the table. |
 
@@ -60,6 +66,14 @@ machine that runs `bees eval`.
 The `todo-*` grading tests are only in each case's `grade/`, so the sessions
 do not see them.
 
+These are the per-role cases, one per kind of check:
+
+| Case | The role is given | The case checks |
+|---|---|---|
+| `developer/done-number` | one ready issue on the shared `todo` fixture | the outcome `pr-opened`, a pull request for the issue, `bees:ready` gone from it, and a rubric on the change and the pull request's description |
+| `project_manager/thin-issue` | a triage queue of two, a blocked issue and the developer's question about it | the outcome, `bees:triage` → `bees:ready` on the thin issue, the invalid one closed, mail to the developer, and rubrics on the refined issue and the answer |
+| `qa/broken-greeting` | a default branch whose `test.sh` fails, and one bug already filed | the outcome, one issue created, the report mailed to the product manager, and a rubric on the bug report |
+
 ### Which profile the sessions run on
 
 `--profile <name>` runs every role on that profile. bees looks it up in the
@@ -73,12 +87,13 @@ role's `profile` and `profile_by_size`, and the reviewer's `brief_profile`,
 the built-in profile.
 
 The eval takes nothing else from `bees.toml`: no prompts, skills, MCP
-servers, limits or timings, and every role runs. Two runs differ only by
-their profiles. A fixture can carry its own `bees/prompts/`, as any project
+servers, limits or timings, and every role is configured — a per-role run
+scopes the scheduler to one role rather than configuring the rest away. Two
+runs differ only by their profiles. A fixture can carry its own `bees/prompts/`, as any project
 can. A profile whose sandbox is `container` or `sbx` is refused: those
 sessions cannot reach the fake GitHub described below.
 
-## What a run does
+## What a whole-factory run does
 
 For each case, in its own directory under
 `<state_dir>/evals/<timestamp>/<case>/`:
@@ -101,6 +116,9 @@ For each case, in its own directory under
 The directory keeps everything: `state/` with the sessions' transcripts and
 `bees.log`, the fixture, and the test output in `before.log` and `after.log`.
 
+A per-role run does steps 1, 3 and 6, and in place of 4 and 5 runs one
+session for the role (see [Per-role cases](#per-role-cases) below).
+
 ### The fake GitHub
 
 The scheduler talks to the in-memory GitHub directly. A session, and the
@@ -118,7 +136,7 @@ stopped from reaching github.com.
 
 ## Grading
 
-A case passes when every check passes:
+A whole-factory case passes when every check passes:
 
 | Check | Passes when |
 |---|---|
@@ -132,7 +150,8 @@ copied over it, as `sh -c "<test>"`. A test gets 10 minutes.
 
 ## Writing a case
 
-A case is a directory under `evals/` with a `case.toml`:
+A whole-factory case is a directory under `evals/` with a `case.toml`, and a
+per-role one a directory under `evals/<role>/`. Both hold the same fixture:
 
 ```
 evals/hello/
@@ -197,4 +216,116 @@ with no links to anything outside the fixture, and graded by a test that fails
 before the change and passes after it.
 
 A directory under `evals/` named after a role (`evals/developer/`) is not a
-case. Those names are reserved for per-role cases.
+whole-factory case: it holds that role's cases, which only `bees eval <role>`
+takes.
+
+## Per-role cases
+
+`bees eval <role>` runs one role against the cases under `evals/<role>/`, the
+way `bees exec <role>` runs one session: the scheduler is scoped to that
+role, so nothing else runs, and the seeded GitHub state and mailbox stand in
+for the rest of the factory. The run ends when the session does. Nothing is
+merged and no second pass runs.
+
+The rest of the factory is still *configured*, and that is deliberate: the
+scheduler routes a new issue by the roles the configuration has, so a run
+that configured four roles away would label an unlabelled issue somewhere
+the real factory never would, and the case would be measuring the role
+against a workflow that does not exist.
+
+A per-role case has no `test`. It is graded by what it declares under
+`[expect]`, and it passes when every one of those checks passes.
+
+`evals/project_manager/thin-issue/case.toml`, cut down:
+
+```toml
+description = "a thin bug report to refine and a developer's question to answer"
+
+[[issues]]
+number = 1
+title = "todo done marks the wrong item"
+labels = ["bees:triage"]
+body = "I typed `todo done 1` and it crossed off the second thing on my list."
+
+[[issues]]
+number = 2
+title = "todo list should show due dates"
+labels = ["bees:blocked", "bees:size/s"]
+body = "`todo list` prints the raw line."
+
+[[mail]]
+from = "developer"
+to = "project_manager"
+subject = "Question about #2"
+body = "What should `todo list` print for an item with no due date?"
+issue = 2
+
+[expect]
+outcome = "done"
+
+[[expect.labels]]
+issue = 1
+has = ["bees:ready"]
+missing = ["bees:triage"]
+
+[[expect.mail]]
+to = "developer"
+issue = 2
+```
+
+The keys `[[issues]]`, `[[mail]]`, `description`, `timeout` and `max_cost`
+mean what they mean for a whole-factory case. These are the rest:
+
+| Key | Meaning |
+|---|---|
+| `issue`, `pr` | What the session is about, as `bees exec --issue`/`--pr`. A developer or reviewer case needs one; the three singleton roles take neither, since their session is about the whole repository. |
+| `[expect]` | How the case is graded. At least one check, or the case grades nothing. |
+
+### The checks a case can declare
+
+| Check | Passes when |
+|---|---|
+| `outcome = "done"` | The role's session reported that status with `done`. It has to be one the role may report. `failed` is declarable for a developer or reviewer case, where the factory hands the issue to a person and the run still ends as `done`; for the other three roles a failed session ends the run as `error`, which fails the case whatever it declared. |
+| `issues_created = 1` | That many issues exist at the end that the case did not seed. |
+| `issues_closed = [3]` | Each of those seeded issues is closed. |
+| `pull_requests = [1]` | Each of those issues has a pull request: one on its branch, or one whose body closes it. |
+| `[[expect.labels]]` | The issue carries every label under `has` and none under `missing`. One check per label. |
+| `[[expect.mail]]` | The role sent the role under `to` a message, about the issue under `issue` when it names one. |
+| `[[expect.graded]]` | A grader session scored the rubric at or above its pass score. |
+
+### Rubrics and grader sessions
+
+A check that needs judgement is a rubric, scored by a session of its own,
+following Inspect AI's model-graded scorer pattern. The grader is given the
+rubric, the transcript of the role's session and the state the run left
+behind — the issues as they stand, the comments posted on them, the pull
+requests opened and the mail the role sent — and answers with a score
+between 0 and 1 and the reasons for it. Both go in the report; the score also
+fills the table's `SCORE` column.
+
+```toml
+[[expect.graded]]
+name = "#1 is detailed enough for a developer to build"
+pass = 0.7
+rubric = """
+#1 as it now stands names where the bug is and says what the fixed behaviour
+is. It carries acceptance criteria a test could be written from. Judge the
+issue's body as it is at the end, not how it was written.
+"""
+```
+
+`name` is what the report calls the check, and `pass` the score it passes at:
+0.7 when the rubric leaves it out, and `pass = 0` to record the score in the
+report without ever failing the case. Write the rubric as what the grader
+should see, and say what not to judge: a rubric that leaves the bar to the
+grader's taste scores differently from run to run, which is the one thing an
+eval must not do.
+
+The grader is **not** the agent `--profile` selects. It is the read-only
+session agent from `~/.config/bees/config.toml` — the one `bees review` runs
+— and it stays the same whatever profile the roles run on. Two runs of a case
+are compared by their scores, so what does the scoring has to hold still
+while what is being scored changes.
+
+A reviewer case needs a pull request seeded in the fixture, which a case
+cannot describe yet. The reviewer's cases wait for it.

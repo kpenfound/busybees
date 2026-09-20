@@ -15,8 +15,11 @@ const ReportFile = "report.json"
 
 // Report is one `bees eval` run: what it ran with and how each case did.
 type Report struct {
-	Started time.Time    `json:"started"`
-	Dir     string       `json:"dir"`
+	Started time.Time `json:"started"`
+	Dir     string    `json:"dir"`
+	// Role is the role a per-role run ran in isolation, and "" for a
+	// whole-factory run.
+	Role    string       `json:"role,omitempty"`
 	Profile Selection    `json:"profile"`
 	Cases   []CaseResult `json:"cases"`
 }
@@ -24,8 +27,13 @@ type Report struct {
 // CaseResult is how one case did.
 type CaseResult struct {
 	Case string `json:"case"`
+	// Role is the role a per-role case ran in isolation.
+	Role string `json:"role,omitempty"`
 	// Pass is true when every check passed.
 	Pass bool `json:"pass"`
+	// Score is the mean of the case's graded checks, and nil when it
+	// declared none.
+	Score *float64 `json:"score,omitempty"`
 	// Stop is why the run stopped: StopDone, StopTimeout, ...
 	Stop   string  `json:"stop"`
 	Error  string  `json:"error,omitempty"`
@@ -53,6 +61,34 @@ type Check struct {
 	Failure string `json:"failure,omitempty"`
 	Pass    bool   `json:"pass"`
 	Detail  string `json:"detail,omitempty"`
+	// Score is what a grader session scored the check, between 0 and 1,
+	// and nil for a mechanical check. Detail holds the grader's reasons.
+	Score *float64 `json:"score,omitempty"`
+}
+
+// meanScore is a case's score: the mean of its graded checks, and nil when
+// it declared none.
+func meanScore(checks []Check) *float64 {
+	sum, n := 0.0, 0
+	for _, c := range checks {
+		if c.Score != nil {
+			sum += *c.Score
+			n++
+		}
+	}
+	if n == 0 {
+		return nil
+	}
+	mean := sum / float64(n)
+	return &mean
+}
+
+// scoreText is a score as the table shows it, and "-" for none.
+func scoreText(score *float64) string {
+	if score == nil {
+		return "-"
+	}
+	return fmt.Sprintf("%.2f", *score)
 }
 
 // Failed is the line a failing check is reported as.
@@ -93,7 +129,7 @@ func (r *Report) Write() error {
 func (r *Report) Table() string {
 	var b strings.Builder
 	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "CASE\tRESULT\tSTOP\tCOST\tTURNS\tDURATION\tPROFILE")
+	_, _ = fmt.Fprintln(w, "CASE\tRESULT\tSCORE\tSTOP\tCOST\tTURNS\tDURATION\tPROFILE")
 	for _, c := range r.Cases {
 		result := "pass"
 		if !c.Pass {
@@ -104,7 +140,7 @@ func (r *Report) Table() string {
 			cost += "+?"
 		}
 		d := time.Duration(c.DurationSeconds * float64(time.Second)).Round(time.Second)
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%s\t%s\n", c.Case, result, c.Stop, cost, c.Turns, d, c.Profile)
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n", c.Case, result, scoreText(c.Score), c.Stop, cost, c.Turns, d, c.Profile)
 	}
 	_ = w.Flush()
 	for _, c := range r.Cases {

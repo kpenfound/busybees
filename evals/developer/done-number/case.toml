@@ -1,0 +1,41 @@
+# The developer alone, on one ready issue: it opens a pull request and
+# nothing else runs. docs/evals.md describes every key.
+description = "todo done <n> marks the item after the one it was given"
+issue = 1
+timeout = "30m"
+max_cost = 5
+
+[[issues]]
+number = 1
+title = "todo done marks the wrong item"
+labels = ["bees:ready", "bees:size/xs"]
+body = """
+`todo done 1` marks the second item, not the first. `List.Complete` in
+`todo/list.go` counts from 0 where the command numbers from 1.
+
+## Acceptance criteria
+
+- `List.Complete(n)` marks the nth item, counting from 1.
+- `Complete(0)`, a negative number and a number past the end of the list are
+  errors, and leave the list as it was.
+- `go test ./...` passes.
+"""
+
+[expect]
+outcome = "pr-opened"
+pull_requests = [1]
+
+[[expect.labels]]
+issue = 1
+missing = ["bees:ready"]
+
+[[expect.graded]]
+name = "the change fixes the off-by-one and the pull request says how it was tested"
+rubric = """
+The session changed `List.Complete` so that `Complete(1)` marks the first
+item, and made 0, a negative number and a number past the end of the list
+errors that leave the list unchanged. The pull request body says what
+changed and how the session checked it (running the tests counts; claiming
+it without running anything does not). Ignore the wording and the commit
+history; judge the change and the description.
+"""

@@ -23,11 +23,9 @@ const evalsDir = "evals"
 func newEvalCmd(g *globalFlags) *cobra.Command {
 	var caseName, profile string
 	cmd := &cobra.Command{
-		Use: "eval",
-		// No role argument yet: per-role evals (bees eval <role>) will read
-		// evals/<role>/, which LoadCases already leaves alone.
-		Args:  cobra.NoArgs,
-		Short: "Run the whole factory against the eval cases under evals/ and grade the result",
+		Use:   "eval [role]",
+		Args:  cobra.MaximumNArgs(1),
+		Short: "Run the factory, or one role, against the eval cases under evals/ and grade the result",
 		Long: `eval runs the whole factory against each case under ./evals/: it builds the
 case's fixture repository as a local origin, seeds an in-memory GitHub with the
 case's issues and mail, and runs the scheduler until every seeded issue is
@@ -40,6 +38,15 @@ request of its own. The table goes to stdout and the JSON report to
 <state_dir>/evals/<timestamp>/report.json, beside each case's fixture, state
 and test output. It exits non-zero when any case fails.
 
+With a role, eval runs that role in isolation against the cases under
+./evals/<role>/, the way bees exec runs one session: the scheduler is scoped
+to that role, so the seeded GitHub state and mailbox stand in for the rest of
+the factory, which stays configured so that routing does not move. Such a
+case is graded by the checks it declares — the outcome the session reported,
+labels moved, mail sent, issues created or closed, a pull request opened —
+and by the rubrics a grader session scores, whose score is the table's SCORE
+column.
+
 Sessions are real agent sessions and cost money. --profile runs every role on
 one profile from bees.toml or ~/.config/bees/config.toml; without it the eval
 takes the profiles bees.toml selects, or config.toml's provider and model when
@@ -47,6 +54,13 @@ there is no bees.toml. Nothing else of bees.toml is used. See docs/evals.md.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := refuseInsideSession("eval"); err != nil {
 				return err
+			}
+			role := ""
+			if len(args) == 1 {
+				var err error
+				if role, err = config.CanonicalRole(args[0]); err != nil {
+					return err
+				}
 			}
 			local, err := evalLocalConfig(g)
 			if err != nil {
@@ -60,7 +74,7 @@ there is no bees.toml. Nothing else of bees.toml is used. See docs/evals.md.`,
 			if err != nil {
 				return err
 			}
-			cases, err := eval.LoadCases(evalsDir, caseName)
+			cases, err := evalCases(role, caseName)
 			if err != nil {
 				return err
 			}
@@ -78,8 +92,9 @@ there is no bees.toml. Nothing else of bees.toml is used. See docs/evals.md.`,
 			}
 			skillMgr := skills.NewManager(cacheDir())
 			r := &eval.Runner{Bees: self, ClaudeBin: claudeBin(), CodexBin: codexBin(), OpenCodeBin: opencodeBin(), PiBin: piBin(),
-				Skills: skillMgr, Console: cmd.ErrOrStderr()}
-			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "running %s with profile %s in %s\n", text.Count(len(cases), "case"), sel, dir)
+				Skills: skillMgr, Grader: evalGrader(global), Console: cmd.ErrOrStderr()}
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "running %s%s with profile %s in %s\n",
+				text.Count(len(cases), "case"), evalOf(role), sel, dir)
 			rep, err := r.Run(cmd.Context(), cases, sel, dir)
 			if rep != nil {
 				_, _ = fmt.Fprint(cmd.OutOrStdout(), rep.Table())
@@ -91,7 +106,7 @@ there is no bees.toml. Nothing else of bees.toml is used. See docs/evals.md.`,
 			return evalExit(rep, len(cases))
 		},
 	}
-	cmd.Flags().StringVar(&caseName, "case", "", "run only the case in evals/<name>")
+	cmd.Flags().StringVar(&caseName, "case", "", "run only this case, from evals/ or evals/<role>/")
 	cmd.Flags().StringVar(&profile, "profile", "", "run every role on this profile, from bees.toml or ~/.config/bees/config.toml")
 
 	// The gh every eval session runs: the script eval writes in front of
@@ -117,6 +132,35 @@ there is no bees.toml. Nothing else of bees.toml is used. See docs/evals.md.`,
 	}
 	cmd.AddCommand(gh)
 	return cmd
+}
+
+// evalCases are the cases a run takes: the whole-factory ones under evals/,
+// or one role's under evals/<role>/.
+func evalCases(role, name string) ([]eval.Case, error) {
+	if role == "" {
+		return eval.LoadCases(evalsDir, name)
+	}
+	return eval.LoadRoleCases(evalsDir, role, name)
+}
+
+// evalOf names the role a per-role run is of, for the line that says what
+// is about to run.
+func evalOf(role string) string {
+	if role == "" {
+		return ""
+	}
+	return " for the " + role
+}
+
+// evalGrader is the agent every graded check of a run is judged by: the
+// person's own read-only session agent, from ~/.config/bees/config.toml,
+// and never the profile the eval runs its roles on. Two runs of a case are
+// compared by their scores, so what does the scoring has to stay the same
+// while --profile changes what is being scored.
+func evalGrader(global *review.Config) review.Agent {
+	a := review.NewAgent(global)
+	a.ClaudeBin, a.CodexBin = claudeBin(), codexBin()
+	return a
 }
 
 // evalExit is the error bees eval exits with for a run of total cases: one

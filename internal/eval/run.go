@@ -22,6 +22,7 @@ import (
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/logging"
 	"github.com/kpenfound/busybees/internal/mail"
+	"github.com/kpenfound/busybees/internal/review"
 	"github.com/kpenfound/busybees/internal/scheduler"
 	"github.com/kpenfound/busybees/internal/session"
 	"github.com/kpenfound/busybees/internal/skills"
@@ -63,6 +64,10 @@ type Runner struct {
 	ClaudeBin, CodexBin, OpenCodeBin, PiBin string
 	// Skills prepares the skills a role names. Optional.
 	Skills *skills.Manager
+	// Grader runs the grader sessions a per-role case's rubrics are
+	// scored by (grader.go). Nil fails every graded check rather than the
+	// run.
+	Grader review.Agent
 	// Console receives each case's session summaries, warnings and
 	// errors; nil discards them. The whole log is the case's bees.log.
 	Console io.Writer
@@ -79,6 +84,11 @@ func (r *Runner) Run(ctx context.Context, cases []Case, sel Selection, dir strin
 		return nil, fmt.Errorf("pass interval: %w", err)
 	}
 	rep := &Report{Started: time.Now().UTC(), Dir: dir, Profile: sel}
+	// Every case of a run is the same kind: a per-role run's cases all
+	// carry its role, a whole-factory run's carry none.
+	if len(cases) > 0 {
+		rep.Role = cases[0].Role
+	}
 	for _, c := range cases {
 		if ctx.Err() != nil {
 			break
@@ -97,13 +107,14 @@ func (r *Runner) passInterval() string {
 
 func (r *Runner) runCase(ctx context.Context, c Case, sel Selection, dir string) (res CaseResult) {
 	start := time.Now()
-	res = CaseResult{Case: c.Name, Profile: sel.String(), Dir: dir, Stop: StopError}
+	res = CaseResult{Case: c.Name, Role: c.Role, Profile: sel.String(), Dir: dir, Stop: StopError}
 	defer func() {
 		res.DurationSeconds = time.Since(start).Round(time.Millisecond).Seconds()
 		res.Pass = res.Error == "" && res.Stop != StopInvalid && len(res.Checks) > 0
 		for _, check := range res.Checks {
 			res.Pass = res.Pass && check.Pass
 		}
+		res.Score = meanScore(res.Checks)
 	}()
 	fail := func(err error) CaseResult {
 		res.Error = err.Error()
@@ -113,31 +124,43 @@ func (r *Runner) runCase(ctx context.Context, c Case, sel Selection, dir string)
 	if err != nil {
 		return fail(fmt.Errorf("fixture: %w", err))
 	}
-	passed, log, err := runTest(ctx, c, fx.origin, filepath.Join(dir, "before"))
-	if err != nil {
-		return fail(fmt.Errorf("test on the fixture: %w", err))
-	}
-	res.Checks = append(res.Checks, Check{
-		Name:    "the test fails on the fixture",
-		Failure: "the test passed on the fixture, where it has to fail: the case does not describe work to do",
-		Pass:    !passed,
-		Detail:  log,
-	})
-	if passed {
-		res.Stop = StopInvalid
-		return res
+	// Only a whole-factory case has a test, and a test that already passes
+	// describes no work: the case proves nothing and no session runs.
+	if c.Test != "" {
+		passed, log, err := runTest(ctx, c, fx.origin, filepath.Join(dir, "before"))
+		if err != nil {
+			return fail(fmt.Errorf("test on the fixture: %w", err))
+		}
+		res.Checks = append(res.Checks, Check{
+			Name:    "the test fails on the fixture",
+			Failure: "the test passed on the fixture, where it has to fail: the case does not describe work to do",
+			Pass:    !passed,
+			Detail:  log,
+		})
+		if passed {
+			res.Stop = StopInvalid
+			return res
+		}
 	}
 	f, err := r.factory(ctx, c, sel, dir, fx)
 	if err != nil {
 		return fail(err)
 	}
 	defer f.close()
-	res.Stop = f.loop(ctx, c)
+	if c.Role == "" {
+		res.Stop = f.loop(ctx, c)
+	} else {
+		res.Stop = f.runRole(ctx, c)
+	}
 	if res.Stop == StopError {
 		res.Error = f.err.Error()
 	}
 	res.Checks = append(res.Checks, f.grade(ctx, c, filepath.Join(dir, "after"))...)
-	res.CostUSD, res.CostUnknown, res.Turns, res.Sessions = f.spend()
+	graded, graders := f.graded(ctx, c, r.Grader, dir)
+	res.Checks = append(res.Checks, graded...)
+	spent := f.spend()
+	spent.add(graders)
+	res.CostUSD, res.CostUnknown, res.Turns, res.Sessions = spent.usd, spent.unknown, spent.turns, spent.sessions
 	return res
 }
 
@@ -271,6 +294,7 @@ type caseFactory struct {
 	gh     *fakegh.GitHub
 	sched  *scheduler.Scheduler
 	store  *state.Store
+	box    *mail.Box
 	fx     fixture
 	srv    *server
 	logger *logging.Logger
@@ -287,7 +311,8 @@ type caseFactory struct {
 func (r *Runner) factory(ctx context.Context, c Case, sel Selection, dir string, fx fixture) (*caseFactory, error) {
 	repo := "bees-eval/" + c.Name
 	stateDir := filepath.Join(dir, "state")
-	text := sel.configText(settings{Repo: repo, StateDir: stateDir, Workspaces: filepath.Join(dir, "worktrees"), PassInterval: r.passInterval()})
+	text := sel.configText(settings{Repo: repo, StateDir: stateDir, Workspaces: filepath.Join(dir, "worktrees"),
+		PassInterval: r.passInterval()})
 	path := filepath.Join(fx.project, "bees.toml")
 	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
 		return nil, err
@@ -338,10 +363,10 @@ func (r *Runner) factory(ctx context.Context, c Case, sel Selection, dir string,
 		f.close()
 		return nil, err
 	}
-	box := mail.Open(f.store.MailDir(), f.store.Migrate)
+	f.box = mail.Open(f.store.MailDir(), f.store.Migrate)
 	for _, m := range c.Mail {
 		to, _ := config.CanonicalRole(m.To)
-		if _, err := box.Send(mail.Message{From: m.From, To: to, Subject: m.Subject, Body: m.Body, Work: ghwork.New(m.Issue, 0)}); err != nil {
+		if _, err := f.box.Send(mail.Message{From: m.From, To: to, Subject: m.Subject, Body: m.Body, Work: ghwork.New(m.Issue, 0)}); err != nil {
 			f.close()
 			return nil, err
 		}
@@ -379,12 +404,22 @@ func (r *Runner) factory(ctx context.Context, c Case, sel Selection, dir string,
 	}
 	ws := workspace.NewManager(fx.project, cfg.Scheduler.WorkspaceRoot)
 	ws.Remote = cfg.Project.Remote
-	f.sched, err = scheduler.New(scheduler.Deps{Config: cfg, GitHub: client, Mail: box, Runner: runner, Workspaces: ws, Store: f.store, Logger: f.log})
+	f.sched, err = scheduler.New(scheduler.Deps{Config: cfg, GitHub: client, Mail: f.box, Runner: runner, Workspaces: ws, Store: f.store, Logger: f.log})
 	if err != nil {
 		f.close()
 		return nil, err
 	}
 	f.sched.Once = true
+	if c.Role != "" {
+		// A per-role case runs that role and nothing else. The scope is the
+		// scheduler's own (`bees exec`'s), not `roles.<name>.enabled` in the
+		// eval's bees.toml: reconcile routes a new issue by the roles the
+		// configuration has (`configuredRole`), so disabling four of them
+		// would send unlabelled issues somewhere the real factory never
+		// would, and the eval would be measuring the role against a
+		// workflow that does not exist.
+		f.sched.OnlyRoles = map[string]bool{c.Role: true}
+	}
 	return f, nil
 }
 
@@ -397,73 +432,101 @@ func (f *caseFactory) close() {
 	}
 }
 
+// watcher stops a case's factory when its timeout or its budget runs out,
+// and remembers which did. It is what bounds both a whole-factory loop and
+// the single session of a per-role case.
+type watcher struct {
+	// outer is the context the eval itself was given, which tells a case
+	// that ran out of time from an eval a person stopped.
+	outer  context.Context
+	cancel context.CancelFunc
+	done   chan struct{}
+	wg     sync.WaitGroup
+	mu     sync.Mutex
+	stop   string
+}
+
+// watch starts watching the case's timeout and budget, and returns the
+// context the factory runs under. Close the watcher when the run is over.
+func (f *caseFactory) watch(ctx context.Context, c Case) (*watcher, context.Context) {
+	runCtx, cancel := context.WithTimeout(ctx, c.Timeout.Duration)
+	w := &watcher{outer: ctx, cancel: cancel, done: make(chan struct{})}
+	w.wg.Add(1)
+	go func() {
+		defer w.wg.Done()
+		tick := time.NewTicker(time.Second)
+		defer tick.Stop()
+		for {
+			select {
+			case <-w.done:
+				return
+			case <-runCtx.Done():
+				w.set(w.ended())
+				f.sched.HardStop()
+				return
+			case <-tick.C:
+				if f.overBudget(c) {
+					w.set(StopBudget)
+					cancel()
+				}
+			}
+		}
+	}()
+	return w, runCtx
+}
+
+// set records why the run stopped, the first reason winning.
+func (w *watcher) set(stop string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.stop == "" {
+		w.stop = stop
+	}
+}
+
+// stopped is why the run stopped, and "" while nothing has stopped it.
+func (w *watcher) stopped() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.stop
+}
+
+// ended is what an expired context means: the eval was stopped, or the
+// case ran out of time.
+func (w *watcher) ended() string {
+	if w.outer.Err() != nil {
+		return StopInterrupted
+	}
+	return StopTimeout
+}
+
+// close stops watching and releases the timeout.
+func (w *watcher) close() {
+	close(w.done)
+	w.wg.Wait()
+	w.cancel()
+}
+
 // loop runs scheduler passes until the case stops, merging what the
 // reviewer approved between them, and returns why it stopped. Each pass
 // waits for the work it started, a developer's issue up to its approval.
 // The timeout and the budget are also watched while a pass runs, and stop
 // the sessions running when they end.
 func (f *caseFactory) loop(ctx context.Context, c Case) string {
-	runCtx, cancel := context.WithTimeout(ctx, c.Timeout.Duration)
-	defer cancel()
-	var mu sync.Mutex
-	stop := ""
-	setStop := func(s string) {
-		mu.Lock()
-		defer mu.Unlock()
-		if stop == "" {
-			stop = s
-		}
-	}
-	stopped := func() string {
-		mu.Lock()
-		defer mu.Unlock()
-		return stop
-	}
-	ended := func() string {
-		if ctx.Err() != nil {
-			return StopInterrupted
-		}
-		return StopTimeout
-	}
-	watched := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		tick := time.NewTicker(time.Second)
-		defer tick.Stop()
-		for {
-			select {
-			case <-watched:
-				return
-			case <-runCtx.Done():
-				setStop(ended())
-				f.sched.HardStop()
-				return
-			case <-tick.C:
-				if f.overBudget(c) {
-					setStop(StopBudget)
-					cancel()
-				}
-			}
-		}
-	}()
-	defer func() {
-		close(watched)
-		wg.Wait()
-	}()
+	w, runCtx := f.watch(ctx, c)
+	defer w.close()
 	for {
 		if err := f.sched.Run(runCtx); err != nil {
 			f.err = err
-			setStop(StopError)
+			w.set(StopError)
 		}
 		if f.overBudget(c) {
-			setStop(StopBudget)
+			w.set(StopBudget)
 		}
 		if runCtx.Err() != nil {
-			setStop(ended())
+			w.set(w.ended())
 		}
-		if s := stopped(); s != "" {
+		if s := w.stopped(); s != "" {
 			return s
 		}
 		if err := f.mergeApproved(runCtx); err != nil {
@@ -479,29 +542,68 @@ func (f *caseFactory) loop(ctx context.Context, c Case) string {
 	}
 }
 
+// runRole runs the one session a per-role case is about, the way
+// `bees exec <role>` runs it: the scheduler is scoped to that role, so the
+// seeded GitHub state and mailbox are all it has to go on. Nothing is
+// merged and no second pass runs; the case is graded on what the session
+// left behind.
+func (f *caseFactory) runRole(ctx context.Context, c Case) string {
+	w, runCtx := f.watch(ctx, c)
+	defer w.close()
+	if err := f.sched.RunRole(runCtx, c.Role, c.Issue, c.PR); err != nil {
+		f.err = err
+		w.set(StopError)
+	}
+	if f.overBudget(c) {
+		w.set(StopBudget)
+	}
+	if runCtx.Err() != nil {
+		w.set(w.ended())
+	}
+	if s := w.stopped(); s != "" {
+		return s
+	}
+	return StopDone
+}
+
+// costs is what a set of sessions cost.
+type costs struct {
+	// usd is what the sessions reported costing, and unknown counts the
+	// ones that reported nothing, which it leaves out.
+	usd      float64
+	unknown  int
+	turns    int
+	sessions int
+}
+
+func (c *costs) add(o costs) {
+	c.usd += o.usd
+	c.unknown += o.unknown
+	c.turns += o.turns
+	c.sessions += o.sessions
+}
+
 // spend sums the case's sessions from the ledger.
-func (f *caseFactory) spend() (cost float64, unknown, turns, sessions int) {
+func (f *caseFactory) spend() costs {
 	entries, err := f.store.ReadLedger(time.Time{})
 	if err != nil {
 		f.log.Warn("could not read the ledger", "err", err)
 	}
+	var spent costs
 	for _, e := range entries {
-		sessions++
-		turns += e.Turns
-		cost += e.CostUSD
+		spent.add(costs{usd: e.CostUSD, turns: e.Turns, sessions: 1})
 		if e.CostUnknown {
-			unknown++
+			spent.unknown++
 		}
 	}
-	return cost, unknown, turns, sessions
+	return spent
 }
 
 func (f *caseFactory) overBudget(c Case) bool {
 	if c.MaxCost <= 0 {
 		return false
 	}
-	cost, _, _, _ := f.spend()
-	return cost >= c.MaxCost
+	return f.spend().usd >= c.MaxCost
 }
 
 // settled reports whether every seeded issue is closed or held for a
@@ -603,34 +705,17 @@ func (f *caseFactory) merge(ctx context.Context, p github.PR) (conflict string, 
 	return "", err
 }
 
-// grade checks the end state: each seeded issue closed, with a pull request
-// of its own, and the case's test passing on the default branch.
+// grade checks the end state. A whole-factory case wants each seeded issue
+// closed, with a pull request of its own, and its test passing on the
+// default branch; a per-role case wants what it declared (expect.go).
 func (f *caseFactory) grade(ctx context.Context, c Case, dest string) []Check {
+	if c.Role != "" {
+		return f.expected(c)
+	}
 	snap := f.gh.Snapshot()
 	var checks []Check
 	for _, seeded := range c.Issues {
-		i, _ := snap.Issue(seeded.Number)
-		closed := Check{
-			Name:    fmt.Sprintf("#%d closed", seeded.Number),
-			Failure: fmt.Sprintf("#%d was not closed", seeded.Number),
-			Pass:    i.State == "CLOSED",
-		}
-		if !closed.Pass && github.HasLabel(i.Labels, f.labels.NeedsHuman) {
-			closed.Detail = "held for a person: " + f.labels.NeedsHuman
-		}
-		checks = append(checks, closed)
-		pr := Check{
-			Name:    fmt.Sprintf("#%d has a pull request", seeded.Number),
-			Failure: fmt.Sprintf("#%d got no pull request", seeded.Number),
-		}
-		branch := f.sched.BranchFor(seeded.Number)
-		for _, p := range snap.PRs {
-			if p.HeadRefName == branch || slices.Contains(closes(p.Body), seeded.Number) {
-				pr.Pass, pr.Detail = true, fmt.Sprintf("#%d", p.Number)
-				break
-			}
-		}
-		checks = append(checks, pr)
+		checks = append(checks, f.closedCheck(snap, seeded.Number), f.prCheck(snap, seeded.Number))
 	}
 	passed, log, err := runTest(ctx, c, f.fx.origin, dest)
 	test := Check{
@@ -643,6 +728,38 @@ func (f *caseFactory) grade(ctx context.Context, c Case, dest string) []Check {
 		test.Detail = err.Error()
 	}
 	return append(checks, test)
+}
+
+// closedCheck is whether issue n is closed, saying so when it is open
+// because the factory handed it to a person instead.
+func (f *caseFactory) closedCheck(snap fakegh.Snapshot, n int) Check {
+	i, _ := snap.Issue(n)
+	closed := Check{
+		Name:    fmt.Sprintf("#%d closed", n),
+		Failure: fmt.Sprintf("#%d was not closed", n),
+		Pass:    i.State == "CLOSED",
+	}
+	if !closed.Pass && github.HasLabel(i.Labels, f.labels.NeedsHuman) {
+		closed.Detail = "held for a person: " + f.labels.NeedsHuman
+	}
+	return closed
+}
+
+// prCheck is whether issue n got a pull request: one on its branch, or one
+// whose body closes it.
+func (f *caseFactory) prCheck(snap fakegh.Snapshot, n int) Check {
+	pr := Check{
+		Name:    fmt.Sprintf("#%d has a pull request", n),
+		Failure: fmt.Sprintf("#%d got no pull request", n),
+	}
+	branch := f.sched.BranchFor(n)
+	for _, p := range snap.PRs {
+		if p.HeadRefName == branch || slices.Contains(closes(p.Body), n) {
+			pr.Pass, pr.Detail = true, fmt.Sprintf("#%d", p.Number)
+			break
+		}
+	}
+	return pr
 }
 
 // runLogged runs a command in dir with its output in the file log.

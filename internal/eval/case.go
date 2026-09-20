@@ -1,17 +1,26 @@
-// Package eval is `bees eval`: it runs the whole factory against a fixture
-// repository and grades the result mechanically, SWE-bench Lite style.
+// Package eval is `bees eval`: it runs the factory against a fixture
+// repository and grades the result, SWE-bench Lite style.
 //
-// A case is a directory under evals/ (case.go): a fixture repository, the
-// GitHub state and mail to seed, and a test command that fails on the
-// fixture and must pass once the factory has worked the seeded issues. The
-// runner (run.go) builds the fixture as a local bare origin, seeds an
-// in-memory GitHub (internal/fakegh), and runs the scheduler pass after
-// pass, merging the pull requests it approved the way a person would, until
-// every seeded issue is closed or held for a person, or the case's budget or
-// timeout runs out. Sessions reach that GitHub through a gh of their own on
-// PATH (shim.go). Grading (run.go's grade) runs the test command on the
-// default branch and checks that every seeded issue closed with a pull
-// request, and the report (report.go) is a table and a JSON file per run.
+// A whole-factory case is a directory under evals/ (case.go): a fixture
+// repository, the GitHub state and mail to seed, and a test command that
+// fails on the fixture and must pass once the factory has worked the seeded
+// issues. The runner (run.go) builds the fixture as a local bare origin,
+// seeds an in-memory GitHub (internal/fakegh), and runs the scheduler pass
+// after pass, merging the pull requests it approved the way a person would,
+// until every seeded issue is closed or held for a person, or the case's
+// budget or timeout runs out. Sessions reach that GitHub through a gh of
+// their own on PATH (shim.go). Grading (run.go's grade) runs the test
+// command on the default branch and checks that every seeded issue closed
+// with a pull request, and the report (report.go) is a table and a JSON
+// file per run.
+//
+// `bees eval <role>` runs one role instead, against the cases under
+// evals/<role>/: the scheduler is scoped to that role, the seeded GitHub
+// state and mailbox stand in for the others, and one session runs the way
+// `bees exec` runs it (run.go's runRole). Such a case is graded by what it declares
+// (expect.go): the outcome the session reported, labels moved, mail sent,
+// issues created or closed, a pull request opened, and rubrics a grader
+// session of its own scores (grader.go).
 //
 // Which agent profiles the sessions run on is profile.go's: --profile, or
 // the profiles bees.toml selects, or the person's global config.toml.
@@ -60,24 +69,35 @@ const (
 	DefaultAuthor = "human"
 )
 
-// Case is one whole-factory eval: evals/<name>/case.toml and the fixture
-// beside it.
+// Case is one eval: evals/<name>/case.toml, or evals/<role>/<name>/case.toml
+// for a per-role one, and the fixture beside it.
 type Case struct {
 	// Name is the case directory's name, and Dir its absolute path.
 	Name string `toml:"-"`
 	Dir  string `toml:"-"`
+	// Role is the role a per-role case runs in isolation, taken from the
+	// directory it lives in, and "" for a whole-factory case.
+	Role string `toml:"-"`
 
 	Description string `toml:"description"`
-	// Test grades the case: a command run with sh -c in a checkout of the
-	// default branch, which must fail on the fixture and pass after the
-	// run.
+	// Test grades a whole-factory case: a command run with sh -c in a
+	// checkout of the default branch, which must fail on the fixture and
+	// pass after the run. A per-role case has none; it is graded by what
+	// it declares under Expect.
 	Test string `toml:"test"`
+	// Issue and PR are what a per-role case's session is about, the way
+	// `bees exec --issue`/`--pr` name them. A whole-factory case has
+	// neither: it works every issue it seeds.
+	Issue int `toml:"issue"`
+	PR    int `toml:"pr"`
 	// Timeout and MaxCost (USD) stop the run: the factory is stopped, the
 	// sessions still running with it, and the case graded as it stands.
 	Timeout config.Duration `toml:"timeout"`
 	MaxCost float64         `toml:"max_cost"`
 	Issues  []Issue         `toml:"issues"`
 	Mail    []Mail          `toml:"mail"`
+	// Expect is how a per-role case is graded (expect.go).
+	Expect Expect `toml:"expect"`
 }
 
 // Issue is one seeded issue. The runner adds the factory's label, so the
@@ -108,14 +128,32 @@ type Mail struct {
 	Issue   int    `toml:"issue"`
 }
 
-// LoadCases reads the cases under dir, in name order: every one, or only
-// the one called name. A directory named after a role is left out: it holds
-// that role's cases, which a whole-factory run does not take. So is
-// FixturesDir.
+// LoadCases reads the whole-factory cases under dir, in name order: every
+// one, or only the one called name. A directory named after a role is left
+// out: it holds that role's cases, which a whole-factory run does not take.
+// So is FixturesDir.
 func LoadCases(dir, name string) ([]Case, error) {
+	return loadCases(dir, name, "", func(e string) bool {
+		return e == FixturesDir || slices.Contains(config.Roles, e)
+	})
+}
+
+// LoadRoleCases reads role's cases under dir/<role>/, in name order: every
+// one, or only the one called name.
+func LoadRoleCases(dir, role string, name string) ([]Case, error) {
+	return loadCases(filepath.Join(dir, role), name, role, func(string) bool { return false })
+}
+
+// loadCases reads the cases in the directories under dir that skip does not
+// leave out, as cases of role.
+func loadCases(dir, name, role string, skip func(string) bool) ([]Case, error) {
+	kind := "an eval case"
+	if role != "" {
+		kind = "a " + role + " eval case"
+	}
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("no %s directory here: an eval case is a directory %s/<case>/ with a case.toml in it, described in docs/evals.md", dir, dir)
+		return nil, fmt.Errorf("no %s directory here: %s is a directory %s/<case>/ with a case.toml in it, described in docs/evals.md", dir, kind, dir)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("eval cases: %w", err)
@@ -123,14 +161,14 @@ func LoadCases(dir, name string) ([]Case, error) {
 	var cases []Case
 	var names []string
 	for _, e := range entries {
-		if !e.IsDir() || e.Name() == FixturesDir || slices.Contains(config.Roles, e.Name()) {
+		if !e.IsDir() || skip(e.Name()) {
 			continue
 		}
 		names = append(names, e.Name())
 		if name != "" && e.Name() != name {
 			continue
 		}
-		c, err := LoadCase(filepath.Join(dir, e.Name()))
+		c, err := loadCase(filepath.Join(dir, e.Name()), role)
 		if err != nil {
 			return nil, err
 		}
@@ -145,14 +183,19 @@ func LoadCases(dir, name string) ([]Case, error) {
 	return cases, nil
 }
 
-// LoadCase reads the case in dir and checks it.
-func LoadCase(dir string) (Case, error) {
+// LoadCase reads the whole-factory case in dir and checks it.
+func LoadCase(dir string) (Case, error) { return loadCase(dir, "") }
+
+// LoadRoleCase reads the case in dir as one of role's and checks it.
+func LoadRoleCase(dir, role string) (Case, error) { return loadCase(dir, role) }
+
+func loadCase(dir, role string) (Case, error) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return Case{}, err
 	}
 	path := filepath.Join(abs, CaseFile)
-	c := Case{Name: filepath.Base(abs), Dir: abs}
+	c := Case{Name: filepath.Base(abs), Dir: abs, Role: role}
 	md, err := toml.DecodeFile(path, &c)
 	if err != nil {
 		return Case{}, fmt.Errorf("case %s: %w", c.Name, err)
@@ -187,9 +230,6 @@ func LoadCase(dir string) (Case, error) {
 
 func (c Case) validate() error {
 	var errs []error
-	if strings.TrimSpace(c.Test) == "" {
-		errs = append(errs, errors.New("test: the command that grades the case is required"))
-	}
 	if c.Timeout.Duration < 0 {
 		errs = append(errs, errors.New("timeout must be positive"))
 	}
@@ -204,15 +244,15 @@ func (c Case) validate() error {
 	if len(c.Issues) == 0 {
 		errs = append(errs, errors.New("issues: a case seeds at least one issue"))
 	}
-	seen := map[int]bool{}
+	seeded := map[int]bool{}
 	for _, i := range c.Issues {
 		if i.Number <= 0 {
 			errs = append(errs, fmt.Errorf("issues: %q has no number", i.Title))
 		}
-		if seen[i.Number] {
+		if seeded[i.Number] {
 			errs = append(errs, fmt.Errorf("issues: #%d is seeded twice", i.Number))
 		}
-		seen[i.Number] = true
+		seeded[i.Number] = true
 		if strings.TrimSpace(i.Title) == "" {
 			errs = append(errs, fmt.Errorf("issues: #%d has no title", i.Number))
 		}
@@ -221,11 +261,62 @@ func (c Case) validate() error {
 		if _, err := config.CanonicalRole(m.To); err != nil {
 			errs = append(errs, fmt.Errorf("mail: to: %w", err))
 		}
-		if m.Issue != 0 && !seen[m.Issue] {
+		if m.Issue != 0 && !seeded[m.Issue] {
 			errs = append(errs, fmt.Errorf("mail: issue #%d is not a seeded issue", m.Issue))
 		}
 	}
-	return errors.Join(errs...)
+	if c.Role == "" {
+		return errors.Join(append(errs, c.validateFactory()...)...)
+	}
+	return errors.Join(append(errs, c.validateRole(seeded)...)...)
+}
+
+// validateFactory checks the keys of a whole-factory case: it is graded by
+// its test command, and the per-role keys are not its.
+func (c Case) validateFactory() []error {
+	var errs []error
+	if strings.TrimSpace(c.Test) == "" {
+		errs = append(errs, errors.New("test: the command that grades the case is required"))
+	}
+	if c.Issue != 0 || c.PR != 0 {
+		errs = append(errs, errors.New("issue and pr belong to a per-role case: a whole-factory case works every issue it seeds"))
+	}
+	if !c.Expect.empty() {
+		errs = append(errs, errors.New("expect belongs to a per-role case: a whole-factory case is graded by its test"))
+	}
+	return errs
+}
+
+// validateRole checks the keys of a per-role case: it is graded by what it
+// declares under expect, and the session it runs has to have a subject the
+// role can work on.
+func (c Case) validateRole(seeded map[int]bool) []error {
+	var errs []error
+	if strings.TrimSpace(c.Test) != "" {
+		errs = append(errs, fmt.Errorf("test belongs to a whole-factory case: a %s case is graded by what it declares under expect", c.Role))
+	}
+	if c.Expect.empty() {
+		errs = append(errs, errors.New("expect: a per-role case declares at least one check, or it grades nothing"))
+	}
+	switch c.Role {
+	case config.RoleDeveloper, config.RoleReviewer:
+		if c.Issue == 0 && c.PR == 0 {
+			errs = append(errs, fmt.Errorf("issue: a %s case names the issue its session works on", c.Role))
+		}
+	default:
+		if c.Issue != 0 || c.PR != 0 {
+			errs = append(errs, fmt.Errorf("issue and pr: a %s session is about the whole repository, not one issue", c.Role))
+		}
+	}
+	if c.Issue != 0 && !seeded[c.Issue] {
+		errs = append(errs, fmt.Errorf("issue: #%d is not a seeded issue", c.Issue))
+	}
+	for _, n := range c.Expect.issues() {
+		if !seeded[n] {
+			errs = append(errs, fmt.Errorf("expect: #%d is not a seeded issue", n))
+		}
+	}
+	return append(errs, c.Expect.validate(c.Role)...)
 }
 
 func firstNonEmpty(values ...string) string {

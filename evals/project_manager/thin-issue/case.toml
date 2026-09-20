@@ -1,0 +1,74 @@
+# The project manager alone, with a triage queue and a question to answer.
+# docs/evals.md describes every key.
+description = "a thin bug report to refine, an invalid one to close and a developer's question to answer"
+timeout = "30m"
+max_cost = 5
+
+[[issues]]
+number = 1
+title = "todo done marks the wrong item"
+labels = ["bees:triage"]
+body = """
+I typed `todo done 1` and it crossed off the second thing on my list.
+"""
+
+[[issues]]
+number = 2
+title = "todo list should show due dates"
+labels = ["bees:blocked", "bees:size/s"]
+body = """
+`todo list` prints the raw line. It should show the due date in a column of
+its own.
+"""
+
+[[issues]]
+number = 3
+title = "todo should print a usage line when it is run with no arguments"
+labels = ["bees:triage"]
+body = """
+Running `todo` on its own should tell me what the commands are.
+"""
+
+[[mail]]
+from = "developer"
+to = "project_manager"
+subject = "Question about #2"
+body = """
+#2 asks for a column of its own for the due date, but it does not say what
+to print for an item that has no due date, or how wide the column is. What
+should `todo list` print for an item with no `due:`?
+"""
+issue = 2
+
+[expect]
+outcome = "done"
+issues_closed = [3]
+
+[[expect.labels]]
+issue = 1
+has = ["bees:ready"]
+missing = ["bees:triage"]
+
+[[expect.mail]]
+to = "developer"
+issue = 2
+
+[[expect.graded]]
+name = "#1 is detailed enough for a developer to build"
+rubric = """
+#1 as it now stands names where the bug is (`List.Complete` in
+`todo/list.go`, which counts from 0 where the command numbers from 1) and
+says what the fixed behaviour is, including what happens for 0, a negative
+number and a number past the end of the list. It carries acceptance criteria
+a test could be written from. Judge the issue's body as it is at the end,
+not how it was written.
+"""
+
+[[expect.graded]]
+name = "the answer to the developer decides the question"
+rubric = """
+The mail the project manager sent the developer about #2 answers what to
+print for an item with no due date with a decision the developer can build
+from, rather than passing the question on or restating it. It does not have
+to be the answer you would have picked.
+"""

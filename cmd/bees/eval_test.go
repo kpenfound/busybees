@@ -47,6 +47,52 @@ func evalCase(t *testing.T, name, test string) {
 	}
 }
 
+// evalRoleCase writes evals/<role>/<name>/ in the current directory, with
+// one check declared.
+func evalRoleCase(t *testing.T, role, name string) {
+	t.Helper()
+	for rel, content := range map[string]string{
+		"evals/" + role + "/" + name + "/case.toml":      "[[issues]]\nnumber = 1\ntitle = \"x\"\n[expect]\noutcome = \"done\"\n",
+		"evals/" + role + "/" + name + "/repo/README.md": "x\n",
+	} {
+		if err := os.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(rel, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// bees eval <role> takes the cases under evals/<role>/, and a
+// whole-factory run does not.
+func TestEvalRoleCasesComeFromTheRoleDirectory(t *testing.T) {
+	evalHome(t)
+	t.Chdir(t.TempDir())
+	evalCase(t, "whole", "false")
+	evalRoleCase(t, "qa", "smoke")
+	if err := runRoot(t, "eval", "qa", "--case", "whole"); err == nil || !strings.Contains(err.Error(), `no case "whole" under evals/qa (cases: smoke)`) {
+		t.Fatalf("got %v", err)
+	}
+	if err := runRoot(t, "eval", "--case", "smoke"); err == nil || !strings.Contains(err.Error(), `no case "smoke" under evals (cases: whole)`) {
+		t.Fatalf("got %v", err)
+	}
+	if err := runRoot(t, "eval", "reviewer"); err == nil || !strings.Contains(err.Error(), "a reviewer eval case is a directory evals/reviewer/<case>/") {
+		t.Fatalf("a role with no cases: %v", err)
+	}
+}
+
+// A role bees does not have is refused before anything runs.
+func TestEvalRefusesAnUnknownRole(t *testing.T) {
+	evalHome(t)
+	t.Chdir(t.TempDir())
+	evalCase(t, "one", "false")
+	err := runRoot(t, "eval", "janitor")
+	if err == nil || !strings.Contains(err.Error(), "janitor") {
+		t.Fatalf("got %v", err)
+	}
+}
+
 func TestEvalCaseMustExist(t *testing.T) {
 	evalHome(t)
 	t.Chdir(t.TempDir())
