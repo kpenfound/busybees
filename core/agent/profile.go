@@ -35,9 +35,17 @@ var Agents = []string{AgentClaude, AgentCodex, AgentOpenCode}
 var Sandboxes = []string{SandboxNone, SandboxClaude, SandboxContainer, SandboxSbx}
 
 // AgentCredentials names credentials forwarded into an isolated container.
+// opencode is authenticated through whichever provider it is configured for,
+// so its entry lists one key per provider it reads: any one of them is a
+// credential, and every one of them that is set is forwarded.
 var AgentCredentials = map[string][]string{
 	AgentClaude: {"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"},
 	AgentCodex:  {"OPENAI_API_KEY", "CODEX_API_KEY"},
+	AgentOpenCode: {
+		"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
+		"OPENROUTER_API_KEY", "GROQ_API_KEY", "MISTRAL_API_KEY", "XAI_API_KEY",
+		"DEEPSEEK_API_KEY",
+	},
 }
 
 // Profile contains only agent execution settings. Workflow and identity policy
