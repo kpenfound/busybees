@@ -1,0 +1,76 @@
+# The project manager alone, with one triage item that is two pull requests:
+# the pass is to split it and close the original, not to size it and send it
+# on. docs/evals.md describes every key.
+#
+# The item names two commands that share nothing but the due date the todo
+# package already parses, and it carries bees:size/xl, which the factory
+# never dispatches — so the count issues_created pins is the obvious one.
+# Whether the split was drawn sensibly is the rubric's. The item has no
+# parent feature, so the parts are created with `related` and inherit no
+# milestone: the case seeds none, and cannot.
+description = "a triage item that is two pull requests, to split"
+timeout = "30m"
+max_cost = 5
+
+[[issues]]
+number = 1
+title = "Due dates on the command line"
+labels = ["bees:triage", "bees:size/xl"]
+body = """
+The `todo` package parses `due:YYYY-MM-DD` already, but the `todo` command
+does nothing with it. Two things would fix that:
+
+- `todo due <n> <date>` sets item n's due date, and `todo due <n>` with no
+  date clears it. Both write the file back.
+- `todo overdue` prints the pending items whose due date is before today,
+  earliest first, numbered the way `todo list` numbers them.
+
+They are separate commands and neither needs the other. I would rather have
+them one at a time than wait for both.
+
+Dates are `YYYY-MM-DD` in and out, there are no relative dates, "overdue"
+compares dates and not times, and an item due today is not overdue. Done
+items never show up in `todo overdue`.
+"""
+
+[expect]
+outcome = "done"
+issues_created = 2
+issues_closed = [1]
+
+[[expect.labels]]
+issue = 1
+missing = ["bees:ready"]
+
+[[expect.graded]]
+name = "the split is two buildable work items, and the original says where they went"
+rubric = """
+The session created one work item per command the issue names, each one a
+piece a single pull request could deliver. Each body says what the command
+does, where in the code it goes (`cmd/todo/main.go` for the command surface,
+the `todo` package for anything the library has to grow) and what its
+acceptance criteria are, and each carries the decisions the original stated
+— the date format, dates and not times, today is not overdue, done items
+left out — rather than dropping them or contradicting them. Both are ready
+for a developer.
+
+The session then closed #1 with a comment naming the two issues it was split
+into.
+
+Do not judge the wording or the sizes, and do not require the two to be
+ordered or to declare a dependency on each other: the original says they are
+independent.
+"""
+
+[[expect.graded]]
+name = "the parts are new issues, not a rewrite of the original"
+rubric = """
+The work the session did is the split: it did not rewrite #1 into one
+detailed issue and move it to `bees:ready`, and it did not leave #1 open
+after creating the parts. Nothing in the transcript creates, edits, renames
+or closes a milestone, and the parts being in no milestone is correct — the
+repository has none.
+
+Do not judge whether the parts kept #1's title, and do not judge the closing
+comment's wording.
+"""
