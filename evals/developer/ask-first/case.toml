@@ -5,10 +5,14 @@
 # The two numbering criteria cannot both hold for a list with a done item
 # above a pending one, and which one gives way is a product call — printed
 # numbers that renumber break the caller the issue names, line numbers that
-# do not renumber make the printed numbers useless. The `todo done`
-# off-by-one is named in the body as part of the issue, so a session that
-# notices it has no reason to file it as an out-of-scope bug: issues_created
-# is 0 and the case would fail on a bug report it was right to write.
+# do not renumber make the printed numbers useless.
+#
+# The body names both of the shared fixture's seeded faults, because
+# issues_created is 0 and the case would fail on a bug report the session
+# was right to write: `List.Complete`'s off-by-one is in this issue, and
+# `List.ByPriority`'s ordering is filed elsewhere. Both sit in the file the
+# issue sends the session to read, and the developer prompt tells a session
+# to file an out-of-scope fault rather than fix it.
 description = "a ready issue whose acceptance criteria contradict each other about the numbering"
 issue = 1
 timeout = "30m"
@@ -30,10 +34,12 @@ body = """
 I have crossed the tax return off already; I do not want to read it every
 time. Print the pending items only.
 
-`List.Pending` in `todo/list.go` is the list to print. While you are there:
-`todo done 1` marks the second item today, because `List.Complete` counts
-from 0 where the command numbers from 1. That off-by-one is part of this
-issue, not a separate one.
+`List.Pending` in `todo/list.go` is the list to print. Two faults in that
+file are known already, and neither is yours to report. `List.Complete`
+counts from 0 where the command numbers from 1, so `todo done 1` marks the
+second item today: that off-by-one is part of this issue and is fixed here.
+`List.ByPriority` sorts the items with no priority ahead of `(A)`: that one
+is filed and is not this issue's.
 
 ## Acceptance criteria
 
