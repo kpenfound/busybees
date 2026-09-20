@@ -478,7 +478,7 @@ func (e *hostEnforcer) Prepare(ctx context.Context, g Grants) (Session, error) {
 // this machine has them.
 func (r *Runner) agentExecutables() []Mount {
 	var found []Mount
-	for _, bin := range []struct{ named, fallback string }{{r.ClaudeBin, "claude"}, {r.CodexBin, "codex"}, {r.OpenCodeBin, "opencode"}} {
+	for _, bin := range []struct{ named, fallback string }{{r.ClaudeBin, "claude"}, {r.CodexBin, "codex"}, {r.OpenCodeBin, "opencode"}, {r.PiBin, "pi"}} {
 		name := bin.named
 		if name == "" {
 			name = bin.fallback

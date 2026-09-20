@@ -241,17 +241,17 @@ func oneLine(out []byte, err error) string {
 }
 
 // CheckSandboxAgent reports whether the role's agent can run under one
-// mode. SandboxClaude is Claude Code's own sandbox, so a codex or opencode
-// role asking for it would run with its own approvals and sandbox switched
-// off and nothing boxing it; that is refused, both here and by the runner,
-// rather than run unboxed. SandboxSbx runs an agent sbx has a template for
-// (agent.SbxTemplates), since the sandbox is created for its agent. None
-// asks nothing of the agent, and container asks its own question of the
-// agent's credential in CheckSandboxContainer. Loading refuses the same
-// profiles naming the key; this is what the runner asks of a role built by
-// hand.
+// mode. SandboxClaude is Claude Code's own sandbox, so a codex, opencode or
+// pi role asking for it would run with nothing boxing it (codex's and
+// opencode's approvals are switched off, and pi has none); that is refused,
+// both here and by the runner, rather than run unboxed. SandboxSbx runs an
+// agent sbx has a template for (agent.SbxTemplates), since the sandbox is
+// created for its agent. None asks nothing of the agent, and container asks
+// its own question of the agent's credential in CheckSandboxContainer.
+// Loading refuses the same profiles naming the key; this is what the runner
+// asks of a role built by hand.
 func CheckSandboxAgent(mode, agent string) error {
-	if mode == SandboxClaude && (agent == AgentCodex || agent == AgentOpenCode) {
+	if mode == SandboxClaude && (agent == AgentCodex || agent == AgentOpenCode || agent == AgentPi) {
 		return fmt.Errorf("sandbox %q is Claude Code's sandbox and agent %q does not run under it", mode, agent)
 	}
 	if mode == SandboxSbx && agent != "" && sbxTemplates[agent] == "" {

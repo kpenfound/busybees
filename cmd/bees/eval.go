@@ -77,7 +77,7 @@ there is no bees.toml. Nothing else of bees.toml is used. See docs/evals.md.`,
 				return err
 			}
 			skillMgr := skills.NewManager(cacheDir())
-			r := &eval.Runner{Bees: self, ClaudeBin: claudeBin(), CodexBin: codexBin(), OpenCodeBin: opencodeBin(),
+			r := &eval.Runner{Bees: self, ClaudeBin: claudeBin(), CodexBin: codexBin(), OpenCodeBin: opencodeBin(), PiBin: piBin(),
 				Skills: skillMgr, Console: cmd.ErrOrStderr()}
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "running %s with profile %s in %s\n", text.Count(len(cases), "case"), sel, dir)
 			rep, err := r.Run(cmd.Context(), cases, sel, dir)

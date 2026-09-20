@@ -58,9 +58,9 @@ type Runner struct {
 	// Bees is the bees executable: sessions run it as bees (mail, done,
 	// the MCP server), and their gh runs its ShimCommand.
 	Bees string
-	// ClaudeBin, CodexBin and OpenCodeBin are the agent executables, as
-	// for `bees run`.
-	ClaudeBin, CodexBin, OpenCodeBin string
+	// ClaudeBin, CodexBin, OpenCodeBin and PiBin are the agent
+	// executables, as for `bees run`.
+	ClaudeBin, CodexBin, OpenCodeBin, PiBin string
 	// Skills prepares the skills a role names. Optional.
 	Skills *skills.Manager
 	// Console receives each case's session summaries, warnings and
@@ -362,6 +362,7 @@ func (r *Runner) factory(ctx context.Context, c Case, sel Selection, dir string,
 		ClaudeBin:   r.ClaudeBin,
 		CodexBin:    r.CodexBin,
 		OpenCodeBin: r.OpenCodeBin,
+		PiBin:       r.PiBin,
 		// The link in bin: the runner puts its directory first on every
 		// session's PATH, which is how the shim's gh comes before any
 		// other.

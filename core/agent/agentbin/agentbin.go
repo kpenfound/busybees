@@ -1,5 +1,5 @@
 // Package agentbin resolves the executable of a coding agent — claude,
-// codex or opencode — before a session runs it, and keeps a test binary
+// codex, opencode or pi — before a session runs it, and keeps a test binary
 // from ever running a real one.
 //
 // Every test that runs a session fakes its agent, with a script under the

@@ -19,7 +19,9 @@
 // factory's state directory the way the claude and codex markers do, and
 // reading a process's environment to recover it is not portable across the
 // platforms this package runs on. A crashed opencode session with no live
-// pid file is therefore not found by orphan cleanup.
+// pid file is therefore not found by orphan cleanup. The scan does not know
+// a pi session either: pi renames its process to "pi" as it starts, which
+// on Linux and macOS overwrites the command line a ps scan would read.
 //
 // Every source is scoped to one factory: a process only counts when its
 // command line also references this state directory's sessions directory

@@ -57,6 +57,8 @@ type Deps struct {
 	CodexBin string
 	// OpenCodeBin is the opencode executable. Default "opencode".
 	OpenCodeBin string
+	// PiBin is the pi executable. Default "pi".
+	PiBin string
 
 	// MachineGitHub runs the one gh command that is about the machine's own
 	// authentication rather than the repository: `gh auth status`. It never
@@ -75,8 +77,8 @@ type Deps struct {
 // checks run against. It never fails: a configuration that does not load or
 // does not resolve is reported by the config checks instead, so the toolchain
 // checks still run on a machine that has no bees.toml yet.
-func New(ctx context.Context, configPath, claudeBin, codexBin, openCodeBin string) *Deps {
-	d := &Deps{ConfigPath: configPath, ClaudeBin: claudeBin, CodexBin: codexBin, OpenCodeBin: openCodeBin, MachineGitHub: github.New("")}
+func New(ctx context.Context, configPath, claudeBin, codexBin, openCodeBin, piBin string) *Deps {
+	d := &Deps{ConfigPath: configPath, ClaudeBin: claudeBin, CodexBin: codexBin, OpenCodeBin: openCodeBin, PiBin: piBin, MachineGitHub: github.New("")}
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		d.ConfigErr = err
@@ -114,7 +116,13 @@ func (d *Deps) Checks() []Check {
 		checks = append(checks, Check{Run: d.checkCodex})
 	}
 	if d.usesOpenCode() {
-		checks = append(checks, Check{Run: d.checkOpenCode}, Check{Run: d.checkOpenCodeConfigWritable})
+		checks = append(checks, Check{Run: d.checkOpenCode})
+	}
+	if d.usesAgent(config.AgentPi) {
+		checks = append(checks, Check{Run: d.checkPi})
+	}
+	if d.usesOpenCode() || d.usesAgent(config.AgentPi) {
+		checks = append(checks, Check{Run: d.checkSessionConfigWritable})
 	}
 	if d.usesSbx() {
 		checks = append(checks, Check{Run: d.checkSbx})
@@ -140,33 +148,32 @@ func (d *Deps) Checks() []Check {
 // usesCodex reports whether any enabled role resolves to agent = "codex":
 // checkCodex only runs then, the same way checkClaude runs unconditionally
 // because claude is the default agent every installation needs.
-func (d *Deps) usesCodex() bool {
+func (d *Deps) usesCodex() bool { return d.usesAgent(config.AgentCodex) }
+
+// usesOpenCode reports whether any enabled role resolves to agent =
+// "opencode", the same way usesCodex gates checkCodex.
+func (d *Deps) usesOpenCode() bool { return d.usesAgent(config.AgentOpenCode) }
+
+// usesAgent reports whether any enabled role resolves to agent at some
+// work item size.
+func (d *Deps) usesAgent(agent string) bool {
 	for _, name := range config.Roles {
 		role, err := d.Config.Role(name)
 		if err != nil || !role.Enabled {
 			continue
 		}
-		for _, size := range append([]string{""}, config.Sizes...) {
-			if role.ForSize(size).Agent == config.AgentCodex {
-				return true
-			}
+		if roleUses(role, agent) {
+			return true
 		}
 	}
 	return false
 }
 
-// usesOpenCode reports whether any enabled role resolves to agent =
-// "opencode", the same way usesCodex gates checkCodex.
-func (d *Deps) usesOpenCode() bool {
-	for _, name := range config.Roles {
-		role, err := d.Config.Role(name)
-		if err != nil || !role.Enabled {
-			continue
-		}
-		for _, size := range append([]string{""}, config.Sizes...) {
-			if role.ForSize(size).Agent == config.AgentOpenCode {
-				return true
-			}
+// roleUses reports whether role resolves to agent at some work item size.
+func roleUses(role config.ResolvedRole, agent string) bool {
+	for _, size := range append([]string{""}, config.Sizes...) {
+		if role.ForSize(size).Agent == agent {
+			return true
 		}
 	}
 	return false
@@ -271,6 +278,13 @@ func (d *Deps) openCodeBin() string {
 		return d.OpenCodeBin
 	}
 	return "opencode"
+}
+
+func (d *Deps) piBin() string {
+	if d.PiBin != "" {
+		return d.PiBin
+	}
+	return "pi"
 }
 
 // ---- toolchain -------------------------------------------------------------
@@ -502,6 +516,39 @@ func (d *Deps) checkOpenCode(ctx context.Context) Result {
 	return pass(name, GroupToolchain, fmt.Sprintf("opencode %s at %s", oneLine(string(out)), path))
 }
 
+// checkPi only runs when a role is configured with agent = "pi": pi is
+// opt-in the same way codex is. bees pins no minimum version for pi yet, so
+// this only asks that it is installed and runs; whether the packages a pi
+// session loads are there is a question per role (checkRolePiPackages).
+func (d *Deps) checkPi(ctx context.Context) Result {
+	const name = "pi runnable"
+	path, res := d.piPath(name)
+	if path == "" {
+		return res
+	}
+	out, err := exec.CommandContext(ctx, path, "--version").CombinedOutput()
+	if err != nil {
+		return fail(name, GroupToolchain, fmt.Sprintf("%s --version failed: %s", path, oneLine(string(out)+" "+err.Error())),
+			"check that "+path+" is a working pi installation")
+	}
+	return pass(name, GroupToolchain, fmt.Sprintf("pi %s at %s", oneLine(string(out)), path))
+}
+
+// piPath finds pi the way a session does, or returns the failed result a
+// check named name reports when it cannot.
+func (d *Deps) piPath(name string) (string, Result) {
+	bin := d.piBin()
+	if strings.ContainsRune(bin, filepath.Separator) {
+		return bin, Result{}
+	}
+	p, err := d.lookPath(bin)
+	if err != nil {
+		return "", fail(name, GroupToolchain, fmt.Sprintf("%s not found on PATH", bin),
+			"install pi (https://pi.dev), or set $BEES_PI_BIN to its path")
+	}
+	return p, Result{}
+}
+
 // ---- config ----------------------------------------------------------------
 
 func (d *Deps) checkConfigLoads(context.Context) Result {
@@ -589,14 +636,15 @@ func (d *Deps) checkNotesWritable(context.Context) Result {
 	return pass(name, GroupConfig, dir)
 }
 
-// checkOpenCodeConfigWritable only runs when usesOpenCode found a role
-// configured for it: an opencode session's MCP configuration
-// (internal/session's opencodeConfig) is written into that session's own
-// directory under the sessions directory, so this checks that directory the
-// same way checkNotesWritable checks the notes one, rather than requiring an
-// opencode.json to pre-exist somewhere - bees itself creates the file.
-func (d *Deps) checkOpenCodeConfigWritable(context.Context) Result {
-	const name = "opencode session dir writable"
+// checkSessionConfigWritable only runs when a role is configured for an
+// agent whose MCP configuration is a file: opencode's (core/agent's
+// opencodeConfig) and pi's (pi-mcp.json, which the pi-mcp-adapter reads)
+// are both written into that session's own directory under the sessions
+// directory, so this checks that directory the same way checkNotesWritable
+// checks the notes one, rather than requiring the file to pre-exist
+// somewhere - bees itself creates it.
+func (d *Deps) checkSessionConfigWritable(context.Context) Result {
+	const name = "session dir writable"
 	dir := filepath.Join(d.Config.StateDir(), "sessions")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fail(name, GroupConfig, oneLine(err.Error()),
@@ -605,7 +653,7 @@ func (d *Deps) checkOpenCodeConfigWritable(context.Context) Result {
 	f, err := os.CreateTemp(dir, ".doctor-")
 	if err != nil {
 		return fail(name, GroupConfig, oneLine(err.Error()),
-			fmt.Sprintf("make %s writable: an opencode session's MCP configuration is written there", dir))
+			fmt.Sprintf("make %s writable: an opencode or pi session's MCP configuration is written there", dir))
 	}
 	_ = f.Close()
 	_ = os.Remove(f.Name())

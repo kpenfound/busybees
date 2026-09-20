@@ -259,6 +259,7 @@ func TestProfileValidation(t *testing.T) {
 		{name: "opencode variant", agent: AgentOpenCode, effort: "custom-variant", valid: true},
 		{name: "explicit claude", agent: AgentClaude, effort: "invalid"},
 		{name: "explicit codex", agent: AgentCodex, effort: "invalid"},
+		{name: "explicit pi", agent: AgentPi, effort: "invalid"},
 		{name: "default claude", effort: "invalid"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

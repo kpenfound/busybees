@@ -514,6 +514,11 @@ func TestCheckSandboxContainer(t *testing.T) {
 		{"opencode names its provider keys", ResolvedRole{Sandbox: SandboxContainer, SandboxImage: "img", Agent: AgentOpenCode}, bot, nil, "ANTHROPIC_API_KEY or OPENAI_API_KEY or GEMINI_API_KEY or GOOGLE_API_KEY or OPENROUTER_API_KEY or GROQ_API_KEY or MISTRAL_API_KEY or XAI_API_KEY or DEEPSEEK_API_KEY"},
 		{"opencode with a provider key in the role env", ResolvedRole{Sandbox: SandboxContainer, SandboxImage: "img", Agent: AgentOpenCode, Env: map[string]string{"OPENROUTER_API_KEY": "k"}}, bot, nil, ""},
 		{"opencode with a provider key on the host", ResolvedRole{Sandbox: SandboxContainer, SandboxImage: "img", Agent: AgentOpenCode}, bot, map[string]string{"DEEPSEEK_API_KEY": "k"}, ""},
+		// pi is authenticated the same way, through whichever provider its
+		// model names.
+		{"pi names its provider keys", ResolvedRole{Sandbox: SandboxContainer, SandboxImage: "img", Agent: AgentPi}, bot, nil, "ANTHROPIC_API_KEY or ANTHROPIC_OAUTH_TOKEN or OPENAI_API_KEY or GEMINI_API_KEY or OPENROUTER_API_KEY or GROQ_API_KEY or XAI_API_KEY or MISTRAL_API_KEY or DEEPSEEK_API_KEY or CEREBRAS_API_KEY"},
+		{"pi with a provider key in the role env", ResolvedRole{Sandbox: SandboxContainer, SandboxImage: "img", Agent: AgentPi, Env: map[string]string{"CEREBRAS_API_KEY": "k"}}, bot, nil, ""},
+		{"pi with a provider key on the host", ResolvedRole{Sandbox: SandboxContainer, SandboxImage: "img", Agent: AgentPi}, bot, map[string]string{"OPENROUTER_API_KEY": "k"}, ""},
 		// sbx needs the GitHub credential alone: no image, and the agent's
 		// credential is the sbx secret store's to supply.
 		{"sbx with github", ResolvedRole{Sandbox: SandboxSbx}, bot, nil, ""},
@@ -727,13 +732,17 @@ func TestCheckSandboxAgent(t *testing.T) {
 	}
 }
 
-// The sbx sandbox runs every agent: a profile that selects it loads for
-// claude, codex and opencode, under a role's legacy keys and under
-// [profiles.<name>] alike, and an agent bees does not know is refused by
-// the agent key.
+// The sbx sandbox runs every agent it has a template for: a profile that
+// selects it loads for claude, codex and opencode, under a role's legacy
+// keys and under [profiles.<name>] alike; pi, which it has no template for,
+// is refused by the sandbox key, and an agent bees does not know by the
+// agent key.
 func TestSbxProfileRunsEveryAgent(t *testing.T) {
-	if _, err := Load(writeConfig(t, "version = 3\n[project]\nrepo = \"a/b\"\n[profiles.boxed]\nagent = \"pi\"\nsandbox = \"sbx\"\n[roles.qa]\nprofile = \"boxed\"\n")); err == nil || !strings.Contains(err.Error(), "profiles.boxed.agent must be one of claude, codex, opencode") {
+	if _, err := Load(writeConfig(t, "version = 3\n[project]\nrepo = \"a/b\"\n[profiles.boxed]\nagent = \"pi\"\nsandbox = \"sbx\"\n[roles.qa]\nprofile = \"boxed\"\n")); err == nil || !strings.Contains(err.Error(), `profiles.boxed.sandbox "sbx" does not run agent "pi"`) {
 		t.Errorf("pi in sbx: %v", err)
+	}
+	if _, err := Load(writeConfig(t, "version = 3\n[project]\nrepo = \"a/b\"\n[profiles.boxed]\nagent = \"gpt\"\nsandbox = \"sbx\"\n[roles.qa]\nprofile = \"boxed\"\n")); err == nil || !strings.Contains(err.Error(), "profiles.boxed.agent must be one of claude, codex, opencode, pi") {
+		t.Errorf("an unknown agent in sbx: %v", err)
 	}
 	for name, body := range map[string]string{
 		"claude":   "version = 1\n[project]\nrepo = \"a/b\"\n[roles.developer]\nagent = \"claude\"\nsandbox = \"sbx\"\n",
