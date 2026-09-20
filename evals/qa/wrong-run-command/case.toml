@@ -1,7 +1,10 @@
 # QA alone, on a default branch whose README documents a command that is not
 # there: the script is `greet.sh` and the README calls it `run-greet.sh`.
 # The behaviour is right and the test suite passes, so the only defect is
-# the documentation. docs/evals.md describes every key.
+# the documentation. The missing command has to stay the *only* discrepancy
+# the README holds — that is why its usage-line sentence names no script at
+# all — or a session that files a second one fails `issues_created = 1`
+# having done nothing wrong. docs/evals.md describes every key.
 description = "the README documents a run command that does not exist"
 timeout = "30m"
 max_cost = 5

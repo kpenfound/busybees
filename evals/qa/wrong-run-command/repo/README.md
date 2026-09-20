@@ -7,6 +7,6 @@ $ sh run-greet.sh Ada
 Hello, Ada!
 ```
 
-With no name it prints the usage line `usage: run-greet.sh <name>` and exits 1.
+With no name it prints a usage line and exits 1.
 
 Run the tests with `sh test.sh`.
