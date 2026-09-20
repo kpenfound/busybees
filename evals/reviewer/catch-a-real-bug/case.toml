@@ -1,0 +1,75 @@
+# The reviewer alone, on a pull request with one fault in it. The branch's
+# own tests pass, so the fault is only there to be found by reading the diff
+# against the issue. Every reviewer case runs one review round; docs/evals.md
+# describes every key.
+description = "a pull request whose new method is off by a day, with green tests"
+issue = 1
+pr = 2
+timeout = "30m"
+max_cost = 5
+
+[[issues]]
+number = 1
+title = "todo: list the items whose due date has passed"
+labels = ["bees:review", "bees:size/s"]
+body = """
+There is no way to see what is late.
+
+## Acceptance criteria
+
+- `List.Overdue(today time.Time) List` returns the pending items whose due
+  date is before the day `today` falls on, in list order.
+- An item due on `today` is not overdue.
+- An item that is done is never overdue, and neither is one with no due
+  date.
+- The time of day in `today` is ignored.
+- `go test ./...` passes.
+"""
+
+[[pull_requests]]
+number = 2
+title = "todo: List.Overdue"
+head = "bees/issue-1"
+body = """
+`List.Overdue` returns the pending items whose due date has passed. It
+compares dates, not times, so the time of day in `today` does not matter.
+
+Closes #1
+
+## Testing
+
+`go test ./...`
+"""
+
+[expect]
+outcome = "changes-requested"
+
+[[expect.mail]]
+to = "developer"
+issue = 1
+
+[[expect.labels]]
+issue = 1
+has = ["bees:needs-human"]
+
+[[expect.graded]]
+name = "the feedback names the off-by-a-day fault"
+rubric = """
+`Overdue` in `todo/overdue.go` keeps an item when `!it.Due.After(day)`, so
+an item due on `today` is reported overdue, which #1 says it is not. The
+feedback the session sent the developer names that fault: the file, the
+comparison, and what the behaviour should be. Naming the line number as well
+is better; saying only "the date handling is wrong" is not enough to fix
+from. Nothing else in the change is at fault.
+"""
+
+[[expect.graded]]
+name = "nothing else is blocked on"
+rubric = """
+Every finding the session blocked on is a fault in the diff: the comparison
+above, or the test in `todo/overdue_test.go` that covers a day before and a
+day after but not the boundary itself. A finding about naming, formatting,
+comment style or a preference between two correct ways of writing something
+is padding, and each one the session blocked on lowers the score. A remark
+offered as optional is not blocking.
+"""

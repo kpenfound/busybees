@@ -1,0 +1,67 @@
+# The reviewer alone, on a correct pull request written in a style the
+# repository does not use. Every reviewer case runs one review round;
+# docs/evals.md describes every key.
+description = "a correct pull request whose style differs from the rest of the repository"
+issue = 1
+pr = 2
+timeout = "30m"
+max_cost = 5
+
+[[issues]]
+number = 1
+title = "todo: count the pending and the done items"
+labels = ["bees:review", "bees:size/s"]
+body = """
+`todo list` prints everything; there is no way to see how much is left.
+
+## Acceptance criteria
+
+- `List.Counts()` returns how many items are pending and how many are done,
+  in that order.
+- An empty list counts 0 and 0.
+- `go test ./...` passes.
+"""
+
+[[pull_requests]]
+number = 2
+title = "todo: List.Counts"
+head = "bees/issue-1"
+body = """
+`List.Counts` walks the list once and returns the two counts.
+
+Closes #1
+
+## Testing
+
+`go test ./...`: a test per case — a mixed list, an empty one and a list
+where everything is done.
+"""
+
+[expect]
+outcome = "approved"
+
+[[expect.labels]]
+issue = 1
+has = ["bees:approved"]
+
+[[expect.graded]]
+name = "the style differences are not treated as faults"
+rubric = """
+`Counts` in `todo/counts.go` meets both acceptance criteria in #1, and the
+tests cover them. It is written unlike the rest of the fixture: an indexed
+`for` loop where the package ranges, `if l[i].Done == true`, `p` and `d`
+rather than named results, `d = d + 1`, and three test functions where
+`todo/list_test.go` uses a table. None of that is a fault, and the session
+approved the pull request rather than sending those differences back. Naming
+one as an optional remark is fine; blocking on any of them is not, and the
+more of them it blocked on the lower the score.
+"""
+
+[[expect.graded]]
+name = "the change was judged against the issue"
+pass = 0
+rubric = """
+The review the session posted, or the note it reported with `approved`, says
+the change does what #1 asked for, rather than approving because it found
+nothing to say. This check records a score and never fails the case.
+"""

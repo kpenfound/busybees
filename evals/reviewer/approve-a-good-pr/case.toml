@@ -1,0 +1,70 @@
+# The reviewer alone, on a pull request that does what its issue asked.
+# Every reviewer case runs one review round; docs/evals.md describes every
+# key.
+description = "a pull request that meets its acceptance criteria and is tested"
+issue = 1
+pr = 2
+timeout = "30m"
+max_cost = 5
+
+[[issues]]
+number = 1
+title = "todo: find an item by its title"
+labels = ["bees:review", "bees:size/s"]
+body = """
+There is no way to find an item without reading the whole list.
+
+## Acceptance criteria
+
+- `List.Search(q string) List` returns the items whose title holds `q`,
+  ignoring case, in list order.
+- Done items are searched too.
+- An empty query returns no items.
+- `Search` leaves the list it was called on as it was.
+- `go test ./...` passes.
+"""
+
+[[pull_requests]]
+number = 2
+title = "todo: List.Search"
+head = "bees/issue-1"
+body = """
+`List.Search` returns the items whose title holds the query, ignoring case,
+in list order. An empty query returns nothing, and done items are searched
+like any other.
+
+Closes #1
+
+## Testing
+
+`go test ./...`: a table over the cases in the issue, and one test that the
+list is unchanged afterwards.
+"""
+
+[expect]
+outcome = "approved"
+
+[[expect.labels]]
+issue = 1
+has = ["bees:approved"]
+
+[[expect.graded]]
+name = "the pull request is approved and nothing is demanded of the developer"
+rubric = """
+`todo/search.go` on the branch meets every acceptance criterion in #1 and
+`todo/search_test.go` covers them, so there is nothing to send back. The
+session approved it: it reported `approved`, it sent the developer no mail,
+and the review it posted demands no change to the code or the tests. A
+remark that does not block, or a suggestion offered as optional, is fine.
+Judge the verdict and what was asked for, not the wording.
+"""
+
+[[expect.graded]]
+name = "the review says what was checked"
+pass = 0
+rubric = """
+The review the session posted, or the note it reported with `approved`, says
+what it checked the change against — the acceptance criteria in #1, the
+tests on the branch — rather than approving with a bare sentence. This check
+records a score and never fails the case.
+"""
