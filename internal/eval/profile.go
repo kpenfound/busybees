@@ -160,6 +160,9 @@ func checkHostOnly(cfg *config.Config) error {
 type settings struct {
 	Repo, StateDir, Workspaces string
 	PassInterval               string
+	// Role is the role a per-role case runs, and "" for a whole-factory
+	// case: a reviewer case is given one review round (ReviewRounds).
+	Role string
 }
 
 // The bees.toml an eval writes into its fixture's clone.
@@ -181,6 +184,9 @@ type fileProject struct {
 type fileScheduler struct {
 	PollInterval  string `toml:"poll_interval"`
 	WorkspaceRoot string `toml:"workspace_root"`
+	// MaxReviewRounds is left out of a whole-factory eval, which runs the
+	// review loop the configured default number of times.
+	MaxReviewRounds int `toml:"max_review_rounds,omitempty"`
 }
 
 // roleTable is the profile selection of [global] or a [roles.<name>], and
@@ -201,6 +207,25 @@ func (t roleTable) empty() bool {
 	return t.Profile == "" && len(t.ProfileBySize) == 0 && t.BriefProfile == "" && t.JudgeProfile == "" && len(t.AngleProfiles) == 0
 }
 
+// ReviewRounds is how many review rounds a per-role reviewer case runs.
+// One: the round a reviewer eval measures is the review, and what the
+// factory does with "changes requested" is to start a developer session,
+// which a per-role run must not do — the scheduler's role scope gates
+// dispatch, not the stage the review loop moves to next. With one round the
+// worker escalates the issue to a person instead, and the run ends where
+// the reviewer's verdict is. The session is told it is the final round,
+// which every reviewer case therefore is.
+const ReviewRounds = 1
+
+// reviewRounds is the scheduler's max_review_rounds for a case of role, and
+// 0 — the key left out — for every role but the reviewer.
+func reviewRounds(role string) int {
+	if role == config.RoleReviewer {
+		return ReviewRounds
+	}
+	return 0
+}
+
 type profileTable struct {
 	Agent    string `toml:"agent,omitempty"`
 	Model    string `toml:"model,omitempty"`
@@ -214,7 +239,7 @@ func (s Selection) configText(set settings) string {
 	f := fileConfig{
 		Version:   config.CurrentVersion,
 		Project:   fileProject{Repo: set.Repo, DefaultBranch: DefaultBranch, StateDir: set.StateDir},
-		Scheduler: fileScheduler{PollInterval: set.PassInterval, WorkspaceRoot: set.Workspaces},
+		Scheduler: fileScheduler{PollInterval: set.PassInterval, WorkspaceRoot: set.Workspaces, MaxReviewRounds: reviewRounds(set.Role)},
 		Global:    s.global,
 		Roles:     maps.Clone(s.roles),
 	}

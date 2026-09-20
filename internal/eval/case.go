@@ -18,7 +18,9 @@
 // `bees eval <role>` runs one role instead, against the cases under
 // evals/<role>/: the scheduler is scoped to that role, the seeded GitHub
 // state and mailbox stand in for the others, and one session runs the way
-// `bees exec` runs it (run.go's runRole). Such a case is graded by what it declares
+// `bees exec` runs it (run.go's runRole). A reviewer case is the review
+// loop's review stage, review and all, held to one round (profile.go's
+// ReviewRounds) so that the verdict ends the run. Such a case is graded by what it declares
 // (expect.go): the outcome the session reported, labels moved, mail sent,
 // issues created or closed, a pull request opened, and rubrics a grader
 // session of its own scores (grader.go).

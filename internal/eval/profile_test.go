@@ -161,3 +161,32 @@ func TestConfigTextKeepsOnlyTheProfiles(t *testing.T) {
 		t.Fatalf("merge policy: %+v", policy)
 	}
 }
+
+// A reviewer case's bees.toml caps the review loop at one round, and no
+// other case's does: the loop's next stage after "changes requested" is a
+// developer session, which a per-role reviewer run must not start.
+func TestConfigTextGivesAReviewerCaseOneReviewRound(t *testing.T) {
+	s, err := SelectProfile("", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	set := settings{Repo: "bees-eval/x", StateDir: "state", Workspaces: "wt", PassInterval: "1s"}
+	for _, tc := range []struct {
+		role string
+		want int
+	}{
+		{config.RoleReviewer, 1},
+		{config.RoleDeveloper, config.DefaultReviewRounds},
+		{"", config.DefaultReviewRounds},
+	} {
+		set.Role = tc.role
+		text := s.configText(set)
+		cfg, err := config.Parse(text, filepath.Join(t.TempDir(), "bees.toml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Scheduler.MaxReviewRounds != tc.want {
+			t.Errorf("role %q: max_review_rounds %d, want %d:\n%s", tc.role, cfg.Scheduler.MaxReviewRounds, tc.want, text)
+		}
+	}
+}
