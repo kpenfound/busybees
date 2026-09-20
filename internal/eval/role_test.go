@@ -455,3 +455,40 @@ has = ["bees:needs-human"]
 		t.Fatalf("result: %+v", res)
 	}
 }
+
+// A per-role case that seeds a pull request hands it to the session: the
+// developer is given the pull request of the issue's branch, and the
+// GitHub it reads answers with the title, body, comments, reviews and diff
+// the case declared.
+func TestRoleCaseSeedsAPullRequestTheSessionReads(t *testing.T) {
+	t.Setenv("FAKE_DEV_SEES_PR", "1")
+	_, res := runRoleCase(t, config.RoleDeveloper, prCase, prFiles(), nil)
+	if !res.Pass || res.Stop != StopDone || res.Error != "" {
+		t.Fatalf("result: %+v", res)
+	}
+	// The session was handed the seeded pull request, not a new one: it
+	// reported pr-updated.
+	if c := checkNamed(t, res, `the session reported "pr-updated"`); !c.Pass {
+		t.Fatalf("outcome check: %+v", c)
+	}
+	seen, err := os.ReadFile(filepath.Join(res.Dir, "state", "seen-pr.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`"title":"Fix the answer"`,
+		`"body":"Closes #1"`,
+		`"headRefName":"bees/issue-1"`,
+		`"baseRefName":"main"`,
+		`"bees:wip"`,           // a label the case gave the pull request
+		"-broken",              // the diff of the seeded branch
+		"+half fixed",          //
+		"it still says broken", // the comment
+		"CHANGES_REQUESTED",    // the review
+		"one line, lowercase",
+	} {
+		if !strings.Contains(string(seen), want) {
+			t.Errorf("no %q in what the session read:\n%s", want, seen)
+		}
+	}
+}

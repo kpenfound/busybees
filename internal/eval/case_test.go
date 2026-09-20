@@ -217,3 +217,126 @@ func TestLoadRoleCaseRejectsLabelsWithNoIssue(t *testing.T) {
 		t.Errorf("it also complains about issue #0: %v", err)
 	}
 }
+
+// prCase seeds a pull request beside its issue: the branch's tree lives in
+// the case directory, and the rest is what GitHub shows for it.
+const prCase = `
+issue = 1
+pr = 2
+
+[[issues]]
+number = 1
+title = "Fix the answer"
+labels = ["bees:in-progress", "bees:size/xs"]
+
+[[pull_requests]]
+number = 2
+title = "Fix the answer"
+body = "Closes #1"
+head = "bees/issue-1"
+labels = ["bees:wip"]
+
+[[pull_requests.comments]]
+body = "it still says broken"
+
+[[pull_requests.reviews]]
+author = "kpenfound"
+state = "CHANGES_REQUESTED"
+body = "one line, lowercase"
+
+[expect]
+outcome = "pr-updated"
+`
+
+// prFiles is prCase's fixture and the working tree of its head branch.
+func prFiles() map[string]string {
+	return map[string]string{
+		"repo/answer.txt":            "broken\n",
+		"repo/README.md":             "the answer\n",
+		"pr/bees/issue-1/answer.txt": "half fixed\n",
+	}
+}
+
+// A case can seed a pull request: the keys it leaves out take their
+// defaults, and the head branch's tree is pr/<head>.
+func TestLoadRoleCaseSeedsAPullRequest(t *testing.T) {
+	dir := writeCase(t, t.TempDir(), "pr", prCase, prFiles())
+	c, err := LoadRoleCase(dir, "developer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.PullRequests) != 1 {
+		t.Fatalf("pull requests: %+v", c.PullRequests)
+	}
+	p := c.PullRequests[0]
+	if p.Base != DefaultBranch || p.Author != DefaultAuthor {
+		t.Errorf("defaults: %+v", p)
+	}
+	if p.Comments[0].Author != DefaultAuthor || p.Reviews[0].Author != "kpenfound" || p.Reviews[0].State != "CHANGES_REQUESTED" {
+		t.Errorf("conversation: %+v", p)
+	}
+	if want := filepath.Join(dir, PRDir, "bees/issue-1"); p.FilesDir(c) != want {
+		t.Errorf("files directory %q, want %q", p.FilesDir(c), want)
+	}
+	// A review that names no state is a comment on the pull request.
+	quiet, err := LoadRoleCase(writeCase(t, t.TempDir(), "pr",
+		strings.Replace(prCase, "state = \"CHANGES_REQUESTED\"\n", "", 1), prFiles()), "developer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := quiet.PullRequests[0].Reviews[0].State; got != DefaultReviewState {
+		t.Errorf("review state %q, want %q", got, DefaultReviewState)
+	}
+	// The files directory can be named instead of defaulted.
+	files := prFiles()
+	files["head/answer.txt"] = "half fixed\n"
+	named, err := LoadRoleCase(writeCase(t, t.TempDir(), "pr",
+		strings.Replace(prCase, `head = "bees/issue-1"`, "head = \"bees/issue-1\"\nfiles = \"head\"", 1), files), "developer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(named.Dir, "head"); named.PullRequests[0].FilesDir(named) != want {
+		t.Errorf("files directory %q, want %q", named.PullRequests[0].FilesDir(named), want)
+	}
+}
+
+// What a case cannot say about a pull request it seeds.
+func TestLoadCaseRejectsPullRequests(t *testing.T) {
+	for _, tc := range []struct {
+		name, toml string
+		files      map[string]string
+		want       string
+	}{
+		{"a subject that is not seeded", strings.Replace(prCase, "pr = 2", "pr = 9", 1), prFiles(),
+			"pr: #9 is not a seeded pull request"},
+		{"no tree", prCase, map[string]string{"repo/answer.txt": "broken\n"},
+			filepath.Join(PRDir, "bees/issue-1") + " is not a directory"},
+		{"a files directory that is not there", strings.Replace(prCase, `head = "bees/issue-1"`, "head = \"bees/issue-1\"\nfiles = \"elsewhere\"", 1), prFiles(),
+			"elsewhere is not a directory"},
+		{"no number", strings.Replace(prCase, "number = 2", "", 1), prFiles(),
+			`pull_requests: "Fix the answer" has no number`},
+		{"the number of a seeded issue", strings.Replace(prCase, "number = 2", "number = 1", 1), prFiles(),
+			"pull_requests: #1 is already a seeded issue or pull request"},
+		{"no title", strings.Replace(prCase, `title = "Fix the answer"
+body`, "body", 1), prFiles(), "pull_requests: #2 has no title"},
+		{"no head branch", strings.Replace(prCase, `head = "bees/issue-1"`, "", 1), prFiles(),
+			"pull_requests: #2 has no head branch"},
+		{"a head that is its base", strings.Replace(prCase, `head = "bees/issue-1"`, `head = "main"`, 1), prFiles(),
+			"pull_requests: #2 is from main into itself"},
+		{"a review state GitHub does not have", strings.Replace(prCase, `state = "CHANGES_REQUESTED"`, `state = "GRUMPY"`, 1), prFiles(),
+			`review state "GRUMPY" is not one of APPROVED, CHANGES_REQUESTED, COMMENTED`},
+		{"two pull requests from one branch", prCase + `
+[[pull_requests]]
+number = 3
+title = "again"
+head = "bees/issue-1"
+`, prFiles(), "pull_requests: #2 and #3 are both from bees/issue-1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := LoadRoleCase(writeCase(t, t.TempDir(), "bad", tc.toml, tc.files), "developer")
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("got %v, want %q", err, tc.want)
+			}
+		})
+	}
+}

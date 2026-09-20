@@ -102,12 +102,14 @@ sessions cannot reach the fake GitHub described below.
 For each case, in its own directory under
 `<state_dir>/evals/<timestamp>/<case>/`:
 
-1. It builds the fixture: a bare `origin.git` with one commit on `main`, and a
-   clone of it in `project/`.
+1. It builds the fixture: a bare `origin.git` with one commit on `main`, a
+   branch for each pull request the case seeds, and a clone of it in
+   `project/`.
 2. It runs the case's test on the fixture, in `before/`. A test that passes
    ends the case as `invalid`.
 3. It writes `project/bees.toml` and seeds an in-memory GitHub with the case's
-   issues, each carrying the `bees` label, and the mailbox with its mail.
+   issues and pull requests, each carrying the `bees` label, and the mailbox
+   with its mail.
 4. It runs scheduler passes. Each pass waits for the work it started, which
    takes a developer's issue up to its approval. Between passes, it merges
    every pull request labelled `bees:approved` into its base branch on the
@@ -162,6 +164,7 @@ evals/hello/
   case.toml       the issues to seed, the test and the limits
   repo/           the fixture's files, committed as they are
   grade/          optional: files copied over the checkout before the test runs
+  pr/<branch>/    optional: the working tree of a seeded pull request's branch
 ```
 
 Instead of `repo/`, a case can have a `setup.sh`, which bees runs with `sh` in
@@ -210,6 +213,7 @@ body = """
 | `max_cost` | The budget in USD. `0` is no limit. Default `10`. |
 | `[[issues]]` | The issues to seed, at least one: `number`, `title`, `body`, `labels`, `author` (default `human`) and `[[issues.comments]]` with `author` and `body`. |
 | `[[mail]]` | Messages in a role's mailbox when the run starts: `from` (default `human`), `to` (a role), `subject`, `body`, and `issue`, a seeded issue it is about. |
+| `[[pull_requests]]` | The pull requests to seed, each on a branch of its own in the fixture. See [Seeding a pull request](#seeding-a-pull-request). |
 
 bees adds the `bees` label to every seeded issue. Give a work item
 `bees:ready` and a size to send it straight to a developer, or `bees:triage`
@@ -282,7 +286,8 @@ mean what they mean for a whole-factory case. These are the rest:
 
 | Key | Meaning |
 |---|---|
-| `issue`, `pr` | What the session is about, as `bees exec --issue`/`--pr`. A developer or reviewer case needs one; the three singleton roles take neither, since their session is about the whole repository. |
+| `issue`, `pr` | What the session is about, as `bees exec --issue`/`--pr`. A developer or reviewer case needs one; the three singleton roles take neither, since their session is about the whole repository. `pr` names a seeded pull request. |
+| `[[pull_requests]]` | The pull requests to seed: what a reviewer case reviews, and what a developer case has review feedback on. See [Seeding a pull request](#seeding-a-pull-request). |
 | `[expect]` | How the case is graded. At least one check, or the case grades nothing. |
 
 ### The checks a case can declare
@@ -331,5 +336,59 @@ session agent from `~/.config/bees/config.toml` — the one `bees review` runs
 are compared by their scores, so what does the scoring has to hold still
 while what is being scored changes.
 
-A reviewer case needs a pull request seeded in the fixture, which a case
-cannot describe yet. The reviewer's cases wait for it.
+## Seeding a pull request
+
+`[[pull_requests]]` gives a case a pull request a session sees the way it
+would on GitHub: a branch in the fixture with the change on it, and the pull
+request itself with its body, comments and reviews.
+
+The branch's working tree is a directory in the case, `pr/<head>` by default:
+
+```
+evals/developer/address-feedback/
+  case.toml
+  repo/                        the fixture, committed on main
+  pr/bees/issue-1/             the working tree of the head branch
+```
+
+```toml
+pr = 2                         # what the session is about
+
+[[pull_requests]]
+number = 2
+title = "todo list: show due dates"
+body = "Closes #1"
+head = "bees/issue-1"
+base = "main"
+
+[[pull_requests.comments]]
+author = "human"
+body = "The dates are still raw."
+
+[[pull_requests.reviews]]
+author = "kpenfound"
+state = "CHANGES_REQUESTED"
+body = "Print `no due date` for an item with none."
+```
+
+| Key | Meaning |
+|---|---|
+| `number` | Required. GitHub numbers issues and pull requests together, so it cannot be a seeded issue's number. |
+| `title`, `body` | Required title, and the body. A body with a closing keyword (`Closes #1`) is what ties the pull request to its issue. |
+| `head` | Required. The branch the change is on, branched off `base`. |
+| `base` | The branch it is against. Default `main`. |
+| `files` | The directory holding the head branch's working tree, relative to the case directory. Default `pr/<head>`. It has to be there, whether it is named or defaulted. |
+| `labels` | Labels beside the `bees` label, which bees adds. |
+| `author` | Who opened it. Default `human`. |
+| `[[pull_requests.comments]]` | Comments on the conversation: `author` (default `human`) and `body`. |
+| `[[pull_requests.reviews]]` | Reviews: `author` (default `human`), `body` and `state`, one of `APPROVED`, `CHANGES_REQUESTED` and `COMMENTED` (default `COMMENTED`). |
+
+Once the fixture is committed on `main`, bees branches `head` off `base`,
+copies the tree over it and pushes it. A file the tree leaves out is
+unchanged from `base`, so the directory carries only what the pull request
+touches. A pull request with no tree directory is a load error: a pull
+request with no change is nothing for a session to read.
+
+A developer case gives its pull request the branch of the issue it names
+(`bees/issue-<n>`): that is the branch the developer's session works on, and
+the pull request it is handed to update.
