@@ -239,7 +239,7 @@ func createdCheck(snap fakegh.Snapshot, c Case, want int) Check {
 	}
 	return Check{
 		Name:    text.Count(want, "issue") + " created",
-		Failure: fmt.Sprintf("the run created %s, not %s", text.Count(len(opened), "issue"), text.Count(want, "issue")),
+		Failure: fmt.Sprintf("the run created %s, not %d", text.Count(len(opened), "issue"), want),
 		Pass:    len(opened) == want,
 		Detail:  strings.Join(opened, "; "),
 	}

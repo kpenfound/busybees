@@ -225,7 +225,8 @@ func TestRoleCaseFailsEveryCheckTheRoleDidNotMeet(t *testing.T) {
 	if res.Pass || rep.Pass() {
 		t.Fatalf("a project manager that did nothing passed: %+v", res)
 	}
-	for _, name := range []string{"#1 carries bees:ready", "mail to the developer about #2", "#3 closed"} {
+	for _, name := range []string{"#1 carries bees:ready", "#1 no longer carries bees:triage",
+		"mail to the developer about #2", "#3 closed"} {
 		if c := checkNamed(t, res, name); c.Pass {
 			t.Errorf("check %q passed: %+v", name, c)
 		}
@@ -233,12 +234,44 @@ func TestRoleCaseFailsEveryCheckTheRoleDidNotMeet(t *testing.T) {
 	table := rep.Table()
 	for _, line := range []string{
 		"subject: #1 does not carry bees:ready",
+		"subject: #1 still carries bees:triage",
 		"subject: the project_manager sent the developer no mail about #2",
 		"subject: #3 was not closed",
 	} {
 		if !strings.Contains(table, line) {
 			t.Errorf("no %q in the table:\n%s", line, table)
 		}
+	}
+}
+
+// The outcome check is the status the session reported, not any status: a
+// developer that opened a pull request did not report "done".
+func TestRoleCaseChecksWhichOutcomeTheSessionReported(t *testing.T) {
+	_, res := runRoleCase(t, config.RoleDeveloper,
+		strings.Replace(developerCase, `outcome = "pr-opened"`, `outcome = "question"`, 1), answerRepo(), nil)
+	if res.Pass {
+		t.Fatalf("a session that reported pr-opened passed a case wanting question: %+v", res)
+	}
+	c := checkNamed(t, res, `the session reported "question"`)
+	if c.Pass || c.Failure != `the session reported "pr-opened", not "question"` {
+		t.Fatalf("outcome check: %+v", c)
+	}
+}
+
+// Mail about one issue does not answer an expectation about another.
+func TestRoleCaseMailCheckIsAboutTheIssueItNames(t *testing.T) {
+	t.Setenv("FAKE_PM", "1")
+	_, res := runRoleCase(t, config.RoleProjectManager,
+		projectManagerCase+"\n[[expect.mail]]\nto = \"developer\"\nissue = 1\n", answerRepo(), nil)
+	if res.Pass {
+		t.Fatalf("mail about #2 answered an expectation about #1: %+v", res)
+	}
+	if c := checkNamed(t, res, "mail to the developer about #2"); !c.Pass {
+		t.Fatalf("the mail that was sent: %+v", c)
+	}
+	c := checkNamed(t, res, "mail to the developer about #1")
+	if c.Pass || c.Failure != "the project_manager sent the developer no mail about #1" {
+		t.Fatalf("mail check: %+v", c)
 	}
 }
 
@@ -253,6 +286,19 @@ func TestRoleCaseCountsTheIssuesTheRoleCreated(t *testing.T) {
 	created := checkNamed(t, res, "1 issue created")
 	if !created.Pass || !strings.Contains(created.Detail, "greet.sh drops the comma") {
 		t.Fatalf("created check: %+v", created)
+	}
+}
+
+// issues_created is a count, not "at least one".
+func TestRoleCaseCountsExactlyTheIssuesAsked(t *testing.T) {
+	t.Setenv("FAKE_QA", "1")
+	_, res := runRoleCase(t, config.RoleQA, strings.Replace(qaCase, "issues_created = 1", "issues_created = 2", 1), answerRepo(), nil)
+	if res.Pass {
+		t.Fatalf("one issue answered an expectation of two: %+v", res)
+	}
+	c := checkNamed(t, res, "2 issues created")
+	if c.Pass || c.Failure != "the run created 1 issue, not 2" {
+		t.Fatalf("created check: %+v", c)
 	}
 }
 
