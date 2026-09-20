@@ -11,6 +11,17 @@
 # a signature and the errors it returns, a test in a named file, and two
 # named places that document the command. A rubric asking whether "the
 # feedback was addressed" would score the grader's taste instead.
+#
+# Point 1's symptom is exhaustive and it holds: the seeded Remove is
+# `append(l[:n-1], l[n:]...)`, and in `l[n:]` the high bound defaults to
+# len(l), not to cap(l), so n > len panics however much spare capacity Read
+# left the slice. n < 1 panics on `l[:n-1]`. Every number outside 1..len(l)
+# panics, so a session that reproduces the report before fixing it sees what
+# the mail describes.
+#
+# Do not weaken Remove in pr/ to something validated or merely wrong: the
+# mail is the specification a graded session is handed, and the ask is only
+# justified while the branch really does crash.
 description = "three review findings on an open pull request, to address in one round"
 issue = 1
 pr = 2
@@ -54,11 +65,12 @@ subject = "Changes requested on #2"
 body = """
 Three things before this can be approved.
 
-1. `List.Remove` takes no bad number seriously: `Remove(0)` and
-   `Remove(len(l)+1)` panic on the slice. Make it `Remove(n int) (List,
-   error)` and return an error for 0, for a negative number and for a number
-   past the end of the list, leaving the list unchanged in each case.
-   `todo rm` returns that error rather than dropping it.
+1. `List.Remove` takes no bad number seriously: every number outside
+   1..len(l) panics on the slice, so `todo rm 0` and `todo rm 99` crash
+   instead of reporting anything. Make it `Remove(n int) (List, error)` and
+   return an error for 0, for a negative number and for a number past the end
+   of the list, leaving the list unchanged in each case. `todo rm` returns
+   that error rather than dropping it.
 
 2. Nothing tests `Remove`. Add a test to `todo/list_test.go` that removes the
    middle item of a three-item list and checks the item order that is left,
