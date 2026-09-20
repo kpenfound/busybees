@@ -204,3 +204,16 @@ func TestLoadCaseRejectsPerRoleKeys(t *testing.T) {
 		})
 	}
 }
+
+// An expect.labels block with no issue says which issue it wants.
+func TestLoadRoleCaseRejectsLabelsWithNoIssue(t *testing.T) {
+	_, err := LoadRoleCase(writeCase(t, t.TempDir(), "bad",
+		"\n[[issues]]\nnumber = 1\ntitle = \"x\"\n[[expect.labels]]\nhas = [\"bees:ready\"]\n",
+		map[string]string{"repo/README": "x"}), "qa")
+	if err == nil || !strings.Contains(err.Error(), "expect.labels: issue: name the issue whose labels to check") {
+		t.Fatalf("got %v", err)
+	}
+	if strings.Contains(err.Error(), "#0 is not a seeded issue") {
+		t.Errorf("it also complains about issue #0: %v", err)
+	}
+}

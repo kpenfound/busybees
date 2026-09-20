@@ -1,6 +1,7 @@
 package eval
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -66,7 +67,9 @@ func (e Expect) empty() bool {
 func (e Expect) issues() []int {
 	var out []int
 	for _, l := range e.Labels {
-		out = append(out, l.Issue)
+		if l.Issue != 0 {
+			out = append(out, l.Issue)
+		}
 	}
 	for _, m := range e.Mail {
 		if m.Issue != 0 {
@@ -85,6 +88,9 @@ func (e Expect) validate(role string) []error {
 		}
 	}
 	for _, l := range e.Labels {
+		if l.Issue <= 0 {
+			errs = append(errs, errors.New("expect.labels: issue: name the issue whose labels to check"))
+		}
 		if len(l.Has) == 0 && len(l.Missing) == 0 {
 			errs = append(errs, fmt.Errorf("expect.labels: #%d names no label to check", l.Issue))
 		}
@@ -95,7 +101,7 @@ func (e Expect) validate(role string) []error {
 		}
 	}
 	if e.IssuesCreated != nil && *e.IssuesCreated < 0 {
-		errs = append(errs, fmt.Errorf("expect.issues_created must not be negative"))
+		errs = append(errs, errors.New("expect.issues_created must not be negative"))
 	}
 	for _, r := range e.Graded {
 		errs = append(errs, r.validate()...)

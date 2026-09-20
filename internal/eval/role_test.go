@@ -194,6 +194,15 @@ func TestRoleCaseRunsTheDeveloperAlone(t *testing.T) {
 			t.Errorf("the %s is not disabled in %s", role, path)
 		}
 	}
+	// A per-role run merges nothing and takes no second pass: the default
+	// branch is still the one commit the fixture was built with.
+	log, err := git(context.Background(), filepath.Join(res.Dir, "origin.git"), "log", "--oneline", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lines := strings.Count(strings.TrimSpace(log), "\n") + 1; lines != 1 {
+		t.Fatalf("the default branch moved:\n%s", log)
+	}
 	if table := rep.Table(); !strings.Contains(table, "SCORE") || !strings.Contains(table, "0.90") {
 		t.Fatalf("table:\n%s", table)
 	}

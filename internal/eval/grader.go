@@ -112,10 +112,7 @@ func (f *caseFactory) runGrader(ctx context.Context, c Case, r Rubric, grader re
 		check.Failure = fmt.Sprintf("%s: the grader session failed: %s", r.Name, err)
 		return check
 	}
-	spent.add(costs{usd: res.CostUSD, turns: res.Turns, sessions: 1})
-	if !res.CostKnown {
-		spent.unknown++
-	}
+	spent.add(costs{usd: res.CostUSD, turns: res.Turns, sessions: 1, unknown: boolToInt(!res.CostKnown)})
 	g, err := parseGrade(res.Text)
 	if err != nil {
 		check.Failure = fmt.Sprintf("%s: the grader answered no score: %s", r.Name, err)
@@ -260,5 +257,16 @@ func cut(s string, n int) string {
 	}
 	const marker = "\n... (cut here) ...\n"
 	half := (n - len(marker)) / 2
+	if half <= 0 {
+		return s[:n]
+	}
 	return s[:half] + marker + s[len(s)-half:]
+}
+
+// boolToInt counts a flag: 1 when it is set.
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }

@@ -279,7 +279,7 @@ mean what they mean for a whole-factory case. These are the rest:
 
 | Check | Passes when |
 |---|---|
-| `outcome = "done"` | The role's session reported that status with `done`. It has to be one the role may report. |
+| `outcome = "done"` | The role's session reported that status with `done`. It has to be one the role may report. A session the factory treats as a failure ends the run as `error`, which fails the case whatever it declared. |
 | `issues_created = 1` | That many issues exist at the end that the case did not seed. |
 | `issues_closed = [3]` | Each of those seeded issues is closed. |
 | `pull_requests = [1]` | Each of those issues has a pull request: one on its branch, or one whose body closes it. |
