@@ -2,16 +2,16 @@
 // orphan cleanup after a crash.
 //
 // Sessions are found two ways: the pid file the runner writes in each
-// session directory, and a scan of the process table for claude and codex
-// processes carrying a session marker: the `--name agent-…` argument every
-// claude session is started with, or the override that hands a codex
-// session its session directory. A session in the container sandbox has a
-// third: the agent runs in the container, so the container is what is
-// found and stopped, from the id file and the label the runner leaves
-// (see container.go); what the process table shows of it is the engine
-// client that started it. When the caller supplies a host MCP server,
-// that optional process is a fourth thing to stop, recorded in its own
-// pid file.
+// session directory, and a scan of the process table for processes running
+// an agent executable (AgentExecutables) and carrying a session marker:
+// the `--name agent-…` argument every claude session is started with, or
+// the override that hands a codex session its session directory. A session
+// in the container sandbox has a third: the agent runs in the container,
+// so the container is what is found and stopped, from the id file and the
+// label the runner leaves (see container.go); what the process table shows
+// of it is the engine client that started it. When the caller supplies a
+// host MCP server, that optional process is a fourth thing to stop,
+// recorded in its own pid file.
 //
 // An opencode or a pi session is found through its pid file alone. opencode
 // is given its session directory through OPENCODE_CONFIG, an environment
@@ -19,23 +19,25 @@
 // match to one factory's state directory the way the claude and codex
 // markers do, and reading a process's environment to recover it is not
 // portable across the platforms this package runs on; pi renames its
-// process to "pi" as it starts, which on Linux and macOS overwrites the
-// command line a ps scan would read, so it carries nothing at all. Either
-// pid file is trusted because the process it names runs an agent
-// executable (AgentExecutables), which the process table does say; a pid
-// file naming anything else is a pid reused by an unrelated process and is
-// deleted. A crashed session of either agent with no live pid file is not
-// found by orphan cleanup.
+// process as it starts, which on Linux and macOS overwrites the command
+// line a ps scan would read, so it shows nothing but "pi". Either pid file
+// is trusted because what the process table does show is an agent
+// executable (AgentExecutables); a pid file naming anything else is a pid
+// reused by an unrelated process and is deleted. A crashed session of
+// either agent with no live pid file is not found by orphan cleanup.
 //
-// Every source is scoped to one factory: a process only counts when its
-// command line also references this state directory's sessions directory
-// (a claude session's argv carries `--append-system-prompt-file
-// <sessions dir>/<session>/system-prompt.md`, a codex session's the
-// session directory in the same override, an engine client both the
-// container's label and its id file), and a container only when the
-// session directory its label carries lies under it. Another project's
-// sessions are therefore never reported, however many factories share a
-// machine.
+// The scan and the containers are scoped to one factory: a process only
+// counts when its command line also references this state directory's
+// sessions directory (a claude session's argv carries
+// `--append-system-prompt-file <sessions dir>/<session>/system-prompt.md`,
+// a codex session's the session directory in the same override, an engine
+// client both the container's label and its id file), and a container only
+// when the session directory its label carries lies under it, so neither
+// reports a session of another project's factory, however many share a
+// machine. A pid file is scoped by where it lies instead: nothing in an
+// agent's command line ties it to a state directory, so the pid a reboot
+// handed to another factory's opencode or pi session is trusted and
+// stopped like the session the file was written for.
 package procs
 
 import (
@@ -374,10 +376,15 @@ func isSessionProcess(argv []string, command string, markers ...Markers) bool {
 }
 
 // isAgentCommand reports whether argv runs an agent executable, directly or
-// through an interpreter: the same discrimination isSessionProcess makes,
-// without the markers and the container engine, which is all a pid file
-// needs. A shell or an editor whose arguments merely name an agent is not
-// one.
+// through an interpreter (node running claude's script): the same
+// discrimination isSessionProcess makes, without the markers and the
+// container engine, which is all a pid file needs. Only the first two words
+// of the command line count, so a command that takes a flag before naming
+// an agent — `zsh -c opencode`, `grep -r opencode` — is not one, while a
+// command whose second word is a bare agent name (`vim opencode`) is. What
+// that costs is a process taken for the session whose pid it reused, in the
+// one case where such a command holds the pid a pid file names; the check
+// is otherwise the cheapest thing that keeps a shell out.
 func isAgentCommand(argv []string) bool {
 	for i, a := range argv[:min(2, len(argv))] {
 		if slices.Contains(AgentExecutables, filepath.Base(a)) {

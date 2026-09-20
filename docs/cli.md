@@ -1302,13 +1302,17 @@ session gets; the older `mcp_servers.bees.env.BEES_SESSION_DIR=` marker also
 counts) *and* its command line references `<state_dir>/sessions/`. An
 opencode session carries no such marker — it is given its session directory
 through `OPENCODE_CONFIG`, which the process table does not show — and a pi
-session shows no command line at all, because pi renames its process to
-`pi`; both are found through their pid file. Another project's factory
-running on the same machine is never touched, whichever config you point
-`bees kill` at. Pid files are cross-checked against that scan: a pid the
-scan did not match is kept only when the process table says it runs an
-agent, so a pid reused by an unrelated process after a reboot is discarded,
-never killed.
+session shows nothing but `pi`, because pi renames its process as it starts;
+both are found through their pid file. The scan reports no session of
+another project's factory, whichever config you point `bees kill` at.
+
+Pid files are cross-checked against that scan: a pid the scan did not match
+is kept only when the process table says it runs an agent, so a pid reused
+by an unrelated process after a reboot is discarded, never killed. A pid
+file is scoped by where it lies, though, not by what the process says:
+nothing in an agent's command line names a state directory, so a reused pid
+that happens to be another factory's opencode or pi session is stopped along
+with the session the file was written for.
 
 A session in the [container sandbox](configuration.md#sandboxing) is found a
 third way, because its agent runs in the container rather than on the host:

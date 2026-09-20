@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -21,9 +22,11 @@ func psLine(pid, pgid int, sessionsDir, name string) string {
 		pid, pgid, sessionsDir, name, name)
 }
 
-func TestParsePS(t *testing.T) {
-	scope := "/a/.agent/sessions"
-	text := strings.Join([]string{
+// psTable is a process table holding one factory's sessions among other
+// processes: what parsePS keeps and what commandsOf reads are the two
+// answers taken from it.
+func psTable(scope string) string {
+	return strings.Join([]string{
 		psLine(100, 100, scope, "developer-issue-1-r1"),
 		"  101   100 npx -y some-mcp",
 		"  200   200 agent kill",
@@ -51,8 +54,11 @@ func TestParsePS(t *testing.T) {
 		// table says names an agent (TestFindKeepsTheSessionOfAnUnmarkedAgent).
 		`  1400   1400 opencode run --format json --auto --title agent-developer-issue-5-r1`,
 	}, "\n") + "\n"
+}
 
-	got := parsePS(text, 300, scope)
+func TestParsePS(t *testing.T) {
+	scope := "/a/.agent/sessions"
+	got := parsePS(psTable(scope), 300, scope)
 	var pids []int
 	for _, p := range got {
 		pids = append(pids, p.PID)
@@ -60,6 +66,28 @@ func TestParsePS(t *testing.T) {
 	want := []int{100, 400, 700, 1000, 1100}
 	if !slices.Equal(pids, want) {
 		t.Fatalf("parsePS: got pids %v want %v (%+v)", pids, want, got)
+	}
+}
+
+// commandsOf keeps every process the table lists, whatever it runs and
+// whichever factory it belongs to: it is what a pid file the scan did not
+// match is read against, and the unmarked agent is the process only it has.
+func TestCommandsOf(t *testing.T) {
+	got := commandsOf(psTable("/a/.agent/sessions"))
+	for pid, want := range map[int]string{
+		1400: "opencode run --format json --auto --title agent-developer-issue-5-r1",
+		300:  "vim --name agent-foo.txt",
+		101:  "npx -y some-mcp",
+	} {
+		if got[pid] != want {
+			t.Errorf("commandsOf[%d] = %q, want %q", pid, got[pid], want)
+		}
+	}
+	// The pid and pgid columns are not part of a command line.
+	for pid, command := range got {
+		if strings.HasPrefix(command, strconv.Itoa(pid)) {
+			t.Errorf("commandsOf[%d] = %q, want the command without its columns", pid, command)
+		}
 	}
 }
 
@@ -253,6 +281,9 @@ func TestAPIDFileIsTrustedForAnAgentCommandAlone(t *testing.T) {
 		{"pi", "pi", true},
 		{"through an interpreter", "/usr/bin/node /opt/claude/bin/claude -p", true},
 		{"a shell naming one", "/bin/zsh -c opencode", false},
+		// The check reads the first two words only, so a command naming an
+		// agent as its bare first argument passes it (isAgentCommand).
+		{"an agent as a bare argument", "/usr/bin/vim opencode", true},
 		{"grep", "grep -r opencode /src", false},
 		{"unlisted by the table", "", false},
 		{"another program", "/usr/bin/vim notes.md", false},
