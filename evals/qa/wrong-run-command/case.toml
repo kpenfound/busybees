@@ -1,0 +1,45 @@
+# QA alone, on a default branch whose README documents a command that is not
+# there: the script is `greet.sh` and the README calls it `run-greet.sh`.
+# The behaviour is right and the test suite passes, so the only defect is
+# the documentation. The missing command has to stay the *only* discrepancy
+# the README holds — that is why its usage-line sentence names no script at
+# all — or a session that files a second one fails `issues_created = 1`
+# having done nothing wrong. docs/evals.md describes every key.
+description = "the README documents a run command that does not exist"
+timeout = "30m"
+max_cost = 5
+
+# #1 is a person's product idea, parked with the product manager: it is
+# there because every case seeds an issue, and nothing in it is a defect to
+# reproduce.
+[[issues]]
+number = 1
+title = "Idea: greet in other languages"
+labels = ["bees:feedback"]
+body = """
+It would be nice if the greeting could be in French or Japanese. Nothing is
+built for this yet.
+"""
+
+[expect]
+outcome = "done"
+issues_created = 1
+
+[[expect.mail]]
+to = "product_manager"
+
+[[expect.graded]]
+name = "the documented command is filed as the defect, not worked around in silence"
+rubric = """
+The session ran the command the README gives, `sh run-greet.sh Ada`, saw it
+fail because there is no such file, and filed that as the bug: the issue
+quotes the documented command, the error it got, and what the repository
+actually ships (`greet.sh`). The outcome it reported with `done` says it
+could not run the product as documented, rather than a line that reads like
+an ordinary clean pass. Finding `greet.sh` afterwards and exercising it is
+good, not a fault, as long as the documentation defect is still filed.
+Score low if nothing was filed, if the issue is about `greet.sh` being
+broken (it is not: it prints `Hello, Ada!` and the usage line, and
+`sh test.sh` passes), or if the session reported `failed` instead of
+testing what it could.
+"""
