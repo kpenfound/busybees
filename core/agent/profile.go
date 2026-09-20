@@ -36,13 +36,23 @@ var Agents = []string{AgentClaude, AgentCodex, AgentOpenCode, AgentPi}
 var Sandboxes = []string{SandboxNone, SandboxClaude, SandboxContainer, SandboxSbx}
 
 // AgentCredentials names credentials forwarded into an isolated container.
+// opencode and pi are authenticated through whichever provider they are
+// configured for, so their entries list one key per provider they read: any
+// one of them is a credential, and every one of them that is set is
+// forwarded.
 var AgentCredentials = map[string][]string{
 	AgentClaude: {"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"},
 	AgentCodex:  {"OPENAI_API_KEY", "CODEX_API_KEY"},
-	// Pi talks to whichever provider its model names; these are the keys of
-	// the providers it reads one from the environment for.
-	AgentPi: {"ANTHROPIC_API_KEY", "ANTHROPIC_OAUTH_TOKEN", "OPENAI_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY",
-		"GROQ_API_KEY", "XAI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY", "CEREBRAS_API_KEY"},
+	AgentOpenCode: {
+		"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
+		"OPENROUTER_API_KEY", "GROQ_API_KEY", "MISTRAL_API_KEY", "XAI_API_KEY",
+		"DEEPSEEK_API_KEY",
+	},
+	AgentPi: {
+		"ANTHROPIC_API_KEY", "ANTHROPIC_OAUTH_TOKEN", "OPENAI_API_KEY",
+		"GEMINI_API_KEY", "OPENROUTER_API_KEY", "GROQ_API_KEY", "XAI_API_KEY",
+		"MISTRAL_API_KEY", "DEEPSEEK_API_KEY", "CEREBRAS_API_KEY",
+	},
 }
 
 // Profile contains only agent execution settings. Workflow and identity policy

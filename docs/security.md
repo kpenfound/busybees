@@ -126,9 +126,9 @@ outbound connections inside the container.
 
 **Credentials.** The container's environment is built from nothing rather
 than inherited from the host process: the agent's credential
-(`ANTHROPIC_API_KEY`/`CLAUDE_CODE_OAUTH_TOKEN`, the codex equivalents, or
-[the provider keys pi reads](configuration.md#pi)) when the bees environment
-or the role's `env` has one, the `[github]` token and
+(`ANTHROPIC_API_KEY`/`CLAUDE_CODE_OAUTH_TOKEN`, the codex or opencode
+provider equivalents, or [the provider keys pi reads](configuration.md#pi))
+when the bees environment or the role's `env` has one, the `[github]` token and
 git identity, the Neo4j Agent Memory API key with the `neo4j` notes backend,
 and the role's own `env`. Values reach the engine by variable
 name, never on a command line that a process listing could read. The
