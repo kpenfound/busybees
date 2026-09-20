@@ -1,0 +1,74 @@
+# The product manager alone, with one approved feature to break into work
+# items. docs/evals.md describes every key.
+#
+# The feature carries no bees:proposal: a person filed it, so it is approved
+# already and the breakdown is this session's job. Its "What done looks like"
+# is three pull-request-sized outcomes, which is the count issues_created
+# pins; whether the split is a sensible one is the rubric's.
+description = "an approved feature with three pieces in it, to break down"
+timeout = "30m"
+max_cost = 5
+
+[[issues]]
+number = 1
+title = "Due dates should be usable from the command line"
+labels = ["bees:feature"]
+body = """
+The `todo` package already parses `due:YYYY-MM-DD`, but the `todo` command
+does nothing with it: `todo list` prints the raw line and there is no way to
+set a due date except by editing the file.
+
+## Who it is for
+
+Someone keeping a list with deadlines in it who works from the command line
+and does not want to open the file.
+
+## What done looks like
+
+1. `todo list` prints the due date in a column of its own, right-aligned,
+   after the number and before the text. An item with no due date gets an
+   empty column.
+2. `todo overdue` prints the pending items whose due date is before today,
+   earliest first, numbered the way `todo list` numbers them.
+3. `todo due <n> <date>` sets item n's due date, and `todo due <n>` with no
+   date clears it. Both write the file back.
+
+## Decisions already taken
+
+- Dates are `YYYY-MM-DD` everywhere, in and out. No relative dates.
+- "Overdue" compares dates, not times, and today is not overdue.
+- Done items never appear in `todo overdue`.
+- The README's format section does not change: this is all command surface.
+"""
+
+[expect]
+outcome = "done"
+issues_created = 3
+
+[[expect.labels]]
+issue = 1
+has = ["bees:feature"]
+missing = ["bees:question"]
+
+[[expect.graded]]
+name = "the three work items split the feature along its own seams"
+rubric = """
+The session created one work item per outcome in "What done looks like", each
+one a piece a single pull request could deliver, and each body says what the
+piece delivers and how it fits. The work items are ordered where order
+matters, and any dependency between them is a `Blocked by #N` line rather
+than prose. The session then commented on #1 listing them.
+
+Do not judge the wording, the sizes, or whether you would have drawn the
+lines in the same place. Do not require implementation detail: that is the
+project manager's to add at triage.
+"""
+
+[[expect.graded]]
+name = "no milestone was created, edited or closed"
+rubric = """
+Milestones belong to people. Nothing in the session's transcript creates,
+edits, renames or closes a milestone, and nothing asks for one to be moved.
+The repository has none seeded, so the work items being in no milestone is
+correct and is not a failure.
+"""

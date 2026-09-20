@@ -1,0 +1,63 @@
+# The product manager alone, with one question from the project manager and
+# nothing on GitHub to do. docs/evals.md describes every key.
+#
+# The seeded issue is only what the question is about: it is a work item in
+# someone else's hands, so a pass that touches GitHub at all has done
+# something it was not asked to.
+description = "a blocked project manager waiting on a product decision"
+timeout = "30m"
+max_cost = 5
+
+[[issues]]
+number = 1
+title = "todo list should show the due date"
+labels = ["bees:blocked", "bees:size/s"]
+body = """
+`todo list` prints the raw line, `due:2026-03-01` and all. It should show the
+due date in a column of its own.
+"""
+
+[[mail]]
+from = "project_manager"
+to = "product_manager"
+subject = "Question about #1"
+issue = 1
+body = """
+#1 wants a due-date column. Most lists have a few items with a due date and
+many without, and I can't decide this from the code:
+
+Should `todo list` always print the column, leaving it blank for an item with
+no due date, or print it only when at least one item in the list has one?
+
+The first makes every list wider; the second makes the output change shape
+depending on the file. Whichever you pick I'll write into the issue and hand
+it to a developer.
+"""
+
+[expect]
+outcome = "done"
+issues_created = 0
+
+[[expect.mail]]
+to = "project_manager"
+issue = 1
+
+[[expect.labels]]
+issue = 1
+has = ["bees:blocked"]
+missing = ["bees:question"]
+
+[[expect.graded]]
+name = "the reply decides the question, and GitHub was left alone"
+rubric = """
+The mail sent to the project manager picks one of the two behaviours and says
+which, in a form the project manager can write straight into #1. It does not
+hand the decision back, ask for more information, or say only that it agrees.
+A short reason for the choice is welcome; a page of them is not needed.
+
+The session posted nothing on GitHub: no comment on #1, no edit to it, no
+issue created. Mail from the project manager is answered by mail — there is
+no feedback issue here to reply on.
+
+Do not judge which of the two behaviours was picked.
+"""
