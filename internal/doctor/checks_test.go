@@ -406,7 +406,7 @@ func TestChecksIncludeOpenCodeOnlyWhenConfigured(t *testing.T) {
 		t.Errorf("got %d checks with the opencode role disabled, want %d", got, base)
 	}
 
-	both := setup(t, "[roles.developer]\nagent = \"opencode\"\n[roles.reviewer]\nagent = \"pi\"\n", nil)
+	both := setup(t, "[roles.developer]\nagent = \"opencode\"\n[roles.qa]\nagent = \"pi\"\n", nil)
 	if got := len(both.Checks()); got != base+3 {
 		t.Errorf("got %d checks with an opencode and a pi role, want %d (base %d + two toolchain checks + one writable check)", got, base+3, base)
 	}
