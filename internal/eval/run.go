@@ -117,7 +117,12 @@ func (r *Runner) runCase(ctx context.Context, c Case, sel Selection, dir string)
 	if err != nil {
 		return fail(fmt.Errorf("test on the fixture: %w", err))
 	}
-	res.Checks = append(res.Checks, Check{Name: "the test fails on the fixture", Pass: !passed, Detail: log})
+	res.Checks = append(res.Checks, Check{
+		Name:    "the test fails on the fixture",
+		Failure: "the test passed on the fixture, where it has to fail: the case does not describe work to do",
+		Pass:    !passed,
+		Detail:  log,
+	})
 	if passed {
 		res.Stop = StopInvalid
 		return res
@@ -604,12 +609,19 @@ func (f *caseFactory) grade(ctx context.Context, c Case, dest string) []Check {
 	var checks []Check
 	for _, seeded := range c.Issues {
 		i, _ := snap.Issue(seeded.Number)
-		closed := Check{Name: fmt.Sprintf("#%d closed", seeded.Number), Pass: i.State == "CLOSED"}
+		closed := Check{
+			Name:    fmt.Sprintf("#%d closed", seeded.Number),
+			Failure: fmt.Sprintf("#%d was not closed", seeded.Number),
+			Pass:    i.State == "CLOSED",
+		}
 		if !closed.Pass && github.HasLabel(i.Labels, f.labels.NeedsHuman) {
 			closed.Detail = "held for a person: " + f.labels.NeedsHuman
 		}
 		checks = append(checks, closed)
-		pr := Check{Name: fmt.Sprintf("#%d has a pull request", seeded.Number)}
+		pr := Check{
+			Name:    fmt.Sprintf("#%d has a pull request", seeded.Number),
+			Failure: fmt.Sprintf("#%d got no pull request", seeded.Number),
+		}
 		branch := f.sched.BranchFor(seeded.Number)
 		for _, p := range snap.PRs {
 			if p.HeadRefName == branch || slices.Contains(closes(p.Body), seeded.Number) {
@@ -620,7 +632,12 @@ func (f *caseFactory) grade(ctx context.Context, c Case, dest string) []Check {
 		checks = append(checks, pr)
 	}
 	passed, log, err := runTest(ctx, c, f.fx.origin, dest)
-	test := Check{Name: "the test passes", Pass: passed, Detail: log}
+	test := Check{
+		Name:    "the test passes",
+		Failure: "the test still fails on the default branch",
+		Pass:    passed,
+		Detail:  log,
+	}
 	if err != nil {
 		test.Detail = err.Error()
 	}

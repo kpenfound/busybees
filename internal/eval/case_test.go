@@ -1,6 +1,8 @@
 package eval
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -36,6 +38,36 @@ func TestLoadCasesSkipsRoleAndFixturesDirectories(t *testing.T) {
 	}
 	if _, err := LoadCases(t.TempDir(), ""); err == nil || !strings.Contains(err.Error(), "no cases") {
 		t.Fatalf("an empty evals directory: %v", err)
+	}
+}
+
+// Having no eval cases is the normal state of a project: say where they
+// live rather than passing on an errno.
+func TestLoadCasesWithoutAnEvalsDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "evals")
+	_, err := LoadCases(dir, "")
+	if err == nil {
+		t.Fatal("a missing evals directory loaded")
+	}
+	for _, want := range []string{dir + "/<case>/", "case.toml", "docs/evals.md"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "no such file or directory") {
+		t.Errorf("the errno is still there: %v", err)
+	}
+}
+
+// Any other read error keeps its wrapping.
+func TestLoadCasesReadError(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "evals")
+	if err := os.WriteFile(file, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadCases(file, "")
+	if err == nil || !strings.Contains(err.Error(), "eval cases: ") {
+		t.Fatalf("a file where evals/ should be: %v", err)
 	}
 }
 
