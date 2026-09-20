@@ -108,9 +108,10 @@ func CheckInterrupted(role, dir string, alive func(int) bool) (*Interrupted, boo
 // finished steps or pi's ended turns, whichever the transcript carries. A
 // session takes its turn count from the end of its stream, and three kinds
 // of session never reached one: an interrupted one, a running one the live
-// view is watching, and one whose agent process died from a signal. The turns are counted instead: close enough to say
-// how far the session had got, and not the same number the agent would
-// have reported. A missing or unreadable file is 0.
+// view is watching, and one whose agent process died from a signal. The
+// turns are counted instead: close enough to say how far the session had
+// got, and not the same number the agent would have reported. A missing or
+// unreadable file is 0.
 func CountTurns(path string) int {
 	f, err := os.Open(path)
 	if err != nil {

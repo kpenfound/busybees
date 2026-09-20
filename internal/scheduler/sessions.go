@@ -42,8 +42,9 @@ type sessionSpec struct {
 	// id (Result.Agent): the session runs resumed only when it runs as that
 	// agent, since a retry down the fallback chain can have left an id of
 	// another agent's, which the profile's own agent would fail on. A retry
-	// never carries it: an id the agent no longer knows is the one way a
-	// resumed launch fails.
+	// never carries it: an id the agent no longer knows fails a resumed
+	// launch for claude and opencode, and gains a pi session nothing, since
+	// pi opens a new session under that id.
 	resumeID    string
 	resumeAgent string
 	// worker, when set, is updated with the attempt number so `bees status`

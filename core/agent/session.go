@@ -61,10 +61,12 @@ type Request struct {
 	// ResumeID, when set, is the agent's own id of an earlier session
 	// (Result.ClaudeID) whose conversation this one continues, so a later
 	// round of the same role starts with the previous round's context
-	// instead of relearning the codebase. Claude, opencode and pi can; codex
-	// has no resume, and ignores it. The caller owns the id's lifetime; one that
-	// the agent no longer knows makes the launch fail before it says
-	// anything, which the caller's retry runs fresh.
+	// instead of relearning the codebase. Claude, opencode and pi can;
+	// codex has no resume, and ignores it. The caller owns the id's
+	// lifetime, and an id the agent no longer knows ends two ways: claude
+	// and opencode fail the launch before saying anything, which the
+	// caller's retry runs fresh, while pi starts a new session under that
+	// id with no earlier context.
 	ResumeID string
 }
 

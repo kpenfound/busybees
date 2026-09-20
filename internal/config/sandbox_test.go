@@ -514,6 +514,11 @@ func TestCheckSandboxContainer(t *testing.T) {
 		{"opencode names its provider keys", ResolvedRole{Sandbox: SandboxContainer, SandboxImage: "img", Agent: AgentOpenCode}, bot, nil, "ANTHROPIC_API_KEY or OPENAI_API_KEY or GEMINI_API_KEY or GOOGLE_API_KEY or OPENROUTER_API_KEY or GROQ_API_KEY or MISTRAL_API_KEY or XAI_API_KEY or DEEPSEEK_API_KEY"},
 		{"opencode with a provider key in the role env", ResolvedRole{Sandbox: SandboxContainer, SandboxImage: "img", Agent: AgentOpenCode, Env: map[string]string{"OPENROUTER_API_KEY": "k"}}, bot, nil, ""},
 		{"opencode with a provider key on the host", ResolvedRole{Sandbox: SandboxContainer, SandboxImage: "img", Agent: AgentOpenCode}, bot, map[string]string{"DEEPSEEK_API_KEY": "k"}, ""},
+		// pi is authenticated the same way, through whichever provider its
+		// model names.
+		{"pi names its provider keys", ResolvedRole{Sandbox: SandboxContainer, SandboxImage: "img", Agent: AgentPi}, bot, nil, "ANTHROPIC_API_KEY or ANTHROPIC_OAUTH_TOKEN or OPENAI_API_KEY or GEMINI_API_KEY or OPENROUTER_API_KEY or GROQ_API_KEY or XAI_API_KEY or MISTRAL_API_KEY or DEEPSEEK_API_KEY or CEREBRAS_API_KEY"},
+		{"pi with a provider key in the role env", ResolvedRole{Sandbox: SandboxContainer, SandboxImage: "img", Agent: AgentPi, Env: map[string]string{"CEREBRAS_API_KEY": "k"}}, bot, nil, ""},
+		{"pi with a provider key on the host", ResolvedRole{Sandbox: SandboxContainer, SandboxImage: "img", Agent: AgentPi}, bot, map[string]string{"OPENROUTER_API_KEY": "k"}, ""},
 		// sbx needs the GitHub credential alone: no image, and the agent's
 		// credential is the sbx secret store's to supply.
 		{"sbx with github", ResolvedRole{Sandbox: SandboxSbx}, bot, nil, ""},

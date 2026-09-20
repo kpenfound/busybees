@@ -40,9 +40,10 @@ func TestCheckPi(t *testing.T) {
 	})
 }
 
-// Checks() carries the pi toolchain check, and the role carries its pi
-// packages check, the moment a role is configured to run pi, and neither
-// while it is disabled.
+// Checks() carries the pi toolchain check and the session dir writable
+// check (a pi session's MCP configuration is written there), and the role
+// carries its pi packages check, the moment a role is configured to run pi,
+// and none of them while it is disabled.
 func TestChecksIncludePiOnlyWhenConfigured(t *testing.T) {
 	names := func(f *fixture) (cheap, expensive int, piRole bool) {
 		for _, c := range f.Checks() {
@@ -60,8 +61,8 @@ func TestChecksIncludePiOnlyWhenConfigured(t *testing.T) {
 	baseCheap, _, _ := names(setup(t, "", nil))
 	with := setup(t, "[roles.developer]\nagent = \"pi\"\n", nil)
 	with.PiBin = fakePi(t, "--mcp-config <value>", 0)
-	if cheap, _, piRole := names(with); cheap != baseCheap+1 || !piRole {
-		t.Errorf("with a pi role: %d cheap checks (want %d), a pi packages check %v", cheap, baseCheap+1, piRole)
+	if cheap, _, piRole := names(with); cheap != baseCheap+2 || !piRole {
+		t.Errorf("with a pi role: %d cheap checks (want %d: the toolchain and writable checks), a pi packages check %v", cheap, baseCheap+2, piRole)
 	}
 	disabled := setup(t, "[roles.developer]\nagent = \"pi\"\nenabled = false\n", nil)
 	if cheap, _, piRole := names(disabled); cheap != baseCheap || piRole {

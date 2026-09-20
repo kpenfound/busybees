@@ -439,8 +439,17 @@ echo '{"type":"message_end","message":{"role":"assistant","content":[{"type":"te
 	if tools.URL != "http://host.docker.internal:45678/mcp" || tools.Command != "" || tools.Headers["Authorization"] != "Bearer ${"+EnvMCPToken+"}" {
 		t.Errorf("built-in server entry: %+v", tools)
 	}
-	if strings.Contains(string(b), "secret") {
-		t.Errorf("%s carries a secret:\n%s", PiMCPConfigFile, b)
+	var token string
+	for _, kv := range lines(t, filepath.Join(dir, "docker-env.txt")) {
+		if value, ok := strings.CutPrefix(kv, EnvMCPToken+"="); ok {
+			token = value
+		}
+	}
+	if token == "" {
+		t.Fatal("the container was given no bearer token")
+	}
+	if strings.Contains(string(b), token) {
+		t.Errorf("%s carries the bearer token itself:\n%s", PiMCPConfigFile, b)
 	}
 	if got := flagValue(piArgs(t, dir), "--mcp-config"); got != filepath.Join(dir, PiMCPConfigFile) {
 		t.Errorf("--mcp-config %q", got)
