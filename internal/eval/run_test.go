@@ -325,14 +325,6 @@ issue = 3
 	}
 }
 
-func labelNames(i github.Issue) []string {
-	var out []string
-	for _, l := range i.Labels {
-		out = append(out, l.Name)
-	}
-	return out
-}
-
 // An approved pull request that no longer merges stays open, marked the
 // way GitHub marks it, which is what sends it back to the developer: the
 // next pass mails them and moves the issue out of approved.

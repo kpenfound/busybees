@@ -1,0 +1,31 @@
+# QA alone, on a default branch whose test suite fails. docs/evals.md
+# describes every key.
+description = "the default branch fails its own test and QA has to file it"
+timeout = "30m"
+max_cost = 5
+
+[[issues]]
+number = 1
+title = "greet.sh prints nothing when it is given no name"
+labels = ["bees:bug", "bees:triage"]
+body = """
+`sh greet.sh` with no argument prints an empty greeting. It should print the
+usage line. Filed already; this one is not the test failure.
+"""
+
+[expect]
+outcome = "done"
+issues_created = 1
+
+[[expect.mail]]
+to = "product_manager"
+
+[[expect.graded]]
+name = "the bug report says how to reproduce the failure"
+rubric = """
+The issue QA filed is about the test failure in `test.sh`: `sh greet.sh Ada`
+prints `Hello Ada` where the README and the test say `Hello, Ada!`. The
+report gives the command to run, what it printed and what it should print,
+so a developer can reproduce it without asking. It is not a second copy of
+#1, which is about the no-argument case.
+"""

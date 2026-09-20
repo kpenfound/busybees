@@ -89,9 +89,11 @@ ways to run the factory.
   reviews a pull request from six angles in read-only sessions, lets you
   select, dismiss, defer or ask about each finding, and posts what you
   selected as one GitHub review. See [Reviewing a pull request](docs/review.md).
-- **Evals of the whole factory.** `bees eval` runs the factory against fixture
-  repositories with an in-memory GitHub, merges what it approves, and grades
-  the result with each fixture's own test. See [Evals](docs/evals.md).
+- **Evals of the factory, and of one role.** `bees eval` runs the factory
+  against fixture repositories with an in-memory GitHub, merges what it
+  approves, and grades the result with each fixture's own test.
+  `bees eval <role>` runs one role on its own and grades its session.
+  See [Evals](docs/evals.md).
 - **A local mailbox, not GitHub comments.** Roles ask each other questions and
   exchange review feedback through a mailbox in the state directory; every comment a
   bee posts on GitHub is to a person, and ends with an invisible marker. See
@@ -128,7 +130,7 @@ These pages are also published at
 | [docs/security.md](docs/security.md) | What each sandbox mode protects and what it does not: filesystem, network, credentials |
 | [docs/templates.md](docs/templates.md) | The named ways to run the factory: which roles run, what merges on its own, what waits for a person |
 | [docs/cli.md](docs/cli.md) | Every `bees` command |
-| [docs/evals.md](docs/evals.md) | `bees eval`: running the factory against fixture cases, the case layout, grading |
+| [docs/evals.md](docs/evals.md) | `bees eval`: running the factory, or one role, against fixture cases, the case layout, grading |
 | [docs/review.md](docs/review.md) | `bees review`: how a review runs, its findings, reviewer notes, and its two configuration files |
 | [docs/architecture.md](docs/architecture.md) | How `bees run` works: the scheduler loop, the developer worker, sessions, the mailbox, the state directory, crash recovery |
 | [docs/releasing.md](docs/releasing.md) | Cutting a release: the tag, the workflow, the assets it publishes |

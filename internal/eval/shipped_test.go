@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/kpenfound/busybees/internal/config"
 )
 
 // shippedSolution is the directory beside a shipped case's case.toml that
@@ -73,5 +75,43 @@ func TestShippedCasesPassWithTheirSolutions(t *testing.T) {
 				t.Fatalf("the fixed fixture fails its test (%v):\n%s", err, b)
 			}
 		})
+	}
+}
+
+// Every per-role case shipped under evals/<role>/ loads and builds its
+// fixture. There is no test to run it against: a per-role case is graded by
+// the checks it declares, and those need a session.
+func TestShippedRoleCasesLoad(t *testing.T) {
+	ctx := context.Background()
+	roles := 0
+	for _, role := range config.Roles {
+		if _, err := os.Stat(filepath.Join("../../evals", role)); err != nil {
+			continue
+		}
+		roles++
+		cases, err := LoadRoleCases("../../evals", role, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range cases {
+			t.Run(role+"/"+c.Name, func(t *testing.T) {
+				if _, err := buildFixture(ctx, c, t.TempDir()); err != nil {
+					t.Fatal(err)
+				}
+			})
+		}
+	}
+	// A run of the whole factory does not take them.
+	whole, err := LoadCases("../../evals", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range whole {
+		if c.Role != "" {
+			t.Errorf("%s is the %s's case", c.Name, c.Role)
+		}
+	}
+	if roles == 0 {
+		t.Fatal("no role ships a case; this suite would pin nothing")
 	}
 }

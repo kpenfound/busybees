@@ -1831,23 +1831,33 @@ its count moves. `--notes` works on a file other than the configured one, and
 
 ## Evals
 
-### `bees eval [--case name] [--profile name]`
+### `bees eval [role] [--case name] [--profile name]`
 
 Runs the whole factory against each case under `./evals/`, with an in-memory
 GitHub and a local origin, and grades the result with the case's test. It
-prints one row per case (result, why the run stopped, cost, turns, duration,
-profile), writes `<state_dir>/evals/<timestamp>/report.json`, and exits
-non-zero when any case fails. The sessions are real agent sessions.
+prints one row per case (result, score, why the run stopped, cost, turns,
+duration, profile), writes `<state_dir>/evals/<timestamp>/report.json`, and
+exits non-zero when any case fails. The sessions are real agent sessions.
 
-`--case` runs one case. `--profile` runs every role on one profile from
-`bees.toml` or `~/.config/bees/config.toml`. Without it the eval uses the
-profiles `bees.toml` selects, or the `provider` and `model` of
+With a role, it runs that role in isolation against the cases under
+`./evals/<role>/`, the way `bees exec` runs one session: every other role is
+disabled and the seeded GitHub state and mailbox stand in for them. Such a
+case is graded by the checks it declares — the outcome, labels moved, mail
+sent, issues created or closed, a pull request opened — and by rubrics a
+grader session scores, which fills the `SCORE` column.
+
+`--case` runs one case, from `evals/` or from `evals/<role>/`. `--profile`
+runs every role on one profile from `bees.toml` or
+`~/.config/bees/config.toml`. Without it the eval uses the profiles
+`bees.toml` selects, or the `provider` and `model` of
 `~/.config/bees/config.toml` when there is no `bees.toml`, or the built-in
-profile when there is neither. Like `bees run`, it refuses to run inside a
-session.
+profile when there is neither. Grader sessions ignore `--profile`: they run
+on `~/.config/bees/config.toml`'s agent, so scores stay comparable between
+runs. Like `bees run`, it refuses to run inside a session.
 
 ```sh
 bees eval --case hello --profile fast
+bees eval developer
 ```
 
 [Evals](evals.md) describes the case layout and the grading.
