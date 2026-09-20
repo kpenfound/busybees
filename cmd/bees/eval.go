@@ -28,7 +28,7 @@ func newEvalCmd(g *globalFlags) *cobra.Command {
 		Short: "Run the factory, or one role, against the eval cases under evals/ and grade the result",
 		Long: `eval runs the whole factory against each case under ./evals/: it builds the
 case's fixture repository as a local origin, seeds an in-memory GitHub with the
-case's issues and mail, and runs the scheduler until every seeded issue is
+case's issues, pull requests and mail, and runs the scheduler until every seeded issue is
 closed or held for a person, or the case's timeout or budget runs out. The
 factory's approved pull requests are merged as a person would merge them.
 

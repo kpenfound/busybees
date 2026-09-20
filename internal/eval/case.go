@@ -2,7 +2,8 @@
 // repository and grades the result, SWE-bench Lite style.
 //
 // A whole-factory case is a directory under evals/ (case.go): a fixture
-// repository, the GitHub state and mail to seed, and a test command that
+// repository, the GitHub state and mail to seed (issues, and pull requests
+// with a branch of their own in the fixture), and a test command that
 // fails on the fixture and must pass once the factory has worked the seeded
 // issues. The runner (run.go) builds the fixture as a local bare origin,
 // seeds an in-memory GitHub (internal/fakegh), and runs the scheduler pass
