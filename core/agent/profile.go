@@ -10,12 +10,15 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/kpenfound/busybees/core/agent/procs"
 )
 
 const (
 	AgentClaude      = "claude"
 	AgentCodex       = "codex"
 	AgentOpenCode    = "opencode"
+	AgentPi          = "pi"
 	SandboxNone      = "none"
 	SandboxClaude    = "claude"
 	SandboxContainer = "container"
@@ -28,16 +31,20 @@ const (
 	DefaultTimeout = 45 * time.Minute
 )
 
-// Agents lists the backends the runner builds a command line for.
-var Agents = []string{AgentClaude, AgentCodex, AgentOpenCode}
+// Agents lists the backends the runner builds a command line for. It is
+// procs' list of agent executables: procs recognizes a running session in
+// the process table by the command it runs and cannot import this package,
+// so the two are one list and an agent added to it is known to both.
+var Agents = procs.AgentExecutables
 
 // Sandboxes lists the sandbox kinds the runner implements, weakest first.
 var Sandboxes = []string{SandboxNone, SandboxClaude, SandboxContainer, SandboxSbx}
 
 // AgentCredentials names credentials forwarded into an isolated container.
-// opencode is authenticated through whichever provider it is configured for,
-// so its entry lists one key per provider it reads: any one of them is a
-// credential, and every one of them that is set is forwarded.
+// opencode and pi are authenticated through whichever provider they are
+// configured for, so their entries list one key per provider they read: any
+// one of them is a credential, and every one of them that is set is
+// forwarded.
 var AgentCredentials = map[string][]string{
 	AgentClaude: {"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"},
 	AgentCodex:  {"OPENAI_API_KEY", "CODEX_API_KEY"},
@@ -45,6 +52,11 @@ var AgentCredentials = map[string][]string{
 		"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
 		"OPENROUTER_API_KEY", "GROQ_API_KEY", "MISTRAL_API_KEY", "XAI_API_KEY",
 		"DEEPSEEK_API_KEY",
+	},
+	AgentPi: {
+		"ANTHROPIC_API_KEY", "ANTHROPIC_OAUTH_TOKEN", "OPENAI_API_KEY",
+		"GEMINI_API_KEY", "OPENROUTER_API_KEY", "GROQ_API_KEY", "XAI_API_KEY",
+		"MISTRAL_API_KEY", "DEEPSEEK_API_KEY", "CEREBRAS_API_KEY",
 	},
 }
 
@@ -90,6 +102,9 @@ type Profile struct {
 	Shell     string
 	Env       map[string]string
 	Skills    []string
+	// PiPackages are pi package sources (npm:, git:, a URL or a local path)
+	// a pi session loads after PiMCPAdapter, which it always loads.
+	PiPackages []string
 }
 
 // Validate rejects modes that would silently run without the requested box.

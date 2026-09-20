@@ -46,6 +46,7 @@ type RoleView struct {
 	Name                    string               `json:"name"`
 	Prompt                  string               `json:"prompt"`
 	Skills                  []string             `json:"skills"`
+	PiPackages              []string             `json:"pi_packages"`
 	SkillsRefresh           string               `json:"skills_refresh"`
 	MCP                     map[string]MCPServer `json:"mcp"`
 	Model                   string               `json:"model"`
@@ -135,6 +136,7 @@ func (c *Config) View(roles []string) (View, error) {
 			ProfilesBySize:          maps.Clone(rr.ProfilesBySize),
 			Prompt:                  rr.Prompt,
 			Skills:                  rr.Skills,
+			PiPackages:              rr.PiPackages,
 			SkillsRefresh:           c.SkillsRefreshPolicy(),
 			MCP:                     rr.MCP,
 			Model:                   rr.Model,
@@ -160,6 +162,9 @@ func (c *Config) View(roles []string) (View, error) {
 		// Empty collections print as [] / {} rather than null.
 		if rv.Skills == nil {
 			rv.Skills = []string{}
+		}
+		if rv.PiPackages == nil {
+			rv.PiPackages = []string{}
 		}
 		if rv.AllowedTools == nil {
 			rv.AllowedTools = []string{}

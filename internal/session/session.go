@@ -95,6 +95,7 @@ func profileForRole(role config.ResolvedRole) Profile {
 		SandboxDomains: slices.Clone(ClaudeSandboxDomains), VCSAccess: true,
 		ContainerUseEnvironment: role.ContainerUseEnvironment, Shell: role.Shell,
 		Env: maps.Clone(role.Env), Skills: slices.Clone(role.Skills),
+		PiPackages: slices.Clone(role.PiPackages),
 	}
 	// The Dagger engine is an sbx option: a judge or fallback profile in
 	// another sandbox runs without it, as it runs without the container
@@ -123,6 +124,9 @@ type Runner struct {
 	// OpenCodeBin is the opencode executable, run for a role whose agent
 	// is opencode. Default "opencode".
 	OpenCodeBin string
+	// PiBin is the pi executable, run for a role whose agent is pi.
+	// Default "pi".
+	PiBin string
 	// DockerBin is the container engine a container session is run with.
 	// Default config.ContainerEngine.
 	DockerBin string
@@ -156,7 +160,8 @@ type Runner struct {
 	Skills *skills.Manager
 	// AddDirs are extra directories claude may access (the state dir).
 	// Codex, which runs without a sandbox, needs no such list, and neither
-	// does opencode, whose --auto approves writing outside the worktree.
+	// does opencode, whose --auto approves writing outside the worktree,
+	// nor pi, which has no approvals to ask.
 	AddDirs []string
 	// Stream, when set, receives every stream-json line (debug output).
 	Stream io.Writer
@@ -213,7 +218,7 @@ func (r *Runner) coreRunner() *agent.Runner {
 		preparer = r.Skills
 	}
 	return &agent.Runner{
-		ClaudeBin: r.ClaudeBin, CodexBin: r.CodexBin, OpenCodeBin: r.OpenCodeBin, DockerBin: r.DockerBin, SbxBin: r.SbxBin,
+		ClaudeBin: r.ClaudeBin, CodexBin: r.CodexBin, OpenCodeBin: r.OpenCodeBin, PiBin: r.PiBin, DockerBin: r.DockerBin, SbxBin: r.SbxBin,
 		ContainerListen: r.ContainerListen, SessionsDir: r.SessionsDir, Skills: preparer, SkillMountDirs: skillDirs,
 		EnvironmentPrefix: beesEnvPrefix, NamePrefix: "bees-", ContainerLabel: ProcessMarkers.Container,
 		ContainerHome: "/home/bees", ContainerUseRepository: "bees-container-use",
@@ -304,6 +309,7 @@ var ProviderEnv = map[string][]string{
 	agent.AgentClaude:   {"ANTHROPIC_*", "CLAUDE_*", "AWS_*", "GOOGLE_*", "CLOUD_ML_REGION", "VERTEX_*", "DISABLE_*", "MAX_THINKING_TOKENS", "MCP_*"},
 	agent.AgentCodex:    {"OPENAI_*", "CODEX_*"},
 	agent.AgentOpenCode: {"OPENCODE_*", "ANTHROPIC_*", "OPENAI_*", "GEMINI_*", "GOOGLE_*", "AWS_*", "OPENROUTER_*", "GROQ_*", "MISTRAL_*", "XAI_*", "DEEPSEEK_*", "AZURE_*"},
+	agent.AgentPi:       {"PI_*", "ANTHROPIC_*", "OPENAI_*", "GEMINI_*", "GOOGLE_*", "AWS_*", "OPENROUTER_*", "GROQ_*", "MISTRAL_*", "XAI_*", "DEEPSEEK_*", "AZURE_*", "CEREBRAS_*", "MCP_*"},
 }
 
 // VCSEnv are the host variables a session with VCS access inherits: gh's
@@ -578,3 +584,5 @@ func (r *Runner) beesBin() string {
 
 const OpenCodeConfigFile = agent.OpenCodeConfigFile
 const EnvOpenCodeConfig = agent.EnvOpenCodeConfig
+const PiMCPConfigFile = agent.PiMCPConfigFile
+const EnvPiMCPConfigMode = agent.EnvPiMCPConfigMode

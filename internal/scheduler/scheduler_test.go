@@ -30,11 +30,11 @@ import (
 )
 
 // TestMain lets the test binary double as a fake `claude` — and a fake
-// `codex` or `opencode`, which it tells apart by its first argument, codex's
-// `exec` or opencode's `run` — when FAKE_CLAUDE is set: the runner executes
-// it, it inspects its role and environment, performs a scripted action and
-// prints a stream-json result, or codex's or opencode's event stream when
-// it is one of those.
+// `codex`, `opencode` or `pi`, which it tells apart by its first arguments,
+// codex's `exec`, opencode's `run` or pi's `-p --mode` — when FAKE_CLAUDE is
+// set: the runner executes it, it inspects its role and environment,
+// performs a scripted action and prints a stream-json result, or codex's,
+// opencode's or pi's event stream when it is one of those.
 //
 // The flags that steer the fake (FAKE_CLAUDE, FAKE_DEV_HANG, FAKE_DEV_FAIL,
 // FAKE_DEV_MAIL_TO, FAKE_ATTEMPT_FAIL, FAKE_ASSEMBLE_FAIL, FAKE_REVIEW_ALWAYS_CHANGES,
@@ -233,11 +233,19 @@ func fakeClaude() {
 	// stream-json, and the runner reads each stream its own way.
 	codex := len(os.Args) > 1 && os.Args[1] == "exec"
 	opencode := len(os.Args) > 1 && os.Args[1] == "run"
-	if codex || opencode {
-		// The prompt is on stdin for codex and opencode; claude reads it
-		// there too, but only those two close with an error when it is
-		// left unread.
+	pi := len(os.Args) > 2 && os.Args[1] == "-p" && os.Args[2] == "--mode"
+	if codex || opencode || pi {
+		// The prompt is on stdin for codex, opencode and pi; claude reads
+		// it there too, but only those close with an error when it is left
+		// unread.
 		_, _ = io.Copy(io.Discard, os.Stdin)
+	}
+	if pi {
+		// pi-mcp-adapter reads only the --mcp-config file when
+		// PI_MCP_CONFIG_MODE says so; record it so tests can see it set.
+		if err := os.WriteFile(filepath.Join(sessionDir, "pi-mcp-mode.txt"), []byte(os.Getenv(session.EnvPiMCPConfigMode)), 0o644); err != nil {
+			fail(err)
+		}
 	}
 	if opencode {
 		// opencode is configured through the file OPENCODE_CONFIG names,
@@ -267,7 +275,8 @@ func fakeClaude() {
 	// The session id claude reports is derived from the --name the runner
 	// passed ("bees-developer-issue-1-r1" -> "sid-developer-issue-1-r1"), so
 	// a test can predict the id a later round must resume with.
-	// An opencode session's id is derived from its --title the same way.
+	// An opencode session's id is derived from its --title the same way,
+	// and a pi session's from its --name like claude's.
 	sessionID := "fake"
 	for _, flag := range []string{"--name", "--title"} {
 		if i := slices.Index(os.Args, flag); i >= 0 && i+1 < len(os.Args) {
@@ -607,6 +616,20 @@ func fakeClaude() {
 		fmt.Println(`{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":2}}`)
 		return
 	}
+	if pi {
+		// Two ended turns are the two turns, the first a response that
+		// called a tool and the second one that stopped; each response
+		// carries half the cost, which pi reports per response.
+		fmt.Printf(`{"type":"session","version":3,"id":%q,"cwd":"."}`+"\n", sessionID)
+		fmt.Println(`{"type":"agent_start"}`)
+		fmt.Printf(`{"type":"message_end","message":{"role":"assistant","content":[{"type":"toolCall","id":"c1","name":"bees_done","arguments":{}}],"stopReason":"toolUse","usage":{"cost":{"total":%v}}}}`+"\n", cost/2)
+		fmt.Println(`{"type":"message_end","message":{"role":"toolResult","toolCallId":"c1","toolName":"bees_done","content":[{"type":"text","text":"ok"}],"isError":false}}`)
+		fmt.Println(`{"type":"turn_end","toolResults":[]}`)
+		fmt.Printf(`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":%q}],"stopReason":"stop","usage":{"cost":{"total":%v}}}}`+"\n", text, cost/2)
+		fmt.Println(`{"type":"turn_end","toolResults":[]}`)
+		fmt.Println(`{"type":"agent_end","messages":[]}`)
+		return
+	}
 	if opencode {
 		// Two finished steps are the two turns, the first ended by a tool
 		// call and the second by the model stopping; each carries half
@@ -801,6 +824,7 @@ func newHarnessAt(t *testing.T, toml string, now time.Time, opts ...func(*Deps))
 		ClaudeBin:   os.Args[0],
 		CodexBin:    os.Args[0],
 		OpenCodeBin: os.Args[0],
+		PiBin:       os.Args[0],
 		SessionsDir: store.SessionsDir(),
 		StateDir:    store.Dir,
 		Repo:        cfg.Project.Repo,

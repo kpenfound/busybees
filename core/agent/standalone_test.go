@@ -16,7 +16,7 @@ import (
 )
 
 func TestHostMCPTokenStaysInEnvironment(t *testing.T) {
-	for _, backend := range []string{AgentClaude, AgentCodex, AgentOpenCode} {
+	for _, backend := range Agents {
 		t.Run(backend, func(t *testing.T) {
 			dir := t.TempDir()
 			body := `printf '%s\n' "$@" > "$RUN_DIR/args"
@@ -30,9 +30,11 @@ cat >/dev/null
 				body += `echo '{"type":"turn.completed"}'`
 			case AgentOpenCode:
 				body += `echo '{"type":"step_finish","part":{"reason":"stop"}}'`
+			case AgentPi:
+				body += `echo '{"type":"message_end","message":{"role":"assistant","stopReason":"stop"}}'`
 			}
 			bin := agenttest.Script(t, backend, body)
-			r := Runner{ClaudeBin: bin, CodexBin: bin, OpenCodeBin: bin, DockerBin: agenttest.Docker(t, "image", "RUN_DIR"), ContainerListen: "127.0.0.1:0"}
+			r := Runner{ClaudeBin: bin, CodexBin: bin, OpenCodeBin: bin, PiBin: bin, DockerBin: agenttest.Docker(t, "image", "RUN_DIR"), ContainerListen: "127.0.0.1:0"}
 			req := Request{SessionDir: dir, Workspace: fakeWorkspace{dir: t.TempDir()}, Env: map[string]string{"RUN_DIR": dir, "PRIVATE_MCP_TOKEN": "stale"}, Profile: Profile{Agent: backend, Sandbox: SandboxContainer, SandboxImage: "image"}, HostMCP: &HostMCP{Name: "tools", Entry: MCPEntry{Command: agenttest.MCPServer(t, "RUN_DIR")}, ListenArgs: []string{"mcp", "serve", "--listen"}, TokenEnv: "PRIVATE_MCP_TOKEN", ListeningPrefix: "listening on ", Path: "/mcp"}}
 			res, err := r.Run(context.Background(), grantAll(req))
 			if err != nil || res.IsError {
@@ -79,6 +81,19 @@ cat >/dev/null
 				}
 				if cfg.MCP["tools"].Headers["Authorization"] != "Bearer {env:PRIVATE_MCP_TOKEN}" {
 					t.Error("OpenCode header is not an environment reference")
+				}
+			case AgentPi:
+				files = append(files, PiMCPConfigFile)
+				data, err := os.ReadFile(filepath.Join(dir, PiMCPConfigFile))
+				if err != nil {
+					t.Fatal(err)
+				}
+				var cfg piMCPConfig
+				if err := json.Unmarshal(data, &cfg); err != nil {
+					t.Fatal(err)
+				}
+				if cfg.MCPServers["tools"].Headers["Authorization"] != "Bearer ${PRIVATE_MCP_TOKEN}" {
+					t.Error("Pi header is not an environment reference")
 				}
 			}
 			for _, file := range files {

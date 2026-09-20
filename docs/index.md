@@ -4,7 +4,8 @@
 staff of headless coding-agent sessions — product manager, project manager,
 developers, reviewers and QA, against one or more GitHub repositories. A role runs
 as [Claude Code](https://claude.com/claude-code), as
-[Codex](https://github.com/openai/codex) or as [opencode](https://opencode.ai).
+[Codex](https://github.com/openai/codex), as [opencode](https://opencode.ai)
+or as [pi](https://pi.dev).
 
 Humans steer it through GitHub. Create and label issues, comment, merge pull
 requests; the bees do the rest. Every role runs in its own temporary git

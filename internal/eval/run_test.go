@@ -70,7 +70,7 @@ func testRunner(t *testing.T) (*Runner, *bytes.Buffer) {
 	t.Helper()
 	t.Setenv("FAKE_CLAUDE", "1")
 	var console bytes.Buffer
-	return &Runner{Bees: os.Args[0], ClaudeBin: os.Args[0], CodexBin: os.Args[0], OpenCodeBin: os.Args[0],
+	return &Runner{Bees: os.Args[0], ClaudeBin: os.Args[0], CodexBin: os.Args[0], OpenCodeBin: os.Args[0], PiBin: os.Args[0],
 		PassInterval: "100ms", Console: &console}, &console
 }
 

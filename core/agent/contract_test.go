@@ -115,7 +115,7 @@ exec sleep 60`)}
 }
 
 func TestEveryBackendRunsThroughFakeContainer(t *testing.T) {
-	for _, backend := range []string{AgentClaude, AgentCodex, AgentOpenCode} {
+	for _, backend := range Agents {
 		t.Run(backend, func(t *testing.T) {
 			dir := t.TempDir()
 			body := `printf '%s\n' "$@" > "$RUN_DIR/args"
@@ -127,9 +127,12 @@ echo '{"type":"turn.completed"}'`
 			case AgentOpenCode:
 				body = `printf '%s\n' "$@" > "$RUN_DIR/args"
 echo '{"type":"step_finish","part":{"reason":"stop"}}'`
+			case AgentPi:
+				body = `printf '%s\n' "$@" > "$RUN_DIR/args"
+echo '{"type":"message_end","message":{"role":"assistant","stopReason":"stop"}}'`
 			}
 			bin := agenttest.Script(t, backend, body)
-			r := Runner{ClaudeBin: bin, CodexBin: bin, OpenCodeBin: bin, DockerBin: agenttest.Docker(t, "image", "RUN_DIR"), ContainerLabel: "custom.session"}
+			r := Runner{ClaudeBin: bin, CodexBin: bin, OpenCodeBin: bin, PiBin: bin, DockerBin: agenttest.Docker(t, "image", "RUN_DIR"), ContainerLabel: "custom.session"}
 			res, err := r.Run(context.Background(), grantAll(Request{SessionDir: dir, Workspace: fakeWorkspace{dir: t.TempDir()}, Profile: Profile{Name: "custom", Agent: backend, Sandbox: SandboxContainer, SandboxImage: "image"}, Env: map[string]string{"RUN_DIR": dir}}))
 			if err != nil || res.IsError {
 				t.Fatalf("container: %+v, %v", res, err)
@@ -215,6 +218,17 @@ func TestContainerEnvironmentIsIsolated(t *testing.T) {
 	for _, key := range []string{"HOST_ONLY", "PATH", "USER", "CLAUDE_CODE_OAUTH_TOKEN"} {
 		if _, ok := env[key]; ok {
 			t.Errorf("inherited host variable %s", key)
+		}
+	}
+}
+
+// Agents is procs' list of agent executables, so an agent this package
+// names must be in it: a backend missing from the list is one no caller
+// accepts in its configuration and procs takes for a stranger's process.
+func TestAgentsHoldsEveryAgentThisPackageNames(t *testing.T) {
+	for _, a := range []string{AgentClaude, AgentCodex, AgentOpenCode, AgentPi} {
+		if !slices.Contains(Agents, a) {
+			t.Errorf("agent %s is not in Agents (%v)", a, Agents)
 		}
 	}
 }

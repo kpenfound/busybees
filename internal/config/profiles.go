@@ -570,6 +570,8 @@ func ValidateProfiles(profiles map[string]AgentProfile) []string {
 		// about the machine, and CheckSandbox asks it once at `bees run`.
 		if p.Sandbox != "" && !slices.Contains(SandboxModes, p.Sandbox) {
 			errs = append(errs, fmt.Sprintf("%s.sandbox must be one of %s", scope, strings.Join(SandboxModes, ", ")))
+		} else if r := p.resolved(); r.Agent == AgentPi && !slices.Contains(PiSandboxes, r.Sandbox) {
+			errs = append(errs, fmt.Sprintf("%s.sandbox %q does not run agent %q: pi has no sandbox of its own and runs with sandbox %s", scope, r.Sandbox, AgentPi, strings.Join(PiSandboxes, " or ")))
 		}
 		if p.Fallback != "" {
 			if err := validateFallback(profiles, name); err != nil {

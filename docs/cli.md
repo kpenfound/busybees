@@ -92,11 +92,11 @@ prints what it found grouped by area:
 
 | Group | Checks |
 |---|---|
-| `toolchain` | `git` on `PATH`; `gh` on `PATH`, authenticated and holding the `repo` token scope; `claude` (or `$BEES_CLAUDE_BIN`) runnable and new enough; `codex` (or `$BEES_CODEX_BIN`) runnable, when a role is configured with `agent = "codex"`; `opencode` (or `$BEES_OPENCODE_BIN`) runnable, when a role is configured with `agent = "opencode"`; `sbx` on `PATH` and answering `sbx version`, when a role is configured with `sandbox = "sbx"`. |
-| `config` | `bees.toml` loads and validates; `project.repo` and `project.default_branch` are set or derivable; the remote answers; the state directory is ignored by git; the notes directory is writable; the sessions directory is writable, when a role is configured with `agent = "opencode"`; every configured `prompt_file` exists; the repository's `bees/prompts/` files are all readable and named after a role; a running scheduler is serving a build of the commit that is checked out. |
+| `toolchain` | `git` on `PATH`; `gh` on `PATH`, authenticated and holding the `repo` token scope; `claude` (or `$BEES_CLAUDE_BIN`) runnable and new enough; `codex` (or `$BEES_CODEX_BIN`) runnable, when a role is configured with `agent = "codex"`; `opencode` (or `$BEES_OPENCODE_BIN`) runnable, when a role is configured with `agent = "opencode"`; `pi` (or `$BEES_PI_BIN`) runnable, when a role is configured with `agent = "pi"`; `sbx` on `PATH` and answering `sbx version`, when a role is configured with `sandbox = "sbx"`. |
+| `config` | `bees.toml` loads and validates; `project.repo` and `project.default_branch` are set or derivable; the remote answers; the state directory is ignored by git; the notes directory is writable; the sessions directory is writable, when a role is configured with `agent = "opencode"` or `agent = "pi"`; every configured `prompt_file` exists; the repository's `bees/prompts/` files are all readable and named after a role; a running scheduler is serving a build of the commit that is checked out. |
 | `github` | The repository is readable and writable (`viewerPermission`); with `[github]` set, that `github.token` belongs to `github.login`; every workflow label exists; with `[github]` set, that the account can actually write issues, issue comments and labels; with `[github]` set, that the account can actually push branches; the visibility filter matches at least one open issue; with `auto_merge` on, what a merge is actually gated on. |
 | `workspace` | A worktree can be created under `workspace_root` and removed again. |
-| `roles` | Per role: every configured skill URL clones and produces a plugin directory; every configured MCP server starts and answers an `initialize` request within 15s; a configured `shell` can be executed. |
+| `roles` | Per role: every configured skill URL clones and produces a plugin directory; every configured MCP server starts and answers an `initialize` request within 15s; a configured `shell` can be executed; for a `pi` role, `pi --no-extensions -e npm:pi-mcp-adapter -e <pi_packages entry>... --help` loads the adapter and every `pi_packages` entry, pi installing what is missing, within 5m (see [Pi](configuration.md#pi)). |
 
 A failure (`✗`) means the factory cannot run: a missing tool, a repository it
 cannot push to, missing workflow labels. A warning (`!`) means something that
@@ -765,7 +765,8 @@ event (killed by a signal, most often) leaves the cost unknown rather than a
 cost of zero. A codex session's cost is never known: codex reports tokens
 rather than a price. An opencode session's cost is the sum of its steps'
 costs, known whenever at least one step finished, zero and known for a local
-model that really is free. A session that really did cost nothing still
+model that really is free; a pi session's is the sum of its responses'
+costs the same way. A session that really did cost nothing still
 prints `$0.00`.
 
 **Recent** is what just happened: the sessions that have finished, newest
@@ -1291,18 +1292,27 @@ them together with their process groups (MCP servers, shells), removes stale
 pid files, removes the temporary worktrees bees created under the workspace
 root, and resets the worker list in `status.json`.
 
-Sessions are found two ways: from the `pid` file each running session keeps in
-its `<state_dir>/sessions/<id>/` directory, and from the process table, limited
-to sessions of this state directory — a `claude` or `codex` process counts
-only when it carries a session marker (the `--name bees-…` argument every
-claude session is started with, or the
-`shell_environment_policy.set.BEES_SESSION_DIR=` override every codex session
-gets; the older `mcp_servers.bees.env.BEES_SESSION_DIR=` marker also counts)
-*and* its command line references
-`<state_dir>/sessions/`. Another project's factory
-running on the same machine is never touched, whichever config you point
-`bees kill` at. Pid files are cross-checked against that scan, so a pid reused
-by an unrelated process after a reboot is discarded, never killed.
+Sessions are found two ways: from the `pid` file each running session keeps
+in its `<state_dir>/sessions/<id>/` directory, and from the process table,
+limited to sessions of this state directory — a `claude` or `codex` process
+counts only when it carries a session marker (the `--name bees-…` argument
+every claude session is started with, or the
+`shell_environment_policy.set.BEES_SESSION_DIR=` override every codex
+session gets; the older `mcp_servers.bees.env.BEES_SESSION_DIR=` marker also
+counts) *and* its command line references `<state_dir>/sessions/`. An
+opencode session carries no such marker — it is given its session directory
+through `OPENCODE_CONFIG`, which the process table does not show — and a pi
+session shows nothing but `pi`, because pi renames its process as it starts;
+both are found through their pid file. The scan reports no session of
+another project's factory, whichever config you point `bees kill` at.
+
+Pid files are cross-checked against that scan: a pid the scan did not match
+is kept only when the process table says it runs an agent, so a pid reused
+by an unrelated process after a reboot is discarded, never killed. A pid
+file is scoped by where it lies, though, not by what the process says:
+nothing in an agent's command line names a state directory, so a reused pid
+that happens to be another factory's opencode or pi session is stopped along
+with the session the file was written for.
 
 A session in the [container sandbox](configuration.md#sandboxing) is found a
 third way, because its agent runs in the container rather than on the host:
@@ -1520,7 +1530,8 @@ Runs the built-in MCP server on stdio (or over HTTP, below). You never start
 it yourself: `bees`
 hands it to every session as the server named `bees` (in `mcp.json` for
 claude, as `mcp_servers.bees` overrides for codex, in the `mcp` table of the
-configuration file `OPENCODE_CONFIG` names for opencode), and the agent
+configuration file `OPENCODE_CONFIG` names for opencode, in the `pi-mcp.json`
+`pi-mcp-adapter` reads for pi), and the agent
 starts it as `<bees binary> mcp serve` with the session's `BEES_*`
 variables. The name `bees` is reserved — a `[global.mcp.bees]` or
 `[roles.<role>.mcp.bees]` entry in `bees.toml` fails validation.
