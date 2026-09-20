@@ -69,7 +69,8 @@ const FixturesDir = "fixtures"
 const (
 	DefaultTimeout = time.Hour
 	DefaultMaxCost = 10.0
-	// DefaultAuthor is who a seeded issue, comment or mail is from.
+	// DefaultAuthor is who a seeded issue, pull request, comment, review or
+	// mail is from.
 	DefaultAuthor = "human"
 )
 
@@ -120,7 +121,7 @@ type Issue struct {
 	Comments []Comment `toml:"comments"`
 }
 
-// Comment is one comment on a seeded issue.
+// Comment is one comment on a seeded issue or pull request.
 type Comment struct {
 	Author string `toml:"author"`
 	Body   string `toml:"body"`

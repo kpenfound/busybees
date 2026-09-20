@@ -377,7 +377,7 @@ body = "Print `no due date` for an item with none."
 | `title`, `body` | Required title, and the body. A body with a closing keyword (`Closes #1`) is what ties the pull request to its issue. |
 | `head` | Required. The branch the change is on, branched off `base`. |
 | `base` | The branch it is against. Default `main`. |
-| `files` | The directory holding the head branch's working tree, relative to the case directory. Default `pr/<head>`. |
+| `files` | The directory holding the head branch's working tree, relative to the case directory. Default `pr/<head>`. It has to be there, whether it is named or defaulted. |
 | `labels` | Labels beside the `bees` label, which bees adds. |
 | `author` | Who opened it. Default `human`. |
 | `[[pull_requests.comments]]` | Comments on the conversation: `author` (default `human`) and `body`. |
@@ -386,7 +386,8 @@ body = "Print `no due date` for an item with none."
 Once the fixture is committed on `main`, bees branches `head` off `base`,
 copies the tree over it and pushes it. A file the tree leaves out is
 unchanged from `base`, so the directory carries only what the pull request
-touches.
+touches. A pull request with no tree directory is a load error: a pull
+request with no change is nothing for a session to read.
 
 A developer case gives its pull request the branch of the issue it names
 (`bees/issue-<n>`): that is the branch the developer's session works on, and

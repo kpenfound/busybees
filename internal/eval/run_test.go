@@ -466,3 +466,44 @@ func TestBuildFixtureBranchesEachSeededPullRequest(t *testing.T) {
 		t.Errorf("the clone is on %q, not %q", strings.TrimSpace(branch), DefaultBranch)
 	}
 }
+
+// What the fake GitHub is seeded with for a declared pull request: the
+// factory's own label on top of the case's, the declared author, and the
+// commit the head branch was pushed at, which is what the scheduler's
+// conflict check compares a pull request against.
+func TestFactorySeedsAPullRequest(t *testing.T) {
+	root := t.TempDir()
+	c, err := LoadRoleCase(writeCase(t, root, "pr", prCase, prFiles()), "developer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	dir := filepath.Join(root, "out")
+	fx, err := buildFixture(ctx, c, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, _ := testRunner(t)
+	f, err := r.factory(ctx, c, builtIn(t), dir, fx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.close()
+	p, ok := f.gh.Snapshot().PR(2)
+	if !ok {
+		t.Fatal("#2 was not seeded")
+	}
+	var names []string
+	for _, l := range p.Labels {
+		names = append(names, l.Name)
+	}
+	if !slices.Equal(names, []string{"bees", "bees:wip"}) {
+		t.Errorf("labels: %v", names)
+	}
+	if p.Author.Login != DefaultAuthor {
+		t.Errorf("author: %q", p.Author.Login)
+	}
+	if p.HeadSHA == "" || p.HeadSHA != fx.heads[2] {
+		t.Errorf("head SHA %q, pushed at %q", p.HeadSHA, fx.heads[2])
+	}
+}
