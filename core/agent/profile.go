@@ -18,6 +18,7 @@ const (
 	AgentClaude      = "claude"
 	AgentCodex       = "codex"
 	AgentOpenCode    = "opencode"
+	AgentPi          = "pi"
 	SandboxNone      = "none"
 	SandboxClaude    = "claude"
 	SandboxContainer = "container"
@@ -40,9 +41,10 @@ var Agents = procs.AgentExecutables
 var Sandboxes = []string{SandboxNone, SandboxClaude, SandboxContainer, SandboxSbx}
 
 // AgentCredentials names credentials forwarded into an isolated container.
-// opencode is authenticated through whichever provider it is configured for,
-// so its entry lists one key per provider it reads: any one of them is a
-// credential, and every one of them that is set is forwarded.
+// opencode and pi are authenticated through whichever provider they are
+// configured for, so their entries list one key per provider they read: any
+// one of them is a credential, and every one of them that is set is
+// forwarded.
 var AgentCredentials = map[string][]string{
 	AgentClaude: {"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"},
 	AgentCodex:  {"OPENAI_API_KEY", "CODEX_API_KEY"},
@@ -50,6 +52,11 @@ var AgentCredentials = map[string][]string{
 		"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
 		"OPENROUTER_API_KEY", "GROQ_API_KEY", "MISTRAL_API_KEY", "XAI_API_KEY",
 		"DEEPSEEK_API_KEY",
+	},
+	AgentPi: {
+		"ANTHROPIC_API_KEY", "ANTHROPIC_OAUTH_TOKEN", "OPENAI_API_KEY",
+		"GEMINI_API_KEY", "OPENROUTER_API_KEY", "GROQ_API_KEY", "XAI_API_KEY",
+		"MISTRAL_API_KEY", "DEEPSEEK_API_KEY", "CEREBRAS_API_KEY",
 	},
 }
 
@@ -95,6 +102,9 @@ type Profile struct {
 	Shell     string
 	Env       map[string]string
 	Skills    []string
+	// PiPackages are pi package sources (npm:, git:, a URL or a local path)
+	// a pi session loads after PiMCPAdapter, which it always loads.
+	PiPackages []string
 }
 
 // Validate rejects modes that would silently run without the requested box.

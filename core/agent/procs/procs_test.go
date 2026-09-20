@@ -249,6 +249,8 @@ func TestAPIDFileIsTrustedForAnAgentCommandAlone(t *testing.T) {
 		want    bool
 	}{
 		{"opencode", "opencode run --format json --auto --title agent-qa-1", true},
+		// All a pi session shows: it renames its process as it starts.
+		{"pi", "pi", true},
 		{"through an interpreter", "/usr/bin/node /opt/claude/bin/claude -p", true},
 		{"a shell naming one", "/bin/zsh -c opencode", false},
 		{"grep", "grep -r opencode /src", false},

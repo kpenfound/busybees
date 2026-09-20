@@ -67,6 +67,15 @@ func opencodeBin() string {
 	return "opencode"
 }
 
+// piBin is the pi executable, run for a role whose agent is pi:
+// BEES_PI_BIN, else pi on PATH.
+func piBin() string {
+	if bin := os.Getenv("BEES_PI_BIN"); bin != "" {
+		return bin
+	}
+	return "pi"
+}
+
 // usesClaude reports whether any enabled role resolves to agent = "claude"
 // (the default), so newApp knows whether the claude binary needs to exist.
 func usesClaude(cfg *config.Config) bool {
@@ -182,6 +191,7 @@ func newAppFor(ctx context.Context, g *globalFlags, cfg *config.Config, log *slo
 		ClaudeBin:   bin,
 		CodexBin:    codexBin(),
 		OpenCodeBin: opencodeBin(),
+		PiBin:       piBin(),
 		BeesBin:     self,
 		SessionsDir: store.SessionsDir(),
 		StateDir:    store.Dir,

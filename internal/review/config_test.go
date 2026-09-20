@@ -156,6 +156,7 @@ func TestConfigInvalid(t *testing.T) {
 		{"empty size", "[angles]\nm = []\n", []string{"angles.m must name at least one angle"}},
 		{"unknown angle model", "[angle_models]\nstyle = \"haiku\"\n", []string{"angle_models.style", "\"style\" is not an angle"}},
 		{"empty angle model", "[angle_models]\ndocs = \"\"\n", []string{"angle_models.docs must name a model"}},
+		{"pi under the claude sandbox", "[profiles.p]\nagent = \"pi\"\nsandbox = \"claude\"\n", []string{"profiles.p.sandbox", "\"pi\"", "none or container"}},
 		{"token expands to nothing", "[github]\ntoken = \"$REVIEW_UNSET_TOKEN$REVIEW_UNSET_TOKEN\"\n", []string{"expands to nothing"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

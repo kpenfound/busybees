@@ -186,6 +186,17 @@ func TestOpenCodeBin(t *testing.T) {
 	}
 }
 
+func TestPiBin(t *testing.T) {
+	t.Setenv("BEES_PI_BIN", "")
+	if got := piBin(); got != "pi" {
+		t.Errorf("default pi binary = %q", got)
+	}
+	t.Setenv("BEES_PI_BIN", "/opt/pi")
+	if got := piBin(); got != "/opt/pi" {
+		t.Errorf("BEES_PI_BIN = %q", got)
+	}
+}
+
 // A typo in a subcommand must fail, exactly like a typo in a top-level
 // command: a group that only printed its help and exited 0 left a session
 // with no way to tell its command had not run (#83).

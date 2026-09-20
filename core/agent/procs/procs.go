@@ -13,16 +13,19 @@
 // that optional process is a fourth thing to stop, recorded in its own
 // pid file.
 //
-// An opencode session is found through its pid file alone: it is given its
-// session directory through OPENCODE_CONFIG, an environment variable, so
-// its argv carries no path-bearing token to scope a ps-scan match to one
-// factory's state directory the way the claude and codex markers do, and
-// reading a process's environment to recover it is not portable across the
-// platforms this package runs on. Its pid file is trusted because the
-// process it names runs an agent executable (AgentExecutables), which the
-// process table does say; a pid file naming anything else is a pid reused
-// by an unrelated process and is deleted. A crashed opencode session with
-// no live pid file is not found by orphan cleanup.
+// An opencode or a pi session is found through its pid file alone. opencode
+// is given its session directory through OPENCODE_CONFIG, an environment
+// variable, so its argv carries no path-bearing token to scope a ps-scan
+// match to one factory's state directory the way the claude and codex
+// markers do, and reading a process's environment to recover it is not
+// portable across the platforms this package runs on; pi renames its
+// process to "pi" as it starts, which on Linux and macOS overwrites the
+// command line a ps scan would read, so it carries nothing at all. Either
+// pid file is trusted because the process it names runs an agent
+// executable (AgentExecutables), which the process table does say; a pid
+// file naming anything else is a pid reused by an unrelated process and is
+// deleted. A crashed session of either agent with no live pid file is not
+// found by orphan cleanup.
 //
 // Every source is scoped to one factory: a process only counts when its
 // command line also references this state directory's sessions directory
@@ -75,7 +78,7 @@ func CodexMarker(prefix string) string {
 //
 // The runner's agent list is this one (agent.Agents), so an agent added
 // there is recognized here.
-var AgentExecutables = []string{"claude", "codex", "opencode"}
+var AgentExecutables = []string{"claude", "codex", "opencode", "pi"}
 
 // Proc is a process that looks like an agent session.
 type Proc struct {

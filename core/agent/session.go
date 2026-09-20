@@ -61,10 +61,12 @@ type Request struct {
 	// ResumeID, when set, is the agent's own id of an earlier session
 	// (Result.ClaudeID) whose conversation this one continues, so a later
 	// round of the same role starts with the previous round's context
-	// instead of relearning the codebase. Claude and opencode can; codex
-	// has no resume, and ignores it. The caller owns the id's lifetime; one that
-	// the agent no longer knows makes the launch fail before it says
-	// anything, which the caller's retry runs fresh.
+	// instead of relearning the codebase. Claude, opencode and pi can;
+	// codex has no resume, and ignores it. The caller owns the id's
+	// lifetime, and an id the agent no longer knows ends two ways: claude
+	// and opencode fail the launch before saying anything, which the
+	// caller's retry runs fresh, while pi starts a new session under that
+	// id with no earlier context.
 	ResumeID string
 }
 
@@ -82,8 +84,8 @@ type Result struct {
 	// process and the signal is the only part that says why, so both are
 	// recorded: the number here, its name in ErrorSubtype ("signal_killed").
 	Signal int `json:"signal,omitempty"`
-	// ClaudeID is the id the agent gave the session: claude's session id,
-	// OpenCode's session id, or codex's thread id. The JSON name is kept for
+	// ClaudeID is the id the agent gave the session: claude's, opencode's
+	// or pi's session id, or codex's thread id. The JSON name is kept for
 	// readers of result.json that predate codex. Agent is the backend that
 	// gave it (AgentClaude when the profile named none), the only one that
 	// can resume it.
@@ -178,6 +180,9 @@ type Runner struct {
 	// OpenCodeBin is the opencode executable, run for a role whose agent
 	// is opencode. Default "opencode".
 	OpenCodeBin string
+	// PiBin is the pi executable, run for a role whose agent is pi.
+	// Default "pi".
+	PiBin string
 	// DockerBin is the container engine a container session is run with.
 	// Default ContainerEngine.
 	DockerBin string
@@ -208,7 +213,8 @@ type Runner struct {
 	// AddDirs are extra directories claude may write (the state dir). Each
 	// must be granted read-write.
 	// Codex, which runs without a sandbox, needs no such list, and neither
-	// does opencode, whose --auto approves writing outside the worktree.
+	// does opencode, whose --auto approves writing outside the worktree,
+	// nor pi, which has no approvals to ask.
 	AddDirs []string
 	// Confiner enforces a confined host session (Profile.Confine); nil
 	// selects this platform's. SystemPaths are what such a session reaches
@@ -577,7 +583,7 @@ func (r *Runner) tee(stdout io.Reader, transcript io.Writer, visit func(line []b
 
 // MCPEntry is one MCP server as a session is given it: an entry of claude's
 // --mcp-config file, the source of codex's mcp_servers overrides, or a
-// server of opencode's configuration file.
+// server of opencode's or pi-mcp-adapter's configuration file.
 type MCPEntry struct {
 	Type    string            `json:"type,omitempty"`
 	Command string            `json:"command,omitempty"`
@@ -586,7 +592,7 @@ type MCPEntry struct {
 	URL     string            `json:"url,omitempty"`
 	Headers map[string]string `json:"headers,omitempty"`
 	// EnvVars names variables Codex must inherit from its own environment.
-	// Claude and OpenCode inherit it already, so this is not a file entry.
+	// Claude, OpenCode and pi inherit it already, so this is not a file entry.
 	EnvVars []string `json:"-"`
 	// BearerTokenEnv names the process variable holding an HTTP bearer token.
 	// Backend writers render an environment reference, never the secret value.

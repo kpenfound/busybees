@@ -34,9 +34,9 @@ type watch struct {
 	// transcript.jsonl they were read from; the next read starts there.
 	lines []string
 	off   int64
-	// cost is the running total of an opencode session's cost, carried
-	// across reads the same way off is: opencode reports it per step
-	// rather than once at the end.
+	// cost is the running total of an opencode or pi session's cost,
+	// carried across reads the same way off is: opencode reports it per
+	// step and pi per response, rather than once at the end.
 	cost float64
 	// err is the last transcript read that failed. The lines already read
 	// stay on screen: a view that blanks itself says less than a stale one.

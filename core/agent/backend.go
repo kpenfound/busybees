@@ -18,8 +18,8 @@ import (
 )
 
 // A backend is one CLI a session can run as, chosen by the role's resolved
-// agent setting (AgentClaude, AgentCodex or
-// AgentOpenCode). The runner owns everything a session is regardless
+// agent setting (AgentClaude, AgentCodex, AgentOpenCode or
+// AgentPi). The runner owns everything a session is regardless
 // of its backend — the session directory, the prompt files, the
 // environment, the process group, the timeout, the transcript, the pid
 // file, the outcome and the result file — and asks the backend for the two
@@ -77,6 +77,8 @@ func backendFor(agent string) (backend, error) {
 		return codexBackend{}, nil
 	case AgentOpenCode:
 		return opencodeBackend{}, nil
+	case AgentPi:
+		return piBackend{}, nil
 	}
 	return nil, errors.New("session: unknown agent " + strconv.Quote(agent))
 }

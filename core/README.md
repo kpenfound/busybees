@@ -54,6 +54,11 @@ Orphan scans use `procs.CodexMarker(prefix)` with the same environment prefix;
 `LegacyCodex` can also match a caller's older MCP-based marker. With the default
 empty prefix, `procs.Find` needs no marker overrides.
 
+A pi session (`AgentPi`) has no MCP support of its own: the runner loads
+`PiMCPAdapter` (`npm:pi-mcp-adapter`) and then `Profile.PiPackages` with
+`-e`, writes the MCP entries to `pi-mcp.json` in the session directory, and
+passes it as the adapter's `--mcp-config` with `PI_MCP_CONFIG_MODE=exclusive`.
+
 ## Grants
 
 `agent.Grants` lists everything a session may have:
@@ -75,8 +80,8 @@ req.Grants = &agent.Grants{
 - `Tools` are built-in tool names, or `agent.ToolsAll`, and `mcp__<server>`
   for each MCP server. The profile's `AllowedTools`, `MCP` and `HostMCP` may
   name less, never more; `DisallowedTools` only narrows. Claude is started
-  with `--tools` when not every built-in tool is granted; codex and opencode
-  cannot restrict their built-in tools and need `ToolsAll`.
+  with `--tools` when not every built-in tool is granted; codex, opencode and
+  pi cannot restrict their built-in tools and need `ToolsAll`.
 - `Mounts` are absolute, clean, existing paths, `ReadOnly` or `ReadWrite`,
   judged after their symbolic links are resolved; `Within` confines them all.
   The working directory must lie inside one. Without `VCS`, a writable mount
@@ -300,8 +305,8 @@ result, err := session.Run(ctx, request)
   agent was installed. A container turn adds only a granted mount again,
   under the name a symbolic link gives a directory of the request.
 - Tools are held by the agent's own flags, not by the prompt: `claude` is
-  started with `--tools` and `--strict-mcp-config`, and a request for codex
-  or opencode with anything less than `ToolsAll` is refused.
+  started with `--tools` and `--strict-mcp-config`, and a request for codex,
+  opencode or pi with anything less than `ToolsAll` is refused.
 - A session runs any number of turns. After `Release`, `Run` returns
   `ErrReleased`.
 

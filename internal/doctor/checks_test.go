@@ -148,7 +148,7 @@ func setupIn(t *testing.T, clone, extra string, replies map[string]ghReply) *fix
 	if err := os.WriteFile(path, []byte(baseTOML+extra), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	d := New(context.Background(), path, fakeClaude(t, "2.9.0 (Claude Code)"), "", "")
+	d := New(context.Background(), path, fakeClaude(t, "2.9.0 (Claude Code)"), "", "", "")
 	if d.ConfigErr != nil {
 		t.Fatalf("load bees.toml: %v", d.ConfigErr)
 	}
@@ -390,8 +390,9 @@ func TestCheckOpenCode(t *testing.T) {
 
 // TestChecksIncludeOpenCodeOnlyWhenConfigured pins usesOpenCode the same way
 // TestChecksIncludeCodexOnlyWhenConfigured pins usesCodex: Checks() carries
-// two extra checks (the toolchain check and the config writable check) the
-// moment a role is actually configured to run opencode.
+// two extra checks (the toolchain check and the session dir writable check)
+// the moment a role is actually configured to run opencode. A factory that
+// runs opencode and pi gets that writable check once, not once per agent.
 func TestChecksIncludeOpenCodeOnlyWhenConfigured(t *testing.T) {
 	base := len(setup(t, "", nil).Checks())
 
@@ -403,6 +404,11 @@ func TestChecksIncludeOpenCodeOnlyWhenConfigured(t *testing.T) {
 	disabled := setup(t, "[roles.developer]\nagent = \"opencode\"\nenabled = false\n", nil)
 	if got := len(disabled.Checks()); got != base {
 		t.Errorf("got %d checks with the opencode role disabled, want %d", got, base)
+	}
+
+	both := setup(t, "[roles.developer]\nagent = \"opencode\"\n[roles.qa]\nagent = \"pi\"\n", nil)
+	if got := len(both.Checks()); got != base+3 {
+		t.Errorf("got %d checks with an opencode and a pi role, want %d (base %d + two toolchain checks + one writable check)", got, base+3, base)
 	}
 }
 
@@ -456,9 +462,9 @@ func TestChecksIncludeSbxOnlyWhenConfigured(t *testing.T) {
 	}
 }
 
-func TestCheckOpenCodeConfigWritable(t *testing.T) {
+func TestCheckSessionConfigWritable(t *testing.T) {
 	f := setup(t, "", nil)
-	r := f.run(t, f.checkOpenCodeConfigWritable)
+	r := f.run(t, f.checkSessionConfigWritable)
 	wantResult(t, r, Pass, "sessions")
 	if entries, err := os.ReadDir(r.Detail); err != nil || len(entries) != 0 {
 		t.Errorf("the probe file should be gone: %v %v", entries, err)
@@ -471,7 +477,7 @@ func TestCheckOpenCodeConfigWritable(t *testing.T) {
 		t.Fatal(err)
 	}
 	f = setup(t, "state_dir = "+fmt.Sprintf("%q", blocked)+"\n", nil)
-	wantResult(t, f.run(t, f.checkOpenCodeConfigWritable), Fail, "not a directory")
+	wantResult(t, f.run(t, f.checkSessionConfigWritable), Fail, "not a directory")
 }
 
 // ---- config ----------------------------------------------------------------
@@ -485,7 +491,7 @@ func TestCheckConfigLoads(t *testing.T) {
 	if err := os.WriteFile(path, []byte("version = 1\n[project]\nnonsense = true\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	d := New(context.Background(), path, "claude", "codex", "opencode")
+	d := New(context.Background(), path, "claude", "codex", "opencode", "pi")
 	if d.Config != nil {
 		t.Fatal("an invalid bees.toml must not load")
 	}
@@ -1177,7 +1183,7 @@ func TestChecksWithoutAResolvedRepo(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A local origin: config.Resolve cannot derive a GitHub repository.
-	d := New(context.Background(), path, fakeClaude(t, "2.9.0 (Claude Code)"), "", "")
+	d := New(context.Background(), path, fakeClaude(t, "2.9.0 (Claude Code)"), "", "", "")
 	gh := &fakeGH{t: t, replies: map[string]ghReply{"auth status": {out: "- Token scopes: 'repo'"}}}
 	gh.installAll(d)
 	d.LookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
