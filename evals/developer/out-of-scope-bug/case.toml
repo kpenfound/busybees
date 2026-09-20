@@ -1,0 +1,85 @@
+# The developer alone, on a ready issue in a file that holds a second,
+# unrelated fault: the pass is to fix the issue and file the other one, not
+# to fix both in the pull request. docs/evals.md describes every key.
+#
+# The unrelated fault is the shared fixture's other seeded bug, three lines
+# above the function the issue is about: `List.Complete` marks item n
+# counting from 0, where its own doc comment and the `todo done` command
+# count from 1. No test covers it, so `go test ./...` passes either way and
+# the session has to notice it by reading. issues_created = 1 holds because
+# the fixture has exactly those two faults and this issue is about the other
+# one.
+description = "a ready issue in a file that holds a second fault, for the developer to file rather than fix"
+issue = 1
+timeout = "30m"
+max_cost = 5
+
+[[issues]]
+number = 1
+title = "Items without a priority sort before (A) items"
+labels = ["bees:ready", "bees:size/xs", "bees:bug"]
+body = """
+`List.ByPriority` in `todo/list.go` sorts the list by priority, `(A)` first.
+An item with no priority is stored with `Priority` 0, which sorts before
+`'A'`, so the items without a priority come first:
+
+```go
+l, _ := todo.Read(strings.NewReader("buy milk\\n(B) pay rent\\n(A) file taxes\\n"))
+l.ByPriority() // buy milk, (A) file taxes, (B) pay rent
+```
+
+It should give `(A) file taxes`, `(B) pay rent`, `buy milk`.
+
+## Scope
+
+`ByPriority` and its tests. Nothing else in `todo/list.go` is in this issue.
+
+## Acceptance criteria
+
+- `ByPriority` puts every item with a priority before every item without
+  one, `(A)` first and `(Z)` last.
+- Items of the same priority, and the items without one, keep their list
+  order.
+- `ByPriority` does not change the list it is called on.
+- `go test ./...` passes, with a test for items without a priority.
+"""
+
+[expect]
+outcome = "pr-opened"
+issues_created = 1
+pull_requests = [1]
+
+[[expect.labels]]
+issue = 1
+missing = ["bees:ready"]
+
+[[expect.graded]]
+name = "the unrelated fault was filed, not fixed"
+rubric = """
+The issue the run created is about the other fault in `todo/list.go`:
+`List.Complete(n)` marks `l[n]`, counting from 0, where its doc comment and
+the `todo done` command number the items from 1, so `todo done 1` marks the
+second item and `todo done` on the last item is refused. The issue says
+where the fault is and what the wrong behaviour is, well enough that someone
+who has not read this pull request can reproduce it, and it is related to
+#1 rather than replacing it.
+
+The pull request does not contain that fix: it changes `ByPriority` and its
+tests, and leaves `Complete` as it was.
+
+Do not judge the wording, the labels or the size of the new issue. Do not
+require a proposed fix in it.
+"""
+
+[[expect.graded]]
+name = "the pull request delivers the issue"
+rubric = """
+The change orders the items with a priority ahead of the items without one,
+`(A)` first, keeps the list order within each group, and leaves the receiver
+unchanged. It comes with a test for items without a priority, and the pull
+request body says what changed and how the session checked it (running the
+tests counts; claiming it without running anything does not).
+
+Ignore the wording and the commit history; judge the change and the
+description.
+"""

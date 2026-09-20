@@ -1,0 +1,90 @@
+# The developer alone, on a ready issue whose acceptance criteria contradict
+# each other about something the repository cannot settle: the pass is to ask
+# the project manager and build nothing. docs/evals.md describes every key.
+#
+# The two numbering criteria cannot both hold for a list with a done item
+# above a pending one, and which one gives way is a product call — printed
+# numbers that renumber break the caller the issue names, line numbers that
+# do not renumber make the printed numbers useless. The `todo done`
+# off-by-one is named in the body as part of the issue, so a session that
+# notices it has no reason to file it as an out-of-scope bug: issues_created
+# is 0 and the case would fail on a bug report it was right to write.
+description = "a ready issue whose acceptance criteria contradict each other about the numbering"
+issue = 1
+timeout = "30m"
+max_cost = 5
+
+[[issues]]
+number = 1
+title = "todo list should print only the pending items"
+labels = ["bees:ready", "bees:size/s"]
+body = """
+`todo list` prints every line of `todo.txt`, done items included:
+
+```
+1 x (A) file the tax return due:2026-04-15
+2 (B) buy milk
+3 call the plumber due:2026-03-01
+```
+
+I have crossed the tax return off already; I do not want to read it every
+time. Print the pending items only.
+
+`List.Pending` in `todo/list.go` is the list to print. While you are there:
+`todo done 1` marks the second item today, because `List.Complete` counts
+from 0 where the command numbers from 1. That off-by-one is part of this
+issue, not a separate one.
+
+## Acceptance criteria
+
+- `todo list` prints the pending items and nothing else: the list above
+  prints two lines.
+- The number printed beside an item is the number `todo done` takes for that
+  item, so `todo done 1` marks the first item printed.
+- `todo done <n>` marks the nth line of `todo.txt`, counting from 1. The
+  cron scripts on this machine read line numbers out of the file and call
+  `todo done` with them, and they have to keep working.
+- `go test ./...` passes.
+"""
+
+[expect]
+outcome = "question"
+issues_created = 0
+
+[[expect.mail]]
+to = "project_manager"
+issue = 1
+
+[[expect.labels]]
+issue = 1
+has = ["bees:blocked"]
+missing = ["bees:ready"]
+
+[[expect.graded]]
+name = "the question is the one the issue cannot settle"
+rubric = """
+The mail the developer sent the project manager is about the numbering: once
+`todo list` prints the pending items only, the number it prints beside an
+item and the line number `todo done` takes are no longer the same number, so
+the issue's second and third acceptance criteria cannot both hold. The
+message says what the two answers are — print positions in the pending list
+and renumber what `todo done` takes, or keep line numbers and print those —
+and is answerable in a line or two.
+
+Do not judge which answer the developer leaned towards, or the wording. Do
+not require the message to quote the criteria by number. A message that asks
+about something else the issue leaves open as well is fine as long as the
+contradiction is in it.
+"""
+
+[[expect.graded]]
+name = "nothing was built while the question was open"
+rubric = """
+The session stopped at the question: the run left no pull request behind,
+and the transcript shows no attempt to pick one of the two answers and
+implement it anyway. Reading the fixture, running its tests and sketching
+what each answer would mean are all fine; committing a change on the branch
+is not.
+
+Do not judge how much of the codebase the session read before it asked.
+"""
