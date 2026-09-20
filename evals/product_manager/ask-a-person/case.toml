@@ -1,0 +1,53 @@
+# The product manager alone, with a feature whose scope turns on a decision
+# only a person can make: the pass is to ask, not to guess and build.
+# docs/evals.md describes every key.
+#
+# issues_created = 0 is the point of the case: nothing was created, not even
+# a first work item to get started with.
+description = "a feature with a product fork in it that has to go back to a person"
+timeout = "30m"
+max_cost = 5
+
+[[issues]]
+number = 1
+title = "Two of us should be able to work from the same list"
+labels = ["bees:feature"]
+body = """
+I keep the household list and my partner keeps their own. Half the items are
+the same errands, and we redo each other's work. We would like to work from
+one list.
+
+## Who it is for
+
+Two people sharing a file — a household, a pair on the same small project.
+
+## What done looks like
+
+Neither of us redoes an errand the other already did, and neither of us has
+to ask the other what is left.
+"""
+
+[expect]
+outcome = "done"
+issues_created = 0
+
+[[expect.labels]]
+issue = 1
+has = ["bees:feature", "bees:question"]
+
+[[expect.graded]]
+name = "the question is the one a person has to answer"
+rubric = """
+The comment posted on #1 asks about the fork the feature leaves open: whether
+`todo` grows a notion of who an item is for, so one file carries both
+people's work, or stays a single-user tool and sharing is left to the file
+(a shared directory, a repository) with the tool unchanged. The two answers
+lead to different work, which is why it is a person's to decide.
+
+The comment names the options it sees, recommends one, and is answerable in
+a line or two. It does not ask a list of everything that is unspecified, and
+it does not ask something the repository or the feature body already answers.
+
+Do not judge which option was recommended, and do not judge the wording. Do
+not expect the question to be phrased as the rubric phrases it.
+"""
