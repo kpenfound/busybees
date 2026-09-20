@@ -509,6 +509,11 @@ func TestCheckSandboxContainer(t *testing.T) {
 		{"api key in the role env", ResolvedRole{Sandbox: SandboxContainer, SandboxImage: "img", Env: map[string]string{"ANTHROPIC_API_KEY": "k"}}, bot, nil, ""},
 		{"codex names its own", ResolvedRole{Sandbox: SandboxContainer, SandboxImage: "img", Agent: AgentCodex}, bot, map[string]string{"ANTHROPIC_API_KEY": "k"}, "OPENAI_API_KEY or CODEX_API_KEY"},
 		{"codex with its key", ResolvedRole{Sandbox: SandboxContainer, SandboxImage: "img", Agent: AgentCodex}, bot, map[string]string{"OPENAI_API_KEY": "k"}, ""},
+		// opencode is authenticated through its provider, so any one of the
+		// provider keys is its credential and the refusal names them all.
+		{"opencode names its provider keys", ResolvedRole{Sandbox: SandboxContainer, SandboxImage: "img", Agent: AgentOpenCode}, bot, nil, "ANTHROPIC_API_KEY or OPENAI_API_KEY or GEMINI_API_KEY or GOOGLE_API_KEY or OPENROUTER_API_KEY or GROQ_API_KEY or MISTRAL_API_KEY or XAI_API_KEY or DEEPSEEK_API_KEY"},
+		{"opencode with a provider key in the role env", ResolvedRole{Sandbox: SandboxContainer, SandboxImage: "img", Agent: AgentOpenCode, Env: map[string]string{"OPENROUTER_API_KEY": "k"}}, bot, nil, ""},
+		{"opencode with a provider key on the host", ResolvedRole{Sandbox: SandboxContainer, SandboxImage: "img", Agent: AgentOpenCode}, bot, map[string]string{"DEEPSEEK_API_KEY": "k"}, ""},
 		// sbx needs the GitHub credential alone: no image, and the agent's
 		// credential is the sbx secret store's to supply.
 		{"sbx with github", ResolvedRole{Sandbox: SandboxSbx}, bot, nil, ""},
