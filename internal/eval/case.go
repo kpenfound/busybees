@@ -20,6 +20,7 @@ package eval
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -113,6 +114,9 @@ type Mail struct {
 // FixturesDir.
 func LoadCases(dir, name string) ([]Case, error) {
 	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("no %s directory here: an eval case is a directory %s/<case>/ with a case.toml in it, described in docs/evals.md", dir, dir)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("eval cases: %w", err)
 	}

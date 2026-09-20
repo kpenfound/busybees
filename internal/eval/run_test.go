@@ -181,7 +181,7 @@ func TestRunFailsACaseWhoseTestStillFails(t *testing.T) {
 	if test.Pass || !strings.HasSuffix(test.Detail, "after.log") {
 		t.Fatalf("test check: %+v", test)
 	}
-	if table := rep.Table(); !strings.Contains(table, "FAIL") || !strings.Contains(table, "answer: failed: the test passes") {
+	if table := rep.Table(); !strings.Contains(table, "FAIL") || !strings.Contains(table, "answer: the test still fails on the default branch") {
 		t.Fatalf("table:\n%s", table)
 	}
 }
@@ -189,7 +189,7 @@ func TestRunFailsACaseWhoseTestStillFails(t *testing.T) {
 // A test that already passes on the fixture proves nothing: no session
 // runs. The fixture here is built by setup.sh.
 func TestRunRefusesACaseWhoseTestAlreadyPasses(t *testing.T) {
-	_, res := runOne(t, answerCase, map[string]string{
+	rep, res := runOne(t, answerCase, map[string]string{
 		SetupScript:      "echo fixed > answer.txt\n",
 		"grade/check.sh": "grep -qx fixed answer.txt\n",
 	})
@@ -201,6 +201,15 @@ func TestRunRefusesACaseWhoseTestAlreadyPasses(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(res.Dir, "state")); !os.IsNotExist(err) {
 		t.Fatalf("a factory was built for an invalid case: %v", err)
+	}
+	// The line says what happened, not the requirement it broke: the
+	// test passed where it had to fail.
+	table := rep.Table()
+	if !strings.Contains(table, "answer: the test passed on the fixture, where it has to fail") {
+		t.Fatalf("table:\n%s", table)
+	}
+	if strings.Contains(table, "answer: failed: the test fails on the fixture") {
+		t.Fatalf("the line still reads as a failing test:\n%s", table)
 	}
 }
 
