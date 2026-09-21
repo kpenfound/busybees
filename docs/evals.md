@@ -196,6 +196,13 @@ is unlikely to pick (`eval_count_test.go`, `TestEvalCount`): a file copied
 over the checkout replaces one with the same path, and a Go test declared
 twice does not build.
 
+A fixture written in Go has to build, be `gofmt`-clean and pass its own
+`go test ./...`, and so does the tree of every branch the case seeds. The
+defect the case is about belongs in the hidden tests under `grade/`, or in
+what the seeded branch's diff shows: a fixture that ships a failing test
+grades whoever runs `go test` rather than the role the case is about. The
+suite assembles each shipped case and checks this.
+
 `evals/hello/case.toml`:
 
 ```toml
@@ -396,6 +403,10 @@ copies the tree over it and pushes it. A file the tree leaves out is
 unchanged from `base`, so the directory carries only what the pull request
 touches. A pull request with no tree directory is a load error: a pull
 request with no change is nothing for a session to read.
+
+The tree's own tests pass. A reviewer reads the branch's diff for the
+defect, so a test that already fails on the branch hands the answer to
+anything that runs the suite instead.
 
 A developer case gives its pull request the branch of the issue it names
 (`bees/issue-<n>`): that is the branch the developer's session works on, and
