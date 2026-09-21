@@ -64,7 +64,7 @@ func TestWorkHoursLine(t *testing.T) {
 		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			got := workHoursLine(schedulerFor(t, c.toml), state.Status{NextPoll: c.next}, c.now)
+			got := workHoursLine(schedulerFor(t, c.toml), state.Status{NextPoll: c.next}, true, c.now)
 			if got != c.want {
 				t.Fatalf("workHoursLine = %q, want %q", got, c.want)
 			}
@@ -254,7 +254,7 @@ func TestSchedulerLine(t *testing.T) {
 			if !tc.now.IsZero() {
 				at = tc.now
 			}
-			if got := schedulerLine(tc.st, at); got != tc.want {
+			if got := schedulerLine(tc.st, true, at); got != tc.want {
 				t.Errorf("got  %q\nwant %q", got, tc.want)
 			}
 		})
@@ -339,5 +339,90 @@ func TestStatusJSONCarriesTheBuildInsideStatus(t *testing.T) {
 		if _, ok := top[key]; ok {
 			t.Errorf("--json grew a top-level %q key; the build belongs inside status", key)
 		}
+	}
+}
+
+// fakeAlive replaces the liveness check for one test: only the pids in live
+// are running processes.
+func fakeAlive(t *testing.T, live ...int) {
+	t.Helper()
+	old := processAlive
+	t.Cleanup(func() { processAlive = old })
+	processAlive = func(pid int) bool {
+		for _, p := range live {
+			if p == pid {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+// A status.json outlives the scheduler that wrote it (#846): a dead pid is
+// marked on the scheduler line, drops the next-poll countdown and reads
+// running=false in --json, while a live one reads as before and a
+// status.json never written is not running at all.
+func TestStatusSaysWhenTheSchedulerIsNotRunning(t *testing.T) {
+	fakeAlive(t, 42)
+	now := utcAt(t, 31, 12, 0)
+	next := now.Add(4*time.Minute + 58*time.Second)
+	sched := schedulerFor(t, "")
+	for _, c := range []struct {
+		name             string
+		st               state.Status
+		running          bool
+		scheduler, hours string
+	}{
+		{
+			name:      "live pid",
+			st:        state.Status{UpdatedAt: now, PID: 42, LastPoll: now.Add(-time.Minute), NextPoll: next},
+			running:   true,
+			scheduler: "scheduler: pid 42, last poll 1m0s ago",
+			hours:     "work hours: not configured — GitHub polled every 5m0s   next GitHub poll in 4m58s",
+		},
+		{
+			name:      "dead pid",
+			st:        state.Status{UpdatedAt: now, PID: 19, LastPoll: now.Add(-3 * time.Hour), NextPoll: next},
+			scheduler: "scheduler: pid 19 (not running), last poll 3h0m0s ago",
+			hours:     "work hours: not configured — GitHub polled every 5m0s",
+		},
+		{
+			name:      "dead pid, no successful poll",
+			st:        state.Status{UpdatedAt: now, PID: 19, NextPoll: next},
+			scheduler: "scheduler: pid 19 (not running), no successful poll yet",
+			hours:     "work hours: not configured — GitHub polled every 5m0s",
+		},
+		{
+			name:      "never written",
+			st:        state.Status{},
+			scheduler: "scheduler: never run",
+			hours:     "work hours: not configured — GitHub polled every 5m0s",
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			running := schedulerRunning(c.st)
+			if running != c.running {
+				t.Fatalf("schedulerRunning = %v, want %v", running, c.running)
+			}
+			if got := schedulerLine(c.st, running, now); got != c.scheduler {
+				t.Errorf("schedulerLine = %q, want %q", got, c.scheduler)
+			}
+			if got := workHoursLine(sched, c.st, running, now); got != c.hours {
+				t.Errorf("workHoursLine = %q, want %q", got, c.hours)
+			}
+			raw, err := json.Marshal(statusJSON(&config.Config{}, c.st, map[string]int{}, todayReport{}, nil, now))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got struct {
+				Running *bool `json:"running"`
+			}
+			if err := json.Unmarshal(raw, &got); err != nil {
+				t.Fatal(err)
+			}
+			if got.Running == nil || *got.Running != c.running {
+				t.Errorf("--json running = %v, want %v", got.Running, c.running)
+			}
+		})
 	}
 }

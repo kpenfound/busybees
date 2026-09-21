@@ -1060,6 +1060,14 @@ age:
 scheduler: pid 4711, no successful poll yet   build dev (b24a0605c2a1 modified)
 ```
 
+`status.json` outlives the run that wrote it. When the pid it records is not
+a running process, the line marks it, and `running` in `--json` is `false`
+(`true` while the scheduler is up):
+
+```
+scheduler: pid 4711 (not running), last poll 3h0m0s ago   build dev (b24a0605c2a1 modified)
+```
+
 The [role prompts](roles.md#customising-a-role) are compiled into the binary,
 so a running factory serves the prompts of that build: a prompt change merged
 to the default branch reaches no session until `bees` is rebuilt and
@@ -1199,6 +1207,9 @@ clock:
 ```
 work hours: not configured — GitHub polled every 5m0s   next GitHub poll in 2m55s
 ```
+
+The next-poll countdown is left out while the scheduler is not running: no
+poll is coming.
 
 When `scheduler.timezone` is unset the window is read in the machine's local
 time, which is printed as the abbreviation and offset in force right now

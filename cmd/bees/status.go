@@ -5,17 +5,33 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kpenfound/busybees/core/agent/procs"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/state"
 )
 
+// processAlive answers whether a pid is a running process. It is
+// procs.Alive, the read-only test `bees doctor` uses for the same question
+// (procs.Find and FromPIDFile would delete a stale pid file, and status
+// writes nothing); tests replace it so no real scheduler is needed.
+var processAlive = procs.Alive
+
+// schedulerRunning reports whether the scheduler status.json records is
+// still running: it has written the file and its pid is a live process.
+// A status.json outlives the run that wrote it, so without this a stopped
+// scheduler reads exactly like a running one.
+func schedulerRunning(st state.Status) bool {
+	return !st.UpdatedAt.IsZero() && st.PID > 0 && processAlive(st.PID)
+}
+
 // workHoursLine renders the "work hours:" line of `bees status`. It is always
 // printed: an operator who never set scheduler.work_hours still needs to know
 // that, and which cadence applies instead. The yes/no is computed from now, so
 // it is right even when the scheduler is stopped; st only contributes the
-// recorded time of the next poll.
-func workHoursLine(s config.Scheduler, st state.Status, now time.Time) string {
+// recorded time of the next poll, and only while the scheduler is running:
+// a stopped one polls nothing.
+func workHoursLine(s config.Scheduler, st state.Status, running bool, now time.Time) string {
 	line := fmt.Sprintf("work hours: not configured — GitHub polled every %s", s.PollInterval)
 	if s.WorkHoursEnabled() {
 		yes := "no"
@@ -28,7 +44,7 @@ func workHoursLine(s config.Scheduler, st state.Status, now time.Time) string {
 	// configured, and a cadence without it says nothing about when the next
 	// poll actually happens.
 	switch d := st.NextPoll.Sub(now).Round(time.Second); {
-	case st.NextPoll.IsZero():
+	case st.NextPoll.IsZero(), !running:
 	case d > 0:
 		line += fmt.Sprintf("   next GitHub poll in %s", d)
 	default:
@@ -151,15 +167,23 @@ func workersText(st state.Status) string {
 // polls have all failed (an expired token, a network outage at startup) has
 // UpdatedAt set but no LastPoll: that is reported plainly instead of the
 // saturated duration now.Sub(time.Time{}) would otherwise print.
-func schedulerLine(st state.Status, now time.Time) string {
+//
+// running is schedulerRunning's answer: a pid that is no longer a live
+// process is marked "(not running)", so the line is not read as a factory
+// that is up.
+func schedulerLine(st state.Status, running bool, now time.Time) string {
 	line := "scheduler: never run"
+	pid := fmt.Sprintf("pid %d", st.PID)
+	if !running {
+		pid += " (not running)"
+	}
 	switch {
 	case st.UpdatedAt.IsZero():
 		// line stays "scheduler: never run"
 	case st.LastPoll.IsZero():
-		line = fmt.Sprintf("scheduler: pid %d, no successful poll yet", st.PID)
+		line = fmt.Sprintf("scheduler: %s, no successful poll yet", pid)
 	default:
-		line = fmt.Sprintf("scheduler: pid %d, last poll %s ago", st.PID, now.Sub(st.LastPoll).Round(time.Second))
+		line = fmt.Sprintf("scheduler: %s, last poll %s ago", pid, now.Sub(st.LastPoll).Round(time.Second))
 	}
 	switch notice := st.PauseNotice(now); {
 	case notice != "":
