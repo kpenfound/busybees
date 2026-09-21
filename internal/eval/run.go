@@ -354,7 +354,7 @@ func (r *Runner) factory(ctx context.Context, c Case, sel Selection, dir string,
 	repo := "bees-eval/" + c.Name
 	stateDir := filepath.Join(dir, "state")
 	text := sel.configText(settings{Repo: repo, StateDir: stateDir, Workspaces: filepath.Join(dir, "worktrees"),
-		PassInterval: r.passInterval()})
+		PassInterval: r.passInterval(), Role: c.Role})
 	path := filepath.Join(fx.project, "bees.toml")
 	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
 		return nil, err

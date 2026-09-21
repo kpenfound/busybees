@@ -46,7 +46,9 @@ the factory, which stays configured so that routing does not move. Such a
 case is graded by the checks it declares — the outcome the session reported,
 labels moved, mail sent, issues created or closed, a pull request opened —
 and by the rubrics a grader session scores, whose score is the table's SCORE
-column.
+column. A reviewer case runs the review loop's review stage — brief, angles
+and the session that posts the findings — with one review round, so the run
+ends on the verdict instead of going on to a developer session.
 
 Sessions are real agent sessions and cost money. --profile runs every role on
 one profile from bees.toml or ~/.config/bees/config.toml; without it the eval

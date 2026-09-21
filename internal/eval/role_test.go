@@ -492,3 +492,85 @@ func TestRoleCaseSeedsAPullRequestTheSessionReads(t *testing.T) {
 		}
 	}
 }
+
+// reviewerCase runs the reviewer alone on a seeded pull request: it is the
+// review loop's review stage, so the review pipeline runs before the
+// session that reports the verdict.
+const reviewerCase = `
+description = "a pull request that says it fixes the answer"
+issue = 1
+pr = 2
+timeout = "2m"
+max_cost = 3
+
+[[issues]]
+number = 1
+title = "Fix the answer"
+body = "answer.txt should say fixed."
+labels = ["bees:review", "bees:size/xs"]
+
+[[pull_requests]]
+number = 2
+title = "Fix the answer"
+body = "Closes #1"
+head = "bees/issue-1"
+
+[expect]
+outcome = "approved"
+
+[[expect.labels]]
+issue = 1
+has = ["bees:approved"]
+`
+
+// The reviewer runs alone on the pull request the case seeded: it approves
+// it, the issue ends up waiting for a person to merge, and no other role's
+// session ran.
+func TestRoleCaseRunsTheReviewerAlone(t *testing.T) {
+	_, res := runRoleCase(t, config.RoleReviewer, reviewerCase, prFiles(), nil)
+	if !res.Pass || res.Stop != StopDone || res.Error != "" {
+		t.Fatalf("result: %+v", res)
+	}
+	for _, name := range []string{`the session reported "approved"`, "#1 carries bees:approved"} {
+		if c := checkNamed(t, res, name); !c.Pass {
+			t.Errorf("check %q failed: %+v", name, c)
+		}
+	}
+	sessions, err := filepath.Glob(filepath.Join(res.Dir, "state", "sessions", "*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 || !strings.Contains(filepath.Base(sessions[0]), config.RoleReviewer) {
+		t.Fatalf("sessions: %v", sessions)
+	}
+}
+
+// A reviewer case that ends in changes requested ends there: the review
+// loop's next stage is a developer session, which a per-role run must not
+// start, so the one round the eval configures escalates the issue to a
+// person instead. Without it the developer would run, and the verdict the
+// case grades would be a later round's.
+func TestRoleCaseReviewerStopsAtOneRound(t *testing.T) {
+	t.Setenv("FAKE_REVIEW_CHANGES", "1")
+	_, res := runRoleCase(t, config.RoleReviewer, strings.NewReplacer(
+		`outcome = "approved"`, "outcome = \"changes-requested\"\n\n[[expect.mail]]\nto = \"developer\"\nissue = 1",
+		`has = ["bees:approved"]`, `has = ["bees:needs-human"]`).Replace(reviewerCase), prFiles(), nil)
+	if !res.Pass || res.Stop != StopDone || res.Error != "" {
+		t.Fatalf("result: %+v", res)
+	}
+	for _, name := range []string{`the session reported "changes-requested"`, "#1 carries bees:needs-human",
+		"mail to the developer about #1"} {
+		if c := checkNamed(t, res, name); !c.Pass {
+			t.Errorf("check %q failed: %+v", name, c)
+		}
+	}
+	// One session, the reviewer's: the developer round the verdict would
+	// otherwise lead to never started.
+	sessions, err := filepath.Glob(filepath.Join(res.Dir, "state", "sessions", "*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 || !strings.Contains(filepath.Base(sessions[0]), config.RoleReviewer) {
+		t.Fatalf("sessions: %v", sessions)
+	}
+}

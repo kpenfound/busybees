@@ -60,8 +60,14 @@ func TestMain(m *testing.M) {
 // sendMail is a fake session writing to the mailbox, which a real one does
 // through the built-in MCP server's mail_send.
 func sendMail(fail func(error), from, to, subject, body string, issue int) {
+	sendMailAbout(fail, from, to, subject, body, issue, 0)
+}
+
+// sendMailAbout is sendMail for a message about a pull request as well as
+// an issue, the way the reviewer's feedback to the developer is.
+func sendMailAbout(fail func(error), from, to, subject, body string, issue, pr int) {
 	box := mail.Open(filepath.Join(os.Getenv(session.EnvStateDir), "mail"))
-	if _, err := box.Send(mail.Message{From: from, To: to, Subject: subject, Body: body, Work: ghwork.New(issue, 0)}); err != nil {
+	if _, err := box.Send(mail.Message{From: from, To: to, Subject: subject, Body: body, Work: ghwork.New(issue, pr)}); err != nil {
 		fail(err)
 	}
 }
@@ -160,6 +166,13 @@ func fakeClaude() {
 	case config.RoleReviewer:
 		if hang, _ := strconv.Atoi(os.Getenv("FAKE_REVIEW_HANG")); hang > 0 {
 			time.Sleep(time.Duration(hang) * time.Second)
+		}
+		if os.Getenv("FAKE_REVIEW_CHANGES") == "1" {
+			gh("answer.txt still says broken\n\n<!-- bees:reviewer -->", "pr", "review", strconv.Itoa(pr), "-R", repo, "--request-changes", "--body-file", "-")
+			sendMailAbout(fail, config.RoleReviewer, config.RoleDeveloper, "Changes requested on #"+strconv.Itoa(pr),
+				"answer.txt still says broken.", issue, pr)
+			outcome = session.Outcome{Status: "changes-requested", Note: "one finding", Work: ghwork.New(issue, pr)}
+			break
 		}
 		gh("looks right\n\n<!-- bees:reviewer -->", "pr", "review", strconv.Itoa(pr), "-R", repo, "--comment", "--body-file", "-")
 		outcome = session.Outcome{Status: "approved", Note: "lgtm"}
