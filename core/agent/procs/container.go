@@ -79,13 +79,18 @@ func RemoveServerPID(dir string) { _ = os.Remove(filepath.Join(dir, ServerPIDFil
 // the process table: the caller server is deliberately not one of the
 // executables the scan counts (it is no agent session), so the scan can say
 // nothing about it.
-func liveServer(dir string) int {
+//
+// A read-only finder deletes nothing: the stale file stays and the server
+// is still reported as gone.
+func (f Finder) liveServer(dir string) int {
 	pid := ServerPID(dir)
 	if pid <= 0 {
 		return 0
 	}
 	if !Alive(pid) {
-		RemoveServerPID(dir)
+		if !f.ReadOnly {
+			RemoveServerPID(dir)
+		}
 		return 0
 	}
 	return pid
@@ -148,11 +153,17 @@ func RemoveSandboxName(dir string) { _ = os.Remove(filepath.Join(dir, SandboxNam
 // It fails when there is no engine to ask, which is also the answer to
 // "are any container sessions running": none that can be found or stopped.
 func FromContainers(ctx context.Context, sessionsDir string, markers ...Markers) ([]Proc, error) {
-	running, err := runningContainers(ctx, sessionsDir, markers...)
+	return withMarkers(markers).FromContainers(ctx, sessionsDir)
+}
+
+// FromContainers is FromContainers with the finder's options: a read-only
+// finder deletes no stale container id file.
+func (f Finder) FromContainers(ctx context.Context, sessionsDir string) ([]Proc, error) {
+	running, err := runningContainers(ctx, sessionsDir, f.markers())
 	if err != nil {
 		return nil, err
 	}
-	removeStaleContainerIDs(sessionsDir, running)
+	f.removeStaleContainerIDs(sessionsDir, running)
 	out := make([]Proc, 0, len(running))
 	for dir, id := range running {
 		out = append(out, Proc{Container: id, SessionDir: dir, Source: "container"})
@@ -192,8 +203,12 @@ func runningContainers(ctx context.Context, sessionsDir string, markers ...Marke
 }
 
 // removeStaleContainerIDs deletes the container id file of every session
-// directory whose container the engine no longer lists.
-func removeStaleContainerIDs(sessionsDir string, running map[string]string) {
+// directory whose container the engine no longer lists. A read-only finder
+// deletes none of them.
+func (f Finder) removeStaleContainerIDs(sessionsDir string, running map[string]string) {
+	if f.ReadOnly {
+		return
+	}
 	entries, err := os.ReadDir(sessionsDir)
 	if err != nil {
 		return

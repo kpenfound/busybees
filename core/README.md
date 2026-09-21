@@ -54,6 +54,11 @@ Orphan scans use `procs.CodexMarker(prefix)` with the same environment prefix;
 `LegacyCodex` can also match a caller's older MCP-based marker. With the default
 empty prefix, `procs.Find` needs no marker overrides.
 
+Discovery deletes the stale pid, container id and server pid files it reads,
+the cleanup a caller stopping sessions wants. A caller that only inspects
+asks through `procs.Finder{ReadOnly: true}`, which reports the same sessions
+and leaves every file in place.
+
 A pi session (`AgentPi`) has no MCP support of its own: the runner loads
 `PiMCPAdapter` (`npm:pi-mcp-adapter`) and then `Profile.PiPackages` with
 `-e`, writes the MCP entries to `pi-mcp.json` in the session directory, and

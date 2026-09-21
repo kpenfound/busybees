@@ -2,12 +2,16 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/kpenfound/busybees/core/agent/procs"
+	"github.com/kpenfound/busybees/internal/statemigrate"
 	"github.com/kpenfound/busybees/internal/testutil"
 	"github.com/kpenfound/busybees/internal/workspace"
 )
@@ -125,5 +129,150 @@ func TestKillStopsOnStatusMigrationFailure(t *testing.T) {
 	cmd.SetArgs([]string{"--dry-run"})
 	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "invalid state schema") {
 		t.Fatalf("kill ignored status migration failure: %v", err)
+	}
+}
+
+// `bees kill --dry-run` is an inspection: it must delete nothing under the
+// state directory, and say what it would do rather than what it did. Session
+// discovery deletes the stale pid, container-id and server-pid files it
+// reads, so a dry run over a running session used to delete that session's
+// pid file and report "no leftover sessions" (#840).
+//
+// The container id file is not exercised here: the PATH below holds no
+// container engine, so discovery never reaches it. core/agent/procs'
+// read-only discovery test covers that file; everything else bees kill
+// prints about an action — the scheduler, the session and the worktree — is
+// printed and checked here.
+func TestKillDryRunDeletesNothingAndSpeaksInTheConditional(t *testing.T) {
+	root := t.TempDir() // the workspace root bees kill cleans worktrees under
+	worktree := filepath.Join(root, "developer-issue-1-123", "repo")
+	if err := os.MkdirAll(worktree, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := writeProject(t, "owner/repo", "[scheduler]\nworkspace_root = "+strconv.Quote(root)+"\n")
+	sessions := filepath.Join(filepath.Dir(path), ".bees", "sessions")
+	live := filepath.Join(sessions, "20260920-developer-issue-1-r1")
+	gone := filepath.Join(sessions, "20260920-qa-2")
+	for _, dir := range []string{live, gone} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// State migration refuses to upgrade a state directory whose session pid
+	// files name live processes, and it is no part of what this test is
+	// about: migrate the empty directory first, so kill finds it current.
+	if err := statemigrate.Ensure(filepath.Join(filepath.Dir(path), ".bees")); err != nil {
+		t.Fatal(err)
+	}
+	// A live process for the pid file to name. The PATH below holds no ps,
+	// so there is no process table to cross-check against and the pid file
+	// is trusted on its own: no agent is started, or needed.
+	sleep := exec.Command("/bin/sh", "-c", "sleep 60")
+	if err := sleep.Start(); err != nil {
+		t.Fatal(err)
+	}
+	reaped := make(chan struct{})
+	go func() { _ = sleep.Wait(); close(reaped) }() // reap, as init would for an orphan
+	t.Cleanup(func() { _ = sleep.Process.Kill(); <-reaped })
+	if err := procs.WritePID(live, sleep.Process.Pid); err != nil {
+		t.Fatal(err)
+	}
+	if err := procs.WritePID(gone, 999999); err != nil {
+		t.Fatal(err)
+	}
+	if err := procs.WriteServerPID(gone, 999999); err != nil {
+		t.Fatal(err)
+	}
+	// The same process recorded as the scheduler, so --scheduler prints its
+	// line: bees kill refuses to run at all while one is alive. status.json
+	// is written by hand because SaveStatus stamps the writer's own pid.
+	status := filepath.Join(filepath.Dir(path), ".bees", "status.json")
+	if err := os.WriteFile(status, fmt.Appendf(nil, `{"pid":%d}`, sleep.Process.Pid), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// No ps and no container engine, and a git that answers `worktree list`
+	// with the one worktree above and does nothing else: the state directory
+	// and that answer are all the command reads, and no real git, ps or
+	// engine runs.
+	bin := t.TempDir()
+	script := "#!/bin/sh\ncase \"$1 $2\" in\n\"worktree list\") echo \"worktree " + worktree + "\" ;;\nesac\n"
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+
+	out := captureStdout(t, func() {
+		cmd := newKillCmd(&globalFlags{config: path})
+		cmd.SetArgs([]string{"--dry-run", "--scheduler"})
+		if err := cmd.Execute(); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	for _, want := range []string{
+		fmt.Sprintf("would stop scheduler pid %d", sleep.Process.Pid),
+		fmt.Sprintf("would kill pid %d (pidfile)", sleep.Process.Pid),
+		"would remove worktree " + worktree,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("bees kill --dry-run printed:\n%s\nwant a line %q", out, want)
+		}
+	}
+	for _, verb := range []string{"killing ", "removed ", "stopping "} {
+		if strings.Contains(out, verb) {
+			t.Errorf("bees kill --dry-run printed %q, which reads as a real run:\n%s", verb, out)
+		}
+	}
+	for _, f := range []string{
+		filepath.Join(live, procs.PIDFile),
+		filepath.Join(gone, procs.PIDFile),
+		filepath.Join(gone, procs.ServerPIDFile),
+	} {
+		if _, err := os.Stat(f); err != nil {
+			t.Errorf("bees kill --dry-run deleted %s: %v", f, err)
+		}
+	}
+	if !procs.Alive(sleep.Process.Pid) {
+		t.Error("bees kill --dry-run stopped the process it only reported on")
+	}
+	if _, err := os.Stat(worktree); err != nil {
+		t.Errorf("bees kill --dry-run removed the worktree it only reported on: %v", err)
+	}
+
+	// The real run is what cleans up: the same fixture, now emptied of its
+	// stale files, and the process actually stopped.
+	cmd := newKillCmd(&globalFlags{config: path})
+	cmd.SetArgs([]string{"--scheduler", "--grace", "2s"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{
+		filepath.Join(live, procs.PIDFile),
+		filepath.Join(gone, procs.PIDFile),
+		filepath.Join(gone, procs.ServerPIDFile),
+	} {
+		if _, err := os.Stat(f); !os.IsNotExist(err) {
+			t.Errorf("bees kill kept %s: %v", f, err)
+		}
+	}
+	if _, err := os.Stat(worktree); !os.IsNotExist(err) {
+		t.Errorf("bees kill kept the worktree %s: %v", worktree, err)
+	}
+}
+
+// tense is what keeps a dry run's output from reading as a real run's: every
+// line bees kill prints about an action goes through it.
+func TestTense(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		dryRun bool
+		want   string
+	}{
+		{"a real run says what it did", false, "removed worktree"},
+		{"a dry run says what it would do", true, "would remove worktree"},
+	} {
+		if got := tense(tc.dryRun, "removed worktree", "would remove worktree"); got != tc.want {
+			t.Errorf("%s: tense = %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }

@@ -38,6 +38,12 @@
 // agent's command line ties it to a state directory, so the pid a reboot
 // handed to another factory's opencode or pi session is trusted and
 // stopped like the session the file was written for.
+//
+// Finding a session is not free of consequence: the stale pid, container-id
+// and server-pid files read along the way are deleted, which is the cleanup
+// a caller stopping sessions wants. A caller that only inspects asks
+// through a Finder with ReadOnly set, which reports the same sessions and
+// leaves every file where it is.
 package procs
 
 import (
@@ -158,6 +164,44 @@ func (s *Scan) sessions() []Proc {
 	return out
 }
 
+// Finder is session discovery with the options a caller needs. The package
+// functions Find, FromPIDFile, FromPIDFiles and FromContainers are a Finder
+// carrying the markers they are given and nothing else.
+//
+// Discovery ordinarily writes: a pid, container-id or server-pid file
+// naming a process, container or server that is gone is deleted as it is
+// read, which is how cleanup keeps the sessions directory honest. A caller
+// that must only look — an inspection command, a dry run — builds a Finder
+// with ReadOnly set and gets the same []Proc with every file left in place.
+type Finder struct {
+	// Markers identify the caller's sessions in the process table and its
+	// containers by label. Nil is the default set; a Markers given here is
+	// used as it stands, so an empty one matches no process and no
+	// container, exactly as passing Markers{} to the package functions does.
+	Markers *Markers
+	// ReadOnly keeps discovery from writing under the sessions directory:
+	// nothing stale is deleted, however plainly stale it is.
+	ReadOnly bool
+}
+
+// markers is the set to identify sessions with: the caller's as it stands,
+// or the defaults when it named none.
+func (f Finder) markers() Markers {
+	if f.Markers == nil {
+		return markerSet(nil)
+	}
+	return *f.Markers
+}
+
+// withMarkers is the finder the package functions run on: the markers as
+// given, which is not the same as none given when they are empty.
+func withMarkers(markers []Markers) Finder {
+	if len(markers) == 0 {
+		return Finder{}
+	}
+	return Finder{Markers: &markers[0]}
+}
+
 // FromPIDFile returns the live session recorded in one session directory:
 // the process its pid file names, the container it runs in and the
 // host-side MCP server it left, the last two for a container-backed session
@@ -169,8 +213,13 @@ func (s *Scan) sessions() []Proc {
 // signal and the server is stopped in its own right. That is what a crash
 // leaves behind.
 func FromPIDFile(dir string, scan *Scan) (Proc, bool) {
-	server := liveServer(dir)
-	pid, ok := livePID(dir, scan)
+	return Finder{}.FromPIDFile(dir, scan)
+}
+
+// FromPIDFile is FromPIDFile with the finder's options.
+func (f Finder) FromPIDFile(dir string, scan *Scan) (Proc, bool) {
+	server := f.liveServer(dir)
+	pid, ok := f.livePID(dir, scan)
 	if !ok && server == 0 {
 		return Proc{}, false
 	}
@@ -183,35 +232,49 @@ func FromPIDFile(dir string, scan *Scan) (Proc, bool) {
 
 // livePID returns the pid of a session's main command from its pid file.
 // It reports false when the directory holds no pid file, when the process
-// the file names is gone — in which case the stale file is deleted — and,
-// when scan is non-nil (the ps scan), when the pid is alive but is neither
-// a session the scan matched nor a process running an agent executable: a
-// pid reused by an unrelated process after a reboot, which must never be
-// killed.
-func livePID(dir string, scan *Scan) (int, bool) {
+// the file names is gone — in which case the stale file is deleted, unless
+// the finder is read-only — and, when scan is non-nil (the ps scan), when
+// the pid is alive but is neither a session the scan matched nor a process
+// running an agent executable: a pid reused by an unrelated process after a
+// reboot, which must never be killed.
+func (f Finder) livePID(dir string, scan *Scan) (int, bool) {
 	b, err := os.ReadFile(filepath.Join(dir, PIDFile))
 	if err != nil {
 		return 0, false
 	}
 	pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
 	if !Alive(pid) {
-		RemovePID(dir)
+		f.removePID(dir)
 		return 0, false
 	}
 	if scan != nil {
 		_, matched := scan.Sessions[pid]
 		if !matched && !scan.isAgent(pid) {
-			RemovePID(dir) // alive, but not an agent session: pid reused
+			f.removePID(dir) // alive, but not an agent session: pid reused
 			return 0, false
 		}
 	}
 	return pid, true
 }
 
+// removePID deletes a stale pid file, unless the finder only looks.
+func (f Finder) removePID(dir string) {
+	if f.ReadOnly {
+		return
+	}
+	RemovePID(dir)
+}
+
 // FromPIDFiles returns live sessions recorded under sessionsDir and deletes
 // pid files of processes that no longer exist, by asking FromPIDFile about
 // every session directory in turn.
 func FromPIDFiles(sessionsDir string, scan *Scan) ([]Proc, error) {
+	return Finder{}.FromPIDFiles(sessionsDir, scan)
+}
+
+// FromPIDFiles is FromPIDFiles with the finder's options: a read-only
+// finder deletes no pid file.
+func (f Finder) FromPIDFiles(sessionsDir string, scan *Scan) ([]Proc, error) {
 	entries, err := os.ReadDir(sessionsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -224,7 +287,7 @@ func FromPIDFiles(sessionsDir string, scan *Scan) ([]Proc, error) {
 		if !e.IsDir() {
 			continue
 		}
-		if p, ok := FromPIDFile(filepath.Join(sessionsDir, e.Name()), scan); ok {
+		if p, ok := f.FromPIDFile(filepath.Join(sessionsDir, e.Name()), scan); ok {
 			out = append(out, p)
 		}
 	}
@@ -401,8 +464,14 @@ func isAgentCommand(argv []string) bool {
 // whose sessions live in sessionsDir. Pid files are cross-checked against
 // the process table when it is available.
 func Find(ctx context.Context, sessionsDir string, markers ...Markers) ([]Proc, error) {
+	return withMarkers(markers).Find(ctx, sessionsDir)
+}
+
+// Find is Find with the finder's options: a read-only finder reports the
+// same sessions and deletes nothing.
+func (f Finder) Find(ctx context.Context, sessionsDir string) ([]Proc, error) {
 	byPID := map[int]Proc{}
-	scan, err := scanPS(ctx, sessionsDir, markers...)
+	scan, err := scanPS(ctx, sessionsDir, f.markers())
 	if err != nil {
 		scan = nil // no process table to cross-check against
 	}
@@ -410,8 +479,8 @@ func Find(ctx context.Context, sessionsDir string, markers ...Markers) ([]Proc, 
 	// asking clears the id file of a session whose container has gone. A
 	// machine with no container engine has no container session either, so
 	// the error is the empty answer.
-	fromContainers, _ := FromContainers(ctx, sessionsDir, markers...)
-	fromFiles, err := FromPIDFiles(sessionsDir, scan)
+	fromContainers, _ := f.FromContainers(ctx, sessionsDir)
+	fromFiles, err := f.FromPIDFiles(sessionsDir, scan)
 	if err != nil {
 		return nil, err
 	}

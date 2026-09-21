@@ -316,3 +316,85 @@ func TestAPIDFileIsTrustedForAnAgentCommandAlone(t *testing.T) {
 		})
 	}
 }
+
+// Discovery deletes the stale files it reads, which is the cleanup a caller
+// stopping sessions wants and a liability for one that only looks: a dry run
+// that deleted a running session's pid file would leave the session
+// unstoppable and read as interrupted (#840). A read-only Finder reports the
+// same sessions and writes nothing.
+func TestReadOnlyDiscoveryDeletesNothing(t *testing.T) {
+	sessions := t.TempDir()
+	// A live session found through its pid file, so the answer under test is
+	// not the empty one.
+	live := filepath.Join(sessions, "20260920-developer-issue-1-r1")
+	if err := os.MkdirAll(live, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := agentProcess(t, "opencode", "run", "--format", "json")
+	if err := WritePID(live, cmd.Process.Pid); err != nil {
+		t.Fatal(err)
+	}
+	// A pid file naming a process that has gone, and one naming a live
+	// process that is no agent: the two a writing run deletes.
+	gone := filepath.Join(sessions, "20260920-qa-2")
+	if err := os.MkdirAll(gone, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := WritePID(gone, 999999); err != nil {
+		t.Fatal(err)
+	}
+	reused := filepath.Join(sessions, "20260920-reviewer-pr-3")
+	if err := os.MkdirAll(reused, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := WritePID(reused, os.Getpid()); err != nil {
+		t.Fatal(err)
+	}
+	// A server the crash left recorded but not running, and a container the
+	// engine no longer lists.
+	if err := WriteServerPID(gone, 999999); err != nil {
+		t.Fatal(err)
+	}
+	container := filepath.Join(sessions, "20260920-product_manager-4")
+	writeContainerID(t, container, "aaa111")
+	fakeEngine(t, "") // an engine with no session container running
+
+	if _, err := FromPS(context.Background(), sessions); err != nil {
+		t.Skipf("no process table to scan: %v", err)
+	}
+	files := []string{
+		filepath.Join(gone, PIDFile),
+		filepath.Join(reused, PIDFile),
+		filepath.Join(gone, ServerPIDFile),
+		filepath.Join(container, ContainerIDFile),
+	}
+
+	readOnly, err := Finder{ReadOnly: true}.Find(context.Background(), sessions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(readOnly) != 1 || readOnly[0].PID != cmd.Process.Pid || readOnly[0].SessionDir != live {
+		t.Fatalf("read-only Find: %+v, want the live session alone", readOnly)
+	}
+	for _, f := range files {
+		if _, err := os.Stat(f); err != nil {
+			t.Errorf("read-only Find deleted %s: %v", f, err)
+		}
+	}
+
+	writing, err := Find(context.Background(), sessions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(writing, readOnly) {
+		t.Errorf("Find: %+v, want what read-only discovery reported (%+v)", writing, readOnly)
+	}
+	for _, f := range files {
+		if _, err := os.Stat(f); !os.IsNotExist(err) {
+			t.Errorf("Find kept the stale %s: %v", f, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(live, PIDFile)); err != nil {
+		t.Errorf("the pid file of a live session must survive either run: %v", err)
+	}
+}

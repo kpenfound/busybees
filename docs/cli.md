@@ -1346,7 +1346,7 @@ needs and this command does not do.
 
 | Flag | Meaning |
 |---|---|
-| `--dry-run` | Show what would be killed and removed. |
+| `--dry-run` | Show what would be killed and removed, in the conditional tense (`would kill`, `would remove worktree`), and delete nothing: the stale pid, container id and MCP server pid files a real run clears away are left in place. Reading `status.json` still upgrades a state directory written by an older bees, as it does for every command. |
 | `--scheduler` | Also stop a running scheduler (found via the pid in `status.json`). |
 | `--grace 5s` | Time to wait after SIGTERM before SIGKILL. |
 
