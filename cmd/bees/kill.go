@@ -35,8 +35,10 @@ Sessions of another project's factory are never touched, however many
 factories share a machine.
 
 --dry-run only looks: it prints in the conditional tense what it would stop
-and remove, and writes nothing under the state directory, not even the stale
-pid, container id and MCP server pid files a real run clears away.
+and remove, and deletes nothing — not even the stale pid, container id and
+MCP server pid files a real run clears away. Reading status.json still brings
+a state directory written by an older bees up to the current schema, the way
+every command that reads it does.
 
 It refuses to run while a bees scheduler is alive, because killing sessions
 under a running scheduler corrupts its state; pass --scheduler to stop the
@@ -69,9 +71,9 @@ scheduler as well.`,
 
 			// A dry run only looks: discovery deletes the stale pid,
 			// container-id and server-pid files it reads, and a command that
-			// reports what it would do must leave the state directory as it
-			// found it (#840).
-			finder := procs.Finder{Markers: session.ProcessMarkers, ReadOnly: dryRun}
+			// reports what it would do must delete none of them (#840).
+			markers := session.ProcessMarkers
+			finder := procs.Finder{Markers: &markers, ReadOnly: dryRun}
 			found, err := finder.Find(ctx, store.SessionsDir())
 			if err != nil {
 				return err

@@ -508,3 +508,46 @@ func TestFindGroupsEveryOrphanedServerWithItsContainer(t *testing.T) {
 		t.Errorf("Find %s: %+v, want the server alone", loose, p)
 	}
 }
+
+// Markers given are used as they stand, and no markers given means the
+// package defaults. The two are told apart by the pointer: Finder{} defaults
+// where Finder{Markers: &Markers{}} matches nothing, which is what passing
+// Markers{} to the package functions has always meant. The label the engine
+// is asked for shows which set was used.
+func TestFinderUsesTheMarkersGivenAndDefaultsForNone(t *testing.T) {
+	sessions := t.TempDir()
+	dir := filepath.Join(sessions, "20260920-developer-issue-1-r1")
+	writeContainerID(t, dir, "aaa111")
+	for _, tc := range []struct {
+		name string
+		ask  func(string) ([]Proc, error)
+		want string
+	}{
+		{"no markers given", func(d string) ([]Proc, error) {
+			return Finder{}.FromContainers(context.Background(), d)
+		}, "label=" + ContainerLabel},
+		{"a marker set given", func(d string) ([]Proc, error) {
+			return Finder{Markers: &Markers{Container: "acme.session"}}.FromContainers(context.Background(), d)
+		}, "label=acme.session"},
+		{"an empty marker set given", func(d string) ([]Proc, error) {
+			return Finder{Markers: &Markers{}}.FromContainers(context.Background(), d)
+		}, "label="},
+		{"an empty marker set through the package function", func(d string) ([]Proc, error) {
+			return FromContainers(context.Background(), d, Markers{})
+		}, "label="},
+		{"no marker set through the package function", func(d string) ([]Proc, error) {
+			return FromContainers(context.Background(), d)
+		}, "label=" + ContainerLabel},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := fakeEngine(t, "")
+			if _, err := tc.ask(sessions); err != nil {
+				t.Fatal(err)
+			}
+			asked := listings(t, engine)
+			if len(asked) != 1 || !strings.Contains(asked[0], tc.want+" ") {
+				t.Fatalf("the engine was asked %q, want a filter %q", asked, tc.want)
+			}
+		})
+	}
+}

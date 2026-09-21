@@ -131,12 +131,17 @@ func TestKillStopsOnStatusMigrationFailure(t *testing.T) {
 	}
 }
 
-// `bees kill --dry-run` is an inspection: it must leave the state directory
-// as it found it, and say what it would do rather than what it did. Session
+// `bees kill --dry-run` is an inspection: it must delete nothing under the
+// state directory, and say what it would do rather than what it did. Session
 // discovery deletes the stale pid, container-id and server-pid files it
 // reads, so a dry run over a running session used to delete that session's
 // pid file and report "no leftover sessions" (#840).
-func TestKillDryRunWritesNothingAndSpeaksInTheConditional(t *testing.T) {
+//
+// The worktree line is not exercised here: the PATH below has no git, so
+// cleanWorktrees fails before it lists one, and the container id file is
+// never reached either for want of an engine. TestTense pins that line's
+// wording, and core/agent/procs' read-only discovery test the id file.
+func TestKillDryRunDeletesNothingAndSpeaksInTheConditional(t *testing.T) {
 	path := writeProject(t, "owner/repo", "")
 	sessions := filepath.Join(filepath.Dir(path), ".bees", "sessions")
 	live := filepath.Join(sessions, "20260920-developer-issue-1-r1")
@@ -171,23 +176,37 @@ func TestKillDryRunWritesNothingAndSpeaksInTheConditional(t *testing.T) {
 	if err := procs.WriteServerPID(gone, 999999); err != nil {
 		t.Fatal(err)
 	}
-	// No ps, no git and no container engine: nothing but the pid files is
-	// read, and no real command runs.
+	// The same process recorded as the scheduler, so --scheduler prints its
+	// line: bees kill refuses to run at all while one is alive. status.json
+	// is written by hand because SaveStatus stamps the writer's own pid.
+	status := filepath.Join(filepath.Dir(path), ".bees", "status.json")
+	if err := os.WriteFile(status, fmt.Appendf(nil, `{"pid":%d}`, sleep.Process.Pid), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// No ps, no git and no container engine: nothing but the pid files and
+	// status.json is read, and no real command runs.
 	t.Setenv("PATH", t.TempDir())
 
 	out := captureStdout(t, func() {
 		cmd := newKillCmd(&globalFlags{config: path})
-		cmd.SetArgs([]string{"--dry-run"})
+		cmd.SetArgs([]string{"--dry-run", "--scheduler"})
 		if err := cmd.Execute(); err != nil {
 			t.Fatal(err)
 		}
 	})
 
-	want := fmt.Sprintf("would kill pid %d (pidfile)", sleep.Process.Pid)
-	if !strings.Contains(out, want) {
-		t.Errorf("bees kill --dry-run printed:\n%s\nwant a line %q", out, want)
+	for _, want := range []string{
+		fmt.Sprintf("would stop scheduler pid %d", sleep.Process.Pid),
+		fmt.Sprintf("would kill pid %d (pidfile)", sleep.Process.Pid),
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("bees kill --dry-run printed:\n%s\nwant a line %q", out, want)
+		}
 	}
-	for _, verb := range []string{"killing ", "removed "} {
+	// "removed " cannot appear on this PATH — the worktree line is not
+	// reached — so that one is a guard against a future run that does reach
+	// it, not coverage of the line.
+	for _, verb := range []string{"killing ", "removed ", "stopping "} {
 		if strings.Contains(out, verb) {
 			t.Errorf("bees kill --dry-run printed %q, which reads as a real run:\n%s", verb, out)
 		}
@@ -202,12 +221,13 @@ func TestKillDryRunWritesNothingAndSpeaksInTheConditional(t *testing.T) {
 		}
 	}
 	if !procs.Alive(sleep.Process.Pid) {
-		t.Error("bees kill --dry-run stopped the session it only reported on")
+		t.Error("bees kill --dry-run stopped the process it only reported on")
 	}
 
 	// The real run is what cleans up: the same fixture, now emptied of its
-	// stale files.
+	// stale files, and the process actually stopped.
 	cmd := newKillCmd(&globalFlags{config: path})
+	cmd.SetArgs([]string{"--scheduler", "--grace", "2s"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -218,6 +238,25 @@ func TestKillDryRunWritesNothingAndSpeaksInTheConditional(t *testing.T) {
 	} {
 		if _, err := os.Stat(f); !os.IsNotExist(err) {
 			t.Errorf("bees kill kept %s: %v", f, err)
+		}
+	}
+}
+
+// Every line bees kill prints about an action goes through tense, which is
+// what keeps a dry run's output from reading as a real run's. The worktree
+// line is covered here and nowhere else: a command test whose PATH has no
+// git never reaches it.
+func TestTense(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		dryRun bool
+		want   string
+	}{
+		{"a real run says what it did", false, "removed worktree"},
+		{"a dry run says what it would do", true, "would remove worktree"},
+	} {
+		if got := tense(tc.dryRun, "removed worktree", "would remove worktree"); got != tc.want {
+			t.Errorf("%s: tense = %q, want %q", tc.name, got, tc.want)
 		}
 	}
 }

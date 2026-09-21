@@ -165,8 +165,8 @@ func (s *Scan) sessions() []Proc {
 }
 
 // Finder is session discovery with the options a caller needs. The package
-// functions Find, FromPIDFile, FromPIDFiles, FromContainers and FromPS are
-// a zero Finder with the markers they are given.
+// functions Find, FromPIDFile, FromPIDFiles and FromContainers are a Finder
+// carrying the markers they are given and nothing else.
 //
 // Discovery ordinarily writes: a pid, container-id or server-pid file
 // naming a process, container or server that is gone is deleted as it is
@@ -175,20 +175,31 @@ func (s *Scan) sessions() []Proc {
 // with ReadOnly set and gets the same []Proc with every file left in place.
 type Finder struct {
 	// Markers identify the caller's sessions in the process table and its
-	// containers by label. The zero value is the default set.
-	Markers Markers
+	// containers by label. Nil is the default set; a Markers given here is
+	// used as it stands, so an empty one matches no process and no
+	// container, exactly as passing Markers{} to the package functions does.
+	Markers *Markers
 	// ReadOnly keeps discovery from writing under the sessions directory:
 	// nothing stale is deleted, however plainly stale it is.
 	ReadOnly bool
 }
 
-// markers is the set to identify sessions with: the caller's, or the
-// defaults when it named none.
+// markers is the set to identify sessions with: the caller's as it stands,
+// or the defaults when it named none.
 func (f Finder) markers() Markers {
-	if f.Markers == (Markers{}) {
+	if f.Markers == nil {
 		return markerSet(nil)
 	}
-	return f.Markers
+	return *f.Markers
+}
+
+// withMarkers is the finder the package functions run on: the markers as
+// given, which is not the same as none given when they are empty.
+func withMarkers(markers []Markers) Finder {
+	if len(markers) == 0 {
+		return Finder{}
+	}
+	return Finder{Markers: &markers[0]}
 }
 
 // FromPIDFile returns the live session recorded in one session directory:
@@ -453,7 +464,7 @@ func isAgentCommand(argv []string) bool {
 // whose sessions live in sessionsDir. Pid files are cross-checked against
 // the process table when it is available.
 func Find(ctx context.Context, sessionsDir string, markers ...Markers) ([]Proc, error) {
-	return Finder{Markers: markerSet(markers)}.Find(ctx, sessionsDir)
+	return withMarkers(markers).Find(ctx, sessionsDir)
 }
 
 // Find is Find with the finder's options: a read-only finder reports the

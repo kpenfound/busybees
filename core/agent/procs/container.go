@@ -153,7 +153,7 @@ func RemoveSandboxName(dir string) { _ = os.Remove(filepath.Join(dir, SandboxNam
 // It fails when there is no engine to ask, which is also the answer to
 // "are any container sessions running": none that can be found or stopped.
 func FromContainers(ctx context.Context, sessionsDir string, markers ...Markers) ([]Proc, error) {
-	return Finder{Markers: markerSet(markers)}.FromContainers(ctx, sessionsDir)
+	return withMarkers(markers).FromContainers(ctx, sessionsDir)
 }
 
 // FromContainers is FromContainers with the finder's options: a read-only
