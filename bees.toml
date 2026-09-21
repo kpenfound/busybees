@@ -205,13 +205,7 @@ test. go build, go vet and gofmt are fine on the host; go vet type-checks tests.
 skills = [
   "https://github.com/poteto/plugins#pstack/skills/unslop",
 ]
-# claude model, and the model used once it has hit its usage limit.
-# Agent settings moved to profiles (version 3).
-# Previous: agent = "codex"
-# Configure model through profile / profile_by_size and [profiles.<name>].
-# Configure fallback through profile / profile_by_size and [profiles.<name>].
-# Effort level: low, medium, high or max.
-# Configure effort through profile / profile_by_size and [profiles.<name>].
+
 # Agentic turns per session and wall-clock limit.
 #max_turns = 200
 #timeout = "45m"
@@ -221,12 +215,6 @@ disallowed_tools = ["Artifact", "Bash(go test *)", "Bash(docker *)"]
 # Shell for claude's Bash tool in sessions (exported as $SHELL).
 #shell = "/bin/bash"
 
-
-# How much of the machine a session can reach: none, claude, container or sbx.
-# Set it per role in [roles.<name>] to box the roles that run untrusted code
-# harder than the ones that only read the repository.
-# Agent settings moved to profiles (version 3).
-# Previous: sandbox = "none"
 
 # Environment variables exported into every session (claude, its Bash tool,
 # MCP servers, git). $VARS are expanded from the bees environment. Roles can
