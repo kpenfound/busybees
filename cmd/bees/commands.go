@@ -607,9 +607,10 @@ func newStatusCmd(g *globalFlags) *cobra.Command {
 				return json.NewEncoder(os.Stdout).Encode(statusJSON(cfg, st, counts, todayJSON(today, todayErr), rows, now))
 			}
 			fmt.Printf("repo: %s   state: %s%s\n", cfg.Project.Repo, cfg.StateDir(), actingAs(cfg))
-			fmt.Println(schedulerLine(st, now))
+			running := schedulerRunning(st)
+			fmt.Println(schedulerLine(st, running, now))
 			fmt.Println(todayText(today, todayErr))
-			fmt.Println(workHoursLine(cfg.Scheduler, st, now))
+			fmt.Println(workHoursLine(cfg.Scheduler, st, running, now))
 			if st.LastError != "" {
 				fmt.Println("last error:", st.LastError)
 			}
@@ -699,10 +700,13 @@ type roleRow struct {
 // statusJSON is the object `bees status --json` prints. It is a function so a
 // test can assert what that object carries: the build the scheduler is running
 // rides along inside `status`, and must not gain a second, top-level copy.
+// `running` is whether the scheduler status.json records is still a live
+// process (schedulerRunning), computed as the command runs.
 func statusJSON(cfg *config.Config, st state.Status, counts map[string]int, today todayReport, rows []roleRow, now time.Time) map[string]any {
 	return map[string]any{
 		"status": st, "unread_mail": counts, "today": today, "notes_bytes": notesBytes(rows),
 		"work_hours": workHoursJSON(cfg.Scheduler, now), "acting_as": cfg.GitHub.Login,
+		"running": schedulerRunning(st),
 	}
 }
 
