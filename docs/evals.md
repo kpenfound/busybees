@@ -100,9 +100,11 @@ is a fault the case scores against the reviewer.
 
 Which angles run follows the size the brief gives the change, not the size
 label on the issue: a change the brief calls `xs` or `s` is read from
-`quick_general` and `docs`, and `test_coverage`, `acceptance_criteria` and
-`side_effects` run from `m` up. The criteria of the issues the pull request
-closes reach every angle whatever the size, because the brief carries them.
+`quick_general` and `docs`; `m` and `l` swap the quick general pass for the
+thorough one and add `test_coverage` and `acceptance_criteria`; and
+`side_effects` runs at `xl` alone. The criteria of the issues the pull
+request closes reach every angle whatever the size, because the brief
+carries them.
 A project's `context.toml` can turn angles and context sources off; the
 fixtures ship none, so every built-in context source is gathered.
 
