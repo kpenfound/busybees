@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/kpenfound/busybees/core/agent/procs"
+	"github.com/kpenfound/busybees/internal/statemigrate"
 	"github.com/kpenfound/busybees/internal/testutil"
 	"github.com/kpenfound/busybees/internal/workspace"
 )
@@ -125,5 +128,96 @@ func TestKillStopsOnStatusMigrationFailure(t *testing.T) {
 	cmd.SetArgs([]string{"--dry-run"})
 	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "invalid state schema") {
 		t.Fatalf("kill ignored status migration failure: %v", err)
+	}
+}
+
+// `bees kill --dry-run` is an inspection: it must leave the state directory
+// as it found it, and say what it would do rather than what it did. Session
+// discovery deletes the stale pid, container-id and server-pid files it
+// reads, so a dry run over a running session used to delete that session's
+// pid file and report "no leftover sessions" (#840).
+func TestKillDryRunWritesNothingAndSpeaksInTheConditional(t *testing.T) {
+	path := writeProject(t, "owner/repo", "")
+	sessions := filepath.Join(filepath.Dir(path), ".bees", "sessions")
+	live := filepath.Join(sessions, "20260920-developer-issue-1-r1")
+	gone := filepath.Join(sessions, "20260920-qa-2")
+	for _, dir := range []string{live, gone} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// State migration refuses to upgrade a state directory whose session pid
+	// files name live processes, and it is no part of what this test is
+	// about: migrate the empty directory first, so kill finds it current.
+	if err := statemigrate.Ensure(filepath.Join(filepath.Dir(path), ".bees")); err != nil {
+		t.Fatal(err)
+	}
+	// A live process for the pid file to name. The PATH below holds no ps,
+	// so there is no process table to cross-check against and the pid file
+	// is trusted on its own: no agent is started, or needed.
+	sleep := exec.Command("/bin/sh", "-c", "sleep 60")
+	if err := sleep.Start(); err != nil {
+		t.Fatal(err)
+	}
+	reaped := make(chan struct{})
+	go func() { _ = sleep.Wait(); close(reaped) }() // reap, as init would for an orphan
+	t.Cleanup(func() { _ = sleep.Process.Kill(); <-reaped })
+	if err := procs.WritePID(live, sleep.Process.Pid); err != nil {
+		t.Fatal(err)
+	}
+	if err := procs.WritePID(gone, 999999); err != nil {
+		t.Fatal(err)
+	}
+	if err := procs.WriteServerPID(gone, 999999); err != nil {
+		t.Fatal(err)
+	}
+	// No ps, no git and no container engine: nothing but the pid files is
+	// read, and no real command runs.
+	t.Setenv("PATH", t.TempDir())
+
+	out := captureStdout(t, func() {
+		cmd := newKillCmd(&globalFlags{config: path})
+		cmd.SetArgs([]string{"--dry-run"})
+		if err := cmd.Execute(); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	want := fmt.Sprintf("would kill pid %d (pidfile)", sleep.Process.Pid)
+	if !strings.Contains(out, want) {
+		t.Errorf("bees kill --dry-run printed:\n%s\nwant a line %q", out, want)
+	}
+	for _, verb := range []string{"killing ", "removed "} {
+		if strings.Contains(out, verb) {
+			t.Errorf("bees kill --dry-run printed %q, which reads as a real run:\n%s", verb, out)
+		}
+	}
+	for _, f := range []string{
+		filepath.Join(live, procs.PIDFile),
+		filepath.Join(gone, procs.PIDFile),
+		filepath.Join(gone, procs.ServerPIDFile),
+	} {
+		if _, err := os.Stat(f); err != nil {
+			t.Errorf("bees kill --dry-run deleted %s: %v", f, err)
+		}
+	}
+	if !procs.Alive(sleep.Process.Pid) {
+		t.Error("bees kill --dry-run stopped the session it only reported on")
+	}
+
+	// The real run is what cleans up: the same fixture, now emptied of its
+	// stale files.
+	cmd := newKillCmd(&globalFlags{config: path})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{
+		filepath.Join(live, procs.PIDFile),
+		filepath.Join(gone, procs.PIDFile),
+		filepath.Join(gone, procs.ServerPIDFile),
+	} {
+		if _, err := os.Stat(f); !os.IsNotExist(err) {
+			t.Errorf("bees kill kept %s: %v", f, err)
+		}
 	}
 }

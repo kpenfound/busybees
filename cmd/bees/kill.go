@@ -34,6 +34,10 @@ stopped too, from the pid file it left in the session directory.
 Sessions of another project's factory are never touched, however many
 factories share a machine.
 
+--dry-run only looks: it prints in the conditional tense what it would stop
+and remove, and writes nothing under the state directory, not even the stale
+pid, container id and MCP server pid files a real run clears away.
+
 It refuses to run while a bees scheduler is alive, because killing sessions
 under a running scheduler corrupts its state; pass --scheduler to stop the
 scheduler as well.`,
@@ -54,7 +58,7 @@ scheduler as well.`,
 				if !scheduler {
 					return fmt.Errorf("a bees scheduler is running (pid %d); stop it with Ctrl-C or pass --scheduler", st.PID)
 				}
-				fmt.Printf("stopping scheduler pid %d\n", st.PID)
+				fmt.Printf("%s scheduler pid %d\n", tense(dryRun, "stopping", "would stop"), st.PID)
 				if !dryRun {
 					pgid := st.PID
 					if err := procs.Kill(procs.Proc{PID: st.PID, PGID: pgid}, grace); err != nil {
@@ -63,7 +67,12 @@ scheduler as well.`,
 				}
 			}
 
-			found, err := procs.Find(ctx, store.SessionsDir(), session.ProcessMarkers)
+			// A dry run only looks: discovery deletes the stale pid,
+			// container-id and server-pid files it reads, and a command that
+			// reports what it would do must leave the state directory as it
+			// found it (#840).
+			finder := procs.Finder{Markers: session.ProcessMarkers, ReadOnly: dryRun}
+			found, err := finder.Find(ctx, store.SessionsDir())
 			if err != nil {
 				return err
 			}
@@ -75,7 +84,7 @@ scheduler as well.`,
 				if desc == "" {
 					desc = filepath.Base(p.SessionDir)
 				}
-				fmt.Printf("killing %s (%s): %s\n", killTarget(p), p.Source, truncateStr(desc, 100))
+				fmt.Printf("%s %s (%s): %s\n", tense(dryRun, "killing", "would kill"), killTarget(p), p.Source, truncateStr(desc, 100))
 				if dryRun {
 					continue
 				}
@@ -98,7 +107,7 @@ scheduler as well.`,
 				fmt.Fprintln(os.Stderr, "warning:", err)
 			}
 			for _, w := range removed {
-				fmt.Println("removed worktree", w)
+				fmt.Println(tense(dryRun, "removed worktree", "would remove worktree"), w)
 			}
 
 			if !dryRun {
@@ -120,6 +129,15 @@ scheduler as well.`,
 	cmd.Flags().BoolVar(&scheduler, "scheduler", false, "also stop a running bees scheduler")
 	cmd.Flags().DurationVar(&grace, "grace", procs.DefaultGrace, "time to wait after SIGTERM before SIGKILL")
 	return cmd
+}
+
+// tense renders the verb of an action line in the tense the run is in, so
+// the output of a dry run cannot be read as a real one.
+func tense(dryRun bool, doing, would string) string {
+	if dryRun {
+		return would
+	}
+	return doing
 }
 
 // killTarget names what stopping a session means for it: its process, the
