@@ -68,8 +68,7 @@ notes_max_bytes = 18768
 stacked_prs = false
 
 #===============================================================================
-# Codex Profiles. A profile's fallback names the profile a retry runs on
-# instead after a session on it failed, as the Claude profiles below do.
+# Codex Profiles
 #===============================================================================
 
 # [profiles.default]
@@ -77,36 +76,53 @@ stacked_prs = false
 # model = "gpt-5.6-terra"
 # effort = "high"
 # sandbox = "none"
+# fallback = [astra_medium]
 
 # [profiles.review_fast]
 # agent = "codex"
-# model = "gpt-5.6-luna"
-# effort = "medium"
-# sandbox = "none"
+# model = "gpt-5.6-sol"
+# effort = "low"
+# fallback = [astra_medium]
 
 # [profiles.coder_smart]
 # agent = "codex"
-# model = "gpt-6-astra"
+# model = "gpt-5.6-sol"
 # effort = "high"
+# fallback = [astra_medium]
 
 # [profiles.coder_medium]
 # agent = "codex"
-# model = "gpt-6-sol"
-# effort = "high"
+# model = "gpt-5.6-sol"
+# effort = "medium"
+# fallback = [astra_medium]
 
 # [profiles.coder_dumb]
 # agent = "codex"
-# model = "gpt-5.6-luna"
+# model = "gpt-5.6-terra"
 # effort = "medium"
+# fallback = [coder_medium]
 
 # [profiles.manager_smart]
 # agent = "codex"
-# model = "gpt-5.6-sol"
-# effort = "high"
+# model = "gpt-6-astra"
+# effort = "medium"
+# fallback = [astra_high]
 
 # [profiles.manager_dumb]
 # agent = "codex"
 # model = "gpt-5.6-terra"
+# effort = "medium"
+# fallback = [manager_smart]
+
+# Fallbacks
+# [profiles.astra_high]
+# agent = "codex"
+# model = "gpt-6-astra"
+# effort = "high"
+
+# [profiles.astra_medium]
+# agent = "codex"
+# model = "gpt-6-astra"
 # effort = "medium"
 
 #===============================================================================
@@ -116,63 +132,56 @@ stacked_prs = false
 [profiles.default]
 agent = "claude"
 model = "opus"
-fallback = "coder_smart"
-effort = "high"
+effort = "medium"
 sandbox = "none"
+fallback = "coder_smart"
 
 [profiles.review_fast]
 agent = "claude"
 model = "opus"
-fallback = "fable_medium"
 effort = "medium"
-sandbox = "none"
+fallback = "fable_medium"
 
 [profiles.coder_smart]
 agent = "claude"
 model = "opus"
-fallback = "fable_medium"
 effort = "high"
+fallback = "fable_medium"
 
 [profiles.coder_medium]
 agent = "claude"
 model = "opus"
-fallback = "fable_medium"
 effort = "medium"
+fallback = "fable_medium"
 
 [profiles.coder_dumb]
 agent = "claude"
-model = "opus"
-fallback = "fable_low"
-effort = "low"
+model = "sonnet"
+effort = "high"
+fallback = "coder_smart"
 
 [profiles.manager_smart]
 agent = "claude"
-model = "opus"
-fallback = "fable_medium"
+model = "fable"
 effort = "medium"
+fallback = "fable_high"
 
 [profiles.manager_dumb]
 agent = "claude"
-model = "opus"
-fallback = "fable_low"
-effort = "low"
-
-# The profiles the ones above fall back to: fable at the same effort, and
-# for coder_smart, which runs fable itself, sonnet.
-[profiles.sonnet_high]
-agent = "claude"
 model = "sonnet"
 effort = "high"
+fallback = "manager_smart"
 
+# Fallbacks
 [profiles.fable_medium]
 agent = "claude"
 model = "fable"
 effort = "medium"
 
-[profiles.fable_low]
+[profiles.fable_high]
 agent = "claude"
 model = "fable"
-effort = "low"
+effort = "high"
 
 
 #===============================================================================
@@ -261,10 +270,6 @@ skills = [
   "https://github.com/mattpocock/skills#skills/engineering/resolving-merge-conflicts",
   "https://github.com/mattpocock/skills#skills/engineering/tdd",
 ]
-[roles.developer.mcp.dagger]
-command = "dagger"
-args = ["mcp", "--progress", "plain", "-m", "dagger.io/go@do-not-merge-hack"]
-env = { DAGGER_X_RELEASE = "v1.0.0-beta.14" }
 
 # Reviews pull requests and, optionally, merges them once checks are green.
 [roles.reviewer]
@@ -286,7 +291,7 @@ angles = { xs = ["quick_general"], s = ["quick_general"], m = ["quick_general", 
 # Brief/angles ignore sandbox and retain the host read-only floor: no commands,
 # writes, web/network tools, MCP/factory identity or writable/shared VCS.
 # The judge uses all five fields with reviewer-owned tools and permissions.
-brief_profile = "default"
+brief_profile = "review_fast"
 judge_profile = "default"
 angle_profiles = { quick_general = "review_fast", docs = "review_fast", test_coverage = "default" }
 
