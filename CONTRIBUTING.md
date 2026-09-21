@@ -222,6 +222,15 @@ dagger call qa-playground script --contents "$(cat probe.sh)"
 dagger call qa-playground script --project ../my-project --contents 'bees status'
 ```
 
+The playground is not a timing environment. A second in it is not a second
+on the host: a control script of nothing but `sleep 5` in a loop took over
+fifty minutes for a three-minute loop while the host was near idle. So
+nothing there can be judged by how long it took, and timeouts, budget
+windows and retry delays cannot be verified in it at all. Check those with
+unit tests under `dagger check`. If the speed of a run ever does matter,
+run a plain `sleep` loop beside it: that says whether the sandbox or bees
+is the slow one.
+
 The module contributes no checks: `dagger check` runs the three Go checks
 and nothing else. It is registered in `dagger.toml` as `qa-playground`
 without the `dang` SDK helper module (`github.com/dagger/dang-sdk`), which
