@@ -115,15 +115,15 @@ stacked_prs = false
 # fallback = manager_smart
 
 # Fallbacks
-# [profiles.astra_high]
-# agent = "codex"
-# model = "gpt-6-astra"
-# effort = "high"
+[profiles.astra_high]
+agent = "codex"
+model = "gpt-6-astra"
+effort = "high"
 
-# [profiles.astra_medium]
-# agent = "codex"
-# model = "gpt-6-astra"
-# effort = "medium"
+[profiles.astra_medium]
+agent = "codex"
+model = "gpt-6-astra"
+effort = "medium"
 
 #===============================================================================
 # Claude Profiles
@@ -183,6 +183,45 @@ agent = "claude"
 model = "fable"
 effort = "high"
 
+#===============================================================================
+# OpenCode Profiles
+#===============================================================================
+# [profiles.manager_dumb]
+# agent = "opencode"
+# model = "openrouter/z-ai/glm-5.3"
+# effort = "high"
+# fallback = "manager_smart"
+
+# [profiles.coder_medium]
+# agent = "opencode"
+# model = "openrouter/z-ai/glm-5.3"
+# effort = "high"
+# fallback = "coder_smart"
+
+# [profiles.coder_dumb]
+# agent = "opencode"
+# model = "openrouter/z-ai/glm-5.3-flash"
+# effort = "high"
+# fallback = "opencode_glm"
+
+# [profiles.review_fast]
+# agent = "opencode"
+# model = "openrouter/z-ai/glm-5.3-flash"
+# effort = "high"
+# fallback = "opencode_glm"
+
+# Fallbacks
+[profiles.opencode_glm_flash]
+agent = "opencode"
+model = "openrouter/z-ai/glm-5.3-flash"
+effort = "high"
+fallback = "default"
+
+[profiles.opencode_glm]
+agent = "opencode"
+model = "openrouter/z-ai/glm-5.3"
+effort = "high"
+fallback = "default"
 
 #===============================================================================
 # Global role settings
