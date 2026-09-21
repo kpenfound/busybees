@@ -158,9 +158,11 @@ func caseKey(c Case) string {
 // and the tree of every pull request the case seeds, build, are
 // gofmt-clean and have passing tests. A seeded branch whose own tests fail
 // measures whoever runs `go test` rather than the role the case is about,
-// and nothing else in the suite compiles either tree.
+// and nothing else in the suite compiles a seeded branch or a per-role
+// fixture at all.
 func TestShippedCaseGoIsSound(t *testing.T) {
 	ctx := context.Background()
+	branches := 0
 	for _, c := range shippedCases(t) {
 		t.Run(caseKey(c), func(t *testing.T) {
 			fx, err := buildFixture(ctx, c, t.TempDir())
@@ -170,6 +172,7 @@ func TestShippedCaseGoIsSound(t *testing.T) {
 			if err := checkGo(ctx, fx.project); err != nil {
 				t.Errorf("the fixture: %v", err)
 			}
+			branches += len(c.PullRequests)
 			for _, p := range c.PullRequests {
 				if _, err := git(ctx, fx.project, "checkout", "-q", p.Head); err != nil {
 					t.Fatal(err)
@@ -179,6 +182,9 @@ func TestShippedCaseGoIsSound(t *testing.T) {
 				}
 			}
 		})
+	}
+	if branches == 0 {
+		t.Fatal("no shipped case seeds a pull request; the branch half of this test pins nothing")
 	}
 }
 
@@ -299,7 +305,10 @@ func TestCheckGoCatchesUnsoundGo(t *testing.T) {
 		want  string
 	}{
 		{"sound", map[string]string{"todo/sum.go": clean, "todo/sum_test.go": passes}, ""},
-		{"unformatted", map[string]string{"todo/sum.go": "package todo\n\nfunc Sum( n int ) int { return n }\n"}, "gofmt"},
+		{"unformatted", map[string]string{"todo/sum.go": "package todo\n\nfunc Sum( n int ) int { return n }\n"}, "gofmt would rewrite todo/sum.go"},
+		// A file gofmt cannot parse is left to the build, which says so in
+		// its own words.
+		{"unparseable", map[string]string{"todo/sum.go": "package todo\n\nfunc Sum( { }\n"}, "go build"},
 		{"does not build", map[string]string{"todo/sum.go": "package todo\n\nimport \"nosuch/pkg\"\n\nfunc Sum() int { return pkg.N }\n"}, "go build"},
 		{"failing test", map[string]string{"todo/sum.go": clean, "todo/sum_test.go": "package todo\n\nimport \"testing\"\n\nfunc TestSum(t *testing.T) {\n\tt.Fatal(\"the branch's own test fails\")\n}\n"}, "go test"},
 	} {

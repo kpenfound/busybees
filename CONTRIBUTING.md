@@ -166,8 +166,8 @@ See [core/README.md](core/README.md) for the execution boundary.
   seeds over it — and checks the Go in it builds, is `gofmt`-clean and passes
   `go test ./...`, in a temporary directory of its own. `evals/` is a Go
   module of its own (`evals/go.mod`) and `dagger.toml` leaves it out of lint
-  and test: the fixtures carry bugs on purpose, and the tests that catch them
-  live in `grade/`.
+  and test: the fixtures carry bugs on purpose, and a whole-factory case's
+  grading tests live in `grade/`.
 - `bees.example.toml` at the repository root is a golden file: the `bees init`
   template with the placeholders left in. Never edit it by hand. After
   changing `internal/config/template.go`, regenerate it with

@@ -188,13 +188,15 @@ cp -R "$(dirname "$0")/../fixtures/todo/." .
 `evals/fixtures/` is not a case.
 
 Put the files that grade the case in `grade/`, where a session that edits
-the fixture's tests does not change what grades it. A copy in `repo/` as well
-lets the developer run them, as in `hello`. Left out of `repo/`, as in the
-`todo-*` cases, they stay hidden the way SWE-bench hides its tests, and the
-issue has to state the behaviour they check. Give them names the developer
-is unlikely to pick (`eval_count_test.go`, `TestEvalCount`): a file copied
-over the checkout replaces one with the same path, and a Go test declared
-twice does not build.
+the fixture's tests does not change what grades it. A copy in `repo/` as
+well lets the developer run them, as in `hello`, where the test is a shell
+script: a Go test that fails on the fixture cannot be copied into `repo/`.
+Left out of `repo/`, as in the `todo-*` cases, they stay hidden the way
+SWE-bench hides its tests, and the issue has to state the behaviour they
+check. Give them names the developer is unlikely to pick
+(`eval_count_test.go`, `TestEvalCount`): a file copied over the checkout
+replaces one with the same path, and a Go test declared twice does not
+build.
 
 A fixture written in Go has to build, be `gofmt`-clean and pass its own
 `go test ./...`, and so does the tree of every branch the case seeds. The
