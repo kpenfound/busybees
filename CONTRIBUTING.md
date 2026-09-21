@@ -161,9 +161,13 @@ See [core/README.md](core/README.md) for the execution boundary.
   the case's test to fail, then copies `solution/` over it and expects the
   test to pass. A new case needs a `solution/` that passes. A per-role case
   under `evals/<role>/` has no test and so no `solution/`; the same suite
-  checks that it loads and that its fixture builds. `evals/` is a Go module of
-  its own (`evals/go.mod`) and `dagger.toml` leaves it out of lint and test:
-  the fixtures carry bugs on purpose.
+  checks that it loads and that its fixture builds. It also assembles every
+  shipped case — the fixture, then the tree of each pull request the case
+  seeds over it — and checks the Go in it builds, is `gofmt`-clean and passes
+  `go test ./...`, in a temporary directory of its own. `evals/` is a Go
+  module of its own (`evals/go.mod`) and `dagger.toml` leaves it out of lint
+  and test: the fixtures carry bugs on purpose, and a whole-factory case's
+  grading tests live in `grade/`.
 - `bees.example.toml` at the repository root is a golden file: the `bees init`
   template with the placeholders left in. Never edit it by hand. After
   changing `internal/config/template.go`, regenerate it with
