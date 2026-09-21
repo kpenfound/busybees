@@ -76,43 +76,43 @@ stacked_prs = false
 # model = "gpt-5.6-terra"
 # effort = "high"
 # sandbox = "none"
-# fallback = [astra_medium]
+# fallback = astra_medium
 
 # [profiles.review_fast]
 # agent = "codex"
 # model = "gpt-5.6-sol"
 # effort = "low"
-# fallback = [astra_medium]
+# fallback = astra_medium
 
 # [profiles.coder_smart]
 # agent = "codex"
 # model = "gpt-5.6-sol"
 # effort = "high"
-# fallback = [astra_medium]
+# fallback = astra_medium
 
 # [profiles.coder_medium]
 # agent = "codex"
 # model = "gpt-5.6-sol"
 # effort = "medium"
-# fallback = [astra_medium]
+# fallback = astra_medium
 
 # [profiles.coder_dumb]
 # agent = "codex"
 # model = "gpt-5.6-terra"
 # effort = "medium"
-# fallback = [coder_medium]
+# fallback = coder_medium
 
 # [profiles.manager_smart]
 # agent = "codex"
 # model = "gpt-6-astra"
 # effort = "medium"
-# fallback = [astra_high]
+# fallback = astra_high
 
 # [profiles.manager_dumb]
 # agent = "codex"
 # model = "gpt-5.6-terra"
 # effort = "medium"
-# fallback = [manager_smart]
+# fallback = manager_smart
 
 # Fallbacks
 # [profiles.astra_high]
