@@ -57,6 +57,23 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+// isReviewSession reports whether this process was started as a read-only
+// session through the shared restricted execution — a grader, or the review
+// pipeline's brief or one of its angles: claude is held to empty setting
+// sources, codex to its read-only sandbox, opencode to its pure mode and pi
+// to its read-only tool set. An ordinary role session carries none of those.
+func isReviewSession() bool {
+	switch {
+	case slices.Contains(os.Args, "--setting-sources"),
+		slices.Contains(os.Args, "--no-tools"):
+		return true
+	case len(os.Args) > 1 && os.Args[1] == "exec" && slices.Contains(os.Args, "read-only"),
+		len(os.Args) > 1 && os.Args[1] == "--pure":
+		return true
+	}
+	return false
+}
+
 // sendMail is a fake session writing to the mailbox, which a real one does
 // through the built-in MCP server's mail_send.
 func sendMail(fail func(error), from, to, subject, body string, issue int) {
@@ -81,9 +98,18 @@ func fakeClaude() {
 		fmt.Println("[]")
 		return
 	}
-	// A read-only session asked for json, not stream-json: a grader, or the
-	// review pipeline's brief or one of its angles.
-	if i := slices.Index(os.Args, "--output-format"); i >= 0 && i+1 < len(os.Args) && os.Args[i+1] == "json" {
+	// The configuration inventory a restricted opencode run probes with
+	// before the model: what a CLI honoring the inline restrictions
+	// resolves.
+	if len(os.Args) > 3 && os.Args[1] == "--pure" && os.Args[2] == "debug" {
+		fmt.Println(`{"agent":{"bees-read-only":{"mode":"primary","permission":{"*":"deny","read":"allow","grep":"allow","glob":"allow"}}},"mcp":{}}`)
+		return
+	}
+	// A read-only session through the shared restricted execution — a
+	// grader, or the review pipeline's brief or one of its angles. It runs
+	// as whichever agent the person's review configuration selects; the
+	// fake answers in each backend's stream format.
+	if isReviewSession() {
 		prompt, _ := io.ReadAll(os.Stdin)
 		text := string(prompt)
 		lines := strings.Split(strings.TrimSpace(text), "\n")
@@ -94,7 +120,33 @@ func fakeClaude() {
 		case !strings.Contains(lines[len(lines)-1], "from the ") || !strings.Contains(lines[len(lines)-1], " angle"):
 			answer = `{"summary":"Fixes the answer.","size":"xs","acceptance_criteria":[],"touched_areas":[]}`
 		}
-		fmt.Printf(`{"type":"result","subtype":"success","is_error":false,"result":%s,"session_id":"sid-review","num_turns":1,"total_cost_usd":0}`+"\n", strconv.Quote(answer))
+		switch {
+		case len(os.Args) > 1 && os.Args[1] == "exec" && slices.Contains(os.Args, "read-only"):
+			for _, ev := range []string{
+				`{"type":"thread.started","thread_id":"thread-review"}`,
+				`{"type":"item.completed","item":{"type":"agent_message","text":` + strconv.Quote(answer) + `}}`,
+				`{"type":"turn.completed"}`,
+			} {
+				fmt.Println(ev)
+			}
+		case len(os.Args) > 1 && os.Args[1] == "--pure":
+			for _, ev := range []string{
+				`{"type":"text","sessionID":"open-review","part":{"type":"text","text":` + strconv.Quote(answer) + `}}`,
+				`{"type":"step_finish","sessionID":"open-review","part":{"type":"step-finish","reason":"stop","cost":0}}`,
+			} {
+				fmt.Println(ev)
+			}
+		case slices.Contains(os.Args, "--no-tools"):
+			for _, ev := range []string{
+				`{"type":"session","id":"pi-review"}`,
+				`{"type":"message_end","message":{"role":"assistant","provider":"anthropic","model":"claude-sonnet","content":[{"type":"text","text":` + strconv.Quote(answer) + `}],"stopReason":"stop","usage":{"cost":{"total":0}}}}`,
+				`{"type":"turn_end"}`,
+			} {
+				fmt.Println(ev)
+			}
+		default:
+			fmt.Printf(`{"type":"result","subtype":"success","is_error":false,"result":%s,"session_id":"sid-review","num_turns":1,"total_cost_usd":0}`+"\n", strconv.Quote(answer))
+		}
 		return
 	}
 	sessionDir := os.Getenv(session.EnvSessionDir)

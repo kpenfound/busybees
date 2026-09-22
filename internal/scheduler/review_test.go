@@ -69,6 +69,21 @@ func modelOf(args []string) string {
 	return ""
 }
 
+// mcpServersOf reads the MCP configuration file a recorded session was
+// pointed at, from the path its command line names.
+func mcpServersOf(t *testing.T, args []string) string {
+	t.Helper()
+	i := slices.Index(args, "--mcp-config")
+	if i < 0 || i+1 >= len(args) {
+		t.Fatalf("no --mcp-config in %v", args)
+	}
+	data, err := os.ReadFile(args[i+1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
 // byKind indexes the recorded sessions by kind.
 func byKind(sessions []reviewSession) map[string]reviewSession {
 	out := map[string]reviewSession{}
@@ -167,13 +182,19 @@ func TestAReviewRunsBriefAnglesAndJudgeFromTheReviewerRole(t *testing.T) {
 			t.Errorf("the %s session ran with BEES_ROLE=%q; a review session is no factory session", s.Kind, s.Role)
 		}
 		line := strings.Join(s.Args, " ")
-		for _, want := range []string{`--mcp-config {"mcpServers":{}} --strict-mcp-config`, "--allowedTools " + strings.Join(review.ReadOnlyTools, ","), "--disallowedTools " + strings.Join(review.DeniedTools, ",")} {
+		for _, want := range []string{"--strict-mcp-config", "--allowedTools Read,Grep,Glob,LS,NotebookRead", "--disallowedTools Bash,BashOutput,Edit,KillShell,MultiEdit,NotebookEdit,Task,WebFetch,WebSearch,Write", "--setting-sources"} {
 			if !strings.Contains(line, want) {
 				t.Errorf("the %s session lacks %q:\n%s", s.Kind, want, line)
 			}
 		}
-		if strings.Contains(line, "--dangerously-skip-permissions") || strings.Contains(line, "mcp.json") {
-			t.Errorf("the %s session ran with the factory's permissions or MCP server:\n%s", s.Kind, line)
+		// The session's MCP configuration is an empty set: strict, so no
+		// inherited server is added, and the built-in bees server is not
+		// there.
+		if servers := mcpServersOf(t, s.Args); strings.Contains(servers, `"bees"`) {
+			t.Errorf("the %s session was given the factory's MCP server:\n%s", s.Kind, servers)
+		}
+		if strings.Contains(line, "--dangerously-skip-permissions") {
+			t.Errorf("the %s session ran with the factory's permissions:\n%s", s.Kind, line)
 		}
 	}
 	if line := strings.Join(judge, " "); !strings.Contains(line, "mcp.json") || !strings.Contains(line, "--dangerously-skip-permissions") {
@@ -338,7 +359,7 @@ func TestAFailedAngleIsSkippedAndAFailedReviewEscalates(t *testing.T) {
 
 	h.wantOrder("developer-issue-1-r1", "reviewer-pr-201-r1")
 	prompt := promptOf(t, h, 1)
-	for _, want := range []string{"Not reviewed:", "- docs: the session failed: docs session: exit status 1: fake review session: the model is overloaded", "### quick general: Widget does nothing"} {
+	for _, want := range []string{"Not reviewed:", "- docs: the session failed: docs session: exit_1: fake review session: the model is overloaded", "### quick general: Widget does nothing"} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("the judge's task lacks %q:\n%s", want, prompt)
 		}

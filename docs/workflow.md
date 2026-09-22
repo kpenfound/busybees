@@ -781,10 +781,10 @@ read-only session per angle `roles.reviewer.angles` gives that size looks
 for problems from that angle alone, and the judge merges what they found
 into one list, most severe first. `brief_profile`, `angle_profiles` and
 `judge_profile` select named profiles after the reviewer's size-resolved
-profile; unspecified phases retain that fallback. Brief/angle profiles use
-Claude or Codex, with sandbox ignored and a fixed host read-only policy:
-no commands, writes, web/network tools, MCP/factory identity or writable/shared
-VCS. The judge uses all five profile fields, including sandbox, through the
+profile; unspecified phases retain that fallback. Brief/angle profiles run
+any of the four agents — claude, codex, opencode or pi — each held to the
+read-only floor its backend declares, with sandbox ignored: no commands,
+writes, web/network tools, MCP/factory identity or writable/shared VCS. The judge uses all five profile fields, including sandbox, through the
 ordinary reviewer session with reviewer-owned prompt, tools and permissions.
 The reviewer session then posts that
 list on the pull request as one `comment` review, every finding and nothing

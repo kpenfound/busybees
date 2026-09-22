@@ -312,6 +312,26 @@ func (g *recordingGrader) Run(_ context.Context, req review.AgentRequest) (*revi
 	return &review.AgentResult{Text: g.answer, Turns: 1, CostKnown: true}, nil
 }
 
+// The grader is a review agent on the shared restricted execution, and the
+// review configuration can select any of the four agents for it: the fake
+// answers in each backend's stream format, and every rubric is scored.
+func TestTheGraderRunsOnEveryProvider(t *testing.T) {
+	for _, provider := range []string{"", config.AgentClaude, config.AgentCodex, config.AgentOpenCode, config.AgentPi} {
+		name := provider
+		if name == "" {
+			name = "default"
+		}
+		t.Run(name, func(t *testing.T) {
+			g := &review.CLIAgent{Provider: provider, ClaudeBin: os.Args[0], CodexBin: os.Args[0], OpenCodeBin: os.Args[0], PiBin: os.Args[0]}
+			_, res := runRoleCase(t, config.RoleDeveloper, developerCase, answerRepo(), func(r *Runner) { r.Grader = g })
+			graded := checkNamed(t, res, "the pull request says what changed")
+			if !graded.Pass {
+				t.Fatalf("the %s grader scored the case under the pass score: %+v", name, graded)
+			}
+		})
+	}
+}
+
 // A grader session is given the rubric, the transcript of the role's
 // session and the state the run left behind.
 func TestGraderSessionSeesTheTranscriptAndTheEndState(t *testing.T) {

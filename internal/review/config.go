@@ -88,15 +88,14 @@ const (
 // printed.
 var OutputModes = []string{OutputAsk, OutputApprove, OutputComment, OutputReject, OutputReport, OutputDiscard}
 
-// SupportedProviders lists the providers CLIAgent.command() (agent.go)
-// implements. Config.Validate() checks Provider against this list rather
-// than against config.Agents, the factory's own shared agent-name enum: the
-// two happen to agree today, but config.Agents can grow a value (a new
-// factory session backend) before internal/review implements it, and
-// validating against it would then accept a provider Run cannot start.
-// Widening this list is a deliberate step taken together with adding that
-// provider's case to command().
-var SupportedProviders = []string{config.AgentClaude, config.AgentCodex}
+// SupportedProviders lists the agents a review session can run as: the
+// backends whose descriptor (core/agent.Backends) declares that it can
+// establish the read-only floor a review session is held to. There is no
+// list of this package's own to keep in step: an agent that can run
+// restricted under the shared execution is supported here when it is
+// declared there, and Config.Validate() checks Provider and every profile
+// of a session's fallback chain against it.
+var SupportedProviders = supportedProviders()
 
 // Defaults used for every key the global file leaves out.
 const (

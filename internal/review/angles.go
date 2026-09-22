@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 
 	core "github.com/kpenfound/busybees/core/review"
-	"github.com/kpenfound/busybees/internal/config"
 )
 
 // The busybees angle adapter supplies configured read-only CLI agents and
@@ -168,15 +167,16 @@ func (a *Angles) logf(format string, args ...any) {
 // Resume reopens an angle's session with a follow-up question, for the
 // triage action that asks one, and returns what the session answered. The
 // session runs where it ran before, as the agent that ran it, under the same
-// read-only restriction. An angle that failed has no session to reopen, and
-// codex has no resume: both are errors, as is an agent other than the one
-// the run records, which would start a session that had read nothing.
+// read-only restriction. An angle that failed has no session to reopen, a
+// backend that declares no follow-up (codex) cannot resume, and an agent
+// other than the one the run records would start a session that had read
+// nothing: all three are errors.
 func (a *Angles) Resume(ctx context.Context, run AngleRun, question string) (*AgentResult, error) {
 	switch {
 	case run.Failed() || run.SessionID == "":
 		return nil, fmt.Errorf("the %s angle's session did not finish, so there is nothing to resume: run the review again", run.Angle)
-	case run.Provider == config.AgentCodex:
-		return nil, fmt.Errorf("the %s angle ran as codex, which cannot resume a session", run.Angle)
+	case !followUpSupported(run.Provider):
+		return nil, fmt.Errorf("the %s angle ran as %s, which cannot resume a session", run.Angle, run.Provider)
 	case run.Provider != a.providerFor(run.Angle):
 		return nil, fmt.Errorf("the %s angle ran as %s and the configured provider is %s, which cannot resume its session", run.Angle, run.Provider, a.providerFor(run.Angle))
 	}

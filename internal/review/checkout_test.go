@@ -231,6 +231,22 @@ func TestTheCheckoutImageIsBuiltOnce(t *testing.T) {
 	}
 }
 
+// What docker said reaches the error through tail, and only its end when
+// it said too much: a failure that repeated itself on every line must not
+// print the whole of it.
+func TestTailBoundsWhatDockerSaid(t *testing.T) {
+	if got := tail(""); got != "" {
+		t.Errorf("tail(\"\") = %q, want nothing appended", got)
+	}
+	if got := tail("  not found  "); got != ": not found" {
+		t.Errorf("tail of a short message = %q, want the message", got)
+	}
+	long := strings.Repeat("x", 500)
+	if got, want := tail(long), ": ..."+long[100:]; got != want {
+		t.Errorf("tail of a long message kept %d characters, want the last %d behind an ellipsis", len(got)-4, len(long)-100)
+	}
+}
+
 func TestWithoutDockerTheAnglesRunInTheMachinesCheckout(t *testing.T) {
 	local := t.TempDir()
 	artifact := filepath.Join(t.TempDir(), "review-7")

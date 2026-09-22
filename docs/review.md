@@ -51,10 +51,27 @@ context  ->  brief  ->  angles  ->  findings  ->  triage  ->  end
 6. **End.** What you selected is posted as one review, printed as a
    report, or discarded: see [How a review ends](#how-a-review-ends).
 
-Every session is read-only. A `claude` session may use `Read`, `Grep`,
-`Glob`, `LS` and `NotebookRead` and nothing else; a `codex` session runs in
-Codex's read-only sandbox. No session runs the tests, builds the change or
-writes to the repository.
+Every session is read-only, held there by the agent's own settings rather
+than by the prompt. A `claude` session may use `Read`, `Grep`, `Glob`, `LS`
+and `NotebookRead` and nothing else. A `codex` session runs in Codex's
+read-only sandbox with its command, fetch and plugin features off, and an
+inventory of the MCP servers it inherits is taken first so every one of
+them can be disabled. An `opencode` session runs in pure mode as a private
+agent whose only tools are read, grep and glob, and the configuration it
+resolves is checked to have taken them before the model runs. A `pi`
+session loads no extension, skill, prompt template or context file, and
+gets only its `read`, `grep`, `find` and `ls` tools. No session runs the
+tests, builds the change or writes to the repository, and none inherits
+your factory's identity: `BEES_*` and Git variables are dropped.
+
+The sessions run as the agent `provider` or a profile names — `claude`,
+`codex`, `opencode` or `pi` — and an effort maps to each one's reasoning
+setting: claude's `--effort`, codex's `model_reasoning_effort` (its levels
+stop at `high`, so `max` goes as `high`), the opencode agent's variant and
+pi's `--thinking`. Codex reports no cost, so a codex session's cost is
+unknown rather than zero; claude, opencode and pi report one. An `ask` in
+triage reopens the angle's session; codex has no resume, so a question
+about a finding a codex angle made is refused.
 
 As the context is gathered, bees checks out the pull request's head, in a
 container: an Alpine image with git, built the first time and kept, clones
@@ -331,7 +348,7 @@ token = "$REVIEW_GH_TOKEN"
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `provider` | string | `"claude"` | The agent a session without a profile runs as: `claude` or `codex` |
+| `provider` | string | `"claude"` | The agent a session without a profile runs as: `claude`, `codex`, `opencode` or `pi` |
 | `model` | string | `"opus"` | The model a session without a profile uses, unless a key below names another |
 | `brief_model` | string | `model` | The model of the distiller session that writes the brief |
 | `angle_models.<angle>` | string | `model` | The model of that angle's session |
@@ -386,9 +403,9 @@ agent = "codex"
 model = "gpt-5"
 ```
 
-The distiller and the angles run as `claude` or `codex`, and so does every
-profile of their fallback chains. `sandbox` is checked and not used: every
-review session is read-only whatever the profile says.
+The distiller and the angles run as one of the four agents above, and so
+does every profile of their fallback chains. `sandbox` is checked and not
+used: every review session is read-only whatever the profile says.
 
 `judge_model` and `judge_profile` give the file the shape of
 `roles.reviewer` in `bees.toml`, where the judge is a session; in

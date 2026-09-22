@@ -217,6 +217,19 @@ func checkoutImageFor(ctx context.Context, docker string) (string, error) {
 	return tag, nil
 }
 
+// tail is the end of what docker printed, appended to the error that says
+// the build or the clone failed. It is bounded: a failure that repeated
+// itself on every line would otherwise print the whole of it.
+func tail(s string) string {
+	if s = strings.TrimSpace(s); s == "" {
+		return ""
+	}
+	if len(s) > 400 {
+		s = "..." + s[len(s)-400:]
+	}
+	return ": " + s
+}
+
 // checkoutTag names the image checkoutDockerfile builds.
 func checkoutTag() string {
 	sum := sha256.Sum256([]byte(checkoutDockerfile))

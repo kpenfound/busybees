@@ -556,9 +556,11 @@ change of that size is reviewed from; a size it does not name keeps the
 built-in list. `brief_profile`, `angle_profiles` and `judge_profile` select
 named execution profiles after the reviewer's size-specific selection.
 Unspecified phases and angles keep that fallback. Brief and angle profiles
-use Claude or Codex and ignore sandbox: the host adapter enforces a read-only
+run any of the four agents — claude, codex, opencode or pi — and ignore
+sandbox: the shared restricted execution enforces a read-only
 checkout with no commands, writes, web/network tools, MCP/factory identity
-or writable/shared VCS. The judge applies all five profile fields, including
+or writable/shared VCS, whatever the agent is. The judge applies all five
+profile fields, including
 sandbox, with reviewer-owned prompt, tools and permissions. See
 [configuration.md](configuration.md#rolesreviewer-only-the-review-pipeline)
 for the keys, their defaults and their built-in per-size lists.
