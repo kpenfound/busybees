@@ -5,8 +5,9 @@ headless coding-agent sessions — product manager, project manager, developers,
 reviewers and QA, against one or more GitHub repositories.
 
 Humans steer it through GitHub. Create and label issues, comment, merge pull requests;
-the bees do the rest. Every role runs in its own temporary git worktree, talks to the
-other roles through a local mailbox, and is configured by one file: `bees.toml`.
+the bees do the rest. Every role runs in its own temporary git worktree and talks to
+the other roles through a local mailbox. Each project has a `bees.toml`; optional
+user-level defaults share agent profiles and role mappings across projects.
 
 <img width="964" height="575" alt="image" src="https://github.com/user-attachments/assets/599cba11-910a-4f22-8ec3-c78272417c35" />
 
@@ -101,11 +102,11 @@ ways to run the factory.
   [The mailbox](docs/architecture.md#the-mailbox).
 - **Several projects per process.** A machine config lists each project's
   `bees.toml`. `bees run -d` runs in the background; SIGHUP reloads the list
-  and every project's `bees.toml`.
+  and every project's `bees.toml` and user-level profile defaults.
   See [Running in the background](docs/cli.md#running-in-the-background).
 - **A config per project.** `bees.toml` holds project settings, the visibility filter,
   scheduler limits, agent profiles, and global and per-role prompt/skills/MCP
-  settings. See
+  settings; `~/.config/bees/defaults.toml` can supply shared profiles and selectors. See
   [Configuration](docs/configuration.md) and [bees.example.toml](bees.example.toml).
 - **A CLI for status, cost and control.** `bees status`, `bees cost`, `bees tick`,
   `bees exec`, `bees notes`, and `bees kill`. See [CLI reference](docs/cli.md).

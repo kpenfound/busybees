@@ -604,9 +604,10 @@ bees machine reload -c ~/.config/bees/machine.toml
 bees machine stop -c ~/.config/bees/machine.toml
 ```
 
-SIGHUP to a project run rereads its `bees.toml` and hands it to the running
-scheduler, the same reload as `r` in [the live view](#the-live-view), with or
-without the view; a `--once` run ignores the signal. The log says
+SIGHUP to a project run rereads its `bees.toml` and user-level profile defaults
+and hands them to the running scheduler, the same reload as `r` in [the live
+view](#the-live-view), with or without the view; a `--once` run ignores the
+signal. The log says
 `reloaded bees.toml` with the file, or gives the reason the reload was
 refused, the file and, for a key that cannot change while the factory runs,
 that a restart applies it:
@@ -685,7 +686,8 @@ child publishes its PID and lock ownership, they ask you to retry.
 
 Sends SIGHUP through the same pidfile. A missing daemon is an error. Success
 means the reload was requested; check the daemon log for the result. The
-daemon rereads the project list and every project's `bees.toml` as described
+daemon rereads the project list, every project's `bees.toml`, and the
+user-level profile defaults as described
 under [Running in the background](#running-in-the-background). Stop and reload
 need the active file to identify a machine config, but do not load its
 project files, so a removed project config does not block control.
@@ -805,7 +807,7 @@ The keys:
 | `o` | Open the selected issue or pull request on GitHub. |
 | `k` | Stop the selected session and hand its issue to a person. It asks first, naming the session: press `k` again to stop the one it named. |
 | `p` | Pause dispatch, or resume it. Unavailable while the daily budget pause is in force. |
-| `r` | Reload the configuration from disk: `bees.toml`, or a machine config and every project's `bees.toml`. Running sessions keep the settings they started with. |
+| `r` | Reload the configuration from disk: `bees.toml` and user-level profile defaults, or a machine config, every project's `bees.toml`, and those defaults. Running sessions keep the settings they started with. |
 | `q`, `ctrl-c` | Stop the factory: nothing new starts and the work in flight finishes. Press again to stop the running sessions now, and a third time to leave the terminal early. |
 
 `q` and Ctrl-C stop the factory exactly as an interrupt does without the

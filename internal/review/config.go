@@ -205,14 +205,7 @@ func (g GitHub) RedactedToken() string {
 // configuration, notes and review artifacts in: $XDG_CONFIG_HOME/bees, or
 // ~/.config/bees when that variable is unset.
 func DefaultConfigDir() string {
-	if dir := os.Getenv("XDG_CONFIG_HOME"); filepath.IsAbs(dir) {
-		return filepath.Join(dir, "bees")
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return filepath.Join(".config", "bees")
-	}
-	return filepath.Join(home, ".config", "bees")
+	return config.DefaultConfigDir()
 }
 
 // DefaultConfigPath is the global configuration file LoadConfig reads when

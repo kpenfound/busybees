@@ -320,12 +320,14 @@ label = "{{.Label}}"
 #neo4j_url = "https://memory.neo4jlabs.com/v1"
 #neo4j_api_key = "$BEES_NEO4J_API_KEY"
 
-# Agent profiles bundle agent, model, fallback, effort and sandbox. Each
-# profile uses its own defaults; codex, opencode and pi have no default model.
-# No declaration is required when using the built-in defaults. Uncomment this
+# Agent profiles bundle agent, model, fallback, effort and sandbox. Profiles
+# and their global/per-role selectors may instead be shared across projects in
+# ~/.config/bees/defaults.toml; values in this project file win. Each profile
+# uses its own defaults; codex, opencode and pi have no default model. No
+# declaration is required when using the built-in defaults. Uncomment this
 # example to name those defaults explicitly. fallback names another profile,
-# the one a retry runs on instead, agent included, after a session on this
-# one failed; empty is none.
+# the one a retry runs on instead, agent included, after a session on this one
+# failed; empty is none.
 #[profiles.default]
 #agent = "claude"        # claude | codex | opencode | pi
 #model = "opus"
