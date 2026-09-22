@@ -51,9 +51,11 @@ and the session that posts the findings — with one review round, so the run
 ends on the verdict instead of going on to a developer session.
 
 Sessions are real agent sessions and cost money. --profile runs every role on
-one profile from bees.toml or ~/.config/bees/config.toml; without it the eval
-takes the profiles bees.toml selects, or config.toml's provider and model when
-there is no bees.toml. Nothing else of bees.toml is used. See docs/evals.md.`,
+one profile from bees.toml or ~/.config/bees/config.toml, which defaults.toml
+fills below itself; without it the eval takes the profiles bees.toml selects,
+config.toml's provider and model when there is no bees.toml, or the selection
+defaults.toml's [global] and [roles] tables make when there is no config.toml
+either. Nothing else of bees.toml is used. See docs/evals.md.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := refuseInsideSession("eval"); err != nil {
 				return err
@@ -110,7 +112,7 @@ there is no bees.toml. Nothing else of bees.toml is used. See docs/evals.md.`,
 		},
 	}
 	cmd.Flags().StringVar(&caseName, "case", "", "run only this case, from evals/ or evals/<role>/")
-	cmd.Flags().StringVar(&profile, "profile", "", "run every role on this profile, from bees.toml or ~/.config/bees/config.toml")
+	cmd.Flags().StringVar(&profile, "profile", "", "run every role on this profile, from bees.toml, ~/.config/bees/config.toml or defaults.toml")
 
 	// The gh every eval session runs: the script eval writes in front of
 	// the session's PATH calls this, never a person.
@@ -156,10 +158,10 @@ func evalOf(role string) string {
 }
 
 // evalGrader is the agent every graded check of a run is judged by: the
-// person's own read-only session agent, from ~/.config/bees/config.toml,
-// and never the profile the eval runs its roles on. Two runs of a case are
-// compared by their scores, so what does the scoring has to stay the same
-// while --profile changes what is being scored.
+// person's own read-only session agent, from ~/.config/bees/config.toml with
+// defaults.toml below it, and never the profile the eval runs its roles on.
+// Two runs of a case are compared by their scores, so what does the scoring
+// has to stay the same while --profile changes what is being scored.
 func evalGrader(global *review.Config) review.Agent {
 	a := review.NewAgent(global)
 	a.ClaudeBin, a.CodexBin = claudeBin(), codexBin()

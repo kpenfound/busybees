@@ -47,9 +47,11 @@ func (s Selection) String() string {
 
 // SelectProfile picks the profiles an eval runs on, the way a normal run
 // resolves them. A name is looked up in bees.toml's profiles first, then in
-// the global config.toml's, and runs every role; with none, bees.toml's own
-// selection is taken as it stands; without a bees.toml, the global file's
-// provider and model; without that either, the built-in profile. local and
+// the global config.toml's, which the user defaults file fills below it, and
+// runs every role; with none, bees.toml's own selection is taken as it
+// stands; without a bees.toml, the global file's provider and model; with no
+// config.toml file, the selection the defaults file's [global] and [roles]
+// tables make; and without that either, the built-in profile. local and
 // global may be nil.
 func SelectProfile(name string, local *config.Config, global *review.Config) (Selection, error) {
 	var s Selection
@@ -59,30 +61,30 @@ func SelectProfile(name string, local *config.Config, global *review.Config) (Se
 		case local != nil && hasProfile(local.Profiles, name):
 			s = Selection{Source: local.Path, profiles: local.Profiles}
 		case global != nil && hasProfile(global.Profiles, name):
-			s = Selection{Source: global.Path, profiles: global.Profiles}
+			source := global.Path
+			if !global.Loaded {
+				// config.toml is not there: the table the lookup found
+				// the name in is the defaults file's, and the selection
+				// names that file.
+				source = config.DefaultDefaultsPath()
+			}
+			s = Selection{Source: source, profiles: global.Profiles}
 		default:
 			return Selection{}, fmt.Errorf("--profile %q: no such profile in %s", name, strings.Join(profileSources(local, global), " or "))
 		}
 		s.Name = name
 		s.global = roleTable{Profile: name}
 	case local != nil:
-		s = Selection{Name: firstNonEmpty(local.Global.Profile, "default"), Source: local.Path, profiles: local.Profiles,
-			global: roleTable{Profile: local.Global.Profile, ProfileBySize: local.Global.ProfileBySize}}
-		for _, role := range slices.Sorted(maps.Keys(local.Roles)) {
-			rs := local.Roles[role]
-			t := roleTable{Profile: rs.Profile, ProfileBySize: rs.ProfileBySize, BriefProfile: rs.BriefProfile,
-				JudgeProfile: rs.JudgeProfile, AngleProfiles: rs.AngleProfiles}
-			if !t.empty() {
-				if s.roles == nil {
-					s.roles = map[string]roleTable{}
-				}
-				s.roles[role] = t
-			}
-		}
+		s = selectionFromTables(local.Path, local.Global, local.Roles, local.Profiles)
 	case global != nil && global.Loaded:
 		s = Selection{Name: "default", Source: global.Path,
 			profiles: map[string]config.AgentProfile{"default": {Agent: global.Provider, Model: global.Model}},
 			global:   roleTable{Profile: "default"}}
+	case global != nil:
+		var err error
+		if s, err = defaultsSelection(); err != nil {
+			return Selection{}, err
+		}
 	default:
 		s = Selection{Name: "default", Source: BuiltIn}
 	}
@@ -109,6 +111,39 @@ func SelectProfile(name string, local *config.Config, global *review.Config) (Se
 func hasProfile(profiles map[string]config.AgentProfile, name string) bool {
 	_, ok := profiles[name]
 	return ok
+}
+
+// selectionFromTables is the selection a bees.toml-shaped set of tables
+// makes: [global]'s profile and profile_by_size, each role's own keys, and
+// the [profiles] the selection names. A project's bees.toml and the user
+// defaults file hold the same tables.
+func selectionFromTables(source string, global config.RoleSettings, roles map[string]config.RoleSettings, profiles map[string]config.AgentProfile) Selection {
+	s := Selection{Name: firstNonEmpty(global.Profile, "default"), Source: source, profiles: profiles,
+		global: roleTable{Profile: global.Profile, ProfileBySize: global.ProfileBySize}}
+	for _, role := range slices.Sorted(maps.Keys(roles)) {
+		rs := roles[role]
+		t := roleTable{Profile: rs.Profile, ProfileBySize: rs.ProfileBySize, BriefProfile: rs.BriefProfile,
+			JudgeProfile: rs.JudgeProfile, AngleProfiles: rs.AngleProfiles}
+		if !t.empty() {
+			if s.roles == nil {
+				s.roles = map[string]roleTable{}
+			}
+			s.roles[role] = t
+		}
+	}
+	return s
+}
+
+// defaultsSelection is the selection the user defaults file makes below the
+// global config: its [global] and [roles] tables and its profiles, named as
+// the file they came from. With no defaults file there is no selection, and
+// the caller takes the built-in profile.
+func defaultsSelection() (Selection, error) {
+	defaults, err := config.LoadUserDefaults()
+	if err != nil || defaults == nil {
+		return Selection{Name: "default", Source: BuiltIn}, err
+	}
+	return selectionFromTables(config.DefaultDefaultsPath(), defaults.Global, defaults.Roles, defaults.Profiles), nil
 }
 
 func profileSources(local *config.Config, global *review.Config) []string {

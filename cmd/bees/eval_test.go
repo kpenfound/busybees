@@ -31,6 +31,34 @@ func TestEvalProfileMustExist(t *testing.T) {
 	}
 }
 
+// bees eval resolves --profile from defaults.toml when neither bees.toml nor
+// config.toml defines it, and the run's line names the file it came from.
+// The case is invalid, so no session runs.
+func TestEvalProfileFromDefaults(t *testing.T) {
+	evalHome(t)
+	dir := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "bees")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "defaults.toml"), []byte("version = 5\n[profiles.fast]\nmodel = \"sonnet\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(t.TempDir())
+	evalCase(t, "hello", "true")
+	root := newRoot()
+	var errOut bytes.Buffer
+	root.SetArgs([]string{"eval", "--profile", "fast"})
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&errOut)
+	err := root.Execute()
+	if err == nil || err.Error() != "1 case of 1 failed" {
+		t.Fatalf("got %v", err)
+	}
+	if !strings.Contains(errOut.String(), "with profile fast (defaults.toml)") {
+		t.Fatalf("what the run said:\n%s", errOut.String())
+	}
+}
+
 // evalCase writes evals/<name>/ in the current directory, graded by test.
 func evalCase(t *testing.T, name, test string) {
 	t.Helper()

@@ -111,14 +111,19 @@ fixtures ship none, so every built-in context source is gathered.
 ### Which profile the sessions run on
 
 `--profile <name>` runs every role on that profile. bees looks it up in the
-`[profiles]` of `bees.toml` first, then in `~/.config/bees/config.toml`.
+`[profiles]` of `bees.toml` first, then in `~/.config/bees/config.toml`,
+which [defaults.toml](review.md#defaultstoml) fills below itself — a profile
+defined only there is found, and the run names the file it came from.
 
 Without `--profile`, the eval uses the profile selection `bees.toml` makes
 ([profiles](configuration.md#profilesname)): `[global]` and each
 role's `profile` and `profile_by_size`, and the reviewer's `brief_profile`,
 `judge_profile` and `angle_profiles`. With no `bees.toml`, it uses the
-`provider` and `model` of `~/.config/bees/config.toml`, and without that file
-the built-in profile.
+`provider` and `model` of `~/.config/bees/config.toml`. With no
+`config.toml` either, it takes the selection `defaults.toml`'s `[global]`
+and `[roles]` tables make instead, the same keys a project's `bees.toml`
+reads them as, and the run names that file. Without a `defaults.toml`, the
+built-in profile.
 
 The eval takes nothing else from `bees.toml`: no prompts, skills, MCP
 servers, limits or timings, and every role is configured — a per-role run
@@ -378,10 +383,13 @@ grader's taste scores differently from run to run, which is the one thing an
 eval must not do.
 
 The grader is **not** the agent `--profile` selects. It is the read-only
-session agent from `~/.config/bees/config.toml` — the one `bees review` runs
-— and it stays the same whatever profile the roles run on. Two runs of a case
-are compared by their scores, so what does the scoring has to hold still
-while what is being scored changes.
+session agent the global review configuration supplies — `config.toml`, with
+`defaults.toml` below it, so with no `config.toml` it runs as the agent and
+model the defaults file's `roles.reviewer.profile` selects, else
+`global.profile`'s. It is the one `bees review` runs, and it stays the same
+whatever profile the roles run on. Two runs of a case are compared by their
+scores, so what does the scoring has to hold still while what is being scored
+changes.
 
 ## Seeding a pull request
 

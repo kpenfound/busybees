@@ -26,7 +26,8 @@
 // session of its own scores (grader.go).
 //
 // Which agent profiles the sessions run on is profile.go's: --profile, or
-// the profiles bees.toml selects, or the person's global config.toml.
+// the profiles bees.toml selects, or the person's global config.toml,
+// which the user defaults file fills below it.
 package eval
 
 import (
