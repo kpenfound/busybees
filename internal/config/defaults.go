@@ -35,18 +35,35 @@ func DefaultConfigDir() string {
 }
 
 // DefaultDefaultsPath is the user-level defaults file read below every
-// project bees.toml.
+// project bees.toml and below the global review configuration.
 func DefaultDefaultsPath() string { return filepath.Join(DefaultConfigDir(), DefaultsFile) }
 
-type userDefaults struct {
-	Version  int                     `toml:"version"`
-	Global   RoleSettings            `toml:"global"`
-	Roles    map[string]RoleSettings `toml:"roles"`
-	Profiles map[string]AgentProfile `toml:"profiles"`
+// UserDefaults is what a defaults.toml holds: agent profiles and the
+// selectors that choose them, in the shape of the bees.toml tables they
+// stand in for ([profiles.*], [global] and [roles.*]). Loading has held the
+// file to bees.toml's rules: an unknown or misplaced key, and a value of
+// the wrong shape, are errors naming the file. What the references name is
+// checked after the merge, where either file may define the profile.
+type UserDefaults struct {
+	Version  int
+	Global   RoleSettings
+	Roles    map[string]RoleSettings
+	Profiles map[string]AgentProfile
+}
+
+// LoadUserDefaults reads the user defaults file, DefaultDefaultsPath. A file
+// that is not there is not an error: it loads as nil.
+func LoadUserDefaults() (*UserDefaults, error) {
+	parsed, err := loadUserDefaults()
+	if err != nil || parsed == nil {
+		return nil, err
+	}
+	d := parsed.config
+	return &d, nil
 }
 
 type parsedDefaults struct {
-	config   userDefaults
+	config   UserDefaults
 	metadata toml.MetaData
 	path     string
 }
@@ -75,7 +92,7 @@ func parseUserDefaults(text, path string) (*parsedDefaults, error) {
 		}
 	}
 
-	var d userDefaults
+	var d UserDefaults
 	md, err := toml.Decode(text, &d)
 	if err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
@@ -126,7 +143,7 @@ func allowedDefaultsKey(key toml.Key) bool {
 // replaces another value. References and fallback chains intentionally wait
 // for validation of the merged config, where either file may define the
 // profile they name.
-func (d userDefaults) validateSyntax() []string {
+func (d UserDefaults) validateSyntax() []string {
 	var errs []string
 	for _, name := range slices.Sorted(maps.Keys(d.Profiles)) {
 		errs = append(errs, validateProfileSyntax(name, d.Profiles[name])...)

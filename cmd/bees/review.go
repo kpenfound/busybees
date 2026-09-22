@@ -52,7 +52,8 @@ actions: what it dismisses goes into your reviewer notes, and --instructions
 tells it what you want from the review. It chooses how the review ends where
 you would have been asked.
 
-Its settings are ~/.config/bees/config.toml, and the repository's own
+Its settings are ~/.config/bees/config.toml, with ~/.config/bees/defaults.toml
+below it for the profiles and selectors it leaves out, and the repository's own
 context.toml says which angles run there. Every finding you dismiss is
 recorded in your reviewer notes, and consolidate turns the dismissals that
 repeat into rules: what a review drops, or ranks down, before it reaches you

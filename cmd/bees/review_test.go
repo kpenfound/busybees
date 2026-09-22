@@ -341,6 +341,27 @@ func TestReviewConsolidateDryRunWritesNothing(t *testing.T) {
 	}
 }
 
+// A defaults.toml that fails to load fails `bees review` before it reaches
+// the pull request, and the error names that file, which the command's own
+// messages never print otherwise.
+func TestReviewRefusesABadDefaultsFile(t *testing.T) {
+	home := reviewHome(t)
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	defaults := filepath.Join(home, "defaults.toml")
+	if err := os.WriteFile(defaults, []byte("version = 5\n[roles.reviewer]\nbrief_profile = \"ghost\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := runReview(t, "acme/widgets#7")
+	if err == nil {
+		t.Fatal("bees review loaded a defaults.toml naming an unknown profile")
+	}
+	if !strings.Contains(err.Error(), defaults) || !strings.Contains(err.Error(), `brief_profile: unknown profile "ghost"`) {
+		t.Fatalf("error %v does not name the defaults file and its key", err)
+	}
+}
+
 func TestReviewConsolidateReadsTheNotesPathFromTheGlobalConfig(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", home)

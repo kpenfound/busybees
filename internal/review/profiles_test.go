@@ -3,6 +3,7 @@ package review
 import (
 	"context"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -60,7 +61,7 @@ func chainOfRole(r config.ResolvedRole) []string {
 	return out
 }
 
-func parseConfig(t *testing.T, text string) *Config {
+func mustParseConfig(t *testing.T, text string) *Config {
 	t.Helper()
 	cfg, err := ParseConfig(text, filepath.Join(t.TempDir(), ConfigFile))
 	if err != nil {
@@ -72,7 +73,8 @@ func parseConfig(t *testing.T, text string) *Config {
 // A bees.toml reviewer setup moved into config.toml, its [profiles.*] tables
 // as they are and its three selectors taken out of [roles.reviewer] to the
 // top level, gives every step the agent, model, effort and fallback chain
-// the factory gives it.
+// the factory gives it. The same setup in defaults.toml, below a config.toml
+// that is not there, gives every step the same chains.
 func TestBeesTomlReviewerProfilesMovedToConfigToml(t *testing.T) {
 	bees, err := config.Parse("version = 5\n"+reviewerSection+"\n[roles.reviewer]\n"+reviewerSelection, filepath.Join(t.TempDir(), "bees.toml"))
 	if err != nil {
@@ -82,7 +84,7 @@ func TestBeesTomlReviewerProfilesMovedToConfigToml(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := parseConfig(t, reviewerSelection+reviewerSection)
+	cfg := mustParseConfig(t, reviewerSelection+reviewerSection)
 
 	brief := NewDistiller(cfg, "").Agent.(*CLIAgent)
 	if got, want := chainOf(brief), chainOfRole(role.ForBrief()); strings.Join(got, " ") != strings.Join(want, " ") {
@@ -106,12 +108,37 @@ func TestBeesTomlReviewerProfilesMovedToConfigToml(t *testing.T) {
 	if angles.Provider != DefaultProvider || angles.Model != DefaultModel {
 		t.Errorf("an angle no profile names runs as %s/%s, want the defaults", angles.Provider, angles.Model)
 	}
+
+	dir := configHome(t)
+	writeDefaults(t, dir, "version = 5\n"+reviewerSection+"[roles.reviewer]\n"+reviewerSelection)
+	fromDefaults, err := LoadConfig(filepath.Join(t.TempDir(), ConfigFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fromDefaults.Loaded {
+		t.Fatal("Loaded is true with no config.toml")
+	}
+	defaultsBrief := NewDistiller(fromDefaults, "").Agent.(*CLIAgent)
+	if got, want := chainOf(defaultsBrief), chainOf(brief); strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("brief from defaults.toml = %q, config.toml runs %q", got, want)
+	}
+	defaultsAngles := NewAngles(fromDefaults, "")
+	for angle := range cfg.AngleProfiles {
+		agent, _ := defaultsAngles.agentFor(angle)
+		if got, want := chainOf(agent.(*CLIAgent)), chainOfRole(role.ForAngle(angle)); strings.Join(got, " ") != strings.Join(want, " ") {
+			t.Errorf("%s = %q, bees.toml runs %q", angle, got, want)
+		}
+	}
+	if fromDefaults.BriefProfile != cfg.BriefProfile || !reflect.DeepEqual(fromDefaults.AngleProfiles, cfg.AngleProfiles) ||
+		!reflect.DeepEqual(fromDefaults.Profiles, cfg.Profiles) {
+		t.Errorf("defaults.toml projected %+v, config.toml holds %+v", fromDefaults, cfg)
+	}
 }
 
 // A step with a profile runs as the profile, whatever the flat keys say for
 // it; a step without one keeps the flat keys.
 func TestAProfileWinsOverTheFlatKeys(t *testing.T) {
-	cfg := parseConfig(t, `provider = "claude"
+	cfg := mustParseConfig(t, `provider = "claude"
 model = "opus"
 brief_model = "sonnet"
 brief_profile = "code"
@@ -145,7 +172,7 @@ effort = "max"
 // its fallback given to claude as --fallback-model, and its session is
 // resumed as the profile's agent, not the file's provider.
 func TestAnAngleProfileRunsAndResumesAsItsAgent(t *testing.T) {
-	cfg := parseConfig(t, `provider = "codex"
+	cfg := mustParseConfig(t, `provider = "codex"
 angle_profiles = { docs = "deep" }
 
 [profiles.deep]
@@ -220,5 +247,5 @@ func TestProfileErrors(t *testing.T) {
 	}
 	// The judge is no session, so its profile may run any agent, as in
 	// bees.toml; a profile nothing selects is only held to the table's checks.
-	parseConfig(t, "judge_profile = \"a\"\n[profiles.a]\nagent = \"opencode\"\n[profiles.b]\nagent = \"opencode\"\n")
+	mustParseConfig(t, "judge_profile = \"a\"\n[profiles.a]\nagent = \"opencode\"\n[profiles.b]\nagent = \"opencode\"\n")
 }
