@@ -14,7 +14,7 @@ import (
 //
 // What differs from claude and from opencode, and how each difference is met:
 //
-//   - Pi has no MCP support of its own. Every pi session loads the
+//   - Pi has no MCP support of its own. Ordinary pi sessions load the
 //     third-party pi-mcp-adapter extension (PiMCPAdapter) with -e, and hands
 //     it the session's MCP servers through the adapter's --mcp-config flag:
 //     pi-mcp.json in the session directory (writePiMCPConfig), the built-in
@@ -72,8 +72,8 @@ const PiMCPAdapter = "npm:pi-mcp-adapter"
 const PiMCPConfigFile = "pi-mcp.json"
 
 // EnvPiMCPConfigMode is the variable the adapter reads to decide whether
-// the --mcp-config file is the only configuration it reads; every pi
-// session sets it to "exclusive".
+// the --mcp-config file is the only configuration it reads; ordinary pi
+// sessions set it to "exclusive". Restricted sessions load no adapter.
 const EnvPiMCPConfigMode = "PI_MCP_CONFIG_MODE"
 
 var piRestrictedTools = []string{"read", "grep", "find", "ls"}
