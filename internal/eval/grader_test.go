@@ -1,8 +1,12 @@
 package eval
 
 import (
+	"os"
 	"strings"
 	"testing"
+
+	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/review"
 )
 
 // A grader answers the JSON object it was asked for, whatever it wraps it
@@ -101,5 +105,51 @@ func TestCutKeepsBothEnds(t *testing.T) {
 	}
 	if !strings.HasPrefix(got, "aaaa") || !strings.HasSuffix(got, "zzzz") || !strings.Contains(got, "cut here") {
 		t.Fatalf("cut: %q", got)
+	}
+}
+
+// The grader is built from the global review configuration and never from
+// the profile the eval runs its roles on. With no config.toml, that
+// configuration is the defaults file's, so the grader runs as the agent and
+// model roles.reviewer.profile selects there, whatever --profile selects for
+// the roles.
+func TestGraderComesFromTheGlobalConfigNotTheProfile(t *testing.T) {
+	global := defaultsConfig(t, `version = 5
+[profiles.fast]
+agent = "claude"
+model = "haiku"
+[profiles.slow]
+agent = "claude"
+model = "opus"
+[global]
+profile = "fast"
+[roles.reviewer]
+profile = "slow"
+`)
+
+	// --profile fast runs every role on the profile it names.
+	sel, err := SelectProfile("fast", nil, global)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, role := range config.Roles {
+		if sel.Roles[role] != "claude haiku" {
+			t.Fatalf("--profile fast: %s runs %q", role, sel.Roles[role])
+		}
+	}
+
+	// The grader the run grades with is the global configuration's — the
+	// defaults file's reviewer selection — and stays there however the
+	// roles are selected.
+	g := review.NewAgent(global)
+	if g.Provider != "claude" || g.Model != "opus" {
+		t.Fatalf("grader = %s/%s, want the defaults file's roles.reviewer.profile", g.Provider, g.Model)
+	}
+
+	// And it grades a case: the rubric's score is the fake grader's answer.
+	g.ClaudeBin = os.Args[0]
+	_, res := runRoleCase(t, config.RoleDeveloper, developerCase, answerRepo(), func(r *Runner) { r.Grader = g })
+	if c := checkNamed(t, res, "the pull request says what changed"); !c.Pass || c.Score == nil || *c.Score != 0.9 {
+		t.Fatalf("graded check: %+v", c)
 	}
 }
