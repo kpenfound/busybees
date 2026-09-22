@@ -369,6 +369,16 @@ sandbox values are ignored: the host adapter permits no commands, writes,
 web/network tools, MCP/factory identity or writable/shared VCS. The judge
 applies its sandbox through the ordinary reviewer workflow.
 
+Values the user-level `defaults.toml` supplied (see
+[User-level profile defaults](configuration.md#user-level-profile-defaults))
+are named beside what they supplied: `profile_sources` follows `profiles`, and
+every role carries `profile_sources` naming the file for each selector it set,
+`profile` and `profile_by_size` on every role, the reviewer's `brief_profile`,
+`judge_profile`, `angle_profiles` and `angles` besides, the map selectors per
+entry. A selection the project's `bees.toml` made, and every value built in,
+appear in no source map, so a role marked there runs on a profile or a
+selection `defaults.toml` chose.
+
 ```sh
 bees config show
 bees config show developer
@@ -381,6 +391,8 @@ bees config show developer
   "filter": { "label": "bees", "require_label": true, "assignee": "@me", "milestone": "", "creator": "" },
   "github": { "login": "busybees-bot", "token": "$BEES_GITHUB_TOKEN", "git_name": "", "git_email": "" },
   "scheduler": { "poll_interval": "5m0s", "max_developers": 1, "max_review_rounds": 3, "...": "" },
+  "profiles": { "fast": { "agent": "claude", "model": "sonnet", "fallback": "", "effort": "low", "sandbox": "none" } },
+  "profile_sources": { "fast": "/home/me/.config/bees/defaults.toml" },
   "roles": {
     "reviewer": {
       "name": "reviewer",
@@ -400,6 +412,7 @@ bees config show developer
       "brief_profile": { "agent": "claude", "model": "opus", "fallback": "", "effort": "", "sandbox": "none" },
       "judge_profile": { "agent": "claude", "model": "opus", "fallback": "", "effort": "", "sandbox": "none" },
       "angle_profiles": { "docs": { "agent": "claude", "model": "opus", "fallback": "", "effort": "", "sandbox": "none" }, "...": {} },
+      "profile_sources": { "profile": "/home/me/.config/bees/defaults.toml", "angle_profiles": { "docs": "/home/me/.config/bees/defaults.toml" } },
       "review_profiles_by_size": { "...": {} },
       "host_review_policy": "brief/angles: sandbox ignored; read-only checkout; no commands, writes, web/network tools, MCP, factory identity or writable/shared VCS",
       "auto_merge": false,

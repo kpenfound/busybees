@@ -179,6 +179,7 @@ func (c *Config) mergeUserDefaults(d *parsedDefaults, projectMD toml.MetaData) {
 	}
 
 	c.sources = metadataSources(d.metadata, d.path)
+	c.defaultsPath = d.path
 	projectPath := c.Path
 	if c.Profiles == nil {
 		c.Profiles = map[string]AgentProfile{}

@@ -259,6 +259,9 @@ type Config struct {
 	// It survives the defaults.toml merge for validation and future resolved
 	// configuration provenance.
 	sources map[string]string
+	// defaultsPath is the user-level defaults.toml the merge read keys into
+	// sources beside the project's from, empty when there was none.
+	defaultsPath string
 	// retentionPeriodDefaulted is true when the file did not set
 	// scheduler.retention_period, so a machine config's value may replace
 	// the default.

@@ -1,6 +1,12 @@
 package config
 
-import "maps"
+import (
+	"maps"
+	"slices"
+	"strings"
+
+	"github.com/BurntSushi/toml"
+)
 
 // View is the resolved configuration as printed by `bees config show`. Its
 // JSON field names follow bees.toml, with profiles_by_size showing each size
@@ -17,6 +23,10 @@ type View struct {
 	Notes     Notes                   `json:"notes"`
 	Roles     map[string]RoleView     `json:"roles"`
 	Profiles  map[string]AgentProfile `json:"profiles"`
+
+	// ProfileSources names, per profile, the defaults.toml that defined it.
+	// Profiles the project file declared are absent.
+	ProfileSources map[string]string `json:"profile_sources,omitempty"`
 }
 
 // FilterView is [filter] with require_label resolved to the bool the factory
@@ -69,6 +79,13 @@ type RoleView struct {
 	// ProfilesBySize describes the effective size overrides for every role.
 	ProfilesBySize map[string]AgentProfile `json:"profiles_by_size"`
 
+	// ProfileSources names the defaults.toml behind every selector it set:
+	// profile and profile_by_size on every role, the reviewer's
+	// brief_profile, judge_profile, angle_profiles and angles besides, the
+	// map selectors per entry. A selection the project file made is absent,
+	// as is everything built in.
+	ProfileSources *RoleProfileSources `json:"profile_sources,omitempty"`
+
 	// CommitFlags, MaxSize and the best-of-N and
 	// mixture-of-experts keys are only set on the developer.
 	CommitFlags     *string         `json:"commit_flags,omitempty"`
@@ -106,6 +123,18 @@ type MergeView struct {
 	PreReviewChecksTimeout Duration `json:"pre_review_checks_timeout"`
 }
 
+// RoleProfileSources is a role's profile selectors as the user-level
+// defaults.toml set them, under their bees.toml key names and per map entry.
+// A selection the project file made, and every value built in, are absent.
+type RoleProfileSources struct {
+	Profile       string            `json:"profile,omitempty"`
+	ProfileBySize map[string]string `json:"profile_by_size,omitempty"`
+	BriefProfile  string            `json:"brief_profile,omitempty"`
+	JudgeProfile  string            `json:"judge_profile,omitempty"`
+	AngleProfiles map[string]string `json:"angle_profiles,omitempty"`
+	Angles        map[string]string `json:"angles,omitempty"`
+}
+
 // View resolves the configuration for the named roles.
 func (c *Config) View(roles []string) (View, error) {
 	v := View{
@@ -122,6 +151,17 @@ func (c *Config) View(roles []string) (View, error) {
 	}
 	if v.Profiles == nil {
 		v.Profiles = map[string]AgentProfile{}
+	}
+	if c.defaultsPath != "" {
+		sources := map[string]string{}
+		for name := range v.Profiles {
+			if c.sources[toml.Key{"profiles", name}.String()] == c.defaultsPath {
+				sources[name] = c.defaultsPath
+			}
+		}
+		if len(sources) > 0 {
+			v.ProfileSources = sources
+		}
 	}
 	if v.Scheduler.WorkDays == nil {
 		v.Scheduler.WorkDays = []string{}
@@ -178,6 +218,7 @@ func (c *Config) View(roles []string) (View, error) {
 		if rv.Env == nil {
 			rv.Env = map[string]string{}
 		}
+		rv.ProfileSources = c.roleProfileSources(rr.Name)
 		switch rr.Name {
 		case RoleProductManager:
 			min := c.MinIssueSize()
@@ -246,4 +287,82 @@ func reviewProfilesView(r ResolvedRole) ReviewProfilesView {
 		v.AngleProfiles[angle] = r.ForAngle(angle).AgentProfile()
 	}
 	return v
+}
+
+// roleProfileSources marks the profile selectors defaults.toml set for one
+// role. It resolves each selector the way Role does and reads the file the
+// merged key came from (Config.sources, which the defaults.toml merge fills),
+// so the marking sits on the same value the selector chose. A role nothing in
+// defaults.toml reaches has no sources.
+func (c *Config) roleProfileSources(name string) *RoleProfileSources {
+	if c.defaultsPath == "" {
+		return nil
+	}
+	rs := c.Roles[name]
+	g := c.Global
+	out := &RoleProfileSources{}
+	base := firstNonEmpty(rs.Profile, g.Profile)
+	if base != "" {
+		key := []string{"global", "profile"}
+		if rs.Profile != "" {
+			key = []string{"roles", name, "profile"}
+		}
+		out.Profile = c.defaultedSource(key...)
+	}
+	for _, size := range Sizes {
+		if firstNonEmpty(rs.ProfileBySize[size], rs.Profile, g.ProfileBySize[size], g.Profile) == base {
+			continue // no size override, nothing printed to mark
+		}
+		key := []string{"global", "profile_by_size", size}
+		if rs.ProfileBySize[size] != "" {
+			key = []string{"roles", name, "profile_by_size", size}
+		}
+		if s := c.defaultedSource(key...); s != "" {
+			if out.ProfileBySize == nil {
+				out.ProfileBySize = map[string]string{}
+			}
+			out.ProfileBySize[size] = s
+		}
+	}
+	if name == RoleReviewer {
+		if rs.BriefProfile != "" {
+			out.BriefProfile = c.defaultedSource("roles", name, "brief_profile")
+		}
+		if rs.JudgeProfile != "" {
+			out.JudgeProfile = c.defaultedSource("roles", name, "judge_profile")
+		}
+		for _, angle := range slices.Sorted(maps.Keys(rs.AngleProfiles)) {
+			if s := c.defaultedSource("roles", name, "angle_profiles", angle); s != "" {
+				if out.AngleProfiles == nil {
+					out.AngleProfiles = map[string]string{}
+				}
+				out.AngleProfiles[angle] = s
+			}
+		}
+		for _, size := range Sizes {
+			if len(rs.Angles[size]) == 0 {
+				continue
+			}
+			if s := c.defaultedSource("roles", name, "angles", size); s != "" {
+				if out.Angles == nil {
+					out.Angles = map[string]string{}
+				}
+				out.Angles[size] = s
+			}
+		}
+	}
+	if out.Profile == "" && out.ProfileBySize == nil && out.BriefProfile == "" &&
+		out.JudgeProfile == "" && out.AngleProfiles == nil && out.Angles == nil {
+		return nil
+	}
+	return out
+}
+
+// defaultedSource names defaults.toml when the merged key came from that
+// file, and is empty when the project supplied the key or nothing did.
+func (c *Config) defaultedSource(key ...string) string {
+	if c.defaultsPath == "" || c.sources[strings.Join(key, ".")] != c.defaultsPath {
+		return ""
+	}
+	return c.defaultsPath
 }
