@@ -25,16 +25,17 @@ type Angles struct {
 	Provider string
 	Model    string
 	// Sized replaces the built-in angles of each size it names (core/review size selection),
-	// config.toml's angles; a size it leaves out keeps the built-in list.
+	// the review configuration's angles (config.toml, with defaults.toml
+	// below it); a size it leaves out keeps the built-in list.
 	Sized map[string][]string
-	// Models is the model of each angle it names, config.toml's
-	// angle_models: that angle's session runs as a copy of Agent with the
-	// model replaced, when Agent is the CLI agent. Agents overrides take
-	// precedence and can select a different provider.
+	// Models is the model of each angle it names, the review
+	// configuration's angle_models: that angle's session runs as a copy of
+	// Agent with the model replaced, when Agent is the CLI agent. Agents
+	// overrides take precedence and can select a different provider.
 	Models map[string]string
 	// Agents is the agent of each angle it names, which may run another
-	// provider: the factory's roles.reviewer.angle_profiles, or config.toml's
-	// angle_profiles. It takes precedence over Models.
+	// provider: the factory's roles.reviewer.angle_profiles, or the review
+	// configuration's angle_profiles. It takes precedence over Models.
 	Agents map[string]*CLIAgent
 	// Checkout clones the pull request's head into the artifact directory
 	// for the sessions to run in (checkout.go), which is where they run

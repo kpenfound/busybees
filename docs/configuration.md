@@ -29,8 +29,9 @@ a default. Every validation error names the key and what to change.
 Durations are written the way Go reads them: `"30s"`, `"5m"`, `"1h30m"`.
 
 `bees review` reads none of this file. Its settings are
-`~/.config/bees/config.toml` and the project's `context.toml`, both described
-in [Reviewing a pull request](review.md#configuration).
+`~/.config/bees/config.toml` and the project's `context.toml`, with
+`defaults.toml` below the first; [Reviewing a pull
+request](review.md#configuration) describes all three.
 
 ## User-level profile defaults
 
@@ -79,7 +80,10 @@ profile the project file never mentions says where both came from. See
 
 SIGHUP, the live view's `r` key, and every other operation that reloads a
 project read both files again. A machine config itself does not inherit these
-defaults, but every project it lists does.
+defaults, but every project it lists does. `bees review` reads the same file
+below its own `config.toml` and takes the reviewer's profiles and selectors
+from it; [Reviewing a pull request](review.md#defaultstoml) lists what it
+takes.
 
 One bees process managing several projects reads a
 [machine config](#machine-config-several-projects) instead, which lists the

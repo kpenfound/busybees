@@ -13,7 +13,7 @@ bees review 7
 
 The commands and their flags are in the
 [CLI reference](cli.md#reviewing-a-pull-request). This page covers what a
-review does, where it keeps what it found, and the two files that configure
+review does, where it keeps what it found, and the files that configure
 it.
 
 ## How a review runs
@@ -297,9 +297,13 @@ there; an angle reads the code as the change leaves it in that case.
 
 ## Configuration
 
-`bees review` reads two files, and neither is `bees.toml`. Both are
-optional: a missing file loads as the defaults. An unknown key, or a value
-outside the ones listed, fails the command with an error naming the key.
+`bees review` reads two files of its own, and neither is `bees.toml`. Both
+are optional: a missing file loads as the defaults. An unknown key, or a
+value outside the ones listed, fails the command with an error naming the
+key. Below `config.toml` it reads `defaults.toml`, the user-level defaults
+the factory's projects read too: for each setting, a command-line flag
+comes first, then `config.toml`, then `defaults.toml`, then the built-in
+default.
 
 ### `config.toml`
 
@@ -393,6 +397,68 @@ review session is read-only whatever the profile says.
 `github.token` takes a `$VAR` or `${VAR}` reference, expanded from the
 environment, so the secret stays out of the file. A reference to a variable
 that is not set fails the command.
+
+### `defaults.toml`
+
+The user-level defaults beside `config.toml`:
+`~/.config/bees/defaults.toml`, or `$XDG_CONFIG_HOME/bees/defaults.toml`
+when `XDG_CONFIG_HOME` is an absolute path. It is the file
+[the factory's projects](configuration.md) read below their `bees.toml`,
+and it holds agent profiles and the reviewer selectors of a `bees.toml`.
+With no `config.toml`, or one that sets none of these keys, a review runs
+on the same profiles the factory's reviewer uses.
+
+```toml
+version = 5
+
+[profiles.default]
+agent = "claude"
+model = "opus"
+fallback = "spare"
+effort = "high"
+
+[roles.reviewer]
+profile = "default"
+brief_profile = "default"
+angle_profiles = { docs = "review_fast" }
+angles = { xs = ["quick_general"] }
+```
+
+The file accepts only what a `bees.toml` accepts there: `version`,
+`[profiles.<name>]`, `global.profile` and `global.profile_by_size`, every
+role's `profile` and `profile_by_size`, and the reviewer's `brief_profile`,
+`angle_profiles`, `judge_profile` and `angles`. It must carry the `version`
+shown. Anything else is an error, as in `config.toml`.
+
+For each setting the order is: a command-line flag, then `config.toml`,
+then `defaults.toml`, then the built-in default. `defaults.toml` supplies
+`config.toml`:
+
+| `config.toml` | taken from `defaults.toml` when unset |
+|---|---|
+| `[profiles.<name>]` | `[profiles.<name>]`: a name `config.toml` defines replaces the user one whole |
+| `angles.<size>` | `roles.reviewer.angles.<size>` |
+| `brief_profile` | `roles.reviewer.brief_profile` |
+| `angle_profiles.<angle>` | `roles.reviewer.angle_profiles.<angle>` |
+| `judge_profile` | `roles.reviewer.judge_profile` |
+| `provider`, `model` | the agent and model of the profile `roles.reviewer.profile` selects, else `global.profile` |
+
+`notes_path`, `storage_path`, `output`, `brief_model` and `angle_models`
+have no counterpart there and stay `config.toml`-only.
+
+The nearer file wins, whatever form it uses. Within one file a step's
+profile beats its flat keys. Across files, a step `config.toml` configures
+at all takes nothing from `defaults.toml`. For the brief and the angles
+that is a profile or a step model; for the base it is the flat `provider`
+or `model`. A `config.toml` that says `model = "sonnet"` is never
+overridden by a profile `defaults.toml` set for the same step. The `angles`
+lists merge per size, the `angle_profiles` per angle, and the profiles per
+name, whether or not the other keys are set.
+
+Validation happens after the merge, so the two files may refer to each
+other's profiles; an error names the file that set the bad key.
+`defaults.toml` is read from its own location even when `--config` reads
+another `config.toml`.
 
 ### `context.toml`
 

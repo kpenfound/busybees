@@ -1648,9 +1648,11 @@ unconstrained tool set.
 `bees review` reviews a GitHub pull request from several angles at once. Its
 settings are `~/.config/bees/config.toml`: the agent it runs as, where your
 reviewer notes and review artifacts live, and how a review ends when the
-command line does not say. The repository's own `context.toml` says which
-angles run there. [Reviewing a pull request](review.md) describes how a
-review runs, what it keeps, and every key of both files.
+command line does not say. Below it, `~/.config/bees/defaults.toml` fills
+the keys it leaves out with the reviewer settings of a `bees.toml`. The
+repository's own `context.toml` says which angles run there.
+[Reviewing a pull request](review.md) describes how a review runs, what it
+keeps, and every key of the files.
 
 ### `bees review <pr> [--post mode | --report] [--config path]`
 

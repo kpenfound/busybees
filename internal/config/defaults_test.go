@@ -220,6 +220,46 @@ func TestLoadReloadsChangedUserDefaults(t *testing.T) {
 	}
 }
 
+// LoadUserDefaults is the exported loader, the one `bees review`'s
+// config.go layers below its config.toml.
+func TestLoadUserDefaultsExported(t *testing.T) {
+	t.Run("missing loads as nil", func(t *testing.T) {
+		defaultsFixture(t, "version = 5\n", "")
+		d, err := LoadUserDefaults()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d != nil {
+			t.Fatalf("a missing defaults.toml loads as %+v, want nil", d)
+		}
+	})
+	t.Run("present", func(t *testing.T) {
+		defaultsFixture(t, "version = 5\n", `version = 5
+[profiles.fast]
+model = "sonnet"
+[roles.reviewer]
+brief_profile = "fast"
+angles = { xs = ["docs"] }
+`)
+		d, err := LoadUserDefaults()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d.Profiles["fast"].Model != "sonnet" || d.Roles[RoleReviewer].BriefProfile != "fast" {
+			t.Fatalf("LoadUserDefaults read %+v", d)
+		}
+		if got := strings.Join(d.Roles[RoleReviewer].Angles["xs"], ","); got != "docs" {
+			t.Fatalf("angles = %q", got)
+		}
+	})
+	t.Run("invalid names the file", func(t *testing.T) {
+		_, defaults := defaultsFixture(t, "version = 5\n", "version = 5\n[global]\nprompt = \"x\"\n")
+		if _, err := LoadUserDefaults(); err == nil || !strings.Contains(err.Error(), defaults) {
+			t.Fatalf("LoadUserDefaults() error = %v, want the file named", err)
+		}
+	})
+}
+
 func TestUserDefaultsVersion(t *testing.T) {
 	t.Run("newer", func(t *testing.T) {
 		project, defaults := defaultsFixture(t, "version = 5\n", "version = 6\n")

@@ -22,6 +22,9 @@ func localConfig(t *testing.T, text string) *config.Config {
 
 func globalConfig(t *testing.T, text string) *review.Config {
 	t.Helper()
+	// LoadConfig layers defaults.toml below the file; keep the machine's
+	// own out of the test. Selecting from defaults.toml is #852's work.
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	path := filepath.Join(t.TempDir(), "config.toml")
 	if text != "" {
 		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
