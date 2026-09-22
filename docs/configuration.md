@@ -32,6 +32,50 @@ Durations are written the way Go reads them: `"30s"`, `"5m"`, `"1h30m"`.
 `~/.config/bees/config.toml` and the project's `context.toml`, both described
 in [Reviewing a pull request](review.md#configuration).
 
+## User-level profile defaults
+
+Every project load also reads `defaults.toml` beside that review configuration:
+`$XDG_CONFIG_HOME/bees/defaults.toml` when `XDG_CONFIG_HOME` is an absolute
+path, otherwise `~/.config/bees/defaults.toml`. The file is optional. It lets a
+machine with several projects define agent profiles and their role mappings
+once:
+
+```toml
+version = 5
+
+[profiles.fast]
+agent = "claude"
+model = "sonnet"
+effort = "low"
+
+[global]
+profile = "fast"
+profile_by_size = { xs = "fast", s = "fast" }
+
+[roles.reviewer]
+brief_profile = "fast"
+angle_profiles = { docs = "fast" }
+angles = { xs = ["quick_general"] }
+```
+
+The file accepts only `version`, `[profiles.<name>]`, `global.profile`,
+`global.profile_by_size`, every role's `profile` and `profile_by_size`, and
+the reviewer's `brief_profile`, `angle_profiles`, `judge_profile` and
+`angles`. Any other key is an error. It has its own migration history, begins
+at the current version shown above, and must include that version.
+
+The project `bees.toml` is the nearer layer and wins. A same-named profile in
+the project replaces the user profile whole. Map settings merge entry by
+entry: a project entry replaces the user entry for that size or angle, while
+the remaining user entries stay. Validation happens after this merge, so the
+two files may refer to each other's profiles; an error names the file that set
+the bad key. Invalid values and refused keys in `defaults.toml` are still
+errors even when the project would replace them.
+
+SIGHUP, the live view's `r` key, and every other operation that reloads a
+project read both files again. A machine config itself does not inherit these
+defaults, but every project it lists does.
+
 One bees process managing several projects reads a
 [machine config](#machine-config-several-projects) instead, which lists the
 `bees.toml` of each project.
@@ -1307,9 +1351,10 @@ references and not run for this page.
 `bees config show <role>` prints the result.
 
 Only the contents of `prompt_file` are re-read for every session. Everything
-else, `prompt` included, comes from the `bees.toml` that `bees run` loaded when
-it started or last reloaded: `r` in [the live view](cli.md#the-live-view), or
-SIGHUP, reads the file again and the next session dispatched
+else, `prompt` included, comes from the `bees.toml` and user-level profile
+defaults that `bees run` loaded when it started or last reloaded: `r` in [the
+live view](cli.md#the-live-view), or SIGHUP, reads both files again and the
+next session dispatched
 runs on it; a few keys, listed there, take a restart. The built-in role
 prompts are compiled into the `bees` binary and need a
 rebuild as well as a restart. `bees status` names the build the running

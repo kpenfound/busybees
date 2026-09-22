@@ -1,5 +1,5 @@
-// Package config loads and validates bees.toml, the single file that
-// configures an entire busybees staff.
+// Package config loads and validates the project bees.toml and its optional
+// user-level profile defaults, which configure an entire busybees staff.
 //
 // The file has these top-level tables:
 //
@@ -255,6 +255,10 @@ type Config struct {
 	MigratedFrom int `toml:"-"`
 	// migrated is the file text after migrations, written by Rewrite.
 	migrated string
+	// sources records the file that supplied each explicitly configured key.
+	// It survives the defaults.toml merge for validation and future resolved
+	// configuration provenance.
+	sources map[string]string
 	// retentionPeriodDefaulted is true when the file did not set
 	// scheduler.retention_period, so a machine config's value may replace
 	// the default.
@@ -1327,7 +1331,17 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	return Parse(string(data), path)
+	// A machine config is not a project layer and never reads user defaults.
+	// Let parse return the established ErrMachineConfig before defaults.toml
+	// can mask it with an unrelated error.
+	if kind, kindErr := kindOf(string(data)); kindErr == nil && kind == KindMachine {
+		return parse(string(data), abs, nil)
+	}
+	defaults, err := loadUserDefaults()
+	if err != nil {
+		return nil, err
+	}
+	return parse(string(data), abs, defaults)
 }
 
 // Parse validates the text of a bees.toml as if it had been read from path,
@@ -1335,6 +1349,10 @@ func Load(path string) (*Config, error) {
 // read and need not exist. `bees init` parses the template it rendered before
 // writing anything to disk.
 func Parse(text, path string) (*Config, error) {
+	return parse(text, path, nil)
+}
+
+func parse(text, path string, defaults *parsedDefaults) (*Config, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
@@ -1365,6 +1383,8 @@ func Parse(text, path string) (*Config, error) {
 		}
 		return nil, fmt.Errorf("%s: unknown keys: %s", path, strings.Join(keys, ", "))
 	}
+	cfg.sources = metadataSources(md, abs)
+	cfg.mergeUserDefaults(defaults, md)
 	cfg.applyDefaults()
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -1436,14 +1456,18 @@ func fileVersion(text string) (int, error) {
 // migrate upgrades text from version from to version to by applying
 // steps[from], steps[from+1], ... in order.
 func migrate(text string, from, to int, steps map[int]migration) (string, error) {
+	return migrateFile(text, from, to, steps, "bees.toml")
+}
+
+func migrateFile(text string, from, to int, steps map[int]migration, name string) (string, error) {
 	for v := from; v < to; v++ {
 		step, ok := steps[v]
 		if !ok {
-			return "", fmt.Errorf("no migration from bees.toml version %d to %d", v, v+1)
+			return "", fmt.Errorf("no migration from %s version %d to %d", name, v, v+1)
 		}
 		out, err := step(text)
 		if err != nil {
-			return "", fmt.Errorf("migrate bees.toml version %d to %d: %w", v, v+1, err)
+			return "", fmt.Errorf("migrate %s version %d to %d: %w", name, v, v+1, err)
 		}
 		text = setVersion(out, v+1)
 	}
@@ -1915,9 +1939,39 @@ func (c *Config) Validate() error {
 	errs = append(errs, c.validateDagger()...)
 	errs = append(errs, c.validateReviewProfiles()...)
 	if len(errs) > 0 {
+		for i, message := range errs {
+			if source := c.validationSource(message); source != "" {
+				errs[i] = source + ": " + message
+			}
+		}
 		return fmt.Errorf("invalid bees.toml:\n  - %s", strings.Join(errs, "\n  - "))
 	}
 	return nil
+}
+
+// validationSource finds the most specific configured key named by a
+// validation message. When an error describes a chain and names more than one
+// equally specific key, the last one is the link that made the chain invalid.
+func (c *Config) validationSource(message string) string {
+	bestPath, bestKey := "", ""
+	bestAt := -1
+	for key, path := range c.sources {
+		at := strings.LastIndex(message, key)
+		if at < 0 || (at > 0 && message[at-1] != ' ' && message[at-1] != ':') {
+			continue
+		}
+		end := at + len(key)
+		if end < len(message) && !strings.ContainsRune(".: ", rune(message[end])) {
+			continue
+		}
+		if len(key) > len(bestKey) || (len(key) == len(bestKey) && at > bestAt) {
+			bestPath, bestKey, bestAt = path, key, at
+		}
+	}
+	if bestPath != "" {
+		return bestPath
+	}
+	return c.Path
 }
 
 // validateDagger checks the Dagger keys on every role as resolved, since

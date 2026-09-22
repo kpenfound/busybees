@@ -9,8 +9,9 @@ or as [pi](https://pi.dev).
 
 Humans steer it through GitHub. Create and label issues, comment, merge pull
 requests; the bees do the rest. Every role runs in its own temporary git
-worktree, talks to the other roles through a local mailbox, and is configured
-by one file: `bees.toml`.
+worktree and talks to the other roles through a local mailbox. Each project
+has a `bees.toml`; optional user-level defaults share agent profiles and role
+mappings across projects.
 
 ## Quick start
 

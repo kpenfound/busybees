@@ -552,32 +552,39 @@ func ValidateProfiles(profiles map[string]AgentProfile) []string {
 	var errs []string
 	for _, name := range slices.Sorted(maps.Keys(profiles)) {
 		p, scope := profiles[name], "profiles."+name
-		if name == "" {
-			errs = append(errs, "profiles: profile name must not be empty")
-		}
-		if p.resolved().Agent != AgentOpenCode {
-			switch p.Effort {
-			case "", "low", "medium", "high", "max":
-			default:
-				errs = append(errs, fmt.Sprintf("%s.effort must be low, medium, high or max", scope))
-			}
-		}
-		if p.Agent != "" && !slices.Contains(Agents, p.Agent) {
-			errs = append(errs, fmt.Sprintf("%s.agent must be one of %s", scope, strings.Join(Agents, ", ")))
-		}
-		// Every mode of SandboxModes loads, including the ones no session
-		// can run in yet: whether a mode works on this machine is a question
-		// about the machine, and CheckSandbox asks it once at `bees run`.
-		if p.Sandbox != "" && !slices.Contains(SandboxModes, p.Sandbox) {
-			errs = append(errs, fmt.Sprintf("%s.sandbox must be one of %s", scope, strings.Join(SandboxModes, ", ")))
-		} else if r := p.resolved(); r.Agent == AgentPi && !slices.Contains(PiSandboxes, r.Sandbox) {
-			errs = append(errs, fmt.Sprintf("%s.sandbox %q does not run agent %q: pi has no sandbox of its own and runs with sandbox %s", scope, r.Sandbox, AgentPi, strings.Join(PiSandboxes, " or ")))
-		}
+		errs = append(errs, validateProfileSyntax(name, p)...)
 		if p.Fallback != "" {
 			if err := validateFallback(profiles, name); err != nil {
 				errs = append(errs, fmt.Sprintf("%s.fallback: %v", scope, err))
 			}
 		}
+	}
+	return errs
+}
+
+func validateProfileSyntax(name string, p AgentProfile) []string {
+	var errs []string
+	scope := "profiles." + name
+	if name == "" {
+		errs = append(errs, "profiles: profile name must not be empty")
+	}
+	if p.resolved().Agent != AgentOpenCode {
+		switch p.Effort {
+		case "", "low", "medium", "high", "max":
+		default:
+			errs = append(errs, fmt.Sprintf("%s.effort must be low, medium, high or max", scope))
+		}
+	}
+	if p.Agent != "" && !slices.Contains(Agents, p.Agent) {
+		errs = append(errs, fmt.Sprintf("%s.agent must be one of %s", scope, strings.Join(Agents, ", ")))
+	}
+	// Every mode of SandboxModes loads, including the ones no session can run
+	// in yet: whether a mode works on this machine is a question about the
+	// machine, and CheckSandbox asks it once at `bees run`.
+	if p.Sandbox != "" && !slices.Contains(SandboxModes, p.Sandbox) {
+		errs = append(errs, fmt.Sprintf("%s.sandbox must be one of %s", scope, strings.Join(SandboxModes, ", ")))
+	} else if r := p.resolved(); r.Agent == AgentPi && !slices.Contains(PiSandboxes, r.Sandbox) {
+		errs = append(errs, fmt.Sprintf("%s.sandbox %q does not run agent %q: pi has no sandbox of its own and runs with sandbox %s", scope, r.Sandbox, AgentPi, strings.Join(PiSandboxes, " or ")))
 	}
 	return errs
 }
