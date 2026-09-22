@@ -351,10 +351,11 @@ func TestCheckCodex(t *testing.T) {
 	})
 }
 
-// TestChecksIncludeCodexOnlyWhenConfigured pins usesCodex: Checks() (which
-// resolves every role but runs none of them) carries one extra check the
-// moment a role is actually configured to run codex, gated the same way the
-// disabled role check already reads roles.developer.enabled.
+// TestChecksIncludeCodexOnlyWhenConfigured pins the descriptor-driven
+// selection in Checks(): (which resolves every role but runs none of them)
+// carries one extra check the moment a role is actually configured to run
+// codex, gated the same way the disabled role check already reads
+// roles.developer.enabled.
 func TestChecksIncludeCodexOnlyWhenConfigured(t *testing.T) {
 	base := len(setup(t, "", nil).Checks())
 
@@ -389,8 +390,8 @@ func TestCheckOpenCode(t *testing.T) {
 	})
 }
 
-// TestChecksIncludeOpenCodeOnlyWhenConfigured pins usesOpenCode the same way
-// TestChecksIncludeCodexOnlyWhenConfigured pins usesCodex: Checks() carries
+// TestChecksIncludeOpenCodeOnlyWhenConfigured pins the selection the same
+// way TestChecksIncludeCodexOnlyWhenConfigured does: Checks() carries
 // two extra checks (the toolchain check and the session dir writable check)
 // the moment a role is actually configured to run opencode. A factory that
 // runs opencode and pi gets that writable check once, not once per agent.
@@ -440,8 +441,9 @@ func TestCheckSbx(t *testing.T) {
 }
 
 // TestChecksIncludeSbxOnlyWhenConfigured pins usesSbx the way
-// TestChecksIncludeCodexOnlyWhenConfigured pins usesCodex: Checks() carries
-// one extra check the moment an enabled role is boxed with sandbox = "sbx".
+// TestChecksIncludeCodexOnlyWhenConfigured pins the agent checks: Checks()
+// carries one extra check the moment an enabled role is boxed with
+// sandbox = "sbx".
 func TestChecksIncludeSbxOnlyWhenConfigured(t *testing.T) {
 	base := len(setup(t, "", nil).Checks())
 
