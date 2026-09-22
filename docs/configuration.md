@@ -72,6 +72,11 @@ two files may refer to each other's profiles; an error names the file that set
 the bad key. Invalid values and refused keys in `defaults.toml` are still
 errors even when the project would replace them.
 
+`bees config show` names the file beside every value it took from
+`defaults.toml`, per entry for the map selectors, so a role running on a
+profile the project file never mentions says where both came from. See
+[the `config show` section](cli.md#bees-config-show-role) for the shape.
+
 SIGHUP, the live view's `r` key, and every other operation that reloads a
 project read both files again. A machine config itself does not inherit these
 defaults, but every project it lists does. `bees review` reads the same file

@@ -72,11 +72,8 @@ const PiMCPConfigFile = "pi-mcp.json"
 // session sets it to "exclusive".
 const EnvPiMCPConfigMode = "PI_MCP_CONFIG_MODE"
 
-func (piBackend) command(_ context.Context, r *Runner, req Request, paths sessionPaths) (string, []string, string, []envVar, error) {
-	bin := r.PiBin
-	if bin == "" {
-		bin = "pi"
-	}
+func (piBackend) command(_ context.Context, r *Runner, b Backend, req Request, paths sessionPaths) (string, []string, string, []envVar, error) {
+	bin := b.executable(r)
 	configPath := filepath.Join(paths.dir, PiMCPConfigFile)
 	args := []string{
 		"-p",

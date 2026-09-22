@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"maps"
+	"testing"
 )
 
 const (
@@ -23,6 +24,17 @@ type testRunner struct {
 	*Runner
 	StateDir  string
 	ServerBin string
+}
+
+// backendNamed is the descriptor of the named backend, for tests that
+// call a backend's command builder directly.
+func backendNamed(t *testing.T, name string) Backend {
+	t.Helper()
+	b, err := backendFor(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }
 
 func (r *testRunner) Run(ctx context.Context, req Request) (*Result, error) {

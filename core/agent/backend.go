@@ -19,8 +19,9 @@ import (
 
 // A backend is one CLI a session can run as, chosen by the role's resolved
 // agent setting (AgentClaude, AgentCodex, AgentOpenCode or
-// AgentPi). The runner owns everything a session is regardless
-// of its backend — the session directory, the prompt files, the
+// AgentPi): the implementation half of a Backend descriptor, which
+// carries the per-agent facts. The runner owns everything a session is
+// regardless of its backend — the session directory, the prompt files, the
 // environment, the process group, the timeout, the transcript, the pid
 // file, the outcome and the result file — and asks the backend for the two
 // things that differ: the command line that starts the CLI, and how to read
@@ -30,9 +31,11 @@ type backend interface {
 	// stdin, and the variables to add to the session's environment: the
 	// ones a CLI is configured through when it has no flag, laid over the
 	// environment the runner builds (on the host, in a container or in a
-	// sandbox). paths
-	// tells it where the runner wrote the session's files.
-	command(ctx context.Context, r *Runner, req Request, paths sessionPaths) (bin string, args []string, stdin string, env []envVar, err error)
+	// sandbox). b is the backend's own descriptor: the executable the
+	// session runs comes from it (Backend.executable), so an
+	// implementation never names its own command. paths tells it where
+	// the runner wrote the session's files.
+	command(ctx context.Context, r *Runner, b Backend, req Request, paths sessionPaths) (bin string, args []string, stdin string, env []envVar, err error)
 	// consume reads the CLI's stdout to its end, copying every line to the
 	// transcript (and to r.Stream when set), and returns what the stream
 	// said at its end: nil when it ended without saying.
@@ -68,29 +71,11 @@ type streamEnd struct {
 	CostKnown bool
 }
 
-// backendFor selects the requested backend. An empty name selects Claude.
-func backendFor(agent string) (backend, error) {
-	switch agent {
-	case "", AgentClaude:
-		return claudeBackend{}, nil
-	case AgentCodex:
-		return codexBackend{}, nil
-	case AgentOpenCode:
-		return opencodeBackend{}, nil
-	case AgentPi:
-		return piBackend{}, nil
-	}
-	return nil, errors.New("session: unknown agent " + strconv.Quote(agent))
-}
-
 // claudeBackend runs a session as `claude -p`.
 type claudeBackend struct{}
 
-func (claudeBackend) command(ctx context.Context, r *Runner, req Request, paths sessionPaths) (string, []string, string, []envVar, error) {
-	bin := r.ClaudeBin
-	if bin == "" {
-		bin = "claude"
-	}
+func (claudeBackend) command(ctx context.Context, r *Runner, b Backend, req Request, paths sessionPaths) (string, []string, string, []envVar, error) {
+	bin := b.executable(r)
 	boxed := req.Profile.Sandbox == SandboxClaude
 	args := []string{
 		"-p",
@@ -293,11 +278,8 @@ func (claudeBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer) 
 //     than zero.
 type codexBackend struct{}
 
-func (codexBackend) command(_ context.Context, r *Runner, req Request, paths sessionPaths) (string, []string, string, []envVar, error) {
-	bin := r.CodexBin
-	if bin == "" {
-		bin = "codex"
-	}
+func (codexBackend) command(_ context.Context, r *Runner, b Backend, req Request, paths sessionPaths) (string, []string, string, []envVar, error) {
+	bin := b.executable(r)
 	args := []string{
 		"exec",
 		"--json",
@@ -524,11 +506,8 @@ const EnvOpenCodeConfig = "OPENCODE_CONFIG"
 // OpenCodeConfigFile is the name of that file in the session directory.
 const OpenCodeConfigFile = "opencode.json"
 
-func (opencodeBackend) command(_ context.Context, r *Runner, req Request, paths sessionPaths) (string, []string, string, []envVar, error) {
-	bin := r.OpenCodeBin
-	if bin == "" {
-		bin = "opencode"
-	}
+func (opencodeBackend) command(_ context.Context, r *Runner, b Backend, req Request, paths sessionPaths) (string, []string, string, []envVar, error) {
+	bin := b.executable(r)
 	args := []string{
 		"run",
 		"--format", "json",

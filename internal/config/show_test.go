@@ -8,9 +8,12 @@ import (
 )
 
 // viewJSON loads a config, renders it through View and decodes the result the
-// way `bees config show` prints it.
+// way `bees config show` prints it. XDG_CONFIG_HOME points at an empty
+// directory: the views describe the file alone, not whatever defaults.toml
+// the machine running the tests has.
 func viewJSON(t *testing.T, body string) map[string]any {
 	t.Helper()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	cfg, err := Load(writeConfig(t, body))
 	if err != nil {
 		t.Fatal(err)
@@ -302,5 +305,133 @@ func TestViewShowsTheDaggerKeys(t *testing.T) {
 	dev, _ := out["roles"].(map[string]any)[RoleDeveloper].(map[string]any)
 	if dev["sandbox_dagger_engine"] != "unix:///s" || dev["sandbox_dagger_version"] != "v0.20.5" {
 		t.Errorf("developer view: engine %v, version %v", dev["sandbox_dagger_engine"], dev["sandbox_dagger_version"])
+	}
+}
+
+// defaultsViewFixture writes a project bees.toml and a defaults.toml under
+// XDG_CONFIG_HOME and returns the printed view and the defaults path the
+// output is expected to name.
+func defaultsViewFixture(t *testing.T, project, defaults string) (map[string]any, string) {
+	t.Helper()
+	_, defaultsPath := defaultsFixture(t, project, defaults)
+	cfg, err := Load(writeConfig(t, project))
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := cfg.View(Roles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(data, &out); err != nil {
+		t.Fatal(err)
+	}
+	return out, defaultsPath
+}
+
+// TestViewMarksUserDefaultsToml walks every section defaults.toml can
+// contribute to and checks the view names the file beside each value it
+// supplied, per entry for the map selectors, and nothing beside values the
+// project set.
+func TestViewMarksUserDefaultsToml(t *testing.T) {
+	project := `version = 5
+[profiles.project]
+agent = "codex"
+[profiles.replaced]
+model = "project-model"
+[global]
+profile_by_size = { s = "project" }
+[roles.developer]
+profile_by_size = { l = "project" }
+[roles.reviewer]
+angle_profiles = { docs = "project" }
+angles = { xs = ["docs"] }
+`
+	defaults := `version = 5
+[profiles.shared]
+agent = "claude"
+model = "sonnet"
+[profiles.other]
+agent = "codex"
+[profiles.replaced]
+model = "user-model"
+[global]
+profile = "shared"
+profile_by_size = { xs = "shared", s = "shared" }
+[roles.developer]
+profile = "other"
+profile_by_size = { m = "shared", l = "shared" }
+[roles.reviewer]
+brief_profile = "shared"
+judge_profile = "shared"
+angle_profiles = { general = "shared", docs = "shared" }
+angles = { xs = ["quick_general"], m = ["general", "docs"] }
+`
+	out, defaultsPath := defaultsViewFixture(t, project, defaults)
+
+	got, ok := out["profile_sources"].(map[string]any)
+	if !ok {
+		t.Fatalf("no profile_sources in %v", out)
+	}
+	if want := map[string]any{"shared": defaultsPath, "other": defaultsPath}; !reflect.DeepEqual(got, want) {
+		t.Errorf("profile_sources = %v, want %v", got, want)
+	}
+
+	dev := roleOf(t, out, RoleDeveloper)
+	src, ok := dev["profile_sources"].(map[string]any)
+	if !ok {
+		t.Fatalf("developer carries no profile_sources: %v", dev)
+	}
+	want := map[string]any{
+		"profile":         defaultsPath,
+		"profile_by_size": map[string]any{"m": defaultsPath},
+	}
+	if !reflect.DeepEqual(src, want) {
+		t.Errorf("developer profile_sources = %v, want %v", src, want)
+	}
+
+	rev := roleOf(t, out, RoleReviewer)
+	src, ok = rev["profile_sources"].(map[string]any)
+	if !ok {
+		t.Fatalf("reviewer carries no profile_sources: %v", rev)
+	}
+	want = map[string]any{
+		"profile":        defaultsPath,
+		"brief_profile":  defaultsPath,
+		"judge_profile":  defaultsPath,
+		"angle_profiles": map[string]any{"general": defaultsPath},
+		"angles":         map[string]any{"m": defaultsPath},
+	}
+	if !reflect.DeepEqual(src, want) {
+		t.Errorf("reviewer profile_sources = %v, want %v", src, want)
+	}
+
+	// A role defaults.toml reaches only through [global] is marked there.
+	qa := roleOf(t, out, RoleQA)
+	src, ok = qa["profile_sources"].(map[string]any)
+	if !ok {
+		t.Fatalf("qa carries no profile_sources: %v", qa)
+	}
+	if want := (map[string]any{"profile": defaultsPath}); !reflect.DeepEqual(src, want) {
+		t.Errorf("qa profile_sources = %v, want %v", src, want)
+	}
+}
+
+// TestViewWithoutUserDefaultsHasNoSources checks a config loaded without a
+// defaults.toml prints no source marking anywhere: built-in defaults and the
+// project file keep showing the way they always have.
+func TestViewWithoutUserDefaultsHasNoSources(t *testing.T) {
+	out, _ := defaultsViewFixture(t, "version = 5\n[project]\nrepo = \"a/b\"\n", "")
+	if _, ok := out["profile_sources"]; ok {
+		t.Errorf("profile_sources present without a defaults.toml: %v", out["profile_sources"])
+	}
+	for _, r := range Roles {
+		if _, ok := roleOf(t, out, r)["profile_sources"]; ok {
+			t.Errorf("role %s carries profile_sources without a defaults.toml", r)
+		}
 	}
 }
