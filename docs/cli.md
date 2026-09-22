@@ -1888,12 +1888,15 @@ grader session scores, which fills the `SCORE` column.
 
 `--case` runs one case, from `evals/` or from `evals/<role>/`. `--profile`
 runs every role on one profile from `bees.toml` or
-`~/.config/bees/config.toml`. Without it the eval uses the profiles
-`bees.toml` selects, or the `provider` and `model` of
-`~/.config/bees/config.toml` when there is no `bees.toml`, or the built-in
-profile when there is neither. Grader sessions ignore `--profile`: they run
-on `~/.config/bees/config.toml`'s agent, so scores stay comparable between
-runs. Like `bees run`, it refuses to run inside a session.
+`~/.config/bees/config.toml`, which `defaults.toml` fills below itself.
+Without it the eval uses the profiles `bees.toml` selects, or the `provider`
+and `model` of `~/.config/bees/config.toml` when there is no `bees.toml`, or
+the selection `defaults.toml`'s `[global]` and `[roles]` tables make when
+there is no `config.toml` either, or the built-in profile when there is no
+`defaults.toml` either. Grader sessions ignore `--profile`: they run on the
+agent the global review configuration supplies — `config.toml`, with
+`defaults.toml` below it — so scores stay comparable between runs. Like
+`bees run`, it refuses to run inside a session.
 
 ```sh
 bees eval --case hello --profile fast

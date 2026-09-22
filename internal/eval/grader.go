@@ -24,8 +24,9 @@ import (
 // The grader is deliberately not the agent the eval runs the role on. Two
 // runs of a case are compared by their scores, so what scores them has to
 // stay put while --profile changes what is being scored: cmd/bees builds it
-// from ~/.config/bees/config.toml, as the read-only session agent that
-// `bees review` runs, and --profile does not reach it.
+// from ~/.config/bees/config.toml with defaults.toml below it, as the
+// read-only session agent that `bees review` runs, and --profile does not
+// reach it.
 
 const (
 	// DefaultPassScore is the score a graded check passes at when its
