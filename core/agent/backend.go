@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"maps"
 	"os"
@@ -48,6 +49,7 @@ type sessionPaths struct {
 	dir          string
 	systemPrompt string
 	prompt       string
+	restricted   bool
 	// mcp are the session's MCP servers, the built-in one included: the
 	// runner decides how that one is reached (a caller-owned server the agent
 	// starts, or the host's HTTP server for a container or sandbox session).
@@ -82,7 +84,14 @@ func (claudeBackend) command(ctx context.Context, r *Runner, b Backend, req Requ
 		"--output-format", "stream-json",
 		"--verbose",
 	}
-	if boxed {
+	if paths.restricted {
+		args = append(args,
+			"--permission-prompts", "none",
+			"--setting-sources", "",
+			"--allowedTools", strings.Join(restrictedReadTools, ","),
+			"--disallowedTools", strings.Join(restrictedDeniedTools, ","),
+		)
+	} else if boxed {
 		// Inside the box the permission layer is what holds the built-in
 		// tools, which run in the claude process and not under the OS
 		// sandbox: acceptEdits lets Write and Edit work in the worktree
@@ -95,12 +104,11 @@ func (claudeBackend) command(ctx context.Context, r *Runner, b Backend, req Requ
 	} else {
 		args = append(args, "--dangerously-skip-permissions")
 	}
-	args = append(args,
-		"--append-system-prompt-file", paths.systemPrompt,
-		"--model", req.Profile.Model,
-		"--max-turns", strconv.Itoa(req.Profile.MaxTurns),
-		"--name", r.namePrefix()+req.Name,
-	)
+	args = append(args, "--append-system-prompt-file", paths.systemPrompt)
+	if !paths.restricted || req.Profile.Model != "" {
+		args = append(args, "--model", req.Profile.Model)
+	}
+	args = append(args, "--max-turns", strconv.Itoa(req.Profile.MaxTurns), "--name", r.namePrefix()+req.Name)
 	// Claude can switch to another claude model itself; a fallback on
 	// another agent is a new session, the caller's to run.
 	if f := req.Profile.Fallback; f != nil && (f.Agent == "" || f.Agent == AgentClaude) && f.Model != "" && f.Model != req.Profile.Model {
@@ -241,23 +249,26 @@ func (claudeBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer) 
 //
 // What differs from claude, and how each difference is met:
 //
-//   - Approvals and the sandbox are switched off with
+//   - An ordinary session switches approvals and the sandbox off with
 //     --dangerously-bypass-approvals-and-sandbox, the counterpart of
-//     --dangerously-skip-permissions.
+//     --dangerously-skip-permissions. RunRestricted instead selects Codex's
+//     read-only sandbox and disables command, fetch, plugin and hook features.
 //   - There is no flag to append to the system prompt, so the rendered system
 //     prompt is written ahead of the task on stdin, separated by a rule. The
 //     two files in the session directory are still written apart, as they are
 //     for claude, and the prompt argument is `-`, which tells codex to read
 //     stdin.
-//   - There is no --mcp-config: MCP servers are configuration, so each one
-//     is passed as `-c mcp_servers.<name>.<key>=<value>` overrides — the
-//     caller-owned server included, with the session context as
-//     its env, the way mcp.json carries them for claude. Every value is a
-//     JSON string or a JSON array of strings, which codex parses whether it
-//     reads its overrides as JSON or as TOML (a JSON object is not a TOML
-//     inline table, so no override is one). Codex starts an MCP server with
-//     a small fixed environment plus that env, not with its own, so the
-//     built-in server sees only what the override names.
+//   - There is no --mcp-config: for an ordinary session each MCP server is
+//     passed as `-c mcp_servers.<name>.<key>=<value>` overrides — the
+//     caller-owned server included, with the session context as its env, the
+//     way mcp.json carries them for claude. Every value is a JSON string or a
+//     JSON array of strings, which codex parses whether it reads its overrides
+//     as JSON or as TOML (a JSON object is not a TOML inline table, so no
+//     override is one). RunRestricted inventories inherited servers with the
+//     same disabled features and explicitly disables every one. Codex starts
+//     an MCP server with a small fixed environment plus that env, not with its
+//     own, so an ordinary session's built-in server sees only what the
+//     override names.
 //   - The model goes as -m when the role resolved one: with agent = "codex"
 //     the model keys default to empty (config), and an empty model leaves
 //     the choice to codex's own configuration. There is no fallback-model
@@ -278,15 +289,32 @@ func (claudeBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer) 
 //     than zero.
 type codexBackend struct{}
 
-func (codexBackend) command(_ context.Context, r *Runner, b Backend, req Request, paths sessionPaths) (string, []string, string, []envVar, error) {
+func (codexBackend) command(ctx context.Context, r *Runner, b Backend, req Request, paths sessionPaths) (string, []string, string, []envVar, error) {
 	bin := b.executable(r)
-	args := []string{
-		"exec",
-		"--json",
-		"--dangerously-bypass-approvals-and-sandbox",
+	args := []string{"exec", "--json"}
+	if paths.restricted {
+		args = append(args, "--sandbox", "read-only")
+	} else {
+		args = append(args, "--dangerously-bypass-approvals-and-sandbox")
+	}
+	args = append(args,
 		"--skip-git-repo-check",
 		// A path-bearing marker independent of optional MCP configuration.
-		"-c", procs.CodexMarker(r.EnvironmentPrefix) + codexValue(paths.dir),
+		"-c", procs.CodexMarker(r.EnvironmentPrefix)+codexValue(paths.dir),
+	)
+	if paths.restricted {
+		args = append(args, codexRestrictedConfigArgs()...)
+		servers, err := codexMCPInventory(ctx, bin, req.workDir(), paths.turn.Env)
+		if err != nil {
+			return "", nil, "", nil, fmt.Errorf("restricted codex setup: %w", err)
+		}
+		if len(servers) > 0 {
+			var disabled []string
+			for _, name := range servers {
+				disabled = append(disabled, codexValue(name)+"={enabled=false}")
+			}
+			args = append(args, "-c", "mcp_servers={"+strings.Join(disabled, ",")+"}")
+		}
 	}
 	if req.Profile.Model != "" {
 		args = append(args, "--model", req.Profile.Model)
