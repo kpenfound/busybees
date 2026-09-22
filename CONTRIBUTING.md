@@ -49,11 +49,39 @@ stages and the state directory, and it is kept in step with the code.
 
 ## Building and testing
 
-Iterate with:
+Tests never run on the host: test processes can leak onto the machine they run
+on, so every test run happens inside Dagger. `gofmt`, `go build` and `go vet`
+are fine on the host.
+
+For focused iteration, run one package or one test inside a Dagger container.
+From the repository root, for the root module:
 
 ```sh
-dagger check
+dagger core container from --address golang:1.26-bookworm \
+    with-directory --path /src --source . --exclude .git,.bees \
+    with-workdir --path /src \
+    with-exec --args=go,test,-count=1,-run,'TestA|TestB',-v,./internal/config \
+    combined-output
 ```
+
+For the standalone `core/` module, the same shape with the working directory
+inside it:
+
+```sh
+dagger core container from --address golang:1.26-bookworm \
+    with-directory --path /src --source . --exclude .git,.bees \
+    with-workdir --path /src/core \
+    with-exec --args=go,test,-count=1,-run,'TestA|TestB',-v,./agent \
+    combined-output
+```
+
+The arguments after `--args=` are the `go test` command line, separated by
+commas. Add `-count=5` there to reproduce a flake and `-race` to match the
+race detector. Put the package before a flag `go` itself does not define:
+`go test -update ./internal/config` reads `./internal/config` as `-update`'s
+value and tests the current directory instead. Build with `go build ./...`
+from the repository root or from `core/` — on the host. See
+[core/README.md](core/README.md) for the execution boundary.
 
 The gate before committing is Dagger:
 
@@ -65,11 +93,6 @@ dagger check
 `github.com/dagger/go` module installed by `dagger.toml`. `dagger check -l` lists
 the checks, and `dagger check go:test-all` runs one of them. Each check discovers
 both Go modules. The root `go.mod` uses a local replacement for `./core`.
-
-For focused iteration, build and test the standalone module from `core/` with
-`go build ./...` and `go test ./...`; use the same commands from the repository
-root for busybees. Run `dagger check` from the repository root before committing.
-See [core/README.md](core/README.md) for the execution boundary.
 
 ### Testing rules
 
@@ -170,9 +193,21 @@ See [core/README.md](core/README.md) for the execution boundary.
   grading tests live in `grade/`.
 - `bees.example.toml` at the repository root is a golden file: the `bees init`
   template with the placeholders left in. Never edit it by hand. After
-  changing `internal/config/template.go`, regenerate it with
-  `go test ./internal/config -update`; `TestExampleTOMLInSync` fails when the
-  two drift.
+  changing `internal/config/template.go`, regenerate it inside Dagger and
+  export the file into your working tree — the container's write dies with
+  the container, so the export is what updates the file you commit:
+
+  ```sh
+  dagger core container from --address golang:1.26-bookworm \
+    with-directory --path /src --source . --exclude .git,.bees \
+    with-workdir --path /src \
+    with-exec --args=go,test,./internal/config,-count=1,-update \
+    file --path /src/bees.example.toml \
+    export --path bees.example.toml
+  ```
+
+  `TestExampleTOMLInSync` fails when the two drift, and its failure message
+  points at this recipe.
 
 ### The QA playground
 

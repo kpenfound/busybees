@@ -1,12 +1,10 @@
 # Core factory components
 
 `github.com/kpenfound/busybees/core` is a standalone Go module. It imports no
-package from the busybees root module. Build and test from this directory:
-
-```sh
-go build ./...
-go test ./...
-```
+package from the busybees root module. Build it from this directory with
+`go build ./...`. Tests never run on the host: run them inside Dagger from the
+repository root — [CONTRIBUTING.md](../CONTRIBUTING.md) has the recipes,
+including the one-package command for this module.
 
 The repository's `dagger check` builds, lints, generates and tests both modules.
 The root module consumes this one through its `replace ... => ./core` entry.

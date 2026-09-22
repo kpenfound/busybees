@@ -869,7 +869,7 @@ func TestExampleTOMLInSync(t *testing.T) {
 	}
 	if string(got) != want {
 		t.Errorf("bees.example.toml is out of date with internal/config/template.go.\n"+
-			"Regenerate it with: go test ./internal/config -update\n%s",
+			"Regenerate it with the bees.example.toml recipe in CONTRIBUTING.md\n%s",
 			firstDiff(string(got), want))
 	}
 }
