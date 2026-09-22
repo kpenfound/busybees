@@ -119,11 +119,21 @@ const fakeDiff = "diff --git a/widget.go b/widget.go\n--- a/widget.go\n+++ b/wid
 // session: claude's is asked for `--output-format json` where the runner
 // asks for stream-json, and codex's runs in its read-only sandbox where the
 // runner bypasses it.
+// isReviewSession reports whether this process was started as a review
+// pipeline session — the brief, an angle, a grader or a triage session —
+// through the shared restricted execution. Claude is held to empty setting
+// sources, codex to its read-only sandbox, opencode to its pure mode and
+// pi to its read-only tool set; an ordinary session carries none of those.
 func isReviewSession() bool {
-	if i := slices.Index(os.Args, "--output-format"); i >= 0 && i+1 < len(os.Args) && os.Args[i+1] == "json" {
+	switch {
+	case slices.Contains(os.Args, "--setting-sources"),
+		slices.Contains(os.Args, "--no-tools"):
+		return true
+	case len(os.Args) > 1 && os.Args[1] == "exec" && slices.Contains(os.Args, "read-only"),
+		len(os.Args) > 1 && os.Args[1] == "--pure":
 		return true
 	}
-	return len(os.Args) > 1 && os.Args[1] == "exec" && slices.Contains(os.Args, "read-only")
+	return false
 }
 
 // fakeReviewSession is the fake distiller or angle session. It reads its
@@ -183,7 +193,11 @@ func fakeReviewSession() {
 		// into one.
 		answer = fmt.Sprintf(`{"findings":[{"category":"correctness","severity":"medium","file":"widget.go","lines":[%d,%d],"side":"new","title":"%s: Widget does nothing","body":"Widget has an empty body (from the %s angle).","evidence":"func Widget() {}"}]}`, len(kind), len(kind), kind, kind)
 	}
-	if os.Args[1] == "exec" {
+	// The session answers in its own backend's stream format: the fake is
+	// started as claude, codex, opencode or pi, whichever the reviewer's
+	// configuration selects, and the shared execution reads each its way.
+	switch {
+	case len(os.Args) > 1 && os.Args[1] == "exec" && slices.Contains(os.Args, "read-only"):
 		for _, ev := range []string{
 			`{"type":"thread.started","thread_id":"thread-` + kind + `"}`,
 			`{"type":"item.completed","item":{"type":"agent_message","text":` + strconv.Quote(answer) + `}}`,
@@ -191,9 +205,24 @@ func fakeReviewSession() {
 		} {
 			fmt.Println(ev)
 		}
-		return
+	case len(os.Args) > 1 && os.Args[1] == "--pure":
+		for _, ev := range []string{
+			`{"type":"text","sessionID":"` + kind + `","part":{"type":"text","text":` + strconv.Quote(answer) + `}}`,
+			`{"type":"step_finish","sessionID":"` + kind + `","part":{"type":"step-finish","reason":"stop","cost":0.25}}`,
+		} {
+			fmt.Println(ev)
+		}
+	case slices.Contains(os.Args, "--no-tools"):
+		for _, ev := range []string{
+			`{"type":"session","id":"` + kind + `"}`,
+			`{"type":"message_end","message":{"role":"assistant","provider":"anthropic","model":"claude-sonnet","content":[{"type":"text","text":` + strconv.Quote(answer) + `}],"stopReason":"stop","usage":{"cost":{"total":0.75}}}}`,
+			`{"type":"turn_end"}`,
+		} {
+			fmt.Println(ev)
+		}
+	default:
+		fmt.Printf(`{"type":"result","subtype":"success","is_error":false,"result":%s,"session_id":"sid-review-%s","num_turns":1,"total_cost_usd":0.25}`+"\n", strconv.Quote(answer), kind)
 	}
-	fmt.Printf(`{"type":"result","subtype":"success","is_error":false,"result":%s,"session_id":"sid-review-%s","num_turns":1,"total_cost_usd":0.25}`+"\n", strconv.Quote(answer), kind)
 }
 
 // findingsOf is the `## Findings` section of a judge session's task, which
@@ -210,6 +239,13 @@ func findingsOf(prompt string) string {
 func fakeClaude() {
 	if len(os.Args) > 1 && os.Args[1] == "mcp" {
 		fmt.Println("[]")
+		return
+	}
+	// The configuration inventory a restricted opencode run probes with
+	// before the model: what a CLI honoring the inline restrictions
+	// resolves, with no inherited server and the read-only agent in force.
+	if len(os.Args) > 3 && os.Args[1] == "--pure" && os.Args[2] == "debug" {
+		fmt.Println(`{"agent":{"bees-read-only":{"mode":"primary","permission":{"*":"deny","read":"allow","grep":"allow","glob":"allow"}}},"mcp":{}}`)
 		return
 	}
 	// A brief or angle session of the review pipeline has no role, no

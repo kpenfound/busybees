@@ -2,30 +2,76 @@ package review
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/BurntSushi/toml"
 
+	"github.com/kpenfound/busybees/core/agent"
+	"github.com/kpenfound/busybees/core/agent/agentbin"
 	"github.com/kpenfound/busybees/internal/config"
 )
 
-// fakeCLI writes a shell script standing in for claude or codex: it records
-// the arguments, the prompt it was given on stdin and the directory it ran
-// in, then prints body. No test in this package runs a real agent.
+// fakeCLI writes a shell script standing in for a review session's agent: it
+// records the arguments, the prompt it was given on stdin, the directory it
+// ran in and its environment, then prints body. The probes the shared
+// restricted execution runs before an agent — codex's `mcp list` and
+// opencode's `debug config` — are answered with what a CLI honoring the
+// inline restrictions would say: nothing inherited, everything disabled. No
+// test in this package runs a real agent.
 func fakeCLI(t *testing.T, body string) (bin, record string) {
+	t.Helper()
+	return fakeScript(t, honestProbe, body)
+}
+
+const honestProbe = `if [ "$1" = mcp ]; then printf '%s\n' "$@" > RECORD.mcp-args; pwd > "RECORD.mcp-dir"; echo '[]'; exit 0; fi
+if [ "$2" = debug ]; then
+  if printf '%s' "$OPENCODE_CONFIG_CONTENT" | grep -q '"legacy"' && printf '%s' "$OPENCODE_CONFIG_CONTENT" | grep -q '"enabled":false'; then
+    enabled=false
+  else
+    enabled=true
+  fi
+  printf '%s\n' "$OPENCODE_CONFIG_CONTENT" > "RECORD.config-inline"
+  printf '{"agent":{"bees-read-only":{"mode":"primary","permission":{"*":"deny","read":"allow","grep":"allow","glob":"allow"}}},"mcp":{"legacy":{"enabled":%s}}}\n' "$enabled" > "RECORD.config-content"
+  cat "RECORD.config-content"
+  exit 0
+fi`
+
+func fakeScript(t *testing.T, probe, body string) (bin, record string) {
 	t.Helper()
 	dir := t.TempDir()
 	bin = filepath.Join(dir, "agent")
 	record = filepath.Join(dir, "record")
 	script := "#!/bin/sh\n" +
-		"if [ \"$1\" = mcp ]; then printf '%s\\n' \"$@\" > " + record + ".mcp-args; pwd > " + record + ".mcp-dir; echo '[]'; exit 0; fi\n" +
+		strings.ReplaceAll(probe, "RECORD", record) + "\n" +
 		"printf '%s\\n' \"$@\" > " + record + ".args\n" +
 		"cat > " + record + ".stdin\n" +
 		"pwd > " + record + ".dir\n" +
+		"env > " + record + ".env\n" +
+		body
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return bin, record
+}
+
+// fakeLog writes a fake whose records accumulate: two runs of one agent
+// leave both command lines behind.
+func fakeLog(t *testing.T, body string) (bin, record string) {
+	t.Helper()
+	dir := t.TempDir()
+	bin = filepath.Join(dir, "agent")
+	record = filepath.Join(dir, "record")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$@\" >> " + record + ".args\n" +
+		"cat >> " + record + ".stdin\n" +
 		body
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
@@ -50,8 +96,53 @@ func args(t *testing.T, record string) string {
 	return "\n" + recorded(t, record, "args")
 }
 
+// envOf is the environment the fake CLI ran in.
+func envOf(t *testing.T, record string) string {
+	t.Helper()
+	return "\n" + recorded(t, record, "env")
+}
+
+// The four answers: one session of each backend, each answering "the brief".
 const claudeAnswer = `echo '{"type":"result","subtype":"success","is_error":false,` +
 	`"result":"the brief","session_id":"sess-1","num_turns":3,"total_cost_usd":0.5}'`
+
+const codexAnswer = `echo '{"type":"thread.started","thread_id":"thread-9"}'
+echo '{"type":"item.completed","item":{"type":"reasoning","text":"thinking"}}'
+echo '{"type":"item.completed","item":{"type":"agent_message","text":"the brief"}}'
+echo '{"type":"item.completed","item":{"type":"reasoning","text":"that will do"}}'
+echo '{"type":"turn.completed"}'`
+
+const openCodeAnswer = `echo '{"type":"text","sessionID":"open-7","part":{"type":"text","text":"the brief"}}'
+echo '{"type":"step_finish","sessionID":"open-7","part":{"type":"step-finish","reason":"stop","cost":0.25}}'`
+
+const piAnswer = `echo '{"type":"session","id":"pi-4"}'
+echo '{"type":"message_end","message":{"role":"assistant","provider":"anthropic","model":"claude-sonnet","content":[{"type":"text","text":"the brief"}],"stopReason":"stop","usage":{"cost":{"total":0.75}}}}'
+echo '{"type":"turn_end"}'`
+
+// session is the fake per provider: what it answers and what a run of it
+// is read back as.
+type session struct {
+	answer    string
+	id        string
+	turns     int
+	cost      float64
+	costKnown bool
+}
+
+func sessionsByAgent() map[string]session {
+	return map[string]session{
+		config.AgentClaude:   {claudeAnswer, "sess-1", 3, 0.5, true},
+		config.AgentCodex:    {codexAnswer, "thread-9", 3, 0, false},
+		config.AgentOpenCode: {openCodeAnswer, "open-7", 1, 0.25, true},
+		config.AgentPi:       {piAnswer, "pi-4", 1, 0.75, true},
+	}
+}
+
+// allProviderBins are the executables of every provider, so a case can run
+// any of them through one adapter.
+func allProviderBins(bin string) *CLIAgent {
+	return &CLIAgent{ClaudeBin: bin, CodexBin: bin, OpenCodeBin: bin, PiBin: bin}
+}
 
 func TestAClaudeReviewSessionIsReadOnly(t *testing.T) {
 	bin, record := fakeCLI(t, claudeAnswer)
@@ -63,8 +154,9 @@ func TestAClaudeReviewSessionIsReadOnly(t *testing.T) {
 	for _, want := range []string{
 		"\n--disallowedTools\nBash,BashOutput,Edit,KillShell,MultiEdit,NotebookEdit,Task,WebFetch,WebSearch,Write\n",
 		"\n--allowedTools\nRead,Grep,Glob,LS,NotebookRead\n",
+		"\n--tools\nRead,Grep,Glob,LS,NotebookRead\n",
 		"\n--permission-prompts\nnone\n",
-		"\n--mcp-config\n{\"mcpServers\":{}}\n",
+		"\n--setting-sources\n\n",
 		"\n--strict-mcp-config\n",
 		"\n--model\nopus\n",
 		"\n--max-turns\n40\n",
@@ -77,20 +169,77 @@ func TestAClaudeReviewSessionIsReadOnly(t *testing.T) {
 	if strings.Contains(got, "--dangerously-skip-permissions") {
 		t.Errorf("a review session skipped permissions:\n%s", got)
 	}
+	// An MCP server is another way to run something, and the person's own
+	// servers are configured for their own work, not for this: the
+	// configuration the session is given holds none.
+	if servers := mcpServers(t, got); len(servers) != 0 {
+		t.Errorf("a review session was given MCP servers: %v", servers)
+	}
 	if prompt := recorded(t, record, "stdin"); prompt != "do it" {
 		t.Errorf("prompt = %q, want it on stdin", prompt)
 	}
 }
 
-func TestAClaudeSessionsAnswerIsRead(t *testing.T) {
-	bin, _ := fakeCLI(t, claudeAnswer)
-	agent := &CLIAgent{Provider: config.AgentClaude, ClaudeBin: bin}
-	res, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Dir: t.TempDir()})
+// mcpServers reads the MCP configuration the session was pointed at and
+// names the servers it holds.
+func mcpServers(t *testing.T, argv string) []string {
+	t.Helper()
+	_, path, _ := strings.Cut(argv, "\n--mcp-config\n")
+	path, _, _ = strings.Cut(path, "\n")
+	var cfg struct {
+		MCPServers map[string]json.RawMessage `json:"mcpServers"`
+	}
+	data, err := os.ReadFile(strings.TrimSpace(path))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Text != "the brief" || res.ID != "sess-1" || res.Turns != 3 || res.CostUSD != 0.5 || !res.CostKnown {
-		t.Errorf("result = %+v", res)
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for name := range cfg.MCPServers {
+		names = append(names, name)
+	}
+	return names
+}
+
+func TestASessionRunsInTheDirectoryItWasGiven(t *testing.T) {
+	bin, record := fakeCLI(t, claudeAnswer)
+	dir := t.TempDir()
+	agent := &CLIAgent{ClaudeBin: bin}
+	if _, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Dir: dir}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := filepath.EvalSymlinks(strings.TrimSpace(recorded(t, record, "dir")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Errorf("ran in %s, want %s", got, want)
+	}
+}
+
+func TestEveryProviderAnswersThroughTheAdapter(t *testing.T) {
+	for name, tc := range sessionsByAgent() {
+		t.Run(name, func(t *testing.T) {
+			bin, _ := fakeCLI(t, tc.answer)
+			agent := allProviderBins(bin)
+			agent.Provider = name
+			res, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Dir: t.TempDir()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res.Text != "the brief" || res.ID != tc.id || res.Turns != tc.turns || res.CostUSD != tc.cost || res.CostKnown != tc.costKnown {
+				t.Errorf("result = %+v, want %q with %d turns, cost %.2f known %v", res, tc.id, tc.turns, tc.cost, tc.costKnown)
+			}
+			if res.Provider != name {
+				t.Errorf("the result named provider %q, want the agent that answered", res.Provider)
+			}
+		})
 	}
 }
 
@@ -125,8 +274,8 @@ func TestASessionThatPrintedNoResultIsAnError(t *testing.T) {
 
 func TestASessionThatFailedWithAResultReportsTheResult(t *testing.T) {
 	// The exit code is not what says a session failed: claude reports the
-	// failure in its result and can still exit 0.
-	bin, _ := fakeCLI(t, `echo '{"is_error":true,"subtype":"error_during_execution","result":"no capacity"}'`)
+	// failure in its result event and can still exit 0.
+	bin, _ := fakeCLI(t, `echo '{"type":"result","is_error":true,"subtype":"error_during_execution","result":"no capacity"}'`)
 	agent := &CLIAgent{ClaudeBin: bin}
 	_, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Dir: t.TempDir()})
 	if err == nil || !strings.Contains(err.Error(), "no capacity") {
@@ -151,34 +300,12 @@ func TestAClaudeSessionIsResumedByItsID(t *testing.T) {
 	}
 }
 
-func TestTheSessionRunsInTheDirectoryItWasGiven(t *testing.T) {
-	bin, record := fakeCLI(t, claudeAnswer)
-	dir := t.TempDir()
-	agent := &CLIAgent{ClaudeBin: bin}
-	if _, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Dir: dir}); err != nil {
-		t.Fatal(err)
-	}
-	got, err := filepath.EvalSymlinks(strings.TrimSpace(recorded(t, record, "dir")))
-	if err != nil {
-		t.Fatal(err)
-	}
-	want, err := filepath.EvalSymlinks(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != want {
-		t.Errorf("ran in %s, want %s", got, want)
-	}
-}
-
-func TestAModelTheConfigurationLeavesOutIsTheCLIsOwn(t *testing.T) {
-	for _, tc := range []struct{ provider, answer string }{
-		{config.AgentClaude, claudeAnswer},
-		{config.AgentCodex, codexAnswer},
-	} {
-		t.Run(tc.provider, func(t *testing.T) {
+func TestAModelTheConfigurationLeavesOutIsTheAgentsOwn(t *testing.T) {
+	for name, tc := range sessionsByAgent() {
+		t.Run(name, func(t *testing.T) {
 			bin, record := fakeCLI(t, tc.answer)
-			agent := &CLIAgent{Provider: tc.provider, ClaudeBin: bin, CodexBin: bin}
+			agent := allProviderBins(bin)
+			agent.Provider = name
 			if _, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Dir: t.TempDir()}); err != nil {
 				t.Fatal(err)
 			}
@@ -197,29 +324,26 @@ func TestACLIThatCouldNotBeRunIsAnError(t *testing.T) {
 	}
 }
 
-const codexAnswer = `echo '{"type":"thread.started","thread_id":"thread-9"}'
-echo '{"type":"item.completed","item":{"type":"reasoning","text":"thinking"}}'
-echo '{"type":"item.completed","item":{"type":"agent_message","text":"the brief"}}'
-echo '{"type":"item.completed","item":{"type":"reasoning","text":"that will do"}}'
-echo '{"type":"turn.completed"}'`
-
 func TestACodexReviewSessionRunsInItsReadOnlySandbox(t *testing.T) {
 	bin, record := fakeCLI(t, codexAnswer)
-	agent := &CLIAgent{Provider: config.AgentCodex, CodexBin: bin, Model: "gpt-5"}
-	res, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Prompt: "do it", Dir: t.TempDir(), ResumeID: "thread-1"})
+	agent := &CLIAgent{Provider: config.AgentCodex, CodexBin: bin, Model: "gpt-5", Effort: "max"}
+	res, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Prompt: "do it", Dir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := args(t, record)
-	for _, want := range []string{"\nexec\n", "\n--json\n", "\n--sandbox\nread-only\n", "\n--model\ngpt-5\n", "\n-\n"} {
+	for _, want := range []string{"\nexec\n", "\n--json\n", "\n--sandbox\nread-only\n", "\n--model\ngpt-5\n",
+		"\nmodel_reasoning_effort=\"high\"\n", "\nfeatures.shell_tool=false\n", "\nfeatures.plugins=false\n",
+		"\nweb_search=\"disabled\"\n", "\napproval_policy=\"never\"\n", "\n-\n"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("codex was not given %q:\n%s", want, got)
 		}
 	}
 	// Codex has no resume, and the id of a claude session is not one of its
-	// threads: it starts a session instead of failing on the flag.
-	if strings.Contains(got, "--resume") {
-		t.Errorf("codex was asked to resume:\n%s", got)
+	// threads: the shared execution refuses one before the launch rather
+	// than start a session that had read nothing.
+	if _, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Dir: t.TempDir(), ResumeID: "thread-1"}); err == nil || !strings.Contains(err.Error(), "does not support follow-up") {
+		t.Errorf("a resume id for codex: %v, want it refused", err)
 	}
 	if res.Text != "the brief" || res.ID != "thread-9" || res.Turns != 3 || res.CostUSD != 0 || res.CostKnown {
 		t.Errorf("result = %+v", res)
@@ -249,16 +373,148 @@ func TestACodexStreamThatNeverEndsTheTurnIsAnError(t *testing.T) {
 echo '{"type":"item.completed","item":{"type":"agent_message","text":"half a brief"}}'`)
 	agent := &CLIAgent{Provider: config.AgentCodex, CodexBin: bin}
 	_, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Dir: t.TempDir()})
-	if err == nil || !strings.Contains(err.Error(), "without finishing the turn") {
-		t.Fatalf("err = %v, want an unfinished turn", err)
+	if err == nil || !strings.Contains(err.Error(), "no_result") {
+		t.Fatalf("err = %v, want a stream that ended without saying", err)
+	}
+}
+
+func TestAnOpenCodeReviewSessionRunsItsOwnReadOnlyAgent(t *testing.T) {
+	bin, record := fakeCLI(t, openCodeAnswer)
+	agent := &CLIAgent{Provider: config.AgentOpenCode, OpenCodeBin: bin, Model: "anthropic/claude-sonnet", Effort: "high"}
+	res, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Prompt: "do it", Dir: t.TempDir(), ResumeID: "open-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := args(t, record)
+	for _, want := range []string{"\n--pure\n", "\nrun\n", "\n--format\njson\n", "\n--agent\nbees-read-only\n", "\n--model\nanthropic/claude-sonnet\n", "\n--session\nopen-1\n"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("opencode was not given %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "--auto") {
+		t.Errorf("a review session auto-approved its tools:\n%s", got)
+	}
+	// The read-only agent's exact permissions, the disabled sharing and
+	// plugins, are inline configuration the CLI is probed on having taken;
+	// the resolved configuration names every inherited server disabled.
+	inline := recorded(t, record, "config-inline")
+	for _, want := range []string{`"bees-read-only"`, `"*":"deny"`, `"read":"allow"`, `"grep":"allow"`, `"glob":"allow"`, `"share":"disabled"`, `"plugin":[]`} {
+		if !strings.Contains(inline, want) {
+			t.Errorf("the restricted configuration lacked %q:\n%s", want, inline)
+		}
+	}
+	if resolved := recorded(t, record, "config-content"); !strings.Contains(resolved, `"legacy":{"enabled":false}`) {
+		t.Errorf("the resolved configuration did not have the inherited server disabled:\n%s", resolved)
+	}
+	if env := envOf(t, record); !strings.Contains(env, "OPENCODE_DISABLE_DEFAULT_PLUGINS=true") {
+		t.Errorf("discovered plugins were not disabled:\n%s", env)
+	}
+	if res.Text != "the brief" || res.ID != "open-7" || res.CostUSD != 0.25 || !res.CostKnown {
+		t.Errorf("result = %+v", res)
+	}
+}
+
+// TestAnOpenCodeConfigurationThatIgnoredTheFloorIsRefused runs a stand-in
+// whose `debug config` reports the inherited server still enabled: the
+// launch is refused before the model runs, and no session starts.
+func TestAnOpenCodeConfigurationThatIgnoredTheFloorIsRefused(t *testing.T) {
+	// The honest probe resolves "legacy" as disabled once the inline
+	// configuration disables it; this one reports it enabled whatever it is
+	// given, so the condition is false and the else branch always answers.
+	liar := strings.Replace(honestProbe, "if printf", "if false && printf", 1)
+	bin, record := fakeScript(t, liar, openCodeAnswer)
+	agent := &CLIAgent{Provider: config.AgentOpenCode, OpenCodeBin: bin}
+	_, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Dir: t.TempDir()})
+	if err == nil || !strings.Contains(err.Error(), "not disabled") {
+		t.Fatalf("err = %v, want the launch refused", err)
+	}
+	if _, err := os.Stat(record + ".args"); !os.IsNotExist(err) {
+		t.Fatalf("the session ran after the configuration was refused: %v", err)
+	}
+}
+
+func TestAPiReviewSessionRunsItsReadOnlyTools(t *testing.T) {
+	bin, record := fakeCLI(t, piAnswer)
+	agent := &CLIAgent{Provider: config.AgentPi, PiBin: bin, Model: "anthropic/claude-sonnet", Effort: "max"}
+	res, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Prompt: "do it", Dir: t.TempDir(), ResumeID: "pi-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := args(t, record)
+	for _, want := range []string{
+		"\n-p\n", "\n--mode\njson\n", "\n--no-extensions\n", "\n--no-tools\n",
+		"\n--tools\nread,grep,find,ls\n", "\n--no-skills\n", "\n--no-prompt-templates\n",
+		"\n--no-context-files\n", "\n--model\nanthropic/claude-sonnet\n", "\n--thinking\nmax\n",
+		"\n--session-id\npi-1\n", "\n--name\nagent-distiller\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("pi was not given %q:\n%s", want, got)
+		}
+	}
+	// The ordinary pi session loads the MCP adapter and hands it the
+	// session's servers; a review session loads no extension at all.
+	if strings.Contains(got, "\n-e\n") || strings.Contains(got, "--mcp-config") {
+		t.Errorf("a review session loaded an extension or an MCP configuration:\n%s", got)
+	}
+	if env := envOf(t, record); strings.Contains(env, "PI_MCP_CONFIG_MODE") {
+		t.Errorf("a review session was configured for the MCP adapter:\n%s", env)
+	}
+	if res.Text != "the brief" || res.ID != "pi-4" || res.Turns != 1 || res.CostUSD != 0.75 || !res.CostKnown {
+		t.Errorf("result = %+v", res)
+	}
+}
+
+func TestAFailedPiResponseIsAnError(t *testing.T) {
+	for _, tc := range []struct{ name, event, want string }{
+		{"an error", `{"type":"message_end","message":{"role":"assistant","stopReason":"error","errorMessage":"no capacity"}}`, "error: no capacity"},
+		{"cut short", `{"type":"message_end","message":{"role":"assistant","stopReason":"length"}}`, "stop_length"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bin, _ := fakeCLI(t, "echo '{\"type\":\"session\",\"id\":\"pi\"}'\necho '"+tc.event+"'")
+			agent := &CLIAgent{Provider: config.AgentPi, PiBin: bin}
+			_, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Dir: t.TempDir()})
+			if err == nil || !strings.HasSuffix(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 
 func TestAnUnknownProviderIsRefused(t *testing.T) {
 	agent := &CLIAgent{Provider: "gemini"}
 	_, err := agent.Run(context.Background(), AgentRequest{Name: "distiller"})
-	if err == nil || !strings.Contains(err.Error(), `"gemini"`) || !strings.Contains(err.Error(), "claude, codex") {
-		t.Fatalf("err = %v, want the provider and the ones there are", err)
+	if err == nil || !strings.Contains(err.Error(), `unknown provider "gemini"`) ||
+		!strings.Contains(err.Error(), "claude, codex, opencode, pi") {
+		t.Fatalf("err = %v, want the unknown provider and the ones there are", err)
+	}
+}
+
+// A backend that declares no restricted capability is refused, however it
+// is named: the declaration is what the floor is derived from, not the
+// name. The descriptor is borrowed for the length of the test and taken
+// back after it.
+func TestABackendWithoutTheFloorIsRefused(t *testing.T) {
+	agent.Backends = append(agent.Backends, agent.Backend{Name: "gemini"})
+	defer func() { agent.Backends = agent.Backends[:len(agent.Backends)-1] }()
+	a := &CLIAgent{Provider: "gemini"}
+	_, err := a.Run(context.Background(), AgentRequest{Name: "distiller", Dir: t.TempDir()})
+	if err == nil || !strings.Contains(err.Error(), `review: agent "gemini" cannot establish the read-only restriction`) {
+		t.Fatalf("err = %v, want the launch refused by the adapter", err)
+	}
+	// And the derivation a review's configuration is validated against
+	// leaves it out: only a declared floor makes a provider.
+	if slices.Contains(supportedProviders(), "gemini") {
+		t.Error("a backend without the floor is one of the providers a review session can run as")
+	}
+}
+
+func TestAFallbackChainThatNeverEndsIsRefused(t *testing.T) {
+	a := &CLIAgent{Provider: config.AgentClaude}
+	b := &CLIAgent{Provider: config.AgentCodex, Fallback: a}
+	a.Fallback = b
+	_, err := a.Run(context.Background(), AgentRequest{Name: "distiller"})
+	if err == nil || !strings.Contains(err.Error(), "cycle") {
+		t.Fatalf("err = %v, want the cycle refused", err)
 	}
 }
 
@@ -290,62 +546,94 @@ func TestTheAgentIsTheConfiguredProviderAndModel(t *testing.T) {
 // The session runs in the caller's environment with Env on top of it: a
 // role's own variables from bees.toml when the factory runs the review.
 func TestTheSessionIsGivenTheAgentsEnvironment(t *testing.T) {
-	envFile := filepath.Join(t.TempDir(), "env")
-	bin, _ := fakeCLI(t, "env > "+envFile+"\n"+claudeAnswer)
 	t.Setenv("REVIEW_TEST_INHERITED", "from the caller")
-	agent := &CLIAgent{ClaudeBin: bin, Env: map[string]string{"REVIEW_TEST_ROLE": "from the role", "REVIEW_TEST_INHERITED": "from the role too"}}
+	bin, record := fakeCLI(t, claudeAnswer)
+	agent := &CLIAgent{ClaudeBin: bin, Env: map[string]string{
+		"REVIEW_TEST_ROLE":      "from the role",
+		"REVIEW_TEST_INHERITED": "from the role too",
+		"REVIEW_TEST_EXPANDED":  "$REVIEW_TEST_INHERITED and more",
+	}}
 	if _, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Prompt: "do it", Dir: t.TempDir()}); err != nil {
 		t.Fatal(err)
 	}
-	env, err := os.ReadFile(envFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := "\n" + string(env)
-	if !strings.Contains(got, "\nREVIEW_TEST_ROLE=from the role\n") {
+	env := envOf(t, record)
+	if !strings.Contains(env, "\nREVIEW_TEST_ROLE=from the role\n") {
 		t.Errorf("the role's variable did not reach the session:\n%s", env)
 	}
 	// A variable the role sets wins over the caller's own, as it does for a
-	// factory session.
-	if !strings.Contains(got, "\nREVIEW_TEST_INHERITED=from the role too\n") {
+	// factory session, and a $VAR reference in it is expanded.
+	if !strings.Contains(env, "\nREVIEW_TEST_INHERITED=from the role too\n") {
 		t.Errorf("the role's value of an inherited variable did not win:\n%s", env)
 	}
-	// Nothing is set on a session whose agent has no Env.
-	envFile = filepath.Join(t.TempDir(), "env")
-	bin, _ = fakeCLI(t, "env > "+envFile+"\n"+claudeAnswer)
-	if _, err := (&CLIAgent{ClaudeBin: bin}).Run(context.Background(), AgentRequest{Name: "distiller", Prompt: "do it", Dir: t.TempDir()}); err != nil {
+	if !strings.Contains(env, "\nREVIEW_TEST_EXPANDED=from the caller and more\n") {
+		t.Errorf("a $VAR reference was not expanded:\n%s", env)
+	}
+	// Nothing of the factory or of Git reaches the session, whatever the
+	// role or the caller named.
+	for _, leak := range []string{"BEES_ROLE", "BEES_SESSION_DIR", "GIT_DIR", "GIT_CONFIG_COUNT"} {
+		if strings.Contains(env, leak+"=") {
+			t.Errorf("%s reached the session:\n%s", leak, env)
+		}
+	}
+}
+
+// A review must not inherit factory identity or Git access overrides, even
+// when its caller is itself a factory session or the role's env names
+// those keys.
+func TestTheSessionIsNotGivenFactoryOrVCSVariables(t *testing.T) {
+	t.Setenv("BEES_ROLE", "reviewer")
+	t.Setenv("BEES_SESSION_DIR", "/session")
+	t.Setenv("GIT_DIR", "/shared")
+	t.Setenv("REVIEW_TEST_KEPT", "yes")
+	bin, record := fakeCLI(t, claudeAnswer)
+	agent := &CLIAgent{ClaudeBin: bin, Env: map[string]string{"BEES_REPO": "secret", "GIT_WORK_TREE": "/repo", "REVIEW_TEST_ROLE": "ok"}}
+	if _, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Prompt: "do it", Dir: t.TempDir()}); err != nil {
 		t.Fatal(err)
 	}
-	env, err = os.ReadFile(envFile)
-	if err != nil {
-		t.Fatal(err)
+	env := envOf(t, record)
+	for _, leak := range []string{"BEES_ROLE", "BEES_SESSION_DIR", "BEES_REPO", "GIT_DIR", "GIT_WORK_TREE"} {
+		if strings.Contains(env, leak+"=") {
+			t.Errorf("%s leaked into the session:\n%s", leak, env)
+		}
 	}
-	if strings.Contains(string(env), "REVIEW_TEST_ROLE") || !strings.Contains(string(env), "REVIEW_TEST_INHERITED=from the caller") {
-		t.Errorf("an agent with no Env changed the environment:\n%s", env)
+	if !strings.Contains(env, "REVIEW_TEST_KEPT=yes") || !strings.Contains(env, "REVIEW_TEST_ROLE=ok") {
+		t.Errorf("the caller's own variables were not kept:\n%s", env)
 	}
 }
 
 func TestReviewExecutionSettingsAndSafety(t *testing.T) {
-	for _, provider := range []string{config.AgentClaude, config.AgentCodex} {
-		t.Run(provider, func(t *testing.T) {
-			answer := claudeAnswer
-			if provider == config.AgentCodex {
-				answer = codexAnswer
-			}
-			bin, record := fakeCLI(t, answer)
-			a := &CLIAgent{Provider: provider, ClaudeBin: bin, CodexBin: bin, Model: "chosen", Fallback: &CLIAgent{Provider: config.AgentClaude, Model: "fallback"}, Effort: "max"}
+	for name, tc := range sessionsByAgent() {
+		t.Run(name, func(t *testing.T) {
+			bin, record := fakeCLI(t, tc.answer)
+			a := allProviderBins(bin)
+			a.Provider, a.Model, a.Effort = name, "chosen", "max"
+			a.Fallback = &CLIAgent{Provider: config.AgentClaude, Model: "fallback"}
 			if _, err := a.Run(context.Background(), AgentRequest{Dir: t.TempDir()}); err != nil {
 				t.Fatal(err)
 			}
 			got := args(t, record)
 			wants := []string{"\n--model\nchosen\n"}
-			if provider == config.AgentClaude {
-				wants = append(wants, "\n--fallback-model\nfallback\n", "\n--effort\nmax\n", "\n--tools\nRead,Grep,Glob,LS,NotebookRead\n", "\n--setting-sources\n\n")
-			} else {
-				wants = append(wants, "\nmodel_reasoning_effort=\"high\"\n", "\nfeatures.shell_tool=false\n", "\nfeatures.plugins=false\n", "\nweb_search=\"disabled\"\n", "\n--sandbox\nread-only\n")
+			switch name {
+			case config.AgentClaude:
+				// Claude can switch to another claude model itself; the
+				// claude fallback's model goes as --fallback-model.
+				wants = append(wants, "\n--fallback-model\nfallback\n", "\n--effort\nmax\n", "\n--setting-sources\n\n")
+			case config.AgentCodex:
+				// Codex's levels stop at high, and there is no fallback
+				// model flag: the fallback is a session of its own.
+				wants = append(wants, "\nmodel_reasoning_effort=\"high\"\n", "\nfeatures.shell_tool=false\n", "\n--sandbox\nread-only\n")
 				if strings.Contains(got, "--fallback-model") {
-					t.Fatal("Codex received Claude fallback flag")
+					t.Errorf("codex was given claude's fallback flag:\n%s", got)
 				}
+			case config.AgentOpenCode:
+				wants = append(wants, "\n--agent\nbees-read-only\n")
+				// opencode takes effort as the read-only agent's variant,
+				// in the inline configuration, not on the command line.
+				if !strings.Contains(recorded(t, record, "config-inline"), `"variant":"max"`) {
+					t.Errorf("the read-only agent ran without the effort:\n%s", recorded(t, record, "config-inline"))
+				}
+			case config.AgentPi:
+				wants = append(wants, "\n--thinking\nmax\n", "\n--no-tools\n")
 			}
 			for _, want := range wants {
 				if !strings.Contains(got, want) {
@@ -353,10 +641,6 @@ func TestReviewExecutionSettingsAndSafety(t *testing.T) {
 				}
 			}
 		})
-	}
-	env := reviewEnvironment([]string{"BEES_ROLE=reviewer", "BEES_SESSION_DIR=/session", "GIT_DIR=/shared", "GIT_CONFIG_COUNT=1", "KEEP=yes"}, map[string]string{"BEES_REPO": "secret", "GIT_WORK_TREE": "/repo", "ROLE_ENV": "ok"})
-	if strings.Join(env, " ") != "KEEP=yes ROLE_ENV=ok" {
-		t.Fatalf("identity leaked: %v", env)
 	}
 }
 
@@ -428,8 +712,8 @@ esac`
 
 func TestCodexReviewMCPInventoryFailsClosed(t *testing.T) {
 	for _, tc := range []struct{ name, response, want string }{
-		{"failed command", "exit 1", "list codex MCP"},
-		{"invalid JSON", "echo invalid", "decode codex MCP"},
+		{"failed command", "exit 1", "list MCP servers"},
+		{"invalid JSON", "echo invalid", "decode MCP servers"},
 		{"null", "echo null", "must be an array"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -455,30 +739,37 @@ func TestCodexReviewMCPInventoryFailsClosed(t *testing.T) {
 
 // A session refused for want of capacity runs again as the fallback agent,
 // down the chain until one answers, and the one that answers is a review
-// session like any other: the codex fallback of a claude session runs in
-// codex's read-only sandbox, and the claude session was told no
-// --fallback-model, since claude cannot switch to codex itself. Any other
-// failure is the session's own, and the fallback never runs.
+// session like any other: every attempt is held to the same read-only
+// floor, a cross-agent fallback starts its own session, and the run is
+// recorded under the agent and model that answered. Any other failure is
+// the session's own, and the fallback never runs.
 func TestAReviewSessionWithoutCapacityRunsAsItsFallback(t *testing.T) {
 	limited, limitedRecord := fakeCLI(t, `echo '{"type":"result","subtype":"error","is_error":true,"result":"Rate limit reached for opus","session_id":"sess-0","num_turns":0}'`)
 	overloaded, overloadedRecord := fakeCLI(t, `echo '{"type":"error","message":"the model is overloaded"}'`)
-	answering, answeringRecord := fakeCLI(t, codexAnswer)
+	answering, answeringRecord := fakeCLI(t, openCodeAnswer)
 	a := &CLIAgent{ClaudeBin: limited, Model: "opus", Fallback: &CLIAgent{
 		Provider: config.AgentCodex, CodexBin: overloaded, Model: "gpt-first", Fallback: &CLIAgent{
-			Provider: config.AgentCodex, CodexBin: answering, Model: "gpt-last"}}}
+			Provider: config.AgentOpenCode, OpenCodeBin: answering, Model: "gpt-last"}}}
 	res, err := a.Run(context.Background(), AgentRequest{Name: "distiller", Prompt: "do it", Dir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Text != "the brief" || res.ID != "thread-9" || res.Provider != config.AgentCodex || res.Model != "gpt-last" {
+	if res.Text != "the brief" || res.ID != "open-7" || res.Provider != config.AgentOpenCode || res.Model != "gpt-last" {
 		t.Errorf("answer: %+v, want the last fallback's answer, named as its own", res)
 	}
 	if got := args(t, limitedRecord); strings.Contains(got, "--fallback-model") {
 		t.Errorf("the claude session was told a fallback model it cannot switch to:%s", got)
 	}
-	for _, record := range []string{overloadedRecord, answeringRecord} {
-		got := args(t, record)
-		for _, want := range []string{"\nexec\n", "\n--sandbox\nread-only\n", "\nfeatures.shell_tool=false\n"} {
+	// Every attempt is held to its own backend's floor.
+	for _, tc := range []struct {
+		record string
+		want   []string
+	}{
+		{overloadedRecord, []string{"\nexec\n", "\n--sandbox\nread-only\n", "\nfeatures.shell_tool=false\n"}},
+		{answeringRecord, []string{"\n--pure\n", "\n--agent\nbees-read-only\n"}},
+	} {
+		got := args(t, tc.record)
+		for _, want := range tc.want {
 			if !strings.Contains(got, want) {
 				t.Errorf("the fallback escaped the floor, missing %q:%s", want, got)
 			}
@@ -488,17 +779,23 @@ func TestAReviewSessionWithoutCapacityRunsAsItsFallback(t *testing.T) {
 		t.Errorf("the last fallback ran another model:%s", got)
 	}
 
-	// A CLI that says so on stderr alone and exits without a result event.
-	quiet, quietRecord := fakeCLI(t, `echo 'API Error: 429 rate limit reached' >&2; exit 1`)
-	answering, answeringRecord = fakeCLI(t, claudeAnswer)
-	a = &CLIAgent{ClaudeBin: quiet, Model: "opus", Fallback: &CLIAgent{ClaudeBin: answering, Model: "sonnet"}}
-	if res, err := a.Run(context.Background(), AgentRequest{Name: "distiller", Prompt: "do it", Dir: t.TempDir()}); err != nil || res.Text != "the brief" {
+	// A CLI that says so on stderr alone and exits without a result event
+	// is caught the same way. One agent plays both: it rate-limits the
+	// model it is first asked for and answers for the fallback's, and its
+	// records accumulate, so both command lines are read back.
+	flip, flipRecord := fakeLog(t, `case " $* " in
+  *" --model opus "*) echo 'API Error: 429 rate limit reached' >&2; exit 1 ;;
+  *) `+claudeAnswer+` ;;
+esac`)
+	a = &CLIAgent{ClaudeBin: flip, Model: "opus", Fallback: &CLIAgent{ClaudeBin: flip, Model: "sonnet"}}
+	res, err = a.Run(context.Background(), AgentRequest{Name: "distiller", Prompt: "do it", Dir: t.TempDir()})
+	if err != nil || res.Text != "the brief" || res.Provider != config.AgentClaude || res.Model != "sonnet" {
 		t.Fatalf("a capacity failure on stderr: %v %+v", err, res)
 	}
-	if got := args(t, quietRecord); !strings.Contains(got, "\n--fallback-model\nsonnet\n") {
+	if got := args(t, flipRecord); !strings.Contains(got, "\n--fallback-model\nsonnet\n") {
 		t.Errorf("a claude fallback's model was not passed to claude:%s", got)
 	}
-	if got := args(t, answeringRecord); !strings.Contains(got, "\n--model\nsonnet\n") {
+	if got := args(t, flipRecord); !strings.Contains(got, "\n--model\nsonnet\n") {
 		t.Errorf("the fallback ran another model:%s", got)
 	}
 
@@ -510,5 +807,19 @@ func TestAReviewSessionWithoutCapacityRunsAsItsFallback(t *testing.T) {
 	}
 	if _, err := os.Stat(neverRecord + ".args"); err == nil {
 		t.Error("the fallback ran for a failure that is not about capacity")
+	}
+}
+
+// A review session goes through the same guard as a factory session: an
+// agent no test made is refused from a test binary before it is started.
+func TestARealAgentNeverRunsFromATestBinary(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("no sh on PATH")
+	}
+	agent := &CLIAgent{ClaudeBin: sh}
+	_, err = agent.Run(context.Background(), AgentRequest{Name: "distiller", Prompt: "do it", Dir: t.TempDir()})
+	if !errors.Is(err, agentbin.ErrRealAgent) {
+		t.Fatalf("err = %v, want ErrRealAgent", err)
 	}
 }

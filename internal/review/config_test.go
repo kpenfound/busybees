@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kpenfound/busybees/core/agent"
 	"github.com/kpenfound/busybees/internal/config"
 )
 
@@ -203,7 +204,7 @@ func TestConfigInvalid(t *testing.T) {
 		{"unknown key", "provder = \"claude\"\n", []string{"unknown keys", "provder"}},
 		{"unknown key in a table", "[github]\ntokn = \"x\"\n", []string{"unknown keys", "github.tokn"}},
 		{"tui table is gone", "[tui]\ncolor = false\n", []string{"unknown keys", "tui"}},
-		{"provider", "provider = \"gemini\"\n", []string{"provider \"gemini\" must be one of claude, codex"}},
+		{"provider", "provider = \"gemini\"\n", []string{"provider \"gemini\" must be one of claude, codex, opencode, pi"}},
 		{"output", "output = \"merge\"\n", []string{"output \"merge\" must be one of ask, approve, comment, reject, report, discard"}},
 		{"token variable", "[github]\ntoken = \"$REVIEW_UNSET_TOKEN\"\n", []string{"github.token reads $REVIEW_UNSET_TOKEN, which is not set"}},
 		{"unknown per-step key", "angle_model = \"haiku\"\n", []string{"unknown keys", "angle_model"}},
@@ -544,8 +545,8 @@ func TestDefaultsErrors(t *testing.T) {
 		},
 		{
 			name:     "base profile on an agent reviews cannot run",
-			defaults: "version = 5\n[profiles.oc]\nagent = \"opencode\"\n[roles.reviewer]\nprofile = \"oc\"\n",
-			want:     []string{"defaults.toml: provider \"opencode\" must be one of claude, codex"},
+			defaults: "version = 5\n[profiles.gem]\nagent = \"gemini\"\n[roles.reviewer]\nprofile = \"gem\"\n",
+			want:     []string{"defaults.toml: profiles.gem.agent must be one of claude, codex, opencode, pi"},
 		},
 		{
 			name:     "bad value in a defaults profile",
@@ -561,7 +562,7 @@ func TestDefaultsErrors(t *testing.T) {
 			name:     "an error of config.toml's own is not attributed to the defaults file",
 			defaults: defaultsReviewer,
 			config:   "provider = \"gemini\"\n",
-			want:     []string{"provider \"gemini\" must be one of claude, codex"},
+			want:     []string{"provider \"gemini\" must be one of claude, codex, opencode, pi"},
 			notWant:  "defaults.toml",
 		},
 	} {
@@ -591,14 +592,23 @@ func TestDefaultsErrors(t *testing.T) {
 	}
 }
 
-// TestSupportedProvidersMatchesWhatCommandImplements pins the provider list
-// Config.Validate() and CLIAgent.command()'s error both read from. Widening
-// config.Agents (a factory session backend) must not, by itself, widen this
-// list: that only happens when someone adds the matching case to command()
-// in agent.go.
-func TestSupportedProvidersMatchesWhatCommandImplements(t *testing.T) {
-	want := []string{"claude", "codex"}
+// TestSupportedProvidersDerivesFromTheDescriptors pins the provider list
+// Config.Validate() and CLIAgent.Run's error both read from: the agents
+// whose backend descriptor declares the read-only floor a review session is
+// held to. There is no second list to widen when one is added: the test
+// fails when a descriptor declares restricted support without the shared
+// execution delivering it, and the derived list is what both readers take.
+func TestSupportedProvidersDerivesFromTheDescriptors(t *testing.T) {
+	var want []string
+	for _, b := range agent.Backends {
+		if b.Restricted != nil && b.Restricted.Supported {
+			want = append(want, b.Name)
+		}
+	}
 	if !slices.Equal(SupportedProviders, want) {
-		t.Fatalf("SupportedProviders = %v, want %v", SupportedProviders, want)
+		t.Fatalf("SupportedProviders = %v, want the declared %v", SupportedProviders, want)
+	}
+	if !slices.Equal(want, []string{"claude", "codex", "opencode", "pi"}) {
+		t.Fatalf("the descriptors declare %v, want all four", want)
 	}
 }

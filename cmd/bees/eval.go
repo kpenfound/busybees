@@ -165,6 +165,7 @@ func evalOf(role string) string {
 func evalGrader(global *review.Config) review.Agent {
 	a := review.NewAgent(global)
 	a.ClaudeBin, a.CodexBin = claudeBin(), codexBin()
+	a.OpenCodeBin, a.PiBin = opencodeBin(), piBin()
 	return a
 }
 

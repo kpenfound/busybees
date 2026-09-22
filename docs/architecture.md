@@ -709,12 +709,13 @@ stateDiagram-v2
   sizes it, one session per angle `roles.reviewer.angles` gives that size
   looks for problems from that angle alone, and the judge, deterministic
   code, merges what they found into one list. The brief and the angle
-  sessions are `internal/review`'s read-only host sessions. `brief_profile`
-  and `angle_profiles` select agent, model, fallback and effort after
-  the role's size-resolved profile; unspecified phases retain that fallback.
-  Only Claude and Codex are supported, on the fallback chain too, and a
-  session refused for want of capacity runs again as its fallback under the
-  same restrictions. Profile sandbox is ignored: no
+  sessions are `internal/review`'s read-only host sessions, run through
+  the shared restricted execution, claude, codex, opencode and pi alike.
+  `brief_profile` and `angle_profiles` select agent, model, fallback and
+  effort after the role's size-resolved profile, and every profile of a
+  fallback chain runs as one of the four. A session refused for want of
+  capacity runs again as its fallback under the same restrictions. Profile
+  sandbox is ignored: no
   commands, writes, web/network tools, MCP/factory identity or writable/shared
   VCS are available. Both phases read an independent clone of the worker's checkout
   under the review's artifact, which the diff is read from too (the branch

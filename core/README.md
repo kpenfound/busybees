@@ -85,6 +85,46 @@ An ordinary pi session (`AgentPi`) has no MCP support of its own: the runner loa
 passes it as the adapter's `--mcp-config` with `PI_MCP_CONFIG_MODE=exclusive`.
 Restricted execution loads neither the adapter nor configured packages.
 
+## Adding a backend
+
+A new agent CLI joins in one descriptor and one implementation, and every
+other list derives from or is held to them. The checklist:
+
+1. **Metadata.** Add the `Backend` to `agent.Backends` (backends.go): `Name`
+   (also the value of the `agent` setting and the default executable's
+   basename), `Credentials` (the variables the CLI reads its credential
+   from), `ProviderEnv` (its configuration and credential variables, `*`
+   for a prefix), `ArgvMarker` (whether the command line carries a marker
+   the process-table scan finds), a `bin` selector for the runner's
+   executable override, and the implementation. `AgentCredentials` and the
+   factory's `internal/session.ProviderEnv` derive from the descriptors.
+2. **Ordinary execution.** Give the implementation its `command` (the
+   executable comes from `b.executable(r)`, never named directly) and its
+   `consume` (the stream reduced to a `streamEnd`), and cover both with a
+   fixture test in `fixture_test.go`'s style, `backendNamed` for the
+   descriptor lookup.
+3. **Restricted review execution.** Extend `command`'s `paths.restricted`
+   branch to establish the whole read-only floor — no write, run or
+   fetch tool, no MCP (inherited servers inventoried and disabled, a
+   probe that cannot answer failing the launch), no writable VCS access,
+   inherited configuration unable to widen any of it — and cover it in
+   `restricted_test.go`: the command line, inherited-configuration
+   attacks, the fail-closed probe, and the result fields. A restriction
+   that cannot be established is refused before any process starts, never
+   silently dropped.
+4. **Capability declarations.** Set `Restricted` (`RestrictedCapabilities`):
+   `Supported` only when the command builder can establish the complete
+   floor, and `FollowUp` when `ResumeID` is meaningful. The pointer is
+   nil when a descriptor forgets, which `TestBackendsAreDeclaredCompletely`
+   reports; `TestBackendRestrictedCapabilities` pins each declaration.
+5. **Completeness.** `procs.AgentExecutables` names the executable
+   (`TestBackendsMatchProcsExecutables` holds the two together); doctor
+   carries the toolchain check (`TestEveryBackendHasAToolchainCheck` in
+   the busybees root); `SbxTemplates` has a template or the sandbox is
+   refused for it; `profile.go`'s per-agent facts (PiPackages,
+   SbxTemplates) say what applies; and the repository's review and role
+   documentation names the agent where it lists the ones there are.
+
 ## Grants
 
 `agent.Grants` lists everything a session may have:

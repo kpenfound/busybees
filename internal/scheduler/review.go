@@ -195,14 +195,16 @@ func (s *Scheduler) reviewAgent(role config.ResolvedRole) *review.CLIAgent {
 
 func (s *Scheduler) reviewAgentFor(role config.ResolvedRole) *review.CLIAgent {
 	return &review.CLIAgent{
-		Provider:  role.Agent,
-		Model:     role.Model,
-		Effort:    role.Effort,
-		ClaudeBin: s.runner.ClaudeBin,
-		CodexBin:  s.runner.CodexBin,
-		Timeout:   role.Timeout,
-		MaxTurns:  role.MaxTurns,
-		Env:       role.Env,
+		Provider:    role.Agent,
+		Model:       role.Model,
+		Effort:      role.Effort,
+		ClaudeBin:   s.runner.ClaudeBin,
+		CodexBin:    s.runner.CodexBin,
+		OpenCodeBin: s.runner.OpenCodeBin,
+		PiBin:       s.runner.PiBin,
+		Timeout:     role.Timeout,
+		MaxTurns:    role.MaxTurns,
+		Env:         role.Env,
 	}
 }
 

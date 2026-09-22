@@ -774,8 +774,8 @@ Like the checks keys, they are accepted only under `[roles.reviewer]`.
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `angles.<size>` | string list | the built-in list for that size | The angles a pull request of that size is reviewed from. `<size>` is `xs`, `s`, `m`, `l` or `xl`; one or more of `quick_general`, `general`, `docs`, `test_coverage`, `acceptance_criteria`, `side_effects`. An unknown size or angle, or an empty list, is a load error. A size this does not name keeps the built-in list. |
-| `brief_profile` | profile name | size-resolved reviewer profile | Execution profile for the brief. Must use Claude or Codex; sandbox is ignored. |
-| `angle_profiles.<angle>` | profile name | size-resolved reviewer profile | Execution profile for that angle. Must use Claude or Codex; sandbox is ignored. Unknown profile or angle names fail loading with the complete key path. |
+| `brief_profile` | profile name | size-resolved reviewer profile | Execution profile for the brief. Its agent is one the review sessions can run as (claude, codex, opencode or pi); sandbox is ignored. |
+| `angle_profiles.<angle>` | profile name | size-resolved reviewer profile | Execution profile for that angle. Same agent rule as `brief_profile`, and its whole fallback chain with it. Unknown profile or angle names fail loading with the complete key path. |
 | `judge_profile` | profile name | size-resolved reviewer profile | All five execution fields, including sandbox, for the reviewer session that posts findings and decides the verdict. |
 
 | Size | Built-in angles |
@@ -788,13 +788,13 @@ Phase overrides resolve through `[profiles.*]` after ordinary role and
 `profile_by_size` selection. An unspecified angle uses the size-resolved
 reviewer profile. Brief and angle sessions select `agent`, `model`,
 `fallback` and `effort`, subject to backend support (Codex maps `max` effort
-to `high`). They ignore the profile's `sandbox` and use the host adapter's
-mandatory read-only checkout policy: no commands, writes, web/network tools,
-MCP, factory identity, or writable or shared VCS access. Claude and Codex are
-the supported host agents, on every profile of the `fallback` chain too: a
-brief or angle session refused for want of capacity runs again as its
-fallback, under the same policy, and a chain that reaches an `opencode` or
-`pi` profile is a load error.
+to `high`). They ignore the profile's `sandbox` and run under the shared
+restricted execution's read-only floor: no commands, writes, web/network
+tools, MCP, factory identity, or writable or shared VCS access. Claude,
+codex, opencode and pi are the supported host agents, on every profile of
+the `fallback` chain too: a brief or angle session refused for want of
+capacity runs again as its `fallback`, under the same policy, and a chain
+that reaches an agent a review session cannot run as is a load error.
 
 The judge applies all five profile fields, including `sandbox`, through an
 ordinary factory reviewer session. Its prompt, tools, permissions and ability

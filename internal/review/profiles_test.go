@@ -226,8 +226,6 @@ func TestProfileErrors(t *testing.T) {
 		{"sandbox", "[profiles.a]\nsandbox = \"jail\"\n", []string{"profiles.a.sandbox must be one of"}},
 		{"unknown fallback", "[profiles.a]\nfallback = \"b\"\n", []string{`profiles.a.fallback: unknown profile "b"`}},
 		{"fallback cycle", "[profiles.a]\nfallback = \"b\"\n[profiles.b]\nfallback = \"a\"\n", []string{`comes back to "a"`}},
-		{"brief profile on an agent review cannot run", "brief_profile = \"a\"\n[profiles.a]\nagent = \"opencode\"\n", []string{`brief_profile: review sessions run as one of claude, codex, and profile "a" runs "opencode"`}},
-		{"angle profile falling back to one", "angle_profiles = { docs = \"a\" }\n[profiles.a]\nfallback = \"b\"\n[profiles.b]\nagent = \"opencode\"\n", []string{`angle_profiles.docs: review sessions run as one of claude, codex, and its fallback profile "b" runs "opencode"`}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), ConfigFile)
@@ -248,4 +246,36 @@ func TestProfileErrors(t *testing.T) {
 	// The judge is no session, so its profile may run any agent, as in
 	// bees.toml; a profile nothing selects is only held to the table's checks.
 	mustParseConfig(t, "judge_profile = \"a\"\n[profiles.a]\nagent = \"opencode\"\n[profiles.b]\nagent = \"opencode\"\n")
+}
+
+// The agent a session's profile runs is checked against the providers the
+// shared restricted execution supports, the whole fallback chain with it.
+// The table's rows cannot reach this check — ValidateProfiles rejects an
+// agent outside the four before it — so it is driven on a configuration
+// built by hand, the way a factory agent added without restricted support
+// would reach it.
+func TestASessionsProfilesMustRunSupportedProviders(t *testing.T) {
+	cfg := &Config{Profiles: map[string]config.AgentProfile{
+		"a": {Agent: "gemini", Model: "gemini-pro"},
+		"b": {Agent: "claude", Fallback: "c"},
+		"c": {Agent: "gemini"},
+	}}
+	for _, agent := range SupportedProviders {
+		cfg.Profiles["ok"] = config.AgentProfile{Agent: agent}
+		if errs := cfg.checkProfile("brief_profile", "ok", true); len(errs) != 0 {
+			t.Errorf("a profile on %s was refused: %v", agent, errs)
+			delete(cfg.Profiles, "ok")
+		}
+	}
+	errs := cfg.checkProfile("brief_profile", "a", true)
+	if len(errs) != 1 || !strings.Contains(errs[0], `brief_profile: review sessions run as one of claude, codex, opencode, pi, and profile "a" runs "gemini"`) {
+		t.Fatalf("errors = %v, want the profile's agent named", errs)
+	}
+	errs = cfg.checkProfile("angle_profiles.docs", "b", true)
+	if len(errs) != 1 || !strings.Contains(errs[0], `its fallback profile "c" runs "gemini"`) {
+		t.Fatalf("errors = %v, want the fallback profile named", errs)
+	}
+	if errs := cfg.checkProfile("judge_profile", "b", false); len(errs) != 0 {
+		t.Errorf("the judge's profile is no session's: %v", errs)
+	}
 }
