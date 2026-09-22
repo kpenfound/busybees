@@ -46,9 +46,9 @@ type RestrictedResult struct {
 // RunRestricted runs a read-only agent turn through the same backend and
 // process lifecycle as Run. It is intended for reviews and other analysis
 // that needs no caller-owned tools: the turn receives no MCP server, writable
-// mount, VCS access, skills, hooks or local project configuration. Claude and
-// Codex implement the restriction today; other backends are refused before
-// any process starts.
+// mount, VCS access, skills, hooks or local project configuration. A backend
+// descriptor must explicitly declare that it implements the restriction;
+// unsupported backends are refused before any process starts.
 //
 // The request may set Name, Profile's execution fields (Name, Agent, Model,
 // Fallback, Effort, MaxTurns, Timeout and Env), Workspace, Prompt, Env and
@@ -68,9 +68,15 @@ func (r *Runner) RunRestricted(ctx context.Context, req Request) (*RestrictedRes
 	}
 
 	profile := req.Profile
+	resumeOwner := profileAgent(profile)
 	for {
 		profile = restrictedDefaults(profile)
 		attempt := restrictedRequest(&runner, req, profile)
+		if profileAgent(profile) != resumeOwner {
+			// A session id is meaningful only to the backend that issued it.
+			// A cross-backend fallback starts its own restricted session.
+			attempt.ResumeID = ""
+		}
 		attemptCtx, cancel := context.WithTimeout(ctx, profile.Timeout)
 		res, err := runner.run(attemptCtx, attempt, true)
 		cancel()
@@ -141,6 +147,13 @@ func restrictedEnvName(prefix, name string) bool {
 		(prefix == "" || !strings.HasPrefix(name, prefix)) && !isVCSEnv(name)
 }
 
+func profileAgent(p Profile) string {
+	if p.Agent == "" {
+		return AgentClaude
+	}
+	return p.Agent
+}
+
 func validateRestrictedRequest(req Request) error {
 	switch {
 	case req.Workspace == nil:
@@ -164,12 +177,13 @@ func validateRestrictedRequest(req Request) error {
 			return errors.New("restricted session: fallback profiles form a cycle")
 		}
 		seen[p] = true
-		provider := p.Agent
-		if provider == "" {
-			provider = AgentClaude
+		provider := profileAgent(*p)
+		backend, err := backendFor(provider)
+		if err != nil {
+			return fmt.Errorf("restricted session: %w", err)
 		}
-		if provider != AgentClaude && provider != AgentCodex {
-			return fmt.Errorf("restricted session: agent %q cannot establish the read-only restriction (supported: %s, %s)", provider, AgentClaude, AgentCodex)
+		if backend.Restricted == nil || !backend.Restricted.Supported {
+			return fmt.Errorf("restricted session: agent %q cannot establish the read-only restriction", provider)
 		}
 		if p.Sandbox != "" || p.Confine || p.SandboxImage != "" || p.ContainerUseEnvironment != "" || p.Dagger != nil || len(p.SandboxDomains) > 0 {
 			return errors.New("restricted session: caller-selected sandboxes are not supported; RunRestricted establishes the boundary")
@@ -177,6 +191,10 @@ func validateRestrictedRequest(req Request) error {
 		if p.VCSAccess || p.Shell != "" || len(p.MCP) > 0 || len(p.AllowedTools) > 0 || len(p.DisallowedTools) > 0 || len(p.Skills) > 0 || len(p.PiPackages) > 0 {
 			return errors.New("restricted session: VCS, shell, MCP, tool, skill and package configuration cannot be supplied")
 		}
+	}
+	backend, _ := backendFor(profileAgent(req.Profile))
+	if req.ResumeID != "" && (backend.Restricted == nil || !backend.Restricted.FollowUp) {
+		return fmt.Errorf("restricted session: agent %q does not support follow-up", backend.Name)
 	}
 	return nil
 }

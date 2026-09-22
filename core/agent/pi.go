@@ -30,6 +30,10 @@ import (
 //     an adapter a person also installed with `pi install` is not loaded a
 //     second time from there. A missing package is installed by pi itself
 //     on first use, into its own cache.
+//     RunRestricted instead loads no extension at all (including the MCP
+//     adapter), disables skill, prompt-template and context-file discovery,
+//     and gives pi a strict allowlist of its read-only built-ins. The CLI
+//     flags win over inherited user and project settings.
 //   - Pi has no approvals and no sandbox of its own: every tool runs without
 //     asking, the counterpart of --dangerously-skip-permissions, so none
 //     and container are the sandboxes it runs in and claude's is refused
@@ -59,8 +63,8 @@ import (
 //     sum and is known — zero for a local model — once one response ended.
 type piBackend struct{}
 
-// PiMCPAdapter is the pi package that gives pi MCP support, loaded by every
-// pi session ahead of Profile.PiPackages.
+// PiMCPAdapter is the pi package that gives ordinary pi sessions MCP support,
+// loaded ahead of Profile.PiPackages. Restricted sessions load neither.
 const PiMCPAdapter = "npm:pi-mcp-adapter"
 
 // PiMCPConfigFile is the adapter's configuration file in the session
@@ -72,6 +76,8 @@ const PiMCPConfigFile = "pi-mcp.json"
 // session sets it to "exclusive".
 const EnvPiMCPConfigMode = "PI_MCP_CONFIG_MODE"
 
+var piRestrictedTools = []string{"read", "grep", "find", "ls"}
+
 func (piBackend) command(_ context.Context, r *Runner, b Backend, req Request, paths sessionPaths) (string, []string, string, []envVar, error) {
 	bin := b.executable(r)
 	configPath := filepath.Join(paths.dir, PiMCPConfigFile)
@@ -79,15 +85,23 @@ func (piBackend) command(_ context.Context, r *Runner, b Backend, req Request, p
 		"-p",
 		"--mode", "json",
 		"--no-extensions",
-		"-e", PiMCPAdapter,
 	}
-	for _, pkg := range req.Profile.PiPackages {
-		args = append(args, "-e", pkg)
+	if paths.restricted {
+		args = append(args,
+			"--no-tools",
+			"--tools", strings.Join(piRestrictedTools, ","),
+			"--no-skills",
+			"--no-prompt-templates",
+			"--no-context-files",
+		)
+	} else {
+		args = append(args, "-e", PiMCPAdapter)
+		for _, pkg := range req.Profile.PiPackages {
+			args = append(args, "-e", pkg)
+		}
+		args = append(args, "--mcp-config", configPath)
 	}
-	args = append(args,
-		"--mcp-config", configPath,
-		"--name", r.namePrefix()+req.Name,
-	)
+	args = append(args, "--name", r.namePrefix()+req.Name)
 	if req.SystemPrompt != "" {
 		args = append(args, "--append-system-prompt", paths.systemPrompt)
 	}
@@ -99,6 +113,9 @@ func (piBackend) command(_ context.Context, r *Runner, b Backend, req Request, p
 	}
 	if req.ResumeID != "" {
 		args = append(args, "--session-id", req.ResumeID)
+	}
+	if paths.restricted {
+		return bin, args, req.Prompt, nil, nil
 	}
 	if err := writePiMCPConfig(configPath, paths.mcp); err != nil {
 		return "", nil, "", nil, err

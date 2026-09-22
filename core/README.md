@@ -51,10 +51,16 @@ outcome contract, writable mount, VCS access, skill, plugin or hook. Factory and
 VCS identity variables are removed. Claude is held to named read-only tools,
 empty settings sources and strict empty MCP configuration; Codex is held to its
 read-only sandbox, disabled command/network/plugin features and a fail-closed
-inventory that disables every inherited MCP server. Claude and Codex implement
-this contract today; other backends are refused before launch. A capacity
-failure walks `Profile.Fallback`, applying the same contract to every attempt,
-and the returned `RestrictedResult.Agent`, `RestrictedResult.Model` and
+inventory that disables every inherited MCP server. OpenCode runs in pure mode
+as a private agent whose effective configuration is probed before launch: only
+read, grep and glob are allowed and every inherited MCP server must resolve
+disabled. Pi loads no extension (including the ordinary MCP adapter), skill,
+prompt template or context file and receives only its read, grep, find and ls
+tools. Every backend descriptor declares whether it can establish this contract
+and whether it supports follow-up; Codex deliberately does not resume. A
+capacity failure walks `Profile.Fallback`, applying the same contract to every
+attempt and clearing a resume id before crossing to another backend. The
+returned `RestrictedResult.Agent`, `RestrictedResult.Model` and
 `RestrictedResult.ClaudeID` belong to the backend that answered.
 
 MCP entries contain public context in `Env` and credential names in `EnvVars`.
@@ -75,10 +81,11 @@ the cleanup a caller stopping sessions wants. A caller that only inspects
 asks through `procs.Finder{ReadOnly: true}`, which reports the same sessions
 and leaves every file in place.
 
-A pi session (`AgentPi`) has no MCP support of its own: the runner loads
+An ordinary pi session (`AgentPi`) has no MCP support of its own: the runner loads
 `PiMCPAdapter` (`npm:pi-mcp-adapter`) and then `Profile.PiPackages` with
 `-e`, writes the MCP entries to `pi-mcp.json` in the session directory, and
 passes it as the adapter's `--mcp-config` with `PI_MCP_CONFIG_MODE=exclusive`.
+Restricted execution loads neither the adapter nor configured packages.
 
 ## Grants
 

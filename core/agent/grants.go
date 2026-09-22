@@ -324,7 +324,9 @@ func verifyCommonFor(req Request, restricted bool) (*Turn, error) {
 		}
 	}
 	if !all {
-		if p.Agent != "" && p.Agent != AgentClaude && (!restricted || p.Agent != AgentCodex) {
+		backend, backendErr := backendFor(p.Agent)
+		canRestrict := backendErr == nil && backend.Restricted != nil && backend.Restricted.Supported
+		if p.Agent != "" && p.Agent != AgentClaude && (!restricted || !canRestrict) {
 			return nil, fmt.Errorf("%w: agent %q cannot restrict its built-in tools; grant %q", ErrUnsupported, p.Agent, ToolsAll)
 		}
 		turn.Tools = tools
