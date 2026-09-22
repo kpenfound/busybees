@@ -2,19 +2,23 @@
 // command that reviews any GitHub pull request, not only the ones a factory
 // manages.
 //
-// This file is its configuration surface, which is two files and neither of
-// them is bees.toml:
+// This file is its configuration surface: two files of its own, neither of
+// them bees.toml, plus the user defaults read below the first:
 //
 //	~/.config/bees/config.toml   the person's own settings (this file):
 //	                             provider and model, the angles of each size
 //	                             and the model or profile of each step, where reviewer
 //	                             notes and review artifacts live, the default
 //	                             output mode, GitHub authentication
+//	defaults.toml                user-level defaults beside it
+//	                             (config.LoadUserDefaults): the profiles and
+//	                             reviewer selectors of a bees.toml, taken for
+//	                             every key config.toml leaves out
 //	context.toml                 the project's settings (project.go): which
 //	                             angles run, extra style sources, category
 //	                             overrides, which context sources are gathered
 //
-// Both are optional: a missing file loads as defaults. A file that is
+// Each is optional: a missing file loads as defaults. A file that is
 // present is held to the same standard as bees.toml, an unknown key and an
 // invalid value are load errors naming the key.
 //
@@ -115,8 +119,9 @@ type Config struct {
 	// even when that file does not exist (Loaded says which): a relative
 	// notes_path or storage_path resolves against its directory.
 	Path string `toml:"-"`
-	// Loaded reports whether Path existed. It is false for a configuration
-	// that is every default.
+	// Loaded reports whether Path existed. It stays false when the file was
+	// not there, however much defaults.toml filled in: the one consumer
+	// outside this package reads it as "config.toml existed".
 	Loaded bool `toml:"-"`
 
 	// Provider is the agent a review session without a profile runs as,
@@ -165,6 +170,16 @@ type Config struct {
 	Output string `toml:"output"`
 
 	GitHub GitHub `toml:"github"`
+
+	// fromDefaults records, under the name an error names a key by, every
+	// key mergeUserDefaults filled from defaults.toml. Validate prefixes
+	// those errors with the defaults file's path, which the header naming
+	// config.toml does not mention and which may not even exist.
+	fromDefaults map[string]bool
+	// defaultsErrors are the problems the defaults file's reviewer settings
+	// have that this schema has no key to report under: a base profile name
+	// neither file defines.
+	defaultsErrors []string
 }
 
 // GitHub is where `bees review` gets its GitHub credentials from. An empty
@@ -213,8 +228,13 @@ func DefaultConfigDir() string {
 func DefaultConfigPath() string { return filepath.Join(DefaultConfigDir(), ConfigFile) }
 
 // LoadConfig reads the global configuration at path, or at
-// DefaultConfigPath when path is empty. A file that is not there is not an
-// error: it loads as the defaults, with Loaded false.
+// DefaultConfigPath when path is empty, and layers the user defaults file
+// (config.LoadUserDefaults) below it: for every key config.toml leaves out,
+// defaults.toml's, then the built-in default. A config.toml that is not
+// there is not an error: it loads as the defaults, with Loaded false. The
+// defaults file is read from its own default location whatever path says,
+// the way a project's bees.toml reads it below itself; a missing one
+// changes nothing, and one that fails to load fails the command.
 func LoadConfig(path string) (*Config, error) {
 	if path == "" {
 		path = DefaultConfigPath()
@@ -223,27 +243,34 @@ func LoadConfig(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(abs)
-	if os.IsNotExist(err) {
-		cfg := &Config{Path: abs}
-		cfg.applyDefaults()
-		return cfg, nil
+	data, readErr := os.ReadFile(abs)
+	if readErr != nil && !os.IsNotExist(readErr) {
+		return nil, readErr
 	}
+	defaults, err := config.LoadUserDefaults()
 	if err != nil {
 		return nil, err
 	}
-	return ParseConfig(string(data), abs)
+	if os.IsNotExist(readErr) {
+		return parseConfig("", abs, false, defaults)
+	}
+	return parseConfig(string(data), abs, true, defaults)
 }
 
 // ParseConfig validates the text of a global configuration file as if it had
 // been read from path, which is used for the Config's location and in error
-// messages but is not itself read.
+// messages but is not itself read. It layers no defaults.toml: LoadConfig,
+// the one caller that reads a file from disk, does that.
 func ParseConfig(text, path string) (*Config, error) {
+	return parseConfig(text, path, true, nil)
+}
+
+func parseConfig(text, path string, present bool, defaults *config.UserDefaults) (*Config, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
 	}
-	cfg := Config{Path: abs, Loaded: true}
+	cfg := Config{Path: abs, Loaded: present}
 	md, err := toml.Decode(text, &cfg)
 	if err != nil {
 		return nil, fmt.Errorf("parse %s: %w", abs, err)
@@ -251,6 +278,7 @@ func ParseConfig(text, path string) (*Config, error) {
 	if err := undecoded(md, abs); err != nil {
 		return nil, err
 	}
+	cfg.mergeUserDefaults(defaults)
 	cfg.applyDefaults()
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -276,10 +304,112 @@ func (c *Config) applyDefaults() {
 	}
 }
 
+// mergeUserDefaults fills the keys config.toml left unset from d, the user
+// defaults file (config.LoadUserDefaults), which holds a bees.toml's
+// [profiles.*], [global].profile and [roles.reviewer]. The nearer file
+// wins, whatever form it uses, and it wins per step: a step config.toml
+// configures at all — a profile or a step model for the brief and the
+// angles, the flat provider or model for the base — takes nothing from
+// defaults.toml. Two merges happen key by key whatever else is set: the
+// angles per size, and the profiles per name, a config.toml profile
+// replacing the defaults one whole.
+func (c *Config) mergeUserDefaults(d *config.UserDefaults) {
+	if d == nil {
+		return
+	}
+	mark := func(key string) {
+		if c.fromDefaults == nil {
+			c.fromDefaults = map[string]bool{}
+		}
+		c.fromDefaults[key] = true
+	}
+
+	// Profiles: a name config.toml defines replaces the defaults one whole.
+	for name, p := range d.Profiles {
+		if _, ok := c.Profiles[name]; ok {
+			continue
+		}
+		if c.Profiles == nil {
+			c.Profiles = map[string]config.AgentProfile{}
+		}
+		c.Profiles[name] = p
+		mark("profiles." + name)
+	}
+
+	reviewer := d.Roles[config.RoleReviewer]
+
+	// The angles a change of each size is reviewed from merge per size.
+	for size, list := range reviewer.Angles {
+		if _, ok := c.Angles[size]; ok {
+			continue
+		}
+		if c.Angles == nil {
+			c.Angles = map[string][]string{}
+		}
+		c.Angles[size] = slices.Clone(list)
+		mark("angles." + size)
+	}
+
+	// The distiller takes the defaults profile when config.toml left its
+	// step unconfigured: no profile and no step model. The judge takes its
+	// profile when config.toml named none; it changes nothing either way,
+	// the judge is not a session.
+	if c.BriefProfile == "" && c.BriefModel == "" && reviewer.BriefProfile != "" {
+		c.BriefProfile = reviewer.BriefProfile
+		mark("brief_profile")
+	}
+	if c.JudgeProfile == "" && reviewer.JudgeProfile != "" {
+		c.JudgeProfile = reviewer.JudgeProfile
+		mark("judge_profile")
+	}
+
+	// An angle takes the defaults profile when config.toml named neither a
+	// profile nor a model for it.
+	for angle, name := range reviewer.AngleProfiles {
+		if _, ok := c.AngleProfiles[angle]; ok {
+			continue
+		}
+		if _, ok := c.AngleModels[angle]; ok {
+			continue
+		}
+		if c.AngleProfiles == nil {
+			c.AngleProfiles = map[string]string{}
+		}
+		c.AngleProfiles[angle] = name
+		mark("angle_profiles." + angle)
+	}
+
+	// The base is the flat provider and model. defaults.toml gives it the
+	// agent and model of the profile roles.reviewer.profile selects, else
+	// global.profile; either flat key set in config.toml takes nothing.
+	if c.Provider != "" || c.Model != "" {
+		return
+	}
+	name := reviewer.Profile
+	if name == "" {
+		name = d.Global.Profile
+	}
+	if name == "" {
+		return
+	}
+	p, ok := c.Profiles[name]
+	if !ok {
+		c.defaultsErrors = append(c.defaultsErrors, fmt.Sprintf(
+			"roles.reviewer.profile: unknown profile %q (declare it under [profiles.%s])", name, name))
+		mark("roles.reviewer.profile")
+		return
+	}
+	c.Provider, c.Model = p.Agent, p.Model
+	mark("provider")
+	mark("model")
+}
+
 // Validate checks the global configuration, reporting every problem it finds
-// rather than the first.
+// rather than the first. An error a defaults.toml key caused is prefixed
+// with that file's path, which the header naming config.toml does not.
 func (c *Config) Validate() error {
 	var errs []string
+	errs = append(errs, c.defaultsErrors...)
 	if !slices.Contains(SupportedProviders, c.Provider) {
 		errs = append(errs, fmt.Sprintf("provider %q must be one of %s", c.Provider, strings.Join(SupportedProviders, ", ")))
 	}
@@ -329,7 +459,41 @@ func (c *Config) Validate() error {
 		}
 		errs = append(errs, where+": set it in the environment, or remove github.token to use your own gh authentication")
 	}
-	return invalid(c.Path, errs)
+	return invalid(c.Path, c.attributeDefaults(errs))
+}
+
+// attributeDefaults prefixes with the defaults file's path every error a key
+// mergeUserDefaults filled from it caused. A key counts when the error starts
+// with the name mergeUserDefaults recorded for it and the character after it
+// is a separator: the errors about a filled key all begin with the key, and
+// a name that only appears mid-sentence ("a model") is not one of them.
+func (c *Config) attributeDefaults(errs []string) []string {
+	if len(c.fromDefaults) == 0 {
+		return errs
+	}
+	path := config.DefaultDefaultsPath()
+	out := make([]string, 0, len(errs))
+	for _, err := range errs {
+		if c.namesDefaultedKey(err) {
+			err = path + ": " + err
+		}
+		out = append(out, err)
+	}
+	return out
+}
+
+func (c *Config) namesDefaultedKey(message string) bool {
+	for key := range c.fromDefaults {
+		rest, ok := strings.CutPrefix(message, key)
+		if !ok || rest == "" {
+			continue
+		}
+		switch rest[0] {
+		case ' ', ':', '.', '"':
+			return true
+		}
+	}
+	return false
 }
 
 // checkProfile checks the profile key selects: that Profiles has it, and
