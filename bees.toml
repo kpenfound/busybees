@@ -71,48 +71,48 @@ stacked_prs = false
 # Codex Profiles
 #===============================================================================
 
-# [profiles.default]
-# agent = "codex"
-# model = "gpt-5.6-terra"
-# effort = "high"
-# sandbox = "none"
-# fallback = astra_medium
+[profiles.default]
+agent = "codex"
+model = "gpt-6-sol"
+effort = "medium"
+sandbox = "none"
+fallback = "astra_medium"
 
-# [profiles.review_fast]
-# agent = "codex"
-# model = "gpt-5.6-sol"
-# effort = "low"
-# fallback = astra_medium
+[profiles.review_fast]
+agent = "codex"
+model = "gpt-6-sol"
+effort = "low"
+fallback = "astra_medium"
 
-# [profiles.coder_smart]
-# agent = "codex"
-# model = "gpt-5.6-sol"
-# effort = "high"
-# fallback = astra_medium
+[profiles.coder_smart]
+agent = "codex"
+model = "gpt-6-sol"
+effort = "high"
+fallback = "astra_medium"
 
-# [profiles.coder_medium]
-# agent = "codex"
-# model = "gpt-5.6-sol"
-# effort = "medium"
-# fallback = astra_medium
+[profiles.coder_medium]
+agent = "codex"
+model = "gpt-6-sol"
+effort = "medium"
+fallback = "astra_medium"
 
 # [profiles.coder_dumb]
 # agent = "codex"
-# model = "gpt-5.6-terra"
+# model = "gpt-6-sol"
 # effort = "medium"
-# fallback = coder_medium
+# fallback = "coder_medium"
 
-# [profiles.manager_smart]
-# agent = "codex"
-# model = "gpt-6-astra"
-# effort = "medium"
-# fallback = astra_high
+[profiles.manager_smart]
+agent = "codex"
+model = "gpt-6-sol"
+effort = "high"
+fallback = "astra_high"
 
 # [profiles.manager_dumb]
 # agent = "codex"
-# model = "gpt-5.6-terra"
+# model = "gpt-6-sol"
 # effort = "medium"
-# fallback = manager_smart
+# fallback = "manager_smart"
 
 # Fallbacks
 [profiles.astra_high]
@@ -129,80 +129,80 @@ effort = "medium"
 # Claude Profiles
 #===============================================================================
 
-[profiles.default]
-agent = "claude"
-model = "opus"
-effort = "medium"
-sandbox = "none"
-fallback = "coder_smart"
+# [profiles.default]
+# agent = "claude"
+# model = "opus"
+# effort = "medium"
+# sandbox = "none"
+# fallback = "coder_smart"
 
-[profiles.review_fast]
-agent = "claude"
-model = "opus"
-effort = "medium"
-fallback = "fable_medium"
+# [profiles.review_fast]
+# agent = "claude"
+# model = "opus"
+# effort = "medium"
+# fallback = "fable_medium"
 
-[profiles.coder_smart]
-agent = "claude"
-model = "opus"
-effort = "high"
-fallback = "fable_medium"
+# [profiles.coder_smart]
+# agent = "claude"
+# model = "opus"
+# effort = "high"
+# fallback = "fable_medium"
 
-[profiles.coder_medium]
-agent = "claude"
-model = "opus"
-effort = "medium"
-fallback = "fable_medium"
+# [profiles.coder_medium]
+# agent = "claude"
+# model = "opus"
+# effort = "medium"
+# fallback = "fable_medium"
 
-[profiles.coder_dumb]
-agent = "claude"
-model = "sonnet"
-effort = "high"
-fallback = "coder_smart"
+# [profiles.coder_dumb]
+# agent = "claude"
+# model = "sonnet"
+# effort = "high"
+# fallback = "coder_smart"
 
-[profiles.manager_smart]
-agent = "claude"
-model = "fable"
-effort = "medium"
-fallback = "fable_high"
+# [profiles.manager_smart]
+# agent = "claude"
+# model = "fable"
+# effort = "medium"
+# fallback = "fable_high"
 
-[profiles.manager_dumb]
-agent = "claude"
-model = "sonnet"
-effort = "high"
-fallback = "manager_smart"
+# [profiles.manager_dumb]
+# agent = "claude"
+# model = "sonnet"
+# effort = "high"
+# fallback = "manager_smart"
 
-# Fallbacks
-[profiles.fable_medium]
-agent = "claude"
-model = "fable"
-effort = "medium"
+# # Fallbacks
+# [profiles.fable_medium]
+# agent = "claude"
+# model = "fable"
+# effort = "medium"
 
-[profiles.fable_high]
-agent = "claude"
-model = "fable"
-effort = "high"
+# [profiles.fable_high]
+# agent = "claude"
+# model = "fable"
+# effort = "high"
 
 #===============================================================================
 # OpenCode Profiles
 #===============================================================================
-# [profiles.manager_dumb]
-# agent = "opencode"
-# model = "openrouter/z-ai/glm-5.3"
-# effort = "high"
-# fallback = "manager_smart"
+[profiles.manager_dumb]
+agent = "opencode"
+model = "openrouter/z-ai/glm-5.3-flash"
+effort = "high"
+fallback = "manager_smart"
 
 # [profiles.coder_medium]
-# agent = "opencode"
-# model = "openrouter/z-ai/glm-5.3"
-# effort = "high"
-# fallback = "coder_smart"
-
-# [profiles.coder_dumb]
 # agent = "opencode"
 # model = "openrouter/z-ai/glm-5.3-flash"
 # effort = "high"
 # fallback = "opencode_glm"
+
+[profiles.coder_dumb]
+agent = "opencode"
+model = "openrouter/z-ai/glm-5.3-flash"
+effort = "high"
+fallback = "opencode_glm"
 
 # [profiles.review_fast]
 # agent = "opencode"
