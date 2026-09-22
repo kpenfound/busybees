@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,8 +14,10 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
+	"github.com/kpenfound/busybees/core/agent/agentbin"
 	"github.com/kpenfound/busybees/core/agent/procs"
 )
 
@@ -486,6 +489,13 @@ func makeSuccessEnd(sessionID, result string, turns int, cost float64, costKnown
 //     rejects what would ask. --auto is passed, the counterpart of
 //     --dangerously-skip-permissions: it approves those and leaves an
 //     explicit "deny" in the project's own configuration in force.
+//     RunRestricted does not use auto approval. It starts a private primary
+//     agent whose exact effective permissions allow only read, grep and glob,
+//     and runs with --pure so discovered plugins and their hooks cannot load.
+//     `opencode debug config` is run before the model: inherited MCP servers
+//     are explicitly disabled through the highest-precedence inline config,
+//     and a second inventory refuses the launch if a managed or malformed
+//     configuration defeated either restriction.
 //   - opencode has no flag to append to the system prompt, no --mcp-config
 //     and no --add-dir, but it reads one more configuration file from the
 //     path OPENCODE_CONFIG names, merged over its global one and under the
@@ -531,16 +541,41 @@ type opencodeBackend struct{}
 // wrote.
 const EnvOpenCodeConfig = "OPENCODE_CONFIG"
 
+const (
+	// EnvOpenCodeConfigContent is opencode's highest-precedence inline
+	// configuration. Restricted execution owns it even when the caller
+	// inherited or supplied another value.
+	EnvOpenCodeConfigContent = "OPENCODE_CONFIG_CONTENT"
+	// EnvOpenCodePermission is applied after every file-backed permission
+	// source. The restricted agent repeats the same permissions because its
+	// rules take precedence over the global ones.
+	EnvOpenCodePermission   = "OPENCODE_PERMISSION"
+	openCodeRestrictedAgent = "bees-read-only"
+)
+
+var openCodeRestrictedPermissions = map[string]string{
+	"*":    "deny",
+	"read": "allow",
+	"grep": "allow",
+	"glob": "allow",
+}
+
 // OpenCodeConfigFile is the name of that file in the session directory.
 const OpenCodeConfigFile = "opencode.json"
 
-func (opencodeBackend) command(_ context.Context, r *Runner, b Backend, req Request, paths sessionPaths) (string, []string, string, []envVar, error) {
+func (opencodeBackend) command(ctx context.Context, r *Runner, b Backend, req Request, paths sessionPaths) (string, []string, string, []envVar, error) {
 	bin := b.executable(r)
-	args := []string{
-		"run",
-		"--format", "json",
-		"--auto",
-		"--title", r.namePrefix() + req.Name,
+	args := []string{}
+	if paths.restricted {
+		args = append(args, "--pure")
+	}
+	args = append(args, "run", "--format", "json")
+	if paths.restricted {
+		args = append(args, "--title", r.namePrefix()+req.Name, "--agent", openCodeRestrictedAgent)
+	} else {
+		// Keep the ordinary command's public shape: tests and container
+		// wrappers have always seen --auto directly after the format.
+		args = append(args, "--auto", "--title", r.namePrefix()+req.Name)
 	}
 	if req.Profile.Model != "" {
 		args = append(args, "--model", req.Profile.Model)
@@ -553,10 +588,22 @@ func (opencodeBackend) command(_ context.Context, r *Runner, b Backend, req Requ
 	if req.SystemPrompt == "" {
 		instructions = ""
 	}
-	if err := writeOpenCodeConfig(configPath, instructions, paths.mcp, req.Profile.Effort); err != nil {
+	effort := req.Profile.Effort
+	if paths.restricted {
+		effort = ""
+	}
+	if err := writeOpenCodeConfig(configPath, instructions, paths.mcp, effort); err != nil {
 		return "", nil, "", nil, err
 	}
-	return bin, args, req.Prompt, []envVar{{EnvOpenCodeConfig, configPath}}, nil
+	extra := []envVar{{EnvOpenCodeConfig, configPath}}
+	if paths.restricted {
+		var err error
+		extra, err = openCodeRestrictedEnvironment(ctx, bin, req.workDir(), paths.turn.Env, extra, req.Profile.Effort)
+		if err != nil {
+			return "", nil, "", nil, fmt.Errorf("restricted opencode setup: %w", err)
+		}
+	}
+	return bin, args, req.Prompt, extra, nil
 }
 
 // opencodeMCP is one server of opencode.json's mcp table: a local one by
@@ -574,7 +621,10 @@ type opencodeMCP struct {
 // opencodeAgent is the part of opencode.json that selects a model variant for
 // the default build agent.
 type opencodeAgent struct {
-	Variant string `json:"variant,omitempty"`
+	Description string            `json:"description,omitempty"`
+	Mode        string            `json:"mode,omitempty"`
+	Variant     string            `json:"variant,omitempty"`
+	Permission  map[string]string `json:"permission,omitempty"`
 }
 
 // opencodeConfig is the configuration file an opencode session is given:
@@ -585,6 +635,142 @@ type opencodeConfig struct {
 	Instructions []string                 `json:"instructions,omitempty"`
 	Agent        map[string]opencodeAgent `json:"agent,omitempty"`
 	MCP          map[string]opencodeMCP   `json:"mcp"`
+}
+
+type opencodeRestrictedConfig struct {
+	Agent    map[string]opencodeAgent       `json:"agent"`
+	MCP      map[string]opencodeDisabledMCP `json:"mcp"`
+	Plugin   []string                       `json:"plugin"`
+	Share    string                         `json:"share"`
+	Snapshot bool                           `json:"snapshot"`
+}
+
+type opencodeDisabledMCP struct {
+	Enabled bool `json:"enabled"`
+}
+
+type opencodeResolvedConfig struct {
+	Agent map[string]struct {
+		Mode       string            `json:"mode"`
+		Permission map[string]string `json:"permission"`
+		Tools      map[string]bool   `json:"tools"`
+	} `json:"agent"`
+	MCP map[string]struct {
+		Enabled *bool `json:"enabled"`
+	} `json:"mcp"`
+}
+
+func openCodeRestrictedEnvironment(ctx context.Context, bin, dir string, env []string, base []envVar, effort string) ([]envVar, error) {
+	content, err := openCodeRestrictedContent(nil, effort)
+	if err != nil {
+		return nil, err
+	}
+	extra := append(slices.Clone(base), openCodeRestrictedEnv(content)...)
+	resolved, err := openCodeConfigInventory(ctx, bin, dir, environmentWith(env, extra))
+	if err != nil {
+		return nil, err
+	}
+	content, err = openCodeRestrictedContent(sortedKeys(resolved.MCP), effort)
+	if err != nil {
+		return nil, err
+	}
+	extra = append(slices.Clone(base), openCodeRestrictedEnv(content)...)
+	resolved, err = openCodeConfigInventory(ctx, bin, dir, environmentWith(env, extra))
+	if err != nil {
+		return nil, err
+	}
+	if err := validateOpenCodeRestriction(resolved); err != nil {
+		return nil, err
+	}
+	return extra, nil
+}
+
+func openCodeRestrictedContent(servers []string, effort string) (string, error) {
+	mcp := make(map[string]opencodeDisabledMCP, len(servers))
+	for _, name := range servers {
+		mcp[name] = opencodeDisabledMCP{Enabled: false}
+	}
+	cfg := opencodeRestrictedConfig{
+		Agent: map[string]opencodeAgent{openCodeRestrictedAgent: {
+			Description: "Read-only analysis managed by the caller",
+			Mode:        "primary",
+			Variant:     effort,
+			Permission:  maps.Clone(openCodeRestrictedPermissions),
+		}},
+		MCP: mcp, Plugin: []string{}, Share: "disabled", Snapshot: false,
+	}
+	data, err := json.Marshal(cfg)
+	return string(data), err
+}
+
+func openCodeRestrictedEnv(content string) []envVar {
+	permissions, _ := json.Marshal(openCodeRestrictedPermissions)
+	return []envVar{
+		{EnvOpenCodeConfigContent, content},
+		{EnvOpenCodePermission, string(permissions)},
+		{"OPENCODE_DISABLE_DEFAULT_PLUGINS", "true"},
+		{"OPENCODE_DISABLE_CLAUDE_CODE", "true"},
+		{"OPENCODE_DISABLE_AUTOUPDATE", "true"},
+		{"OPENCODE_DISABLE_LSP_DOWNLOAD", "true"},
+		{"OPENCODE_DISABLE_MODELS_FETCH", "true"},
+		{"OPENCODE_ENABLE_EXA", "false"},
+		{"OPENCODE_ENABLE_PARALLEL", "false"},
+	}
+}
+
+func openCodeConfigInventory(ctx context.Context, bin, dir string, env []string) (opencodeResolvedConfig, error) {
+	cmd := agentbin.CommandContext(ctx, bin, "--pure", "debug", "config")
+	cmd.Dir = dir
+	cmd.Env = env
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = 10 * time.Second
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		return opencodeResolvedConfig{}, fmt.Errorf("inspect effective configuration: %w%s", err, stderrTail(stderr.String()))
+	}
+	var cfg opencodeResolvedConfig
+	if err := json.Unmarshal(stdout.Bytes(), &cfg); err != nil {
+		return opencodeResolvedConfig{}, fmt.Errorf("decode effective configuration: %w", err)
+	}
+	return cfg, nil
+}
+
+func validateOpenCodeRestriction(cfg opencodeResolvedConfig) error {
+	agent, ok := cfg.Agent[openCodeRestrictedAgent]
+	if !ok {
+		return fmt.Errorf("effective configuration removed agent %q", openCodeRestrictedAgent)
+	}
+	if agent.Mode != "primary" {
+		return fmt.Errorf("effective agent %q has mode %q, want primary", openCodeRestrictedAgent, agent.Mode)
+	}
+	if !maps.Equal(agent.Permission, openCodeRestrictedPermissions) || len(agent.Tools) != 0 {
+		return fmt.Errorf("effective agent %q does not have the exact read-only permissions", openCodeRestrictedAgent)
+	}
+	for name, server := range cfg.MCP {
+		if server.Enabled == nil || *server.Enabled {
+			return fmt.Errorf("effective MCP server %q is not disabled", name)
+		}
+	}
+	return nil
+}
+
+func environmentWith(env []string, extra []envVar) []string {
+	vars := make([]envVar, 0, len(env)+len(extra))
+	for _, entry := range env {
+		name, value, ok := strings.Cut(entry, "=")
+		if ok {
+			vars = append(vars, envVar{name, value})
+		}
+	}
+	vars = append(vars, extra...)
+	vars = dedupe(vars)
+	out := make([]string, 0, len(vars))
+	for _, v := range vars {
+		out = append(out, v.name+"="+v.value)
+	}
+	return out
 }
 
 // opencodeServers renders MCP entries as opencode.json's mcp table: a

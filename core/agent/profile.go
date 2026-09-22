@@ -85,7 +85,8 @@ type Profile struct {
 	Env       map[string]string
 	Skills    []string
 	// PiPackages are pi package sources (npm:, git:, a URL or a local path)
-	// a pi session loads after PiMCPAdapter, which it always loads.
+	// an ordinary pi session loads after PiMCPAdapter. RunRestricted loads
+	// neither packages nor the adapter.
 	PiPackages []string
 }
 
