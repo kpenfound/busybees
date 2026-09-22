@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kpenfound/busybees/core/agent"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/prompts"
@@ -1348,7 +1349,23 @@ agent = "opencode"
 [roles.qa]
 profile_by_size = { xs = "code", s = "remote" }
 `, nil)
-	if !f.usesCodex() || !f.usesOpenCode() {
+	if !f.usesAgent(config.AgentCodex) || !f.usesAgent(config.AgentOpenCode) {
 		t.Fatal("doctor skipped an agent selected only by size")
+	}
+}
+
+// TestEveryBackendHasAToolchainCheck holds doctor's hand-written check
+// table against the backend descriptors: an agent added to the descriptors
+// without a check here would be selected for nothing, the one omission the
+// descriptor-driven selection cannot report on its own.
+func TestEveryBackendHasAToolchainCheck(t *testing.T) {
+	f := setup(t, "", nil)
+	for _, b := range agent.Backends {
+		if b.Name == config.AgentClaude {
+			continue // checked ahead of the config checks, unconditionally
+		}
+		if _, ok := f.agentCheck(b.Name); !ok {
+			t.Errorf("doctor has no toolchain check for agent %q", b.Name)
+		}
 	}
 }

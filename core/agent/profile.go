@@ -33,32 +33,14 @@ const (
 
 // Agents lists the backends the runner builds a command line for. It is
 // procs' list of agent executables: procs recognizes a running session in
-// the process table by the command it runs and cannot import this package,
-// so the two are one list and an agent added to it is known to both.
+// the process table by the command it runs and cannot import this
+// package, so the two are one list and an agent added to it is known to
+// both. The backend descriptors (Backends) describe the same agents and
+// are held to this list by test rather than derived from it.
 var Agents = procs.AgentExecutables
 
 // Sandboxes lists the sandbox kinds the runner implements, weakest first.
 var Sandboxes = []string{SandboxNone, SandboxClaude, SandboxContainer, SandboxSbx}
-
-// AgentCredentials names credentials forwarded into an isolated container.
-// opencode and pi are authenticated through whichever provider they are
-// configured for, so their entries list one key per provider they read: any
-// one of them is a credential, and every one of them that is set is
-// forwarded.
-var AgentCredentials = map[string][]string{
-	AgentClaude: {"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"},
-	AgentCodex:  {"OPENAI_API_KEY", "CODEX_API_KEY"},
-	AgentOpenCode: {
-		"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
-		"OPENROUTER_API_KEY", "GROQ_API_KEY", "MISTRAL_API_KEY", "XAI_API_KEY",
-		"DEEPSEEK_API_KEY",
-	},
-	AgentPi: {
-		"ANTHROPIC_API_KEY", "ANTHROPIC_OAUTH_TOKEN", "OPENAI_API_KEY",
-		"GEMINI_API_KEY", "OPENROUTER_API_KEY", "GROQ_API_KEY", "XAI_API_KEY",
-		"MISTRAL_API_KEY", "DEEPSEEK_API_KEY", "CEREBRAS_API_KEY",
-	},
-}
 
 // Profile contains only agent execution settings. Workflow and identity policy
 // belong to the caller. Skills are generic plugin sources, prepared by Skills.

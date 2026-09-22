@@ -16,6 +16,20 @@ import (
 	"github.com/kpenfound/busybees/internal/skills"
 )
 
+// ProviderEnv grants each agent the provider environment of its backend
+// descriptor, and nothing more: a hand-written map in its place is what
+// drifted from the backends when opencode and pi were added.
+func TestProviderEnvMatchesBackends(t *testing.T) {
+	if len(ProviderEnv) != len(agent.Backends) {
+		t.Errorf("ProviderEnv holds %d agents, want the %d backends", len(ProviderEnv), len(agent.Backends))
+	}
+	for _, b := range agent.Backends {
+		if !slices.Equal(ProviderEnv[b.Name], b.ProviderEnv) {
+			t.Errorf("ProviderEnv[%s] = %v, want the descriptor's %v", b.Name, ProviderEnv[b.Name], b.ProviderEnv)
+		}
+	}
+}
+
 // A session's environment is its role's grants: the host's shell, toolchain,
 // provider and VCS variables, the role's own env, and nothing else.
 func TestSessionEnvironmentIsTheRolesGrants(t *testing.T) {

@@ -344,7 +344,7 @@ func TestPiCommandResumes(t *testing.T) {
 	paths := sessionPaths{dir: t.TempDir(), systemPrompt: "/s/system-prompt.md", mcp: map[string]MCPEntry{"tools": {Command: "task", Args: []string{"mcp", "serve"}}}}
 	var got [][]string
 	for _, id := range []string{"", "pi-ses-abc"} {
-		_, args, stdin, env, err := piBackend{}.command(context.Background(), r.Runner, Request{Name: "n", Profile: piRole("m"), SystemPrompt: "SYS", Prompt: "TASK", ResumeID: id}, paths)
+		_, args, stdin, env, err := piBackend{}.command(context.Background(), r.Runner, backendNamed(t, AgentPi), Request{Name: "n", Profile: piRole("m"), SystemPrompt: "SYS", Prompt: "TASK", ResumeID: id}, paths)
 		if err != nil {
 			t.Fatal(err)
 		}
