@@ -27,7 +27,9 @@ func TestBackendsMatchProcsExecutables(t *testing.T) {
 // TestBackendsAreDeclaredCompletely refuses a descriptor that leaves one of
 // its facts to the zero value: adding a backend that silently omits its
 // credential, its provider environment, its executable override or its
-// implementation is the omission this list exists to make impossible.
+// implementation is the omission this list exists to make impossible. The
+// restricted declaration is a pointer so even an unsupported backend must
+// state that choice instead of inheriting a zero value by accident.
 func TestBackendsAreDeclaredCompletely(t *testing.T) {
 	var seen []string
 	for _, b := range Backends {
@@ -50,9 +52,26 @@ func TestBackendsAreDeclaredCompletely(t *testing.T) {
 		if b.bin == nil {
 			t.Errorf("backend %q declares no runner executable field", b.Name)
 		}
+		if b.Restricted == nil {
+			t.Errorf("backend %q makes no restricted-execution capability declaration", b.Name)
+		}
 	}
 	if len(seen) == 0 {
 		t.Fatal("no backend is declared")
+	}
+}
+
+func TestBackendRestrictedCapabilities(t *testing.T) {
+	want := map[string]RestrictedCapabilities{
+		AgentClaude:   {Supported: true, FollowUp: true},
+		AgentCodex:    {Supported: true},
+		AgentOpenCode: {Supported: true, FollowUp: true},
+		AgentPi:       {Supported: true, FollowUp: true},
+	}
+	for _, b := range Backends {
+		if b.Restricted == nil || *b.Restricted != want[b.Name] {
+			t.Errorf("restricted capabilities of %s = %+v, want %+v", b.Name, b.Restricted, want[b.Name])
+		}
 	}
 }
 

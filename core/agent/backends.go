@@ -40,6 +40,12 @@ type Backend struct {
 	// in the process table. A backend without one is found through its
 	// pid file alone; procs' package comment says why.
 	ArgvMarker bool
+	// Restricted declares whether the backend can establish
+	// RunRestricted's read-only floor, and whether a restricted turn can
+	// continue a session it owns. The pointer is deliberate: nil means a
+	// descriptor forgot to make the declaration, distinct from an explicit
+	// unsupported declaration.
+	Restricted *RestrictedCapabilities
 	// bin is the runner's executable override for this backend
 	// (Runner.ClaudeBin and friends): what a caller configured in the
 	// executable's place, empty when it did not. executable resolves it,
@@ -48,6 +54,15 @@ type Backend struct {
 	// impl builds the command line and reads the CLI's stream: the
 	// backend implementation (backend.go, pi.go).
 	impl backend
+}
+
+// RestrictedCapabilities are the parts of restricted execution that differ
+// by backend. Supported says the command builder can establish the complete
+// floor. FollowUp says ResumeID is meaningful for that backend; a resume id is
+// never handed to a different backend during fallback.
+type RestrictedCapabilities struct {
+	Supported bool
+	FollowUp  bool
 }
 
 // executable is the command a session of this backend runs: the
@@ -77,6 +92,7 @@ var Backends = []Backend{
 			"VERTEX_*", "DISABLE_*", "MAX_THINKING_TOKENS", "MCP_*",
 		},
 		ArgvMarker: true,
+		Restricted: &RestrictedCapabilities{Supported: true, FollowUp: true},
 		bin:        func(r *Runner) string { return r.ClaudeBin },
 		impl:       claudeBackend{},
 	},
@@ -85,6 +101,7 @@ var Backends = []Backend{
 		Credentials: []string{"OPENAI_API_KEY", "CODEX_API_KEY"},
 		ProviderEnv: []string{"OPENAI_*", "CODEX_*"},
 		ArgvMarker:  true,
+		Restricted:  &RestrictedCapabilities{Supported: true},
 		bin:         func(r *Runner) string { return r.CodexBin },
 		impl:        codexBackend{},
 	},
@@ -99,8 +116,9 @@ var Backends = []Backend{
 			"OPENCODE_*", "ANTHROPIC_*", "OPENAI_*", "GEMINI_*", "GOOGLE_*", "AWS_*",
 			"OPENROUTER_*", "GROQ_*", "MISTRAL_*", "XAI_*", "DEEPSEEK_*", "AZURE_*",
 		},
-		bin:  func(r *Runner) string { return r.OpenCodeBin },
-		impl: opencodeBackend{},
+		Restricted: &RestrictedCapabilities{Supported: true, FollowUp: true},
+		bin:        func(r *Runner) string { return r.OpenCodeBin },
+		impl:       opencodeBackend{},
 	},
 	{
 		Name: AgentPi,
@@ -114,8 +132,9 @@ var Backends = []Backend{
 			"OPENROUTER_*", "GROQ_*", "MISTRAL_*", "XAI_*", "DEEPSEEK_*", "AZURE_*",
 			"CEREBRAS_*", "MCP_*",
 		},
-		bin:  func(r *Runner) string { return r.PiBin },
-		impl: piBackend{},
+		Restricted: &RestrictedCapabilities{Supported: true, FollowUp: true},
+		bin:        func(r *Runner) string { return r.PiBin },
+		impl:       piBackend{},
 	},
 }
 
