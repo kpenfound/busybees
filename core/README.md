@@ -41,6 +41,22 @@ The caller also supplies:
 - An optional `SkillPreparer` and read-only skill cache mounts. Acquisition,
   caching and configuration policy stay with the caller.
 
+`agent.Runner.RunRestricted` is the smaller entry point for a read-only
+analysis turn. It accepts the same `Request` and uses the same backend command
+builders, stream parsers, timeout and process-group lifecycle as `Run`, but it
+owns the capability contract instead of accepting caller grants. The request
+may carry only a workspace, prompt, resume id, environment and the profile's
+agent/model/effort/turn/timeout/fallback settings. It receives no MCP server,
+outcome contract, writable mount, VCS access, skill, plugin or hook. Factory and
+VCS identity variables are removed. Claude is held to named read-only tools,
+empty settings sources and strict empty MCP configuration; Codex is held to its
+read-only sandbox, disabled command/network/plugin features and a fail-closed
+inventory that disables every inherited MCP server. Claude and Codex implement
+this contract today; other backends are refused before launch. A capacity
+failure walks `Profile.Fallback`, applying the same contract to every attempt,
+and the returned `RestrictedResult.Agent`, `RestrictedResult.Model` and
+`RestrictedResult.ClaudeID` belong to the backend that answered.
+
 MCP entries contain public context in `Env` and credential names in `EnvVars`.
 Pass credential values in the request environment. `MCPEntries` can expand
 configured environment references before entries are passed to the runner;
@@ -85,8 +101,9 @@ req.Grants = &agent.Grants{
 - `Tools` are built-in tool names, or `agent.ToolsAll`, and `mcp__<server>`
   for each MCP server. The profile's `AllowedTools`, `MCP` and `HostMCP` may
   name less, never more; `DisallowedTools` only narrows. Claude is started
-  with `--tools` when not every built-in tool is granted; codex, opencode and
-  pi cannot restrict their built-in tools and need `ToolsAll`.
+  with `--tools` when not every built-in tool is granted; outside the fixed
+  `RunRestricted` contract, codex, opencode and pi cannot restrict their
+  built-in tools and need `ToolsAll`.
 - `Mounts` are absolute, clean, existing paths, `ReadOnly` or `ReadWrite`,
   judged after their symbolic links are resolved; `Within` confines them all.
   The working directory must lie inside one. Without `VCS`, a writable mount

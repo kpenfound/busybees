@@ -115,15 +115,17 @@ type Bind struct {
 	Access      Access
 }
 
-// HostBoundary runs a session as a process of this host. It has two modes.
-// By default the host enforces nothing of the mounts, so Verify asks for the
-// grants that say so: "/" read-write and VCS without a sandbox, "/" read-only
-// and a writable working directory under SandboxClaude. A profile with Confine
-// set is held to its grants by the operating system instead: it reads the
-// granted mounts and SystemPaths and nothing else, its working directory may
-// be read-only, and without VCS the VCS executables cannot be read or run
-// under any path. Neither host sandbox needs "/" for it, and where nothing
-// can enforce it the request is refused with ErrUnsupported.
+// HostBoundary runs a session as a process of this host. By default the host
+// enforces nothing of the mounts, so Verify asks for the grants that say so:
+// "/" read-write and VCS without a sandbox, "/" read-only and a writable
+// working directory under SandboxClaude. RunRestricted uses its private
+// verification mode for a read-only root held by the backend's fixed tool and
+// sandbox configuration. A profile with Confine set is held to its grants by
+// the operating system instead: it reads the granted mounts and SystemPaths
+// and nothing else, its working directory may be read-only, and without VCS
+// the VCS executables cannot be read or run under any path. Neither host
+// sandbox needs "/" for it, and where nothing can enforce it the request is
+// refused with ErrUnsupported.
 type HostBoundary struct {
 	// Environ is the host environment; nil reads os.Environ.
 	Environ func() []string
@@ -149,7 +151,11 @@ type HostBoundary struct {
 // request without grants, with an unknown access mode, or with a grant the
 // host cannot enforce is refused.
 func (h HostBoundary) Verify(req Request) (*Turn, error) {
-	turn, err := verifyCommon(req)
+	return h.verify(req, false)
+}
+
+func (h HostBoundary) verify(req Request, restricted bool) (*Turn, error) {
+	turn, err := verifyCommonFor(req, restricted)
 	if err != nil {
 		return nil, err
 	}
@@ -158,6 +164,17 @@ func (h HostBoundary) Verify(req Request) (*Turn, error) {
 	switch {
 	case p.Sandbox != "" && p.Sandbox != SandboxNone && p.Sandbox != SandboxClaude:
 		return nil, fmt.Errorf("%w: sandbox %q is not a host sandbox", ErrUnsupported, p.Sandbox)
+	case restricted:
+		// RunRestricted gives the process a fixed backend-enforced read-only
+		// floor. Its grants describe that floor: the host may be read, nothing
+		// may be written, and VCS is unavailable. The backend validation and
+		// command builders are the other half of this boundary.
+		if root == nil || root.Access != ReadOnly {
+			return nil, fmt.Errorf("%w: restricted execution requires %q %s", ErrUnsupported, "/", ReadOnly)
+		}
+		if turn.VCS {
+			return nil, fmt.Errorf("%w: restricted execution cannot grant VCS", ErrUnsupported)
+		}
 	case p.Confine:
 		// The operating system holds the turn to its mounts: checked below,
 		// once the environment the executables are searched in is known.
@@ -247,6 +264,10 @@ func (h HostBoundary) env(req Request, turn *Turn) []string {
 
 // verifyCommon checks grants that every boundary enforces the same way.
 func verifyCommon(req Request) (*Turn, error) {
+	return verifyCommonFor(req, false)
+}
+
+func verifyCommonFor(req Request, restricted bool) (*Turn, error) {
 	g := req.Grants
 	if g == nil {
 		return nil, ErrNoGrants
@@ -303,7 +324,7 @@ func verifyCommon(req Request) (*Turn, error) {
 		}
 	}
 	if !all {
-		if p.Agent != "" && p.Agent != AgentClaude {
+		if p.Agent != "" && p.Agent != AgentClaude && (!restricted || p.Agent != AgentCodex) {
 			return nil, fmt.Errorf("%w: agent %q cannot restrict its built-in tools; grant %q", ErrUnsupported, p.Agent, ToolsAll)
 		}
 		turn.Tools = tools
@@ -593,6 +614,23 @@ func (r *Runner) boundary(req Request) Boundary {
 // runner of a Session also refuses a turn that is not the one the session's
 // policy describes.
 func (r *Runner) Verify(req Request) (*Turn, error) {
+	return r.verify(req, false)
+}
+
+func (r *Runner) verify(req Request, restricted bool) (*Turn, error) {
+	if restricted {
+		b := HostBoundary{StripPrefix: r.EnvironmentPrefix, Confiner: r.Confiner, SystemPaths: r.SystemPaths, SessionsDir: r.SessionsDir}
+		turn, err := b.verify(req, true)
+		if err != nil {
+			return nil, err
+		}
+		if r.held != nil {
+			if err := r.held.admit(turn); err != nil {
+				return nil, err
+			}
+		}
+		return turn, nil
+	}
 	turn, err := r.boundary(req).Verify(req)
 	if err != nil {
 		return nil, err

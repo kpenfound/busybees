@@ -2,7 +2,6 @@ package ops
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/kpenfound/busybees/core/agent"
@@ -74,13 +73,7 @@ func InfraReason(res *agent.Result) string {
 
 // RateLimitedText recognizes capacity and transient service-limit messages.
 func RateLimitedText(msg string) bool {
-	msg = strings.ToLower(msg)
-	for _, p := range []string{"rate limit", "abuse detection", "secondary rate", "overloaded", "usage limit", "session limit"} {
-		if strings.Contains(msg, p) {
-			return true
-		}
-	}
-	return false
+	return agent.RateLimitedText(msg)
 }
 
 // RetryPolicy counts retries after the initial attempt.

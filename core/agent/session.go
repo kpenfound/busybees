@@ -235,6 +235,11 @@ type Runner struct {
 // result file, so the session directory reads as an interrupted session;
 // a session that ran but reported failure returns a Result with IsError set.
 func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
+	return r.run(ctx, req, false)
+}
+
+// run is the lifecycle shared by ordinary and restricted execution.
+func (r *Runner) run(ctx context.Context, req Request, restricted bool) (*Result, error) {
 	runner := *r
 	r = &runner // per-run defaults must not mutate a shared runner
 	if r.Logger == nil {
@@ -249,7 +254,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 	}
 	// Grants are verified before anything is written or started: a request
 	// that asks for more than it was granted never runs.
-	turn, err := r.Verify(req)
+	turn, err := r.verify(req, restricted)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", req.Profile.Name, err)
 	}
@@ -263,7 +268,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 		}
 		// Verified again now that the directory the box is given exists.
 		req.SessionDir = sessionDir
-		if turn, err = r.Verify(req); err != nil {
+		if turn, err = r.verify(req, restricted); err != nil {
 			_ = os.RemoveAll(sessionDir)
 			return nil, fmt.Errorf("%s: %w", req.Profile.Name, err)
 		}
@@ -282,7 +287,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 		return nil, err
 	}
 
-	paths := sessionPaths{dir: sessionDir, systemPrompt: systemPromptPath, prompt: promptPath}
+	paths := sessionPaths{dir: sessionDir, systemPrompt: systemPromptPath, prompt: promptPath, restricted: restricted}
 	paths.mcp = maps.Clone(req.Profile.MCP)
 	var box box
 	switch req.Profile.Sandbox {
