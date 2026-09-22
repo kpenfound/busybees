@@ -474,16 +474,12 @@ func (e *hostEnforcer) Prepare(ctx context.Context, g Grants) (Session, error) {
 	return &session{grants: g, r: r}, nil
 }
 
-// agentExecutables are the executables of the agents the runner names, where
-// this machine has them.
+// agentExecutables are the executables of the backends the runner names,
+// where this machine has them.
 func (r *Runner) agentExecutables() []Mount {
 	var found []Mount
-	for _, bin := range []struct{ named, fallback string }{{r.ClaudeBin, "claude"}, {r.CodexBin, "codex"}, {r.OpenCodeBin, "opencode"}, {r.PiBin, "pi"}} {
-		name := bin.named
-		if name == "" {
-			name = bin.fallback
-		}
-		path, err := agentbin.Resolve(name)
+	for _, b := range Backends {
+		path, err := agentbin.Resolve(b.executable(r))
 		if err != nil {
 			continue // a real agent in a test binary: Run refuses it by name
 		}

@@ -304,7 +304,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 		}
 	}
 	paths.turn = turn
-	bin, args, stdin, extra, err := be.command(ctx, r, req, paths)
+	bin, args, stdin, extra, err := be.impl.command(ctx, r, be, req, paths)
 	if err != nil {
 		return nil, err
 	}
@@ -410,7 +410,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 	}
 	defer procs.RemovePID(sessionDir)
 
-	final, limit, scanErr := be.consume(r, stdout, transcript)
+	final, limit, scanErr := be.impl.consume(r, stdout, transcript)
 	waitErr := cmd.Wait()
 	res.Duration = time.Since(started)
 	if scanErr != nil {

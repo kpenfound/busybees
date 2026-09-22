@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/kpenfound/busybees/core/agent"
 	"github.com/kpenfound/busybees/core/agent/agentbin"
 	"github.com/kpenfound/busybees/core/agent/procs"
 	"github.com/kpenfound/busybees/internal/config"
@@ -112,14 +113,17 @@ func (d *Deps) Checks() []Check {
 	if d.Config == nil {
 		return checks
 	}
-	if d.usesCodex() {
-		checks = append(checks, Check{Run: d.checkCodex})
-	}
-	if d.usesOpenCode() {
-		checks = append(checks, Check{Run: d.checkOpenCode})
-	}
-	if d.usesAgent(config.AgentPi) {
-		checks = append(checks, Check{Run: d.checkPi})
+	// The per-agent toolchain checks are selected from the backend
+	// descriptors, in their order: each agent beyond claude runs its check
+	// when a role resolves to it. The checks themselves are CLI-specific
+	// and hand-written (agentCheck pairs each agent with its own).
+	for _, b := range agent.Backends {
+		if b.Name == config.AgentClaude {
+			continue // claude's check is above: the default every installation needs
+		}
+		if check, ok := d.agentCheck(b.Name); ok && d.usesAgent(b.Name) {
+			checks = append(checks, Check{Run: check})
+		}
 	}
 	if d.usesOpenCode() || d.usesAgent(config.AgentPi) {
 		checks = append(checks, Check{Run: d.checkSessionConfigWritable})
@@ -145,13 +149,24 @@ func (d *Deps) Checks() []Check {
 	return append(checks, d.roleChecks()...)
 }
 
-// usesCodex reports whether any enabled role resolves to agent = "codex":
-// checkCodex only runs then, the same way checkClaude runs unconditionally
-// because claude is the default agent every installation needs.
-func (d *Deps) usesCodex() bool { return d.usesAgent(config.AgentCodex) }
+// agentCheck pairs one opt-in agent with its toolchain check. The pairing
+// is hand-written because the checks are CLI-specific; the agents it is
+// asked for are the backend descriptors. The second return is false when
+// doctor has no check for the agent.
+func (d *Deps) agentCheck(agent string) (func(context.Context) Result, bool) {
+	switch agent {
+	case config.AgentCodex:
+		return d.checkCodex, true
+	case config.AgentOpenCode:
+		return d.checkOpenCode, true
+	case config.AgentPi:
+		return d.checkPi, true
+	}
+	return nil, false
+}
 
 // usesOpenCode reports whether any enabled role resolves to agent =
-// "opencode", the same way usesCodex gates checkCodex.
+// "opencode": checkOpenCode and checkSessionConfigWritable run then.
 func (d *Deps) usesOpenCode() bool { return d.usesAgent(config.AgentOpenCode) }
 
 // usesAgent reports whether any enabled role resolves to agent at some
@@ -180,8 +195,8 @@ func roleUses(role config.ResolvedRole, agent string) bool {
 }
 
 // usesSbx reports whether any enabled role resolves to sandbox = "sbx",
-// the way usesCodex gates checkCodex: the judge profile counts, as it does
-// for `bees run`'s own sandbox check.
+// the way usesOpenCode gates checkOpenCode: the judge profile counts, as it
+// does for `bees run`'s own sandbox check.
 func (d *Deps) usesSbx() bool {
 	for _, name := range config.Roles {
 		role, err := d.Config.Role(name)
@@ -449,7 +464,8 @@ func (d *Deps) checkClaude(ctx context.Context) Result {
 	return pass(name, GroupToolchain, fmt.Sprintf("claude %s at %s", got, path))
 }
 
-// checkCodex only runs when usesCodex found a role configured for it: unlike
+// checkCodex only runs when the descriptor-driven selection in Checks found
+// a role configured for it: unlike
 // claude, codex is opt-in, and a machine that never runs a codex role should
 // not be failed over a CLI it does not need. bees pins no minimum version for
 // codex yet, so this only asks that it is installed and runs.

@@ -281,7 +281,7 @@ func TestOpenCodeCommandResumes(t *testing.T) {
 	paths := sessionPaths{dir: t.TempDir(), systemPrompt: "/s/system-prompt.md", mcp: map[string]MCPEntry{"tools": {Command: "task", Args: []string{"mcp", "serve"}}}}
 	var got [][]string
 	for _, id := range []string{"", "ses_abc"} {
-		_, args, stdin, env, err := opencodeBackend{}.command(context.Background(), r.Runner, Request{Name: "n", Profile: opencodeRole("m"), SystemPrompt: "SYS", Prompt: "TASK", ResumeID: id}, paths)
+		_, args, stdin, env, err := opencodeBackend{}.command(context.Background(), r.Runner, backendNamed(t, AgentOpenCode), Request{Name: "n", Profile: opencodeRole("m"), SystemPrompt: "SYS", Prompt: "TASK", ResumeID: id}, paths)
 		if err != nil {
 			t.Fatal(err)
 		}

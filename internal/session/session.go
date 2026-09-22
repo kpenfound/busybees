@@ -304,12 +304,19 @@ var HostEnv = []string{
 }
 
 // ProviderEnv are the variables each agent is configured and authenticated
-// through: its provider's credentials and settings.
-var ProviderEnv = map[string][]string{
-	agent.AgentClaude:   {"ANTHROPIC_*", "CLAUDE_*", "AWS_*", "GOOGLE_*", "CLOUD_ML_REGION", "VERTEX_*", "DISABLE_*", "MAX_THINKING_TOKENS", "MCP_*"},
-	agent.AgentCodex:    {"OPENAI_*", "CODEX_*"},
-	agent.AgentOpenCode: {"OPENCODE_*", "ANTHROPIC_*", "OPENAI_*", "GEMINI_*", "GOOGLE_*", "AWS_*", "OPENROUTER_*", "GROQ_*", "MISTRAL_*", "XAI_*", "DEEPSEEK_*", "AZURE_*"},
-	agent.AgentPi:       {"PI_*", "ANTHROPIC_*", "OPENAI_*", "GEMINI_*", "GOOGLE_*", "AWS_*", "OPENROUTER_*", "GROQ_*", "MISTRAL_*", "XAI_*", "DEEPSEEK_*", "AZURE_*", "CEREBRAS_*", "MCP_*"},
+// through: its provider's credentials and settings, one list per backend
+// descriptor (agent.Backends).
+var ProviderEnv = providerEnv()
+
+// providerEnv indexes the backends' provider environment by agent name, so
+// a backend added to the descriptors is granted its environment here
+// without a second list to keep in step.
+func providerEnv() map[string][]string {
+	m := make(map[string][]string, len(agent.Backends))
+	for _, b := range agent.Backends {
+		m[b.Name] = b.ProviderEnv
+	}
+	return m
 }
 
 // VCSEnv are the host variables a session with VCS access inherits: gh's
