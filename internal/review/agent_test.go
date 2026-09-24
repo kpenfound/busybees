@@ -686,7 +686,8 @@ esac`
 	// server names inside the TOML value so their punctuation stays literal.
 	var overrides struct {
 		Servers map[string]struct {
-			Enabled *bool `toml:"enabled"`
+			Enabled *bool  `toml:"enabled"`
+			URL     string `toml:"url"`
 		} `toml:"mcp_servers"`
 	}
 	for _, arg := range strings.Split(recorded(t, record, "args"), "\n") {
@@ -700,8 +701,9 @@ esac`
 			}
 		}
 	}
-	if len(overrides.Servers) != 3 {
-		t.Fatalf("disabled servers = %v, want the three configured servers", overrides.Servers)
+	// The fourth is the read server, the session's only way to read a file.
+	if len(overrides.Servers) != 4 || !strings.HasPrefix(overrides.Servers[agent.ReadServerName].URL, "http://127.0.0.1:") {
+		t.Fatalf("MCP servers = %v, want the three configured servers disabled and the read server", overrides.Servers)
 	}
 	for _, name := range []string{"bees", "server.with.dots", `server "quoted"`} {
 		if server := overrides.Servers[name]; server.Enabled == nil || *server.Enabled {

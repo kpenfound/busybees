@@ -64,7 +64,7 @@ func TestBackendsAreDeclaredCompletely(t *testing.T) {
 func TestBackendRestrictedCapabilities(t *testing.T) {
 	want := map[string]RestrictedCapabilities{
 		AgentClaude:   {Supported: true, FollowUp: true},
-		AgentCodex:    {Supported: true},
+		AgentCodex:    {Supported: true, ReadServer: true},
 		AgentOpenCode: {Supported: true, FollowUp: true},
 		AgentPi:       {Supported: true, FollowUp: true},
 	}
