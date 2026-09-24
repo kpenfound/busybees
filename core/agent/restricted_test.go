@@ -277,9 +277,9 @@ func TestRunRestrictedDeniesInheritedIdentityConfigurationAndMCP(t *testing.T) {
 		t.Fatal(err)
 	}
 	var config struct {
-		Servers map[string]MCPEntry `json:"mcpServers"`
+		Servers json.RawMessage `json:"mcpServers"`
 	}
-	if err := json.Unmarshal(data, &config); err != nil || len(config.Servers) != 0 {
+	if err := json.Unmarshal(data, &config); err != nil || string(config.Servers) != "{}" {
 		t.Fatalf("MCP config = %s, err %v", data, err)
 	}
 	if res.HasOutcome {

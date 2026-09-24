@@ -639,9 +639,13 @@ func bearerHeaders(entry MCPEntry, reference string) map[string]string {
 
 // WriteMCPConfig writes the file claude is given as --mcp-config.
 func WriteMCPConfig(path string, entries map[string]MCPEntry) error {
+	servers := maps.Clone(entries)
+	if servers == nil {
+		servers = map[string]MCPEntry{}
+	}
 	out := struct {
 		MCPServers map[string]MCPEntry `json:"mcpServers"`
-	}{MCPServers: maps.Clone(entries)}
+	}{MCPServers: servers}
 	for name, entry := range out.MCPServers {
 		if entry.BearerTokenEnv != "" {
 			entry.Headers = bearerHeaders(entry, "${"+entry.BearerTokenEnv+"}")
