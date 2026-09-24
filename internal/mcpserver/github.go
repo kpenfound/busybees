@@ -47,6 +47,13 @@ type GitHub interface {
 	// of them is close enough. It reads the whole repository, open and closed
 	// issues alike: see internal/duplicates.
 	DuplicateCandidates(ctx context.Context, title, body string) ([]duplicates.Match, error)
+	ListMilestones(ctx context.Context) ([]github.Milestone, error)
+	ListOpenPRs(ctx context.Context) ([]github.PR, error)
+	TagExists(ctx context.Context, tag string) (bool, error)
+	BranchHead(ctx context.Context, branch string) (string, error)
+	CreateTag(ctx context.Context, tag, commit string) error
+	CreateRelease(ctx context.Context, tag string) error
+	CloseMilestone(ctx context.Context, number int) error
 }
 
 // errNoGitHub is what every GitHub tool reports when there is no backend,
@@ -141,6 +148,14 @@ func (s *server) addGitHubTools(srv *mcphost.Registry) {
 			"`issue_create` does not check for duplicates.",
 		InputSchema: mcphost.SchemaFor[fileBugInput](nil),
 	}, s.fileBug, config.RoleQA)
+
+	mcphost.AddTool(srv, &mcp.Tool{
+		Name: "release_ship", Title: "Ship a milestone",
+		Description: "Ship the requested open milestone only after it has closed issues, no open issues or related open pull requests. " +
+			"Tags the current main head with the milestone title, creates a GitHub release with generated notes, then closes that milestone. " +
+			"Reports completed steps on failure; an existing tag stops a retry for human inspection. Do not construct git tag or gh release commands yourself.",
+		InputSchema: mcphost.SchemaFor[releaseShipInput](nil),
+	}, s.releaseShip, config.RoleReleaseManager)
 }
 
 // touched records that this session changed an issue on GitHub, so the

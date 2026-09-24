@@ -309,9 +309,10 @@ A full pass is:
    `bees issue create`), which labels for the filter and for kind and state,
    resolves the milestone as the explicit one, else the parent or related
    issue's, else `filter.milestone`, creates the issue, and attaches it to its
-   parent as a sub-issue. The factory never creates, edits or closes
-   milestones; people do, and the bees inherit, or pick among them for the
-   features of an agreed design. See
+   parent as a sub-issue. The factory never creates or edits milestones;
+   people do, and the bees inherit, or pick among them for the
+   features of an agreed design. `release_ship` closes the milestone it
+   ships. See
    [Features, sub-issues and milestones](workflow.md#features-sub-issues-and-milestones).
 
 9. **File the factory errors.** With
@@ -1186,7 +1187,8 @@ steps or ended turns instead.
   and `done` go to every role; `issue_edit_body` to the
   two managers, `issue_set_state` to the project manager, `issue_question`
   to the product manager, `submit_review` to the reviewer and `file_bug`,
-  which refuses a bug the repository already reports, to QA. The schemas
+  which refuses a bug the repository already reports, to QA, and
+  `release_ship` to the release manager. The schemas
   depend on `BEES_ROLE`: `done`'s `status`
   enum is the role's valid outcomes. The name `bees` is reserved in
   `bees.toml`. See [bees mcp serve](cli.md#bees-mcp-serve-sessions) and
