@@ -1151,3 +1151,18 @@ func TestListSubIssuesRequiresCompletePages(t *testing.T) {
 		})
 	}
 }
+
+func TestListMilestonesDecodesIssueCounts(t *testing.T) {
+	c := New("acme/widgets")
+	c.Exec = func(_ context.Context, args ...string) ([]byte, error) {
+		want := []string{"api", "repos/acme/widgets/milestones?state=open&per_page=100"}
+		if !slices.Equal(args, want) {
+			t.Fatalf("args = %v, want %v", args, want)
+		}
+		return []byte(`[{"number":7,"title":"v1","open_issues":2,"closed_issues":5}]`), nil
+	}
+	got, err := c.ListMilestones(context.Background())
+	if err != nil || len(got) != 1 || got[0].OpenIssues != 2 || got[0].ClosedIssues != 5 {
+		t.Fatalf("ListMilestones = %+v, %v", got, err)
+	}
+}

@@ -123,6 +123,48 @@ func TestSeedReadsBackThroughTheClient(t *testing.T) {
 	}
 }
 
+func TestReleasePrimitives(t *testing.T) {
+	f, c := seeded(t)
+	ctx := context.Background()
+	f.Milestones[0].OpenIssues = 0
+	f.Milestones[0].ClosedIssues = 4
+	ms, err := c.ListMilestones(ctx)
+	if err != nil || len(ms) != 1 || ms[0].OpenIssues != 0 || ms[0].ClosedIssues != 4 {
+		t.Fatalf("milestone counts = %+v, %v", ms, err)
+	}
+	f.Tags["v1-preview"] = "other-commit"
+	exists, err := c.TagExists(ctx, "v1")
+	if err != nil || exists {
+		t.Fatalf("prefix tag matched: exists=%v err=%v", exists, err)
+	}
+	if err := c.CreateTag(ctx, "v1", "requested-commit"); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.Tags["v1"]; got != "requested-commit" {
+		t.Fatalf("tag points at %q", got)
+	}
+	exists, err = c.TagExists(ctx, "v1")
+	if err != nil || !exists {
+		t.Fatalf("created tag missing: exists=%v err=%v", exists, err)
+	}
+	if err := c.CreateTag(ctx, "v1", "different-commit"); err == nil {
+		t.Fatal("duplicate tag creation succeeded")
+	}
+	if err := c.CreateRelease(ctx, "v1"); err != nil || !f.Releases["v1"] {
+		t.Fatalf("generated release = %v, recorded=%v", err, f.Releases["v1"])
+	}
+	if err := c.CloseMilestone(ctx, 3); err != nil {
+		t.Fatal(err)
+	}
+	ms, err = c.ListMilestones(ctx)
+	if err != nil || len(ms) != 0 || f.Milestones[0].State != "closed" {
+		t.Fatalf("closed milestone remains open: %+v, %v", ms, err)
+	}
+	if err := c.CloseMilestone(ctx, 99); err == nil {
+		t.Fatal("missing milestone closed")
+	}
+}
+
 func TestExecWritesShowInTheSnapshot(t *testing.T) {
 	f, c := seeded(t)
 	ctx := context.Background()
