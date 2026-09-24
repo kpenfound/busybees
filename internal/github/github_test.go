@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -1179,5 +1180,57 @@ func TestListAllOpenPRsForReleasePaginatesAndKeepsClosingRefs(t *testing.T) {
 	prs, err := c.ListAllOpenPRsForRelease(context.Background())
 	if err != nil || len(prs) != 2 || prs[0].Number != 1 || !slices.Equal(prs[0].ClosingIssues(), []int{7}) || prs[1].MilestoneTitle() != "v1" {
 		t.Fatalf("open PR pages = %+v, %v", prs, err)
+	}
+}
+
+func TestClosedMilestoneIssueSkipsPullRequests(t *testing.T) {
+	c := New("acme/widgets")
+	c.Exec = func(_ context.Context, args ...string) ([]byte, error) {
+		want := []string{"api", "repos/acme/widgets/issues?milestone=7&state=closed&per_page=100"}
+		if !slices.Equal(args, want) {
+			t.Fatalf("args = %v, want %v", args, want)
+		}
+		return []byte(`[{"number":3,"pull_request":{"url":"x"}},{"number":4}]`), nil
+	}
+	if n, err := c.ClosedMilestoneIssue(context.Background(), 7); err != nil || n != 4 {
+		t.Fatalf("ClosedMilestoneIssue = %d, %v, want 4", n, err)
+	}
+	c.Exec = func(context.Context, ...string) ([]byte, error) {
+		return []byte(`[{"number":3,"pull_request":{}}]`), nil
+	}
+	if n, err := c.ClosedMilestoneIssue(context.Background(), 7); err != nil || n != 0 {
+		t.Fatalf("only pull requests: %d, %v, want 0", n, err)
+	}
+}
+
+func TestMilestoneInFlight(t *testing.T) {
+	issues := map[int]Issue{
+		7: {Number: 7, Milestone: &MilestoneRef{Title: "v1"}},
+		8: {Number: 8, Milestone: &MilestoneRef{Title: "v2"}},
+	}
+	lookup := func(_ context.Context, n int) (Issue, error) {
+		i, ok := issues[n]
+		if !ok {
+			return Issue{}, errors.New("not found")
+		}
+		return i, nil
+	}
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		prs        []PR
+		pr, closes int
+		wantErr    bool
+	}{
+		"none":                  {prs: []PR{{Number: 1, Body: "Closes #8"}}},
+		"in the milestone":      {prs: []PR{{Number: 2, Milestone: &MilestoneRef{Title: "v1"}}}, pr: 2},
+		"closes an issue in it": {prs: []PR{{Number: 1, Body: "Closes #8"}, {Number: 3, Body: "Fixes #7"}}, pr: 3, closes: 7},
+		"unreadable issue":      {prs: []PR{{Number: 4, Body: "Closes #9"}}, pr: 4, closes: 9, wantErr: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			pr, closes, err := MilestoneInFlight(ctx, tc.prs, "v1", lookup)
+			if pr != tc.pr || closes != tc.closes || (err != nil) != tc.wantErr {
+				t.Fatalf("MilestoneInFlight = %d, %d, %v; want %d, %d, error %v", pr, closes, err, tc.pr, tc.closes, tc.wantErr)
+			}
+		})
 	}
 }

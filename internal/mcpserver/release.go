@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/kpenfound/busybees/internal/github"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -56,19 +57,14 @@ func (s *server) releaseShip(ctx context.Context, _ *mcp.CallToolRequest, in rel
 	if err != nil {
 		return releaseFailure(completed, "could not inspect open pull requests: %v", err)
 	}
-	for _, pr := range prs {
-		if pr.MilestoneTitle() == title {
-			return releaseFailure(completed, "pull request #%d is open in milestone #%d", pr.Number, in.Milestone)
-		}
-		for _, issueNumber := range pr.ClosingIssues() {
-			issue, err := s.github.Issue(ctx, issueNumber)
-			if err != nil {
-				return releaseFailure(completed, "could not check issue #%d referenced by open pull request #%d: %v", issueNumber, pr.Number, err)
-			}
-			if issue.MilestoneTitle() == title {
-				return releaseFailure(completed, "pull request #%d is still open for issue #%d in milestone #%d", pr.Number, issueNumber, in.Milestone)
-			}
-		}
+	pr, issueNumber, err := github.MilestoneInFlight(ctx, prs, title, s.github.Issue)
+	switch {
+	case err != nil:
+		return releaseFailure(completed, "could not check issue #%d referenced by open pull request #%d: %v", issueNumber, pr, err)
+	case pr != 0 && issueNumber == 0:
+		return releaseFailure(completed, "pull request #%d is open in milestone #%d", pr, in.Milestone)
+	case pr != 0:
+		return releaseFailure(completed, "pull request #%d is still open for issue #%d in milestone #%d", pr, issueNumber, in.Milestone)
 	}
 	exists, err := s.github.TagExists(ctx, title)
 	if err != nil {

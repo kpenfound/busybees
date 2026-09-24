@@ -193,6 +193,12 @@ type Edit struct {
 	// request — APPROVED, CHANGES_REQUESTED or COMMENTED — which the fake
 	// serves from the reviews endpoint. A review edit changes no labels.
 	Review string `json:"review,omitempty"`
+	// Milestone puts an issue the edit creates in the open milestone with
+	// this title, counted among its open issues the way GitHub counts it.
+	Milestone string `json:"milestone,omitempty"`
+	// CloseMilestone closes the milestone with this number, the way
+	// release_ship ends; the edit changes nothing else.
+	CloseMilestone int `json:"close_milestone,omitempty"`
 }
 
 // RequestEdit records one edit in dir for the fake whose EditsDir it is to
@@ -240,12 +246,28 @@ func (f *GitHub) applyEdits() {
 			f.Reviews[e.Number] = append(f.Reviews[e.Number], Review{State: e.Review, At: f.now()})
 			continue
 		}
+		if e.CloseMilestone != 0 {
+			for k := range f.Milestones {
+				if f.Milestones[k].Number == e.CloseMilestone {
+					f.Milestones[k].State = "closed"
+				}
+			}
+			continue
+		}
 		i, ok := f.Issues[e.Number]
 		if !ok {
 			if !e.Create {
 				continue
 			}
 			i = &github.Issue{Number: e.Number, Title: e.Title, Body: "please", State: "OPEN"}
+			if e.Milestone != "" {
+				i.Milestone = &github.MilestoneRef{Title: e.Milestone}
+				for k := range f.Milestones {
+					if f.Milestones[k].Title == e.Milestone {
+						f.Milestones[k].OpenIssues++
+					}
+				}
+			}
 			f.Issues[e.Number] = i
 		}
 		i.Labels = removeLabels(i.Labels, e.Remove)
@@ -644,6 +666,26 @@ func (f *GitHub) api(args []string, stdin *string) (out []byte, err error, ok bo
 			page = append(page, map[string]any{"number": p.Number, "body": p.Body, "html_url": p.URL, "state": "open", "milestone": p.Milestone})
 		}
 		out, err := json.Marshal([]any{page})
+		return out, err, true
+	case method == "" && strings.HasPrefix(target, repo+"issues?milestone=") && strings.HasSuffix(target, "&state=closed&per_page=100"):
+		// The closed issues of one milestone, pull requests excluded: the
+		// fake keeps those apart, so every entry is an issue.
+		if !sscanfAll(target, repo+"issues?milestone=%d&state=closed&per_page=100", &n) {
+			return nil, fmt.Errorf("fake gh: milestone issues %q", target), true
+		}
+		title := ""
+		for _, m := range f.Milestones {
+			if m.Number == n {
+				title = m.Title
+			}
+		}
+		page := []map[string]any{}
+		for _, num := range slices.Sorted(maps.Keys(f.Issues)) {
+			if i := f.Issues[num]; i.State == "CLOSED" && title != "" && i.MilestoneTitle() == title {
+				page = append(page, map[string]any{"number": num, "state": "closed"})
+			}
+		}
+		out, err := json.Marshal(page)
 		return out, err, true
 	case method == "" && strings.HasPrefix(target, repo+"git/ref/heads/"):
 		branch := strings.TrimPrefix(target, repo+"git/ref/heads/")
