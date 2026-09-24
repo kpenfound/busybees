@@ -100,11 +100,11 @@ func ranAngles(runs []AngleRun) []string {
 }
 
 func TestAnAngleSessionIsToldItsAngleTheBriefAndTheDiff(t *testing.T) {
-	// No one size runs every angle: xs and xl between them do. A checkout
-	// (fakeDocker) is what makes diff.patch's directory one the angles'
-	// read-only tools can reach: without one the angles fall back to the
-	// machine's own checkout, which diff.patch is not written into
-	// (TestTheDiffIsNotWrittenIntoTheMachinesCheckout).
+	// No one size runs every angle: xs and xl between them do. The diff is
+	// in every prompt. A checkout (fakeDocker) is what makes diff.patch's
+	// directory one the angles' read-only tools can reach: without one the
+	// angles fall back to the machine's own checkout, which diff.patch is
+	// not written into (TestTheDiffIsNotWrittenIntoTheMachinesCheckout).
 	reqs := map[string]AgentRequest{}
 	diffPaths := map[string]string{}
 	for _, size := range []string{"xs", "xl"} {
@@ -144,20 +144,18 @@ func TestAnAngleSessionIsToldItsAngleTheBriefAndTheDiff(t *testing.T) {
 			heading,
 			"# Review brief: acme/widgets#7",
 			"- every new key needs a test (CLAUDE.md)",
-			"The diff is at " + diffPath + ": read it there.",
+			"The diff of the change:\n\n```diff\n" + testDiff,
+			"The same diff is at " + diffPath + ", for searching.",
 			"Review acme/widgets#7 from the " + map[string]string{AngleQuickGeneral: "quick general", AngleSideEffects: "side effects", AngleGeneral: "general", AngleDocs: "documentation accuracy", AngleTests: "test coverage and documentation", AngleAcceptance: "acceptance criteria"}[angle] + " angle. Answer with the JSON object alone.\n",
 		} {
 			if !strings.Contains(prompt, want) {
 				t.Errorf("the %s session was not told %q:\n%s", angle, want, prompt)
 			}
 		}
-		if strings.Contains(prompt, testDiff) {
-			t.Errorf("the %s session's prompt still has the diff inline:\n%s", angle, prompt)
-		}
 		// The frame, the angle, the brief, the diff, the closing line: in
 		// that order, so the instructions come before what can be long.
 		last := -1
-		for _, mark := range []string{"You are one session", heading, "# Review brief", "The diff is at", "Answer with the JSON object alone"} {
+		for _, mark := range []string{"You are one session", heading, "# Review brief", "The diff of the change", "Answer with the JSON object alone"} {
 			at := strings.Index(prompt, mark)
 			if at <= last {
 				t.Errorf("the %s session's prompt has %q out of order:\n%s", angle, mark, prompt)
