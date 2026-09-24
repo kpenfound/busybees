@@ -79,12 +79,13 @@ you could not finish.
 are MCP tools, served to every session by the built-in `bees` server. Eleven go
 to every role: `mail_send`, `mail_list`, `issue_create`, `issue_link`,
 `issue_view`, `pr_view`, `comment`, `report_factory_error`, `notes_read`,
-`notes_write` and `done`. Five are role-scoped: `issue_edit_body` (both
+`notes_write` and `done`. Six are role-scoped: `issue_edit_body` (both
 managers), `issue_set_state` (project manager), `issue_question` (product
 manager), `submit_review`
-(reviewer, for a requested review only) and `file_bug` (QA). The tools
-enforce the factory's rules: no issue or pull request outside the filter can
-be read or written, `comment` and `submit_review` append the marker,
+(reviewer, for a requested review only), `file_bug` (QA), and `release_ship`
+(release manager). The issue and pull request tools refuse items outside the
+filter; `release_ship` checks all open PRs for a milestone's issues.
+`comment` and `submit_review` append the marker,
 `issue_edit_body` refuses a feature or feedback issue for anyone but the
 product manager, `issue_set_state` only moves an issue out of `bees:triage`,
 and `file_bug` refuses a bug the repository already reports. Its duplicate

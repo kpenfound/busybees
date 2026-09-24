@@ -368,6 +368,55 @@ func (b *backend) PR(ctx context.Context, number int) (github.PR, error) {
 	return b.gh.GetPR(ctx, number)
 }
 
+func (b *backend) ListMilestones(ctx context.Context) ([]github.Milestone, error) {
+	if err := b.load(ctx); err != nil {
+		return nil, err
+	}
+	return b.gh.ListMilestones(ctx)
+}
+
+func (b *backend) ListOpenPRs(ctx context.Context) ([]github.PR, error) {
+	if err := b.load(ctx); err != nil {
+		return nil, err
+	}
+	return b.gh.ListOpenPRs(ctx, github.Query{})
+}
+
+func (b *backend) TagExists(ctx context.Context, tag string) (bool, error) {
+	if err := b.load(ctx); err != nil {
+		return false, err
+	}
+	return b.gh.TagExists(ctx, tag)
+}
+
+func (b *backend) BranchHead(ctx context.Context, branch string) (string, error) {
+	if err := b.load(ctx); err != nil {
+		return "", err
+	}
+	return b.gh.BranchHead(ctx, branch)
+}
+
+func (b *backend) CreateTag(ctx context.Context, tag, commit string) error {
+	if err := b.load(ctx); err != nil {
+		return err
+	}
+	return b.gh.CreateTag(ctx, tag, commit)
+}
+
+func (b *backend) CreateRelease(ctx context.Context, tag string) error {
+	if err := b.load(ctx); err != nil {
+		return err
+	}
+	return b.gh.CreateRelease(ctx, tag)
+}
+
+func (b *backend) CloseMilestone(ctx context.Context, number int) error {
+	if err := b.load(ctx); err != nil {
+		return err
+	}
+	return b.gh.CloseMilestone(ctx, number)
+}
+
 func (b *backend) PRActivity(ctx context.Context, number int, since time.Time) ([]github.Activity, error) {
 	if err := b.load(ctx); err != nil {
 		return nil, err

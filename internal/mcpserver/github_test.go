@@ -17,14 +17,20 @@ import (
 // write, so a test can assert both what a tool did and — for a refusal —
 // that it did nothing.
 type fakeGitHub struct {
-	q      github.Query
-	labels config.Labels
-	actsAs string // the login [github] gives the factory ("" = a shared account)
-	issues map[int]github.Issue
-	prs    map[int]github.PR
-	parent *github.Parent
-	checks []github.Check
-	acts   []github.Activity
+	q            github.Query
+	labels       config.Labels
+	actsAs       string // the login [github] gives the factory ("" = a shared account)
+	issues       map[int]github.Issue
+	prs          map[int]github.PR
+	parent       *github.Parent
+	checks       []github.Check
+	acts         []github.Activity
+	milestones   []github.Milestone
+	branchHead   string
+	tags         map[string]string
+	releases     map[string]bool
+	releaseErr   map[string]error
+	releaseCalls []string
 
 	comments []numberedBody
 	bodies   []numberedBody
@@ -50,11 +56,79 @@ type labelEdit struct {
 
 func newFakeGitHub() *fakeGitHub {
 	return &fakeGitHub{
-		q:      github.Query{Label: "bees", Assignee: "kyle"},
-		labels: config.LabelsFor("bees"),
-		issues: map[int]github.Issue{},
-		prs:    map[int]github.PR{},
+		q:          github.Query{Label: "bees", Assignee: "kyle"},
+		labels:     config.LabelsFor("bees"),
+		issues:     map[int]github.Issue{},
+		prs:        map[int]github.PR{},
+		branchHead: "main-head",
+		tags:       map[string]string{},
+		releases:   map[string]bool{},
+		releaseErr: map[string]error{},
 	}
+}
+
+func (f *fakeGitHub) ListMilestones(context.Context) ([]github.Milestone, error) {
+	if err := f.releaseErr["milestones"]; err != nil {
+		return nil, err
+	}
+	return f.milestones, nil
+}
+func (f *fakeGitHub) ListOpenPRs(context.Context) ([]github.PR, error) {
+	if err := f.releaseErr["prs"]; err != nil {
+		return nil, err
+	}
+	var prs []github.PR
+	for _, p := range f.prs {
+		if strings.EqualFold(p.State, "open") {
+			prs = append(prs, p)
+		}
+	}
+	return prs, nil
+}
+func (f *fakeGitHub) TagExists(_ context.Context, tag string) (bool, error) {
+	if err := f.releaseErr["exists"]; err != nil {
+		return false, err
+	}
+	_, ok := f.tags[tag]
+	return ok, nil
+}
+func (f *fakeGitHub) BranchHead(_ context.Context, branch string) (string, error) {
+	if err := f.releaseErr["head"]; err != nil {
+		return "", err
+	}
+	if branch != "main" {
+		return "", fmt.Errorf("unexpected branch %s", branch)
+	}
+	return f.branchHead, nil
+}
+func (f *fakeGitHub) CreateTag(_ context.Context, tag, commit string) error {
+	f.releaseCalls = append(f.releaseCalls, "tag")
+	if err := f.releaseErr["tag"]; err != nil {
+		return err
+	}
+	f.tags[tag] = commit
+	return nil
+}
+func (f *fakeGitHub) CreateRelease(_ context.Context, tag string) error {
+	f.releaseCalls = append(f.releaseCalls, "release")
+	if err := f.releaseErr["release"]; err != nil {
+		return err
+	}
+	f.releases[tag] = true
+	return nil
+}
+func (f *fakeGitHub) CloseMilestone(_ context.Context, number int) error {
+	f.releaseCalls = append(f.releaseCalls, "close")
+	if err := f.releaseErr["close"]; err != nil {
+		return err
+	}
+	for i := range f.milestones {
+		if f.milestones[i].Number == number {
+			f.milestones[i].State = "closed"
+			return nil
+		}
+	}
+	return fmt.Errorf("no milestone %d", number)
 }
 
 // issue seeds a visible issue: it carries the filter's label and assignee.
@@ -158,9 +232,10 @@ func TestGitHubToolsPerRole(t *testing.T) {
 			"issue_set_state, issue_view, mail_list, mail_send, notes_read, notes_write, pr_view, report_factory_error",
 		config.RoleProductManager: "comment, done, issue_create, issue_edit_body, issue_link, " +
 			"issue_question, issue_view, mail_list, mail_send, notes_read, notes_write, pr_view, report_factory_error",
+		config.RoleReleaseManager: base[:len(base)-len("report_factory_error")] + "release_ship, report_factory_error",
 		// Hand use through `bees mcp serve`: everything.
 		"": "comment, done, file_bug, issue_create, issue_edit_body, issue_link, issue_question, " +
-			"issue_set_state, issue_view, mail_list, mail_send, notes_read, notes_write, pr_view, report_factory_error, submit_review",
+			"issue_set_state, issue_view, mail_list, mail_send, notes_read, notes_write, pr_view, release_ship, report_factory_error, submit_review",
 	} {
 		list, err := Tools(context.Background(), Env{Role: role})
 		if err != nil {
@@ -187,6 +262,7 @@ func TestGitHubToolsWithoutABackend(t *testing.T) {
 		"issue_question":  {"number": 12, "waiting": true},
 		"submit_review":   {"number": 12, "event": "approve", "body": "fine"},
 		"file_bug":        {"title": "Crash on empty input", "body": "steps"},
+		"release_ship":    {"milestone": 3},
 	} {
 		res := h.callRaw(name, args)
 		if !res.IsError || !strings.Contains(resultText(res), "bees.toml") {
