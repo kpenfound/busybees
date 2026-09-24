@@ -61,7 +61,7 @@ func TestOnlyTheThemeNamesColours(t *testing.T) {
 }
 
 // TestRolesAreToldApartByColour pins that the Now panel can be read by who
-// is working: five roles, five different colours. It asserts on the style
+// is working: six roles, six different colours. It asserts on the style
 // rather than on a rendered row because `go test` is not a terminal, so
 // lipgloss renders every colour as nothing at all and an assertion about the
 // escape sequences would pass whatever the colours were. GetForeground
@@ -210,6 +210,7 @@ func paintedModel(t *testing.T) Model {
 		started("dev", config.RoleDeveloper, 1, 0, fixed, "claude-opus-5", false),
 		started("rev", config.RoleReviewer, 1, 9, fixed, "claude-opus-5", false),
 		started("qa", config.RoleQA, 0, 0, fixed, "claude-sonnet-5", false),
+		started("release", config.RoleReleaseManager, 0, 0, fixed, "claude-opus-5", false),
 		endedAs("dev-2", config.RoleDeveloper, 2, 0, "approved", "clean", 0.1, time.Second),
 		endedAs("dev-3", config.RoleDeveloper, 3, 0, "changes-requested", "attention", 0.1, time.Second),
 		endedAs("dev-4", config.RoleDeveloper, 4, 0, "failed", "bad", 0.1, time.Second),

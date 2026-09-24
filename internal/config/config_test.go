@@ -40,6 +40,13 @@ func TestTemplateLoads(t *testing.T) {
 	if cfg.Project.Repo != "acme/widgets" || cfg.Project.Remote != "origin" || cfg.Filter.Label != "bees" || cfg.Filter.Assignee != "@me" {
 		t.Fatalf("unexpected config: %+v %+v", cfg.Project, cfg.Filter)
 	}
+	releaseManager, err := cfg.Role(RoleReleaseManager)
+	if err != nil || releaseManager.Enabled {
+		t.Fatalf("release_manager should be disabled by default: %+v, %v", releaseManager, err)
+	}
+	if !strings.Contains(text, "#enabled = false") || !strings.Contains(text, "[roles.release_manager]") {
+		t.Fatal("template does not show the release_manager opt-in setting")
+	}
 	// Without the Explicit flags, repo and default_branch are commented placeholders.
 	text, _ = RenderTOML(RenderOptions{Repo: "acme/widgets", DefaultBranch: "trunk"})
 	cfg, err = Load(writeConfig(t, text))
@@ -139,6 +146,62 @@ FOO = "dev"
 	rev, _ := cfg.Role("reviewer")
 	if !rev.Enabled || rev.Timeout != 10*time.Minute {
 		t.Fatalf("reviewer: %+v", rev)
+	}
+}
+
+func TestReleaseManagerRoleConfig(t *testing.T) {
+	for _, alias := range []string{"release_manager", "release-manager", "release"} {
+		got, err := CanonicalRole(alias)
+		if err != nil || got != RoleReleaseManager {
+			t.Errorf("CanonicalRole(%q) = %q, %v; want %q", alias, got, err, RoleReleaseManager)
+		}
+	}
+	if !slices.Contains(Roles, RoleReleaseManager) {
+		t.Fatalf("Roles does not include %q: %v", RoleReleaseManager, Roles)
+	}
+
+	cfg, err := Load(writeConfig(t, `
+version = 5
+[project]
+repo = "acme/widgets"
+[profiles.release]
+agent = "codex"
+model = "gpt-5-codex"
+[roles.release_manager]
+prompt = "publish the release"
+profile = "release"
+max_turns = 12
+timeout = "7m"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	role, err := cfg.Role("release")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if role.Name != RoleReleaseManager || role.Enabled {
+		t.Fatalf("omitted enabled should resolve disabled: %+v", role)
+	}
+	if role.Agent != AgentCodex || role.Model != "gpt-5-codex" || role.Prompt != "publish the release" || role.MaxTurns != 12 || role.Timeout != 7*time.Minute {
+		t.Fatalf("ordinary role settings/profile did not resolve: %+v", role)
+	}
+
+	cfg, err = Load(writeConfig(t, `version = 5
+[project]
+repo = "acme/widgets"
+[roles.release_manager]
+enabled = true
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	role, err = cfg.Role(RoleReleaseManager)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !role.Enabled {
+		t.Fatal("explicit enabled = true was not retained")
 	}
 }
 

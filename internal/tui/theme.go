@@ -36,14 +36,15 @@ const (
 	// One colour per role, so the Now panel can be read as who is working
 	// rather than by spelling out each row. None of them is red: a role is
 	// not a verdict, and a running session must never read as a failure.
-	// Five roles need one hue more than is left once red and the plain
-	// yellow of the attention class are spoken for, so QA takes the bright
-	// yellow beside it.
+	// Six roles need one hue more than is left once red and the plain
+	// yellow of the attention class are spoken for, so QA and release manager
+	// take bright yellow and bright magenta.
 	colorProductManager = lipgloss.Color("5")  // magenta
 	colorProjectManager = lipgloss.Color("4")  // blue
 	colorDeveloper      = lipgloss.Color("6")  // cyan
 	colorReviewer       = lipgloss.Color("2")  // green
 	colorQA             = lipgloss.Color("11") // bright yellow
+	colorReleaseManager = lipgloss.Color("13") // bright magenta
 )
 
 // The styles the whole package paints with. Every style a row is rendered
@@ -77,6 +78,7 @@ var roleColors = map[string]lipgloss.Color{
 	config.RoleDeveloper:      colorDeveloper,
 	config.RoleReviewer:       colorReviewer,
 	config.RoleQA:             colorQA,
+	config.RoleReleaseManager: colorReleaseManager,
 }
 
 // roleStyle is the colour a running session's row is drawn in. An unknown

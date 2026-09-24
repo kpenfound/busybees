@@ -578,4 +578,22 @@ label = "{{.Label}}"
 #EXAMPLE = "value"
 #[roles.qa.mcp.example]
 #command = "example-mcp"
+
+# Publishes a GitHub release and closes the milestone. Disabled unless you
+# explicitly opt in because this role publishes externally.
+[roles.release_manager]
+#prompt = """
+#"""
+#prompt_file = ""
+#skills = []
+#profile = "default"
+#profile_by_size = { xs = "default", s = "default" }
+#max_turns = 200
+#timeout = "45m"
+{{setting . "roles.release_manager.enabled" "#enabled = false"}}
+#shell = "/bin/bash"
+#[roles.release_manager.env]
+#EXAMPLE = "value"
+#[roles.release_manager.mcp.example]
+#command = "example-mcp"
 `
