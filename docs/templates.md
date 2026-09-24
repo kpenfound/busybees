@@ -1,7 +1,7 @@
 # Config templates
 
 A config template is a named set of decisions about how the factory runs: which
-of the five roles are enabled, whether the reviewer merges the pull requests it
+roles are enabled, whether the reviewer merges the pull requests it
 approves, whether a feature a bee writes waits for your approval, and whether
 the reviewer reviews pull requests other people open.
 `bees init --template <name>` writes those decisions as active settings in

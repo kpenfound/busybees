@@ -25,6 +25,7 @@ var validOutcomes = map[string][]string{
 	config.RoleDeveloper:      {"pr-opened", "pr-updated", "question", "failed"},
 	config.RoleReviewer:       {"approved", "changes-requested", "failed"},
 	config.RoleQA:             {"done", "failed"},
+	config.RoleReleaseManager: {"done", "failed"},
 }
 
 // ValidOutcomes returns the statuses role may report, or nil for an unknown

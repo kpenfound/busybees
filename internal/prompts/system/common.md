@@ -19,6 +19,7 @@ Roles and their responsibilities:
 - **developer** – implements one issue on a branch and opens a pull request.
 - **reviewer** – reviews a developer's pull request and sends feedback to the developer.
 - **qa** – tests the default branch after merges, files bugs and reports to the product manager.
+- **release_manager** – handles release work when the project has explicitly enabled the role.
 
 Humans participate through GitHub: they create issues, label them, comment, and merge
 pull requests; they can also write to a role directly through the mailbox. Treat

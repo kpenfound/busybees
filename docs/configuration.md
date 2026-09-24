@@ -641,8 +641,15 @@ state directory's file, whatever `backend` is.
 ## `[global]` and `[roles.<name>]`
 
 `[global]` and each `[roles.<name>]` table take the same keys. The role name
-is one of `product_manager`, `project_manager`, `developer`, `reviewer`, `qa`.
-The CLI accepts aliases such as `pm` and `dev`; the TOML keys do not.
+is one of `product_manager`, `project_manager`, `developer`, `reviewer`, `qa`,
+`release_manager`. The CLI accepts aliases such as `pm`, `dev` and `release`;
+the TOML keys do not. `release_manager` is disabled by default. Explicitly opt
+in before using it because it can publish a GitHub release:
+
+```toml
+[roles.release_manager]
+enabled = true
+```
 
 | Key | Type | Default | Description |
 |---|---|---|---|
@@ -664,7 +671,7 @@ The CLI accepts aliases such as `pm` and `dev`; the TOML keys do not.
 | `sandbox_dagger_engine` | string | `""` | The host's Dagger engine an `sbx` session is given, `unix://<socket path>` or `tcp://<host>:<port>`, with the Dagger CLI installed in the sandbox. Empty gives neither. Requires the resolved profile's `sandbox = "sbx"` at every size and `sandbox_dagger_version`. See [Dagger in the sandbox](#dagger-in-the-sandbox). |
 | `sandbox_dagger_version` | string | `""` | The Dagger CLI release installed in the sandbox for `sandbox_dagger_engine`, the engine's own, such as `"v0.20.5"`. Requires `sandbox_dagger_engine`. |
 | `env` | table | `{}` | Environment variables exported into every session: the agent, its shell tool and git see them, and so do MCP servers under `claude`, `opencode` and `pi` (codex starts a server with only the variables its entry names). A `$VAR` value is expanded from the bees process environment when the session starts. A name may not be empty or contain `=` or a space. See [Exported into every session](#exported-into-every-session) for how it meets the variables bees sets itself. |
-| `enabled` | bool | `true` | Roles only. `false` takes a role out of the rotation. Disabling `reviewer` makes a developer's pull request count as approved the moment it is opened, and with `auto_merge` it goes straight to the checks stage. Under `[global]` the key is an error. A named set of these decisions is a [config template](templates.md). |
+| `enabled` | bool | `true` (`false` for `release_manager`) | Roles only. `false` takes a role out of the rotation. `release_manager` must be explicitly enabled because it can publish a GitHub release. Disabling `reviewer` makes a developer's pull request count as approved the moment it is opened, and with `auto_merge` it goes straight to the checks stage. Under `[global]` the key is an error. A named set of these decisions is a [config template](templates.md). |
 
 ## `[profiles.<name>]`
 

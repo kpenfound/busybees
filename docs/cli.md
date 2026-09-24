@@ -563,7 +563,7 @@ the run continues.
 |---|---|
 | `-d, --daemon` | Detach and print the child pid; see below. |
 | `--once` | Do one pass and exit when the sessions it started finish. Same scheduling as `bees tick`; in a terminal it draws [the live view](#the-live-view) rather than logging the pass, so `bees tick` or `--no-tui` is what prints a report. |
-| `--roles a,b` | Only run these roles (aliases accepted: `pm`, `pjm`, `dev`, `reviewer`, `qa`). |
+| `--roles a,b` | Only run these roles (aliases accepted: `pm`, `pjm`, `dev`, `reviewer`, `qa`, `release`). |
 | `--skip-doctor` | Start without running the doctor preflight. |
 | `--no-tui` | Log to the console instead of drawing the terminal UI. A stdout that is not a terminal turns the UI off on its own. |
 
@@ -1627,7 +1627,7 @@ mcp__bees__issue_link       Attach an issue to a feature
 mcp__bees__issue_view       Read an issue
 mcp__bees__mail_list        Read the mailbox
 mcp__bees__mail_send        Send mail to another role
-    to: product_manager | project_manager | developer | reviewer | qa
+    to: product_manager | project_manager | developer | reviewer | qa | release_manager
 mcp__bees__notes_read       Read your notes
 mcp__bees__notes_write      Replace your notes
 mcp__bees__pr_view          Read a pull request

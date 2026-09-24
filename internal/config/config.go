@@ -10,7 +10,7 @@
 //	[logging]   – console log format and level
 //	[notes]     – where role notes live: files, or Neo4j Agent Memory
 //	[roles.*]   – per-role overrides (product_manager, project_manager,
-//	              developer, reviewer, qa)
+//	              developer, reviewer, qa, release_manager)
 //
 // Role settings are resolved by merging [global] with [roles.<name>]:
 // prompts are concatenated, skills and pi packages are unioned, MCP servers are unioned with
@@ -47,10 +47,11 @@ const (
 	RoleDeveloper      = "developer"
 	RoleReviewer       = "reviewer"
 	RoleQA             = "qa"
+	RoleReleaseManager = "release_manager"
 )
 
 // Roles lists every role in the order the factory thinks about them.
-var Roles = []string{RoleProductManager, RoleProjectManager, RoleDeveloper, RoleReviewer, RoleQA}
+var Roles = []string{RoleProductManager, RoleProjectManager, RoleDeveloper, RoleReviewer, RoleQA, RoleReleaseManager}
 
 // roleAliases maps short CLI-friendly names to canonical role names.
 var roleAliases = map[string]string{
@@ -68,6 +69,9 @@ var roleAliases = map[string]string{
 	"reviewer":        RoleReviewer,
 	"qa":              RoleQA,
 	"tester":          RoleQA,
+	"release":         RoleReleaseManager,
+	"release_manager": RoleReleaseManager,
+	"release-manager": RoleReleaseManager,
 }
 
 // CanonicalRole resolves a user-supplied role name or alias.
@@ -2078,7 +2082,7 @@ func (c *Config) Role(name string) (ResolvedRole, error) {
 		Effort:                  p.Effort,
 		MaxTurns:                firstPositive(rs.MaxTurns, g.MaxTurns, DefaultMaxTurns),
 		Timeout:                 firstPositiveDur(rs.Timeout.Duration, g.Timeout.Duration, DefaultTimeout),
-		Enabled:                 true,
+		Enabled:                 canonical != RoleReleaseManager,
 		Shell:                   firstNonEmpty(rs.Shell, g.Shell),
 		Sandbox:                 p.Sandbox,
 		SandboxImage:            firstNonEmpty(rs.SandboxImage, g.SandboxImage),

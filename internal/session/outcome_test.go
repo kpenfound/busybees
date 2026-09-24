@@ -14,7 +14,7 @@ import (
 func TestValidOutcomes(t *testing.T) {
 	for role, want := range map[string]string{
 		"developer": "pr-opened", "reviewer": "approved", "qa": "done",
-		"product_manager": "idle", "project_manager": "idle",
+		"product_manager": "idle", "project_manager": "idle", "release_manager": "done",
 	} {
 		valid := ValidOutcomes(role)
 		if len(valid) == 0 {
