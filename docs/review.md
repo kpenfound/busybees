@@ -40,7 +40,10 @@ context  ->  brief  ->  angles  ->  findings  ->  triage  ->  end
    and `context.toml` enables reads the brief and the diff, and answers with
    findings. The angles run at the same time, and at a terminal the
    command shows each one's progress while they do. An angle that
-   fails is skipped; the review stops only when every angle fails.
+   fails is skipped, and so is one whose session answers that it could
+   not read the diff or a file it needed: it is named as not reviewed,
+   never counted as having found nothing. The review stops only when
+   every angle fails.
 4. **Findings.** bees merges the angles' answers into one list, in code and
    not in a session (see [Findings](#findings)), then applies the rules in
    your [reviewer notes](#reviewer-notes): a finding you dismissed before is
@@ -54,9 +57,13 @@ context  ->  brief  ->  angles  ->  findings  ->  triage  ->  end
 Every session is read-only, held there by the agent's own settings rather
 than by the prompt. A `claude` session may use `Read`, `Grep`, `Glob`, `LS`
 and `NotebookRead` and nothing else. A `codex` session runs in Codex's
-read-only sandbox with its command, fetch and plugin features off, and an
-inventory of the MCP servers it inherits is taken first so every one of
-them can be disabled. An `opencode` session runs in pure mode as a private
+read-only sandbox with its command, fetch, plugin and image generation
+features off, and an inventory of the MCP servers it inherits is taken
+first so every one of them can be disabled. That leaves Codex no way of its
+own to read a file, so bees serves the session one MCP server of its own
+for the length of the turn, over loopback with a token only that session
+has: `read_file`, `list_directory` and `search_files`, which read the
+directory the session runs in and refuse any path or link outside it. An `opencode` session runs in pure mode as a private
 agent whose only tools are read, grep and glob, and the configuration it
 resolves is checked to have taken them before the model runs. A `pi`
 session loads no extension, skill, prompt template or context file, and
@@ -297,7 +304,7 @@ goes:
   angles/<angle>.json   each angle's session id, directory and answer
   checkout/             the pull request's head, cloned for the diff and
                         the angles; also holds diff.patch, for every
-                        angle to read
+                        angle to search
   scratch/              where the angles and triage ran without a checkout;
                         also holds diff.patch, on the same terms
   findings.json         the merged list, and what your notes hid from it
@@ -310,7 +317,7 @@ written leaves no directory. `bees review triage` reopens the newest
 directory of the pull request, and an ask resumes the angle's session from
 its file under `angles/`. When the angles ran in your machine's own
 checkout instead of one made for the review, diff.patch is not written
-there; an angle reads the code as the change leaves it in that case.
+there. Either way the diff is in every angle's prompt.
 
 ## Configuration
 

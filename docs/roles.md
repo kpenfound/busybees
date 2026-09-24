@@ -536,8 +536,8 @@ the diff) and its acceptance criteria; one session per angle the size calls
 for reads the brief and the diff and looks for problems from that angle
 alone; and the judge, deterministic code and not a session, merges what the
 angles found into one list, most severe first. The brief and angle sessions
-run read-only, with no MCP server and no tool that writes, runs or fetches,
-in a local clone of the pull request's checkout; only the judge step is a
+run read-only, with no MCP server but the read-only file server bees gives a
+codex session, and no tool that writes, runs or fetches, in a local clone of the pull request's checkout; only the judge step is a
 factory session, and it does not review the change again: it posts the list
 `submit_review` gives it and decides the verdict from it (see
 [reviewer](#reviewer) above). What each step costs is entered in the ledger
@@ -559,7 +559,7 @@ named execution profiles after the reviewer's size-specific selection.
 Unspecified phases and angles keep that fallback. Brief and angle profiles
 run any of the four agents — claude, codex, opencode or pi — and ignore
 sandbox: the shared restricted execution enforces a read-only
-checkout with no commands, writes, web/network tools, MCP/factory identity
+checkout with no commands, writes, web/network tools, inherited MCP, factory identity
 or writable/shared VCS, whatever the agent is. The judge applies all five
 profile fields, including
 sandbox, with reviewer-owned prompt, tools and permissions. See

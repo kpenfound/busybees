@@ -12,9 +12,9 @@ says.
 
 The brief below is what the distiller made of the context that was gathered:
 what the change does, what it says it does, the style rules that apply to it
-and the areas it touched. After the brief you are told where to read the
-diff, when it was gathered. Read the files the brief names when the diff
-leaves a question open; a finding about a line you did not read is a guess.
+and the areas it touched. The diff follows the brief, when it was gathered.
+Read the files the brief names when the diff leaves a question open; a
+finding about a line you did not read is a guess.
 The generated files the brief lists as not reviewed are not in the diff and
 not yours to review: a finding anchored in one is dropped.
 
@@ -59,3 +59,15 @@ after it:
 it and `old` for a line the change removed. A finding about the change as a
 whole, with no line to anchor it to, leaves `file` and `lines` out.
 `suggestion` and `sources` are optional; every other field is not.
+
+An empty list says you reviewed the change and found nothing. When you could
+not review it — there is no diff and you could not read the files it
+touches, or a file you needed would not open — do not answer with an empty
+list. Add `"unreadable"` to the object, saying what you could not read and
+why:
+
+```json
+{"findings": [], "unreadable": "no diff was given and src/overdue.go would not open"}
+```
+
+The review then records your angle as not reviewed, rather than as clean.

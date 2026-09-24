@@ -717,7 +717,7 @@ stateDiagram-v2
   fallback chain runs as one of the four. A session refused for want of
   capacity runs again as its fallback under the same restrictions. Profile
   sandbox is ignored: no
-  commands, writes, web/network tools, MCP/factory identity or writable/shared
+  commands, writes, web/network tools, inherited MCP, factory identity or writable/shared
   VCS are available. Both phases read an independent clone of the worker's checkout
   under the review's artifact, which the diff is read from too (the branch
   against its merge base with the base branch, so no number of changed

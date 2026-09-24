@@ -140,10 +140,9 @@ func TestARunGathersBriefsReviewsJudgesFiltersAndWritesTheArtifact(t *testing.T)
 	// machine's own checkout (Angles.Dir): a working tree the review does
 	// not own, and diff.patch is not written into it (angles_test.go's
 	// TestTheDiffIsNotWrittenIntoTheMachinesCheckout covers that
-	// directly). The prompt falls back to the same message a session with
-	// no diff at all gets.
-	if p := agent.reqs[AngleGeneral].Prompt; !strings.Contains(p, "gathers the context sources a project declares") || !strings.Contains(p, "The diff was not gathered") || !strings.Contains(p, "receiver names are short here") {
-		t.Errorf("the general angle was not given the brief, the rules and the diff fallback:\n%s", p)
+	// directly). The diff is in the prompt all the same.
+	if p := agent.reqs[AngleGeneral].Prompt; !strings.Contains(p, "gathers the context sources a project declares") || !strings.Contains(p, "The diff of the change") || strings.Contains(p, "The same diff is at") || !strings.Contains(p, "receiver names are short here") {
+		t.Errorf("the general angle was not given the brief, the rules and the diff:\n%s", p)
 	}
 	if _, err := os.Stat(filepath.Join(a.Dir, DiffFile)); !os.IsNotExist(err) {
 		t.Errorf("diff.patch written under the artifact directory (stat err: %v)", err)
