@@ -258,10 +258,12 @@ func (claudeBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer) 
 //   - An ordinary session switches approvals and the sandbox off with
 //     --dangerously-bypass-approvals-and-sandbox, the counterpart of
 //     --dangerously-skip-permissions. RunRestricted instead selects Codex's
-//     read-only sandbox and disables command, fetch, plugin, hook and image
-//     generation features. That leaves Codex no way to read a file, so the
-//     turn is given the runner's read server (readserver.go) over its
-//     workspace as an MCP server by url, with its token in the environment.
+//     read-only sandbox and disables command, fetch, plugin, hook, image
+//     generation and agent delegation features. agents.enabled=false also
+//     overrides models that advertise collaboration tools independently of
+//     the feature flags. The turn is given the runner's read server
+//     (readserver.go) over its workspace as an MCP server by url, with its
+//     token in the environment.
 //   - There is no flag to append to the system prompt, so the rendered system
 //     prompt is written ahead of the task on stdin, separated by a rule. The
 //     two files in the session directory are still written apart, as they are

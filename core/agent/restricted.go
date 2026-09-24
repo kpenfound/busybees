@@ -233,7 +233,7 @@ func RateLimitedText(msg string) bool {
 
 func codexRestrictedConfigArgs() []string {
 	args := []string{"-c", `approval_policy="never"`, "-c", `web_search="disabled"`,
-		"-c", "orchestrator.mcp.enabled=false"}
+		"-c", "orchestrator.mcp.enabled=false", "-c", "agents.enabled=false"}
 	for _, feature := range []string{"shell_tool", "unified_exec", "js_repl", "browser_use", "browser_use_external", "computer_use", "in_app_browser", "multi_agent", "multi_agent_v2", "apps", "plugins", "hooks", "codex_hooks", "plugin_hooks", "skill_mcp_dependency_install", "tool_suggest", "web_search_request", "web_search_cached", "image_generation", "goals"} {
 		args = append(args, "-c", "features."+feature+"=false")
 	}

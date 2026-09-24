@@ -135,7 +135,7 @@ func TestRunRestrictedUsesTheSharedCodexBackend(t *testing.T) {
 		t.Fatalf("result = %+v", res)
 	}
 	args := restrictedArgs(t, record, ".args")
-	for _, want := range []string{"exec", "--json", "--sandbox", "read-only", `approval_policy="never"`, `web_search="disabled"`, "features.shell_tool=false", "features.plugins=false", `model_reasoning_effort="high"`} {
+	for _, want := range []string{"exec", "--json", "--sandbox", "read-only", `approval_policy="never"`, `web_search="disabled"`, "agents.enabled=false", "features.shell_tool=false", "features.plugins=false", `model_reasoning_effort="high"`} {
 		if !slices.Contains(args, want) {
 			t.Errorf("args missing %q:\n%v", want, args)
 		}
@@ -144,10 +144,42 @@ func TestRunRestrictedUsesTheSharedCodexBackend(t *testing.T) {
 		t.Errorf("restricted Codex bypassed its sandbox: %v", args)
 	}
 	probe := restrictedArgs(t, record, ".mcp-args")
-	for _, want := range []string{"mcp", "list", "--json", "features.plugins=false", "orchestrator.mcp.enabled=false"} {
+	for _, want := range []string{"mcp", "list", "--json", "agents.enabled=false", "features.plugins=false", "orchestrator.mcp.enabled=false"} {
 		if !slices.Contains(probe, want) {
 			t.Errorf("MCP inventory missing %q: %v", want, probe)
 		}
+	}
+}
+
+// The fake models a Codex model that advertises collaboration despite the
+// multi-agent feature flags. Its attempted child action succeeds unless the
+// separate agents.enabled control forbids delegation.
+func TestRunRestrictedCodexCannotDelegateWhenModelExposesCollaboration(t *testing.T) {
+	record := filepath.Join(t.TempDir(), "record")
+	script := `if [ "$1" = mcp ]; then echo '[]'; exit 0; fi
+printf '%s\n' "$@" > "` + record + `.args"
+cat >/dev/null
+if ! grep -Fxq 'agents.enabled=false' "` + record + `.args"; then
+  touch "` + record + `.delegated"
+fi
+` + restrictedCodexAnswer
+	bin := agenttest.Script(t, "codex", script)
+	res, err := restrictedRunner(t, "", bin).RunRestricted(context.Background(), restrictedRequestFor(AgentCodex, t.TempDir()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ResultText != "the brief" {
+		t.Fatalf("result = %+v", res)
+	}
+	if _, err := os.Stat(record + ".delegated"); !os.IsNotExist(err) {
+		t.Errorf("restricted Codex delegated to a child: stat error = %v", err)
+	}
+	args := restrictedArgs(t, record, ".args")
+	if !slices.Contains(args, "--sandbox") || !slices.Contains(args, "read-only") {
+		t.Errorf("restricted Codex lost its read-only sandbox: %v", args)
+	}
+	if slices.Contains(args, "features.code_mode_host=false") {
+		t.Errorf("restricted Codex lost the JavaScript MCP host: %v", args)
 	}
 }
 
