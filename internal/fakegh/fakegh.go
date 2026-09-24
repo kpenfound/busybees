@@ -65,6 +65,10 @@ type GitHub struct {
 	Labels []string
 	// Milestones are the open milestones of the repository.
 	Milestones []github.Milestone
+	// Tags maps tag names to the commit they point at. Releases records tags
+	// published with generated notes.
+	Tags     map[string]string
+	Releases map[string]bool
 	// Parents maps a work item to the feature it is a sub-issue of.
 	Parents map[int]int
 	// ImplicitParent answers the parent of an issue Parents has no entry
@@ -136,6 +140,8 @@ func New(repo string) *GitHub {
 		ChildResponse: map[int]string{},
 		ChildErr:      map[int]error{},
 		ErrFor:        map[string]error{},
+		Tags:          map[string]string{},
+		Releases:      map[string]bool{},
 	}
 }
 
@@ -515,8 +521,26 @@ func (f *GitHub) exec(args []string, stdin *string) ([]byte, error) {
 			f.Labels = append(f.Labels, args[2])
 		}
 		return nil, nil
+	case "release create":
+		if len(args) < 3 || !slices.Contains(args, "--generate-notes") || flag("-R") != f.Repo {
+			return nil, fmt.Errorf("fake gh: invalid generated release: %v", args)
+		}
+		if _, ok := f.Tags[args[2]]; !ok {
+			return nil, fmt.Errorf("fake gh: tag %q does not exist", args[2])
+		}
+		if f.Releases[args[2]] {
+			return nil, fmt.Errorf("fake gh: release %q already exists", args[2])
+		}
+		f.Releases[args[2]] = true
+		return nil, nil
 	case "api repos/" + f.Repo + "/milestones?state=open&per_page=100":
-		return json.Marshal(f.Milestones)
+		var open []github.Milestone
+		for _, m := range f.Milestones {
+			if m.State != "closed" {
+				open = append(open, m)
+			}
+		}
+		return json.Marshal(open)
 	}
 	return nil, fmt.Errorf("fake gh: unsupported %v", args)
 }
@@ -605,6 +629,52 @@ func (f *GitHub) api(args []string, stdin *string) (out []byte, err error, ok bo
 	}
 	var n int
 	switch {
+	case method == "" && strings.HasPrefix(target, repo+"git/matching-refs/tags/"):
+		prefix := strings.TrimPrefix(target, repo+"git/matching-refs/tags/")
+		var refs []struct {
+			Ref string `json:"ref"`
+		}
+		for tag := range f.Tags {
+			if strings.HasPrefix(tag, prefix) {
+				refs = append(refs, struct {
+					Ref string `json:"ref"`
+				}{Ref: "refs/tags/" + tag})
+			}
+		}
+		slices.SortFunc(refs, func(a, b struct {
+			Ref string `json:"ref"`
+		}) int { return strings.Compare(a.Ref, b.Ref) })
+		out, err := json.Marshal(refs)
+		return out, err, true
+	case method == "POST" && target == repo+"git/refs":
+		fs, err := fields(args, stdin)
+		if err != nil {
+			return nil, err, true
+		}
+		tag, valid := strings.CutPrefix(fs["ref"], "refs/tags/")
+		if !valid || tag == "" || fs["sha"] == "" {
+			return nil, fmt.Errorf("fake gh: invalid tag ref or sha"), true
+		}
+		if _, exists := f.Tags[tag]; exists {
+			return nil, fmt.Errorf("fake gh: tag %q already exists", tag), true
+		}
+		f.Tags[tag] = fs["sha"]
+		return []byte("{}"), nil, true
+	case method == "PATCH" && sscanfAll(target, repo+"milestones/%d", &n):
+		fs, err := fields(args, stdin)
+		if err != nil {
+			return nil, err, true
+		}
+		if fs["state"] != "closed" {
+			return nil, fmt.Errorf("fake gh: milestone state %q", fs["state"]), true
+		}
+		for i := range f.Milestones {
+			if f.Milestones[i].Number == n {
+				f.Milestones[i].State = "closed"
+				return []byte("{}"), nil, true
+			}
+		}
+		return nil, fmt.Errorf("fake gh: no milestone %d", n), true
 	case method == "POST" && sscanfAll(target, repo+"pulls/%d/reviews", &n):
 		// A review with its comments, the way github.Client.PostReview
 		// submits one: the JSON request on --input.
