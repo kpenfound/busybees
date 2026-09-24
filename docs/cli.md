@@ -366,7 +366,7 @@ and the best-of-N and mixture-of-experts keys. Each role also carries
 resolved five-field profiles, with `review_profiles_by_size` showing each
 size's effective phases. `host_review_policy` explains that brief/angle
 sandbox values are ignored: the host adapter permits no commands, writes,
-web/network tools, MCP/factory identity or writable/shared VCS. The judge
+web/network tools, inherited MCP, factory identity or writable/shared VCS. The judge
 applies its sandbox through the ordinary reviewer workflow.
 
 Values the user-level `defaults.toml` supplied (see
@@ -414,7 +414,7 @@ bees config show developer
       "angle_profiles": { "docs": { "agent": "claude", "model": "opus", "fallback": "", "effort": "", "sandbox": "none" }, "...": {} },
       "profile_sources": { "profile": "/home/me/.config/bees/defaults.toml", "angle_profiles": { "docs": "/home/me/.config/bees/defaults.toml" } },
       "review_profiles_by_size": { "...": {} },
-      "host_review_policy": "brief/angles: sandbox ignored; read-only checkout; no commands, writes, web/network tools, MCP, factory identity or writable/shared VCS",
+      "host_review_policy": "brief/angles: sandbox ignored; read-only checkout; no commands, writes, web/network tools, inherited MCP, factory identity or writable/shared VCS",
       "auto_merge": false,
       "merge_method": "squash",
       "checks_wait": "1m0s",

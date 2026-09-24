@@ -958,7 +958,7 @@ func TestReviewerTaskCarriesTheFindings(t *testing.T) {
 		"## Findings",
 		"the change was sized `s` and reviewed from the quick_general, docs angles",
 		"The brief's summary: Adds the widget.",
-		"Not reviewed: - docs: the session failed: overloaded",
+		"Not reviewed — these angles did not look at the change, so their silence is not a clean result: - docs: the session failed: overloaded",
 		"### Widget does nothing",
 		"`widget.go:2` · medium · correctness",
 		"The review is kept under `/s/reviews/acme/widgets/9/20260914-120000` (`brief.json`, `angles/`, `findings.json`)",
@@ -987,6 +987,17 @@ func TestReviewerTaskCarriesTheFindings(t *testing.T) {
 	}
 	if strings.Contains(rev, "Not reviewed") || strings.Contains(rev, "The brief's summary") {
 		t.Errorf("empty review task renders a section it has nothing for:\n%s", rev)
+	}
+
+	// Nothing found, and an angle that did not look: the empty list is not
+	// passed off as a clean review.
+	d.Review = &Review{Size: "xs", Angles: []string{"quick_general", "docs"}, Skipped: []string{"docs: the session failed: the session could not read its input: no diff"}, Artifact: "/s/reviews/x"}
+	rev, err = Task(config.RoleReviewer, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "The judge's list is empty: the angles that reviewed the change found nothing to report, and the ones not reviewed above found nothing because they did not look."; !strings.Contains(flowed(rev), want) || strings.Contains(rev, "no angle found anything") {
+		t.Errorf("a review with an angle that did not look reads as clean:\n%s", rev)
 	}
 
 	d.Review = nil

@@ -59,6 +59,9 @@ type sessionPaths struct {
 	mcp map[string]MCPEntry
 	// turn is the verified request.
 	turn *Turn
+	// read is the restricted turn's read server, for a backend that
+	// declares RestrictedCapabilities.ReadServer, and nil otherwise.
+	read *readServer
 }
 
 // streamEnd is what a backend read off the end of a session's stream, in
@@ -255,9 +258,12 @@ func (claudeBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer) 
 //   - An ordinary session switches approvals and the sandbox off with
 //     --dangerously-bypass-approvals-and-sandbox, the counterpart of
 //     --dangerously-skip-permissions. RunRestricted instead selects Codex's
-//     read-only sandbox and disables command, fetch, plugin, hook and agent
-//     delegation features. agents.enabled=false also overrides models that
-//     advertise collaboration tools independently of the feature flags.
+//     read-only sandbox and disables command, fetch, plugin, hook, image
+//     generation and agent delegation features. agents.enabled=false also
+//     overrides models that advertise collaboration tools independently of
+//     the feature flags. The turn is given the runner's read server
+//     (readserver.go) over its workspace as an MCP server by url, with its
+//     token in the environment.
 //   - There is no flag to append to the system prompt, so the rendered system
 //     prompt is written ahead of the task on stdin, separated by a rule. The
 //     two files in the session directory are still written apart, as they are
@@ -270,7 +276,8 @@ func (claudeBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer) 
 //     JSON array of strings, which codex parses whether it reads its overrides
 //     as JSON or as TOML (a JSON object is not a TOML inline table, so no
 //     override is one). RunRestricted inventories inherited servers with the
-//     same disabled features and explicitly disables every one. Codex starts
+//     same disabled features and explicitly disables every one but the read
+//     server, which one of the same name is replaced by. Codex starts
 //     an MCP server with a small fixed environment plus that env, not with its
 //     own, so an ordinary session's built-in server sees only what the
 //     override names.
@@ -297,6 +304,7 @@ type codexBackend struct{}
 func (codexBackend) command(ctx context.Context, r *Runner, b Backend, req Request, paths sessionPaths) (string, []string, string, []envVar, error) {
 	bin := b.executable(r)
 	args := []string{"exec", "--json"}
+	var extra []envVar
 	if paths.restricted {
 		args = append(args, "--sandbox", "read-only")
 	} else {
@@ -313,12 +321,20 @@ func (codexBackend) command(ctx context.Context, r *Runner, b Backend, req Reque
 		if err != nil {
 			return "", nil, "", nil, fmt.Errorf("restricted codex setup: %w", err)
 		}
-		if len(servers) > 0 {
-			var disabled []string
-			for _, name := range servers {
-				disabled = append(disabled, codexValue(name)+"={enabled=false}")
+		var entries []string
+		for _, name := range servers {
+			if paths.read != nil && name == ReadServerName {
+				continue
 			}
-			args = append(args, "-c", "mcp_servers={"+strings.Join(disabled, ",")+"}")
+			entries = append(entries, codexValue(name)+"={enabled=false}")
+		}
+		if paths.read != nil {
+			entries = append(entries, codexValue(ReadServerName)+"={url="+codexValue(paths.read.url)+
+				",bearer_token_env_var="+codexValue(readServerTokenEnv)+"}")
+			extra = append(extra, envVar{readServerTokenEnv, paths.read.token})
+		}
+		if len(entries) > 0 {
+			args = append(args, "-c", "mcp_servers={"+strings.Join(entries, ",")+"}")
 		}
 	}
 	if req.Profile.Model != "" {
@@ -335,7 +351,7 @@ func (codexBackend) command(ctx context.Context, r *Runner, b Backend, req Reque
 	if req.SystemPrompt != "" {
 		stdin = req.SystemPrompt + "\n\n---\n\n" + req.Prompt
 	}
-	return bin, args, stdin, nil, nil
+	return bin, args, stdin, extra, nil
 }
 
 // codexEffort maps a configured effort to a codex reasoning level. The

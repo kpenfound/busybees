@@ -28,7 +28,8 @@ const (
 var (
 	// restrictedReadTools are the Claude built-ins available to a restricted
 	// turn. Codex expresses the same floor through its feature configuration
-	// and read-only sandbox.
+	// and read-only sandbox, and reads through the runner's read server
+	// (readserver.go), since its own only way to read is the shell.
 	restrictedReadTools = []string{"Read", "Grep", "Glob", "LS", "NotebookRead"}
 	// restrictedDeniedTools name Claude built-ins that can change state, run
 	// commands, delegate work or fetch from the network.
@@ -45,8 +46,11 @@ type RestrictedResult struct {
 
 // RunRestricted runs a read-only agent turn through the same backend and
 // process lifecycle as Run. It is intended for reviews and other analysis
-// that needs no caller-owned tools: the turn receives no MCP server, writable
-// mount, VCS access, skills, hooks or local project configuration. A backend
+// that needs no caller-owned tools: the turn receives no caller's or
+// inherited MCP server, writable mount, VCS access, skills, hooks or local
+// project configuration. A backend whose descriptor declares
+// RestrictedCapabilities.ReadServer is given the runner's own read-only
+// server over its workspace instead, and nothing else. A backend
 // descriptor must explicitly declare that it implements the restriction;
 // unsupported backends are refused before any process starts.
 //
@@ -230,7 +234,7 @@ func RateLimitedText(msg string) bool {
 func codexRestrictedConfigArgs() []string {
 	args := []string{"-c", `approval_policy="never"`, "-c", `web_search="disabled"`,
 		"-c", "orchestrator.mcp.enabled=false", "-c", "agents.enabled=false"}
-	for _, feature := range []string{"shell_tool", "unified_exec", "js_repl", "browser_use", "browser_use_external", "computer_use", "in_app_browser", "multi_agent", "multi_agent_v2", "apps", "plugins", "hooks", "codex_hooks", "plugin_hooks", "skill_mcp_dependency_install", "tool_suggest", "web_search_request", "web_search_cached"} {
+	for _, feature := range []string{"shell_tool", "unified_exec", "js_repl", "browser_use", "browser_use_external", "computer_use", "in_app_browser", "multi_agent", "multi_agent_v2", "apps", "plugins", "hooks", "codex_hooks", "plugin_hooks", "skill_mcp_dependency_install", "tool_suggest", "web_search_request", "web_search_cached", "image_generation", "goals"} {
 		args = append(args, "-c", "features."+feature+"=false")
 	}
 	return args

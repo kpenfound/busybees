@@ -309,6 +309,12 @@ func (r *Runner) run(ctx context.Context, req Request, restricted bool) (*Result
 		}
 	}
 	paths.turn = turn
+	if restricted && be.Restricted != nil && be.Restricted.ReadServer {
+		if paths.read, err = startReadServer(req.workDir()); err != nil {
+			return nil, fmt.Errorf("%s: %w", req.Profile.Name, err)
+		}
+		defer paths.read.close()
+	}
 	bin, args, stdin, extra, err := be.impl.command(ctx, r, be, req, paths)
 	if err != nil {
 		return nil, err

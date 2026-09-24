@@ -325,7 +325,7 @@ func TestRunRestrictedDisablesEveryInheritedCodexMCPServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	script := strings.Replace(string(data), "echo '[]'", `echo '[{"name":"bees"},{"name":"server.with.dots"},{"name":"server \"quoted\""}]'`, 1)
+	script := strings.Replace(string(data), "echo '[]'", `echo '[{"name":"bees"},{"name":"server.with.dots"},{"name":"server \"quoted\""},{"name":"restricted_read"}]'`, 1)
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -333,8 +333,10 @@ func TestRunRestrictedDisablesEveryInheritedCodexMCPServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	joined := strings.Join(restrictedArgs(t, record, ".args"), "\n")
-	want := `mcp_servers={"bees"={enabled=false},"server.with.dots"={enabled=false},"server \"quoted\""={enabled=false}}`
-	if !strings.Contains(joined, want) {
+	// Every inherited server is disabled; one named like the read server is
+	// replaced by it, not disabled and not left as it was.
+	want := `mcp_servers={"bees"={enabled=false},"server.with.dots"={enabled=false},"server \"quoted\""={enabled=false},"restricted_read"={url="http://127.0.0.1:`
+	if !strings.Contains(joined, want) || strings.Count(joined, `"restricted_read"=`) != 1 {
 		t.Errorf("configured MCP servers were not disabled:\n%s", joined)
 	}
 }
