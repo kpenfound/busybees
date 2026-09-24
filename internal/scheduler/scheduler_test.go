@@ -115,7 +115,7 @@ func fakeAssemble(sessionDir, stateDir string, git func(args ...string), fail fu
 const fakeDiff = "diff --git a/widget.go b/widget.go\n--- a/widget.go\n+++ b/widget.go\n@@ -1,2 +1,3 @@\n package widgets\n+func Widget() {}\n"
 
 // isReviewSession tells a brief or angle session of the review pipeline
-// (internal/review's CLIAgent, run as claude or codex) from a factory
+// (internal/review's CLIAgent, run through shared restricted execution) from a factory
 // session: claude's is asked for `--output-format json` where the runner
 // asks for stream-json, and codex's runs in its read-only sandbox where the
 // runner bypasses it.
