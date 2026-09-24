@@ -1395,10 +1395,12 @@ func (s *Scheduler) cacheIssue(live github.Issue) {
 	s.lastIssues = append(next, live)
 }
 
-// dispatchSingletons starts the product manager, project manager and QA
-// when they have work and are not already running. With mailOnly (a local
-// pass) a role only starts when it has unread mail: the other has-work checks
-// query GitHub.
+// dispatchSingletons starts the product manager, project manager, QA and
+// the release manager when they have work and are not already running. With
+// mailOnly (a local pass) a role only starts when it has unread mail: the
+// other has-work checks query GitHub. The release manager does not start on
+// a local pass at all: its work is a finished milestone, which only GitHub
+// can say, and mail waits for that run.
 func (s *Scheduler) dispatchSingletons(ctx context.Context, snap *snapshot, mailOnly bool) {
 	type job struct {
 		role string
@@ -1409,11 +1411,12 @@ func (s *Scheduler) dispatchSingletons(ctx context.Context, snap *snapshot, mail
 		{config.RoleProjectManager, func() bool { return s.projectManagerHasWork(snap) }, s.runProjectManager},
 		{config.RoleProductManager, func() bool { return s.productManagerHasWork(ctx, snap) }, s.runProductManager},
 		{config.RoleQA, func() bool { return s.qaHasWork(ctx) }, s.runQA},
+		{config.RoleReleaseManager, func() bool { return s.releaseManagerHasWork(ctx, snap) }, s.runReleaseManager},
 	}
 	if mailOnly {
 		for i := range jobs {
 			role := jobs[i].role
-			jobs[i].want = func() bool { return s.hasUnreadMail(role, 0, 0) }
+			jobs[i].want = func() bool { return role != config.RoleReleaseManager && s.hasUnreadMail(role, 0, 0) }
 		}
 	}
 	// The same three gates as dispatchDevelopers, ctx.Err() included: a
@@ -1560,7 +1563,7 @@ func (s *Scheduler) writeStatus() {
 	sort.Slice(st.Workers, func(i, j int) bool {
 		return ghwork.Number(st.Workers[i].Work.Key) < ghwork.Number(st.Workers[j].Work.Key)
 	})
-	for _, r := range []string{config.RoleProductManager, config.RoleProjectManager, config.RoleQA} {
+	for _, r := range []string{config.RoleProductManager, config.RoleProjectManager, config.RoleQA, config.RoleReleaseManager} {
 		if s.running[r] {
 			st.Singletons[r] = "running"
 		} else {

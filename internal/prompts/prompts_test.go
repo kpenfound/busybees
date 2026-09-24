@@ -1903,3 +1903,79 @@ func TestMoEAssemblerTaskNamesTheExperts(t *testing.T) {
 		}
 	}
 }
+
+// The release manager's system prompt carries the whole contract: check the
+// release workflow first and file a work item instead of shipping when it is
+// missing, ship through release_ship only, escalate a refused tag with a
+// needs-human issue in the milestone, and never touch a CHANGELOG, a version
+// file or a release pull request.
+func TestReleaseManagerSystemPromptCarriesTheContract(t *testing.T) {
+	sys, err := System(config.RoleReleaseManager, sample(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		// The workflow check.
+		"**Check the release workflow.**",
+		"`.github/workflows/`",
+		"triggered by a push of a tag matching `v*`",
+		"builds the project from that tag",
+		"**When no workflow meets the contract, ship nothing.** Create one developer work item\n   with `issue_create` (`related:`",
+		// Shipping.
+		"call `release_ship` with the milestone's number",
+		"Never run `git tag`",
+		// The escalation.
+		"the milestone's title is not a valid Git tag,\n   or the tag already exists",
+		"`labels:\n   [\"bees:needs-human\"]`",
+		"the scheduler does not start you for\n   it again while the issue is open",
+		// What the role never does.
+		"You never edit a CHANGELOG, bump a version file or open a release\npull request",
+		"`done`", "`failed`",
+	} {
+		if !strings.Contains(sys, want) {
+			t.Errorf("release manager system prompt missing %q:\n%s", want, sys)
+		}
+	}
+	// The preamble's "never close milestones" names its one exception, so the
+	// release manager is not told two contradicting things.
+	if !strings.Contains(sys, "The one\nexception is the release manager's `release_ship`, which closes the milestone it ships.") {
+		t.Errorf("the preamble does not name release_ship as the exception to never closing milestones:\n%s", sys)
+	}
+}
+
+// The task names the milestone, the number release_ship takes, and the closed
+// issue every issue_create relates to; without one, it names the milestone
+// for issue_create instead.
+func TestReleaseManagerTaskNamesTheMilestone(t *testing.T) {
+	d := sample()
+	d.Release = &Release{Milestone: github.Milestone{Number: 4, Title: "v1.0.0", ClosedIssues: 3, Description: "the first release"}, Issue: 7}
+	task, err := Task(config.RoleReleaseManager, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"# Task: ship milestone v1.0.0",
+		"Milestone #4 `v1.0.0` has 3 closed and 0 open issues",
+		"tags `main` as `v1.0.0`",
+		"the first release",
+		"pass `related: 7` to every\n`issue_create` call",
+		"Check the release workflow on `main`",
+		"file one developer work item for it and ship nothing",
+		"call `release_ship`\n(`milestone: 4`)",
+		"file an issue\nlabelled `bees:needs-human` naming the milestone and the reason",
+		"## Mail for you (1)",
+	} {
+		if !strings.Contains(task, want) {
+			t.Errorf("release manager task missing %q:\n%s", want, task)
+		}
+	}
+
+	d.Release.Issue = 0
+	task, err = Task(config.RoleReleaseManager, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(task, "related: ") || !strings.Contains(task, "`milestone: \"v1.0.0\"` to every `issue_create` call") {
+		t.Errorf("without a closed issue the task should name the milestone for issue_create:\n%s", task)
+	}
+}
