@@ -138,13 +138,12 @@ func TestPiPackagesInvalid(t *testing.T) {
 	}
 }
 
-// The review pipeline's brief and angle sessions run claude or codex only,
-// so a pi profile there is refused like an opencode one; the judge, an
-// ordinary session, can be pi.
+// Pi supports the restricted execution used by reviewer brief and angle
+// sessions, so it can be selected through a reviewer profile.
 func TestPiReviewProfiles(t *testing.T) {
 	_, err := Load(writeConfig(t, "version = 5\n[profiles.pi]\nagent = \"pi\"\n[roles.reviewer]\nbrief_profile = \"pi\"\n"))
-	if err == nil || !strings.Contains(err.Error(), "roles.reviewer.brief_profile") {
-		t.Errorf("a pi brief profile: %v", err)
+	if err != nil {
+		t.Errorf("a pi brief profile should load: %v", err)
 	}
 	if _, err := Load(writeConfig(t, "version = 5\n[profiles.pi]\nagent = \"pi\"\n[roles.reviewer]\njudge_profile = \"pi\"\n")); err != nil {
 		t.Errorf("a pi judge profile: %v", err)

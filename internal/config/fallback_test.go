@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"reflect"
 	"strings"
@@ -144,32 +145,30 @@ func TestFallbackChainEndsOnItsOwn(t *testing.T) {
 	}
 }
 
-// Brief and angle sessions are held to claude or codex on every profile of
-// the chain their profile starts, because the read-only floor holds on
-// whatever profile a fallback lands on. The judge may fall back to anything
-// a factory session runs.
-func TestReviewPhaseFallbackKeepsTheHostFloor(t *testing.T) {
-	for _, tc := range []struct{ key, path string }{
-		{"brief_profile = \"host\"", "roles.reviewer.brief_profile"},
-		{"angle_profiles.docs = \"host\"", "roles.reviewer.angle_profiles.docs"},
-		{"profile = \"host\"", "roles.reviewer.profile"},
-		{"profile_by_size.l = \"host\"", "roles.reviewer.profile_by_size.l"},
-	} {
-		t.Run(tc.path, func(t *testing.T) {
-			_, err := Load(writeConfig(t, "version = 5\n[profiles.host]\nfallback = \"remote\"\n[profiles.remote]\nagent = \"opencode\"\n[roles.reviewer]\n"+tc.key+"\n"))
-			want := tc.path + `: brief and angle sessions require agent claude or codex, and fallback profile "remote" runs "opencode"`
-			if err == nil || !strings.Contains(err.Error(), want) {
-				t.Fatalf("want %q, got %v", want, err)
-			}
-		})
+// Brief and angle profiles use the restricted capability declared by the
+// shared agent backend, including every profile in the fallback chain.
+func TestReviewPhaseProfilesAcceptRestrictedBackends(t *testing.T) {
+	for _, backend := range []string{AgentOpenCode, AgentPi} {
+		for _, selection := range []string{`brief_profile = "selected"`, `angle_profiles.docs = "selected"`} {
+			t.Run(backend+"/"+selection, func(t *testing.T) {
+				body := fmt.Sprintf("version = 5\n[profiles.selected]\nagent = %q\n[roles.reviewer]\n%s\n", backend, selection)
+				if _, err := Load(writeConfig(t, body)); err != nil {
+					t.Fatalf("restricted backend %q should be accepted: %v", backend, err)
+				}
+			})
+		}
+		// A selected profile may fall back to another supported restricted backend.
+		body := fmt.Sprintf("version = 5\n[profiles.selected]\nagent = %q\nfallback = \"fallback\"\n[profiles.fallback]\nagent = %q\n[roles.reviewer]\nbrief_profile = \"selected\"\n", backend, backend)
+		if _, err := Load(writeConfig(t, body)); err != nil {
+			t.Errorf("restricted fallback %q should be accepted: %v", backend, err)
+		}
 	}
-	if _, err := Load(writeConfig(t, "version = 5\n[profiles.host]\n[profiles.judge]\nfallback = \"remote\"\n[profiles.remote]\nagent = \"opencode\"\n[roles.reviewer]\nprofile = \"host\"\njudge_profile = \"judge\"\n")); err != nil {
-		t.Fatalf("the judge may fall back to opencode: %v", err)
-	}
-	// Further down the chain too.
-	_, err := Load(writeConfig(t, "version = 5\n[profiles.host]\nfallback = \"second\"\n[profiles.second]\nagent = \"codex\"\nfallback = \"remote\"\n[profiles.remote]\nagent = \"opencode\"\n[roles.reviewer]\nbrief_profile = \"host\"\n"))
-	if err == nil || !strings.Contains(err.Error(), `fallback profile "remote" runs "opencode"`) {
-		t.Fatalf("second link: %v", err)
+}
+
+func TestReviewPhaseProfilesRejectUnsupportedBackend(t *testing.T) {
+	_, err := Load(writeConfig(t, "version = 5\n[profiles.unsupported]\nagent = \"other\"\n[roles.reviewer]\nbrief_profile = \"unsupported\"\n"))
+	if err == nil || !strings.Contains(err.Error(), `brief_profile`) || !strings.Contains(err.Error(), `restricted execution`) {
+		t.Fatalf("unsupported reviewer backend should be rejected by restricted capability validation: %v", err)
 	}
 }
 
