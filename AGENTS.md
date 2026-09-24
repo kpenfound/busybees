@@ -141,7 +141,8 @@ dagger core container from --address golang:1.26-bookworm \
   comment by the login it acts as as a bee's — the marker is emitted either way.
   The orchestrator itself only writes the `needs-human` escalation comment (which
   carries no marker).
-- Milestones are managed by people. Bees never create, edit or close them; new issues
+- Milestones are managed by people. Bees never create, edit or close them, except that
+  the release manager's `release_ship` closes the milestone it ships; new issues
   inherit them via `bees issue create --parent/--related`.
 - Workflow label transitions happen in the scheduler, except the ones prompts
   explicitly delegate: the project manager moves triage → ready / blocked, the

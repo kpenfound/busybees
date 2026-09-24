@@ -6,8 +6,9 @@
 //   - a pool of developer workers (scheduler.max_developers). Each worker
 //     owns one issue and runs a sequential developer -> reviewer -> developer
 //     loop until the reviewer approves or the round limit is hit;
-//   - three singleton roles: product manager, project manager and QA, each
-//     running at most one session at a time when they have work.
+//   - four singleton roles: product manager, project manager, QA and the
+//     release manager (off unless enabled), each running at most one session
+//     at a time when they have work.
 //
 // All GitHub state transitions are made by the scheduler (never by the
 // sessions) except the ones role prompts explicitly delegate, such as the
