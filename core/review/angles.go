@@ -90,13 +90,14 @@ type AngleRun struct {
 	CostUSD     float64 `json:"cost_usd,omitempty"`
 	CostUnknown bool    `json:"cost_unknown,omitempty"`
 	// Error is what the session failed with, and "" for one that finished.
-	// A failed angle is kept with the rest so the review can say which
-	// angle nobody looked from.
+	// A session that answered that it could not read its input has failed
+	// too, and keeps that answer beside the error. A failed angle is kept
+	// with the rest so the review can say which angle nobody looked from.
 	Error string `json:"error,omitempty"`
 }
 
-// Failed reports whether the session failed, in which case there is no
-// answer and nothing to resume.
+// Failed reports whether the session failed, in which case it found nothing
+// and there is nothing to resume.
 func (r *AngleRun) Failed() bool { return r.Error != "" }
 
 // Angles runs the angle sessions of a review.
@@ -153,8 +154,8 @@ const (
 )
 
 // Run fans out one session per angle the brief's size calls for (Sized, else
-// sizeAngles) and project enables (anglesFor), all at once, each given the brief and told where to
-// read the diff, and waits for every one of them. The runs come back in
+// sizeAngles) and project enables (anglesFor), all at once, each given the
+// brief and the diff, and waits for every one of them. The runs come back in
 // BuiltinAngles order and are written into artifact, one file per angle,
 // before Run returns. A brief whose size is not one of Sizes is reported on
 // Log and gets the angles of the largest.
@@ -163,18 +164,20 @@ const (
 // or the artifact's empty ScratchDir. Acquisition stays with the caller.
 //
 // One angle failing stops none of the others: the runs are complete whether
-// or not err is nil, a failed angle is among them with Error set and no
-// answer, and err says so once every angle has ended. An error before any
-// session ran (no brief, a directory that could not be made) returns no
-// runs. diff is the pull request's diff, and "" when it was not gathered; it
-// is written once to DiffFile inside dir (writeDiff), not once per angle,
-// so every angle's prompt can point at the one file instead of repeating
-// the diff's text: dir is what an angle's read-only tools can reach, and a
-// path outside it could not be read. It is not written, and the prompt
-// falls back to the same message it gets when there was no diff at all,
-// when dir is Dir, the checkout the machine already had: a review does not
-// write into a working tree it did not make. Progress, when set, is told as
-// each session starts and ends.
+// or not err is nil, a failed angle is among them with Error set, and err
+// says so once every angle has ended. An angle whose session answered that
+// it could not read what it was given (unreadableInput) has failed too: an
+// angle that did not see the change has not found it clean. An error before
+// any session ran (no brief, a directory that could not be made) returns no
+// runs.
+//
+// diff is the pull request's diff, and "" when it was not gathered. It is
+// in every angle's prompt, so a session reads it without a tool, and it is
+// also written once to DiffFile inside dir (writeDiff), where the session's
+// read-only tools can search it. It is not written when dir is Dir, the
+// checkout the machine already had: a review does not write into a working
+// tree it did not make. Progress, when set, is told as each session starts
+// and ends.
 func (a *Angles[R]) Run(ctx context.Context, artifact string, project *Settings, brief *Brief[R], diff string) ([]AngleRun, error) {
 	if brief == nil {
 		return nil, errors.New("angles: no brief to review from")
@@ -199,7 +202,7 @@ func (a *Angles[R]) Run(ctx context.Context, artifact string, project *Settings,
 	}
 	prompts := make([]string, len(angles))
 	for i, angle := range angles {
-		prompt, err := anglePrompt(angle, brief, diffPath, a.Rules)
+		prompt, err := anglePrompt(angle, brief, diff, diffPath, a.Rules)
 		if err != nil {
 			return nil, err
 		}
@@ -232,7 +235,12 @@ func (a *Angles[R]) Run(ctx context.Context, artifact string, project *Settings,
 				if res.Model != "" {
 					run.Model = res.Model
 				}
-				a.progress(angle, AngleFinished)
+				if reason := unreadableInput(res.Text); reason != "" {
+					run.Error = "the session could not read its input: " + reason
+					a.progress(angle, AngleFailed)
+				} else {
+					a.progress(angle, AngleFinished)
+				}
 			}
 			runs[i] = run
 		}(i, angle)
@@ -345,15 +353,12 @@ func (a *Angles[R]) logf(format string, args ...any) {
 // writeDiff writes the pull request's diff once per review run to DiffFile
 // inside dir, the directory the angle sessions run in (Angles.dir) and the
 // only one their read-only tools can reach: a path outside it, such as the
-// artifact directory dir sits under, could not be read back. It returns the
-// path an angle prompt points at, and "" without writing anything when
+// artifact directory dir sits under, could not be read back. The prompt
+// carries the diff itself; the file is there for a session to search. It
+// returns the path the prompt names, and "" without writing anything when
 // there was no diff to write, or when dir is hostDir, the checkout of the
 // repository under review the machine already had (Angles.Dir): a review
-// does not write a stray file into a working tree it did not make, so the
-// angle prompts fall back to the same message they get when no diff was
-// gathered at all. Writing it once here, rather than once per angle inline
-// in the prompt, is what keeps a change reviewed by several angles from
-// carrying the same diff text in as many prompts.
+// does not write a stray file into a working tree it did not make.
 func writeDiff(dir, hostDir, diff string) (string, error) {
 	if strings.TrimSpace(diff) == "" || (hostDir != "" && dir == hostDir) {
 		return "", nil
@@ -367,11 +372,13 @@ func writeDiff(dir, hostDir, diff string) (string, error) {
 
 // anglePrompt is the whole of what an angle session is told: how a review
 // session behaves, what this angle looks for, what the reviewer notes say
-// has been dismissed from this angle before, the brief, where to read the
-// diff when there is one, and what to answer with, in that order. The brief
-// can be long, so the instruction it is followed by is repeated in one line
-// at the end.
-func anglePrompt[R Reference](angle string, brief *Brief[R], diffPath string, rules []Rule) (string, error) {
+// has been dismissed from this angle before, the brief, the diff when there
+// is one (and where it is written, when it is), and what to answer with, in
+// that order. The diff is in the prompt itself, not only in a file, so a
+// session reads the change whatever tools its agent has. The brief and the
+// diff can be long, so the instruction they are followed by is repeated in
+// one line at the end.
+func anglePrompt[R Reference](angle string, brief *Brief[R], diff, diffPath string, rules []Rule) (string, error) {
 	instructions, err := angleInstructions(angle)
 	if err != nil {
 		return "", err
@@ -387,13 +394,64 @@ func anglePrompt[R Reference](angle string, brief *Brief[R], diffPath string, ru
 	out.WriteString("\n---\n\n")
 	out.WriteString(brief.Text())
 	out.WriteString("\n---\n\n")
-	if diffPath == "" {
+	if strings.TrimSpace(diff) == "" {
 		out.WriteString("The diff was not gathered: read the files the brief's touched areas name.\n")
 	} else {
-		fmt.Fprintf(&out, "The diff is at %s: read it there.\n", diffPath)
+		out.WriteString("The diff of the change:\n\n")
+		fence := codeFence(diff)
+		out.WriteString(fence + "diff\n" + strings.TrimSuffix(diff, "\n") + "\n" + fence + "\n")
+		if diffPath != "" {
+			fmt.Fprintf(&out, "\nThe same diff is at %s, for searching.\n", diffPath)
+		}
 	}
 	fmt.Fprintf(&out, "\n---\n\nReview %s from the %s angle. Answer with the JSON object alone.\n", brief.Ref, angleTitles[angle])
 	return out.String(), nil
+}
+
+// codeFence is a run of backticks longer than any in text, so text can sit
+// inside it as one code block whatever it holds.
+func codeFence(text string) string {
+	longest, run := 0, 0
+	for _, r := range text {
+		if r == '`' {
+			run++
+			longest = max(longest, run)
+		} else {
+			run = 0
+		}
+	}
+	return strings.Repeat("`", max(3, longest+1))
+}
+
+// unreadableInput is the reason an angle session gave for not having read
+// what the review needs, the "unreadable" field of its answer (see
+// prompts/angle.md), and "" when it gave none or its answer is no JSON
+// object: an answer the judge cannot read is the judge's to skip.
+func unreadableInput(answer string) string {
+	obj, ok := JSONObject(answer)
+	if !ok {
+		return ""
+	}
+	var a struct {
+		Unreadable any `json:"unreadable"`
+	}
+	if json.Unmarshal([]byte(obj), &a) != nil {
+		return ""
+	}
+	switch v := a.Unreadable.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(v)
+	case bool:
+		if v {
+			return "no reason given"
+		}
+		return ""
+	default:
+		data, _ := json.Marshal(v)
+		return string(data)
+	}
 }
 
 // angleInstructions is what one angle looks for, read from its file under

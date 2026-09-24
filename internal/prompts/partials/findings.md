@@ -18,13 +18,17 @@ from the {{join .Review.Angles ", "}} {{if eq (len .Review.Angles) 1}}angle{{els
 below, most severe first. {{if .Review.Summary}}The brief's summary: {{.Review.Summary}}{{end}}
 {{- if .Review.Skipped}}
 
-Not reviewed:
+Not reviewed — these angles did not look at the change, so their silence is not a
+clean result:
 {{range .Review.Skipped}}
 - {{.}}
 {{- end}}
 {{- end}}
 {{if .Review.Findings}}
 {{.Review.Findings}}
+{{else if .Review.Skipped}}
+The judge's list is empty: the angles that reviewed the change found nothing to report,
+and the ones not reviewed above found nothing because they did not look.
 {{else}}
 The judge's list is empty: no angle found anything to report.
 {{end}}

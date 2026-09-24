@@ -26,6 +26,8 @@ type fakeAngleAgent struct {
 	noCost map[string]bool
 	// answeredBy names the provider and model a session says answered it.
 	answeredBy map[string][2]string
+	// answer replaces a session's answer, `{"findings": []}` by default.
+	answer map[string]string
 
 	mu      sync.Mutex
 	reqs    map[string]AgentRequest
@@ -58,6 +60,9 @@ func (f *fakeAngleAgent) Run(_ context.Context, req AgentRequest) (*AgentResult,
 		return nil, err
 	}
 	res := &AgentResult{ID: "sess-" + req.Name, Text: `{"findings": []}`, Turns: 2, CostUSD: 0.25, CostKnown: !f.noCost[req.Name]}
+	if answer, ok := f.answer[req.Name]; ok {
+		res.Text = answer
+	}
 	if f.answeredBy != nil {
 		res.Provider, res.Model = f.answeredBy[req.Name][0], f.answeredBy[req.Name][1]
 	}
@@ -316,8 +321,8 @@ func TestTheDiffIsNotWrittenIntoTheMachinesCheckout(t *testing.T) {
 		t.Fatal(err)
 	}
 	prompt := agent.reqs[AngleGeneral].Prompt
-	if !strings.Contains(prompt, "The diff was not gathered") || strings.Contains(prompt, "The diff is at") {
-		t.Errorf("a session run in the machine's checkout was not given the no-diff fallback:\n%s", prompt)
+	if !strings.Contains(prompt, "```diff\n"+testDiff+"```\n") || strings.Contains(prompt, "The same diff is at") {
+		t.Errorf("a session run in the machine's checkout was not given the diff inline, and only inline:\n%s", prompt)
 	}
 	if _, err := os.Stat(filepath.Join(host, DiffFile)); !os.IsNotExist(err) {
 		t.Errorf("diff.patch written into the machine's own checkout (stat err: %v)", err)
@@ -332,7 +337,7 @@ func TestWithoutADiffTheSessionIsToldSo(t *testing.T) {
 		t.Fatal(err)
 	}
 	prompt := agent.reqs[AngleGeneral].Prompt
-	if !strings.Contains(prompt, "The diff was not gathered") || strings.Contains(prompt, "The diff is at") {
+	if !strings.Contains(prompt, "The diff was not gathered") || strings.Contains(prompt, "The diff of the change") || strings.Contains(prompt, "The same diff is at") {
 		t.Errorf("a session with no diff was not told so:\n%s", prompt)
 	}
 	if _, err := os.Stat(filepath.Join(artifact, DiffFile)); !os.IsNotExist(err) {
@@ -344,7 +349,7 @@ func TestWithoutADiffTheSessionIsToldSo(t *testing.T) {
 // kept in evidence and sources, and a suggestion that is the fix alone.
 func TestEveryAngleIsAskedForAShortFinding(t *testing.T) {
 	for _, angle := range BuiltinAngles {
-		prompt, err := anglePrompt(angle, testBrief(), "diff.patch", nil)
+		prompt, err := anglePrompt(angle, testBrief(), testDiff, "diff.patch", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -420,6 +425,117 @@ func TestAnAngleThatFailedDoesNotStopTheOthers(t *testing.T) {
 		}
 		if _, err := os.Stat(filepath.Join(artifact, AnglesDir, r.Angle+".json")); err != nil {
 			t.Errorf("%s run not persisted: %v", r.Angle, err)
+		}
+	}
+}
+
+// The diff is in every angle's prompt, so a session whose agent has no tool
+// to read a file with (restricted Codex had none) still reviews the change,
+// and the file beside it is named for searching.
+func TestEveryAngleIsGivenTheDiffInItsPrompt(t *testing.T) {
+	agent := newFakeAngleAgent(len(briefAngles))
+	artifact := t.TempDir()
+	if _, err := (&Angles[testRef]{Agent: agent}).Run(context.Background(), artifact, &Settings{}, testBrief(), testDiff); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(artifact, ScratchDir, DiffFile)
+	for _, angle := range briefAngles {
+		prompt := agent.reqs[angle].Prompt
+		for _, want := range []string{"The diff of the change:\n\n```diff\n" + testDiff + "```\n", "The same diff is at " + path + ", for searching."} {
+			if !strings.Contains(prompt, want) {
+				t.Errorf("the %s session was not told %q:\n%s", angle, want, prompt)
+			}
+		}
+		last := -1
+		for _, mark := range []string{"# Review brief", "The diff of the change", "Answer with the JSON object alone"} {
+			at := strings.Index(prompt, mark)
+			if at <= last {
+				t.Errorf("the %s session's prompt has %q out of order:\n%s", angle, mark, prompt)
+			}
+			last = at
+		}
+	}
+}
+
+// A diff that holds a code fence of its own is not cut short by it.
+func TestADiffWithAFenceKeepsItsBlock(t *testing.T) {
+	diff := "diff --git a/README.md b/README.md\n+```go\n+x := 1\n+````\n"
+	prompt, err := anglePrompt(AngleDocs, testBrief(), diff, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(prompt, "`````diff\n"+diff+"`````\n") {
+		t.Errorf("the diff was not fenced longer than the fences in it:\n%s", prompt)
+	}
+}
+
+// An angle whose session says it could not read what it was given has not
+// reviewed the change: it is recorded as failed, with its reason, and never
+// as an angle that found nothing.
+func TestAnAngleThatCouldNotReadItsInputFailed(t *testing.T) {
+	agent := newFakeAngleAgent(len(briefAngles))
+	agent.answer = map[string]string{AngleGeneral: "```json\n{\"findings\": [], \"unreadable\": \"no diff was given and gather.go would not open\"}\n```"}
+	var events sync.Map
+	artifact := t.TempDir()
+	runs, err := (&Angles[testRef]{Agent: agent, Dir: t.TempDir(), Progress: func(angle string, e AngleEvent) {
+		if e != AngleStarted {
+			events.Store(angle, e)
+		}
+	}}).Run(context.Background(), artifact, &Settings{}, testBrief(), testDiff)
+	want := "the session could not read its input: no diff was given and gather.go would not open"
+	if err == nil || err.Error() != want {
+		t.Fatalf("err = %v, want %q", err, want)
+	}
+	for _, r := range runs {
+		if r.Angle == AngleGeneral && (!r.Failed() || r.Error != want || r.SessionID == "") {
+			t.Errorf("general run = %+v, want it failed with the session's reason and its session kept", r)
+		}
+		if r.Angle != AngleGeneral && r.Failed() {
+			t.Errorf("%s run = %+v, want it to have finished", r.Angle, r)
+		}
+	}
+	if e, _ := events.Load(AngleGeneral); e != AngleFailed {
+		t.Errorf("progress was told %v for the general angle, want %v", e, AngleFailed)
+	}
+	read, err := ReadAngleRuns(artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings := Judge(read, nil, nil)
+	if !slices.Contains(findings.Skipped, "general: the session failed: "+want) {
+		t.Errorf("the judge did not name the general angle as not reviewed: %v", findings.Skipped)
+	}
+}
+
+// Every angle unable to read its input is a review that did not happen, not
+// an empty one.
+func TestEveryAngleUnableToReadIsNoReview(t *testing.T) {
+	agent := agentFunc(func(_ context.Context, req AgentRequest) (*AgentResult, error) {
+		if req.Name == DistillerName {
+			return &AgentResult{ID: "brief-session", Text: answeredBrief}, nil
+		}
+		return &AgentResult{ID: req.Name + "-session", Text: `{"findings": [], "unreadable": "diff.patch would not open"}`}, nil
+	})
+	r := &Runner[testRef]{Distiller: &Distiller[testRef]{Agent: agent}, Angles: &Angles[testRef]{Agent: agent}}
+	a, err := r.Run(context.Background(), filepath.Join(t.TempDir(), "artifact"), testBundle(), testDiff)
+	if err == nil || !strings.Contains(err.Error(), "every angle failed") || a != nil {
+		t.Fatalf("Run = %v, %v; want no review and every angle failed", a, err)
+	}
+}
+
+func TestUnreadableInput(t *testing.T) {
+	for answer, want := range map[string]string{
+		`{"findings": []}`:                                 "",
+		`{"findings": [], "unreadable": ""}`:               "",
+		`{"findings": [], "unreadable": null}`:             "",
+		`{"findings": [], "unreadable": false}`:            "",
+		`{"findings": [], "unreadable": true}`:             "no reason given",
+		`{"findings": [], "unreadable": " no tools "}`:     "no tools",
+		`{"findings": [], "unreadable": ["a.go", "b.go"]}`: `["a.go","b.go"]`,
+		`no JSON here`: "",
+	} {
+		if got := unreadableInput(answer); got != want {
+			t.Errorf("unreadableInput(%s) = %q, want %q", answer, got, want)
 		}
 	}
 }

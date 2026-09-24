@@ -173,8 +173,8 @@ func TestAReviewRunsBriefAnglesAndJudgeFromTheReviewerRole(t *testing.T) {
 		}
 		// The path as the runner spelled it, which on macOS need not be the
 		// resolved one the session's own pwd reports.
-		if !strings.Contains(s.Prompt, "The diff is at ") || !strings.Contains(s.Prompt, filepath.Join(review.CheckoutDir, review.DiffFile)+": read it there") {
-			t.Errorf("the %s angle was not told where the diff is:\n%s", kind, s.Prompt)
+		if !strings.Contains(s.Prompt, "The diff of the change:") || !strings.Contains(s.Prompt, "+++ b/work-1.txt") || !strings.Contains(s.Prompt, filepath.Join(review.CheckoutDir, review.DiffFile)+", for searching.") {
+			t.Errorf("the %s angle was not given the diff, and where it is:\n%s", kind, s.Prompt)
 		}
 	}
 	for _, s := range sessions {
@@ -359,7 +359,7 @@ func TestAFailedAngleIsSkippedAndAFailedReviewEscalates(t *testing.T) {
 
 	h.wantOrder("developer-issue-1-r1", "reviewer-pr-201-r1")
 	prompt := promptOf(t, h, 1)
-	for _, want := range []string{"Not reviewed:", "- docs: the session failed: docs session: exit_1: fake review session: the model is overloaded", "### quick general: Widget does nothing"} {
+	for _, want := range []string{"Not reviewed —", "- docs: the session failed: docs session: exit_1: fake review session: the model is overloaded", "### quick general: Widget does nothing"} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("the judge's task lacks %q:\n%s", want, prompt)
 		}

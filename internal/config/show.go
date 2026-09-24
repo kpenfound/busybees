@@ -282,7 +282,7 @@ type ReviewProfilesView struct {
 }
 
 func reviewProfilesView(r ResolvedRole) ReviewProfilesView {
-	v := ReviewProfilesView{BriefProfile: r.ForBrief().AgentProfile(), JudgeProfile: r.ForJudge().AgentProfile(), AngleProfiles: map[string]AgentProfile{}, HostReviewPolicy: "brief/angles: sandbox ignored; read-only checkout; no commands, writes, web/network tools, MCP, factory identity or writable/shared VCS"}
+	v := ReviewProfilesView{BriefProfile: r.ForBrief().AgentProfile(), JudgeProfile: r.ForJudge().AgentProfile(), AngleProfiles: map[string]AgentProfile{}, HostReviewPolicy: "brief/angles: sandbox ignored; read-only checkout; no commands, writes, web/network tools, inherited MCP, factory identity or writable/shared VCS"}
 	for _, angle := range KnownReviewAngles {
 		v.AngleProfiles[angle] = r.ForAngle(angle).AgentProfile()
 	}

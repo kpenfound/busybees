@@ -790,7 +790,7 @@ reviewer profile. Brief and angle sessions select `agent`, `model`,
 `fallback` and `effort`, subject to backend support (Codex maps `max` effort
 to `high`). They ignore the profile's `sandbox` and run under the shared
 restricted execution's read-only floor: no commands, writes, web/network
-tools, MCP, factory identity, or writable or shared VCS access. Claude,
+tools, inherited MCP, factory identity, or writable or shared VCS access. Claude,
 codex, opencode and pi are the supported host agents, on every profile of
 the `fallback` chain too: a brief or angle session refused for want of
 capacity runs again as its `fallback`, under the same policy, and a chain

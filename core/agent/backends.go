@@ -63,6 +63,11 @@ type Backend struct {
 type RestrictedCapabilities struct {
 	Supported bool
 	FollowUp  bool
+	// ReadServer says the backend has no read-only file tool of its own
+	// once its command execution is switched off, so a restricted turn is
+	// given the runner's read server (readserver.go) to read the
+	// workspace with instead.
+	ReadServer bool
 }
 
 // executable is the command a session of this backend runs: the
@@ -101,7 +106,7 @@ var Backends = []Backend{
 		Credentials: []string{"OPENAI_API_KEY", "CODEX_API_KEY"},
 		ProviderEnv: []string{"OPENAI_*", "CODEX_*"},
 		ArgvMarker:  true,
-		Restricted:  &RestrictedCapabilities{Supported: true},
+		Restricted:  &RestrictedCapabilities{Supported: true, ReadServer: true},
 		bin:         func(r *Runner) string { return r.CodexBin },
 		impl:        codexBackend{},
 	},
