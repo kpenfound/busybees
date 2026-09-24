@@ -128,6 +128,15 @@ func TestReleasePrimitives(t *testing.T) {
 	ctx := context.Background()
 	f.Milestones[0].OpenIssues = 0
 	f.Milestones[0].ClosedIssues = 4
+	f.Branches["main"] = "default-head"
+	f.PRs[8].Body = "Closes #7"
+	all, err := c.ListAllOpenPRsForRelease(ctx)
+	if err != nil || len(all) != 1 || !slices.Equal(all[0].ClosingIssues(), []int{7}) {
+		t.Fatalf("release PR listing = %+v, %v", all, err)
+	}
+	if head, err := c.BranchHead(ctx, "main"); err != nil || head != "default-head" {
+		t.Fatalf("main head = %q, %v", head, err)
+	}
 	ms, err := c.ListMilestones(ctx)
 	if err != nil || len(ms) != 1 || ms[0].OpenIssues != 0 || ms[0].ClosedIssues != 4 {
 		t.Fatalf("milestone counts = %+v, %v", ms, err)

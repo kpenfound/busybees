@@ -1496,7 +1496,8 @@ set, the assignee; adds the kind label; adds `bees:triage` (or `bees:ready`) to
 work items — feature issues get no state label; resolves the milestone as
 *explicit → parent/related issue's milestone → `filter.milestone`*; and, with
 `--parent`, attaches the issue as a sub-issue (three API calls: parent details,
-create, attach). Bees never create, edit or close milestones themselves.
+create, attach). Bees never create or edit milestones; `release_ship` closes
+the milestone it ships.
 `--milestone` only picks among the ones people made, and the one role that
 passes it is the product manager, for a feature spawned from an agreed design
 ([From an agreed design to several features](workflow.md#from-an-agreed-design-to-several-features)).
@@ -1596,10 +1597,13 @@ hand, with the factory's rules applied.
 | `issue_question` | `number`, `waiting` | product_manager | Adds or removes `bees:question`. Refuses anything that is not a feature or feedback issue. |
 | `submit_review` | optional `number`, `event` (`approve`\|`request-changes`\|`comment`), `body` | reviewer | Submits one GitHub review on a pull request, appending the reviewer's marker as `comment` does: the findings of the [review](workflow.md#review), as a `comment` review on a developer's pull request (the verdict goes to the developer by mail) and with the verdict as the event on a [requested review](workflow.md#asking-for-a-review-of-any-pull-request). Refuses an issue. |
 | `file_bug` | `title`, `body`, optional `related`, `override` | qa | Files a `bees:bug` work item as `issue_create` would, after scoring it against every issue in the repository, open and closed. When any of them scores high enough nothing is filed and the ranked candidates come back instead; `override: true` files without asking again. |
+| `release_ship` | `milestone` number | release_manager | Requires closed issues, no open issues or related open PRs, and a valid unused tag title; tags the current `main` head, creates a release with generated notes, then closes exactly that milestone. Reports completed steps on partial failure. |
 
-Every one of them refuses the issue or pull request it acts on when it does
-not match the [filter](workflow.md#what-the-factory-can-see), and every write
-is a refusal or a single `gh` call — there is no partial state to clean up.
+The issue and pull request tools refuse an item they act on when it does
+not match the [filter](workflow.md#what-the-factory-can-see), and each of
+their writes is a refusal or a single `gh` call. `release_ship` checks open
+PRs across the repository and makes three sequential writes; its response
+lists the steps completed if a later step fails.
 `file_bug` creates an issue rather than acting on one: its optional `related`
 only supplies a milestone, and is not checked against the filter, exactly as
 `issue_create`'s is not.

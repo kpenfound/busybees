@@ -69,6 +69,8 @@ type GitHub struct {
 	// published with generated notes.
 	Tags     map[string]string
 	Releases map[string]bool
+	// Branches are remote branch heads served through the git ref API.
+	Branches map[string]string
 	// Parents maps a work item to the feature it is a sub-issue of.
 	Parents map[int]int
 	// ImplicitParent answers the parent of an issue Parents has no entry
@@ -142,6 +144,7 @@ func New(repo string) *GitHub {
 		ErrFor:        map[string]error{},
 		Tags:          map[string]string{},
 		Releases:      map[string]bool{},
+		Branches:      map[string]string{"main": "main-head"},
 	}
 }
 
@@ -629,6 +632,27 @@ func (f *GitHub) api(args []string, stdin *string) (out []byte, err error, ok bo
 	}
 	var n int
 	switch {
+	case method == "" && target == repo+"pulls?state=open&per_page=100":
+		if !slices.Contains(args, "--paginate") || !slices.Contains(args, "--slurp") {
+			return nil, fmt.Errorf("fake gh: release PR listing must paginate"), true
+		}
+		var page []map[string]any
+		for _, p := range f.PRs {
+			if p.State != "OPEN" {
+				continue
+			}
+			page = append(page, map[string]any{"number": p.Number, "body": p.Body, "html_url": p.URL, "state": "open", "milestone": p.Milestone})
+		}
+		out, err := json.Marshal([]any{page})
+		return out, err, true
+	case method == "" && strings.HasPrefix(target, repo+"git/ref/heads/"):
+		branch := strings.TrimPrefix(target, repo+"git/ref/heads/")
+		sha := f.Branches[branch]
+		if sha == "" {
+			return nil, fmt.Errorf("fake gh: no branch %q", branch), true
+		}
+		out, err := json.Marshal(map[string]any{"object": map[string]string{"sha": sha}})
+		return out, err, true
 	case method == "" && strings.HasPrefix(target, repo+"git/matching-refs/tags/"):
 		prefix := strings.TrimPrefix(target, repo+"git/matching-refs/tags/")
 		var refs []struct {
@@ -643,7 +667,9 @@ func (f *GitHub) api(args []string, stdin *string) (out []byte, err error, ok bo
 		}
 		slices.SortFunc(refs, func(a, b struct {
 			Ref string `json:"ref"`
-		}) int { return strings.Compare(a.Ref, b.Ref) })
+		}) int {
+			return strings.Compare(a.Ref, b.Ref)
+		})
 		out, err := json.Marshal(refs)
 		return out, err, true
 	case method == "POST" && target == repo+"git/refs":
