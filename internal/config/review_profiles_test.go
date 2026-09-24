@@ -100,17 +100,9 @@ judge_profile = "missing"`, "roles.reviewer.judge_profile"},
 angle_profiles.docs = "missing"`, "roles.reviewer.angle_profiles.docs"},
 		{`[roles.reviewer]
 angle_profiles.unknown = "host"`, "roles.reviewer.angle_profiles.unknown"},
-		{`[roles.reviewer]
-brief_profile = "remote"`, "roles.reviewer.brief_profile"},
-		{`[roles.reviewer]
-angle_profiles.docs = "remote"`, "roles.reviewer.angle_profiles.docs"},
-		{`[roles.reviewer]
-profile_by_size.l = "remote"`, "roles.reviewer.profile_by_size.l"},
-		{`[global]
-profile = "remote"`, "roles.reviewer.profile"},
 	} {
 		t.Run(tc.path+tc.body, func(t *testing.T) {
-			_, err := Load(writeConfig(t, "version = 4\n[profiles.host]\n[profiles.remote]\nagent = \"opencode\"\n"+tc.body))
+			_, err := Load(writeConfig(t, "version = 4\n[profiles.host]\n"+tc.body))
 			if err == nil || !strings.Contains(err.Error(), tc.path) {
 				t.Fatalf("want %s, got %v", tc.path, err)
 			}

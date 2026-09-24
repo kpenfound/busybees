@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	"github.com/kpenfound/busybees/core/agent"
 )
 
 func (c *Config) reviewProfile(name string) *AgentProfile {
@@ -62,13 +63,21 @@ func (c *Config) validateReviewProfiles() []string {
 	// The read-only floor holds on whatever profile a fallback lands on, so
 	// the chain a profile starts is held to the same agents it is.
 	resolved := c.resolvedProfiles()
+	supportsRestrictedReview := func(name string) bool {
+		for _, backend := range agent.Backends {
+			if backend.Name == name {
+				return backend.Restricted != nil && backend.Restricted.Supported
+			}
+		}
+		return false
+	}
 	check := func(path string, p AgentProfile) {
-		if p.Agent != AgentClaude && p.Agent != AgentCodex {
-			errs = append(errs, fmt.Sprintf("%s: brief and angle sessions require agent claude or codex, got %q", path, p.Agent))
+		if !supportsRestrictedReview(p.Agent) {
+			errs = append(errs, fmt.Sprintf("%s: brief and angle sessions require an agent that supports restricted execution, got %q", path, p.Agent))
 		}
 		for _, name := range fallbackChain(resolved, profileNamed(resolved, p), p.Fallback) {
-			if f := resolved[name]; f.Agent != AgentClaude && f.Agent != AgentCodex {
-				errs = append(errs, fmt.Sprintf("%s: brief and angle sessions require agent claude or codex, and fallback profile %q runs %q", path, name, f.Agent))
+			if f := resolved[name]; !supportsRestrictedReview(f.Agent) {
+				errs = append(errs, fmt.Sprintf("%s: brief and angle sessions require an agent that supports restricted execution, and fallback profile %q runs %q", path, name, f.Agent))
 			}
 		}
 	}

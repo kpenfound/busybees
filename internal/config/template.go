@@ -549,7 +549,8 @@ label = "{{.Label}}"
 # side_effects. A size not named here gets its default:
 #angles = { xs = ["quick_general", "docs"], s = ["quick_general", "docs"], m = ["general", "docs", "test_coverage", "acceptance_criteria"], l = ["general", "docs", "test_coverage", "acceptance_criteria"], xl = ["general", "docs", "test_coverage", "acceptance_criteria", "side_effects"] }
 # Named profiles for the brief, judge and individual angles. Unset: the
-# reviewer's size-resolved profile. Brief/angles accept Claude or Codex only;
+# reviewer's size-resolved profile. Brief/angle profiles need a backend that
+# declares support for shared restricted execution;
 # their sandbox is ignored: host read-only, no commands/writes, web/network
 # tools, MCP/factory identity or writable/shared VCS. The judge applies all
 # five profile fields, including sandbox, with reviewer-owned tools/permissions.
