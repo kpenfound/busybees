@@ -49,7 +49,11 @@ outcome contract, writable mount, VCS access, skill, plugin or hook. Factory and
 VCS identity variables are removed. Claude is held to named read-only tools,
 empty settings sources and strict empty MCP configuration; Codex is held to its
 read-only sandbox, disabled command/network/plugin features and a fail-closed
-inventory that disables every inherited MCP server. OpenCode runs in pure mode
+inventory that disables every inherited MCP server. Restricted Codex also sets
+`agents.enabled=false`: disabling multi-agent feature flags alone does not
+remove collaboration tools for models that advertise them. Its JavaScript
+`functions.exec` host remains available for configured read-only MCP tools.
+OpenCode runs in pure mode
 as a private agent whose effective configuration is probed before launch: only
 read, grep and glob are allowed and every inherited MCP server must resolve
 disabled. Pi loads no extension (including the ordinary MCP adapter), skill,
