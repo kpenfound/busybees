@@ -632,6 +632,19 @@ func (f *GitHub) api(args []string, stdin *string) (out []byte, err error, ok bo
 	}
 	var n int
 	switch {
+	case method == "" && target == repo+"pulls?state=open&per_page=100":
+		if !slices.Contains(args, "--paginate") || !slices.Contains(args, "--slurp") {
+			return nil, fmt.Errorf("fake gh: release PR listing must paginate"), true
+		}
+		var page []map[string]any
+		for _, p := range f.PRs {
+			if p.State != "OPEN" {
+				continue
+			}
+			page = append(page, map[string]any{"number": p.Number, "body": p.Body, "html_url": p.URL, "state": "open", "milestone": p.Milestone})
+		}
+		out, err := json.Marshal([]any{page})
+		return out, err, true
 	case method == "" && strings.HasPrefix(target, repo+"git/ref/heads/"):
 		branch := strings.TrimPrefix(target, repo+"git/ref/heads/")
 		sha := f.Branches[branch]

@@ -530,6 +530,33 @@ func (c *Client) ListOpenPRs(ctx context.Context, q Query) ([]PR, error) {
 	return list(ctx, c, q, base, func(p PR) int { return p.Number })
 }
 
+// ListAllOpenPRsForRelease reads every open PR without the factory filter.
+// Release eligibility must account for a PR even when the factory would not
+// otherwise dispatch work on it.
+func (c *Client) ListAllOpenPRsForRelease(ctx context.Context) ([]PR, error) {
+	out, err := c.Exec(ctx, "api", "--paginate", "--slurp", fmt.Sprintf("repos/%s/pulls?state=open&per_page=100", c.Repo))
+	if err != nil {
+		return nil, err
+	}
+	var pages [][]struct {
+		Number    int           `json:"number"`
+		Body      string        `json:"body"`
+		URL       string        `json:"html_url"`
+		State     string        `json:"state"`
+		Milestone *MilestoneRef `json:"milestone"`
+	}
+	if err := json.Unmarshal(out, &pages); err != nil {
+		return nil, err
+	}
+	var prs []PR
+	for _, page := range pages {
+		for _, p := range page {
+			prs = append(prs, PR{Number: p.Number, Body: p.Body, URL: p.URL, State: p.State, Milestone: p.Milestone})
+		}
+	}
+	return prs, nil
+}
+
 // ListMergedPRsSince returns PRs matching q merged at or after t.
 func (c *Client) ListMergedPRsSince(ctx context.Context, q Query, t time.Time) ([]PR, error) {
 	search := fmt.Sprintf("merged:>=%s", t.UTC().Format("2006-01-02T15:04:05Z"))

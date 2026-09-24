@@ -379,7 +379,7 @@ func (b *backend) ListOpenPRs(ctx context.Context) ([]github.PR, error) {
 	if err := b.load(ctx); err != nil {
 		return nil, err
 	}
-	return b.gh.ListOpenPRs(ctx, github.Query{})
+	return b.gh.ListAllOpenPRsForRelease(ctx)
 }
 
 func (b *backend) TagExists(ctx context.Context, tag string) (bool, error) {

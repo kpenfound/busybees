@@ -1166,3 +1166,18 @@ func TestListMilestonesDecodesIssueCounts(t *testing.T) {
 		t.Fatalf("ListMilestones = %+v, %v", got, err)
 	}
 }
+
+func TestListAllOpenPRsForReleasePaginatesAndKeepsClosingRefs(t *testing.T) {
+	c := New("acme/widgets")
+	c.Exec = func(_ context.Context, args ...string) ([]byte, error) {
+		want := []string{"api", "--paginate", "--slurp", "repos/acme/widgets/pulls?state=open&per_page=100"}
+		if !slices.Equal(args, want) {
+			t.Fatalf("args = %v, want %v", args, want)
+		}
+		return []byte(`[[{"number":1,"body":"Closes #7","html_url":"https://github.com/acme/widgets/pull/1","state":"open"}],[{"number":2,"body":"Fixes #8","html_url":"https://github.com/acme/widgets/pull/2","milestone":{"title":"v1"}}]]`), nil
+	}
+	prs, err := c.ListAllOpenPRsForRelease(context.Background())
+	if err != nil || len(prs) != 2 || prs[0].Number != 1 || !slices.Equal(prs[0].ClosingIssues(), []int{7}) || prs[1].MilestoneTitle() != "v1" {
+		t.Fatalf("open PR pages = %+v, %v", prs, err)
+	}
+}
