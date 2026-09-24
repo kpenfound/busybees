@@ -182,6 +182,9 @@ type Data struct {
 	// Blockers maps an issue number to the prerequisites it declares that
 	// are still open (project manager).
 	Blockers map[int][]int
+	// Release is the milestone the release manager is started to ship. Set
+	// only for the release manager.
+	Release *Release
 	// Attempts are the best-of-N or mixture-of-experts attempts an
 	// assembler session makes the result from, one per attempt branch, in
 	// attempt order. Set only for the developer's assembler tasks
@@ -221,6 +224,17 @@ type Review struct {
 	ReviewedHead string
 }
 
+// Release is a milestone the scheduler found finished: at least one closed
+// issue, no open issue, and no open pull request in it or for one of its
+// issues.
+type Release struct {
+	Milestone github.Milestone
+	// Issue is a closed issue in the milestone, for issue_create's related
+	// so that an issue the release manager files inherits the milestone; 0
+	// when none was found.
+	Issue int
+}
+
 // Attempt is what one attempt of a fan-out came to, as the assembler is
 // told it: the branch it worked on, how many commits that branch carries beyond
 // the base branch, and what its session reported. Candidate is false for an
@@ -256,6 +270,7 @@ var titles = map[string]string{
 	config.RoleDeveloper:      "developer",
 	config.RoleReviewer:       "reviewer",
 	config.RoleQA:             "QA engineer",
+	config.RoleReleaseManager: "release manager",
 }
 
 // Title returns the human name of a role.

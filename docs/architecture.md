@@ -241,8 +241,8 @@ A full pass is:
    remote does not have it, and is recorded like a worker under the pull
    request's number. A failed session backs the pull request off for five poll
    intervals; there is no issue to escalate.
-8. **Dispatch singletons.** The project manager, product manager and QA each
-   run in a goroutine of their own, at most one session per role at a time, in
+8. **Dispatch singletons.** The project manager, product manager, QA and,
+   when it is enabled, the release manager each run in a goroutine of their own, at most one session per role at a time, in
    a detached worktree of the default branch. When a session ends the role is
    not started again for one poll interval; when it fails, five. What starts
    each:
@@ -268,7 +268,15 @@ A full pass is:
      days); or `scheduler.qa_interval` (default 30m) elapsed since it last ran
      or last looked, and something merged since its last run. The merged-PR
      query runs at most once per interval, recorded as `last_check` in
-     `<state_dir>/qa.json`.
+     `<state_dir>/qa.json`;
+   - the **release manager**: an open milestone with at least one closed
+     issue, no open issue, and no open pull request in it or closing one of
+     its issues. The milestones are one `gh api` call per full pass; only
+     when one is finished are the open pull requests read, every one of them
+     whatever the filter, with a `gh issue view` for each closing issue the
+     poll does not hold. The lowest-numbered finished milestone is the one
+     shipped, and the session is told one closed issue in it (one more
+     `gh api` call) to relate what it files to. A local pass never starts it.
 
    The **product manager** is shown: the fresh feedback issues; the fresh
    features, with proposals in a section of their own; the issues in planning
@@ -349,9 +357,9 @@ local pass: it classifies the issue and pull request lists cached from the
 last successful poll again (reconcile's write-back and the refresh at the end
 of every session keep that cache in step), then runs steps 5 and 6, dispatches
 developers (never a requested review) and starts only the singletons that have
-unread mail. It skips the poll, steps 2 to 4, steps 9 and 10 and the product
-manager's and QA's other has-work checks, all of which read GitHub; the label writes
-reconcile and dispatch make still happen, because what a local pass protects
+unread mail, never the release manager. It skips the poll, steps 2 to 4,
+steps 9 and 10 and the product manager's and QA's other has-work checks, all
+of which read GitHub; the label writes reconcile and dispatch make still happen, because what a local pass protects
 is the polling budget, not every API call. Until the first successful poll
 there is nothing cached and a local pass does nothing.
 
@@ -835,6 +843,10 @@ Checked, in Go, when the session ends:
   a report every session, a clean pass included, and skips it only when it
   could not test at all, which is the `failed` outcome. A missing report fails
   the run and backs QA off for five poll intervals.
+- the release manager's `done`: its milestone is closed, or has an open issue
+  that holds it back (the release-workflow work item or the `bees:needs-human`
+  issue the session filed). A milestone still open with no open issue fails
+  the run and backs the release manager off for five poll intervals.
 - every session's comments: the marker audit, under
   [The scheduler loop](#the-scheduler-loop).
 
@@ -850,7 +862,7 @@ Not checked, because there is nothing to look at afterwards:
 
 - a tool call itself. Each of `issue_create`, `issue_link`, `comment`,
   `issue_edit_body`, `issue_set_state`, `issue_question`, `submit_review`,
-  `file_bug`, `report_factory_error` and
+  `file_bug`, `release_ship`, `report_factory_error` and
   `mail_send` does its work inside the call and returns its error to the
   session there, so the call is the ground truth at the moment it runs. What
   is checked above is the outcome claiming one was made, not the call.

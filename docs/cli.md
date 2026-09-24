@@ -1031,6 +1031,7 @@ Like `bees run`, it refuses to run inside a session.
 | Role | Arguments |
 |---|---|
 | `pm`, `pjm`, `qa` | None. Polls GitHub, reconciles, then runs the role once. |
+| `release` | None. Polls GitHub, reconciles, then runs the release manager for the lowest-numbered [finished milestone](workflow.md#releases); with none, it logs so and starts no session. `roles.release_manager.enabled` is not consulted. |
 | `developer` | `--issue N`. Runs the full developer ↔ reviewer loop for that issue. |
 | `reviewer` | `--issue N` or `--pr N` (the PR's closing issue is used). Moves the issue into review and runs the loop from the review stage, the pre-review checks read included. It is an instruction, not a resumption: any stage the worker that last had the issue recorded is forgotten. |
 
@@ -1117,7 +1118,7 @@ worker's: the stages of one worker run different roles, and a role's
 [`sandbox`](configuration.md#global-and-rolesname) is its own. A worker whose
 first session has not started reads `-`.
 
-The `roles:` table covers all five roles with what each is doing (`running` or
+The `roles:` table covers every role with what each is doing (`running` or
 `idle`; `-` for the developer and reviewer, whose work is in the workers table
 above), when it last ran, and how big its [notes](roles.md#notes-files) have
 grown — a role whose notes are getting long is a candidate for
@@ -1130,6 +1131,7 @@ roles:
   developer        -        last run never        notes 31.4 KB
   reviewer         -        last run never        notes 6.0 KB
   qa               idle     last run 2h0m0s ago   notes -
+  release_manager  idle     last run never        notes -
 ```
 
 Notes sizes are measured when the command runs, not read from `status.json`,

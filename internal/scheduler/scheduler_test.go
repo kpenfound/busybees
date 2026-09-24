@@ -613,6 +613,31 @@ func fakeClaude() {
 				fail(err)
 			}
 		}
+		// FAKE_RELEASE is what a release manager session does with the
+		// milestone its task names: "ship:<number>" closes it, the way
+		// release_ship ends; "escalate:<issue>:<milestone title>" files the
+		// needs-human issue for a refused tag in that milestone. Unset, the
+		// session does nothing and still reports done.
+		if v := os.Getenv("FAKE_RELEASE"); role == config.RoleReleaseManager && v != "" {
+			parts := strings.Split(v, ":")
+			n, err := strconv.Atoi(parts[1])
+			if err != nil {
+				fail(err)
+			}
+			edit := ghEdit{CloseMilestone: n}
+			if parts[0] == "escalate" {
+				edit = ghEdit{Number: n, Create: true, Title: "Release " + parts[2] + " needs a person", Milestone: parts[2],
+					Add: []string{"bees", "bees:triage", "bees:needs-human"}}
+			}
+			if err := requestGHEdit(stateDir, edit); err != nil {
+				fail(err)
+			}
+			if parts[0] == "escalate" {
+				if err := session.RecordTouched(sessionDir, n); err != nil {
+					fail(err)
+				}
+			}
+		}
 		// FAKE_QA_OTHER_MAIL writes to the product manager as another role
 		// while QA runs, the way a project manager session running alongside
 		// it does: mail QA's report cannot be confused with.

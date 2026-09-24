@@ -774,6 +774,54 @@ func (c *Client) ListMilestones(ctx context.Context) ([]Milestone, error) {
 	return ms, json.Unmarshal(out, &ms)
 }
 
+// ClosedMilestoneIssue returns the number of one closed issue, not a pull
+// request, in the milestone numbered number, or 0 when the first page of its
+// closed issues has none.
+func (c *Client) ClosedMilestoneIssue(ctx context.Context, number int) (int, error) {
+	out, err := c.Exec(ctx, "api", fmt.Sprintf("repos/%s/issues?milestone=%d&state=closed&per_page=100", c.Repo, number))
+	if err != nil {
+		return 0, err
+	}
+	var items []struct {
+		Number      int       `json:"number"`
+		PullRequest *struct{} `json:"pull_request"`
+	}
+	if err := json.Unmarshal(out, &items); err != nil {
+		return 0, err
+	}
+	for _, i := range items {
+		if i.PullRequest == nil {
+			return i.Number, nil
+		}
+	}
+	return 0, nil
+}
+
+// MilestoneInFlight returns the first of prs still in flight for the
+// milestone titled title: a pull request in the milestone itself (closes is
+// 0), or one that closes an issue in it (closes is that issue). pr is 0 when
+// none is. issue reads a closing issue; when it fails, pr and closes name the
+// pull request and the issue that could not be checked. The release manager's
+// dispatch and release_ship both decide with it, so they agree on what keeps
+// a milestone from shipping.
+func MilestoneInFlight(ctx context.Context, prs []PR, title string, issue func(context.Context, int) (Issue, error)) (pr, closes int, err error) {
+	for _, p := range prs {
+		if p.MilestoneTitle() == title {
+			return p.Number, 0, nil
+		}
+		for _, n := range p.ClosingIssues() {
+			i, err := issue(ctx, n)
+			if err != nil {
+				return p.Number, n, err
+			}
+			if i.MilestoneTitle() == title {
+				return p.Number, n, nil
+			}
+		}
+	}
+	return 0, 0, nil
+}
+
 // TagExists reports whether the repository has exactly this tag. The matching
 // refs endpoint also returns tags with this name as a prefix, so compare refs.
 func (c *Client) TagExists(ctx context.Context, tag string) (bool, error) {

@@ -174,6 +174,33 @@ func TestReleasePrimitives(t *testing.T) {
 	}
 }
 
+func TestClosedMilestoneIssueAndMilestoneEdits(t *testing.T) {
+	f, c := seeded(t)
+	ctx := context.Background()
+	if n, err := c.ClosedMilestoneIssue(ctx, 3); err != nil || n != 0 {
+		t.Fatalf("no closed issue yet: %d, %v", n, err)
+	}
+	f.Issues[7].State = "CLOSED"
+	if n, err := c.ClosedMilestoneIssue(ctx, 3); err != nil || n != 7 {
+		t.Fatalf("closed issue in v1: %d, %v, want 7", n, err)
+	}
+
+	f.EditsDir = t.TempDir()
+	if err := RequestEdit(f.EditsDir, Edit{Number: 20, Create: true, Title: "held", Milestone: "v1"}); err != nil {
+		t.Fatal(err)
+	}
+	ms, err := c.ListMilestones(ctx)
+	if err != nil || len(ms) != 1 || ms[0].OpenIssues != 1 || f.Issues[20].MilestoneTitle() != "v1" {
+		t.Fatalf("created issue not counted in v1: %+v, %v", ms, err)
+	}
+	if err := RequestEdit(f.EditsDir, Edit{CloseMilestone: 3}); err != nil {
+		t.Fatal(err)
+	}
+	if ms, err := c.ListMilestones(ctx); err != nil || len(ms) != 0 {
+		t.Fatalf("milestone still open after the close edit: %+v, %v", ms, err)
+	}
+}
+
 func TestExecWritesShowInTheSnapshot(t *testing.T) {
 	f, c := seeded(t)
 	ctx := context.Background()

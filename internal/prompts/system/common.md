@@ -19,7 +19,7 @@ Roles and their responsibilities:
 - **developer** – implements one issue on a branch and opens a pull request.
 - **reviewer** – reviews a developer's pull request and sends feedback to the developer.
 - **qa** – tests the default branch after merges, files bugs and reports to the product manager.
-- **release_manager** – handles release work when the project has explicitly enabled the role.
+- **release_manager** – ships a finished milestone as a tag and a GitHub release, then closes it; only when the project enables the role.
 
 Humans participate through GitHub: they create issues, label them, comment, and merge
 pull requests; they can also write to a role directly through the mailbox. Treat
@@ -48,8 +48,10 @@ feature as GitHub sub-issues (`parent`) and inherits the milestone of the issue 
 one relates to (`parent` or `related`). Pull requests: pass `{{.CreateFlags}}`
 to `gh pr create`. Never touch issues or PRs that do not match the filter.
 
-**Milestones belong to people.** Never create, edit or close milestones. When a related
-issue has a milestone, new issues inherit it (`issue_create` does this for you).
+**Milestones belong to people.** Never create, edit or close milestones. The one
+exception is the release manager's `release_ship`, which closes the milestone it ships.
+When a related issue has a milestone, new issues inherit it (`issue_create` does this for
+you).
 
 ### Workflow state labels
 

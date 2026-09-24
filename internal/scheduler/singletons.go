@@ -526,6 +526,108 @@ func (s *Scheduler) runQA(ctx context.Context, snap *snapshot) error {
 	return s.runSingleton(ctx, config.RoleQA, prompts.Data{MergedPRs: merged, Issues: bugs, LastRun: last, Inbox: inbox})
 }
 
+// ---- release manager -------------------------------------------------------
+
+// releaseCandidate returns the open milestone the release manager ships next,
+// or nil: the lowest-numbered one with at least one closed issue, no open
+// issue, and no open pull request in flight for it. Pull requests are read
+// whatever the factory's filter says, and judged by github.MilestoneInFlight,
+// the check release_ship repeats before it tags anything.
+//
+// An open issue in the milestone is also what holds a milestone back after a
+// release manager session that did not ship it: the release-workflow work
+// item it files, or the needs-human escalation of a tag it could not create,
+// inherits the milestone. So a milestone is not dispatched again while either
+// is open.
+func (s *Scheduler) releaseCandidate(ctx context.Context, snap *snapshot) (*github.Milestone, error) {
+	milestones, err := s.gh.ListMilestones(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var finished []github.Milestone
+	for _, m := range milestones {
+		if m.ClosedIssues > 0 && m.OpenIssues == 0 {
+			finished = append(finished, m)
+		}
+	}
+	if len(finished) == 0 {
+		return nil, nil
+	}
+	slices.SortFunc(finished, func(a, b github.Milestone) int { return a.Number - b.Number })
+	prs, err := s.gh.ListAllOpenPRsForRelease(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// An issue the poll holds is read from it rather than asked for again:
+	// this runs on every full pass while a finished milestone waits.
+	issue := func(ctx context.Context, n int) (github.Issue, error) {
+		if i, ok := snap.byNumber[n]; ok {
+			return i, nil
+		}
+		return s.gh.GetIssue(ctx, n)
+	}
+	for i := range finished {
+		m := finished[i]
+		pr, closes, err := github.MilestoneInFlight(ctx, prs, m.Title, issue)
+		if err != nil {
+			return nil, fmt.Errorf("milestone %s: read issue #%d of pull request #%d: %w", m.Title, closes, pr, err)
+		}
+		if pr != 0 {
+			s.log.Debug("milestone waits on a pull request", "milestone", m.Title, "pr", pr)
+			continue
+		}
+		return &m, nil
+	}
+	return nil, nil
+}
+
+func (s *Scheduler) releaseManagerHasWork(ctx context.Context, snap *snapshot) bool {
+	m, err := s.releaseCandidate(ctx, snap)
+	if s.op("release-milestones", err, "find a finished milestone", "err", err) {
+		return false
+	}
+	return m != nil
+}
+
+func (s *Scheduler) runReleaseManager(ctx context.Context, snap *snapshot) error {
+	m, err := s.releaseCandidate(ctx, snap)
+	if err != nil {
+		return err
+	}
+	if m == nil {
+		s.log.Info("no milestone is ready to ship")
+		return nil
+	}
+	s.log.Info("milestone is ready to ship", "milestone", m.Title)
+	// Without a closed issue to relate to, the prompt names the milestone
+	// for issue_create instead.
+	related, err := s.gh.ClosedMilestoneIssue(ctx, m.Number)
+	s.op("release-issue", err, "find a closed issue in the milestone", "milestone", m.Title, "err", err)
+	inbox, err := s.inbox(config.RoleReleaseManager, 0, 0)
+	if err != nil {
+		return err
+	}
+	if err := s.runSingleton(ctx, config.RoleReleaseManager, prompts.Data{
+		Release: &prompts.Release{Milestone: *m, Issue: related}, Inbox: inbox,
+	}); err != nil {
+		return err
+	}
+	// A session that reports done has either shipped the milestone, which
+	// closes it, or filed the issue that holds it back. A milestone still
+	// open with nothing open in it is a claim nothing backs, and would be
+	// dispatched again on the next pass.
+	after, err := s.gh.ListMilestones(ctx)
+	if err != nil {
+		return err
+	}
+	for _, a := range after {
+		if a.Number == m.Number && a.OpenIssues == 0 {
+			return fmt.Errorf("the release manager reported done, but milestone %s is still open and nothing open holds it back", m.Title)
+		}
+	}
+	return nil
+}
+
 // ---- shared ----------------------------------------------------------------
 
 // runSingleton runs one session for a singleton role in a detached checkout
@@ -647,7 +749,7 @@ func (s *Scheduler) RunRole(ctx context.Context, role string, issue, pr int) err
 		// No extra slots: `bees exec developer` runs outside the pool and
 		// never fans out.
 		return s.workIssue(ctx, i, w, 0)
-	case config.RoleProjectManager, config.RoleProductManager, config.RoleQA:
+	case config.RoleProjectManager, config.RoleProductManager, config.RoleQA, config.RoleReleaseManager:
 		snap, err := s.poll(ctx)
 		if err != nil {
 			return err
@@ -659,6 +761,8 @@ func (s *Scheduler) RunRole(ctx context.Context, role string, issue, pr int) err
 			return s.runProjectManager(ctx, snap)
 		case config.RoleProductManager:
 			return s.runProductManager(ctx, snap)
+		case config.RoleReleaseManager:
+			return s.runReleaseManager(ctx, snap)
 		default:
 			return s.runQA(ctx, snap)
 		}
