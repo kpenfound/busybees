@@ -2,7 +2,8 @@
 
 **busybees** is a lightweight software factory: a Go CLI (`bees`) that runs a staff of
 headless coding-agent sessions — product manager, project manager, developers,
-reviewers and QA, against one or more GitHub repositories.
+reviewers, QA and, when you enable it, a release manager, against one or more GitHub
+repositories.
 
 Humans steer it through GitHub. Create and label issues, comment, merge pull requests;
 the bees do the rest. Every role runs in its own temporary git worktree and talks to
@@ -84,6 +85,10 @@ ways to run the factory.
 - **A developer → reviewer loop.** A developer implements a work item and opens a
   pull request; a reviewer reviews it, and the two iterate until it is approved. See
   [developer](docs/roles.md#developer) and [reviewer](docs/roles.md#reviewer).
+- **Releases from finished milestones.** With the release manager enabled, a
+  milestone whose issues are all closed ships as a tag named after it, a GitHub
+  release with generated notes, and the milestone closed. See
+  [Releases](docs/workflow.md#releases).
 - **A review on request.** Put `bees:review-requested` on any pull request the
   factory can see, yours included, and the reviewer submits one GitHub review on
   it. See [Asking for a review of any pull request](docs/workflow.md#asking-for-a-review-of-any-pull-request).

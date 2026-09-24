@@ -26,6 +26,9 @@ you. What each role is, what it reads and how to configure it is on
    after the checks pass.
 5. **QA tests the default branch** after merges, files bugs and reports to
    the product manager.
+6. **The release manager ships a finished milestone**, when you enable it:
+   a tag named after the milestone, a GitHub release with generated notes,
+   and the milestone closed. See [Releases](#releases).
 
 A concrete piece of work you already understand skips the product manager:
 label it `bees` + `bees:triage` for the project manager, or `bees` +
@@ -1396,8 +1399,9 @@ that one closes too. A feature whose sub-issues all closed before the
 orchestrator ever recorded them is picked up on the next run for any other
 reason instead.
 
-**Milestones are managed by people, never by bees.** No role creates, edits
-or closes a milestone. The product manager sees the open milestones read-only
+**Milestones are managed by people, never by bees.** No role creates or
+edits a milestone, and the only one closed by a bee is a milestone the
+release manager ships ([Releases](#releases)). The product manager sees the open milestones read-only
 and treats them as a priority signal. What the bees do is inherit: every
 issue they create takes the milestone of the issue it relates to, with one
 exception, a feature spawned from an agreed design that the design's phasing
@@ -1418,6 +1422,45 @@ between them, editing the product manager's notes (with the default
 `notes.backend = "file"`, `<state_dir>/notes/product_manager.md`; see
 [Notes files](roles.md#notes-files)), filing feature or feedback issues,
 or answering the product manager's questions.
+
+## Releases
+
+The release manager is a singleton, disabled until you enable it with
+`[roles.release_manager] enabled = true` because it publishes a tag and a
+GitHub release. On each full poll the orchestrator reads the open milestones
+and starts it for the lowest-numbered one that is finished:
+
+- at least one closed issue,
+- no open issue, and
+- no open pull request in the milestone or closing one of its issues. Every
+  open pull request counts here, whether or not it matches the filter.
+
+The session runs in a detached checkout of the default branch and ships
+that one milestone:
+
+1. It checks the release workflow. One workflow under `.github/workflows/`
+   must be triggered by a push of a `v*` tag and build the project from that
+   tag. When none does, the release manager files a developer work item for
+   it with `issue_create`, related to an issue in the milestone, and ships
+   nothing. The work item inherits the milestone, so the milestone has an
+   open issue again and is not dispatched until the fix has merged and the
+   work item is closed.
+2. Otherwise it calls `release_ship`, which checks the milestone again, tags
+   the head of the default branch with the milestone's title, creates a
+   GitHub release for that tag with generated notes (every pull request
+   merged since the previous tag), and closes the milestone.
+3. When `release_ship` refuses the tag because the title is not a valid Git
+   tag or the tag already exists, the release manager files an issue in the
+   milestone labelled `bees:needs-human` that names the milestone and the
+   reason. It does not pick another tag or bump a version. While that issue
+   is open the milestone has an open issue, so it is not dispatched again;
+   close the issue once you have fixed the title or the tag.
+
+The release manager never edits a CHANGELOG, bumps a version file or opens a
+release pull request. A project that wants those, or extra tags such as one
+for a nested module, does them in its release workflow. A session that
+reports `done` while its milestone is still open with no open issue in it is
+treated as a failed run. See [roles.md](roles.md#release_manager).
 
 ## One issue, end to end
 

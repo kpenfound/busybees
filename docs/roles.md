@@ -1,6 +1,6 @@
 # Roles
 
-A busybees staff has five roles. Each session is a fresh non-interactive run
+A busybees staff has six roles, one of them, the release manager, off until you enable it. Each session is a fresh non-interactive run
 of the role's [`agent`](#customising-a-role) with that role's system prompt,
 so a role remembers nothing between sessions beyond its notes file and what
 is visible on GitHub. This page says what each role is: what it reads, what
@@ -17,6 +17,7 @@ and the review loop, is on [workflow.md](workflow.md).
 | `developer` | pool of `scheduler.max_developers` workers (default 1) | a `bees:ready` issue is waiting, or an issue in `bees:in-progress`, `bees:review` or `bees:approved` has a worker to resume. A ready issue that already has a pull request goes before new work |
 | `reviewer` | one per developer worker, in turn with it; one per requested review, in a developer slot | the worker's developer session opened or updated a pull request; a check on that pull request failed, before the first review or, with `auto_merge`, after approval; a person put `bees:review-requested` on a pull request; with `scheduler.review_assigned_prs`, a pull request the factory did not write is in the filter at a head no review has looked at |
 | `qa` | singleton | unread mail; or `scheduler.qa_interval` (default 30m) elapsed and something was merged since its last run, the first run being immediate |
+| `release_manager` | singleton, disabled by default | a full poll finds an open milestone with at least one closed issue, no open issue, and no open pull request in it or closing one of its issues |
 
 A developer worker owns one issue at a time and runs developer, reviewer,
 developer, and so on for it, one session at a time. A review a person asks for
@@ -684,6 +685,40 @@ with why. The orchestrator records the run time either way, and checks that
 [What the orchestrator checks](architecture.md#what-the-orchestrator-checks)).
 When QA runs and what it looks at is under [QA](workflow.md#qa).
 
+## release_manager
+
+Ships a finished milestone: a tag named after the milestone's title at the
+head of the default branch, a GitHub release for it with generated notes, and
+the milestone closed. It is disabled by default because it publishes; enable
+it with `[roles.release_manager] enabled = true`. It runs against a detached
+checkout of the default branch, one milestone per session.
+
+**Reads.** The milestone it was started for (number, title, description,
+issue counts), a closed issue in it for `issue_create`'s `related`, unread
+mail addressed to `release_manager`, the workflows under
+`.github/workflows/`, and its notes.
+
+**Does.** Checks that one workflow is triggered by a push of a `v*` tag and
+builds the project from that tag. When none does, it files one developer
+work item for the fix with `issue_create`, related to an issue in the
+milestone so the work item inherits it, and ships nothing. Otherwise it calls
+`release_ship` with the milestone's number, which checks the milestone again,
+tags, publishes the release and closes the milestone. When `release_ship`
+refuses the tag because the title is not a valid Git tag or the tag already
+exists, it files an issue in the milestone labelled `bees:needs-human` naming
+the milestone and the reason, and picks no other tag. Either issue keeps the
+milestone from being dispatched again while it is open. It never edits a
+CHANGELOG, bumps a version file, opens a release pull request, or runs
+`git tag` or `gh release create` itself.
+
+**Mail.** Writes to no role.
+
+**Outcomes.** `done` with a note saying what shipped or what it filed, and
+`failed` when it could not finish, including a `release_ship` failure other
+than a refused tag. A session that reports `done` while its milestone is
+still open with no open issue in it is treated as a failure. The whole flow
+is under [Releases](workflow.md#releases).
+
 ## Customising a role
 
 Everything is in `bees.toml`. `[global]` applies to every role and
@@ -788,5 +823,7 @@ restricts one run the same way without editing the file. What each one costs:
   unread in the mailbox.
 - **developer disabled:** nothing is built, and the reviewer never runs
   either.
+- **release_manager disabled** (the default): no milestone is tagged,
+  released or closed by the factory; you do that yourself.
 
 `enabled` is a role key; under `[global]` it is a load error.
