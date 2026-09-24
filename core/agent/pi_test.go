@@ -317,7 +317,8 @@ func TestPiFailedRun(t *testing.T) {
 
 // A pi stream that ends with no assistant message that stopped — the
 // process was killed, or it crashed — is a session that never said how it
-// went: no_result, and the turns counted from the transcript.
+// went: no_result, the turns counted from the transcript, and the cost of
+// the responses it reported.
 func TestPiStreamWithoutAnEnd(t *testing.T) {
 	bin := fakePi(t, `
 echo '{"type":"session","id":"pi-ses-4"}'
@@ -331,7 +332,7 @@ echo '{"type":"turn_end"}'
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !res.IsError || res.ErrorSubtype != "no_result" || res.NumTurns != 2 || res.CostKnown {
+	if !res.IsError || res.ErrorSubtype != "no_result" || res.NumTurns != 2 || !res.CostKnown || res.CostUSD != 0.1 {
 		t.Fatalf("result: %+v", res)
 	}
 }

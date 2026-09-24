@@ -237,10 +237,10 @@ func (m piMessage) text() string {
 // that stopped ended without saying, like a claude stream with no result
 // event. Pi has no rate-limit event; a provider that refused the request
 // says so in the error message, which SessionLimited reads.
-func (piBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer) (*streamEnd, *RateLimit, error) {
+func (piBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer, cost *costMeter) (*streamEnd, *RateLimit, error) {
 	var end *streamEnd
 	var sessionID, lastText string
-	turns, cost, costKnown := 0, 0.0, false
+	turns := 0
 	err := r.tee(stdout, transcript, func(line []byte, typ string) {
 		var ev piEvent
 		if err := json.Unmarshal(line, &ev); err != nil {
@@ -256,8 +256,7 @@ func (piBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer) (*st
 			if m.Role != "assistant" {
 				return
 			}
-			cost += m.Usage.Cost.Total
-			costKnown = true
+			cost.add(m.Usage.Cost.Total)
 			if t := m.text(); t != "" {
 				lastText = t
 			}
@@ -279,7 +278,6 @@ func (piBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer) (*st
 	}
 	end.SessionID = sessionID
 	end.NumTurns = turns
-	end.CostUSD, end.CostKnown = cost, costKnown
 	if end.Result == "" {
 		end.Result = lastText
 	}

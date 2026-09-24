@@ -68,6 +68,13 @@ type Request struct {
 	// caller's retry runs fresh, while pi starts a new session under that
 	// id with no earlier context.
 	ResumeID string
+	// CostCapUSD, when above zero, is the most the session may cost: the
+	// runner stops it once the known cost its stream reports reaches this
+	// many dollars, and a session that ends with a known cost at or over
+	// it is reported as capped too (Result.CostCapped). Zero is no cap. A
+	// cost the backend does not report never reaches the cap: codex
+	// reports none, so a codex session runs to its end.
+	CostCapUSD float64
 }
 
 // Result is what a finished session produced.
@@ -96,12 +103,18 @@ type Result struct {
 	ErrorSubtype string  `json:"error_subtype,omitempty"`
 	NumTurns     int     `json:"num_turns"`
 	CostUSD      float64 `json:"cost_usd"`
-	// CostKnown says whether CostUSD is what the session cost or merely
-	// what is known about it: claude reports the cost in the result event
-	// of its stream alone, so a session killed before it emitted one has
-	// no cost at all rather than a cost of zero, and codex reports tokens
-	// but never a cost. Nothing derives one.
-	CostKnown  bool    `json:"cost_known"`
+	// CostKnown says whether the stream reported any cost at all: claude
+	// reports the cost in the result event of its stream alone, so a
+	// session killed before it emitted one has no cost at all rather than
+	// a cost of zero, and codex reports tokens but never a cost. Nothing
+	// derives one. Opencode and pi report each step's cost as it ends, so
+	// a session stopped part way has the cost of the steps it finished.
+	CostKnown bool `json:"cost_known"`
+	// CostCapped says the known cost reached Request.CostCapUSD: the
+	// runner stopped the session for it, or it ended with a final cost at
+	// or over the cap. ErrorSubtype is SubtypeCostCap, and CostUSD is the
+	// cost observed until then. A caller's cancellation is never this.
+	CostCapped bool    `json:"cost_capped,omitempty"`
 	TimedOut   bool    `json:"timed_out"`
 	Outcome    Outcome `json:"outcome"`
 	HasOutcome bool    `json:"has_outcome"`
@@ -248,6 +261,9 @@ func (r *Runner) run(ctx context.Context, req Request, restricted bool) (*Result
 	if err := req.Profile.Validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", req.Profile.Name, err)
 	}
+	if err := validCostCap(req.CostCapUSD); err != nil {
+		return nil, fmt.Errorf("%s: %w", req.Profile.Name, err)
+	}
 	be, err := backendFor(req.Profile.Agent)
 	if err != nil {
 		return nil, err
@@ -359,7 +375,15 @@ func (r *Runner) run(ctx context.Context, req Request, restricted bool) (*Result
 	if timeout <= 0 {
 		timeout = DefaultTimeout
 	}
-	runCtx, cancel := context.WithTimeout(ctx, timeout)
+	// The cost cap stops the turn through a context of its own, whose
+	// cause is what tells that stop apart from the caller's cancellation.
+	capCtx, stopForCost := context.WithCancelCause(ctx)
+	defer stopForCost(nil)
+	cost := &costMeter{cap: req.CostCapUSD, stop: func() {
+		r.Logger.Warn("session cost cap reached", "session", req.Name, "role", req.Profile.Name, "cap_usd", req.CostCapUSD)
+		stopForCost(errCostCap)
+	}}
+	runCtx, cancel := context.WithTimeout(capCtx, timeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(runCtx, bin, args...)
@@ -421,7 +445,7 @@ func (r *Runner) run(ctx context.Context, req Request, restricted bool) (*Result
 	}
 	defer procs.RemovePID(sessionDir)
 
-	final, limit, scanErr := be.impl.consume(r, stdout, transcript)
+	final, limit, scanErr := be.impl.consume(r, stdout, transcript, cost)
 	waitErr := cmd.Wait()
 	res.Duration = time.Since(started)
 	if scanErr != nil {
@@ -429,13 +453,12 @@ func (r *Runner) run(ctx context.Context, req Request, restricted bool) (*Result
 	}
 
 	res.RateLimit = limit
+	res.CostUSD, res.CostKnown = cost.usd, cost.known
 	if final != nil {
 		res.ClaudeID = final.SessionID
 		res.ResultText = final.Result
 		res.IsError = final.IsError
 		res.NumTurns = final.NumTurns
-		res.CostUSD = final.CostUSD
-		res.CostKnown = final.CostKnown
 		if final.Subtype != "success" {
 			res.ErrorSubtype = final.Subtype
 			res.IsError = true
@@ -448,13 +471,16 @@ func (r *Runner) run(ctx context.Context, req Request, restricted bool) (*Result
 		res.NumTurns = CountTurns(transcriptPath)
 	}
 	var exitErr *exec.ExitError
+	// A turn the runner stopped for its cost is not the caller's to have
+	// stopped: it ended, and is reported below with the cost it reached.
+	stoppedForCost := errors.Is(context.Cause(capCtx), errCostCap)
 	switch {
 	case runCtx.Err() == context.DeadlineExceeded:
 		res.TimedOut = true
 		res.IsError = true
 		res.ExitCode = -1
 		res.ErrorSubtype = "timeout"
-	case runCtx.Err() == context.Canceled && waitErr != nil:
+	case runCtx.Err() == context.Canceled && waitErr != nil && !stoppedForCost:
 		// The caller cancelled the session — a hard stop, or an
 		// interrupt around a run outside the loop — and the process group
 		// was killed before it finished. No result file is written: its
@@ -479,8 +505,17 @@ func (r *Runner) run(ctx context.Context, req Request, restricted bool) (*Result
 				res.ErrorSubtype = "exit_" + strconv.Itoa(res.ExitCode)
 			}
 		}
-	case waitErr != nil:
+	case waitErr != nil && !stoppedForCost:
 		return nil, fmt.Errorf("%s: %w", filepath.Base(bin), waitErr)
+	}
+	if !res.TimedOut && cost.reached() {
+		// Whether the runner stopped the turn or it ended on its own —
+		// claude's own budget stop, or a last event that reached the cap as
+		// the process exited — a known final cost at the cap is a capped
+		// session.
+		res.CostCapped = true
+		res.IsError = true
+		res.ErrorSubtype = SubtypeCostCap
 	}
 	if stderr.Len() > 0 {
 		_ = os.WriteFile(filepath.Join(sessionDir, "stderr.log"), stderr.Bytes(), 0o644)
@@ -507,7 +542,7 @@ func (r *Runner) run(ctx context.Context, req Request, restricted bool) (*Result
 	if data, err := json.MarshalIndent(res, "", "  "); err == nil {
 		_ = os.WriteFile(filepath.Join(sessionDir, ResultFile), data, 0o644)
 	}
-	r.Logger.Info("session end", "session", req.Name, "turns", res.NumTurns, "cost_usd", res.CostUSD,
+	r.Logger.Info("session end", "session", req.Name, "turns", res.NumTurns, "cost_usd", res.CostUSD, "cost_capped", res.CostCapped,
 		"duration", res.Duration.Round(time.Second), "error", res.IsError, "subtype", res.ErrorSubtype,
 		"outcome", res.Outcome.Status)
 	return res, nil

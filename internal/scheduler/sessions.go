@@ -425,11 +425,13 @@ type summary struct {
 	note    string
 	turns   int
 	cost    float64
-	// costKnown says whether cost is what the session cost. A cost arrives
-	// in the event that ends a session's stream alone, so a session that
+	// costKnown says whether the session reported a cost. Claude's arrives
+	// in the event that ends its stream alone, so a claude session that
 	// died before emitting one has no cost rather than a cost of zero, and
-	// the line says so instead of printing $0.00. A codex session never
-	// reports one: it reports tokens rather than a price.
+	// the line says so instead of printing $0.00; opencode and pi report
+	// each step's, so one that died part way has what its finished steps
+	// cost. A codex session never reports one: it reports tokens rather
+	// than a price.
 	costKnown bool
 	dur       time.Duration
 }

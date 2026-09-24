@@ -774,10 +774,10 @@ do nothing on it: it has no session transcript or session-stop action.
 already finished, plus the assistant messages the running session's own
 `transcript.jsonl` holds right now, recounted every few seconds. **Cost** is
 the finished sessions only, and it is `-` until one of them has ended and
-reported a cost — an agent prices a session in the event that ends its stream
-and says nothing before it, so a session that ended without reaching that
-event (killed by a signal, most often) leaves the cost unknown rather than a
-cost of zero. A codex session's cost is never known: codex reports tokens
+reported a cost — claude prices a session in the event that ends its stream
+and says nothing before it, so a claude session that ended without reaching
+that event (killed by a signal, most often) leaves the cost unknown rather
+than a cost of zero. A codex session's cost is never known: codex reports tokens
 rather than a price. An opencode session's cost is the sum of its steps'
 costs, known whenever at least one step finished, zero and known for a local
 model that really is free; a pi session's is the sum of its responses'
