@@ -55,8 +55,8 @@ type RestrictedResult struct {
 // unsupported backends are refused before any process starts.
 //
 // The request may set Name, Profile's execution fields (Name, Agent, Model,
-// Fallback, Effort, MaxTurns, Timeout and Env), Workspace, Prompt, Env and
-// ResumeID. Other fields describe capabilities a restricted turn cannot have
+// Fallback, Effort, MaxTurns, Timeout and Env), Workspace, Prompt, Env,
+// ResumeID and CostCapUSD, which holds each attempt to the cap. Other fields describe capabilities a restricted turn cannot have
 // and are rejected rather than ignored.
 func (r *Runner) RunRestricted(ctx context.Context, req Request) (*RestrictedResult, error) {
 	if err := validateRestrictedRequest(req); err != nil {

@@ -41,9 +41,10 @@ type backend interface {
 	// the runner wrote the session's files.
 	command(ctx context.Context, r *Runner, b Backend, req Request, paths sessionPaths) (bin string, args []string, stdin string, env []envVar, err error)
 	// consume reads the CLI's stdout to its end, copying every line to the
-	// transcript (and to r.Stream when set), and returns what the stream
-	// said at its end: nil when it ended without saying.
-	consume(r *Runner, stdout io.Reader, transcript io.Writer) (*streamEnd, *RateLimit, error)
+	// transcript (and to r.Stream when set), reports every cost the stream
+	// carries to cost as it is read, and returns what the stream said at
+	// its end: nil when it ended without saying.
+	consume(r *Runner, stdout io.Reader, transcript io.Writer, cost *costMeter) (*streamEnd, *RateLimit, error)
 }
 
 // sessionPaths are the files the runner writes for a session before the CLI
@@ -66,17 +67,17 @@ type sessionPaths struct {
 
 // streamEnd is what a backend read off the end of a session's stream, in
 // the terms Result is written in: the fields a backend cannot supply stay
-// zero, and CostKnown says whether the cost is one.
+// zero. The cost is not among them: the backend reports it to the turn's
+// costMeter as the stream goes, so a stream that ends without saying keeps
+// what it cost until then.
 type streamEnd struct {
 	SessionID string
 	Result    string
 	IsError   bool
 	// Subtype is "success" for a session that finished, and otherwise names
 	// the failure the way the error subtypes do.
-	Subtype   string
-	NumTurns  int
-	CostUSD   float64
-	CostKnown bool
+	Subtype  string
+	NumTurns int
 }
 
 // claudeBackend runs a session as `claude -p`.
@@ -122,6 +123,13 @@ func (claudeBackend) command(ctx context.Context, r *Runner, b Backend, req Requ
 	}
 	if req.Profile.Effort != "" {
 		args = append(args, "--effort", req.Profile.Effort)
+	}
+	if req.CostCapUSD > 0 {
+		// Claude's stream carries a cost only in its result event, at the
+		// end of the turn, so the runner cannot stop a claude turn in
+		// flight from the stream alone: claude holds itself to the same
+		// cap and ends the turn with error_max_budget_usd.
+		args = append(args, "--max-budget-usd", strconv.FormatFloat(req.CostCapUSD, 'f', -1, 64))
 	}
 	if req.ResumeID != "" {
 		// Claude renders the system prompt once, on a conversation's first
@@ -214,7 +222,7 @@ type rateLimitEvent struct {
 // consume reads claude's stream-json: the final "result" event carries the
 // result text, the turn count, the cost and the session id, and the last
 // "rate_limit_event" is what the account's capacity looked like.
-func (claudeBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer) (*streamEnd, *RateLimit, error) {
+func (claudeBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer, cost *costMeter) (*streamEnd, *RateLimit, error) {
 	var final *streamResult
 	var limit *RateLimit
 	err := r.tee(stdout, transcript, func(line []byte, typ string) {
@@ -223,6 +231,9 @@ func (claudeBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer) 
 			var sr streamResult
 			if err := json.Unmarshal(line, &sr); err == nil {
 				final = &sr
+				// total_cost_usd is the session's running total, not
+				// what this turn added to it.
+				cost.total(sr.TotalCostUSD)
 			}
 		case "rate_limit_event":
 			var ev rateLimitEvent
@@ -245,8 +256,6 @@ func (claudeBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer) 
 		IsError:   final.IsError,
 		Subtype:   final.Subtype,
 		NumTurns:  final.NumTurns,
-		CostUSD:   final.TotalCostUSD,
-		CostKnown: true,
 	}, limit, err
 }
 
@@ -296,7 +305,7 @@ func (claudeBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer) 
 //     "turn.completed", "turn.failed" or a bare "error" event. There is no
 //     cost in it: codex reports tokens, and turning those into dollars
 //     needs a price table, so a codex session's cost is unknown rather
-//     than zero.
+//     than zero, and Request.CostCapUSD never stops one.
 type codexBackend struct{}
 
 func (codexBackend) command(ctx context.Context, r *Runner, b Backend, req Request, paths sessionPaths) (string, []string, string, []envVar, error) {
@@ -435,7 +444,7 @@ type codexEvent struct {
 // without saying, like a claude stream with no result event. Codex has no
 // rate-limit event of its own; a session it refuses to run reports the
 // limit in the failure's message, which SessionLimited reads.
-func (codexBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer) (*streamEnd, *RateLimit, error) {
+func (codexBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer, _ *costMeter) (*streamEnd, *RateLimit, error) {
 	var end *streamEnd
 	var threadID, lastMessage string
 	turns := 0
@@ -482,15 +491,13 @@ func (codexBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer) (
 
 // makeSuccessEnd creates a generic successful streamEnd used when a backend
 // finishes without an explicit end event.
-func makeSuccessEnd(sessionID, result string, turns int, cost float64, costKnown bool) *streamEnd {
+func makeSuccessEnd(sessionID, result string, turns int) *streamEnd {
 	return &streamEnd{
 		SessionID: sessionID,
 		Result:    result,
 		IsError:   false,
 		Subtype:   "success",
 		NumTurns:  turns,
-		CostUSD:   cost,
-		CostKnown: costKnown,
 	}
 }
 
@@ -856,10 +863,10 @@ type opencodeEvent struct {
 // event. opencode has no rate-limit event of its own; a provider that
 // refused the request reports it in the error's message, which
 // SessionLimited reads.
-func (opencodeBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer) (*streamEnd, *RateLimit, error) {
+func (opencodeBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer, cost *costMeter) (*streamEnd, *RateLimit, error) {
 	var end *streamEnd
 	var sessionID, lastText string
-	turns, cost, costKnown := 0, 0.0, false
+	turns := 0
 	err := r.tee(stdout, transcript, func(line []byte, typ string) {
 		var ev opencodeEvent
 		if err := json.Unmarshal(line, &ev); err != nil {
@@ -879,8 +886,7 @@ func (opencodeBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer
 			}
 		case "step_finish":
 			turns++
-			cost += ev.Part.Cost
-			costKnown = true
+			cost.add(ev.Part.Cost)
 			switch ev.Part.Reason {
 			case "stop":
 				end = &streamEnd{Subtype: "success"}
@@ -905,14 +911,13 @@ func (opencodeBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer
 	})
 	if end == nil {
 		if lastText != "" {
-			end = makeSuccessEnd(sessionID, lastText, turns, cost, costKnown)
+			end = makeSuccessEnd(sessionID, lastText, turns)
 		} else {
 			return nil, nil, err
 		}
 	}
 	end.SessionID = sessionID
 	end.NumTurns = turns
-	end.CostUSD, end.CostKnown = cost, costKnown
 	if end.Result == "" {
 		end.Result = lastText
 	}

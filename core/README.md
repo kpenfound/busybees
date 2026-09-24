@@ -38,13 +38,26 @@ The caller also supplies:
   them does not run.
 - An optional `SkillPreparer` and read-only skill cache mounts. Acquisition,
   caching and configuration policy stay with the caller.
+- An optional `CostCapUSD` on the request (zero is no cap). The runner stops
+  the turn once the known cost its stream reports reaches the cap, and checks
+  the final cost when the turn ends; either way the result has `CostCapped`
+  set, `ErrorSubtype` `cost_cap`, the cost observed until then in `CostUSD`,
+  and a result file. The caller's cancellation returns an error and no
+  result. Each backend reports cost its own way:
+
+  | Backend  | Cost in the stream                          | Stopped in flight                          |
+  |----------|---------------------------------------------|--------------------------------------------|
+  | claude   | running total in each `result` event        | by claude itself, given `--max-budget-usd` |
+  | opencode | each `step_finish`'s `part.cost`, summed    | after the step that reaches the cap        |
+  | pi       | each assistant `message_end`'s cost, summed | after the response that reaches the cap    |
+  | codex    | none (tokens only)                          | never: an unknown cost never reaches a cap |
 
 `agent.Runner.RunRestricted` is the smaller entry point for a read-only
 analysis turn. It accepts the same `Request` and uses the same backend command
 builders, stream parsers, timeout and process-group lifecycle as `Run`, but it
 owns the capability contract instead of accepting caller grants. The request
-may carry only a workspace, prompt, resume id, environment and the profile's
-agent/model/effort/turn/timeout/fallback settings. It receives no MCP server,
+may carry only a workspace, prompt, resume id, environment, cost cap and the
+profile's agent/model/effort/turn/timeout/fallback settings. It receives no MCP server,
 outcome contract, writable mount, VCS access, skill, plugin or hook. Factory and
 VCS identity variables are removed. Claude is held to named read-only tools,
 empty settings sources and strict empty MCP configuration; Codex is held to its
@@ -100,7 +113,8 @@ other list derives from or is held to them. The checklist:
    factory's `internal/session.ProviderEnv` derive from the descriptors.
 2. **Ordinary execution.** Give the implementation its `command` (the
    executable comes from `b.executable(r)`, never named directly) and its
-   `consume` (the stream reduced to a `streamEnd`), and cover both with a
+   `consume` (the stream reduced to a `streamEnd`, every cost it carries
+   reported to the `costMeter` as it is read), and cover both with a
    fixture test in `fixture_test.go`'s style, `backendNamed` for the
    descriptor lookup.
 3. **Restricted review execution.** Extend `command`'s `paths.restricted`
