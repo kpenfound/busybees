@@ -365,6 +365,7 @@ func TestRunRestrictedFailsClosedBeforeOpenCodeLaunch(t *testing.T) {
 	}{
 		{"malformed inventory", `echo invalid`, "decode effective configuration"},
 		{"agent permissions widened", `echo '{"agent":{"bees-read-only":{"mode":"primary","permission":{"*":"deny","read":"allow","grep":"allow","glob":"allow","bash":"allow"}}},"mcp":{}}'`, "exact read-only permissions"},
+		{"agent disabled", `echo '{"agent":{"bees-read-only":{"mode":"primary","disable":true,"permission":{"*":"deny","read":"allow","grep":"allow","glob":"allow"}}},"mcp":{}}'`, "disabled agent"},
 		{"MCP re-enabled", `echo '{"agent":{"bees-read-only":{"mode":"primary","permission":{"*":"deny","read":"allow","grep":"allow","glob":"allow"}}},"mcp":{"inherited":{"enabled":true}}}'`, "MCP server \"inherited\" is not disabled"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

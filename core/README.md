@@ -214,15 +214,18 @@ builder: grant cannot be enforced: agent "opencode" cannot hold a writable turn 
   generated primary agent, `bees-granted`, whose permissions deny `*`, allow
   each granted tool, and allow `<server>_*` for each of the session's MCP
   servers. A server whose `<server>_*` would also match one of opencode's
-  own permissions (a server named `external` and `external_directory`) is
-  refused. Before the model starts, `opencode debug config` runs where the
+  own permissions is refused: a server named `external`, whose
+  `external_*` matches `external_directory`. Before the model starts, `opencode debug config` runs where the
   turn will run: on the host, under the same confinement, in a container of
   the same image with the same binds, or in the same Docker Sandbox. Every
   inherited MCP server is disabled through `OPENCODE_CONFIG_CONTENT`, and a
   second inventory refuses the turn when the agent is missing, disabled, not
   primary, has any permission other than those or a `tools` map, when an
   inherited server is still enabled, or when one of the session's servers
-  has another type, command or url.
+  is missing, disabled or differs from what the runner wrote in any key
+  (command, url, environment, headers, or a key added). A `{env:NAME}`
+  reference matches as written or resolved against the turn's
+  environment.
 - Codex and pi need `ToolsAll`.
 - `RunRestricted` fixes its own read-only tools and is not governed by this
   table.

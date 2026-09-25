@@ -9,6 +9,8 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
+	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
@@ -700,7 +702,7 @@ func (opencodeBackend) command(ctx context.Context, r *Runner, b Backend, req Re
 			return "", nil, "", nil, fmt.Errorf("restricted opencode setup: %w", err)
 		}
 	case granted:
-		hold := openCodeGrantedHold(paths.turn.Tools, opencodeServers(paths.mcp), req.Profile.Effort)
+		hold := openCodeGrantedHold(paths.turn.Tools, opencodeServers(paths.mcp), req.Profile.Effort, paths.turn.Env)
 		if extra, err = openCodeHeldEnvironment(ctx, paths.probe, bin, extra, hold); err != nil {
 			return "", nil, "", nil, fmt.Errorf("granted opencode setup: %w", err)
 		}
@@ -756,12 +758,9 @@ type opencodeResolvedConfig struct {
 		Permission map[string]string `json:"permission"`
 		Tools      map[string]bool   `json:"tools"`
 	} `json:"agent"`
-	MCP map[string]struct {
-		Type    string   `json:"type"`
-		Command []string `json:"command"`
-		URL     string   `json:"url"`
-		Enabled *bool    `json:"enabled"`
-	} `json:"mcp"`
+	// MCP is kept raw: a session's own server is compared whole
+	// (openCodeOwnServer), every other one by its enabled key.
+	MCP map[string]json.RawMessage `json:"mcp"`
 }
 
 // opencodeHold is the primary agent a held turn runs as, and what the
@@ -775,6 +774,9 @@ type opencodeHold struct {
 	permission  map[string]string
 	servers     map[string]opencodeMCP
 	effort      string
+	// env is the turn's environment, which opencode resolves the
+	// servers' {env:NAME} references against when it loads them.
+	env []string
 }
 
 // openCodeReadOnlyHold is RunRestricted's floor: read, grep and glob, and
@@ -789,7 +791,7 @@ func openCodeReadOnlyHold(effort string) opencodeHold {
 // openCodeGrantedHold is a writable turn's grant: every built-in tool
 // denied but the granted ones, and every tool of the session's own MCP
 // servers allowed.
-func openCodeGrantedHold(tools []string, servers map[string]opencodeMCP, effort string) opencodeHold {
+func openCodeGrantedHold(tools []string, servers map[string]opencodeMCP, effort string, env []string) opencodeHold {
 	permission := map[string]string{"*": "deny"}
 	for _, t := range tools {
 		permission[t] = "allow"
@@ -799,7 +801,7 @@ func openCodeGrantedHold(tools []string, servers map[string]opencodeMCP, effort 
 	}
 	return opencodeHold{
 		agent: openCodeGrantedAgent, kind: "granted", description: "Built-in tools granted by the caller",
-		permission: permission, servers: servers, effort: effort,
+		permission: permission, servers: servers, effort: effort, env: env,
 	}
 }
 
@@ -828,7 +830,7 @@ func openCodeHeldEnvironment(ctx context.Context, probe prober, bin string, base
 	if err != nil {
 		return nil, err
 	}
-	if err := validateOpenCodeHold(resolved, hold); err != nil {
+	if err := validateOpenCodeHold(resolved, hold, environmentWith(hold.env, extra)); err != nil {
 		return nil, err
 	}
 	return extra, nil
@@ -882,7 +884,7 @@ func openCodeConfigInventory(ctx context.Context, probe prober, bin string, extr
 	return cfg, nil
 }
 
-func validateOpenCodeHold(cfg opencodeResolvedConfig, hold opencodeHold) error {
+func validateOpenCodeHold(cfg opencodeResolvedConfig, hold opencodeHold, env []string) error {
 	agent, ok := cfg.Agent[hold.agent]
 	if !ok {
 		return fmt.Errorf("effective configuration removed agent %q", hold.agent)
@@ -897,18 +899,99 @@ func validateOpenCodeHold(cfg opencodeResolvedConfig, hold opencodeHold) error {
 	if !maps.Equal(agent.Permission, hold.permission) || len(agent.Tools) != 0 {
 		return fmt.Errorf("effective agent %q does not have the exact %s permissions", hold.agent, hold.kind)
 	}
-	for name, server := range cfg.MCP {
-		if own, ok := hold.servers[name]; ok {
-			if server.Type != own.Type || !slices.Equal(server.Command, own.Command) || server.URL != own.URL {
-				return fmt.Errorf("effective MCP server %q is not the session's own", name)
-			}
+	for _, name := range sortedKeys(hold.servers) {
+		raw, ok := cfg.MCP[name]
+		if !ok {
+			return fmt.Errorf("effective configuration removed the session's MCP server %q", name)
+		}
+		if err := openCodeOwnServer(name, raw, hold.servers[name], env); err != nil {
+			return err
+		}
+	}
+	for _, name := range sortedKeys(cfg.MCP) {
+		if _, own := hold.servers[name]; own {
 			continue
+		}
+		var server struct {
+			Enabled *bool `json:"enabled"`
+		}
+		if err := json.Unmarshal(cfg.MCP[name], &server); err != nil {
+			return fmt.Errorf("decode effective MCP server %q: %w", name, err)
 		}
 		if server.Enabled == nil || *server.Enabled {
 			return fmt.Errorf("effective MCP server %q is not disabled", name)
 		}
 	}
 	return nil
+}
+
+// openCodeOwnServer refuses an effective server that is not exactly the
+// session's own as the runner wrote it: every key the same, enabled, and
+// nothing added (an environment variable, a header, a timeout). opencode
+// replaces each {env:NAME} with the variable's value in env as it loads
+// the configuration, so the server matches either as written or so
+// resolved.
+func openCodeOwnServer(name string, raw json.RawMessage, own opencodeMCP, env []string) error {
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		return fmt.Errorf("decode effective MCP server %q: %w", name, err)
+	}
+	if enabled, _ := got["enabled"].(bool); !enabled {
+		return fmt.Errorf("effective MCP server %q, the session's own, is not enabled", name)
+	}
+	for _, want := range []opencodeMCP{own, resolveOpenCodeEnv(own, env)} {
+		if m, err := jsonObject(want); err == nil && reflect.DeepEqual(got, m) {
+			return nil
+		}
+	}
+	return fmt.Errorf("effective MCP server %q is not the session's own", name)
+}
+
+// resolveOpenCodeEnv is a server with every {env:NAME} in its strings
+// replaced the way opencode does: by the variable's value, empty when it
+// is not set.
+func resolveOpenCodeEnv(s opencodeMCP, env []string) opencodeMCP {
+	values := map[string]string{}
+	for _, kv := range env {
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			values[k] = v
+		}
+	}
+	expand := func(v string) string {
+		return openCodeEnvRef.ReplaceAllStringFunc(v, func(ref string) string {
+			return values[ref[len("{env:"):len(ref)-1]]
+		})
+	}
+	out := s
+	out.URL = expand(s.URL)
+	out.Command = nil
+	for _, c := range s.Command {
+		out.Command = append(out.Command, expand(c))
+	}
+	for _, m := range []*map[string]string{&out.Environment, &out.Headers} {
+		if *m == nil {
+			continue
+		}
+		resolved := make(map[string]string, len(*m))
+		for k, v := range *m {
+			resolved[k] = expand(v)
+		}
+		*m = resolved
+	}
+	return out
+}
+
+// openCodeEnvRef is opencode's {env:NAME} reference.
+var openCodeEnvRef = regexp.MustCompile(`\{env:[^}]+\}`)
+
+// jsonObject is v as JSON decodes it into a generic object.
+func jsonObject(v any) (map[string]any, error) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	var m map[string]any
+	return m, json.Unmarshal(data, &m)
 }
 
 func environmentWith(env []string, extra []envVar) []string {
