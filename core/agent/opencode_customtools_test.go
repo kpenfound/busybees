@@ -16,7 +16,8 @@ import (
 // for custom tools, the probe run with BUN_BE_BUN=1: it records its
 // arguments in record.scan-args, its environment in record.scan-env and,
 // in a container, the engine's arguments in record.scan-engine, then runs
-// scan, a shell snippet standing in for openCodeToolScan.
+// scan, a shell snippet: openCodeScanRuns for the production script, or a
+// canned answer.
 func openCodeScanProbe(record, scan string) string {
 	return `if [ "$BUN_BE_BUN" = 1 ]; then
   printf '%s\n' "$@" > "` + record + `.scan-args"
@@ -27,26 +28,6 @@ func openCodeScanProbe(record, scan string) string {
 fi
 `
 }
-
-// openCodeScanFake does what openCodeToolScan does, in sh: the same roots
-// from the same variables and working directory, and every entry that is
-// not a directory in their tool/ and tools/ directories, dot files and
-// dangling links included.
-const openCodeScanFake = `home="${HOME:-/}"
-roots="${XDG_CONFIG_HOME:-$home/.config}/opencode
-$home/.config/opencode
-$home/.opencode"
-if [ -n "$OPENCODE_CONFIG_DIR" ]; then roots="$roots
-$OPENCODE_CONFIG_DIR"; fi
-d="$(pwd -P)"
-while :; do roots="$roots
-${d%/}/.opencode"; [ "$d" = / ] && break; d="$(dirname "$d")"; done
-list() { out=""; while IFS= read -r l; do [ -n "$l" ] && out="$out${out:+,}\"$l\""; done; printf '%s' "$out"; }
-found="$(printf '%s\n' "$roots" | while IFS= read -r r; do for s in tool tools; do for f in "$r/$s"/* "$r/$s"/.[!.]*; do
-  [ -d "$f" ] && continue
-  if [ -e "$f" ] || [ -L "$f" ]; then printf '%s\n' "$f"; fi
-done; done; done)"
-printf '{"probe":"` + openCodeToolScanMarker + `","roots":[%s],"tools":[%s],"errors":[]}\n' "$(printf '%s\n' "$roots" | list)" "$(printf '%s\n' "$found" | list)"`
 
 // heldOpenCodeTurn is one kind of held opencode turn: how it is run on the
 // host with a fake whose scan is given, with the variables env and in the
@@ -114,7 +95,7 @@ func TestHeldOpenCodeTurnSearchesForCustomToolsFirst(t *testing.T) {
 				t.Fatal(err)
 			}
 			writeTool(t, filepath.Join(work, ".opencode", "plugin"), "p.ts")
-			record, err := kind.run(t, openCodeScanFake, work, nil)
+			record, err := kind.run(t, openCodeScanRuns(t), work, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -169,7 +150,7 @@ func TestHeldOpenCodeTurnRefusesACustomToolInEveryRoot(t *testing.T) {
 				}
 				tool := writeTool(t, root.dir(home, xdg, configDir, work), "read.ts")
 				env := map[string]string{"HOME": home, "XDG_CONFIG_HOME": xdg, "OPENCODE_CONFIG_DIR": configDir}
-				record, err := kind.run(t, openCodeScanFake, work, env)
+				record, err := kind.run(t, openCodeScanRuns(t), work, env)
 				if err == nil || !strings.Contains(err.Error(), kind.prefix+": ") || !strings.Contains(err.Error(), "would load custom tools") || !strings.Contains(err.Error(), tool) {
 					t.Fatalf("error = %v, want the custom tool %s refused", err, tool)
 				}
@@ -201,7 +182,7 @@ func TestHeldOpenCodeTurnRefusesHiddenAndLinkedCustomTools(t *testing.T) {
 			} else {
 				writeTool(t, dir, name)
 			}
-			record, err := heldOpenCodeTurns[0].run(t, openCodeScanFake, work, nil)
+			record, err := heldOpenCodeTurns[0].run(t, openCodeScanRuns(t), work, nil)
 			if err == nil || !strings.Contains(err.Error(), tool) {
 				t.Fatalf("error = %v, want %s refused", err, tool)
 			}
@@ -209,6 +190,48 @@ func TestHeldOpenCodeTurnRefusesHiddenAndLinkedCustomTools(t *testing.T) {
 				t.Fatal("the model started")
 			}
 		})
+	}
+}
+
+// A tool directory the search cannot read, in any root, refuses the turn
+// before the model starts, naming the directory and why: here one that is
+// a link to itself, which cannot be listed whoever runs the search.
+func TestHeldOpenCodeTurnRefusesAToolDirectoryItCannotRead(t *testing.T) {
+	for _, kind := range heldOpenCodeTurns {
+		for _, root := range []struct {
+			name string
+			dir  func(home, xdg, configDir, work string) string
+		}{
+			{"XDG_CONFIG_HOME", func(_, xdg, _, _ string) string { return filepath.Join(xdg, "opencode", "tool") }},
+			{"~/.config/opencode", func(home, _, _, _ string) string { return filepath.Join(home, ".config", "opencode", "tools") }},
+			{"~/.opencode", func(home, _, _, _ string) string { return filepath.Join(home, ".opencode", "tool") }},
+			{"OPENCODE_CONFIG_DIR", func(_, _, configDir, _ string) string { return filepath.Join(configDir, "tools") }},
+			{"project", func(_, _, _, work string) string { return filepath.Join(work, ".opencode", "tool") }},
+			{"parent of the working directory", func(_, _, _, work string) string { return filepath.Join(filepath.Dir(work), ".opencode", "tools") }},
+		} {
+			t.Run(kind.name+"/"+root.name, func(t *testing.T) {
+				home, xdg, configDir := realTempDir(t), realTempDir(t), realTempDir(t)
+				work := filepath.Join(realTempDir(t), "work")
+				if err := os.Mkdir(work, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				dir := root.dir(home, xdg, configDir, work)
+				if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(filepath.Base(dir), dir); err != nil {
+					t.Fatal(err)
+				}
+				env := map[string]string{"HOME": home, "XDG_CONFIG_HOME": xdg, "OPENCODE_CONFIG_DIR": configDir}
+				record, err := kind.run(t, openCodeScanRuns(t), work, env)
+				if err == nil || !strings.Contains(err.Error(), kind.prefix+": ") || !strings.Contains(err.Error(), "could not read "+dir+": ELOOP") {
+					t.Fatalf("error = %v, want %s refused as unreadable", err, dir)
+				}
+				if launched(record) {
+					t.Fatal("the model started with a tool directory unread")
+				}
+			})
+		}
 	}
 }
 
@@ -223,6 +246,12 @@ func TestHeldOpenCodeTurnFailsClosedWhenTheSearchDoesNot(t *testing.T) {
 			{"malformed", `echo 'opencode 1.18.31'`, "did not report the search"},
 			{"another report", `echo '{"roots":["/.opencode"],"tools":[],"errors":[]}'`, "did not report the search"},
 			{"no roots", `echo '{"probe":"` + openCodeToolScanMarker + `","roots":[],"tools":[],"errors":[]}'`, "did not report the search"},
+			{"roots left out", `echo '{"probe":"` + openCodeToolScanMarker + `","tools":[],"errors":[]}'`, "did not report the search"},
+			{"tools left out", `echo '{"probe":"` + openCodeToolScanMarker + `","roots":["/r"],"errors":[]}'`, "did not report the search"},
+			{"tools null", `echo '{"probe":"` + openCodeToolScanMarker + `","roots":["/r"],"tools":null,"errors":[]}'`, "did not report the search"},
+			{"errors left out", `echo '{"probe":"` + openCodeToolScanMarker + `","roots":["/r"],"tools":[]}'`, "did not report the search"},
+			{"errors null", `echo '{"probe":"` + openCodeToolScanMarker + `","roots":["/r"],"tools":[],"errors":null}'`, "did not report the search"},
+			{"tools not a list of paths", `echo '{"probe":"` + openCodeToolScanMarker + `","roots":["/r"],"tools":{},"errors":[]}'`, "did not report the search"},
 			{"unreadable root", `echo '{"probe":"` + openCodeToolScanMarker + `","roots":["/r"],"tools":[],"errors":["/r/tools: EACCES"]}'`, "could not read /r/tools: EACCES"},
 		} {
 			t.Run(kind.name+"/"+tc.name, func(t *testing.T) {

@@ -44,7 +44,7 @@ printf '{%s,%s%s}\n' '` + grantedInherited + `' "$inner" '` + managed + `'`
 // instead.
 func grantedOpenCodeFake(t *testing.T, effective string) (string, string) {
 	t.Helper()
-	return grantedOpenCodeFakeScanning(t, effective, openCodeScanFake)
+	return grantedOpenCodeFakeScanning(t, effective, openCodeScanRuns(t))
 }
 
 // grantedOpenCodeFakeScanning is grantedOpenCodeFake answering the search

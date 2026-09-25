@@ -228,17 +228,21 @@ builder: grant cannot be enforced: agent "opencode" cannot hold a writable turn 
   reference matches as written or resolved against the turn's
   environment.
   Custom tools refuse the turn before any of that. OpenCode imports every
-  file in the `tool/` and `tools/` directories of its configuration roots
-  as a tool, even with `--pure`, and it does so before any permission
-  applies. A file named after a granted tool, such as `read.ts`, takes that
-  tool's permission. The roots are `$XDG_CONFIG_HOME/opencode` (else
-  `~/.config/opencode`), every `.opencode` directory from the working
-  directory up, `~/.opencode` and `$OPENCODE_CONFIG_DIR`. Where the turn
-  will run, and with its environment, the runner starts the opencode
-  executable as its Bun runtime (`BUN_BE_BUN=1 opencode --config=/dev/null
-  --no-env-file -e <script>`) to list those directories. It refuses the
-  turn when the list holds any file, when a directory cannot be read, or
-  when the executable does not answer with the list. This applies to
+  `*.js` and `*.ts` file in the `tool/` and `tools/` directories of its
+  configuration roots as a tool, even with `--pure`, and it does so before
+  any permission applies. A file named after a granted tool, such as
+  `read.ts`, takes that tool's permission. OpenCode's roots are
+  `$XDG_CONFIG_HOME/opencode` (else `~/.config/opencode`), every
+  `.opencode` directory from the working directory up to the worktree,
+  `~/.opencode` and `$OPENCODE_CONFIG_DIR`. Where the turn will run, and
+  with its environment, the runner starts the opencode executable as its
+  Bun runtime (`BUN_BE_BUN=1 opencode --config=/dev/null --no-env-file -e
+  <script>`) to list the `tool/` and `tools/` directories of a wider set
+  of roots: all of those, `~/.config/opencode` even when
+  `$XDG_CONFIG_HOME` is set, and every `.opencode` directory up to `/`.
+  It refuses the turn when the list holds any file, whatever its
+  extension, when a directory cannot be read, or when the executable does
+  not answer with the list. This applies to
   `RunRestricted` and to turns granted named tools; a turn granted `*`
   is not searched and loads whatever custom tools opencode finds.
 - Codex tools are named by the Codex control that holds them:

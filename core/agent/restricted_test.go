@@ -61,7 +61,7 @@ func restrictedRunner(t *testing.T, claude, codex string) *Runner {
 
 func restrictedOpenCodeFake(t *testing.T, config, answer string) (string, string) {
 	t.Helper()
-	return restrictedOpenCodeFakeScanning(t, config, answer, openCodeScanFake)
+	return restrictedOpenCodeFakeScanning(t, config, answer, openCodeScanRuns(t))
 }
 
 // restrictedOpenCodeFakeScanning is restrictedOpenCodeFake answering the

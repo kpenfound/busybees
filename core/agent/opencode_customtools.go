@@ -7,9 +7,10 @@ import (
 	"strings"
 )
 
-// opencode imports every file it finds in the tool/ and tools/ directories
-// of its configuration roots as a custom tool, --pure or not, and before any
-// permission applies: importing runs the file's top-level code, and a custom
+// opencode imports every *.js and *.ts file it finds in the tool/ and
+// tools/ directories of its configuration roots (dot files and links
+// included) as a custom tool, --pure or not, and before any permission
+// applies: importing runs the file's top-level code, and a custom
 // tool named like a built-in one ("read.ts") takes the built-in's
 // permission. `debug config` reports none of them, and opencode has no
 // switch that stops the scan. The roots are its global configuration
@@ -22,9 +23,10 @@ import (
 // is one or when the look fails. The look is openCodeToolScan run by the
 // opencode executable itself as the JavaScript runtime it is built on
 // (BUN_BE_BUN), since a probe runs the agent's executable and nothing else.
-// The scan searches more than opencode does: every .opencode directory up
-// to the root of the filesystem, both global directories, and every file in
-// tool/ and tools/ rather than *.js and *.ts only.
+// The scan searches more than opencode imports from: every .opencode
+// directory up to the root of the filesystem, both ~/.config/opencode and
+// $XDG_CONFIG_HOME/opencode when that is set, and every file in tool/ and
+// tools/ whatever its extension.
 
 // openCodeToolScanMarker names the report openCodeToolScan prints, so that
 // output from anything else (an opencode that is no longer a Bun
@@ -67,12 +69,13 @@ console.log(JSON.stringify({ probe: "` + openCodeToolScanMarker + `", roots, too
 // to preload code into the scan, left out.
 var openCodeToolScanArgs = []string{"--config=/dev/null", "--no-env-file", "-e", openCodeToolScan}
 
-// openCodeToolReport is what openCodeToolScan prints.
+// openCodeToolReport is what openCodeToolScan prints. A list left out or
+// null is nil, which is not a report of nothing found.
 type openCodeToolReport struct {
-	Probe  string   `json:"probe"`
-	Roots  []string `json:"roots"`
-	Tools  []string `json:"tools"`
-	Errors []string `json:"errors"`
+	Probe  string    `json:"probe"`
+	Roots  *[]string `json:"roots"`
+	Tools  *[]string `json:"tools"`
+	Errors *[]string `json:"errors"`
 }
 
 // openCodeCustomTools refuses a held turn opencode would give a custom
@@ -86,14 +89,15 @@ func openCodeCustomTools(ctx context.Context, probe prober, bin string, extra []
 		return fmt.Errorf("search for custom tools: %w; a held opencode turn needs an opencode built on Bun that runs a script with BUN_BE_BUN=1", err)
 	}
 	var report openCodeToolReport
-	if err := json.Unmarshal(out, &report); err != nil || report.Probe != openCodeToolScanMarker || len(report.Roots) == 0 {
+	if err := json.Unmarshal(out, &report); err != nil || report.Probe != openCodeToolScanMarker ||
+		report.Roots == nil || len(*report.Roots) == 0 || report.Tools == nil || report.Errors == nil {
 		return fmt.Errorf("search for custom tools: opencode did not report the search (%q); a held opencode turn needs an opencode built on Bun that runs a script with BUN_BE_BUN=1", strings.TrimSpace(string(out)))
 	}
-	if len(report.Errors) > 0 {
-		return fmt.Errorf("search for custom tools: could not read %s; make them readable where the turn runs, or remove them", strings.Join(report.Errors, ", "))
+	if errs := *report.Errors; len(errs) > 0 {
+		return fmt.Errorf("search for custom tools: could not read %s; make them readable where the turn runs, or remove them", strings.Join(errs, ", "))
 	}
-	if len(report.Tools) > 0 {
-		return fmt.Errorf("opencode would load custom tools before its permissions apply: %s; remove them from where the turn runs, and run the turn again", strings.Join(report.Tools, ", "))
+	if tools := *report.Tools; len(tools) > 0 {
+		return fmt.Errorf("opencode would load custom tools before its permissions apply: %s; remove them from where the turn runs, and run the turn again", strings.Join(tools, ", "))
 	}
 	return nil
 }
