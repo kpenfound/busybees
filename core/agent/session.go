@@ -756,7 +756,7 @@ type box interface {
 	// command wraps the backend's command line in the client's.
 	command(ctx context.Context, bin string, args []string) (string, []string, error)
 	// probe runs a command in the box before the session's own (prober).
-	probe(ctx context.Context, bin string, args []string, extra []envVar) ([]byte, error)
+	probe(ctx context.Context, bin string, args []string, extra []envVar, talk talker) ([]byte, error)
 	// clientEnv is the environment the client runs with.
 	clientEnv() []string
 	// remove stops and removes the box, for a session that is being

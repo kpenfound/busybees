@@ -333,7 +333,7 @@ func (codexBackend) command(ctx context.Context, r *Runner, b Backend, req Reque
 		"-c", procs.CodexMarker(r.EnvironmentPrefix)+codexValue(paths.dir),
 	)
 	if granted {
-		held, err := codexHeldArgs(ctx, paths.probe, bin, paths.turn.Tools, paths.mcp)
+		held, err := codexHeldArgs(ctx, paths.probe, bin, req.workDir(), paths.turn.Tools, paths.mcp)
 		if err != nil {
 			return "", nil, "", nil, fmt.Errorf("granted codex setup: %w", err)
 		}
@@ -886,7 +886,7 @@ func openCodeHeldEnv(hold opencodeHold, content string) []envVar {
 }
 
 func openCodeConfigInventory(ctx context.Context, probe prober, bin string, extra []envVar) (opencodeResolvedConfig, error) {
-	out, err := probe(ctx, bin, []string{"--pure", "debug", "config"}, extra)
+	out, err := probe(ctx, bin, []string{"--pure", "debug", "config"}, extra, nil)
 	if err != nil {
 		return opencodeResolvedConfig{}, fmt.Errorf("inspect effective configuration: %w", err)
 	}

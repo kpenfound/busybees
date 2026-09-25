@@ -58,9 +58,32 @@ if grep -q '^mcp_servers\.tools\.command=' "$probe"; then own=',{"name":"tools",
 printf '[{"name":"legacy","enabled":%s,"transport":{"type":"stdio","command":"inherited","args":[],"env":null,"env_vars":[],"cwd":null}}%s]\n' "$legacy" "$own"`
 }
 
-// codexGrantedFake stands in for codex. `features list` and `mcp list`
-// append their arguments to record.config-args and print features and
-// servers, shell snippets that read the probe's arguments from $probe;
+// codexConfig is the fake's app server: it answers initialize, and
+// config/read with an effective configuration made from the probe's
+// arguments ($probe) the way codex makes it (every -c key's origin the
+// session flags; approval_policy, agents.enabled, orchestrator.mcp.enabled
+// and web_search as they are set, and otherwise as a user configuration
+// that allows everything has them), then managed, a sed script standing
+// for a layer above the command line, applied to the answer. A
+// notification comes first, as codex sends one. The config/read request
+// is recorded in record.probe.talk.
+func codexConfig(managed string) string {
+	return `origins="$(awk 'prev == "-c" && /^[a-z_.]+=/ { k = $0; sub(/=.*/, "", k); printf "%s\"%s\":{\"name\":{\"type\":\"sessionFlags\"}}", (n++ ? "," : ""), k } { prev = $0 }' "$probe")"
+set_() { grep -qxF -- "$1" "$probe" && printf '%s' "$2" || printf '%s' "$3"; }
+config="{\"approval_policy\":$(set_ 'approval_policy="never"' '"never"' '"on-request"'),\"agents\":{\"enabled\":$(set_ agents.enabled=false false true)},\"orchestrator\":{\"mcp\":{\"enabled\":$(set_ orchestrator.mcp.enabled=false false true)}},\"web_search\":$(set_ 'web_search="disabled"' '"disabled"' '"live"'),\"tools\":{\"web_search\":null}}"
+echo '{"method":"remoteControl/status/changed","params":{}}'
+while IFS= read -r line; do
+  case "$line" in
+  *'"id":1,'*) echo '{"id":1,"result":{}}' ;;
+  *'"id":2,'*) printf '%s\n' "$line" >> "$probe.talk"; printf '{"id":2,"result":{"config":%s,"origins":{%s}}}\n' "$config" "$origins" | sed '` + managed + `' ;;
+  esac
+done`
+}
+
+// codexGrantedFake stands in for codex. `features list`, `mcp list` and
+// `app-server` append a line "probe" and their arguments to
+// record.config-args and run features, servers and config, shell snippets
+// that read the probe's arguments from $probe;
 // the turn records its arguments and environment, marks that it launched,
 // and uses its tools the way codex would under the configuration it was
 // handed: apply_patch writes edited.txt in the working directory unless
@@ -71,17 +94,30 @@ printf '[{"name":"legacy","enabled":%s,"transport":{"type":"stdio","command":"in
 // give ends as a failed item instead.
 func codexGrantedFake(t *testing.T, features, servers string) (string, string) {
 	t.Helper()
+	return codexGrantedFakeWith(t, features, servers, codexConfig(""))
+}
+
+func codexGrantedFakeWith(t *testing.T, features, servers, config string) (string, string) {
+	t.Helper()
 	record := filepath.Join(t.TempDir(), "record")
-	script := `if [ "$1 $2" = "features list" ] || [ "$1 $2" = "mcp list" ]; then
+	script := `if [ "$1 $2" = "features list" ] || [ "$1 $2" = "mcp list" ] || [ "$1" = app-server ]; then
   probe="` + record + `.probe"
   printf '%s\n' "$@" > "$probe"
-  cat "$probe" >> "` + record + `.config-args"
-  if [ -n "$RUN_DIR" ] && [ -f "$RUN_DIR/docker-args.txt" ]; then cp "$RUN_DIR/docker-args.txt" "` + record + `.probe-engine"; fi
-  if [ "$1" = features ]; then
+  { echo probe; cat "$probe"; } >> "` + record + `.config-args"
+  engine=probe-engine
+  if [ "$1" = app-server ]; then engine=talk-engine; fi
+  if [ -n "$RUN_DIR" ] && [ -f "$RUN_DIR/docker-args.txt" ]; then cp "$RUN_DIR/docker-args.txt" "` + record + `.$engine"; fi
+  case "$1" in
+  features)
 ` + features + `
-  else
+  ;;
+  mcp)
 ` + servers + `
-  fi
+  ;;
+  *)
+` + config + `
+  ;;
+  esac
   exit 0
 fi
 printf '%s\n' "$@" > "` + record + `.args"
@@ -114,9 +150,11 @@ var codexHeld = heldAgent{
 	},
 	runner: func(bin string) *Runner { return &Runner{CodexBin: bin} },
 	tools:  []string{"apply_patch", "mcp__tools"},
-	marker: "list",
-	// Features and servers, then both again with the whole configuration.
-	probes: 4,
+	marker: "probe",
+	// Features and servers, then both again with the whole configuration,
+	// then the app server's config/read.
+	probes: 5,
+	talks:  1,
 }
 
 // TestCodexWritableTurnIsHeldToItsGrantedTools: in every placement the
@@ -146,6 +184,10 @@ func TestCodexWritableTurnIsHeldToItsGrantedTools(t *testing.T) {
 				t.Fatalf("result: %+v", res)
 			}
 			probed(t, record)
+			dir, _ := json.Marshal(req.workDir())
+			if talk, err := os.ReadFile(record + ".probe.talk"); err != nil || !strings.Contains(string(talk), `"method":"config/read","params":{"cwd":`+string(dir)+`}`) {
+				t.Errorf("config/read did not ask about the working directory: %s, %v", talk, err)
+			}
 			args := lines(t, record+".args")
 			for _, want := range []string{
 				"--dangerously-bypass-approvals-and-sandbox", `approval_policy="never"`, "agents.enabled=false", "orchestrator.mcp.enabled=false",
@@ -211,45 +253,62 @@ func TestCodexWritableTurnKeepsItsGrantedTools(t *testing.T) {
 	}
 }
 
-// A codex turn not granted apply_patch runs in codex's read-only sandbox,
-// where the patch is rejected, and its MCP server still runs.
+// In every supported placement, a codex turn not granted apply_patch runs
+// in codex's read-only sandbox, where the patch is rejected, and its MCP
+// server still runs.
 func TestCodexWritableTurnWithoutApplyPatchIsReadOnly(t *testing.T) {
-	bin, record := codexGrantedDefault(t)
-	r, req, _ := heldPlacements(codexHeld)[0].setup(t, bin)
-	req.Grants.Tools = []string{"mcp__tools"}
-	res, err := r.Run(context.Background(), req)
-	if err != nil || res.IsError {
-		t.Fatalf("run: %+v, %v", res, err)
-	}
-	args := lines(t, record+".args")
-	if flagValue(args, "--sandbox") != "read-only" || slices.Contains(args, "--dangerously-bypass-approvals-and-sandbox") || !slices.Contains(args, `approval_policy="never"`) {
-		t.Errorf("args: %v", args)
-	}
-	if _, err := os.Stat(filepath.Join(req.workDir(), "edited.txt")); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("apply_patch wrote without being granted: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(req.workDir(), "mcp-called")); err != nil {
-		t.Errorf("the session's MCP tool did not run: %v", err)
+	for _, pl := range heldPlacements(codexHeld) {
+		t.Run(pl.where.String(), func(t *testing.T) {
+			bin, record := codexGrantedDefault(t)
+			r, req, probed := pl.setup(t, bin)
+			req.Grants.Tools = []string{"mcp__tools"}
+			res, err := r.Run(context.Background(), req)
+			if err != nil || res.IsError {
+				t.Fatalf("run: %+v, %v", res, err)
+			}
+			probed(t, record)
+			args := lines(t, record+".args")
+			if flagValue(args, "--sandbox") != "read-only" || slices.Contains(args, "--dangerously-bypass-approvals-and-sandbox") || !slices.Contains(args, `approval_policy="never"`) {
+				t.Errorf("args: %v", args)
+			}
+			if _, err := os.Stat(filepath.Join(req.workDir(), "edited.txt")); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("apply_patch wrote without being granted: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(req.workDir(), "mcp-called")); err != nil {
+				t.Errorf("the session's MCP tool did not run: %v", err)
+			}
+		})
 	}
 }
 
 // TestCodexWritableTurnRefusesAWiderEffectiveConfiguration: in every
-// supported placement, a managed configuration that keeps the shell on
-// over the runner's override is found by the inventory where the turn
-// runs, and the turn is refused before codex is launched.
+// supported placement, a managed configuration that keeps the shell on,
+// or update_plan or delegation, over the runner's override is found by
+// the inspection where the turn runs, and the turn is refused before
+// codex is launched.
 func TestCodexWritableTurnRefusesAWiderEffectiveConfiguration(t *testing.T) {
-	for _, pl := range heldPlacements(codexHeld) {
-		t.Run(pl.where.String(), func(t *testing.T) {
-			bin, record := codexGrantedFake(t, codexFeatures(`s/^\(shell_tool .*\)false$/\1true/`), codexServers(codexOwnTransport))
-			r, req, _ := pl.setup(t, bin)
-			_, err := r.Run(context.Background(), req)
-			if err == nil || !strings.Contains(err.Error(), `effective feature "shell_tool" is still enabled`) {
-				t.Fatalf("error = %v", err)
-			}
-			if _, err := os.Stat(record + ".launched"); !errors.Is(err, os.ErrNotExist) {
-				t.Fatalf("codex launched on a widened configuration: %v", err)
-			}
-		})
+	for _, widened := range []struct {
+		name, features, config, want string
+	}{
+		{"shell", codexFeatures(`s/^\(shell_tool .*\)false$/\1true/`), codexConfig(""), `effective feature "shell_tool" is still enabled`},
+		{"update_plan", codexFeatures(""), codexConfig(`s/"tools.update_plan.enabled":{"name":{"type":"sessionFlags"}}/"tools.update_plan.enabled":{"name":{"type":"mdm"}}/`),
+			`effective setting "tools.update_plan.enabled" comes from the "mdm" layer, not the turn's command line`},
+		{"delegation", codexFeatures(""), codexConfig(`s/"agents":{"enabled":false}/"agents":{"enabled":true}/;s/"agents.enabled":{"name":{"type":"sessionFlags"}}/"agents.enabled":{"name":{"type":"system"}}/`),
+			`effective setting "agents.enabled" comes from the "system" layer`},
+	} {
+		for _, pl := range heldPlacements(codexHeld) {
+			t.Run(widened.name+"/"+pl.where.String(), func(t *testing.T) {
+				bin, record := codexGrantedFakeWith(t, widened.features, codexServers(codexOwnTransport), widened.config)
+				r, req, _ := pl.setup(t, bin)
+				_, err := r.Run(context.Background(), req)
+				if err == nil || !strings.Contains(err.Error(), widened.want) {
+					t.Fatalf("error = %v, want %q", err, widened.want)
+				}
+				if _, err := os.Stat(record + ".launched"); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("codex launched on a widened configuration: %v", err)
+				}
+			})
+		}
 	}
 }
 
@@ -259,28 +318,43 @@ func TestCodexWritableTurnRefusesAWiderEffectiveConfiguration(t *testing.T) {
 func TestCodexWritableTurnFailsClosedBeforeLaunch(t *testing.T) {
 	for _, tc := range []struct {
 		name, features, servers, want string
+		config                        string
 	}{
-		{"failed feature inventory", `echo broken >&2; exit 3`, codexServers(codexOwnTransport), "list features"},
-		{"unreadable feature inventory", `echo 'shell_tool stable maybe'`, codexServers(codexOwnTransport), "unreadable line"},
-		{"empty feature inventory", `true`, codexServers(codexOwnTransport), "no feature listed"},
+		{"failed feature inventory", `echo broken >&2; exit 3`, codexServers(codexOwnTransport), "list features", ""},
+		{"unreadable feature inventory", `echo 'shell_tool stable maybe'`, codexServers(codexOwnTransport), "unreadable line", ""},
+		{"empty feature inventory", `true`, codexServers(codexOwnTransport), "no feature listed", ""},
 		{"a new feature kept on", codexFeatures(`$a\
-new_tool                      stable             true`), codexServers(codexOwnTransport), `effective feature "new_tool" is still enabled`},
-		{"failed server inventory", codexFeatures(""), `echo broken >&2; exit 3`, "list MCP servers"},
-		{"malformed server inventory", codexFeatures(""), `echo invalid`, "decode MCP servers"},
-		{"null server inventory", codexFeatures(""), `echo null`, "must be an array"},
-		{"inherited server re-enabled", codexFeatures(""), `echo '[{"name":"legacy","enabled":true},{"name":"tools","enabled":true,"transport":` + codexOwnTransport + `}]'`, `MCP server "legacy" is not disabled`},
-		{"inherited server enabled by default", codexFeatures(""), `echo '[{"name":"legacy"},{"name":"tools","enabled":true,"transport":` + codexOwnTransport + `}]'`, `MCP server "legacy" is not disabled`},
-		{"own server replaced", codexFeatures(""), codexServers(`{"type":"stdio","command":"evil","args":["-c","touch mcp-called"]}`), `MCP server "tools" is not the session's own`},
-		{"own server given an environment", codexFeatures(""), codexServers(`{"type":"stdio","command":"/bin/sh","args":["-c","touch mcp-called"],"env":{"NODE_OPTIONS":"--require /tmp/evil.js"}}`), `MCP server "tools" is not the session's own`},
-		{"own server given a directory", codexFeatures(""), codexServers(`{"type":"stdio","command":"/bin/sh","args":["-c","touch mcp-called"],"cwd":"/tmp"}`), `MCP server "tools" is not the session's own`},
-		{"own server given a key", codexFeatures(""), codexServers(`{"type":"stdio","command":"/bin/sh","args":["-c","touch mcp-called"],"wrapper":"sudo"}`), `MCP server "tools" is not the session's own`},
-		{"own server reached over http", codexFeatures(""), codexServers(`{"type":"streamable_http","url":"http://evil.example/mcp"}`), `MCP server "tools" is not the session's own`},
-		{"own server without a transport", codexFeatures(""), `echo '[{"name":"legacy","enabled":false},{"name":"tools","enabled":true}]'`, `MCP server "tools" is not the session's own`},
-		{"own server disabled", codexFeatures(""), `echo '[{"name":"legacy","enabled":false},{"name":"tools","enabled":false,"transport":` + codexOwnTransport + `}]'`, `MCP server "tools", the session's own, is not enabled`},
-		{"own server removed", codexFeatures(""), `echo '[{"name":"legacy","enabled":false}]'`, `removed the session's MCP server "tools"`},
+new_tool                      stable             true`), codexServers(codexOwnTransport), `effective feature "new_tool" is still enabled`, ""},
+		{"failed server inventory", codexFeatures(""), `echo broken >&2; exit 3`, "list MCP servers", ""},
+		{"malformed server inventory", codexFeatures(""), `echo invalid`, "decode MCP servers", ""},
+		{"null server inventory", codexFeatures(""), `echo null`, "must be an array", ""},
+		{"inherited server re-enabled", codexFeatures(""), `echo '[{"name":"legacy","enabled":true},{"name":"tools","enabled":true,"transport":` + codexOwnTransport + `}]'`, `MCP server "legacy" is not disabled`, ""},
+		{"inherited server enabled by default", codexFeatures(""), `echo '[{"name":"legacy"},{"name":"tools","enabled":true,"transport":` + codexOwnTransport + `}]'`, `MCP server "legacy" is not disabled`, ""},
+		{"own server replaced", codexFeatures(""), codexServers(`{"type":"stdio","command":"evil","args":["-c","touch mcp-called"]}`), `MCP server "tools" is not the session's own`, ""},
+		{"own server given an environment", codexFeatures(""), codexServers(`{"type":"stdio","command":"/bin/sh","args":["-c","touch mcp-called"],"env":{"NODE_OPTIONS":"--require /tmp/evil.js"}}`), `MCP server "tools" is not the session's own`, ""},
+		{"own server given a directory", codexFeatures(""), codexServers(`{"type":"stdio","command":"/bin/sh","args":["-c","touch mcp-called"],"cwd":"/tmp"}`), `MCP server "tools" is not the session's own`, ""},
+		{"own server given a key", codexFeatures(""), codexServers(`{"type":"stdio","command":"/bin/sh","args":["-c","touch mcp-called"],"wrapper":"sudo"}`), `MCP server "tools" is not the session's own`, ""},
+		{"own server reached over http", codexFeatures(""), codexServers(`{"type":"streamable_http","url":"http://evil.example/mcp"}`), `MCP server "tools" is not the session's own`, ""},
+		{"own server without a transport", codexFeatures(""), `echo '[{"name":"legacy","enabled":false},{"name":"tools","enabled":true}]'`, `MCP server "tools" is not the session's own`, ""},
+		{"own server disabled", codexFeatures(""), `echo '[{"name":"legacy","enabled":false},{"name":"tools","enabled":false,"transport":` + codexOwnTransport + `}]'`, `MCP server "tools", the session's own, is not enabled`, ""},
+		{"own server removed", codexFeatures(""), `echo '[{"name":"legacy","enabled":false}]'`, `removed the session's MCP server "tools"`, ""},
+		{"app server without an answer", codexFeatures(""), codexServers(codexOwnTransport), "ended without answering config/read", `exit 0`},
+		{"app server failed", codexFeatures(""), codexServers(codexOwnTransport), "read effective configuration", `echo broken >&2; exit 3`},
+		{"config/read refused", codexFeatures(""), codexServers(codexOwnTransport), "config/read: not allowed", codexConfig(`s/.*/{"id":2,"error":{"message":"not allowed"}}/`)},
+		{"config/read malformed", codexFeatures(""), codexServers(codexOwnTransport), "decode effective configuration", codexConfig(`s/.*/{"id":2,"result":"x"}/`)},
+		{"config/read without origins", codexFeatures(""), codexServers(codexOwnTransport), "no config or origins", codexConfig(`s/.*/{"id":2,"result":{"config":{}}}/`)},
+		{"a setting without an origin", codexFeatures(""), codexServers(codexOwnTransport), `effective setting "tools.update_plan.enabled" has no origin`,
+			codexConfig(`s/"tools.update_plan.enabled":{"name":{"type":"sessionFlags"}},//`)},
+		{"a setting with another value", codexFeatures(""), codexServers(codexOwnTransport), `effective setting "web_search" is live, want "disabled"`,
+			codexConfig(`s/"web_search":"disabled"/"web_search":"live"/`)},
+		{"approvals asked for", codexFeatures(""), codexServers(codexOwnTransport), `effective setting "approval_policy" is on-request`,
+			codexConfig(`s/"approval_policy":"never"/"approval_policy":"on-request"/`)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			bin, record := codexGrantedFake(t, tc.features, tc.servers)
+			if tc.config == "" {
+				tc.config = codexConfig("")
+			}
+			bin, record := codexGrantedFakeWith(t, tc.features, tc.servers, tc.config)
 			r, req, _ := heldPlacements(codexHeld)[0].setup(t, bin)
 			_, err := r.Run(context.Background(), req)
 			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "granted codex setup") {

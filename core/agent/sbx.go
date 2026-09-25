@@ -166,22 +166,27 @@ func (s *sandbox) command(_ context.Context, bin string, args []string) (string,
 }
 
 // probe runs a command in the session's sandbox before the session's own:
-// `sbx exec` without stdin, with the session's variables and the backend's
-// extra ones laid over them.
-func (s *sandbox) probe(ctx context.Context, bin string, args []string, extra []envVar) ([]byte, error) {
+// `sbx exec` without stdin unless talk converses over it, with the
+// session's variables and the backend's extra ones laid over them.
+func (s *sandbox) probe(ctx context.Context, bin string, args []string, extra []envVar, talk talker) ([]byte, error) {
 	if _, err := agentbin.Resolve(bin); err != nil {
 		return nil, err
 	}
 	p := *s
 	p.vars = append(slices.Clone(s.vars), extra...)
 	sbx, sbxArgs, err := p.execCommand(bin, args, false)
+	if talk != nil && err == nil {
+		// After --workdir, so the probe keeps a probe's shape: the
+		// session's own exec is the one that starts with --interactive.
+		sbxArgs = slices.Insert(sbxArgs, 3, "--interactive")
+	}
 	if err != nil {
 		return nil, err
 	}
 	cmd := agentbin.CommandContext(ctx, sbx, sbxArgs...)
 	cmd.Dir = s.req.workDir()
 	cmd.Env = p.clientEnv()
-	return runProbe(cmd, nil, nil)
+	return runProbe(cmd, nil, nil, talk)
 }
 
 // execCommand is the `sbx exec` command line that runs bin with args in

@@ -143,6 +143,7 @@ exec)
     while [ $# -gt 0 ]; do
       case "$1" in
       --env|--workdir) shift 2 ;;
+      --interactive) shift ;;
       *) shift; break ;;
       esac
     done

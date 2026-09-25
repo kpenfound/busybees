@@ -91,13 +91,16 @@ func grantedProfile() Profile {
 // by inspecting its effective configuration before launch: how its
 // profile, runner and grant are made, and how its fake records the
 // inspections (probes, each writing its arguments one per line to
-// record.config-args, marker among them).
+// record.config-args, marker among them; talks of them converse over
+// stdin, the last one, and copy the engine's arguments to
+// record.talk-engine instead of record.probe-engine).
 type heldAgent struct {
 	profile func() Profile
 	runner  func(bin string) *Runner
 	tools   []string
 	marker  string
 	probes  int
+	talks   int
 }
 
 var openCodeHeld = heldAgent{
@@ -171,6 +174,12 @@ func heldPlacements(a heldAgent) []grantedPlacement {
 				if slices.Contains(engine, "--cidfile") || slices.Contains(engine, "--interactive") {
 					t.Errorf("the inventory took the session's container id file or stdin: %v", engine)
 				}
+				if a.talks > 0 {
+					talk := lines(t, record+".talk-engine")
+					if !strings.HasSuffix(flagValue(talk, "--name"), "-probe") || !slices.Contains(talk, "--interactive") || slices.Contains(talk, "--cidfile") || !slices.Contains(talk, "image") {
+						t.Errorf("conversing probe's engine command: %v", talk)
+					}
+				}
 			}
 		}},
 		{Placement{Sandbox: SandboxSbx}, func(t *testing.T, bin string) (*Runner, Request, func(*testing.T, string)) {
@@ -182,9 +191,10 @@ func heldPlacements(a heldAgent) []grantedPlacement {
 			r := runner(t, bin)
 			r.SbxBin = agenttest.Sbx(t, "RUN_DIR")
 			return r, req, func(t *testing.T, record string) {
-				// Every inventory ran in the session's sandbox, without stdin.
+				// Every inventory ran in the session's sandbox, without
+				// stdin unless it converses over it.
 				probes := lines(t, filepath.Join(filepath.Dir(r.SbxBin), "sbx-probe.txt"))
-				if execs := countLines(probes, "exec"); execs != a.probes || slices.Contains(probes, "--interactive") || !slices.Contains(probes, work) {
+				if execs := countLines(probes, "exec"); execs != a.probes || countLines(probes, "--interactive") != a.talks || !slices.Contains(probes, work) {
 					t.Errorf("inventories in the sandbox: %v", probes)
 				}
 			}
