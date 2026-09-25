@@ -65,7 +65,11 @@ for the length of the turn, over loopback with a token only that session
 has: `read_file`, `list_directory` and `search_files`, which read the
 directory the session runs in and refuse any path or link outside it. An `opencode` session runs in pure mode as a private
 agent whose only tools are read, grep and glob, and the configuration it
-resolves is checked to have taken them before the model runs. A `pi`
+resolves is checked to have taken them before the model runs. It is refused
+when opencode would load a custom tool: a file in `tool/` or `tools/` under
+`$XDG_CONFIG_HOME/opencode` (else `~/.config/opencode`), `~/.opencode`, `$OPENCODE_CONFIG_DIR` or a
+`.opencode` directory from the repository checkout up. Remove the file to
+review the pull request. A `pi`
 session loads no extension, skill, prompt template or context file, and
 gets only its `read`, `grep`, `find` and `ls` tools. No session runs the
 tests, builds the change or writes to the repository, and none inherits

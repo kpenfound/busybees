@@ -69,7 +69,8 @@ remove collaboration tools for models that advertise them. Its JavaScript
 OpenCode runs in pure mode
 as a private agent whose effective configuration is probed before launch: only
 read, grep and glob are allowed and every inherited MCP server must resolve
-disabled. Pi loads no extension (including the ordinary MCP adapter), skill,
+disabled. The turn is refused before that when OpenCode would load a custom
+tool (see the OpenCode tools bullet below). Pi loads no extension (including the ordinary MCP adapter), skill,
 prompt template or context file and receives only its read, grep, find and ls
 tools. Every backend descriptor declares whether it can establish this contract
 and whether it supports follow-up; Codex deliberately does not resume. A
@@ -226,6 +227,20 @@ builder: grant cannot be enforced: agent "opencode" cannot hold a writable turn 
   (command, url, environment, headers, or a key added). A `{env:NAME}`
   reference matches as written or resolved against the turn's
   environment.
+  Custom tools refuse the turn before any of that. OpenCode imports every
+  file in the `tool/` and `tools/` directories of its configuration roots
+  as a tool, even with `--pure`, and it does so before any permission
+  applies. A file named after a granted tool, such as `read.ts`, takes that
+  tool's permission. The roots are `$XDG_CONFIG_HOME/opencode` (else
+  `~/.config/opencode`), every `.opencode` directory from the working
+  directory up, `~/.opencode` and `$OPENCODE_CONFIG_DIR`. Where the turn
+  will run, and with its environment, the runner starts the opencode
+  executable as its Bun runtime (`BUN_BE_BUN=1 opencode --config=/dev/null
+  --no-env-file -e <script>`) to list those directories. It refuses the
+  turn when the list holds any file, when a directory cannot be read, or
+  when the executable does not answer with the list. This applies to
+  `RunRestricted` and to turns granted named tools; a turn granted `*`
+  is not searched and loads whatever custom tools opencode finds.
 - Codex tools are named by the Codex control that holds them:
 
   | Tool | Held by |

@@ -138,6 +138,7 @@ func supportNowhere(remedy string) map[Placement]ToolSupport {
 
 // openCodeWritableTools is where opencode's granted agent (backend.go:
 // opencodeBackend) is verified before launch: wherever the runner can run
+// the search for custom tools (opencode_customtools.go) and
 // `opencode debug config` the way the turn itself runs, on the host,
 // under the same confinement, in the same image or in the same sandbox.
 // Claude Code's sandbox runs claude alone.
