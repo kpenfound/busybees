@@ -121,7 +121,11 @@ func TestHeldOpenCodeTurnSearchesForCustomToolsFirst(t *testing.T) {
 			if !launched(record) {
 				t.Fatal("the turn did not start")
 			}
-			if got := lines(t, record+".scan-args"); !slices.Equal(got, strings.Split(strings.Join(openCodeToolScanArgs, "\n"), "\n")) {
+			// Bun reads neither its configuration file nor .env files from the
+			// working directory for the scan: a repository could preload code
+			// into it with either.
+			got := lines(t, record+".scan-args")
+			if len(got) < 4 || !slices.Equal(got[:3], []string{"--config=/dev/null", "--no-env-file", "-e"}) || !strings.HasPrefix(got[3], "const fs = require(") {
 				t.Errorf("scan arguments = %q", got)
 			}
 			scanEnv, err := os.ReadFile(record + ".scan-env")
