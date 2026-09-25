@@ -221,7 +221,7 @@ func TestRunRestrictedUsesTheSharedOpenCodeBackend(t *testing.T) {
 			t.Errorf("environment missing %q:\n%s", want, env)
 		}
 	}
-	var content opencodeRestrictedConfig
+	var content opencodeHeldConfig
 	for _, line := range strings.Split(string(env), "\n") {
 		if value, ok := strings.CutPrefix(line, EnvOpenCodeConfigContent+"="); ok {
 			if err := json.Unmarshal([]byte(value), &content); err != nil {

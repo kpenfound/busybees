@@ -227,15 +227,49 @@ func (r *Runner) containerListen(ctx context.Context) (string, error) {
 // client's own environment (clientEnv), so no secret appears on a command
 // line another user of the machine can list.
 func (c *container) command(ctx context.Context, bin string, args []string) (string, []string, error) {
-	r, req := c.r, c.req
-	out := []string{
-		"run", "--rm", "--interactive",
-		"--name", c.name,
-		"--cidfile", filepath.Join(c.sessionDir, procs.ContainerIDFile),
-		"--label", r.containerLabel() + "=" + c.sessionDir,
-		"--workdir", req.workDir(),
-		"--mount", "type=tmpfs,destination=" + r.containerHome() + ",tmpfs-mode=1777",
+	return c.engineCommand(bin, args, true)
+}
+
+// probe runs a command in a container of its own that is the session's in
+// everything but its name, its stdin and the container id file: the same
+// image, binds, user, home and environment, with the backend's variables
+// extra laid over it. The session's container does not exist yet, and the
+// probe's is gone (--rm) before it starts.
+func (c *container) probe(ctx context.Context, bin string, args []string, extra []envVar) ([]byte, error) {
+	if _, err := agentbin.Resolve(bin); err != nil {
+		return nil, err
 	}
+	p := *c
+	p.name = c.name + "-probe"
+	p.vars = append(slices.Clone(c.vars), extra...)
+	engine, engineArgs, err := p.engineCommand(bin, args, false)
+	if err != nil {
+		return nil, err
+	}
+	cmd := agentbin.CommandContext(ctx, engine, engineArgs...)
+	cmd.Dir = c.req.workDir()
+	cmd.Env = p.clientEnv()
+	return runProbe(cmd, nil, p.remove)
+}
+
+// engineCommand is the engine's command line for a container that runs bin
+// with args: the session's own (session: its prompt on stdin and its id in
+// the session directory) or a probe's.
+func (c *container) engineCommand(bin string, args []string, session bool) (string, []string, error) {
+	r, req := c.r, c.req
+	out := []string{"run", "--rm"}
+	if session {
+		out = append(out, "--interactive")
+	}
+	out = append(out, "--name", c.name)
+	if session {
+		out = append(out, "--cidfile", filepath.Join(c.sessionDir, procs.ContainerIDFile))
+	}
+	out = append(out,
+		"--label", r.containerLabel()+"="+c.sessionDir,
+		"--workdir", req.workDir(),
+		"--mount", "type=tmpfs,destination="+r.containerHome()+",tmpfs-mode=1777",
+	)
 	out = append(out, c.mounts()...)
 	// The session runs as the host's user, not the image's: claude refuses
 	// --dangerously-skip-permissions as root, and on Linux what the session

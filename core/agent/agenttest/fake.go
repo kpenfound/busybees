@@ -106,9 +106,12 @@ exec sleep 60
 // is there; `exec --interactive`, the session's command, records its
 // arguments and the client's environment in the directory sessionVariable
 // names (sbx-exec-args.txt, sbx-exec-env.txt) and runs the command after the
-// sandbox name on this machine; any other `exec`, a setup command, is
-// appended to sbx-setup.txt beside the script, one argument per line, runs
-// nothing and fails when a file named fail-setup is there; `rm` records
+// sandbox name on this machine; `exec --workdir`, a probe the runner runs
+// before the session's command, appends its arguments to sbx-probe.txt
+// beside the script and runs its command the same way; any other `exec`, a
+// setup command, is appended to sbx-setup.txt beside the script, one
+// argument per line, runs nothing and fails when a file named fail-setup
+// is there; `rm` records
 // its arguments in sbx-rm.txt beside the script; `version` prints one.
 func Sbx(t *testing.T, sessionVariable string) string {
 	t.Helper()
@@ -134,6 +137,17 @@ rm)
   exit 0
   ;;
 exec)
+  if [ "$2" = "--workdir" ]; then
+    printf '%s\n' "$@" >> "$here/sbx-probe.txt"
+    shift
+    while [ $# -gt 0 ]; do
+      case "$1" in
+      --env|--workdir) shift 2 ;;
+      *) shift; break ;;
+      esac
+    done
+    exec "$@"
+  fi
   if [ "$2" != "--interactive" ]; then
     printf '%s\n' "$@" >> "$here/sbx-setup.txt"
     if [ -f "$here/fail-setup" ]; then

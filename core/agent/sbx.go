@@ -162,7 +162,37 @@ func (s *sandbox) workspaces() ([]string, error) {
 // sandbox and the command, behind a shell that puts the stand-ins for the
 // denied executables first on PATH when the turn has any.
 func (s *sandbox) command(_ context.Context, bin string, args []string) (string, []string, error) {
-	out := []string{"exec", "--interactive", "--workdir", s.req.workDir()}
+	return s.execCommand(bin, args, true)
+}
+
+// probe runs a command in the session's sandbox before the session's own:
+// `sbx exec` without stdin, with the session's variables and the backend's
+// extra ones laid over them.
+func (s *sandbox) probe(ctx context.Context, bin string, args []string, extra []envVar) ([]byte, error) {
+	if _, err := agentbin.Resolve(bin); err != nil {
+		return nil, err
+	}
+	p := *s
+	p.vars = append(slices.Clone(s.vars), extra...)
+	sbx, sbxArgs, err := p.execCommand(bin, args, false)
+	if err != nil {
+		return nil, err
+	}
+	cmd := agentbin.CommandContext(ctx, sbx, sbxArgs...)
+	cmd.Dir = s.req.workDir()
+	cmd.Env = p.clientEnv()
+	return runProbe(cmd, nil, nil)
+}
+
+// execCommand is the `sbx exec` command line that runs bin with args in
+// the sandbox: the session's own (session: stdin kept open for its prompt)
+// or a probe's.
+func (s *sandbox) execCommand(bin string, args []string, session bool) (string, []string, error) {
+	out := []string{"exec"}
+	if session {
+		out = append(out, "--interactive")
+	}
+	out = append(out, "--workdir", s.req.workDir())
 	for _, v := range dedupe(s.vars) {
 		if v.name == "HOME" {
 			// The client keeps its own HOME to find its configuration

@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,10 +13,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
-	"github.com/kpenfound/busybees/core/agent/agentbin"
 	"github.com/kpenfound/busybees/core/agent/procs"
 )
 
@@ -60,6 +57,9 @@ type sessionPaths struct {
 	mcp map[string]MCPEntry
 	// turn is the verified request.
 	turn *Turn
+	// probe runs a command of the agent's where the turn will run, before
+	// it does.
+	probe prober
 	// read is the restricted turn's read server, for a backend that
 	// declares RestrictedCapabilities.ReadServer, and nil otherwise.
 	read *readServer
@@ -514,13 +514,21 @@ func makeSuccessEnd(sessionID, result string, turns int) *streamEnd {
 //     rejects what would ask. --auto is passed, the counterpart of
 //     --dangerously-skip-permissions: it approves those and leaves an
 //     explicit "deny" in the project's own configuration in force.
-//     RunRestricted does not use auto approval. It starts a private primary
-//     agent whose exact effective permissions allow only read, grep and glob,
-//     and runs with --pure so discovered plugins and their hooks cannot load.
-//     `opencode debug config` is run before the model: inherited MCP servers
-//     are explicitly disabled through the highest-precedence inline config,
-//     and a second inventory refuses the launch if a managed or malformed
-//     configuration defeated either restriction.
+//     A held turn does not use auto approval: RunRestricted, and a
+//     writable turn whose grants name built-in tools rather than ToolsAll.
+//     It starts a private primary agent (opencodeHold) whose exact
+//     effective permissions deny every tool but the held ones — read, grep
+//     and glob for RunRestricted's `bees-read-only`; the granted built-in
+//     tools (openCodeTools) and every tool of the session's own MCP
+//     servers for `bees-granted` — and runs with --pure so discovered
+//     plugins and their hooks cannot load. `opencode debug config` is run
+//     before the model, where the turn will run (prober): inherited MCP
+//     servers are explicitly disabled through the highest-precedence
+//     inline config, and a second inventory refuses the launch if a
+//     managed or malformed configuration defeated either restriction or
+//     replaced one of the session's own servers. Where the runner cannot
+//     run that inventory the way the turn runs, the backend descriptor's
+//     WritableTools refuses the grant before anything starts.
 //   - opencode has no flag to append to the system prompt, no --mcp-config
 //     and no --add-dir, but it reads one more configuration file from the
 //     path OPENCODE_CONFIG names, merged over its global one and under the
@@ -568,14 +576,17 @@ const EnvOpenCodeConfig = "OPENCODE_CONFIG"
 
 const (
 	// EnvOpenCodeConfigContent is opencode's highest-precedence inline
-	// configuration. Restricted execution owns it even when the caller
-	// inherited or supplied another value.
+	// configuration. A held turn (opencodeHold) owns it even when the
+	// caller inherited or supplied another value.
 	EnvOpenCodeConfigContent = "OPENCODE_CONFIG_CONTENT"
 	// EnvOpenCodePermission is applied after every file-backed permission
-	// source. The restricted agent repeats the same permissions because its
+	// source. The held agent repeats the same permissions because its
 	// rules take precedence over the global ones.
 	EnvOpenCodePermission   = "OPENCODE_PERMISSION"
 	openCodeRestrictedAgent = "bees-read-only"
+	// openCodeGrantedAgent is the primary agent a writable turn runs as
+	// when its grants name built-in tools rather than ToolsAll.
+	openCodeGrantedAgent = "bees-granted"
 )
 
 var openCodeRestrictedPermissions = map[string]string{
@@ -585,19 +596,79 @@ var openCodeRestrictedPermissions = map[string]string{
 	"glob": "allow",
 }
 
+// openCodeTools are the permissions opencode's built-in tools ask for: the
+// built-in tool names a grant may give an opencode turn. "edit" covers
+// every tool that changes a file (edit, write, patch); "external_directory"
+// lets those tools reach outside the working directory.
+var openCodeTools = []string{
+	"bash", "codesearch", "edit", "external_directory", "glob", "grep", "list",
+	"lsp", "read", "skill", "todoread", "todowrite", "webfetch", "websearch",
+}
+
+// openCodeUngranted are the permissions opencode asks for that no grant
+// gives: "task" starts subagents, which run under their own permissions
+// rather than the turn's, and the others ask a person something.
+var openCodeUngranted = []string{"doom_loop", "plan_enter", "plan_exit", "question", "task", "workflow_tool_approval"}
+
+// checkTools holds an opencode grant to opencode's own vocabulary. An MCP
+// server's tools are named "<server>_<tool>", and the granted agent allows
+// them with the pattern "<server>_*", so a server whose pattern would match
+// one of opencode's own permissions is refused rather than let it grant
+// that permission too.
+func (opencodeBackend) checkTools(tools, servers []string) error {
+	for _, t := range tools {
+		if t == "task" {
+			return fmt.Errorf("%w: agent %q cannot be granted %q: its subagents run under their own permissions, not the turn's", ErrUnsupported, AgentOpenCode, t)
+		}
+		if !slices.Contains(openCodeTools, t) {
+			return fmt.Errorf("%w: agent %q has no built-in tool %q; grant one of %s", ErrUnsupported, AgentOpenCode, t, strings.Join(openCodeTools, ", "))
+		}
+	}
+	for _, s := range servers {
+		prefix := openCodeToolPrefix(s)
+		for _, name := range append(slices.Clone(openCodeTools), openCodeUngranted...) {
+			if strings.HasPrefix(name, prefix) {
+				return fmt.Errorf("%w: agent %q allows MCP server %q's tools as %q, which also matches its own permission %q; rename the server", ErrUnsupported, AgentOpenCode, s, prefix+"*", name)
+			}
+		}
+	}
+	return nil
+}
+
+// openCodeToolPrefix is what opencode names every tool of an MCP server
+// with: the server's name with each character outside [A-Za-z0-9_-]
+// replaced by "_", then "_".
+func openCodeToolPrefix(server string) string {
+	var b strings.Builder
+	for _, r := range server {
+		if r == '_' || r == '-' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('_')
+		}
+	}
+	return b.String() + "_"
+}
+
 // OpenCodeConfigFile is the name of that file in the session directory.
 const OpenCodeConfigFile = "opencode.json"
 
 func (opencodeBackend) command(ctx context.Context, r *Runner, b Backend, req Request, paths sessionPaths) (string, []string, string, []envVar, error) {
 	bin := b.executable(r)
+	// A writable turn whose grants name built-in tools is held to them
+	// the way a restricted one is held to its read-only floor.
+	granted := !paths.restricted && paths.turn != nil && paths.turn.Tools != nil
 	args := []string{}
-	if paths.restricted {
+	if paths.restricted || granted {
 		args = append(args, "--pure")
 	}
 	args = append(args, "run", "--format", "json")
-	if paths.restricted {
+	switch {
+	case paths.restricted:
 		args = append(args, "--title", r.namePrefix()+req.Name, "--agent", openCodeRestrictedAgent)
-	} else {
+	case granted:
+		args = append(args, "--title", r.namePrefix()+req.Name, "--agent", openCodeGrantedAgent)
+	default:
 		// Keep the ordinary command's public shape: tests and container
 		// wrappers have always seen --auto directly after the format.
 		args = append(args, "--auto", "--title", r.namePrefix()+req.Name)
@@ -614,18 +685,24 @@ func (opencodeBackend) command(ctx context.Context, r *Runner, b Backend, req Re
 		instructions = ""
 	}
 	effort := req.Profile.Effort
-	if paths.restricted {
+	if paths.restricted || granted {
+		// The held agent carries the variant.
 		effort = ""
 	}
 	if err := writeOpenCodeConfig(configPath, instructions, paths.mcp, effort); err != nil {
 		return "", nil, "", nil, err
 	}
 	extra := []envVar{{EnvOpenCodeConfig, configPath}}
-	if paths.restricted {
-		var err error
-		extra, err = openCodeRestrictedEnvironment(ctx, bin, req.workDir(), paths.turn.Env, extra, req.Profile.Effort)
-		if err != nil {
+	var err error
+	switch {
+	case paths.restricted:
+		if extra, err = openCodeHeldEnvironment(ctx, paths.probe, bin, extra, openCodeReadOnlyHold(req.Profile.Effort)); err != nil {
 			return "", nil, "", nil, fmt.Errorf("restricted opencode setup: %w", err)
+		}
+	case granted:
+		hold := openCodeGrantedHold(paths.turn.Tools, opencodeServers(paths.mcp), req.Profile.Effort)
+		if extra, err = openCodeHeldEnvironment(ctx, paths.probe, bin, extra, hold); err != nil {
+			return "", nil, "", nil, fmt.Errorf("granted opencode setup: %w", err)
 		}
 	}
 	return bin, args, req.Prompt, extra, nil
@@ -633,9 +710,10 @@ func (opencodeBackend) command(ctx context.Context, r *Runner, b Backend, req Re
 
 // opencodeMCP is one server of opencode.json's mcp table: a local one by
 // its command line (the executable and its arguments in one list) and
-// environment, a remote one by its url and headers.
+// environment, a remote one by its url and headers. A server a held turn
+// disables is its enabled key alone.
 type opencodeMCP struct {
-	Type        string            `json:"type"`
+	Type        string            `json:"type,omitempty"`
 	Command     []string          `json:"command,omitempty"`
 	Environment map[string]string `json:"environment,omitempty"`
 	URL         string            `json:"url,omitempty"`
@@ -662,65 +740,114 @@ type opencodeConfig struct {
 	MCP          map[string]opencodeMCP   `json:"mcp"`
 }
 
-type opencodeRestrictedConfig struct {
-	Agent    map[string]opencodeAgent       `json:"agent"`
-	MCP      map[string]opencodeDisabledMCP `json:"mcp"`
-	Plugin   []string                       `json:"plugin"`
-	Share    string                         `json:"share"`
-	Snapshot bool                           `json:"snapshot"`
-}
-
-type opencodeDisabledMCP struct {
-	Enabled bool `json:"enabled"`
+// opencodeHeldConfig is the inline configuration of a held turn.
+type opencodeHeldConfig struct {
+	Agent    map[string]opencodeAgent `json:"agent"`
+	MCP      map[string]opencodeMCP   `json:"mcp"`
+	Plugin   []string                 `json:"plugin"`
+	Share    string                   `json:"share"`
+	Snapshot bool                     `json:"snapshot"`
 }
 
 type opencodeResolvedConfig struct {
 	Agent map[string]struct {
 		Mode       string            `json:"mode"`
+		Disable    bool              `json:"disable"`
 		Permission map[string]string `json:"permission"`
 		Tools      map[string]bool   `json:"tools"`
 	} `json:"agent"`
 	MCP map[string]struct {
-		Enabled *bool `json:"enabled"`
+		Type    string   `json:"type"`
+		Command []string `json:"command"`
+		URL     string   `json:"url"`
+		Enabled *bool    `json:"enabled"`
 	} `json:"mcp"`
 }
 
-func openCodeRestrictedEnvironment(ctx context.Context, bin, dir string, env []string, base []envVar, effort string) ([]envVar, error) {
-	content, err := openCodeRestrictedContent(nil, effort)
+// opencodeHold is the primary agent a held turn runs as, and what the
+// effective configuration must say of it before the model starts: the
+// agent with exactly these permissions, every MCP server but the
+// session's own disabled, and the session's own as the runner wrote them.
+type opencodeHold struct {
+	agent       string
+	kind        string
+	description string
+	permission  map[string]string
+	servers     map[string]opencodeMCP
+	effort      string
+}
+
+// openCodeReadOnlyHold is RunRestricted's floor: read, grep and glob, and
+// no MCP server at all.
+func openCodeReadOnlyHold(effort string) opencodeHold {
+	return opencodeHold{
+		agent: openCodeRestrictedAgent, kind: "read-only", description: "Read-only analysis managed by the caller",
+		permission: maps.Clone(openCodeRestrictedPermissions), effort: effort,
+	}
+}
+
+// openCodeGrantedHold is a writable turn's grant: every built-in tool
+// denied but the granted ones, and every tool of the session's own MCP
+// servers allowed.
+func openCodeGrantedHold(tools []string, servers map[string]opencodeMCP, effort string) opencodeHold {
+	permission := map[string]string{"*": "deny"}
+	for _, t := range tools {
+		permission[t] = "allow"
+	}
+	for name := range servers {
+		permission[openCodeToolPrefix(name)+"*"] = "allow"
+	}
+	return opencodeHold{
+		agent: openCodeGrantedAgent, kind: "granted", description: "Built-in tools granted by the caller",
+		permission: permission, servers: servers, effort: effort,
+	}
+}
+
+// openCodeHeldEnvironment builds a held turn's variables and verifies them
+// before the model starts: a first inventory names the MCP servers the
+// effective configuration inherits, which the inline configuration then
+// disables, and a second one refuses the launch when a managed or
+// malformed configuration defeated the hold. Both run where the turn will
+// (probe).
+func openCodeHeldEnvironment(ctx context.Context, probe prober, bin string, base []envVar, hold opencodeHold) ([]envVar, error) {
+	content, err := openCodeHeldContent(hold, nil)
 	if err != nil {
 		return nil, err
 	}
-	extra := append(slices.Clone(base), openCodeRestrictedEnv(content)...)
-	resolved, err := openCodeConfigInventory(ctx, bin, dir, environmentWith(env, extra))
+	extra := append(slices.Clone(base), openCodeHeldEnv(hold, content)...)
+	resolved, err := openCodeConfigInventory(ctx, probe, bin, extra)
 	if err != nil {
 		return nil, err
 	}
-	content, err = openCodeRestrictedContent(sortedKeys(resolved.MCP), effort)
+	content, err = openCodeHeldContent(hold, sortedKeys(resolved.MCP))
 	if err != nil {
 		return nil, err
 	}
-	extra = append(slices.Clone(base), openCodeRestrictedEnv(content)...)
-	resolved, err = openCodeConfigInventory(ctx, bin, dir, environmentWith(env, extra))
+	extra = append(slices.Clone(base), openCodeHeldEnv(hold, content)...)
+	resolved, err = openCodeConfigInventory(ctx, probe, bin, extra)
 	if err != nil {
 		return nil, err
 	}
-	if err := validateOpenCodeRestriction(resolved); err != nil {
+	if err := validateOpenCodeHold(resolved, hold); err != nil {
 		return nil, err
 	}
 	return extra, nil
 }
 
-func openCodeRestrictedContent(servers []string, effort string) (string, error) {
-	mcp := make(map[string]opencodeDisabledMCP, len(servers))
+// openCodeHeldContent is the inline configuration of a held turn: the
+// agent, the session's own servers, and servers disabled.
+func openCodeHeldContent(hold opencodeHold, servers []string) (string, error) {
+	mcp := make(map[string]opencodeMCP, len(servers)+len(hold.servers))
 	for _, name := range servers {
-		mcp[name] = opencodeDisabledMCP{Enabled: false}
+		mcp[name] = opencodeMCP{Enabled: false}
 	}
-	cfg := opencodeRestrictedConfig{
-		Agent: map[string]opencodeAgent{openCodeRestrictedAgent: {
-			Description: "Read-only analysis managed by the caller",
+	maps.Copy(mcp, hold.servers)
+	cfg := opencodeHeldConfig{
+		Agent: map[string]opencodeAgent{hold.agent: {
+			Description: hold.description,
 			Mode:        "primary",
-			Variant:     effort,
-			Permission:  maps.Clone(openCodeRestrictedPermissions),
+			Variant:     hold.effort,
+			Permission:  maps.Clone(hold.permission),
 		}},
 		MCP: mcp, Plugin: []string{}, Share: "disabled", Snapshot: false,
 	}
@@ -728,8 +855,8 @@ func openCodeRestrictedContent(servers []string, effort string) (string, error) 
 	return string(data), err
 }
 
-func openCodeRestrictedEnv(content string) []envVar {
-	permissions, _ := json.Marshal(openCodeRestrictedPermissions)
+func openCodeHeldEnv(hold opencodeHold, content string) []envVar {
+	permissions, _ := json.Marshal(hold.permission)
 	return []envVar{
 		{EnvOpenCodeConfigContent, content},
 		{EnvOpenCodePermission, string(permissions)},
@@ -743,37 +870,40 @@ func openCodeRestrictedEnv(content string) []envVar {
 	}
 }
 
-func openCodeConfigInventory(ctx context.Context, bin, dir string, env []string) (opencodeResolvedConfig, error) {
-	cmd := agentbin.CommandContext(ctx, bin, "--pure", "debug", "config")
-	cmd.Dir = dir
-	cmd.Env = env
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
-	cmd.WaitDelay = 10 * time.Second
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := cmd.Run(); err != nil {
-		return opencodeResolvedConfig{}, fmt.Errorf("inspect effective configuration: %w%s", err, stderrTail(stderr.String()))
+func openCodeConfigInventory(ctx context.Context, probe prober, bin string, extra []envVar) (opencodeResolvedConfig, error) {
+	out, err := probe(ctx, bin, []string{"--pure", "debug", "config"}, extra)
+	if err != nil {
+		return opencodeResolvedConfig{}, fmt.Errorf("inspect effective configuration: %w", err)
 	}
 	var cfg opencodeResolvedConfig
-	if err := json.Unmarshal(stdout.Bytes(), &cfg); err != nil {
+	if err := json.Unmarshal(out, &cfg); err != nil {
 		return opencodeResolvedConfig{}, fmt.Errorf("decode effective configuration: %w", err)
 	}
 	return cfg, nil
 }
 
-func validateOpenCodeRestriction(cfg opencodeResolvedConfig) error {
-	agent, ok := cfg.Agent[openCodeRestrictedAgent]
+func validateOpenCodeHold(cfg opencodeResolvedConfig, hold opencodeHold) error {
+	agent, ok := cfg.Agent[hold.agent]
 	if !ok {
-		return fmt.Errorf("effective configuration removed agent %q", openCodeRestrictedAgent)
+		return fmt.Errorf("effective configuration removed agent %q", hold.agent)
+	}
+	if agent.Disable {
+		// opencode runs its default agent in place of a disabled one.
+		return fmt.Errorf("effective configuration disabled agent %q", hold.agent)
 	}
 	if agent.Mode != "primary" {
-		return fmt.Errorf("effective agent %q has mode %q, want primary", openCodeRestrictedAgent, agent.Mode)
+		return fmt.Errorf("effective agent %q has mode %q, want primary", hold.agent, agent.Mode)
 	}
-	if !maps.Equal(agent.Permission, openCodeRestrictedPermissions) || len(agent.Tools) != 0 {
-		return fmt.Errorf("effective agent %q does not have the exact read-only permissions", openCodeRestrictedAgent)
+	if !maps.Equal(agent.Permission, hold.permission) || len(agent.Tools) != 0 {
+		return fmt.Errorf("effective agent %q does not have the exact %s permissions", hold.agent, hold.kind)
 	}
 	for name, server := range cfg.MCP {
+		if own, ok := hold.servers[name]; ok {
+			if server.Type != own.Type || !slices.Equal(server.Command, own.Command) || server.URL != own.URL {
+				return fmt.Errorf("effective MCP server %q is not the session's own", name)
+			}
+			continue
+		}
 		if server.Enabled == nil || *server.Enabled {
 			return fmt.Errorf("effective MCP server %q is not disabled", name)
 		}
