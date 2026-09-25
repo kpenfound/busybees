@@ -384,16 +384,17 @@ func checkBuiltinTools(req Request, restricted bool) error {
 		if req.HostMCP != nil && !slices.Contains(servers, req.HostMCP.Name) {
 			servers = append(servers, req.HostMCP.Name)
 		}
-		return v.checkTools(tools, servers)
+		return v.checkTools(PlacementOf(p), tools, servers)
 	}
 	return nil
 }
 
 // toolVocabulary is implemented by a backend whose built-in tools have
-// names of their own: it refuses a granted name it does not have, and an
-// MCP server its permissions could not tell apart from a built-in tool.
+// names of their own: it refuses a granted name it does not have, a grant
+// it cannot express exactly where the turn runs, and an MCP server its
+// permissions could not tell apart from a built-in tool.
 type toolVocabulary interface {
-	checkTools(tools, servers []string) error
+	checkTools(where Placement, tools, servers []string) error
 }
 
 // verifyDagger checks the Dagger engine against its grant: given only in

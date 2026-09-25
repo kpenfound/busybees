@@ -142,8 +142,22 @@ func supportNowhere(remedy string) map[Placement]ToolSupport {
 // under the same confinement, in the same image or in the same sandbox.
 // Claude Code's sandbox runs claude alone.
 func openCodeWritableTools() map[Placement]ToolSupport {
+	return supportOutsideClaudeBox(AgentOpenCode)
+}
+
+// codexWritableTools is where codex's granted configuration
+// (codex_tools.go) is verified before launch: wherever the runner can run
+// `codex features list` and `codex mcp list` the way the turn itself runs.
+// Claude Code's sandbox runs claude alone.
+func codexWritableTools() map[Placement]ToolSupport {
+	return supportOutsideClaudeBox(AgentCodex)
+}
+
+// supportOutsideClaudeBox declares every placement supported but Claude
+// Code's sandbox, confined or not, which runs claude alone.
+func supportOutsideClaudeBox(agent string) map[Placement]ToolSupport {
 	m := supportEverywhere()
-	remedy := fmt.Sprintf("sandbox %q runs claude alone; run opencode in sandbox %q, %q or %q", SandboxClaude, SandboxNone, SandboxContainer, SandboxSbx)
+	remedy := fmt.Sprintf("sandbox %q runs claude alone; run %s in sandbox %q, %q or %q", SandboxClaude, agent, SandboxNone, SandboxContainer, SandboxSbx)
 	m[Placement{Sandbox: SandboxClaude}] = ToolSupport{Remedy: remedy}
 	m[Placement{Sandbox: SandboxClaude, Confine: true}] = ToolSupport{Remedy: remedy}
 	return m
@@ -207,7 +221,7 @@ var Backends = []Backend{
 		ProviderEnv:   []string{"OPENAI_*", "CODEX_*"},
 		ArgvMarker:    true,
 		Restricted:    &RestrictedCapabilities{Supported: true, ReadServer: true},
-		WritableTools: supportNowhere(fmt.Sprintf("grant %q", ToolsAll)),
+		WritableTools: codexWritableTools(),
 		bin:           func(r *Runner) string { return r.CodexBin },
 		impl:          codexBackend{},
 	},
