@@ -201,7 +201,7 @@ builder: grant cannot be enforced: agent "opencode" cannot hold a writable turn 
 |---|---|---|---|---|---|---|
 | `claude` | yes | yes | yes | yes | yes | yes |
 | `opencode` | yes | yes | no | no | yes | yes |
-| `codex` | no | no | no | no | no | no |
+| `codex` | yes | yes | no | no | yes | yes |
 | `pi` | no | no | no | no | no | no |
 
 - Claude is started with `--tools`.
@@ -226,7 +226,47 @@ builder: grant cannot be enforced: agent "opencode" cannot hold a writable turn 
   (command, url, environment, headers, or a key added). A `{env:NAME}`
   reference matches as written or resolved against the turn's
   environment.
-- Codex and pi need `ToolsAll`.
+- Codex tools are named by the Codex control that holds them:
+
+  | Tool | Held by |
+  |---|---|
+  | `apply_patch` | Codex's file editing. No setting removes it: without it the turn runs in `--sandbox read-only` with `approval_policy="never"`, where every patch is rejected |
+  | `shell` | the `shell_tool` feature, which gates every form of Codex's shell (`unified_exec` only chooses the form, and Codex keeps it on whatever its configuration says) |
+  | `update_plan` | `tools.update_plan.enabled` |
+  | `web_search` | `web_search="disabled"` and the `web_search_request`, `web_search_cached` and `standalone_web_search` features |
+  | `view_image` | the `view_image` feature |
+  | `image_generation` | the `image_generation` feature |
+
+  Any other name is refused, and so is `shell` without `apply_patch`: the
+  read-only sandbox that withholds `apply_patch` would hold the shell too,
+  and Codex's shell writes files. The error names the agent, the sandbox,
+  the tools and the remedy:
+
+  ```text
+  builder: grant cannot be enforced: agent "codex" cannot hold a writable turn to its granted built-in tools in sandbox "container": it withholds "apply_patch" only by making the turn read-only, which would hold "shell" too, and its shell writes files; grant "apply_patch" as well, or leave out "shell"
+  ```
+
+  Every turn is given `approval_policy="never"`, `agents.enabled=false`,
+  `orchestrator.mcp.enabled=false` and
+  `tools.experimental_request_user_input.enabled=false`. Before the model
+  starts, `codex features list` and `codex mcp list --json` run where the
+  turn will run, the way opencode's inventory does. Every feature reported
+  enabled is switched off with `-c features.<name>=false` unless a granted
+  tool keeps it, Codex reports it `removed` (Codex ignores it), or it gives
+  the model no tool (`code_mode_host`, `fast_mode`, `personality`, the
+  shell's form features and a few others, `codexNeutralFeatures`), so a
+  feature a newer Codex adds is off until it is listed. Every MCP server but
+  the session's own is disabled. Both inventories then run again with the
+  whole configuration, and the turn is refused when a feature is still
+  enabled, an inherited server is still enabled, or one of the session's
+  servers is missing, disabled or reached differently from what the runner
+  wrote (its transport compared whole: command, arguments, environment,
+  `env_vars`, `cwd`, url, bearer variable, headers). The web search mode
+  and `tools.update_plan` are set on the command line and not reported by
+  either inventory. A held turn still sees Codex's `exec` and `wait`
+  (the JavaScript host that calls the other tools), `request_user_input_async`,
+  which `codex exec` refuses, and `clock`, which reads the time.
+- Pi needs `ToolsAll`.
 - `RunRestricted` fixes its own read-only tools and is not governed by this
   table.
 
@@ -440,9 +480,9 @@ result, err := session.Run(ctx, request)
   under the name a symbolic link gives a directory of the request.
 - Tools are held by the agent itself, not by the prompt: `claude` is
   started with `--tools` and `--strict-mcp-config`, opencode as its
-  `bees-granted` agent (see [Built-in tool grants](#built-in-tool-grants)),
-  and a request for codex or pi with anything less than `ToolsAll` is
-  refused.
+  `bees-granted` agent and codex with configuration derived from the grant
+  (see [Built-in tool grants](#built-in-tool-grants)), and a request for pi
+  with anything less than `ToolsAll` is refused.
 - A session runs any number of turns. After `Release`, `Run` returns
   `ErrReleased`.
 
