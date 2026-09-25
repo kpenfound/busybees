@@ -274,7 +274,10 @@ func (claudeBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer, 
 //     overrides models that advertise collaboration tools independently of
 //     the feature flags. The turn is given the runner's read server
 //     (readserver.go) over its workspace as an MCP server by url, with its
-//     token in the environment.
+//     token in the environment. A writable turn whose grants name built-in
+//     tools rather than ToolsAll is held to them by configuration derived
+//     from the grant and verified where the turn runs (codex_tools.go); one
+//     not granted apply_patch runs in the read-only sandbox instead.
 //   - There is no flag to append to the system prompt, so the rendered system
 //     prompt is written ahead of the task on stdin, separated by a rule. The
 //     two files in the session directory are still written apart, as they are
@@ -316,7 +319,10 @@ func (codexBackend) command(ctx context.Context, r *Runner, b Backend, req Reque
 	bin := b.executable(r)
 	args := []string{"exec", "--json"}
 	var extra []envVar
-	if paths.restricted {
+	// A writable turn whose grants name built-in tools is held to them
+	// (codex_tools.go); one not granted apply_patch runs read-only.
+	granted := !paths.restricted && paths.turn != nil && paths.turn.Tools != nil
+	if paths.restricted || (granted && !slices.Contains(paths.turn.Tools, "apply_patch")) {
 		args = append(args, "--sandbox", "read-only")
 	} else {
 		args = append(args, "--dangerously-bypass-approvals-and-sandbox")
@@ -326,6 +332,13 @@ func (codexBackend) command(ctx context.Context, r *Runner, b Backend, req Reque
 		// A path-bearing marker independent of optional MCP configuration.
 		"-c", procs.CodexMarker(r.EnvironmentPrefix)+codexValue(paths.dir),
 	)
+	if granted {
+		held, err := codexHeldArgs(ctx, paths.probe, bin, req.workDir(), paths.turn.Tools, paths.mcp)
+		if err != nil {
+			return "", nil, "", nil, fmt.Errorf("granted codex setup: %w", err)
+		}
+		args = append(args, held...)
+	}
 	if paths.restricted {
 		args = append(args, codexRestrictedConfigArgs()...)
 		servers, err := codexMCPInventory(ctx, bin, req.workDir(), paths.turn.Env)
@@ -617,7 +630,7 @@ var openCodeUngranted = []string{"doom_loop", "plan_enter", "plan_exit", "questi
 // them with the pattern "<server>_*", so a server whose pattern would match
 // one of opencode's own permissions is refused rather than let it grant
 // that permission too.
-func (opencodeBackend) checkTools(tools, servers []string) error {
+func (opencodeBackend) checkTools(_ Placement, tools, servers []string) error {
 	for _, t := range tools {
 		if t == "task" {
 			return fmt.Errorf("%w: agent %q cannot be granted %q: its subagents run under their own permissions, not the turn's", ErrUnsupported, AgentOpenCode, t)
@@ -873,7 +886,7 @@ func openCodeHeldEnv(hold opencodeHold, content string) []envVar {
 }
 
 func openCodeConfigInventory(ctx context.Context, probe prober, bin string, extra []envVar) (opencodeResolvedConfig, error) {
-	out, err := probe(ctx, bin, []string{"--pure", "debug", "config"}, extra)
+	out, err := probe(ctx, bin, []string{"--pure", "debug", "config"}, extra, nil)
 	if err != nil {
 		return opencodeResolvedConfig{}, fmt.Errorf("inspect effective configuration: %w", err)
 	}

@@ -74,7 +74,7 @@ var grantedServer = MCPEntry{Command: "/bin/sh", Args: []string{"-c", "touch mcp
 // and the session's server.
 var grantedPermissions = map[string]string{"*": "deny", "read": "allow", "edit": "allow", "tools_*": "allow"}
 
-// grantedPlacement is one placement WritableTools declares opencode
+// grantedPlacement is one placement WritableTools declares a backend
 // supported in: how a runner and a request are made for it, and what shows
 // that the effective configuration was inspected there.
 type grantedPlacement struct {
@@ -87,47 +87,82 @@ func grantedProfile() Profile {
 		MCP: map[string]MCPEntry{"tools": grantedServer}}
 }
 
-func grantedPlacements() []grantedPlacement {
+// heldAgent is a backend whose writable turn is held to its granted tools
+// by inspecting its effective configuration before launch: how its
+// profile, runner and grant are made, and how its fake records the
+// inspections (probes, each writing its arguments one per line to
+// record.config-args, marker among them; talks of them converse over
+// stdin, the last one, and copy the engine's arguments to
+// record.talk-engine instead of record.probe-engine).
+type heldAgent struct {
+	profile func() Profile
+	runner  func(bin string) *Runner
+	tools   []string
+	marker  string
+	probes  int
+	talks   int
+}
+
+var openCodeHeld = heldAgent{
+	profile: grantedProfile,
+	runner:  func(bin string) *Runner { return &Runner{OpenCodeBin: bin} },
+	tools:   []string{"read", "edit", "mcp__tools"},
+	marker:  "debug",
+	probes:  2,
+}
+
+func grantedPlacements() []grantedPlacement { return heldPlacements(openCodeHeld) }
+
+// heldPlacements are the placements a held agent is tested in.
+func heldPlacements(a heldAgent) []grantedPlacement {
+	runner := func(t *testing.T, bin string) *Runner {
+		r := a.runner(bin)
+		r.SessionsDir = t.TempDir()
+		return r
+	}
 	return []grantedPlacement{
 		{Placement{Sandbox: SandboxNone}, func(t *testing.T, bin string) (*Runner, Request, func(*testing.T, string)) {
 			work, session := realTempDir(t), realTempDir(t)
-			req := grantAll(Request{Name: "g", Profile: grantedProfile(), Workspace: fakeWorkspace{dir: work}, SessionDir: session, Prompt: "TASK"})
-			req.Grants.Tools = []string{"read", "edit", "mcp__tools"}
-			return &Runner{OpenCodeBin: bin, SessionsDir: t.TempDir()}, req, func(t *testing.T, record string) {
-				if got := strings.Count(strings.Join(lines(t, record+".config-args"), " "), "--pure debug config"); got != 2 {
-					t.Errorf("the effective configuration was inspected %d times, want twice", got)
+			req := grantAll(Request{Name: "g", Profile: a.profile(), Workspace: fakeWorkspace{dir: work}, SessionDir: session, Prompt: "TASK"})
+			req.Grants.Tools = slices.Clone(a.tools)
+			return runner(t, bin), req, func(t *testing.T, record string) {
+				if got := countLines(lines(t, record+".config-args"), a.marker); got != a.probes {
+					t.Errorf("the effective configuration was inspected %d times, want %d", got, a.probes)
 				}
 			}
 		}},
 		{Placement{Sandbox: SandboxNone, Confine: true}, func(t *testing.T, bin string) (*Runner, Request, func(*testing.T, string)) {
 			work, session := realTempDir(t), realTempDir(t)
-			p := grantedProfile()
+			p := a.profile()
 			p.Confine = true
 			req := Request{Name: "g", Profile: p, Workspace: fakeWorkspace{dir: work}, SessionDir: session, Prompt: "TASK",
-				Grants: &Grants{Env: []string{"PATH"}, Tools: []string{"read", "edit", "mcp__tools"},
+				Grants: &Grants{Env: []string{"PATH"}, Tools: slices.Clone(a.tools),
 					Mounts: []Mount{{Path: work, Access: ReadWrite}, {Path: session, Access: ReadWrite}}}}
 			confiner := &fakeConfiner{}
-			r := &Runner{OpenCodeBin: bin, SessionsDir: t.TempDir(), Confiner: confiner, SystemPaths: []Mount{}}
+			r := runner(t, bin)
+			r.Confiner, r.SystemPaths = confiner, []Mount{}
 			return r, req, func(t *testing.T, record string) {
-				// Both inventories and the turn were started by the confiner,
+				// Every inventory and the turn were started by the confiner,
 				// under the same confinement.
-				if len(confiner.started) != 3 {
-					t.Fatalf("the confiner started %d processes, want the two inventories and the turn", len(confiner.started))
+				if len(confiner.started) != a.probes+1 {
+					t.Fatalf("the confiner started %d processes, want %d inventories and the turn", len(confiner.started), a.probes)
 				}
-				for _, c := range confiner.started[:2] {
-					if !slices.Equal(c.Mounts, confiner.started[2].Mounts) {
-						t.Errorf("an inventory ran confined to %v, the turn to %v", c.Mounts, confiner.started[2].Mounts)
+				turn := confiner.started[a.probes]
+				for _, c := range confiner.started[:a.probes] {
+					if !slices.Equal(c.Mounts, turn.Mounts) {
+						t.Errorf("an inventory ran confined to %v, the turn to %v", c.Mounts, turn.Mounts)
 					}
 				}
 			}
 		}},
 		{Placement{Sandbox: SandboxContainer}, func(t *testing.T, bin string) (*Runner, Request, func(*testing.T, string)) {
 			work, session := realTempDir(t), realTempDir(t)
-			p := grantedProfile()
+			p := a.profile()
 			p.Sandbox, p.SandboxImage = SandboxContainer, "image"
 			req := grantAll(Request{Name: "g", Profile: p, Workspace: fakeWorkspace{dir: work}, SessionDir: session, Prompt: "TASK", Env: map[string]string{"RUN_DIR": session}})
-			req.Grants.Tools = []string{"read", "edit", "mcp__tools"}
-			r := &Runner{OpenCodeBin: bin, SessionsDir: t.TempDir(), DockerBin: agenttest.Docker(t, "image", "RUN_DIR")}
+			req.Grants.Tools = slices.Clone(a.tools)
+			r := runner(t, bin)
+			r.DockerBin = agenttest.Docker(t, "image", "RUN_DIR")
 			return r, req, func(t *testing.T, record string) {
 				// The inventory ran in a container of the session's image,
 				// with its binds, named apart from the session's.
@@ -139,30 +174,43 @@ func grantedPlacements() []grantedPlacement {
 				if slices.Contains(engine, "--cidfile") || slices.Contains(engine, "--interactive") {
 					t.Errorf("the inventory took the session's container id file or stdin: %v", engine)
 				}
+				if a.talks > 0 {
+					talk := lines(t, record+".talk-engine")
+					if !strings.HasSuffix(flagValue(talk, "--name"), "-probe") || !slices.Contains(talk, "--interactive") || slices.Contains(talk, "--cidfile") || !slices.Contains(talk, "image") {
+						t.Errorf("conversing probe's engine command: %v", talk)
+					}
+				}
 			}
 		}},
 		{Placement{Sandbox: SandboxSbx}, func(t *testing.T, bin string) (*Runner, Request, func(*testing.T, string)) {
 			work, session := realTempDir(t), realTempDir(t)
-			p := grantedProfile()
+			p := a.profile()
 			p.Sandbox = SandboxSbx
 			req := grantAll(Request{Name: "g", Profile: p, Workspace: fakeWorkspace{dir: work}, SessionDir: session, Prompt: "TASK", Env: map[string]string{"RUN_DIR": session}})
-			req.Grants.Tools = []string{"read", "edit", "mcp__tools"}
-			r := &Runner{OpenCodeBin: bin, SessionsDir: t.TempDir(), SbxBin: agenttest.Sbx(t, "RUN_DIR")}
+			req.Grants.Tools = slices.Clone(a.tools)
+			r := runner(t, bin)
+			r.SbxBin = agenttest.Sbx(t, "RUN_DIR")
 			return r, req, func(t *testing.T, record string) {
-				// Both inventories ran in the session's sandbox, without stdin.
+				// Every inventory ran in the session's sandbox, without
+				// stdin unless it converses over it.
 				probes := lines(t, filepath.Join(filepath.Dir(r.SbxBin), "sbx-probe.txt"))
-				execs := 0
-				for _, l := range probes {
-					if l == "exec" {
-						execs++
-					}
-				}
-				if execs != 2 || slices.Contains(probes, "--interactive") || !slices.Contains(probes, work) {
+				if execs := countLines(probes, "exec"); execs != a.probes || countLines(probes, "--interactive") != a.talks || !slices.Contains(probes, work) {
 					t.Errorf("inventories in the sandbox: %v", probes)
 				}
 			}
 		}},
 	}
+}
+
+// countLines counts the lines equal to line.
+func countLines(ls []string, line string) int {
+	n := 0
+	for _, l := range ls {
+		if l == line {
+			n++
+		}
+	}
+	return n
 }
 
 // TestOpenCodeWritableTurnIsHeldToItsGrantedTools: in every placement the
@@ -405,8 +453,9 @@ func TestOpenCodeWritableTurnRefusesWhatItCannotHold(t *testing.T) {
 }
 
 // Every backend declares every placement, and the declarations are the
-// contract's: claude holds its tools everywhere, codex and pi nowhere (and
-// say to grant every tool), opencode everywhere but Claude Code's sandbox.
+// contract's: claude holds its tools everywhere, pi nowhere (and says to
+// grant every tool), codex and opencode everywhere but Claude Code's
+// sandbox.
 func TestEveryBackendDeclaresWritableToolsForEveryPlacement(t *testing.T) {
 	for _, b := range Backends {
 		for _, p := range Placements {
@@ -420,7 +469,7 @@ func TestEveryBackendDeclaresWritableToolsForEveryPlacement(t *testing.T) {
 			}
 			want := map[string]bool{
 				AgentClaude:   true,
-				AgentCodex:    false,
+				AgentCodex:    p.Sandbox != SandboxClaude,
 				AgentPi:       false,
 				AgentOpenCode: p.Sandbox != SandboxClaude,
 			}[b.Name]
@@ -429,15 +478,12 @@ func TestEveryBackendDeclaresWritableToolsForEveryPlacement(t *testing.T) {
 			}
 		}
 	}
-	// A codex or pi turn that names built-in tools is refused as before,
-	// with the remedy.
-	for _, name := range []string{AgentCodex, AgentPi} {
-		req := grantAll(Request{Name: "n", Profile: Profile{Name: "x", Agent: name}, Workspace: fakeWorkspace{dir: t.TempDir()}})
-		req.Grants.Tools = []string{"Read"}
-		_, err := (&Runner{SessionsDir: t.TempDir()}).Verify(req)
-		if !errors.Is(err, ErrUnsupported) || !strings.Contains(err.Error(), `grant "*"`) {
-			t.Errorf("%s narrowed: %v", name, err)
-		}
+	// A pi turn that names built-in tools is refused, with the remedy.
+	req := grantAll(Request{Name: "n", Profile: Profile{Name: "x", Agent: AgentPi}, Workspace: fakeWorkspace{dir: t.TempDir()}})
+	req.Grants.Tools = []string{"Read"}
+	_, err := (&Runner{SessionsDir: t.TempDir()}).Verify(req)
+	if !errors.Is(err, ErrUnsupported) || !strings.Contains(err.Error(), `grant "*"`) {
+		t.Errorf("pi narrowed: %v", err)
 	}
 }
 
