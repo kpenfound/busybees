@@ -536,8 +536,11 @@ func makeSuccessEnd(sessionID, result string, turns int) *streamEnd {
 //     and glob for RunRestricted's `bees-read-only`; the granted built-in
 //     tools (openCodeTools) and every tool of the session's own MCP
 //     servers for `bees-granted` — and runs with --pure so discovered
-//     plugins and their hooks cannot load. `opencode debug config` is run
-//     before the model, where the turn will run (prober): inherited MCP
+//     plugins and their hooks cannot load. --pure does not stop opencode
+//     importing custom tools from its configuration directories, so the
+//     turn is refused when there is one (openCodeCustomTools). `opencode
+//     debug config` is run before the model, where the turn will run
+//     (prober): inherited MCP
 //     servers are explicitly disabled through the highest-precedence
 //     inline config, and a second inventory refuses the launch if a
 //     managed or malformed configuration defeated either restriction or
@@ -819,17 +822,21 @@ func openCodeGrantedHold(tools []string, servers map[string]opencodeMCP, effort 
 }
 
 // openCodeHeldEnvironment builds a held turn's variables and verifies them
-// before the model starts: a first inventory names the MCP servers the
-// effective configuration inherits, which the inline configuration then
-// disables, and a second one refuses the launch when a managed or
-// malformed configuration defeated the hold. Both run where the turn will
-// (probe).
+// before the model starts: a search for custom tools refuses the launch
+// when opencode would load one (openCodeCustomTools), a first inventory
+// names the MCP servers the effective configuration inherits, which the
+// inline configuration then disables, and a second one refuses the launch
+// when a managed or malformed configuration defeated the hold. All three
+// run where the turn will (probe).
 func openCodeHeldEnvironment(ctx context.Context, probe prober, bin string, base []envVar, hold opencodeHold) ([]envVar, error) {
 	content, err := openCodeHeldContent(hold, nil)
 	if err != nil {
 		return nil, err
 	}
 	extra := append(slices.Clone(base), openCodeHeldEnv(hold, content)...)
+	if err := openCodeCustomTools(ctx, probe, bin, extra); err != nil {
+		return nil, err
+	}
 	resolved, err := openCodeConfigInventory(ctx, probe, bin, extra)
 	if err != nil {
 		return nil, err

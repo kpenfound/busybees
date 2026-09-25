@@ -61,6 +61,13 @@ func restrictedRunner(t *testing.T, claude, codex string) *Runner {
 
 func restrictedOpenCodeFake(t *testing.T, config, answer string) (string, string) {
 	t.Helper()
+	return restrictedOpenCodeFakeScanning(t, config, answer, openCodeScanFake)
+}
+
+// restrictedOpenCodeFakeScanning is restrictedOpenCodeFake answering the
+// search for custom tools with scan (openCodeScanProbe).
+func restrictedOpenCodeFakeScanning(t *testing.T, config, answer, scan string) (string, string) {
+	t.Helper()
 	record := filepath.Join(t.TempDir(), "record")
 	if config == "" {
 		config = `if printf '%s' "$OPENCODE_CONFIG_CONTENT" | grep -q '"legacy"' && printf '%s' "$OPENCODE_CONFIG_CONTENT" | grep -q '"enabled":false'; then
@@ -70,7 +77,7 @@ else
 fi
 printf '{"agent":{"bees-read-only":{"mode":"primary","permission":{"*":"deny","read":"allow","grep":"allow","glob":"allow"}}},"mcp":{"legacy":{"enabled":%s}}}\n' "$enabled"`
 	}
-	script := `if [ "$1" = "--pure" ] && [ "$2" = "debug" ]; then
+	script := openCodeScanProbe(record, scan) + `if [ "$1" = "--pure" ] && [ "$2" = "debug" ]; then
   printf '%s\n' "$@" > "` + record + `.config-args"
   printf '%s\n' "$OPENCODE_CONFIG_CONTENT" >> "` + record + `.config-content"
   ` + config + `

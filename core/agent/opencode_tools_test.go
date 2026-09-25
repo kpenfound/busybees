@@ -44,8 +44,15 @@ printf '{%s,%s%s}\n' '` + grantedInherited + `' "$inner" '` + managed + `'`
 // instead.
 func grantedOpenCodeFake(t *testing.T, effective string) (string, string) {
 	t.Helper()
+	return grantedOpenCodeFakeScanning(t, effective, openCodeScanFake)
+}
+
+// grantedOpenCodeFakeScanning is grantedOpenCodeFake answering the search
+// for custom tools with scan (openCodeScanProbe).
+func grantedOpenCodeFakeScanning(t *testing.T, effective, scan string) (string, string) {
+	t.Helper()
 	record := filepath.Join(t.TempDir(), "record")
-	script := `if [ "$1" = "--pure" ] && [ "$2" = "debug" ]; then
+	script := openCodeScanProbe(record, scan) + `if [ "$1" = "--pure" ] && [ "$2" = "debug" ]; then
   printf '%s\n' "$@" >> "` + record + `.config-args"
   if [ -n "$RUN_DIR" ] && [ -f "$RUN_DIR/docker-args.txt" ]; then cp "$RUN_DIR/docker-args.txt" "` + record + `.probe-engine"; fi
   ` + effective + `
@@ -93,7 +100,9 @@ func grantedProfile() Profile {
 // inspections (probes, each writing its arguments one per line to
 // record.config-args, marker among them; talks of them converse over
 // stdin, the last one, and copy the engine's arguments to
-// record.talk-engine instead of record.probe-engine).
+// record.talk-engine instead of record.probe-engine; scans are probes run
+// before the inspections that record nothing there: opencode's search for
+// custom tools).
 type heldAgent struct {
 	profile func() Profile
 	runner  func(bin string) *Runner
@@ -101,6 +110,7 @@ type heldAgent struct {
 	marker  string
 	probes  int
 	talks   int
+	scans   int
 }
 
 var openCodeHeld = heldAgent{
@@ -109,6 +119,7 @@ var openCodeHeld = heldAgent{
 	tools:   []string{"read", "edit", "mcp__tools"},
 	marker:  "debug",
 	probes:  2,
+	scans:   1,
 }
 
 func grantedPlacements() []grantedPlacement { return heldPlacements(openCodeHeld) }
@@ -142,13 +153,14 @@ func heldPlacements(a heldAgent) []grantedPlacement {
 			r := runner(t, bin)
 			r.Confiner, r.SystemPaths = confiner, []Mount{}
 			return r, req, func(t *testing.T, record string) {
-				// Every inventory and the turn were started by the confiner,
-				// under the same confinement.
-				if len(confiner.started) != a.probes+1 {
-					t.Fatalf("the confiner started %d processes, want %d inventories and the turn", len(confiner.started), a.probes)
+				// Every scan, every inventory and the turn were started by
+				// the confiner, under the same confinement.
+				probes := a.scans + a.probes
+				if len(confiner.started) != probes+1 {
+					t.Fatalf("the confiner started %d processes, want %d scans, %d inventories and the turn", len(confiner.started), a.scans, a.probes)
 				}
-				turn := confiner.started[a.probes]
-				for _, c := range confiner.started[:a.probes] {
+				turn := confiner.started[probes]
+				for _, c := range confiner.started[:probes] {
 					if !slices.Equal(c.Mounts, turn.Mounts) {
 						t.Errorf("an inventory ran confined to %v, the turn to %v", c.Mounts, turn.Mounts)
 					}
@@ -174,6 +186,12 @@ func heldPlacements(a heldAgent) []grantedPlacement {
 				if slices.Contains(engine, "--cidfile") || slices.Contains(engine, "--interactive") {
 					t.Errorf("the inventory took the session's container id file or stdin: %v", engine)
 				}
+				if a.scans > 0 {
+					scan := lines(t, record+".scan-engine")
+					if !strings.HasSuffix(flagValue(scan, "--name"), "-probe") || slices.Contains(scan, "--interactive") || slices.Contains(scan, "--cidfile") || !slices.Contains(scan, "image") {
+						t.Errorf("search's engine command: %v", scan)
+					}
+				}
 				if a.talks > 0 {
 					talk := lines(t, record+".talk-engine")
 					if !strings.HasSuffix(flagValue(talk, "--name"), "-probe") || !slices.Contains(talk, "--interactive") || slices.Contains(talk, "--cidfile") || !slices.Contains(talk, "image") {
@@ -194,7 +212,7 @@ func heldPlacements(a heldAgent) []grantedPlacement {
 				// Every inventory ran in the session's sandbox, without
 				// stdin unless it converses over it.
 				probes := lines(t, filepath.Join(filepath.Dir(r.SbxBin), "sbx-probe.txt"))
-				if execs := countLines(probes, "exec"); execs != a.probes || countLines(probes, "--interactive") != a.talks || !slices.Contains(probes, work) {
+				if execs := countLines(probes, "exec"); execs != a.scans+a.probes || countLines(probes, "--interactive") != a.talks || !slices.Contains(probes, work) {
 					t.Errorf("inventories in the sandbox: %v", probes)
 				}
 			}

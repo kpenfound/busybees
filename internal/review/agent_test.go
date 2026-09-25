@@ -16,6 +16,7 @@ import (
 
 	"github.com/kpenfound/busybees/core/agent"
 	"github.com/kpenfound/busybees/core/agent/agentbin"
+	"github.com/kpenfound/busybees/core/agent/agenttest"
 	"github.com/kpenfound/busybees/internal/config"
 )
 
@@ -23,15 +24,17 @@ import (
 // records the arguments, the prompt it was given on stdin, the directory it
 // ran in and its environment, then prints body. The probes the shared
 // restricted execution runs before an agent — codex's `mcp list` and
-// opencode's `debug config` — are answered with what a CLI honoring the
-// inline restrictions would say: nothing inherited, everything disabled. No
+// opencode's search for custom tools and `debug config` — are answered with
+// what a CLI honoring the inline restrictions would say: no custom tool,
+// nothing inherited, everything disabled. No
 // test in this package runs a real agent.
 func fakeCLI(t *testing.T, body string) (bin, record string) {
 	t.Helper()
 	return fakeScript(t, honestProbe, body)
 }
 
-const honestProbe = `if [ "$1" = mcp ]; then printf '%s\n' "$@" > RECORD.mcp-args; pwd > "RECORD.mcp-dir"; echo '[]'; exit 0; fi
+const honestProbe = `if [ "$BUN_BE_BUN" = 1 ]; then echo '` + agenttest.OpenCodeNoCustomTools + `'; exit 0; fi
+if [ "$1" = mcp ]; then printf '%s\n' "$@" > RECORD.mcp-args; pwd > "RECORD.mcp-dir"; echo '[]'; exit 0; fi
 if [ "$2" = debug ]; then
   if printf '%s' "$OPENCODE_CONFIG_CONTENT" | grep -q '"legacy"' && printf '%s' "$OPENCODE_CONFIG_CONTENT" | grep -q '"enabled":false'; then
     enabled=false
