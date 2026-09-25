@@ -81,7 +81,9 @@ dagger core container from --address golang:1.26-bookworm \
 - `core/agent` — standalone Go module's headless session runner: backend commands
   and streams, sandbox/container execution, timeout/cancellation, result/outcome
   files and interruption inspection. `grants.go` is the capability contract every
-  request carries (`Grants`: env allowlist, tools, ro/rw mounts, VCS) and the
+  request carries (`Grants`: env allowlist, tools, ro/rw mounts, VCS; a grant naming built-in tools is held to them
+  where the backend's `WritableTools` in `backends.go` declares the placement supported, opencode through its generated
+  `bees-granted` agent checked with `opencode debug config` where the turn runs (`probe.go`), and refused elsewhere) and the
   `Boundary` that verifies it before launch (`HostBoundary`, `ContainerBoundary`, and `SandboxBoundary` in `sbx.go`,
   the Docker Sandbox mode `sandbox = "sbx"`: `sbx create <agent>` with the binds as workspaces, `sbx exec` around the agent's
   command, `sbx rm` at the end, the agent's credential left to the sbx proxy; `sbxdagger.go`, the opt-in Dagger CLI and

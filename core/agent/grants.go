@@ -324,10 +324,8 @@ func verifyCommonFor(req Request, restricted bool) (*Turn, error) {
 		}
 	}
 	if !all {
-		backend, backendErr := backendFor(p.Agent)
-		canRestrict := backendErr == nil && backend.Restricted != nil && backend.Restricted.Supported
-		if p.Agent != "" && p.Agent != AgentClaude && (!restricted || !canRestrict) {
-			return nil, fmt.Errorf("%w: agent %q cannot restrict its built-in tools; grant %q", ErrUnsupported, p.Agent, ToolsAll)
+		if err := checkBuiltinTools(req, restricted); err != nil {
+			return nil, err
 		}
 		turn.Tools = tools
 		if turn.Tools == nil {
@@ -350,6 +348,52 @@ func verifyCommonFor(req Request, restricted bool) (*Turn, error) {
 		return nil, fmt.Errorf("%w: working directory %s is outside every mount", ErrNotGranted, dir)
 	}
 	return turn, nil
+}
+
+// checkBuiltinTools refuses a request whose grants name built-in tools, not
+// ToolsAll, that its backend cannot hold the turn to: RunRestricted's fixed
+// floor where the backend declares RestrictedCapabilities, and otherwise
+// the backend's WritableTools declaration for the profile's placement,
+// then the tool names and MCP servers the backend's own vocabulary takes
+// (toolVocabulary). A request that grants every built-in tool, or has no
+// grants, passes: what else it asks for is verifyCommon's to judge.
+func checkBuiltinTools(req Request, restricted bool) error {
+	if req.Grants == nil {
+		return nil
+	}
+	tools, _, err := splitTools(req.Grants.Tools)
+	if err != nil || slices.Contains(tools, ToolsAll) {
+		return nil
+	}
+	p := req.Profile
+	backend, err := backendFor(p.Agent)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrUnsupported, err)
+	}
+	if restricted {
+		if backend.Restricted == nil || !backend.Restricted.Supported {
+			return fmt.Errorf("%w: agent %q cannot restrict its built-in tools; grant %q", ErrUnsupported, backend.Name, ToolsAll)
+		}
+		return nil
+	}
+	if err := writableTools(backend, p); err != nil {
+		return err
+	}
+	if v, ok := backend.impl.(toolVocabulary); ok {
+		servers := slices.Sorted(maps.Keys(p.MCP))
+		if req.HostMCP != nil && !slices.Contains(servers, req.HostMCP.Name) {
+			servers = append(servers, req.HostMCP.Name)
+		}
+		return v.checkTools(tools, servers)
+	}
+	return nil
+}
+
+// toolVocabulary is implemented by a backend whose built-in tools have
+// names of their own: it refuses a granted name it does not have, and an
+// MCP server its permissions could not tell apart from a built-in tool.
+type toolVocabulary interface {
+	checkTools(tools, servers []string) error
 }
 
 // verifyDagger checks the Dagger engine against its grant: given only in

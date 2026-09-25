@@ -258,6 +258,12 @@ func (r *Runner) run(ctx context.Context, req Request, restricted bool) (*Result
 	if r.Logger == nil {
 		r.Logger = slog.Default()
 	}
+	// A tool grant the backend cannot hold the turn to is refused first,
+	// with the remedy, ahead of the profile's own consistency: opencode in
+	// Claude Code's sandbox is both.
+	if err := checkBuiltinTools(req, restricted); err != nil {
+		return nil, fmt.Errorf("%s: %w", req.Profile.Name, err)
+	}
 	if err := req.Profile.Validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", req.Profile.Name, err)
 	}
@@ -325,6 +331,11 @@ func (r *Runner) run(ctx context.Context, req Request, restricted bool) (*Result
 		}
 	}
 	paths.turn = turn
+	if box != nil {
+		paths.probe = box.probe
+	} else {
+		paths.probe = r.hostProber(req, turn)
+	}
 	if restricted && be.Restricted != nil && be.Restricted.ReadServer {
 		if paths.read, err = startReadServer(req.workDir()); err != nil {
 			return nil, fmt.Errorf("%s: %w", req.Profile.Name, err)
@@ -744,6 +755,8 @@ type box interface {
 	add(vars []envVar)
 	// command wraps the backend's command line in the client's.
 	command(ctx context.Context, bin string, args []string) (string, []string, error)
+	// probe runs a command in the box before the session's own (prober).
+	probe(ctx context.Context, bin string, args []string, extra []envVar) ([]byte, error)
 	// clientEnv is the environment the client runs with.
 	clientEnv() []string
 	// remove stops and removes the box, for a session that is being

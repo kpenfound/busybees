@@ -134,7 +134,11 @@ other list derives from or is held to them. The checklist:
    `Supported` only when the command builder can establish the complete
    floor, and `FollowUp` when `ResumeID` is meaningful. The pointer is
    nil when a descriptor forgets, which `TestBackendsAreDeclaredCompletely`
-   reports; `TestBackendRestrictedCapabilities` pins each declaration.
+   reports; `TestBackendRestrictedCapabilities` pins each declaration. Set
+   `WritableTools` for every entry of `agent.Placements` (see
+   [Grants](#grants)): `Supported` only where `command` holds a writable
+   turn to the granted built-in tools, and a `Remedy` everywhere else.
+   `TestEveryBackendDeclaresWritableToolsForEveryPlacement` pins them.
 5. **Completeness.** `procs.AgentExecutables` names the executable
    (`TestBackendsMatchProcsExecutables` holds the two together); doctor
    carries the toolchain check (`TestEveryBackendHasAToolchainCheck` in
@@ -163,10 +167,10 @@ req.Grants = &agent.Grants{
   `SSH_AUTH_SOCK`, ...) is refused.
 - `Tools` are built-in tool names, or `agent.ToolsAll`, and `mcp__<server>`
   for each MCP server. The profile's `AllowedTools`, `MCP` and `HostMCP` may
-  name less, never more; `DisallowedTools` only narrows. Claude is started
-  with `--tools` when not every built-in tool is granted; outside the fixed
-  `RunRestricted` contract, codex, opencode and pi cannot restrict their
-  built-in tools and need `ToolsAll`.
+  name less, never more; `DisallowedTools` only narrows. A grant without
+  `ToolsAll` is held to the tools it names where the backend's
+  `WritableTools` declares the placement supported, and refused with
+  `ErrUnsupported` everywhere else (see below).
 - `Mounts` are absolute, clean, existing paths, `ReadOnly` or `ReadWrite`,
   judged after their symbolic links are resolved; `Within` confines them all.
   The working directory must lie inside one. Without `VCS`, a writable mount
@@ -180,6 +184,51 @@ req.Grants = &agent.Grants{
   profile that does not ask (`ErrUnsupported`), asked for without the grant
   or with another engine granted (`ErrNotGranted`), or in any other mode
   (`ErrUnsupported`).
+
+### Built-in tool grants
+
+Each backend declares, for every `agent.Placement` (the sandbox, and for a
+host sandbox whether `Profile.Confine` is set), whether an ordinary turn,
+one that may write, can be held to the built-in tools its grants name. A
+placement declared unsupported is refused before anything starts, with an
+`ErrUnsupported` error that names the agent, the placement and the remedy:
+
+```text
+builder: grant cannot be enforced: agent "opencode" cannot hold a writable turn to its granted built-in tools in sandbox "claude"; sandbox "claude" runs claude alone; run opencode in sandbox "none", "container" or "sbx"
+```
+
+| Agent | `none` | `none` confined | `claude` | `claude` confined | `container` | `sbx` |
+|---|---|---|---|---|---|---|
+| `claude` | yes | yes | yes | yes | yes | yes |
+| `opencode` | yes | yes | no | no | yes | yes |
+| `codex` | no | no | no | no | no | no |
+| `pi` | no | no | no | no | no | no |
+
+- Claude is started with `--tools`.
+- Opencode tools carry opencode's own permission names: `bash`,
+  `codesearch`, `edit` (every tool that changes a file), `external_directory`
+  (the file tools outside the working directory), `glob`, `grep`, `list`,
+  `lsp`, `read`, `skill`, `todoread`, `todowrite`, `webfetch` and `websearch`.
+  Any other name is refused, and so is `task`: its subagents run under their
+  own permissions, not the turn's. The turn runs with `--pure` as a
+  generated primary agent, `bees-granted`, whose permissions deny `*`, allow
+  each granted tool, and allow `<server>_*` for each of the session's MCP
+  servers. A server whose `<server>_*` would also match one of opencode's
+  own permissions is refused: a server named `external`, whose
+  `external_*` matches `external_directory`. Before the model starts, `opencode debug config` runs where the
+  turn will run: on the host, under the same confinement, in a container of
+  the same image with the same binds, or in the same Docker Sandbox. Every
+  inherited MCP server is disabled through `OPENCODE_CONFIG_CONTENT`, and a
+  second inventory refuses the turn when the agent is missing, disabled, not
+  primary, has any permission other than those or a `tools` map, when an
+  inherited server is still enabled, or when one of the session's servers
+  is missing, disabled or differs from what the runner wrote in any key
+  (command, url, environment, headers, or a key added). A `{env:NAME}`
+  reference matches as written or resolved against the turn's
+  environment.
+- Codex and pi need `ToolsAll`.
+- `RunRestricted` fixes its own read-only tools and is not governed by this
+  table.
 
 `Runner.Verify(req)` checks a request without starting anything and returns
 the `Turn` it would run: its environment, tools and resolved mounts. `Run`
@@ -389,9 +438,11 @@ result, err := session.Run(ctx, request)
   with another `git` on it, a granted symbolic link points elsewhere, an
   agent was installed. A container turn adds only a granted mount again,
   under the name a symbolic link gives a directory of the request.
-- Tools are held by the agent's own flags, not by the prompt: `claude` is
-  started with `--tools` and `--strict-mcp-config`, and a request for codex,
-  opencode or pi with anything less than `ToolsAll` is refused.
+- Tools are held by the agent itself, not by the prompt: `claude` is
+  started with `--tools` and `--strict-mcp-config`, opencode as its
+  `bees-granted` agent (see [Built-in tool grants](#built-in-tool-grants)),
+  and a request for codex or pi with anything less than `ToolsAll` is
+  refused.
 - A session runs any number of turns. After `Release`, `Run` returns
   `ErrReleased`.
 

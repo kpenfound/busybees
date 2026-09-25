@@ -2,6 +2,8 @@ package agent
 
 import (
 	"errors"
+	"fmt"
+	"slices"
 	"strconv"
 )
 
@@ -46,6 +48,14 @@ type Backend struct {
 	// descriptor forgot to make the declaration, distinct from an explicit
 	// unsupported declaration.
 	Restricted *RestrictedCapabilities
+	// WritableTools declares, for every placement (Placements), whether an
+	// ordinary turn, one that may write, can be held to the built-in tools
+	// its grants name when they do not grant ToolsAll. A placement the map
+	// does not name is unsupported: the turn is refused with
+	// ErrUnsupported before anything starts, and so is one declared
+	// unsupported, whose Remedy the error carries. A test holds every
+	// descriptor to a declaration for every placement.
+	WritableTools map[Placement]ToolSupport
 	// bin is the runner's executable override for this backend
 	// (Runner.ClaudeBin and friends): what a caller configured in the
 	// executable's place, empty when it did not. executable resolves it,
@@ -68,6 +78,94 @@ type RestrictedCapabilities struct {
 	// given the runner's read server (readserver.go) to read the
 	// workspace with instead.
 	ReadServer bool
+}
+
+// A Placement is where a turn runs: its sandbox (one of Sandboxes, never
+// empty), and for a host sandbox whether the operating system confines it
+// (Profile.Confine).
+type Placement struct {
+	Sandbox string
+	Confine bool
+}
+
+// Placements are every placement a valid profile selects.
+var Placements = []Placement{
+	{Sandbox: SandboxNone}, {Sandbox: SandboxNone, Confine: true},
+	{Sandbox: SandboxClaude}, {Sandbox: SandboxClaude, Confine: true},
+	{Sandbox: SandboxContainer}, {Sandbox: SandboxSbx},
+}
+
+// PlacementOf is where a profile's turn runs.
+func PlacementOf(p Profile) Placement {
+	sandbox := p.Sandbox
+	if sandbox == "" {
+		sandbox = SandboxNone
+	}
+	return Placement{Sandbox: sandbox, Confine: p.Confine}
+}
+
+func (p Placement) String() string {
+	if p.Confine {
+		return strconv.Quote(p.Sandbox) + " confined"
+	}
+	return strconv.Quote(p.Sandbox)
+}
+
+// ToolSupport is one backend's declaration for one placement: whether a
+// writable turn there is held to its granted built-in tools, and for one
+// that is not, what the caller can change instead.
+type ToolSupport struct {
+	Supported bool
+	Remedy    string
+}
+
+// supportEverywhere and supportNowhere declare every placement alike.
+func supportEverywhere() map[Placement]ToolSupport {
+	m := make(map[Placement]ToolSupport, len(Placements))
+	for _, p := range Placements {
+		m[p] = ToolSupport{Supported: true}
+	}
+	return m
+}
+
+func supportNowhere(remedy string) map[Placement]ToolSupport {
+	m := make(map[Placement]ToolSupport, len(Placements))
+	for _, p := range Placements {
+		m[p] = ToolSupport{Remedy: remedy}
+	}
+	return m
+}
+
+// openCodeWritableTools is where opencode's granted agent (backend.go:
+// opencodeBackend) is verified before launch: wherever the runner can run
+// `opencode debug config` the way the turn itself runs, on the host,
+// under the same confinement, in the same image or in the same sandbox.
+// Claude Code's sandbox runs claude alone.
+func openCodeWritableTools() map[Placement]ToolSupport {
+	m := supportEverywhere()
+	remedy := fmt.Sprintf("sandbox %q runs claude alone; run opencode in sandbox %q, %q or %q", SandboxClaude, SandboxNone, SandboxContainer, SandboxSbx)
+	m[Placement{Sandbox: SandboxClaude}] = ToolSupport{Remedy: remedy}
+	m[Placement{Sandbox: SandboxClaude, Confine: true}] = ToolSupport{Remedy: remedy}
+	return m
+}
+
+// writableTools refuses a writable turn whose grants name built-in tools
+// in a placement where its backend cannot hold it to them. A placement no
+// valid profile selects is Profile.Validate's to refuse.
+func writableTools(b Backend, p Profile) error {
+	where := PlacementOf(p)
+	if !slices.Contains(Placements, where) {
+		return nil
+	}
+	support, ok := b.WritableTools[where]
+	if ok && support.Supported {
+		return nil
+	}
+	remedy := support.Remedy
+	if remedy == "" {
+		remedy = fmt.Sprintf("grant %q", ToolsAll)
+	}
+	return fmt.Errorf("%w: agent %q cannot hold a writable turn to its granted built-in tools in sandbox %s; %s", ErrUnsupported, b.Name, where, remedy)
 }
 
 // executable is the command a session of this backend runs: the
@@ -98,17 +196,20 @@ var Backends = []Backend{
 		},
 		ArgvMarker: true,
 		Restricted: &RestrictedCapabilities{Supported: true, FollowUp: true},
-		bin:        func(r *Runner) string { return r.ClaudeBin },
-		impl:       claudeBackend{},
+		// --tools holds every placement.
+		WritableTools: supportEverywhere(),
+		bin:           func(r *Runner) string { return r.ClaudeBin },
+		impl:          claudeBackend{},
 	},
 	{
-		Name:        AgentCodex,
-		Credentials: []string{"OPENAI_API_KEY", "CODEX_API_KEY"},
-		ProviderEnv: []string{"OPENAI_*", "CODEX_*"},
-		ArgvMarker:  true,
-		Restricted:  &RestrictedCapabilities{Supported: true, ReadServer: true},
-		bin:         func(r *Runner) string { return r.CodexBin },
-		impl:        codexBackend{},
+		Name:          AgentCodex,
+		Credentials:   []string{"OPENAI_API_KEY", "CODEX_API_KEY"},
+		ProviderEnv:   []string{"OPENAI_*", "CODEX_*"},
+		ArgvMarker:    true,
+		Restricted:    &RestrictedCapabilities{Supported: true, ReadServer: true},
+		WritableTools: supportNowhere(fmt.Sprintf("grant %q", ToolsAll)),
+		bin:           func(r *Runner) string { return r.CodexBin },
+		impl:          codexBackend{},
 	},
 	{
 		Name: AgentOpenCode,
@@ -121,9 +222,10 @@ var Backends = []Backend{
 			"OPENCODE_*", "ANTHROPIC_*", "OPENAI_*", "GEMINI_*", "GOOGLE_*", "AWS_*",
 			"OPENROUTER_*", "GROQ_*", "MISTRAL_*", "XAI_*", "DEEPSEEK_*", "AZURE_*",
 		},
-		Restricted: &RestrictedCapabilities{Supported: true, FollowUp: true},
-		bin:        func(r *Runner) string { return r.OpenCodeBin },
-		impl:       opencodeBackend{},
+		Restricted:    &RestrictedCapabilities{Supported: true, FollowUp: true},
+		WritableTools: openCodeWritableTools(),
+		bin:           func(r *Runner) string { return r.OpenCodeBin },
+		impl:          opencodeBackend{},
 	},
 	{
 		Name: AgentPi,
@@ -137,9 +239,10 @@ var Backends = []Backend{
 			"OPENROUTER_*", "GROQ_*", "MISTRAL_*", "XAI_*", "DEEPSEEK_*", "AZURE_*",
 			"CEREBRAS_*", "MCP_*",
 		},
-		Restricted: &RestrictedCapabilities{Supported: true, FollowUp: true},
-		bin:        func(r *Runner) string { return r.PiBin },
-		impl:       piBackend{},
+		Restricted:    &RestrictedCapabilities{Supported: true, FollowUp: true},
+		WritableTools: supportNowhere(fmt.Sprintf("grant %q", ToolsAll)),
+		bin:           func(r *Runner) string { return r.PiBin },
+		impl:          piBackend{},
 	},
 }
 
