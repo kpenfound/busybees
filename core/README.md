@@ -246,26 +246,33 @@ builder: grant cannot be enforced: agent "opencode" cannot hold a writable turn 
   builder: grant cannot be enforced: agent "codex" cannot hold a writable turn to its granted built-in tools in sandbox "container": it withholds "apply_patch" only by making the turn read-only, which would hold "shell" too, and its shell writes files; grant "apply_patch" as well, or leave out "shell"
   ```
 
-  Every turn is given `approval_policy="never"`, `agents.enabled=false`,
-  `orchestrator.mcp.enabled=false` and
-  `tools.experimental_request_user_input.enabled=false`. Before the model
-  starts, `codex features list` and `codex mcp list --json` run where the
-  turn will run, the way opencode's inventory does. Every feature reported
-  enabled is switched off with `-c features.<name>=false` unless a granted
-  tool keeps it, Codex reports it `removed` (Codex ignores it), or it gives
-  the model no tool (`code_mode_host`, `fast_mode`, `personality`, the
-  shell's form features and a few others, `codexNeutralFeatures`), so a
-  feature a newer Codex adds is off until it is listed. Every MCP server but
-  the session's own is disabled. Both inventories then run again with the
-  whole configuration, and the turn is refused when a feature is still
-  enabled, an inherited server is still enabled, or one of the session's
-  servers is missing, disabled or reached differently from what the runner
-  wrote (its transport compared whole: command, arguments, environment,
-  `env_vars`, `cwd`, url, bearer variable, headers). The web search mode
-  and `tools.update_plan` are set on the command line and not reported by
-  either inventory. A held turn still sees Codex's `exec` and `wait`
-  (the JavaScript host that calls the other tools), `request_user_input_async`,
-  which `codex exec` refuses, and `clock`, which reads the time.
+  A Codex turn granted `ToolsAll` runs with
+  `--dangerously-bypass-approvals-and-sandbox` and none of what follows. A
+  turn whose grant names built-in tools is given `approval_policy="never"`,
+  `agents.enabled=false`, `orchestrator.mcp.enabled=false` and
+  `tools.experimental_request_user_input.enabled=false`, plus
+  `tools.update_plan.enabled=false` and `web_search="disabled"` when those
+  tools are not granted. Before the model starts, `codex features list` and
+  `codex mcp list --json` run where the turn will run, the way opencode's
+  inventory does. Every feature reported enabled is switched off with
+  `-c features.<name>=false` unless a granted tool keeps it, Codex reports
+  it `removed` (Codex ignores it), or it gives the model no tool
+  (`code_mode_host`, `fast_mode`, `personality`, the shell's form features
+  and a few others, `codexNeutralFeatures`), so a feature a newer Codex adds
+  is off until it is listed. Every MCP server but the session's own is
+  disabled. Both inventories then run again with the whole configuration,
+  and the turn is refused when a feature is still enabled, an inherited
+  server is still enabled, or one of the session's servers is missing,
+  disabled or reached differently from what the runner wrote (its transport
+  compared whole: command, arguments, environment, `env_vars`, `cwd`, url,
+  bearer variable, headers). Last, `codex app-server` starts where the turn
+  will run with the same overrides, and its `config/read` answer, for the
+  working directory, is checked for each of the settings above: its origin
+  must be the command line (`sessionFlags`), not a managed layer above it,
+  and where the answer shows the value, the value must be the one given.
+  A held turn still sees Codex's `exec` and `wait` (the JavaScript host
+  that calls the other tools), `request_user_input_async`, which
+  `codex exec` refuses, and `clock`, which reads the time.
 - Pi needs `ToolsAll`.
 - `RunRestricted` fixes its own read-only tools and is not governed by this
   table.
