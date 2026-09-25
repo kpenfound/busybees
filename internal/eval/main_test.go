@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kpenfound/busybees/core/agent/agenttest"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/ghwork"
 	"github.com/kpenfound/busybees/internal/mail"
@@ -101,6 +102,12 @@ func fakeClaude() {
 	// The configuration inventory a restricted opencode run probes with
 	// before the model: what a CLI honoring the inline restrictions
 	// resolves.
+	// The search for custom tools a held opencode turn runs first, with
+	// the executable started as its JavaScript runtime.
+	if os.Getenv("BUN_BE_BUN") == "1" {
+		fmt.Println(agenttest.OpenCodeNoCustomTools)
+		return
+	}
 	if len(os.Args) > 3 && os.Args[1] == "--pure" && os.Args[2] == "debug" {
 		fmt.Println(`{"agent":{"bees-read-only":{"mode":"primary","permission":{"*":"deny","read":"allow","grep":"allow","glob":"allow"}}},"mcp":{}}`)
 		return

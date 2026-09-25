@@ -188,3 +188,8 @@ func Script(t *testing.T, name, body string) string {
 	}
 	return path
 }
+
+// OpenCodeNoCustomTools is what a fake opencode prints for the search for
+// custom tools a held opencode turn runs first, the command it is started
+// with BUN_BE_BUN=1 for: the search ran and found nothing to load.
+const OpenCodeNoCustomTools = `{"probe":"bees-opencode-custom-tools/1","roots":["/.opencode"],"tools":[],"errors":[]}`
