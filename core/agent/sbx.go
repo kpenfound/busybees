@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -209,13 +208,11 @@ func (s *sandbox) execCommand(bin string, args []string, session bool) (string, 
 		out = append(out, "--env", v.name)
 	}
 	out = append(out, s.name)
-	if denied := s.turn.DeniedExecutables; len(denied) > 0 {
-		dir := filepath.Join(s.sessionDir, deniedBinDir)
-		if err := writeDenied(dir, denied); err != nil {
-			return "", nil, err
-		}
-		out = append(out, "/bin/sh", "-c", `PATH="$0:$PATH" exec "$@"`, dir)
+	prefix, err := s.pathPrefix()
+	if err != nil {
+		return "", nil, err
 	}
+	out = append(out, prefix...)
 	out = append(out, bin)
 	out = append(out, args...)
 	return s.r.sbxBin(), out, nil

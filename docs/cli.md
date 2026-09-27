@@ -51,7 +51,9 @@ the login it will act as (`acting on GitHub as busybees-bot`); creating the
 labels is that token's first real job. A value you stated, or init really
 detected, is written as an active setting; one it could only guess stays a
 commented placeholder, so init fails rather than write a default branch nobody
-confirmed. A failed init leaves no `bees.toml` behind and the directory exactly
+confirmed. To act as a [GitHub App](configuration.md#github), add it to
+`[github]` after init and run `bees doctor`, which asks the App the same
+questions. A failed init leaves no `bees.toml` behind and the directory exactly
 as it was: fix what the error reports and run init again. The one step that can
 fail after the local files exist is creating the labels; the error then says to
 run `bees labels sync`, not init again.
@@ -94,7 +96,7 @@ prints what it found grouped by area:
 |---|---|
 | `toolchain` | `git` on `PATH`; `gh` on `PATH`, authenticated and holding the `repo` token scope; `claude` (or `$BEES_CLAUDE_BIN`) runnable and new enough; `codex` (or `$BEES_CODEX_BIN`) runnable, when a role is configured with `agent = "codex"`; `opencode` (or `$BEES_OPENCODE_BIN`) runnable, when a role is configured with `agent = "opencode"`; `pi` (or `$BEES_PI_BIN`) runnable, when a role is configured with `agent = "pi"`; `sbx` on `PATH` and answering `sbx version`, when a role is configured with `sandbox = "sbx"`. |
 | `config` | `bees.toml` loads and validates; `project.repo` and `project.default_branch` are set or derivable; the remote answers; the state directory is ignored by git; the notes directory is writable; the sessions directory is writable, when a role is configured with `agent = "opencode"` or `agent = "pi"`; every configured `prompt_file` exists; the repository's `bees/prompts/` files are all readable and named after a role; a running scheduler is serving a build of the commit that is checked out. |
-| `github` | The repository is readable and writable (`viewerPermission`); with `[github]` set, that `github.token` belongs to `github.login`; every workflow label exists; with `[github]` set, that the account can actually write issues, issue comments and labels; with `[github]` set, that the account can actually push branches; the visibility filter matches at least one open issue; with `auto_merge` on, what a merge is actually gated on. |
+| `github` | The repository is readable and writable (`viewerPermission`); with `[github]` set, that `github.login` is the account the credential belongs to, and for a GitHub App that the App is installed on the repository; every workflow label exists; with `[github]` set, that the account can actually write issues, issue comments and labels; with `[github]` set, that the account can actually push branches; the visibility filter matches at least one open issue; with `auto_merge` on, what a merge is actually gated on. |
 | `workspace` | A worktree can be created under `workspace_root` and removed again. |
 | `roles` | Per role: every configured skill URL clones and produces a plugin directory; every configured MCP server starts and answers an `initialize` request within 15s; a configured `shell` can be executed; for a `pi` role, `pi --no-extensions -e npm:pi-mcp-adapter -e <pi_packages entry>... --help` loads the adapter and every `pi_packages` entry, pi installing what is missing, within 5m (see [Pi](configuration.md#pi)). |
 
@@ -138,14 +140,15 @@ The three [`[github]`](configuration.md#github) checks answer what
 `viewerPermission` cannot, and all three are silent — a pass saying so — when
 the table is unset, because there is then no configured account to check.
 
-The first compares the login `github.token` actually authenticates as with
+The first compares the login the credential actually authenticates as with
 `github.login`, and reports a mismatch by name. `github.login` is what tells
 the factory's own comments from a person's, so a login naming an account other
 than the one posting means a person's comments are read as the factory's own
-and answered by nobody. A `[bot]` suffix is never stripped or added — it
-belongs in `bees.toml` exactly when GitHub uses it — so a user token whose
-login was written with the suffix is an ordinary mismatch, named in the
-detail, and it fails.
+and answered by nobody. For a GitHub App the login is the App's slug followed
+by `[bot]`, and the check also asks whether GitHub accepts the App ID and key
+and whether the App is installed on the repository. For a token the login is
+the token's user, written without the suffix, and a user login written with it
+is a mismatch named in the detail.
 
 The second establishes that the account can write what bees writes. Repository
 permission does not imply it: a fine-grained token carries per-resource
@@ -352,7 +355,8 @@ servers, model, fallback, limits, `sandbox` and `enabled` after merging
 `[global]` with `[roles.<name>]`. The global-only `skills_refresh` is printed
 under every role, since it governs how each role's skills are refreshed. `github.token` is
 never printed resolved: a `"$VAR"` value is shown as written and anything else
-as `"(set)"`.
+as `"(set)"`. `github.private_key` is shown as written, except a PEM, which is
+`"(set)"`.
 
 The JSON keys follow `bees.toml`; agent settings are resolved for each role.
 Durations print as duration strings (`"45m0s"`).
@@ -389,7 +393,7 @@ bees config show developer
   "path": "/src/widgets/bees.toml",
   "version": 5,
   "filter": { "label": "bees", "require_label": true, "assignee": "@me", "milestone": "", "creator": "" },
-  "github": { "login": "busybees-bot", "token": "$BEES_GITHUB_TOKEN", "git_name": "", "git_email": "" },
+  "github": { "login": "busybees[bot]", "token": "", "app_id": 123456, "private_key": "~/.config/bees/busybees.pem", "git_name": "", "git_email": "" },
   "scheduler": { "poll_interval": "5m0s", "max_developers": 1, "max_review_rounds": 3, "...": "" },
   "profiles": { "fast": { "agent": "claude", "model": "sonnet", "fallback": "", "effort": "low", "sandbox": "none" } },
   "profile_sources": { "fast": "/home/me/.config/bees/defaults.toml" },
@@ -1058,7 +1062,7 @@ repository is about to see (`acting_as` in `--json`, empty when the factory
 uses your own gh login):
 
 ```
-repo: acme/widgets   state: /home/kyle/src/acme/.bees   acting as: busybees-bot
+repo: acme/widgets   state: /home/kyle/src/acme/.bees   acting as: busybees[bot]
 ```
 
 The scheduler line ends with the build `bees run` was started from — what

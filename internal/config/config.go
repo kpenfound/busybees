@@ -327,10 +327,11 @@ func (f Filter) LabelRequired() bool { return f.RequireLabel == nil || *f.Requir
 // means the machine owner's own `gh` authentication, which is what bees has
 // always used.
 //
-// Login and Token are set together: a login on its own would make bees report
-// an account it does not act as, and a token on its own leaves nothing to
-// report without asking GitHub who it belongs to. Validate rejects either
-// alone.
+// The account is a GitHub App (AppID and PrivateKey, with Login its bot
+// login) or a user account (Token). Login goes with exactly one of the two:
+// a login on its own would make bees report an account it does not act as,
+// and a credential on its own leaves nothing to report without asking GitHub
+// who it belongs to. Validate rejects every other combination.
 //
 // Note that filter.assignee = "@me" is deliberately *not* affected: it says
 // whose work the factory picks up, which is the person's, so it is resolved
@@ -344,6 +345,15 @@ type GitHub struct {
 	// from the environment bees runs in, so the secret need not be written
 	// into bees.toml. Read it through ResolvedToken, never directly.
 	Token string `toml:"token" json:"token"`
+	// AppID is the GitHub App the factory acts as, with Login its bot login
+	// ("<slug>[bot]"). The orchestrator mints the App's installation tokens
+	// from PrivateKey (internal/ghapp); sessions are given those tokens and
+	// never the key.
+	AppID int64 `toml:"app_id" json:"app_id"`
+	// PrivateKey is the App's private key: a PEM, a "$VAR" or "${VAR}"
+	// reference to one, or the path of a PEM file. Read it through
+	// ResolvedPrivateKey, never directly.
+	PrivateKey string `toml:"private_key" json:"private_key"`
 	// GitName and GitEmail are the identity for commits the developer makes:
 	// a session gets them as GIT_AUTHOR_* and GIT_COMMITTER_*. They are
 	// independent of Token and of each other — whichever is unset leaves that
@@ -355,7 +365,45 @@ type GitHub struct {
 // Configured reports whether the factory acts as an account of its own. It is
 // false for every configuration that predates [github], which is what makes
 // "unset means today's behaviour" hold.
-func (g GitHub) Configured() bool { return g.Login != "" && g.Token != "" }
+func (g GitHub) Configured() bool { return g.Login != "" && (g.Token != "" || g.App()) }
+
+// App reports whether the factory acts as a GitHub App, whose tokens bees
+// mints, rather than with a token of the configuration's.
+func (g GitHub) App() bool { return g.AppID != 0 }
+
+// BotSuffix is what GitHub appends to a GitHub App's slug to make the login
+// it reports as the author of what the App writes ("busybees[bot]").
+const BotSuffix = "[bot]"
+
+// ResolvedPrivateKey is the App's private key as PEM: private_key with a
+// $VAR reference expanded, and read from the file it names when it is not a
+// PEM itself. The error names the key and what to change. Only a process
+// that mints tokens asks for it; sessions never do, and do not have it.
+func (g GitHub) ResolvedPrivateKey() ([]byte, error) {
+	value := strings.TrimSpace(os.ExpandEnv(g.PrivateKey))
+	if value == "" {
+		if v := tokenVar(g.PrivateKey); v != "" {
+			return nil, fmt.Errorf("github.private_key reads $%s, which is not set: set it in the environment bees runs in", v)
+		}
+		return nil, fmt.Errorf("github.private_key is empty: set it to the GitHub App's private key, or the path of its .pem file")
+	}
+	if strings.HasPrefix(value, "-----BEGIN") {
+		return []byte(value), nil
+	}
+	path := value
+	if rest, ok := strings.CutPrefix(path, "~/"); ok {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("github.private_key %q: %w", g.PrivateKey, err)
+		}
+		path = filepath.Join(home, rest)
+	}
+	pem, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("github.private_key: read the GitHub App's private key: %w", err)
+	}
+	return pem, nil
+}
 
 // ResolvedToken is the token with $VAR references expanded, or "" when no
 // token is configured. Validate has already rejected a reference that expands
@@ -403,6 +451,9 @@ func tokenVar(token string) string {
 // the two ways out: complete the setting, or drop the table and act as the
 // machine owner again.
 func (g GitHub) validate() []string {
+	if g.AppID != 0 || g.PrivateKey != "" {
+		return g.validateApp()
+	}
 	var errs []string
 	switch {
 	case g.Login != "" && g.Token == "":
@@ -418,6 +469,42 @@ func (g GitHub) validate() []string {
 		errs = append(errs, where+": set it in the environment bees runs in, or remove github.login and github.token to act as your own gh account")
 	}
 	return errs
+}
+
+// validateApp checks [github] for a GitHub App. The private key is not
+// read here: in-session `bees` commands load this configuration too, and
+// they are given installation tokens, never the key, so the key is resolved
+// only where tokens are minted (ResolvedPrivateKey).
+func (g GitHub) validateApp() []string {
+	var errs []string
+	switch {
+	case g.AppID < 0:
+		errs = append(errs, fmt.Sprintf("github.app_id = %d: set it to the App ID on the GitHub App's settings page", g.AppID))
+	case g.AppID == 0:
+		errs = append(errs, "github.private_key is set without github.app_id: add the App ID from the GitHub App's settings page")
+	}
+	if g.PrivateKey == "" {
+		errs = append(errs, "github.app_id is set without github.private_key: add the App's private key, a \"$VAR\" holding it, or the path of its .pem file")
+	}
+	if g.Token != "" {
+		errs = append(errs, "github.token and github.app_id are both set: keep github.app_id and github.private_key to act as the GitHub App, or github.token to act as the account the token belongs to")
+	}
+	switch {
+	case g.Login == "":
+		errs = append(errs, fmt.Sprintf("github.app_id is set without github.login: add the App's bot login, its slug followed by %s (\"busybees%s\")", BotSuffix, BotSuffix))
+	case !strings.HasSuffix(g.Login, BotSuffix):
+		errs = append(errs, fmt.Sprintf("github.login %q is not a GitHub App's login: set it to the App's slug followed by %s (%q)", g.Login, BotSuffix, g.Login+BotSuffix))
+	}
+	return errs
+}
+
+// RedactedPrivateKey is what `bees config show` prints for the private key:
+// a $VAR reference or a path as written, and a PEM as a placeholder.
+func (g GitHub) RedactedPrivateKey() string {
+	if strings.HasPrefix(strings.TrimSpace(g.PrivateKey), "-----BEGIN") {
+		return "(set)"
+	}
+	return g.PrivateKey
 }
 
 // RedactedToken is what `bees config show` prints for the token: a $VAR

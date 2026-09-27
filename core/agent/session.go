@@ -44,6 +44,12 @@ type Request struct {
 	// configuration, injected only when the profile allows VCS access.
 	VCSEnv          map[string]string
 	VCSContainerEnv map[string]string
+	// VCSContainerPath are caller-owned directories put in front of the
+	// image's PATH inside a container or a sandbox, only when the profile
+	// allows VCS access: wrappers such as a gh that fetches its own
+	// credentials. Each must be inside a directory the box mounts. On the
+	// host the caller sets PATH in Env itself.
+	VCSContainerPath []string
 	// SystemPrompt is appended to claude's default system prompt.
 	SystemPrompt string
 	// Prompt is the task given to the session.

@@ -1387,6 +1387,8 @@ func uncommentTemplate(text string) string {
 			continue // placeholder file does not exist
 		case strings.HasPrefix(line, "#container_use_environment"):
 			continue // conflicts with the also-commented sandbox_image example
+		case strings.HasPrefix(line, "#app_id"), strings.HasPrefix(line, "#private_key"):
+			continue // a GitHub App conflicts with the also-commented token example
 		case strings.HasPrefix(line, "#sandbox_dagger_"):
 			continue // needs sandbox = "sbx", and the template's is "none"
 		case strings.HasPrefix(line, "#"):
@@ -1982,6 +1984,76 @@ func TestGitHubAccount(t *testing.T) {
 	// not credentials, so they do not need a token.
 	if _, err := Load(writeConfig(t, head+"[github]\ngit_name = \"busybees\"\ngit_email = \"bot@example.com\"\n")); err != nil {
 		t.Fatalf("git identity alone: %v", err)
+	}
+}
+
+// TestGitHubApp covers [github] for a GitHub App: login, app_id and
+// private_key go together, login is the App's bot login, and a token beside
+// them is refused. The key is not read at load, because the bees commands a
+// session runs load this file without it; ResolvedPrivateKey reads it where
+// tokens are minted, from a PEM, a $VAR or a file.
+func TestGitHubApp(t *testing.T) {
+	const head = "version = 1\n[project]\nrepo = \"a/b\"\ndefault_branch = \"main\"\n"
+	const app = "[github]\nlogin = \"busybees[bot]\"\napp_id = 4242\nprivate_key = \"$BEES_TEST_APP_KEY\"\n"
+
+	// The variable is not set, and the file loads: a session's view.
+	cfg, err := Load(writeConfig(t, head+app))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.GitHub.Configured() || !cfg.GitHub.App() || cfg.GitHub.AppID != 4242 {
+		t.Fatalf("github: %+v", cfg.GitHub)
+	}
+	if _, err := cfg.GitHub.ResolvedPrivateKey(); err == nil || !strings.Contains(err.Error(), "$BEES_TEST_APP_KEY, which is not set") {
+		t.Errorf("an unset key variable: %v", err)
+	}
+	const pem = "-----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY-----"
+	t.Setenv("BEES_TEST_APP_KEY", pem)
+	if got, err := cfg.GitHub.ResolvedPrivateKey(); err != nil || string(got) != pem {
+		t.Errorf("$VAR key = %q, %v", got, err)
+	}
+	// A path, with ~ for the home directory.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.WriteFile(filepath.Join(home, "app.pem"), []byte(pem), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"~/app.pem", filepath.Join(home, "app.pem")} {
+		if got, err := (GitHub{PrivateKey: path}).ResolvedPrivateKey(); err != nil || string(got) != pem {
+			t.Errorf("key file %s = %q, %v", path, got, err)
+		}
+	}
+	if _, err := (GitHub{PrivateKey: filepath.Join(home, "missing.pem")}).ResolvedPrivateKey(); err == nil || !strings.Contains(err.Error(), "github.private_key") {
+		t.Errorf("a missing key file: %v", err)
+	}
+	// The key is never printed; a reference or a path is.
+	if got := (GitHub{PrivateKey: pem}).RedactedPrivateKey(); got != "(set)" {
+		t.Errorf("a PEM key is printed as %q", got)
+	}
+	if got := cfg.GitHub.RedactedPrivateKey(); got != "$BEES_TEST_APP_KEY" {
+		t.Errorf("a key reference is printed as %q", got)
+	}
+
+	for _, tc := range []struct{ name, body, want string }{
+		{"no key", "[github]\nlogin = \"busybees[bot]\"\napp_id = 4242\n", "github.app_id is set without github.private_key"},
+		{"no app id", "[github]\nlogin = \"busybees[bot]\"\nprivate_key = \"~/app.pem\"\n", "github.private_key is set without github.app_id"},
+		{"no login", "[github]\napp_id = 4242\nprivate_key = \"~/app.pem\"\n", "github.app_id is set without github.login"},
+		{"user login", "[github]\nlogin = \"busybees\"\napp_id = 4242\nprivate_key = \"~/app.pem\"\n", `set it to the App's slug followed by [bot] ("busybees[bot]")`},
+		{"token too", app + "token = \"ghp_x\"\n", "github.token and github.app_id are both set"},
+		{"negative id", "[github]\nlogin = \"busybees[bot]\"\napp_id = -1\nprivate_key = \"~/app.pem\"\n", "github.app_id = -1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Load(writeConfig(t, head+tc.body))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error = %v, want it to say %q", err, tc.want)
+			}
+		})
+	}
+
+	// `bees config show` prints the App's keys.
+	gh := viewJSON(t, head+app)["github"].(map[string]any)
+	if gh["app_id"] != float64(4242) || gh["private_key"] != "$BEES_TEST_APP_KEY" {
+		t.Errorf("view: %v", gh)
 	}
 }
 

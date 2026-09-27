@@ -101,6 +101,9 @@ ways to run the factory.
   approves, and grades the result with each fixture's own test.
   `bees eval <role>` runs one role on its own and grades its session.
   See [Evals](docs/evals.md).
+- **A GitHub App of its own.** With `[github]` naming a GitHub App, the
+  factory writes as the App's bot, and sessions get installation tokens scoped
+  to the repository, never the App's key. See [`[github]`](docs/configuration.md#github).
 - **A local mailbox, not GitHub comments.** Roles ask each other questions and
   exchange review feedback through a mailbox in the state directory; every comment a
   bee posts on GitHub is to a person, and ends with an invisible marker. See

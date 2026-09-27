@@ -950,8 +950,9 @@ either one on its own makes a comment a bee's:
   factory an account of its own, everything the factory does acts as that
   login, so any comment by it is the factory's whether or not it carries a
   marker. The orchestrator's escalation comment, for one, carries none.
-  Sessions carry the same token in `GH_TOKEN`, so a comment a session posts
-  with its own `gh` is made by that login too. This says nothing about
+  Sessions act as the same login, through `GH_TOKEN` or a GitHub App's own
+  `gh`, so a comment a session posts with its own `gh` is made by that login
+  too. This says nothing about
   anybody else's comment: yours is yours even when it quotes a marker.
 
 With `[github]` set, the orchestrator checks the two against each other: when

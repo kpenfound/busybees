@@ -276,3 +276,65 @@ func TestUserDefaultsVersion(t *testing.T) {
 		}
 	})
 }
+
+// TestUserDefaultsGitHub: defaults.toml may hold [github], so several
+// projects share one account. It is one account, taken whole: a project
+// with any [github] of its own takes nothing of the defaults' (an empty
+// table included, which acts as the machine's own gh again), and an error
+// in the defaults' table names that file.
+func TestUserDefaultsGitHub(t *testing.T) {
+	const shared = `version = 5
+[github]
+login = "busybees[bot]"
+app_id = 4242
+private_key = "~/.config/bees/busybees.pem"
+git_name = "busybees[bot]"
+git_email = "1+busybees[bot]@users.noreply.github.com"
+`
+	t.Run("taken whole when the project has none", func(t *testing.T) {
+		project, _ := defaultsFixture(t, "version = 5\n", shared)
+		cfg, err := Load(project)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := GitHub{Login: "busybees[bot]", AppID: 4242, PrivateKey: "~/.config/bees/busybees.pem", GitName: "busybees[bot]", GitEmail: "1+busybees[bot]@users.noreply.github.com"}
+		if cfg.GitHub != want {
+			t.Errorf("github = %+v, want %+v", cfg.GitHub, want)
+		}
+	})
+	t.Run("the project's own wins whole", func(t *testing.T) {
+		t.Setenv("BEES_TEST_TOKEN", "ghp_x")
+		project, _ := defaultsFixture(t, "version = 5\n[github]\nlogin = \"kyle\"\ntoken = \"$BEES_TEST_TOKEN\"\n", shared)
+		cfg, err := Load(project)
+		if err != nil {
+			t.Fatalf("a token beside the defaults' App: %v", err)
+		}
+		if want := (GitHub{Login: "kyle", Token: "$BEES_TEST_TOKEN"}); cfg.GitHub != want {
+			t.Errorf("github = %+v, want %+v", cfg.GitHub, want)
+		}
+	})
+	t.Run("an empty table opts out", func(t *testing.T) {
+		project, _ := defaultsFixture(t, "version = 5\n[github]\n", shared)
+		cfg, err := Load(project)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.GitHub != (GitHub{}) {
+			t.Errorf("github = %+v, want the machine's own account", cfg.GitHub)
+		}
+	})
+	t.Run("an error names defaults.toml", func(t *testing.T) {
+		project, defaults := defaultsFixture(t, "version = 5\n", "version = 5\n[github]\nlogin = \"busybees\"\napp_id = 4242\nprivate_key = \"x.pem\"\n")
+		_, err := Load(project)
+		if err == nil || !strings.Contains(err.Error(), defaults+": github.login") {
+			t.Errorf("Load() error = %v, want it to name %s", err, defaults)
+		}
+	})
+	t.Run("an unknown key is refused", func(t *testing.T) {
+		project, defaults := defaultsFixture(t, "version = 5\n", "version = 5\n[github]\nrepo = \"a/b\"\n")
+		_, err := Load(project)
+		if err == nil || !strings.Contains(err.Error(), defaults) || !strings.Contains(err.Error(), "github.repo") {
+			t.Errorf("Load() error = %v", err)
+		}
+	})
+}

@@ -20,6 +20,14 @@ behalf. A session that can push to the repository and comment as the bot in
 `none` mode can still do both in `claude`, `container` and `sbx` mode: that
 is the role's job, not a gap.
 
+With a [GitHub App](configuration.md#github), those credentials are
+installation tokens restricted to `project.repo`, each good for an hour. A
+session is never given the App's private key, and gets a new token from the
+`bees` process that started it only when the one it has expires. In `none`
+mode the session can read any file your user can, so keep the key in a
+variable (`private_key = "$VAR"`) rather than a `.pem` file to keep it out of
+reach there too.
+
 What each mode changes is everything else the process can reach: the rest of
 the filesystem, other hosts, and credentials that belong to something other
 than this session.

@@ -55,6 +55,8 @@ import (
 	"github.com/BurntSushi/toml"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghapp"
+	"github.com/kpenfound/busybees/internal/github"
 )
 
 // ConfigFile is the name of the global configuration file, and ProjectFile
@@ -183,14 +185,71 @@ type Config struct {
 
 // GitHub is where `bees review` gets its GitHub credentials from. An empty
 // table means the machine's own `gh` authentication, which is what most
-// people want; a token is for a machine that has none, or an account other
-// than the one `gh auth status` reports.
+// people want; a GitHub App or a token posts reviews as another account.
+// It has bees.toml's [github] keys for the credential, and with no [github]
+// of its own takes defaults.toml's.
 type GitHub struct {
+	// Login is the account the credential acts as. A review does not need
+	// it; it is accepted so a [github] table moves across from bees.toml
+	// or defaults.toml as it is.
+	Login string `toml:"login"`
 	// Token authenticates the gh calls a review makes. A "$VAR" or
 	// "${VAR}" reference is expanded from the environment, so the secret
 	// need not be written into the file. Read it through ResolvedToken,
 	// never directly.
 	Token string `toml:"token"`
+	// AppID and PrivateKey are a GitHub App the review acts as instead,
+	// with the App's installation tokens for the pull request's repository
+	// (internal/ghapp). PrivateKey takes the forms bees.toml's does.
+	AppID      int64  `toml:"app_id"`
+	PrivateKey string `toml:"private_key"`
+}
+
+// App reports whether a review acts as a GitHub App.
+func (g GitHub) App() bool { return g.AppID != 0 }
+
+// client is the gh client for repo authenticated as g says.
+func (g GitHub) client(repo string) (*github.Client, error) {
+	if !g.App() {
+		client := github.New(repo)
+		client.Token = g.ResolvedToken()
+		return client, nil
+	}
+	key, err := (config.GitHub{PrivateKey: g.PrivateKey}).ResolvedPrivateKey()
+	if err != nil {
+		return nil, err
+	}
+	m, err := ghapp.NewMinter(g.AppID, key, repo, "")
+	if err != nil {
+		return nil, err
+	}
+	return github.NewApp(repo, g.Login, m), nil
+}
+
+// validate checks the credential: a token or a GitHub App, not both, and
+// an App's ID and key together. The key itself is read when a review first
+// needs a token.
+func (g GitHub) validate() []string {
+	var errs []string
+	if g.Token != "" && g.ResolvedToken() == "" {
+		where := fmt.Sprintf("github.token %q expands to nothing", g.Token)
+		if v := config.TokenVar(g.Token); v != "" {
+			where = fmt.Sprintf("github.token reads $%s, which is not set", v)
+		}
+		errs = append(errs, where+": set it in the environment, or remove github.token to use your own gh authentication")
+	}
+	switch {
+	case g.AppID < 0:
+		errs = append(errs, fmt.Sprintf("github.app_id = %d: set it to the App ID on the GitHub App's settings page", g.AppID))
+	case g.AppID == 0 && g.PrivateKey != "":
+		errs = append(errs, "github.private_key is set without github.app_id: add the App ID from the GitHub App's settings page")
+	case g.AppID != 0 && g.PrivateKey == "":
+		errs = append(errs, "github.app_id is set without github.private_key: add the App's private key, a \"$VAR\" holding it, or the path of its .pem file")
+	}
+	if g.AppID != 0 && g.Token != "" {
+		errs = append(errs, "github.token and github.app_id are both set: keep github.app_id and github.private_key to review as the GitHub App, or github.token to review as the account the token belongs to")
+	}
+	return errs
 }
 
 // ResolvedToken is the token with $VAR references expanded, and "" when no
@@ -277,7 +336,7 @@ func parseConfig(text, path string, present bool, defaults *config.UserDefaults)
 	if err := undecoded(md, abs); err != nil {
 		return nil, err
 	}
-	cfg.mergeUserDefaults(defaults)
+	cfg.mergeUserDefaults(defaults, md)
 	cfg.applyDefaults()
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -311,8 +370,9 @@ func (c *Config) applyDefaults() {
 // angles, the flat provider or model for the base — takes nothing from
 // defaults.toml. Two merges happen key by key whatever else is set: the
 // angles per size, and the profiles per name, a config.toml profile
-// replacing the defaults one whole.
-func (c *Config) mergeUserDefaults(d *config.UserDefaults) {
+// replacing the defaults one whole. [github] is one account, taken whole
+// when config.toml (md) has no [github] of its own.
+func (c *Config) mergeUserDefaults(d *config.UserDefaults, md toml.MetaData) {
 	if d == nil {
 		return
 	}
@@ -321,6 +381,11 @@ func (c *Config) mergeUserDefaults(d *config.UserDefaults) {
 			c.fromDefaults = map[string]bool{}
 		}
 		c.fromDefaults[key] = true
+	}
+
+	if g := d.GitHub; !md.IsDefined("github") && (g.Login != "" || g.Token != "" || g.AppID != 0 || g.PrivateKey != "") {
+		c.GitHub = GitHub{Login: g.Login, Token: g.Token, AppID: g.AppID, PrivateKey: g.PrivateKey}
+		mark("github")
 	}
 
 	// Profiles: a name config.toml defines replaces the defaults one whole.
@@ -451,13 +516,7 @@ func (c *Config) Validate() error {
 		}
 		errs = append(errs, c.checkProfile("angle_profiles."+angle, c.AngleProfiles[angle], true)...)
 	}
-	if c.GitHub.Token != "" && c.GitHub.ResolvedToken() == "" {
-		where := fmt.Sprintf("github.token %q expands to nothing", c.GitHub.Token)
-		if v := config.TokenVar(c.GitHub.Token); v != "" {
-			where = fmt.Sprintf("github.token reads $%s, which is not set", v)
-		}
-		errs = append(errs, where+": set it in the environment, or remove github.token to use your own gh authentication")
-	}
+	errs = append(errs, c.GitHub.validate()...)
 	return invalid(c.Path, c.attributeDefaults(errs))
 }
 

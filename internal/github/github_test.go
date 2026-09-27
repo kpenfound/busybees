@@ -740,7 +740,7 @@ func TestNoTokenInjectsNothing(t *testing.T) {
 	}
 	// Printing the whole environment would bury the point: report only what
 	// the builder added on top of the process's own.
-	if cmd := c.command(ctx, "issue", "list"); cmd.Env != nil {
+	if cmd, _ := c.command(ctx, "issue", "list"); cmd.Env != nil {
 		var tokens []string
 		for _, e := range cmd.Env {
 			if strings.HasPrefix(e, "GH_TOKEN=") {
@@ -763,6 +763,87 @@ func TestNoTokenInjectsNothing(t *testing.T) {
 	}
 	if got := string(out); got != "token=[ghp_bot] args=[issue list] stdin=[]" {
 		t.Errorf("configured token does not win: %q", got)
+	}
+}
+
+// tokenSeq is a TokenSource that answers each call with the next token, or
+// with err.
+type tokenSeq struct {
+	tokens []string
+	err    error
+}
+
+func (s *tokenSeq) Token(context.Context) (string, error) {
+	if s.err != nil {
+		return "", s.err
+	}
+	t := s.tokens[0]
+	s.tokens = s.tokens[1:]
+	return t, nil
+}
+
+// TestTokenSourceIsAskedOnEveryCall: a GitHub App's token expires within the
+// hour, so a client with a TokenSource asks it for each call rather than
+// keeping the first answer, and a source that cannot answer fails the call
+// instead of letting gh act as the machine's own account.
+func TestTokenSourceIsAskedOnEveryCall(t *testing.T) {
+	fakeGHOnPath(t)
+	t.Setenv("GH_TOKEN", "the-machines-own")
+	ctx := context.Background()
+
+	c := NewApp("acme/widgets", "busybees[bot]", &tokenSeq{tokens: []string{"ghs_one", "ghs_two"}})
+	for _, want := range []string{"ghs_one", "ghs_two"} {
+		out, err := c.Exec(ctx, "issue", "list")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := string(out); got != "token=["+want+"] args=[issue list] stdin=[]" {
+			t.Errorf("Exec: %q, want token %s", got, want)
+		}
+	}
+	c = NewApp("acme/widgets", "busybees[bot]", &tokenSeq{err: errors.New("no key")})
+	if _, err := c.ExecStdin(ctx, "body", "issue", "comment"); err == nil || !strings.Contains(err.Error(), "no key") {
+		t.Errorf("a failed token source did not fail the call: %v", err)
+	}
+}
+
+// TestSameLogin: GitHub reports a GitHub App's login with "[bot]" through
+// REST and without it through GraphQL, so both name the App; a user login
+// is compared as it always was.
+func TestSameLogin(t *testing.T) {
+	for _, c := range []struct {
+		a, b string
+		want bool
+	}{
+		{"busybees[bot]", "busybees", true},
+		{"busybees", "BusyBees[bot]", true},
+		{"busybees[bot]", "busybees[bot]", true},
+		{"busybees-bot", "BUSYBEES-BOT", true},
+		{"busybees", "busybees-bot", false},
+		{"busybees[bot]", "other[bot]", false},
+		{"[bot]", "", false},
+	} {
+		if got := SameLogin(c.a, c.b); got != c.want {
+			t.Errorf("SameLogin(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
+		}
+	}
+	// And a GitHub App's comment is the factory's under either spelling.
+	if !IsBee("busybees[bot]", "busybees", "no marker") {
+		t.Error("the App's GraphQL login is not read as the factory's")
+	}
+}
+
+// TestAppAuthorListsWithAppFlag: gh names a GitHub App author with --app and
+// its slug; --author with the "[bot]" login matches nothing.
+func TestAppAuthorListsWithAppFlag(t *testing.T) {
+	q := Query{Label: "bees", Creator: "kyle", Self: "busybees[bot]"}
+	got := q.argSets()
+	if len(got) != 2 || !slices.Equal(got[0], []string{"--label", "bees", "--author", "kyle"}) ||
+		!slices.Equal(got[1], []string{"--label", "bees", "--app", "busybees"}) {
+		t.Errorf("argSets: %q", got)
+	}
+	if !q.Matches([]Label{{Name: "bees"}}, nil, "", "busybees") {
+		t.Error("an item the App opened, as GraphQL names it, is not visible")
 	}
 }
 

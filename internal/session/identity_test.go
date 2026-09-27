@@ -13,6 +13,8 @@ import (
 
 	"github.com/kpenfound/busybees/core/vcs"
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghapp"
+	"github.com/kpenfound/busybees/internal/ghapp/ghapptest"
 	"github.com/kpenfound/busybees/internal/testutil"
 	"github.com/kpenfound/busybees/internal/workspace"
 )
@@ -458,5 +460,60 @@ func TestCodexBuiltinMCPCredentials(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestGitHubAppSession: a GitHub App's session is given no token. Its gh is
+// the App's, first on PATH, and its git asks the App's credential helper;
+// both ask the runner's Minter, which the runner holds for the session, for
+// a token when they need one, and the Minter mints it then.
+func TestGitHubAppSession(t *testing.T) {
+	srv := ghapptest.New(t, "a/b")
+	stateDir := t.TempDir()
+	m := srv.Minter(t, ghapp.Dir(stateDir))
+	m.Poll = 10 * time.Millisecond
+
+	// The gh the App's gh runs: the next one on PATH, a fake.
+	fake := t.TempDir()
+	if err := os.WriteFile(filepath.Join(fake, "gh"), []byte("#!/bin/sh\necho \"gh token=$GH_TOKEN\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fake+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv(EnvGHToken, machineEnv)
+	t.Setenv("GIT_CONFIG_COUNT", "")
+	t.Setenv("GIT_TERMINAL_PROMPT", "0")
+
+	out := filepath.Join(t.TempDir(), "out.txt")
+	bin := fakeClaude(t, `
+{
+  echo "GH_TOKEN=[$GH_TOKEN]"
+  gh api user
+  printf 'protocol=https\nhost=github.com\n\n' | git credential fill
+} > `+out+` 2>&1
+echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
+`)
+	r := newRunner(t, bin)
+	r.StateDir = stateDir
+	r.BeesBin = filepath.Join(t.TempDir(), "bees")
+	r.GitHub = config.GitHub{Login: "busybees[bot]", AppID: srv.AppID, PrivateKey: "$UNUSED"}
+	r.GitHubApp = m
+	if _, err := r.Run(context.Background(), Request{
+		Name: "t", Profile: ProfileForRole(config.ResolvedRole{Name: "developer", Model: "opus", MaxTurns: 1, Timeout: time.Minute}),
+		Workspace: vcs.Directory(t.TempDir()),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(b)
+	for _, want := range []string{"GH_TOKEN=[]\n", "gh token=ghs_1\n", "username=x-access-token\n", "password=ghs_1\n"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("session output lacks %q:\n%s", want, got)
+		}
+	}
+	if n := len(srv.Minted()); n != 1 {
+		t.Errorf("minted %d tokens for one session, want 1", n)
 	}
 }

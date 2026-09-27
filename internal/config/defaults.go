@@ -12,8 +12,9 @@ import (
 )
 
 // DefaultsFile is the user-level project defaults file. It deliberately has
-// a smaller schema than bees.toml: only agent profiles and the selectors that
-// choose them can be shared between projects.
+// a smaller schema than bees.toml: only agent profiles, the selectors that
+// choose them, and the GitHub account the factory acts as can be shared
+// between projects.
 const DefaultsFile = "defaults.toml"
 
 // defaultsMigrations is independent of the bees.toml migrations. The file is
@@ -38,9 +39,10 @@ func DefaultConfigDir() string {
 // project bees.toml and below the global review configuration.
 func DefaultDefaultsPath() string { return filepath.Join(DefaultConfigDir(), DefaultsFile) }
 
-// UserDefaults is what a defaults.toml holds: agent profiles and the
-// selectors that choose them, in the shape of the bees.toml tables they
-// stand in for ([profiles.*], [global] and [roles.*]). Loading has held the
+// UserDefaults is what a defaults.toml holds: agent profiles, the selectors
+// that choose them, and the GitHub account, in the shape of the bees.toml
+// tables they stand in for ([profiles.*], [global], [roles.*] and
+// [github]). Loading has held the
 // file to bees.toml's rules: an unknown or misplaced key, and a value of
 // the wrong shape, are errors naming the file. What the references name is
 // checked after the merge, where either file may define the profile.
@@ -49,6 +51,9 @@ type UserDefaults struct {
 	Global   RoleSettings
 	Roles    map[string]RoleSettings
 	Profiles map[string]AgentProfile
+	// GitHub is [github]: taken whole by a project whose bees.toml has no
+	// [github] of its own (mergeUserDefaults).
+	GitHub GitHub
 }
 
 // LoadUserDefaults reads the user defaults file, DefaultDefaultsPath. A file
@@ -115,6 +120,10 @@ func parseUserDefaults(text, path string) (*parsedDefaults, error) {
 	return &parsedDefaults{config: d, metadata: md, path: path}, nil
 }
 
+// DefaultsGitHubKeys are the [github] keys defaults.toml accepts: all of
+// them.
+var DefaultsGitHubKeys = []string{"login", "token", "app_id", "private_key", "git_name", "git_email"}
+
 func allowedDefaultsKey(key toml.Key) bool {
 	if len(key) == 0 {
 		return false
@@ -122,6 +131,8 @@ func allowedDefaultsKey(key toml.Key) bool {
 	switch key[0] {
 	case "version":
 		return len(key) == 1
+	case "github":
+		return len(key) == 1 || (len(key) == 2 && slices.Contains(DefaultsGitHubKeys, key[1]))
 	case "profiles":
 		return len(key) <= 2 || (len(key) == 3 && slices.Contains([]string{"agent", "model", "fallback", "effort", "sandbox"}, key[2]))
 	case "global":
@@ -212,6 +223,15 @@ func (c *Config) mergeUserDefaults(d *parsedDefaults, projectMD toml.MetaData) {
 		}
 		deleteSourcePrefix(c.sources, "profiles."+name)
 		c.sources["profiles."+name] = projectPath
+	}
+
+	// [github] is one account: a project that configures any of it takes
+	// none of the defaults', so a token never pairs with another file's
+	// App and one account's commits never carry another's email.
+	if projectMD.IsDefined("github") {
+		deleteSourcePrefix(c.sources, "github")
+	} else {
+		c.GitHub = d.config.GitHub
 	}
 
 	c.Global = mergeDefaultRole(d.config.Global, c.Global, projectMD, []string{"global"}, false)

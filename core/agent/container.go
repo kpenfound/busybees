@@ -294,18 +294,36 @@ func (c *container) engineCommand(bin string, args []string, session, interactiv
 		out = append(out, "--env", v.name)
 	}
 	out = append(out, c.image)
-	if denied := c.turn.DeniedExecutables; len(denied) > 0 {
-		// The image's PATH is not known here, so the stand-ins are put in
-		// front of it inside, by a shell that then runs the command.
-		dir := filepath.Join(c.sessionDir, deniedBinDir)
-		if err := writeDenied(dir, denied); err != nil {
-			return "", nil, err
-		}
-		out = append(out, "/bin/sh", "-c", `PATH="$0:$PATH" exec "$@"`, dir)
+	prefix, err := c.pathPrefix()
+	if err != nil {
+		return "", nil, err
 	}
+	out = append(out, prefix...)
 	out = append(out, bin)
 	out = append(out, args...)
 	return r.dockerBin(), out, nil
+}
+
+// pathPrefix is what runs the command inside the box with directories in
+// front of the image's PATH: the stand-ins for denied executables, or with
+// VCS the caller's VCSContainerPath. The image's PATH is not known here, so
+// a shell inside puts them in front of it and then runs the command.
+func (c *container) pathPrefix() ([]string, error) {
+	var dirs []string
+	if denied := c.turn.DeniedExecutables; len(denied) > 0 {
+		dir := filepath.Join(c.sessionDir, deniedBinDir)
+		if err := writeDenied(dir, denied); err != nil {
+			return nil, err
+		}
+		dirs = append(dirs, dir)
+	}
+	if c.turn.VCS {
+		dirs = append(dirs, c.req.VCSContainerPath...)
+	}
+	if len(dirs) == 0 {
+		return nil, nil
+	}
+	return []string{"/bin/sh", "-c", `PATH="$0:$PATH" exec "$@"`, strings.Join(dirs, ":")}, nil
 }
 
 // mounts are the bind mounts the container gets: the turn's binds, parents

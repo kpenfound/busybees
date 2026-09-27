@@ -285,14 +285,14 @@ func (p *Pipeline) logf(format string, args ...any) {
 }
 
 // NewClient is the gh client a review reads ref's repository through, and
-// posts to: authenticated the way cfg says, which with no token is the
-// machine's own gh authentication.
-func NewClient(ref Ref, cfg *Config) *github.Client {
-	client := github.New(ref.Repo)
-	if cfg != nil {
-		client.Token = cfg.GitHub.ResolvedToken()
+// posts to: authenticated the way cfg says, which with no token and no
+// GitHub App is the machine's own gh authentication. An App's private key
+// that cannot be read is the error.
+func NewClient(ref Ref, cfg *Config) (*github.Client, error) {
+	if cfg == nil {
+		return github.New(ref.Repo), nil
 	}
-	return client
+	return cfg.GitHub.client(ref.Repo)
 }
 
 // Open is the pipeline that gathers context for ref: gh authenticated the
@@ -301,7 +301,10 @@ func NewClient(ref Ref, cfg *Config) *github.Client {
 // review run from an unrelated clone reads no style rules rather than the
 // wrong ones.
 func Open(ctx context.Context, ref Ref, cfg *Config, dir string) (*Pipeline, error) {
-	client := NewClient(ref, cfg)
+	client, err := NewClient(ref, cfg)
+	if err != nil {
+		return nil, err
+	}
 	// With no checkout there is no context.toml to look for either: the
 	// directory the command happens to have been run in is another
 	// repository, and its configuration is not this review's.

@@ -1,6 +1,7 @@
 package review
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -10,6 +11,8 @@ import (
 
 	"github.com/kpenfound/busybees/core/agent"
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghapp"
+	"github.com/kpenfound/busybees/internal/ghapp/ghapptest"
 )
 
 func writeFile(t *testing.T, dir, name, body string) string {
@@ -611,4 +614,72 @@ func TestSupportedProvidersDerivesFromTheDescriptors(t *testing.T) {
 	if !slices.Equal(want, []string{"claude", "codex", "opencode", "pi"}) {
 		t.Fatalf("the descriptors declare %v, want all four", want)
 	}
+}
+
+// TestGitHubAppReview: config.toml's [github] takes a GitHub App, which a
+// review acts as with installation tokens for the pull request's
+// repository; with no [github] of its own it takes defaults.toml's whole,
+// and a token in config.toml takes none of it.
+func TestGitHubAppReview(t *testing.T) {
+	_, pem := ghapptest.Key(t)
+	key := filepath.Join(t.TempDir(), "app.pem")
+	if err := os.WriteFile(key, pem, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	app := fmt.Sprintf("[github]\nlogin = \"busybees[bot]\"\napp_id = 4242\nprivate_key = %q\n", key)
+	ref := Ref{Repo: "acme/widgets", Number: 7}
+
+	t.Run("from defaults.toml", func(t *testing.T) {
+		dir := configHome(t)
+		writeDefaults(t, dir, "version = 5\n"+app+"git_email = \"bot@example.com\"\n")
+		cfg, err := LoadConfig(filepath.Join(t.TempDir(), ConfigFile))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := (GitHub{Login: "busybees[bot]", AppID: 4242, PrivateKey: key}); cfg.GitHub != want {
+			t.Fatalf("github = %+v, want %+v", cfg.GitHub, want)
+		}
+		client, err := NewClient(ref, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m, ok := client.Tokens.(*ghapp.Minter)
+		if !ok || m.Repo != "acme/widgets" || m.AppID != 4242 || client.Token != "" {
+			t.Errorf("client: tokens %#v, token %q", client.Tokens, client.Token)
+		}
+	})
+	t.Run("config.toml's own wins whole", func(t *testing.T) {
+		dir := configHome(t)
+		writeDefaults(t, dir, "version = 5\n"+app)
+		t.Setenv("REVIEW_TOKEN", "ghp_secret")
+		cfg, err := LoadConfig(writeFile(t, dir, ConfigFile, "[github]\ntoken = \"$REVIEW_TOKEN\"\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.GitHub.App() || cfg.GitHub.ResolvedToken() != "ghp_secret" {
+			t.Errorf("github = %+v", cfg.GitHub)
+		}
+	})
+	for _, tc := range []struct{ name, body, want string }{
+		{"a token and an App", app + "token = \"ghp_x\"\n", "github.token and github.app_id are both set"},
+		{"a key without an ID", "[github]\nprivate_key = \"x.pem\"\n", "github.private_key is set without github.app_id"},
+		{"an ID without a key", "[github]\napp_id = 4242\n", "github.app_id is set without github.private_key"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			configHome(t)
+			if _, err := ParseConfig(tc.body, "/c/config.toml"); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+	t.Run("a key that cannot be read", func(t *testing.T) {
+		configHome(t)
+		cfg, err := ParseConfig("[github]\napp_id = 4242\nprivate_key = \"/nonexistent/app.pem\"\n", "/c/config.toml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := NewClient(ref, cfg); err == nil || !strings.Contains(err.Error(), "github.private_key") {
+			t.Errorf("NewClient: %v", err)
+		}
+	})
 }

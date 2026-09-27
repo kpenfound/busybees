@@ -1132,7 +1132,8 @@ steps or ended turns instead.
   `GH_TOKEN`, `GIT_AUTHOR_*` and `GIT_COMMITTER_*`, plus the variable a
   `"$VAR"` `github.token` names, holding the token bees resolved (a session
   loads `bees.toml` itself, and a reference that expands to nothing is a load
-  error, so that one name survives the drop); and, unless `GIT_CONFIG_COUNT`
+  error, so that one name survives the drop), or for a GitHub App an empty
+  `GH_TOKEN` and `<state_dir>/github/bin` first on `PATH` (see below); and, unless `GIT_CONFIG_COUNT`
   is already set, the `GIT_CONFIG_*` entries below. The `BEES_*` variables are
   also written into the built-in MCP server's entry in `mcp.json` (for
   codex, its overrides; for opencode and pi, their configuration files)
@@ -1233,11 +1234,33 @@ configuration through `GIT_CONFIG_KEY_n` / `GIT_CONFIG_VALUE_n`, with
 plain `git push` on a branch the workspace created with `git worktree add
 --no-track -b`; and, when `[github]` carries a token, an empty
 `credential.helper` followed by `credential.helper=!gh auth git-credential`,
-so that an https push authenticates as the factory. The empty value comes
+so that an https push authenticates as the factory; with a GitHub App, the
+second helper is `<state_dir>/github/credential.sh` instead. The empty value comes
 first because git asks helpers in configuration order and takes the first
 answer, and `GIT_CONFIG_*` is read last: without it the machine owner's own
 helper would answer and the push would be theirs. busybees never edits the
 clone's git configuration.
+
+A GitHub App's tokens expire after an hour and sessions can run longer, so a
+session is given no token at all. `internal/ghapp`'s `Minter` holds the App's
+private key in the process that runs sessions. The session runner holds it for
+each session (`Minter.Hold`), and while any session runs, it answers requests
+through `<state_dir>/github/`, a directory every sandbox mounts:
+
+| File | What it is |
+|---|---|
+| `token` | `<expiry, Unix seconds> <token>`, mode 0600, replaced by rename |
+| `refresh` | Created by a session that found `token` expired; removed once answered |
+| `token.sh` | Prints `token` while it has more than two minutes left; otherwise creates `refresh` and waits up to a minute |
+| `credential.sh` | The git credential helper: `token.sh`'s token for `github.com` |
+| `bin/gh` | `token.sh`'s token as `GH_TOKEN`, then the next `gh` on `PATH` |
+
+The `Minter` polls for `refresh` once a second and mints only when its cached
+token is itself about to expire, so every session shares one token per hour.
+A `bees` command inside a session reads the same file through
+`ghapp.FileSource`. `bin/gh` goes first on the host session's `PATH`, and in a
+container or sandbox in front of the image's through core's
+`Request.VCSContainerPath`, only for a session with VCS access.
 
 ## The mailbox
 

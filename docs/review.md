@@ -373,6 +373,8 @@ token = "$REVIEW_GH_TOKEN"
 | `storage_path` | path | `"reviews"` | The directory review directories are created in |
 | `output` | string | `"ask"` | How a review ends without `--post` or `--report`: `ask`, `approve`, `comment`, `reject`, `report` or `discard` |
 | `github.token` | string | none | The token the review's `gh` calls use; without it, your own `gh` login |
+| `github.app_id`, `github.private_key` | int, string | none | A [GitHub App](configuration.md#github) the review acts as instead of a token, with `private_key` in the forms `bees.toml` takes |
+| `github.login` | string | none | Accepted so a `[github]` table from `bees.toml` moves across unchanged; a review does not use it |
 
 A path is absolute, starts with `~`, or is relative to the directory
 `config.toml` is in, which puts the defaults at
@@ -426,15 +428,28 @@ used: every review session is read-only whatever the profile says.
 environment, so the secret stays out of the file. A reference to a variable
 that is not set fails the command.
 
+With `app_id` and `private_key`, the review reads the pull request, clones
+it and posts its review as the GitHub App, with installation tokens for the
+pull request's repository. The App needs to be installed on that repository
+with the permissions [`[github]`](configuration.md#setting-up-the-github-app)
+lists:
+
+```toml
+[github]
+app_id = 123456
+private_key = "~/.config/bees/busybees.pem"
+```
+
 ### `defaults.toml`
 
 The user-level defaults beside `config.toml`:
 `~/.config/bees/defaults.toml`, or `$XDG_CONFIG_HOME/bees/defaults.toml`
 when `XDG_CONFIG_HOME` is an absolute path. It is the file
 [the factory's projects](configuration.md) read below their `bees.toml`,
-and it holds agent profiles and the reviewer selectors of a `bees.toml`.
-With no `config.toml`, or one that sets none of these keys, a review runs
-on the same profiles the factory's reviewer uses.
+and it holds agent profiles, the reviewer selectors of a `bees.toml`, and
+`[github]`. With no `config.toml`, or one that sets none of these keys, a
+review runs on the same profiles the factory's reviewer uses and acts as the
+same GitHub account.
 
 ```toml
 version = 5
@@ -455,8 +470,8 @@ angles = { xs = ["quick_general"] }
 The file accepts only what a `bees.toml` accepts there: `version`,
 `[profiles.<name>]`, `global.profile` and `global.profile_by_size`, every
 role's `profile` and `profile_by_size`, and the reviewer's `brief_profile`,
-`angle_profiles`, `judge_profile` and `angles`. It must carry the `version`
-shown. Anything else is an error, as in `config.toml`.
+`angle_profiles`, `judge_profile` and `angles`, and `[github]`. It must
+carry the `version` shown. Anything else is an error, as in `config.toml`.
 
 For each setting the order is: a command-line flag, then `config.toml`,
 then `defaults.toml`, then the built-in default. `defaults.toml` supplies
@@ -470,6 +485,7 @@ then `defaults.toml`, then the built-in default. `defaults.toml` supplies
 | `angle_profiles.<angle>` | `roles.reviewer.angle_profiles.<angle>` |
 | `judge_profile` | `roles.reviewer.judge_profile` |
 | `provider`, `model` | the agent and model of the profile `roles.reviewer.profile` selects, else `global.profile` |
+| `[github]` | `[github]`, whole, when `config.toml` has no `[github]` table: `login`, `token`, `app_id` and `private_key` |
 
 `notes_path`, `storage_path`, `output`, `brief_model` and `angle_models`
 have no counterpart there and stay `config.toml`-only.
@@ -481,7 +497,9 @@ that is a profile or a step model; for the base it is the flat `provider`
 or `model`. A `config.toml` that says `model = "sonnet"` is never
 overridden by a profile `defaults.toml` set for the same step. The `angles`
 lists merge per size, the `angle_profiles` per angle, and the profiles per
-name, whether or not the other keys are set.
+name, whether or not the other keys are set. `[github]` is one account and
+never merges key by key: a `[github]` table in `config.toml`, an empty one
+included, takes nothing from `defaults.toml`.
 
 Validation happens after the merge, so the two files may refer to each
 other's profiles; an error names the file that set the bad key.

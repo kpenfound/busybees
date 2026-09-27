@@ -168,7 +168,7 @@ func validateRestrictedRequest(req Request) error {
 		return errors.New("restricted session: MCP servers are not supported")
 	case req.ValidOutcomes != nil:
 		return errors.New("restricted session: outcomes are not supported")
-	case len(req.ContainerEnv) > 0 || len(req.VCSEnv) > 0 || len(req.VCSContainerEnv) > 0:
+	case len(req.ContainerEnv) > 0 || len(req.VCSEnv) > 0 || len(req.VCSContainerEnv) > 0 || len(req.VCSContainerPath) > 0:
 		return errors.New("restricted session: container and VCS environments are not supported")
 	case req.SystemPrompt != "":
 		return errors.New("restricted session: put all instructions in Prompt; SystemPrompt is not supported")

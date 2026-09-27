@@ -387,9 +387,9 @@ func (f *GitHub) exec(args []string, stdin *string) ([]byte, error) {
 	switch args[0] + " " + args[1] {
 	case "issue list":
 		var out []github.Issue
-		label, state, author := flag("--label"), flag("--state"), flag("--author")
+		label, state, author := flag("--label"), flag("--state"), authorFlag(flag)
 		for _, i := range f.Issues {
-			if author != "" && !strings.EqualFold(i.Author.Login, author) {
+			if author != "" && !github.SameLogin(i.Author.Login, author) {
 				continue
 			}
 			if (state == "all" || i.State == "OPEN") && (label == "" || github.HasLabel(i.Labels, label)) {
@@ -461,12 +461,12 @@ func (f *GitHub) exec(args []string, stdin *string) ([]byte, error) {
 		return f.createPR(args, stdin)
 	case "pr list":
 		var out []github.PR
-		head, state, author := flag("--head"), flag("--state"), flag("--author")
+		head, state, author := flag("--head"), flag("--state"), authorFlag(flag)
 		for _, p := range f.PRs {
 			if !f.visible(p) {
 				continue
 			}
-			if author != "" && !strings.EqualFold(p.Author.Login, author) {
+			if author != "" && !github.SameLogin(p.Author.Login, author) {
 				continue
 			}
 			if head != "" && p.HeadRefName != head {
@@ -978,4 +978,13 @@ func flagValues(args []string, name string) []string {
 		}
 	}
 	return out
+}
+
+// authorFlag is the author a gh listing filters on: --author's login, or
+// --app's GitHub App as the login GitHub reports it by.
+func authorFlag(flag func(string) string) string {
+	if app := flag("--app"); app != "" {
+		return app + "[bot]"
+	}
+	return flag("--author")
 }

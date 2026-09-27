@@ -58,15 +58,24 @@ label = "bees"
 # owner's own gh login, so every issue, comment and label edit looks like it
 # came from the person running bees.
 #
-# login and token go together: set both, or neither. filter.assignee = "@me"
-# above is NOT affected — it says whose work the factory picks up, so it keeps
-# resolving to the person's own gh login.
+# Give the factory a GitHub App of its own: login is the App's slug followed
+# by [bot], app_id its App ID, and private_key its private key (a PEM, a
+# "$VAR" holding one, or the path of the .pem file). bees mints the App's
+# installation tokens and hands them to sessions; the key stays with bees.
+# With no [github] table here, the one in ~/.config/bees/defaults.toml
+# applies, so several projects can share one App.
+# filter.assignee = "@me" above is NOT affected — it says whose work the
+# factory picks up, so it keeps resolving to the person's own gh login.
 #===============================================================================
 [github]
 # GitHub login the factory acts as.
-#login = "busybees-bot"
-# A token for that login. A "$VAR" reference is expanded from the environment
-# bees runs in, so the secret itself stays out of this file.
+#login = "busybees[bot]"
+# The GitHub App's ID and private key.
+#app_id = 123456
+#private_key = "~/.config/bees/busybees.pem"
+# Or, in place of app_id and private_key, a token for login. A "$VAR"
+# reference is expanded from the environment bees runs in, so the secret
+# itself stays out of this file.
 #token = "$BEES_GITHUB_TOKEN"
 # Identity for commits made by developer sessions. Either may be set on its
 # own; whichever is unset stays the machine's own git identity.

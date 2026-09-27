@@ -11,6 +11,7 @@ import (
 
 	"github.com/kpenfound/busybees/core/agent"
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghapp/ghapptest"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/prompts"
 	"github.com/kpenfound/busybees/internal/testutil"
@@ -756,6 +757,59 @@ func TestCheckGitHubLogin(t *testing.T) {
 			wantResult(t, f.run(t, f.checkGitHubLogin), c.status, c.detail...)
 		})
 	}
+}
+
+// appTOML configures [github] for a GitHub App whose key is in keyFile.
+func appTOML(login, keyFile string) string {
+	return fmt.Sprintf("\n[github]\nlogin = %q\napp_id = 4242\nprivate_key = %q\n", login, keyFile)
+}
+
+// TestCheckAppLogin: for a GitHub App, the login check asks GitHub about the
+// App rather than about a user: it accepts the ID and key, github.login is
+// the App's, and the App is installed on the repository. A key doctor cannot
+// read is named, and fails every gh call rather than letting one act as the
+// machine's own account.
+func TestCheckAppLogin(t *testing.T) {
+	srv := ghapptest.New(t, "owner/name")
+	key := filepath.Join(t.TempDir(), "app.pem")
+	if err := os.WriteFile(key, srv.PEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	app := func(t *testing.T, login, repo string) *fixture {
+		f := setup(t, appTOML(login, key), nil)
+		if f.AppErr != nil {
+			t.Fatalf("the key did not load: %v", f.AppErr)
+		}
+		m := srv.Minter(t, "")
+		m.Repo = repo
+		f.App = m
+		return f
+	}
+	t.Run("the App is the configured login and installed", func(t *testing.T) {
+		f := app(t, "busybees[bot]", "owner/name")
+		wantResult(t, f.run(t, f.checkGitHubLogin), Pass, "busybees[bot]", "installed on owner/name")
+	})
+	t.Run("another login", func(t *testing.T) {
+		f := app(t, "other[bot]", "owner/name")
+		wantResult(t, f.run(t, f.checkGitHubLogin), Fail, "is busybees[bot]", `set github.login = "busybees[bot]"`)
+	})
+	t.Run("not installed", func(t *testing.T) {
+		f := app(t, "busybees[bot]", "owner/elsewhere")
+		wantResult(t, f.run(t, f.checkGitHubLogin), Fail, "not installed on owner/elsewhere")
+	})
+	t.Run("the key cannot be read", func(t *testing.T) {
+		f := setup(t, appTOML("busybees[bot]", filepath.Join(t.TempDir(), "missing.pem")), nil)
+		wantResult(t, f.run(t, f.checkGitHubLogin), Fail, "github.private_key")
+	})
+	t.Run("a missing permission names the App's", func(t *testing.T) {
+		f := app(t, "busybees[bot]", "owner/name")
+		f.gh.replies = map[string]ghReply{"api": {err: errors.New("gh api: exit status 1: HTTP 403: Resource not accessible by integration")}}
+		r := f.run(t, f.checkIssueWrites)
+		wantResult(t, r, Fail)
+		if !strings.Contains(r.Remediation, "grant the GitHub App write access to issues") {
+			t.Errorf("remediation: %s", r.Remediation)
+		}
+	})
 }
 
 // TestGitHubChecksAreSkippedWithoutTheTable pins the other half of "only when

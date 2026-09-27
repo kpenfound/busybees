@@ -16,6 +16,7 @@ import (
 	"github.com/kpenfound/busybees/core/agent"
 	"github.com/kpenfound/busybees/core/agent/procs"
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghapp"
 	"github.com/kpenfound/busybees/internal/skills"
 )
 
@@ -152,6 +153,11 @@ type Runner struct {
 	// value means the machine's own gh authentication and git identity,
 	// which is what every configuration without [github] gets.
 	GitHub config.GitHub
+	// GitHubApp mints the tokens of a GitHub App ([github] app_id). The
+	// runner holds it while a session runs, so that the session's gh, git
+	// and bees commands can ask it for a token (internal/ghapp). Nil
+	// otherwise.
+	GitHubApp *ghapp.Minter
 	// Notes is [notes] from bees.toml: with the neo4j backend the variable
 	// notes.neo4j_api_key reads has to reach the session, as github.token's
 	// does (see sessionVars).
@@ -179,6 +185,13 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Result, error) {
 	}
 	if err := config.CheckSandboxContainer(config.ResolvedRole{Agent: p.Agent, Sandbox: p.Sandbox, SandboxImage: p.SandboxImage, ContainerUseEnvironment: p.ContainerUseEnvironment, Env: p.Env}, r.GitHub); err != nil {
 		return nil, fmt.Errorf("%s: %w", p.Name, err)
+	}
+	if r.GitHubApp != nil {
+		release, err := r.GitHubApp.Hold()
+		if err != nil {
+			return nil, fmt.Errorf("%s: GitHub App tokens: %w", p.Name, err)
+		}
+		defer release()
 	}
 	core := r.coreRunner()
 	if isolated(p.Sandbox) {
@@ -259,6 +272,15 @@ func (r *Runner) prepare(req Request, dir string) Request {
 	}
 	if r.BeesBin != "" {
 		host["PATH"] = filepath.Dir(r.BeesBin) + string(os.PathListSeparator) + os.Getenv("PATH")
+	}
+	if dir := r.appBin(); dir != "" && req.Profile.VCSAccess {
+		// A GitHub App's gh fetches its own token, so it goes first.
+		path, ok := host["PATH"]
+		if !ok {
+			path = os.Getenv("PATH")
+		}
+		host["PATH"] = dir + string(os.PathListSeparator) + path
+		req.VCSContainerPath = []string{dir}
 	}
 	vcsHost, vcsContainer := map[string]string{}, map[string]string{}
 	for _, v := range r.vcsVars(req) {
@@ -501,7 +523,12 @@ func (r *Runner) vcsVars(req Request) []envVar {
 	// commits are the bot's rather than the machine owner's. It sits with
 	// bees' own variables, after req.Profile.Env, so a role cannot configure a
 	// second identity for itself.
-	if token := r.GitHub.ResolvedToken(); token != "" {
+	// A GitHub App's session has no token of its own: its gh and git ask
+	// for one when they need it (gitConfig, appBin). GH_TOKEN is emptied so
+	// that nothing in it acts as the machine owner instead.
+	if r.GitHubApp != nil {
+		set(EnvGHToken, "")
+	} else if token := r.GitHub.ResolvedToken(); token != "" {
 		set(EnvGHToken, token)
 		// github.token may be a $VAR reference, and when the operator named a
 		// BEES_* variable the strip above drops it — leaving a session whose
@@ -563,6 +590,15 @@ func (r *Runner) gitConfig() []envVar {
 		{"push.autoSetupRemote", "true"},
 		{"push.default", "current"},
 	}
+	if r.GitHubApp != nil {
+		// As below, with the GitHub App's helper, which answers with a
+		// current installation token.
+		helper := filepath.Join(r.GitHubApp.Dir, ghapp.CredentialFile)
+		return append(entries,
+			envVar{"credential.helper", ""},
+			envVar{"credential.helper", "!sh " + shellQuote(helper)},
+		)
+	}
 	if r.GitHub.ResolvedToken() != "" {
 		// Push over https as the bot, without reading or writing the
 		// person's stored credentials. The empty value is load-bearing:
@@ -577,6 +613,20 @@ func (r *Runner) gitConfig() []envVar {
 		)
 	}
 	return entries
+}
+
+// appBin is the directory of the GitHub App's gh, which a session with VCS
+// access runs first on its PATH; "" without a GitHub App.
+func (r *Runner) appBin() string {
+	if r.GitHubApp == nil {
+		return ""
+	}
+	return filepath.Join(r.GitHubApp.Dir, ghapp.BinDir)
+}
+
+// shellQuote quotes s as one word for sh.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 func (r *Runner) beesBin() string {

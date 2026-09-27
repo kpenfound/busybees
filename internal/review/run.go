@@ -66,6 +66,9 @@ func NewRunner(ctx context.Context, ref Ref, cfg *Config, dir string) (*Runner, 
 	}
 	angles := NewAngles(cfg, pipeline.Dir)
 	angles.Rules = notes.Rules
+	// A GitHub App's clone takes a token for ref's repository, which the
+	// pipeline's client already mints.
+	angles.Checkout.Tokens = pipeline.Client.Tokens
 	pipeline.Checkout = angles.Checkout
 	return &Runner{
 		Pipeline:  pipeline,

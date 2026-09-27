@@ -326,9 +326,13 @@ func (s *Scheduler) deliverMention(ctx context.Context, issue github.Issue, to s
 // one: case is ignored, since logins are, and the name has to stand alone —
 // @busybees-bot is not mentioned by @busybees-bot-2, and an address like
 // bees@busybees-bot mentions nobody. An empty login is mentioned by nothing.
+// A GitHub App ("busybees[bot]") is mentioned by its slug, @busybees, as well.
 func mentionsLogin(body, login string) bool {
 	if login == "" {
 		return false
+	}
+	if slug, ok := github.AppSlug(login); ok && mentionsLogin(body, slug) {
+		return true
 	}
 	body, login = strings.ToLower(body), "@"+strings.ToLower(login)
 	for i := 0; ; {

@@ -269,7 +269,10 @@ func ignoreStateDir(ctx context.Context, cfg *config.Config) {
 }
 
 func syncLabels(ctx context.Context, cfg *config.Config) error {
-	gh := githubClient(cfg)
+	gh, _, err := githubClient(cfg)
+	if err != nil {
+		return err
+	}
 	for _, l := range cfg.Labels().All() {
 		if err := gh.EnsureLabel(ctx, l.Name, l.Color, l.Description); err != nil {
 			return err

@@ -186,6 +186,14 @@ func newAppFor(ctx context.Context, g *globalFlags, cfg *config.Config, log *slo
 	ws.Keep = cfg.Scheduler.KeepWorkspaces
 	ws.Remote = cfg.Project.Remote
 
+	gh, minter, err := githubClient(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if minter != nil {
+		minter.Logger = log
+	}
+
 	// The busybees adapter supplies identity and context to core/agent.
 	runner := &session.Runner{
 		ClaudeBin:   bin,
@@ -199,6 +207,7 @@ func newAppFor(ctx context.Context, g *globalFlags, cfg *config.Config, log *slo
 		Repo:        cfg.Project.Repo,
 		Label:       cfg.Filter.Label,
 		GitHub:      cfg.GitHub,
+		GitHubApp:   minter,
 		Notes:       cfg.Notes,
 		Skills:      skillMgr,
 		AddDirs:     []string{store.Dir},
@@ -212,7 +221,7 @@ func newAppFor(ctx context.Context, g *globalFlags, cfg *config.Config, log *slo
 		actsAs: actsAs,
 		store:  store,
 		notes:  notesBackendFor(cfg.Notes, store),
-		gh:     githubClient(cfg),
+		gh:     gh,
 		mail:   mail.Open(store.MailDir(), store.Migrate),
 		runner: runner,
 		ws:     ws,
