@@ -132,7 +132,7 @@ func TestNotesToolsWithoutABackend(t *testing.T) {
 	}
 }
 
-// The descriptions carry the rule the prompt no longer states in full: the
+// The descriptions carry the rule the prompt does not state in full: the
 // notes are not in the prompt, so read first, a write is the whole text, and
 // the notes keep what cannot be worked out again rather than a log.
 func TestNotesToolDescriptionsCarryTheRules(t *testing.T) {

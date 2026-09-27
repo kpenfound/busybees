@@ -72,15 +72,15 @@ func TestProjectPromptFilesAreAppendedInOrder(t *testing.T) {
 	}
 }
 
-// Every repository that has never heard of this feature has no bees/prompts/
-// directory, so that case must render byte for byte the prompt bees rendered
-// before it existed - and read the directory silently, with no error.
+// A repository that keeps no project prompts has no bees/prompts/
+// directory, so that case must render byte for byte the prompt System renders
+// with no project files - and read the directory silently, with no error.
 //
 // The comparison is run against a repository that has the directory but not
 // this role's files, so it is a real comparison rather than one Go guarantees:
 // a LoadProject that globbed the directory instead of naming the two files it
 // reads would put another role's instructions in this role's prompt.
-func TestNoProjectPromptsRendersTheSamePromptAsBefore(t *testing.T) {
+func TestNoProjectPromptsRendersThePromptWithoutAProjectSection(t *testing.T) {
 	bare := t.TempDir()
 	populated := t.TempDir()
 	writeProjectPrompt(t, populated, "notes.md", "not a role, never read.")
@@ -89,7 +89,7 @@ func TestNoProjectPromptsRendersTheSamePromptAsBefore(t *testing.T) {
 	}
 
 	for _, role := range config.Roles {
-		// Before the feature existed there was no fourth argument at all.
+		// With no project files there is no fourth argument at all.
 		before, err := System(role, sample(), "custom instructions here")
 		if err != nil {
 			t.Fatal(err)
@@ -113,7 +113,8 @@ func TestNoProjectPromptsRendersTheSamePromptAsBefore(t *testing.T) {
 			t.Errorf("%s system prompt names a project prompt file that does not exist:\n%s", role, after)
 		}
 
-		// Same repository minus this role's own files: still today's prompt.
+		// Same repository minus this role's own files: still the prompt with
+		// no project files.
 		other := t.TempDir()
 		for _, name := range []string{"notes.md"} {
 			writeProjectPrompt(t, other, name, "not a role, never read.")

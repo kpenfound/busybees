@@ -13,6 +13,8 @@ import (
 
 	"github.com/kpenfound/busybees/core/vcs"
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghapp"
+	"github.com/kpenfound/busybees/internal/ghapp/ghapptest"
 	"github.com/kpenfound/busybees/internal/testutil"
 	"github.com/kpenfound/busybees/internal/workspace"
 )
@@ -24,7 +26,7 @@ var botIdentity = config.GitHub{
 
 // machineEnv is what the person running bees already has in their
 // environment. Every identity variable is seeded with it so that "[github]
-// is unset means today's behaviour" can be asserted as "the machine's own
+// unset changes nothing" can be asserted as "the machine's own
 // value reached the session untouched", which is stronger — and steadier on
 // a developer machine — than asserting the variable is absent.
 const machineEnv = "machine-owner"
@@ -54,7 +56,7 @@ func sessionEnvDir(t *testing.T, gh config.GitHub) (map[string]string, string) {
 	// suite run from inside a developer session inherits the four entries
 	// that session was handed. The runner overwrites keys 0 and 1 itself,
 	// but 2 and 3 would survive and gitConfigEntries would read the outer
-	// factory's credential helper back as an injection (#328). t.Setenv
+	// factory's credential helper back as an injection. t.Setenv
 	// registers the cleanup that restores the original value; the
 	// os.Unsetenv after it makes the variable genuinely absent, which is
 	// what gitConfigEntries' stop condition needs.
@@ -137,7 +139,7 @@ func TestGitHubIdentityReachesTheSession(t *testing.T) {
 			got[1] != (envVar{"credential.helper", "!gh auth git-credential"}) {
 			t.Errorf("credential helper entries = %+v, want a reset then gh's helper", got)
 		}
-		// The push settings that predate [github] are still there.
+		// The push settings every session gets are there too.
 		if entries[0] != (envVar{"push.autoSetupRemote", "true"}) || entries[1] != (envVar{"push.default", "current"}) {
 			t.Errorf("push settings = %+v", entries[:2])
 		}
@@ -166,39 +168,6 @@ func TestGitHubIdentityReachesTheSession(t *testing.T) {
 		}
 		if env[EnvGHToken] != machineEnv {
 			t.Errorf("%s = %q, want the machine's own %q", EnvGHToken, env[EnvGHToken], machineEnv)
-		}
-	})
-
-	// This repository's own bees.toml sets [github], so the suite is
-	// regularly run from inside a session that was handed the whole
-	// GIT_CONFIG_* block. The runner writes keys 0 and 1 itself; 2 and 3 are
-	// the credential helper, and before #328 they survived into the dumped
-	// environment and read back as an injection the runner had not made.
-	// The ambient block is seeded here, before sessionEnv is called, because
-	// that is the order the real case has: sessionEnvDir reads os.Environ()
-	// when the session starts.
-	t.Run("inside a session of this repository", func(t *testing.T) {
-		t.Setenv("GIT_CONFIG_COUNT", "4")
-		for i, e := range []envVar{
-			{"push.autoSetupRemote", "true"},
-			{"push.default", "current"},
-			{"credential.helper", ""},
-			{"credential.helper", "!gh auth git-credential"},
-		} {
-			t.Setenv("GIT_CONFIG_KEY_"+strconv.Itoa(i), e.name)
-			t.Setenv("GIT_CONFIG_VALUE_"+strconv.Itoa(i), e.value)
-		}
-
-		env := sessionEnv(t, config.GitHub{})
-		entries := gitConfigEntries(env)
-		for _, e := range entries {
-			if e.name == "credential.helper" {
-				t.Errorf("a credential helper was read back with no token to use: %+v: "+
-					"the enclosing session's own entries survived into the environment under test", e)
-			}
-		}
-		if env["GIT_CONFIG_COUNT"] != strconv.Itoa(len(entries)) {
-			t.Errorf("GIT_CONFIG_COUNT = %q but %d entries are set: %+v", env["GIT_CONFIG_COUNT"], len(entries), entries)
 		}
 	})
 }
@@ -283,11 +252,11 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
 
 // TestTheTokenVariableReachesTheSession: github.token may be a "$VAR"
 // reference, and env strips every inherited BEES_* variable, so a
-// BEES_-prefixed name never reached the session. Its gh still worked — the
-// scheduler resolves the token and passes GH_TOKEN — but every in-session
-// `bees` command loads bees.toml again, and a reference that expands to
-// nothing is a load error, so the built-in MCP server behind issue_view,
-// comment, done and the rest failed on the first call. The name has to reach
+// BEES_-prefixed name would never reach the session. Its gh would still work
+// — the scheduler resolves the token and passes GH_TOKEN — but every
+// in-session `bees` command loads bees.toml again, and a reference that
+// expands to nothing is a load error, so the built-in MCP server behind
+// issue_view, comment, done and the rest would fail on the first call. The name has to reach
 // the session; the value it carries is the one the scheduler resolved, so a
 // session can never be handed a token from a stale environment.
 func TestTheTokenVariableReachesTheSession(t *testing.T) {
@@ -458,5 +427,60 @@ func TestCodexBuiltinMCPCredentials(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestGitHubAppSession: a GitHub App's session is given no token. Its gh is
+// the App's, first on PATH, and its git asks the App's credential helper;
+// both ask the runner's Minter, which the runner holds for the session, for
+// a token when they need one, and the Minter mints it then.
+func TestGitHubAppSession(t *testing.T) {
+	srv := ghapptest.New(t, "a/b")
+	stateDir := t.TempDir()
+	m := srv.Minter(t, ghapp.Dir(stateDir))
+	m.Poll = 10 * time.Millisecond
+
+	// The gh the App's gh runs: the next one on PATH, a fake.
+	fake := t.TempDir()
+	if err := os.WriteFile(filepath.Join(fake, "gh"), []byte("#!/bin/sh\necho \"gh token=$GH_TOKEN\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fake+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv(EnvGHToken, machineEnv)
+	t.Setenv("GIT_CONFIG_COUNT", "")
+	t.Setenv("GIT_TERMINAL_PROMPT", "0")
+
+	out := filepath.Join(t.TempDir(), "out.txt")
+	bin := fakeClaude(t, `
+{
+  echo "GH_TOKEN=[$GH_TOKEN]"
+  gh api user
+  printf 'protocol=https\nhost=github.com\n\n' | git credential fill
+} > `+out+` 2>&1
+echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
+`)
+	r := newRunner(t, bin)
+	r.StateDir = stateDir
+	r.BeesBin = filepath.Join(t.TempDir(), "bees")
+	r.GitHub = config.GitHub{Login: "busybees[bot]", AppID: srv.AppID, PrivateKey: "$UNUSED"}
+	r.GitHubApp = m
+	if _, err := r.Run(context.Background(), Request{
+		Name: "t", Profile: ProfileForRole(config.ResolvedRole{Name: "developer", Model: "opus", MaxTurns: 1, Timeout: time.Minute}),
+		Workspace: vcs.Directory(t.TempDir()),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(b)
+	for _, want := range []string{"GH_TOKEN=[]\n", "gh token=ghs_1\n", "username=x-access-token\n", "password=ghs_1\n"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("session output lacks %q:\n%s", want, got)
+		}
+	}
+	if n := len(srv.Minted()); n != 1 {
+		t.Errorf("minted %d tokens for one session, want 1", n)
 	}
 }

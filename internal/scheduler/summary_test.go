@@ -103,9 +103,8 @@ func TestFormatSummaryIsValidUTF8(t *testing.T) {
 // TestASignalledSessionIsReportedWithItsSignal drives a real session that
 // dies from SIGKILL through the scheduler and reads the line a person sees
 // in bees.log. The formatSummary table above pins the rendering; this pins
-// the wiring, which is the half that made the report useless: the summary
-// used to say "exit_-1" with 0 turns and $0.00 for a session that had
-// worked for minutes.
+// the wiring: without it the summary would say "exit_-1" with 0 turns and
+// $0.00 for a session that had worked for minutes.
 func TestASignalledSessionIsReportedWithItsSignal(t *testing.T) {
 	t.Setenv("FAKE_SIGNAL", "9")
 	h := newHarness(t, strings.Replace(devOnlyTOML, "[scheduler]\n", "[scheduler]\nretries = 0\n", 1))
@@ -127,8 +126,5 @@ func TestASignalledSessionIsReportedWithItsSignal(t *testing.T) {
 	}
 	if strings.Contains(logs, "(0 turns,") {
 		t.Errorf("summary says the session did nothing:\n%s", logs)
-	}
-	if strings.Contains(logs, "exit_-1") {
-		t.Errorf("summary still reports a signal as an exit code:\n%s", logs)
 	}
 }

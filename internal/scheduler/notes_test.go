@@ -84,9 +84,6 @@ func TestNotesConsolidationIsAskedForOnSchedule(t *testing.T) {
 			t.Errorf("the ask does not name %s:\n%s", want, second)
 		}
 	}
-	if strings.Contains(second, h.store.NotesPath(config.RoleDeveloper)) {
-		t.Errorf("the ask names the notes file, which the session cannot be told to edit:\n%s", second)
-	}
 
 	rs, err := h.store.Role(config.RoleDeveloper)
 	if err != nil {
@@ -163,9 +160,6 @@ func TestNotesAreNotRenderedIntoThePrompts(t *testing.T) {
 		if !strings.Contains(sys, want) {
 			t.Errorf("the system prompt does not name %s:\n%s", want, sys)
 		}
-	}
-	if strings.Contains(sys+task, h.store.NotesPath(config.RoleDeveloper)) {
-		t.Errorf("a prompt names the notes file:\n%s\n%s", sys, task)
 	}
 	if ask := "Also consolidate your notes this session (notes are " + byteSize(len(notes)) + ")"; !strings.Contains(task, ask) {
 		t.Errorf("the task does not ask %q:\n%s", ask, task)

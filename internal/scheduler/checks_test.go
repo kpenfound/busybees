@@ -76,7 +76,7 @@ func runChecksLoop(t *testing.T, h *harness) {
 	}
 }
 
-// TestRequiredChecksAreTheWholeGate pins the unchanged path: when the branch
+// TestRequiredChecksAreTheWholeGate pins the required-checks path: when the branch
 // requires checks, they decide, and the second (unrequired) gh call is never
 // made — the failing reported checks here would block the merge if it were.
 func TestRequiredChecksAreTheWholeGate(t *testing.T) {

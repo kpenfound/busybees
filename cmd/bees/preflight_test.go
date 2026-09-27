@@ -109,7 +109,7 @@ func TestRunChecksTheSandboxAheadOfTheDoctor(t *testing.T) {
 	}
 	skip := strings.Index(body, "if !skipDoctor")
 	if skip < 0 {
-		t.Fatal("bees run no longer guards the doctor preflight with --skip-doctor; this test reads that line to place the sandbox check")
+		t.Fatal("bees run does not guard the doctor preflight with --skip-doctor; this test reads that line to place the sandbox check")
 	}
 	if check > skip {
 		t.Error("the sandbox check runs after the doctor preflight, so --skip-doctor bypasses it too")

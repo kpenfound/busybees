@@ -169,8 +169,8 @@ func CheckSandboxContainer(r ResolvedRole, gh GitHub) error {
 	if r.Sandbox == SandboxContainer && r.SandboxImage == "" && r.ContainerUseEnvironment == "" {
 		return fmt.Errorf("sandbox %q needs sandbox_image (the image the session runs in, holding the agent, git and gh) or container_use_environment (a definition to build one from)", r.Sandbox)
 	}
-	if gh.ResolvedToken() == "" && r.Env[EnvGHToken] == "" {
-		return fmt.Errorf("sandbox %q needs [github] (login and token) or %s in the role's env: inside the sandbox gh and git push have no other credentials", r.Sandbox, EnvGHToken)
+	if gh.ResolvedToken() == "" && !gh.App() && r.Env[EnvGHToken] == "" {
+		return fmt.Errorf("sandbox %q needs [github] (a GitHub App, or login and token) or %s in the role's env: inside the sandbox gh and git push have no other credentials", r.Sandbox, EnvGHToken)
 	}
 	if r.Sandbox == SandboxSbx {
 		return nil

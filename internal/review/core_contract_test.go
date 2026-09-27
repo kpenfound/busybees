@@ -30,8 +30,8 @@ func TestAcquiredBundleReachesCoreWithoutLosingContext(t *testing.T) {
 	}
 }
 
-func TestLegacyArtifactStillReadsWritesAndTriages(t *testing.T) {
-	// These are the pre-extraction wire shapes, including the concrete GitHub ref.
+func TestTheArtifactWireFormatReadsWritesAndTriages(t *testing.T) {
+	// These are the wire shapes artifacts on disk hold, including the concrete GitHub ref.
 	files := map[string]string{
 		BriefFile: `{"ref":{"repo":"acme/widgets","number":7},"title":"title","author":"author","summary":"summary","size":"m","acceptance_criteria":[{"text":"criterion","source":"#12"}],"style_rules":[{"text":"rule"}],"touched_areas":[{"name":"area","paths":["a.go"]}],"sources":["diff"],"not_gathered":["missing context"],"session_id":"distiller","cost_usd":0.5}`,
 		filepath.Join(AnglesDir, AngleGeneral+".json"): `{"angle":"general","provider":"claude","model":"opus","dir":"/checkout","session_id":"angle","answer":"answer","turns":3,"cost_usd":0.75}`,
@@ -51,7 +51,7 @@ func TestLegacyArtifactStillReadsWritesAndTriages(t *testing.T) {
 		t.Fatal(err)
 	}
 	if artifact.Brief.Ref != (Ref{Repo: testRepo, Number: 7}) || artifact.Runs[0].Turns != 3 || artifact.Runs[0].CostUSD != 0.75 || !artifact.Runs[1].Failed() {
-		t.Fatalf("legacy identity/accounting/failed angle: %+v", artifact)
+		t.Fatalf("identity/accounting/failed angle: %+v", artifact)
 	}
 	queue, err := NewQueue(artifact, nil, nil, nil)
 	if err != nil {

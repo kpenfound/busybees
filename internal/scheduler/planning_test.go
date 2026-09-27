@@ -60,7 +60,7 @@ func TestACommentOnAPlanningIssueStartsADiscussionOnlySession(t *testing.T) {
 		t.Errorf("a planning issue is presented for breakdown:\n%s", breakdown)
 	}
 	if !strings.Contains(breakdown, "#5: Exports") {
-		t.Errorf("an ordinary feature is no longer presented for breakdown:\n%s", breakdown)
+		t.Errorf("an ordinary feature is not presented for breakdown:\n%s", breakdown)
 	}
 }
 
@@ -128,8 +128,8 @@ func TestAPlannedFeatureIsBrokenDownOnceAndNotAgain(t *testing.T) {
 }
 
 // bees:planning and bees:planned are neither state nor size labels: an issue
-// in planning keeps whatever state it has, and classify buckets it exactly as
-// it did before the labels existed.
+// in planning keeps whatever state it has, and classify buckets it as it
+// would without them.
 func TestClassifyIgnoresThePlanningLabels(t *testing.T) {
 	h := newHarness(t, noRolesTOML)
 	now := time.Now()
@@ -209,7 +209,7 @@ func TestAnAgreedIssueLeavesTheFreshLists(t *testing.T) {
 		t.Errorf("an agreed issue is also presented as a fresh feature:\n%s", breakdown)
 	}
 	if !strings.Contains(breakdown, "#5: Exports") {
-		t.Errorf("an ordinary fresh feature is no longer presented:\n%s", breakdown)
+		t.Errorf("an ordinary fresh feature is not presented:\n%s", breakdown)
 	}
 }
 

@@ -2,7 +2,8 @@ package review
 
 import core "github.com/kpenfound/busybees/core/review"
 
-// Brief retains the existing reference JSON while core owns its content.
+// Brief keeps the GitHub reference JSON artifacts are written with; core
+// owns its content.
 type Brief = core.Brief[Ref]
 
 var WriteBrief = core.WriteBrief[Ref]

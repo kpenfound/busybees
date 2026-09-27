@@ -191,9 +191,9 @@ echo '{"type":"result","subtype":"error_during_execution","is_error":true,"resul
 // TestSignalledSessionReportsTheSignal covers a claude process that dies
 // from a signal rather than exiting. Go reports an ExitCode of -1 for one,
 // which says nothing about why it died, and no result event is emitted, so
-// the session used to be reported as "exit_-1" with 0 turns and $0.00 even
-// when it had worked for minutes. The signal names the cause, and the turns
-// are recovered from the transcript.
+// the session would read as "exit_-1" with 0 turns and $0.00 even when it
+// had worked for minutes. The signal names the cause, and the turns are
+// recovered from the transcript.
 func TestSignalledSessionReportsTheSignal(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -582,8 +582,8 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
 	}
 }
 
-// The mode every session runs in today: "none" runs, and so does a role
-// whose mode was never set at all.
+// The default mode: "none" runs, and so does a role whose mode was never
+// set at all.
 func TestRunAcceptsNoSandbox(t *testing.T) {
 	bin := fakeClaude(t, `echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'`)
 	for _, mode := range []string{"", SandboxNone} {
@@ -671,7 +671,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
 	}
 }
 
-// A session in none mode is the command it always was: permissions skipped,
+// A session in none mode is the plain command: permissions skipped,
 // no settings block, nothing about a box in the session directory.
 func TestUnboxedSessionSkipsPermissions(t *testing.T) {
 	bin := fakeClaude(t, `

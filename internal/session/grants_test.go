@@ -17,8 +17,8 @@ import (
 )
 
 // ProviderEnv grants each agent the provider environment of its backend
-// descriptor, and nothing more: a hand-written map in its place is what
-// drifted from the backends when opencode and pi were added.
+// descriptor, and nothing more: a hand-written map in its place drifts from
+// the backends as soon as one is added.
 func TestProviderEnvMatchesBackends(t *testing.T) {
 	if len(ProviderEnv) != len(agent.Backends) {
 		t.Errorf("ProviderEnv holds %d agents, want the %d backends", len(ProviderEnv), len(agent.Backends))

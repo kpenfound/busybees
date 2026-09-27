@@ -24,7 +24,7 @@ import (
 // GitHub under the label and checked again per item before any write.
 // Selection is never on the author or on the `<!-- bees:<role> -->` marker: a
 // feature issue a person filed with the base label and no assignee is the case
-// this exists for (#119).
+// this exists for.
 //
 // It never adds or removes a label. With `filter.require_label = false` there
 // is no base label to trust, so it does nothing at all and says why: "label

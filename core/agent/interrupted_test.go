@@ -42,7 +42,7 @@ not json at all
 // point of the pid check. A session that has not written its result file yet
 // is the ordinary state of a session that is still running, so the absence of
 // the file cannot be the signal on its own: the pid file decides. alive is a
-// seam precisely so this test needs no real process to kill (#250).
+// seam precisely so this test needs no real process to kill.
 func TestCheckInterruptedTellsARunningSessionFromAnInterruptedOne(t *testing.T) {
 	dead := func(int) bool { return false }
 	live := func(int) bool { return true }

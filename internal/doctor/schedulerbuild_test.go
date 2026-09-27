@@ -80,9 +80,9 @@ func (g gitAnswers) install(t *testing.T, f *fixture) {
 	}
 }
 
-// TestCheckSchedulerBuild walks every row of #297's verdict table. The check
-// warns and never fails: a scheduler behind HEAD is a real factory doing real
-// work, and `bees doctor` exits non-zero on a failure.
+// TestCheckSchedulerBuild walks every row of the check's verdict table. The
+// check warns and never fails: a scheduler behind HEAD is a real factory doing
+// real work, and `bees doctor` exits non-zero on a failure.
 func TestCheckSchedulerBuild(t *testing.T) {
 	cases := []struct {
 		name   string

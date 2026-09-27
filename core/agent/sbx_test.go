@@ -424,6 +424,35 @@ func TestSandboxDeniesVCSExecutablesByName(t *testing.T) {
 	}
 }
 
+// With VCS, the caller's VCSContainerPath goes first on the box's PATH, the
+// way the stand-ins do without it; without VCS it is left out, so a
+// caller's VCS wrapper never reaches a session that may not use VCS.
+func TestVCSContainerPath(t *testing.T) {
+	dir := t.TempDir()
+	for _, granted := range []bool{true, false} {
+		req := Request{Workspace: fakeWorkspace{dir: "/w"}, VCSContainerPath: []string{"/state/github/bin"}}
+		s := &sandbox{container: container{r: &Runner{}, sessionDir: dir, req: req, turn: &Turn{VCS: granted}}, created: true}
+		s.name = "task-x"
+		if !granted {
+			s.turn.DeniedExecutables = slices.Clone(VCSExecutables)
+		}
+		_, args, err := s.command(context.Background(), "claude", []string{"-p"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		joined := strings.Join(args, " ")
+		want := " task-x /bin/sh -c " + `PATH="$0:$PATH" exec "$@"` + " "
+		if granted {
+			want += "/state/github/bin claude -p"
+		} else {
+			want += filepath.Join(dir, deniedBinDir) + " claude -p"
+		}
+		if !strings.HasSuffix(joined, want) {
+			t.Errorf("vcs=%v: %s, want it to end %q", granted, joined, want)
+		}
+	}
+}
+
 // A stopped session's sandbox is removed, once.
 func TestStoppedSandboxSessionIsRemoved(t *testing.T) {
 	claude := fakeClaude(t, `sleep 5`)

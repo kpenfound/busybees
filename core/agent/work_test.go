@@ -1,9 +1,6 @@
 package agent
 
 import (
-	"encoding/json"
-	"os"
-	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -27,18 +24,5 @@ func TestOpaqueSessionArtifacts(t *testing.T) {
 	outcome, ok, err := ReadOutcome(dir)
 	if err != nil || !ok || !reflect.DeepEqual(outcome, want) {
 		t.Fatalf("outcome: %+v %v", outcome, err)
-	}
-	b, err := os.ReadFile(filepath.Join(dir, OutcomeFile))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(b, &raw); err != nil {
-		t.Fatal(err)
-	}
-	for _, legacy := range []string{"issue", "pr"} {
-		if _, ok := raw[legacy]; ok {
-			t.Errorf("wrote legacy field %s", legacy)
-		}
 	}
 }

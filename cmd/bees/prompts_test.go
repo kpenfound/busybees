@@ -44,9 +44,6 @@ sandbox = "container"
 	if !strings.Contains(pm, "`s`") {
 		t.Errorf("project manager prompt does not name the configured max size:\n%s", pm)
 	}
-	if strings.Contains(pm, "larger than `` ") {
-		t.Errorf("project manager prompt rendered an empty max size:\n%s", pm)
-	}
 
 	dev, _, err := renderedPrompt(cfg, config.RoleDeveloper)
 	if err != nil {

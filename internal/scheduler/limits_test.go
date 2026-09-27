@@ -114,8 +114,8 @@ func TestSessionLimitPausesSingletonDispatch(t *testing.T) {
 }
 
 // TestRateLimitedTextNamesTheSessionLimit: the sentence a person sees when
-// the account runs out of capacity matched none of the phrases that mark a
-// message "come back later", so it read as an ordinary failure wherever
+// the account runs out of capacity must match one of the phrases that mark a
+// message "come back later", or it reads as an ordinary failure wherever
 // that list is consulted.
 func TestRateLimitedTextNamesTheSessionLimit(t *testing.T) {
 	for _, c := range []struct {

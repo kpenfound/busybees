@@ -499,7 +499,7 @@ func reviewedSHA(t *testing.T, h *harness, n int) string {
 }
 
 // Without the key, an assigned pull request carrying no label is not
-// reviewed: today's behaviour, unchanged.
+// reviewed.
 func TestAnAssignedPullRequestIsNotReviewedByDefault(t *testing.T) {
 	h := newHarnessAt(t, assignedAbsentTOML, requestedReviewClock)
 	pushBranch(t, h.clone, "fix-widget")
@@ -784,7 +784,7 @@ func TestAnAssignedPullRequestWithNoHeadCommitIsSkipped(t *testing.T) {
 // the verdict it reports is a claim about GitHub. A session that reports
 // `approved` or `changes-requested` with no review to show for it — a
 // hallucinated status, or `done` called before `submit_review` — is a failure,
-// not the silent success it used to be.
+// not a silent success.
 func TestARequestedReviewWithoutTheReviewFails(t *testing.T) {
 	for name, changes := range map[string]bool{"approved": false, "changes-requested": true} {
 		t.Run(name, func(t *testing.T) {

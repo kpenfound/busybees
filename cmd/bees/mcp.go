@@ -217,7 +217,11 @@ func (b *backend) load(ctx context.Context) error {
 	b.self = self
 	b.policy = issuePolicy(cfg)
 	b.reportFactoryErrors = cfg.Scheduler.ReportFactoryErrors
-	b.gh = githubClient(cfg)
+	gh, _, err := githubClient(cfg)
+	if err != nil {
+		return err
+	}
+	b.gh = gh
 	return nil
 }
 

@@ -198,8 +198,8 @@ func TestPiBin(t *testing.T) {
 }
 
 // A typo in a subcommand must fail, exactly like a typo in a top-level
-// command: a group that only printed its help and exited 0 left a session
-// with no way to tell its command had not run (#83).
+// command: a group that only printed its help and exited 0 would leave a
+// session with no way to tell its command had not run.
 func TestUnknownSubcommandIsAnError(t *testing.T) {
 	for _, group := range []string{"config", "prompts", "mail", "issue", "labels", "skills", "mcp", "notes"} {
 		err := runRoot(t, group, "bogus")
@@ -214,7 +214,7 @@ func TestUnknownSubcommandIsAnError(t *testing.T) {
 	}
 }
 
-// The realistic shape from #83: a typo'd subcommand carrying the subcommand's
+// The realistic shape: a typo'd subcommand carrying the subcommand's
 // flags. Cobra parses flags before it validates Args, so the error names the
 // flag rather than the command — what matters is that it is an error at all.
 func TestUnknownSubcommandWithFlagsIsAnError(t *testing.T) {
@@ -228,7 +228,7 @@ func TestUnknownSubcommandWithFlagsIsAnError(t *testing.T) {
 	}
 }
 
-// An unknown top-level command was already rejected; keep it that way.
+// An unknown top-level command is an error too.
 func TestUnknownCommandIsAnError(t *testing.T) {
 	err := runRoot(t, "boguscmd")
 	if err == nil || !strings.Contains(err.Error(), `unknown command "boguscmd" for "bees"`) {

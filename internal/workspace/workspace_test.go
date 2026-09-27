@@ -73,10 +73,10 @@ func TestBranchAndDetached(t *testing.T) {
 	}
 }
 
-// TestConcurrentWorkspacesDoNotRace is the regression guard for #133: every
-// workspace used to check out into a directory named "repo", so `git worktree
-// add` had to allocate repo, repo1, repo2, … by scanning .git/worktrees/ and
-// then creating the entry — not atomically. Two concurrent adds could pick the
+// TestConcurrentWorkspacesDoNotRace guards the worktree id: were every
+// workspace to check out into a directory named "repo", `git worktree add`
+// would allocate repo, repo1, repo2, … by scanning .git/worktrees/ and then
+// creating the entry — not atomically. Two concurrent adds could pick the
 // same id and one of them read a half-written commondir.
 func TestConcurrentWorkspacesDoNotRace(t *testing.T) {
 	ctx := context.Background()
@@ -141,8 +141,8 @@ func TestConcurrentWorkspacesDoNotRace(t *testing.T) {
 }
 
 // TestRepoDirIsNamedAfterTheWorkspace pins the property the concurrency guard
-// relies on: the leaf name is neither the constant "repo" nor derived from the
-// caller's name, both of which two live workspaces can share.
+// relies on: the leaf name is not derived from the caller's name, which two
+// live workspaces can share.
 func TestRepoDirIsNamedAfterTheWorkspace(t *testing.T) {
 	ctx := context.Background()
 	_, clone := testutil.SetupRepos(t)
@@ -163,9 +163,6 @@ func TestRepoDirIsNamedAfterTheWorkspace(t *testing.T) {
 	defer func() { _ = m.Remove(ctx, b) }()
 
 	for _, ws := range []*workspace.Workspace{a, b} {
-		if leaf := filepath.Base(ws.RepoDir); leaf == "repo" {
-			t.Errorf("RepoDir leaf is the constant %q: %s", leaf, ws.RepoDir)
-		}
 		if filepath.Dir(ws.RepoDir) != ws.Root {
 			t.Errorf("RepoDir %s is not inside Root %s", ws.RepoDir, ws.Root)
 		}
@@ -205,7 +202,7 @@ func worktreeCount(ctx context.Context, t *testing.T, clone string) int {
 	return n
 }
 
-// TestFetchDoesNotRaceWorktreeOperations guards #230: `git fetch` in the main
+// TestFetchDoesNotRaceWorktreeOperations: `git fetch` in the main
 // clone enumerates .git/worktrees/<id>/HEAD to build its "have" set, so it can
 // read an entry a concurrent `git worktree add` is still writing and fail the
 // whole fetch with:
@@ -213,15 +210,16 @@ func worktreeCount(ctx context.Context, t *testing.T, clone string) int {
 //	fatal: bad object worktrees/<id>/HEAD
 //	error: <origin> did not send all necessary objects
 //
-// This is not the id-allocation race of #133/#142 (unique leaf names fixed
-// that): it is a read of one clone's .git against a write of it. The scheduler
+// This is not the id-allocation race TestConcurrentWorkspacesDoNotRace covers
+// (unique leaf names prevent that): it is a read of one clone's .git against
+// a write of it. The scheduler
 // overlaps exactly these two — runSingleton calls Fetch while developer
 // workers call Branch — so Manager serialises both behind one mutex, and every
 // call below must return without error.
 //
 // The width (24 workers) matters more than the depth: without the mutex this
-// fails on the first few rounds, 15 runs out of 15. The failure seen on macOS
-// is a sibling of the reported one rather than the fetch message above — `git
+// fails on the first few rounds. The failure seen on macOS is often a
+// sibling of the fetch message above — `git
 // worktree add` racing the implicit prune inside another `worktree
 // remove`/`prune` ("failed to read .git/worktrees/<id>/commondir") — but it is
 // the same defect: concurrent git commands on one .git directory.

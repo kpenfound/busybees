@@ -17,6 +17,7 @@ import (
 	"github.com/kpenfound/busybees/core/agent/agentbin"
 	"github.com/kpenfound/busybees/core/agent/procs"
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghapp"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/prompts"
 	"github.com/kpenfound/busybees/internal/skills"
@@ -61,6 +62,11 @@ type Deps struct {
 	// PiBin is the pi executable. Default "pi".
 	PiBin string
 
+	// App answers for a GitHub App ([github] app_id): nil otherwise, and
+	// when its private key could not be read, which AppErr says.
+	App    App
+	AppErr error
+
 	// MachineGitHub runs the one gh command that is about the machine's own
 	// authentication rather than the repository: `gh auth status`. It never
 	// carries github.token - see machineGH.
@@ -91,7 +97,19 @@ func New(ctx context.Context, configPath, claudeBin, codexBin, openCodeBin, piBi
 		// The checks answer for the account the factory acts as, so they
 		// carry the same token the orchestrator's own calls do (config's
 		// [github] table; empty means the machine's own gh auth).
-		d.GitHub = github.NewAs(cfg.Project.Repo, cfg.GitHub.Login, cfg.GitHub.ResolvedToken())
+		gh, minter, err := ghapp.NewClient(cfg.GitHub, cfg.Project.Repo, cfg.StateDir(), false)
+		switch {
+		case err != nil:
+			// The login check reports it; every other check's gh call
+			// fails with it too, rather than acting as someone else.
+			d.AppErr = err
+			d.GitHub = github.NewApp(cfg.Project.Repo, cfg.GitHub.Login, failedTokens{err})
+		default:
+			d.GitHub = gh
+			if minter != nil {
+				d.App = minter
+			}
+		}
 	}
 	// Keep is deliberately left off even when scheduler.keep_workspaces is
 	// set: doctor's worktree is a probe and always cleans up after itself.
@@ -890,12 +908,24 @@ func (d *Deps) checkRepoAccess(ctx context.Context) Result {
 	return pass(name, GroupGitHub, fmt.Sprintf("%s (%s)", repo, view.ViewerPermission))
 }
 
+// App is what doctor asks of a GitHub App: its slug and its installation
+// on the repository (ghapp.Minter).
+type App interface {
+	Slug(ctx context.Context) (string, error)
+	Installation(ctx context.Context) (int64, error)
+}
+
+// failedTokens is the token source of a GitHub App whose key could not be
+// read: every call fails with why.
+type failedTokens struct{ err error }
+
+func (f failedTokens) Token(context.Context) (string, error) { return "", f.err }
+
 // botSuffix is what GitHub appends to a GitHub App's slug when it reports the
-// author of something the app wrote ("agent-kal[bot]"). bees neither adds nor
-// strips it: github.login is compared with the author login GitHub reports,
-// verbatim (github.IsBee), so it belongs in bees.toml exactly when GitHub
-// uses it and never otherwise.
-const botSuffix = "[bot]"
+// author of something the app wrote ("agent-kal[bot]"). A user token's login
+// is compared with what GitHub reports for it verbatim, so the suffix
+// belongs in bees.toml exactly when github.login is a GitHub App's.
+const botSuffix = config.BotSuffix
 
 // checkGitHubLogin reports whether github.token really belongs to the account
 // github.login names. Nothing else asks at run time - `bees init` verifies it
@@ -912,6 +942,9 @@ func (d *Deps) checkGitHubLogin(ctx context.Context) Result {
 	const name = "github.login matches token"
 	if !d.Config.GitHub.Configured() {
 		return pass(name, GroupGitHub, "[github] is not configured: the factory acts as the machine's own gh account")
+	}
+	if d.Config.GitHub.App() {
+		return d.checkAppLogin(ctx)
 	}
 	want := d.Config.GitHub.Login
 	got, err := d.GitHub.Login(ctx)
@@ -934,6 +967,41 @@ func (d *Deps) checkGitHubLogin(ctx context.Context) Result {
 		fmt.Sprintf("set github.login = %q, or configure a token belonging to %s: github.login decides which comments count as the factory's own, so a wrong one makes it read a person's comments as its own", got, want))
 }
 
+// checkAppLogin is checkGitHubLogin for a GitHub App: GitHub accepts its
+// ID and key, github.login is its login, and it is installed on the
+// repository.
+func (d *Deps) checkAppLogin(ctx context.Context) Result {
+	const name = "github.login matches the GitHub App"
+	g, repo := d.Config.GitHub, d.Config.Project.Repo
+	if d.AppErr != nil {
+		return fail(name, GroupGitHub, oneLine(d.AppErr.Error()),
+			"set github.private_key to the GitHub App's private key, a \"$VAR\" holding it, or the path of its .pem file")
+	}
+	slug, err := d.App.Slug(ctx)
+	if err != nil {
+		return fail(name, GroupGitHub, fmt.Sprintf("GitHub did not accept github.app_id %d with github.private_key: %s", g.AppID, oneLine(err.Error())),
+			"check the App ID and generate a private key on the GitHub App's settings page")
+	}
+	if got := slug + botSuffix; !strings.EqualFold(got, g.Login) {
+		return fail(name, GroupGitHub, fmt.Sprintf("github.app_id %d is %s, github.login says %s", g.AppID, got, g.Login),
+			fmt.Sprintf("set github.login = %q: github.login decides which comments count as the factory's own", got))
+	}
+	if _, err := d.App.Installation(ctx); err != nil {
+		return fail(name, GroupGitHub, oneLine(err.Error()),
+			"install the GitHub App on "+repo+" from its settings page")
+	}
+	return pass(name, GroupGitHub, fmt.Sprintf("%s, installed on %s", g.Login, repo))
+}
+
+// grant is the remediation for a permission the account lacks: what a
+// GitHub App's settings page calls it, or a personal access token's.
+func (d *Deps) grant(what, app, token string) string {
+	if d.Config.GitHub.App() {
+		return "grant the GitHub App " + what + " on its settings page: " + app + ", then approve the new permissions on its installation"
+	}
+	return "grant github.token " + what + " - on a fine-grained personal access token that is " + token
+}
+
 // notAccessible matches GitHub's refusal of a write the credentials are not
 // permitted to make. A fine-grained token that was not granted the resource
 // answers "Resource not accessible by personal access token"; the other 403s
@@ -954,8 +1022,7 @@ var noSuchResource = regexp.MustCompile(`HTTP 404`)
 // role. A fine-grained personal access token carries per-resource permissions
 // on top of that role, so "ADMIN" and "cannot create an issue" are an
 // ordinary pair - and then every issue_create, comment and label edit in
-// every session fails, one session at a time, with nothing having said so
-// (#303).
+// every session fails, one session at a time, with nothing having said so.
 //
 // The probe is a no-op update of the base label: renaming it to the name it
 // already has. Three properties earn it the job.
@@ -985,9 +1052,9 @@ func (d *Deps) checkIssueWrites(ctx context.Context) Result {
 	case notAccessible.MatchString(err.Error()):
 		return fail(name, GroupGitHub,
 			fmt.Sprintf("%s cannot write issues in %s: %s", login, repo, oneLine(err.Error())),
-			"grant github.token write access to issues - on a fine-grained personal access token that is Issues -> Read and write, "+
-				"on a classic one the `repo` scope. Repository permission is not enough on its own: without this, "+
-				"every issue, comment and label edit a session makes fails")
+			d.grant("write access to issues", "Issues -> Read and write",
+				"Issues -> Read and write, on a classic one the `repo` scope")+
+				". Repository permission is not enough on its own: without this, every issue, comment and label edit a session makes fails")
 	case noSuchResource.MatchString(err.Error()):
 		return warn(name, GroupGitHub,
 			fmt.Sprintf("could not check: %s has no `%s` label to write to", repo, label),
@@ -1016,7 +1083,7 @@ var unprocessable = regexp.MustCompile(`HTTP 422`)
 // repository as ADMIN, passes every other GitHub check bees has - including
 // `can write issues`, whose probe the Issues grant covers - and then fails
 // every push. That costs a session and an escalation per work item,
-// discovered mid-pass (#312).
+// discovered mid-pass.
 //
 // The probe is a no-op ref update: setting the default branch to the commit
 // it already points at, read first. Like the label probe it is a real write,
@@ -1079,10 +1146,9 @@ func (d *Deps) checkPushes(ctx context.Context) Result {
 	case notAccessible.MatchString(err.Error()):
 		return fail(name, GroupGitHub,
 			fmt.Sprintf("%s cannot write branches in %s: %s", login, repo, oneLine(err.Error())),
-			"grant github.token write access to the repository's contents - on a fine-grained personal access token that is "+
-				"Contents -> Read and write, and Pull requests -> Read and write, which the session needs next; on a classic "+
-				"one the `repo` scope. Repository permission is not enough on its own: without this, every developer session's "+
-				"`git push` fails and the issue is escalated")
+			d.grant("write access to the repository's contents", "Contents -> Read and write, and Pull requests -> Read and write, which the session needs next",
+				"Contents -> Read and write, and Pull requests -> Read and write, which the session needs next; on a classic one the `repo` scope")+
+				". Repository permission is not enough on its own: without this, every developer session's `git push` fails and the issue is escalated")
 	case noSuchResource.MatchString(err.Error()):
 		return warn(name, GroupGitHub,
 			fmt.Sprintf("could not check: %s has no %s branch to probe with", repo, branch),
@@ -1140,15 +1206,15 @@ var notProtected = regexp.MustCompile(`(?i)branch not protected|HTTP 404`)
 
 // checkAutoMerge reports what auto_merge will actually gate a merge on.
 //
-// With no branch protection `gh pr checks --required` reports nothing, so
-// before #117 an auto-merging factory merged with nothing green at all. It
-// now falls back to every check a pull request reports, which is a sound
-// default but is not the same promise as "the checks you marked required".
+// With no branch protection `gh pr checks --required` reports nothing, so an
+// auto-merging factory falls back to every check a pull request reports,
+// which is a sound default but is not the same promise as "the checks you
+// marked required".
 // This check says which of the two is in force, once, in plain words.
 //
-// It is a Warn and never a Fail: #48 wires doctor into the `bees run`
-// preflight, which refuses to start on a failure, and an unprotected default
-// branch must not stop the factory. bees never enables or edits branch
+// It is a Warn and never a Fail: doctor runs in the `bees run` preflight,
+// which refuses to start on a failure, and an unprotected default branch
+// must not stop the factory. bees never enables or edits branch
 // protection - that is a person's setting.
 func (d *Deps) checkAutoMerge(ctx context.Context) Result {
 	const name = "auto_merge check gate"
@@ -1216,7 +1282,7 @@ func unrequiredGate(name, branch, why string) Result {
 // when it does not, which of the two very different reasons it is: an empty or
 // not-yet-labelled repository, or a filter that just stopped matching the work
 // the factory already owns (adding filter.assignee to an installed factory
-// hides every issue nobody ever assigned - see #110).
+// hides every issue nobody ever assigned).
 //
 // It is a Warn and never a Fail, in both cases: the `bees run` preflight
 // refuses to start on a failure, and a filter that matches nothing on purpose

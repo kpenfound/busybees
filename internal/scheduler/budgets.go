@@ -45,7 +45,7 @@ func (s *Scheduler) recordWorkCost(ref work.Ref, cost float64) {
 
 // issueSpend returns what an issue has cost so far and over how many
 // sessions. The stored total is authoritative; an issue that has none (its
-// bookkeeping was written before budgets existed, or deleted) is seeded from
+// bookkeeping carries no total, or was deleted) is seeded from
 // the ledger once, which is also what makes the total survive a state file
 // that was thrown away but not the ledger, as far as the ledger still reaches
 // back: trimLedger keeps only max(scheduler.retention_period, 24h) of it. A

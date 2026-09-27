@@ -221,7 +221,7 @@ type Scheduler struct {
 	// stop key asks for. HardStop is the other stop: it cancels this
 	// context, which kills every running session's process group. Both are
 	// nil outside Run — a session started another way (`bees exec`) runs
-	// under its caller's context and dies with it, as it always has.
+	// under its caller's context and dies with it.
 	sessionCtx   context.Context
 	stopSessions context.CancelFunc
 	events       *ops.Bus

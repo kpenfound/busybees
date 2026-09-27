@@ -18,9 +18,9 @@ import (
 	"github.com/kpenfound/busybees/internal/session"
 )
 
-// GitHub is the backend behind the GitHub tools: the `gh` calls a role used
-// to build itself, plus the factory's own rules (the visibility filter and
-// the label set) so the tools can enforce them.
+// GitHub is the backend behind the GitHub tools: the `gh` calls the tools
+// make, plus the factory's own rules (the visibility filter and the label
+// set) so the tools can enforce them.
 //
 // The rules are enforced here rather than in the implementation, so that
 // what "matches the filter" or "belongs to the product manager" means is one

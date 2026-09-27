@@ -95,8 +95,8 @@ func LoadProject(repoDir, role string) ([]ProjectPrompt, error) {
 // misspelled role name. Files that are not markdown are neither: a repository
 // may keep whatever else it likes there.
 //
-// A missing directory yields nothing and no error - every repository that has
-// never heard of this feature is in that state.
+// A missing directory yields nothing and no error - every repository that
+// keeps no project prompts is in that state.
 func ProjectPromptFiles(repoDir string) (known, unknown []string, err error) {
 	entries, err := os.ReadDir(filepath.Join(repoDir, filepath.FromSlash(ProjectDir)))
 	if errors.Is(err, os.ErrNotExist) {

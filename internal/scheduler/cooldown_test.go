@@ -64,9 +64,7 @@ func waitRun(t *testing.T, done chan error) error {
 // Cancelling the loop's context is the cool-down: the running session is
 // left to finish — its result and outcome are written, and Run returns only
 // after them — and the console says how many sessions it is waiting for and
-// that a second interrupt stops them (#338). Before the split into two
-// contexts the same cancellation reached `claude` and SIGKILLed it, so the
-// promised drain threw the session's work away.
+// that a second interrupt stops them.
 func TestCancellingTheLoopLetsTheRunningSessionFinish(t *testing.T) {
 	h := newHarness(t, devOnlyTOML)
 	dir, release, cancel, done := startHeldSession(t, h, func(dir string) bool {
@@ -76,9 +74,9 @@ func TestCancellingTheLoopLetsTheRunningSessionFinish(t *testing.T) {
 	defer cancel()
 
 	cancel()
-	// Room for the old behaviour — the loop's cancellation reaching the
-	// session — to kill it before the release. The fixed code races
-	// nothing: the session cannot finish before the file exists.
+	// Room for the loop's cancellation to reach the session and kill it
+	// before the release, if it could. Nothing is raced: the session
+	// cannot finish before the file exists.
 	time.Sleep(200 * time.Millisecond)
 	if err := os.WriteFile(release, nil, 0o644); err != nil {
 		t.Fatal(err)
@@ -141,7 +139,7 @@ func TestHardStopKillsTheRunningSession(t *testing.T) {
 }
 
 // A pass that is still running when the loop's context is cancelled starts
-// nothing: sessions no longer die with that context, so without a gate at
+// nothing: sessions do not die with that context, so without a gate at
 // both dispatch sites the pass would start work the cool-down promised not
 // to — and the session would run to completion under its own context.
 func TestNoSessionStartsAfterTheLoopIsCancelled(t *testing.T) {
@@ -174,9 +172,7 @@ func TestHardStopOutsideRunDoesNothing(t *testing.T) {
 // One work item's develop -> review loop is one piece of work in progress,
 // so a cool-down carries it to a natural end: the developer session that was
 // running when the loop's context was cancelled is followed by the review
-// that belongs with it, and the issue reaches approval (#339). Before the
-// change the worker checked the loop's context between stages, so a stop
-// landed mid-issue and the review never ran.
+// that belongs with it, and the issue reaches approval.
 func TestACooldownCarriesTheWorkerIntoItsReview(t *testing.T) {
 	h := newHarness(t, prereviewTOML)
 	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true, config.RoleReviewer: true}
@@ -266,10 +262,10 @@ func TestACooldownStillEscalatesAtTheRoundLimit(t *testing.T) {
 
 // A cool-down that lands between two of a worker's stages has no session to
 // count, and the console must not fall silent for as long as the worker
-// takes to finish the issue it is carrying. The counted line stays exactly
-// what it was: it counts the sessions running at that instant, which is
-// still true, and TestCancellingTheLoopLetsTheRunningSessionFinish pins it
-// through a real run.
+// takes to finish the issue it is carrying. The counted line counts the
+// sessions running at that instant, and
+// TestCancellingTheLoopLetsTheRunningSessionFinish pins it through a real
+// run.
 func TestStopNoticeSaysWhatTheWaitIsFor(t *testing.T) {
 	cases := []struct {
 		name     string

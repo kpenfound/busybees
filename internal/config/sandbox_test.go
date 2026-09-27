@@ -51,8 +51,7 @@ sandbox = "container"
 	}
 }
 
-// With nothing configured anywhere every role runs unboxed, which is what
-// bees has always done.
+// With nothing configured anywhere every role runs unboxed.
 func TestSandboxDefaultsToNone(t *testing.T) {
 	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"))
 	if err != nil {
@@ -338,8 +337,7 @@ func TestSandboxImageWithSpacesIsALoadError(t *testing.T) {
 }
 
 // container_use_environment resolves like sandbox_image, and defaults to
-// empty (today's behaviour, unchanged); `bees config show` prints it per
-// role.
+// empty; `bees config show` prints it per role.
 func TestContainerUseEnvironmentMerges(t *testing.T) {
 	cfg, err := Load(writeConfig(t, `
 version = 1

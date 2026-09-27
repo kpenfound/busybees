@@ -14,9 +14,8 @@ import (
 // A session's box is a property of the session, so it rides on the
 // session-started event the live view reads and on the worker `bees status`
 // prints — not on the configuration a reader would have to go and resolve.
-// Every mode but "none" refuses to run today (config.CheckSandboxMode), so
-// "none" is the only one a session can be observed in; what this pins is
-// that the resolved mode is carried at all, rather than left empty.
+// This session runs with sandbox "none"; what this pins is that the
+// resolved mode is carried at all, rather than left empty.
 func TestASessionReportsTheSandboxItRunsIn(t *testing.T) {
 	h := newHarness(t, devOnlyTOML)
 	sub := h.sched.Subscribe()

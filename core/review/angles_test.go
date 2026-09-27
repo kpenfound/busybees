@@ -430,7 +430,7 @@ func TestAnAngleThatFailedDoesNotStopTheOthers(t *testing.T) {
 }
 
 // The diff is in every angle's prompt, so a session whose agent has no tool
-// to read a file with (restricted Codex had none) still reviews the change,
+// to read a file with still reviews the change,
 // and the file beside it is named for searching.
 func TestEveryAngleIsGivenTheDiffInItsPrompt(t *testing.T) {
 	agent := newFakeAngleAgent(len(briefAngles))

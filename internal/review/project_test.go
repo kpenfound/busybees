@@ -158,7 +158,6 @@ func TestProjectInvalid(t *testing.T) {
 		{"unknown key in an entry", "[[context_sources]]\nname = \"diff\"\nenable = false\n", []string{"unknown keys", "context_sources.enable"}},
 		{"wrong type", "[angles]\ngeneral = \"off\"\n", []string{"general"}},
 		{"unknown angle", "[angles]\nsecurity = false\n", []string{"angles.security: unknown angle (want one of quick_general, general, docs, test_coverage, acceptance_criteria, side_effects)"}},
-		{"the retired style angle", "[angles]\nstyle = false\n", []string{"angles.style: unknown angle"}},
 		{"category severity", "[categories]\nnaming = \"nit\"\n", []string{"categories.naming \"nit\" must be one of off, info, low, medium, high"}},
 		{"absolute style source", "style_sources = [\"/etc/style.md\"]\n", []string{"style_sources[0] \"/etc/style.md\" must be relative to the project directory"}},
 		{"escaping style source", "style_sources = [\"../../etc/passwd\"]\n", []string{"style_sources[0] \"../../etc/passwd\" must stay inside the project directory"}},

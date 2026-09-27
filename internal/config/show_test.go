@@ -422,8 +422,8 @@ angles = { xs = ["quick_general"], m = ["general", "docs"] }
 }
 
 // TestViewWithoutUserDefaultsHasNoSources checks a config loaded without a
-// defaults.toml prints no source marking anywhere: built-in defaults and the
-// project file keep showing the way they always have.
+// defaults.toml prints no source marking anywhere, beside built-in defaults
+// and project values alike.
 func TestViewWithoutUserDefaultsHasNoSources(t *testing.T) {
 	out, _ := defaultsViewFixture(t, "version = 5\n[project]\nrepo = \"a/b\"\n", "")
 	if _, ok := out["profile_sources"]; ok {

@@ -228,6 +228,10 @@ func TestMentionsLogin(t *testing.T) {
 		{"nothing here", mentionLogin, false},
 		{"@busybees-bot", "", false},
 		{"@busybees-bot2 then @busybees-bot", mentionLogin, true},
+		// A GitHub App is mentioned by its slug or by its login.
+		{"@busybees can you look", "busybees[bot]", true},
+		{"@busybees[bot] can you look", "busybees[bot]", true},
+		{"@busybees-other is somebody else", "busybees[bot]", false},
 	} {
 		if got := mentionsLogin(tc.body, tc.login); got != tc.want {
 			t.Errorf("mentionsLogin(%q, %q) = %v, want %v", tc.body, tc.login, got, tc.want)

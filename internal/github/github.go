@@ -26,21 +26,22 @@ type Client struct {
 	// ActsAs is the GitHub login this client's calls act as, when the factory
 	// has an account of its own (config's [github] table). It is what makes
 	// the author of a comment a signal: see IsBee. Empty (the default) means
-	// the factory shares an account with the people it works for, which is
-	// what bees did before [github] existed, and then the comment marker is
-	// the only signal there is. It is configuration, unlike the Login method,
+	// the factory shares an account with the people it works for, and then
+	// the comment marker is the only signal there is. It is configuration, unlike the Login method,
 	// which asks GitHub.
 	ActsAs string
 	// Token is the GitHub token this client's gh calls authenticate with,
 	// passed as GH_TOKEN. Empty (the default) runs gh with whatever
-	// authentication the machine already has, which is what bees did before
-	// config's [github] table existed.
+	// authentication the machine already has.
 	//
 	// It is a field rather than something the command builder reaches for so
 	// that a caller can be asserted to have wired the configured token
 	// through: the Exec hooks below replace command execution wholesale in
 	// tests, so the environment never reaches a fake.
 	Token string
+	// Tokens supplies the token for each call instead of Token: a GitHub
+	// App's installation tokens expire within the hour (internal/ghapp).
+	Tokens TokenSource
 	// Exec overrides command execution (tests).
 	Exec func(ctx context.Context, args ...string) ([]byte, error)
 	// ExecStdin overrides command execution with input on gh's standard
@@ -68,20 +69,45 @@ func NewAs(repo, login, token string) *Client {
 	return c
 }
 
+// TokenSource supplies the token of each call a Client makes.
+type TokenSource interface {
+	Token(ctx context.Context) (string, error)
+}
+
+// NewApp returns a client for repo that acts as login, a GitHub App's bot
+// login, authenticating with the installation tokens tokens supplies.
+func NewApp(repo, login string, tokens TokenSource) *Client {
+	c := New(repo)
+	c.ActsAs = login
+	c.Tokens = tokens
+	return c
+}
+
 // command builds the gh command both exec paths run. It is the single place
 // the token is applied, so a third call site cannot be added without it.
-func (c *Client) command(ctx context.Context, args ...string) *exec.Cmd {
+func (c *Client) command(ctx context.Context, args ...string) (*exec.Cmd, error) {
 	cmd := exec.CommandContext(ctx, "gh", args...)
-	if c.Token != "" {
+	token := c.Token
+	if c.Tokens != nil {
+		t, err := c.Tokens.Token(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("gh %s: %w", strings.Join(args, " "), err)
+		}
+		token = t
+	}
+	if token != "" {
 		// os/exec keeps the last occurrence of a duplicated variable, so this
 		// wins over a GH_TOKEN the operator's own environment already has.
-		cmd.Env = append(os.Environ(), "GH_TOKEN="+c.Token)
+		cmd.Env = append(os.Environ(), "GH_TOKEN="+token)
 	}
-	return cmd
+	return cmd, nil
 }
 
 func (c *Client) run(ctx context.Context, args ...string) ([]byte, error) {
-	cmd := c.command(ctx, args...)
+	cmd, err := c.command(ctx, args...)
+	if err != nil {
+		return nil, err
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -92,7 +118,10 @@ func (c *Client) run(ctx context.Context, args ...string) ([]byte, error) {
 }
 
 func (c *Client) runStdin(ctx context.Context, stdin string, args ...string) ([]byte, error) {
-	cmd := c.command(ctx, args...)
+	cmd, err := c.command(ctx, args...)
+	if err != nil {
+		return nil, err
+	}
 	cmd.Stdin = strings.NewReader(stdin)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -189,14 +218,39 @@ func (c Comment) IsBee() bool { _, ok := BeeRole(c.Body); return ok }
 // by anyone else: a person quoting a marker is still a person, because the
 // marker rule is positional and their login is not the factory's.
 //
-// An empty login is every configuration that predates [github], and then this
-// is exactly the marker rule.
+// An empty login is every configuration without [github], and then this is
+// exactly the marker rule.
 func IsBee(login, author, body string) bool {
-	if login != "" && strings.EqualFold(author, login) {
+	if login != "" && SameLogin(author, login) {
 		return true
 	}
 	_, ok := BeeRole(body)
 	return ok
+}
+
+// botSuffix is what GitHub appends to a GitHub App's slug to make its login.
+const botSuffix = "[bot]"
+
+// SameLogin reports whether two logins name the same account. Logins are
+// case-insensitive, and GitHub reports a GitHub App's login with the "[bot]"
+// suffix through its REST API and without it through GraphQL, which is
+// where gh's --json fields come from: "busybees[bot]" and "busybees" are
+// the same App. GitHub keeps App slugs and user logins apart, so the bare
+// slug names no one else.
+func SameLogin(a, b string) bool {
+	if strings.EqualFold(a, b) {
+		return true
+	}
+	ta, bota := strings.CutSuffix(strings.ToLower(a), botSuffix)
+	tb, botb := strings.CutSuffix(strings.ToLower(b), botSuffix)
+	return (bota || botb) && ta == tb && ta != ""
+}
+
+// AppSlug is the slug of a GitHub App login ("busybees" for
+// "busybees[bot]"), and false for any other login.
+func AppSlug(login string) (string, bool) {
+	slug, ok := strings.CutSuffix(login, botSuffix)
+	return slug, ok && slug != ""
 }
 
 // isBee is IsBee for the login this client acts as.
@@ -383,7 +437,7 @@ func (q Query) authors() []string {
 	if q.Creator == "" {
 		return nil
 	}
-	if q.Self == "" || strings.EqualFold(q.Self, q.Creator) {
+	if q.Self == "" || SameLogin(q.Self, q.Creator) {
 		return []string{q.Creator}
 	}
 	return []string{q.Creator, q.Self}
@@ -409,8 +463,12 @@ func (q Query) argSets() [][]string {
 	}
 	sets := make([][]string, 0, len(authors))
 	for _, login := range authors {
-		set := append(slices.Clone(a), "--author", login)
-		sets = append(sets, set)
+		// gh names a GitHub App author by its slug, with its own flag.
+		flag := "--author"
+		if slug, ok := AppSlug(login); ok {
+			flag, login = "--app", slug
+		}
+		sets = append(sets, append(slices.Clone(a), flag, login))
 	}
 	return sets
 }
@@ -468,7 +526,7 @@ func (q Query) Matches(labels []Label, assignees []Author, milestone string, aut
 	if q.Milestone != "" && milestone != q.Milestone {
 		return false
 	}
-	if q.Creator != "" && !slices.ContainsFunc(q.authors(), func(login string) bool { return strings.EqualFold(author, login) }) {
+	if q.Creator != "" && !slices.ContainsFunc(q.authors(), func(login string) bool { return SameLogin(author, login) }) {
 		return false
 	}
 	return true

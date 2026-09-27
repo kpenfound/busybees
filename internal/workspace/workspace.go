@@ -21,7 +21,7 @@ import (
 type Workspace struct {
 	// Root is the temp directory. RepoDir is the worktree inside it, named
 	// after Root's unique basename: `git worktree add` derives the id under
-	// .git/worktrees/ from the leaf name, so a shared name (once "repo")
+	// .git/worktrees/ from the leaf name, so a shared name (such as "repo")
 	// makes concurrent adds race for the same id.
 	Root    string
 	RepoDir string

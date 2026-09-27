@@ -200,6 +200,29 @@ func TestTheAnglesRunInACheckoutOfThePullRequestHead(t *testing.T) {
 	}
 }
 
+// tokenSource is a github.TokenSource with one answer.
+type tokenSource string
+
+func (s tokenSource) Token(context.Context) (string, error) { return string(s), nil }
+
+// A GitHub App's clone asks its token source when it clones, and the token
+// reaches the container the way a configured one does: by name.
+func TestTheCloneAsksTheTokenSource(t *testing.T) {
+	docker := fakeDocker(t)
+	agent := newFakeAngleAgent(1)
+	project := projectWith(t, "[angles]\nacceptance_criteria = false\ntest_coverage = false\nside_effects = false\n")
+	checkout := &Checkout{DockerBin: docker, Tokens: tokenSource("ghs_minted")}
+	if _, err := (&Angles{Agent: agent, Checkout: checkout}).Run(context.Background(), t.TempDir(), project, testBrief(), testDiff); err != nil {
+		t.Fatal(err)
+	}
+	if run := beside(t, docker, "run-args.txt"); !strings.Contains(run, "\n--env\n"+CheckoutTokenVar+"\n") {
+		t.Errorf("run args do not name %s:\n%s", CheckoutTokenVar, run)
+	}
+	if env := beside(t, docker, "run-env.txt"); !strings.Contains(env, CheckoutTokenVar+"=ghs_minted\n") {
+		t.Errorf("the client's environment lacks the minted token:\n%s", env)
+	}
+}
+
 func TestWithoutATokenTheCloneIsAnonymous(t *testing.T) {
 	t.Setenv(CheckoutTokenVar, "the-hosts-own")
 	docker := fakeDocker(t)

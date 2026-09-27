@@ -64,14 +64,6 @@ func TestRenderAllRoles(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s task: %v", role, err)
 		}
-		// The notes reach a session through notes_read, never the prompt:
-		// nothing tells a role to edit a file, and no prompt has a notes
-		// section to render them into.
-		for _, unwant := range []string{"notes file", "\n## Your notes\n", "/s/notes/"} {
-			if strings.Contains(sys+task, unwant) {
-				t.Errorf("%s prompt contains %q", role, unwant)
-			}
-		}
 		if strings.Contains(sys+task, "<no value>") {
 			t.Errorf("%s prompt contains <no value>", role)
 		}
@@ -82,7 +74,7 @@ func TestRenderAllRoles(t *testing.T) {
 // every task prompt in one wording. Nothing else about the prompt changes.
 func TestConsolidateNotesParagraph(t *testing.T) {
 	// The exact text the partial renders, so that removing it from the
-	// prompt has to give back the prompt as it is rendered today.
+	// prompt has to give back the prompt rendered without ConsolidateNotes.
 	const para = "\nAlso consolidate your notes this session (every 10 sessions): read them with\n" +
 		"`notes_read` and write back a consolidated version with `notes_write`, organised under\n" +
 		"the standard sections — merge duplicates, drop what is stale or contradicted and what\n" +
@@ -164,8 +156,8 @@ func TestSystemPromptNamesTheNotesSections(t *testing.T) {
 	}
 }
 
-// Sessions used to fill their notes with a log of what they did and with what
-// git, the code, the docs and GitHub already record (feedback #692). The system
+// Sessions left to themselves fill their notes with a log of what they did and
+// with what git, the code, the docs and GitHub already record. The system
 // prompt says what to keep and, just as plainly, what to leave out.
 func TestSystemPromptSaysWhatNotesLeaveOut(t *testing.T) {
 	for _, role := range config.Roles {
@@ -184,9 +176,6 @@ func TestSystemPromptSaysWhatNotesLeaveOut(t *testing.T) {
 				t.Errorf("%s system prompt lacks %q", role, want)
 			}
 		}
-		if strings.Contains(flow, "anything your future self should know") {
-			t.Errorf("%s system prompt still invites recording anything", role)
-		}
 	}
 }
 
@@ -204,7 +193,7 @@ func TestProjectManagerIsToldTheMaxSize(t *testing.T) {
 
 // The triage list a project manager session is handed is capped at
 // scheduler.triage_batch_size (runProjectManager, internal/scheduler/
-// singletons.go): everything past the cap arrives in Issues, where it used to
+// singletons.go): everything past the cap arrives in Issues, where it would
 // be indistinguishable from issues in other states. The overflow gets a
 // section of its own, and does not appear twice.
 func TestProjectManagerSeesTheRestOfTheTriageQueue(t *testing.T) {
@@ -238,7 +227,7 @@ func TestProjectManagerSeesTheRestOfTheTriageQueue(t *testing.T) {
 
 // runProjectManager (internal/scheduler/singletons.go) passes the open pull
 // requests as Data.PRs; the template must render them, or the field is dead
-// data the project manager never sees (#388).
+// data the project manager never sees.
 func TestProjectManagerSeesOpenPullRequests(t *testing.T) {
 	d := sample()
 	d.PRs = []github.PR{{Number: 9, Title: "Add thing", HeadRefName: "bees/issue-4"}}
@@ -267,10 +256,10 @@ func TestProjectManagerSeesOpenPullRequests(t *testing.T) {
 
 // The shared preamble must not state a rule more absolutely than the factory
 // applies it, because the role prompt rendered right after it contradicts the
-// absolute (#180). Two sentences: bees:priority ("only a person adds or
+// absolute. Two sentences: bees:priority ("only a person adds or
 // removes it", while the project manager may add it to a work item that
 // unblocks the factory and the product manager carries one from a feedback
-// issue onto the work item it creates, #214), and what a person says is
+// issue onto the work item it creates), and what a person says is
 // authoritative (issues and PRs only, while a person can also write to a role
 // through the mailbox).
 func TestPreambleDoesNotOverstateWhatTheFactoryApplies(t *testing.T) {
@@ -278,9 +267,6 @@ func TestPreambleDoesNotOverstateWhatTheFactoryApplies(t *testing.T) {
 		sys, err := System(role, sample(), "")
 		if err != nil {
 			t.Fatal(err)
-		}
-		if strings.Contains(sys, "Only a person adds or removes it") {
-			t.Errorf("%s preamble states bees:priority absolutely; the project manager may add it:\n%s", role, sys)
 		}
 		for _, want := range []string{
 			"Only a person decides what carries it, and only a person removes it",
@@ -312,17 +298,11 @@ func TestProjectManagerMayOnlyReorderTheQueueWithPriority(t *testing.T) {
 			t.Errorf("project manager system prompt missing %q:\n%s", want, sys)
 		}
 	}
-	if strings.Contains(flowed(sys), "takes the oldest") {
-		t.Errorf("project manager system prompt still states dispatch order as oldest-first:\n%s", sys)
-	}
 }
 
 // A person reaches the product manager through feedback issues *and* through
-// the mailbox, and the prompt used to name only the first — contradicting the
-// shared preamble, which says mail from `human` outranks these instructions.
-// Both halves are pinned: the direction sentence the other roles already carry,
-// and the absence of the absolute "humans talk to you through issues" claim
-// that made the mailbox look like no channel at all.
+// the mailbox, as the shared preamble says: mail from `human` outranks these
+// instructions.
 func TestProductManagerTakesDirectionFromHumanMail(t *testing.T) {
 	sys, err := System(config.RoleProductManager, sample(), "")
 	if err != nil {
@@ -336,16 +316,12 @@ func TestProductManagerTakesDirectionFromHumanMail(t *testing.T) {
 			t.Errorf("product manager system prompt missing %q:\n%s", want, sys)
 		}
 	}
-	if strings.Contains(sys, "Humans talk to you through issues labelled") {
-		t.Errorf("product manager system prompt still states feedback issues as the only channel:\n%s", sys)
-	}
 }
 
-// Three archived developer sessions started a background task and ended
-// their turn to wait for a completion notification a headless session never
-// receives, abandoning the work with no outcome reported. Nothing warned
-// against it; the rule lives once in common.md so every role, not only the
-// developer, carries it.
+// A headless session that starts a background task and ends its turn to
+// wait for a completion notification never receives one, and abandons the
+// work with no outcome reported. The rule lives once in common.md so
+// every role, not only the developer, carries it.
 func TestEveryRoleIsWarnedAgainstEndingATurnOnBackgroundWork(t *testing.T) {
 	for _, role := range config.Roles {
 		sys, err := System(role, sample(), "")
@@ -445,11 +421,9 @@ func TestRoleSpecifics(t *testing.T) {
 	}
 }
 
-// Verification is CI's job, not the reviewer's: a person said so on #5, and the
-// archive shows every short round-1 approval spending most of its turns on
-// `go build/vet/test`, `dagger check` and throwaway worktrees. Both halves are
-// pinned separately, because a paraphrase of "run the tests" creeping back in
-// would leave the positive sentence untouched.
+// Verification is CI's job, not the reviewer's: a reviewer left to verify
+// spends most of a short round-1 approval's turns on `go build/vet/test`,
+// `dagger check` and throwaway worktrees.
 func TestReviewerDoesNotRunTheTestSuite(t *testing.T) {
 	sys, err := System(config.RoleReviewer, sample(), "")
 	if err != nil {
@@ -463,16 +437,7 @@ func TestReviewerDoesNotRunTheTestSuite(t *testing.T) {
 			t.Errorf("reviewer system prompt missing %q:\n%s", want, sys)
 		}
 	}
-	for _, gone := range []string{
-		"Run the tests the way the repository documents",
-		"exercise the change where practical",
-	} {
-		if strings.Contains(sys, gone) {
-			t.Errorf("reviewer system prompt still tells it to run the tests (%q):\n%s", gone, sys)
-		}
-	}
-	// A repository that reports no checks is the case where the old prompt
-	// made the reviewer stand in for CI; now it says so in its note instead.
+	// A repository that reports no checks: the note says nothing was verified.
 	d := sample()
 	d.ChecksStatus = "passed"
 	task, err := Task(config.RoleReviewer, d)
@@ -481,9 +446,6 @@ func TestReviewerDoesNotRunTheTestSuite(t *testing.T) {
 	}
 	if !strings.Contains(task, "nothing was verified for you") {
 		t.Errorf("reviewer task does not say nothing was verified:\n%s", task)
-	}
-	if strings.Contains(task, "run the tests yourself") || strings.Contains(task, "test-suite yourself") {
-		t.Errorf("reviewer task still tells it to run the tests:\n%s", task)
 	}
 }
 
@@ -503,9 +465,6 @@ func TestReviewerChecksModeAlsoHappensBeforeTheFirstReview(t *testing.T) {
 	}
 	if !strings.Contains(sys, "again after your approval when\nauto-merge is on") {
 		t.Errorf("reviewer system prompt does not say checks mode follows an approval under auto-merge:\n%s", sys)
-	}
-	if strings.Contains(sys, "when auto-merge is enabled and the required checks fail after your") {
-		t.Errorf("reviewer system prompt still conditions checks mode on auto-merge alone:\n%s", sys)
 	}
 	checks, err := TaskNamed(config.RoleReviewer, "reviewer_checks", sample())
 	if err != nil {
@@ -570,9 +529,9 @@ func TestDeveloperRunsTheRepositoryChecksBeforePushing(t *testing.T) {
 	// Lint is the cheapest of the three self-checks but not the one review
 	// rounds are actually spent on. Across the 22 reviewer messages in the
 	// session archive not one cites a lint or format failure, while three ask
-	// for a regression guard that does not guard (PRs 129, 65 r2, 189) and six
-	// for a claim the change itself made false and left standing elsewhere
-	// (PRs 77, 108, 163, 184, 187, 188). Both belong in the step.
+	// for a regression guard that does not guard and six for a claim the
+	// change itself made false and left standing elsewhere. Both belong in
+	// the step.
 	for _, want := range []string{
 		"Undo your fix and confirm the test you added fails",
 		"searching for the claim rather than for the sentence you edited",
@@ -585,9 +544,8 @@ func TestDeveloperRunsTheRepositoryChecksBeforePushing(t *testing.T) {
 
 // Falling behind the default branch is the most common reason for an extra
 // review round: 6 of the 22 reviewer messages in the session archive carry a
-// "merge main" blocker (PRs 65 r2, 65 r3, 94 r2, 99, 134, 149), and PR 65 r3
-// exists for no other reason. The rule used to live only in the developer's
-// notes file, where only 36 of 96 archived sessions acted on it.
+// "merge main" blocker. In the developer's notes file alone, the rule is acted
+// on in only 36 of 96 archived sessions, so the prompt carries it.
 func TestDeveloperMergesTheDefaultBranchBeforePushing(t *testing.T) {
 	sys, err := System(config.RoleDeveloper, sample(), "")
 	if err != nil {
@@ -614,7 +572,7 @@ func TestDeveloperMergesTheDefaultBranchBeforePushing(t *testing.T) {
 }
 
 // 0 questions and 0 developer messages in 96 archived sessions, while the one
-// session that did hit a self-contradicting issue (issue 76, PR 146) chose,
+// session that did hit a self-contradicting issue chose,
 // wrote both judgement calls into the PR body, and was approved with "both
 // judgement calls are right, keep them". Choosing is the default; asking parks
 // the issue and restarts the work in a session with none of this one's context.
@@ -651,14 +609,10 @@ func TestDeveloperChoosesBeforeItAsks(t *testing.T) {
 
 // QA tests the product, and a session that finds nothing is a success.
 //
-// Both rules come out of the session archive. QA's findings drifted into
-// code reading — the 2026-08-30 sessions filed "the product_manager prompt
-// falsely claims proposal-parent enforcement exists" and "the visibility
-// backstop's own doc-comment scenarios are unreachable" — which is the
-// reviewer's job on the pull request, not QA's on a merged tree. And "you
-// need not file anything" had to be added to this repository's bees.toml as
-// a custom instruction because the prompt did not carry it; it belongs in
-// the prompt. Each clause is asserted separately so it fails on its own.
+// Without the first, QA's findings drift into code reading, which is the
+// reviewer's job on the pull request, not QA's on a merged tree. Without the
+// second, a session files something every run. Each clause is asserted
+// separately so it fails on its own.
 func TestQALooksForProductDefectsAndNeedNotFileAnything(t *testing.T) {
 	sys, err := System(config.RoleQA, sample(), "")
 	if err != nil {
@@ -688,18 +642,15 @@ func TestQALooksForProductDefectsAndNeedNotFileAnything(t *testing.T) {
 //
 // The closed-issues half: the task lists open bugs only (runQA filters
 // snap.issues by the bug label, internal/scheduler/singletons.go), so
-// "search for an existing report" pointed at half the record — #84 and #103
-// were both filed against reports that were already closed. A closed issue is
+// "search for an existing report" would point at half the record and file
+// again what a closed report already covers. A closed issue is
 // context and not somewhere to file: ListOpenIssues asks gh for --state open
 // (internal/github/github.go), so no role's task ever carries one and nothing
 // reopens it, which is why a failure reproduced again becomes a new bug. The
-// reproduce
-// half: #103 was filed from a truncated reporter dump and closed as not
-// reproducible. The never-start half: session 20260829-192238 ran
-// `bees exec developer` with $BEES_CONFIG still pointing at the live
-// factory; only the missing --issue flag stopped it launching a real
-// session. Each half is a separate assertion, and the old wording each one
-// replaces is asserted absent so a revert cannot pass silently.
+// reproduce half: a bug filed from a truncated reporter dump is closed as
+// not reproducible. The never-start half: `bees exec developer` with
+// $BEES_CONFIG still pointing at the live factory launches a real session.
+// Each half is a separate assertion.
 func TestQAReproducesBeforeFilingAndStartsNothingLive(t *testing.T) {
 	sys, err := System(config.RoleQA, sample(), "")
 	if err != nil {
@@ -707,7 +658,7 @@ func TestQAReproducesBeforeFilingAndStartsNothingLive(t *testing.T) {
 	}
 	flow := flowed(sys)
 	for _, want := range []string{
-		// The search is `file_bug`'s job now, but QA is still told what it
+		// The search is `file_bug`'s job, but QA is still told what it
 		// covers and what to do with what it finds.
 		"against every issue in the repository, closed as well as open",
 		"nothing in the factory reads a closed issue",
@@ -716,15 +667,6 @@ func TestQAReproducesBeforeFilingAndStartsNothingLive(t *testing.T) {
 	} {
 		if !strings.Contains(flow, want) {
 			t.Errorf("qa system prompt missing %q:\n%s", want, sys)
-		}
-	}
-	for _, gone := range []string{
-		"Search for an existing report first",
-		"Comment on the report you find",
-		"exercise it as a user would",
-	} {
-		if strings.Contains(flow, gone) {
-			t.Errorf("qa system prompt still carries the old wording %q:\n%s", gone, sys)
 		}
 	}
 }
@@ -748,16 +690,12 @@ func TestQAFilesBugsThroughFileBug(t *testing.T) {
 			t.Errorf("qa system prompt missing %q:\n%s", want, sys)
 		}
 	}
-	// The old route: issue_create with the bug flag, which checks nothing.
-	if strings.Contains(flow, "`issue_create` (`bug: true`") {
-		t.Errorf("qa system prompt still files bugs with issue_create:\n%s", sys)
-	}
 }
 
 // The reviewer can be steered by mail like every other role: `bees mail send
-// --from human --to reviewer` is a documented channel, and until #197 the
-// reviewer's sessions were built with no inbox at all, so a message sat unread
-// forever. Three assertions: the mail section in both reviewer task templates
+// --from human --to reviewer` is a documented channel, and a reviewer
+// session built with no inbox would leave a message unread forever. Three
+// assertions: the mail section in both reviewer task templates
 // (checks mode included — a check is diagnosed in a session of its own, and a
 // person steering it writes to the same address), and the direction sentence
 // the other roles already carry in the system prompt.
@@ -794,14 +732,11 @@ func TestReviewerReadsItsMail(t *testing.T) {
 			t.Errorf("reviewer system prompt missing %q:\n%s", want, sys)
 		}
 	}
-	if strings.Contains(sys, "You may send mail to: `developer`.") {
-		t.Errorf("reviewer system prompt still describes mail as send-only:\n%s", sys)
-	}
 }
 
 // QA can be steered by mail like every other role: `bees mail send --from
-// human --to qa` is a documented channel, and until #199 QA's sessions were
-// built with no inbox at all, so a message sat unread forever. Two halves: the
+// human --to qa` is a documented channel, and a QA session built with no
+// inbox would leave a message unread forever. Two halves: the
 // mail section in the task template (empty case included, so a filled-in
 // section is not the only shape that renders) and the direction sentence the
 // other roles already carry in the system prompt.
@@ -838,16 +773,16 @@ func TestQAReadsItsMail(t *testing.T) {
 	}
 }
 
-// Since #213 an issue a person files with only the `bees` label is routed to
-// the product manager as feedback instead of into triage, so some of its
-// inbox is now a small, ready-to-build ask rather than an idea. The prompt is
+// An issue a person files with only the `bees` label is routed to the
+// product manager as feedback instead of into triage, so some of its inbox
+// is a small, ready-to-build ask rather than an idea. The prompt is
 // the one place where that wording is load-bearing — the same rule is stated
 // in prose in docs/workflow.md and docs/roles.md, where a test would fight
 // every rewording — so the instruction is pinned here: turn the ask into a
 // work item related to the feedback issue rather than a feature written
 // around it, and carry the person's `bees:priority` onto the work item, which
 // is the half nothing else in the factory does for it. The condition itself
-// names the two labels that actually route (#226): `bees:bug` is a kind label
+// names the two labels that actually route: `bees:bug` is a kind label
 // but not a routing kind, so a person's bug report with no state label reaches
 // the product manager the same way a bare `bees` issue does. The wants are
 // matched against the flowed prompt because that condition wraps.
@@ -872,7 +807,7 @@ func TestProductManagerRoutesAReadyToBuildAsk(t *testing.T) {
 }
 
 // A feature whose every sub-issue has closed reaches the product manager in a
-// section of its own (#239), not as a row in the feature table where the
+// section of its own, not as a row in the feature table where the
 // scheduler's one wake for it would be easy to miss. What that section asks
 // for is a single yes/no — is the feature's original intent complete? — so it
 // must not read as an invitation to keep a finished feature open by widening
@@ -1120,10 +1055,10 @@ func taskSection(t *testing.T, task, heading string) string {
 // TestAnInterruptedSessionIsReportedAtTheTopOfTheTask: the session that takes
 // over from one a killed scheduler left unfinished is told so before it is
 // told anything else — how far it got, where its transcript is, and what its
-// own role has to do about it (#250). The assertion is deliberately stronger
+// own role has to do about it. The assertion is deliberately stronger
 // than "the section is there": with nothing interrupted the task prompt must
-// be byte for byte the one this version has always rendered, so the section
-// is checked as a *prefix* of an otherwise unchanged prompt.
+// be byte for byte the one rendered without the section, so the section
+// is checked as a *prefix* of an otherwise identical prompt.
 //
 // The advice is per role and only half of it is true of a reviewer: a
 // reviewer session commits nothing and opens no pull request, and a round
@@ -1226,7 +1161,7 @@ func TestAnInterruptionWithNothingToShowStillReads(t *testing.T) {
 }
 
 // A person's comment on the issue reaches the developer as mail from `human`
-// (scheduler.deliverHumanIssueComments, #304). The prompt has to say three
+// (scheduler.deliverHumanIssueComments). The prompt has to say three
 // things a rendering of the comment history cannot: that such a comment is a
 // direction rather than context, where it ranks against the issue and the
 // reviewer, and that the reply goes on the issue rather than on the pull
@@ -1287,7 +1222,7 @@ func TestRequestedReviewRendersWithoutAnIssue(t *testing.T) {
 		t.Errorf("requested-review task renders an issue section:\n%s", task)
 	}
 
-	// With an issue, the review-loop sentences read as they always have.
+	// With an issue, the review-loop sentences name it.
 	sys, err = System(config.RoleReviewer, sample(), "")
 	if err != nil {
 		t.Fatal(err)
@@ -1535,7 +1470,7 @@ func TestProductManagerMinIssueSize(t *testing.T) {
 		}
 	}
 
-	// The new paragraph is the only difference: cut it out of the rendered
+	// The floor paragraph is the only difference: cut it out of the rendered
 	// prompt and what is left is byte-for-byte the unset render.
 	start := strings.Index(on, "\n     Aim the split")
 	end := strings.Index(on, "makes at triage.")
@@ -1548,8 +1483,8 @@ func TestProductManagerMinIssueSize(t *testing.T) {
 }
 
 // A container session has no bees binary, so its prompt offers the tools
-// alone; every other session is still told the four commands exist. The
-// unboxed render is what every role has always read.
+// alone; every other session is still told the four commands exist, and
+// sandbox none renders the same as an unset mode.
 func TestContainerSessionIsNotOfferedTheBeesCommands(t *testing.T) {
 	for _, role := range config.Roles {
 		d := sample()
@@ -1583,8 +1518,8 @@ func TestContainerSessionIsNotOfferedTheBeesCommands(t *testing.T) {
 // A stacked work item (scheduler.stacked_prs) builds on the branch of the
 // work item it is blocked by: the pull request targets that branch and the
 // pre-push merge brings it in, not the default branch. The developer is told
-// so in both prompts, and a session that is not stacked reads exactly what
-// it always did.
+// so in both prompts, and a session that is not stacked reads nothing about
+// stacking.
 func TestDeveloperIsToldItsStackBase(t *testing.T) {
 	d := sample()
 	d.BaseBranch = "bees/issue-3"

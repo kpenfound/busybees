@@ -38,8 +38,8 @@ request](review.md#configuration) describes all three.
 Every project load also reads `defaults.toml` beside that review configuration:
 `$XDG_CONFIG_HOME/bees/defaults.toml` when `XDG_CONFIG_HOME` is an absolute
 path, otherwise `~/.config/bees/defaults.toml`. The file is optional. It lets a
-machine with several projects define agent profiles and their role mappings
-once:
+machine with several projects define agent profiles, their role mappings and
+the [GitHub account](#github) once:
 
 ```toml
 version = 5
@@ -57,18 +57,27 @@ profile_by_size = { xs = "fast", s = "fast" }
 brief_profile = "fast"
 angle_profiles = { docs = "fast" }
 angles = { xs = ["quick_general"] }
+
+[github]
+login = "busybees[bot]"
+app_id = 123456
+private_key = "~/.config/bees/busybees.pem"
 ```
 
 The file accepts only `version`, `[profiles.<name>]`, `global.profile`,
-`global.profile_by_size`, every role's `profile` and `profile_by_size`, and
-the reviewer's `brief_profile`, `angle_profiles`, `judge_profile` and
-`angles`. Any other key is an error. It has its own migration history, begins
+`global.profile_by_size`, every role's `profile` and `profile_by_size`, the
+reviewer's `brief_profile`, `angle_profiles`, `judge_profile` and `angles`,
+and `[github]` with every key it has in `bees.toml`. Any other key is an
+error. It has its own migration history, begins
 at the current version shown above, and must include that version.
 
 The project `bees.toml` is the nearer layer and wins. A same-named profile in
 the project replaces the user profile whole. Map settings merge entry by
 entry: a project entry replaces the user entry for that size or angle, while
-the remaining user entries stay. Validation happens after this merge, so the
+the remaining user entries stay. `[github]` is one account and is taken whole
+or not at all: a project whose `bees.toml` has a `[github]` table takes
+nothing from the user one. An empty `[github]` table makes that project act
+as your own `gh` login. Validation happens after this merge, so the
 two files may refer to each other's profiles; an error names the file that set
 the bad key. Invalid values and refused keys in `defaults.toml` are still
 errors even when the project would replace them.
@@ -81,8 +90,8 @@ profile the project file never mentions says where both came from. See
 SIGHUP, the live view's `r` key, and every other operation that reloads a
 project read both files again. A machine config itself does not inherit these
 defaults, but every project it lists does. `bees review` reads the same file
-below its own `config.toml` and takes the reviewer's profiles and selectors
-from it; [Reviewing a pull request](review.md#defaultstoml) lists what it
+below its own `config.toml` and takes the reviewer's profiles and selectors,
+and `[github]`, from it; [Reviewing a pull request](review.md#defaultstoml) lists what it
 takes.
 
 One bees process managing several projects reads a
@@ -226,15 +235,16 @@ account the factory acts as always passes `creator`.
 `require_label = false` without `assignee`, `milestone` or `creator` is
 rejected: it would make every open issue in the repository visible.
 
-A factory acting as a bot that should pick up only the issues one person
-files, plus the ones it opens itself:
+A factory acting as a GitHub App that should pick up only the issues one
+person files, plus the ones it opens itself:
 
 ```toml
 [filter]
 creator = "kyle"
 [github]
-login = "busybees-bot"
-token = "$BEES_GITHUB_TOKEN"
+login = "busybees[bot]"
+app_id = 123456
+private_key = "~/.config/bees/busybees.pem"
 ```
 
 One person running busybees for their share of a team repository needs no
@@ -296,83 +306,154 @@ orchestrator adds `bees:size/m` to a ready issue that has none. See
 
 With the table unset, the factory acts as whatever account the machine's `gh`
 is logged in with, and everything it writes on GitHub looks like it came from
-the person running it. `[github]` gives it an account of its own.
+the person running it. `[github]` gives the factory an account of its own: a
+GitHub App, which GitHub shows as a bot on everything the factory writes.
 
 ```toml
 [github]
-login = "busybees-bot"
-token = "$BEES_GITHUB_TOKEN"
-git_name = "busybees"
-git_email = "busybees@example.com"
+login = "busybees[bot]"
+app_id = 123456
+private_key = "~/.config/bees/busybees.pem"
+git_name = "busybees[bot]"
+git_email = "234567+busybees[bot]@users.noreply.github.com"
 ```
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `login` | string | `""` | The account the factory acts as. `bees init` and `bees doctor` check the token belongs to it, `bees status` reports it, and the orchestrator reads every comment that login posts as the factory's own. It must be the login GitHub reports as the token's user. |
-| `token` | string | `""` | A token for `login`, passed as `GH_TOKEN` to every `gh` call the orchestrator makes and to every session. A `"$VAR"` or `"${VAR}"` value is read from the environment bees runs in, so the secret stays out of the file. A reference that expands to nothing is a load error naming the variable. |
+| `login` | string | `""` | The account the factory acts as. For a GitHub App it is the App's slug followed by `[bot]`. `bees init` and `bees doctor` check it against the credential, `bees status` reports it, and the orchestrator reads every comment that login posts as the factory's own. |
+| `app_id` | int | `0` | The GitHub App's ID, from its settings page. Set with `private_key`. |
+| `private_key` | string | `""` | The GitHub App's private key: the path of the `.pem` file GitHub generated (`~` is your home directory), a `"$VAR"` or `"${VAR}"` reference to a variable holding the PEM, or the PEM itself. bees reads it when it starts. A reference that expands to nothing, or a file it cannot read, fails the start with the key named. |
+| `token` | string | `""` | In place of `app_id` and `private_key`, a token for `login`, passed as `GH_TOKEN` to every `gh` call the orchestrator makes and to every session. A `"$VAR"` or `"${VAR}"` value is read from the environment bees runs in. A reference that expands to nothing is a load error naming the variable. |
 | `git_name` | string | `""` | Author and committer name for the commits developer sessions make (`GIT_AUTHOR_NAME`, `GIT_COMMITTER_NAME`). |
 | `git_email` | string | `""` | Author and committer email for those commits (`GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_EMAIL`). |
 
-`login` and `token` go together: either alone is rejected. `git_name` and
-`git_email` are an identity rather than a credential, so each may be set alone,
-and whichever is unset leaves that half of the commit identity to the machine's
-own git configuration.
+`login` goes with either `app_id` and `private_key` or `token`, and bees
+refuses any other combination. To share one App across projects, put the
+table in [`defaults.toml`](#user-level-profile-defaults) instead: a project
+with no `[github]` table of its own takes it whole, and so does
+[`bees review`](review.md#defaultstoml). `git_name` and `git_email` are an identity
+rather than a credential, so each may be set alone, and whichever is unset
+leaves that half of the commit identity to the machine's own git
+configuration.
 
-The token is a fine-grained personal access token belonging to a user account,
-a bot account or your own, scoped to the one repository: read and write on
-Issues, Pull requests and Contents, read on Metadata. Issues and pull requests
-cover labels, comments, milestones and reviews; contents covers the pushes
-developer sessions make. A classic token with the `repo` scope also works.
-With [`scheduler.report_factory_errors`](#scheduler) on, the same token files
-the factory-error reports against `kpenfound/busybees`, so a fine-grained
-token scoped to your repository alone leaves them in the queue: give it issue
-write on `kpenfound/busybees` too, or leave the key off. The
-token has to authenticate as a user, because `login` is compared with the
-account GitHub says the token belongs to.
+### Setting up the GitHub App
+
+1. On GitHub, open **Settings → Developer settings → GitHub Apps → New GitHub
+   App**. The name you give it becomes its slug, the last part of
+   `https://github.com/apps/<slug>`. Any homepage URL will do. Clear
+   **Webhook → Active**: bees polls and needs no webhook.
+2. Under **Repository permissions**, set:
+
+   | Permission | Access |
+   |---|---|
+   | Contents | Read and write |
+   | Issues | Read and write |
+   | Pull requests | Read and write |
+   | Checks | Read-only |
+   | Commit statuses | Read-only |
+   | Workflows | Read and write, only if developers may change files under `.github/workflows` |
+
+   Metadata is read-only and always granted. Issues cover labels, comments,
+   milestones and sub-issues.
+3. Create the App. On its settings page, copy the **App ID** into `app_id`,
+   then **Generate a private key**. GitHub downloads a `.pem` file: move it
+   somewhere only you can read, such as `~/.config/bees/`, and point
+   `private_key` at it.
+4. **Install App**, on the account that owns the repository, with access to
+   the repository `project.repo` names.
+5. Set `login` to the slug followed by `[bot]`. For commits GitHub attributes
+   to the App, set `git_name` to the same login and `git_email` to
+   `<id>+<login>@users.noreply.github.com`, with the id from
+   `gh api 'users/busybees[bot]' --jq .id`.
+
+`bees init` checks the App before the factory uses it: GitHub accepts the App
+ID and key, `login` is the App's, the App is installed on the repository, and
+a token it mints can read the repository. `bees doctor` asks the same
+questions, and two more: that the App can write an issue and that it can push
+a branch.
+
+### Tokens
+
+The `bees` process that runs sessions holds the private key, and no session
+does. From it, bees mints the
+App's installation tokens, each restricted to `project.repo` and good for an
+hour. It mints one when it first needs one, and the next only once that one
+has two minutes left, however many calls come in between.
+
+Sessions never get the key. A session with `gh` and git access gets the App's
+`gh` first on its `PATH` and a git credential helper, both of which read the
+current token from `<state_dir>/github/token`. When that token has expired,
+they ask the `bees` process that started the session for a new one and wait
+for it, so a session that runs for hours keeps working. The same goes for the
+`bees` commands a session runs. This works the same way on the host and in a
+`container` or `sbx` sandbox, which mount the state directory.
+
+A session with `sandbox = "none"` can read any file your user can, the `.pem`
+included. To keep the key out of its reach, hold it in a variable instead,
+which no session is given:
+
+```toml
+private_key = "$BEES_GITHUB_APP_KEY"
+```
+
+```sh
+export BEES_GITHUB_APP_KEY="$(cat ~/.config/bees/busybees.pem)"
+```
+
+The tokens reach only `project.repo`, so leave
+[`scheduler.report_factory_errors`](#scheduler) off with a GitHub App: the
+reports go to `kpenfound/busybees`.
+
+### A token
+
+`token` in place of `app_id` and `private_key` makes the factory act as the
+account the token belongs to, and `login` is that account's login. Use a
+fine-grained personal access token scoped to the one repository: read and
+write on Issues, Pull requests and Contents, read on Metadata. A classic token
+with the `repo` scope also works. With `scheduler.report_factory_errors` on,
+the token also needs issue write on `kpenfound/busybees`.
 
 `bees init` checks the token before the factory uses it: GitHub accepts it, it
 belongs to `login`, and it can read the repository. `bees doctor` asks the same
-questions of whatever token is configured, and two more: that the account can
-write an issue and that it can push a branch. Repository access does not
-imply either. A fine-grained token's permissions sit on top of the repository
-role, so a token can read the repository as an admin and still be refused
-every label edit or every push.
+questions, and whether the account can write an issue and push a branch.
+Repository access does not imply either. A fine-grained token's permissions
+sit on top of the repository role, so a token can read the repository as an
+admin and still be refused every label edit or every push.
 
-The token covers everything the factory does on GitHub: polling, label edits,
-review requests, the escalation comment, `bees init`'s label creation, `bees
-doctor`'s checks, `bees issue`, and the built-in MCP tools. Sessions get it
-too, so a session's own `gh pr create`, `gh api` and `git push` act as the
-factory. With `git_name` and `git_email` set, its commits are the factory's as
-well.
+A session runs with `GH_TOKEN` set to the token and git configured to answer
+https pushes through `gh auth git-credential`. When `token` is a `"$VAR"`
+reference the session is also given that variable, holding the resolved
+token, because the `bees` commands a session runs load `bees.toml`
+themselves. It goes into the session's environment and never into a file.
+
+### What the account covers
+
+The account covers everything the factory does on GitHub: polling, label
+edits, review requests, the escalation comment, `bees init`'s label creation,
+`bees doctor`'s checks, `bees issue`, the built-in MCP tools, and a session's
+own `gh pr create`, `gh api` and `git push`. With `git_name` and `git_email`
+set, its commits are the factory's as well.
+
+Your own credential helper is reset for a session's pushes, so it cannot
+answer them, and your stored credentials are neither read nor written. The
+helper only steers https remotes: on an `ssh://` or `git@github.com:` remote
+the commits are the factory's but the push authenticates with the machine's
+ssh key. The full list of what a session is given is under
+[Exported into every session](#exported-into-every-session).
 
 Comments the factory posts still end with the
 [comment marker](roles.md#common-ground), because `[github]` is optional and
 with it unset every comment arrives under your own login. With it set, the
 orchestrator reads a comment as the factory's when it carries the marker or
 when `login` wrote it, so the escalation comment, which carries no marker, is
-not mistaken for a person's.
-
-A session runs with `GH_TOKEN` set to the token, the `GIT_AUTHOR_*` and
-`GIT_COMMITTER_*` variables from `git_name` and `git_email`, and git configured
-to answer https pushes through `gh auth git-credential`. Your own credential
-helper is reset first so it cannot answer the push, and your stored credentials
-are neither read nor written. The helper only steers https remotes: on an
-`ssh://` or `git@github.com:` remote the commits are the factory's but the push
-authenticates with the machine's ssh key. When `token` is a `"$VAR"` reference
-the session is also given that variable, holding the resolved token, because
-the `bees` commands a session runs load `bees.toml` themselves. It goes into
-the session's environment and never into a file. The full list is under
-[Exported into every session](#exported-into-every-session).
+not mistaken for a person's. People mention a GitHub App as `@busybees`, by
+its slug, and the factory reads that as a mention of `busybees[bot]`.
 
 `filter.assignee = "@me"` still means you. It says whose work the factory picks
 up, and is resolved with the machine's own `gh` login before any token is used,
-in the orchestrator, the MCP server and `bees doctor` alike. To pick up the
-bot's issues instead, write its login out:
-
-```toml
-[filter]
-assignee = "busybees-bot"
-```
+in the orchestrator, the MCP server and `bees doctor` alike. GitHub does not
+assign issues to a GitHub App, so leave `filter.assignee` unset or name a
+person.
 
 ## `[scheduler]`
 
@@ -1726,13 +1807,14 @@ On top of those, a session gets:
 | `BEES_PR` | The pull request, when any. |
 | `BEES_BRANCH` | The checked-out branch, when any. |
 | `BEES_BIN` | Path of the `bees` executable. Its directory is also prepended to `PATH`, so a session can run `bees mail` and `bees done`. Not set in a `container` session, which has no `bees` binary. |
+| `PATH` | With a [GitHub App](#github) and `gh` and git access, `<state_dir>/github/bin` first, holding the App's `gh`, which runs yours with the App's current token. |
 | `BEES_REVIEW_MODE` | `checks` in a reviewer session that diagnoses failed checks; unset otherwise. |
 | `SHELL` | The configured `shell`, when set. |
-| `GH_TOKEN` | [`github.token`](#github), when set, so the session's `gh` acts as the factory. |
+| `GH_TOKEN` | [`github.token`](#github), when set, so the session's `gh` acts as the factory. Empty with a GitHub App, whose `gh` fetches its own token. |
 | *the variable `github.token` names* | When `github.token` is a `"$VAR"` reference, that variable, holding the resolved token. The `bees` commands a session runs load `bees.toml` themselves, and a reference that expands to nothing is a load error, so the name has to survive the `BEES_*` strip. It is set in the environment only; nothing writes it into the session directory. |
 | *the variable `notes.neo4j_api_key` names* | The same, for a `"$VAR"` `notes.neo4j_api_key`, with `notes.backend = "neo4j"`: the value the scheduler resolved, so the session's own `notes_read` and `notes_write` can load `[notes]`. |
 | `GIT_AUTHOR_NAME`, `GIT_COMMITTER_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_EMAIL` | `github.git_name` and `github.git_email`, when set. |
-| `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_n`, `GIT_CONFIG_VALUE_n` | `push.autoSetupRemote=true` and `push.default=current`, so a plain `git push` works on a fresh branch without touching the clone's git config; with `github.token` set, also an empty `credential.helper` followed by `credential.helper=!gh auth git-credential`, so an https push authenticates as the factory rather than through your stored credentials. Left alone when `GIT_CONFIG_COUNT` is already in the bees environment. |
+| `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_n`, `GIT_CONFIG_VALUE_n` | `push.autoSetupRemote=true` and `push.default=current`, so a plain `git push` works on a fresh branch without touching the clone's git config; with `github.token` set, also an empty `credential.helper` followed by `credential.helper=!gh auth git-credential`, so an https push authenticates as the factory rather than through your stored credentials. With a GitHub App the second helper is `<state_dir>/github/credential.sh`, which answers with the App's current token. Left alone when `GIT_CONFIG_COUNT` is already in the bees environment. |
 
 `BEES_*` variables are always set by bees for each session and never inherited,
 so a session started from inside another one, by a nested `bees run` or `bees

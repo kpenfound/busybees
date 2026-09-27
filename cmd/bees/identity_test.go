@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghapp"
+	"github.com/kpenfound/busybees/internal/ghapp/ghapptest"
 	"github.com/kpenfound/busybees/internal/github"
 	"github.com/kpenfound/busybees/internal/testutil"
 	"github.com/kpenfound/busybees/internal/versions"
@@ -81,9 +83,9 @@ func TestOrchestratorActsAsTheConfiguredAccount(t *testing.T) {
 }
 
 // TestMCPServerActsAsTheConfiguredAccount is the same claim for the second
-// resolution path: the built-in MCP server loads its own configuration, so a
-// fix applied only to the scheduler would leave every tool a session calls
-// filtering on the wrong login.
+// resolution path: the built-in MCP server loads its own configuration, so
+// resolving the account only in the scheduler would leave every tool a
+// session calls filtering on the wrong login.
 func TestMCPServerActsAsTheConfiguredAccount(t *testing.T) {
 	path := setupBotFactory(t, botTOML)
 
@@ -155,8 +157,8 @@ func TestFilterCreatorAllowsTheAccountTheFactoryActsAs(t *testing.T) {
 	}
 }
 
-// TestNoGitHubTableInjectsNoToken pins the default: a bees.toml written
-// before [github] existed produces exactly the client it always did.
+// TestNoGitHubTableInjectsNoToken pins the default: a bees.toml with no
+// [github] table produces a client that carries no token.
 func TestNoGitHubTableInjectsNoToken(t *testing.T) {
 	body := strings.SplitN(botTOML, "[github]", 2)[0]
 	path := setupBotFactory(t, body)
@@ -209,12 +211,16 @@ func TestVerifyGitHubAccount(t *testing.T) {
 	// client the checks run through is the factory's own, so they answer for
 	// the account it will act as rather than for the machine's gh user.
 	c := cfg(t)
-	if got := githubClient(c).Token; got != "ghp_bot" {
+	client, _, err := githubClient(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := client.Token; got != "ghp_bot" {
 		t.Fatalf("the verified client does not carry the configured token: %q", got)
 	}
 	// It carries the login as well: that is what makes a comment by the bot
-	// a bee's comment without a marker (#243).
-	if got := githubClient(c).ActsAs; got != "busybees-bot" {
+	// a bee's comment without a marker.
+	if got := client.ActsAs; got != "busybees-bot" {
 		t.Fatalf("the verified client does not act as the configured login: %q", got)
 	}
 	login, err := verifyAccount(ctx, c, fakeGH(map[string]string{"api user": "busybees-bot", "repo view": "main"}, ""))
@@ -332,5 +338,57 @@ func TestActingAsLine(t *testing.T) {
 	}
 	if got := actingAs(cfg); got != "" {
 		t.Errorf("unset [github] still prints an account: %q", got)
+	}
+}
+
+// TestVerifyApp: bees init checks a GitHub App the way it checks a token,
+// with the App's own questions: GitHub accepts its ID and key, github.login
+// is the App's login, the App is installed on the repository, and a token it
+// mints reads it. Each refusal names the key to change.
+func TestVerifyApp(t *testing.T) {
+	ctx := context.Background()
+	srv := ghapptest.New(t, "acme/widgets")
+	cfg := func(login string) *config.Config {
+		return &config.Config{Project: config.Project{Repo: "acme/widgets"}, GitHub: config.GitHub{Login: login, AppID: srv.AppID, PrivateKey: "$UNUSED"}}
+	}
+	gh := fakeGH(map[string]string{"repo view": "main"}, "")
+
+	login, err := verifyApp(ctx, cfg("busybees[bot]"), gh, srv.Minter(t, ""))
+	if err != nil || login != "busybees[bot]" {
+		t.Fatalf("verifyApp = %q, %v", login, err)
+	}
+	if _, err := verifyApp(ctx, cfg("other[bot]"), gh, srv.Minter(t, "")); err == nil || !strings.Contains(err.Error(), `set github.login = "busybees[bot]"`) {
+		t.Errorf("another login: %v", err)
+	}
+	elsewhere := srv.Minter(t, "")
+	elsewhere.Repo = "acme/elsewhere"
+	if _, err := verifyApp(ctx, cfg("busybees[bot]"), gh, elsewhere); err == nil || !strings.Contains(err.Error(), "not installed on acme/elsewhere") {
+		t.Errorf("not installed: %v", err)
+	}
+	if _, err := verifyApp(ctx, cfg("busybees[bot]"), fakeGH(nil, "repo view"), srv.Minter(t, "")); err == nil || !strings.Contains(err.Error(), "cannot read acme/widgets") {
+		t.Errorf("cannot read the repository: %v", err)
+	}
+}
+
+// TestGitHubClientInASession: inside a session the client reads the tokens
+// the session's bees process keeps, and never reads the private key, which
+// a session does not have.
+func TestGitHubClientInASession(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("BEES_SESSION_DIR", t.TempDir())
+	t.Setenv("BEES_STATE_DIR", state)
+	c := &config.Config{Project: config.Project{Repo: "acme/widgets"}, GitHub: config.GitHub{Login: "busybees[bot]", AppID: 1, PrivateKey: "$BEES_TEST_UNSET_KEY"}}
+	gh, minter, err := githubClient(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, ok := gh.Tokens.(*ghapp.FileSource)
+	if minter != nil || !ok || src.Dir != ghapp.Dir(state) || gh.ActsAs != "busybees[bot]" {
+		t.Errorf("in-session client: minter %v, tokens %#v, acts as %q", minter, gh.Tokens, gh.ActsAs)
+	}
+	// Outside a session the key is read, and one that is missing is named.
+	t.Setenv("BEES_SESSION_DIR", "")
+	if _, _, err := githubClient(c); err == nil || !strings.Contains(err.Error(), "$BEES_TEST_UNSET_KEY") {
+		t.Errorf("outside a session: %v", err)
 	}
 }

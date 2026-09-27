@@ -107,8 +107,8 @@ type Data struct {
 	// never finished: a scheduler dying while it worked, or a hard stop.
 	// Set for the first session of the role that was interrupted, and nil
 	// for every other session — including every session of a factory that
-	// was neither killed nor hard-stopped, which renders exactly what it
-	// always did.
+	// was neither killed nor hard-stopped, which renders no interrupted
+	// section.
 	Interrupted *session.Interrupted
 
 	// FailedChecks is set for the reviewer's checks-mode task.
@@ -159,9 +159,9 @@ type Data struct {
 	// role and for the reviewer's checks-mode task, which diagnoses one
 	// failure rather than reviewing.
 	Review *Review
-	// Mode is the variant of a role's session, empty for every session that
-	// existed before it: "requested" for a reviewer reviewing a pull request
-	// the factory did not write — asked for with bees:review-requested or by
+	// Mode is the variant of a role's session, empty for an ordinary one:
+	// "requested" for a reviewer reviewing a pull request the factory did
+	// not write — asked for with bees:review-requested or by
 	// scheduler.review_assigned_prs — which has no issue and no developer
 	// behind it and puts its verdict on GitHub as a review. Set only for a
 	// requested review.
@@ -288,8 +288,8 @@ func Title(role string) string {
 // after bees.toml so a machine-specific setting still wins.
 //
 // project is variadic because a repository with no bees/prompts/ directory is
-// the normal case, and passing none renders exactly the prompt bees rendered
-// before project prompt files existed.
+// the normal case, and passing none renders the prompt with no project
+// section.
 func System(role string, d Data, custom string, project ...ProjectPrompt) (string, error) {
 	d.Role = role
 	d.RoleTitle = Title(role)
@@ -414,7 +414,7 @@ func render(name string, d Data) (string, error) {
 			}
 			return i.Milestone.Title
 		},
-		"eqFold": strings.EqualFold,
+		"sameLogin": github.SameLogin,
 		"oneline": func(s string) string {
 			s = strings.ReplaceAll(strings.TrimSpace(s), "\n", " ")
 			if len(s) > 120 {

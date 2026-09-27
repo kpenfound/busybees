@@ -139,7 +139,7 @@ func TestAllShowsEveryProjectsRowsWithAProjectColumn(t *testing.T) {
 	}
 }
 
-// A single-project view is exactly what it was before there were daemons:
+// A single-project view has no daemon furniture:
 // no selector, no project column, no project keys, and ← and → do nothing.
 func TestASingleProjectViewHasNoSelector(t *testing.T) {
 	msgs := []tea.Msg{

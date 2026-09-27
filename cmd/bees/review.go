@@ -158,7 +158,11 @@ func endReview(ctx context.Context, cfg *review.Config, ref review.Ref, brief *r
 			fmt.Print(review.Report(brief, queue.Selected()))
 			return nil
 		}
-		posted, err := review.Post(ctx, review.NewClient(ref, cfg), ref, mode, queue.Selected())
+		client, err := review.NewClient(ref, cfg)
+		if err != nil {
+			return err
+		}
+		posted, err := review.Post(ctx, client, ref, mode, queue.Selected())
 		var refusal *review.Refusal
 		if ask && errors.As(err, &refusal) {
 			fmt.Printf("%v\n", err)
@@ -294,7 +298,11 @@ func (w *triageFlags) triage(ctx context.Context, cmd *cobra.Command, cfg *revie
 	if !w.agent {
 		console := &review.Console{In: cmd.InOrStdin(), Out: os.Stdout, Editor: editComment}
 		if tuiMode(w.noTUI, os.Stdout) {
-			diff, err := review.NewClient(ref, cfg).PRDiff(ctx, ref.Number)
+			client, err := review.NewClient(ref, cfg)
+			if err != nil {
+				return err
+			}
+			diff, err := client.PRDiff(ctx, ref.Number)
 			if err != nil {
 				return fmt.Errorf("read the diff of %s: %w", ref, err)
 			}

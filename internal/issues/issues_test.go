@@ -164,8 +164,8 @@ func TestProposalGrowsNoSubIssues(t *testing.T) {
 		t.Errorf("the issue was created before the refusal:\n%s", joined)
 	}
 
-	// Also with an explicit milestone, which used to be the only reason the
-	// parent was looked up at all.
+	// Also with an explicit milestone, which leaves the proposal check as the
+	// only reason to look the parent up.
 	gh, calls = fake(t, "v1")
 	if _, err := Create(context.Background(), gh, policy(filter),
 		Options{Title: "t", Kind: KindTask, Parent: 13, Milestone: "v2"}); err == nil {
@@ -385,7 +385,7 @@ func TestNoProposalGateWhenTurnedOff(t *testing.T) {
 	}
 
 	// Planning is a person's hold, not the gate: still refused, with the
-	// same sentence as before.
+	// planning sentence.
 	const wantPlanning = "#14 is in planning: a person must end it (swap the bees:planning label for bees:planned) before it can be broken into work items"
 	gh, _ = fake(t, "v1")
 	if _, err := Create(context.Background(), gh, gateOff(filter), Options{Title: "t", Kind: KindTask, Parent: 14}); err == nil || err.Error() != wantPlanning {

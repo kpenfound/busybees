@@ -322,9 +322,8 @@ func TestSizeLabels(t *testing.T) {
 //
 // bees:needs-human must be first because a person parks an issue by adding
 // it from the GitHub issue list, which does not remove the state label
-// underneath. Last, as it was until #322, it lost to that label and the
-// factory kept dispatching the issue. Restoring "workflow order" here
-// reopens that bug in three places at once.
+// underneath. Placed last, it loses to that label and the factory keeps
+// dispatching the issue, in all three derivations at once.
 func TestNeedsHumanWinsTheStatePrecedence(t *testing.T) {
 	l := LabelsFor("bees")
 	if got := l.StateLabels()[0]; got != l.NeedsHuman {
@@ -1387,6 +1386,8 @@ func uncommentTemplate(text string) string {
 			continue // placeholder file does not exist
 		case strings.HasPrefix(line, "#container_use_environment"):
 			continue // conflicts with the also-commented sandbox_image example
+		case strings.HasPrefix(line, "#app_id"), strings.HasPrefix(line, "#private_key"):
+			continue // a GitHub App conflicts with the also-commented token example
 		case strings.HasPrefix(line, "#sandbox_dagger_"):
 			continue // needs sandbox = "sbx", and the template's is "none"
 		case strings.HasPrefix(line, "#"):
@@ -1401,7 +1402,7 @@ func uncommentTemplate(text string) string {
 // TestTemplateNeverWritesAGuessedBranch checks that default_branch is only
 // written as an active setting when there is a real value for it: with no
 // detected branch the template must keep the "main" placeholder commented,
-// whatever the caller passes (#89).
+// whatever the caller passes.
 func TestTemplateNeverWritesAGuessedBranch(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -1442,7 +1443,7 @@ func TestTemplateNeverWritesAGuessedBranch(t *testing.T) {
 
 // TestTemplateEscapesInterpolatedValues checks that no value bees init
 // interpolates can introduce, remove or alter a TOML key: an unescaped quote
-// used to close the string early and let the rest be parsed as TOML (#136).
+// would close the string early and let the rest be parsed as TOML.
 func TestTemplateEscapesInterpolatedValues(t *testing.T) {
 	const injection = "main\"\nremote = \"upstream"
 	const weird = "a\"b\\c\td\ne\rf\x01g\x7fh"
@@ -1648,11 +1649,11 @@ func TestCostBudgets(t *testing.T) {
 }
 
 // TestDailyBudgetResumePercent pins the boundaries of
-// scheduler.max_cost_per_day_resume_percent (#365). It is a percentage of
+// scheduler.max_cost_per_day_resume_percent. It is a percentage of
 // max_cost_per_day rather than an amount, and a TOML float has no "unset"
 // distinct from 0, so — like notes_consolidate_every and notes_max_bytes — 0
-// means the default, which is 100: an existing bees.toml that does not carry
-// the key behaves exactly as it did.
+// means the default, which is 100: a bees.toml that does not carry the key
+// resumes as soon as the window is under budget.
 func TestDailyBudgetResumePercent(t *testing.T) {
 	const head = "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\n"
 	for _, tc := range []struct {
@@ -1921,9 +1922,7 @@ func TestFilterAssigneeDefaultsToUnset(t *testing.T) {
 // TestGitHubAccount covers the [github] table: the two halves of the identity
 // are only accepted together, the token's $VAR is expanded from the
 // environment, and a reference that expands to nothing is rejected by name.
-// The default — nothing set — must stay "act as the machine owner", which is
-// what makes an existing bees.toml behave exactly as it did before [github]
-// existed.
+// The default — nothing set — must stay "act as the machine owner".
 func TestGitHubAccount(t *testing.T) {
 	const head = "version = 1\n[project]\nrepo = \"a/b\"\ndefault_branch = \"main\"\n"
 
@@ -1971,7 +1970,7 @@ func TestGitHubAccount(t *testing.T) {
 			if !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("error does not name the key: %v", err)
 			}
-			// Every one of them says how to get back to today's behaviour.
+			// Every one of them says how to act as the machine owner again.
 			if !strings.Contains(err.Error(), "act as your own gh account") {
 				t.Errorf("error does not say what to change: %v", err)
 			}
@@ -1982,6 +1981,76 @@ func TestGitHubAccount(t *testing.T) {
 	// not credentials, so they do not need a token.
 	if _, err := Load(writeConfig(t, head+"[github]\ngit_name = \"busybees\"\ngit_email = \"bot@example.com\"\n")); err != nil {
 		t.Fatalf("git identity alone: %v", err)
+	}
+}
+
+// TestGitHubApp covers [github] for a GitHub App: login, app_id and
+// private_key go together, login is the App's bot login, and a token beside
+// them is refused. The key is not read at load, because the bees commands a
+// session runs load this file without it; ResolvedPrivateKey reads it where
+// tokens are minted, from a PEM, a $VAR or a file.
+func TestGitHubApp(t *testing.T) {
+	const head = "version = 1\n[project]\nrepo = \"a/b\"\ndefault_branch = \"main\"\n"
+	const app = "[github]\nlogin = \"busybees[bot]\"\napp_id = 4242\nprivate_key = \"$BEES_TEST_APP_KEY\"\n"
+
+	// The variable is not set, and the file loads: a session's view.
+	cfg, err := Load(writeConfig(t, head+app))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.GitHub.Configured() || !cfg.GitHub.App() || cfg.GitHub.AppID != 4242 {
+		t.Fatalf("github: %+v", cfg.GitHub)
+	}
+	if _, err := cfg.GitHub.ResolvedPrivateKey(); err == nil || !strings.Contains(err.Error(), "$BEES_TEST_APP_KEY, which is not set") {
+		t.Errorf("an unset key variable: %v", err)
+	}
+	const pem = "-----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY-----"
+	t.Setenv("BEES_TEST_APP_KEY", pem)
+	if got, err := cfg.GitHub.ResolvedPrivateKey(); err != nil || string(got) != pem {
+		t.Errorf("$VAR key = %q, %v", got, err)
+	}
+	// A path, with ~ for the home directory.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.WriteFile(filepath.Join(home, "app.pem"), []byte(pem), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"~/app.pem", filepath.Join(home, "app.pem")} {
+		if got, err := (GitHub{PrivateKey: path}).ResolvedPrivateKey(); err != nil || string(got) != pem {
+			t.Errorf("key file %s = %q, %v", path, got, err)
+		}
+	}
+	if _, err := (GitHub{PrivateKey: filepath.Join(home, "missing.pem")}).ResolvedPrivateKey(); err == nil || !strings.Contains(err.Error(), "github.private_key") {
+		t.Errorf("a missing key file: %v", err)
+	}
+	// The key is never printed; a reference or a path is.
+	if got := (GitHub{PrivateKey: pem}).RedactedPrivateKey(); got != "(set)" {
+		t.Errorf("a PEM key is printed as %q", got)
+	}
+	if got := cfg.GitHub.RedactedPrivateKey(); got != "$BEES_TEST_APP_KEY" {
+		t.Errorf("a key reference is printed as %q", got)
+	}
+
+	for _, tc := range []struct{ name, body, want string }{
+		{"no key", "[github]\nlogin = \"busybees[bot]\"\napp_id = 4242\n", "github.app_id is set without github.private_key"},
+		{"no app id", "[github]\nlogin = \"busybees[bot]\"\nprivate_key = \"~/app.pem\"\n", "github.private_key is set without github.app_id"},
+		{"no login", "[github]\napp_id = 4242\nprivate_key = \"~/app.pem\"\n", "github.app_id is set without github.login"},
+		{"user login", "[github]\nlogin = \"busybees\"\napp_id = 4242\nprivate_key = \"~/app.pem\"\n", `set it to the App's slug followed by [bot] ("busybees[bot]")`},
+		{"token too", app + "token = \"ghp_x\"\n", "github.token and github.app_id are both set"},
+		{"negative id", "[github]\nlogin = \"busybees[bot]\"\napp_id = -1\nprivate_key = \"~/app.pem\"\n", "github.app_id = -1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Load(writeConfig(t, head+tc.body))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error = %v, want it to say %q", err, tc.want)
+			}
+		})
+	}
+
+	// `bees config show` prints the App's keys.
+	gh := viewJSON(t, head+app)["github"].(map[string]any)
+	if gh["app_id"] != float64(4242) || gh["private_key"] != "$BEES_TEST_APP_KEY" {
+		t.Errorf("view: %v", gh)
 	}
 }
 
@@ -2122,10 +2191,6 @@ func TestReviewAngles(t *testing.T) {
 			}
 		})
 	}
-	// stages is gone: a version 2 file that still has it is an unknown key.
-	if _, err := Load(writeConfig(t, head+"[roles.reviewer]\nstages = [\"style\"]\n")); err == nil || !strings.Contains(err.Error(), "stages") {
-		t.Errorf("stages in a version 2 file: %v", err)
-	}
 }
 
 // The 1 to 2 migration drops roles.reviewer.stages, set or commented out and
@@ -2178,7 +2243,7 @@ func TestMigrateReviewStages(t *testing.T) {
 // feedback issue, not a state: an issue in planning keeps whatever state
 // label it has, so neither may appear among the state or size labels — and
 // both must be in All(), or the scheduler's ensureLabels never creates them
-// in a repository that predates them and every edit using one fails.
+// in a repository that lacks them and every edit using one fails.
 func TestPlanningLabels(t *testing.T) {
 	l := LabelsFor("bees")
 	if l.Planning != "bees:planning" || l.Planned != "bees:planned" {
@@ -2319,7 +2384,7 @@ func TestBestOfN(t *testing.T) {
 		t.Errorf("reviewer BestOfN(%q): got %d want 1", "l", got)
 	}
 	// Unset: the table is nil, every size is one attempt and the overrides are
-	// empty, which is today's behaviour with no best-of-N keys at all.
+	// empty, which is the behaviour of a configuration with no best-of-N keys.
 	cfg, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"))
 	if err != nil {
 		t.Fatal(err)

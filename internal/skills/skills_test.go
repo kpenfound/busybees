@@ -428,8 +428,8 @@ func TestConcurrentPrepare(t *testing.T) {
 		mustExist(t, filepath.Join(dir, "skills", filepath.Base(dir), "SKILL.md"))
 	})
 
-	// Warm cache: the reproduction from the report — every session finds the
-	// wrapper already built and must leave it alone.
+	// Warm cache: every session finds the wrapper already built and must
+	// leave it alone.
 	t.Run("warm cache", func(t *testing.T) {
 		m := NewManager(t.TempDir())
 		first, err := m.Prepare(context.Background(), []string{up})

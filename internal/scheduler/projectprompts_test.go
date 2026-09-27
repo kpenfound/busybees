@@ -98,8 +98,8 @@ func TestProjectPromptsComeFromTheSessionsBranch(t *testing.T) {
 }
 
 // The normal case: a repository with no bees/prompts/ directory. The session
-// gets exactly the prompt it got before the feature existed, and the missing
-// directory is completely silent - no warning, no degraded operation.
+// gets no project prompt section, and the missing directory is completely
+// silent - no warning, no degraded operation.
 func TestNoProjectPromptsIsSilent(t *testing.T) {
 	h := newHarnessAt(t, devOnlyTOML, time.Now())
 	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true}

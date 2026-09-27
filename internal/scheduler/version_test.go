@@ -7,8 +7,8 @@ import (
 
 // The role prompts are compiled into the binary, so a running factory serves
 // the prompts of the build it was started from: the scheduler records that
-// build in status.json (and in its startup log line) so a person, and #297's
-// staleness check, can tell which one is running.
+// build in status.json (and in its startup log line) so a person, and `bees
+// doctor`'s stale-build check, can tell which one is running.
 func TestStatusRecordsTheRunningBuild(t *testing.T) {
 	const (
 		version  = "dev (b24a0605c2a1 modified)"
@@ -34,7 +34,7 @@ func TestStatusRecordsTheRunningBuild(t *testing.T) {
 }
 
 // A scheduler given no build — which is every other test, and any caller that
-// does not resolve one — records none and behaves exactly as before.
+// does not resolve one — records none.
 func TestAnEmptyBuildIsNotRecorded(t *testing.T) {
 	h := newHarness(t, noRolesTOML)
 	runPass(t, h)

@@ -320,7 +320,7 @@ func TestAPIDFileIsTrustedForAnAgentCommandAlone(t *testing.T) {
 // Discovery deletes the stale files it reads, which is the cleanup a caller
 // stopping sessions wants and a liability for one that only looks: a dry run
 // that deleted a running session's pid file would leave the session
-// unstoppable and read as interrupted (#840). A read-only Finder reports the
+// unstoppable and read as interrupted. A read-only Finder reports the
 // same sessions and writes nothing.
 func TestReadOnlyDiscoveryDeletesNothing(t *testing.T) {
 	sessions := t.TempDir()

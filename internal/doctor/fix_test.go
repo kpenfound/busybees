@@ -218,15 +218,15 @@ func labels(names ...string) []github.Label {
 	return out
 }
 
-// ---- the fixture the acceptance criteria describe ---------------------------
+// ---- a repository whose labelled work is stranded --------------------------
 
-// strandedRepo is the repository of issue #112: two open issues and one open
-// pull request carrying `bees` with nobody assigned, plus one issue that
-// carries no factory label at all and must come out untouched.
+// strandedRepo is a repository the filter has lost track of: two open issues
+// and one open pull request carrying `bees` with nobody assigned, plus one
+// issue that carries no factory label at all and must come out untouched.
 //
-// #119 is the human-authored case that actually bit us: a person filed it with
-// the base label, it carries no `<!-- bees:... -->` marker anywhere, and it is
-// adopted exactly like the rest.
+// #119 is the human-authored case: a person filed it with the base label, it
+// carries no `<!-- bees:... -->` marker anywhere, and it is adopted exactly
+// like the rest.
 func strandedRepo(t *testing.T) *repoGH {
 	t.Helper()
 	return &repoGH{
@@ -263,9 +263,9 @@ func fixFixture(t *testing.T, gh *repoGH, extraFilter string) *fixture {
 // wires it.
 func (f *fixture) filterCheck() Check { return Check{Run: f.checkFilter, Fix: f.fixFilter} }
 
-// TestFixAdoptsEveryLabelledItem is the acceptance criterion of #112: the two
-// labelled issues and the labelled pull request are brought into the filter,
-// the unlabelled issue is not touched at all, and the check passes afterwards.
+// TestFixAdoptsEveryLabelledItem: the two labelled issues and the labelled
+// pull request are brought into the filter, the unlabelled issue is not
+// touched at all, and the check passes afterwards.
 func TestFixAdoptsEveryLabelledItem(t *testing.T) {
 	gh := strandedRepo(t)
 	f := fixFixture(t, gh, "assignee = \"kyle\"\n")

@@ -54,7 +54,7 @@ func TestEscalationMentionsNotify(t *testing.T) {
 	}
 }
 
-// With notify unset the comment is exactly what it always was.
+// With notify unset the comment mentions nobody.
 func TestEscalationWithoutNotify(t *testing.T) {
 	h := newHarness(t, baseTOML)
 	h.gh.Issues[12] = &github.Issue{Number: 12, Title: "Build the thing", State: "OPEN",

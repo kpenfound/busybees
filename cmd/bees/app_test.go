@@ -138,9 +138,10 @@ func TestLoadConfigAppliesTheLoggingTable(t *testing.T) {
 
 // The build handed to the scheduler is the one `bees version` prints, plus
 // the untruncated revision behind it: the version is for a person to read and
-// the revision is what #297 compares against the repository, so the two must
-// not collapse into one. Built from a hand-made *debug.BuildInfo — under
-// `go test` the real one describes the test binary, not bees.
+// the revision is what the doctor's scheduler build check compares against
+// the repository, so the two must not collapse into one. Built from a
+// hand-made *debug.BuildInfo — under `go test` the real one describes the
+// test binary, not bees.
 func TestSchedulerBuild(t *testing.T) {
 	build := func(main string, settings ...debug.BuildSetting) *debug.BuildInfo {
 		return &debug.BuildInfo{Main: debug.Module{Version: main}, Settings: settings}

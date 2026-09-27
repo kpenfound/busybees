@@ -81,7 +81,7 @@ func runEventFixture(t *testing.T, h *harness, subscribe bool) ([]Event, []strin
 // The stream carries a session's start and its end, the stage a developer
 // worker moved to, and the end of a full pass. It is a view mechanism, so
 // the same fixture must run identically whether or not anyone subscribed:
-// the test runs it both ways and compares the sessions (#244).
+// the test runs it both ways and compares the sessions.
 func TestSchedulerPublishesSessionStageAndPollEvents(t *testing.T) {
 	h := newHarnessAt(t, devOnlyTOML, time.Now())
 	events, sessions := runEventFixture(t, h, true)
@@ -142,7 +142,7 @@ func TestSchedulerPublishesSessionStageAndPollEvents(t *testing.T) {
 		t.Errorf("%d poll events, want 1: %v", got, events)
 	}
 	// Timestamps come from the injected clock, never time.Now: the harness
-	// clock is frozen, so every event carries the same instant (#222).
+	// clock is frozen, so every event carries the same instant.
 	for _, ev := range events {
 		if !ev.Time.Equal(h.clock.now()) {
 			t.Fatalf("%s event is stamped %s, want the injected clock's %s", ev.Kind, ev.Time, h.clock.now())
@@ -152,7 +152,7 @@ func TestSchedulerPublishesSessionStageAndPollEvents(t *testing.T) {
 
 // A session that ends without the event that closes its stream carries no
 // known cost, and the stream must say so rather than let the field default
-// to a confident-looking zero (#371, the live view's half of #359).
+// to a confident-looking zero.
 func TestSessionEndedEventCarriesWhetherTheCostIsKnown(t *testing.T) {
 	t.Setenv("FAKE_SIGNAL", "9")
 	h := newHarness(t, strings.Replace(devOnlyTOML, "[scheduler]\n", "[scheduler]\nretries = 0\n", 1))
@@ -210,7 +210,7 @@ func TestEventsAreDroppedWhenTheSubscriberNeverReads(t *testing.T) {
 // A view re-reads status.json when a poll event arrives, so the file must
 // already hold what the pass found when the event is published. The first
 // pass of an idle factory writes status.json nowhere else, so an event
-// published before writeStatus finds no file at all (#244).
+// published before writeStatus finds no file at all.
 func TestPollEventArrivesAfterStatusIsWritten(t *testing.T) {
 	h := newHarnessAt(t, devOnlyTOML, time.Now())
 	sub := h.sched.Subscribe()

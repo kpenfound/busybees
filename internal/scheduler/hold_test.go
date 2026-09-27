@@ -16,8 +16,8 @@ import (
 // not remove the state label underneath. The issue therefore carries two
 // state labels, and the hold only works because bees:needs-human comes
 // first in StateLabels() — every derivation of a state takes the first
-// match. Last, as it was until #322, it lost to bees:ready and the factory
-// went on dispatching the issue while the Needs human panel listed it.
+// match. Last, it would lose to bees:ready and the factory would go on
+// dispatching the issue while the Needs human panel listed it.
 //
 // The second half is what makes the documented undo true: removing the
 // label alone hands the issue straight back to bees:ready. Nothing tidies
@@ -84,9 +84,9 @@ func TestNeedsHumanHoldsAnIssueThatKeepsItsStateLabel(t *testing.T) {
 // review stage by rewriting the issue's state label, and the local copy the
 // worker reads has to be rewritten the same way. A held issue carries two
 // state labels, so removing only the one stateOf names leaves the other
-// behind: with bees:needs-human first the copy kept bees:in-progress,
-// stateOf read that back out and a developer session ran instead of the
-// review that was asked for.
+// behind: with bees:needs-human first the copy would keep
+// bees:in-progress, stateOf would read that back out and a developer
+// session would run instead of the review that was asked for.
 func TestExecReviewerOnAHeldIssueStillReviews(t *testing.T) {
 	h := newHarness(t, prereviewTOML)
 	seedPreReviewIssue(t, h, "Review what is already pushed")

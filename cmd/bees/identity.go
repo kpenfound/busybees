@@ -3,10 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/kpenfound/busybees/internal/config"
+	"github.com/kpenfound/busybees/internal/ghapp"
 	"github.com/kpenfound/busybees/internal/github"
+	"github.com/kpenfound/busybees/internal/session"
 )
 
 // meLookup answers "who is running bees?". It is a variable so tests can
@@ -18,9 +21,19 @@ var meLookup = github.CurrentUser
 // through: the account [github] configures, or the machine's own gh
 // authentication when the table is unset. config.Validate has already
 // rejected a token that expands to nothing, so an empty token here means the
-// operator asked for today's behaviour.
-func githubClient(cfg *config.Config) *github.Client {
-	return github.NewAs(cfg.Project.Repo, cfg.GitHub.Login, cfg.GitHub.ResolvedToken())
+// operator asked for the machine's own gh authentication.
+//
+// For a GitHub App it also returns the Minter the client's tokens come from,
+// which a session runner holds so that its sessions get tokens too (nil
+// otherwise). Inside a session there is no Minter and no private key: the
+// client reads the tokens the session's bees process keeps in the state
+// directory.
+func githubClient(cfg *config.Config) (*github.Client, *ghapp.Minter, error) {
+	stateDir := os.Getenv(session.EnvStateDir)
+	if stateDir == "" {
+		stateDir = cfg.StateDir()
+	}
+	return ghapp.NewClient(cfg.GitHub, cfg.Project.Repo, stateDir, os.Getenv(session.EnvSessionDir) != "")
 }
 
 // resolveFilterAssignee replaces filter.assignee = "@me" with the login of
@@ -73,16 +86,44 @@ func resolveFilterSelf(ctx context.Context, cfg *config.Config) (string, error) 
 // account, because a token that cannot do these three things cannot run the
 // factory at all.
 func verifyGitHubAccount(ctx context.Context, cfg *config.Config) (string, error) {
-	return verifyAccount(ctx, cfg, githubClient(cfg))
+	gh, minter, err := githubClient(cfg)
+	if err != nil {
+		return "", err
+	}
+	if minter != nil {
+		return verifyApp(ctx, cfg, gh, minter)
+	}
+	return verifyAccount(ctx, cfg, gh)
+}
+
+// verifyApp is verifyAccount for a GitHub App: GitHub accepts the App ID
+// and key, github.login is the App's login, the App is installed on the
+// repository, and a token it mints can read it.
+func verifyApp(ctx context.Context, cfg *config.Config, gh *github.Client, m *ghapp.Minter) (string, error) {
+	slug, err := m.Slug(ctx)
+	if err != nil {
+		return "", fmt.Errorf("GitHub did not accept github.app_id %d with github.private_key: %w (check both on the GitHub App's settings page)", cfg.GitHub.AppID, err)
+	}
+	login := slug + config.BotSuffix
+	if !strings.EqualFold(login, cfg.GitHub.Login) {
+		return "", fmt.Errorf("github.app_id %d is the GitHub App %s, but github.login says %q: set github.login = %q", cfg.GitHub.AppID, login, cfg.GitHub.Login, login)
+	}
+	if _, err := m.Installation(ctx); err != nil {
+		return "", fmt.Errorf("%w (install it from the GitHub App's settings page, with access to %s)", err, cfg.Project.Repo)
+	}
+	if _, err := gh.DefaultBranch(ctx); err != nil {
+		return "", fmt.Errorf("github.login %s cannot read %s: %w (grant the GitHub App the repository permissions bees needs)", login, cfg.Project.Repo, err)
+	}
+	return login, nil
 }
 
 // verifyAccount is verifyGitHubAccount against a given client, so the checks
 // can be tested without a gh on the machine.
 func verifyAccount(ctx context.Context, cfg *config.Config, gh *github.Client) (string, error) {
 	if !cfg.GitHub.Configured() {
-		// Nothing to verify, and nothing worth failing over: bees init has
-		// always worked with a gh that cannot answer "who am I", so a lookup
-		// that fails only costs the line that names the account.
+		// Nothing to verify, and nothing worth failing over: bees init works
+		// with a gh that cannot answer "who am I", so a lookup that fails
+		// only costs the line that names the account.
 		login, _ := meLookup(ctx)
 		return login, nil
 	}

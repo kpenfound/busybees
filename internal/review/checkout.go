@@ -13,6 +13,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/kpenfound/busybees/internal/github"
 )
 
 // The checkout the diff is read from and the angle sessions read. As the
@@ -139,8 +141,11 @@ type Checkout struct {
 	// DockerBin is the container engine's client, "docker" when it is
 	// empty.
 	DockerBin string
-	// Token authenticates the clone, and "" clones anonymously.
-	Token string
+	// Token authenticates the clone, and "" clones anonymously. Tokens,
+	// when set, supplies it instead: a GitHub App's installation token for
+	// the pull request's repository.
+	Token  string
+	Tokens github.TokenSource
 	// Timeout bounds the build and the clone together,
 	// DefaultCheckoutTimeout when it is zero.
 	Timeout time.Duration
@@ -266,9 +271,17 @@ func (c *Checkout) clone(ctx context.Context, docker, image string, ref Ref, bas
 			env = append(env, kv)
 		}
 	}
-	if c.Token != "" {
+	token := c.Token
+	if c.Tokens != nil {
+		t, err := c.Tokens.Token(ctx)
+		if err != nil {
+			return err
+		}
+		token = t
+	}
+	if token != "" {
 		args = append(args, "--env", CheckoutTokenVar)
-		env = append(env, CheckoutTokenVar+"="+c.Token)
+		env = append(env, CheckoutTokenVar+"="+token)
 	}
 	args = append(args, image, "sh", "-c", checkoutScript, "sh", "https://github.com/"+ref.Repo+".git", fmt.Sprintf("refs/pull/%d/head", ref.Number), base)
 	var out bytes.Buffer

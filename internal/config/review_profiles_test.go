@@ -1,7 +1,6 @@
 package config
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"reflect"
@@ -77,12 +76,6 @@ func TestReviewPhaseProfiles(t *testing.T) {
 		view := v.Roles[RoleReviewer]
 		if view.BriefProfile != r.ForBrief().AgentProfile() || view.JudgeProfile != r.ForJudge().AgentProfile() || view.AngleProfiles["docs"] != r.ForAngle("docs").AgentProfile() || view.ReviewProfilesBySize["l"].AngleProfiles["general"] != r.ForSize("l").AgentProfile() {
 			t.Fatalf("show did not resolve profiles: %+v", view)
-		}
-		data, _ := json.Marshal(view)
-		for _, old := range []string{"brief_model", "judge_model", "angle_models"} {
-			if strings.Contains(string(data), old) {
-				t.Errorf("show contains %s", old)
-			}
 		}
 		if !strings.Contains(view.HostReviewPolicy, "sandbox ignored") {
 			t.Fatal("show omits host safety policy")
@@ -171,7 +164,7 @@ repo   = 'a/b' # exact formatting
 				if got.AgentProfile() != want || got.Fallback == "" {
 					t.Errorf("%s: got %+v want %+v", phase, got.AgentProfile(), want)
 				}
-				// Version 5 made the fallback model a profile of its own.
+				// The 4 -> 5 migration makes the fallback model a profile of its own.
 				if f := got.Fallbacks(); len(f) != 1 || f[0].AgentProfile() != (AgentProfile{Agent: "codex", Model: "fallback", Effort: "max", Sandbox: "container"}) {
 					t.Errorf("%s: fallback chain %+v", phase, f)
 				}

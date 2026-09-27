@@ -236,8 +236,8 @@ var stackedTOML = strings.Replace(devOnlyTOML, "max_review_rounds = 3\n", "max_r
 
 // Under scheduler.stacked_prs a blocker holds an issue back until it can be
 // stacked on: it must have an open pull request and be a sub-issue of the
-// same feature. Everything else waits exactly as before, and the parent
-// lookups are only paid for a blocker with a pull request.
+// same feature. Everything else waits as it does without stacking, and
+// the parent lookups are only paid for a blocker with a pull request.
 func TestStackedPRsRelaxTheHold(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -289,7 +289,7 @@ func TestStackedPRsRelaxTheHold(t *testing.T) {
 // feature is dispatched as soon as the blocker's pull request is open, its
 // branch is cut from the blocker's branch rather than the default branch,
 // and its developer is told to target and merge that branch. The predecessor
-// itself, blocked by nothing, is built from the default branch as before.
+// itself, blocked by nothing, is built from the default branch.
 func TestStackedPRsBuildOnThePredecessorBranch(t *testing.T) {
 	h := newHarnessAt(t, stackedTOML, time.Now())
 	h.sched.OnlyRoles = map[string]bool{config.RoleDeveloper: true} // reviewer disabled: PR auto-approved
@@ -802,7 +802,7 @@ func TestAStackedPullRequestWhosePredecessorClosedUnmergedWhileNoWorkerRan(t *te
 // The check reads the factory's own branch names only. A pull request a
 // person retargeted at a branch of another naming is theirs and the worker
 // proceeds; a predecessor whose pull request is still open is a stack, and
-// the worker waits for it as before; a pull request on the default branch
+// the worker waits for it; a pull request on the default branch
 // is the plain case.
 func TestAWorkerStartsOnAPullRequestTargetingSomeOtherBranch(t *testing.T) {
 	for _, tc := range []struct {

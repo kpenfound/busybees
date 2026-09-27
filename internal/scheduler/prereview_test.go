@@ -219,15 +219,15 @@ func TestPreReviewChecksErrorReviewsAnyway(t *testing.T) {
 	}
 }
 
-// TestPreReviewChecksDisabled: pre_review_checks = false is exactly the
-// behaviour that predates the stage — no read, no checks section.
+// TestPreReviewChecksDisabled: pre_review_checks = false turns the stage
+// off — no read, no checks section.
 func TestPreReviewChecksDisabled(t *testing.T) {
 	h := newHarness(t, prereviewTOML+"[roles.reviewer]\npre_review_checks = false\n")
 	seedPreReviewIssue(t, h, "No pre-review")
 	h.gh.Checks = []checksResponse{{JSON: `[{"name":"go / test","bucket":"fail","state":"FAILURE"}]`, Err: fmt.Errorf("exit status 1")}}
 	runPreReviewLoop(t, h)
 
-	// Today's sequence: review round 1 requests changes, round 2 approves.
+	// The sequence without the stage: review round 1 requests changes, round 2 approves.
 	h.wantOrder("developer-issue-1-r1", "reviewer-pr-101-r1", "developer-issue-1-r2", "reviewer-pr-101-r2")
 	if n := h.gh.CallCount("pr checks"); n != 0 {
 		t.Fatalf("the checks were read %d times with pre_review_checks = false", n)

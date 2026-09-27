@@ -48,7 +48,7 @@ func resumeOf(t *testing.T, h *harness, name string) string {
 	return args[i+1]
 }
 
-// TestASecondRoundResumesTheFirstRoundsSession is the point of #494: a
+// TestASecondRoundResumesTheFirstRoundsSession: a
 // developer handed back review feedback continues the conversation it had
 // in round 1 instead of relearning the codebase. Round 1 runs fresh and
 // round 2 resumes it. The reviewer's judge session is never resumed: a later
@@ -104,8 +104,8 @@ func TestACodexRoundIsNeverResumed(t *testing.T) {
 // TestAFailedResumeIsRetriedFresh: a session id claude no longer has makes
 // the resumed launch die before any result event. That is an infrastructure
 // failure like any other, retried under scheduler.retries, and the retry
-// drops the id: it runs as the fresh session the round would have had before
-// #494, and the loop goes on from its result.
+// drops the id: it runs as a fresh session, and the loop goes on from its
+// result.
 func TestAFailedResumeIsRetriedFresh(t *testing.T) {
 	t.Setenv("FAKE_RESUME_FAIL", "1")
 	h := newHarness(t, strings.Replace(devOnlyTOML, "[scheduler]\n", "[scheduler]\nretries = 1\nretry_delay = \"0s\"\n", 1))

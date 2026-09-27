@@ -190,8 +190,8 @@ func TestAdoptedPRAlreadyVisibleIsLeftAlone(t *testing.T) {
 	}
 }
 
-// Without filter.milestone the backstop sets no milestone, and the label and
-// the assignee are applied exactly as they are today.
+// Without filter.milestone the backstop sets no milestone, and still applies
+// the label and the assignee.
 func TestAdoptedPRWithoutAMilestoneFilter(t *testing.T) {
 	h := newHarness(t, devOnlyTOML+"\n[filter]\nassignee = \"kyle\"\n")
 	since, created := adoptTime()
@@ -231,7 +231,7 @@ func TestAdoptedIssueDoesNotGetAMilestone(t *testing.T) {
 // createdPR builds the pull request `gh pr create` produces when a session
 // passes exactly the flags its prompt tells it to pass, and nothing else.
 // Deriving the fixture from prompts.CreateFlags is the point: the shape the
-// backstop has to cope with is whatever those flags produce today.
+// backstop has to cope with is whatever those flags produce.
 func createdPR(t *testing.T, number int, f config.Filter, created time.Time) *github.PR {
 	t.Helper()
 	pr := &github.PR{Number: number, State: "OPEN", HeadRefName: "bees/issue-1", BaseRefName: "main", CreatedAt: created}

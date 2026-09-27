@@ -39,14 +39,16 @@ type FilterView struct {
 	Creator      string `json:"creator"`
 }
 
-// GitHubView is [github] as printed. The token is redacted (see
-// GitHub.RedactedToken): the resolved secret must never reach `bees config
+// GitHubView is [github] as printed. The token and a PEM private key are
+// redacted (see GitHub.RedactedToken): the resolved secret must never reach `bees config
 // show`, whose output people paste into issues.
 type GitHubView struct {
-	Login    string `json:"login"`
-	Token    string `json:"token"`
-	GitName  string `json:"git_name"`
-	GitEmail string `json:"git_email"`
+	Login      string `json:"login"`
+	Token      string `json:"token"`
+	AppID      int64  `json:"app_id"`
+	PrivateKey string `json:"private_key"`
+	GitName    string `json:"git_name"`
+	GitEmail   string `json:"git_email"`
 }
 
 // RoleView is a ResolvedRole under its bees.toml key names. The role-specific
@@ -142,7 +144,7 @@ func (c *Config) View(roles []string) (View, error) {
 		Version:   c.Version,
 		Project:   c.Project,
 		Filter:    FilterView{Label: c.Filter.Label, RequireLabel: c.Filter.LabelRequired(), Assignee: c.Filter.Assignee, Milestone: c.Filter.Milestone, Creator: c.Filter.Creator},
-		GitHub:    GitHubView{Login: c.GitHub.Login, Token: c.GitHub.RedactedToken(), GitName: c.GitHub.GitName, GitEmail: c.GitHub.GitEmail},
+		GitHub:    GitHubView{Login: c.GitHub.Login, Token: c.GitHub.RedactedToken(), AppID: c.GitHub.AppID, PrivateKey: c.GitHub.RedactedPrivateKey(), GitName: c.GitHub.GitName, GitEmail: c.GitHub.GitEmail},
 		Scheduler: c.Scheduler,
 		Logging:   c.Logging,
 		Notes:     c.Notes.redacted(),

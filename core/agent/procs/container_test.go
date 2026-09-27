@@ -512,7 +512,7 @@ func TestFindGroupsEveryOrphanedServerWithItsContainer(t *testing.T) {
 // Markers given are used as they stand, and no markers given means the
 // package defaults. The two are told apart by the pointer: Finder{} defaults
 // where Finder{Markers: &Markers{}} matches nothing, which is what passing
-// Markers{} to the package functions has always meant. The label the engine
+// Markers{} to the package functions means. The label the engine
 // is asked for shows which set was used.
 func TestFinderUsesTheMarkersGivenAndDefaultsForNone(t *testing.T) {
 	sessions := t.TempDir()

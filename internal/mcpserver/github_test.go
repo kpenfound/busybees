@@ -700,7 +700,7 @@ func TestDescribeQuery(t *testing.T) {
 // TestAuthorReadsTheMarker is the marker rule on its own: with [github]
 // unset — the configuration nearly every test and every factory that shares
 // an account with its people uses — the comment's login is not a signal and
-// issue_view renders exactly what it always has.
+// issue_view renders by the marker alone.
 func TestAuthorReadsTheMarker(t *testing.T) {
 	for body, want := range map[string]string{
 		"plain text":                        "human",
@@ -737,11 +737,11 @@ func TestToolsReportAFailingConfiguration(t *testing.T) {
 }
 
 // TestIssueViewMarksTheFactorysOwnCommentAsABees is the rule issue_view
-// shares with the orchestrator (#266): with [github] configured, a comment
+// shares with the orchestrator: with [github] configured, a comment
 // the factory's own login posted is a bee's even with no marker on it. The
 // one comment that shape describes is the orchestrator's `needs-human`
-// escalation, and rendering it `(human)` told a role a person had said the
-// factory gave up — the one label whose being wrong changes what a role does.
+// escalation, and rendering it `(human)` would tell a role a person had said
+// the factory gave up — the one label whose being wrong changes what a role does.
 //
 // The login only ever says yes: a person's comment is still a person's,
 // whether or not they quote a marker and whether or not [github] is set.

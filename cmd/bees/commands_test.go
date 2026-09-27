@@ -101,7 +101,7 @@ func TestAGENTSMdListsEveryCommand(t *testing.T) {
 			bullet, strings.Join(missing, ", "), line)
 	}
 	if len(extra) > 0 {
-		t.Errorf("AGENTS.md: the %q line lists %s, no longer a bees command. Drop the stale names from that line:\n%s",
+		t.Errorf("AGENTS.md: the %q line lists %s, which is not a bees command. Drop the stale names from that line:\n%s",
 			bullet, strings.Join(extra, ", "), line)
 	}
 }

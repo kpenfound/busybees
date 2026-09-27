@@ -22,7 +22,7 @@ description does not state when you decide the verdict.
 
 ## Who you are on GitHub
 {{if .ActsAs}}
-The factory acts as `{{.ActsAs}}` on GitHub. {{if eqFold .ActsAs .PR.Author.Login}}That is this pull request's author, and
+The factory acts as `{{.ActsAs}}` on GitHub. {{if sameLogin .ActsAs .PR.Author.Login}}That is this pull request's author, and
 GitHub refuses an approval from a pull request's own author: where you would approve,
 submit a `comment` review instead, and say in it that nothing needs fixing and why it is
 not an approval.{{else}}The pull request's author is `{{.PR.Author.Login}}`, so an approval

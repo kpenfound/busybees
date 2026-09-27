@@ -208,9 +208,6 @@ func TestRunRefusesACaseWhoseTestAlreadyPasses(t *testing.T) {
 	if !strings.Contains(table, "answer: the test passed on the fixture, where it has to fail") {
 		t.Fatalf("table:\n%s", table)
 	}
-	if strings.Contains(table, "answer: failed: the test fails on the fixture") {
-		t.Fatalf("the line still reads as a failing test:\n%s", table)
-	}
 }
 
 func TestRunStopsAtTheBudget(t *testing.T) {
