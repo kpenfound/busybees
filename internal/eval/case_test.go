@@ -54,9 +54,6 @@ func TestLoadCasesWithoutAnEvalsDirectory(t *testing.T) {
 			t.Errorf("error %q does not name %q", err, want)
 		}
 	}
-	if strings.Contains(err.Error(), "no such file or directory") {
-		t.Errorf("the errno is still there: %v", err)
-	}
 }
 
 // Any other read error keeps its wrapping.

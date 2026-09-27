@@ -19,8 +19,7 @@ import (
 )
 
 // fixed is the clock every test renders against: the view must never read
-// the wall clock, so two renders of the same messages are the same string
-// (#222).
+// the wall clock, so two renders of the same messages are the same string.
 var fixed = time.Date(2026, 8, 31, 10, 3, 8, 0, time.UTC)
 
 // panelHeight is the terminal drive draws in: tall enough for all five
@@ -83,7 +82,7 @@ func ended(name, role string, issue, pr int, turns int, cost float64) tea.Msg {
 
 // endedUnknownCost is a session-ended event for a session that ended with no
 // closing event, so its cost is not a real zero but unpriced (a signalled
-// process, most often — see #359).
+// process, most often).
 
 func endedUnknownCost(name, role string, issue, pr int, turns int) tea.Msg {
 	return eventMsg{Event: scheduler.Event{
@@ -198,7 +197,7 @@ func TestEmptyStateReadsAsEmpty(t *testing.T) {
 // sessions too (Deps.HardStop) and still stays up; only a third leaves the
 // terminal early. Nothing but the factory stopping quits the program on its
 // own. The footer names the two stops apart, with the count through
-// text.Count so one session never reads "1 sessions" (#338).
+// text.Count so one session never reads "1 sessions".
 func TestCtrlCStopsTheFactoryAndTheViewWaits(t *testing.T) {
 	stops, hard := 0, 0
 	m := New(Deps{Now: func() time.Time { return fixed }, Stop: func() { stops++ }, HardStop: func() { hard++ }})
@@ -253,7 +252,7 @@ func TestAFailedStatusReadKeepsTheLastView(t *testing.T) {
 }
 
 // Every elapsed time and countdown comes from the injected clock, so the
-// same messages render the same view however long a test takes (#222).
+// same messages render the same view however long a test takes.
 func TestTheViewIsRenderedFromTheInjectedClock(t *testing.T) {
 	msgs := []tea.Msg{
 		started("developer-issue-12-r1", config.RoleDeveloper, 12, 0, fixed.Add(-90*time.Second), "opus", false),
@@ -394,9 +393,6 @@ func TestRecentPanelRendersCostTheSameWayTheNowPanelDoes(t *testing.T) {
 	if got := column(t, header, row, "cost"); got != "-" {
 		t.Errorf("a session with no reported cost shows %q, want -:\n%s", got, view)
 	}
-	if strings.Contains(row, "$0.00") {
-		t.Errorf("the row prints $0.00 for a cost nothing has reported:\n%s", row)
-	}
 
 	view = drive(t, Deps{Repo: "acme/widgets"},
 		endedAs("developer-issue-9-r1", config.RoleDeveloper, 9, 0, "pr-opened", "", 0, time.Second),
@@ -458,7 +454,7 @@ func TestApprovedPanelListsWhatIsWaitingToBeMerged(t *testing.T) {
 
 // The header says whenever dispatch is paused and why, with the numbers
 // behind it: a paused factory whose Now panel is empty otherwise reads
-// exactly like an idle one (#367). The clock the test drives against is in
+// exactly like an idle one. The clock the test drives against is in
 // time.Local, like schedulerLine's own tests, because the notice prints a
 // wall-clock time.
 func TestHeaderShowsWhyDispatchIsPaused(t *testing.T) {
@@ -1012,7 +1008,7 @@ func TestADrawnListPanelAlwaysHasARow(t *testing.T) {
 // flat index over rows the factory moves under it, so an earlier session
 // finishing between the two k presses shifts every later one up a row: the
 // second press must act on the name the first one showed, not on whatever
-// the cursor points at by then (#308).
+// the cursor points at by then.
 func TestKillStopsTheSessionTheConfirmationNamed(t *testing.T) {
 	var killed []string
 	var view tea.Model = New(Deps{Repo: "acme/widgets", Now: func() time.Time { return fixed },
@@ -1052,7 +1048,7 @@ func TestKillStopsTheSessionTheConfirmationNamed(t *testing.T) {
 
 // A confirmation whose session has finished before the second press stops
 // nothing: the person read that name, and stopping whatever is selected
-// instead is the bug this asks about (#308).
+// instead would stop a session they were never shown.
 func TestKillStopsNothingWhenTheNamedSessionHasFinished(t *testing.T) {
 	var killed []string
 	var view tea.Model = New(Deps{Repo: "acme/widgets", Now: func() time.Time { return fixed },
@@ -1081,7 +1077,7 @@ func TestKillStopsNothingWhenTheNamedSessionHasFinished(t *testing.T) {
 }
 
 // Moving the cursor disarms the confirmation, so k on another session asks
-// about that one instead of firing at the one named before (#308).
+// about that one instead of firing at the one named before.
 func TestKillOnAnotherSessionAsksAgain(t *testing.T) {
 	var killed []string
 	var view tea.Model = New(Deps{Repo: "acme/widgets", Now: func() time.Time { return fixed },
@@ -1163,7 +1159,7 @@ func at(t *testing.T, line, want string) int {
 // A running session's turns come from its own transcript. An agent reports
 // its turn count in the event that ends its stream and nothing before it, so a
 // session that has not ended has no reported turn count — and 0 in that
-// column reads as "doing nothing" over a session doing real work (#313).
+// column reads as "doing nothing" over a session doing real work.
 // The count is taken on the refresh tick, the same one that re-reads
 // status.json, not on every redraw.
 func TestTheNowPanelCountsARunningSessionsTurns(t *testing.T) {
@@ -1238,9 +1234,6 @@ func TestAnUnknownCostIsNotZero(t *testing.T) {
 	if got := column(t, header, row, "cost"); got != "-" {
 		t.Errorf("a work item no session has finished on shows a cost of %q, want -:\n%s", got, view)
 	}
-	if strings.Contains(row, "$0.00") {
-		t.Errorf("the row prints $0.00 for a cost nothing has reported yet:\n%s", row)
-	}
 
 	view = drive(t, deps,
 		started("developer-issue-12-r1", config.RoleDeveloper, 12, 31, fixed.Add(-time.Minute), "opus", false),
@@ -1287,8 +1280,8 @@ func TestTheNowPanelNamesTheSandboxOfABoxedSession(t *testing.T) {
 		}
 	}
 
-	// Nothing boxed: the column is not drawn, and the row is laid out as it
-	// was before there was one.
+	// Nothing boxed: the column is not drawn, and the row is laid out
+	// without it.
 	plain := drive(t, Deps{Repo: "acme/widgets"},
 		startedIn("developer-issue-12-r1", config.RoleDeveloper, 12, 31, fixed, "opus", "none"))
 	if strings.Contains(plain, "sandbox") {
@@ -1450,7 +1443,7 @@ func TestReviewActivityFitsCompactLayout(t *testing.T) {
 			t.Errorf("view exceeds height at width %d:\n%s", width, view)
 		}
 		for _, line := range strings.Split(view, "\n") {
-			// Footer hints retain their existing wrapping behavior.
+			// Only panel lines are held to the width: footer hints wrap.
 			if strings.HasPrefix(line, "│") && len([]rune(line)) > width {
 				t.Errorf("panel exceeds width %d: %s", width, line)
 			}

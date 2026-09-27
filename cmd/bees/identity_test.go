@@ -83,9 +83,9 @@ func TestOrchestratorActsAsTheConfiguredAccount(t *testing.T) {
 }
 
 // TestMCPServerActsAsTheConfiguredAccount is the same claim for the second
-// resolution path: the built-in MCP server loads its own configuration, so a
-// fix applied only to the scheduler would leave every tool a session calls
-// filtering on the wrong login.
+// resolution path: the built-in MCP server loads its own configuration, so
+// resolving the account only in the scheduler would leave every tool a
+// session calls filtering on the wrong login.
 func TestMCPServerActsAsTheConfiguredAccount(t *testing.T) {
 	path := setupBotFactory(t, botTOML)
 
@@ -157,8 +157,8 @@ func TestFilterCreatorAllowsTheAccountTheFactoryActsAs(t *testing.T) {
 	}
 }
 
-// TestNoGitHubTableInjectsNoToken pins the default: a bees.toml written
-// before [github] existed produces exactly the client it always did.
+// TestNoGitHubTableInjectsNoToken pins the default: a bees.toml with no
+// [github] table produces a client that carries no token.
 func TestNoGitHubTableInjectsNoToken(t *testing.T) {
 	body := strings.SplitN(botTOML, "[github]", 2)[0]
 	path := setupBotFactory(t, body)
@@ -219,7 +219,7 @@ func TestVerifyGitHubAccount(t *testing.T) {
 		t.Fatalf("the verified client does not carry the configured token: %q", got)
 	}
 	// It carries the login as well: that is what makes a comment by the bot
-	// a bee's comment without a marker (#243).
+	// a bee's comment without a marker.
 	if got := client.ActsAs; got != "busybees-bot" {
 		t.Fatalf("the verified client does not act as the configured login: %q", got)
 	}

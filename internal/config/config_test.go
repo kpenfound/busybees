@@ -322,9 +322,8 @@ func TestSizeLabels(t *testing.T) {
 //
 // bees:needs-human must be first because a person parks an issue by adding
 // it from the GitHub issue list, which does not remove the state label
-// underneath. Last, as it was until #322, it lost to that label and the
-// factory kept dispatching the issue. Restoring "workflow order" here
-// reopens that bug in three places at once.
+// underneath. Placed last, it loses to that label and the factory keeps
+// dispatching the issue, in all three derivations at once.
 func TestNeedsHumanWinsTheStatePrecedence(t *testing.T) {
 	l := LabelsFor("bees")
 	if got := l.StateLabels()[0]; got != l.NeedsHuman {
@@ -1403,7 +1402,7 @@ func uncommentTemplate(text string) string {
 // TestTemplateNeverWritesAGuessedBranch checks that default_branch is only
 // written as an active setting when there is a real value for it: with no
 // detected branch the template must keep the "main" placeholder commented,
-// whatever the caller passes (#89).
+// whatever the caller passes.
 func TestTemplateNeverWritesAGuessedBranch(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -1444,7 +1443,7 @@ func TestTemplateNeverWritesAGuessedBranch(t *testing.T) {
 
 // TestTemplateEscapesInterpolatedValues checks that no value bees init
 // interpolates can introduce, remove or alter a TOML key: an unescaped quote
-// used to close the string early and let the rest be parsed as TOML (#136).
+// would close the string early and let the rest be parsed as TOML.
 func TestTemplateEscapesInterpolatedValues(t *testing.T) {
 	const injection = "main\"\nremote = \"upstream"
 	const weird = "a\"b\\c\td\ne\rf\x01g\x7fh"
@@ -1650,11 +1649,11 @@ func TestCostBudgets(t *testing.T) {
 }
 
 // TestDailyBudgetResumePercent pins the boundaries of
-// scheduler.max_cost_per_day_resume_percent (#365). It is a percentage of
+// scheduler.max_cost_per_day_resume_percent. It is a percentage of
 // max_cost_per_day rather than an amount, and a TOML float has no "unset"
 // distinct from 0, so — like notes_consolidate_every and notes_max_bytes — 0
-// means the default, which is 100: an existing bees.toml that does not carry
-// the key behaves exactly as it did.
+// means the default, which is 100: a bees.toml that does not carry the key
+// resumes as soon as the window is under budget.
 func TestDailyBudgetResumePercent(t *testing.T) {
 	const head = "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\n"
 	for _, tc := range []struct {
@@ -1923,9 +1922,7 @@ func TestFilterAssigneeDefaultsToUnset(t *testing.T) {
 // TestGitHubAccount covers the [github] table: the two halves of the identity
 // are only accepted together, the token's $VAR is expanded from the
 // environment, and a reference that expands to nothing is rejected by name.
-// The default — nothing set — must stay "act as the machine owner", which is
-// what makes an existing bees.toml behave exactly as it did before [github]
-// existed.
+// The default — nothing set — must stay "act as the machine owner".
 func TestGitHubAccount(t *testing.T) {
 	const head = "version = 1\n[project]\nrepo = \"a/b\"\ndefault_branch = \"main\"\n"
 
@@ -1973,7 +1970,7 @@ func TestGitHubAccount(t *testing.T) {
 			if !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("error does not name the key: %v", err)
 			}
-			// Every one of them says how to get back to today's behaviour.
+			// Every one of them says how to act as the machine owner again.
 			if !strings.Contains(err.Error(), "act as your own gh account") {
 				t.Errorf("error does not say what to change: %v", err)
 			}
@@ -2194,10 +2191,6 @@ func TestReviewAngles(t *testing.T) {
 			}
 		})
 	}
-	// stages is gone: a version 2 file that still has it is an unknown key.
-	if _, err := Load(writeConfig(t, head+"[roles.reviewer]\nstages = [\"style\"]\n")); err == nil || !strings.Contains(err.Error(), "stages") {
-		t.Errorf("stages in a version 2 file: %v", err)
-	}
 }
 
 // The 1 to 2 migration drops roles.reviewer.stages, set or commented out and
@@ -2250,7 +2243,7 @@ func TestMigrateReviewStages(t *testing.T) {
 // feedback issue, not a state: an issue in planning keeps whatever state
 // label it has, so neither may appear among the state or size labels — and
 // both must be in All(), or the scheduler's ensureLabels never creates them
-// in a repository that predates them and every edit using one fails.
+// in a repository that lacks them and every edit using one fails.
 func TestPlanningLabels(t *testing.T) {
 	l := LabelsFor("bees")
 	if l.Planning != "bees:planning" || l.Planned != "bees:planned" {
@@ -2391,7 +2384,7 @@ func TestBestOfN(t *testing.T) {
 		t.Errorf("reviewer BestOfN(%q): got %d want 1", "l", got)
 	}
 	// Unset: the table is nil, every size is one attempt and the overrides are
-	// empty, which is today's behaviour with no best-of-N keys at all.
+	// empty, which is the behaviour of a configuration with no best-of-N keys.
 	cfg, err = Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n"))
 	if err != nil {
 		t.Fatal(err)

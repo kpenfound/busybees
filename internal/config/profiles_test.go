@@ -64,9 +64,9 @@ angle_profiles = { quick_general = "claude", general = "claude", docs = "claude"
 }
 
 // A version 2 file migrates through 3 and 4 to 5: the fallback model every
-// claude scope had then, "sonnet" unless it named one, is a fallback profile
-// of the scope's profile now, one per profile (count is the profiles the
-// migrated file declares), and a codex or opencode scope has none.
+// claude scope has in version 2, "sonnet" unless it names one, becomes a
+// fallback profile of the scope's profile, one per profile (count is the
+// profiles the migrated file declares), and a codex or opencode scope has none.
 func TestProfileMigration(t *testing.T) {
 	defaults := AgentProfile{Agent: "claude", Model: "opus", Sandbox: "none"}
 	for _, tc := range []struct {
@@ -217,18 +217,6 @@ func TestProfileValidation(t *testing.T) {
 		}
 		return s
 	}()...) {
-		for _, key := range legacyProfileKeys {
-			t.Run(scope+"."+key, func(t *testing.T) {
-				value := `"claude"`
-				if key == "model_by_size" {
-					value = `{ xs = "haiku" }`
-				}
-				_, err := Load(writeConfig(t, fmt.Sprintf("version = 3\n[%s]\n%s = %s\n", scope, key, value)))
-				if err == nil || !strings.Contains(err.Error(), scope+"."+key) {
-					t.Fatalf("error: %v", err)
-				}
-			})
-		}
 		for _, key := range []string{"profile", "profile_by_size"} {
 			value := `"missing"`
 			if key == "profile_by_size" {

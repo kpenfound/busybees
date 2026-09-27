@@ -616,7 +616,7 @@ func (s *Store) AddWorkCost(ref work.Ref, cost float64) (WorkState, error) {
 }
 
 // SetIssueCost replaces an issue's running totals, which is how a total is
-// seeded from the ledger for an issue whose bookkeeping predates budgets.
+// seeded from the ledger for an issue whose bookkeeping carries no totals.
 func (s *Store) SetIssueCost(number int, cost float64, sessions int) (WorkState, error) {
 	return s.SetWorkCost(ghwork.New(number, 0), cost, sessions)
 }

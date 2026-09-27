@@ -11,7 +11,7 @@ import (
 )
 
 // reviewerSection is the reviewer section of a bees.toml, profiles and all,
-// the way #789 wrote it with fallback naming a profile.
+// with fallback naming a profile.
 const reviewerSection = `
 [profiles.default]
 agent = "claude"

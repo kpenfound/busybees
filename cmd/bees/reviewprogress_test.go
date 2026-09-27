@@ -254,7 +254,7 @@ func TestDrawReviewProgressCtrlCCancelsTheRun(t *testing.T) {
 }
 
 // At a terminal the review's lines go to the view and not to stdout;
-// without one, or with --no-tui, they print as before.
+// without one, or with --no-tui, they print on stdout.
 func TestReviewDrawsItsProgressOnlyAtATerminal(t *testing.T) {
 	reviewHome(t)
 	// No gh on the PATH: the review fails at the gather, after its first

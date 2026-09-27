@@ -87,7 +87,8 @@ func TestWorkspaceVCSMountPaths(t *testing.T) {
 }
 
 func TestWorkspaceAccessContract(t *testing.T) {
-	// If git discovery returns, fail on its side effect even if its error is ignored.
+	// Core does no git discovery (the caller's Workspace supplies VCS access):
+	// a git it ran would leave a marker, even if its error were ignored.
 	gitDir := t.TempDir()
 	marker := filepath.Join(t.TempDir(), "git-called")
 	t.Setenv("GIT_DISCOVERY_MARKER", marker)

@@ -71,7 +71,7 @@ scheduler as well.`,
 
 			// A dry run only looks: discovery deletes the stale pid,
 			// container-id and server-pid files it reads, and a command that
-			// reports what it would do must delete none of them (#840).
+			// reports what it would do must delete none of them.
 			markers := session.ProcessMarkers
 			finder := procs.Finder{Markers: &markers, ReadOnly: dryRun}
 			found, err := finder.Find(ctx, store.SessionsDir())

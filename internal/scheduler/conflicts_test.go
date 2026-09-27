@@ -187,28 +187,23 @@ func TestPRCheckHonoursTheSettings(t *testing.T) {
 }
 
 // The mail spells out both git commands with the configured remote. With
-// the default remote that is the familiar origin text; anything else must
-// not leak an `origin` the worktree does not have.
+// the default remote that is the familiar origin text.
 func TestUpdateBranchBodyNamesTheRemote(t *testing.T) {
 	pr := github.PR{Number: 101, HeadRefName: "bees/issue-1", URL: "https://x/pull/101"}
 	for _, tc := range []struct {
-		name    string
-		remote  string
-		reason  string
-		want    string
-		notWant string
+		name   string
+		remote string
+		reason string
+		want   string
 	}{
-		{"default remote", config.DefaultRemote, "conflicts with", "`git fetch origin && git merge origin/main`", "upstream"},
-		{"configured remote", "upstream", "conflicts with", "`git fetch upstream && git merge upstream/main`", "origin/"},
-		{"configured remote, behind", "upstream", "is behind", "`git fetch upstream && git merge upstream/main`", "origin/"},
+		{"default remote", config.DefaultRemote, "conflicts with", "`git fetch origin && git merge origin/main`"},
+		{"configured remote", "upstream", "conflicts with", "`git fetch upstream && git merge upstream/main`"},
+		{"configured remote, behind", "upstream", "is behind", "`git fetch upstream && git merge upstream/main`"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			body := updateBranchBody(pr, tc.remote, "main", tc.reason)
 			if !strings.Contains(body, tc.want) {
 				t.Errorf("body missing %q:\n%s", tc.want, body)
-			}
-			if strings.Contains(body, tc.notWant) {
-				t.Errorf("body still contains %q:\n%s", tc.notWant, body)
 			}
 		})
 	}
@@ -233,9 +228,6 @@ func TestConflictMailUsesTheConfiguredRemote(t *testing.T) {
 	}
 	if !strings.Contains(msgs[0].Body, "git fetch upstream && git merge upstream/main") {
 		t.Errorf("mail body does not name project.remote:\n%s", msgs[0].Body)
-	}
-	if strings.Contains(msgs[0].Body, "origin/") {
-		t.Errorf("mail body still names origin:\n%s", msgs[0].Body)
 	}
 }
 

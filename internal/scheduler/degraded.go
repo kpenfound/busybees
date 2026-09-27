@@ -24,8 +24,8 @@ import (
 const degradedEscalateAfter = 3
 
 // op records the outcome of a named factory operation. A nil err clears the
-// operation's failure streak; a non-nil err logs the warning that used to be
-// logged here, extends the streak and escalates once when it gets long.
+// operation's failure streak; a non-nil err logs the warning, extends the
+// streak and escalates once when it gets long.
 //
 // It returns err != nil, so a call site can keep its own control flow:
 //
@@ -38,7 +38,7 @@ func (s *Scheduler) op(name string, err error, msg string, attrs ...any) bool {
 
 // opAs is op for the sites that cannot use the scheduler's logger at warn
 // level: a developer worker logs through a logger carrying worker/issue/branch,
-// and the poll failure has always reported at error level. The escalation
+// and the poll failure reports at error level. The escalation
 // record is emitted by the scheduler's own logger either way.
 func (s *Scheduler) opAs(log *slog.Logger, level slog.Level, name string, err error, msg string, attrs ...any) bool {
 	if err != nil {

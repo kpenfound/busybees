@@ -31,7 +31,7 @@ func TestAcquiredBundleReachesCoreWithoutLosingContext(t *testing.T) {
 }
 
 func TestLegacyArtifactStillReadsWritesAndTriages(t *testing.T) {
-	// These are the pre-extraction wire shapes, including the concrete GitHub ref.
+	// These are the wire shapes artifacts on disk hold, including the concrete GitHub ref.
 	files := map[string]string{
 		BriefFile: `{"ref":{"repo":"acme/widgets","number":7},"title":"title","author":"author","summary":"summary","size":"m","acceptance_criteria":[{"text":"criterion","source":"#12"}],"style_rules":[{"text":"rule"}],"touched_areas":[{"name":"area","paths":["a.go"]}],"sources":["diff"],"not_gathered":["missing context"],"session_id":"distiller","cost_usd":0.5}`,
 		filepath.Join(AnglesDir, AngleGeneral+".json"): `{"angle":"general","provider":"claude","model":"opus","dir":"/checkout","session_id":"angle","answer":"answer","turns":3,"cost_usd":0.75}`,

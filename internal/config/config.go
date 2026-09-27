@@ -145,11 +145,11 @@ const (
 	DefaultMaxCostPerDayResumePercent = 100.0
 	// DefaultLogFormat and DefaultLogLevel are the console logging defaults;
 	// they mirror the --log-format and --log-level flag defaults, so an
-	// absent [logging] table logs exactly as bees always did.
+	// absent [logging] table logs exactly as the flags' defaults do.
 	DefaultLogFormat = logging.FormatText
 	DefaultLogLevel  = "info"
 	// DefaultNotesBackend is the notes.backend a factory gets with no [notes]
-	// table: notes files on disk, as bees has always stored them.
+	// table: notes files on disk.
 	DefaultNotesBackend = NotesBackendFile
 )
 
@@ -290,8 +290,8 @@ type Project struct {
 	// Dir is the git clone the factory works in, when it differs from the
 	// directory holding bees.toml (e.g. a config kept centrally for several
 	// projects). A relative path is resolved against the directory holding
-	// bees.toml. Empty means bees.toml's own directory is the clone, as
-	// today. See Config.CloneDir.
+	// bees.toml. Empty means bees.toml's own directory is the clone. See
+	// Config.CloneDir.
 	Dir string `toml:"dir" json:"dir"`
 }
 
@@ -324,8 +324,7 @@ type Filter struct {
 func (f Filter) LabelRequired() bool { return f.RequireLabel == nil || *f.RequireLabel }
 
 // GitHub is the GitHub account the factory itself acts as. Everything unset
-// means the machine owner's own `gh` authentication, which is what bees has
-// always used.
+// means the machine owner's own `gh` authentication.
 //
 // The account is a GitHub App (AppID and PrivateKey, with Login its bot
 // login) or a user account (Token). Login goes with exactly one of the two:
@@ -363,8 +362,8 @@ type GitHub struct {
 }
 
 // Configured reports whether the factory acts as an account of its own. It is
-// false for every configuration that predates [github], which is what makes
-// "unset means today's behaviour" hold.
+// false for every configuration without [github], and the factory then acts
+// through the machine owner's own gh authentication.
 func (g GitHub) Configured() bool { return g.Login != "" && (g.Token != "" || g.App()) }
 
 // App reports whether the factory acts as a GitHub App, whose tokens bees
@@ -1426,8 +1425,8 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 	// A machine config is not a project layer and never reads user defaults.
-	// Let parse return the established ErrMachineConfig before defaults.toml
-	// can mask it with an unrelated error.
+	// Let parse return ErrMachineConfig before defaults.toml can mask it with
+	// an unrelated error.
 	if kind, kindErr := kindOf(string(data)); kindErr == nil && kind == KindMachine {
 		return parse(string(data), abs, nil)
 	}
@@ -1607,10 +1606,11 @@ var (
 	stagesLineRE  = regexp.MustCompile(`^[ \t]*#?[ \t]*stages[ \t]*=`)
 )
 
-// dropReviewStages is the 1 to 2 migration: roles.reviewer.stages gave way
-// to roles.reviewer.angles. The old stage names have no counterpart among the
-// angles, so the stages line (set or commented out, over as many lines as its
-// array takes) is replaced with a comment saying so and angles stays unset.
+// dropReviewStages is the 1 to 2 migration: version 2 has
+// roles.reviewer.angles where version 1 has roles.reviewer.stages. The stage
+// names have no counterpart among the angles, so the stages line (set or
+// commented out, over as many lines as its array takes) is replaced with a
+// comment saying so and angles stays unset.
 func dropReviewStages(text string) (string, error) {
 	lines := strings.Split(text, "\n")
 	out := make([]string, 0, len(lines))

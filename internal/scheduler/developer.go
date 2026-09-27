@@ -68,8 +68,7 @@ func (s *Scheduler) workIssue(ctx context.Context, issue github.Issue, w *state.
 	// Not the loop's context, because the whole worker is on it: with only
 	// the loop check swapped, the stages after a cancellation would run
 	// their `gh` and `git` calls on a cancelled context and fail one by one.
-	// Outside Run (`bees exec`) this is the caller's own context, so that
-	// path is unchanged.
+	// Outside Run (`bees exec`) this is the caller's own context.
 	ctx = s.sessionContext(ctx)
 	branch := s.BranchFor(issue.Number)
 	log := s.log.With("worker", w.Name, "issue", issue.Number, "branch", branch)
@@ -687,8 +686,8 @@ func postApprovalFixRound(bk state.WorkState) bool {
 // (postApprovalFixRound): it is recorded before the develop stage can relabel
 // the issue, so bees:approved is where it legitimately sits, and the gate it
 // returns to is the whole reason to resume it. An issue with nothing
-// remembered (the first run, and every issue that existed before the stage was
-// recorded) starts exactly where it always did.
+// remembered (the first run, or bookkeeping written without a stage) starts
+// where its label says.
 //
 // The whole record belongs to the pull request it was written for, and is
 // dropped for any other one: both tests below compare the recorded number with
@@ -805,7 +804,7 @@ const (
 	// gateUnknown is the state before the first observation.
 	gateUnknown checksGate = ""
 	// gateRequired: the branch protection rules require checks, and those are
-	// the gate. This is the only gate that existed before #117.
+	// the gate.
 	gateRequired checksGate = "required"
 	// gateReported: nothing is required, so every check the pull request
 	// reports is the gate. Gating on the checks that exist beats gating on
@@ -833,10 +832,10 @@ type checksWatch struct {
 // reports which gate it settled on.
 //
 // The required checks are asked for first and win outright: when the branch
-// requires anything, the second `gh pr checks` call is never made and the
-// behaviour is exactly what it was before #117. Only when nothing is required
-// does the wait fall back to every reported check — a repository with no
-// branch protection would otherwise merge with nothing green at all. Two
+// requires anything, the second `gh pr checks` call is never made. Only when
+// nothing is required does the wait fall back to every reported check — a
+// repository with no branch protection would otherwise merge with nothing
+// green at all. Two
 // consecutive empty observations are needed before concluding there is no CI,
 // because a workflow can take longer than checks_wait to register.
 func (s *Scheduler) awaitChecks(ctx context.Context, pr int, policy config.MergePolicy, watch checksWatch, w *state.Worker, round int) (github.ChecksStatus, []github.Check, checksGate, error) {

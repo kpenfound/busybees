@@ -28,7 +28,7 @@
 // size-based angle execution, deterministic judging and noise filtering.
 // agent.go supplies read-only CLI sessions; angles.go supplies configured
 // models, working directories and provider-specific resumption. notes.go owns
-// reviewer notes storage and consolidation, and judge.go supplies the existing
+// reviewer notes storage and consolidation, and judge.go supplies the
 // busybees text comparator to core's merge and filter stages.
 //
 // triage.go is the triage queue over that list, the four actions it takes on

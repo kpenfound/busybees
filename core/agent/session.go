@@ -98,10 +98,10 @@ type Result struct {
 	// recorded: the number here, its name in ErrorSubtype ("signal_killed").
 	Signal int `json:"signal,omitempty"`
 	// ClaudeID is the id the agent gave the session: claude's, opencode's
-	// or pi's session id, or codex's thread id. The JSON name is kept for
-	// readers of result.json that predate codex. Agent is the backend that
-	// gave it (AgentClaude when the profile named none), the only one that
-	// can resume it.
+	// or pi's session id, or codex's thread id. The JSON name stays
+	// claude_session_id for older readers of result.json. Agent is the
+	// backend that gave it (AgentClaude when the profile named none), the
+	// only one that can resume it.
 	ClaudeID     string  `json:"claude_session_id,omitempty"`
 	Agent        string  `json:"agent,omitempty"`
 	ResultText   string  `json:"result_text,omitempty"`
@@ -483,8 +483,8 @@ func (r *Runner) run(ctx context.Context, req Request, restricted bool) (*Result
 	} else {
 		// No closing event: the agent never reported how far it had got, so
 		// the turns it wrote to the transcript are counted instead. A
-		// session that died after four minutes of work reported zero turns
-		// otherwise, which reads as a session that did nothing.
+		// session that died after four minutes of work would report zero
+		// turns otherwise, which reads as a session that did nothing.
 		res.NumTurns = CountTurns(transcriptPath)
 	}
 	var exitErr *exec.ExitError

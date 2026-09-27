@@ -200,12 +200,12 @@ func TestTheRunningSessionSurvivesASaveIssue(t *testing.T) {
 	}
 }
 
-// Two goroutines saving the same issue must not corrupt its state file. Every
-// writer used to go through one temp name derived from the destination
-// (issues/<n>.json.tmp), so concurrent saves truncated and wrote the same
-// file and one could rename what the other was still writing. The result was
-// invalid JSON, and permanent: every reader of a corrupt WorkState warns and
-// carries on without rewriting it, so nothing ever repaired it.
+// Two goroutines saving the same issue must not corrupt its state file. With
+// one temp name derived from the destination (issues/<n>.json.tmp) for every
+// writer, concurrent saves truncate and write the same file and one can
+// rename what the other is still writing. The result is invalid JSON, and
+// permanent: every reader of a corrupt WorkState warns and carries on without
+// rewriting it, so nothing ever repairs it.
 //
 // The assertion is on the errors and on the final read, not on the race
 // detector: this is a race between filesystem syscalls, not between memory
@@ -564,8 +564,8 @@ func TestSetOpenChildrenKeepsARememberedSet(t *testing.T) {
 }
 
 // The build the scheduler is running as survives a status.json round trip:
-// #297 compares the revision against the repository, so it is recorded raw
-// rather than as the 12-character form Version shows.
+// `bees doctor` compares the revision against the repository, so it is
+// recorded raw rather than as the 12-character form Version shows.
 func TestStatusCarriesTheRunningBuild(t *testing.T) {
 	s := New(t.TempDir())
 	want := Status{

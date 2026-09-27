@@ -55,9 +55,8 @@ func TestResolveFromGit(t *testing.T) {
 }
 
 // TestResolveFromGitWithProjectDir covers bees.toml living outside the git
-// clone it manages (project.dir), the gap #661 closes: Resolve's git-remote
-// derivation reads the remote from project.dir, not from bees.toml's own
-// directory.
+// clone it manages (project.dir): Resolve's git-remote derivation reads the
+// remote from project.dir, not from bees.toml's own directory.
 func TestResolveFromGitWithProjectDir(t *testing.T) {
 	ctx := context.Background()
 	_, clone := testutil.SetupRepos(t)

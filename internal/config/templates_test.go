@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// templateTable is decision 4 of #421: what each template resolves to. A
+// templateTable is what each template resolves to. A
 // template in Templates() without a row here fails TestTemplatesResolve, and
 // so does a row without a template.
 var templateTable = map[string]struct {
@@ -217,7 +217,7 @@ func TestTemplateHeader(t *testing.T) {
 			t.Errorf("template %q: the header does not carry the When paragraph:\n%s", tpl.Name, header)
 		}
 	}
-	// Decision 8 of #421: assignment-triggered review needs filter.assignee,
+	// Assignment-triggered review needs filter.assignee,
 	// which no template can set, and the reviewer template says how.
 	reviewer, err := TemplateByName("reviewer")
 	if err != nil {
@@ -346,9 +346,9 @@ func TestCompareMatchesTheTemplateItWasRenderedFrom(t *testing.T) {
 	}
 }
 
-// The example the issue leads with: an issue-driven factory compared to
-// slop-factory reports that auto-merge is off and that a feature a bee
-// proposes waits for a person, and nothing else. The differences come out in
+// An issue-driven factory compared to slop-factory reports that auto-merge
+// is off and that a feature a bee proposes waits for a person, and nothing
+// else. The differences come out in
 // the order the file writes the keys, which is TemplateKeys order.
 func TestCompareReportsTheSettingsAndNothingElse(t *testing.T) {
 	issueDriven, err := TemplateByName("issue-driven")
@@ -386,7 +386,7 @@ func TestCompareReportsOneSettingAtATime(t *testing.T) {
 	}
 }
 
-// Decision 2 of #423: the comparison is on the resolved values. A config that
+// The comparison is on the resolved values. A config that
 // sets none of the eight keys runs on their defaults, which is what
 // issue-driven writes explicitly, so the two are equal.
 func TestCompareReadsDefaultsNotFileText(t *testing.T) {
@@ -433,7 +433,7 @@ func TestClosest(t *testing.T) {
 	}
 }
 
-// Decision 4 of #423: ties go to the earlier template in Templates(). This
+// Ties go to the earlier template in Templates(). This
 // config enables the product manager (contributor does not) and disables QA
 // (issue-driven does not), and agrees with both on the other six settings.
 func TestClosestTieGoesToTheEarlierTemplate(t *testing.T) {

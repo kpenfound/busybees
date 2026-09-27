@@ -651,8 +651,8 @@ func TestCheckProjectPrompts(t *testing.T) {
 
 // A repository can carry both kinds of problem at once - a misspelled file no
 // role reads, and a separately oversized common.md - and one run has to name
-// both. Reporting the misspelling alone made discovering the second cost a
-// fix and a re-run (#309).
+// both. Reporting the misspelling alone would make discovering the second
+// cost a fix and a re-run.
 func TestCheckProjectPromptsReportsEveryProblemInOneRun(t *testing.T) {
 	f := setup(t, "", nil)
 	dir := filepath.Join(f.clone, "bees", "prompts")
@@ -723,7 +723,7 @@ token = "ghp_fixture"
 // TestCheckGitHubLogin covers the three answers `gh api user` can give for a
 // configured token - the login bees.toml names, a different one, and an error
 // - plus the "[bot]" shape somebody configuring a bot account actually
-// writes. An error is a failure whatever github.login says (#306): the login
+// writes. An error is a failure whatever github.login says: the login
 // is compared with the account GitHub reports, so a token that authenticates
 // as no account is a token bees cannot run as.
 func TestCheckGitHubLogin(t *testing.T) {
@@ -828,10 +828,9 @@ func TestGitHubChecksAreSkippedWithoutTheTable(t *testing.T) {
 	}
 }
 
-// TestCheckIssueWrites covers the failure #303 was filed for: a token that
-// reads the repository as ADMIN and cannot create an issue. checkRepoAccess
-// passes on such a token, so the write has to be established rather than
-// inferred.
+// TestCheckIssueWrites covers a token that reads the repository as ADMIN
+// and cannot create an issue. checkRepoAccess passes on such a token, so the
+// write has to be established rather than inferred.
 func TestCheckIssueWrites(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -883,8 +882,8 @@ func TestTheWriteProbeLeavesNothingBehind(t *testing.T) {
 	}
 }
 
-// TestCheckPushes covers the sibling of #303 the issue-write check does not
-// reach (#312): a token granted Issues but not Contents passes every other
+// TestCheckPushes covers the sibling failure the issue-write check does not
+// reach: a token granted Issues but not Contents passes every other
 // GitHub check bees has, and then every developer session's `git push` fails.
 // The refusal is GitHub's, so the probe has to be a real write.
 func TestCheckPushes(t *testing.T) {
@@ -1061,7 +1060,7 @@ func TestCheckFilterCreatorListsTheAccountTheFactoryActsAs(t *testing.T) {
 // A filter.assignee that is not a GitHub login makes `gh issue list --assignee X`
 // error instead of answering an empty list (it only answers empty when the query
 // also carries a label). That is a filter matching nothing, not a broken gh, and
-// checkFilter is a Warn and never a Fail - see #130.
+// checkFilter is a Warn and never a Fail.
 func TestCheckFilterUnknownAssignee(t *testing.T) {
 	const toml = "\n[filter]\nrequire_label = false\nassignee = \"kylpenfound\"\n"
 	graphQL := errors.New("gh issue list: exit status 1: GraphQL: Could not find an assignee " +
@@ -1124,7 +1123,7 @@ func baseLabelGH(issues, prs int) func([]string) (ghReply, bool) {
 }
 
 // A filter that suddenly matches nothing while the repository is full of
-// labelled work is the failure mode of #110: say so, with both counts.
+// labelled work is a hidden backlog: say so, with both counts.
 func TestCheckFilterTellsAnEmptyRepoFromAHiddenBacklog(t *testing.T) {
 	f := setup(t, "\n[filter]\nassignee = \"kyle\"\n", nil)
 	f.gh.reply = baseLabelGH(34, 2)

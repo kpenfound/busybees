@@ -180,7 +180,7 @@ func TestInitLabelFailureSaysHowToRetry(t *testing.T) {
 // undetectableClone returns a clone in which nothing about the project can be
 // detected: the origin remote has no HEAD ref and its URL points nowhere, so
 // both `git symbolic-ref` and `git ls-remote` fail, and the URL is not a
-// GitHub one. That is the boundary #89 is about.
+// GitHub one.
 func undetectableClone(t *testing.T) string {
 	t.Helper()
 	_, clone := testutil.SetupRepos(t)
@@ -219,9 +219,9 @@ func captureStdout(t *testing.T, fn func()) string {
 	return string(out)
 }
 
-// TestInitRepoWithUndetectableBranchFails is the bug of #89: --repo used to
-// make init write a guessed default_branch = "main" as an active setting,
-// which also made the Resolve check of #41 pass trivially.
+// TestInitRepoWithUndetectableBranchFails: --repo alone must not make init
+// write a guessed default_branch = "main" as an active setting, which would
+// also make init's Resolve check pass trivially.
 func TestInitRepoWithUndetectableBranchFails(t *testing.T) {
 	clone := undetectableClone(t)
 	deps, labels := testInitDeps()
@@ -295,8 +295,8 @@ func TestInitPrintKeepsAGuessedBranchCommented(t *testing.T) {
 
 // TestInitWithAQuotedDefaultBranch: git accepts a quote in a ref name, so a
 // detected branch can contain one. It must be escaped, not interpolated raw:
-// unescaped it closed the TOML string and turned the rest of the branch name
-// into settings of its own (#136).
+// unescaped it would close the TOML string and turn the rest of the branch
+// name into settings of its own.
 func TestInitWithAQuotedDefaultBranch(t *testing.T) {
 	const branch = `we"ird`
 	_, clone := testutil.SetupRepos(t)
@@ -349,8 +349,6 @@ func TestInitPrintsTheDoctorTable(t *testing.T) {
 	}
 }
 
-// TestInitRunsTheDoctorWithoutLabels covers --no-labels, which used to return
-// before anything after the label sync.
 // TestInitPrintTemplateMatchesTemplatesShow: --print --template and
 // `bees templates show` share the one renderer, so they must print the same
 // bytes, and --print still writes nothing.

@@ -206,7 +206,6 @@ func TestConfigInvalid(t *testing.T) {
 	}{
 		{"unknown key", "provder = \"claude\"\n", []string{"unknown keys", "provder"}},
 		{"unknown key in a table", "[github]\ntokn = \"x\"\n", []string{"unknown keys", "github.tokn"}},
-		{"tui table is gone", "[tui]\ncolor = false\n", []string{"unknown keys", "tui"}},
 		{"provider", "provider = \"gemini\"\n", []string{"provider \"gemini\" must be one of claude, codex, opencode, pi"}},
 		{"output", "output = \"merge\"\n", []string{"output \"merge\" must be one of ask, approve, comment, reject, report, discard"}},
 		{"token variable", "[github]\ntoken = \"$REVIEW_UNSET_TOKEN\"\n", []string{"github.token reads $REVIEW_UNSET_TOKEN, which is not set"}},

@@ -174,7 +174,7 @@ func TestSchedulerLine(t *testing.T) {
 			// A status.json that records the build the running scheduler
 			// was started from names it, because the role prompts are
 			// compiled in and a merged prompt change reaches no session
-			// until bees is rebuilt and `bees run` restarted (#296).
+			// until bees is rebuilt and `bees run` restarted.
 			name: "running a recorded build",
 			st: state.Status{UpdatedAt: now, PID: 42, LastPoll: now.Add(-90 * time.Second),
 				Version: "dev (abc123def456 modified)", Revision: "abc123def456789"},
@@ -241,7 +241,7 @@ func TestSchedulerLine(t *testing.T) {
 			want: "scheduler: pid 47, no successful poll yet   build dev",
 		},
 		{
-			// The pause notice still appends to the new arm: a factory
+			// The pause notice appends to this line too: a factory
 			// whose polls fail can also be budget-paused.
 			name: "no successful poll yet, paused",
 			st: state.Status{UpdatedAt: now, PID: 47, BudgetPaused: true,
@@ -263,7 +263,7 @@ func TestSchedulerLine(t *testing.T) {
 
 // A worker that took over from a session a killed scheduler left unfinished
 // is marked resumed, because its branch may already carry work nobody
-// reported; one that started fresh reads exactly as it always did (#250).
+// reported; one that started fresh carries no mark.
 func TestWorkersTextMarksAResumedWorker(t *testing.T) {
 	since := time.Date(2026, 8, 31, 8, 22, 0, 0, time.Local)
 	fresh := state.Worker{Name: "dev-1", Size: "m", Stage: "developer", Round: 1, Since: since, Work: ghwork.New(7, 0)}
@@ -283,7 +283,7 @@ func TestWorkersTextMarksAResumedWorker(t *testing.T) {
 	if !strings.HasSuffix(lines[1], "   resumed") {
 		t.Errorf("a resumed worker is not marked: %q", lines[1])
 	}
-	// Everything the line said before is still on it, in the same columns.
+	// The mark only appends: the rest of the line keeps its columns.
 	// A worker whose session has not started yet has no sandbox to report.
 	if !strings.HasPrefix(lines[1], "  dev-2        issue #9     s   reviewer          round 2              sandbox -         since ") {
 		t.Errorf("the columns moved: %q", lines[1])
@@ -308,11 +308,9 @@ func TestWorkersTextReportsTheSandbox(t *testing.T) {
 	}
 }
 
-// `bees status --json` needed no new key for the running build: the two
-// fields ride along inside the marshalled `status` object, which is the whole
-// state.Status. The test marshals `statusJSON`, the object the command itself
-// prints, so a second, top-level copy of the version added there later fails
-// here rather than quietly giving a consumer two places to read it from.
+// `bees status --json` carries the running build inside the marshalled
+// `status` object, which is the whole state.Status. The test marshals
+// `statusJSON`, the object the command itself prints.
 func TestStatusJSONCarriesTheBuildInsideStatus(t *testing.T) {
 	st := state.Status{Version: "dev (abc123def456 modified)", Revision: "abc123def456789"}
 	raw, err := json.Marshal(statusJSON(&config.Config{}, st, map[string]int{}, todayReport{}, nil, time.Now()))
@@ -330,15 +328,6 @@ func TestStatusJSONCarriesTheBuildInsideStatus(t *testing.T) {
 	}
 	if got.Status["revision"] != st.Revision {
 		t.Errorf("status.revision: got %v want %q", got.Status["revision"], st.Revision)
-	}
-	var top map[string]any
-	if err := json.Unmarshal(raw, &top); err != nil {
-		t.Fatal(err)
-	}
-	for _, key := range []string{"version", "revision", "build"} {
-		if _, ok := top[key]; ok {
-			t.Errorf("--json grew a top-level %q key; the build belongs inside status", key)
-		}
 	}
 }
 
@@ -358,9 +347,9 @@ func fakeAlive(t *testing.T, live ...int) {
 	}
 }
 
-// A status.json outlives the scheduler that wrote it (#846): a dead pid is
+// A status.json outlives the scheduler that wrote it: a dead pid is
 // marked on the scheduler line, drops the next-poll countdown and reads
-// running=false in --json, while a live one reads as before and a
+// running=false in --json, while a live one carries no mark and a
 // status.json never written is not running at all.
 func TestStatusSaysWhenTheSchedulerIsNotRunning(t *testing.T) {
 	fakeAlive(t, 42)

@@ -136,8 +136,8 @@ func TestAConfinedTurnIsHeldToItsGrants(t *testing.T) {
 				t.Errorf("the confiner was asked %+v", confiner.checked)
 			}
 
-			// The same grants without Confine are what they always were:
-			// nothing enforces them, so they are refused.
+			// The same grants without Confine are enforced by nothing, so
+			// they are refused.
 			req.Profile.Confine = false
 			if _, err := l.boundary(confiner).Verify(req); !errors.Is(err, ErrUnsupported) {
 				t.Errorf("unconfined with the same grants: %v, want ErrUnsupported", err)

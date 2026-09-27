@@ -10,8 +10,9 @@ import (
 	"github.com/kpenfound/busybees/internal/mcpserver"
 )
 
-// These wire and CLI fingerprints pin the complete pre-extraction public
-// contract, including descriptions, annotations, schemas, ordering and enums.
+// These wire and CLI fingerprints pin the complete public contract of every
+// role's tools, including descriptions, annotations, schemas, ordering and
+// enums.
 func TestMCPPublicContract(t *testing.T) {
 	want := map[string][2]string{
 		"":                {"546717fa9e544c7b96f0deb90c0b98a3821cfce3bc5b61cdad0e545a69e7f3df", "ce88d26d56d9252cd5229b7b5a9d5adc3a8996159bd1964fcb9162329e0f6c51"},

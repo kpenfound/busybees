@@ -117,7 +117,7 @@ the directory exactly as it found it.`,
 
 // runInit validates first and writes second: nothing touches disk until the
 // rendered template has parsed and resolved, so a failed init leaves no
-// half-initialised directory behind (#41).
+// half-initialised directory behind.
 func runInit(ctx context.Context, o initOptions, d initDeps) error {
 	// Resolved before anything else init does: an unknown template name must
 	// fail with no filesystem, git or GitHub side effect at all.
@@ -135,7 +135,7 @@ func runInit(ctx context.Context, o initOptions, d initDeps) error {
 	// render detects what it can so the placeholders in the template are
 	// right. A value only becomes an active setting when the user stated it or
 	// it was actually detected: an undetectable default branch stays a
-	// commented placeholder rather than a guess bees would then push to (#89).
+	// commented placeholder rather than a guess bees would then push to.
 	render := func() (string, error) {
 		repo := o.repo
 		if repo == "" {
@@ -353,9 +353,8 @@ func tuiMode(noTUI bool, stdout *os.File) bool {
 
 // logTUIMode is what `bees run` calls: it makes the decision and records it
 // for the log file. The record is a debug one, so `bees run --no-tui` and a
-// redirected stdout print exactly what they printed before the flag existed
-// (#244); with the UI on the console is silenced anyway and the log file has
-// it.
+// redirected stdout print only the factory's own log; with the UI on the
+// console is silenced anyway and the log file has it.
 func logTUIMode(log *slog.Logger, noTUI bool, stdout *os.File) bool {
 	on := tuiMode(noTUI, stdout)
 	log.Debug("terminal UI", "enabled", on)
@@ -498,7 +497,7 @@ func preflight(ctx context.Context, checks []doctor.Check) error {
 
 // loggedPreflight uses the project logger in machine mode, where the live
 // view already owns the console. Its error carries details for the view.
-// A nil logger preserves the single-project command's printed doctor table.
+// A nil logger prints the doctor table, as the single-project command does.
 func loggedPreflight(ctx context.Context, checks []doctor.Check, log *slog.Logger) error {
 	cheap := doctor.CheapChecks(checks)
 	results := doctor.Run(ctx, cheap)

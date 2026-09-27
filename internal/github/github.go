@@ -26,15 +26,13 @@ type Client struct {
 	// ActsAs is the GitHub login this client's calls act as, when the factory
 	// has an account of its own (config's [github] table). It is what makes
 	// the author of a comment a signal: see IsBee. Empty (the default) means
-	// the factory shares an account with the people it works for, which is
-	// what bees did before [github] existed, and then the comment marker is
-	// the only signal there is. It is configuration, unlike the Login method,
+	// the factory shares an account with the people it works for, and then
+	// the comment marker is the only signal there is. It is configuration, unlike the Login method,
 	// which asks GitHub.
 	ActsAs string
 	// Token is the GitHub token this client's gh calls authenticate with,
 	// passed as GH_TOKEN. Empty (the default) runs gh with whatever
-	// authentication the machine already has, which is what bees did before
-	// config's [github] table existed.
+	// authentication the machine already has.
 	//
 	// It is a field rather than something the command builder reaches for so
 	// that a caller can be asserted to have wired the configured token
@@ -220,8 +218,8 @@ func (c Comment) IsBee() bool { _, ok := BeeRole(c.Body); return ok }
 // by anyone else: a person quoting a marker is still a person, because the
 // marker rule is positional and their login is not the factory's.
 //
-// An empty login is every configuration that predates [github], and then this
-// is exactly the marker rule.
+// An empty login is every configuration without [github], and then this is
+// exactly the marker rule.
 func IsBee(login, author, body string) bool {
 	if login != "" && SameLogin(author, login) {
 		return true

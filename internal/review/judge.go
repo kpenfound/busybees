@@ -5,7 +5,8 @@ import (
 	"github.com/kpenfound/busybees/internal/duplicates"
 )
 
-// compareFindingsText keeps busybees' existing text policy and threshold.
+// compareFindingsText is busybees' text policy and threshold:
+// internal/duplicates' Score.
 func compareFindingsText(title, body, otherTitle, otherBody string) bool {
 	return duplicates.Score(title, body, otherTitle, otherBody) >= duplicates.Threshold
 }

@@ -255,8 +255,8 @@ func (a *app) scheduler() (*scheduler.Scheduler, error) {
 
 // schedulerBuild resolves the build the scheduler records in its startup log
 // line and in status.json: the version `bees version` prints, and the
-// untruncated commit behind it (the version truncates it for display; #297
-// compares the raw one against the repository).
+// untruncated commit behind it (the version truncates it for display; the
+// doctor's scheduler build check compares the raw one against the repository).
 //
 // cmd/bees resolves it and hands it to the scheduler rather than the other
 // way round, because the release build's `-ldflags -X main.version` override

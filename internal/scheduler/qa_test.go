@@ -42,12 +42,12 @@ func seedQAFirstRun(t *testing.T) *harness {
 	return h
 }
 
-// TestMailStartsQARunInsideItsInterval pins the contract behind `qa_interval`
-// (#228): it is a floor on the runs QA starts *by itself*, not on the ones
+// TestMailStartsQARunInsideItsInterval pins the contract behind `qa_interval`:
+// it is a floor on the runs QA starts *by itself*, not on the ones
 // somebody directs at it. Mail is the only channel into a role, so a message
 // addressed to `qa` is a person or the product manager asking for a run now;
-// making it wait up to the interval would half-undo the steering channel
-// #199 built. The cost is bounded because the run marks the mail read: a mail
+// making it wait up to the interval would half-undo that steering channel.
+// The cost is bounded because the run marks the mail read: a mail
 // burst buys one extra session, not one per poll. QA is checked here on an
 // ordinary full poll, where qaHasWork decides: that check is the contract,
 // not a side effect of the mail-only override dispatchSingletons applies on a
@@ -75,8 +75,8 @@ func TestMailStartsQARunInsideItsInterval(t *testing.T) {
 	}
 }
 
-// TestQAIntervalStillBoundsUnpromptedRuns is the other half of that contract
-// (#228): mail lifts the floor, nothing else does. With an empty QA mailbox
+// TestQAIntervalStillBoundsUnpromptedRuns is the other half of that contract:
+// mail lifts the floor, nothing else does. With an empty QA mailbox
 // no poll starts a session while `qa_interval` has not elapsed — not even
 // with something newly merged to look at — and the session that was held back
 // does run once the interval passes, which is what shows the interval is what

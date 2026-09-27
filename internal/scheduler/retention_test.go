@@ -94,8 +94,9 @@ func TestRetentionRemovesAClosedIssuesStateOnceRetentionPeriodHasPassed(t *testi
 	legacy9 := fakeSessionDir(t, h, "reviewer-pr-209-r1", 0, true, 0)
 	open8 := fakeSessionDir(t, h, "developer-issue-8-r1", 8, true, 0)
 	unrelated := fakeSessionDir(t, h, "qa", 0, true, 0)
-	// These directories predate work markers. Re-run the one-time upgrade
-	// before the scheduler starts, as an existing installation would.
+	// These directories carry no work markers, as an older bees wrote them.
+	// Re-run the one-time upgrade before the scheduler starts, as an existing
+	// installation would.
 	if err := os.Remove(filepath.Join(h.store.Dir, statemigrate.Marker)); err != nil {
 		t.Fatal(err)
 	}

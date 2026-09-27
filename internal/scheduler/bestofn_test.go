@@ -372,9 +372,9 @@ func TestBestOfNClampsToMaxDevelopers(t *testing.T) {
 	}
 }
 
-// A size with no best_of_n_by_size entry dispatches exactly as it always
-// has, with the table set for another size: one session under its usual
-// name, on the issue's own branch, in one slot.
+// A size with no best_of_n_by_size entry does not fan out, with the table
+// set for another size: one session under its usual name, on the issue's
+// own branch, in one slot.
 func TestBestOfNLeavesOtherSizesAlone(t *testing.T) {
 	h := newHarness(t, bestOfNTOML)
 	release := filepath.Join(t.TempDir(), "release")
@@ -1075,7 +1075,7 @@ func TestMoEAttemptsCarryTheirExpert(t *testing.T) {
 // A size best_of_n_by_size fans out, and a size neither table names, are
 // untouched by the expert path: the best-of-N attempts run the best-of-N
 // model and prompt with no expert named, the single session runs the
-// developer's own, and dispatch claims the same slots it always has. The
+// developer's own, and dispatch claims one slot per attempt. The
 // expert table is set for another size so the path is reachable.
 func TestMoELeavesBestOfNAndSingleSessionsAlone(t *testing.T) {
 	toml := strings.Replace(moeTOML, "moe_experts_by_size = { l = [\"backend\", \"frontend\", \"tests\"] }\n",

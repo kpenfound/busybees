@@ -357,7 +357,7 @@ func TestSortReadyPutsPriorityFirst(t *testing.T) {
 			want:   []int{2, 1, 3},
 		},
 		{
-			// ... and under "oldest" that is age, as before.
+			// ... and under "oldest" that is age.
 			name:   "two priority issues keep age",
 			order:  config.DispatchOldest,
 			issues: []github.Issue{issue(1, "l", true), issue(2, "xs", true), issue(3, "xs", false)},

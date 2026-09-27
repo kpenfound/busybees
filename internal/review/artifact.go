@@ -100,7 +100,8 @@ func pullRequestDir(storage string, ref Ref) string {
 	return filepath.Join(storage, filepath.FromSlash(ref.Repo), strconv.Itoa(ref.Number))
 }
 
-// Artifact keeps the legacy reference shape for triage and verification.
+// Artifact keeps the GitHub reference shape artifacts are written with, for
+// triage and verification.
 type Artifact = core.Artifact[Ref]
 type Triage = core.Triage
 type Decision = core.Decision

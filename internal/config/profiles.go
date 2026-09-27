@@ -67,8 +67,8 @@ type legacyAgentProfile struct {
 	Sandbox       string `toml:"sandbox"`
 }
 
-// legacyDefaultFallbackModel was the fallback model of a claude profile that
-// named none, in versions 3 and 4.
+// legacyDefaultFallbackModel is the fallback model of a claude profile that
+// names none, in versions 3 and 4.
 const legacyDefaultFallbackModel = "sonnet"
 
 func (p legacyAgentProfile) resolved() legacyAgentProfile {

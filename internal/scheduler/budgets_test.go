@@ -98,7 +98,7 @@ func TestIssueOverItsCostBudgetIsEscalated(t *testing.T) {
 }
 
 // TestIssueCostBudgetOffChangesNothing is the same fixture without a budget:
-// the loop runs to approval as it does today.
+// the loop runs to approval.
 func TestIssueCostBudgetOffChangesNothing(t *testing.T) {
 	t.Setenv("FAKE_COST", "1.0")
 	h := newHarness(t, baseTOML+devAndReviewerTOML)
@@ -156,8 +156,8 @@ func TestDailyBudgetStopsNewSessions(t *testing.T) {
 	}
 }
 
-// TestDailyBudgetResumesAtTheResumeThreshold drives the whole hysteresis
-// (#365): with max_cost_per_day = 100 and max_cost_per_day_resume_percent =
+// TestDailyBudgetResumesAtTheResumeThreshold drives the whole hysteresis:
+// with max_cost_per_day = 100 and max_cost_per_day_resume_percent =
 // 80 the factory pauses at $100 and stays paused all the way down to $80,
 // rather than resuming a cent under the budget and dispatching straight over
 // it again. The rolling window falls by advancing the fake clock so seeded
@@ -229,8 +229,8 @@ func TestDailyBudgetResumesAtTheResumeThreshold(t *testing.T) {
 	}
 }
 
-// TestTheDefaultResumePercentKeepsTodaysBehaviour covers the two ways #365
-// changes nothing: a bees.toml with no resume percent resumes the moment the
+// TestTheDefaultResumePercentKeepsTodaysBehaviour covers the two cases in
+// which the resume percent has no effect: a bees.toml with no resume percent resumes the moment the
 // rolling window is under budget (the default is 100%, at which the two
 // thresholds are the same number), and the key is inert when there is no
 // daily budget for it to be a percentage of.
@@ -431,8 +431,8 @@ func TestBudgetKey(t *testing.T) {
 	}
 }
 
-// TestIssueSpendSeedsFromTheLedger: an issue whose bookkeeping predates
-// budgets (or was deleted) still has a history in the ledger, and the total
+// TestIssueSpendSeedsFromTheLedger: an issue whose bookkeeping carries no
+// total (or was deleted) still has a history in the ledger, and the total
 // is seeded from it once rather than starting again at zero.
 func TestIssueSpendSeedsFromTheLedger(t *testing.T) {
 	h := newHarness(t, baseTOML)

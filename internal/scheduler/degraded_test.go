@@ -268,8 +268,8 @@ func TestDegradedEntriesAreSortedAndNamed(t *testing.T) {
 	}
 }
 
-// A migrated site that does log names its operation in the record, so a log
-// reader can group by it.
+// An op call that logs names its operation in the record, so a log reader
+// can group by it.
 func TestALoggedOperationCarriesItsName(t *testing.T) {
 	h := newHarness(t, degradedTOML)
 	buf := jsonLog(h)

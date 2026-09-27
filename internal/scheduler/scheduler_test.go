@@ -2073,8 +2073,7 @@ func TestProductManagerSeesEachWorkItemsParent(t *testing.T) {
 }
 
 // TestQAReceivesHumanMail: `bees mail send --from human --to qa` is a
-// documented channel, and until #199 runQA built its session with no Inbox at
-// all, so a message sat unread forever. The message reaches the next QA
+// documented channel. The message reaches the next QA
 // session — this test's own next run is its interval plus a new merge, not
 // the mail — and is marked read there, which is what keeps the following
 // session's mail section empty.

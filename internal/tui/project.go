@@ -91,7 +91,7 @@ type sessionRef struct {
 
 // multi says whether the view is over several projects: a daemon's view,
 // where the selector and the project column exist. A single-project view
-// has neither and reads exactly as it did before there were daemons.
+// has neither.
 func (m Model) multi() bool { return len(m.projects) > 1 }
 
 // all says whether every project is in view.

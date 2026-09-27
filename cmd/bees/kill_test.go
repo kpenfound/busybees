@@ -17,7 +17,7 @@ import (
 )
 
 // A live workspace must never look leftover: bees kill would RemoveAll the
-// worktree of a running session (#133).
+// worktree of a running session.
 func TestIsLeftoverWorkspaceKeepsALiveWorkspace(t *testing.T) {
 	ctx := context.Background()
 	_, clone := testutil.SetupRepos(t)
@@ -56,7 +56,7 @@ func TestIsLeftoverWorkspace(t *testing.T) {
 
 	empty := mkdir("empty")
 
-	// A worktree whose leaf is named after the workspace (today's layout).
+	// A worktree whose leaf is named after the workspace (the layout bees creates).
 	named := mkdir("developer-1-123", "developer-1-123")
 	write(filepath.Join(named, ".git"), "gitdir: /somewhere/.git/worktrees/developer-1-123\n")
 
@@ -135,8 +135,8 @@ func TestKillStopsOnStatusMigrationFailure(t *testing.T) {
 // `bees kill --dry-run` is an inspection: it must delete nothing under the
 // state directory, and say what it would do rather than what it did. Session
 // discovery deletes the stale pid, container-id and server-pid files it
-// reads, so a dry run over a running session used to delete that session's
-// pid file and report "no leftover sessions" (#840).
+// reads, so a dry run that let it would delete a running session's pid file
+// and report "no leftover sessions".
 //
 // The container id file is not exercised here: the PATH below holds no
 // container engine, so discovery never reaches it. core/agent/procs'

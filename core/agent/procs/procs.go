@@ -616,7 +616,7 @@ func signal(p Proc, sig syscall.Signal) error {
 // Markers describes the caller's session command markers and container label.
 type Markers struct {
 	Session, Codex, Container string
-	// LegacyCodex optionally recognizes sessions launched before the standalone runner.
+	// LegacyCodex optionally recognizes codex sessions that carry an older runner's marker.
 	LegacyCodex string
 }
 

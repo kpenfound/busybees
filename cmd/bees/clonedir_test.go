@@ -17,7 +17,7 @@ func withDir(dir string) string {
 	return strings.Replace(botTOML, "state_dir = \".bees\"\n", "state_dir = \".bees\"\ndir = \""+filepath.ToSlash(dir)+"\"\n", 1)
 }
 
-// TestNewAppProjectDir covers #661: bees.toml living outside the git clone it
+// TestNewAppProjectDir covers bees.toml living outside the git clone it
 // manages, project.dir naming where the clone actually is. newApp's git-clone
 // check, and the workspace manager it builds, both have to follow project.dir
 // rather than assume bees.toml's own directory is the clone.

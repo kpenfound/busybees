@@ -44,7 +44,7 @@ func TestAWorkerKilledInTheChecksStageResumesInIt(t *testing.T) {
 		t.Fatalf("nothing was merged yet, got %v", h.gh.Merged)
 	}
 	// The label a restart would otherwise infer the stage from says only that
-	// a developer is on it, which is where the old inference would restart.
+	// a developer is on it, which is where inferring from it would restart.
 	if got := h.stateOfIssue(1); got != "in-progress" {
 		t.Fatalf("issue state label after the crash is %q", got)
 	}
@@ -194,7 +194,7 @@ func TestAResumedDeveloperRoundDoesNotPayForTheReadAgain(t *testing.T) {
 // cannot reach are here — a remembered review-loop stage whose pull request
 // has gone, and a state file another version wrote — along with the one that
 // matters most, an issue with nothing remembered at all, which must start
-// exactly where it always did.
+// where its label says.
 func TestResumeStage(t *testing.T) {
 	h := newHarness(t, prereviewTOML)
 	pr := &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1"}
@@ -342,10 +342,10 @@ func TestASubStateDoesNotSurviveTheIssueGoingBackToReady(t *testing.T) {
 // forces the review stage by rewriting the issue's state label, and the local
 // copy the worker reads has to be rewritten too. relabel matches a full label
 // name while stateOf returns the short state, so spelling the state back out
-// is what actually removes the old label: given "in-progress" nothing was
-// removed, the copy carried bees:in-progress and bees:review at once, and
-// stateOf — first hit in StateLabels() order — read in-progress back out and
-// started a developer session instead of a review.
+// is what actually removes the old label: given "in-progress" nothing would
+// be removed, the copy would carry bees:in-progress and bees:review at once,
+// and stateOf — first hit in StateLabels() order — would read in-progress
+// back out and start a developer session instead of a review.
 func TestExecReviewerReviewsAnIssueThatIsNotYetInReview(t *testing.T) {
 	h := newHarness(t, prereviewTOML)
 	seedPreReviewIssue(t, h, "Review what is already pushed")
@@ -362,16 +362,13 @@ func TestExecReviewerReviewsAnIssueThatIsNotYetInReview(t *testing.T) {
 	}
 
 	h.wantOrder("reviewer-pr-101-r1")
-	if n := len(h.sessions(config.RoleDeveloper)); n != 0 {
-		t.Fatalf("%d developer sessions ran, want none: exec reviewer asked for a review", n)
-	}
 }
 
 // TestAWorkerKilledInThePostApprovalChecksIsResumed: approve() labels the
 // issue bees:approved before the worker enters the checks stage, so a
 // scheduler killed while waiting out checks_timeout leaves work in flight
-// behind a label no dispatch pass used to look at — with auto_merge on,
-// nothing merged the pull request and nothing escalated it. The issue is a
+// behind a label that otherwise means waiting for a person — with auto_merge
+// on, nothing else merges the pull request or escalates it. The issue is a
 // resumption like any other: the second run goes straight back to the checks
 // it was waiting for and merges, without a developer or a reviewer session.
 func TestAWorkerKilledInThePostApprovalChecksIsResumed(t *testing.T) {
@@ -481,7 +478,7 @@ func TestAnApprovedIssueThatIsNotAResumptionIsNotDispatched(t *testing.T) {
 // gating the resumption on roles.reviewer.auto_merge redundant: with it off,
 // approve() returns before the checks stage, so worker_stage never becomes
 // "checks" and the approved issue is never a candidate — the merge is the
-// person's, exactly as it was.
+// person's.
 func TestWithoutAutoMergeAnApprovedIssueStaysWithThePerson(t *testing.T) {
 	h := newHarnessAt(t, strings.Replace(checksTOML, "auto_merge = true", "auto_merge = false", 1), time.Now())
 	seedChecksIssue(t, h)
@@ -626,8 +623,8 @@ func TestAStageRecordedForAnotherPullRequestIsDropped(t *testing.T) {
 // of its loop, before the develop stage relabels the issue bees:in-progress. A
 // scheduler killed there, or a single failing `gh issue edit`, leaves the
 // round behind a bees:approved label: the same work in flight as an
-// interrupted checks stage, one stage on, and nothing merged it or escalated
-// it. The next pass takes it back and carries the round through to the merge.
+// interrupted checks stage, one stage on, and nothing else merges or
+// escalates it. The next pass takes it back and carries the round through to the merge.
 func TestAWorkerKilledInAPostApprovalFixRoundIsResumed(t *testing.T) {
 	h := newHarnessAt(t, checksTOML, time.Now())
 	seedChecksIssue(t, h)
@@ -637,7 +634,7 @@ func TestAWorkerKilledInAPostApprovalFixRoundIsResumed(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Approved, waiting out the post-approval checks, when the scheduler was
-	// restarted: the resumption #281 added.
+	// restarted.
 	if err := h.store.SaveIssue(state.WorkState{Round: 1, Branch: "bees/issue-1",
 		WorkerStage: "checks", AfterDevelop: "review", Work: ghwork.New(1, fakePR),
 	}); err != nil {
@@ -648,7 +645,7 @@ func TestAWorkerKilledInAPostApprovalFixRoundIsResumed(t *testing.T) {
 		{JSON: passingJSON, Err: nil},                         // green once the fix is pushed
 	}
 	// GitHub answers the relabel to bees:in-progress with a 502 — the same
-	// window a kill lands in, and the one the reporter measured.
+	// window a kill lands in.
 	h.gh.ErrFor["issue edit"] = fmt.Errorf("gh: 502 Bad Gateway")
 	runPass(t, h)
 

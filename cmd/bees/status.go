@@ -160,8 +160,7 @@ func workersText(st state.Status) string {
 // The build the running scheduler was started from comes last, after
 // anything that has stopped the factory: it is attribution rather than a
 // thing to act on. It is omitted entirely when status.json carries no
-// version — one written by a bees older than the field — so the line reads
-// exactly as it always did.
+// version, as one written by a bees older than the field does.
 //
 // LastPoll stays zero until the first poll succeeds, so a scheduler whose
 // polls have all failed (an expired token, a network outage at startup) has

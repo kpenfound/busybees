@@ -10,7 +10,7 @@ import (
 // Repo and DefaultBranch are shown as commented placeholders (they are
 // derived from the remote at run time) unless the matching Explicit flag is
 // set. A value that was only guessed must stay a placeholder: writing a guess
-// as an active setting would make bees push to a branch nobody detected (#89).
+// as an active setting would make bees push to a branch nobody detected.
 type RenderOptions struct {
 	Remote        string
 	Repo          string
@@ -56,7 +56,7 @@ func RenderTOML(d RenderOptions) (string, error) {
 	// Every value below is interpolated inside a double-quoted TOML string,
 	// and not all of them are under the operator's control: git accepts a
 	// quote in a branch name, and init writes a detected branch. Escape them
-	// here, once, so no interpolation site can be forgotten (#136).
+	// here, once, so no interpolation site can be forgotten.
 	d.Remote = escapeTOML(d.Remote)
 	d.Repo = escapeTOML(d.Repo)
 	d.DefaultBranch = escapeTOML(d.DefaultBranch)

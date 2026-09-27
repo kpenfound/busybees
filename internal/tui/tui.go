@@ -32,8 +32,7 @@
 // dispatch across the whole factory, on p (Deps.SetPaused), and reload the
 // configuration from disk, on r (Deps.Reload). It is drawn only when
 // `bees run` owns a terminal — `bees run --no-tui`, a redirected stdout and
-// `bees tick` log instead, and their output is exactly what it was before
-// there was a view.
+// `bees tick` log instead.
 package tui
 
 import (

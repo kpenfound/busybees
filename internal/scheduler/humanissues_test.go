@@ -55,8 +55,8 @@ func deliverIssueCommentsOnce(t *testing.T, h *harness) *snapshot {
 	return snap
 }
 
-// TestAnIssueSeenInFlightForTheFirstTimeDeliversNothing is decision 2 of #304:
-// a zero issue_human_seen_at must not mean "deliver every comment this issue
+// TestAnIssueSeenInFlightForTheFirstTimeDeliversNothing: a zero
+// issue_human_seen_at must not mean "deliver every comment this issue
 // ever received", which on the first tick after an upgrade would replay the
 // project manager's whole triage conversation. The first pass records the
 // poll time and says nothing; delivery starts from what is written after it.
@@ -129,7 +129,7 @@ func TestAQuietIssueCostsNoCommentFetch(t *testing.T) {
 	}
 }
 
-// TestACommentOnABlockedIssueGoesToWhoeverIsWaiting is decision 3 of #304.
+// TestACommentOnABlockedIssueGoesToWhoeverIsWaiting:
 // reconcile lifts bees:blocked by recipient — developer mail means the
 // question was a developer's and the issue is ready, project-manager mail
 // means it was triage's and the issue goes back to triage — so mailing the
@@ -368,10 +368,10 @@ func TestADeliveredCommentIsNotDeliveredAgain(t *testing.T) {
 }
 
 // TestActivityAuthorsAreListedOnceInTheOrderTheyWrote pins the helper both
-// mail subjects now name their authors with. The order is the order people
-// wrote in, which is what makes a subject reproducible: the PR side used to
-// collect the authors in a map and range over it, so two people on one pull
-// request produced a different subject from one run to the next.
+// mail subjects name their authors with. The order is the order people
+// wrote in, which is what makes a subject reproducible: authors collected
+// in a map and ranged over would give two people on one pull request a
+// different subject from one run to the next.
 func TestActivityAuthorsAreListedOnceInTheOrderTheyWrote(t *testing.T) {
 	at := time.Now()
 	activity := []github.Activity{
@@ -386,16 +386,15 @@ func TestActivityAuthorsAreListedOnceInTheOrderTheyWrote(t *testing.T) {
 	}
 }
 
-// TestAnAnswerToATriageQuestionSurvivesTheSeed is #320. The first-observation
-// seed delivers nothing, so an issue that has never been in a state that
-// carries a clock swallows the first comment written on it. The two blocked
-// paths used to differ: an issue blocked out of a developer session was
-// in-progress first, which seeded its clock, while one blocked out of triage
-// went straight from bees:triage to bees:blocked and had none — so the first
-// pass that saw it blocked seeded and dropped the answer a person had already
-// written, silently and for good.
+// TestAnAnswerToATriageQuestionSurvivesTheSeed: the first-observation seed
+// delivers nothing, so an issue that has never been in a state that carries
+// a clock swallows the first comment written on it. An issue blocked out of
+// a developer session was in-progress first, which seeded its clock, while
+// one blocked out of triage goes straight from bees:triage to bees:blocked —
+// without a clock there, the first pass that saw it blocked would seed and
+// drop the answer a person had already written, silently and for good.
 //
-// Giving bees:triage a clock closes it: the issue is always observed in
+// Giving bees:triage a clock prevents that: the issue is always observed in
 // triage before anything can block it, so by the time it is blocked the clock
 // is already at the last poll before the state changed.
 func TestAnAnswerToATriageQuestionSurvivesTheSeed(t *testing.T) {
@@ -457,7 +456,7 @@ func TestAnAnswerToATriageQuestionSurvivesTheSeed(t *testing.T) {
 }
 
 // TestATriageConversationIsNotReplayedOnceTheIssueBlocks: giving triage a
-// clock must not weaken decision 2 of #304. Comments written before the
+// clock must not weaken the first-observation seed. Comments written before the
 // factory first saw the issue are history, not direction — on the first tick
 // after an upgrade the whole triage conversation would otherwise arrive as
 // fresh mail from a person — so the seed still swallows them, on the pass
@@ -516,11 +515,12 @@ func TestATriageConversationIsNotReplayedOnceTheIssueBlocks(t *testing.T) {
 // last triage poll for as long as the issue waited to be dispatched — so an
 // issue that sat days in the ready queue would hand every comment written
 // across all of them to the developer as fresh direction on its first
-// in-progress pass. Seeding ready too keeps the clock where decision 3 of
-// #320 puts it: the last poll before the state changed.
+// in-progress pass. Seeding ready too keeps the clock at the last poll
+// before the state changed.
 //
 // A comment written after that last pre-flight poll is a different thing, and
-// it is still delivered — that window is the bug #320 exists to close.
+// it is still delivered — that window is what the triage clock exists to
+// close.
 func TestTheReadyQueueDoesNotBankCommentsForTheDeveloper(t *testing.T) {
 	now := time.Now()
 	h := newHarnessAt(t, noRolesTOML, now)

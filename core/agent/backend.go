@@ -688,7 +688,7 @@ func (opencodeBackend) command(ctx context.Context, r *Runner, b Backend, req Re
 		args = append(args, "--title", r.namePrefix()+req.Name, "--agent", openCodeGrantedAgent)
 	default:
 		// Keep the ordinary command's public shape: tests and container
-		// wrappers have always seen --auto directly after the format.
+		// wrappers expect --auto directly after the format.
 		args = append(args, "--auto", "--title", r.namePrefix()+req.Name)
 	}
 	if req.Profile.Model != "" {

@@ -144,7 +144,7 @@ func TestTheCompletedFeatureCheckCostsNoGitHubCalls(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Nothing recorded: the pass gh makes are the ones it made before #239.
+	// Nothing recorded: the gh calls the polling path makes without the check.
 	before := h.gh.Total()
 	if h.sched.productManagerHasWork(ctx, snap) {
 		t.Fatal("a stale feature with no recorded sub-issues woke the product manager")

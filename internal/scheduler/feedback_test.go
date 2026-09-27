@@ -103,7 +103,7 @@ require_label = false
 // so it is not a kind that keeps the issue out of the feedback route the way
 // bees:feature and bees:feedback are. A person who wants the bug built as
 // written labels it bees:triage as well, which is the documented fast path to
-// the project manager. Decided on #221 rather than changed: see that issue.
+// the project manager.
 func TestBugIssueWithNoStateLabelGoesToTheProductManager(t *testing.T) {
 	h := newHarness(t, managersTOML)
 	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Export writes an empty file", Body: "bees export gives me 0 bytes",
@@ -166,7 +166,7 @@ enabled = false
 
 // With the product manager disabled and the project manager enabled, a
 // person's unlabelled issue is routed to bees:triage instead of going quiet
-// on a route nothing consumes (#418).
+// on a route nothing consumes.
 func TestUnlabelledIssueGoesToTheProjectManagerWhenProductManagerDisabled(t *testing.T) {
 	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
 	h := newHarnessAt(t, projectManagerOnlyTOML, now)
@@ -219,7 +219,7 @@ enabled = false
 
 // With both managers disabled, a person's unlabelled issue goes straight to
 // bees:ready and, in the same pass, picks up the default size from the
-// existing sizing loop (#418).
+// existing sizing loop.
 func TestUnlabelledIssueGoesStraightToReadyWhenBothManagersDisabled(t *testing.T) {
 	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
 	h := newHarnessAt(t, noManagersTOML, now)
@@ -249,7 +249,7 @@ func TestUnlabelledIssueGoesStraightToReadyWhenBothManagersDisabled(t *testing.T
 
 // bees tick --only developer must not change where an unlabelled issue is
 // routed: OnlyRoles scopes one invocation's dispatch, not the configured
-// factory's routing decision (#418).
+// factory's routing decision.
 func TestUnlabelledIssueRoutingIgnoresOnlyRoles(t *testing.T) {
 	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
 	h := newHarnessAt(t, managersTOML, now)
@@ -273,7 +273,7 @@ func TestUnlabelledIssueRoutingIgnoresOnlyRoles(t *testing.T) {
 }
 
 // TestTheFactorysOwnLoginIsNotAPersonWaitingForAnAnswer pins what a
-// configured github.login changes in the scheduler (#243). The orchestrator's
+// configured github.login changes in the scheduler. The orchestrator's
 // escalation comment is the one comment the factory posts without a marker,
 // so on a shared account nothing can tell it from a person's and it makes a
 // feedback issue fresh; once the factory has an account of its own, the

@@ -34,7 +34,7 @@ type Deps struct {
 	Mail func() (map[string]int, error)
 	// Now is the clock every elapsed time and every countdown is measured
 	// against. Production passes time.Now; a test passes its own, so a
-	// rendered view never depends on when it was rendered (#222).
+	// rendered view never depends on when it was rendered.
 	Now func() time.Time
 	// Stop asks the factory to stop polling, start nothing new and let the
 	// work in flight finish, which is what the first Ctrl-C or q does.

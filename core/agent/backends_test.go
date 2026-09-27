@@ -11,9 +11,9 @@ import (
 // TestBackendsMatchProcsExecutables holds the descriptors against procs'
 // independent executable list, both directions and in order: procs cannot
 // import this package, so its list cannot derive from the descriptors, and
-// the two drifting apart is what #818 was — an agent the process scan does
-// not recognize is not found after a crash, and one with no descriptor has
-// no command line to run.
+// when the two drift apart an agent the process scan does not recognize is
+// not found after a crash, and one with no descriptor has no command line
+// to run.
 func TestBackendsMatchProcsExecutables(t *testing.T) {
 	var names []string
 	for _, b := range Backends {
@@ -77,8 +77,7 @@ func TestBackendRestrictedCapabilities(t *testing.T) {
 
 // TestBackendCredentials pins the credentials every agent reads, as the
 // descriptors declare them and as AgentCredentials forwards them into an
-// isolated container. #819 shipped without opencode's, so its list is the
-// one whose loss this test exists to catch.
+// isolated container.
 func TestBackendCredentials(t *testing.T) {
 	want := map[string][]string{
 		AgentClaude:   {"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"},

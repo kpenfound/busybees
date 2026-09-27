@@ -37,10 +37,9 @@ func TestMissingLabelsAreCreatedAtStart(t *testing.T) {
 	h := newHarness(t, noRolesTOML)
 	dropLabel(h, "bees:size/m")
 	dropLabel(h, "bees:review")
-	// bees:priority is a person's lever; a repository initialised before it
-	// existed gets it on the next start like any other label. bees:planning
-	// and bees:planned are the same shape and were added later still — a
-	// label the code applies but the repository does not have makes every
+	// bees:priority is a person's lever; a repository initialised without it
+	// gets it on the next start like any other label, and so do bees:planning
+	// and bees:planned — a label the code applies but the repository does not have makes every
 	// --add-label using it fail, so All() and this path are what stop that.
 	dropLabel(h, "bees:priority")
 	dropLabel(h, "bees:planning")

@@ -1022,8 +1022,7 @@ var noSuchResource = regexp.MustCompile(`HTTP 404`)
 // role. A fine-grained personal access token carries per-resource permissions
 // on top of that role, so "ADMIN" and "cannot create an issue" are an
 // ordinary pair - and then every issue_create, comment and label edit in
-// every session fails, one session at a time, with nothing having said so
-// (#303).
+// every session fails, one session at a time, with nothing having said so.
 //
 // The probe is a no-op update of the base label: renaming it to the name it
 // already has. Three properties earn it the job.
@@ -1084,7 +1083,7 @@ var unprocessable = regexp.MustCompile(`HTTP 422`)
 // repository as ADMIN, passes every other GitHub check bees has - including
 // `can write issues`, whose probe the Issues grant covers - and then fails
 // every push. That costs a session and an escalation per work item,
-// discovered mid-pass (#312).
+// discovered mid-pass.
 //
 // The probe is a no-op ref update: setting the default branch to the commit
 // it already points at, read first. Like the label probe it is a real write,
@@ -1207,15 +1206,15 @@ var notProtected = regexp.MustCompile(`(?i)branch not protected|HTTP 404`)
 
 // checkAutoMerge reports what auto_merge will actually gate a merge on.
 //
-// With no branch protection `gh pr checks --required` reports nothing, so
-// before #117 an auto-merging factory merged with nothing green at all. It
-// now falls back to every check a pull request reports, which is a sound
-// default but is not the same promise as "the checks you marked required".
+// With no branch protection `gh pr checks --required` reports nothing, so an
+// auto-merging factory falls back to every check a pull request reports,
+// which is a sound default but is not the same promise as "the checks you
+// marked required".
 // This check says which of the two is in force, once, in plain words.
 //
-// It is a Warn and never a Fail: #48 wires doctor into the `bees run`
-// preflight, which refuses to start on a failure, and an unprotected default
-// branch must not stop the factory. bees never enables or edits branch
+// It is a Warn and never a Fail: doctor runs in the `bees run` preflight,
+// which refuses to start on a failure, and an unprotected default branch
+// must not stop the factory. bees never enables or edits branch
 // protection - that is a person's setting.
 func (d *Deps) checkAutoMerge(ctx context.Context) Result {
 	const name = "auto_merge check gate"
@@ -1283,7 +1282,7 @@ func unrequiredGate(name, branch, why string) Result {
 // when it does not, which of the two very different reasons it is: an empty or
 // not-yet-labelled repository, or a filter that just stopped matching the work
 // the factory already owns (adding filter.assignee to an installed factory
-// hides every issue nobody ever assigned - see #110).
+// hides every issue nobody ever assigned).
 //
 // It is a Warn and never a Fail, in both cases: the `bees run` preflight
 // refuses to start on a failure, and a filter that matches nothing on purpose

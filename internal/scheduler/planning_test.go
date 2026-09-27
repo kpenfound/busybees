@@ -128,8 +128,8 @@ func TestAPlannedFeatureIsBrokenDownOnceAndNotAgain(t *testing.T) {
 }
 
 // bees:planning and bees:planned are neither state nor size labels: an issue
-// in planning keeps whatever state it has, and classify buckets it exactly as
-// it did before the labels existed.
+// in planning keeps whatever state it has, and classify buckets it as it
+// would without them.
 func TestClassifyIgnoresThePlanningLabels(t *testing.T) {
 	h := newHarness(t, noRolesTOML)
 	now := time.Now()

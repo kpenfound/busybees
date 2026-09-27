@@ -295,8 +295,8 @@ func TestChecks(t *testing.T) {
 	}
 }
 
-// TestSummarizeNoChecks pins the distinction #117 turns on: nothing reported
-// is not everything green.
+// TestSummarizeNoChecks pins the distinction between nothing reported and
+// everything green.
 func TestSummarizeNoChecks(t *testing.T) {
 	if got := Summarize(nil); got != ChecksNone {
 		t.Fatalf("Summarize(nil) = %q, want %q", got, ChecksNone)
@@ -726,9 +726,9 @@ func TestTokenReachesBothExecPaths(t *testing.T) {
 }
 
 // TestNoTokenInjectsNothing pins the default: with [github] unset the client
-// runs gh exactly as it always has, inheriting the machine's own
-// authentication rather than being handed an empty GH_TOKEN (which gh would
-// read as "no credentials" and fail on).
+// runs gh inheriting the machine's own authentication rather than being
+// handed an empty GH_TOKEN (which gh would read as "no credentials" and fail
+// on).
 func TestNoTokenInjectsNothing(t *testing.T) {
 	fakeGHOnPath(t)
 	t.Setenv("GH_TOKEN", "the-machines-own")
@@ -809,7 +809,7 @@ func TestTokenSourceIsAskedOnEveryCall(t *testing.T) {
 
 // TestSameLogin: GitHub reports a GitHub App's login with "[bot]" through
 // REST and without it through GraphQL, so both name the App; a user login
-// is compared as it always was.
+// is compared case-insensitively.
 func TestSameLogin(t *testing.T) {
 	for _, c := range []struct {
 		a, b string
@@ -848,13 +848,12 @@ func TestAppAuthorListsWithAppFlag(t *testing.T) {
 }
 
 // TestIsBeeCountsTheFactorysOwnLogin pins the two ways a comment is read as a
-// bee's (#243, exported for the MCP renderer in #266) and how they combine:
+// bee's and how they combine:
 // the marker, which every role emits, and
 // — only where [github] gives the factory an account of its own — the author.
 // The login is an extra way to say yes and never overrides the positional
 // marker rule, so a person quoting a marker is still a person whatever is
-// configured; with no login this is exactly the marker rule, which is what
-// "[github] unset behaves as it did before" means.
+// configured; with no login this is exactly the marker rule.
 func TestIsBeeCountsTheFactorysOwnLogin(t *testing.T) {
 	const bot = "busybees-bot"
 	marker := "looks good to me\n\n<!-- bees:reviewer -->"
@@ -868,7 +867,7 @@ func TestIsBeeCountsTheFactorysOwnLogin(t *testing.T) {
 		login          string // what the client acts as ("" = the shared account)
 		author, body   string
 		want           bool
-		wantMarkerOnly bool // what the marker alone says, i.e. today's answer
+		wantMarkerOnly bool // what the marker alone says, i.e. the shared account's answer
 	}{
 		{"shared account, a bee's marker", "", "kyle", marker, true, true},
 		{"shared account, no marker", "", "kyle", escalation, false, false},
@@ -885,7 +884,7 @@ func TestIsBeeCountsTheFactorysOwnLogin(t *testing.T) {
 				t.Errorf("IsBee(%q, %q, ...) = %v, want %v", tc.login, tc.author, got, tc.want)
 			}
 			// Client.isBee is the same rule asked with the login the client
-			// acts as, and there is one implementation of it (#266): the
+			// acts as, and there is one implementation of it: the
 			// renderer in internal/mcpserver calls the exported one.
 			c := NewAs("a/b", tc.login, "")
 			if got := c.isBee(tc.author, tc.body); got != tc.want {
@@ -984,7 +983,7 @@ func TestPRActivityDropsTheFactorysOwnComments(t *testing.T) {
 		t.Errorf("with a login of its own: got %s, want %s", got, want)
 	}
 	// On a shared account the marker-less review is indistinguishable from a
-	// person's and still reaches the developer: today's behaviour, unchanged.
+	// person's and still reaches the developer.
 	shared := New("a/b")
 	shared.Exec = exec
 	if got, want := ids(shared), "1,2,3"; got != want {
@@ -996,9 +995,9 @@ func TestPRActivityDropsTheFactorysOwnComments(t *testing.T) {
 // backstop sends: a created:>= bound and nothing about who opened the item.
 // The backstop exists for a pull request a session opened with its own
 // `gh pr create` and for an item a person opened by hand, and neither is
-// reliably the acting account's — scoping the search by author dropped
-// exactly those and kept the ones bees created through its own code, which
-// never needed repairing (#263, #268). The fake gh ignores --search, so the
+// reliably the acting account's — scoping the search by author would drop
+// exactly those and keep the ones bees created through its own code, which
+// never need repairing. The fake gh ignores --search, so the
 // arguments are the only place this can be asserted.
 func TestListCreatedSinceCarriesNoAuthorQualifier(t *testing.T) {
 	since := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)

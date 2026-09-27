@@ -21,7 +21,7 @@ var meLookup = github.CurrentUser
 // through: the account [github] configures, or the machine's own gh
 // authentication when the table is unset. config.Validate has already
 // rejected a token that expands to nothing, so an empty token here means the
-// operator asked for today's behaviour.
+// operator asked for the machine's own gh authentication.
 //
 // For a GitHub App it also returns the Minter the client's tokens come from,
 // which a session runner holds so that its sessions get tokens too (nil
@@ -121,9 +121,9 @@ func verifyApp(ctx context.Context, cfg *config.Config, gh *github.Client, m *gh
 // can be tested without a gh on the machine.
 func verifyAccount(ctx context.Context, cfg *config.Config, gh *github.Client) (string, error) {
 	if !cfg.GitHub.Configured() {
-		// Nothing to verify, and nothing worth failing over: bees init has
-		// always worked with a gh that cannot answer "who am I", so a lookup
-		// that fails only costs the line that names the account.
+		// Nothing to verify, and nothing worth failing over: bees init works
+		// with a gh that cannot answer "who am I", so a lookup that fails
+		// only costs the line that names the account.
 		login, _ := meLookup(ctx)
 		return login, nil
 	}

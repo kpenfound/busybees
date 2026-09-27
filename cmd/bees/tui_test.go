@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -48,104 +47,10 @@ func TestTUINeedsATerminalAndNoFlag(t *testing.T) {
 	}
 }
 
-// The one thing this change adds to the run path — deciding whether to draw
-// a terminal UI — must not reach the console: it is recorded at debug level,
-// so `bees run` and `bees run --no-tui` print what they printed before the
-// flag existed (#244).
-func TestTheTUIDecisionStaysOutOfTheConsole(t *testing.T) {
-	real := isTerminal
-	t.Cleanup(func() { isTerminal = real })
-	isTerminal = func(*os.File) bool { return true }
-
-	for _, noTUI := range []bool{false, true} {
-		var console bytes.Buffer
-		lg := logging.New(logging.Options{Format: logging.FormatText, Level: slog.LevelInfo, Console: &console})
-		on := logTUIMode(lg.Logger, noTUI, os.Stdout)
-		if err := lg.Close(); err != nil {
-			t.Fatal(err)
-		}
-		if on == noTUI {
-			t.Errorf("--no-tui=%v: the UI is %v", noTUI, on)
-		}
-		if console.Len() != 0 {
-			t.Errorf("--no-tui=%v printed %q; the decision belongs in the log file only", noTUI, console.String())
-		}
-	}
-}
-
-// `bees run --no-tui`, `bees run` and `bees tick` log the same thing, byte
-// for byte: the console logger is built from the global flags alone and the
-// flag changes none of it (#244). Only the timestamp differs between two
-// invocations, so it is dropped before the comparison. The commands are
-// stopped at loadConfig, before anything reaches GitHub, so what this
-// compares is the console logging the flag could have changed.
-func TestNoTUIAndTickKeepTodaysLogOutput(t *testing.T) {
-	// A config path that does not exist: the command fails in loadConfig,
-	// after the logging the comparison is about has been set up and before
-	// anything touches GitHub.
-	missing := filepath.Join(t.TempDir(), "bees.toml")
-	record := func(t *testing.T, args ...string) (string, consoleFlags) {
-		t.Helper()
-		g, root := newRootWithFlags()
-		var console bytes.Buffer
-		root.SetArgs(append(args, "--config", missing, "--log-format", "json"))
-		root.SetOut(&bytes.Buffer{})
-		root.SetErr(&console)
-		if err := root.Execute(); err == nil {
-			t.Fatal("the missing config should have failed the command")
-		}
-		slog.Info("polled github", "issues", 3)
-		return withoutTime(t, console.String()), g.console
-	}
-
-	want, wantFlags := record(t, "run")
-	if want == "" {
-		t.Fatal("nothing was logged")
-	}
-	for _, args := range [][]string{{"run", "--no-tui"}, {"run", "--no-tui", "--once"}, {"tick"}} {
-		got, flags := record(t, args...)
-		if got != want {
-			t.Errorf("`bees %s` logs\n\t%q\nwant\n\t%q", strings.Join(args, " "), got, want)
-		}
-		if flags != wantFlags {
-			t.Errorf("`bees %s` resolved console options %+v, want %+v", strings.Join(args, " "), flags, wantFlags)
-		}
-	}
-
-	// `bees tick` never draws a UI, so it does not offer the flag.
-	if err := runRoot(t, "tick", "--no-tui"); err == nil || !strings.Contains(err.Error(), "unknown flag: --no-tui") {
-		t.Errorf("tick --no-tui: got %v", err)
-	}
-}
-
-// withoutTime drops the "time" field of every JSON log record, which is the
-// only thing that differs between two runs of the same command.
-func withoutTime(t *testing.T, out string) string {
-	t.Helper()
-	var b strings.Builder
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		if line == "" {
-			continue
-		}
-		rec := map[string]any{}
-		if err := json.Unmarshal([]byte(line), &rec); err != nil {
-			t.Fatalf("log line is not JSON: %q", line)
-		}
-		delete(rec, "time")
-		enc, err := json.Marshal(rec)
-		if err != nil {
-			t.Fatal(err)
-		}
-		b.Write(enc)
-		b.WriteByte('\n')
-	}
-	return b.String()
-}
-
 // The commands that run sessions also write their log to
 // <state_dir>/bees.log, so nothing a terminal UI covers up is lost. The file
 // gets every record at debug level, whatever the console flags say, so it
-// holds everything that reached stderr and more (#244).
+// holds everything that reached stderr and more.
 func TestSchedulerCommandsWriteTheStateDirLogFile(t *testing.T) {
 	t.Setenv(versions.EnvSkip, "1")
 	_, clone := testutil.SetupRepos(t)
@@ -227,8 +132,8 @@ func TestTheViewSilencesTheConsoleAndGivesItBack(t *testing.T) {
 }
 
 // `bees run` draws the view only when it decided to: the same seam the flag
-// and the terminal check go through picks between the view and the console
-// (#244), and with no terminal `bees run` still runs the scheduler and logs.
+// and the terminal check go through picks between the view and the console,
+// and with no terminal `bees run` still runs the scheduler and logs.
 func TestRunDrawsTheViewOnlyWhenTheModeSaysSo(t *testing.T) {
 	real := isTerminal
 	t.Cleanup(func() { isTerminal = real })

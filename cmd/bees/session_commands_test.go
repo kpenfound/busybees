@@ -14,7 +14,7 @@ import (
 )
 
 // sandboxConfig is a config whose state dir is somewhere nothing else writes,
-// standing in for the "-c /tmp/sandbox.toml" of issue #71.
+// standing in for a "-c /tmp/sandbox.toml".
 func sandboxConfig(t *testing.T) *config.Config {
 	t.Helper()
 	dir := t.TempDir()
@@ -30,8 +30,8 @@ state_dir = "sandbox-state"
 }
 
 // An explicit --config must win over an ambient BEES_STATE_DIR: inside a
-// session both are set, and mail sent with a sandbox config used to land in the
-// live factory's mailbox.
+// session both are set, and mail sent with a sandbox config must not land in
+// the live factory's mailbox.
 func TestMailStateDirPrefersExplicitConfig(t *testing.T) {
 	cfg := sandboxConfig(t)
 	loaded := 0
@@ -86,8 +86,7 @@ func TestMailStateDirReportsLoadFailures(t *testing.T) {
 }
 
 // doneLong's status table is derived from session.ValidOutcomes, so it
-// cannot drift from what "bees done" actually validates (#355: it used to
-// be a hardcoded literal that omitted "failed" for both managers).
+// cannot drift from what "bees done" actually validates.
 func TestDoneLongMatchesValidOutcomes(t *testing.T) {
 	long := doneLong()
 	lines := strings.Split(long, "\n")

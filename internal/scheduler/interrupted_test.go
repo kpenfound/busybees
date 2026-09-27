@@ -48,11 +48,10 @@ const twoTurns = `{"type":"system","subtype":"init"}
 {"type":"assistant","message":{"role":"assistant"}}
 `
 
-// TestAKilledSessionIsReportedToTheNextSessionOfItsRole is the point of #250:
-// a scheduler killed while a developer session ran leaves a branch that may
-// carry work nobody reported, and the session that takes over used to start
-// as if nothing had happened. It is told what was interrupted, how far it
-// got and where to read what it did.
+// TestAKilledSessionIsReportedToTheNextSessionOfItsRole: a scheduler killed
+// while a developer session ran leaves a branch that may carry work nobody
+// reported, so the session that takes over is told what was interrupted,
+// how far it got and where to read what it did.
 func TestAKilledSessionIsReportedToTheNextSessionOfItsRole(t *testing.T) {
 	h := newHarness(t, devOnlyTOML)
 	seedReady(h, 1, "s", time.Now().Add(-time.Hour))
@@ -165,9 +164,9 @@ func TestTakeInterruptedConsumesOnlyWhatIsNoLongerRunning(t *testing.T) {
 	}
 }
 
-// TestAFirstRunReportsNoInterruption: with nothing recorded — every issue
-// before this version, and every issue of a factory that was never killed —
-// the prompt is the one it always was.
+// TestAFirstRunReportsNoInterruption: with nothing recorded — bookkeeping
+// an older bees wrote, and every issue of a factory that was never killed —
+// the prompt reports no interruption.
 func TestAFirstRunReportsNoInterruption(t *testing.T) {
 	h := newHarness(t, devOnlyTOML)
 	seedReady(h, 1, "s", time.Now().Add(-time.Hour))

@@ -17,9 +17,9 @@ import (
 // between projects.
 const DefaultsFile = "defaults.toml"
 
-// defaultsMigrations is independent of the bees.toml migrations. The file is
-// introduced at the current format version, so there are no older versions to
-// migrate today. A future profile-related migration belongs in both maps.
+// defaultsMigrations is independent of the bees.toml migrations. The file has
+// only the current format version, so there are no older versions to
+// migrate. A future profile-related migration belongs in both maps.
 var defaultsMigrations = map[int]migration{}
 
 // DefaultConfigDir is where user-level busybees configuration lives:
@@ -42,9 +42,8 @@ func DefaultDefaultsPath() string { return filepath.Join(DefaultConfigDir(), Def
 // UserDefaults is what a defaults.toml holds: agent profiles, the selectors
 // that choose them, and the GitHub account, in the shape of the bees.toml
 // tables they stand in for ([profiles.*], [global], [roles.*] and
-// [github]). Loading has held the
-// file to bees.toml's rules: an unknown or misplaced key, and a value of
-// the wrong shape, are errors naming the file. What the references name is
+// [github]). Loading holds the file to bees.toml's rules: an unknown or
+// misplaced key, and a value of the wrong shape, are errors naming the file. What the references name is
 // checked after the merge, where either file may define the profile.
 type UserDefaults struct {
 	Version  int
