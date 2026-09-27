@@ -1290,7 +1290,7 @@ func TestTheNowPanelNamesTheSandboxOfABoxedSession(t *testing.T) {
 	same := drive(t, Deps{Repo: "acme/widgets"},
 		started("developer-issue-12-r1", config.RoleDeveloper, 12, 31, fixed, "opus", false))
 	if plain != same {
-		t.Errorf("an unboxed session does not render as it did before the column existed:\ngot\n%s\nwant\n%s", plain, same)
+		t.Errorf("a session in no sandbox renders differently from one with no mode recorded:\ngot\n%s\nwant\n%s", plain, same)
 	}
 }
 

@@ -229,12 +229,12 @@ func TestDailyBudgetResumesAtTheResumeThreshold(t *testing.T) {
 	}
 }
 
-// TestTheDefaultResumePercentKeepsTodaysBehaviour covers the two cases in
+// TestTheResumePercentIsInertAtItsDefaultAndWithoutABudget covers the two cases in
 // which the resume percent has no effect: a bees.toml with no resume percent resumes the moment the
 // rolling window is under budget (the default is 100%, at which the two
 // thresholds are the same number), and the key is inert when there is no
 // daily budget for it to be a percentage of.
-func TestTheDefaultResumePercentKeepsTodaysBehaviour(t *testing.T) {
+func TestTheResumePercentIsInertAtItsDefaultAndWithoutABudget(t *testing.T) {
 	start := time.Date(2026, 3, 4, 12, 0, 0, 0, time.UTC)
 	seed := func(t *testing.T, toml string, entries ...state.LedgerEntry) *harness {
 		t.Helper()

@@ -80,7 +80,7 @@ func TestProjectPromptFilesAreAppendedInOrder(t *testing.T) {
 // this role's files, so it is a real comparison rather than one Go guarantees:
 // a LoadProject that globbed the directory instead of naming the two files it
 // reads would put another role's instructions in this role's prompt.
-func TestNoProjectPromptsRendersTheSamePromptAsBefore(t *testing.T) {
+func TestNoProjectPromptsRendersThePromptWithoutAProjectSection(t *testing.T) {
 	bare := t.TempDir()
 	populated := t.TempDir()
 	writeProjectPrompt(t, populated, "notes.md", "not a role, never read.")

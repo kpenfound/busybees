@@ -403,7 +403,7 @@ func TestCompareReadsDefaultsNotFileText(t *testing.T) {
 		t.Fatal(err)
 	}
 	if tpl.Settings["roles.qa.enabled"] != "true" {
-		t.Fatalf("issue-driven no longer sets roles.qa.enabled = true, so this fixture proves nothing")
+		t.Fatalf("issue-driven does not set roles.qa.enabled = true, so this fixture proves nothing")
 	}
 	if diffs := tpl.Compare(cfg); len(diffs) != 0 {
 		t.Errorf("a config that sets nothing differs from issue-driven: %+v", diffs)

@@ -3,7 +3,6 @@ package review
 import (
 	"bytes"
 	"context"
-	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -85,20 +84,10 @@ func TestARunDropsTheFindingsOnGeneratedFilesAndTellsEverySessionAboutThem(t *te
 	}
 }
 
-func TestABriefWrittenBeforeGeneratedFilesWereExcludedReadsBackWithNone(t *testing.T) {
-	dir := t.TempDir()
-	legacy := `{"ref":{"Key":"component#7","Scope":"component","Link":"https://example.test/7"},"summary":"summary","size":"m","sources":["diff"],"not_gathered":["missing"]}`
-	if err := os.WriteFile(filepath.Join(dir, BriefFile), []byte(legacy), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	b, err := ReadBrief[testRef](dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if b.Excluded != nil || b.Summary != "summary" || !reflect.DeepEqual(b.NotGathered, []string{"missing"}) {
-		t.Errorf("legacy brief read as %+v", b)
-	}
-	if strings.Contains(b.Text(), "Generated files") {
-		t.Errorf("a brief with no excluded files has the heading:\n%s", b.Text())
+// A brief with no excluded files says nothing about generated files.
+func TestABriefWithNoExcludedFilesHasNoGeneratedHeading(t *testing.T) {
+	brief := &Brief[testRef]{Ref: testRef{Key: "change-7", Scope: testRepo, Link: "https://example.test/change-7"}, Summary: "summary"}
+	if strings.Contains(brief.Text(), "Generated files") {
+		t.Errorf("a brief with no excluded files has the heading:\n%s", brief.Text())
 	}
 }

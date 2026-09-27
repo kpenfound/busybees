@@ -24,7 +24,7 @@ func withDir(dir string) string {
 func TestNewAppProjectDir(t *testing.T) {
 	t.Setenv(versions.EnvSkip, "1")
 
-	t.Run("project.dir unset behaves as today", func(t *testing.T) {
+	t.Run("project.dir unset is the directory bees.toml is in", func(t *testing.T) {
 		path := setupBotFactory(t, botTOML)
 		a, err := newApp(context.Background(), &globalFlags{config: path})
 		if err != nil {
