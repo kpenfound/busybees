@@ -63,10 +63,11 @@ type container struct {
 	// image is what the container runs: the role's sandbox_image, or the
 	// image built from its container_use_environment.
 	image string
-	// server is the caller-supplied MCP server on the host, and builtin the entry
-	// the session reaches it through.
-	server  *exec.Cmd
-	builtin MCPEntry
+	// server is the caller-supplied MCP server on the host, builtin the entry
+	// the session reaches it through, and serverPort the port it listens on.
+	server     *exec.Cmd
+	builtin    MCPEntry
+	serverPort string
 	// turn is what the boundary verified the session may have.
 	turn *Turn
 	// vars is the session's environment inside the container.
@@ -184,6 +185,7 @@ func (c *container) startServer(ctx context.Context) error {
 		return fmt.Errorf("the built-in MCP server reported %q: %w", reported, err)
 	}
 	c.vars = append(c.vars, envVar{h.TokenEnv, token})
+	c.serverPort = port
 	c.builtin = MCPEntry{
 		Type:           "http",
 		URL:            "http://" + net.JoinHostPort(containerHostAlias, port) + h.Path,

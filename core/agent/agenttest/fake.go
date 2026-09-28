@@ -111,14 +111,21 @@ exec sleep 60
 // beside the script and runs its command the same way; any other `exec`, a
 // setup command, is appended to sbx-setup.txt beside the script, one
 // argument per line, runs nothing and fails when a file named fail-setup
-// is there; `rm` records
-// its arguments in sbx-rm.txt beside the script; `version` prints one.
+// is there; `policy` appends its arguments to sbx-policy.txt beside the
+// script, one call per line, and fails when a file named fail-policy is
+// there; `rm` records its arguments in sbx-rm.txt beside the script;
+// `version` prints one. Every call but `exec` and `version` also appends its
+// first two arguments to sbx-calls.txt beside the script, in the order they
+// ran.
 func Sbx(t *testing.T, sessionVariable string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "sbx")
 	script := `#!/bin/sh
 set -e
 here="$(dirname "$0")"
+case "$1" in
+create|policy|rm) echo "$1 $2" >> "$here/sbx-calls.txt" ;;
+esac
 case "$1" in
 version)
   echo "sbx version 0.42.0"
@@ -128,6 +135,14 @@ create)
   printf '%s\n' "$@" > "$here/sbx-create.txt"
   if [ -f "$here/fail-create" ]; then
     echo "Error: sandbox name must not contain underscores" >&2
+    exit 1
+  fi
+  exit 0
+  ;;
+policy)
+  echo "$*" >> "$here/sbx-policy.txt"
+  if [ -f "$here/fail-policy" ]; then
+    echo "error: allow network rule: sandbox not found" >&2
     exit 1
   fi
   exit 0

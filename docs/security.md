@@ -164,8 +164,9 @@ ends.
 
 The agent's command line run unchanged inside a Docker Sandbox, described in
 [The sbx mode](configuration.md#the-sbx-mode). Written to the sbx CLI
-reference (sbx 0.42) and the Docker Sandboxes documentation; not run for
-this page.
+reference (sbx 0.42) and the Docker Sandboxes documentation. The network
+rules below were checked against sbx 0.45.1; the rest was not run for this
+page.
 
 **Filesystem.** The sandbox is a microVM with its own kernel and filesystem.
 It sees three things of the host, each mounted at its host path as a
@@ -186,11 +187,15 @@ and notes, and the mounted `.git` is the repository's own, as in
 **Network.** Held by the sbx network policy: every outbound connection
 goes through a proxy on the host that allows a destination only when a
 rule matches it, and the policy is the machine's (or the organisation's),
-not the session's to change. The built-in MCP server needs a rule allowing
-`localhost`, which lets a session reach every service listening on the
-host's loopback, not only the server: the port is picked per session, so
-the rule cannot be narrower. Within the policy the session has the bot's
-GitHub token and the role's `env`, and nothing else of the host's secrets.
+not the session's to change. The sandbox reaches the host's loopback as
+`host.docker.internal`, which the policy denies unless a rule allows it.
+For each session bees adds one rule per port the session needs, scoped to
+that session's sandbox (the built-in MCP server, and a loopback Dagger
+engine with `sandbox_dagger_engine`), and removes the rules before it
+removes the sandbox. Every other service on the host's loopback stays out
+of reach, and no sandbox reaches another session's server. Within the
+policy the session has the bot's GitHub token and the role's `env`, and
+nothing else of the host's secrets.
 
 **Credentials.** The sandbox's environment is built from nothing rather
 than inherited: the `[github]` token and git identity, the role's own
@@ -213,12 +218,13 @@ from `dl.dagger.io` into each sandbox as root.
 
 **Does not hold, or costs something:**
 
-- The `localhost` network rule opens every service on the host's loopback
-  to the session, for as long as the rule stands.
+- A global `localhost` rule, if the machine's policy has one, opens every
+  service on the host's loopback to every sandbox, including each
+  session's built-in server and engine forward. Bees does not need one.
+  The server still asks for the session's token; the engine forward has
+  none.
 - With `sandbox_dagger_engine`, the session runs containers outside the
-  sandbox's network policy, through the engine. The engine's forward is
-  open on the host's loopback while the session runs, so another sandbox
-  allowed `localhost` can reach it too.
+  sandbox's network policy, through the engine.
 - The template is the operator's responsibility; sbx pulls it, and bees
   does not verify it.
 - A `github` secret stored with `sbx secret set` overrides the bot's
@@ -228,10 +234,12 @@ from `dl.dagger.io` into each sandbox as root.
 - The `bees` CLI is not in the sandbox: the tools reach it over HTTP
   instead, so a session that shells out to `bees` directly has nothing to
   run.
-- A sandbox a crash left behind persists on the machine until removed by
-  hand: `<session>/sandbox-name` says which; `bees kill` does not remove
-  it.
-- Nothing on this page was run; the mode is written to the documented CLI.
+- A sandbox a crash left behind persists on the machine, with its network
+  rules, until removed by hand: `<session>/sandbox-name` says which;
+  `bees kill` does not remove it, and `sbx rm --force <name>` removes the
+  sandbox and its rules.
+- Apart from the network rules, nothing on this page was run; the mode is
+  written to the documented CLI.
 
 ## Pi packages
 
@@ -252,7 +260,7 @@ before they run.
 | `none` | inheriting a variable outside its grants | reading or writing anywhere the user can, reaching any host, using any credential stored on the machine |
 | `claude` | writing outside the worktree, state directory and shared `.git`; reaching a host other than GitHub | reading anything the user can read; reaching GitHub with whatever it read; `gh` on macOS reopening the trust daemon |
 | `container` | reading or writing anything of the host outside the worktree, `.git` and the state directory; using a credential other than the bot's own (GitHub, and Neo4j Agent Memory with the `neo4j` notes backend) and its agent's | reaching any host; another role reading the shared state directory |
-| `sbx` | reading or writing anything of the host outside the worktree, `.git` and the state directory; reaching a host the sbx policy does not allow, except through the Dagger engine of a role with `sandbox_dagger_engine`; reading its agent's credential at all; using a credential other than the bot's own | reaching any service on the host's loopback once `localhost` is allowed; another role reading the shared state directory; running containers through the host's Dagger engine, outside the sbx policy, with `sandbox_dagger_engine` |
+| `sbx` | reading or writing anything of the host outside the worktree, `.git` and the state directory; reaching a host the sbx policy does not allow, except through the Dagger engine of a role with `sandbox_dagger_engine`; reading its agent's credential at all; using a credential other than the bot's own | reaching any service on the host's loopback when the machine's policy allows `localhost` globally; another role reading the shared state directory; running containers through the host's Dagger engine, outside the sbx policy, with `sandbox_dagger_engine` |
 
 A role that only reads the repository and calls the factory's own tools is
 no safer in `claude`, `container` or `sbx` than in `none`: the risk
