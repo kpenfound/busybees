@@ -28,17 +28,27 @@ import (
 // server on the host, reached at host.docker.internal over HTTP with a
 // per-session token.
 //
+// The sandbox's proxy turns host.docker.internal into the host's localhost
+// and holds it to the network policy, which denies it by default. The
+// runner allows the sandbox, and no other, each port on the host's loopback
+// it listens on for the session (`sbx policy allow network --sandbox <name>
+// localhost:<port>`), once the port is known, and removes each of those
+// rules before it removes the sandbox. sbx drops a sandbox's rules with the
+// sandbox, so a crash that leaves the sandbox behind leaves its rules with
+// it, and `sbx rm` removes both.
+//
 // The sandbox is created for the profile's agent, from sbx's own template
 // for it unless the profile names one. A profile that asks for Dagger also
 // gets the Dagger CLI and the host's engine (sbxdagger.go).
 //
-// The session is three sbx commands, four with Dagger: `sbx create` before
-// the server starts (a failed create leaves nothing to stop), with Dagger a
-// setup `sbx exec` that installs the Dagger CLI, `sbx exec --interactive`
-// with the backend's command line, its prompt on stdin, and `sbx rm
-// --force` when the session ends, because a sandbox outlives the command it
-// ran. The sandbox's name is
-// recorded in the session directory while it exists (procs.SandboxNameFile).
+// The session is `sbx create` before the server starts (a failed create
+// leaves nothing to stop), with Dagger a setup `sbx exec` that installs the
+// Dagger CLI, an `sbx policy allow network` for each host port the session
+// reaches, `sbx exec --interactive` with the backend's command line, its
+// prompt on stdin, an `sbx policy rm network` for each of those rules, and
+// `sbx rm --force` when the session ends, because a sandbox outlives the
+// command it ran. The sandbox's name is recorded in the session directory
+// while it exists (procs.SandboxNameFile).
 
 // sandbox is one session's Docker Sandbox: the container fields it shares
 // (the caller-supplied server, the session's variables, the turn) and the
@@ -51,6 +61,9 @@ type sandbox struct {
 	// forward carries the session's connections to a Dagger engine on a
 	// host socket; nil without one (sbxdagger.go).
 	forward *forward
+	// allowed are the network policy rules the runner added for this
+	// sandbox alone (allowHost), as `sbx policy` names their resources.
+	allowed []string
 }
 
 // startSandbox creates the sandbox and starts the caller-supplied server on
@@ -78,8 +91,28 @@ func (r *Runner) startSandbox(ctx context.Context, req Request, sessionDir strin
 			s.close()
 			return nil, err
 		}
+		if err := s.allowHost(ctx, s.serverPort); err != nil {
+			s.close()
+			return nil, err
+		}
 	}
 	return s, nil
+}
+
+// allowHost lets this sandbox, and no other, reach one port on the host's
+// loopback, which it reaches as host.docker.internal. The sandbox must
+// exist: sbx refuses a rule for a sandbox it does not have. remove takes
+// the rule away again.
+func (s *sandbox) allowHost(ctx context.Context, port string) error {
+	resource := "localhost:" + port
+	if out, err := s.r.sbxCommand(ctx, "policy", "allow", "network", "--sandbox", s.name, resource).CombinedOutput(); err != nil {
+		if msg := bytes.TrimSpace(out); len(msg) > 0 {
+			err = fmt.Errorf("%w: %s", err, msg)
+		}
+		return fmt.Errorf("allow sandbox %s to reach the host's port %s (%s policy allow network): %w", s.name, port, SandboxCLI, err)
+	}
+	s.allowed = append(s.allowed, resource)
+	return nil
 }
 
 // sandboxListen is the address the caller-supplied server listens on for a
@@ -218,9 +251,11 @@ func (s *sandbox) execCommand(bin string, args []string, session bool) (string, 
 	return s.r.sbxBin(), out, nil
 }
 
-// remove removes the sandbox, for a session that is being stopped or has
-// ended: killing the client leaves the sandbox, and the sandbox persists
-// once its command has exited.
+// remove removes the sandbox's network policy rules and then the sandbox,
+// for a session that is being stopped or has ended: killing the client
+// leaves the sandbox, and the sandbox persists once its command has
+// exited. A rule is removed before the sandbox, while sbx still knows the
+// sandbox it is scoped to.
 func (s *sandbox) remove() {
 	if !s.created {
 		return
@@ -228,6 +263,16 @@ func (s *sandbox) remove() {
 	s.created = false
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
+	for _, resource := range s.allowed {
+		if out, err := s.r.sbxCommand(ctx, "policy", "rm", "network", "--sandbox", s.name, "--resource", resource, "--force").CombinedOutput(); err != nil {
+			var exit *exec.ExitError
+			if errors.As(err, &exit) || len(out) > 0 {
+				err = fmt.Errorf("%w: %s", err, bytes.TrimSpace(out))
+			}
+			s.r.Logger.Warn("remove sandbox network rule", "sandbox", s.name, "resource", resource, "err", err)
+		}
+	}
+	s.allowed = nil
 	if out, err := s.r.sbxCommand(ctx, "rm", "--force", s.name).CombinedOutput(); err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) || len(out) > 0 {

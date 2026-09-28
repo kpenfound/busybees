@@ -510,8 +510,9 @@ func (d *Deps) checkCodex(ctx context.Context) Result {
 // checkSbx only runs when usesSbx found a role boxed with Docker Sandboxes:
 // the sbx CLI is on PATH and answers `sbx version`. It is the machine
 // question `bees run` asks of the mode too; the credentials the sandbox's
-// proxy injects (`sbx secret ls`) and the network rule the built-in MCP
-// server needs are not asked about.
+// proxy injects (`sbx secret ls`) are not asked about. The network rule the
+// built-in MCP server needs is not either: the runner adds it for each
+// sandbox (core/agent/sbx.go).
 func (d *Deps) checkSbx(ctx context.Context) Result {
 	const name = "sbx runnable"
 	path, err := d.lookPath(config.SandboxCLI)

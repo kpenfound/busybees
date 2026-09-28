@@ -1354,14 +1354,23 @@ The `bees` binary is not in the sandbox. The built-in MCP server runs on the
 host as `bees mcp serve --listen` on the loopback, and the session reaches
 it over HTTP at `host.docker.internal` with a bearer token of its own, the
 way a container session does. The sandbox's proxy forwards that name to the
-host's `localhost`, and its network policy must allow it: run
-`sbx policy allow network localhost` once. The server listens on a port
-the operating system picks for each session, so the rule cannot name one,
-and it lets a session reach every service listening on the host's
-loopback; see [Security](security.md#sbx). The same policy decides which
-other hosts the session reaches: the Balanced preset allows GitHub and the
-AI provider APIs; add a module proxy or a package registry with
-`sbx policy allow network`.
+host's `localhost` and checks it against the network policy, which denies
+it unless a rule allows it. Bees adds that rule for each session, once the
+sandbox exists and the server has its port, and removes it before it
+removes the sandbox:
+
+```sh
+sbx policy allow network --sandbox <sandbox> localhost:<port>
+sbx policy rm network --sandbox <sandbox> --resource localhost:<port> --force
+```
+
+The rule names one sandbox and one port, so no other sandbox reaches the
+server and the session reaches nothing else on the host's loopback. If sbx
+refuses the rule, the session does not start and bees removes the sandbox.
+You do not need a global `localhost` rule; see [Security](security.md#sbx).
+The same policy decides which other hosts the session reaches: the
+Balanced preset allows GitHub and the AI provider APIs; add a module proxy
+or a package registry with `sbx policy allow network`.
 A stdio MCP server configured in `bees.toml` starts inside the sandbox, so
 its command must be in the template; a remote one is reached as configured,
 and `sbx mcp add` registrations are not used.
@@ -1420,8 +1429,10 @@ with the install script at `https://dl.dagger.io/dagger/install.sh`, as
 root, before the agent starts; the sbx network policy must allow
 `dl.dagger.io`. A failed install fails the session and removes the sandbox.
 The session reaches the engine through `_EXPERIMENTAL_DAGGER_RUNNER_HOST`,
-which bees sets to the address above, and the network policy must allow
-it too: the `localhost` rule the built-in server needs covers the loopback.
+which bees sets to the address above. For an engine on the host's loopback,
+through the socket forward or on TCP, bees adds a rule allowing that port
+for the session's sandbox, the same way it does for the built-in server.
+An engine on another host needs a rule of your own.
 
 This widens what a session reaches: the engine runs containers outside the
 sandbox, with the engine's own network and cache, not the sandbox's policy.

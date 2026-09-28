@@ -141,6 +141,17 @@ echo '{"type":"result","subtype":"success","result":"ok"}'
 	if setup != want {
 		t.Errorf("setup commands:\n%s\nwant\n%s", setup, want)
 	}
+	// The sandbox alone was allowed the forward's port and the server's,
+	// and both rules were removed with it.
+	wantPolicy := []string{
+		"policy allow network --sandbox " + name + " localhost:" + port,
+		"policy allow network --sandbox " + name + " localhost:45678",
+		"policy rm network --sandbox " + name + " --resource localhost:" + port + " --force",
+		"policy rm network --sandbox " + name + " --resource localhost:45678 --force",
+	}
+	if got := lines(t, filepath.Join(filepath.Dir(r.SbxBin), "sbx-policy.txt")); !slices.Equal(got, wantPolicy) {
+		t.Errorf("sbx policy calls:\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(wantPolicy, "\n"))
+	}
 	// The address reaches the session by name, with its value in the
 	// client's environment.
 	execArgs := strings.Join(lines(t, filepath.Join(dir, "sbx-exec-args.txt")), "\n") + "\n"
@@ -214,6 +225,33 @@ func TestSandboxDaggerInstallFailure(t *testing.T) {
 	}
 	if rm := lines(t, filepath.Join(filepath.Dir(r.SbxBin), "sbx-rm.txt")); len(rm) != 3 {
 		t.Errorf("sandbox not removed exactly once: %v", rm)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(r.SbxBin), "sbx-policy.txt")); err == nil {
+		t.Error("a network policy rule was added or removed for a sandbox whose install failed")
+	}
+}
+
+// Only an engine the sandbox reaches at host.docker.internal is given a
+// network policy rule: any other is left to the policy the operator keeps.
+func TestSandboxDaggerEngineRule(t *testing.T) {
+	for engine, want := range map[string][]string{
+		"tcp://127.0.0.1:1234":      {"allow network --sandbox box localhost:1234"},
+		"tcp://engine.example:1234": nil,
+	} {
+		r := &Runner{SbxBin: fakeSbx(t)}
+		s := &sandbox{container: container{r: r, name: "box", turn: &Turn{DaggerEngine: engine}, req: Request{Profile: Profile{Dagger: &Dagger{Engine: engine, Version: "0.20.5"}}}}}
+		if err := s.startDagger(context.Background()); err != nil {
+			t.Fatalf("%s: %v", engine, err)
+		}
+		var got []string
+		for _, l := range readLines(filepath.Join(filepath.Dir(r.SbxBin), "sbx-policy.txt")) {
+			if l != "" {
+				got = append(got, strings.TrimPrefix(l, "policy "))
+			}
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("%s: policy calls %v, want %v", engine, got, want)
+		}
 	}
 }
 

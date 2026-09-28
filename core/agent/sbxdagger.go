@@ -20,8 +20,9 @@ import (
 // instead, which the sandbox's proxy turns into the host's localhost: an
 // engine on a socket is forwarded from a port on the host's loopback that
 // the runner listens on for this session alone, and an engine on a
-// loopback TCP address is reached at that port. The Dagger CLI inside is
-// pointed at it with EnvDaggerRunnerHost.
+// loopback TCP address is reached at that port. Either port is allowed for
+// this sandbox alone, as the caller-supplied server's is (allowHost). The
+// Dagger CLI inside is pointed at it with EnvDaggerRunnerHost.
 
 // EnvDaggerRunnerHost is the variable the Dagger CLI reads the address of
 // an engine it does not start itself from.
@@ -32,7 +33,9 @@ const EnvDaggerRunnerHost = "_EXPERIMENTAL_DAGGER_RUNNER_HOST"
 const DaggerInstallScript = "https://dl.dagger.io/dagger/install.sh"
 
 // startDagger installs the Dagger CLI in the sandbox and gives the session
-// the engine: the address it reaches the engine at, in EnvDaggerRunnerHost.
+// the engine: the address it reaches the engine at, in EnvDaggerRunnerHost,
+// and, for an engine on the host's loopback, the network policy rule that
+// lets the sandbox reach it.
 func (s *sandbox) startDagger(ctx context.Context) error {
 	d := s.req.Profile.Dagger
 	if err := s.installDagger(ctx, d.Version); err != nil {
@@ -41,6 +44,11 @@ func (s *sandbox) startDagger(ctx context.Context) error {
 	addr, err := s.daggerAddress(s.turn.DaggerEngine)
 	if err != nil {
 		return err
+	}
+	if host, port, _ := net.SplitHostPort(strings.TrimPrefix(addr, "tcp://")); host == containerHostAlias {
+		if err := s.allowHost(ctx, port); err != nil {
+			return err
+		}
 	}
 	s.vars = append(s.vars, envVar{EnvDaggerRunnerHost, addr})
 	return nil

@@ -179,6 +179,20 @@ printf '{"status":"submitted","work":{"key":"task/7","tags":{"ticket":"seven"}}}
 	if rm := lines(t, filepath.Join(engine, "sbx-rm.txt")); len(rm) != 3 || strings.Join(rm, " ") != "rm --force "+name {
 		t.Errorf("sbx rm: %v, want one removal of %s", rm, name)
 	}
+
+	// The sandbox, and no other, was allowed the server's port on the
+	// host's loopback once it existed, and the rule was removed before the
+	// sandbox was.
+	wantPolicy := []string{
+		"policy allow network --sandbox " + name + " localhost:45678",
+		"policy rm network --sandbox " + name + " --resource localhost:45678 --force",
+	}
+	if got := lines(t, filepath.Join(engine, "sbx-policy.txt")); !slices.Equal(got, wantPolicy) {
+		t.Errorf("sbx policy calls:\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(wantPolicy, "\n"))
+	}
+	if got, want := lines(t, filepath.Join(engine, "sbx-calls.txt")), []string{"create --quiet", "policy allow", "policy rm", "rm --force"}; !slices.Equal(got, want) {
+		t.Errorf("sbx calls in order: %v, want %v", got, want)
+	}
 	// The command inside is the ordinary one, with the prompt on stdin.
 	claudeArgs := strings.Join(lines(t, filepath.Join(dir, "args.txt")), " ")
 	for _, want := range []string{"--dangerously-skip-permissions", "--append-system-prompt-file " + filepath.Join(dir, "system-prompt.md"), "--mcp-config " + filepath.Join(dir, "mcp.json")} {
@@ -471,6 +485,52 @@ func TestStoppedSandboxSessionIsRemoved(t *testing.T) {
 	rm := lines(t, filepath.Join(filepath.Dir(r.SbxBin), "sbx-rm.txt"))
 	if len(rm) != 3 || !strings.HasPrefix(strings.Join(rm, " "), "rm --force task-slow-") {
 		t.Errorf("sandbox not removed exactly once: %v", rm)
+	}
+	if got, want := lines(t, filepath.Join(filepath.Dir(r.SbxBin), "sbx-calls.txt")), []string{"create --quiet", "policy allow", "policy rm", "rm --force"}; !slices.Equal(got, want) {
+		t.Errorf("sbx calls in order: %v, want the rule removed once, before the sandbox", got)
+	}
+}
+
+// A refused network policy rule stops the session before its command runs:
+// the server is stopped and the sandbox removed, and no rule is removed
+// that was never added.
+func TestSandboxPolicyFailureStopsTheSession(t *testing.T) {
+	r := newRunner(t, fakeClaude(t, `touch "$TASK_SESSION_DIR/ran"`))
+	r.SbxBin = fakeSbx(t)
+	r.ServerBin = fakeBees(t)
+	r.StateDir = t.TempDir()
+	engine := filepath.Dir(r.SbxBin)
+	if err := os.WriteFile(filepath.Join(engine, "fail-policy"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := r.NewSessionDir("boxed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = r.Run(context.Background(), Request{Name: "boxed", SessionDir: dir, Profile: Profile{Name: "builder", Sandbox: SandboxSbx}, Workspace: fakeWorkspace{dir: t.TempDir()}})
+	if err == nil {
+		t.Fatal("the session ran without its network policy rule")
+	}
+	for _, want := range []string{"reach the host's port 45678", "sbx policy allow network", "sandbox not found"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not say %q", err, want)
+		}
+	}
+	for _, absent := range []string{"ran", procs.ServerPIDFile, procs.SandboxNameFile} {
+		if _, err := os.Stat(filepath.Join(dir, absent)); err == nil {
+			t.Errorf("%s exists after a refused rule", absent)
+		}
+	}
+	pid, _ := strconv.Atoi(strings.TrimSpace(lines(t, filepath.Join(dir, "server-pid.txt"))[0]))
+	deadline := time.Now().Add(5 * time.Second)
+	for syscall.Kill(pid, 0) == nil && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if syscall.Kill(pid, 0) == nil {
+		t.Errorf("the built-in server (pid %d) outlived the refused rule", pid)
+	}
+	if got, want := lines(t, filepath.Join(engine, "sbx-calls.txt")), []string{"create --quiet", "policy allow", "rm --force"}; !slices.Equal(got, want) {
+		t.Errorf("sbx calls in order: %v, want %v", got, want)
 	}
 }
 
