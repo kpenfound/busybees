@@ -329,12 +329,7 @@ func (r *Runner) run(ctx context.Context, req Request, restricted bool) (*Result
 	}
 	if box != nil {
 		defer box.close()
-		if req.HostMCP != nil {
-			if paths.mcp == nil {
-				paths.mcp = map[string]MCPEntry{}
-			}
-			paths.mcp[req.HostMCP.Name] = box.builtinEntry()
-		}
+		paths.mcp = box.mcpEntries(paths.mcp)
 	}
 	paths.turn = turn
 	if box != nil {
@@ -755,8 +750,11 @@ func (req Request) workDir() string {
 // built, wraps that command in the box's client command, runs the client
 // on the host, and closes the box when the session ends.
 type box interface {
-	// builtinEntry is how the session reaches the caller-supplied server.
-	builtinEntry() MCPEntry
+	// mcpEntries are the MCP servers the session is given in the box, from
+	// the profile's (a copy the box may change): the caller-supplied
+	// server added, and a server on the host at the address the box
+	// reaches it by.
+	mcpEntries(mcp map[string]MCPEntry) map[string]MCPEntry
 	// add lays the backend's variables over the session's.
 	add(vars []envVar)
 	// command wraps the backend's command line in the client's.

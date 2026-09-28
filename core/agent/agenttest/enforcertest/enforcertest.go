@@ -28,8 +28,12 @@ import (
 type Enforcer struct {
 	// Sandbox is the kind: agent.SandboxNone when empty.
 	Sandbox string
-	// Image is what a container kind runs, as agent.NewContainer is given it.
+	// Image is what a container kind runs, as agent.NewContainer is given
+	// it, or the template of a sandbox kind, as agent.NewSbx is.
 	Image string
+	// SandboxAgent is the agent a sandbox kind is prepared for, as
+	// agent.NewSbx is given it; empty is agent.AgentClaude.
+	SandboxAgent string
 	// PrepareErr, when set, is what Prepare returns: a platform that cannot
 	// enforce the kind returns one that wraps agent.ErrUnsupported.
 	PrepareErr error
@@ -53,13 +57,23 @@ func (e *Enforcer) Prepare(ctx context.Context, g agent.Grants) (agent.Session, 
 	if err != nil {
 		return nil, err
 	}
-	if policy.Sandbox == agent.SandboxContainer {
+	switch policy.Sandbox {
+	case agent.SandboxContainer:
 		if e.Image == "" {
 			return nil, fmt.Errorf("%w: a container enforcer needs the image its turns run", agent.ErrUnsupported)
 		}
 		policy.Image = e.Image
+	case agent.SandboxSbx:
+		policy.Image, policy.Agent = e.Image, e.SandboxAgent
+		if policy.Agent == "" {
+			policy.Agent = agent.AgentClaude
+		}
+		if agent.SbxTemplates[policy.Agent] == "" {
+			return nil, fmt.Errorf("%w: sandbox %q has no template for agent %q", agent.ErrUnsupported, agent.SandboxSbx, policy.Agent)
+		}
 	}
 	g.Env, g.Tools, g.Mounts = slices.Clone(g.Env), slices.Clone(g.Tools), slices.Clone(g.Mounts)
+	g.HostServers = slices.Clone(g.HostServers)
 	s := &Session{enforcer: e, policy: policy, grants: g}
 	e.mu.Lock()
 	e.sessions = append(e.sessions, s)
@@ -90,6 +104,7 @@ func (s *Session) Policy() agent.Policy {
 	p := s.policy
 	p.Env, p.Tools, p.MCPServers = slices.Clone(p.Env), slices.Clone(p.Tools), slices.Clone(p.MCPServers)
 	p.Mounts, p.DeniedExecutables, p.Binds = slices.Clone(p.Mounts), slices.Clone(p.DeniedExecutables), slices.Clone(p.Binds)
+	p.HostServers = slices.Clone(p.HostServers)
 	return p
 }
 

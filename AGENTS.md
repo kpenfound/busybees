@@ -11,6 +11,10 @@ GitHub repository. Read `docs/architecture.md` before changing the scheduler.
   official `github.com/dagger/go` module in `dagger.toml`) for both the root and
   `core/` modules. Run it before committing.
   `dagger check` is the only validation a pull request may report as done.
+- The Go tests, linters and generators run in `busybees-dev`'s `test-runtime`
+  (`.dagger/modules/busybees-dev`, the `go` module's `base` in `dagger.toml`):
+  `golang:1.26-bookworm` with a pinned, checksummed `jj` release. A tool a test
+  needs goes there.
 - `dagger call qa-playground playground terminal` opens a shell with `bees` built
   from the working tree, a test project and stubbed `gh` and `claude`: the QA
   playground, a dang module in `.dagger/modules/qa-playground` described in
@@ -44,10 +48,10 @@ dagger check
 
 - The factory exports `DAGGER_X_RELEASE` for its sessions.
 - Never run `go test` on the host, in any role and for any purpose: iterating, a single test, a mutation check and reproducing a flake included. Tests start processes that leak onto the machine they run on, so they run only inside Dagger. `gofmt`, `go build` and `go vet` are fine on the host; `go vet ./...` type-checks test files without running them.
-- Run one package or one test inside a Dagger container:
+- Run one package or one test inside a Dagger container, the test runtime `dagger check` runs in (`busybees-dev`'s `test-runtime`: `golang:1.26-bookworm` with `jj`):
 
   ```sh
-dagger core container from --address golang:1.26-bookworm \
+dagger call test-runtime \
     with-directory --path /src --source . --exclude .git,.bees \
     with-workdir --path /src \
     with-exec --args=go,test,-count=1,-run,'TestA|TestB',-v,./internal/service \
@@ -87,13 +91,13 @@ dagger core container from --address golang:1.26-bookworm \
   `Boundary` that verifies it before launch (`HostBoundary`, `ContainerBoundary`, and `SandboxBoundary` in `sbx.go`,
   the Docker Sandbox mode `sandbox = "sbx"`: `sbx create <agent>` with the binds as workspaces, `sbx exec` around the agent's
   command, `sbx rm` at the end, the agent's credential left to the sbx proxy; `sbxdagger.go`, the opt-in Dagger CLI and
-  host engine forward, `Profile.Dagger` and `Grants.DaggerEngine`). `confine.go` is the host's
+  host engine forward, `Profile.Dagger` and `Grants.DaggerEngine`; `sbxhost.go`, `Grants.HostServers`: a caller's own MCP servers on the host's loopback, each port allowed for one sandbox alone). `confine.go` is the host's
   confined mode (`Profile.Confine`): the operating system holds the process to its mounts and `SystemPaths` through a
   `Confiner`, Landlock on Linux (`confine_linux.go`), Seatbelt on macOS (`confine_seatbelt.go`: the profile and the
   `sandbox-exec` start, untagged so the gate tests them; `confine_darwin.go` selects it), `ErrUnsupported` where there
   is none; the Landlock enforcement tests skip on a kernel without Landlock and run in the VM `CONTRIBUTING.md`
   describes, and Seatbelt enforcement is checked by hand with the recipe there. `enforce.go` is the runner an embedder
-  takes a held turn from (`Enforcer`: `NewHostNone`, `NewHostClaude`, `NewContainer`; `Prepare(ctx, grants)` → `Session`
+  takes a held turn from (`Enforcer`: `NewHostNone`, `NewHostClaude`, `NewContainer`, `NewSbx`; `Prepare(ctx, grants)` → `Session`
   with `Policy`, `Run` and `Release`): host kinds are confined turns, a container session binds stand-ins over its
   image's VCS executables (`containermask.go`, `ContainerBoundary.Masks`), and `Run` refuses a turn the reported policy
   does not describe (`ErrPolicyChanged`). Busybees' own sessions go through `Runner.Run`. `agenttest` supplies fake
@@ -126,6 +130,11 @@ dagger core container from --address golang:1.26-bookworm \
 - `internal/github` — thin `gh` wrapper (`Client.Tokens`: a token per call; `SameLogin`: a GitHub App's login with and without `[bot]`). `internal/ghapp` — `[github] app_id`/`private_key`: `NewClient` builds the factory's client, `Minter` mints installation tokens restricted to the repository only when the cached one has expired and, held by `session.Runner` for each session, answers sessions' requests through `<state_dir>/github/` (`token`, `refresh`, `token.sh`, `credential.sh`, `bin/gh`); `FileSource` is the in-session reader; `ghapptest` fakes the App's API. `internal/workspace` — git worktrees. `internal/skills` — skills by git URL → `--plugin-dir`.
 - `core/vcs` — workspace directory, optional VCS mounts and provider lifecycle.
   `internal/workspace` implements it with git worktrees; core does no git discovery.
+  `replay.go` is the optional `Replayer` (replay `OldBase..Head` onto `Onto` without
+  moving a branch, resumable after a conflict and a restart), implemented by
+  `core/vcs/git` (cherry-pick) and `core/vcs/jj` (`jj duplicate`); the jj tests need
+  `jj`: the test runtime has it and sets `BUSYBEES_REQUIRE_JJ`, which turns a missing
+  `jj` into a failure, and a container without either skips them.
 - `core/work` — opaque work keys, caller tags and collision-resistant filenames.
 - `internal/ghwork` — busybees GitHub key/tag mapping; `internal/mailfmt` supplies
   GitHub display fields to the generic mailbox formatter.

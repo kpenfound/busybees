@@ -53,11 +53,14 @@ Tests never run on the host: test processes can leak onto the machine they run
 on, so every test run happens inside Dagger. `gofmt`, `go build` and `go vet`
 are fine on the host.
 
-For focused iteration, run one package or one test inside a Dagger container.
-From the repository root, for the root module:
+For focused iteration, run one package or one test inside a Dagger container
+started from the test runtime `dagger check` uses: `test-runtime` of the
+`busybees-dev` module in `.dagger/modules/busybees-dev`, `golang:1.26-bookworm`
+with a pinned `jj` release for `core/vcs/jj`'s tests. A tool a test needs is
+added there. From the repository root, for the root module:
 
 ```sh
-dagger core container from --address golang:1.26-bookworm \
+dagger call test-runtime \
     with-directory --path /src --source . --exclude .git,.bees \
     with-workdir --path /src \
     with-exec --args=go,test,-count=1,-run,'TestA|TestB',-v,./internal/config \
@@ -68,7 +71,7 @@ For the standalone `core/` module, the same shape with the working directory
 inside it:
 
 ```sh
-dagger core container from --address golang:1.26-bookworm \
+dagger call test-runtime \
     with-directory --path /src --source . --exclude .git,.bees \
     with-workdir --path /src/core \
     with-exec --args=go,test,-count=1,-run,'TestA|TestB',-v,./agent \
@@ -198,7 +201,7 @@ both Go modules. The root `go.mod` uses a local replacement for `./core`.
   the container, so the export is what updates the file you commit:
 
   ```sh
-  dagger core container from --address golang:1.26-bookworm \
+  dagger call test-runtime \
     with-directory --path /src --source . --exclude .git,.bees \
     with-workdir --path /src \
     with-exec --args=go,test,./internal/config,-count=1,-update \

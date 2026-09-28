@@ -113,10 +113,11 @@ exec sleep 60
 // argument per line, runs nothing and fails when a file named fail-setup
 // is there; `policy` appends its arguments to sbx-policy.txt beside the
 // script, one call per line, and fails when a file named fail-policy is
-// there; `rm` records its arguments in sbx-rm.txt beside the script;
-// `version` prints one. Every call but `exec` and `version` also appends its
-// first two arguments to sbx-calls.txt beside the script, in the order they
-// ran.
+// there, `policy rm` also when one named fail-policy-rm is; `rm` records
+// its arguments in sbx-rm.txt beside the script; `version` prints one, and
+// fails when a file named fail-version is there. Every call but `exec` and
+// `version` also appends its first two arguments to sbx-calls.txt beside
+// the script, in the order they ran.
 func Sbx(t *testing.T, sessionVariable string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "sbx")
@@ -128,6 +129,10 @@ create|policy|rm) echo "$1 $2" >> "$here/sbx-calls.txt" ;;
 esac
 case "$1" in
 version)
+  if [ -f "$here/fail-version" ]; then
+    echo "Cannot connect to the sandbox daemon. Is it running?" >&2
+    exit 1
+  fi
   echo "sbx version 0.42.0"
   exit 0
   ;;
@@ -143,6 +148,10 @@ policy)
   echo "$*" >> "$here/sbx-policy.txt"
   if [ -f "$here/fail-policy" ]; then
     echo "error: allow network rule: sandbox not found" >&2
+    exit 1
+  fi
+  if [ "$2" = rm ] && [ -f "$here/fail-policy-rm" ]; then
+    echo "error: remove network rule: policy store is locked" >&2
     exit 1
   fi
   exit 0
