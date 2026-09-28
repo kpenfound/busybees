@@ -185,6 +185,10 @@ req.Grants = &agent.Grants{
   profile that does not ask (`ErrUnsupported`), asked for without the grant
   or with another engine granted (`ErrNotGranted`), or in any other mode
   (`ErrUnsupported`).
+- `HostServers` grants a `SandboxSbx` session MCP servers the caller already
+  runs on the host's loopback, each by name and port. The server must also
+  be granted as `mcp__<name>`. See the sandbox below; every other mode
+  refuses the grant with `ErrUnsupported`.
 
 ### Built-in tool grants
 
@@ -429,7 +433,42 @@ setup `sbx exec` once the sandbox exists, forwards a socket engine from a
 port on `127.0.0.1` for the session's lifetime, and sets
 `EnvDaggerRunnerHost` to the engine's address: at `host.docker.internal`
 for a socket or a loopback TCP engine, and as written for a TCP engine on
-any other host. No `Enforcer` prepares this kind.
+any other host. `NewSbx` prepares this kind (below).
+
+The sandbox reaches the host's loopback as `host.docker.internal`, and the
+sbx network policy denies it. The runner allows the sandbox, and no other,
+each host port the session needs with `sbx policy allow network --sandbox
+<name> localhost:<port>`, after `sbx create` and before any probe or the
+agent runs in it, and removes each rule with `sbx policy rm network` before
+`sbx rm`. That holds when the session ends, when a later setup step or the
+agent fails, and when it is cancelled. A rule sbx refuses stops the session
+before anything runs; a rule sbx cannot remove is logged, and `sbx rm`
+drops it with the sandbox. The ports are the `HostMCP` server's, a loopback
+Dagger engine's, and those of the caller's own servers in
+`Grants.HostServers`:
+
+```go
+// The caller's server listens on 127.0.0.1:8931 and checks a bearer token.
+req.Profile.MCP["tools"] = agent.MCPEntry{Type: "http", URL: "http://127.0.0.1:8931/mcp", BearerTokenEnv: "TOOLS_TOKEN"}
+req.Env["TOOLS_TOKEN"] = token
+req.Grants = &agent.Grants{
+	Env:         []string{"PATH", "TOOLS_TOKEN"},
+	Tools:       []string{"Read", "Edit", "mcp__tools"},
+	Mounts:      []agent.Mount{{Path: work, Access: agent.ReadWrite}},
+	HostServers: []agent.HostServer{{Name: "tools", Port: 8931}},
+}
+```
+
+The granted entry must be an HTTP entry whose URL names the loopback
+(`127.0.0.1`, `::1`, `localhost`) or `host.docker.internal` and the granted
+port. The session is given it at `host.docker.internal`, and the token
+reaches the sandbox by name like any other variable. An entry on another
+port or host, or one that runs a command, is refused before the sandbox is
+created. The grant adds nothing else: a granted server the profile has no
+entry for gets no rule, and an entry that is not granted is passed as
+written and gets none either, so it reaches the host only through a rule
+the machine's own policy has. Two servers on one port share one rule. The
+runner never starts, stops or dials the caller's listener.
 
 ## Enforced turns
 
@@ -439,7 +478,8 @@ something other than the agent holds to their grants. There is one
 constructor per sandbox kind, each taking the `Runner` whose fields it uses:
 
 ```go
-// or NewHostClaude(runner), NewContainer(runner, image)
+// or NewHostClaude(runner), NewContainer(runner, image),
+// NewSbx(runner, agent, template)
 enforcer := agent.NewHostNone(runner)
 session, err := enforcer.Prepare(ctx, grants)
 if err != nil {
@@ -469,13 +509,27 @@ result, err := session.Run(ctx, request)
   the turn downloads is not found. The stand-ins are the runner's own files
   under the temporary directory, which the engine must be able to bind;
   `Release` removes them. An image the engine cannot look into is not
-  prepared.
+  prepared. `NewSbx` gives every turn a sandbox of its own for one agent
+  (empty is claude), created from the template, or from sbx's own for the
+  agent when the template is empty, with the mounts as `SandboxBoundary`
+  binds them, the rules for its host ports, and `sbx rm` when the turn
+  ends. `Prepare` refuses an agent sbx has no template for and a machine
+  whose `sbx version` fails, and creates nothing. Without `VCS` the VCS
+  executables are shadowed on `PATH` and denied by name alone: sbx binds
+  directories, not files, so nothing lies over the template's own `git`,
+  and the sandbox's user has `sudo` to undo anything done inside the VM.
+  VCS stays out of such a turn because it gets no VCS credentials or
+  configuration in its environment and no writable VCS metadata. A
+  credential the operator stored with `sbx secret set` belongs to the
+  sandbox's proxy, which injects it into matching requests; grants cannot
+  withhold it.
 - `Policy` is what the session enforces: the sandbox kind, the environment
   allowlist, the built-in tools the agent is started with (`nil` is all) and
   the MCP servers it may be given, the mounts, `System` (a host session's
   system paths and the executables of the agents the runner names), `VCS`,
-  the names shadowed on `PATH`, the `Denied` paths, and a container's image
-  and `Binds`. It holds names and paths, never a variable's value.
+  the names shadowed on `PATH`, the `Denied` paths, a container's image or
+  a sandbox's template, `Binds`, and a sandbox's `Agent`, `DaggerEngine`
+  and `HostServers`. It holds names and paths, never a variable's value.
   `Reads(path)`, `Writes(path)`, `Runs(path)` and `Allows(tool)` answer for
   one path or tool: the innermost mount decides, a host session's system
   paths add to it, and a denied path, or on the host a hard link to a denied
@@ -488,22 +542,26 @@ result, err := session.Run(ctx, request)
   written: cleaned, with no link followed on the host or in the image, it
   runs unless it lies under `Denied`. A name the image links to a denied
   path (`/bin/git` where `/bin` links to `usr/bin`) is said to run, and the
-  stand-in over the path it leads to refuses it all the same.
+  stand-in over the path it leads to refuses it all the same. A sandbox is
+  judged the same way and has no `Denied` paths, so every absolute path
+  runs, `/usr/bin/git` included.
 - `Run` takes an ordinary `Request`. The grants, the sandbox, the image and
   the confinement are the session's: `Grants` may be nil or equal to the
   prepared ones, the profile's `Sandbox` and `SandboxImage` may be empty or
   name the session's, and `ContainerUseEnvironment` is refused. A host
   session has no image, so it refuses a profile that names one. A host turn
-  runs confined whatever `Profile.Confine` says. Granted `VCS` is the
-  turn's, and a profile that asks for `VCS` that was not granted is refused.
+  runs confined whatever `Profile.Confine` says. A sandbox's agent is the
+  session's: the profile's `Agent` may be empty or name it. Granted `VCS` is
+  the turn's, and a profile that asks for `VCS` that was not granted is
+  refused.
   `agent.Admit` is that step alone.
 - Before anything starts, `Run` compares the verified turn with the policy:
   tools, mounts, system paths, denied names and paths, binds. A difference
   is refused with `ErrPolicyChanged`. It happens when what the policy was
   read from has changed since `Prepare`: the request sets another `PATH`
   with another `git` on it, a granted symbolic link points elsewhere, an
-  agent was installed. A container turn adds only a granted mount again,
-  under the name a symbolic link gives a directory of the request.
+  agent was installed. A container or sandbox turn adds only a granted mount
+  again, under the name a symbolic link gives a directory of the request.
 - Tools are held by the agent itself, not by the prompt: `claude` is
   started with `--tools` and `--strict-mcp-config`, opencode as its
   `bees-granted` agent and codex with configuration derived from the grant
@@ -524,6 +582,61 @@ releases it, and prunes stale metadata. The caller owns this lifetime: a workspa
 may span several sessions and retries. Release it on success, errors and
 cancellation, using `context.WithoutCancel` for cleanup after cancellation.
 Providers own retention policy and interpret refs; core does neither.
+
+### Replaying revisions
+
+`vcs.Replayer` is an optional capability a provider may implement: it replays
+the revisions reachable from `Head` and not from `OldBase` onto `Onto`, in a
+workspace the caller retains, and moves no branch. `OldBase` is the boundary
+the caller chose, such as the revision a dependent branch was started from,
+and must be an ancestor of `Head`; a range holding a merge is refused. A
+merge-base is not used: when a parent branch was integrated upstream as a
+squash, the merge-base lies below the parent's commits, and replaying from it
+brings them back.
+
+```go
+r, err := replayer.Replay(ctx, ws, vcs.ReplayRequest{OldBase: parentTip, Head: "child", Onto: "main"})
+for err == nil && r.InProgress {
+	// r.Conflicts are the paths to resolve in ws.Directory(), sorted.
+	resolve(r.Conflicts)
+	r, err = replayer.Continue(ctx, ws) // wraps vcs.ErrUnresolved while one remains
+}
+// r.Candidate is the replayed head; r.Commits pairs each original with it.
+// Moving the branch to it, with a compare-and-swap, and publishing it are
+// the caller's.
+```
+
+A replay stopped on a conflict stays in progress in the workspace, its state
+kept in the workspace's VCS metadata. After a restart, `ReplayStatus` reports
+it and `Continue` goes on with it; `Abort` drops it and returns the workspace
+to where it was. A second `Replay` in the same workspace is refused with
+`vcs.ErrReplayInProgress`. A replay runs in the caller's process with the
+caller's VCS access: it fetches and pushes nothing, and it is not a session,
+so it grants a session nothing.
+
+Core implements it for two backends, each over a workspace directory, for a
+provider to delegate to:
+
+- `core/vcs/git.Replayer` detaches the working tree at `Onto` and
+  cherry-picks the commits one at a time. Each keeps its original's message,
+  author and committer, so the same replay gives the same commit ids, and a
+  commit that is or becomes empty is kept, so the commit boundaries stay. It
+  refuses a working tree with changes to tracked files, stops with the
+  conflict in the index and the working tree, and on `Continue` stages the
+  working tree and refuses a conflicted path that still holds a
+  `<<<<<<< ` or `>>>>>>> ` line. The state is `core-replay.json` in the
+  worktree's git directory. A finished replay leaves the working tree
+  detached at the candidate.
+- `core/vcs/jj.Replayer` runs `jj duplicate`, so the originals and every
+  bookmark stay. A duplicate is a new change with a change id of its own,
+  which is random: `Commits` is what ties it to its original, and no two
+  replays are alike. jj records a conflict in the revision, so every
+  revision is created; the working copy is put on a new change on top of
+  the first that conflicts, and `Continue` squashes the caller's resolution
+  into it, jj rebasing the revisions above. The state is `core-replay.json`
+  in the workspace's `.jj` directory. A finished replay leaves the working
+  copy on a new change on top of the candidate. jj runs with a
+  configuration of the replayer's own (`JJ_CONFIG`), not the user's.
 
 Busybees implements this contract in `internal/workspace`, serializing git
 operations on its main clone and supplying its shared git directory as a mount.
@@ -579,6 +692,8 @@ e.Agent = func(ctx context.Context, turn *enforcertest.Turn) (*agent.Result, err
 session's policy, and a refusal wraps `fs.ErrPermission`. The fake has no
 platform: its policy has no system paths and no denied paths, a denied name
 is denied under every path that ends in it, and `Exec` runs nothing.
+For `agent.SandboxSbx`, `Image` is the template and `SandboxAgent` the
+agent, as `agent.NewSbx` takes them.
 `PrepareErr` stands in for a platform that cannot enforce the kind, and
 `Sessions`, `Session.Requests` and `Session.Released` say what the caller did.
 It is a package of its own because it imports `agent`, whose tests import

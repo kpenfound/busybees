@@ -56,7 +56,7 @@ func (l layout) request() agent.Request {
 // it reads nothing outside its mounts, writes nothing into a read-only
 // working directory, runs no git and has no tool it was not granted.
 func TestAFakeTurnIsHeldToItsGrants(t *testing.T) {
-	for _, kind := range []string{agent.SandboxNone, agent.SandboxClaude, agent.SandboxContainer} {
+	for _, kind := range []string{agent.SandboxNone, agent.SandboxClaude, agent.SandboxContainer, agent.SandboxSbx} {
 		t.Run(kind, func(t *testing.T) {
 			l := newLayout(t)
 			tried := map[string]error{}
@@ -86,10 +86,11 @@ func TestAFakeTurnIsHeldToItsGrants(t *testing.T) {
 			if err != nil || res.ResultText != "reviewed" || res.Name != "review" || res.Role != "reviewer" || res.SessionDir != l.session {
 				t.Fatalf("run = %+v, %v", res, err)
 			}
-			// A container runs what its image holds, so a path outside its
-			// mounts is the image's and not the host's.
+			// A container or a sandbox runs what its image holds, so a path
+			// outside its mounts is the image's and not the host's.
 			allowed := []string{"read the working directory", "write the session directory", "run ls", "run a script of the working directory", "use Read", "use the granted server"}
-			if kind == agent.SandboxContainer {
+			host := kind == agent.SandboxNone || kind == agent.SandboxClaude
+			if !host {
 				allowed = append(allowed, "run a program outside")
 			}
 			for what, err := range tried {
@@ -115,14 +116,18 @@ func TestAFakeTurnIsHeldToItsGrants(t *testing.T) {
 			}
 
 			// The request it ran is the one a real session would have: the
-			// session's sandbox and grants, and a host turn confined.
+			// session's sandbox and grants, a host turn confined, and a
+			// sandbox's the agent it was prepared for.
 			sessions := e.Sessions()
 			if len(sessions) != 1 || len(sessions[0].Requests()) != 1 {
 				t.Fatalf("sessions = %v", sessions)
 			}
 			ran := sessions[0].Requests()[0]
-			if ran.Profile.Sandbox != kind || ran.Profile.Confine != (kind != agent.SandboxContainer) || ran.Grants == nil || !slices.Equal(ran.Grants.Mounts, l.grants().Mounts) {
+			if ran.Profile.Sandbox != kind || ran.Profile.Confine != host || ran.Grants == nil || !slices.Equal(ran.Grants.Mounts, l.grants().Mounts) {
 				t.Errorf("the admitted request: profile %+v, grants %+v", ran.Profile, ran.Grants)
+			}
+			if kind == agent.SandboxSbx && (ran.Profile.Agent != agent.AgentClaude || ran.Profile.SandboxImage != "image") {
+				t.Errorf("the admitted sandbox request: agent %q, template %q", ran.Profile.Agent, ran.Profile.SandboxImage)
 			}
 
 			if sessions[0].Released() {
@@ -158,6 +163,38 @@ func TestTheFakeRefusesWhatARealEnforcerRefuses(t *testing.T) {
 	}
 	if _, err := (&enforcertest.Enforcer{Sandbox: agent.SandboxContainer}).Prepare(context.Background(), l.grants()); !errors.Is(err, agent.ErrUnsupported) {
 		t.Errorf("a container with no image: %v, want ErrUnsupported", err)
+	}
+	if _, err := (&enforcertest.Enforcer{Sandbox: agent.SandboxSbx, SandboxAgent: agent.AgentPi}).Prepare(context.Background(), l.grants()); !errors.Is(err, agent.ErrUnsupported) {
+		t.Errorf("a sandbox for an agent sbx has no template for: %v, want ErrUnsupported", err)
+	}
+	hosted := l.grants()
+	hosted.HostServers = []agent.HostServer{{Name: "tools", Port: 8080}}
+	if _, err := e.Prepare(context.Background(), hosted); !errors.Is(err, agent.ErrUnsupported) {
+		t.Errorf("a host server for a host turn: %v, want ErrUnsupported", err)
+	}
+	sbx := &enforcertest.Enforcer{Sandbox: agent.SandboxSbx, SandboxAgent: agent.AgentCodex, Agent: e.Agent}
+	boxed, err := sbx.Prepare(context.Background(), hosted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, change := range map[string]func(*agent.Request){
+		"another agent": func(r *agent.Request) { r.Profile.Agent = agent.AgentClaude },
+		"a template":    func(r *agent.Request) { r.Profile.SandboxImage = "acme/template:1" },
+		"a host server on a port": func(r *agent.Request) {
+			r.Profile.MCP = map[string]agent.MCPEntry{"tools": {URL: "http://127.0.0.1:9090/mcp"}}
+		},
+		"a host server off the host": func(r *agent.Request) {
+			r.Profile.MCP = map[string]agent.MCPEntry{"tools": {URL: "https://tools.example.com:8080/mcp"}}
+		},
+		"a host server run inside": func(r *agent.Request) {
+			r.Profile.MCP = map[string]agent.MCPEntry{"tools": {Command: "tools"}}
+		},
+	} {
+		req := l.request()
+		change(&req)
+		if _, err := boxed.Run(context.Background(), req); !errors.Is(err, agent.ErrNotGranted) && !errors.Is(err, agent.ErrUnsupported) {
+			t.Errorf("sandbox, %s: %v, want a refusal", name, err)
+		}
 	}
 	unsupported := errors.Join(agent.ErrUnsupported, errors.New("no confiner on this platform"))
 	if s, err := (&enforcertest.Enforcer{PrepareErr: unsupported}).Prepare(context.Background(), l.grants()); !errors.Is(err, agent.ErrUnsupported) || s != nil {
@@ -211,16 +248,22 @@ func (allowAll) Start(cmd *exec.Cmd, _ agent.Confinement) error { return cmd.Sta
 func TestTheFakePolicyIsTheRealOneWithoutItsPlatform(t *testing.T) {
 	l := newLayout(t)
 	docker := agenttest.Docker(t, "image", "SESSION_DIR")
+	sbx := agenttest.Sbx(t, "SESSION_DIR")
 	for kind, e := range map[string]agent.Enforcer{
 		agent.SandboxNone:      agent.NewHostNone(agent.Runner{Confiner: allowAll{}, SystemPaths: []agent.Mount{}}),
 		agent.SandboxClaude:    agent.NewHostClaude(agent.Runner{Confiner: allowAll{}, SystemPaths: []agent.Mount{}}),
 		agent.SandboxContainer: agent.NewContainer(agent.Runner{DockerBin: docker}, "image"),
+		agent.SandboxSbx:       agent.NewSbx(agent.Runner{SbxBin: sbx}, agent.AgentOpenCode, "image"),
 	} {
-		real, err := e.Prepare(context.Background(), l.grants())
+		g := l.grants()
+		if kind == agent.SandboxSbx {
+			g.HostServers = []agent.HostServer{{Name: "tools", Port: 8080}}
+		}
+		real, err := e.Prepare(context.Background(), g)
 		if err != nil {
 			t.Fatalf("%s: %v", kind, err)
 		}
-		fake, err := (&enforcertest.Enforcer{Sandbox: kind, Image: "image"}).Prepare(context.Background(), l.grants())
+		fake, err := (&enforcertest.Enforcer{Sandbox: kind, Image: "image", SandboxAgent: agent.AgentOpenCode}).Prepare(context.Background(), g)
 		if err != nil {
 			t.Fatalf("%s: %v", kind, err)
 		}
@@ -236,6 +279,7 @@ func TestTheFakePolicyIsTheRealOneWithoutItsPlatform(t *testing.T) {
 
 func samePolicy(a, b agent.Policy) bool {
 	return a.Sandbox == b.Sandbox && a.Image == b.Image && a.VCS == b.VCS &&
+		a.Agent == b.Agent && a.DaggerEngine == b.DaggerEngine && slices.Equal(a.HostServers, b.HostServers) &&
 		slices.Equal(a.Env, b.Env) && slices.Equal(a.Tools, b.Tools) && slices.Equal(a.MCPServers, b.MCPServers) &&
 		slices.Equal(a.Mounts, b.Mounts) && slices.Equal(a.System, b.System) &&
 		slices.Equal(a.DeniedExecutables, b.DeniedExecutables) && slices.Equal(a.Denied, b.Denied) && slices.Equal(a.Binds, b.Binds)

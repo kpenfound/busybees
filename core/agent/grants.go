@@ -55,6 +55,10 @@ type Grants struct {
 	// to a session whose profile asks for it, and only in SandboxSbx. A
 	// profile that asks for another engine, or none, is refused.
 	DaggerEngine string
+	// HostServers grants a SandboxSbx session MCP servers the caller runs
+	// on the host's loopback itself (HostServer). Every other mode refuses
+	// them.
+	HostServers []HostServer
 }
 
 // ErrNoGrants is returned for a request that carries no grants.
@@ -106,6 +110,10 @@ type Turn struct {
 	// DaggerEngine is the Dagger engine the session reaches; empty for
 	// none.
 	DaggerEngine string
+	// HostServers are the granted host servers the profile's MCP entries
+	// reach, in name order: the ports a SandboxSbx session is allowed on
+	// the host's loopback.
+	HostServers []HostServer
 }
 
 // Bind is one host path a container sees, at Destination inside it.
@@ -296,6 +304,17 @@ func verifyCommonFor(req Request, restricted bool) (*Turn, error) {
 	tools, servers, err := splitTools(g.Tools)
 	if err != nil {
 		return nil, err
+	}
+	if err := checkHostServers(g, servers); err != nil {
+		return nil, err
+	}
+	if len(g.HostServers) > 0 && p.Sandbox != SandboxSbx {
+		return nil, fmt.Errorf("%w: sandbox %q cannot give a session a host server; only %q can", ErrUnsupported, p.Sandbox, SandboxSbx)
+	}
+	if p.Sandbox == SandboxSbx {
+		if turn.HostServers, err = hostServers(req); err != nil {
+			return nil, err
+		}
 	}
 	for name := range p.MCP {
 		if !servers[name] {

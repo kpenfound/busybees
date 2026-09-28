@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/kpenfound/busybees/core/agent/agentbin"
@@ -15,8 +16,10 @@ import (
 
 // Enforcer prepares turns of one sandbox kind that are held to their grants
 // by something other than the agent: the operating system for a host kind
-// (the confined HostBoundary), the engine's binds for a container. There is
-// one constructor per kind: NewHostNone, NewHostClaude and NewContainer.
+// (the confined HostBoundary), the engine's binds for a container, the
+// virtual machine's workspaces for a Docker Sandbox. There is one
+// constructor per kind: NewHostNone, NewHostClaude, NewContainer and
+// NewSbx.
 //
 //	session, err := enforcer.Prepare(ctx, grants)
 //	// inspect session.Policy(), and refuse to go on when it is not what was meant
@@ -77,12 +80,39 @@ func NewHostClaude(r Runner) Enforcer { return &hostEnforcer{kind: SandboxClaude
 // Release removes them.
 func NewContainer(r Runner, image string) Enforcer { return &containerEnforcer{r: r, image: image} }
 
+// NewSbx returns the enforcer of turns of agent in a Docker Sandbox
+// (SandboxSbx), each created from template, or from sbx's own template for
+// the agent when template is empty (SbxTemplates). An empty agent is
+// AgentClaude. A turn of another agent, or one whose profile names another
+// template, is refused. Every turn gets a sandbox of its own, given the
+// granted mounts as its workspaces and nothing else of the host, a network
+// policy rule for each host port it is granted and reaches, and removed
+// when the turn ends.
+//
+// Prepare checks the grants and that the sbx CLI answers (`sbx version`).
+// Without VCS, the VCS executables are shadowed on the turn's PATH and
+// denied by name alone: sbx binds directories and not files, so nothing is
+// laid over an executable of the template, one reached by its path runs,
+// and the sandbox's user can undo anything done inside the virtual machine
+// with sudo. What keeps VCS from such a turn is what it is not given: VCS
+// credentials and configuration in its environment and writable VCS
+// metadata. Credentials the operator stores with `sbx secret set` are the
+// sandbox proxy's, which injects them into the requests it forwards;
+// grants cannot withhold them.
+func NewSbx(r Runner, agent, template string) Enforcer {
+	if agent == "" {
+		agent = AgentClaude
+	}
+	return &sbxEnforcer{r: r, agent: agent, template: template}
+}
+
 // Policy is what a session enforces. Every path of the host has its symbolic
 // links resolved, a bind's destination apart, which is also the path a mount
 // was granted by. It carries names and paths and no values: the
 // environment's values are the turn's.
 type Policy struct {
-	// Sandbox is the kind: SandboxNone, SandboxClaude or SandboxContainer.
+	// Sandbox is the kind: SandboxNone, SandboxClaude, SandboxContainer or
+	// SandboxSbx.
 	Sandbox string
 	// Env is the allowlist of variable names the turn's environment is
 	// built from.
@@ -96,28 +126,40 @@ type Policy struct {
 	Mounts []Mount
 	// System is what a host turn reaches beyond its mounts: the system
 	// paths, and the executables of the agents the runner names, of which a
-	// turn runs one. Nil for a container, which reaches its image and
-	// nothing else of the host.
+	// turn runs one. Nil for a container or a sandbox, which reaches its
+	// image and nothing else of the host.
 	System []Mount
 	// VCS is whether version control is granted.
 	VCS bool
 	// DeniedExecutables are the names shadowed on the turn's PATH, and
 	// Denied the paths that can be neither read nor executed: on the host
-	// for a host turn, inside the image for a container.
+	// for a host turn, inside the image for a container. A sandbox has no
+	// denied paths.
 	DeniedExecutables []string
 	Denied            []string
-	// Image is what a container turn runs, and Binds everything it is given
-	// of the host: the mounts, and the stand-ins over Denied. A turn adds
-	// to them only a granted mount again, under the path a symbolic link
-	// names a directory of the request by.
+	// Image is what a container turn runs, or the template a sandbox is
+	// created from (empty: sbx's own for Agent). Binds are everything a
+	// container or a sandbox is given of the host: the mounts, and a
+	// container's stand-ins over Denied. A turn adds to them only a granted
+	// mount again, under the path a symbolic link names a directory of the
+	// request by.
 	Image string
 	Binds []Bind
+	// Agent is the agent a sandbox is created for; empty for any other
+	// kind.
+	Agent string
+	// DaggerEngine is the Dagger engine a sandbox turn whose profile asks
+	// for it reaches, and HostServers the caller's servers on the host's
+	// loopback it may be allowed to reach.
+	DaggerEngine string
+	HostServers  []HostServer
 }
 
 // NewPolicy checks grants on their own, the way every Enforcer does before
 // it asks its platform anything, and returns the policy they describe for a
 // sandbox kind: no system paths and no denied paths, which a platform adds,
-// and for a container the binds of its mounts and no image.
+// for a container or a sandbox the binds of its mounts and no image, and
+// for a sandbox no agent.
 func NewPolicy(sandbox string, g Grants) (Policy, error) {
 	kind, err := sandboxKind(sandbox)
 	if err != nil {
@@ -130,19 +172,31 @@ func NewPolicy(sandbox string, g Grants) (Policy, error) {
 	if err != nil {
 		return Policy{}, err
 	}
+	if err := checkHostServers(&g, servers); err != nil {
+		return Policy{}, err
+	}
+	if kind != SandboxSbx && (g.DaggerEngine != "" || len(g.HostServers) > 0) {
+		return Policy{}, fmt.Errorf("%w: sandbox %q cannot give a session the Dagger engine or a host server; only %q can", ErrUnsupported, kind, SandboxSbx)
+	}
+	if g.DaggerEngine != "" {
+		if err := CheckDaggerEngine(g.DaggerEngine); err != nil {
+			return Policy{}, err
+		}
+	}
 	mounts, err := resolveMounts(&g, g.VCS)
 	if err != nil {
 		return Policy{}, err
 	}
-	p := Policy{Sandbox: kind, Env: slices.Clone(g.Env), MCPServers: slices.Sorted(maps.Keys(servers)), Mounts: mounts, VCS: g.VCS}
+	p := Policy{Sandbox: kind, Env: slices.Clone(g.Env), MCPServers: slices.Sorted(maps.Keys(servers)), Mounts: mounts, VCS: g.VCS,
+		DaggerEngine: g.DaggerEngine, HostServers: slices.Clone(g.HostServers)}
 	if !slices.Contains(tools, ToolsAll) {
 		p.Tools = append([]string{}, tools...)
 	}
 	if !g.VCS {
 		p.DeniedExecutables = slices.Clone(VCSExecutables)
 	}
-	if kind == SandboxContainer {
-		set := &bindSet{}
+	if kind == SandboxContainer || kind == SandboxSbx {
+		set := &bindSet{sbx: kind == SandboxSbx}
 		if err := set.mounts(g.Mounts, mounts); err != nil {
 			return Policy{}, err
 		}
@@ -155,21 +209,26 @@ func sandboxKind(sandbox string) (string, error) {
 	switch sandbox {
 	case "":
 		return SandboxNone, nil
-	case SandboxNone, SandboxClaude, SandboxContainer:
+	case SandboxNone, SandboxClaude, SandboxContainer, SandboxSbx:
 		return sandbox, nil
 	}
-	return "", fmt.Errorf("%w: sandbox %q is not a kind an enforcer holds (%s, %s, %s)", ErrUnsupported, sandbox, SandboxNone, SandboxClaude, SandboxContainer)
+	return "", fmt.Errorf("%w: sandbox %q is not a kind an enforcer holds (%s)", ErrUnsupported, sandbox, strings.Join(Sandboxes, ", "))
 }
+
+// hostKind reports whether a kind runs on this host, where an enforcer
+// confines it.
+func hostKind(kind string) bool { return kind == SandboxNone || kind == SandboxClaude }
 
 // Admit returns req as a session with policy p, prepared with g, runs it, or
 // the reason it does not: the grants are the session's, and a request that
 // carries others is refused; the profile's sandbox and image are the
 // session's, a host session's image being none, and a profile that names
 // another, or a container-use environment to build one from, is refused
-// whatever the kind; a host turn is confined; granted VCS is given to the
-// turn, and a profile that asks for VCS that was not granted is refused. The
-// request is then checked against the grants the way every boundary checks
-// it.
+// whatever the kind; a sandbox's agent is the session's, and a profile that
+// names another is refused; a host turn is confined; granted VCS is given
+// to the turn, and a profile that asks for VCS that was not granted is
+// refused. The request is then checked against the grants the way every
+// boundary checks it.
 func Admit(p Policy, g Grants, req Request) (Request, error) {
 	req, err := admit(p, g, req)
 	if err != nil {
@@ -198,14 +257,24 @@ func admit(p Policy, g Grants, req Request) (Request, error) {
 		return Request{}, fmt.Errorf("%w: the profile asks for sandbox %q and the session was prepared for %q", ErrUnsupported, req.Profile.Sandbox, kind)
 	}
 	req.Profile.Sandbox = kind
-	req.Profile.Confine = kind != SandboxContainer
+	req.Profile.Confine = hostKind(kind)
 	// The image is the one Prepare looked into, and a host session has none:
 	// a profile that names another is not run with the name dropped.
 	if req.Profile.ContainerUseEnvironment != "" || (req.Profile.SandboxImage != "" && req.Profile.SandboxImage != p.Image) {
 		return Request{}, fmt.Errorf("%w: the session was prepared for sandbox %q and image %q, and the profile names another image or an environment to build one from", ErrUnsupported, kind, p.Image)
 	}
-	if kind == SandboxContainer {
+	if !hostKind(kind) {
 		req.Profile.SandboxImage = p.Image
+	}
+	if kind == SandboxSbx {
+		agent := p.Agent
+		if agent == "" {
+			agent = AgentClaude
+		}
+		if req.Profile.Agent != "" && req.Profile.Agent != agent {
+			return Request{}, fmt.Errorf("%w: the profile's agent is %q and the session's sandbox is created for %q", ErrUnsupported, req.Profile.Agent, agent)
+		}
+		req.Profile.Agent = agent
 	}
 	if g.VCS {
 		req.Profile.VCSAccess = true
@@ -214,11 +283,13 @@ func admit(p Policy, g Grants, req Request) (Request, error) {
 }
 
 func equalGrants(a, b Grants) bool {
-	return slices.Equal(a.Env, b.Env) && slices.Equal(a.Tools, b.Tools) && slices.Equal(a.Mounts, b.Mounts) && a.Within == b.Within && a.VCS == b.VCS
+	return slices.Equal(a.Env, b.Env) && slices.Equal(a.Tools, b.Tools) && slices.Equal(a.Mounts, b.Mounts) && a.Within == b.Within && a.VCS == b.VCS &&
+		a.DaggerEngine == b.DaggerEngine && slices.Equal(a.HostServers, b.HostServers)
 }
 
 func cloneGrants(g Grants) Grants {
 	g.Env, g.Tools, g.Mounts = slices.Clone(g.Env), slices.Clone(g.Tools), slices.Clone(g.Mounts)
+	g.HostServers = slices.Clone(g.HostServers)
 	return g
 }
 
@@ -226,6 +297,7 @@ func (p Policy) clone() Policy {
 	p.Env, p.Tools, p.MCPServers = slices.Clone(p.Env), slices.Clone(p.Tools), slices.Clone(p.MCPServers)
 	p.Mounts, p.System = slices.Clone(p.Mounts), slices.Clone(p.System)
 	p.DeniedExecutables, p.Denied, p.Binds = slices.Clone(p.DeniedExecutables), slices.Clone(p.Denied), slices.Clone(p.Binds)
+	p.HostServers = slices.Clone(p.HostServers)
 	return p
 }
 
@@ -271,10 +343,12 @@ func (p Policy) Writes(path string) bool {
 // image: it runs unless it lies under Denied, whether it is a path of the
 // image or one a mount is bound at. A name the image links to a denied path
 // ("/bin/git" where "/bin" is a link to "usr/bin") is therefore said to run,
-// and the stand-in over the path it leads to still refuses it. A path that
-// is not absolute does not run.
+// and the stand-in over the path it leads to still refuses it. A sandbox
+// turn is judged the same way and has no denied paths: every absolute path
+// runs, a VCS executable reached by its path included. A path that is not
+// absolute does not run.
 func (p Policy) Runs(path string) bool {
-	if p.Sandbox != SandboxContainer {
+	if hostKind(p.Sandbox) {
 		return p.Reads(path)
 	}
 	// denied compares cleaned paths: "/usr/bin/../bin/git" is "/usr/bin/git".
@@ -291,7 +365,7 @@ func (p Policy) access(path string) (read, write bool) {
 		return false, false
 	}
 	// A mask hides one name: a container reaches a hard link to it.
-	if p.Sandbox != SandboxContainer && p.deniedLink(real) {
+	if hostKind(p.Sandbox) && p.deniedLink(real) {
 		return false, false
 	}
 	if m := findMount(p.Mounts, real); m != nil {
@@ -360,7 +434,7 @@ func (h *held) ofTurn(turn *Turn) Policy {
 
 // admit refuses a turn the policy does not describe.
 func (h *held) admit(turn *Turn) error {
-	if confined := turn.Confinement != nil; confined == (h.policy.Sandbox == SandboxContainer) {
+	if confined := turn.Confinement != nil; confined != hostKind(h.policy.Sandbox) {
 		return fmt.Errorf("%w: the session holds a %s turn, and this one is confined=%v", ErrPolicyChanged, h.policy.Sandbox, confined)
 	}
 	want, got := h.policy, h.ofTurn(turn)
@@ -549,4 +623,46 @@ func (e *containerEnforcer) Prepare(ctx context.Context, g Grants) (Session, err
 	h.policy = policy
 	s.r.held = h
 	return s, nil
+}
+
+type sbxEnforcer struct {
+	r        Runner
+	agent    string
+	template string
+}
+
+func (e *sbxEnforcer) Prepare(ctx context.Context, g Grants) (Session, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if SbxTemplates[e.agent] == "" {
+		return nil, fmt.Errorf("%w: sandbox %q has no template for agent %q", ErrUnsupported, SandboxSbx, e.agent)
+	}
+	g = cloneGrants(g)
+	policy, err := NewPolicy(SandboxSbx, g)
+	if err != nil {
+		return nil, err
+	}
+	policy.Image, policy.Agent = e.template, e.agent
+	if err := e.r.sbxVersion(ctx); err != nil {
+		return nil, err
+	}
+	s := &session{grants: g, r: e.r}
+	s.r.held = &held{policy: policy}
+	return s, nil
+}
+
+// sbxVersion asks the sbx CLI for its version: a machine where it does not
+// answer cannot run a sandbox.
+func (r *Runner) sbxVersion(ctx context.Context) error {
+	if _, err := agentbin.Resolve(r.sbxBin()); err != nil {
+		return fmt.Errorf("%w: the Docker Sandboxes CLI: %w", ErrUnsupported, err)
+	}
+	if out, err := r.sbxCommand(ctx, "version").CombinedOutput(); err != nil {
+		if msg := strings.TrimSpace(string(out)); msg != "" {
+			err = fmt.Errorf("%w: %s", err, msg)
+		}
+		return fmt.Errorf("%w: the Docker Sandboxes CLI (%s version): %v", ErrUnsupported, r.sbxBin(), err)
+	}
+	return nil
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,9 +32,14 @@ import (
 // The sandbox's proxy turns host.docker.internal into the host's localhost
 // and holds it to the network policy, which denies it by default. The
 // runner allows the sandbox, and no other, each port on the host's loopback
-// it listens on for the session (`sbx policy allow network --sandbox <name>
-// localhost:<port>`), once the port is known, and removes each of those
-// rules before it removes the sandbox. sbx drops a sandbox's rules with the
+// it listens on for the session, and each granted host server's
+// (sbxhost.go), with `sbx policy allow network --sandbox <name>
+// localhost:<port>`, once the sandbox exists and before the backend's
+// probes or command run. A rule sbx refuses stops the session before
+// anything runs in the sandbox. The runner removes each rule it added
+// before it removes the sandbox, whether the session ended, a later step
+// of its setup failed, or it was stopped; a rule that cannot be removed is
+// logged and the sandbox removed all the same. sbx drops a sandbox's rules with the
 // sandbox, so a crash that leaves the sandbox behind leaves its rules with
 // it, and `sbx rm` removes both.
 //
@@ -44,7 +50,8 @@ import (
 // The session is `sbx create` before the server starts (a failed create
 // leaves nothing to stop), with Dagger a setup `sbx exec` that installs the
 // Dagger CLI, an `sbx policy allow network` for each host port the session
-// reaches, `sbx exec --interactive` with the backend's command line, its
+// reaches (the Dagger engine's, the caller-supplied server's, then the host
+// servers'), `sbx exec --interactive` with the backend's command line, its
 // prompt on stdin, an `sbx policy rm network` for each of those rules, and
 // `sbx rm --force` when the session ends, because a sandbox outlives the
 // command it ran. The sandbox's name is recorded in the session directory
@@ -96,15 +103,37 @@ func (r *Runner) startSandbox(ctx context.Context, req Request, sessionDir strin
 			return nil, err
 		}
 	}
+	for _, h := range s.turn.HostServers {
+		if err := s.allowHost(ctx, strconv.Itoa(h.Port)); err != nil {
+			s.close()
+			return nil, err
+		}
+	}
 	return s, nil
+}
+
+// mcpEntries are the MCP servers the session is given: the container's,
+// with each granted host server's entry at host.docker.internal.
+func (s *sandbox) mcpEntries(mcp map[string]MCPEntry) map[string]MCPEntry {
+	mcp = s.container.mcpEntries(mcp)
+	for _, h := range s.turn.HostServers {
+		e := mcp[h.Name]
+		e.URL = sandboxURL(e.URL)
+		mcp[h.Name] = e
+	}
+	return mcp
 }
 
 // allowHost lets this sandbox, and no other, reach one port on the host's
 // loopback, which it reaches as host.docker.internal. The sandbox must
 // exist: sbx refuses a rule for a sandbox it does not have. remove takes
-// the rule away again.
+// the rule away again. A port allowed already, which two servers can
+// share, is allowed once.
 func (s *sandbox) allowHost(ctx context.Context, port string) error {
 	resource := "localhost:" + port
+	if slices.Contains(s.allowed, resource) {
+		return nil
+	}
 	if out, err := s.r.sbxCommand(ctx, "policy", "allow", "network", "--sandbox", s.name, resource).CombinedOutput(); err != nil {
 		if msg := bytes.TrimSpace(out); len(msg) > 0 {
 			err = fmt.Errorf("%w: %s", err, msg)
@@ -339,7 +368,8 @@ func (r *Runner) sbxBin() string {
 // Verify refuses a request whose own paths the grants do not cover, the way
 // ContainerBoundary does, and a workspace sbx cannot be handed: the host's
 // root, or a path holding a colon. The Dagger engine is given only to a
-// profile that asks for it and is granted it (verifyDagger).
+// profile that asks for it and is granted it (verifyDagger), and an MCP
+// entry on the host only when its name and port are granted (HostServer).
 type SandboxBoundary struct {
 	// SessionsDir is where a session directory is created for a request
 	// that names none.

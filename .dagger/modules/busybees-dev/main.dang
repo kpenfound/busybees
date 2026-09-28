@@ -1,0 +1,46 @@
+"""
+Development support for busybees.
+
+`testRuntime` is the container `dagger check` runs the Go tests, linters and
+generators of every Go module in the workspace in (the `go` module's `base`
+setting in dagger.toml).
+"""
+type BusybeesDev {
+  """
+  The jj release installed in the test runtime.
+  """
+  let jjVersion: String! = "0.45.1"
+
+  """
+  Installs jj from its release tarball, checked against the sha256 digest
+  GitHub publishes for that asset, one per architecture the engine runs on.
+  """
+  let installJJ: String! = """
+    set -eu
+    case "$(uname -m)" in
+    x86_64) sum=f35438350b5d61963aac5dd74ede510b31d6b9690769d1a6268cf058cc825f72 ;;
+    aarch64) sum=7349a43dd5a20dbc998b10114daa0ee63d2ab863fb822c7eb6b0ebca5903cc69 ;;
+    *) echo "no jj release for $(uname -m)" >&2; exit 1 ;;
+    esac
+    tarball=/tmp/jj.tar.gz
+    curl -fsSL -o "$tarball" "https://github.com/jj-vcs/jj/releases/download/v$JJ_VERSION/jj-v$JJ_VERSION-$(uname -m)-unknown-linux-musl.tar.gz"
+    echo "$sum  $tarball" | sha256sum -c -
+    tar -xzf "$tarball" -C /usr/local/bin ./jj
+    rm "$tarball"
+    jj --version
+    """
+
+  """
+  The Go image the tests run in, with jj for core/vcs/jj's replay tests. The
+  image sets the Go version; git comes with it.
+  """
+  pub testRuntime: Container! {
+    container
+      .from("golang:1.26-bookworm")
+      .withEnvVariable("JJ_VERSION", jjVersion)
+      .withExec(["sh", "-c", installJJ])
+      .withoutEnvVariable("JJ_VERSION")
+      # core/vcs/jj's tests fail instead of skipping without jj.
+      .withEnvVariable("BUSYBEES_REQUIRE_JJ", "1")
+  }
+}

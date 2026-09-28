@@ -78,9 +78,18 @@ type container struct {
 	listen func(context.Context) (string, error)
 }
 
-// builtinEntry is the entry the session reaches the caller-supplied server
-// by, once startServer has run.
-func (c *container) builtinEntry() MCPEntry { return c.builtin }
+// mcpEntries are the MCP servers the session is given in the box: the
+// profile's, and the caller-supplied server at the entry startServer built.
+func (c *container) mcpEntries(mcp map[string]MCPEntry) map[string]MCPEntry {
+	if c.req.HostMCP == nil {
+		return mcp
+	}
+	if mcp == nil {
+		mcp = map[string]MCPEntry{}
+	}
+	mcp[c.req.HostMCP.Name] = c.builtin
+	return mcp
+}
 
 // add lays the backend's own variables over the session's: they reach the
 // box the way the session's do, by name, with the value in the client's

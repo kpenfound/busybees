@@ -6,8 +6,11 @@
 [modules.go]
 source = "github.com/dagger/go"
 
+# The Go tests, linters and generators run in busybees-dev's test runtime
+# (.dagger/modules/busybees-dev): golang:1.26-bookworm with jj, which
+# core/vcs/jj's replay tests run.
 [modules.go.settings]
-base = "golang:1.26-bookworm"
+base = "busybees-dev:test-runtime"
 
 # Both the root module and standalone core/ module are discovered below.
 # The root module replaces its core dependency with ./core.
@@ -52,4 +55,11 @@ source = "github.com/dagger/dang-sdk"
 module = "dagger-dang-sdk"
 
 [sdks.dang.scopes.".dagger/modules/qa-playground"]
+is-module = true
+
+[modules.busybees-dev]
+entrypoint = true
+source = ".dagger/modules/busybees-dev"
+
+[sdks.dang.scopes.".dagger/modules/busybees-dev"]
 is-module = true
