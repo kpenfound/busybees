@@ -50,7 +50,12 @@ func TestMain(m *testing.M) {
 		fakeClaude()
 		os.Exit(0)
 	}
-	session.HostEnv = append(session.HostEnv, "FAKE_*")
+	session.HostEnv = append(session.HostEnv, "FAKE_*", "GORACE")
+	// Built with -race, every process sleeps a second as it exits
+	// (atexit_sleep_ms), and every fake session is one.
+	if os.Getenv("GORACE") == "" {
+		_ = os.Setenv("GORACE", "atexit_sleep_ms=0")
+	}
 	for _, k := range []string{session.EnvRole, session.EnvSessionDir, session.EnvStateDir, session.EnvRepo,
 		session.EnvLabel, session.EnvIssue, session.EnvPR, session.EnvBranch, session.EnvConfig, session.EnvBin} {
 		_ = os.Unsetenv(k)

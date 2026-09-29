@@ -5,7 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -20,8 +22,10 @@ import (
 // creates, with its own kernel, filesystem, Docker daemon and network. The
 // sandbox is given the turn's binds as its workspaces, each mounted at its
 // host path (sbx mounts a workspace nowhere else), read-only ones with
-// ":ro", and nothing else of the host: the shared skills store sbx mounts by
-// default is switched off. The agent's own credential is not forwarded: the
+// ":ro", and nothing else of the host but, when the working directory
+// cannot be sbx's primary workspace, an empty directory of the runner's
+// (below): the shared skills store sbx mounts by default is switched off.
+// The agent's own credential is not forwarded: the
 // sandbox's credential proxy injects the one stored with `sbx secret set`
 // into the agent's requests, and the value never enters the VM. Everything
 // else is as a container session: an environment built from the session's
@@ -42,6 +46,20 @@ import (
 // logged and the sandbox removed all the same. sbx drops a sandbox's rules with the
 // sandbox, so a crash that leaves the sandbox behind leaves its rules with
 // it, and `sbx rm` removes both.
+//
+// sbx starts the sandbox by writing the agent's instructions (CLAUDE.md and
+// kits-agent-context/ for claude) into the parent of the primary workspace,
+// the first one `sbx create` is given, and fails the whole create with a
+// bare HTTP 500 when that parent is read-only; it refuses a read-only
+// primary workspace outright. The working directory is the primary
+// workspace when it can be: writable, and with a parent no bind covers, so
+// that sbx writes into the sandbox's own filesystem and not onto the host.
+// Otherwise, a working directory that is read-only or directly inside
+// another workspace, the runner makes an empty directory of its own under
+// the host's temporary directory the primary workspace, puts the working
+// directory with the other workspaces and its access unchanged, and removes
+// the directory with the sandbox. `sbx exec` is always given the working
+// directory, so the session never starts in it.
 //
 // The sandbox is created for the profile's agent, from sbx's own template
 // for it unless the profile names one. A profile that asks for Dagger also
@@ -71,6 +89,10 @@ type sandbox struct {
 	// allowed are the network policy rules the runner added for this
 	// sandbox alone (allowHost), as `sbx policy` names their resources.
 	allowed []string
+	// primary is the directory the runner made to be the sandbox's
+	// primary workspace when the working directory cannot be
+	// (ownPrimary); empty when the working directory is.
+	primary string
 }
 
 // startSandbox creates the sandbox and starts the caller-supplied server on
@@ -156,11 +178,27 @@ func (r *Runner) sandboxListen(context.Context) (string, error) {
 }
 
 // create runs `sbx create` for the profile's agent: the sandbox is named,
-// given the turn's binds as its workspaces with the working directory first
-// (the primary workspace, where `sbx exec` starts), created from the
-// profile's template when it names one and from sbx's own for the agent
-// otherwise (SbxTemplates), and without the shared skills store.
-func (s *sandbox) create(ctx context.Context) error {
+// given the turn's binds as its workspaces with the primary one first (the
+// working directory, or a directory of the runner's when it cannot be,
+// ownPrimary), created from the profile's template when it names one and
+// from sbx's own for the agent otherwise (SbxTemplates), and without the
+// shared skills store. A failed create leaves no directory of the runner's
+// behind; sbx removes the sandbox it could not start.
+func (s *sandbox) create(ctx context.Context) (err error) {
+	defer func() {
+		if err != nil {
+			s.removePrimary()
+		}
+	}()
+	own, err := s.ownPrimary()
+	if err != nil {
+		return err
+	}
+	if own {
+		if err := s.makePrimary(); err != nil {
+			return err
+		}
+	}
 	workspaces, err := s.workspaces()
 	if err != nil {
 		return err
@@ -179,34 +217,98 @@ func (s *sandbox) create(ctx context.Context) error {
 		if msg := bytes.TrimSpace(out); len(msg) > 0 {
 			err = fmt.Errorf("%w: %s", err, msg)
 		}
-		return fmt.Errorf("create sandbox %s (%s create): %w", s.name, SandboxCLI, err)
+		return fmt.Errorf("create sandbox %s with workspaces %s (%s create): %w", s.name, strings.Join(workspaces, " "), SandboxCLI, err)
 	}
 	s.created = true
 	return nil
 }
 
+// ownPrimary is whether the working directory cannot be the sandbox's
+// primary workspace: sbx refuses a read-only one, and fails to start when
+// the primary workspace's parent is read-only, where it writes the agent's
+// instructions. A parent inside a writable bind would take those writes
+// onto the host, so a working directory directly inside any bind is not
+// the primary workspace either.
+func (s *sandbox) ownPrimary() (bool, error) {
+	work := s.req.workDir()
+	i := slices.IndexFunc(s.turn.Binds, func(b Bind) bool { return b.Destination == work })
+	if i < 0 {
+		return false, fmt.Errorf("%w: the working directory %s is not among the sandbox's workspaces", ErrNotGranted, work)
+	}
+	if s.turn.Binds[i].Access == ReadOnly {
+		return true, nil
+	}
+	return underBind(s.turn.Binds, filepath.Dir(work)), nil
+}
+
+// underBind is whether path is at or inside one of binds' destinations.
+func underBind(binds []Bind, path string) bool {
+	return slices.ContainsFunc(binds, func(b Bind) bool { return inside(b.Destination, path) })
+}
+
+// makePrimary makes the empty directory that is the sandbox's primary
+// workspace in place of the working directory, under the host's temporary
+// directory at its real path, which is where sbx mounts it. Its parent,
+// where sbx writes the agent's instructions, must lie outside every bind.
+func (s *sandbox) makePrimary() error {
+	dir, err := os.MkdirTemp("", s.r.namePrefix()+"sbx-primary-")
+	if err != nil {
+		return fmt.Errorf("make the sandbox's primary workspace: %w", err)
+	}
+	s.primary = dir
+	if dir, err = filepath.EvalSymlinks(dir); err != nil {
+		return fmt.Errorf("make the sandbox's primary workspace: %w", err)
+	}
+	s.primary = dir
+	if strings.Contains(dir, ":") {
+		return fmt.Errorf("%w: the sandbox's primary workspace %s holds a colon, which %s create cannot take", ErrUnsupported, dir, SandboxCLI)
+	}
+	if underBind(s.turn.Binds, filepath.Dir(dir)) {
+		return fmt.Errorf("%w: the sandbox's primary workspace %s lies directly inside one of its workspaces, where %s would write the agent's instructions", ErrUnsupported, dir, SandboxCLI)
+	}
+	return nil
+}
+
+// removePrimary removes the directory makePrimary made, with whatever the
+// sandbox left in it.
+func (s *sandbox) removePrimary() {
+	if s.primary == "" {
+		return
+	}
+	if err := os.RemoveAll(s.primary); err != nil {
+		s.r.Logger.Warn("remove sandbox primary workspace", "sandbox", s.name, "dir", s.primary, "err", err)
+	}
+	s.primary = ""
+}
+
 // workspaces are the turn's binds as `sbx create` takes them: each bind's
 // destination, which sbx mounts the host directory at that path at, ":ro"
-// when it is read-only; the working directory first, the rest in path
-// order. SandboxBoundary has refused a destination sbx cannot take. A
-// working directory that lies inside a bind without being one is refused:
-// it is the sandbox's primary workspace.
+// when it is read-only; the primary workspace first, the working directory
+// or the runner's own directory (primary), then the rest in path order.
+// SandboxBoundary has refused a destination sbx cannot take. A working
+// directory that lies inside a bind without being one is refused: sbx
+// mounts a workspace only at its own path.
 func (s *sandbox) workspaces() ([]string, error) {
 	work := s.req.workDir()
 	binds := slices.Clone(s.turn.Binds)
 	slices.SortStableFunc(binds, func(a, b Bind) int {
-		switch {
-		case a.Destination == work:
-			return -1
-		case b.Destination == work:
-			return 1
+		if s.primary == "" {
+			switch {
+			case a.Destination == work:
+				return -1
+			case b.Destination == work:
+				return 1
+			}
 		}
 		return strings.Compare(a.Destination, b.Destination)
 	})
-	if len(binds) == 0 || binds[0].Destination != work {
+	if !slices.ContainsFunc(binds, func(b Bind) bool { return b.Destination == work }) {
 		return nil, fmt.Errorf("%w: the working directory %s is not among the sandbox's workspaces", ErrNotGranted, work)
 	}
 	var out []string
+	if s.primary != "" {
+		out = append(out, s.primary)
+	}
 	for _, b := range binds {
 		w := b.Destination
 		if b.Access == ReadOnly {
@@ -312,7 +414,8 @@ func (s *sandbox) remove() {
 }
 
 // close stops the caller-supplied server and the Dagger engine's forward,
-// removes the sandbox and forgets both records.
+// removes the sandbox and the runner's primary workspace, and forgets both
+// records.
 func (s *sandbox) close() {
 	s.container.close()
 	if s.forward != nil {
@@ -320,6 +423,7 @@ func (s *sandbox) close() {
 		s.forward = nil
 	}
 	s.remove()
+	s.removePrimary()
 	procs.RemoveSandboxName(s.sessionDir)
 }
 
