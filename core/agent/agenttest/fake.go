@@ -103,7 +103,9 @@ exec sleep 60
 
 // Sbx writes a fake Docker Sandboxes CLI. `create` records its arguments in
 // sbx-create.txt beside the script and fails when a file named fail-create
-// is there; `exec --interactive`, the session's command, records its
+// is there, and fails the way sbx does when its primary workspace, the
+// first one, is read-only, is not a directory, or has a parent at or inside
+// a read-only workspace, where sbx's start writes the agent's instructions; `exec --interactive`, the session's command, records its
 // arguments and the client's environment in the directory sessionVariable
 // names (sbx-exec-args.txt, sbx-exec-env.txt) and runs the command after the
 // sandbox name on this machine; `exec --workdir`, a probe the runner runs
@@ -142,6 +144,38 @@ create)
     echo "Error: sandbox name must not contain underscores" >&2
     exit 1
   fi
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --quiet) shift ;;
+    --name|--skills|--template) shift 2 ;;
+    *) shift; break ;;
+    esac
+  done
+  [ $# -gt 0 ] || exit 0
+  case "$1" in
+  *:ro)
+    echo "error: primary workspace must be read/write (remove ':ro' or ':readonly')" >&2
+    exit 1
+    ;;
+  esac
+  if [ ! -d "$1" ]; then
+    echo "error: workspace $1 is not a directory" >&2
+    exit 1
+  fi
+  parent="$(dirname "$1")"
+  for w in "$@"; do
+    case "$w" in
+    *:ro)
+      case "$parent/" in
+      "${w%:ro}"/*)
+        echo "error: request failed: 500 Internal Server Error: failed to run sandbox container" >&2
+        exit 1
+        ;;
+      esac
+      ;;
+    esac
+  done
   exit 0
   ;;
 policy)

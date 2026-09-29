@@ -116,11 +116,17 @@ func TestASandboxSessionEnforcesThePolicyItReports(t *testing.T) {
 		t.Fatalf("run: %+v, %v", res, err)
 	}
 	// The sandbox was created for claude from sbx's own template, with
-	// the policy's binds as its workspaces, the working directory first.
+	// the policy's binds as its workspaces, in path order behind the
+	// runner's own primary one: sbx refuses a read-only primary workspace.
+	// The runner's is removed with the sandbox.
 	create := lines(t, filepath.Join(engine, "sbx-create.txt"))
 	name := flagValue(create, "--name")
-	if got, want := strings.Join(create[4:], " "), "--skills off claude "+l.work+":ro "+l.session; got != want {
+	primary := create[7]
+	if got, want := strings.Join(create[4:], " "), "--skills off claude "+primary+" "+l.session+" "+l.work+":ro"; got != want || primary == l.work {
 		t.Errorf("sbx create %v, want the policy's binds (%s)", create, want)
+	}
+	if _, err := os.Stat(primary); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the primary workspace %s outlived the sandbox: %v", primary, err)
 	}
 	if slices.Contains(create, "--template") {
 		t.Errorf("sbx create names a template: %v", create)

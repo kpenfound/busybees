@@ -235,6 +235,145 @@ func TestSandboxWorkspacesFollowTheTurn(t *testing.T) {
 	}
 }
 
+// The working directory is the primary workspace only when sbx can start
+// the sandbox with it and write nothing onto the host: writable, and with a
+// parent no bind covers. Otherwise the runner's own directory is first and
+// the working directory takes its place in path order, its access kept.
+func TestSandboxPrimaryWorkspace(t *testing.T) {
+	binds := []Bind{
+		{Source: "/in", Destination: "/in", Access: ReadOnly},
+		{Source: "/in/scratch", Destination: "/in/scratch", Access: ReadWrite},
+		{Source: "/rw", Destination: "/rw", Access: ReadWrite},
+		{Source: "/rw/inner", Destination: "/rw/inner", Access: ReadWrite},
+		{Source: "/ro-work", Destination: "/ro-work", Access: ReadOnly},
+		{Source: "/w", Destination: "/w", Access: ReadWrite},
+	}
+	for work, want := range map[string]bool{"/w": false, "/in/scratch": true, "/rw/inner": true, "/ro-work": true} {
+		s := &sandbox{container: container{req: Request{Workspace: fakeWorkspace{dir: work}}, turn: &Turn{Binds: binds}}}
+		if got, err := s.ownPrimary(); err != nil || got != want {
+			t.Errorf("working directory %s: own primary = %v, %v; want %v", work, got, err, want)
+		}
+	}
+	s := &sandbox{container: container{req: Request{Workspace: fakeWorkspace{dir: "/in/scratch"}}, turn: &Turn{Binds: binds}}, primary: "/tmp/p"}
+	got, err := s.workspaces()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"/tmp/p", "/in:ro", "/in/scratch", "/ro-work:ro", "/rw", "/rw/inner", "/w"}; !slices.Equal(got, want) {
+		t.Errorf("workspaces = %v, want %v", got, want)
+	}
+	s.req.Workspace = fakeWorkspace{dir: "/in/scratch/sub"}
+	if _, err := s.ownPrimary(); !errors.Is(err, ErrNotGranted) {
+		t.Errorf("a working directory no bind is: %v", err)
+	}
+}
+
+// sbx writes the agent's instructions into the parent of the primary
+// workspace as the sandbox starts, and fails with a bare HTTP 500 when that
+// parent is read-only. A writable working directory inside read-only
+// inputs is therefore not the primary workspace: an empty directory of the
+// runner's is, the inputs stay read-only and the working directory
+// writable, the session runs in the working directory, and the runner's
+// directory is removed with the sandbox.
+func TestSandboxWorkingDirectoryInsideReadOnlyInputs(t *testing.T) {
+	inputs := t.TempDir()
+	work := filepath.Join(inputs, "scratch")
+	if err := os.Mkdir(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r := newRunner(t, fakeClaude(t, `echo '{"type":"result","subtype":"success","result":"ok"}'`))
+	r.SbxBin = fakeSbx(t)
+	r.ServerBin = fakeBees(t)
+	r.StateDir = t.TempDir()
+	r.Mounts = []Mount{{Path: inputs, Access: ReadOnly}}
+	engine := filepath.Dir(r.SbxBin)
+
+	// The working directory first is what sbx cannot start.
+	out, err := exec.Command(r.SbxBin, "create", "--quiet", "--name", "direct", "claude", work, inputs+":ro").CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "500 Internal Server Error") {
+		t.Fatalf("the fake sbx started a sandbox whose primary workspace's parent is read-only: %v: %s", err, out)
+	}
+
+	res, err := r.Run(context.Background(), Request{Name: "inputs", Profile: Profile{Name: "reader", Sandbox: SandboxSbx}, Workspace: fakeWorkspace{dir: work}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError || res.ResultText != "ok" {
+		t.Fatalf("result: %+v", res)
+	}
+	create := lines(t, filepath.Join(engine, "sbx-create.txt"))
+	if len(create) < 8 || create[6] != "claude" {
+		t.Fatalf("sbx create args: %v", create)
+	}
+	workspaces := create[7:]
+	primary := workspaces[0]
+	if primary == work || strings.HasSuffix(primary, ":ro") {
+		t.Errorf("the primary workspace is %q, want the runner's own", primary)
+	}
+	for _, w := range workspaces[1:] {
+		if inside(strings.TrimSuffix(w, ":ro"), filepath.Dir(primary)) {
+			t.Errorf("the primary workspace %s lies inside workspace %s", primary, w)
+		}
+	}
+	if !slices.Contains(workspaces, inputs+":ro") || !slices.Contains(workspaces, work) {
+		t.Errorf("workspaces %v lack the inputs read-only or the working directory writable", workspaces)
+	}
+	if slices.Contains(workspaces, inputs) || slices.Contains(workspaces, work+":ro") {
+		t.Errorf("workspaces %v change the inputs' or the working directory's access", workspaces)
+	}
+	if joined := strings.Join(lines(t, filepath.Join(res.SessionDir, "sbx-exec-args.txt")), " "); !strings.HasPrefix(joined, "exec --interactive --workdir "+work+" ") {
+		t.Errorf("sbx exec args: %s", joined)
+	}
+	if _, err := os.Stat(primary); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the primary workspace %s outlived the sandbox: %v", primary, err)
+	}
+	if rm := lines(t, filepath.Join(engine, "sbx-rm.txt")); len(rm) != 3 {
+		t.Errorf("sbx rm: %v, want one removal", rm)
+	}
+}
+
+// A failed `sbx create` leaves no directory of the runner's behind, and its
+// error carries sbx's own message and the workspaces it was given.
+func TestSandboxCreateFailureRemovesThePrimaryWorkspace(t *testing.T) {
+	inputs := t.TempDir()
+	work := filepath.Join(inputs, "scratch")
+	if err := os.Mkdir(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r := newRunner(t, fakeClaude(t, `touch "$TASK_SESSION_DIR/ran"`))
+	r.SbxBin = fakeSbx(t)
+	r.ServerBin = fakeBees(t)
+	r.StateDir = t.TempDir()
+	r.Mounts = []Mount{{Path: inputs, Access: ReadOnly}}
+	engine := filepath.Dir(r.SbxBin)
+	if err := os.WriteFile(filepath.Join(engine, "fail-create"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := r.NewSessionDir("inputs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = r.Run(context.Background(), Request{Name: "inputs", SessionDir: dir, Profile: Profile{Name: "reader", Sandbox: SandboxSbx}, Workspace: fakeWorkspace{dir: work}})
+	if err == nil {
+		t.Fatal("the session ran without a sandbox")
+	}
+	create := lines(t, filepath.Join(engine, "sbx-create.txt"))
+	primary := create[7]
+	for _, want := range []string{"sbx create", "underscores", "workspaces " + primary + " ", inputs + ":ro"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not say %q", err, want)
+		}
+	}
+	if _, err := os.Stat(primary); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the primary workspace %s outlived the failed create: %v", primary, err)
+	}
+	for _, left := range []string{filepath.Join(dir, "ran"), filepath.Join(dir, "server-pid.txt"), filepath.Join(engine, "sbx-rm.txt"), filepath.Join(dir, procs.SandboxNameFile)} {
+		if _, err := os.Stat(left); err == nil {
+			t.Errorf("%s exists after a failed create", filepath.Base(left))
+		}
+	}
+}
+
 // A HOME the session sets reaches the sandbox by value: the client keeps
 // the operator's own HOME to find its configuration, so passed by name it
 // would be the operator's.

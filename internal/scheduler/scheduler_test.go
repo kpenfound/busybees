@@ -52,7 +52,16 @@ func TestMain(m *testing.M) {
 	}
 	// The fake agent is configured through FAKE_* variables of this process,
 	// which a session inherits only when granted.
-	session.HostEnv = append(session.HostEnv, "FAKE_*")
+	session.HostEnv = append(session.HostEnv, "FAKE_*", "GORACE")
+	// Built with -race, every process sleeps a second as it exits
+	// (atexit_sleep_ms), and every fake session is one: without this the
+	// package spends most of its time waiting on its fakes' exits.
+	if os.Getenv("GORACE") == "" {
+		if err := os.Setenv("GORACE", "atexit_sleep_ms=0"); err != nil {
+			fmt.Fprintln(os.Stderr, "setenv:", err)
+			os.Exit(2)
+		}
+	}
 	// The runner drops inherited BEES_* variables, but the tests run this
 	// binary directly too (and read the environment themselves), so clear the
 	// ones a bees session would have exported: `go test` run from inside a

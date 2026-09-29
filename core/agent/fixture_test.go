@@ -24,6 +24,9 @@ type testRunner struct {
 	*Runner
 	StateDir  string
 	ServerBin string
+	// Mounts are granted beside what grantAll grants a request that
+	// carries no grants of its own.
+	Mounts []Mount
 }
 
 // backendNamed is the descriptor of the named backend, for tests that
@@ -75,6 +78,7 @@ func (r *testRunner) Run(ctx context.Context, req Request) (*Result, error) {
 		if r.StateDir != "" && req.Profile.isolated() {
 			req.Grants.Mounts = append(req.Grants.Mounts, Mount{Path: r.StateDir, Access: ReadWrite})
 		}
+		req.Grants.Mounts = append(req.Grants.Mounts, r.Mounts...)
 	}
 	core := *r.Runner
 	if r.StateDir != "" {

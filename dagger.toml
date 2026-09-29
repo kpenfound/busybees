@@ -10,7 +10,7 @@ source = "github.com/dagger/go"
 # (.dagger/modules/busybees-dev): golang:1.26-bookworm with jj, which
 # core/vcs/jj's replay tests run.
 [modules.go.settings]
-base = "busybees-dev:test-runtime"
+base = "dag://busybees-dev/test-runtime"
 
 # Both the root module and standalone core/ module are discovered below.
 # The root module replaces its core dependency with ./core.
