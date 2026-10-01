@@ -230,6 +230,9 @@ func TestReloadLifecycleObserversKeepIncarnationsAndOrder(t *testing.T) {
 	if s := receive(); !slices.Equal(s.states, []string{"a1:0", "b1:0"}) {
 		t.Fatalf("initial: %+v", s)
 	}
+	// b1 must be running before it is removed: a loop cancelled before it
+	// runs is discarded unrun and finishes at once, without waiting on release.
+	waitLoops(t, d, 2)
 	reload <- []Project{a, c}
 	if s := receive(); !slices.Equal(s.order, []string{"a", "c"}) || !slices.Equal(s.states, []string{"b1:1", "c1:0"}) {
 		t.Fatalf("replace: %+v", s)
