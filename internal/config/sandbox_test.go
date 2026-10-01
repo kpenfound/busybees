@@ -798,12 +798,15 @@ sandbox_image = "ghcr.io/acme/bees-template:1"
 // sandbox cannot use is a load error naming the key.
 func TestSandboxDaggerKeys(t *testing.T) {
 	const head = "version = 1\n[project]\nrepo = \"a/b\"\n"
-	cfg, err := Load(writeConfig(t, head+"[global]\nsandbox = \"sbx\"\nsandbox_dagger_engine = \"unix:///run/dagger/engine.sock\"\nsandbox_dagger_version = \"v0.20.5\"\n[roles.qa]\nsandbox_dagger_engine = \"tcp://127.0.0.1:1234\"\n"))
+	cfg, err := Load(writeConfig(t, head+"[global]\nsandbox = \"sbx\"\nsandbox_dagger_engine = \"unix:///run/dagger/engine.sock\"\nsandbox_dagger_version = \"v0.20.5\"\n[roles.qa]\nsandbox_dagger_engine = \"tcp://127.0.0.1:1234\"\n[roles.project_manager]\nsandbox_dagger_engine = \"docker-container://dagger-engine-v0.20.5\"\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	dev, _ := cfg.Role(RoleDeveloper)
 	qa, _ := cfg.Role(RoleQA)
+	if pm, _ := cfg.Role(RoleProjectManager); pm.SandboxDaggerEngine != "docker-container://dagger-engine-v0.20.5" {
+		t.Errorf("project manager: %q", pm.SandboxDaggerEngine)
+	}
 	if dev.SandboxDaggerEngine != "unix:///run/dagger/engine.sock" || dev.SandboxDaggerVersion != "v0.20.5" {
 		t.Errorf("developer: %q %q", dev.SandboxDaggerEngine, dev.SandboxDaggerVersion)
 	}
@@ -828,7 +831,9 @@ func TestSandboxDaggerKeys(t *testing.T) {
 		"no engine": {"[global]\nsandbox = \"sbx\"\n[roles.qa]\nsandbox_dagger_version = \"v0.20.5\"\n",
 			"roles.qa: sandbox_dagger_version needs sandbox_dagger_engine"},
 		"engine": {"[global]\nsandbox = \"sbx\"\nsandbox_dagger_engine = \"/run/dagger.sock\"\nsandbox_dagger_version = \"v0.20.5\"\n",
-			`global.sandbox_dagger_engine: the Dagger engine "/run/dagger.sock" must be unix://<absolute path of its socket> or tcp://<host>:<port>`},
+			`global.sandbox_dagger_engine: the Dagger engine "/run/dagger.sock" must be unix://<absolute path of its socket>, tcp://<host>:<port> or docker-container://<container name>`},
+		"container name": {"[global]\nsandbox = \"sbx\"\nsandbox_dagger_engine = \"docker-container://-it\"\nsandbox_dagger_version = \"v0.20.5\"\n",
+			`global.sandbox_dagger_engine: the Dagger engine "docker-container://-it" must be`},
 		"tcp port": {"[global]\nsandbox = \"sbx\"\nsandbox_dagger_engine = \"tcp://127.0.0.1:dagger\"\nsandbox_dagger_version = \"v0.20.5\"\n",
 			`global.sandbox_dagger_engine: the Dagger engine "tcp://127.0.0.1:dagger" must be`},
 		"version": {"[global]\nsandbox = \"sbx\"\n[roles.developer]\nsandbox_dagger_engine = \"unix:///s\"\nsandbox_dagger_version = \"latest\"\n",

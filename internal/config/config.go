@@ -594,8 +594,9 @@ type RoleSettings struct {
 	SandboxImage string `toml:"sandbox_image"`
 	// SandboxDaggerEngine is the host's Dagger engine a SandboxSbx session
 	// is given, with the Dagger CLI at SandboxDaggerVersion installed in
-	// the sandbox: "unix://<path>" for the engine's socket, or
-	// "tcp://<host>:<port>". Empty (the default) gives neither. A role's
+	// the sandbox: "unix://<path>" for the engine's socket,
+	// "tcp://<host>:<port>", or "docker-container://<name>" for an engine
+	// in a Docker container. Empty (the default) gives neither. A role's
 	// value replaces the global one; only valid when the profile selects
 	// SandboxSbx, and it needs SandboxDaggerVersion.
 	SandboxDaggerEngine string `toml:"sandbox_dagger_engine"`

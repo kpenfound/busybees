@@ -10,11 +10,14 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/kpenfound/busybees/core/agent/agenttest"
 	"github.com/kpenfound/busybees/core/agent/procs"
 )
 
@@ -351,6 +354,108 @@ func TestSandboxDaggerAddress(t *testing.T) {
 	if want := "tcp://host.docker.internal:" + port; got != want {
 		t.Errorf("socket engine: %q, want %q", got, want)
 	}
+
+	c := &sandbox{container: container{r: &Runner{DockerBin: fakeContainerEngine(t), ContainerListen: "0.0.0.0:0"}}}
+	got, err = c.daggerAddress("docker-container://dagger-engine-v0.20.5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.forward == nil {
+		t.Fatal("a container was not forwarded")
+	}
+	defer c.forward.close()
+	host, port, _ := net.SplitHostPort(c.forward.addr())
+	if host != "127.0.0.1" {
+		t.Errorf("the container forward listens on %s, want the loopback", c.forward.addr())
+	}
+	if want := "tcp://host.docker.internal:" + port; got != want {
+		t.Errorf("container engine: %q, want %q", got, want)
+	}
+}
+
+// fakeContainerEngine stands in for docker: `exec -i <name> buildctl
+// dial-stdio` echoes its stdin, as an engine answering every line would,
+// and records its arguments and pid beside itself.
+func fakeContainerEngine(t *testing.T) string {
+	t.Helper()
+	return agenttest.Script(t, "docker", `here=$(dirname "$0")
+echo "$*" >> "$here/docker-args.txt"
+echo $$ >> "$here/docker-pids.txt"
+exec cat
+`)
+}
+
+// A docker-container engine is reached through `docker exec -i <name>
+// buildctl dial-stdio`, one process per connection, and once the forward
+// is closed it is not reached at all: the connection still open ends, its
+// process is gone and the port takes no more.
+func TestForwardContainer(t *testing.T) {
+	docker := fakeContainerEngine(t)
+	f, err := forwardContainer("127.0.0.1:0", docker, "dagger-engine-v0.20.5", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := echo(t, f.addr(), "ping"); err != nil || got != "ping" {
+		t.Fatalf("echo: %q, %v", got, err)
+	}
+	c, err := net.Dial("tcp", f.addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Close() }()
+	if _, err := c.Write([]byte("hi\n")); err != nil {
+		t.Fatal(err)
+	}
+	r := bufio.NewReader(c)
+	if line, err := r.ReadString('\n'); err != nil || line != "hi\n" {
+		t.Fatalf("echo: %q, %v", line, err)
+	}
+	here := filepath.Dir(docker)
+	want := "exec -i dagger-engine-v0.20.5 buildctl dial-stdio"
+	if args := readLines(filepath.Join(here, "docker-args.txt")); !slices.Equal(args, []string{want, want}) {
+		t.Errorf("docker calls %v, want two of %q", args, want)
+	}
+	f.close()
+	_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, err := r.ReadString('\n'); err == nil || errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Errorf("the connection outlived the forward: %v", err)
+	}
+	if _, err := net.DialTimeout("tcp", f.addr(), time.Second); err == nil {
+		t.Error("the forward's port still takes connections")
+	}
+	for _, line := range readLines(filepath.Join(here, "docker-pids.txt")) {
+		pid, err := strconv.Atoi(line)
+		if err != nil {
+			t.Fatalf("pid %q: %v", line, err)
+		}
+		if err := syscall.Kill(pid, 0); !errors.Is(err, syscall.ESRCH) {
+			t.Errorf("process %d outlived the forward: %v", pid, err)
+		}
+	}
+}
+
+// A container engine that will not start is logged with the engine, and
+// the forward goes on accepting.
+func TestForwardContainerLogsAFailedDial(t *testing.T) {
+	var buf safeBuffer
+	docker := agenttest.Script(t, "docker", "echo 'Error: No such container: gone' >&2\nexit 1\n")
+	f, err := forwardContainer("127.0.0.1:0", docker, "gone", slog.New(slog.NewTextHandler(&buf, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.close()
+	for i := 0; i < 2; i++ {
+		if _, err := echo(t, f.addr(), "ping"); err == nil {
+			t.Fatal("a connection to a missing container was answered")
+		}
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(buf.String(), "No such container") && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if out := buf.String(); !strings.Contains(out, "No such container") {
+		t.Errorf("log does not carry the engine's error: %q", out)
+	}
 }
 
 // Closing a forward ends the connections it carries, not only new ones.
@@ -446,6 +551,13 @@ func TestDaggerProfileValidation(t *testing.T) {
 		{"path after the port", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "tcp://h:1234/path", Version: "v0.20.5"}}, "tcp://<host>:<port>"},
 		{"port out of range", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "tcp://h:99999", Version: "v0.20.5"}}, "tcp://<host>:<port>"},
 		{"port zero", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "tcp://h:0", Version: "v0.20.5"}}, "tcp://<host>:<port>"},
+		{"docker container", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "docker-container://dagger-engine-v0.20.5", Version: "v0.20.5"}}, ""},
+		{"empty container name", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "docker-container://", Version: "v0.20.5"}}, "docker-container://<container name>"},
+		{"one-character container name", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "docker-container://a", Version: "v0.20.5"}}, "docker-container://<container name>"},
+		{"container name like a flag", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "docker-container://-it", Version: "v0.20.5"}}, "docker-container://<container name>"},
+		{"container name with a space", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "docker-container://dagger engine", Version: "v0.20.5"}}, "docker-container://<container name>"},
+		{"container name with a slash", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "docker-container://dagger/engine", Version: "v0.20.5"}}, "docker-container://<container name>"},
+		{"container name with a shell", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "docker-container://e;rm", Version: "v0.20.5"}}, "docker-container://<container name>"},
 		{"docker image", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "docker-image://registry.dagger.io/engine", Version: "v0.20.5"}}, "unix://"},
 		{"no version", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "unix:///s"}}, "Dagger CLI version"},
 		{"shell in version", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "unix:///s", Version: "0.20.5; rm -rf /"}}, "Dagger CLI version"},

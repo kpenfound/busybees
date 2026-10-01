@@ -138,23 +138,31 @@ var SbxTemplates = map[string]string{
 // against, and the CLI release installed in the sandbox for it.
 type Dagger struct {
 	// Engine is where the engine listens on the host: "unix://<path>" for
-	// its socket, or "tcp://<host>:<port>".
+	// its socket, "tcp://<host>:<port>", or "docker-container://<name>"
+	// for an engine in a container of the host's container engine
+	// (Runner.DockerBin) that publishes neither.
 	Engine string
 	// Version is the Dagger CLI release installed in the sandbox, the
 	// engine's own: "v0.20.5" or "0.20.5".
 	Version string
 }
 
+// containerName is a name Docker accepts for a container.
+var containerName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]+$`)
+
 // daggerVersion is a release as the Dagger install script takes one.
 var daggerVersion = regexp.MustCompile(`^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$`)
 
 // CheckDaggerEngine reports whether an engine address is one a sandbox can
-// be given: a socket by its absolute path, or a TCP address with a port.
+// be given: a socket by its absolute path, a TCP address with a port, or a
+// container by a name Docker accepts.
 func CheckDaggerEngine(engine string) error {
 	scheme, rest, ok := strings.Cut(engine, "://")
 	switch {
 	case !ok:
 	case scheme == "unix" && filepath.IsAbs(rest):
+		return nil
+	case scheme == "docker-container" && containerName.MatchString(rest):
 		return nil
 	case scheme == "tcp":
 		host, port, err := net.SplitHostPort(rest)
@@ -162,7 +170,7 @@ func CheckDaggerEngine(engine string) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("the Dagger engine %q must be unix://<absolute path of its socket> or tcp://<host>:<port>", engine)
+	return fmt.Errorf("the Dagger engine %q must be unix://<absolute path of its socket>, tcp://<host>:<port> or docker-container://<container name>", engine)
 }
 
 // CheckDaggerVersion reports whether a Dagger CLI release is one the
