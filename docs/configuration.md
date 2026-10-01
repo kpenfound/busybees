@@ -1424,10 +1424,16 @@ On macOS the socket stays inside Docker Desktop's VM; publish a TCP port
 there instead (`-p 127.0.0.1:1234:1234` and `--addr tcp://0.0.0.0:1234`)
 and set `sandbox_dagger_engine = "tcp://127.0.0.1:1234"`.
 
-Once the sandbox exists, bees installs the CLI into `/usr/local/bin`
+Once the sandbox exists, bees runs `dagger version` in it. When the
+sandbox's template reports the role's release (`v0.20.5` and `0.20.5`
+match), the CLI is used as it is. Otherwise, the CLI missing, another
+release or the probe failing, bees installs the CLI into `/usr/local/bin`
 with the install script at `https://dl.dagger.io/dagger/install.sh`, as
 root, before the agent starts; the sbx network policy must allow
 `dl.dagger.io`. A failed install fails the session and removes the sandbox.
+To skip the install, give the role a [`sandbox_image`](#the-sbx-mode)
+that has the CLI on its `PATH` at the role's release.
+
 The session reaches the engine through `_EXPERIMENTAL_DAGGER_RUNNER_HOST`,
 which bees sets to the address above. For an engine on the host's loopback,
 through the socket forward or on TCP, bees adds a rule allowing that port

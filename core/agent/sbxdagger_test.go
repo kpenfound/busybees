@@ -141,6 +141,10 @@ echo '{"type":"result","subtype":"success","result":"ok"}'
 	if setup != want {
 		t.Errorf("setup commands:\n%s\nwant\n%s", setup, want)
 	}
+	// The sandbox was asked for its CLI first, and had none.
+	if probe := lines(t, filepath.Join(filepath.Dir(r.SbxBin), "sbx-dagger-probe.txt")); !slices.Equal(probe, []string{"exec " + name + " dagger version"}) {
+		t.Errorf("Dagger CLI probes: %v", probe)
+	}
 	// The sandbox alone was allowed the forward's port and the server's,
 	// and both rules were removed with it.
 	wantPolicy := []string{
@@ -231,6 +235,60 @@ func TestSandboxDaggerInstallFailure(t *testing.T) {
 	}
 }
 
+// A sandbox whose template reports the profile's release, with or without
+// the leading v, is not given the CLI again; one without the CLI, with
+// another release or whose probe answers something else is, at the
+// profile's release. Either way the session gets the engine and its rule.
+func TestSandboxDaggerTemplateRelease(t *testing.T) {
+	for _, c := range []struct {
+		name, template, want string
+		install              bool
+	}{
+		{"same release", "v0.20.5", "0.20.5", false},
+		{"same release without v", "0.20.5", "v0.20.5", false},
+		{"no CLI", "", "0.20.5", true},
+		{"another release", "v0.19.0", "0.20.5", true},
+		{"unreadable answer", "", "0.20.5", true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := &Runner{SbxBin: fakeSbx(t), Logger: slog.Default()}
+			here := filepath.Dir(r.SbxBin)
+			switch {
+			case c.name == "unreadable answer":
+				// The CLI runs but does not print a release.
+				if err := os.WriteFile(filepath.Join(here, "dagger-version"), nil, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			case c.template != "":
+				if err := os.WriteFile(filepath.Join(here, "dagger-version"), []byte(c.template), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			engine := "tcp://127.0.0.1:1234"
+			s := &sandbox{container: container{r: r, name: "box", turn: &Turn{DaggerEngine: engine}, req: Request{Profile: Profile{Dagger: &Dagger{Engine: engine, Version: c.want}}}}}
+			if err := s.startDagger(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if probe := readLines(filepath.Join(here, "sbx-dagger-probe.txt")); !slices.Equal(probe, []string{"exec box dagger version"}) {
+				t.Errorf("Dagger CLI probes: %v", probe)
+			}
+			setup := strings.Join(readLines(filepath.Join(here, "sbx-setup.txt")), " ")
+			if !c.install && setup != "" {
+				t.Errorf("installed over the template's release: %s", setup)
+			}
+			if c.install && !strings.Contains(setup, " DAGGER_VERSION=0.20.5 ") {
+				t.Errorf("not installed at the profile's release: %q", setup)
+			}
+			if got := readLines(filepath.Join(here, "sbx-policy.txt")); !slices.Equal(got, []string{"policy allow network --sandbox box localhost:1234"}) {
+				t.Errorf("policy calls %v", got)
+			}
+			if !slices.Contains(s.vars, envVar{EnvDaggerRunnerHost, "tcp://" + containerHostAlias + ":1234"}) {
+				t.Errorf("the session was not given the engine: %v", s.vars)
+			}
+		})
+	}
+}
+
 // Only an engine the sandbox reaches at host.docker.internal is given a
 // network policy rule: any other is left to the policy the operator keeps.
 func TestSandboxDaggerEngineRule(t *testing.T) {
@@ -238,7 +296,7 @@ func TestSandboxDaggerEngineRule(t *testing.T) {
 		"tcp://127.0.0.1:1234":      {"allow network --sandbox box localhost:1234"},
 		"tcp://engine.example:1234": nil,
 	} {
-		r := &Runner{SbxBin: fakeSbx(t)}
+		r := &Runner{SbxBin: fakeSbx(t), Logger: slog.Default()}
 		s := &sandbox{container: container{r: r, name: "box", turn: &Turn{DaggerEngine: engine}, req: Request{Profile: Profile{Dagger: &Dagger{Engine: engine, Version: "0.20.5"}}}}}
 		if err := s.startDagger(context.Background()); err != nil {
 			t.Fatalf("%s: %v", engine, err)
