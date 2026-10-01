@@ -332,9 +332,12 @@ func TestSandboxWorkingDirectoryInsideReadOnlyInputs(t *testing.T) {
 	}
 }
 
-// A failed `sbx create` leaves no directory of the runner's behind, and its
-// error carries sbx's own message and the workspaces it was given.
-func TestSandboxCreateFailureRemovesThePrimaryWorkspace(t *testing.T) {
+// A sandbox whose start fails, as sbx's does when it cannot write the
+// agent's instructions, leaves nothing behind: the sandbox sbx made is
+// removed by name and the runner's directory with it. The error carries
+// sbx's own message and the workspaces it was given, the inputs read-only
+// and the working directory writable.
+func TestSandboxStartFailureRemovesTheSandbox(t *testing.T) {
 	inputs := t.TempDir()
 	work := filepath.Join(inputs, "scratch")
 	if err := os.Mkdir(work, 0o755); err != nil {
@@ -346,7 +349,7 @@ func TestSandboxCreateFailureRemovesThePrimaryWorkspace(t *testing.T) {
 	r.StateDir = t.TempDir()
 	r.Mounts = []Mount{{Path: inputs, Access: ReadOnly}}
 	engine := filepath.Dir(r.SbxBin)
-	if err := os.WriteFile(filepath.Join(engine, "fail-create"), nil, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(engine, "fail-start"), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	dir, err := r.NewSessionDir("inputs")
@@ -358,16 +361,25 @@ func TestSandboxCreateFailureRemovesThePrimaryWorkspace(t *testing.T) {
 		t.Fatal("the session ran without a sandbox")
 	}
 	create := lines(t, filepath.Join(engine, "sbx-create.txt"))
-	primary := create[7]
-	for _, want := range []string{"sbx create", "underscores", "workspaces " + primary + " ", inputs + ":ro"} {
+	name, primary, workspaces := create[3], create[7], create[7:]
+	for _, want := range []string{"sbx create", "500 Internal Server Error", "workspaces " + primary + " ", inputs + ":ro"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not say %q", err, want)
 		}
 	}
+	if !slices.Contains(workspaces, inputs+":ro") || !slices.Contains(workspaces, work) || slices.Contains(workspaces, inputs) || slices.Contains(workspaces, work+":ro") {
+		t.Errorf("workspaces %v do not keep the inputs read-only and the working directory writable", workspaces)
+	}
 	if _, err := os.Stat(primary); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("the primary workspace %s outlived the failed create: %v", primary, err)
 	}
-	for _, left := range []string{filepath.Join(dir, "ran"), filepath.Join(dir, "server-pid.txt"), filepath.Join(engine, "sbx-rm.txt"), filepath.Join(dir, procs.SandboxNameFile)} {
+	if got, want := lines(t, filepath.Join(engine, "sbx-calls.txt")), []string{"create --quiet", "rm --force"}; !slices.Equal(got, want) {
+		t.Errorf("sbx calls in order: %v, want %v", got, want)
+	}
+	if rm := strings.Join(lines(t, filepath.Join(engine, "sbx-rm.txt")), " "); rm != "rm --force "+name {
+		t.Errorf("sbx rm: %q, want the sandbox %s removed", rm, name)
+	}
+	for _, left := range []string{filepath.Join(dir, "ran"), filepath.Join(dir, "server-pid.txt"), filepath.Join(dir, procs.SandboxNameFile)} {
 		if _, err := os.Stat(left); err == nil {
 			t.Errorf("%s exists after a failed create", filepath.Base(left))
 		}
@@ -673,7 +685,8 @@ func TestSandboxPolicyFailureStopsTheSession(t *testing.T) {
 	}
 }
 
-// A failed `sbx create` starts nothing: no server, no removal, no record.
+// A failed `sbx create` starts nothing: no server, no record, and the
+// sandbox removed by name in case sbx made it before it failed.
 func TestSandboxCreateFailureStartsNothing(t *testing.T) {
 	r := newRunner(t, fakeClaude(t, `echo '{"type":"result","subtype":"success","result":"ok"}'`))
 	r.SbxBin = fakeSbx(t)
@@ -695,7 +708,10 @@ func TestSandboxCreateFailureStartsNothing(t *testing.T) {
 			t.Errorf("error %q does not mention %q", err, want)
 		}
 	}
-	for _, left := range []string{filepath.Join(dir, "server-pid.txt"), filepath.Join(filepath.Dir(r.SbxBin), "sbx-rm.txt"), filepath.Join(dir, procs.SandboxNameFile)} {
+	if got, want := lines(t, filepath.Join(filepath.Dir(r.SbxBin), "sbx-calls.txt")), []string{"create --quiet", "rm --force"}; !slices.Equal(got, want) {
+		t.Errorf("sbx calls in order: %v, want %v", got, want)
+	}
+	for _, left := range []string{filepath.Join(dir, "server-pid.txt"), filepath.Join(dir, procs.SandboxNameFile)} {
 		if _, err := os.Stat(left); err == nil {
 			t.Errorf("%s exists after a failed create", filepath.Base(left))
 		}

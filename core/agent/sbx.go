@@ -184,8 +184,11 @@ func (r *Runner) sandboxListen(context.Context) (string, error) {
 // working directory, or a directory of the runner's when it cannot be,
 // ownPrimary), created from the profile's template when it names one and
 // from sbx's own for the agent otherwise (SbxTemplates), and without the
-// shared skills store. A failed create leaves no directory of the runner's
-// behind; sbx removes the sandbox it could not start.
+// shared skills store. A failed create leaves nothing of the runner's
+// behind: its directory is removed, and so is the sandbox by name, since
+// sbx can fail after it has made the sandbox (its start, which writes the
+// agent's instructions, is the last step of `sbx create`). The error
+// carries sbx's own message; a removal that fails is logged beside it.
 func (s *sandbox) create(ctx context.Context) (err error) {
 	defer func() {
 		if err != nil {
@@ -219,6 +222,8 @@ func (s *sandbox) create(ctx context.Context) (err error) {
 		if msg := bytes.TrimSpace(out); len(msg) > 0 {
 			err = fmt.Errorf("%w: %s", err, msg)
 		}
+		s.created = true
+		s.remove()
 		return fmt.Errorf("create sandbox %s with workspaces %s (%s create): %w", s.name, strings.Join(workspaces, " "), SandboxCLI, err)
 	}
 	s.created = true
