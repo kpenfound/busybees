@@ -9,12 +9,16 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"time"
 )
 
 // A SandboxSbx session whose profile asks for Dagger (Profile.Dagger) is
-// given the Dagger CLI and the host's Dagger engine. The CLI is installed
-// into the sandbox once it is created, by the Dagger install script at the
-// profile's release, as root, into /usr/local/bin. The engine cannot be
+// given the Dagger CLI and the host's Dagger engine. Once the sandbox is
+// created, the runner asks the CLI already in it for its release (`dagger
+// version`): a template that has the profile's release keeps it, and any
+// other sandbox, one without the CLI, with another release or whose probe
+// failed, is given it by the Dagger install script, as root, into
+// /usr/local/bin. The engine cannot be
 // mounted: a sandbox is a virtual machine and sbx shares directories with
 // it, not sockets. The session reaches it over TCP at host.docker.internal
 // instead, which the sandbox's proxy turns into the host's localhost: an
@@ -32,14 +36,21 @@ const EnvDaggerRunnerHost = "_EXPERIMENTAL_DAGGER_RUNNER_HOST"
 // sandbox. The sandbox's network policy must allow its host.
 const DaggerInstallScript = "https://dl.dagger.io/dagger/install.sh"
 
-// startDagger installs the Dagger CLI in the sandbox and gives the session
-// the engine: the address it reaches the engine at, in EnvDaggerRunnerHost,
-// and, for an engine on the host's loopback, the network policy rule that
-// lets the sandbox reach it.
+// daggerProbeTimeout bounds the probe for the Dagger CLI a sandbox already
+// has; a probe that takes longer is a failed one, and the CLI is installed.
+const daggerProbeTimeout = time.Minute
+
+// startDagger installs the Dagger CLI in the sandbox, unless it has the
+// profile's release already, and gives the session the engine: the address
+// it reaches the engine at, in EnvDaggerRunnerHost, and, for an engine on
+// the host's loopback, the network policy rule that lets the sandbox reach
+// it.
 func (s *sandbox) startDagger(ctx context.Context) error {
 	d := s.req.Profile.Dagger
-	if err := s.installDagger(ctx, d.Version); err != nil {
-		return err
+	if !s.hasDagger(ctx, d.Version) {
+		if err := s.installDagger(ctx, d.Version); err != nil {
+			return err
+		}
 	}
 	addr, err := s.daggerAddress(s.turn.DaggerEngine)
 	if err != nil {
@@ -52,6 +63,39 @@ func (s *sandbox) startDagger(ctx context.Context) error {
 	}
 	s.vars = append(s.vars, envVar{EnvDaggerRunnerHost, addr})
 	return nil
+}
+
+// hasDagger reports whether the sandbox's template already has the Dagger
+// CLI at a release, "v0.20.5" and "0.20.5" being the same one. A probe that
+// fails, a CLI that is missing included, is logged and reports false.
+func (s *sandbox) hasDagger(ctx context.Context, version string) bool {
+	ctx, cancel := context.WithTimeout(ctx, daggerProbeTimeout)
+	defer cancel()
+	out, err := s.r.sbxCommand(ctx, "exec", s.name, "dagger", "version").CombinedOutput()
+	if err != nil {
+		if msg := bytes.TrimSpace(out); len(msg) > 0 {
+			err = fmt.Errorf("%w: %s", err, msg)
+		}
+		s.r.Logger.Info("no Dagger CLI in the sandbox's template", "sandbox", s.name, "err", err)
+		return false
+	}
+	have := daggerCLIRelease(string(out))
+	if strings.TrimPrefix(have, "v") != strings.TrimPrefix(version, "v") {
+		s.r.Logger.Info("the sandbox's template has another Dagger CLI release", "sandbox", s.name, "have", have, "want", version)
+		return false
+	}
+	return true
+}
+
+// daggerCLIRelease is the release `dagger version` reports, the field after
+// "dagger" in "dagger v0.20.5 (registry.dagger.io/engine:v0.20.5)
+// linux/amd64", or "" when the output is not that.
+func daggerCLIRelease(out string) string {
+	f := strings.Fields(out)
+	if len(f) < 2 || f[0] != "dagger" {
+		return ""
+	}
+	return f[1]
 }
 
 // installDagger runs the install script inside the sandbox at one release.

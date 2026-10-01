@@ -110,7 +110,11 @@ exec sleep 60
 // names (sbx-exec-args.txt, sbx-exec-env.txt) and runs the command after the
 // sandbox name on this machine; `exec --workdir`, a probe the runner runs
 // before the session's command, appends its arguments to sbx-probe.txt
-// beside the script and runs its command the same way; any other `exec`, a
+// beside the script and runs its command the same way; `exec <name> dagger
+// version` appends its arguments to sbx-dagger-probe.txt beside the script,
+// one call per line, and prints the release in a file named dagger-version
+// there the way `dagger version` does, or fails as a missing CLI when there
+// is none; any other `exec`, a
 // setup command, is appended to sbx-setup.txt beside the script, one
 // argument per line, runs nothing and fails when a file named fail-setup
 // is there; `policy` appends its arguments to sbx-policy.txt beside the
@@ -206,6 +210,15 @@ exec)
       esac
     done
     exec "$@"
+  fi
+  if [ "$3" = dagger ] && [ "$4" = version ]; then
+    echo "$*" >> "$here/sbx-dagger-probe.txt"
+    if [ ! -f "$here/dagger-version" ]; then
+      echo "sh: 1: dagger: not found" >&2
+      exit 127
+    fi
+    echo "dagger $(cat "$here/dagger-version") (registry.dagger.io/engine) linux/amd64"
+    exit 0
   fi
   if [ "$2" != "--interactive" ]; then
     printf '%s\n' "$@" >> "$here/sbx-setup.txt"

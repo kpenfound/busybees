@@ -214,7 +214,8 @@ profile asking for it, or in any mode but `sbx`. What the session hands the
 engine runs outside the sandbox: its containers reach the network the
 engine can, not what the sbx policy allows, and they share the engine's
 cache with every other client of that engine. The Dagger CLI is installed
-from `dl.dagger.io` into each sandbox as root.
+from `dl.dagger.io` into each sandbox as root, unless the sandbox's template
+already reports the role's release.
 
 **Does not hold, or costs something:**
 
