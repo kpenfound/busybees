@@ -645,6 +645,58 @@ busybees boundary. Its session adapter supplies git/GitHub identity and push
 configuration through the VCS environment fields. Busybees profiles allow VCS
 access; another caller can supply a plain directory and deny it.
 
+### Signing commits
+
+`vcs.Signer` creates signed commits from trees the caller has reviewed, with
+parents and messages the caller gives, in the caller's process and with the
+repository's own identity and signing key. A session that produced the trees
+never holds the key. A signing moves no branch and writes no file of a working
+tree; pushing the result and moving branches to it are the caller's.
+
+```go
+s, err := git.Signer{}.Sign(ctx, vcs.Directory(repo), vcs.SignRequest{
+	ID: "publish-42", // the operation, found again after a restart
+	Commits: []vcs.CommitSpec{
+		{Tree: reviewed[0], Parents: []string{"origin/main"}, Message: msg[0]},
+		{Tree: reviewed[1], FollowsPrevious: true, Message: msg[1]},
+	},
+})
+// s.Commits are the signed commits in order; s.Head the last one.
+push(s.Head)
+err = git.Signer{}.Forget(ctx, vcs.Directory(repo), "publish-42")
+```
+
+A commit that `FollowsPrevious` has the commit before it in the request as its
+first parent, ahead of its own `Parents`, so a linear history is a first
+commit on its base followed by commits that each follow the previous one.
+Trees and parents are revisions, recorded resolved to ids. Messages are
+written as given: cleanup and sign-off trailers are the caller's.
+
+The signing is recorded under its `ID` as it goes. After an interruption,
+`SignStatus` reports the commits created so far, and `Sign` with the same
+request returns them and signs only what is missing; a finished signing
+returned again is the same commits, signed once. A different request under a
+recorded `ID` is refused with `vcs.ErrSigningMismatch`. `Forget` drops the
+record once the caller is done with the commits.
+
+A commit is never created unsigned: when the signing program fails, or a
+commit comes back without a signature, `Sign` fails with an error wrapping
+`vcs.ErrUnsigned`.
+
+`core/vcs/git.Signer` implements it with `git commit-tree -S` in any git
+store: a working tree, a bare repository, or the git store a Jujutsu
+repository shares, colocated or under `.jj/repo/store/git`. The author and
+committer are the repository's configured identity (`user.name` and
+`user.email`, or `author.*` and `committer.*`); an identity that is not
+configured is refused, and `GIT_AUTHOR_*` and `GIT_COMMITTER_*` in the
+environment are ignored. The signature uses the repository's
+`user.signingKey`, `gpg.format` and the program that format names. Commit `i`
+of a signing is kept under `refs/core-sign/<id>/<i>`, which is no branch, tag
+or bookmark, and the record is `core-sign/<id>.json` in the common git
+directory. A commit kept under its ref before the record said so is taken up
+after its tree, parents, message and signature are checked. The signer runs
+no hook and fetches and pushes nothing.
+
 ## Work identity
 
 `work.Ref` carries an opaque string `Key` and caller-defined string `Tags`.

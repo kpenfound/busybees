@@ -132,7 +132,11 @@ dagger call test-runtime \
   `internal/workspace` implements it with git worktrees; core does no git discovery.
   `replay.go` is the optional `Replayer` (replay `OldBase..Head` onto `Onto` without
   moving a branch, resumable after a conflict and a restart), implemented by
-  `core/vcs/git` (cherry-pick) and `core/vcs/jj` (`jj duplicate`); the jj tests need
+  `core/vcs/git` (cherry-pick) and `core/vcs/jj` (`jj duplicate`). `sign.go` is the optional
+  `Signer` (signed commits from reviewed trees with explicit parents and messages, the
+  repository's identity and key, no unsigned fallback, recorded under an operation id
+  and kept under `refs/core-sign/` until `Forget`), implemented by `core/vcs/git`
+  (`git commit-tree -S`) for any git store, a Jujutsu one included. The jj tests need
   `jj`: the test runtime has it and sets `BUSYBEES_REQUIRE_JJ`, which turns a missing
   `jj` into a failure, and a container without either skips them.
 - `core/work` — opaque work keys, caller tags and collision-resistant filenames.
