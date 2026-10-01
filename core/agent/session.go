@@ -202,8 +202,9 @@ type Runner struct {
 	// PiBin is the pi executable, run for a role whose agent is pi.
 	// Default "pi".
 	PiBin string
-	// DockerBin is the container engine a container session is run with.
-	// Default ContainerEngine.
+	// DockerBin is the container engine a container session is run with,
+	// and the one a SandboxSbx session's docker-container Dagger engine is
+	// reached through (Dagger.Engine). Default ContainerEngine.
 	DockerBin string
 	// SbxBin is the Docker Sandboxes CLI a SandboxSbx session is run with.
 	// Default SandboxCLI.

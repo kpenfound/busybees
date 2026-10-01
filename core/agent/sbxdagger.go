@@ -7,9 +7,13 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/kpenfound/busybees/core/agent/agentbin"
 )
 
 // A SandboxSbx session whose profile asks for Dagger (Profile.Dagger) is
@@ -22,9 +26,12 @@ import (
 // mounted: a sandbox is a virtual machine and sbx shares directories with
 // it, not sockets. The session reaches it over TCP at host.docker.internal
 // instead, which the sandbox's proxy turns into the host's localhost: an
-// engine on a socket is forwarded from a port on the host's loopback that
-// the runner listens on for this session alone, and an engine on a
-// loopback TCP address is reached at that port. Either port is allowed for
+// engine on a socket, or in a container that publishes no port
+// (docker-container://<name>, reached as the Dagger CLI reaches it, by
+// `docker exec -i <name> buildctl dial-stdio` per connection), is
+// forwarded from a port on the host's loopback that the runner listens on
+// for this session alone, and an engine on a loopback TCP address is
+// reached at that port. Either port is allowed for
 // this sandbox alone, as the caller-supplied server's is (allowHost). The
 // Dagger CLI inside is pointed at it with EnvDaggerRunnerHost.
 
@@ -115,17 +122,23 @@ func (s *sandbox) installDagger(ctx context.Context, version string) error {
 }
 
 // daggerAddress is the address the session reaches the engine at: a
-// socket through a forward this session alone has, a TCP engine on the
-// host's loopback at host.docker.internal, and any other TCP engine as it
-// is.
+// socket or a container through a forward this session alone has, a TCP
+// engine on the host's loopback at host.docker.internal, and any other TCP
+// engine as it is.
 func (s *sandbox) daggerAddress(engine string) (string, error) {
 	scheme, rest, _ := strings.Cut(engine, "://")
-	if scheme == "unix" {
+	if scheme == "unix" || scheme == "docker-container" {
 		// Always the loopback, whatever ContainerListen says: the forward
 		// has no token, unlike the caller's server, and whoever connects
 		// to it drives the engine, which is root on the host. The
 		// sandbox's proxy reaches it there as host.docker.internal.
-		f, err := forwardUnix("127.0.0.1:0", rest, s.r.Logger)
+		var f *forward
+		var err error
+		if scheme == "unix" {
+			f, err = forwardUnix("127.0.0.1:0", rest, s.r.Logger)
+		} else {
+			f, err = forwardContainer("127.0.0.1:0", s.r.dockerBin(), rest, s.r.Logger)
+		}
 		if err != nil {
 			return "", fmt.Errorf("forward the Dagger engine %s: %w", engine, err)
 		}
@@ -154,12 +167,13 @@ func isLoopback(host string) bool {
 }
 
 // forward accepts TCP connections and joins each one to a new connection
-// to a Unix socket, until it is closed.
+// to the engine, until it is closed.
 type forward struct {
 	ln     net.Listener
-	socket string
+	engine string
+	dial   func() (io.ReadWriteCloser, error)
 	mu     sync.Mutex
-	conns  map[net.Conn]bool
+	conns  map[io.Closer]bool
 	closed bool
 	wg     sync.WaitGroup
 	log    *slog.Logger
@@ -168,6 +182,30 @@ type forward struct {
 // forwardUnix listens on listen and forwards every connection to socket,
 // logging a connection the socket refuses to log (nil: slog.Default).
 func forwardUnix(listen, socket string, log *slog.Logger) (*forward, error) {
+	return listenForward(listen, socket, func() (io.ReadWriteCloser, error) {
+		return net.Dial("unix", socket)
+	}, log)
+}
+
+// forwardContainer listens on listen and forwards every connection to the
+// engine in the container name, through a `<docker> exec -i <name>
+// buildctl dial-stdio` of its own, as the Dagger CLI reaches a
+// docker-container engine: the engine publishes no port and its socket
+// may be in a virtual machine the host cannot connect into. A process that
+// cannot start is logged to log (nil: slog.Default).
+func forwardContainer(listen, docker, name string, log *slog.Logger) (*forward, error) {
+	if _, err := agentbin.Resolve(docker); err != nil {
+		return nil, err
+	}
+	if log == nil {
+		log = slog.Default()
+	}
+	return listenForward(listen, "docker-container://"+name, func() (io.ReadWriteCloser, error) {
+		return dialProcess(log, docker, "exec", "-i", name, "buildctl", "dial-stdio")
+	}, log)
+}
+
+func listenForward(listen, engine string, dial func() (io.ReadWriteCloser, error), log *slog.Logger) (*forward, error) {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -175,7 +213,7 @@ func forwardUnix(listen, socket string, log *slog.Logger) (*forward, error) {
 	if err != nil {
 		return nil, err
 	}
-	f := &forward{ln: ln, socket: socket, conns: map[net.Conn]bool{}, log: log}
+	f := &forward{ln: ln, engine: engine, dial: dial, conns: map[io.Closer]bool{}, log: log}
 	f.wg.Add(1)
 	go f.serve()
 	return f, nil
@@ -190,9 +228,9 @@ func (f *forward) serve() {
 		if err != nil {
 			return
 		}
-		out, err := net.Dial("unix", f.socket)
+		out, err := f.dial()
 		if err != nil {
-			f.log.Warn("forward to the Dagger engine", "socket", f.socket, "err", err)
+			f.log.Warn("forward to the Dagger engine", "engine", f.engine, "err", err)
 			_ = in.Close()
 			continue
 		}
@@ -207,7 +245,7 @@ func (f *forward) serve() {
 
 // track records a pair of connections for close, or closes them when the
 // forward has been closed already.
-func (f *forward) track(conns ...net.Conn) bool {
+func (f *forward) track(conns ...io.Closer) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.closed {
@@ -224,7 +262,7 @@ func (f *forward) track(conns ...net.Conn) bool {
 
 // pipe copies one direction, then closes both ends and forgets them:
 // either side hanging up ends the connection.
-func (f *forward) pipe(dst, src net.Conn) {
+func (f *forward) pipe(dst io.WriteCloser, src io.ReadCloser) {
 	defer f.wg.Done()
 	_, _ = io.Copy(dst, src)
 	_ = dst.Close()
@@ -253,4 +291,65 @@ func (f *forward) close() {
 	f.mu.Unlock()
 	_ = f.ln.Close()
 	f.wg.Wait()
+}
+
+// processConn is a connection carried by a process's stdin and stdout.
+// Closing it ends the process.
+type processConn struct {
+	cmd    *exec.Cmd
+	stdin  *os.File
+	stdout *os.File
+	stderr *bytes.Buffer
+	log    *slog.Logger
+	once   sync.Once
+}
+
+// processWaitDelay bounds how long closing a processConn waits for the
+// process's output once it is killed.
+const processWaitDelay = 5 * time.Second
+
+// dialProcess starts bin with args, its stdin and stdout the connection.
+// Its own pipes, not exec's, so that a read and Wait can be concurrent.
+// What the process says on stderr is logged to log when it ends.
+func dialProcess(log *slog.Logger, bin string, args ...string) (*processConn, error) {
+	inR, inW, err := os.Pipe()
+	if err != nil {
+		return nil, err
+	}
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		_ = inR.Close()
+		_ = inW.Close()
+		return nil, err
+	}
+	var stderr bytes.Buffer
+	cmd := agentbin.CommandContext(context.Background(), bin, args...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = inR, outW, &stderr
+	cmd.WaitDelay = processWaitDelay
+	err = cmd.Start()
+	_ = inR.Close()
+	_ = outW.Close()
+	if err != nil {
+		_ = inW.Close()
+		_ = outR.Close()
+		return nil, fmt.Errorf("%s: %w", strings.Join(cmd.Args, " "), err)
+	}
+	return &processConn{cmd: cmd, stdin: inW, stdout: outR, stderr: &stderr, log: log}, nil
+}
+
+func (c *processConn) Read(p []byte) (int, error)  { return c.stdout.Read(p) }
+func (c *processConn) Write(p []byte) (int, error) { return c.stdin.Write(p) }
+
+// Close ends the process's input, kills it and waits for it.
+func (c *processConn) Close() error {
+	c.once.Do(func() {
+		_ = c.stdin.Close()
+		_ = c.cmd.Process.Kill()
+		_ = c.stdout.Close()
+		_ = c.cmd.Wait()
+		if msg := bytes.TrimSpace(c.stderr.Bytes()); len(msg) > 0 {
+			c.log.Warn("forward to the Dagger engine", "command", strings.Join(c.cmd.Args, " "), "stderr", string(msg))
+		}
+	})
+	return nil
 }

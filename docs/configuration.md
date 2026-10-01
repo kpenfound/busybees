@@ -749,7 +749,7 @@ enabled = true
 | `shell` | string | the shell bees runs under | Exported into sessions as `$SHELL`. Claude Code discovers its Bash tool's shell from `$SHELL`, so this is the lever, without being a guarantee. Must be an existing file. |
 | `sandbox_image` | string | `""` | The image a `container` session runs in: it must hold the role's agent, `git` and `gh`. A `container` role without one or `container_use_environment` is refused at `bees run`. See [The container mode](#the-container-mode). For an `sbx` session it is the sandbox's template instead, an image built on sbx's image for the agent (`docker/sandbox-templates:claude-code`, `:codex` or `:opencode`); empty selects sbx's own. See [The sbx mode](#the-sbx-mode). |
 | `container_use_environment` | string | `""` | Path, relative to the project repository root, to a `dagger/container-use` environment definition to build the `container` profile's image from, instead of `sandbox_image`. Requires the resolved profile's `sandbox = "container"` and is a load error together with `sandbox_image` on the same resolved role. See [Building from container-use](#building-from-container-use). |
-| `sandbox_dagger_engine` | string | `""` | The host's Dagger engine an `sbx` session is given, `unix://<socket path>` or `tcp://<host>:<port>`, with the Dagger CLI installed in the sandbox. Empty gives neither. Requires the resolved profile's `sandbox = "sbx"` at every size and `sandbox_dagger_version`. See [Dagger in the sandbox](#dagger-in-the-sandbox). |
+| `sandbox_dagger_engine` | string | `""` | The host's Dagger engine an `sbx` session is given, `unix://<socket path>`, `tcp://<host>:<port>` or `docker-container://<container name>`, with the Dagger CLI installed in the sandbox. Empty gives neither. Requires the resolved profile's `sandbox = "sbx"` at every size and `sandbox_dagger_version`. See [Dagger in the sandbox](#dagger-in-the-sandbox). |
 | `sandbox_dagger_version` | string | `""` | The Dagger CLI release installed in the sandbox for `sandbox_dagger_engine`, the engine's own, such as `"v0.20.5"`. Requires `sandbox_dagger_engine`. |
 | `env` | table | `{}` | Environment variables exported into every session: the agent, its shell tool and git see them, and so do MCP servers under `claude`, `opencode` and `pi` (codex starts a server with only the variables its entry names). A `$VAR` value is expanded from the bees process environment when the session starts. A name may not be empty or contain `=` or a space. See [Exported into every session](#exported-into-every-session) for how it meets the variables bees sets itself. |
 | `enabled` | bool | `true` (`false` for `release_manager`) | Roles only. `false` takes a role out of the rotation. `release_manager` must be explicitly enabled because it can publish a GitHub release. Disabling `reviewer` makes a developer's pull request count as approved the moment it is opened, and with `auto_merge` it goes straight to the checks stage. Under `[global]` the key is an error. A named set of these decisions is a [config template](templates.md). |
@@ -1410,6 +1410,11 @@ The engine is one bees can reach on this machine:
 - `tcp://<host>:<port>`: an engine listening on TCP. One on the loopback
   (`127.0.0.1`, `localhost`, `::1`) is reached at `host.docker.internal`;
   any other host as written.
+- `docker-container://<name>`: an engine running in a Docker container,
+  such as the `dagger-engine-<release>` container the Dagger CLI starts
+  for itself. For each session bees listens on a port of the host's
+  loopback and runs `docker exec -i <name> buildctl dial-stdio` for every
+  connection, until the session ends. The sandbox gets no Docker socket.
 
 The engine must be running and of `sandbox_dagger_version`'s release: the
 Dagger CLI refuses an engine it is not compatible with. Start one on a
@@ -1421,9 +1426,11 @@ docker run -d --name dagger-engine --privileged \
   --addr unix:///run/dagger/engine.sock
 ```
 
-On macOS the socket stays inside Docker Desktop's VM; publish a TCP port
-there instead (`-p 127.0.0.1:1234:1234` and `--addr tcp://0.0.0.0:1234`)
-and set `sandbox_dagger_engine = "tcp://127.0.0.1:1234"`.
+On macOS the socket stays inside Docker Desktop's VM. Give the container
+instead, `sandbox_dagger_engine = "docker-container://dagger-engine"`, or
+publish a TCP port (`-p 127.0.0.1:1234:1234` and
+`--addr tcp://0.0.0.0:1234`) and set
+`sandbox_dagger_engine = "tcp://127.0.0.1:1234"`.
 
 Once the sandbox exists, bees runs `dagger version` in it. When the
 sandbox's template reports the role's release (`v0.20.5` and `0.20.5`
