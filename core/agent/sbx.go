@@ -3,6 +3,8 @@ package agent
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -100,7 +102,7 @@ type sandbox struct {
 // the boundary what it is granted. The agent is started by Run, through
 // command; close removes the sandbox and stops the server.
 func (r *Runner) startSandbox(ctx context.Context, req Request, sessionDir string, turn *Turn) (*sandbox, error) {
-	s := &sandbox{container: container{r: r, req: req, sessionDir: sessionDir, turn: turn, name: sandboxName(r.namePrefix()+req.Name) + "-" + randomHex(4), image: req.Profile.SandboxImage, listen: r.sandboxListen}}
+	s := &sandbox{container: container{r: r, req: req, sessionDir: sessionDir, turn: turn, name: sandboxName(r.namePrefix()+req.Name, randomHex(4)), image: req.Profile.SandboxImage, listen: r.sandboxListen}}
 	s.vars = turnVars(turn)
 	if err := s.create(ctx); err != nil {
 		return nil, err
@@ -427,12 +429,17 @@ func (s *sandbox) close() {
 	procs.RemoveSandboxName(s.sessionDir)
 }
 
-// sandboxName makes a name sbx accepts out of a session name: letters,
-// digits, hyphens and periods, the first one a letter or a digit. The
-// caller's random suffix makes it long enough.
-func sandboxName(s string) string {
+// sandboxNameMax is the longest sandbox name `sbx create` accepts.
+const sandboxNameMax = 63
+
+// sandboxName makes a name sbx accepts out of a session name and a random
+// suffix: letters, digits, hyphens and periods, the first one a letter or a
+// digit, at most sandboxNameMax characters. A session name too long to fit
+// is cut short and followed by a hash of the whole of it, so two long names
+// that share a beginning still name different sandboxes.
+func sandboxName(session, suffix string) string {
 	var b strings.Builder
-	for _, r := range s {
+	for _, r := range session {
 		switch {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.':
 			b.WriteRune(r)
@@ -442,9 +449,19 @@ func sandboxName(s string) string {
 	}
 	name := strings.Trim(b.String(), "-.")
 	if name == "" {
-		return "session"
+		name = "session"
 	}
-	return name
+	if room := sandboxNameMax - len("-") - len(suffix); len(name) > room {
+		sum := sha256.Sum256([]byte(session))
+		hash := hex.EncodeToString(sum[:4])
+		name = strings.TrimRight(name[:max(room-len("-")-len(hash), 0)], "-.")
+		if name == "" {
+			name = hash
+		} else {
+			name += "-" + hash
+		}
+	}
+	return name + "-" + suffix
 }
 
 // sbxCommand is an sbx CLI command outside the session's own `sbx exec`,

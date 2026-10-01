@@ -799,11 +799,44 @@ func TestSandboxProfileValidation(t *testing.T) {
 }
 
 // A sandbox name is what sbx accepts: letters, digits, hyphens and periods,
-// starting with one of the first two.
+// starting with one of the first two, ending in the caller's suffix.
 func TestSandboxName(t *testing.T) {
-	for in, want := range map[string]string{"task-boxed_1": "task-boxed-1", "_x": "x", "": "session", "a.b/c d": "a.b-c-d", "-.": "session"} {
-		if got := sandboxName(in); got != want {
+	for in, want := range map[string]string{"task-boxed_1": "task-boxed-1-abcd1234", "_x": "x-abcd1234", "": "session-abcd1234", "a.b/c d": "a.b-c-d-abcd1234", "-.": "session-abcd1234"} {
+		if got := sandboxName(in, "abcd1234"); got != want {
 			t.Errorf("sandboxName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// A session name too long for sbx is cut to fit, with a hash of the whole
+// name that keeps two names sharing a long beginning apart.
+func TestSandboxNameBounded(t *testing.T) {
+	long := "agent-mason-startup-kinds-web-listener-and-tailnet-implement"
+	a := sandboxName(long+"-one", "3cc66791")
+	b := sandboxName(long+"-two", "3cc66791")
+	for _, name := range []string{a, b} {
+		if len(name) > sandboxNameMax {
+			t.Errorf("sandboxName gave %q, %d characters, over %d", name, len(name), sandboxNameMax)
+		}
+		if !strings.HasPrefix(name, "agent-mason-startup") || !strings.HasSuffix(name, "-3cc66791") {
+			t.Errorf("sandboxName gave %q, want the session's beginning and the suffix", name)
+		}
+		if strings.Contains(name, "--") {
+			t.Errorf("sandboxName gave %q, with an empty segment", name)
+		}
+	}
+	if a == b {
+		t.Errorf("two long session names both gave %q", a)
+	}
+	if got := sandboxName(strings.Repeat("x", 54), "3cc66791"); got != strings.Repeat("x", 54)+"-3cc66791" {
+		t.Errorf("a name that fits exactly was changed to %q", got)
+	}
+	if got := sandboxName(strings.Repeat("x", 55), "3cc66791"); len(got) != sandboxNameMax {
+		t.Errorf("a name one over gave %q, %d characters", got, len(got))
+	}
+	for _, in := range []string{strings.Repeat("-", 100) + "x", strings.Repeat("ab-", 40)} {
+		if got := sandboxName(in, "3cc66791"); len(got) > sandboxNameMax || strings.HasPrefix(got, "-") || strings.Contains(got, "--") {
+			t.Errorf("sandboxName(%q) = %q", in, got)
 		}
 	}
 }
