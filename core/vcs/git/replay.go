@@ -1,4 +1,5 @@
-// Package git replays revisions in a git working tree (vcs.Replayer).
+// Package git replays revisions in a git working tree (vcs.Replayer) and
+// creates signed commits in a git store (vcs.Signer).
 package git
 
 import (
