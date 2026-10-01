@@ -103,7 +103,8 @@ exec sleep 60
 
 // Sbx writes a fake Docker Sandboxes CLI. `create` records its arguments in
 // sbx-create.txt beside the script and fails when a file named fail-create
-// is there, and fails the way sbx does when its primary workspace, the
+// is there, fails as sbx's start does after it has made the sandbox (a bare
+// HTTP 500) when one named fail-start is, and fails the way sbx does when its primary workspace, the
 // first one, is read-only, is not a directory, or has a parent at or inside
 // a read-only workspace, where sbx's start writes the agent's instructions; `exec --interactive`, the session's command, records its
 // arguments and the client's environment in the directory sessionVariable
@@ -142,6 +143,10 @@ create)
   printf '%s\n' "$@" > "$here/sbx-create.txt"
   if [ -f "$here/fail-create" ]; then
     echo "Error: sandbox name must not contain underscores" >&2
+    exit 1
+  fi
+  if [ -f "$here/fail-start" ]; then
+    echo "error: request failed: 500 Internal Server Error: failed to run sandbox container" >&2
     exit 1
   fi
   shift

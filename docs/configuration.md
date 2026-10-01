@@ -1380,7 +1380,8 @@ created with `sbx create --quiet --name <session> --skills off <agent>`,
 the command runs through
 `sbx exec --interactive --workdir <worktree> --env <name>...` with the
 prompt on stdin, and `sbx rm --force` removes the sandbox when the session
-ends. `<session>/sandbox-name` holds the sandbox's name while it exists.
+ends, or when `sbx create` fails, since sbx can fail after it has made the
+sandbox. `<session>/sandbox-name` holds the sandbox's name while it exists.
 [`bees kill`](cli.md#bees-kill---dry-run---scheduler---grace-5s)
 does not remove a sandbox a crash left behind; `sbx rm --force <name>` does.
 
