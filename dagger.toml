@@ -4,7 +4,7 @@
 #   dagger install github.com/dagger/dagger/modules/wolfi
 
 [modules.go]
-source = "github.com/dagger/go"
+source = "github.com/dagger/go@collections"
 
 # The Go tests, linters and generators run in busybees-dev's test runtime
 # (.dagger/modules/busybees-dev): golang:1.26-bookworm with jj, which
