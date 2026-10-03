@@ -552,12 +552,22 @@ func TestDaggerProfileValidation(t *testing.T) {
 		{"port out of range", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "tcp://h:99999", Version: "v0.20.5"}}, "tcp://<host>:<port>"},
 		{"port zero", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "tcp://h:0", Version: "v0.20.5"}}, "tcp://<host>:<port>"},
 		{"docker container", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "docker-container://dagger-engine-v0.20.5", Version: "v0.20.5"}}, ""},
+		{"minimal container name", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "docker-container://a1", Version: "v0.20.5"}}, ""},
+		{"container name with dot underscore and dash", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "docker-container://x.y_z-0", Version: "v0.20.5"}}, ""},
 		{"empty container name", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "docker-container://", Version: "v0.20.5"}}, "docker-container://<container name>"},
 		{"one-character container name", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "docker-container://a", Version: "v0.20.5"}}, "docker-container://<container name>"},
 		{"container name like a flag", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "docker-container://-it", Version: "v0.20.5"}}, "docker-container://<container name>"},
+		{"container name with a leading dot", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "docker-container://.hidden", Version: "v0.20.5"}}, "docker-container://<container name>"},
+		{"container name with a leading underscore", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "docker-container://_hidden", Version: "v0.20.5"}}, "docker-container://<container name>"},
+		{"container name with a leading slash", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "docker-container:///hidden", Version: "v0.20.5"}}, "docker-container://<container name>"},
 		{"container name with a space", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "docker-container://dagger engine", Version: "v0.20.5"}}, "docker-container://<container name>"},
 		{"container name with a slash", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "docker-container://dagger/engine", Version: "v0.20.5"}}, "docker-container://<container name>"},
 		{"container name with a shell", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "docker-container://e;rm", Version: "v0.20.5"}}, "docker-container://<container name>"},
+		{"container name with a dollar sign", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "docker-container://e$cho", Version: "v0.20.5"}}, "docker-container://<container name>"},
+		{"container name with a port", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "docker-container://dagger-engine:1234", Version: "v0.20.5"}}, "docker-container://<container name>"},
+		{"container name with a query", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "docker-container://dagger-engine?q=1", Version: "v0.20.5"}}, "docker-container://<container name>"},
+		{"container name with a fragment", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "docker-container://dagger-engine#f", Version: "v0.20.5"}}, "docker-container://<container name>"},
+		{"container name with userinfo", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "docker-container://user@dagger-engine", Version: "v0.20.5"}}, "docker-container://<container name>"},
 		{"docker image", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "docker-image://registry.dagger.io/engine", Version: "v0.20.5"}}, "unix://"},
 		{"no version", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "unix:///s"}}, "Dagger CLI version"},
 		{"shell in version", Profile{Sandbox: SandboxSbx, Dagger: &Dagger{Engine: "unix:///s", Version: "0.20.5; rm -rf /"}}, "Dagger CLI version"},
@@ -568,6 +578,8 @@ func TestDaggerProfileValidation(t *testing.T) {
 			t.Errorf("%s: refused: %v", tc.name, err)
 		case tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)):
 			t.Errorf("%s: error %v does not mention %q", tc.name, err, tc.want)
+		case tc.want != "" && tc.p.Dagger != nil && strings.HasPrefix(tc.p.Dagger.Engine, "docker-container://") && !strings.Contains(err.Error(), tc.p.Dagger.Engine):
+			t.Errorf("%s: error %v does not name the address %q", tc.name, err, tc.p.Dagger.Engine)
 		}
 	}
 	// Every agent but pi, which sbx has no template for: Validate
