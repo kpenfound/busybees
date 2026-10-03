@@ -210,12 +210,23 @@ a machine that runs the factory.
 **Dagger.** A role with [`sandbox_dagger_engine`](configuration.md#dagger-in-the-sandbox)
 reaches the host's Dagger engine from the sandbox, and nothing else of the
 sort: bees refuses to run a session that is granted the engine without its
-profile asking for it, or in any mode but `sbx`. What the session hands the
-engine runs outside the sandbox: its containers reach the network the
-engine can, not what the sbx policy allows, and they share the engine's
-cache with every other client of that engine. The Dagger CLI is installed
-from `dl.dagger.io` into each sandbox as root, unless the sandbox's template
-already reports the role's release.
+profile asking for it, or in any mode but `sbx`. The engine is named as
+`unix://<socket path>`, `tcp://<host>:<port>` or
+`docker-container://<container name>`. For the socket and container forms,
+bees forwards the engine through a port of the host's loopback it opens for
+that session alone, running `docker exec -i <container name> buildctl
+dial-stdio` for every connection to a `docker-container://` engine; either
+way the session sees only `tcp://host.docker.internal:<port>`, with an
+allow rule for that one port and nothing else of the engine, and the
+sandbox never gets a Docker socket, a `DOCKER_HOST` variable or the
+container engine executable. Closing the session closes that port, every
+connection still open on it and every process it started, and removes the
+rule, before removing the sandbox; the port refuses connections afterward.
+What the session hands the engine runs outside the sandbox: its containers
+reach the network the engine can, not what the sbx policy allows, and they
+share the engine's cache with every other client of that engine. The
+Dagger CLI is installed from `dl.dagger.io` into each sandbox as root,
+unless the sandbox's template already reports the role's release.
 
 **Does not hold, or costs something:**
 
