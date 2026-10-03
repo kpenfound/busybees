@@ -2,8 +2,6 @@ package skills
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"os"
@@ -35,6 +33,16 @@ type Manager struct {
 	Git func(ctx context.Context, dir string, args ...string) (string, error)
 	// Now overrides the clock (tests).
 	Now func() time.Time
+
+	// SkillsOnly restricts the layout step to the SKILL.md and skills/
+	// shapes: Prepare never returns a repository's own directory, even when
+	// it is itself a Claude Code plugin, and always returns a generated
+	// wrapper holding only skills/ and the manifest the wrapper needs. No
+	// hooks, MCP servers, agents or commands from the repository come
+	// through, even when it has them. Set it before the manager is used; it
+	// is not safe to change concurrently with Prepare the way the refresh
+	// policy is.
+	SkillsOnly bool
 
 	// mu serialises Prepare: sessions can start concurrently and share one
 	// manager, and without it two of them could clone into, or build the
@@ -121,7 +129,7 @@ func (m *Manager) prepareOne(ctx context.Context, raw string, ref Ref) (string, 
 			return "", fmt.Errorf("sub-directory %q not found in repository", ref.Subdir)
 		}
 	}
-	return m.pluginDirFor(skillName(ref), raw, target)
+	return m.pluginDirFor(ref, raw, dir, target)
 }
 
 // cloneDir is the cache directory a reference is cloned into: a readable
@@ -134,12 +142,7 @@ func (m *Manager) cloneDir(ref Ref) string {
 }
 
 func cloneDirName(ref Ref) string {
-	name := sanitizeName(baseName(ref.URL))
-	if name == "" {
-		name = "ref"
-	}
-	sum := sha256.Sum256([]byte(ref.String()))
-	return name + "-" + hex.EncodeToString(sum[:4])
+	return keyedName(sanitizeName(baseName(ref.URL)), ref)
 }
 
 // stamp is the sibling file whose mtime is when dir was last refreshed.
