@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"net"
 	"os"
@@ -316,6 +317,54 @@ func TestSandboxDaggerEngineRule(t *testing.T) {
 	}
 }
 
+// A session granted a docker-container engine is allowed only the
+// forward's port, as for any other engine reached at host.docker.internal,
+// and is given nothing else of the container engine: no DOCKER_HOST and no
+// path of the engine's own executable.
+func TestSandboxDaggerContainerEngineRule(t *testing.T) {
+	engine := "docker-container://dagger-engine-v0.20.5"
+	docker := fakeContainerEngine(t)
+	r := &Runner{SbxBin: fakeSbx(t), DockerBin: docker, Logger: slog.Default()}
+	s := &sandbox{container: container{r: r, name: "box", turn: &Turn{DaggerEngine: engine}, req: Request{Profile: Profile{Dagger: &Dagger{Engine: engine, Version: "0.20.5"}}}}}
+	if err := s.startDagger(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer s.forward.close()
+	_, port, _ := net.SplitHostPort(s.forward.addr())
+	want := []string{"policy allow network --sandbox box localhost:" + port}
+	if got := readLines(filepath.Join(filepath.Dir(r.SbxBin), "sbx-policy.txt")); !slices.Equal(got, want) {
+		t.Errorf("policy calls %v, want %v", got, want)
+	}
+	for _, v := range s.vars {
+		if v.name == "DOCKER_HOST" || strings.Contains(v.value, docker) {
+			t.Errorf("the session was given the container engine: %+v", v)
+		}
+	}
+}
+
+// Two sessions granted the same docker-container engine each get a forward
+// of their own, on different ports, while both are open at once.
+func TestSandboxDaggerContainerSessionsGetDistinctPorts(t *testing.T) {
+	engine := "docker-container://dagger-engine-v0.20.5"
+	r := &Runner{SbxBin: fakeSbx(t), DockerBin: fakeContainerEngine(t), Logger: slog.Default()}
+	var addrs []string
+	for _, name := range []string{"box1", "box2"} {
+		s := &sandbox{container: container{r: r, name: name, turn: &Turn{DaggerEngine: engine}, req: Request{Profile: Profile{Dagger: &Dagger{Engine: engine, Version: "0.20.5"}}}}}
+		if err := s.startDagger(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		defer s.forward.close()
+		for _, v := range s.vars {
+			if v.name == EnvDaggerRunnerHost {
+				addrs = append(addrs, v.value)
+			}
+		}
+	}
+	if len(addrs) != 2 || addrs[0] == addrs[1] {
+		t.Errorf("two concurrent sessions got %v, want two different addresses", addrs)
+	}
+}
+
 // A TCP engine on the host's loopback is reached at host.docker.internal,
 // and any other at its own address; a socket is forwarded from the
 // loopback, whatever address the runner's own server listens on: the
@@ -455,6 +504,79 @@ func TestForwardContainerLogsAFailedDial(t *testing.T) {
 	}
 	if out := buf.String(); !strings.Contains(out, "No such container") {
 		t.Errorf("log does not carry the engine's error: %q", out)
+	}
+}
+
+// A connection whose process exits non-zero is closed on its own: a
+// connection already open to a working process keeps working, and the
+// forward goes on accepting new connections.
+func TestForwardContainerFailureLeavesOtherConnectionsWorking(t *testing.T) {
+	docker := agenttest.Script(t, "docker", `here=$(dirname "$0")
+n=$(($(cat "$here/docker-count.txt" 2>/dev/null || echo 0) + 1))
+echo "$n" > "$here/docker-count.txt"
+if [ "$n" = 2 ]; then
+	echo boom >&2
+	exit 1
+fi
+exec cat
+`)
+	f, err := forwardContainer("127.0.0.1:0", docker, "dagger-engine-v0.20.5", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.close()
+
+	first, err := net.Dial("tcp", f.addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = first.Close() }()
+	if _, err := first.Write([]byte("a\n")); err != nil {
+		t.Fatal(err)
+	}
+	r := bufio.NewReader(first)
+	if line, err := r.ReadString('\n'); err != nil || line != "a\n" {
+		t.Fatalf("first connection: %q, %v", line, err)
+	}
+
+	if _, err := echo(t, f.addr(), "ping"); err == nil {
+		t.Error("the failing connection was answered")
+	}
+
+	if _, err := first.Write([]byte("b\n")); err != nil {
+		t.Fatal(err)
+	}
+	if line, err := r.ReadString('\n'); err != nil || line != "b\n" {
+		t.Fatalf("first connection after the second one failed: %q, %v", line, err)
+	}
+
+	if got, err := echo(t, f.addr(), "pong"); err != nil || got != "pong" {
+		t.Fatalf("a new connection after the failure: %q, %v", got, err)
+	}
+}
+
+// What the process writes to stderr never reaches the connection, only what
+// it writes to stdout does.
+func TestForwardContainerStderrNeverReachesConnection(t *testing.T) {
+	docker := agenttest.Script(t, "docker", `echo clean-stdout
+echo dirty-stderr >&2
+`)
+	f, err := forwardContainer("127.0.0.1:0", docker, "dagger-engine-v0.20.5", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.close()
+	c, err := net.Dial("tcp", f.addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Close() }()
+	got, err := io.ReadAll(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "clean-stdout\n" {
+		t.Errorf("connection carried %q, want only the process's stdout", got)
 	}
 }
 
