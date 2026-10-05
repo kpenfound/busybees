@@ -332,6 +332,60 @@ func TestSandboxWorkingDirectoryInsideReadOnlyInputs(t *testing.T) {
 	}
 }
 
+// The sandbox's own primary workspace is recorded in the session directory,
+// by its absolute path, as soon as makePrimary makes it, so a crash after
+// that point leaves a record pointing at the leak. A normal close removes
+// the record together with the sandbox's name.
+func TestSandboxPrimaryWorkspaceIsRecorded(t *testing.T) {
+	inputs := t.TempDir()
+	work := filepath.Join(inputs, "scratch")
+	if err := os.Mkdir(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	claude := fakeClaude(t, `
+[ -f "$TASK_SESSION_DIR/sandbox-workspace" ] && cp "$TASK_SESSION_DIR/sandbox-workspace" "$TASK_SESSION_DIR/workspace-while-running"
+echo '{"type":"result","subtype":"success","result":"ok"}'
+`)
+	r := newRunner(t, claude)
+	r.SbxBin = fakeSbx(t)
+	r.ServerBin = fakeBees(t)
+	r.StateDir = t.TempDir()
+	r.Mounts = []Mount{{Path: inputs, Access: ReadOnly}}
+	engine := filepath.Dir(r.SbxBin)
+
+	res, err := r.Run(context.Background(), Request{Name: "inputs", Profile: Profile{Name: "reader", Sandbox: SandboxSbx}, Workspace: fakeWorkspace{dir: work}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError || res.ResultText != "ok" {
+		t.Fatalf("result: %+v", res)
+	}
+
+	// The primary workspace sbx was given is the path the session directory
+	// recorded while the session ran.
+	create := lines(t, filepath.Join(engine, "sbx-create.txt"))
+	if len(create) < 8 {
+		t.Fatalf("sbx create args: %v", create)
+	}
+	primary := create[7]
+	if got, err := os.ReadFile(filepath.Join(res.SessionDir, "workspace-while-running")); err != nil || strings.TrimSpace(string(got)) != primary {
+		t.Errorf("sandbox workspace record while running: %q, %v; want %s", got, err, primary)
+	}
+
+	// After the session ends normally, neither record is left behind.
+	if name := procs.SandboxName(res.SessionDir); name != "" {
+		t.Errorf("sandbox name record left behind: %q", name)
+	}
+	if ws := procs.SandboxWorkspace(res.SessionDir); ws != "" {
+		t.Errorf("sandbox workspace record left behind: %q", ws)
+	}
+	for _, left := range []string{procs.SandboxNameFile, procs.SandboxWorkspaceFile} {
+		if _, err := os.Stat(filepath.Join(res.SessionDir, left)); err == nil {
+			t.Errorf("%s left behind after the session", left)
+		}
+	}
+}
+
 // A sandbox whose start fails, as sbx's does when it cannot write the
 // agent's instructions, leaves nothing behind: the sandbox sbx made is
 // removed by name and the runner's directory with it. The error carries

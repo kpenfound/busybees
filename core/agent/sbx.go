@@ -257,12 +257,19 @@ func underBind(binds []Bind, path string) bool {
 // workspace in place of the working directory, under the host's temporary
 // directory at its real path, which is where sbx mounts it. Its parent,
 // where sbx writes the agent's instructions, must lie outside every bind.
+// The directory's path is recorded in the session directory
+// (procs.SandboxWorkspaceFile) as soon as it exists, before it is resolved
+// to its real path, so the record still matches the workspace path rule
+// orphan cleanup applies against os.TempDir().
 func (s *sandbox) makePrimary() error {
 	dir, err := os.MkdirTemp("", s.r.namePrefix()+"sbx-primary-")
 	if err != nil {
 		return fmt.Errorf("make the sandbox's primary workspace: %w", err)
 	}
 	s.primary = dir
+	if err := os.WriteFile(filepath.Join(s.sessionDir, procs.SandboxWorkspaceFile), []byte(dir+"\n"), 0o644); err != nil {
+		return fmt.Errorf("record the sandbox's primary workspace: %w", err)
+	}
 	if dir, err = filepath.EvalSymlinks(dir); err != nil {
 		return fmt.Errorf("make the sandbox's primary workspace: %w", err)
 	}
@@ -277,7 +284,7 @@ func (s *sandbox) makePrimary() error {
 }
 
 // removePrimary removes the directory makePrimary made, with whatever the
-// sandbox left in it.
+// sandbox left in it, and its record in the session directory.
 func (s *sandbox) removePrimary() {
 	if s.primary == "" {
 		return
@@ -286,6 +293,7 @@ func (s *sandbox) removePrimary() {
 		s.r.Logger.Warn("remove sandbox primary workspace", "sandbox", s.name, "dir", s.primary, "err", err)
 	}
 	s.primary = ""
+	_ = os.Remove(filepath.Join(s.sessionDir, procs.SandboxWorkspaceFile))
 }
 
 // workspaces are the turn's binds as `sbx create` takes them: each bind's

@@ -142,6 +142,25 @@ func SandboxName(dir string) string {
 // RemoveSandboxName deletes a session's sandbox name file.
 func RemoveSandboxName(dir string) { _ = os.Remove(filepath.Join(dir, SandboxNameFile)) }
 
+// SandboxWorkspaceFile is the file in a session directory the runner writes
+// the absolute path of a sandbox-backed session's primary workspace (the
+// directory made under os.TempDir() in place of the working directory, when
+// the working directory itself cannot be the primary workspace) to, once
+// that directory exists. It is removed with the workspace when the session
+// ends, so a session directory holding one is a session whose primary
+// workspace may still exist on disk. Orphan inspection does not read it.
+const SandboxWorkspaceFile = "sandbox-workspace"
+
+// SandboxWorkspace returns the absolute path of the primary workspace a
+// session directory records, empty when the session recorded none.
+func SandboxWorkspace(dir string) string {
+	b, err := os.ReadFile(filepath.Join(dir, SandboxWorkspaceFile))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
 // FromContainers returns the container-backed sessions of the factory whose
 // sessions live in sessionsDir, by asking the engine which of its running
 // containers carry ContainerLabel with a session directory of this factory.
