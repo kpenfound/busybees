@@ -401,7 +401,19 @@ func (r *Runner) run(ctx context.Context, req Request, restricted bool) (*Result
 
 	cmd := exec.CommandContext(runCtx, bin, args...)
 	cmd.Dir = req.workDir()
-	cmd.Stdin = strings.NewReader(stdin)
+	// A backend that implements stdinBackend converses over stdin rather
+	// than being given a single bounded write: it is handed a pipe it
+	// writes to and closes itself, on every placement (container.go and
+	// sbx.go already run the box's client with stdin kept open).
+	stdinBE, hasStdin := be.impl.(stdinBackend)
+	var stdinPipe io.WriteCloser
+	if hasStdin {
+		if stdinPipe, err = cmd.StdinPipe(); err != nil {
+			return nil, err
+		}
+	} else {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
 	cmd.Env = env
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
@@ -458,7 +470,19 @@ func (r *Runner) run(ctx context.Context, req Request, restricted bool) (*Result
 	}
 	defer procs.RemovePID(sessionDir)
 
-	final, limit, scanErr := be.impl.consume(r, stdout, transcript, cost)
+	var final *streamEnd
+	var limit *RateLimit
+	var scanErr error
+	if hasStdin {
+		if stdin != "" {
+			_, scanErr = io.WriteString(stdinPipe, stdin)
+		}
+		if scanErr == nil {
+			final, limit, scanErr = stdinBE.consumeStdin(r, stdinPipe, stdout, transcript, cost)
+		}
+	} else {
+		final, limit, scanErr = be.impl.consume(r, stdout, transcript, cost)
+	}
 	waitErr := cmd.Wait()
 	res.Duration = time.Since(started)
 	if scanErr != nil {

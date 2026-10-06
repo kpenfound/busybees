@@ -46,6 +46,20 @@ type backend interface {
 	consume(r *Runner, stdout io.Reader, transcript io.Writer, cost *costMeter) (*streamEnd, *RateLimit, error)
 }
 
+// A stdinBackend is a backend whose turn is a conversation rather than a
+// single bounded write: the runner checks for this optional interface with
+// a type assertion and, when a backend implements it, calls consumeStdin
+// instead of consume, handing it the session's stdin writer so it can
+// write requests, answer the server's requests while it reads, and close
+// stdin itself when its turn ends. The runner still owns the process
+// group, the timeout, the transcript, the pid file, the outcome and the
+// result; a backend that does not implement it (claude, opencode, pi and
+// today's codex) is unaffected, and keeps writing command's stdin string
+// once, bounded, closed when it is exhausted.
+type stdinBackend interface {
+	consumeStdin(r *Runner, stdin io.WriteCloser, stdout io.Reader, transcript io.Writer, cost *costMeter) (*streamEnd, *RateLimit, error)
+}
+
 // sessionPaths are the files the runner writes for a session before the CLI
 // starts, which a backend's command line may refer to.
 type sessionPaths struct {
