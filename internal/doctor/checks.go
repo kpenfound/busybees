@@ -482,11 +482,20 @@ func (d *Deps) checkClaude(ctx context.Context) Result {
 	return pass(name, GroupToolchain, fmt.Sprintf("claude %s at %s", got, path))
 }
 
+// MinCodexVersion is the Codex CLI release the app-server behaviour
+// (core/agent's codexBackend) was verified against: `codex app-server
+// generate-json-schema --out <dir>` prints the protocol this version speaks.
+// Move it up whenever the codex fakes in the test suite are updated to a
+// newer protocol — the app server is labelled experimental, so its wire
+// format is not expected to stay fixed.
+const MinCodexVersion = "0.160.0"
+
 // checkCodex only runs when the descriptor-driven selection in Checks found
-// a role configured for it: unlike
-// claude, codex is opt-in, and a machine that never runs a codex role should
-// not be failed over a CLI it does not need. bees pins no minimum version for
-// codex yet, so this only asks that it is installed and runs.
+// a role configured for it: unlike claude, codex is opt-in, and a machine
+// that never runs a codex role should not be failed over a CLI it does not
+// need. Unlike checkClaude it fails rather than warns below the minimum:
+// bees runs codex through `codex app-server`, which an older codex-cli does
+// not have.
 func (d *Deps) checkCodex(ctx context.Context) Result {
 	const name = "codex runnable"
 	bin := d.codexBin()
@@ -504,7 +513,16 @@ func (d *Deps) checkCodex(ctx context.Context) Result {
 		return fail(name, GroupToolchain, fmt.Sprintf("%s --version failed: %s", path, oneLine(string(out)+" "+err.Error())),
 			"check that "+path+" is a working Codex CLI installation")
 	}
-	return pass(name, GroupToolchain, fmt.Sprintf("codex %s at %s", oneLine(string(out)), path))
+	got, err := versions.Parse(string(out))
+	if err != nil {
+		return fail(name, GroupToolchain, fmt.Sprintf("%s: no version number in %q", path, oneLine(string(out))),
+			"check that "+path+" is the Codex CLI; bees needs "+MinCodexVersion+" or newer")
+	}
+	if min, perr := versions.Parse(MinCodexVersion); perr == nil && got.Less(min) {
+		return fail(name, GroupToolchain, fmt.Sprintf("codex %s at %s", got, path),
+			fmt.Sprintf("update the Codex CLI: bees needs %s or newer to run codex through `codex app-server`, found %s", MinCodexVersion, got))
+	}
+	return pass(name, GroupToolchain, fmt.Sprintf("codex %s at %s", got, path))
 }
 
 // checkSbx only runs when usesSbx found a role boxed with Docker Sandboxes:

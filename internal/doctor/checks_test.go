@@ -333,11 +333,24 @@ func TestCheckClaude(t *testing.T) {
 }
 
 func TestCheckCodex(t *testing.T) {
-	t.Run("runnable", func(t *testing.T) {
-		f := setup(t, "", nil)
-		f.CodexBin = fakeCodex(t, "codex-cli 0.1.0")
-		wantResult(t, f.run(t, f.checkCodex), Pass, "codex-cli 0.1.0")
-	})
+	cases := []struct {
+		name   string
+		output string
+		status Status
+		detail []string
+	}{
+		{"new enough", "codex-cli 0.161.0", Pass, []string{"codex 0.161.0"}},
+		{"exactly the minimum", "codex-cli " + MinCodexVersion, Pass, nil},
+		{"too old", "codex-cli 0.159.5", Fail, []string{"0.159.5", MinCodexVersion}},
+		{"not codex", "GNU bash, version 5", Fail, []string{"no version number"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := setup(t, "", nil)
+			f.CodexBin = fakeCodex(t, c.output)
+			wantResult(t, f.run(t, f.checkCodex), c.status, c.detail...)
+		})
+	}
 
 	t.Run("not on PATH", func(t *testing.T) {
 		f := setup(t, "", nil)
