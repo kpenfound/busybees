@@ -113,11 +113,16 @@ func (l codexRPCLine) hasID() bool {
 
 // codexUnsupportedRequest answers one request the app server sent: a
 // JSON-RPC error saying bees does not support it, whatever it asks, so
-// none is ever left pending. A later unit special-cases
+// none is ever left pending. answer special-cases
 // mcpServer/elicitation/request with a cancelling result instead.
 func codexUnsupportedRequest(method string) *codexRPCError {
 	return &codexRPCError{Code: -32601, Message: fmt.Sprintf("%s is not supported in a bees session", method)}
 }
+
+// codexElicitationMethod is the one server request answered with a result
+// rather than an error: bees never approves anything, and the server
+// expects either a cancel or a decline for this one, not an error.
+const codexElicitationMethod = "mcpServer/elicitation/request"
 
 // codexAppServerEnded is the one error a codex app-server conversation ends
 // with when the server exits or closes its stdout before answering method:
@@ -244,13 +249,17 @@ func (c *codexConversation) await(id int, method string) (json.RawMessage, error
 	}
 }
 
-// answer responds to one request the server sent, with codexUnsupportedRequest's error.
+// answer responds to one request the server sent: a cancelling result for
+// mcpServer/elicitation/request, codexUnsupportedRequest's error for every
+// other method, known or unknown. Nothing approves anything.
 func (c *codexConversation) answer(l codexRPCLine) error {
-	return c.send(map[string]any{
-		"jsonrpc": "2.0",
-		"id":      l.ID,
-		"error":   codexUnsupportedRequest(l.Method),
-	})
+	v := map[string]any{"jsonrpc": "2.0", "id": l.ID}
+	if l.Method == codexElicitationMethod {
+		v["result"] = map[string]any{"action": "cancel"}
+	} else {
+		v["error"] = codexUnsupportedRequest(l.Method)
+	}
+	return c.send(v)
 }
 
 // codexServerError reads an "error" notification's message.

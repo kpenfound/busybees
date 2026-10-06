@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -361,6 +362,204 @@ func TestCodexRPCAnswersServerRequests(t *testing.T) {
 	if !strings.Contains(transcript, want) {
 		t.Error("transcript is missing the driver's answer")
 	}
+}
+
+// TestCodexRPCServerRequestsDuringTurn sends the driver one
+// mcpServer/elicitation/request, an approval request,
+// item/tool/requestUserInput and an unknown method while turn/completed is
+// awaited, and checks each is answered as spec#7 requires — a cancelling
+// result for the elicitation, a JSON-RPC error naming the matching id for
+// every other one — and that the conversation still reaches turn/completed
+// without hanging.
+func TestCodexRPCServerRequestsDuringTurn(t *testing.T) {
+	answers := map[string]codexRPCLine{}
+	turn := codexRPCTurn{Cwd: "/work", Prompt: "do it"}
+	requests := []struct {
+		id     int
+		method string
+	}{
+		{1, "mcpServer/elicitation/request"},
+		{2, "item/commandExecution/requestApproval"},
+		{3, "item/tool/requestUserInput"},
+		{4, "some/unknown/method"},
+	}
+	out, err, _ := runCodexFakeConversation(t, turn, func(f *codexFakeRPC) {
+		l, _ := f.recv()
+		f.respond(l.ID, map[string]any{})
+		f.recv()
+		l, _ = f.recv()
+		f.respond(l.ID, map[string]any{"thread": map[string]any{"id": "t1"}})
+		l, _ = f.recv()
+		f.respond(l.ID, map[string]any{})
+
+		for _, r := range requests {
+			f.request(r.id, r.method, map[string]any{})
+			a, _ := f.recv()
+			answers[r.method] = a
+		}
+		f.notify("turn/completed", map[string]any{"turn": map[string]any{"status": "completed"}})
+		f.recv()
+	})
+	if err != nil {
+		t.Fatalf("codexRPCRun: %v", err)
+	}
+	if out.SessionID != "t1" {
+		t.Fatalf("session did not finish normally: %+v", out)
+	}
+
+	elicitation := answers["mcpServer/elicitation/request"]
+	if string(elicitation.ID) != "1" {
+		t.Errorf("elicitation answer id = %s, want 1", elicitation.ID)
+	}
+	if elicitation.Error != nil {
+		t.Errorf("elicitation answer = %+v, want a result, not an error", elicitation)
+	}
+	var result struct {
+		Action string `json:"action"`
+	}
+	if err := json.Unmarshal(elicitation.Result, &result); err != nil {
+		t.Fatalf("elicitation result: %v", err)
+	}
+	if result.Action != "cancel" {
+		t.Errorf("elicitation result action = %q, want cancel", result.Action)
+	}
+
+	for _, r := range requests[1:] {
+		a := answers[r.method]
+		if string(a.ID) != strconv.Itoa(r.id) {
+			t.Errorf("%s answer id = %s, want %d", r.method, a.ID, r.id)
+		}
+		if a.Error == nil {
+			t.Errorf("%s answer = %+v, want a JSON-RPC error", r.method, a)
+			continue
+		}
+		want := r.method + " is not supported in a bees session"
+		if a.Error.Message != want {
+			t.Errorf("%s answer error message = %q, want %q", r.method, a.Error.Message, want)
+		}
+	}
+}
+
+// TestCodexRPCServerRequestDuringTurnStart sends the driver a server
+// request while it awaits turn/start's response, and checks it is answered
+// right there, before the turn proceeds, without leaving it pending.
+func TestCodexRPCServerRequestDuringTurnStart(t *testing.T) {
+	var answer codexRPCLine
+	turn := codexRPCTurn{Cwd: "/work", Prompt: "do it"}
+	out, err, _ := runCodexFakeConversation(t, turn, func(f *codexFakeRPC) {
+		l, _ := f.recv()
+		f.respond(l.ID, map[string]any{})
+		f.recv()
+		l, _ = f.recv()
+		f.respond(l.ID, map[string]any{"thread": map[string]any{"id": "t1"}})
+
+		l, _ = f.recv() // turn/start, not yet answered
+		f.request(200, "item/fileChange/requestApproval", map[string]any{"path": "a.txt"})
+		answer, _ = f.recv()
+		f.respond(l.ID, map[string]any{})
+
+		f.notify("turn/completed", map[string]any{"turn": map[string]any{"status": "completed"}})
+		f.recv()
+	})
+	if err != nil {
+		t.Fatalf("codexRPCRun: %v", err)
+	}
+	if out.SessionID != "t1" {
+		t.Fatalf("session did not finish normally: %+v", out)
+	}
+	if string(answer.ID) != "200" {
+		t.Errorf("answer id = %s, want 200", answer.ID)
+	}
+	if answer.Error == nil {
+		t.Fatalf("answer = %+v, want a JSON-RPC error", answer)
+	}
+	const want = "item/fileChange/requestApproval is not supported in a bees session"
+	if answer.Error.Message != want {
+		t.Errorf("answer error message = %q, want %q", answer.Error.Message, want)
+	}
+}
+
+// TestCodexAnswerClosedRule is a table test over every method the task
+// names — known approval and input requests, the elicitation, and an
+// unknown method — asserting the closed rule: only
+// mcpServer/elicitation/request gets a non-error answer, and every other
+// one, named or not, gets a JSON-RPC error naming it unsupported. Nothing
+// approves anything.
+func TestCodexAnswerClosedRule(t *testing.T) {
+	methods := []string{
+		"item/commandExecution/requestApproval",
+		"item/fileChange/requestApproval",
+		"item/permissions/requestApproval",
+		"execCommandApproval",
+		"applyPatchApproval",
+		"item/tool/requestUserInput",
+		"item/tool/call",
+		"account/chatgptAuthTokens/refresh",
+		"attestation/generate",
+		"currentTime/read",
+		"some/unknown/method",
+	}
+	for _, method := range methods {
+		t.Run(method, func(t *testing.T) {
+			c := newCodexConversation(io.Discard, strings.NewReader(""), io.Discard)
+			var sent map[string]any
+			c.stdin = &capturingWriter{on: func(data []byte) {
+				_ = json.Unmarshal(data, &sent)
+			}}
+			id := json.RawMessage(`7`)
+			if err := c.answer(codexRPCLine{ID: id, Method: method}); err != nil {
+				t.Fatalf("answer: %v", err)
+			}
+			if _, ok := sent["result"]; ok {
+				t.Errorf("%s got a result, want only mcpServer/elicitation/request to", method)
+			}
+			errField, ok := sent["error"]
+			if !ok {
+				t.Fatalf("%s got no error field", method)
+			}
+			errMap, ok := errField.(map[string]any)
+			if !ok {
+				t.Fatalf("%s error field = %#v, want an object", method, errField)
+			}
+			want := method + " is not supported in a bees session"
+			if errMap["message"] != want {
+				t.Errorf("%s error message = %v, want %q", method, errMap["message"], want)
+			}
+		})
+	}
+
+	t.Run(codexElicitationMethod, func(t *testing.T) {
+		c := newCodexConversation(io.Discard, strings.NewReader(""), io.Discard)
+		var sent map[string]any
+		c.stdin = &capturingWriter{on: func(data []byte) {
+			_ = json.Unmarshal(data, &sent)
+		}}
+		id := json.RawMessage(`9`)
+		if err := c.answer(codexRPCLine{ID: id, Method: codexElicitationMethod}); err != nil {
+			t.Fatalf("answer: %v", err)
+		}
+		if _, ok := sent["error"]; ok {
+			t.Errorf("%s got an error, want a result", codexElicitationMethod)
+		}
+		result, ok := sent["result"].(map[string]any)
+		if !ok {
+			t.Fatalf("%s result = %#v, want an object", codexElicitationMethod, sent["result"])
+		}
+		if result["action"] != "cancel" {
+			t.Errorf("%s result action = %v, want cancel", codexElicitationMethod, result["action"])
+		}
+	})
+}
+
+// capturingWriter calls on with every write it receives, for tests that
+// inspect what a conversation sent without a real pipe.
+type capturingWriter struct {
+	on func([]byte)
+}
+
+func (w *capturingWriter) Write(p []byte) (int, error) {
+	w.on(p)
+	return len(p), nil
 }
 
 // TestCodexRPCErrorEndings checks every ending spec#9 names: an "error"
