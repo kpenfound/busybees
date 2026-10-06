@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -35,7 +36,10 @@ import (
 // codex's `exec`, opencode's `run` or pi's `-p --mode` — when FAKE_CLAUDE is
 // set: the runner executes it, it inspects its role and environment,
 // performs a scripted action and prints a stream-json result, or codex's,
-// opencode's or pi's event stream when it is one of those.
+// opencode's or pi's event stream when it is one of those. `codex app-server`
+// (os.Args[1] == "app-server") is answered as its own long-lived JSON-RPC
+// conversation instead, by fakeCodexAppServer: no production code starts it
+// yet, so a test that wants it drives the fake directly over pipes.
 //
 // The flags that steer the fake (FAKE_CLAUDE, FAKE_DEV_HANG, FAKE_DEV_FAIL,
 // FAKE_DEV_MAIL_TO, FAKE_ATTEMPT_FAIL, FAKE_ASSEMBLE_FAIL, FAKE_REVIEW_ALWAYS_CHANGES,
@@ -286,6 +290,10 @@ func fakeClaude() {
 	codex := len(os.Args) > 1 && os.Args[1] == "exec"
 	opencode := len(os.Args) > 1 && os.Args[1] == "run"
 	pi := len(os.Args) > 2 && os.Args[1] == "-p" && os.Args[2] == "--mode"
+	// appServer is `codex app-server`: a JSON-RPC conversation over
+	// stdin/stdout rather than a prompt followed by one stream, so its
+	// stdin is read as the conversation instead of discarded.
+	appServer := len(os.Args) > 1 && os.Args[1] == "app-server"
 	if codex || opencode || pi {
 		// The prompt is on stdin for codex, opencode and pi; claude reads
 		// it there too, but only those close with an error when it is left
@@ -424,6 +432,25 @@ func fakeClaude() {
 		_ = os.WriteFile(p, []byte(strconv.Itoa(n)), 0o644)
 		return n
 	}
+	// app-server speaks its own JSON-RPC conversation instead of printing
+	// one stream and exiting: it runs the role action when its own
+	// turn/start arrives, and reports it over notifications rather than a
+	// trailing result line.
+	if appServer {
+		fakeCodexAppServer(role, sessionDir, stateDir, box, fail, git, counter)
+		return
+	}
+	outcome := runFakeRole(role, sessionID, sessionDir, stateDir, box, fail, git, counter)
+	if err := session.WriteOutcome(sessionDir, outcome); err != nil {
+		fail(err)
+	}
+	fakeAgentStream(codex, pi, opencode, sessionID)
+}
+
+// runFakeRole performs the scripted action FAKE_* environment variables
+// steer for role, the same action whichever backend asked for it, and
+// returns the outcome it reports.
+func runFakeRole(role, sessionID, sessionDir, stateDir string, box *mail.Box, fail func(error), git func(args ...string), counter func(string) int) session.Outcome {
 	var outcome session.Outcome
 	switch role {
 	case config.RoleDeveloper:
@@ -664,8 +691,17 @@ func fakeClaude() {
 		}
 		outcome = session.Outcome{Status: OutcomeDone, Note: "ok"}
 	}
-	if err := session.WriteOutcome(sessionDir, outcome); err != nil {
-		fail(err)
+	return outcome
+}
+
+// fakeAgentStream prints the single-shot stream codex's `exec`, pi or
+// opencode report their result through, or claude's result event when none
+// of them ran. FAKE_COST and FAKE_RESULT_TEXT steer the cost and result
+// text every backend's stream carries.
+func fakeAgentStream(codex, pi, opencode bool, sessionID string) {
+	fail := func(err error) {
+		fmt.Fprintln(os.Stderr, "fake claude:", err)
+		os.Exit(2)
 	}
 	// FAKE_COST makes a session's cost controllable, which is what the cost
 	// budget tests spend against.
@@ -719,6 +755,79 @@ func fakeClaude() {
 		return
 	}
 	fmt.Printf(`{"type":"result","subtype":"success","is_error":false,"result":%q,"session_id":%q,"num_turns":2,"total_cost_usd":%v}`+"\n", text, sessionID, cost)
+}
+
+// fakeCodexThreadID is the thread id fakeCodexAppServer answers both
+// thread/start and thread/resume with: a session started as `codex
+// app-server` runs exactly one thread, started or resumed, so one id
+// identifies it throughout.
+const fakeCodexThreadID = "fake-thread"
+
+// fakeCodexAppServer speaks `codex app-server`'s JSON-RPC conversation over
+// stdin/stdout for one session: it answers initialize, an optional
+// config/read, thread/start or thread/resume, and turn/start, running
+// runFakeRole's scripted action once turn/start arrives and reporting it as
+// item/completed and turn/completed notifications, the way codex's
+// `item.completed` and `turn.completed` exec events report it. Any other
+// request bees sends gets a generic result so none is left unanswered, and
+// the process returns — exiting the way TestMain's caller does for every
+// fake — once bees closes stdin.
+func fakeCodexAppServer(role, sessionDir, stateDir string, box *mail.Box, fail func(error), git func(args ...string), counter func(string) int) {
+	enc := json.NewEncoder(os.Stdout)
+	send := func(v map[string]any) {
+		if err := enc.Encode(v); err != nil {
+			fail(err)
+		}
+	}
+	respond := func(id json.RawMessage, result map[string]any) {
+		send(map[string]any{"jsonrpc": "2.0", "id": id, "result": result})
+	}
+	notify := func(method string, params map[string]any) {
+		send(map[string]any{"jsonrpc": "2.0", "method": method, "params": params})
+	}
+
+	sc := bufio.NewScanner(os.Stdin)
+	sc.Buffer(make([]byte, 0, 64*1024), 64*1024*1024)
+	for sc.Scan() {
+		var msg struct {
+			ID     json.RawMessage `json:"id"`
+			Method string          `json:"method"`
+		}
+		if err := json.Unmarshal(sc.Bytes(), &msg); err != nil {
+			fail(fmt.Errorf("fake codex app-server: decode %q: %w", sc.Text(), err))
+		}
+		switch msg.Method {
+		case "initialize":
+			respond(msg.ID, map[string]any{"serverInfo": map[string]any{"name": "codex", "version": "0.0.0-fake"}})
+		case "initialized":
+			// A notification the client sends once it has the initialize
+			// result; it carries no id and wants no answer.
+		case "config/read":
+			respond(msg.ID, map[string]any{"config": map[string]any{}, "origins": map[string]any{}})
+		case "thread/start", "thread/resume":
+			respond(msg.ID, map[string]any{"thread": map[string]any{"id": fakeCodexThreadID}})
+		case "turn/start":
+			respond(msg.ID, map[string]any{"turn": map[string]any{"id": "fake-turn"}})
+			outcome := runFakeRole(role, fakeCodexThreadID, sessionDir, stateDir, box, fail, git, counter)
+			if err := session.WriteOutcome(sessionDir, outcome); err != nil {
+				fail(err)
+			}
+			notify("item/completed", map[string]any{"item": map[string]any{"id": "item_0", "type": "mcp_tool_call", "server": "bees", "tool": "done", "status": "completed"}})
+			notify("item/completed", map[string]any{"item": map[string]any{"id": "item_1", "type": "agent_message", "text": "ok"}})
+			notify("turn/completed", map[string]any{"usage": map[string]any{"input_tokens": 10, "cached_input_tokens": 0, "output_tokens": 2}})
+		default:
+			// Every other request bees might send (turn/interrupt, a
+			// server-request-style call it expects answered) gets a generic
+			// result rather than being left pending; a notification with no
+			// id and no id-bearing answer is simply read and dropped.
+			if msg.ID != nil {
+				respond(msg.ID, map[string]any{})
+			}
+		}
+	}
+	if err := sc.Err(); err != nil {
+		fail(err)
+	}
 }
 
 // fakeGH is the in-memory GitHub backing the gh wrapper (internal/fakegh)
