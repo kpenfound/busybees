@@ -2,6 +2,7 @@ package procs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -120,8 +121,11 @@ func RemoveContainerID(dir string) { _ = os.Remove(filepath.Join(dir, ContainerI
 // SandboxNameFile is the file in a session directory the runner writes the
 // name of the Docker Sandbox (sbx) a sandbox-backed session runs in. It is
 // removed with the sandbox when the session ends, so a session directory
-// holding one is a session whose sandbox may still exist: `sbx rm --force
-// <name>` removes it. Orphan inspection does not read it.
+// holding one is a session whose sandbox may still exist. CleanSandboxes and
+// CleanSandboxDirs read it to find that sandbox and remove it with `sbx rm
+// --force <name>`, which also drops the sandbox's network policy rules: sbx
+// removes those with the sandbox itself, so cleanup makes no separate `sbx
+// policy rm` call.
 const SandboxNameFile = "sandbox-name"
 
 // WriteSandboxName records the name of a session's Docker Sandbox.
@@ -159,6 +163,79 @@ func SandboxWorkspace(dir string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(b))
+}
+
+// sandboxRemoveTimeout is how long sbx is given to remove a sandbox.
+const sandboxRemoveTimeout = 60 * time.Second
+
+// CleanSandboxes removes the orphaned Docker Sandbox of every session
+// directory held in sessionsDir, by collecting its directory entries and
+// asking CleanSandboxDirs about them, the way FromPIDFiles asks FromPIDFile
+// about every entry in turn. sbxBin is the sbx binary to run — a caller's
+// Runner.SbxBin, or agent.SandboxCLI by default — because this package
+// cannot import core/agent. It must run at startup, before any session
+// starts, so that every sandbox-name record it finds belongs to a session
+// an earlier process died without closing, never one still in use.
+func CleanSandboxes(ctx context.Context, sbxBin, sessionsDir string) error {
+	entries, err := os.ReadDir(sessionsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	var dirs []string
+	for _, e := range entries {
+		if e.IsDir() {
+			dirs = append(dirs, filepath.Join(sessionsDir, e.Name()))
+		}
+	}
+	return CleanSandboxDirs(ctx, sbxBin, dirs)
+}
+
+// CleanSandboxDirs is CleanSandboxes for a caller whose sessions do not all
+// live under one sessions directory: every directory given is attempted in
+// turn, through cleanSandboxDir, and the per-directory errors are joined
+// (errors.Join), each naming the session directory and the sandbox or
+// record it concerns, so that one directory's failure never keeps the
+// others from being cleaned up.
+func CleanSandboxDirs(ctx context.Context, sbxBin string, dirs []string) error {
+	var errs []error
+	for _, dir := range dirs {
+		if err := cleanSandboxDir(ctx, sbxBin, dir); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// cleanSandboxDir is the per-directory pass CleanSandboxDirs makes. A
+// directory holding no sandbox-name record is left untouched. One whose
+// record is empty or starts with '-' is reported as an error and kept: sbx
+// would read such a name as a flag, so it is never passed to sbx. Otherwise
+// `sbx rm --force <name>` is run — the one sbx call this makes, which takes
+// the sandbox's network policy rules with it — and the record is deleted
+// only once that call succeeds, so a failure leaves it for a later call to
+// retry.
+func cleanSandboxDir(ctx context.Context, sbxBin, dir string) error {
+	if _, err := os.Stat(filepath.Join(dir, SandboxNameFile)); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("session %s: read sandbox record: %w", dir, err)
+	}
+	name := SandboxName(dir)
+	if name == "" || strings.HasPrefix(name, "-") {
+		return fmt.Errorf("session %s: sandbox record %q is empty or starts with '-', which %s would read as a flag", dir, name, sbxBin)
+	}
+	rmCtx, cancel := context.WithTimeout(ctx, sandboxRemoveTimeout)
+	defer cancel()
+	out, err := agentbin.CommandContext(rmCtx, sbxBin, "rm", "--force", name).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("session %s: remove sandbox %s (%s rm --force %s): %w: %s", dir, name, sbxBin, name, err, strings.TrimSpace(string(out)))
+	}
+	RemoveSandboxName(dir)
+	return nil
 }
 
 // FromContainers returns the container-backed sessions of the factory whose

@@ -44,6 +44,19 @@
 // a caller stopping sessions wants. A caller that only inspects asks
 // through a Finder with ReadOnly set, which reports the same sessions and
 // leaves every file where it is.
+//
+// A session in a Docker Sandbox (sbx) is found by neither the pid file, the
+// ps scan nor the container engine: its agent runs inside the sandbox, a
+// microVM the host's process table and docker ps know nothing of. Its own
+// record, SandboxNameFile, is cleaned up separately by CleanSandboxes and
+// CleanSandboxDirs, not by Find: a caller runs one of them once at startup,
+// before any session starts, so that every sandbox-name record found then
+// belongs to a session an earlier process died without closing, never one
+// still in use. Each removes the recorded sandbox with `sbx rm --force
+// <name>`, which drops the sandbox's network policy rules along with it —
+// sbx removes those with the sandbox itself, so cleanup makes no separate
+// `sbx policy rm` call — and deletes the record only once that call
+// succeeds, so a failed removal is retried by a later call.
 package procs
 
 import (
