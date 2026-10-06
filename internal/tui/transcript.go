@@ -25,9 +25,16 @@ import (
 // the assistant's own words, the tools it called and how each one answered —
 // so everything else in the stream (the thought text, the init and
 // rate-limit bookkeeping, the tool schemas) is reduced to a marker or
-// dropped. A codex transcript is read to the same lines: each completed
-// item is what the session said or did, and the end of its turn is the
-// session's end. An opencode transcript is read the same way too: its
+// dropped. A codex transcript is its app-server's JSON-RPC connection, one
+// message per line, read to the same lines: an "item/completed" notification
+// is what the session said or did, "turn/completed" is the end of its turn
+// and its session, and an "error" notification ends it as a failure too. The
+// delta notifications the server streams token by token
+// (item/agentMessage/delta and the rest), and every request and response
+// bees itself sends on the same connection (initialize, thread/start,
+// turn/start and the rest, including the replies to the server's own
+// requests), are dropped the same way item/started is. An opencode
+// transcript is read the same way too: its
 // "text" events are what the session said, and a "step_finish" whose
 // reason is "stop" is the session's end, with the cost opencode reports per
 // step summed into a running total — unlike codex, which never reports
@@ -60,33 +67,44 @@ const maxTranscriptLines = 4000
 type transcriptEntry struct {
 	Type    string `json:"type"`
 	Subtype string `json:"subtype"`
-	// Message is claude's message object (whose content blocksOf reads),
-	// or the message string of a codex "error" event, so it is decoded by
-	// whichever reads it.
+	// Message is claude's message object, whose content blocksOf reads.
 	Message json.RawMessage `json:"message"`
 	// The fields below are the final "result" event's.
 	IsError      bool    `json:"is_error"`
 	NumTurns     int     `json:"num_turns"`
 	TotalCostUSD float64 `json:"total_cost_usd"`
-	// The fields below are codex's: the item of an "item.completed" event,
-	// and the error of a "turn.failed" one (an "error" event carries its
-	// message at the top level instead).
-	Item struct {
-		Type    string `json:"type"`
-		Text    string `json:"text"`
-		Command string `json:"command"`
-		Server  string `json:"server"`
-		Tool    string `json:"tool"`
-		Status  string `json:"status"`
-		Output  string `json:"aggregated_output"`
-	} `json:"item"`
-	// Error is codex's ("turn.failed"'s Message) and opencode's ("error"'s
-	// Name and nested Data.Message) at once: the two never collide, since
-	// each backend's stream sets only its own fields.
-	Error struct {
+	// Method and Params are codex app-server's: every line on its JSON-RPC
+	// connection that is not a request or a response (bees' own or the
+	// server's) is a notification named by Method, and Params carries
+	// whichever of the fields below that notification sets.
+	Method string `json:"method"`
+	Params struct {
+		// Item is an "item/completed" notification's.
+		Item struct {
+			Type    string `json:"type"`
+			Text    string `json:"text"`
+			Command string `json:"command"`
+			Server  string `json:"server"`
+			Tool    string `json:"tool"`
+			Status  string `json:"status"`
+			Output  string `json:"aggregated_output"`
+		} `json:"item"`
+		// Turn is a "turn/completed" notification's: its Status is
+		// "completed", "failed" (with Error.Message saying why) or
+		// "interrupted".
+		Turn struct {
+			Status string `json:"status"`
+			Error  struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		} `json:"turn"`
+		// Message is a bare "error" notification's.
 		Message string `json:"message"`
-		Name    string `json:"name"`
-		Data    struct {
+	} `json:"params"`
+	// Error is opencode's ("error"'s Name and nested Data.Message).
+	Error struct {
+		Name string `json:"name"`
+		Data struct {
 			Message string `json:"message"`
 		} `json:"data"`
 	} `json:"error"`
@@ -198,10 +216,8 @@ func renderTranscriptLine(line []byte, cost float64) ([]string, float64) {
 		return userLines(blocksOf(e)), cost
 	case "result":
 		return []string{resultLine(e)}, cost
-	case "item.completed":
-		return codexItemLines(e), cost
-	case "turn.completed", "turn.failed", "error":
-		return []string{codexEndLine(e)}, cost
+	case "error":
+		return []string{opencodeErrorLine(e)}, cost
 	case "text":
 		return prefixed(sayMark, e.Part.Text, 0), cost
 	case "step_finish":
@@ -210,14 +226,28 @@ func renderTranscriptLine(line []byte, cost float64) ([]string, float64) {
 		return piMessageLines(e, cost)
 	case "agent_end":
 		return []string{piEndLine(e, cost)}, cost
+	case "":
+		// Codex's JSON-RPC connection carries no "type" field at all: a
+		// notification is named by Method instead, and a request or
+		// response (bees' own or the server's) is named by neither.
+		switch e.Method {
+		case "item/completed":
+			return codexItemLines(e), cost
+		case "turn/completed", "error":
+			return []string{codexEndLine(e)}, cost
+		}
 	}
 	// "system" (init, thinking-token bookkeeping, task notifications) and
-	// "rate_limit_event" are the runner's business, not a reader's; so are
-	// codex's "thread.started", "turn.started" and "item.started". So is
-	// opencode's "tool_use": internal/session.opencodeBackend.consume does
-	// not decode a tool call either, and there is no verified field shape
-	// to render one from yet. Pi's "session" header, its turn and message
-	// starts and its streamed deltas say nothing its ended messages do not.
+	// "rate_limit_event" are the runner's business, not a reader's. So are
+	// codex's delta notifications (item/agentMessage/delta and the rest),
+	// its other bookkeeping notifications (account/rateLimits/updated,
+	// thread/tokenUsage/updated, item/started and the rest) and every
+	// request and response on its connection, bees' own or the server's. So
+	// is opencode's "tool_use": internal/session.opencodeBackend.consume
+	// does not decode a tool call either, and there is no verified field
+	// shape to render one from yet. Pi's "session" header, its turn and
+	// message starts and its streamed deltas say nothing its ended messages
+	// do not.
 	return nil, cost
 }
 
@@ -292,13 +322,13 @@ func stepFinishLines(e transcriptEntry, cost float64) ([]string, float64) {
 	}
 }
 
-// codexItemLines renders one completed codex item the way an assistant
-// message and the tool result under it are rendered: what the session
-// said, the command or MCP tool it called and the first line of the answer.
-// The other item kinds (a file change, a web search, a todo list) are
-// named; reasoning is a marker, as a thought is.
+// codexItemLines renders one item/completed notification's item the way an
+// assistant message and the tool result under it are rendered: what the
+// session said, the command or MCP tool it called and the first line of the
+// answer. The other item kinds (a file change, a web search, a todo list)
+// are named; reasoning is a marker, as a thought is.
 func codexItemLines(e transcriptEntry) []string {
-	it := e.Item
+	it := e.Params.Item
 	switch it.Type {
 	case "agent_message":
 		return prefixed(sayMark, it.Text, 0)
@@ -326,29 +356,42 @@ func rawString(s string) json.RawMessage {
 }
 
 // codexEndLine renders the end of a codex turn: the session is over, and
-// codex reports no cost, so none is shown. A "turn.failed" event says why
-// under "error"; a bare "error" event says it at the top level, as the
-// runner's codex backend reads it too — the same bare "error" type
-// opencode's backend ends a session with, whose message is nested under
-// "error" instead (Data.Message, falling back to Name), so that is tried
-// first.
+// codex reports no cost, so none is shown. A "turn/completed"
+// notification's status says how: "completed" is ok, "interrupted" is
+// bees' own turn/interrupt taking effect, and anything else (ordinarily
+// "failed") says why from the notification's own error. A bare "error"
+// notification ends the session as a failure the same way, with its own
+// message.
 func codexEndLine(e transcriptEntry) string {
-	if e.Type == "turn.completed" {
-		return sayMark + "session ended: ok"
+	if e.Method == "error" {
+		how := "failed"
+		if e.Params.Message != "" {
+			how += ": " + oneLine(e.Params.Message)
+		}
+		return sayMark + "session ended: " + how
 	}
+	switch e.Params.Turn.Status {
+	case "completed":
+		return sayMark + "session ended: ok"
+	case "interrupted":
+		return sayMark + "session ended: interrupted"
+	}
+	how := "failed"
+	if e.Params.Turn.Error.Message != "" {
+		how += ": " + oneLine(e.Params.Turn.Error.Message)
+	}
+	return sayMark + "session ended: " + how
+}
+
+// opencodeErrorLine renders an opencode session that ended with an "error"
+// event rather than a step_finish whose reason is "stop": the session is
+// over, and the error's nested message says why, falling back to its name
+// when there is no message.
+func opencodeErrorLine(e transcriptEntry) string {
 	how := "failed"
 	msg := e.Error.Data.Message
 	if msg == "" {
 		msg = e.Error.Name
-	}
-	if msg == "" {
-		msg = e.Error.Message
-	}
-	if msg == "" {
-		var s string
-		if json.Unmarshal(e.Message, &s) == nil {
-			msg = s
-		}
 	}
 	if msg != "" {
 		how += ": " + oneLine(msg)

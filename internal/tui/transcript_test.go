@@ -143,6 +143,10 @@ func TestALineTheViewCannotParseIsDropped(t *testing.T) {
 		`{"type":"user","message":{"content":[]}}`,
 		`{"type":"system","subtype":"init"}`,
 		`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed"}}`,
+		`{"jsonrpc":"2.0","id":4,"result":{}}`,
+		`{"jsonrpc":"2.0","id":4,"error":{"code":-32600,"message":"no rollout found for thread id t1"}}`,
+		`{"jsonrpc":"2.0","method":"item/agentMessage/delta","params":{"itemId":"item_0","delta":"hi"}}`,
+		`{"jsonrpc":"2.0","method":"account/rateLimits/updated","params":{"rateLimitReachedType":null}}`,
 	} {
 		if got, _ := renderTranscriptLine([]byte(line), 0); len(got) != 0 {
 			t.Errorf("renderTranscriptLine(%q) = %q, want nothing", line, got)
@@ -188,24 +192,38 @@ func TestAFailedSessionsResultLineSaysSo(t *testing.T) {
 	}
 }
 
-// A codex session's transcript is its event stream, and it reads the same
-// way a claude one does: what the session said, the commands and MCP tools
-// it called and how each answered, a thought as a marker, and the end of
-// the turn as the session's end — with no cost, because codex reports none.
-// Its bookkeeping lines (the thread and turn start, an item in progress) are
-// dropped.
+// A codex session's transcript is its app-server's JSON-RPC connection, and
+// it reads the same way a claude one does: what the session said, the
+// commands and MCP tools it called and how each answered, a thought as a
+// marker, and the end of the turn as the session's end — with no cost,
+// because codex reports none. The requests and responses bees exchanges
+// with the server to set the turn up (initialize, config/read, thread/start,
+// turn/start and their replies) and the delta notifications the server
+// streams token by token are dropped, the same as the server's own
+// bookkeeping notifications (an item still in progress, a rate-limit or
+// token-usage update).
 func TestACodexTranscriptRendersTheSameWay(t *testing.T) {
 	transcript := strings.Join([]string{
-		`{"type":"thread.started","thread_id":"0199-abc"}`,
-		`{"type":"turn.started"}`,
-		`{"type":"item.started","item":{"id":"item_0","type":"command_execution","command":"git status","status":"in_progress"}}`,
-		`{"type":"item.completed","item":{"id":"item_0","type":"command_execution","command":"git status","aggregated_output":"On branch main\nnothing to commit\n","exit_code":0,"status":"completed"}}`,
-		`{"type":"item.completed","item":{"id":"item_1","type":"reasoning","text":"I should look at the diff"}}`,
-		`{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"I'll start by reading the diff"}}`,
-		`{"type":"item.completed","item":{"id":"item_3","type":"mcp_tool_call","server":"bees","tool":"issue_view","status":"completed"}}`,
-		`{"type":"item.completed","item":{"id":"item_4","type":"command_execution","command":"go test ./...","aggregated_output":"FAIL\n","exit_code":1,"status":"failed"}}`,
-		`{"type":"item.completed","item":{"id":"item_5","type":"file_change","changes":[{"path":"a.go","kind":"update"}],"status":"completed"}}`,
-		`{"type":"turn.completed","usage":{"input_tokens":1200,"cached_input_tokens":0,"output_tokens":300}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"bees","version":"0"}}}`,
+		`{"jsonrpc":"2.0","id":1,"result":{"userAgent":"codex-app-server/0.160.0"}}`,
+		`{"jsonrpc":"2.0","method":"initialized"}`,
+		`{"jsonrpc":"2.0","id":2,"method":"config/read","params":{"cwd":"/work"}}`,
+		`{"jsonrpc":"2.0","id":2,"result":{"config":{}}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"thread/start","params":{"cwd":"/work","approvalPolicy":"never","sandbox":"danger-full-access"}}`,
+		`{"jsonrpc":"2.0","id":3,"result":{"thread":{"id":"0199-abc"}}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"turn/start","params":{"threadId":"0199-abc","input":[{"type":"text","text":"Build it"}]}}`,
+		`{"jsonrpc":"2.0","method":"item/started","params":{"item":{"id":"item_0","type":"command_execution","command":"git status","status":"in_progress"}}}`,
+		`{"jsonrpc":"2.0","method":"item/agentMessage/delta","params":{"itemId":"item_2","delta":"I'll"}}`,
+		`{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"id":"item_0","type":"command_execution","command":"git status","aggregated_output":"On branch main\nnothing to commit\n","exit_code":0,"status":"completed"}}}`,
+		`{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"id":"item_1","type":"reasoning","text":"I should look at the diff"}}}`,
+		`{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"id":"item_2","type":"agent_message","text":"I'll start by reading the diff"}}}`,
+		`{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"id":"item_3","type":"mcp_tool_call","server":"bees","tool":"issue_view","status":"completed"}}}`,
+		`{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"id":"item_4","type":"command_execution","command":"go test ./...","aggregated_output":"FAIL\n","exit_code":1,"status":"failed"}}}`,
+		`{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"id":"item_5","type":"file_change","changes":[{"path":"a.go","kind":"update"}],"status":"completed"}}}`,
+		`{"jsonrpc":"2.0","method":"account/rateLimits/updated","params":{"rateLimitReachedType":null}}`,
+		`{"jsonrpc":"2.0","method":"thread/tokenUsage/updated","params":{"usage":{"input_tokens":1200,"output_tokens":300}}}`,
+		`{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"status":"completed"}}}`,
+		`{"jsonrpc":"2.0","id":4,"result":{}}`,
 	}, "\n") + "\n"
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, session.TranscriptFile), []byte(transcript), 0o644); err != nil {
@@ -230,7 +248,14 @@ func TestACodexTranscriptRendersTheSameWay(t *testing.T) {
 			t.Errorf("the rendered transcript does not contain %q:\n%s", want, got)
 		}
 	}
-	for _, unwanted := range []string{"0199-abc", "in_progress", "I should look at the diff", "input_tokens", "$"} {
+	for _, unwanted := range []string{
+		// bookkeeping the server sends
+		"0199-abc", "in_progress", "I should look at the diff", "input_tokens", "rateLimitReachedType", "$",
+		// the delta notification
+		"delta",
+		// bees' own requests and responses
+		"initialize", "config/read", "thread/start", "turn/start", "userAgent", "clientInfo",
+	} {
 		if strings.Contains(got, unwanted) {
 			t.Errorf("the rendered transcript still carries %q:\n%s", unwanted, got)
 		}
@@ -240,14 +265,21 @@ func TestACodexTranscriptRendersTheSameWay(t *testing.T) {
 			t.Errorf("a rendered transcript line carries a newline: %q", l)
 		}
 	}
-	// A turn that failed says so, and why.
-	if got, _ := renderTranscriptLine([]byte(`{"type":"turn.failed","error":{"message":"stream disconnected\nbefore completion"}}`), 0); len(got) != 1 || got[0] != "● session ended: failed: stream disconnected before completion" {
+	// A turn that failed says so, and why. The status and its error sit
+	// under the notification's "turn", the same place the server's answer
+	// to turn/start gives the turn's id.
+	if got, _ := renderTranscriptLine([]byte(`{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"status":"failed","error":{"message":"stream disconnected\nbefore completion"}}}}`), 0); len(got) != 1 || got[0] != "● session ended: failed: stream disconnected before completion" {
 		t.Errorf("failed turn rendered as %q", got)
 	}
-	// So does a bare "error" event, codex's other way of ending a turn,
-	// whose message sits at the top level rather than under "error".
-	if got, _ := renderTranscriptLine([]byte(`{"type":"error","message":"You have hit your usage limit. Try again at 3pm."}`), 0); len(got) != 1 || got[0] != "● session ended: failed: You have hit your usage limit. Try again at 3pm." {
-		t.Errorf("error event rendered as %q", got)
+	// So does a bare "error" notification, codex's other way of ending a
+	// turn, whose message sits under its own params rather than the turn's.
+	if got, _ := renderTranscriptLine([]byte(`{"jsonrpc":"2.0","method":"error","params":{"message":"You have hit your usage limit. Try again at 3pm."}}`), 0); len(got) != 1 || got[0] != "● session ended: failed: You have hit your usage limit. Try again at 3pm." {
+		t.Errorf("error notification rendered as %q", got)
+	}
+	// An interrupted turn — bees' own turn/interrupt taking effect — ends
+	// the session without being read as a failure.
+	if got, _ := renderTranscriptLine([]byte(`{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"status":"interrupted"}}}`), 0); len(got) != 1 || got[0] != "● session ended: interrupted" {
+		t.Errorf("interrupted turn rendered as %q", got)
 	}
 }
 
