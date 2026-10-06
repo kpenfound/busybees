@@ -1,7 +1,9 @@
 package eval
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -31,7 +33,9 @@ import (
 // request with `gh pr create`, the reviewer submits its review with `gh pr review`, both
 // through the gh on its PATH, and every other role reports done. The review
 // pipeline's brief and angle sessions answer a brief and no findings, and a
-// grader session answers FAKE_SCORE.
+// grader session answers FAKE_SCORE. Run as `codex app-server` instead of
+// `codex exec --json ...`, it does the same work over the JSON-RPC
+// conversation on stdin and stdout instead (fakeCodexAppServer).
 // FAKE_DEV_SEES_PR makes the developer write what the GitHub it was given
 // says about the pull request it was handed into seen-pr.txt in the state
 // directory, which is how a test reads what a session saw.
@@ -100,6 +104,14 @@ func fakeClaude() {
 		fmt.Fprintln(os.Stderr, "fake claude:", err)
 		os.Exit(2)
 	}
+	// codex's app server, started as `codex app-server` instead of `codex
+	// exec --json ...`: the conversation runs over stdin and stdout instead
+	// of args and a stream of exec's own events, but the scripted work it
+	// does is the same.
+	if len(os.Args) > 1 && os.Args[1] == "app-server" {
+		fakeCodexAppServer(fail)
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "mcp" {
 		fmt.Println("[]")
 		return
@@ -123,15 +135,7 @@ func fakeClaude() {
 	// fake answers in each backend's stream format.
 	if isReviewSession() {
 		prompt, _ := io.ReadAll(os.Stdin)
-		text := string(prompt)
-		lines := strings.Split(strings.TrimSpace(text), "\n")
-		answer := `{"findings":[]}`
-		switch {
-		case strings.Contains(text, "## The rubric"):
-			answer = fmt.Sprintf(`{"score": %s, "reasons": "the fake grader read the rubric"}`, firstNonEmpty(os.Getenv("FAKE_SCORE"), "0.9"))
-		case !strings.Contains(lines[len(lines)-1], "from the ") || !strings.Contains(lines[len(lines)-1], " angle"):
-			answer = `{"summary":"Fixes the answer.","size":"xs","acceptance_criteria":[],"touched_areas":[]}`
-		}
+		answer := reviewAnswer(string(prompt))
 		switch {
 		case len(os.Args) > 1 && os.Args[1] == "exec" && slices.Contains(os.Args, "read-only"):
 			for _, ev := range []string{
@@ -161,6 +165,32 @@ func fakeClaude() {
 		}
 		return
 	}
+	runFakeRole(fail)
+	cost := firstNonEmpty(os.Getenv("FAKE_COST"), "0.01")
+	fmt.Printf(`{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"sid","num_turns":2,"total_cost_usd":%s}`+"\n", cost)
+}
+
+// reviewAnswer is what a read-only review session answers, from the prompt
+// it is given: a rubric's score, an angle's findings (none), or the brief
+// the pipeline grades the pull request against.
+func reviewAnswer(text string) string {
+	lines := strings.Split(strings.TrimSpace(text), "\n")
+	switch {
+	case strings.Contains(text, "## The rubric"):
+		return fmt.Sprintf(`{"score": %s, "reasons": "the fake grader read the rubric"}`, firstNonEmpty(os.Getenv("FAKE_SCORE"), "0.9"))
+	case !strings.Contains(lines[len(lines)-1], "from the ") || !strings.Contains(lines[len(lines)-1], " angle"):
+		return `{"summary":"Fixes the answer.","size":"xs","acceptance_criteria":[],"touched_areas":[]}`
+	}
+	return `{"findings":[]}`
+}
+
+// runFakeRole does the role's scripted work through gh and git on the real
+// PATH — the developer commits the fix and opens or updates a pull
+// request, the reviewer approves or requests changes, the project manager
+// and QA do their case's scripted actions under FAKE_PM and FAKE_QA, and
+// every other role does nothing — writes the session's outcome and
+// returns it.
+func runFakeRole(fail func(error)) session.Outcome {
 	sessionDir := os.Getenv(session.EnvSessionDir)
 	issue, _ := strconv.Atoi(os.Getenv(session.EnvIssue))
 	pr, _ := strconv.Atoi(os.Getenv(session.EnvPR))
@@ -259,6 +289,71 @@ func fakeClaude() {
 	if err := session.WriteOutcome(sessionDir, outcome); err != nil {
 		fail(err)
 	}
-	cost := firstNonEmpty(os.Getenv("FAKE_COST"), "0.01")
-	fmt.Printf(`{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"sid","num_turns":2,"total_cost_usd":%s}`+"\n", cost)
+	return outcome
+}
+
+// fakeCodexAppServer is the codex fake started as `codex app-server`
+// instead of `codex exec --json ...`: it speaks the JSON-RPC conversation
+// over stdin and stdout — initialize, an optional config/read, thread/start
+// or thread/resume, then turn/start — and does the same scripted work
+// isReviewSession and runFakeRole do for `codex exec`, reported through
+// item/completed and turn/completed notifications instead of exec's own
+// stream. A thread/start whose sandbox is "read-only" is a review session,
+// as the sandbox table gives a restricted turn; any other sandbox is an
+// ordinary role session. It exits when the client closes stdin, as the
+// real app server does.
+func fakeCodexAppServer(fail func(error)) {
+	type message struct {
+		ID     json.RawMessage `json:"id"`
+		Method string          `json:"method"`
+		Params struct {
+			Sandbox string `json:"sandbox"`
+			Input   string `json:"input"`
+		} `json:"params"`
+	}
+	in := bufio.NewScanner(os.Stdin)
+	in.Buffer(make([]byte, 0, 64*1024), 64*1024*1024)
+	out := json.NewEncoder(os.Stdout)
+	send := func(v any) {
+		if err := out.Encode(v); err != nil {
+			fail(err)
+		}
+	}
+	const threadID = "thread-fake"
+	review := false
+	for in.Scan() {
+		var msg message
+		if err := json.Unmarshal(in.Bytes(), &msg); err != nil {
+			fail(fmt.Errorf("fake codex app-server: %w", err))
+			continue
+		}
+		switch msg.Method {
+		case "initialized":
+			// A notification: no response.
+		case "initialize", "config/read":
+			result := map[string]any{}
+			if msg.Method == "config/read" {
+				result = map[string]any{"config": map[string]any{}, "origins": map[string]any{}}
+			}
+			send(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": result})
+		case "thread/start", "thread/resume":
+			review = msg.Params.Sandbox == "read-only"
+			send(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{"thread": map[string]any{"id": threadID}}})
+		case "turn/start":
+			send(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{}})
+			var text string
+			if review {
+				text = reviewAnswer(msg.Params.Input)
+			} else {
+				text = runFakeRole(fail).Status
+			}
+			send(map[string]any{"jsonrpc": "2.0", "method": "item/completed",
+				"params": map[string]any{"item": map[string]any{"type": "agent_message", "text": text}}})
+			send(map[string]any{"jsonrpc": "2.0", "method": "turn/completed", "params": map[string]any{"status": "completed"}})
+		default:
+			if len(msg.ID) > 0 {
+				send(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "error": map[string]any{"code": -32601, "message": "method not supported in this fake"}})
+			}
+		}
+	}
 }
