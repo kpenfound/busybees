@@ -152,7 +152,9 @@ func RemoveSandboxName(dir string) { _ = os.Remove(filepath.Join(dir, SandboxNam
 // the working directory itself cannot be the primary workspace) to, once
 // that directory exists. It is removed with the workspace when the session
 // ends, so a session directory holding one is a session whose primary
-// workspace may still exist on disk. Orphan inspection does not read it.
+// workspace may still exist on disk. CleanSandboxes and CleanSandboxDirs
+// read it and remove that directory tree, subject to the workspace path
+// rule (see validWorkspacePath).
 const SandboxWorkspaceFile = "sandbox-workspace"
 
 // SandboxWorkspace returns the absolute path of the primary workspace a
@@ -168,14 +170,15 @@ func SandboxWorkspace(dir string) string {
 // sandboxRemoveTimeout is how long sbx is given to remove a sandbox.
 const sandboxRemoveTimeout = 60 * time.Second
 
-// CleanSandboxes removes the orphaned Docker Sandbox of every session
-// directory held in sessionsDir, by collecting its directory entries and
-// asking CleanSandboxDirs about them, the way FromPIDFiles asks FromPIDFile
-// about every entry in turn. sbxBin is the sbx binary to run — a caller's
-// Runner.SbxBin, or agent.SandboxCLI by default — because this package
-// cannot import core/agent. It must run at startup, before any session
-// starts, so that every sandbox-name record it finds belongs to a session
-// an earlier process died without closing, never one still in use.
+// CleanSandboxes removes the orphaned Docker Sandbox, and the orphaned
+// primary workspace, of every session directory held in sessionsDir, by
+// collecting its directory entries and asking CleanSandboxDirs about them,
+// the way FromPIDFiles asks FromPIDFile about every entry in turn. sbxBin is
+// the sbx binary to run — a caller's Runner.SbxBin, or agent.SandboxCLI by
+// default — because this package cannot import core/agent. It must run at
+// startup, before any session starts, so that every sandbox-name or
+// primary-workspace record it finds belongs to a session an earlier process
+// died without closing, never one still in use.
 func CleanSandboxes(ctx context.Context, sbxBin, sessionsDir string) error {
 	entries, err := os.ReadDir(sessionsDir)
 	if err != nil {
@@ -209,15 +212,25 @@ func CleanSandboxDirs(ctx context.Context, sbxBin string, dirs []string) error {
 	return errors.Join(errs...)
 }
 
-// cleanSandboxDir is the per-directory pass CleanSandboxDirs makes. A
-// directory holding no sandbox-name record is left untouched. One whose
-// record is empty or starts with '-' is reported as an error and kept: sbx
-// would read such a name as a flag, so it is never passed to sbx. Otherwise
-// `sbx rm --force <name>` is run — the one sbx call this makes, which takes
-// the sandbox's network policy rules with it — and the record is deleted
-// only once that call succeeds, so a failure leaves it for a later call to
-// retry.
+// cleanSandboxDir is the per-directory pass CleanSandboxDirs makes: it
+// removes the session's sandbox (cleanSandboxName) and its primary
+// workspace (cleanSandboxWorkspace) independently, so that a session
+// directory holding a workspace record but no sandbox-name record (the
+// process died before the sandbox was named) still has its workspace
+// cleaned up, and a failure in one does not stop the other.
 func cleanSandboxDir(ctx context.Context, sbxBin, dir string) error {
+	return errors.Join(cleanSandboxName(ctx, sbxBin, dir), cleanSandboxWorkspace(dir))
+}
+
+// cleanSandboxName is the sandbox-name half of cleanSandboxDir. A directory
+// holding no sandbox-name record is left untouched. One whose record is
+// empty or starts with '-' is reported as an error and kept: sbx would read
+// such a name as a flag, so it is never passed to sbx. Otherwise `sbx rm
+// --force <name>` is run — the one sbx call this makes, which takes the
+// sandbox's network policy rules with it — and the record is deleted only
+// once that call succeeds, so a failure leaves it for a later call to
+// retry.
+func cleanSandboxName(ctx context.Context, sbxBin, dir string) error {
 	if _, err := os.Stat(filepath.Join(dir, SandboxNameFile)); err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -235,6 +248,60 @@ func cleanSandboxDir(ctx context.Context, sbxBin, dir string) error {
 		return fmt.Errorf("session %s: remove sandbox %s (%s rm --force %s): %w: %s", dir, name, sbxBin, name, err, strings.TrimSpace(string(out)))
 	}
 	RemoveSandboxName(dir)
+	return nil
+}
+
+// validWorkspacePath reports whether p is safe for cleanSandboxWorkspace to
+// remove: the workspace path rule. cleanup is not given the Runner's
+// NamePrefix (it may be the default "agent-", a caller's own value, or
+// empty), so the rule accepts any prefix before "sbx-primary-" and checks
+// only what every core/agent primary workspace has in common: p is
+// absolute; its cleaned parent directory is os.TempDir(); and its base name
+// contains the literal substring "sbx-primary-" with at least one character
+// following its last occurrence. A forged prefix gains an attacker nothing:
+// the path must still name a directory sitting directly under os.TempDir()
+// whose name contains "sbx-primary-".
+func validWorkspacePath(p string) bool {
+	if !filepath.IsAbs(p) {
+		return false
+	}
+	clean := filepath.Clean(p)
+	if filepath.Dir(clean) != filepath.Clean(os.TempDir()) {
+		return false
+	}
+	b := filepath.Base(clean)
+	i := strings.LastIndex(b, "sbx-primary-")
+	return i >= 0 && len(b) > i+len("sbx-primary-")
+}
+
+// removeWorkspace removes a primary workspace's directory tree. It is a
+// variable, the way Engine is, so a test can make it fail deterministically
+// without depending on filesystem permissions a root test runner ignores;
+// nothing but a test changes it.
+var removeWorkspace = os.RemoveAll
+
+// cleanSandboxWorkspace is the primary-workspace half of cleanSandboxDir. A
+// directory holding no workspace record is left untouched. A record whose
+// path fails validWorkspacePath is reported as an error and kept, and
+// nothing is deleted. Otherwise the workspace directory tree is removed (an
+// already-absent directory counts as removed) and the record is deleted
+// only once that succeeds, so a failure leaves it for a later call to
+// retry.
+func cleanSandboxWorkspace(dir string) error {
+	if _, err := os.Stat(filepath.Join(dir, SandboxWorkspaceFile)); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("session %s: read workspace record: %w", dir, err)
+	}
+	path := SandboxWorkspace(dir)
+	if !validWorkspacePath(path) {
+		return fmt.Errorf("session %s: workspace record %q fails the workspace path rule", dir, path)
+	}
+	if err := removeWorkspace(path); err != nil {
+		return fmt.Errorf("session %s: remove workspace %s: %w", dir, path, err)
+	}
+	_ = os.Remove(filepath.Join(dir, SandboxWorkspaceFile))
 	return nil
 }
 

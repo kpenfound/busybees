@@ -2,6 +2,7 @@ package procs
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -62,6 +63,18 @@ func writeSandboxName(t *testing.T, dir, name string) {
 		t.Fatal(err)
 	}
 	if err := WriteSandboxName(dir, name); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// writeSandboxWorkspace records a session's primary-workspace path the way
+// core/agent does: a plain WriteFile, since the package exports no writer.
+func writeSandboxWorkspace(t *testing.T, dir, path string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, SandboxWorkspaceFile), []byte(path+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -265,5 +278,182 @@ func TestCleanSandboxesOfAMissingSessionsDirectory(t *testing.T) {
 	sbxBin := fakeSbx(t, false)
 	if err := CleanSandboxes(context.Background(), sbxBin, filepath.Join(t.TempDir(), "no-such-dir")); err != nil {
 		t.Fatalf("CleanSandboxes of a missing sessions directory: %v", err)
+	}
+}
+
+// mkPrimaryWorkspace makes a fixture under os.TempDir(), the way
+// os.MkdirTemp("", namePrefix()+"sbx-primary-") does for a real session, and
+// registers its removal so the test leaves nothing behind.
+func mkPrimaryWorkspace(t *testing.T, prefix string) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", prefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	return dir
+}
+
+// Cleanup removes the directory a valid workspace record names and deletes
+// the record, whether or not the session directory also holds
+// sandbox-name, across the base names a default, a custom and an empty
+// NamePrefix produce.
+func TestCleanSandboxesRemovesTheWorkspace(t *testing.T) {
+	for _, prefix := range []string{"agent-sbx-primary-", "myapp-sbx-primary-", "sbx-primary-"} {
+		for _, withSandboxName := range []bool{true, false} {
+			name := prefix
+			if withSandboxName {
+				name += " alongside sandbox-name"
+			} else {
+				name += " without sandbox-name"
+			}
+			t.Run(name, func(t *testing.T) {
+				dir := t.TempDir()
+				ws := mkPrimaryWorkspace(t, prefix)
+				if err := os.WriteFile(filepath.Join(ws, "marker"), []byte("x"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				writeSandboxWorkspace(t, dir, ws)
+				sbxBin := fakeSbx(t, false)
+				if withSandboxName {
+					writeSandboxName(t, dir, "agent-session-ab12")
+				}
+
+				if err := CleanSandboxDirs(context.Background(), sbxBin, []string{dir}); err != nil {
+					t.Fatalf("CleanSandboxDirs: %v", err)
+				}
+				if _, err := os.Stat(ws); !os.IsNotExist(err) {
+					t.Errorf("workspace %s should have been removed, stat err = %v", ws, err)
+				}
+				if SandboxWorkspace(dir) != "" {
+					t.Errorf("workspace record should be deleted, got %q", SandboxWorkspace(dir))
+				}
+				if withSandboxName && SandboxName(dir) != "" {
+					t.Errorf("sandbox-name should also be deleted, got %q", SandboxName(dir))
+				}
+			})
+		}
+	}
+}
+
+// When removing the workspace directory fails, the record is kept so a
+// later call can retry.
+func TestCleanSandboxesKeepsTheWorkspaceRecordOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	ws := mkPrimaryWorkspace(t, "agent-sbx-primary-")
+	writeSandboxWorkspace(t, dir, ws)
+
+	old := removeWorkspace
+	removeWorkspace = func(string) error { return fmt.Errorf("boom") }
+	t.Cleanup(func() { removeWorkspace = old })
+
+	err := CleanSandboxDirs(context.Background(), fakeSbx(t, false), []string{dir})
+	if err == nil {
+		t.Fatal("want an error when removing the workspace fails")
+	}
+	if !strings.Contains(err.Error(), dir) {
+		t.Errorf("error %v does not name the session directory", err)
+	}
+	if SandboxWorkspace(dir) != ws {
+		t.Errorf("workspace record should be kept after a failed removal, got %q", SandboxWorkspace(dir))
+	}
+	if _, statErr := os.Stat(ws); statErr != nil {
+		t.Errorf("workspace directory should still exist: %v", statErr)
+	}
+}
+
+// A workspace record that fails the workspace path rule is reported as an
+// error naming the session directory and the path, the path (where it
+// exists) survives, and the record is kept.
+func TestCleanSandboxesRejectsAnInvalidWorkspacePath(t *testing.T) {
+	unique := filepath.Base(t.TempDir())
+	tmp := filepath.Clean(os.TempDir())
+
+	for _, tc := range []struct {
+		name   string
+		path   func() string // returns the recorded path, creating a real directory there when exists is true
+		exists bool
+	}{
+		{"relative path", func() string {
+			return filepath.Join("relative", "sbx-primary-"+unique)
+		}, false},
+		{"subdirectory of os.TempDir()", func() string {
+			sub := filepath.Join(tmp, "orphan-cleanup-sub-"+unique)
+			p := filepath.Join(sub, "sbx-primary-1")
+			if err := os.MkdirAll(p, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { os.RemoveAll(sub) })
+			return p
+		}, true},
+		{"a `..` path that cleans to outside os.TempDir()", func() string {
+			return filepath.Join(tmp, "..", "sbx-primary-"+unique)
+		}, false},
+		{"directly under os.TempDir() without sbx-primary-", func() string {
+			p := filepath.Join(tmp, "agent-workspace-"+unique)
+			if err := os.Mkdir(p, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { os.RemoveAll(p) })
+			return p
+		}, true},
+		{"directly under os.TempDir() ending in sbx-primary- with nothing after", func() string {
+			p := filepath.Join(tmp, "agent-"+unique+"-sbx-primary-")
+			if err := os.Mkdir(p, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { os.RemoveAll(p) })
+			return p
+		}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := tc.path()
+			dir := t.TempDir()
+			writeSandboxWorkspace(t, dir, path)
+
+			err := CleanSandboxDirs(context.Background(), fakeSbx(t, false), []string{dir})
+			if err == nil {
+				t.Fatal("want an error for an invalid workspace path")
+			}
+			if !strings.Contains(err.Error(), dir) || !strings.Contains(err.Error(), path) {
+				t.Errorf("error %v does not name the session directory %s and path %s", err, dir, path)
+			}
+			if SandboxWorkspace(dir) != path {
+				t.Errorf("workspace record should be kept, got %q", SandboxWorkspace(dir))
+			}
+			if tc.exists {
+				if _, statErr := os.Stat(path); statErr != nil {
+					t.Errorf("path %s should still exist: %v", path, statErr)
+				}
+			}
+		})
+	}
+}
+
+// A workspace failure in one session directory does not stop the others
+// from being processed, and the joined error names the failing directory.
+func TestCleanSandboxesJoinsWorkspaceErrorsAcrossDirectories(t *testing.T) {
+	sessions := t.TempDir()
+	bad := filepath.Join(sessions, "20260906-bad")
+	good := filepath.Join(sessions, "20260906-good")
+	writeSandboxWorkspace(t, bad, filepath.Join("relative", "sbx-primary-1"))
+	goodWs := mkPrimaryWorkspace(t, "agent-sbx-primary-")
+	writeSandboxWorkspace(t, good, goodWs)
+
+	err := CleanSandboxes(context.Background(), fakeSbx(t, false), sessions)
+	if err == nil {
+		t.Fatal("want an error naming the failing session directory")
+	}
+	if !strings.Contains(err.Error(), bad) {
+		t.Errorf("error %v does not name the failing directory %s", err, bad)
+	}
+	if SandboxWorkspace(good) != "" {
+		t.Error("the good session's workspace should still be removed despite the bad one's failure")
+	}
+	if _, statErr := os.Stat(goodWs); !os.IsNotExist(statErr) {
+		t.Errorf("the good session's workspace should have been removed: %v", statErr)
+	}
+	if SandboxWorkspace(bad) == "" {
+		t.Error("the bad session's record should be kept")
 	}
 }

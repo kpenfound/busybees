@@ -48,15 +48,22 @@
 // A session in a Docker Sandbox (sbx) is found by neither the pid file, the
 // ps scan nor the container engine: its agent runs inside the sandbox, a
 // microVM the host's process table and docker ps know nothing of. Its own
-// record, SandboxNameFile, is cleaned up separately by CleanSandboxes and
-// CleanSandboxDirs, not by Find: a caller runs one of them once at startup,
-// before any session starts, so that every sandbox-name record found then
-// belongs to a session an earlier process died without closing, never one
-// still in use. Each removes the recorded sandbox with `sbx rm --force
-// <name>`, which drops the sandbox's network policy rules along with it —
-// sbx removes those with the sandbox itself, so cleanup makes no separate
-// `sbx policy rm` call — and deletes the record only once that call
-// succeeds, so a failed removal is retried by a later call.
+// records, SandboxNameFile and SandboxWorkspaceFile, are cleaned up
+// separately by CleanSandboxes and CleanSandboxDirs, not by Find: a caller
+// runs one of them once at startup, before any session starts, so that
+// every record found then belongs to a session an earlier process died
+// without closing, never one still in use. Cleanup removes the recorded
+// sandbox with `sbx rm --force <name>`, which drops the sandbox's network
+// policy rules along with it — sbx removes those with the sandbox itself,
+// so cleanup makes no separate `sbx policy rm` call — and it removes the
+// recorded primary workspace, a directory tree under os.TempDir(), once
+// that path passes the workspace path rule (validWorkspacePath): absolute,
+// its parent the cleaned os.TempDir(), and its base name containing
+// "sbx-primary-" with at least one character after the last occurrence.
+// Each record is deleted only once the removal it names succeeds, so a
+// failed removal is retried by a later call, and the two records are
+// handled independently, so a session directory holding a workspace
+// record but no sandbox-name record still has its workspace cleaned up.
 package procs
 
 import (
