@@ -432,8 +432,10 @@ func codexExecCommand(ctx context.Context, r *Runner, b Backend, req Request, pa
 // consume always has; an ordinary, ToolsAll or held turn's stdin carries
 // nothing yet, and codexRPCRun (codex_rpc.go) drives the whole `codex
 // app-server` conversation over it — a held turn's ConfigDir asks
-// config/read on this same process before any thread starts. Request.ResumeID
-// is not passed through yet: a later unit wires thread/resume.
+// config/read on this same process before any thread starts, and the
+// RateLimit it returns comes from the conversation's last
+// account/rateLimits/updated notification. Request.ResumeID is not passed
+// through yet: a later unit wires thread/resume.
 func (codexBackend) consumeStdin(r *Runner, req Request, paths sessionPaths, stdin io.WriteCloser, stdout io.Reader, transcript io.Writer, cost *costMeter) (*streamEnd, *RateLimit, error) {
 	if codexExecKind(paths) {
 		_ = stdin.Close()
@@ -460,7 +462,7 @@ func (codexBackend) consumeStdin(r *Runner, req Request, paths sessionPaths, std
 		// event's stderr does.
 		return &streamEnd{Subtype: "error", Result: err.Error()}, nil, nil
 	}
-	return &outcome.streamEnd, nil, nil
+	return &outcome.streamEnd, outcome.RateLimit, nil
 }
 
 // codexEffort maps a configured effort to a codex reasoning level. The

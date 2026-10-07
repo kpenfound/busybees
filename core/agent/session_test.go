@@ -520,6 +520,74 @@ echo '{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"type":"agent
 	}
 }
 
+// TestCodexRateLimitUpdated: an account/rateLimits/updated notification
+// with rateLimitReachedType set surfaces as the session's blocking
+// RateLimit, Type naming whichever window — primary or secondary — is at
+// 100% usedPercent and ResetsAt that window's resetsAt; with
+// rateLimitReachedType null the snapshot is allowed and does not block.
+func TestCodexRateLimitUpdated(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		notify     string
+		wantStatus string
+		wantType   string
+		wantResets int64
+		wantLimit  bool
+	}{
+		{
+			name:       "secondary window at 100%",
+			notify:     `{"jsonrpc":"2.0","method":"account/rateLimits/updated","params":{"rateLimitReachedType":"secondary","primary":{"usedPercent":42,"resetsAt":1700000000},"secondary":{"usedPercent":100,"resetsAt":1700003600}}}`,
+			wantStatus: "secondary",
+			wantType:   "secondary",
+			wantResets: 1700003600,
+			wantLimit:  true,
+		},
+		{
+			name:       "primary window at 100%",
+			notify:     `{"jsonrpc":"2.0","method":"account/rateLimits/updated","params":{"rateLimitReachedType":"primary","primary":{"usedPercent":100,"resetsAt":1700007200}}}`,
+			wantStatus: "primary",
+			wantType:   "primary",
+			wantResets: 1700007200,
+			wantLimit:  true,
+		},
+		{
+			name:       "rateLimitReachedType null",
+			notify:     `{"jsonrpc":"2.0","method":"account/rateLimits/updated","params":{"rateLimitReachedType":null,"primary":{"usedPercent":10,"resetsAt":1700000000}}}`,
+			wantStatus: "allowed",
+			wantLimit:  false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bin := fakeCodexAppServer(t, "t", "turn-1", `
+echo '`+tc.notify+`'
+echo '{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"status":"completed"}}}'
+cat >/dev/null
+`)
+			r := newRunner(t, "")
+			r.CodexBin = bin
+			res, err := r.Run(context.Background(), Request{Name: "c-rl", Profile: codexRole(""), Workspace: fakeWorkspace{dir: t.TempDir()}, Prompt: "TASK"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res.RateLimit == nil {
+				t.Fatal("RateLimit is nil, want one built from the notification")
+			}
+			if res.RateLimit.Status != tc.wantStatus {
+				t.Errorf("Status = %q, want %q", res.RateLimit.Status, tc.wantStatus)
+			}
+			if res.RateLimit.Type != tc.wantType {
+				t.Errorf("Type = %q, want %q", res.RateLimit.Type, tc.wantType)
+			}
+			if tc.wantResets != 0 && !res.RateLimit.ResetsAt.Equal(time.Unix(tc.wantResets, 0)) {
+				t.Errorf("ResetsAt = %s, want %s", res.RateLimit.ResetsAt, time.Unix(tc.wantResets, 0))
+			}
+			if _, limited := res.SessionLimited(); limited != tc.wantLimit {
+				t.Errorf("SessionLimited = %v, want %v", limited, tc.wantLimit)
+			}
+		})
+	}
+}
+
 // The agent setting is validated when task.toml loads, so a value the
 // runner does not know is a role that never went through config; it is
 // refused rather than run as claude.

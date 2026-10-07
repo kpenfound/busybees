@@ -8,6 +8,7 @@ import (
 	"io"
 	"slices"
 	"strconv"
+	"time"
 )
 
 // codexRPCClientInfo is the client half of codex app-server's initialize
@@ -43,10 +44,13 @@ type codexRPCTurn struct {
 
 // codexRPCOutcome is what one codex app-server conversation produced, in
 // streamEnd's terms, plus config/read's answer, unexamined, when
-// codexRPCTurn.ConfigDir asked for one.
+// codexRPCTurn.ConfigDir asked for one, and the account's rate-limit
+// snapshot from the conversation's last account/rateLimits/updated
+// notification, nil when none arrived.
 type codexRPCOutcome struct {
 	streamEnd
-	Config json.RawMessage
+	Config    json.RawMessage
+	RateLimit *RateLimit
 }
 
 // codexRPCParams are the parameters thread/start and thread/resume carry.
@@ -124,6 +128,61 @@ func codexUnsupportedRequest(method string) *codexRPCError {
 	return &codexRPCError{Code: -32601, Message: fmt.Sprintf("%s is not supported in a bees session", method)}
 }
 
+// codexRateLimitWindow is one usage window ("primary" or "secondary") of
+// an account/rateLimits/updated notification.
+type codexRateLimitWindow struct {
+	UsedPercent float64 `json:"usedPercent"`
+	ResetsAt    int64   `json:"resetsAt"`
+}
+
+// codexRateLimitParams are account/rateLimits/updated's parameters. A nil
+// RateLimitReachedType means the account is not rate-limited; set, its
+// value becomes the RateLimit's Status and the window at 100% UsedPercent
+// names its Type and ResetsAt.
+type codexRateLimitParams struct {
+	RateLimitReachedType *string               `json:"rateLimitReachedType"`
+	Primary              *codexRateLimitWindow `json:"primary"`
+	Secondary            *codexRateLimitWindow `json:"secondary"`
+}
+
+// codexRateLimit builds the RateLimit an account/rateLimits/updated
+// notification reports: the allowed snapshot when rateLimitReachedType is
+// null, otherwise a blocking one whose Status is rateLimitReachedType's
+// value and whose Type and ResetsAt name whichever window — primary or
+// secondary — is at 100% usedPercent. nil when params does not parse.
+func codexRateLimit(params json.RawMessage) *RateLimit {
+	var p codexRateLimitParams
+	if json.Unmarshal(params, &p) != nil {
+		return nil
+	}
+	if p.RateLimitReachedType == nil {
+		return &RateLimit{Status: "allowed"}
+	}
+	rl := &RateLimit{Status: *p.RateLimitReachedType}
+	switch {
+	case p.Primary != nil && p.Primary.UsedPercent == 100:
+		rl.Type = "primary"
+		rl.ResetsAt = time.Unix(p.Primary.ResetsAt, 0)
+	case p.Secondary != nil && p.Secondary.UsedPercent == 100:
+		rl.Type = "secondary"
+		rl.ResetsAt = time.Unix(p.Secondary.ResetsAt, 0)
+	}
+	return rl
+}
+
+// codexRateLimitMethod is the notification a codexConversation folds into
+// its running rateLimit.
+const codexRateLimitMethod = "account/rateLimits/updated"
+
+// recordRateLimit replaces the conversation's rateLimit with the one
+// account/rateLimits/updated's params build, the latest notification
+// always winning over an earlier one.
+func (c *codexConversation) recordRateLimit(params json.RawMessage) {
+	if rl := codexRateLimit(params); rl != nil {
+		c.rateLimit = rl
+	}
+}
+
 // codexElicitationMethod is the one server request answered with a result
 // rather than an error: bees never approves anything, and the server
 // expects either a cancel or a decline for this one, not an error.
@@ -154,6 +213,10 @@ type codexConversation struct {
 	// status is turn/completed's status once the turn has ended: empty
 	// until then.
 	status string
+	// rateLimit is the RateLimit built from the latest
+	// account/rateLimits/updated notification seen so far, nil until one
+	// arrives.
+	rateLimit *RateLimit
 }
 
 func newCodexConversation(stdin io.Writer, stdout io.Reader, transcript io.Writer) *codexConversation {
@@ -241,10 +304,12 @@ func (c *codexConversation) await(id int, method string) (json.RawMessage, error
 			}
 		case l.Method == "error":
 			return nil, codexServerError(l.Params)
+		case l.Method == codexRateLimitMethod:
+			c.recordRateLimit(l.Params)
 		case l.Method != "":
-			// A notification this phase does not act on
-			// (thread/tokenUsage/updated, account/rateLimits/updated, …):
-			// already recorded in the transcript by readLine.
+			// A notification this phase does not otherwise act on
+			// (thread/tokenUsage/updated, …): already recorded in the
+			// transcript by readLine.
 		case string(l.ID) == wantID:
 			if l.Error != nil {
 				return nil, fmt.Errorf("%s: %s", method, l.Error.Message)
@@ -307,6 +372,8 @@ func (c *codexConversation) awaitTurnCompleted() error {
 			c.recordItem(l.Params)
 		case "turn/completed":
 			return c.recordTurnCompleted(l.Params)
+		case codexRateLimitMethod:
+			c.recordRateLimit(l.Params)
 		case "error":
 			return codexServerError(l.Params)
 		}
@@ -356,7 +423,8 @@ func (c *codexConversation) recordTurnCompleted(params json.RawMessage) error {
 // answered until turn/completed, after which stdin is closed so the
 // server exits. stdin and stdout are the session's; every line the server
 // writes and every request and response the driver sends goes to
-// transcript.
+// transcript. The outcome's RateLimit is the account/rateLimits/updated
+// notification last seen, nil when none arrived.
 func codexRPCRun(stdin io.WriteCloser, stdout io.Reader, transcript io.Writer, turn codexRPCTurn) (*codexRPCOutcome, error) {
 	defer func() { _ = stdin.Close() }()
 	c := newCodexConversation(stdin, stdout, transcript)
@@ -422,5 +490,5 @@ func codexRPCRun(stdin io.WriteCloser, stdout io.Reader, transcript io.Writer, t
 		Result:    c.lastMessage,
 		Subtype:   subtype,
 		NumTurns:  c.turns,
-	}, Config: config}, nil
+	}, Config: config, RateLimit: c.rateLimit}, nil
 }

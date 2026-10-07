@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // codexFakeRPC is an in-process codex app-server double: it reads the
@@ -645,6 +646,101 @@ func TestCodexRPCErrorEndings(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestCodexRPCRateLimitUpdated asserts codexRPCRun folds the latest
+// account/rateLimits/updated notification into the outcome's RateLimit: a
+// set rateLimitReachedType blocks, with Type and ResetsAt naming whichever
+// window is at 100% usedPercent (secondary and primary each checked), and
+// a null one yields the allowed snapshot, with a later notification
+// overriding an earlier one.
+func TestCodexRPCRateLimitUpdated(t *testing.T) {
+	cases := []struct {
+		name       string
+		notify     map[string]any
+		wantStatus string
+		wantType   string
+		wantResets int64
+	}{
+		{
+			name: "secondary window at 100%",
+			notify: map[string]any{
+				"rateLimitReachedType": "secondary",
+				"primary":              map[string]any{"usedPercent": 42, "resetsAt": 1700000000},
+				"secondary":            map[string]any{"usedPercent": 100, "resetsAt": 1700003600},
+			},
+			wantStatus: "secondary",
+			wantType:   "secondary",
+			wantResets: 1700003600,
+		},
+		{
+			name: "primary window at 100%",
+			notify: map[string]any{
+				"rateLimitReachedType": "primary",
+				"primary":              map[string]any{"usedPercent": 100, "resetsAt": 1700007200},
+			},
+			wantStatus: "primary",
+			wantType:   "primary",
+			wantResets: 1700007200,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			turn := codexRPCTurn{Cwd: "/work", Prompt: "do it"}
+			out, err, _ := runCodexFakeConversation(t, turn, func(f *codexFakeRPC) {
+				l, _ := f.recv()
+				f.respond(l.ID, map[string]any{})
+				f.recv()
+				l, _ = f.recv()
+				f.respond(l.ID, map[string]any{"thread": map[string]any{"id": "t1"}})
+				l, _ = f.recv()
+				f.respond(l.ID, map[string]any{})
+
+				f.notify("account/rateLimits/updated", map[string]any{"rateLimitReachedType": nil})
+				f.notify("account/rateLimits/updated", c.notify)
+				f.notify("turn/completed", map[string]any{"turn": map[string]any{"status": "completed"}})
+				f.recv()
+			})
+			if err != nil {
+				t.Fatalf("codexRPCRun: %v", err)
+			}
+			if out.RateLimit == nil {
+				t.Fatal("RateLimit is nil, want one built from the notification")
+			}
+			if out.RateLimit.Status != c.wantStatus {
+				t.Errorf("Status = %q, want %q", out.RateLimit.Status, c.wantStatus)
+			}
+			if out.RateLimit.Type != c.wantType {
+				t.Errorf("Type = %q, want %q", out.RateLimit.Type, c.wantType)
+			}
+			if !out.RateLimit.ResetsAt.Equal(time.Unix(c.wantResets, 0)) {
+				t.Errorf("ResetsAt = %s, want %s", out.RateLimit.ResetsAt, time.Unix(c.wantResets, 0))
+			}
+		})
+	}
+
+	t.Run("rateLimitReachedType null", func(t *testing.T) {
+		turn := codexRPCTurn{Cwd: "/work", Prompt: "do it"}
+		out, err, _ := runCodexFakeConversation(t, turn, func(f *codexFakeRPC) {
+			l, _ := f.recv()
+			f.respond(l.ID, map[string]any{})
+			f.recv()
+			l, _ = f.recv()
+			f.respond(l.ID, map[string]any{"thread": map[string]any{"id": "t1"}})
+			l, _ = f.recv()
+			f.respond(l.ID, map[string]any{})
+
+			f.notify("account/rateLimits/updated", map[string]any{"rateLimitReachedType": nil})
+			f.notify("turn/completed", map[string]any{"turn": map[string]any{"status": "completed"}})
+			f.recv()
+		})
+		if err != nil {
+			t.Fatalf("codexRPCRun: %v", err)
+		}
+		if out.RateLimit == nil || out.RateLimit.Status != "allowed" {
+			t.Errorf("RateLimit = %+v, want the allowed snapshot", out.RateLimit)
+		}
+	})
 }
 
 // TestCodexRPCAppServerEndsDeterministically checks that a server which
