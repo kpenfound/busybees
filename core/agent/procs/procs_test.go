@@ -132,23 +132,23 @@ func TestParsePSWithoutScopeMatchesNothing(t *testing.T) {
 	}
 }
 
-func TestPIDFilesAndKill(t *testing.T) {
+// FromPIDFiles reports the live session a pid file names and deletes a
+// stale pid file for a process that has already died, which is how a
+// crashed session's directory stops being mistaken for a running one.
+func TestFromPIDFilesFindsALiveSessionAndRemovesAStalePIDFile(t *testing.T) {
 	sessions := t.TempDir()
 	dir := filepath.Join(sessions, "20260829-developer-x")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// A process group leader with a child, like claude + an MCP server.
 	cmd := exec.Command("sh", "-c", "sleep 60 & wait")
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = cmd.Process.Kill() }()
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _, _ = cmd.Process.Wait() })
 	if err := WritePID(dir, cmd.Process.Pid); err != nil {
 		t.Fatal(err)
 	}
-	// A stale pid file for a dead process is cleaned up.
 	stale := filepath.Join(sessions, "20260829-qa-y")
 	_ = os.MkdirAll(stale, 0o755)
 	_ = WritePID(stale, 999999)
@@ -157,52 +157,112 @@ func TestPIDFilesAndKill(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(procs) != 1 || procs[0].PID != cmd.Process.Pid || procs[0].PGID != cmd.Process.Pid {
-		t.Fatalf("procs: %+v", procs)
+	if len(procs) != 1 || procs[0].PID != cmd.Process.Pid {
+		t.Fatalf("FromPIDFiles: %+v, want the live session alone", procs)
 	}
 	if _, err := os.Stat(filepath.Join(stale, PIDFile)); !os.IsNotExist(err) {
-		t.Fatal("stale pid file should have been removed")
+		t.Error("stale pid file should have been removed")
 	}
-	// A pid that is alive but absent from the scoped process table — a pid
-	// reused by an unrelated process, or another factory's claude — is
-	// treated as stale and dropped rather than killed.
+}
+
+// A pid that is alive but absent from the scoped process table — a pid
+// reused by an unrelated process, or another factory's claude — is treated
+// as stale and dropped rather than kept as a session to kill.
+func TestFromPIDFilesDropsAPIDTheScanDoesNotMatch(t *testing.T) {
+	sessions := t.TempDir()
+	dir := filepath.Join(sessions, "20260829-developer-x")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", "-c", "sleep 60 & wait")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _, _ = cmd.Process.Wait() })
+	if err := WritePID(dir, cmd.Process.Pid); err != nil {
+		t.Fatal(err)
+	}
 	reused := filepath.Join(sessions, "20260829-pm-z")
 	_ = os.MkdirAll(reused, 0o755)
 	_ = WritePID(reused, os.Getpid())
 	scan := &Scan{Sessions: map[int]Proc{cmd.Process.Pid: {PID: cmd.Process.Pid}}}
+
 	fromFiles, err := FromPIDFiles(sessions, scan)
 	if err != nil || len(fromFiles) != 1 || fromFiles[0].PID != cmd.Process.Pid {
-		t.Fatalf("cross-check: %+v %v", fromFiles, err)
+		t.Fatalf("FromPIDFiles cross-check: %+v %v, want the matched session alone", fromFiles, err)
 	}
 	if _, err := os.Stat(filepath.Join(reused, PIDFile)); !os.IsNotExist(err) {
-		t.Fatal("reused pid file should have been removed")
+		t.Error("reused pid file should have been removed")
 	}
-	// Find with the real ps: our sh test process is not claude, so it only
-	// survives through the pid file when ps is unavailable; here it must
-	// not be reported as a session by the ps scan. The scan is scoped to
-	// this sessions directory, so no other factory's session is reported
-	// either.
+}
+
+// Find's real ps scan never reports the test binary running it, or a
+// session of a different factory, as one of this factory's sessions: the
+// scope check (not a fake process table) is what is under test here, so it
+// runs the real `ps` and skips when none is available rather than faking
+// the answer it is meant to verify.
+func TestFindDoesNotReportTheCallingProcessAsASession(t *testing.T) {
+	sessions := t.TempDir()
+	dir := filepath.Join(sessions, "20260829-developer-x")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", "-c", "sleep 60 & wait")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _, _ = cmd.Process.Wait() })
+	if err := WritePID(dir, cmd.Process.Pid); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := FromPS(context.Background(), sessions); err != nil {
+		t.Skipf("no process table to scan: %v", err)
+	}
 	found, err := Find(context.Background(), sessions)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, p := range found {
 		if p.PID == os.Getpid() {
-			t.Fatal("test binary reported as a session")
+			t.Fatalf("Find reported the test binary (pid %d) as a session: %+v", os.Getpid(), found)
 		}
 	}
+}
+
+// Kill stops a session's process group and removes its pid file, reaping
+// the process the way init would for an orphan so the caller's own wait
+// does not hang.
+func TestKillStopsTheProcessGroupAndRemovesThePIDFile(t *testing.T) {
+	dir := t.TempDir()
+	// A process group leader with a child, like claude + an MCP server:
+	// killing the group, not the leader alone, is what is under test.
+	cmd := exec.Command("sh", "-c", "sleep 60 & wait")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _, _ = cmd.Process.Wait() })
+	if err := WritePID(dir, cmd.Process.Pid); err != nil {
+		t.Fatal(err)
+	}
+	p, ok := FromPIDFile(dir, nil)
+	if !ok || p.PID != cmd.Process.Pid {
+		t.Fatalf("FromPIDFile: %+v %v, want the started process", p, ok)
+	}
+
 	waited := make(chan struct{})
 	go func() { _ = cmd.Wait(); close(waited) }() // reap, as init would for an orphan
-	if err := Kill(procs[0], 2*time.Second); err != nil {
+	if err := Kill(p, 2*time.Second); err != nil {
 		t.Fatal(err)
 	}
 	select {
 	case <-waited:
 	case <-time.After(5 * time.Second):
-		t.Fatal("process still alive")
+		t.Fatal("process still alive after Kill")
 	}
 	if _, err := os.Stat(filepath.Join(dir, PIDFile)); !os.IsNotExist(err) {
-		t.Fatal("pid file should be removed after kill")
+		t.Error("pid file should be removed after kill")
 	}
 }
 
