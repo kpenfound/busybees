@@ -2,43 +2,141 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
-	"fmt"
+	"sort"
+	"strings"
 	"testing"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/mcpserver"
 )
 
-// These wire and CLI fingerprints pin the complete public contract of every
-// role's tools, including descriptions, annotations, schemas, ordering and
-// enums.
-func TestMCPPublicContract(t *testing.T) {
-	want := map[string][2]string{
-		"":                {"546717fa9e544c7b96f0deb90c0b98a3821cfce3bc5b61cdad0e545a69e7f3df", "ce88d26d56d9252cd5229b7b5a9d5adc3a8996159bd1964fcb9162329e0f6c51"},
-		"unknown":         {"546717fa9e544c7b96f0deb90c0b98a3821cfce3bc5b61cdad0e545a69e7f3df", "ce88d26d56d9252cd5229b7b5a9d5adc3a8996159bd1964fcb9162329e0f6c51"},
-		"developer":       {"190d48cc1c62983a5a9d57abb1c04495d4668235b3e745bf3c88b61bc7ea2979", "c7715603e82165858639ff052b3823c65e8536a46b84c624c3ba00ab8ed11b9c"},
-		"reviewer":        {"f08b5c88486429809e60354d4ece28e8c4827a96d21ed42f09a42818d6f039de", "95900dc52d4b37444c568041c5220b23982aa19adfeb58db13519ce96c39995c"},
-		"qa":              {"1fc52836772d1e22abcc552881d0e174022348230a5b951e498ca674db8c5af5", "28659f6a998183106f307a7f50d49ce1a282fbaeb694693e80108e70347b00cb"},
-		"product_manager": {"4879463171ce997da0f44cd90a08889417af9f8daabfef5c891f323c1d6cf92f", "5e224265e6d817308a9594d4e7fe6e68554c3f5201e9d6f0ae62271c72d915a1"},
-		"project_manager": {"df1620c67c17a2c0f331fee829157877042fe97ddb31b2b89b5ee66dd114bf43", "14caf4b43e71e4550c816cbfd18b946698840f5c87eab20b246ff27b199327db"},
-		"release_manager": {"bae42720ae739b92c283e11aee97894c01a586e93e232080ed37c0dbc7662670", "5d3b7ef51d86e37e6d7e407aa683fa18a31db3c593398ce9e9f7a60de4cdd8fb"},
-	}
-	for role, hashes := range want {
+// TestToolSetIsScopedByRole pins the exact set of tools each role is
+// offered: a role argues with nothing it cannot even see. The expected sets
+// are literal, so a change that silently widens or narrows a role's tools
+// (for example by dropping the role arguments on an AddTool call) fails
+// here. It does not cover tool descriptions or schema ordering, which are
+// presentation, not a role boundary; TestReadOnlyToolsAreAnnotatedReadOnly
+// covers the one annotation a client acts on.
+func TestToolSetIsScopedByRole(t *testing.T) {
+	base := []string{"comment", "done", "issue_create", "issue_link", "issue_view", "mail_list", "mail_send", "notes_read", "notes_write", "pr_view", "report_factory_error"}
+	// An unknown or empty role is hand use through `bees mcp serve`: the
+	// full tool set, unrestricted.
+	full := []string{"comment", "done", "file_bug", "issue_create", "issue_edit_body", "issue_link", "issue_question", "issue_set_state", "issue_view", "mail_list", "mail_send", "notes_read", "notes_write", "pr_view", "release_ship", "report_factory_error", "submit_review"}
+	for role, want := range map[string][]string{
+		config.RoleDeveloper:      base,
+		config.RoleReviewer:       append(append([]string{}, base...), "submit_review"),
+		config.RoleQA:             append(append([]string{}, base...), "file_bug"),
+		config.RoleProjectManager: append(append([]string{}, base...), "issue_edit_body", "issue_set_state"),
+		config.RoleProductManager: append(append([]string{}, base...), "issue_edit_body", "issue_question"),
+		config.RoleReleaseManager: append(append([]string{}, base...), "release_ship"),
+		"":                        full,
+		"unknown":                 full,
+	} {
 		list, err := mcpserver.Tools(context.Background(), mcpserver.Env{Role: role})
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("role %q: %v", role, err)
 		}
-		data, err := json.Marshal(list)
+		got := toolNames(list)
+		wantSorted := sortedCopy(want)
+		if strings.Join(got, ",") != strings.Join(wantSorted, ",") {
+			t.Errorf("role %q tool set =\n%s\nwant\n%s", role, strings.Join(got, ", "), strings.Join(wantSorted, ", "))
+		}
+	}
+}
+
+// TestDoneStatusEnumMatchesRoleOutcomes pins the done tool's status enum per
+// role, the outcomes session.Report will accept from that role. The
+// expected lists are the literal values a session sees, not derived by
+// calling the validation they protect. An unknown or empty role gets no
+// enum at all, matching the unrestricted outcome a hand-run `bees mcp
+// serve` accepts.
+func TestDoneStatusEnumMatchesRoleOutcomes(t *testing.T) {
+	for role, want := range map[string][]string{
+		config.RoleDeveloper:      {"pr-opened", "pr-updated", "question", "failed"},
+		config.RoleReviewer:       {"approved", "changes-requested", "failed"},
+		config.RoleQA:             {"done", "failed"},
+		config.RoleProductManager: {"done", "idle", "failed"},
+		config.RoleProjectManager: {"done", "idle", "failed"},
+		config.RoleReleaseManager: {"done", "failed"},
+		"":                        nil,
+		"unknown":                 nil,
+	} {
+		list, err := mcpserver.Tools(context.Background(), mcpserver.Env{Role: role})
+		if err != nil {
+			t.Fatalf("role %q: %v", role, err)
+		}
+		got := doneStatusEnum(t, role, list)
+		if strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Errorf("role %q done status enum = %v, want %v", role, got, want)
+		}
+	}
+}
+
+// TestReadOnlyToolsAreAnnotatedReadOnly pins which tools carry the
+// ReadOnlyHint annotation, the one a client can act on (for example to skip
+// a confirmation it would ask before a mutating call). The literal set
+// comes from reading the tool definitions, not from running them.
+func TestReadOnlyToolsAreAnnotatedReadOnly(t *testing.T) {
+	wantReadOnly := []string{"issue_view", "pr_view", "mail_list", "notes_read"}
+	list, err := mcpserver.Tools(context.Background(), mcpserver.Env{Role: ""})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, tl := range list {
+		if tl.Annotations != nil && tl.Annotations.ReadOnlyHint {
+			got = append(got, tl.Name)
+		}
+	}
+	sort.Strings(got)
+	wantSorted := sortedCopy(wantReadOnly)
+	if strings.Join(got, ",") != strings.Join(wantSorted, ",") {
+		t.Errorf("tools annotated read-only = %v, want %v", got, wantSorted)
+	}
+}
+
+func toolNames(tools []*mcp.Tool) []string {
+	names := make([]string, 0, len(tools))
+	for _, tl := range tools {
+		names = append(names, tl.Name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func sortedCopy(s []string) []string {
+	out := append([]string{}, s...)
+	sort.Strings(out)
+	return out
+}
+
+// doneStatusEnum reads the done tool's status enum out of the schema a
+// session actually sees, the same JSON a client reads over the wire.
+func doneStatusEnum(t *testing.T, role string, tools []*mcp.Tool) []string {
+	t.Helper()
+	for _, tl := range tools {
+		if tl.Name != "done" {
+			continue
+		}
+		b, err := json.Marshal(tl.InputSchema)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := fmt.Sprintf("%x", sha256.Sum256(data)); got != hashes[0] {
-			t.Errorf("role %q wire contract changed (%s): %s", role, got, data)
+		var schema struct {
+			Properties struct {
+				Status struct {
+					Enum []string `json:"enum"`
+				} `json:"status"`
+			} `json:"properties"`
 		}
-		output := toolsText(list)
-		if got := fmt.Sprintf("%x", sha256.Sum256([]byte(output))); got != hashes[1] {
-			t.Errorf("role %q CLI contract changed (%s):\n%s", role, got, output)
+		if err := json.Unmarshal(b, &schema); err != nil {
+			t.Fatal(err)
 		}
+		return schema.Properties.Status.Enum
 	}
+	t.Fatalf("role %q: no done tool", role)
+	return nil
 }

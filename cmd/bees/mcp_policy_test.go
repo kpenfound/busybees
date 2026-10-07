@@ -91,18 +91,17 @@ func TestBackendNotesAreTheStateDirsFiles(t *testing.T) {
 	}
 }
 
-// TestBackendNotesFollowNotesBackend: the backend behind the notes tools is
-// picked from [notes] in the session's bees.toml ($BEES_CONFIG), once. With
-// "neo4j" a read goes to the Neo4j Agent Memory REST API at notes.neo4j_url
-// with the configured key and never touches the state directory; with
-// "file" it is the state directory's file. Only the [notes] table is read:
-// a [github] whose "$VAR" the session's environment lacks — the shape a
-// session's environment takes — leaves the notes tools working, while a
-// [notes] that is incomplete fails the tool call naming the key.
-func TestBackendNotesFollowNotesBackend(t *testing.T) {
-	var reads int
+// fakeNeo4jNotes starts a fake Neo4j Agent Memory service that answers one
+// reviewer conversation holding content, counting each message read, and
+// refusing any request without wantKey as its bearer token. The real
+// service is never reached from a test: this is the boundary the neo4j
+// notes tests stop at, so what they leave unverified is nams's own request
+// shapes and error responses, covered by internal/nams instead.
+func fakeNeo4jNotes(t *testing.T, wantKey, content string) (url string, reads *int) {
+	t.Helper()
+	reads = new(int)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer nams_test" {
+		if r.Header.Get("Authorization") != "Bearer "+wantKey {
 			http.Error(w, `{"error":"invalid API key"}`, http.StatusUnauthorized)
 			return
 		}
@@ -110,42 +109,51 @@ func TestBackendNotesFollowNotesBackend(t *testing.T) {
 		case "/v1/conversations":
 			_, _ = fmt.Fprint(w, `{"conversations":[{"id":"c1","userId":"bees-notes-reviewer","createdAt":"2026-09-09T00:00:00Z"}]}`)
 		case "/v1/conversations/c1/messages":
-			reads++
-			_, _ = fmt.Fprint(w, `{"messages":[{"id":"m1","role":"assistant","content":"# reviewer notes\n\n- from neo4j\n","createdAt":"2026-09-09T00:01:00Z"}]}`)
+			*reads++
+			_, _ = fmt.Fprintf(w, `{"messages":[{"id":"m1","role":"assistant","content":%q,"createdAt":"2026-09-09T00:01:00Z"}]}`, content)
 		default:
 			http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
 		}
 	}))
 	t.Cleanup(srv.Close)
+	return srv.URL + "/v1", reads
+}
 
+// writeSessionConfig writes toml to a fresh bees.toml and points
+// $BEES_CONFIG at it, the way a session's environment names its config.
+func writeSessionConfig(t *testing.T, toml string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "bees.toml")
+	if err := os.WriteFile(p, []byte(toml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(session.EnvConfig, p)
+	return p
+}
+
+// TestNotesBackendReadsFromNeo4jWhenConfigured: with notes.backend =
+// "neo4j", notes_read and the size behind it go through the Neo4j Agent
+// Memory REST API at notes.neo4j_url with the configured key, and the
+// state directory's notes files are never touched. Only the [notes] table
+// needs to load: a [github] whose "$VAR" the session's environment lacks
+// — the shape a session's environment takes — still leaves it working.
+func TestNotesBackendReadsFromNeo4jWhenConfigured(t *testing.T) {
 	stateDir := t.TempDir()
 	t.Setenv(session.EnvStateDir, stateDir)
-	// botTOML's github.token reads $BEES_TEST_TOKEN; unset, the file does
-	// not load whole.
 	t.Setenv("BEES_TEST_TOKEN", "")
-	neo4j := botTOML + "[notes]\nbackend = \"neo4j\"\nneo4j_url = \"" + srv.URL + "/v1\"\nneo4j_api_key = \"nams_test\"\n"
-	ctx := context.Background()
-
-	write := func(toml string) {
-		t.Helper()
-		p := filepath.Join(t.TempDir(), "bees.toml")
-		if err := os.WriteFile(p, []byte(toml), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		t.Setenv(session.EnvConfig, p)
-	}
-
-	write(neo4j)
-	if _, err := config.Load(os.Getenv(session.EnvConfig)); err == nil {
+	url, reads := fakeNeo4jNotes(t, "nams_test", "# reviewer notes\n\n- from neo4j\n")
+	path := writeSessionConfig(t, botTOML+"[notes]\nbackend = \"neo4j\"\nneo4j_url = \""+url+"\"\nneo4j_api_key = \"nams_test\"\n")
+	if _, err := config.Load(path); err == nil {
 		t.Fatal("the fixture loads whole: the [github] half of this test proves nothing")
 	}
+	ctx := context.Background()
 	b := &backend{g: &globalFlags{}}
 	got, err := b.ReadNotes(ctx, config.RoleReviewer)
 	if err != nil {
 		t.Fatalf("neo4j read: %v", err)
 	}
-	if got != "# reviewer notes\n\n- from neo4j\n" || reads != 1 {
-		t.Errorf("neo4j read = %q after %d service reads", got, reads)
+	if got != "# reviewer notes\n\n- from neo4j\n" || *reads != 1 {
+		t.Errorf("neo4j read = %q after %d service reads", got, *reads)
 	}
 	if entries, _ := os.ReadDir(filepath.Join(stateDir, "notes")); len(entries) != 0 {
 		t.Errorf("the neo4j backend wrote %d notes files", len(entries))
@@ -155,15 +163,43 @@ func TestBackendNotesFollowNotesBackend(t *testing.T) {
 	if n, err := b.Size(ctx, config.RoleReviewer); err != nil || n != int64(len("# reviewer notes\n\n- from neo4j\n")) {
 		t.Errorf("neo4j size = %d, %v; want the length of the notes the service holds", n, err)
 	}
-	// Picked once: a later edit of bees.toml does not move a running server.
-	write(botTOML + "[notes]\nbackend = \"file\"\n")
-	if got, _ = b.ReadNotes(ctx, config.RoleReviewer); got != "# reviewer notes\n\n- from neo4j\n" {
-		t.Errorf("the backend moved with bees.toml: %q", got)
-	}
+}
 
-	b = &backend{g: &globalFlags{}}
-	if got, err = b.ReadNotes(ctx, config.RoleReviewer); err != nil || got != state.NotesSkeleton(config.RoleReviewer) {
-		t.Errorf("file read = %q, %v; want the skeleton", got, err)
+// TestNotesBackendIsPickedOnceAtConstruction: the Notes backend behind one
+// backend value is chosen the first time it is used and does not move
+// under it, so a person editing bees.toml mid-session cannot redirect a
+// running server's notes tools.
+func TestNotesBackendIsPickedOnceAtConstruction(t *testing.T) {
+	t.Setenv(session.EnvStateDir, t.TempDir())
+	t.Setenv("BEES_TEST_TOKEN", "")
+	url, _ := fakeNeo4jNotes(t, "nams_test", "# reviewer notes\n\n- from neo4j\n")
+	writeSessionConfig(t, botTOML+"[notes]\nbackend = \"neo4j\"\nneo4j_url = \""+url+"\"\nneo4j_api_key = \"nams_test\"\n")
+	ctx := context.Background()
+	b := &backend{g: &globalFlags{}}
+	if _, err := b.ReadNotes(ctx, config.RoleReviewer); err != nil {
+		t.Fatalf("first read picks the backend: %v", err)
+	}
+	writeSessionConfig(t, botTOML+"[notes]\nbackend = \"file\"\n")
+	got, err := b.ReadNotes(ctx, config.RoleReviewer)
+	if err != nil || got != "# reviewer notes\n\n- from neo4j\n" {
+		t.Errorf("the backend moved with bees.toml: %q, %v", got, err)
+	}
+}
+
+// TestNotesBackendSelectsFileExplicitly: notes.backend = "file" in a loaded
+// bees.toml reads and replaces the same state-dir file the default (no
+// [notes] table at all, covered by TestBackendNotesAreTheStateDirsFiles)
+// does: the first read is the skeleton, a write lands on disk, and the
+// size is the file's size.
+func TestNotesBackendSelectsFileExplicitly(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv(session.EnvStateDir, stateDir)
+	writeSessionConfig(t, botTOML+"[notes]\nbackend = \"file\"\n")
+	ctx := context.Background()
+	b := &backend{g: &globalFlags{}}
+	got, err := b.ReadNotes(ctx, config.RoleReviewer)
+	if err != nil || got != state.NotesSkeleton(config.RoleReviewer) {
+		t.Fatalf("file read = %q, %v; want the skeleton", got, err)
 	}
 	if err := b.WriteNotes(ctx, config.RoleReviewer, "# on disk\n"); err != nil {
 		t.Fatal(err)
@@ -174,10 +210,16 @@ func TestBackendNotesFollowNotesBackend(t *testing.T) {
 	if n, err := b.Size(ctx, config.RoleReviewer); err != nil || n != int64(len("# on disk\n")) {
 		t.Errorf("file size = %d, %v; want the file's %d", n, err, len("# on disk\n"))
 	}
+}
 
-	write(botTOML + "[notes]\nbackend = \"neo4j\"\nneo4j_url = \"" + srv.URL + "/v1\"\n")
-	b = &backend{g: &globalFlags{}}
-	if _, err := b.ReadNotes(ctx, config.RoleReviewer); err == nil || !strings.Contains(err.Error(), "needs notes.neo4j_api_key") {
-		t.Errorf("incomplete [notes]: %v", err)
+// TestNotesBackendWiringSurfacesAnIncompleteNeo4jConfig: a [notes] table
+// naming "neo4j" without neo4j_api_key fails notes_read through the same
+// error config.LoadNotes already names the key with, rather than the
+// backend wiring swallowing or reshaping it.
+func TestNotesBackendWiringSurfacesAnIncompleteNeo4jConfig(t *testing.T) {
+	t.Setenv(session.EnvStateDir, t.TempDir())
+	writeSessionConfig(t, botTOML+"[notes]\nbackend = \"neo4j\"\nneo4j_url = \"https://nams.example.com/v1\"\n")
+	if _, err := (&backend{g: &globalFlags{}}).ReadNotes(context.Background(), config.RoleReviewer); err == nil || !strings.Contains(err.Error(), "needs notes.neo4j_api_key") {
+		t.Errorf("incomplete [notes]: %v, want an error naming notes.neo4j_api_key", err)
 	}
 }
