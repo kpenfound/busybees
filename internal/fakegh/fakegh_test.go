@@ -383,6 +383,116 @@ func TestPRChecksWithNothingQueuedNamesTheHeadBranch(t *testing.T) {
 	}
 }
 
+// Commenting, merging, assigning or editing the milestone of a number the
+// fake holds no issue or pull request for fails the way GitHub's 404 would,
+// rather than silently recording a write for nothing. Each existing-number
+// case is also checked so a passing failure case cannot come from a typo
+// that fails every call.
+func TestWritesOnAnUnknownNumberFail(t *testing.T) {
+	ctx := context.Background()
+	t.Run("comment", func(t *testing.T) {
+		f, c := seeded(t)
+		if err := c.Comment(ctx, 999, "hello"); err == nil {
+			t.Fatal("commenting on number 999, which the fake holds nothing for, succeeded")
+		}
+		if err := c.Comment(ctx, 7, "hello"); err != nil {
+			t.Fatalf("commenting on issue 7: %v", err)
+		}
+		if got := f.Comments[7]; !slices.Equal(got, []string{"hello"}) {
+			t.Fatalf("issue 7 comments = %v, want [hello]", got)
+		}
+	})
+	t.Run("merge", func(t *testing.T) {
+		f, _ := seeded(t)
+		if _, err := f.Exec(ctx, "pr", "merge", "999", "-R", repo, "--squash", "--delete-branch"); err == nil {
+			t.Fatal("merging pull request 999, which does not exist, succeeded")
+		}
+		if len(f.Merged) != 0 {
+			t.Fatalf("merged = %v, want none recorded for the failed merge", f.Merged)
+		}
+		if _, err := f.Exec(ctx, "pr", "merge", "8", "-R", repo, "--squash", "--delete-branch"); err != nil {
+			t.Fatalf("merging pull request 8: %v", err)
+		}
+		if !slices.Equal(f.Merged, []int{8}) {
+			t.Fatalf("merged = %v, want [8]", f.Merged)
+		}
+	})
+	t.Run("assignee", func(t *testing.T) {
+		f, c := seeded(t)
+		if err := c.Assign(ctx, 999, "kyle"); err == nil {
+			t.Fatal("assigning number 999, which does not exist, succeeded")
+		}
+		if err := c.Assign(ctx, 7, "kyle"); err != nil {
+			t.Fatalf("assigning issue 7: %v", err)
+		}
+		if i, _ := f.Snapshot().Issue(7); len(i.Assignees) != 1 || i.Assignees[0].Login != "kyle" {
+			t.Fatalf("issue 7 assignees: %+v", i.Assignees)
+		}
+	})
+	t.Run("milestone", func(t *testing.T) {
+		f, c := seeded(t)
+		if err := c.SetMilestone(ctx, 999, "v1"); err == nil {
+			t.Fatal("setting the milestone of number 999, which does not exist, succeeded")
+		}
+		if err := c.SetMilestone(ctx, 8, "v1"); err != nil {
+			t.Fatalf("setting pull request 8's milestone: %v", err)
+		}
+		if p, _ := f.Snapshot().PR(8); p.MilestoneTitle() != "v1" {
+			t.Fatalf("pull request 8 milestone = %q, want v1", p.MilestoneTitle())
+		}
+	})
+}
+
+// A review request names the pull request and at least one reviewer or
+// team; the fake rejects a call missing either the way GitHub's own 404 or
+// a request with nobody named would be meaningless to serve. The scheduler
+// package name is in the comment above RequestReview's handler, not
+// asserted here, since those are its own tests.
+func TestRequestReviewFailsWithoutAPullRequestOrAReviewer(t *testing.T) {
+	ctx := context.Background()
+	f, c := seeded(t)
+	if err := c.RequestReview(ctx, 999, "kyle"); err == nil {
+		t.Fatal("requesting a review on pull request 999, which does not exist, succeeded")
+	}
+	if err := c.RequestReview(ctx, 8, "kyle"); err != nil {
+		t.Fatalf("requesting a review on pull request 8: %v", err)
+	}
+	calls := f.CallsContaining("requested_reviewers")
+	if len(calls) != 2 {
+		t.Fatalf("logged requested_reviewers calls = %d, want 2 (the failed and the successful one)", len(calls))
+	}
+	last := strings.Join(calls[len(calls)-1], " ")
+	if !strings.Contains(last, "reviewers[]=kyle") {
+		t.Fatalf("the successful call %q does not carry reviewers[]=kyle", last)
+	}
+}
+
+// CallsContaining lets a caller read back the arguments of a call whose
+// answer does not itself depend on them.
+func TestCallsContainingFindsTheMatchingCallsInOrder(t *testing.T) {
+	f, c := seeded(t)
+	ctx := context.Background()
+	if err := c.RequestReview(ctx, 8, "kyle"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.RequestReview(ctx, 8, "myorg/bees-team"); err != nil {
+		t.Fatal(err)
+	}
+	calls := f.CallsContaining("requested_reviewers")
+	if len(calls) != 2 {
+		t.Fatalf("calls = %v, want 2", calls)
+	}
+	if !strings.Contains(strings.Join(calls[0], " "), "reviewers[]=kyle") {
+		t.Fatalf("first call %v does not name kyle", calls[0])
+	}
+	if !strings.Contains(strings.Join(calls[1], " "), "team_reviewers[]=bees-team") {
+		t.Fatalf("second call %v does not name the team", calls[1])
+	}
+	if none := f.CallsContaining("no-such-substring"); none != nil {
+		t.Fatalf("an unmatched substring returned %v, want nil", none)
+	}
+}
+
 func labelNames(labels []github.Label) []string {
 	var out []string
 	for _, l := range labels {

@@ -38,7 +38,10 @@ type Enforcer struct {
 	// enforce the kind returns one that wraps agent.ErrUnsupported.
 	PrepareErr error
 	// Agent plays the agent of every turn. Nil is an agent that does nothing
-	// and succeeds.
+	// and succeeds. The fake never runs a real agent process: a test that
+	// cares what the agent itself does, rather than what its grants let it
+	// do, sets Agent and asserts what the turn given to it could and could
+	// not reach.
 	Agent func(ctx context.Context, turn *Turn) (*agent.Result, error)
 
 	mu       sync.Mutex

@@ -18,6 +18,14 @@ import (
 // beside the script, and it prints image-vcs.txt from there, the VCS
 // executables the image is to have ("f <path>" or "d <path>" a line; none
 // without the file), or fails when a file named fail-probe is there.
+//
+// Every subcommand but `run` and the probe is answered without consulting a
+// real Docker: `network` always reports the one fixed gateway address, and
+// `rm` always succeeds, whatever arguments they were given. A test that
+// needs those to fail, or that needs the gateway address to vary, must use
+// its own script instead. `run` itself is the one call this fake does not
+// fake: it execs the command the caller gave it for real, after recording
+// the arguments and environment it was started with.
 func Docker(t *testing.T, image, sessionVariable string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "docker")
@@ -85,6 +93,12 @@ exec "$@"
 	}
 	return p
 }
+
+// MCPServer writes a fake host MCP server: it records its environment, PID
+// and arguments beside sessionVariable names, prints one fixed listening
+// address and then idles. It always starts and never reports a port already
+// in use or any other startup failure; a test of that behaviour must use a
+// script of its own.
 func MCPServer(t *testing.T, sessionVariable string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "mcp-server")
@@ -125,6 +139,11 @@ exec sleep 60
 // fails when a file named fail-version is there. Every call but `exec` and
 // `version` also appends its first two arguments to sbx-calls.txt beside
 // the script, in the order they ran.
+//
+// `rm` and `policy` beside `policy rm` always succeed unless their marker
+// file is there: the fake does not check that a name passed to `rm` or a
+// rule passed to `policy` matches a sandbox or rule that actually exists.
+// A test of that check must read the recorded arguments itself.
 func Sbx(t *testing.T, sessionVariable string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "sbx")

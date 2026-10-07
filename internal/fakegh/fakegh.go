@@ -9,6 +9,14 @@
 // its writes through a directory instead (RequestEdit), which Exec applies
 // before it answers the next call, or reaches it through a gh of its own
 // that forwards every call to Exec or ExecStdin (internal/eval).
+//
+// Exec answers a write only when the issue or pull request it names exists,
+// the way GitHub's own 404 would refuse it; it does not otherwise validate
+// GitHub's side effects, such as notifications, webhooks or a merge method
+// the branch protection rules would refuse. Every call is logged in Calls
+// regardless of which branch answered it, so a test can still assert on the
+// exact arguments a call carried even where the answer itself does not
+// depend on them (CallsContaining).
 package fakegh
 
 import (
@@ -46,7 +54,11 @@ type GitHub struct {
 	// through Exec, in order.
 	Comments map[int][]string
 	// Merged lists the pull requests merged through Exec and MergeArgs the
-	// argument lists that merged them.
+	// argument lists that merged them. A merge succeeds whenever the pull
+	// request exists, whatever its state or Checks queue: it does not model
+	// GitHub refusing a merge for failing or missing required checks, a
+	// draft or already-merged pull request, or branch protection. A test
+	// asserting those refusals must check Checks, PR state or ErrFor itself.
 	Merged    []int
 	MergeArgs [][]string
 	// Activity is raw JSON served for an api path (pulls/N/reviews,
@@ -180,6 +192,22 @@ func (f *GitHub) Total() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return len(f.Calls)
+}
+
+// CallsContaining returns every logged gh call whose arguments, joined with
+// a space, contain substr, in the order they ran. Use it to assert what a
+// call the fake's own answer does not depend on actually carried, for
+// example which login or team a review request named.
+func (f *GitHub) CallsContaining(substr string) [][]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out [][]string
+	for _, c := range f.Calls {
+		if strings.Contains(strings.Join(c, " "), substr) {
+			out = append(out, append([]string(nil), c...))
+		}
+	}
+	return out
 }
 
 // Edit is a write a session process asks the fake to make.
@@ -440,11 +468,17 @@ func (f *GitHub) exec(args []string, stdin *string) ([]byte, error) {
 		}
 		return nil, nil
 	case "issue comment", "pr comment":
+		n := num()
+		if _, ok := f.Issues[n]; !ok {
+			if _, ok := f.PRs[n]; !ok {
+				return nil, fmt.Errorf("no issue or pull request %d", n)
+			}
+		}
 		text, _, err := bodyOf(args, stdin)
 		if err != nil {
 			return nil, err
 		}
-		f.Comments[num()] = append(f.Comments[num()], text)
+		f.Comments[n] = append(f.Comments[n], text)
 		return nil, nil
 	case "issue close":
 		i, ok := f.Issues[num()]
@@ -515,7 +549,11 @@ func (f *GitHub) exec(args []string, stdin *string) ([]byte, error) {
 		}
 		return nil, fmt.Errorf("fake gh: pr review needs --approve, --request-changes or --comment")
 	case "pr merge":
-		f.Merged = append(f.Merged, num())
+		n := num()
+		if _, ok := f.PRs[n]; !ok {
+			return nil, fmt.Errorf("no pr %d", n)
+		}
+		f.Merged = append(f.Merged, n)
 		f.MergeArgs = append(f.MergeArgs, args)
 		return nil, nil
 	case "pr checks":
@@ -806,6 +844,11 @@ func (f *GitHub) api(args []string, stdin *string) (out []byte, err error, ok bo
 		if _, err := fmt.Sscanf(args[i], repo+"issues/%d/assignees", &n); err != nil {
 			return nil, fmt.Errorf("fake gh: bad assignees path %q", args[i]), true
 		}
+		if _, ok := f.Issues[n]; !ok {
+			if _, ok := f.PRs[n]; !ok {
+				return nil, fmt.Errorf("no issue or pull request %d", n), true
+			}
+		}
 		for _, v := range flagValues(args, "-f") {
 			if login, ok := strings.CutPrefix(v, "assignees[]="); ok {
 				f.setAssignee(n, login)
@@ -816,6 +859,11 @@ func (f *GitHub) api(args []string, stdin *string) (out []byte, err error, ok bo
 	if method == "PATCH" && len(args) > 3 {
 		if _, err := fmt.Sscanf(args[3], repo+"issues/%d", &n); err != nil {
 			return nil, fmt.Errorf("fake gh: bad issue path %q", args[3]), true
+		}
+		i, isIssue := f.Issues[n]
+		p, isPR := f.PRs[n]
+		if !isIssue && !isPR {
+			return nil, fmt.Errorf("no issue or pull request %d", n), true
 		}
 		for _, v := range flagValues(args, "-F") {
 			number, ok := strings.CutPrefix(v, "milestone=")
@@ -832,9 +880,9 @@ func (f *GitHub) api(args []string, stdin *string) (out []byte, err error, ok bo
 			if title == "" {
 				return nil, fmt.Errorf("fake gh: no milestone %s", number), true
 			}
-			if i, ok := f.Issues[n]; ok {
+			if isIssue {
 				i.Milestone = &github.MilestoneRef{Title: title}
-			} else if p, ok := f.PRs[n]; ok {
+			} else {
 				p.Milestone = &github.MilestoneRef{Title: title}
 			}
 			f.History[n] = append(f.History[n], "milestone:"+title)
@@ -842,10 +890,26 @@ func (f *GitHub) api(args []string, stdin *string) (out []byte, err error, ok bo
 		return []byte("{}"), nil, true
 	}
 	// Review requests go to the REST endpoint: `gh pr edit --add-reviewer`
-	// fails against GitHub with a Projects (classic) GraphQL error.
-	if slices.ContainsFunc(args, func(a string) bool { return strings.HasSuffix(a, "/requested_reviewers") }) {
+	// fails against GitHub with a Projects (classic) GraphQL error. The fake
+	// does not record who was asked to review beyond the logged Calls
+	// entry: a test checking who was requested reads the "-f reviewers[]="
+	// and "-f team_reviewers[]=" values back out of Calls itself, the way
+	// internal/scheduler's notify tests do. It also never checks the named
+	// logins are real collaborators, which a request from the pull
+	// request's own author simulates failing with ErrFor instead.
+	if j := slices.IndexFunc(args, func(a string) bool { return strings.HasSuffix(a, "/requested_reviewers") }); j >= 0 {
 		if err, ok := f.ErrFor["requested_reviewers"]; ok {
 			return nil, err, true
+		}
+		var n int
+		if _, err := fmt.Sscanf(args[j], repo+"pulls/%d/requested_reviewers", &n); err != nil {
+			return nil, fmt.Errorf("fake gh: bad requested_reviewers path %q", args[j]), true
+		}
+		if _, ok := f.PRs[n]; !ok {
+			return nil, fmt.Errorf("no pr %d", n), true
+		}
+		if len(flagValues(args, "-f")) == 0 {
+			return nil, fmt.Errorf("fake gh: requested_reviewers needs at least one reviewer or team"), true
 		}
 		return []byte("{}"), nil, true
 	}
