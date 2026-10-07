@@ -12,6 +12,8 @@ import (
 
 	"github.com/dop251/goja"
 	"golang.org/x/sys/unix"
+
+	"github.com/kpenfound/busybees/core/agent/agenttest"
 )
 
 // fakeBunEnv set to 1 makes the test binary a stand-in for the JavaScript
@@ -31,6 +33,9 @@ const fakeBunEnv = "BEES_TEST_FAKE_BUN"
 func TestMain(m *testing.M) {
 	if os.Getenv(fakeBunEnv) == "1" {
 		os.Exit(runFakeBun(os.Args[1:]))
+	}
+	if os.Getenv(agenttest.CodexAppServerFakeEnv) == "1" {
+		os.Exit(agenttest.RunCodexAppServer())
 	}
 	os.Exit(m.Run())
 }

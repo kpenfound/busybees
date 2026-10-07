@@ -147,9 +147,10 @@ func openCodeWritableTools() map[Placement]ToolSupport {
 }
 
 // codexWritableTools is where codex's granted configuration
-// (codex_tools.go) is verified before launch: wherever the runner can run
-// `codex features list` and `codex mcp list` the way the turn itself runs.
-// Claude Code's sandbox runs claude alone.
+// (codex_tools.go) can be held and checked: wherever the runner can run
+// `codex app-server` the way the turn itself runs, since a held turn's
+// config/read check runs on that same process. Claude Code's sandbox runs
+// claude alone.
 func codexWritableTools() map[Placement]ToolSupport {
 	return supportOutsideClaudeBox(AgentCodex)
 }

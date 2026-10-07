@@ -58,8 +58,8 @@ type backend interface {
 // closed when it is exhausted. consumeStdin is given req and paths, the
 // same two call()'s command built the command line from, because a
 // conversation decides what to say from the turn's kind exactly as the
-// command line does: codex (backend.go's codexBackend) runs an ordinary or
-// ToolsAll turn as a `codex app-server` conversation and a held or
+// command line does: codex (backend.go's codexBackend) runs an ordinary,
+// ToolsAll or held turn as a `codex app-server` conversation and a
 // restricted turn as `codex exec`, whose stdin the runner already wrote
 // from command's own return before calling consumeStdin; consumeStdin only
 // closes it and reads the exec event stream as it always has.
@@ -284,14 +284,12 @@ func (claudeBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer, 
 
 // codexBackend runs a session as one `codex app-server` process, Codex
 // CLI's JSON-RPC mode, driven by codexRPCRun (codex_rpc.go) — for an
-// ordinary turn, or one granted ToolsAll or granted apply_patch. A held
-// turn (granted built-in tools short of ToolsAll) and a restricted one
-// (RunRestricted) still run as `codex exec --json` exactly as every codex
-// turn did before this backend changed: command and consumeStdin each
-// switch on the same turn kind (paths.restricted, and paths.turn.Tools set
-// for a held turn) to pick the branch, so the two stay in lockstep. Later
-// units move the held and restricted branches onto the app server too and
-// delete the exec one.
+// ordinary turn, one granted ToolsAll, or one held to granted built-in
+// tools short of ToolsAll. A restricted one (RunRestricted) still runs as
+// `codex exec --json` exactly as every codex turn did before this backend
+// changed: command and consumeStdin each switch on paths.restricted to
+// pick the branch, so the two stay in lockstep. A later unit moves the
+// restricted branch onto the app server too and deletes the exec one.
 //
 // The app-server branch, what differs from claude and from codex exec, and
 // how each difference is met:
@@ -300,7 +298,13 @@ func (claudeBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer, 
 //     --dangerously-bypass-approvals-and-sandbox or --skip-git-repo-check:
 //     their counterparts are thread/start's approvalPolicy and sandbox
 //     parameters (codexThreadStartParams), sent once the process is
-//     running, and the app server has no git-repository check.
+//     running, and the app server has no git-repository check. A held
+//     turn's command line also carries codexHeldArgs, and its conversation
+//     asks config/read for the working directory, on this same process,
+//     before any thread starts, and checks the answer with
+//     validateCodexSettings: a failure closes stdin and ends the session
+//     as an error, and no separate probe process ever runs for a held
+//     turn.
 //   - There is no flag to append to the system prompt: it goes as
 //     thread/start's developerInstructions, and the task as turn/start's
 //     input. Nothing is written to codex's stdin ahead of the
@@ -332,35 +336,36 @@ func (claudeBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer, 
 //     and Request.CostCapUSD never stops one.
 type codexBackend struct{}
 
-// codexHeld says whether this turn is one of the two kinds that still run
-// as `codex exec`: restricted (RunRestricted), or writable but granted
-// built-in tools short of ToolsAll (held). command and consumeStdin both
+// codexExecKind says whether this turn is the one kind that still runs as
+// `codex exec`: restricted (RunRestricted). command and consumeStdin both
 // start from this one check, so the two branch alike.
-func codexExecKind(paths sessionPaths) (restricted, granted bool) {
-	granted = !paths.restricted && paths.turn != nil && paths.turn.Tools != nil
-	return paths.restricted, granted
+func codexExecKind(paths sessionPaths) bool {
+	return paths.restricted
 }
 
 func (codexBackend) command(ctx context.Context, r *Runner, b Backend, req Request, paths sessionPaths) (string, []string, string, []envVar, error) {
-	restricted, granted := codexExecKind(paths)
-	if restricted || granted {
-		return codexExecCommand(ctx, r, b, req, paths, restricted, granted)
+	if codexExecKind(paths) {
+		return codexExecCommand(ctx, r, b, req, paths)
 	}
 	return codexAppServerCommand(r, b, req, paths)
 }
 
-// codexAppServerCommand builds an ordinary or ToolsAll turn's command line:
-// `codex app-server` with the session marker, the turn's MCP overrides and
-// the effort configuration, and none of exec's flags — its counterparts
-// are the parameters codexRPCRun sends once the process is running
-// (codex_rpc.go). Nothing is written to stdin: the conversation itself
-// writes everything the turn needs to say.
+// codexAppServerCommand builds an ordinary, ToolsAll or held turn's command
+// line: `codex app-server` with the session marker, a held turn's
+// codexHeldArgs, the turn's MCP overrides and the effort configuration,
+// and none of exec's flags — its counterparts are the parameters
+// codexRPCRun sends once the process is running (codex_rpc.go). Nothing is
+// written to stdin: the conversation itself writes everything the turn
+// needs to say.
 func codexAppServerCommand(r *Runner, b Backend, req Request, paths sessionPaths) (string, []string, string, []envVar, error) {
 	bin := b.executable(r)
 	args := []string{
 		"app-server",
 		// A path-bearing marker independent of optional MCP configuration.
 		"-c", procs.CodexMarker(r.EnvironmentPrefix) + codexValue(paths.dir),
+	}
+	if paths.turn != nil && paths.turn.Tools != nil {
+		args = append(args, codexHeldArgs(paths.turn.Tools)...)
 	}
 	if req.Profile.Effort != "" {
 		args = append(args, "-c", "model_reasoning_effort="+codexValue(codexEffort(req.Profile.Effort)))
@@ -371,54 +376,38 @@ func codexAppServerCommand(r *Runner, b Backend, req Request, paths sessionPaths
 	return bin, args, "", nil, nil
 }
 
-// codexExecCommand builds a held or restricted turn's command line exactly
-// as every codex turn's was built before this backend changed: `codex exec
-// --json`, approvals and the sandbox bypassed or read-only, the session
-// marker, the held or restricted configuration, the model and effort, the
-// MCP overrides, and the system prompt ahead of the task on stdin, which
-// the prompt argument `-` tells codex to read.
-func codexExecCommand(ctx context.Context, r *Runner, b Backend, req Request, paths sessionPaths, restricted, granted bool) (string, []string, string, []envVar, error) {
+// codexExecCommand builds a restricted turn's command line exactly as
+// every codex turn's was built before this backend changed: `codex exec
+// --json`, approvals off and the sandbox read-only, the session marker,
+// the restricted configuration, the model and effort, the MCP overrides,
+// and the system prompt ahead of the task on stdin, which the prompt
+// argument `-` tells codex to read.
+func codexExecCommand(ctx context.Context, r *Runner, b Backend, req Request, paths sessionPaths) (string, []string, string, []envVar, error) {
 	bin := b.executable(r)
-	args := []string{"exec", "--json"}
-	var extra []envVar
-	if restricted || (granted && !slices.Contains(paths.turn.Tools, "apply_patch")) {
-		args = append(args, "--sandbox", "read-only")
-	} else {
-		args = append(args, "--dangerously-bypass-approvals-and-sandbox")
-	}
-	args = append(args,
-		"--skip-git-repo-check",
+	args := []string{"exec", "--json", "--sandbox", "read-only", "--skip-git-repo-check",
 		// A path-bearing marker independent of optional MCP configuration.
-		"-c", procs.CodexMarker(r.EnvironmentPrefix)+codexValue(paths.dir),
-	)
-	if granted {
-		held, err := codexHeldArgs(ctx, paths.probe, bin, req.workDir(), paths.turn.Tools, paths.mcp)
-		if err != nil {
-			return "", nil, "", nil, fmt.Errorf("granted codex setup: %w", err)
-		}
-		args = append(args, held...)
+		"-c", procs.CodexMarker(r.EnvironmentPrefix) + codexValue(paths.dir),
 	}
-	if restricted {
-		args = append(args, codexRestrictedConfigArgs()...)
-		servers, err := codexMCPInventory(ctx, bin, req.workDir(), paths.turn.Env)
-		if err != nil {
-			return "", nil, "", nil, fmt.Errorf("restricted codex setup: %w", err)
+	args = append(args, codexRestrictedConfigArgs()...)
+	servers, err := codexMCPInventory(ctx, bin, req.workDir(), paths.turn.Env)
+	if err != nil {
+		return "", nil, "", nil, fmt.Errorf("restricted codex setup: %w", err)
+	}
+	var entries []string
+	for _, name := range servers {
+		if paths.read != nil && name == ReadServerName {
+			continue
 		}
-		var entries []string
-		for _, name := range servers {
-			if paths.read != nil && name == ReadServerName {
-				continue
-			}
-			entries = append(entries, codexValue(name)+"={enabled=false}")
-		}
-		if paths.read != nil {
-			entries = append(entries, codexValue(ReadServerName)+"={url="+codexValue(paths.read.url)+
-				",bearer_token_env_var="+codexValue(readServerTokenEnv)+"}")
-			extra = append(extra, envVar{readServerTokenEnv, paths.read.token})
-		}
-		if len(entries) > 0 {
-			args = append(args, "-c", "mcp_servers={"+strings.Join(entries, ",")+"}")
-		}
+		entries = append(entries, codexValue(name)+"={enabled=false}")
+	}
+	var extra []envVar
+	if paths.read != nil {
+		entries = append(entries, codexValue(ReadServerName)+"={url="+codexValue(paths.read.url)+
+			",bearer_token_env_var="+codexValue(readServerTokenEnv)+"}")
+		extra = append(extra, envVar{readServerTokenEnv, paths.read.token})
+	}
+	if len(entries) > 0 {
+		args = append(args, "-c", "mcp_servers={"+strings.Join(entries, ",")+"}")
 	}
 	if req.Profile.Model != "" {
 		args = append(args, "--model", req.Profile.Model)
@@ -437,31 +426,38 @@ func codexExecCommand(ctx context.Context, r *Runner, b Backend, req Request, pa
 	return bin, args, stdin, extra, nil
 }
 
-// consumeStdin satisfies stdinBackend: a held or restricted turn's stdin
-// was already written by the runner from command's returned string, so it
-// is only closed here before the exec event stream is read exactly as
-// consume always has; an ordinary or ToolsAll turn's stdin carries nothing
-// yet, and codexRPCRun (codex_rpc.go) drives the whole `codex app-server`
-// conversation over it. Request.ResumeID is not passed through yet: a
-// later unit wires thread/resume.
+// consumeStdin satisfies stdinBackend: a restricted turn's stdin was
+// already written by the runner from command's returned string, so it is
+// only closed here before the exec event stream is read exactly as
+// consume always has; an ordinary, ToolsAll or held turn's stdin carries
+// nothing yet, and codexRPCRun (codex_rpc.go) drives the whole `codex
+// app-server` conversation over it — a held turn's ConfigDir asks
+// config/read on this same process before any thread starts. Request.ResumeID
+// is not passed through yet: a later unit wires thread/resume.
 func (codexBackend) consumeStdin(r *Runner, req Request, paths sessionPaths, stdin io.WriteCloser, stdout io.Reader, transcript io.Writer, cost *costMeter) (*streamEnd, *RateLimit, error) {
-	if restricted, granted := codexExecKind(paths); restricted || granted {
+	if codexExecKind(paths) {
 		_ = stdin.Close()
 		return codexBackend{}.consume(r, stdout, transcript, cost)
 	}
-	outcome, err := codexRPCRun(stdin, stdout, transcript, codexRPCTurn{
+	turn := codexRPCTurn{
 		Cwd:          req.workDir(),
 		Model:        req.Profile.Model,
 		SystemPrompt: req.SystemPrompt,
 		Prompt:       req.Prompt,
-	})
+	}
+	if paths.turn != nil && paths.turn.Tools != nil {
+		turn.Tools = paths.turn.Tools
+		turn.ConfigDir = req.workDir()
+	}
+	outcome, err := codexRPCRun(stdin, stdout, transcript, turn)
 	if err != nil {
 		// codexRPCRun reports every ending spec#9 names — an "error"
-		// notification, a failed turn, or an error response to
-		// thread/start, thread/resume or turn/start — as a plain error,
-		// with no thread id or partial progress to report alongside it:
-		// its message becomes the session's result text, the way a
-		// claude or opencode session with no closing event's stderr does.
+		// notification, a failed turn, an error response to thread/start,
+		// thread/resume or turn/start, or a failed held-settings check —
+		// as a plain error, with no thread id or partial progress to
+		// report alongside it: its message becomes the session's result
+		// text, the way a claude or opencode session with no closing
+		// event's stderr does.
 		return &streamEnd{Subtype: "error", Result: err.Error()}, nil, nil
 	}
 	return &outcome.streamEnd, nil, nil

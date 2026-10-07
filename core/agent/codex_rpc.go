@@ -31,14 +31,19 @@ type codexRPCTurn struct {
 	// Tools are the turn's granted built-in tools: nil for an ordinary
 	// turn or one granted ToolsAll, the tools a held turn is granted
 	// otherwise.
-	Tools     []string
-	ResumeID  string
+	Tools    []string
+	ResumeID string
+	// ConfigDir, set for a held turn, asks config/read for that working
+	// directory before the thread starts, on the same process the turn
+	// runs on; codexRPCRun checks the answer with validateCodexSettings
+	// against codexHeldSettings(Tools) and ends the session as an error,
+	// before any thread/start, when it fails.
 	ConfigDir string
 }
 
 // codexRPCOutcome is what one codex app-server conversation produced, in
-// streamEnd's terms, plus config/read's answer when codexRPCTurn.ConfigDir
-// asked for one.
+// streamEnd's terms, plus config/read's answer, unexamined, when
+// codexRPCTurn.ConfigDir asked for one.
 type codexRPCOutcome struct {
 	streamEnd
 	Config json.RawMessage
@@ -345,13 +350,13 @@ func (c *codexConversation) recordTurnCompleted(params json.RawMessage) error {
 }
 
 // codexRPCRun drives one codex app-server conversation to its end:
-// initialize, the initialized notification, an optional config/read,
+// initialize, the initialized notification, an optional config/read whose
+// answer is checked against the held settings a held turn was given,
 // thread/start or thread/resume, turn/start, then notifications read and
 // answered until turn/completed, after which stdin is closed so the
 // server exits. stdin and stdout are the session's; every line the server
 // writes and every request and response the driver sends goes to
-// transcript. It is not called by codexBackend yet; a later unit wires it
-// in.
+// transcript.
 func codexRPCRun(stdin io.WriteCloser, stdout io.Reader, transcript io.Writer, turn codexRPCTurn) (*codexRPCOutcome, error) {
 	defer func() { _ = stdin.Close() }()
 	c := newCodexConversation(stdin, stdout, transcript)
@@ -370,6 +375,18 @@ func codexRPCRun(stdin io.WriteCloser, stdout io.Reader, transcript io.Writer, t
 			return nil, err
 		}
 		config = result
+		if turn.Tools != nil {
+			var cfg codexEffectiveConfig
+			if err := json.Unmarshal(result, &cfg); err != nil {
+				return nil, fmt.Errorf("decode effective configuration: %w", err)
+			}
+			if cfg.Config == nil || cfg.Origins == nil {
+				return nil, errors.New("decode effective configuration: no config or origins")
+			}
+			if err := validateCodexSettings(cfg, codexHeldSettings(turn.Tools)); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	params := codexThreadStartParams(turn.Cwd, turn.Model, turn.SystemPrompt, turn.Restricted, turn.Tools)

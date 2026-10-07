@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -14,362 +13,291 @@ import (
 	"github.com/kpenfound/busybees/core/agent/agenttest"
 )
 
-// codexInheritedFeatures is what the fake's `codex features list` reports
-// from the user's and the project's configuration, before the runner's
-// overrides: every tool on, a removed feature codex ignores, and a stage
-// of two words.
-const codexInheritedFeatures = `apply_patch_streaming_events  under development  false
-apps                          stable             true
-code_mode_host                stable             true
-image_generation              stable             true
-item_ids                      removed            true
-memories                      stable             false
-multi_agent                   stable             true
-shell_tool                    stable             true
-sleep_tool                    stable             true
-unified_exec                  stable             true
-view_image                    stable             true
-web_search_request            deprecated         false`
-
-// codexFeatures is the fake's `codex features list`: the inherited
-// features with every `-c features.<name>=false` among the probe's
-// arguments ($probe) applied, then managed, a sed script standing for a
-// managed configuration that has the last word.
-func codexFeatures(managed string) string {
-	return `list='` + codexInheritedFeatures + `'
-for f in $(sed -n 's/^features\.\([a-z_]*\)=false$/\1/p' "$probe"); do
-  list="$(printf '%s\n' "$list" | sed "s/^\($f .*\)true\$/\1false/")"
-done
-printf '%s\n' "$list" | sed '` + managed + `'`
+// codexHeldProfile is the profile a held codex turn's tests run: granted a
+// model, an effort and its own MCP server (grantedServer, defined in
+// opencode_tools_test.go).
+func codexHeldProfile() Profile {
+	return Profile{Name: "builder", Agent: AgentCodex, Model: "m", Effort: "high", Timeout: time.Minute,
+		MCP: map[string]MCPEntry{"tools": grantedServer}}
 }
 
-// codexOwnTransport is how the fake reports the session's own server,
-// grantedServer, when the probe's arguments carry it.
-const codexOwnTransport = `{"type":"stdio","command":"/bin/sh","args":["-c","touch mcp-called"],"env":null,"env_vars":[],"cwd":null}`
-
-// codexServers is the fake's `codex mcp list --json`: an inherited server,
-// legacy, enabled unless the probe's arguments disable it, and the
-// session's own server when they carry it, reported as own (a transport).
-func codexServers(own string) string {
-	return `legacy=true
-if grep -qF '"legacy"={enabled=false}' "$probe"; then legacy=false; fi
-own=''
-if grep -q '^mcp_servers\.tools\.command=' "$probe"; then own=',{"name":"tools","enabled":true,"transport":` + own + `}'; fi
-printf '[{"name":"legacy","enabled":%s,"transport":{"type":"stdio","command":"inherited","args":[],"env":null,"env_vars":[],"cwd":null}}%s]\n' "$legacy" "$own"`
-}
-
-// codexConfig is the fake's app server: it answers initialize, and
-// config/read with an effective configuration made from the probe's
-// arguments ($probe) the way codex makes it (every -c key's origin the
-// session flags; approval_policy, agents.enabled, orchestrator.mcp.enabled
-// and web_search as they are set, and otherwise as a user configuration
-// that allows everything has them), then managed, a sed script standing
-// for a layer above the command line, applied to the answer. A
-// notification comes first, as codex sends one. The config/read request
-// is recorded in record.probe.talk.
-func codexConfig(managed string) string {
-	return `origins="$(awk 'prev == "-c" && /^[a-z_.]+=/ { k = $0; sub(/=.*/, "", k); printf "%s\"%s\":{\"name\":{\"type\":\"sessionFlags\"}}", (n++ ? "," : ""), k } { prev = $0 }' "$probe")"
-set_() { grep -qxF -- "$1" "$probe" && printf '%s' "$2" || printf '%s' "$3"; }
-config="{\"approval_policy\":$(set_ 'approval_policy="never"' '"never"' '"on-request"'),\"agents\":{\"enabled\":$(set_ agents.enabled=false false true)},\"orchestrator\":{\"mcp\":{\"enabled\":$(set_ orchestrator.mcp.enabled=false false true)}},\"web_search\":$(set_ 'web_search="disabled"' '"disabled"' '"live"'),\"tools\":{\"web_search\":null}}"
-echo '{"method":"remoteControl/status/changed","params":{}}'
-while IFS= read -r line; do
-  case "$line" in
-  *'"id":1,'*) echo '{"id":1,"result":{}}' ;;
-  *'"id":2,'*) printf '%s\n' "$line" >> "$probe.talk"; printf '{"id":2,"result":{"config":%s,"origins":{%s}}}\n' "$config" "$origins" | sed '` + managed + `' ;;
-  esac
-done`
-}
-
-// codexGrantedFake stands in for codex. `features list`, `mcp list` and
-// `app-server` append a line "probe" and their arguments to
-// record.config-args and run features, servers and config, shell snippets
-// that read the probe's arguments from $probe;
-// the turn records its arguments and environment, marks that it launched,
-// and uses its tools the way codex would under the configuration it was
-// handed: apply_patch writes edited.txt in the working directory unless
-// the read-only sandbox rejects it, the shell touches a marker unless
-// shell_tool is off, the session's "tools" server runs the script its
-// overrides give it, the inherited legacy server and web search touch
-// markers unless they are switched off. A tool the configuration does not
-// give ends as a failed item instead.
-func codexGrantedFake(t *testing.T, features, servers string) (string, string) {
+// codexHeldRequest is a host-placed request for a held codex turn granted
+// tools and its own MCP server, the way a caller holding it to built-in
+// tools would. It also grants the environment variable agenttest.CodexAppServer
+// uses to make the test binary itself the fake app-server process, so the
+// host boundary's env allowlist does not strip it from the process the turn
+// actually runs.
+func codexHeldRequest(t *testing.T, tools ...string) Request {
 	t.Helper()
-	return codexGrantedFakeWith(t, features, servers, codexConfig(""))
+	req := grantAll(Request{Name: "g", Profile: codexHeldProfile(), Workspace: fakeWorkspace{dir: realTempDir(t)}, Prompt: "TASK"}, "FAKE_CODEX_APP_SERVER*")
+	req.Grants.Tools = append(slices.Clone(tools), "mcp__tools")
+	return req
 }
 
-func codexGrantedFakeWith(t *testing.T, features, servers, config string) (string, string) {
-	t.Helper()
-	record := filepath.Join(t.TempDir(), "record")
-	script := `if [ "$1 $2" = "features list" ] || [ "$1 $2" = "mcp list" ] || [ "$1" = app-server ]; then
-  probe="` + record + `.probe"
-  printf '%s\n' "$@" > "$probe"
-  { echo probe; cat "$probe"; } >> "` + record + `.config-args"
-  engine=probe-engine
-  if [ "$1" = app-server ]; then engine=talk-engine; fi
-  if [ -n "$RUN_DIR" ] && [ -f "$RUN_DIR/docker-args.txt" ]; then cp "$RUN_DIR/docker-args.txt" "` + record + `.$engine"; fi
-  case "$1" in
-  features)
-` + features + `
-  ;;
-  mcp)
-` + servers + `
-  ;;
-  *)
-` + config + `
-  ;;
-  esac
-  exit 0
-fi
-printf '%s\n' "$@" > "` + record + `.args"
-env > "` + record + `.env"
-touch "` + record + `.launched"
-has() { grep -qxF -- "$1" "` + record + `.args"; }
-item() { printf '{"type":"item.completed","item":{"type":"%s","status":"%s"}}\n' "$1" "$2"; }
-echo '{"type":"thread.started","thread_id":"thread-g"}'
-if has --dangerously-bypass-approvals-and-sandbox; then echo written > edited.txt; item file_change completed; else item file_change failed; fi
-if has features.shell_tool=false; then item command_execution failed; else touch "` + record + `.shell"; item command_execution completed; fi
-server="$(sed -n 's/^mcp_servers\.tools\.args=\["-c","\(.*\)"\]$/\1/p' "` + record + `.args")"
-if [ -n "$server" ]; then /bin/sh -c "$server"; item mcp_tool_call completed; else item mcp_tool_call failed; fi
-if grep -qF '"legacy"={enabled=false}' "` + record + `.args"; then item mcp_tool_call failed; else touch "` + record + `.legacy"; item mcp_tool_call completed; fi
-if has 'web_search="disabled"'; then item web_search failed; else touch "` + record + `.web"; item web_search completed; fi
-echo '{"type":"item.completed","item":{"type":"agent_message","text":"done"}}'
-echo '{"type":"turn.completed"}'
-`
-	return agenttest.Script(t, "codex", script), record
+// codexHeldPlacement is one placement codexWritableTools declares
+// supported, with how to build a Runner and a Request granted apply_patch
+// for it.
+type codexHeldPlacement struct {
+	where Placement
+	setup func(t *testing.T, bin string) (*Runner, Request)
 }
 
-func codexGrantedDefault(t *testing.T) (string, string) {
-	t.Helper()
-	return codexGrantedFake(t, codexFeatures(""), codexServers(codexOwnTransport))
-}
-
-var codexHeld = heldAgent{
-	profile: func() Profile {
-		return Profile{Name: "builder", Agent: AgentCodex, Model: "m", Effort: "high", Timeout: time.Minute,
-			MCP: map[string]MCPEntry{"tools": grantedServer}}
-	},
-	runner: func(bin string) *Runner { return &Runner{CodexBin: bin} },
-	tools:  []string{"apply_patch", "mcp__tools"},
-	marker: "probe",
-	// Features and servers, then both again with the whole configuration,
-	// then the app server's config/read.
-	probes: 5,
-	talks:  1,
-}
-
-// TestCodexWritableTurnIsHeldToItsGrantedTools: in every placement the
-// contract declares supported, a writable codex turn granted apply_patch
-// and its own MCP server writes through apply_patch and calls the server,
-// and nothing else the inherited configuration turned on is there: the
-// shell, the other tool features, update_plan, web search and the
-// inherited MCP server are switched off. The features that give no tool,
-// and the removed one, are left alone. The configuration is inspected
-// where the turn runs.
-func TestCodexWritableTurnIsHeldToItsGrantedTools(t *testing.T) {
-	for _, pl := range heldPlacements(codexHeld) {
-		t.Run(pl.where.String(), func(t *testing.T) {
-			if !codexWritableTools()[pl.where].Supported {
-				t.Fatalf("%s is not declared supported", pl.where)
-			}
-			bin, record := codexGrantedDefault(t)
-			r, req, probed := pl.setup(t, bin)
-			if PlacementOf(req.Profile) != pl.where {
-				t.Fatalf("the request runs in %s", PlacementOf(req.Profile))
-			}
-			res, err := r.Run(context.Background(), req)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if res.IsError || res.ClaudeID != "thread-g" {
-				t.Fatalf("result: %+v", res)
-			}
-			probed(t, record)
-			dir, _ := json.Marshal(req.workDir())
-			if talk, err := os.ReadFile(record + ".probe.talk"); err != nil || !strings.Contains(string(talk), `"method":"config/read","params":{"cwd":`+string(dir)+`}`) {
-				t.Errorf("config/read did not ask about the working directory: %s, %v", talk, err)
-			}
-			args := lines(t, record+".args")
-			for _, want := range []string{
-				"--dangerously-bypass-approvals-and-sandbox", `approval_policy="never"`, "agents.enabled=false", "orchestrator.mcp.enabled=false",
-				"tools.update_plan.enabled=false", "tools.experimental_request_user_input.enabled=false", `web_search="disabled"`,
-				"features.apps=false", "features.image_generation=false", "features.multi_agent=false", "features.shell_tool=false",
-				"features.sleep_tool=false", "features.view_image=false", `mcp_servers={"legacy"={enabled=false}}`,
-				`mcp_servers.tools.command="/bin/sh"`,
-			} {
-				if !slices.Contains(args, want) {
-					t.Errorf("args lack %s: %v", want, args)
-				}
-			}
-			for _, kept := range []string{"features.code_mode_host=false", "features.unified_exec=false", "features.item_ids=false", "features.memories=false", "--sandbox"} {
-				if slices.Contains(args, kept) {
-					t.Errorf("args carry %s: %v", kept, args)
-				}
-			}
-			// The granted tool wrote into the working directory and the
-			// session's server ran; nothing else did.
-			if b, err := os.ReadFile(filepath.Join(req.workDir(), "edited.txt")); err != nil || string(b) != "written\n" {
-				t.Errorf("apply_patch did not write: %q, %v", b, err)
-			}
-			if _, err := os.Stat(filepath.Join(req.workDir(), "mcp-called")); err != nil {
-				t.Errorf("the session's MCP tool did not run: %v", err)
-			}
-			for _, marker := range []string{".shell", ".legacy", ".web"} {
-				if _, err := os.Stat(record + marker); !errors.Is(err, os.ErrNotExist) {
-					t.Errorf("%s ran without being granted: %v", marker, err)
-				}
-			}
-			transcript, _ := os.ReadFile(res.Transcript)
-			for _, want := range []string{`"type":"file_change","status":"completed"`, `"type":"command_execution","status":"failed"`, `"type":"web_search","status":"failed"`} {
-				if !strings.Contains(string(transcript), want) {
-					t.Errorf("transcript lacks %s:\n%s", want, transcript)
-				}
-			}
-		})
+// codexHeldPlacements are the placements a held codex turn is tested in:
+// host, confined host, container and sbx.
+func codexHeldPlacements() []codexHeldPlacement {
+	return []codexHeldPlacement{
+		{Placement{Sandbox: SandboxNone}, func(t *testing.T, bin string) (*Runner, Request) {
+			return &Runner{CodexBin: bin, SessionsDir: t.TempDir()}, codexHeldRequest(t, "apply_patch")
+		}},
+		{Placement{Sandbox: SandboxNone, Confine: true}, func(t *testing.T, bin string) (*Runner, Request) {
+			work := realTempDir(t)
+			p := codexHeldProfile()
+			p.Confine = true
+			req := Request{Name: "g", Profile: p, Workspace: fakeWorkspace{dir: work}, Prompt: "TASK",
+				Grants: &Grants{Env: []string{"PATH"}, Tools: []string{"apply_patch", "mcp__tools"},
+					Mounts: []Mount{{Path: work, Access: ReadWrite}}}}
+			return &Runner{CodexBin: bin, SessionsDir: t.TempDir(), Confiner: &fakeConfiner{}, SystemPaths: []Mount{}}, req
+		}},
+		{Placement{Sandbox: SandboxContainer}, func(t *testing.T, bin string) (*Runner, Request) {
+			work, session := realTempDir(t), realTempDir(t)
+			p := codexHeldProfile()
+			p.Sandbox, p.SandboxImage = SandboxContainer, "image"
+			req := grantAll(Request{Name: "g", Profile: p, Workspace: fakeWorkspace{dir: work}, SessionDir: session, Prompt: "TASK", Env: map[string]string{"RUN_DIR": session}})
+			req.Grants.Tools = []string{"apply_patch", "mcp__tools"}
+			return &Runner{CodexBin: bin, SessionsDir: t.TempDir(), DockerBin: agenttest.Docker(t, "image", "RUN_DIR")}, req
+		}},
+		{Placement{Sandbox: SandboxSbx}, func(t *testing.T, bin string) (*Runner, Request) {
+			work, session := realTempDir(t), realTempDir(t)
+			p := codexHeldProfile()
+			p.Sandbox = SandboxSbx
+			req := grantAll(Request{Name: "g", Profile: p, Workspace: fakeWorkspace{dir: work}, SessionDir: session, Prompt: "TASK", Env: map[string]string{"RUN_DIR": session}})
+			req.Grants.Tools = []string{"apply_patch", "mcp__tools"}
+			return &Runner{CodexBin: bin, SessionsDir: t.TempDir(), SbxBin: agenttest.Sbx(t, "RUN_DIR")}, req
+		}},
 	}
 }
 
-// A granted tool keeps what the inherited configuration gives it: the
-// shell and view_image stay on, and so does web search.
-func TestCodexWritableTurnKeepsItsGrantedTools(t *testing.T) {
-	bin, record := codexGrantedDefault(t)
-	r, req, _ := heldPlacements(codexHeld)[0].setup(t, bin)
-	req.Grants.Tools = []string{"apply_patch", "shell", "update_plan", "view_image", "web_search", "mcp__tools"}
-	if _, err := r.Run(context.Background(), req); err != nil {
-		t.Fatal(err)
+// codexRecordStarts is how many times the fake started, or 0 when it never
+// ran at all (a refused turn's record file is never created).
+func codexRecordStarts(t *testing.T, record string) int {
+	t.Helper()
+	if _, err := os.Stat(record); errors.Is(err, os.ErrNotExist) {
+		return 0
 	}
-	args := lines(t, record+".args")
-	for _, dropped := range []string{"features.shell_tool=false", "features.view_image=false", "tools.update_plan.enabled=false", `web_search="disabled"`} {
-		if slices.Contains(args, dropped) {
-			t.Errorf("args carry %s for a granted tool: %v", dropped, args)
+	return agenttest.ReadCodexAppServerRecord(t, record).Starts
+}
+
+// codexRecordedThreadStart finds the thread/start request the fake
+// recorded and decodes its parameters.
+func codexRecordedThreadStart(t *testing.T, rec agenttest.CodexAppServerRecord) codexRPCParams {
+	t.Helper()
+	for _, line := range rec.Lines {
+		var l struct {
+			Method string         `json:"method"`
+			Params codexRPCParams `json:"params"`
+		}
+		if json.Unmarshal([]byte(line), &l) == nil && l.Method == "thread/start" {
+			return l.Params
 		}
 	}
-	if !slices.Contains(args, "features.image_generation=false") {
-		t.Errorf("an ungranted tool was left on: %v", args)
-	}
-	for _, marker := range []string{".shell", ".web"} {
-		if _, err := os.Stat(record + marker); err != nil {
-			t.Errorf("granted %s did not run: %v", marker, err)
+	t.Fatalf("thread/start was not recorded: %v", rec.Lines)
+	return codexRPCParams{}
+}
+
+// setDotted sets a dotted key in a decoded JSON object, making the nested
+// objects it needs along the way.
+func setDotted(m map[string]any, key string, value any) {
+	parts := strings.Split(key, ".")
+	for _, p := range parts[:len(parts)-1] {
+		next, ok := m[p].(map[string]any)
+		if !ok {
+			next = map[string]any{}
+			m[p] = next
 		}
+		m = next
+	}
+	m[parts[len(parts)-1]] = value
+}
+
+// codexConfigAnswer is config/read's config and origins for a held turn
+// granted tools, with every codexHeldSettings key set to the value the
+// command line gave it and codexSessionFlags as its origin: by default,
+// what a turn whose command line won every held setting looks like.
+func codexConfigAnswer(tools []string) (config, origins map[string]any) {
+	config, origins = map[string]any{}, map[string]any{}
+	for _, s := range codexHeldSettings(tools) {
+		var v any
+		_ = json.Unmarshal([]byte(s.value), &v)
+		setDotted(config, s.key, v)
+		origins[s.key] = map[string]any{"name": map[string]any{"type": codexSessionFlags}}
+	}
+	return config, origins
+}
+
+// codexCompletedActions scripts a fake `codex app-server`'s one action once
+// turn/start is answered: a turn/completed notification reporting the turn
+// as completed, so the driver's awaitTurnCompleted does not wait forever for
+// a notification the script never schedules.
+func codexCompletedActions() []agenttest.CodexAppServerAction {
+	return []agenttest.CodexAppServerAction{
+		{Notify: &agenttest.CodexAppServerMessage{Method: "turn/completed", Params: map[string]any{"turn": map[string]any{"status": "completed"}}}},
 	}
 }
 
-// In every supported placement, a codex turn not granted apply_patch runs
-// in codex's read-only sandbox, where the patch is rejected, and its MCP
-// server still runs.
-func TestCodexWritableTurnWithoutApplyPatchIsReadOnly(t *testing.T) {
-	for _, pl := range heldPlacements(codexHeld) {
-		t.Run(pl.where.String(), func(t *testing.T) {
-			bin, record := codexGrantedDefault(t)
-			r, req, probed := pl.setup(t, bin)
-			req.Grants.Tools = []string{"mcp__tools"}
+// TestCodexHeldTurnRunsOnOneProcess: a held codex turn's command line
+// carries codexHeldArgs, and its config/read check and its thread/start
+// both reach the one `codex app-server` process the turn itself runs on
+// (spec#4): the fake started once, and config/read precedes thread/start
+// in what it received.
+func TestCodexHeldTurnRunsOnOneProcess(t *testing.T) {
+	config, origins := codexConfigAnswer([]string{"apply_patch"})
+	bin, record := agenttest.CodexAppServer(t, agenttest.CodexAppServerScript{
+		ConfigResult: map[string]any{"config": config, "origins": origins},
+		ThreadID:     "thread-g",
+		Actions:      codexCompletedActions(),
+	})
+	r, req := codexHeldPlacements()[0].setup(t, bin)
+	res, err := r.Run(context.Background(), req)
+	if err != nil || res.IsError || res.ClaudeID != "thread-g" {
+		t.Fatalf("run: %+v, %v", res, err)
+	}
+	rec := agenttest.ReadCodexAppServerRecord(t, record)
+	if rec.Starts != 1 {
+		t.Fatalf("the fake started %d times, want 1", rec.Starts)
+	}
+	args := rec.Argv[0]
+	for _, want := range []string{
+		"app-server", `approval_policy="never"`, "agents.enabled=false", "orchestrator.mcp.enabled=false",
+		"tools.experimental_request_user_input.enabled=false", "tools.update_plan.enabled=false", `web_search="disabled"`,
+	} {
+		if !slices.Contains(args, want) {
+			t.Errorf("args lack %s: %v", want, args)
+		}
+	}
+	for _, gone := range []string{"exec", "--json", "--sandbox", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check", "-"} {
+		if slices.Contains(args, gone) {
+			t.Errorf("args carry %s, which an app-server turn does not take: %v", gone, args)
+		}
+	}
+	configIdx, startIdx := -1, -1
+	for i, line := range rec.Lines {
+		switch {
+		case strings.Contains(line, `"method":"config/read"`):
+			configIdx = i
+		case strings.Contains(line, `"method":"thread/start"`):
+			startIdx = i
+		}
+	}
+	if configIdx < 0 || startIdx < 0 || configIdx > startIdx {
+		t.Fatalf("config/read did not precede thread/start on the one process: %v", rec.Lines)
+	}
+}
+
+// TestCodexHeldTurnSandbox: thread/start's sandbox is read-only for a held
+// turn not granted apply_patch and danger-full-access for one that is,
+// with approvalPolicy always "never" (spec#5's table, for a held turn).
+func TestCodexHeldTurnSandbox(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		tools   []string
+		sandbox string
+	}{
+		{"without apply_patch", nil, "read-only"},
+		{"with apply_patch", []string{"apply_patch"}, "danger-full-access"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			config, origins := codexConfigAnswer(tc.tools)
+			bin, record := agenttest.CodexAppServer(t, agenttest.CodexAppServerScript{
+				ConfigResult: map[string]any{"config": config, "origins": origins},
+				ThreadID:     "thread-g",
+				Actions:      codexCompletedActions(),
+			})
+			r := &Runner{CodexBin: bin, SessionsDir: t.TempDir()}
+			req := codexHeldRequest(t, tc.tools...)
 			res, err := r.Run(context.Background(), req)
 			if err != nil || res.IsError {
 				t.Fatalf("run: %+v, %v", res, err)
 			}
-			probed(t, record)
-			args := lines(t, record+".args")
-			if flagValue(args, "--sandbox") != "read-only" || slices.Contains(args, "--dangerously-bypass-approvals-and-sandbox") || !slices.Contains(args, `approval_policy="never"`) {
-				t.Errorf("args: %v", args)
+			rec := agenttest.ReadCodexAppServerRecord(t, record)
+			start := codexRecordedThreadStart(t, rec)
+			if start.Sandbox != tc.sandbox {
+				t.Errorf("sandbox = %q, want %q", start.Sandbox, tc.sandbox)
 			}
-			if _, err := os.Stat(filepath.Join(req.workDir(), "edited.txt")); !errors.Is(err, os.ErrNotExist) {
-				t.Errorf("apply_patch wrote without being granted: %v", err)
-			}
-			if _, err := os.Stat(filepath.Join(req.workDir(), "mcp-called")); err != nil {
-				t.Errorf("the session's MCP tool did not run: %v", err)
+			if start.ApprovalPolicy != "never" {
+				t.Errorf("approvalPolicy = %q, want never", start.ApprovalPolicy)
 			}
 		})
 	}
 }
 
-// TestCodexWritableTurnRefusesAWiderEffectiveConfiguration: in every
-// supported placement, a managed configuration that keeps the shell on,
-// or update_plan or delegation, over the runner's override is found by
-// the inspection where the turn runs, and the turn is refused before
-// codex is launched.
-func TestCodexWritableTurnRefusesAWiderEffectiveConfiguration(t *testing.T) {
-	for _, widened := range []struct {
-		name, features, config, want string
-	}{
-		{"shell", codexFeatures(`s/^\(shell_tool .*\)false$/\1true/`), codexConfig(""), `effective feature "shell_tool" is still enabled`},
-		{"update_plan", codexFeatures(""), codexConfig(`s/"tools.update_plan.enabled":{"name":{"type":"sessionFlags"}}/"tools.update_plan.enabled":{"name":{"type":"mdm"}}/`),
-			`effective setting "tools.update_plan.enabled" comes from the "mdm" layer, not the turn's command line`},
-		{"delegation", codexFeatures(""), codexConfig(`s/"agents":{"enabled":false}/"agents":{"enabled":true}/;s/"agents.enabled":{"name":{"type":"sessionFlags"}}/"agents.enabled":{"name":{"type":"system"}}/`),
-			`effective setting "agents.enabled" comes from the "system" layer`},
-	} {
-		for _, pl := range heldPlacements(codexHeld) {
-			t.Run(widened.name+"/"+pl.where.String(), func(t *testing.T) {
-				bin, record := codexGrantedFakeWith(t, widened.features, codexServers(codexOwnTransport), widened.config)
-				r, req, _ := pl.setup(t, bin)
-				_, err := r.Run(context.Background(), req)
-				if err == nil || !strings.Contains(err.Error(), widened.want) {
-					t.Fatalf("error = %v, want %q", err, widened.want)
-				}
-				if _, err := os.Stat(record + ".launched"); !errors.Is(err, os.ErrNotExist) {
-					t.Fatalf("codex launched on a widened configuration: %v", err)
-				}
-			})
-		}
-	}
-}
-
-// TestCodexWritableTurnFailsClosedBeforeLaunch: every way the effective
-// configuration can defeat the hold, or fail to say, refuses the turn
-// before codex is launched.
+// TestCodexWritableTurnFailsClosedBeforeLaunch: every way config/read's
+// answer can defeat the hold, or fail to say, ends the session as an
+// error with no thread/start sent and no second process started
+// (spec#4). "app server without an answer" covers the app-server process
+// exiting before it answers config/read: codexAppServerEnded gives the
+// driver's one deterministic message whether that showed up as a failed
+// write or a read already at its end, so the assertion is on that message
+// rather than on a pipe error.
 func TestCodexWritableTurnFailsClosedBeforeLaunch(t *testing.T) {
+	tools := []string{"apply_patch"}
 	for _, tc := range []struct {
-		name, features, servers, want string
-		config                        string
+		name   string
+		script agenttest.CodexAppServerScript
+		want   string
 	}{
-		{"failed feature inventory", `echo broken >&2; exit 3`, codexServers(codexOwnTransport), "list features", ""},
-		{"unreadable feature inventory", `echo 'shell_tool stable maybe'`, codexServers(codexOwnTransport), "unreadable line", ""},
-		{"empty feature inventory", `true`, codexServers(codexOwnTransport), "no feature listed", ""},
-		{"a new feature kept on", codexFeatures(`$a\
-new_tool                      stable             true`), codexServers(codexOwnTransport), `effective feature "new_tool" is still enabled`, ""},
-		{"failed server inventory", codexFeatures(""), `echo broken >&2; exit 3`, "list MCP servers", ""},
-		{"malformed server inventory", codexFeatures(""), `echo invalid`, "decode MCP servers", ""},
-		{"null server inventory", codexFeatures(""), `echo null`, "must be an array", ""},
-		{"inherited server re-enabled", codexFeatures(""), `echo '[{"name":"legacy","enabled":true},{"name":"tools","enabled":true,"transport":` + codexOwnTransport + `}]'`, `MCP server "legacy" is not disabled`, ""},
-		{"inherited server enabled by default", codexFeatures(""), `echo '[{"name":"legacy"},{"name":"tools","enabled":true,"transport":` + codexOwnTransport + `}]'`, `MCP server "legacy" is not disabled`, ""},
-		{"own server replaced", codexFeatures(""), codexServers(`{"type":"stdio","command":"evil","args":["-c","touch mcp-called"]}`), `MCP server "tools" is not the session's own`, ""},
-		{"own server given an environment", codexFeatures(""), codexServers(`{"type":"stdio","command":"/bin/sh","args":["-c","touch mcp-called"],"env":{"NODE_OPTIONS":"--require /tmp/evil.js"}}`), `MCP server "tools" is not the session's own`, ""},
-		{"own server given a directory", codexFeatures(""), codexServers(`{"type":"stdio","command":"/bin/sh","args":["-c","touch mcp-called"],"cwd":"/tmp"}`), `MCP server "tools" is not the session's own`, ""},
-		{"own server given a key", codexFeatures(""), codexServers(`{"type":"stdio","command":"/bin/sh","args":["-c","touch mcp-called"],"wrapper":"sudo"}`), `MCP server "tools" is not the session's own`, ""},
-		{"own server reached over http", codexFeatures(""), codexServers(`{"type":"streamable_http","url":"http://evil.example/mcp"}`), `MCP server "tools" is not the session's own`, ""},
-		{"own server without a transport", codexFeatures(""), `echo '[{"name":"legacy","enabled":false},{"name":"tools","enabled":true}]'`, `MCP server "tools" is not the session's own`, ""},
-		{"own server disabled", codexFeatures(""), `echo '[{"name":"legacy","enabled":false},{"name":"tools","enabled":false,"transport":` + codexOwnTransport + `}]'`, `MCP server "tools", the session's own, is not enabled`, ""},
-		{"own server removed", codexFeatures(""), `echo '[{"name":"legacy","enabled":false}]'`, `removed the session's MCP server "tools"`, ""},
-		{"app server without an answer", codexFeatures(""), codexServers(codexOwnTransport), "ended without answering config/read", `exit 0`},
-		{"app server failed", codexFeatures(""), codexServers(codexOwnTransport), "read effective configuration", `echo broken >&2; exit 3`},
-		{"config/read refused", codexFeatures(""), codexServers(codexOwnTransport), "config/read: not allowed", codexConfig(`s/.*/{"id":2,"error":{"message":"not allowed"}}/`)},
-		{"config/read malformed", codexFeatures(""), codexServers(codexOwnTransport), "decode effective configuration", codexConfig(`s/.*/{"id":2,"result":"x"}/`)},
-		{"config/read without origins", codexFeatures(""), codexServers(codexOwnTransport), "no config or origins", codexConfig(`s/.*/{"id":2,"result":{"config":{}}}/`)},
-		{"a setting without an origin", codexFeatures(""), codexServers(codexOwnTransport), `effective setting "tools.update_plan.enabled" has no origin`,
-			codexConfig(`s/"tools.update_plan.enabled":{"name":{"type":"sessionFlags"}},//`)},
-		{"a setting with another value", codexFeatures(""), codexServers(codexOwnTransport), `effective setting "web_search" is live, want "disabled"`,
-			codexConfig(`s/"web_search":"disabled"/"web_search":"live"/`)},
-		{"approvals asked for", codexFeatures(""), codexServers(codexOwnTransport), `effective setting "approval_policy" is on-request`,
-			codexConfig(`s/"approval_policy":"never"/"approval_policy":"on-request"/`)},
+		{"app server without an answer", agenttest.CodexAppServerScript{ExitBefore: "config/read"}, "the app server ended without answering config/read"},
+		{"config/read refused", agenttest.CodexAppServerScript{ConfigError: &agenttest.CodexRPCError{Code: -32000, Message: "not allowed"}}, "config/read: not allowed"},
+		{"config/read malformed", agenttest.CodexAppServerScript{ConfigResult: "x"}, "decode effective configuration"},
+		{"config/read without origins", agenttest.CodexAppServerScript{ConfigResult: map[string]any{"config": map[string]any{}}}, "no config or origins"},
+		{"a setting without an origin", func() agenttest.CodexAppServerScript {
+			config, origins := codexConfigAnswer(tools)
+			delete(origins, "tools.update_plan.enabled")
+			return agenttest.CodexAppServerScript{ConfigResult: map[string]any{"config": config, "origins": origins}}
+		}(), `effective setting "tools.update_plan.enabled" has no origin`},
+		{"a setting with another value", func() agenttest.CodexAppServerScript {
+			config, origins := codexConfigAnswer(tools)
+			setDotted(config, "web_search", "live")
+			return agenttest.CodexAppServerScript{ConfigResult: map[string]any{"config": config, "origins": origins}}
+		}(), `effective setting "web_search" is live, want "disabled"`},
+		{"approvals asked for", func() agenttest.CodexAppServerScript {
+			config, origins := codexConfigAnswer(tools)
+			setDotted(config, "approval_policy", "on-request")
+			return agenttest.CodexAppServerScript{ConfigResult: map[string]any{"config": config, "origins": origins}}
+		}(), `effective setting "approval_policy" is on-request`},
+		{"a managed layer wins", func() agenttest.CodexAppServerScript {
+			config, origins := codexConfigAnswer(tools)
+			origins["agents.enabled"] = map[string]any{"name": map[string]any{"type": "mdm"}}
+			return agenttest.CodexAppServerScript{ConfigResult: map[string]any{"config": config, "origins": origins}}
+		}(), `effective setting "agents.enabled" comes from the "mdm" layer, not the turn's command line`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.config == "" {
-				tc.config = codexConfig("")
+			tc.script.ThreadID = "thread-g"
+			bin, record := agenttest.CodexAppServer(t, tc.script)
+			r := &Runner{CodexBin: bin, SessionsDir: t.TempDir()}
+			req := codexHeldRequest(t, tools...)
+			res, err := r.Run(context.Background(), req)
+			if err != nil {
+				t.Fatal(err)
 			}
-			bin, record := codexGrantedFakeWith(t, tc.features, tc.servers, tc.config)
-			r, req, _ := heldPlacements(codexHeld)[0].setup(t, bin)
-			_, err := r.Run(context.Background(), req)
-			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "granted codex setup") {
-				t.Fatalf("error = %v, want %q", err, tc.want)
+			if !res.IsError || res.ErrorSubtype != "error" || !strings.Contains(res.ResultText, tc.want) {
+				t.Fatalf("result = %+v, want an error containing %q", res, tc.want)
 			}
-			if _, err := os.Stat(record + ".launched"); !errors.Is(err, os.ErrNotExist) {
-				t.Fatalf("codex launched after the granted setup failed: %v", err)
+			rec := agenttest.ReadCodexAppServerRecord(t, record)
+			if rec.Starts != 1 {
+				t.Fatalf("the fake started %d times, want 1", rec.Starts)
+			}
+			for _, line := range rec.Lines {
+				if strings.Contains(line, `"method":"thread/start"`) {
+					t.Fatalf("thread/start was sent after a failed held-settings check: %v", rec.Lines)
+				}
 			}
 		})
 	}
 }
 
 // Every placement the contract declares codex unsupported in is refused
-// before anything starts, the inventories included, with ErrUnsupported
-// naming the agent, the sandbox and the remedy.
+// before anything starts, with ErrUnsupported naming the agent, the
+// sandbox and the remedy.
 func TestCodexWritableTurnRefusedWhereUnsupported(t *testing.T) {
 	var unsupported []Placement
 	for _, p := range Placements {
@@ -382,8 +310,8 @@ func TestCodexWritableTurnRefusedWhereUnsupported(t *testing.T) {
 	}
 	for _, p := range unsupported {
 		t.Run(p.String(), func(t *testing.T) {
-			bin, record := codexGrantedDefault(t)
-			prof := codexHeld.profile()
+			bin, record := agenttest.CodexAppServer(t, agenttest.CodexAppServerScript{ThreadID: "thread-g"})
+			prof := codexHeldProfile()
 			prof.Sandbox, prof.Confine = p.Sandbox, p.Confine
 			req := grantAll(Request{Name: "g", Profile: prof, Workspace: fakeWorkspace{dir: realTempDir(t)}, Prompt: "TASK"})
 			req.Grants.Tools = []string{"apply_patch", "mcp__tools"}
@@ -397,10 +325,8 @@ func TestCodexWritableTurnRefusedWhereUnsupported(t *testing.T) {
 					t.Errorf("error %q does not name %s", err, want)
 				}
 			}
-			for _, marker := range []string{".launched", ".config-args"} {
-				if _, err := os.Stat(record + marker); !errors.Is(err, os.ErrNotExist) {
-					t.Errorf("%s written for a refused turn: %v", marker, err)
-				}
+			if n := codexRecordStarts(t, record); n != 0 {
+				t.Errorf("codex launched for a refused turn: %d starts", n)
 			}
 			if entries, _ := os.ReadDir(r.SessionsDir); len(entries) != 0 {
 				t.Errorf("a session directory was made for a refused turn: %v", entries)
@@ -421,10 +347,10 @@ func TestCodexWritableTurnRefusesWhatItCannotHold(t *testing.T) {
 		{"another agent's tool name", []string{"Read"}, []string{`"codex"`, `no built-in tool "Read"`, "grant one of apply_patch, image_generation, shell"}},
 		{"shell without apply_patch", []string{"shell"}, []string{`"codex"`, "in sandbox %s", `withholds "apply_patch"`, `would hold "shell" too`, `grant "apply_patch" as well, or leave out "shell"`}},
 	} {
-		for _, pl := range heldPlacements(codexHeld) {
+		for _, pl := range codexHeldPlacements() {
 			t.Run(tc.name+"/"+pl.where.String(), func(t *testing.T) {
-				bin, record := codexGrantedDefault(t)
-				r, req, _ := pl.setup(t, bin)
+				bin, record := agenttest.CodexAppServer(t, agenttest.CodexAppServerScript{ThreadID: "thread-g"})
+				r, req := pl.setup(t, bin)
 				req.Grants.Tools = append(slices.Clone(tc.tools), "mcp__tools")
 				_, err := r.Run(context.Background(), req)
 				if !errors.Is(err, ErrUnsupported) {
@@ -438,43 +364,10 @@ func TestCodexWritableTurnRefusesWhatItCannotHold(t *testing.T) {
 						t.Errorf("error %q does not say %s", err, want)
 					}
 				}
-				for _, marker := range []string{".launched", ".config-args"} {
-					if _, err := os.Stat(record + marker); !errors.Is(err, os.ErrNotExist) {
-						t.Errorf("%s written for a refused turn: %v", marker, err)
-					}
+				if n := codexRecordStarts(t, record); n != 0 {
+					t.Errorf("codex launched for a refused grant: %d starts", n)
 				}
 			})
 		}
-	}
-}
-
-// A session's remote server is compared whole: its url, bearer variable
-// and headers, and nothing added.
-func TestCodexHoldComparesTheSessionServersWhole(t *testing.T) {
-	own := map[string]MCPEntry{"remote": {URL: "https://x.example/mcp", BearerTokenEnv: "TOKEN", Headers: map[string]string{"X-Role": "builder"}}}
-	for _, tc := range []struct {
-		name, transport, want string
-	}{
-		{"as written", `{"type":"streamable_http","url":"https://x.example/mcp","bearer_token_env_var":"TOKEN","http_headers":{"X-Role":"builder"},"env_http_headers":null,"http_headers_helper":null}`, ""},
-		{"another bearer variable", `{"type":"streamable_http","url":"https://x.example/mcp","bearer_token_env_var":"OTHER","http_headers":{"X-Role":"builder"}}`, "is not the session's own"},
-		{"a header added", `{"type":"streamable_http","url":"https://x.example/mcp","bearer_token_env_var":"TOKEN","http_headers":{"X-Role":"builder","X-Forward":"evil"}}`, "is not the session's own"},
-		{"a header from the environment", `{"type":"streamable_http","url":"https://x.example/mcp","bearer_token_env_var":"TOKEN","http_headers":{"X-Role":"builder"},"env_http_headers":{"X-Key":"SECRET"}}`, "is not the session's own"},
-		{"a headers helper", `{"type":"streamable_http","url":"https://x.example/mcp","bearer_token_env_var":"TOKEN","http_headers":{"X-Role":"builder"},"http_headers_helper":"/tmp/evil"}`, "is not the session's own"},
-		{"headers dropped", `{"type":"streamable_http","url":"https://x.example/mcp","bearer_token_env_var":"TOKEN"}`, "is not the session's own"},
-		{"another url", `{"type":"streamable_http","url":"https://evil.example/mcp","bearer_token_env_var":"TOKEN","http_headers":{"X-Role":"builder"}}`, "is not the session's own"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var servers []codexServer
-			if err := json.Unmarshal([]byte(`[{"name":"remote","enabled":true,"transport":`+tc.transport+`}]`), &servers); err != nil {
-				t.Fatal(err)
-			}
-			err := validateCodexServers(servers, own)
-			switch {
-			case tc.want == "" && err != nil:
-				t.Errorf("refused: %v", err)
-			case tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)):
-				t.Errorf("error = %v, want %q", err, tc.want)
-			}
-		})
 	}
 }
