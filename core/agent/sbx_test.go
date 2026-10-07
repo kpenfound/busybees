@@ -840,19 +840,32 @@ func TestSandboxGuard(t *testing.T) {
 // agent's ordinary command inside `sbx exec`.
 func TestSandboxSessionRunsEveryAgent(t *testing.T) {
 	for _, tc := range []struct {
-		agent, stream string
-		want          []string // in the command inside
+		agent string
+		bin   func(t *testing.T) string
+		want  []string // in the command inside
 	}{
-		{AgentCodex, `echo '{"type":"thread.started","thread_id":"t1"}'
-echo '{"type":"item.completed","item":{"type":"agent_message","text":"boxed"}}'
-echo '{"type":"turn.completed"}'`, []string{"exec --json --dangerously-bypass-approvals-and-sandbox", "mcp_servers.tools.url=\"http://host.docker.internal:45678/mcp\""}},
-		{AgentOpenCode, `echo '{"type":"text","sessionID":"s1","part":{"type":"text","text":"boxed"}}'
-echo '{"type":"step_finish","sessionID":"s1","part":{"type":"step-finish","reason":"stop","cost":0}}'`, []string{"run --format json --auto"}},
+		{AgentCodex, func(t *testing.T) string {
+			// Codex's stdin stays open for the conversation, so it cannot
+			// share the drain-then-stream template below: the handshake
+			// answers initialize, thread/start and turn/start off the args
+			// this process was started with, the args file capturing argv
+			// as every other agent's does.
+			return fakeCodexAppServer(t, "t1", "turn-1", `printf '%s\n' "$@" > "$TASK_SESSION_DIR/args.txt"
+echo '{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"type":"agent_message","text":"boxed"}}}'
+echo '{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"status":"completed"}}}'
+cat >/dev/null
+`)
+		}, []string{"app-server", `mcp_servers.tools.url="http://host.docker.internal:45678/mcp"`}},
+		{AgentOpenCode, func(t *testing.T) string {
+			return agenttest.Script(t, AgentOpenCode, `printf '%s\n' "$@" > "$TASK_SESSION_DIR/args.txt"
+cat > /dev/null
+echo '{"type":"text","sessionID":"s1","part":{"type":"text","text":"boxed"}}'
+echo '{"type":"step_finish","sessionID":"s1","part":{"type":"step-finish","reason":"stop","cost":0}}'
+`)
+		}, []string{"run --format json --auto"}},
 	} {
 		t.Run(tc.agent, func(t *testing.T) {
-			bin := agenttest.Script(t, tc.agent, `printf '%s\n' "$@" > "$TASK_SESSION_DIR/args.txt"
-cat > /dev/null
-`+tc.stream+"\n")
+			bin := tc.bin(t)
 			r := newRunner(t, "")
 			r.CodexBin, r.OpenCodeBin = bin, bin
 			r.SbxBin = fakeSbx(t)

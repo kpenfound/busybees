@@ -35,7 +35,7 @@ func capRun(t *testing.T, agentName, body string, capUSD float64) *Result {
 		r.PiBin = fakePi(t, body)
 		role = piRole("")
 	case AgentCodex:
-		r.CodexBin = fakeCodex(t, body)
+		r.CodexBin = fakeCodexAppServer(t, "thread-1", "turn-1", body)
 		role = codexRole("")
 	}
 	res, err := r.Run(context.Background(), Request{Name: "cap", Profile: role, Workspace: fakeWorkspace{dir: t.TempDir()}, Prompt: "TASK", CostCapUSD: capUSD})
@@ -238,9 +238,10 @@ func readArgs(t *testing.T, dir string) []string {
 // and a claude turn killed before its result event reported none.
 func TestCostCapUnknownCostIsNotTheCap(t *testing.T) {
 	res := capRun(t, AgentCodex, `
-echo '{"type":"thread.started","thread_id":"thread-1"}'
-echo '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"done"}}'
-echo '{"type":"turn.completed","usage":{"input_tokens":900000,"cached_input_tokens":0,"output_tokens":900000}}'
+echo '{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"id":"item_0","type":"agent_message","text":"done"}}}'
+echo '{"jsonrpc":"2.0","method":"thread/tokenUsage/updated","params":{"usage":{"inputTokens":900000,"outputTokens":900000}}}'
+echo '{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"status":"completed"}}}'
+cat >/dev/null
 `, 0.01)
 	if res.CostCapped || res.IsError || res.CostKnown || res.ResultText != "done" {
 		t.Fatalf("codex result: %+v", res)

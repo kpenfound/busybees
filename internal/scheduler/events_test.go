@@ -622,7 +622,8 @@ func TestARetryRunsOnTheFallbackProfilesAgent(t *testing.T) {
 	if first[1] != "-p" || slices.Contains(first, "--fallback-model") {
 		t.Errorf("the attempt was not a plain claude session: %v", first)
 	}
-	if retry := argsOfNamed(t, h, "developer-issue-1-r1-retry1"); retry[1] != "exec" || argValue(retry, "--model") != "gpt-cheap" {
+	retry := argsOfNamed(t, h, "developer-issue-1-r1-retry1")
+	if retry[1] != "app-server" || threadStartModelOfNamed(t, h, "developer-issue-1-r1-retry1") != "gpt-cheap" {
 		t.Errorf("the retry was not a codex session on gpt-cheap: %v", retry)
 	}
 }
@@ -688,7 +689,7 @@ func TestEachRetryMovesOneStepDownTheFallbackChain(t *testing.T) {
 			t.Errorf("attempt %d ran on model %q (fallback %v), want %q %v", i+1, starts[i].Model, starts[i].Fallback, want.model, want.fallback)
 		}
 	}
-	if retry := argsOfNamed(t, h, "developer-issue-1-r1-retry1"); retry[1] != "exec" || argValue(retry, "--model") != "gpt-mid" {
+	if retry := argsOfNamed(t, h, "developer-issue-1-r1-retry1"); retry[1] != "app-server" || threadStartModelOfNamed(t, h, "developer-issue-1-r1-retry1") != "gpt-mid" {
 		t.Errorf("the first retry was not a codex session on gpt-mid: %v", retry)
 	}
 	if retry := argsOfNamed(t, h, "developer-issue-1-r1-retry2"); retry[1] != "run" || argValue(retry, "--model") != "ollama/last" {

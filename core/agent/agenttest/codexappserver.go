@@ -276,7 +276,7 @@ func RunCodexAppServer() int {
 		}
 		if script.Interrupt != nil {
 			respond(msg.ID, map[string]any{}, nil)
-			notify("turn/completed", map[string]any{"status": script.Interrupt.Status})
+			notify("turn/completed", map[string]any{"turn": map[string]any{"status": script.Interrupt.Status}})
 		}
 		return true
 	}
@@ -313,15 +313,9 @@ func RunCodexAppServer() int {
 	}
 	respond(msg.ID, script.InitializeResult, nil)
 
-	msg, ok = await("config/read")
-	if !ok {
-		return 0
-	}
-	if script.ExitBefore == "config/read" {
-		return 0
-	}
-	respond(msg.ID, script.ConfigResult, script.ConfigError)
-
+	// config/read is optional: only a held turn sends it. Read messages
+	// until thread/start or thread/resume arrives, answering config/read
+	// along the way when the client sent one.
 	var threadMethod string
 	for {
 		msg, ok = readLine()
@@ -331,8 +325,16 @@ func RunCodexAppServer() int {
 		if handleInterrupt(msg) {
 			continue
 		}
-		if msg.Method == "thread/start" || msg.Method == "thread/resume" {
+		switch msg.Method {
+		case "config/read":
+			if script.ExitBefore == "config/read" {
+				return 0
+			}
+			respond(msg.ID, script.ConfigResult, script.ConfigError)
+		case "thread/start", "thread/resume":
 			threadMethod = msg.Method
+		}
+		if threadMethod != "" {
 			break
 		}
 	}

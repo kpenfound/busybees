@@ -121,9 +121,6 @@ func TestEveryBackendRunsThroughFakeContainer(t *testing.T) {
 			body := `printf '%s\n' "$@" > "$RUN_DIR/args"
 echo '{"type":"result","subtype":"success","result":"ok"}'`
 			switch backend {
-			case AgentCodex:
-				body = `printf '%s\n' "$@" > "$RUN_DIR/args"
-echo '{"type":"turn.completed"}'`
 			case AgentOpenCode:
 				body = `printf '%s\n' "$@" > "$RUN_DIR/args"
 echo '{"type":"step_finish","part":{"reason":"stop"}}'`
@@ -131,7 +128,19 @@ echo '{"type":"step_finish","part":{"reason":"stop"}}'`
 				body = `printf '%s\n' "$@" > "$RUN_DIR/args"
 echo '{"type":"message_end","message":{"role":"assistant","stopReason":"stop"}}'`
 			}
-			bin := agenttest.Script(t, backend, body)
+			var bin string
+			if backend == AgentCodex {
+				// Codex's stdin stays open for the conversation, unlike
+				// every other backend's bounded write: the handshake
+				// answers initialize, thread/start and turn/start before
+				// the turn completes.
+				bin = agenttest.Script(t, backend, codexAppServerHandshake("thread-g", "turn-g")+`printf '%s\n' "$@" > "$RUN_DIR/args"
+echo '{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"status":"completed"}}}'
+cat >/dev/null
+`)
+			} else {
+				bin = agenttest.Script(t, backend, body)
+			}
 			r := Runner{ClaudeBin: bin, CodexBin: bin, OpenCodeBin: bin, PiBin: bin, DockerBin: agenttest.Docker(t, "image", "RUN_DIR"), ContainerLabel: "custom.session"}
 			res, err := r.Run(context.Background(), grantAll(Request{SessionDir: dir, Workspace: fakeWorkspace{dir: t.TempDir()}, Profile: Profile{Name: "custom", Agent: backend, Sandbox: SandboxContainer, SandboxImage: "image"}, Env: map[string]string{"RUN_DIR": dir}}))
 			if err != nil || res.IsError {

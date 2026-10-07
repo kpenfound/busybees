@@ -169,9 +169,8 @@ func TestASandboxSessionEnforcesThePolicyItReports(t *testing.T) {
 func TestASandboxSessionRunsClaudeCodexAndOpenCode(t *testing.T) {
 	streams := map[string]string{
 		AgentClaude: claudeResult,
-		AgentCodex: `echo '{"type":"thread.started","thread_id":"t1"}'
-echo '{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}'
-echo '{"type":"turn.completed"}'`,
+		AgentCodex: `echo '{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"type":"agent_message","text":"ok"}}}'
+echo '{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"status":"completed"}}}'`,
 		AgentOpenCode: `echo '{"type":"text","sessionID":"s1","part":{"type":"text","text":"ok"}}'
 echo '{"type":"step_finish","sessionID":"s1","part":{"type":"step-finish","reason":"stop","cost":0}}'`,
 	}

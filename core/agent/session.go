@@ -478,7 +478,7 @@ func (r *Runner) run(ctx context.Context, req Request, restricted bool) (*Result
 			_, scanErr = io.WriteString(stdinPipe, stdin)
 		}
 		if scanErr == nil {
-			final, limit, scanErr = stdinBE.consumeStdin(r, stdinPipe, stdout, transcript, cost)
+			final, limit, scanErr = stdinBE.consumeStdin(r, req, paths, stdinPipe, stdout, transcript, cost)
 		}
 	} else {
 		final, limit, scanErr = be.impl.consume(r, stdout, transcript, cost)

@@ -305,9 +305,17 @@ func TestSbxIdentityContract(t *testing.T) {
 // engine would actually work at that address.
 func TestSbxDaggerContract(t *testing.T) {
 	t.Setenv("BEES_GITHUB_KEY", "github-secret")
-	codex := agenttest.Script(t, "codex", `cat > /dev/null
-echo '{"type":"thread.started","thread_id":"t1"}'
-echo '{"type":"turn.completed"}'
+	// An ordinary codex turn speaks the app-server JSON-RPC conversation
+	// (initialize, thread/start, turn/start, turn/completed) rather than
+	// codex exec's event stream; this fake answers each request by id in
+	// turn, the way core/agent's own codex app-server tests do.
+	codex := agenttest.Script(t, "codex", `reqid() { sed -n 's/.*"id":\([0-9]*\).*/\1/p'; }
+IFS= read -r line; printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$(printf '%s' "$line" | reqid)"
+IFS= read -r line
+IFS= read -r line; printf '{"jsonrpc":"2.0","id":%s,"result":{"thread":{"id":"t1"}}}\n' "$(printf '%s' "$line" | reqid)"
+IFS= read -r line; printf '{"jsonrpc":"2.0","id":%s,"result":{"turn":{"id":"turn-1"}}}\n' "$(printf '%s' "$line" | reqid)"
+echo '{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"status":"completed"}}}'
+cat > /dev/null
 `)
 	r := newRunner(t, "")
 	r.CodexBin = codex

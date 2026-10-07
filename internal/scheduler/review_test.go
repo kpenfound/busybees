@@ -740,14 +740,22 @@ max_turns = 19
 			t.Errorf("%s gained factory permissions: %+v", kind, got[kind])
 		}
 	}
-	judge := strings.Join(argsOfNamed(t, h, "reviewer-pr-201-r1"), " ")
-	for _, want := range []string{"exec --json", "--model judge", `model_reasoning_effort="low"`, "--dangerously-bypass-approvals-and-sandbox", "mcp_servers.bees"} {
+	judgeArgs := argsOfNamed(t, h, "reviewer-pr-201-r1")
+	judge := strings.Join(judgeArgs, " ")
+	if judgeArgs[1] != "app-server" {
+		t.Errorf("judge did not run codex app-server: %s", judge)
+	}
+	for _, want := range []string{`model_reasoning_effort="low"`, "mcp_servers.bees"} {
 		if !strings.Contains(judge, want) {
 			t.Errorf("judge lacks %q: %s", want, judge)
 		}
 	}
 	if strings.Contains(judge, "--sandbox read-only") {
 		t.Error("judge inherited host restrictions")
+	}
+	judgeParams := threadStartParamsOfNamed(t, h, "reviewer-pr-201-r1")
+	if judgeParams["model"] != "judge" || judgeParams["sandbox"] != "danger-full-access" {
+		t.Errorf("judge thread/start params: %+v", judgeParams)
 	}
 	dir, err := review.LatestArtifactDir(h.store.ReviewsDir(), review.Ref{Repo: "acme/widgets", Number: 201})
 	if err != nil {

@@ -104,12 +104,14 @@ enabled = false
 		}
 		for _, dir := range dirs {
 			args := argsOf(t, dir)
-			if len(args) < 3 || args[1] != "exec" {
+			if len(args) < 2 || args[1] != "app-server" {
 				t.Fatalf("%s backend: %v", role, args)
 			}
-			joined := strings.Join(args, "\n")
-			if !strings.Contains(joined, `model_reasoning_effort="high"`) || !strings.Contains(joined, "sized-model") {
-				t.Fatalf("%s profile: %v", role, args)
+			if !strings.Contains(strings.Join(args, "\n"), `model_reasoning_effort="high"`) {
+				t.Fatalf("%s profile effort: %v", role, args)
+			}
+			if m, _ := threadStartParamsOf(t, dir)["model"].(string); m != "sized-model" {
+				t.Fatalf("%s profile model: %q", role, m)
 			}
 		}
 	}
@@ -152,10 +154,16 @@ profile_by_size = { l = "fresh" }
 	if len(sessions) < 2 {
 		t.Fatalf("expected brief and angles, got %d sessions", len(sessions))
 	}
-	sessions = append(sessions, reviewSession{Kind: "judge", Args: argsOfNamed(t, h, "reviewer-pr-201-r1")})
 	for _, s := range sessions {
 		if modelOf(s.Args) != "fresh-model" || !strings.Contains(strings.Join(s.Args, " "), "exec") {
 			t.Errorf("%s did not select the fresh codex profile: %v", s.Kind, s.Args)
 		}
+	}
+	// The judge, unlike the brief and the angles, has the built-in MCP
+	// tools and so runs the ordinary turn's app-server command line, with
+	// the profile's model in thread/start rather than on the command line.
+	judge := argsOfNamed(t, h, "reviewer-pr-201-r1")
+	if judge[1] != "app-server" || threadStartModelOfNamed(t, h, "reviewer-pr-201-r1") != "fresh-model" {
+		t.Errorf("judge did not select the fresh codex profile: %v", judge)
 	}
 }

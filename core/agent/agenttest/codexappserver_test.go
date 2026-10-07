@@ -174,6 +174,47 @@ func TestCodexAppServerFullConversation(t *testing.T) {
 	}
 }
 
+// TestCodexAppServerFullConversationWithoutConfigRead drives a fake `codex
+// app-server` through a conversation that never sends config/read — the
+// shape an ordinary or ToolsAll turn's conversation takes — straight from
+// initialize to thread/start, turn/start and turn/completed.
+func TestCodexAppServerFullConversationWithoutConfigRead(t *testing.T) {
+	script := agenttest.CodexAppServerScript{
+		ThreadID: "thread-1",
+		TurnID:   "turn-1",
+		Actions: []agenttest.CodexAppServerAction{
+			{Notify: &agenttest.CodexAppServerMessage{Method: "turn/completed", Params: map[string]any{"turn": map[string]any{"status": "completed"}}}},
+		},
+	}
+	bin, _ := agenttest.CodexAppServer(t, script)
+	c := startCodex(t, bin, "app-server")
+
+	c.send(map[string]any{"id": 1, "method": "initialize", "params": map[string]any{"clientInfo": map[string]any{"name": "bees"}}})
+	if msg := c.recv(); msg["id"] != float64(1) || msg["result"] == nil {
+		c.t.Fatalf("initialize answer: %v", msg)
+	}
+	c.send(map[string]any{"method": "initialized"})
+
+	c.send(map[string]any{"id": 2, "method": "thread/start", "params": map[string]any{"cwd": "/work"}})
+	msg := c.recv()
+	thread, _ := msg["result"].(map[string]any)["thread"].(map[string]any)
+	if thread["id"] != "thread-1" {
+		t.Fatalf("thread/start answer: %v", msg)
+	}
+
+	c.send(map[string]any{"id": 3, "method": "turn/start", "params": map[string]any{"threadId": "thread-1", "input": "TASK"}})
+	c.recv()
+
+	if msg = c.recv(); msg["method"] != "turn/completed" {
+		t.Fatalf("expected turn/completed, got %v", msg)
+	}
+
+	c.closeStdin()
+	if err := c.wait(); err != nil {
+		t.Fatalf("fake codex app-server exit: %v", err)
+	}
+}
+
 // TestCodexAppServerResumeRejected drives a fake `codex app-server` through
 // a `thread/resume` the script answers with a JSON-RPC -32600 error, as a
 // resume for a thread id codex does not know would be.
@@ -323,7 +364,8 @@ func TestCodexAppServerInterrupt(t *testing.T) {
 		t.Fatalf("expected turn/completed after the interrupt, got %v", msg)
 	}
 	params, _ := msg["params"].(map[string]any)
-	if params["status"] != "interrupted" {
+	turn, _ := params["turn"].(map[string]any)
+	if turn["status"] != "interrupted" {
 		t.Fatalf("turn/completed status: %v", msg)
 	}
 

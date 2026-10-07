@@ -60,6 +60,12 @@ func newHostListener(t *testing.T, token string) *hostListener {
 // sandbox's proxy would carry a call to host.docker.internal there, and
 // records the answer; then prints stream. A session that reaches the
 // server with the token it was given leaves "ok" in reply.txt.
+//
+// An ordinary codex turn runs as `codex app-server` rather than reading a
+// bounded prompt off stdin, so for name == AgentCodex the fake instead
+// answers the three requests the conversation sends before stream's
+// notifications are its own to print: initialize, thread/start and
+// turn/start, each echoing the id the driver assigned it.
 func hostAgent(t *testing.T, name, sbx string, port int, stream string) string {
 	t.Helper()
 	call := ""
@@ -70,10 +76,21 @@ func hostAgent(t *testing.T, name, sbx string, port int, stream string) string {
 		call = `curl -sS -H "Authorization: Bearer $HOST_TOKEN" "http://127.0.0.1:` + strconv.Itoa(port) + `/mcp" > "$RUN_DIR/reply.txt"` + "\n"
 	}
 	policy := filepath.Join(filepath.Dir(sbx), "sbx-policy.txt")
+	prelude := `printf '%s\n' "$@" > "$RUN_DIR/agent-args.txt"
+[ ! -f "` + policy + `" ] || cp "` + policy + `" "$RUN_DIR/policy-while-running.txt"
+` + call
+	if name == AgentCodex {
+		return agenttest.Script(t, name, prelude+`reqid() { sed -n 's/.*"id":\([0-9]*\).*/\1/p'; }
+IFS= read -r line; printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$(printf '%s' "$line" | reqid)"
+IFS= read -r line
+IFS= read -r line; printf '{"jsonrpc":"2.0","id":%s,"result":{"thread":{"id":"t1"}}}\n' "$(printf '%s' "$line" | reqid)"
+IFS= read -r line; printf '{"jsonrpc":"2.0","id":%s,"result":{"turn":{"id":"turn1"}}}\n' "$(printf '%s' "$line" | reqid)"
+`+stream+`
+cat >/dev/null
+`)
+	}
 	return agenttest.Script(t, name, `cat >/dev/null
-printf '%s\n' "$@" > "$RUN_DIR/agent-args.txt"
-[ ! -f "`+policy+`" ] || cp "`+policy+`" "$RUN_DIR/policy-while-running.txt"
-`+call+stream+"\n")
+`+prelude+stream+"\n")
 }
 
 // claudeResult is what the fake claude prints.

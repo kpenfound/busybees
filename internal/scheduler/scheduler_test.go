@@ -38,8 +38,8 @@ import (
 // performs a scripted action and prints a stream-json result, or codex's,
 // opencode's or pi's event stream when it is one of those. `codex app-server`
 // (os.Args[1] == "app-server") is answered as its own long-lived JSON-RPC
-// conversation instead, by fakeCodexAppServer: no production code starts it
-// yet, so a test that wants it drives the fake directly over pipes.
+// conversation instead, by fakeCodexAppServer: an ordinary or ToolsAll codex
+// turn runs one, while a held or restricted turn still runs `codex exec`.
 //
 // The flags that steer the fake (FAKE_CLAUDE, FAKE_DEV_HANG, FAKE_DEV_FAIL,
 // FAKE_DEV_MAIL_TO, FAKE_ATTEMPT_FAIL, FAKE_ASSEMBLE_FAIL, FAKE_REVIEW_ALWAYS_CHANGES,
@@ -768,10 +768,15 @@ const fakeCodexThreadID = "fake-thread"
 // config/read, thread/start or thread/resume, and turn/start, running
 // runFakeRole's scripted action once turn/start arrives and reporting it as
 // item/completed and turn/completed notifications, the way codex's
-// `item.completed` and `turn.completed` exec events report it. Any other
-// request bees sends gets a generic result so none is left unanswered, and
-// the process returns — exiting the way TestMain's caller does for every
-// fake — once bees closes stdin.
+// `item.completed` and `turn.completed` exec events report it, with
+// turn/completed's status nested at params.turn.status the way
+// core/agent's driver reads it. thread/start's and thread/resume's params
+// are recorded to thread-start.json in the session directory, next to
+// args.txt, since the model and the rest of a turn's configuration travel
+// in the protocol rather than on the command line. Any other request bees
+// sends gets a generic result so none is left unanswered, and the process
+// returns — exiting the way TestMain's caller does for every fake — once
+// bees closes stdin.
 func fakeCodexAppServer(role, sessionDir, stateDir string, box *mail.Box, fail func(error), git func(args ...string), counter func(string) int) {
 	enc := json.NewEncoder(os.Stdout)
 	send := func(v map[string]any) {
@@ -786,12 +791,17 @@ func fakeCodexAppServer(role, sessionDir, stateDir string, box *mail.Box, fail f
 		send(map[string]any{"jsonrpc": "2.0", "method": method, "params": params})
 	}
 
+	text := "ok"
+	if v := os.Getenv("FAKE_RESULT_TEXT"); v != "" {
+		text = v
+	}
 	sc := bufio.NewScanner(os.Stdin)
 	sc.Buffer(make([]byte, 0, 64*1024), 64*1024*1024)
 	for sc.Scan() {
 		var msg struct {
 			ID     json.RawMessage `json:"id"`
 			Method string          `json:"method"`
+			Params json.RawMessage `json:"params"`
 		}
 		if err := json.Unmarshal(sc.Bytes(), &msg); err != nil {
 			fail(fmt.Errorf("fake codex app-server: decode %q: %w", sc.Text(), err))
@@ -805,6 +815,12 @@ func fakeCodexAppServer(role, sessionDir, stateDir string, box *mail.Box, fail f
 		case "config/read":
 			respond(msg.ID, map[string]any{"config": map[string]any{}, "origins": map[string]any{}})
 		case "thread/start", "thread/resume":
+			// Recorded next to args.txt so tests can read what travels in
+			// the protocol now instead of on the command line, such as the
+			// model.
+			if err := os.WriteFile(filepath.Join(sessionDir, "thread-start.json"), msg.Params, 0o644); err != nil {
+				fail(err)
+			}
 			respond(msg.ID, map[string]any{"thread": map[string]any{"id": fakeCodexThreadID}})
 		case "turn/start":
 			respond(msg.ID, map[string]any{"turn": map[string]any{"id": "fake-turn"}})
@@ -813,8 +829,8 @@ func fakeCodexAppServer(role, sessionDir, stateDir string, box *mail.Box, fail f
 				fail(err)
 			}
 			notify("item/completed", map[string]any{"item": map[string]any{"id": "item_0", "type": "mcp_tool_call", "server": "bees", "tool": "done", "status": "completed"}})
-			notify("item/completed", map[string]any{"item": map[string]any{"id": "item_1", "type": "agent_message", "text": "ok"}})
-			notify("turn/completed", map[string]any{"usage": map[string]any{"input_tokens": 10, "cached_input_tokens": 0, "output_tokens": 2}})
+			notify("item/completed", map[string]any{"item": map[string]any{"id": "item_1", "type": "agent_message", "text": text}})
+			notify("turn/completed", map[string]any{"turn": map[string]any{"id": "fake-turn", "status": "completed"}, "usage": map[string]any{"input_tokens": 10, "cached_input_tokens": 0, "output_tokens": 2}})
 		default:
 			// Every other request bees might send (turn/interrupt, a
 			// server-request-style call it expects answered) gets a generic

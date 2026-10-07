@@ -25,6 +25,23 @@ func argsOf(t *testing.T, dir string) []string {
 	return strings.Split(strings.TrimRight(string(b), "\n"), "\n")
 }
 
+// threadStartParamsOf reads the thread/start or thread/resume parameters
+// the fake codex app server recorded for a session next to args.txt, since
+// an ordinary or ToolsAll turn's model and the rest of its configuration
+// travel in the protocol rather than on the command line.
+func threadStartParamsOf(t *testing.T, dir string) map[string]any {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(dir, "thread-start.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var params map[string]any
+	if err := json.Unmarshal(b, &params); err != nil {
+		t.Fatal(err)
+	}
+	return params
+}
+
 // resultOf reads the result.json the runner wrote for a session.
 func resultOf(t *testing.T, dir string) session.Result {
 	t.Helper()
@@ -41,10 +58,11 @@ func resultOf(t *testing.T, dir string) session.Result {
 
 // A developer configured agent = "codex" walks the whole loop — develop,
 // review, develop again, review, approved — with every developer session
-// started as `codex exec` and every other role's as `claude -p`: the agent
-// is resolved per role, and the scheduler reads what each session did off
-// the stream its own agent writes. The fake codex is the test binary, told
-// apart from the fake claude by the `exec` the runner starts codex with.
+// started as `codex app-server` and every other role's as `claude -p`: the
+// agent is resolved per role, and the scheduler reads what each session did
+// off the conversation or the stream its own agent speaks. The fake codex is
+// the test binary, told apart from the fake claude by the `app-server` the
+// runner starts an ordinary codex turn with.
 func TestACodexDeveloperWalksTheWholeLoop(t *testing.T) {
 	h := newHarness(t, baseTOML+"\n[roles.developer]\nagent = \"codex\"\n[roles.product_manager]\nenabled = false\n[roles.qa]\nenabled = false\n[roles.project_manager]\nenabled = false\n")
 	h.gh.Issues[1] = &github.Issue{Number: 1, Title: "Build the thing", Body: "please", State: "OPEN", Labels: []github.Label{{Name: "bees"}, {Name: "bees:ready"}, {Name: "bees:size/s"}}, CreatedAt: time.Now()}
@@ -72,8 +90,8 @@ func TestACodexDeveloperWalksTheWholeLoop(t *testing.T) {
 	}
 	for _, d := range dev {
 		args := argsOf(t, d)
-		if len(args) < 3 || args[1] != "exec" || args[2] != "--json" {
-			t.Errorf("developer session %s did not run codex exec --json: %q", filepath.Base(d), args)
+		if len(args) < 2 || args[1] != "app-server" {
+			t.Errorf("developer session %s did not run codex app-server: %q", filepath.Base(d), args)
 		}
 		if strings.Contains(strings.Join(args, " "), "--dangerously-skip-permissions") {
 			t.Errorf("developer session %s carries claude's flags: %q", filepath.Base(d), args)
@@ -157,8 +175,8 @@ func TestAGlobalCodexAgentRunsEveryRoleAsCodex(t *testing.T) {
 			t.Errorf("%s sessions: %d, want 1", role, len(dirs))
 			continue
 		}
-		if args := argsOf(t, dirs[0]); len(args) < 2 || args[1] != "exec" {
-			t.Errorf("%s did not run codex: %q", role, args)
+		if args := argsOf(t, dirs[0]); len(args) < 2 || args[1] != "app-server" {
+			t.Errorf("%s did not run codex app-server: %q", role, args)
 		}
 		if res := resultOf(t, dirs[0]); res.CostKnown || res.HasOutcome != true {
 			t.Errorf("%s result: %+v", role, res)

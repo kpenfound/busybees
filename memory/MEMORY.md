@@ -1,1 +1,0 @@
-- [dagger check needs git](dagger_check_no_git.md) — mason views have no .git, so `dagger check`/`dagger list` no-op; use direct `dagger -m` module calls instead.

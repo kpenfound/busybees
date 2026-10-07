@@ -40,7 +40,7 @@ func (fakeStdinBackend) consume(*Runner, io.Reader, io.Writer, *costMeter) (*str
 	panic("fakeStdinBackend: consume called; the runner must dispatch to stdinBackend.consumeStdin")
 }
 
-func (fakeStdinBackend) consumeStdin(r *Runner, stdin io.WriteCloser, stdout io.Reader, transcript io.Writer, cost *costMeter) (*streamEnd, *RateLimit, error) {
+func (fakeStdinBackend) consumeStdin(r *Runner, _ Request, _ sessionPaths, stdin io.WriteCloser, stdout io.Reader, transcript io.Writer, cost *costMeter) (*streamEnd, *RateLimit, error) {
 	if _, err := io.WriteString(stdin, `{"type":"request","text":"ping"}`+"\n"); err != nil {
 		_ = stdin.Close()
 		return nil, nil, err

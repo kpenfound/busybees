@@ -26,14 +26,25 @@ cat >/dev/null
 			switch backend {
 			case AgentClaude:
 				body += `echo '{"type":"result","subtype":"success"}'`
-			case AgentCodex:
-				body += `echo '{"type":"turn.completed"}'`
 			case AgentOpenCode:
 				body += `echo '{"type":"step_finish","part":{"reason":"stop"}}'`
 			case AgentPi:
 				body += `echo '{"type":"message_end","message":{"role":"assistant","stopReason":"stop"}}'`
 			}
-			bin := agenttest.Script(t, backend, body)
+			var bin string
+			if backend == AgentCodex {
+				// Codex's stdin stays open for the conversation, unlike
+				// every other backend's bounded write: the handshake
+				// answers initialize, thread/start and turn/start before
+				// the args and environment are dumped and the turn ends.
+				bin = agenttest.Script(t, backend, codexAppServerHandshake("thread-h", "turn-h")+`printf '%s\n' "$@" > "$RUN_DIR/args"
+env > "$RUN_DIR/agent-env"
+echo '{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"status":"completed"}}}'
+cat >/dev/null
+`)
+			} else {
+				bin = agenttest.Script(t, backend, body)
+			}
 			r := Runner{ClaudeBin: bin, CodexBin: bin, OpenCodeBin: bin, PiBin: bin, DockerBin: agenttest.Docker(t, "image", "RUN_DIR"), ContainerListen: "127.0.0.1:0"}
 			req := Request{SessionDir: dir, Workspace: fakeWorkspace{dir: t.TempDir()}, Env: map[string]string{"RUN_DIR": dir, "PRIVATE_MCP_TOKEN": "stale"}, Profile: Profile{Agent: backend, Sandbox: SandboxContainer, SandboxImage: "image"}, HostMCP: &HostMCP{Name: "tools", Entry: MCPEntry{Command: agenttest.MCPServer(t, "RUN_DIR")}, ListenArgs: []string{"mcp", "serve", "--listen"}, TokenEnv: "PRIVATE_MCP_TOKEN", ListeningPrefix: "listening on ", Path: "/mcp"}}
 			res, err := r.Run(context.Background(), grantAll(req))
@@ -239,7 +250,9 @@ func TestNoMCPCodexOrphanDiscovery(t *testing.T) {
 			if err := os.MkdirAll(dir, 0o755); err != nil {
 				t.Fatal(err)
 			}
-			bin := agenttest.Script(t, "codex", `echo '{"type":"thread.started","thread_id":"test"}'
+			bin := agenttest.Script(t, "codex", `IFS= read -r line
+id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id"
 while :; do sleep 1; done`)
 			r := Runner{CodexBin: bin, EnvironmentPrefix: prefix}
 			ctx, cancel := context.WithCancel(context.Background())

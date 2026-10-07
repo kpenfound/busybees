@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/kpenfound/busybees/core/agent/agenttest"
+	"github.com/kpenfound/busybees/core/agent/procs"
 )
 
 // fakeClaude writes a shell script standing in for the claude binary.
@@ -278,15 +279,27 @@ kill -9 $$
 	}
 }
 
-// fakeCodex writes a shell script standing in for the codex binary.
-func fakeCodex(t *testing.T, body string) string {
+// codexAppServerHandshake is the shell snippet a fake `codex app-server`
+// speaks before a test's own notifications: it answers initialize, reads
+// the initialized notification, then thread/start with threadID and
+// turn/start with turnID, each echoing the request's own id, the way the
+// real server answers them.
+func codexAppServerHandshake(threadID, turnID string) string {
+	return `reqid() { sed -n 's/.*"id":\([0-9]*\).*/\1/p'; }
+IFS= read -r line; printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$(printf '%s' "$line" | reqid)"
+IFS= read -r line
+IFS= read -r line; printf '{"jsonrpc":"2.0","id":%s,"result":{"thread":{"id":"` + threadID + `"}}}\n' "$(printf '%s' "$line" | reqid)"
+IFS= read -r line; printf '{"jsonrpc":"2.0","id":%s,"result":{"turn":{"id":"` + turnID + `"}}}\n' "$(printf '%s' "$line" | reqid)"
+`
+}
+
+// fakeCodexAppServer writes a shell script standing in for `codex
+// app-server`: codexAppServerHandshake answers initialize, thread/start
+// (with threadID) and turn/start (with turnID), then body runs — the
+// test's own notifications, side effects and ending.
+func fakeCodexAppServer(t *testing.T, threadID, turnID, body string) string {
 	t.Helper()
-	p := filepath.Join(t.TempDir(), "codex")
-	script := "#!/bin/sh\nset -e\n" + body
-	if err := os.WriteFile(p, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return p
+	return agenttest.Script(t, "codex", codexAppServerHandshake(threadID, turnID)+body)
 }
 
 // codexRole is a role resolved with agent = "codex".
@@ -295,24 +308,22 @@ func codexRole(model string) Profile {
 }
 
 // TestCodexRunSuccess covers a session of a role whose agent is codex: the
-// runner starts `codex exec --json` instead of `claude -p`, with codex's
-// own switch for running unattended, the system prompt ahead of the task
-// on stdin, and every MCP server — the built-in one included — passed as
-// configuration overrides; and it reads the thread id, the last agent
-// message and the turn count off codex's event stream, with no cost.
+// runner starts `codex app-server` instead of `claude -p`, with the
+// session marker, every MCP server — the built-in one included — passed
+// as configuration overrides, and no model flag or trailing prompt
+// argument on the command line; and it reads the thread id, the last
+// agent message and the turn count off the conversation, with no cost.
 func TestCodexRunSuccess(t *testing.T) {
-	bin := fakeCodex(t, `
+	bin := fakeCodexAppServer(t, "thread-7", "turn-1", `
 printf '%s\n' "$@" > "$TASK_SESSION_DIR/args.txt"
-cat > "$TASK_SESSION_DIR/stdin.txt"
 env > "$TASK_SESSION_DIR/env.txt"
-echo '{"type":"thread.started","thread_id":"thread-7"}'
-echo '{"type":"turn.started"}'
-echo '{"type":"item.started","item":{"id":"item_0","type":"command_execution","command":"ls","status":"in_progress"}}'
-echo '{"type":"item.completed","item":{"id":"item_0","type":"command_execution","command":"ls","aggregated_output":"a b","exit_code":0,"status":"completed"}}'
-echo '{"type":"item.completed","item":{"id":"item_1","type":"mcp_tool_call","server":"task","tool":"done","status":"completed"}}'
-echo '{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"all done"}}'
-echo '{"type":"turn.completed","usage":{"input_tokens":120,"cached_input_tokens":0,"output_tokens":30}}'
+echo '{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"id":"item_0","type":"command_execution","command":"ls","aggregated_output":"a b","exit_code":0,"status":"completed"}}}'
+echo '{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"id":"item_1","type":"mcp_tool_call","server":"task","tool":"done","status":"completed"}}}'
+echo '{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"id":"item_2","type":"agent_message","text":"all done"}}}'
+echo '{"jsonrpc":"2.0","method":"thread/tokenUsage/updated","params":{"usage":{"inputTokens":120,"outputTokens":30}}}'
+echo '{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"status":"completed"}}}'
 printf '{"status":"submitted","work":{"key":"task/12","tags":{"ticket":"twelve"}},"note":"hi"}' > "$TASK_SESSION_DIR/outcome.json"
+cat >/dev/null
 `)
 	r := newRunner(t, "")
 	r.CodexBin = bin
@@ -336,14 +347,13 @@ printf '{"status":"submitted","work":{"key":"task/12","tags":{"ticket":"twelve"}
 	}
 	b, _ := os.ReadFile(filepath.Join(res.SessionDir, "args.txt"))
 	args := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
-	if head := strings.Join(args[:4], " "); head != "exec --json --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check" {
-		t.Errorf("args start %q", head)
+	if args[0] != "app-server" {
+		t.Errorf("args[0] = %q, want app-server", args[0])
 	}
-	if args[len(args)-1] != "-" {
-		t.Errorf("the prompt argument is %q, want - (read stdin)", args[len(args)-1])
+	if !slices.Contains(args, procs.CodexMarker("TASK_")+codexValue(res.SessionDir)) {
+		t.Errorf("args missing the session marker:\n%s", b)
 	}
 	for _, want := range []string{
-		"--model", "gpt-5-codex",
 		`model_reasoning_effort="high"`,
 		`mcp_servers.tools.command="/usr/local/bin/task"`,
 		`mcp_servers.tools.args=["mcp","serve"]`,
@@ -366,18 +376,19 @@ printf '{"status":"submitted","work":{"key":"task/12","tags":{"ticket":"twelve"}
 			}
 		}
 	}
-	// Nothing of claude's command line leaks into codex's.
-	for _, gone := range []string{"-p", "--dangerously-skip-permissions", "--append-system-prompt-file", "--max-turns", "--fallback-model", "--effort", "--allowedTools", "--mcp-config", "--strict-mcp-config", "--add-dir", "--name"} {
+	// Nothing of claude's command line, nor exec's own flags, leaks into
+	// the app server's.
+	for _, gone := range []string{
+		"-p", "--dangerously-skip-permissions", "--append-system-prompt-file", "--max-turns", "--fallback-model",
+		"--effort", "--allowedTools", "--mcp-config", "--strict-mcp-config", "--add-dir", "--name",
+		"exec", "--json", "--sandbox", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check", "--model", "-",
+	} {
 		if slices.Contains(args, gone) {
-			t.Errorf("args carry claude's %s:\n%s", gone, b)
+			t.Errorf("args carry %s, which an app-server turn does not take:\n%s", gone, b)
 		}
 	}
 	if _, err := os.Stat(filepath.Join(res.SessionDir, "mcp.json")); err == nil {
 		t.Error("mcp.json written for a codex session, which never reads it")
-	}
-	stdin, _ := os.ReadFile(filepath.Join(res.SessionDir, "stdin.txt"))
-	if string(stdin) != "SYS\n\n---\n\nTASK" {
-		t.Errorf("stdin: %q", stdin)
 	}
 	// The two prompts are still written apart, for whoever reads the
 	// session directory.
@@ -408,13 +419,15 @@ printf '{"status":"submitted","work":{"key":"task/12","tags":{"ticket":"twelve"}
 	}
 }
 
-// A codex role with no model leaves the choice to codex: no --model at all,
-// rather than claude's default alias, and a plain effort level goes through
-// unchanged. The system prompt alone is stdin when the task is empty.
+// A codex role with no model leaves the choice to codex: no --model flag,
+// and no model parameter on thread/start (left to a later unit's test to
+// pin exactly; here only the command line is checked), and a plain effort
+// level still goes through as model_reasoning_effort.
 func TestCodexLeavesTheModelToCodexWhenUnset(t *testing.T) {
-	bin := fakeCodex(t, `
+	bin := fakeCodexAppServer(t, "thread-2", "turn-1", `
 printf '%s\n' "$@" > "$TASK_SESSION_DIR/args.txt"
-echo '{"type":"turn.completed","usage":{}}'
+echo '{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"status":"completed"}}}'
+cat >/dev/null
 `)
 	r := newRunner(t, "")
 	r.CodexBin = bin
@@ -437,42 +450,45 @@ echo '{"type":"turn.completed","usage":{}}'
 	}
 }
 
-// TestCodexFailedTurn: codex ends a turn it could not finish with
-// "turn.failed", whose message is the result text when the session said
-// nothing else, and that is an error even when the process then exits
-// cleanly; and a message naming the usage limit reads as the account
-// limit, through the same phrase check a claude session's result text
-// goes through.
+// TestCodexFailedTurn: codexRPCRun reports every ending spec#9 names — a
+// failed turn/completed, or an "error" notification before a thread ever
+// starts — as a plain error, which becomes the session's result text and
+// an "error" subtype; and a message naming the usage limit still reads as
+// the account limit, through the same phrase check a claude session's
+// result text goes through.
 func TestCodexFailedTurn(t *testing.T) {
 	for _, tc := range []struct {
-		name, events, subtype, text string
-		exit                        int
-		limited                     bool
+		name, script, text string
+		limited            bool
 	}{
 		{
-			name: "turn.failed, clean exit",
-			events: `echo '{"type":"thread.started","thread_id":"t"}'
-echo '{"type":"item.completed","item":{"type":"agent_message","text":"trying"}}'
-echo '{"type":"turn.failed","error":{"message":"stream disconnected"}}'
-`,
-			subtype: "turn_failed", text: "stream disconnected", exit: 0,
+			name: "failed turn",
+			script: fakeCodexAppServer(t, "t", "turn-1", `
+echo '{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"type":"agent_message","text":"trying"}}}'
+echo '{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"status":"failed"}}}'
+cat >/dev/null
+`),
+			text: `turn ended with status "failed"`,
 		},
 		{
-			name: "error event",
-			events: `echo '{"type":"error","message":"You have hit your usage limit. Try again at 3pm."}'
-`,
-			subtype: "error", text: "You have hit your usage limit. Try again at 3pm.", exit: 1, limited: true,
+			name: "error notification before a thread starts",
+			script: agenttest.Script(t, "codex", `IFS= read -r line
+printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')"
+IFS= read -r line
+echo '{"jsonrpc":"2.0","method":"error","params":{"message":"You have hit your usage limit. Try again at 3pm."}}'
+cat >/dev/null
+`),
+			text: "You have hit your usage limit. Try again at 3pm.", limited: true,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			bin := fakeCodex(t, tc.events+"exit "+strconv.Itoa(tc.exit)+"\n")
 			r := newRunner(t, "")
-			r.CodexBin = bin
+			r.CodexBin = tc.script
 			res, err := r.Run(context.Background(), Request{Name: "c3", Profile: codexRole(""), Workspace: fakeWorkspace{dir: t.TempDir()}, Prompt: "TASK"})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !res.IsError || res.ErrorSubtype != tc.subtype || res.ResultText != tc.text || res.ExitCode != tc.exit || res.HasOutcome {
+			if !res.IsError || res.ErrorSubtype != "error" || res.ResultText != tc.text || res.ExitCode != 0 || res.HasOutcome {
 				t.Fatalf("result: %+v", res)
 			}
 			if res.RateLimit != nil {
@@ -485,15 +501,13 @@ echo '{"type":"turn.failed","error":{"message":"stream disconnected"}}'
 	}
 }
 
-// A codex stream that ends with no turn end — the process was killed, or
-// it crashed — is a session that never said how it went, like a claude
-// stream with no result event: no_result, and the turns counted from the
-// transcript's completed items.
+// A codex app-server conversation that ends — its process exits, closing
+// its stdout — before turn/completed arrives is a session that never said
+// how it went: an error, the same as a failed turn.
 func TestCodexStreamWithoutATurnEnd(t *testing.T) {
-	bin := fakeCodex(t, `
-echo '{"type":"thread.started","thread_id":"t"}'
-echo '{"type":"item.completed","item":{"type":"command_execution","command":"go test ./..."}}'
-echo '{"type":"item.completed","item":{"type":"agent_message","text":"half way"}}'
+	bin := fakeCodexAppServer(t, "t", "turn-1", `
+echo '{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"type":"command_execution","command":"go test ./..."}}}'
+echo '{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"type":"agent_message","text":"half way"}}}'
 `)
 	r := newRunner(t, "")
 	r.CodexBin = bin
@@ -501,7 +515,7 @@ echo '{"type":"item.completed","item":{"type":"agent_message","text":"half way"}
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !res.IsError || res.ErrorSubtype != "no_result" || res.NumTurns != 2 || res.CostKnown {
+	if !res.IsError || res.ErrorSubtype != "error" || !strings.Contains(res.ResultText, "ended without answering turn/completed") || res.CostKnown {
 		t.Fatalf("result: %+v", res)
 	}
 }
@@ -806,20 +820,21 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
 	}
 }
 
-// TestCodexCommandIgnoresResume: codex exec has no resume, so a request
-// naming a session to resume builds the same codex command line, stdin and
-// claude resume flags as one that does not — none of them reach codex at
-// all. The session directory is held fixed across both runs so the two
-// command lines are directly comparable.
+// TestCodexCommandIgnoresResume: thread/resume is wired by a later unit, so
+// a request naming a session to resume builds the same `codex app-server`
+// command line, and the same empty stdin (the conversation itself carries
+// the resume id, not the command line), as one that does not. The session
+// directory is held fixed across both runs so the two command lines are
+// directly comparable.
 func TestCodexCommandIgnoresResume(t *testing.T) {
 	dir, work := t.TempDir(), t.TempDir()
 	var args [][]string
 	var stdin []string
 	for _, id := range []string{"", "abc-123"} {
-		bin := fakeCodex(t, `
+		bin := fakeCodexAppServer(t, "thread-n", "turn-n", `
 printf '%s\n' "$@" > "$TASK_SESSION_DIR/args.txt"
+echo '{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"status":"completed"}}}'
 cat > "$TASK_SESSION_DIR/stdin.txt"
-echo '{"type":"turn.completed","usage":{}}'
 `)
 		r := newRunner(t, "")
 		r.CodexBin = bin
@@ -840,8 +855,8 @@ echo '{"type":"turn.completed","usage":{}}'
 		if err != nil {
 			t.Fatal(err)
 		}
-		if string(s) != "SYS\n\n---\n\nTASK" {
-			t.Errorf("stdin: %q", s)
+		if string(s) != "" {
+			t.Errorf("stdin: %q, want empty: the conversation writes everything", s)
 		}
 		stdin = append(stdin, string(s))
 		args = append(args, a)

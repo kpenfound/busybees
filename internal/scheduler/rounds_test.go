@@ -25,6 +25,28 @@ func argsOfNamed(t *testing.T, h *harness, name string) []string {
 	return nil
 }
 
+// threadStartParamsOfNamed reads an app-server codex session's thread/start
+// parameters, by the session's exact name.
+func threadStartParamsOfNamed(t *testing.T, h *harness, name string) map[string]any {
+	t.Helper()
+	for i, n := range h.sessionNames() {
+		if n == name {
+			return threadStartParamsOf(t, filepath.Join(h.store.SessionsDir(), h.sessionOrder()[i]))
+		}
+	}
+	t.Fatalf("no session %q ran; sessions: %v", name, h.sessionNames())
+	return nil
+}
+
+// threadStartModelOfNamed reads the model an app-server codex session's
+// thread/start recorded, by the session's exact name, since an ordinary or
+// ToolsAll turn carries it in the protocol rather than on the command line.
+func threadStartModelOfNamed(t *testing.T, h *harness, name string) string {
+	t.Helper()
+	m, _ := threadStartParamsOfNamed(t, h, name)["model"].(string)
+	return m
+}
+
 // resumeOf returns the id a session was launched to resume, or "" when it
 // was launched fresh.
 func resumeOf(t *testing.T, h *harness, name string) string {
@@ -79,9 +101,9 @@ func TestASecondRoundResumesTheFirstRoundsSession(t *testing.T) {
 	}
 }
 
-// TestACodexRoundIsNeverResumed: codex exec has nothing to resume with, so
-// a codex role's second round is launched like its first, whatever id the
-// worker knows from round 1.
+// TestACodexRoundIsNeverResumed: Request.ResumeID is still ignored for
+// codex, so a codex role's second round is launched like its first, whatever
+// id the worker knows from round 1.
 func TestACodexRoundIsNeverResumed(t *testing.T) {
 	h := newHarness(t, devOnlyTOML+"[global]\nagent = \"codex\"\n")
 	seedReady(h, 1, "s", time.Now().Add(-time.Hour))
@@ -90,8 +112,8 @@ func TestACodexRoundIsNeverResumed(t *testing.T) {
 	h.wantOrder("developer-issue-1-r1", "reviewer-pr-201-r1", "developer-issue-1-r2", "reviewer-pr-201-r2")
 	for _, name := range []string{"developer-issue-1-r2", "reviewer-pr-201-r2"} {
 		args := argsOfNamed(t, h, name)
-		if len(args) < 2 || args[1] != "exec" {
-			t.Fatalf("%s did not run codex exec: %v", name, args)
+		if len(args) < 2 || args[1] != "app-server" {
+			t.Fatalf("%s did not run codex app-server: %v", name, args)
 		}
 		for _, a := range args {
 			if a == "--resume" || strings.HasPrefix(a, "resume") || a == "--system-prompt-snapshot" {
@@ -194,8 +216,8 @@ func TestARoundAfterARetryOnAnotherAgentIsNotResumed(t *testing.T) {
 	runPass(t, h)
 
 	h.wantOrder("developer-issue-1-r1", "developer-issue-1-r1-retry1", "reviewer-pr-201-r1", "developer-issue-1-r2", "reviewer-pr-201-r2")
-	if retry := argsOfNamed(t, h, "developer-issue-1-r1-retry1"); retry[1] != "exec" {
-		t.Fatalf("the retry did not run codex: %v", retry)
+	if retry := argsOfNamed(t, h, "developer-issue-1-r1-retry1"); retry[1] != "app-server" {
+		t.Fatalf("the retry did not run codex app-server: %v", retry)
 	}
 	r2 := argsOfNamed(t, h, "developer-issue-1-r2")
 	if r2[1] != "-p" {
