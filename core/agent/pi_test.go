@@ -18,7 +18,10 @@ import (
 	"github.com/kpenfound/busybees/core/vcs"
 )
 
-// fakePi writes a shell script standing in for the pi binary.
+// fakePi writes a shell script standing in for the pi binary: it only
+// emits the event-stream lines body gives it, so it leaves unverified
+// whether the real pi CLI accepts the arguments it is given or emits its
+// event stream in this shape in practice.
 func fakePi(t *testing.T, body string) string { return agenttest.Script(t, "pi", body) }
 
 // piRole is a role resolved with agent = "pi".
@@ -337,36 +340,55 @@ echo '{"type":"turn_end"}'
 	}
 }
 
-// TestPiCommandResumes: a request naming a session to resume passes it as
-// pi's --session-id, and nothing else about the command line changes; a
-// fresh request passes none.
+// TestPiCommandResumes: a request naming a session to resume passes it to
+// the fake pi process as --session-id, and nothing else the process
+// receives — its other arguments, its stdin or its environment — changes;
+// a fresh request passes none. The session directory is held fixed across
+// both runs so the two command lines and environments are directly
+// comparable.
 func TestPiCommandResumes(t *testing.T) {
-	r := newRunner(t, "")
-	paths := sessionPaths{dir: t.TempDir(), systemPrompt: "/s/system-prompt.md", mcp: map[string]MCPEntry{"tools": {Command: "task", Args: []string{"mcp", "serve"}}}}
-	var got [][]string
+	dir, work := t.TempDir(), t.TempDir()
+	var args, env [][]string
+	var stdin []string
 	for _, id := range []string{"", "pi-ses-abc"} {
-		_, args, stdin, env, err := piBackend{}.command(context.Background(), r.Runner, backendNamed(t, AgentPi), Request{Name: "n", Profile: piRole("m"), SystemPrompt: "SYS", Prompt: "TASK", ResumeID: id}, paths)
+		bin := fakePi(t, `
+printf '%s\n' "$@" > "$TASK_SESSION_DIR/args.txt"
+cat > "$TASK_SESSION_DIR/stdin.txt"
+env > "$TASK_SESSION_DIR/env.txt"
+echo '{"type":"session","id":"pi-ses-r"}'
+echo '{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"stop","usage":{"cost":{"total":0}}}}'
+`)
+		r := newRunner(t, "")
+		r.PiBin = bin
+		res, err := r.Run(context.Background(), Request{Name: "n", Profile: piRole("m"), SystemPrompt: "SYS", Prompt: "TASK", Workspace: fakeWorkspace{dir: work}, SessionDir: dir, ResumeID: id})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if stdin != "TASK" {
-			t.Errorf("stdin: %q", stdin)
-		}
-		if len(env) != 1 || env[0].name != EnvPiMCPConfigMode || env[0].value != "exclusive" {
-			t.Errorf("env: %+v", env)
-		}
-		if flagValue(args, "--session-id") != id {
-			t.Errorf("resume id %q: --session-id in %q", id, args)
+		a := piArgs(t, res.SessionDir)
+		if flagValue(a, "--session-id") != id {
+			t.Errorf("resume id %q: --session-id in %q", id, a)
 		}
 		for _, gone := range []string{"--resume", "--session", "--continue", "--fork"} {
-			if slices.Contains(args, gone) {
-				t.Errorf("%s reached pi: %q", gone, args)
+			if slices.Contains(a, gone) {
+				t.Errorf("%s reached pi: %q", gone, a)
 			}
 		}
-		got = append(got, slices.DeleteFunc(args, func(a string) bool { return a == "--session-id" || a == id }))
+		s, err := os.ReadFile(filepath.Join(res.SessionDir, "stdin.txt"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		stdin = append(stdin, string(s))
+		args = append(args, slices.DeleteFunc(slices.Clone(a), func(x string) bool { return x == "--session-id" || x == id }))
+		env = append(env, lines(t, filepath.Join(res.SessionDir, "env.txt")))
 	}
-	if !slices.Equal(got[0], got[1]) {
-		t.Errorf("the resume id changed more than --session-id:\n%q\n%q", got[0], got[1])
+	if stdin[0] != "TASK" || stdin[0] != stdin[1] {
+		t.Errorf("stdin changed with the resume id: %q, %q", stdin[0], stdin[1])
+	}
+	if !slices.Equal(args[0], args[1]) {
+		t.Errorf("the resume id changed more than --session-id:\n%q\n%q", args[0], args[1])
+	}
+	if !slices.Equal(env[0], env[1]) {
+		t.Errorf("the resume id changed the environment:\n%q\n%q", env[0], env[1])
 	}
 }
 

@@ -25,6 +25,9 @@ func TestPreparedInputs(t *testing.T) {
 	t.Setenv("EXPAND_ME", "must-not-replace-literal")
 	dir := t.TempDir()
 	skills := &preparedSkills{dir: t.TempDir()}
+	// The fake claude below only records its arguments and reports success;
+	// it leaves unverified whether the real claude CLI reads --plugin-dir
+	// and the written MCP configuration the way this test assumes.
 	r := Runner{Skills: skills, ClaudeBin: agenttest.Script(t, "claude", `printf '%s\n' "$@" > "$ARGS_FILE"
 echo '{"type":"result","subtype":"success","result":"ok"}'`)}
 	_, err := r.Run(context.Background(), grantAll(Request{SessionDir: dir, Workspace: fakeWorkspace{dir: dir},

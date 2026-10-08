@@ -17,7 +17,9 @@ import (
 // arguments in record.scan-args, its environment in record.scan-env and,
 // in a container, the engine's arguments in record.scan-engine, then runs
 // scan, a shell snippet: openCodeScanRuns for the production script, or a
-// canned answer.
+// canned answer. It leaves unverified whether the real opencode binary
+// invokes its bundled runtime with BUN_BE_BUN=1 and these same arguments
+// to run the search in practice.
 func openCodeScanProbe(record, scan string) string {
 	return `if [ "$BUN_BE_BUN" = 1 ]; then
   printf '%s\n' "$@" > "` + record + `.scan-args"

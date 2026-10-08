@@ -12,7 +12,11 @@ import (
 	"time"
 )
 
-// fakeOpenCode writes a shell script standing in for the opencode binary.
+// fakeOpenCode writes a shell script standing in for the opencode binary:
+// it only emits the event-stream lines and reads body gives it, so it
+// leaves unverified whether the real opencode CLI accepts the arguments
+// it is given, parses `OPENCODE_CONFIG` the way the test expects, or emits
+// its event stream in this shape in practice.
 func fakeOpenCode(t *testing.T, body string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "opencode")
@@ -274,34 +278,52 @@ echo '{"type":"step_finish","sessionID":"ses_4","part":{"type":"step-finish","re
 }
 
 // TestOpenCodeCommandResumes: a request naming a session to resume passes
-// it as opencode's --session, and nothing else about the command line
-// changes; a fresh request passes no --session.
+// it to the fake opencode process as --session, and nothing else the
+// process receives — its other arguments, its stdin or its environment —
+// changes; a fresh request passes no --session. The session directory is
+// held fixed across both runs so the two command lines and environments
+// are directly comparable.
 func TestOpenCodeCommandResumes(t *testing.T) {
-	r := newRunner(t, "")
-	paths := sessionPaths{dir: t.TempDir(), systemPrompt: "/s/system-prompt.md", mcp: map[string]MCPEntry{"tools": {Command: "task", Args: []string{"mcp", "serve"}}}}
-	var got [][]string
+	dir, work := t.TempDir(), t.TempDir()
+	var args, env [][]string
+	var stdin []string
 	for _, id := range []string{"", "ses_abc"} {
-		_, args, stdin, env, err := opencodeBackend{}.command(context.Background(), r.Runner, backendNamed(t, AgentOpenCode), Request{Name: "n", Profile: opencodeRole("m"), SystemPrompt: "SYS", Prompt: "TASK", ResumeID: id}, paths)
+		bin := fakeOpenCode(t, `
+printf '%s\n' "$@" > "$TASK_SESSION_DIR/args.txt"
+cat > "$TASK_SESSION_DIR/stdin.txt"
+env > "$TASK_SESSION_DIR/env.txt"
+echo '{"type":"step_finish","sessionID":"ses_r","part":{"type":"step-finish","reason":"stop","cost":0}}'
+`)
+		r := newRunner(t, "")
+		r.OpenCodeBin = bin
+		res, err := r.Run(context.Background(), Request{Name: "n", Profile: opencodeRole("m"), SystemPrompt: "SYS", Prompt: "TASK", Workspace: fakeWorkspace{dir: work}, SessionDir: dir, ResumeID: id})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if stdin != "TASK" {
-			t.Errorf("stdin: %q", stdin)
+		a := lines(t, filepath.Join(res.SessionDir, "args.txt"))
+		i := slices.Index(a, "--session")
+		if (id == "") != (i < 0) || (i >= 0 && a[i+1] != id) {
+			t.Errorf("resume id %q: --session in %q", id, a)
 		}
-		if len(env) != 1 || env[0].name != EnvOpenCodeConfig || env[0].value != filepath.Join(paths.dir, OpenCodeConfigFile) {
-			t.Errorf("env: %+v", env)
+		if slices.Contains(a, "--resume") || slices.Contains(a, "--system-prompt-snapshot") {
+			t.Errorf("claude's resume flags reached opencode: %q", a)
 		}
-		i := slices.Index(args, "--session")
-		if (id == "") != (i < 0) || (i >= 0 && args[i+1] != id) {
-			t.Errorf("resume id %q: --session in %q", id, args)
+		s, err := os.ReadFile(filepath.Join(res.SessionDir, "stdin.txt"))
+		if err != nil {
+			t.Fatal(err)
 		}
-		if slices.Contains(args, "--resume") || slices.Contains(args, "--system-prompt-snapshot") {
-			t.Errorf("claude's resume flags reached opencode: %q", args)
-		}
-		got = append(got, slices.DeleteFunc(args, func(a string) bool { return a == "--session" || a == id }))
+		stdin = append(stdin, string(s))
+		args = append(args, slices.DeleteFunc(slices.Clone(a), func(x string) bool { return x == "--session" || x == id }))
+		env = append(env, lines(t, filepath.Join(res.SessionDir, "env.txt")))
 	}
-	if !slices.Equal(got[0], got[1]) {
-		t.Errorf("the resume id changed more than --session:\n%q\n%q", got[0], got[1])
+	if stdin[0] != "TASK" || stdin[0] != stdin[1] {
+		t.Errorf("stdin changed with the resume id: %q, %q", stdin[0], stdin[1])
+	}
+	if !slices.Equal(args[0], args[1]) {
+		t.Errorf("the resume id changed more than --session:\n%q\n%q", args[0], args[1])
+	}
+	if !slices.Equal(env[0], env[1]) {
+		t.Errorf("the resume id changed the environment:\n%q\n%q", env[0], env[1])
 	}
 }
 

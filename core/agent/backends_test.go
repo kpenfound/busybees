@@ -30,6 +30,10 @@ func TestBackendsMatchProcsExecutables(t *testing.T) {
 // implementation is the omission this list exists to make impossible. The
 // restricted declaration is a pointer so even an unsupported backend must
 // state that choice instead of inheriting a zero value by accident.
+//
+// This test reaches into the descriptor's private fields (impl, bin,
+// Restricted) deliberately: the declaration shape is a maintained contract,
+// not an implementation detail, so a change to it should fail here first.
 func TestBackendsAreDeclaredCompletely(t *testing.T) {
 	var seen []string
 	for _, b := range Backends {

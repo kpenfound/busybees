@@ -20,7 +20,12 @@ import (
 // Node's API the search uses, over this machine's filesystem, and prints
 // what the script logs. The fake opencode execs it for that search
 // (openCodeScanRuns), so the tests exercise the production script where the
-// turn would run and with its environment.
+// turn would run and with its environment. This stub implements only
+// readdirSync, statSync, path.join/dirname and os.homedir, so it leaves
+// unverified whether the real bun runtime's require("fs"/"path"/"os")
+// behaves the same for cases the production script does not exercise, and
+// whether bun itself honours --config=/dev/null and --no-env-file the way
+// this fake assumes.
 const fakeBunEnv = "BEES_TEST_FAKE_BUN"
 
 func TestMain(m *testing.M) {

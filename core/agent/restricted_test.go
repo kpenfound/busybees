@@ -30,6 +30,11 @@ const restrictedPiAnswer = `echo '{"type":"session","id":"pi-4"}'
 echo '{"type":"message_end","message":{"role":"assistant","provider":"anthropic","model":"claude-sonnet","content":[{"type":"text","text":"the brief"}],"stopReason":"stop","usage":{"cost":{"total":0.75}}}}'
 echo '{"type":"turn_end"}'`
 
+// restrictedFake stands in for claude's or codex's real binary: it answers
+// "mcp list/mcp" with a canned inventory and otherwise records what it was
+// given before running body. It leaves unverified whether the real CLI
+// accepts the restricted flags this package builds, or reports its MCP
+// inventory and event stream in the shape these tests assume.
 func restrictedFake(t *testing.T, name, body string) (string, string) {
 	t.Helper()
 	record := filepath.Join(t.TempDir(), "record")
@@ -59,13 +64,18 @@ func restrictedRunner(t *testing.T, claude, codex string) *Runner {
 	return &Runner{ClaudeBin: claude, CodexBin: codex, SessionsDir: t.TempDir(), EnvironmentPrefix: "BEES_"}
 }
 
+// restrictedOpenCodeFake stands in for the opencode binary, answering the
+// custom-tool search with scan's default (openCodeScanRuns, the production
+// script run by the fake bun of fakebun_test.go). It leaves unverified
+// whether the real opencode CLI honours `--pure debug config` and the
+// held agent's permissions the way these tests assume.
 func restrictedOpenCodeFake(t *testing.T, config, answer string) (string, string) {
 	t.Helper()
 	return restrictedOpenCodeFakeScanning(t, config, answer, openCodeScanRuns(t))
 }
 
 // restrictedOpenCodeFakeScanning is restrictedOpenCodeFake answering the
-// search for custom tools with scan (openCodeScanProbe).
+// search for custom tools with scan (openCodeScanProbe) instead.
 func restrictedOpenCodeFakeScanning(t *testing.T, config, answer, scan string) (string, string) {
 	t.Helper()
 	record := filepath.Join(t.TempDir(), "record")
@@ -90,6 +100,10 @@ env > "` + record + `.env"
 	return agenttest.Script(t, "opencode", script), record
 }
 
+// restrictedPiFake stands in for the pi binary. It leaves unverified
+// whether the real pi CLI accepts the restricted (`--no-tools` and
+// friends) flags this package builds, or emits its event stream in this
+// shape in practice.
 func restrictedPiFake(t *testing.T, answer string) (string, string) {
 	t.Helper()
 	record := filepath.Join(t.TempDir(), "record")
@@ -487,7 +501,7 @@ func TestRunRestrictedReportsMalformedAndFailedOutput(t *testing.T) {
 }
 
 func TestRunRestrictedCancellationKillsTheProcessGroup(t *testing.T) {
-	bin, _ := restrictedFake(t, "claude", "sleep 60 &\nwait")
+	bin, record := restrictedFake(t, "claude", "sleep 60 &\nwait")
 	r := restrictedRunner(t, bin, "")
 	req := restrictedRequestFor(AgentClaude, t.TempDir())
 	ctx, cancel := context.WithCancel(context.Background())
@@ -497,7 +511,19 @@ func TestRunRestrictedCancellationKillsTheProcessGroup(t *testing.T) {
 		_, err := r.RunRestricted(ctx, req)
 		done <- err
 	}()
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the fake to have recorded its environment, the last thing it
+	// writes before starting the child that would otherwise outlive it,
+	// instead of guessing how long that takes.
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if _, err := os.Stat(record + ".env"); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the restricted agent never started")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 	cancel()
 	select {
 	case err := <-done:

@@ -41,7 +41,10 @@ printf '{%s,%s%s}\n' '` + grantedInherited + `' "$inner" '` + managed + `'`
 // tools_call starts the session's "tools" server with the command the
 // inline configuration gives it (grantedServer: `sh -c <script>`), when that
 // server is enabled. A tool the permissions do not allow ends in an error
-// instead.
+// instead. This fake's own `allowed` check is a grep over the permission
+// JSON, not opencode's own enforcement, so it leaves unverified whether
+// the real opencode CLI reads and applies the effective configuration's
+// agent permissions the way these tests assume.
 func grantedOpenCodeFake(t *testing.T, effective string) (string, string) {
 	t.Helper()
 	return grantedOpenCodeFakeScanning(t, effective, openCodeScanRuns(t))
