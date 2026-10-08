@@ -240,6 +240,30 @@ func TestEachSizeRunsItsOwnAngles(t *testing.T) {
 	}
 }
 
+// Sized replaces a size's built-in angle list wholesale, the way
+// context.toml's own override does one layer up (internal/review): a size
+// it names runs only the angles it lists, in BuiltinAngles order, and a
+// size it leaves out keeps its built-in list.
+func TestSizedOverridesASizesAngleListWholesale(t *testing.T) {
+	override := map[string][]string{"m": {AngleSideEffects, AngleDocs}}
+	agent := newFakeAngleAgent(2)
+	runs, err := (&Angles[testRef]{Agent: agent, Dir: t.TempDir(), Sized: override}).Run(context.Background(), t.TempDir(), &Settings{}, testBrief(), testDiff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := ranAngles(runs), []string{AngleDocs, AngleSideEffects}; !reflect.DeepEqual(got, want) {
+		t.Errorf("angles run for the overridden size m = %v, want the override's %v, not m's built-in general/tests/acceptance", got, want)
+	}
+	agent = newFakeAngleAgent(2)
+	runs, err = (&Angles[testRef]{Agent: agent, Dir: t.TempDir(), Sized: override}).Run(context.Background(), t.TempDir(), &Settings{}, sized("xs"), testDiff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := ranAngles(runs), []string{AngleQuickGeneral, AngleDocs}; !reflect.DeepEqual(got, want) {
+		t.Errorf("angles run for size xs, which the override does not name, = %v, want its built-in %v", got, want)
+	}
+}
+
 func TestASizeNeverRunsAnAngleTheSettingsTurnedOff(t *testing.T) {
 	project := &Settings{Angles: map[string]bool{"docs": false, "side_effects": false, "quick_general": true}}
 	agent := newFakeAngleAgent(3)
