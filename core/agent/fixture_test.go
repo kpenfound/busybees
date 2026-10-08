@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"maps"
-	"testing"
 )
 
 const (
@@ -27,17 +26,6 @@ type testRunner struct {
 	// Mounts are granted beside what grantAll grants a request that
 	// carries no grants of its own.
 	Mounts []Mount
-}
-
-// backendNamed is the descriptor of the named backend, for tests that
-// call a backend's command builder directly.
-func backendNamed(t *testing.T, name string) Backend {
-	t.Helper()
-	b, err := backendFor(name)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return b
 }
 
 func (r *testRunner) Run(ctx context.Context, req Request) (*Result, error) {

@@ -759,64 +759,98 @@ echo '{"type":"turn.completed"}'
 // TestClaudeCommandResumes: a request naming a session to resume launches
 // claude with --resume and the system-prompt snapshot off, so the system
 // prompt rendered for this round is the one it reads rather than the
-// recording of round 1's; a request without one passes neither flag.
+// recording of round 1's; a request without one passes neither flag, and
+// nothing else — the rest of the command line — changes. The session
+// directory is held fixed across both runs so the two command lines are
+// directly comparable.
 func TestClaudeCommandResumes(t *testing.T) {
-	r := newRunner(t, "claude")
-	role := Profile{Name: "builder", Model: "opus", MaxTurns: 5, Timeout: time.Minute}
+	dir, work := t.TempDir(), t.TempDir()
+	var args [][]string
 	for _, id := range []string{"", "abc-123"} {
-		dir := t.TempDir()
-		paths := sessionPaths{dir: dir, systemPrompt: filepath.Join(dir, "system-prompt.md"), prompt: filepath.Join(dir, "prompt.md"),
-			mcp: map[string]MCPEntry{"tools": {Command: "task", Args: []string{"mcp", "serve"}}}}
-		_, args, _, _, err := claudeBackend{}.command(context.Background(), r.Runner, backendNamed(t, AgentClaude), Request{Name: "n", Profile: role, Prompt: "TASK", ResumeID: id}, paths)
+		bin := fakeClaude(t, `
+printf '%s\n' "$@" > "$TASK_SESSION_DIR/args.txt"
+echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
+`)
+		r := newRunner(t, bin)
+		role := Profile{Name: "builder", Model: "opus", MaxTurns: 5, Timeout: time.Minute}
+		res, err := r.Run(context.Background(), Request{Name: "n", Profile: role, Workspace: fakeWorkspace{dir: work}, SessionDir: dir, SystemPrompt: "SYS", Prompt: "TASK", ResumeID: id})
 		if err != nil {
 			t.Fatal(err)
 		}
-		i := slices.Index(args, "--resume")
-		j := slices.Index(args, "--system-prompt-snapshot")
+		a := lines(t, filepath.Join(res.SessionDir, "args.txt"))
+		i := slices.Index(a, "--resume")
+		j := slices.Index(a, "--system-prompt-snapshot")
 		if id == "" {
 			if i >= 0 || j >= 0 {
-				t.Errorf("no resume id, but the flags were passed: %q", args)
+				t.Errorf("no resume id, but the flags were passed: %q", a)
 			}
-			continue
-		}
-		if i < 0 || i+1 >= len(args) || args[i+1] != id {
-			t.Errorf("resume id %q not passed: %q", id, args)
-		}
-		if j < 0 || j+1 >= len(args) || args[j+1] != "off" {
-			t.Errorf("resumed launch keeps the system-prompt snapshot: %q", args)
+		} else {
+			if i < 0 || i+1 >= len(a) || a[i+1] != id {
+				t.Errorf("resume id %q not passed: %q", id, a)
+			}
+			if j < 0 || j+1 >= len(a) || a[j+1] != "off" {
+				t.Errorf("resumed launch keeps the system-prompt snapshot: %q", a)
+			}
 		}
 		// The round's own system prompt still goes along: the snapshot flag
 		// is what makes claude read it.
-		if k := slices.Index(args, "--append-system-prompt-file"); k < 0 || args[k+1] != paths.systemPrompt {
-			t.Errorf("system prompt file not passed on the resumed launch: %q", args)
+		if k := slices.Index(a, "--append-system-prompt-file"); k < 0 || a[k+1] != filepath.Join(dir, "system-prompt.md") {
+			t.Errorf("system prompt file not passed: %q", a)
 		}
+		args = append(args, slices.DeleteFunc(slices.Clone(a), func(x string) bool {
+			return x == "--resume" || x == id || x == "--system-prompt-snapshot" || x == "off"
+		}))
+	}
+	if !slices.Equal(args[0], args[1]) {
+		t.Errorf("the resume id changed claude's command line beyond the resume flags:\n%q\n%q", args[0], args[1])
 	}
 }
 
 // TestCodexCommandIgnoresResume: codex exec has no resume, so a request
-// naming a session to resume builds the same codex command line as one
-// that does not.
+// naming a session to resume builds the same codex command line, stdin and
+// claude resume flags as one that does not — none of them reach codex at
+// all. The session directory is held fixed across both runs so the two
+// command lines are directly comparable.
 func TestCodexCommandIgnoresResume(t *testing.T) {
-	r := newRunner(t, "")
-	paths := sessionPaths{dir: t.TempDir(), mcp: map[string]MCPEntry{"tools": {Command: "task", Args: []string{"mcp", "serve"}}}}
-	var got [][]string
+	dir, work := t.TempDir(), t.TempDir()
+	var args [][]string
+	var stdin []string
 	for _, id := range []string{"", "abc-123"} {
-		_, args, stdin, _, err := codexBackend{}.command(context.Background(), r.Runner, backendNamed(t, AgentCodex), Request{Name: "n", Profile: codexRole("gpt-5"), SystemPrompt: "SYS", Prompt: "TASK", ResumeID: id}, paths)
+		bin := fakeCodex(t, `
+printf '%s\n' "$@" > "$TASK_SESSION_DIR/args.txt"
+cat > "$TASK_SESSION_DIR/stdin.txt"
+echo '{"type":"turn.completed","usage":{}}'
+`)
+		r := newRunner(t, "")
+		r.CodexBin = bin
+		res, err := r.Run(context.Background(), Request{Name: "n", Profile: codexRole("gpt-5"), Workspace: fakeWorkspace{dir: work}, SessionDir: dir, SystemPrompt: "SYS", Prompt: "TASK", ResumeID: id})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if stdin != "SYS\n\n---\n\nTASK" {
-			t.Errorf("stdin: %q", stdin)
-		}
-		for _, a := range args {
-			if a == "--resume" || strings.Contains(a, "resume") || a == "--system-prompt-snapshot" || a == id {
-				t.Errorf("resume id %q reached codex as %q: %q", id, a, args)
+		a := lines(t, filepath.Join(res.SessionDir, "args.txt"))
+		for _, gone := range []string{"--resume", "--system-prompt-snapshot"} {
+			if slices.Contains(a, gone) {
+				t.Errorf("claude's resume flag %s reached codex: %q", gone, a)
 			}
 		}
-		got = append(got, args)
+		if id != "" && slices.Contains(a, id) {
+			t.Errorf("resume id %q reached codex's command line: %q", id, a)
+		}
+		s, err := os.ReadFile(filepath.Join(res.SessionDir, "stdin.txt"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(s) != "SYS\n\n---\n\nTASK" {
+			t.Errorf("stdin: %q", s)
+		}
+		stdin = append(stdin, string(s))
+		args = append(args, a)
 	}
-	if !slices.Equal(got[0], got[1]) {
-		t.Errorf("the resume id changed codex's command line:\n%q\n%q", got[0], got[1])
+	if !slices.Equal(args[0], args[1]) {
+		t.Errorf("the resume id changed codex's command line:\n%q\n%q", args[0], args[1])
+	}
+	if stdin[0] != stdin[1] {
+		t.Errorf("the resume id changed codex's stdin:\n%q\n%q", stdin[0], stdin[1])
 	}
 }
 

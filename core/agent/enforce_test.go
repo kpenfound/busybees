@@ -374,7 +374,18 @@ func TestATurnThePolicyDoesNotDescribeIsRefused(t *testing.T) {
 	}
 }
 
-// Every part of the policy a turn could differ in is compared.
+// Every part of the policy a turn could differ in is compared. held and its
+// admit method are a maintained contract this test reaches directly: held
+// is what every confined Run checks a turn against (grants.go), and
+// covering every field of Policy this way through a full session would mean
+// standing up a confined Run for each one, on every sandbox kind, with its
+// own masks and binds, just to exercise one invariant admit already owns —
+// that a difference anywhere refuses the turn with ErrPolicyChanged.
+// TestATurnThePolicyDoesNotDescribeIsRefused and
+// TestASessionRunsEveryRequestUnderItsOwnGrants establish that same
+// ErrPolicyChanged contract through the public Run API; this test alone
+// checks that admit's field-by-field comparison misses nothing newly added
+// to Policy or Turn.
 func TestAdmitComparesEveryPartOfThePolicy(t *testing.T) {
 	host := Policy{Sandbox: SandboxNone, Tools: []string{"Read"}, Mounts: []Mount{{Path: "/work", Access: ReadOnly}},
 		System: []Mount{{Path: "/usr", Access: ReadOnly}}, DeniedExecutables: []string{"git"}, Denied: []string{"/usr/bin/git"}}
