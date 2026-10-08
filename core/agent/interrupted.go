@@ -104,9 +104,10 @@ func CheckInterrupted(role, dir string, alive func(int) bool) (*Interrupted, boo
 }
 
 // CountTurns counts the turns of a transcript that no final event has
-// closed: claude's assistant messages, codex's completed items, opencode's
-// finished steps or pi's ended turns, whichever the transcript carries. A
-// session takes its turn count from the end of its stream, and three kinds
+// closed: claude's assistant messages, codex's "item/completed"
+// notifications, opencode's finished steps or pi's ended turns, whichever
+// the transcript carries. A session takes its turn count from the end of
+// its stream, and three kinds
 // of session never reached one: an interrupted one, a running one the live
 // view is watching, and one whose agent process died from a signal. The
 // turns are counted instead: close enough to say how far the session had
@@ -125,13 +126,20 @@ func CountTurns(path string) int {
 	sc.Buffer(make([]byte, 0, 1024*1024), 64*1024*1024)
 	n := 0
 	for sc.Scan() {
+		// Codex's JSON-RPC connection carries no "type" field at all: a
+		// completed item is the "item/completed" notification named by
+		// Method, same as internal/tui/transcript.go reads it. Delta
+		// notifications and bees' own requests and responses on the same
+		// connection carry a Method too (or none), but never this one, so
+		// they fall through uncounted.
 		var probe struct {
-			Type string `json:"type"`
+			Type   string `json:"type"`
+			Method string `json:"method"`
 		}
 		if err := json.Unmarshal(sc.Bytes(), &probe); err != nil {
 			continue
 		}
-		if probe.Type == "assistant" || probe.Type == "item.completed" || probe.Type == "step_finish" || probe.Type == "turn_end" {
+		if probe.Type == "assistant" || probe.Method == "item/completed" || probe.Type == "step_finish" || probe.Type == "turn_end" {
 			n++
 		}
 	}

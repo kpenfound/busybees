@@ -165,18 +165,29 @@ func TestMarkInterrupted(t *testing.T) {
 	}
 }
 
-// A codex transcript is its event stream, and the completed items are its
-// turns; the bookkeeping around them (the thread and turn start, an item in
-// progress, the turn's end) is not counted.
+// A codex transcript is its app-server's JSON-RPC connection, and the
+// "item/completed" notifications are its turns. Everything else on the
+// connection — bees' own requests and the server's responses to them, the
+// server's own requests (answered in turn), delta notifications streamed
+// token by token, and the bookkeeping notifications around an item (its
+// start) and the turn (its start and end) — is not counted.
 func TestCountTurnsReadsACodexTranscript(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, TranscriptFile)
-	codex := `{"type":"thread.started","thread_id":"t"}
-{"type":"turn.started"}
-{"type":"item.started","item":{"type":"command_execution"}}
-{"type":"item.completed","item":{"type":"command_execution"}}
-{"type":"item.completed","item":{"type":"agent_message","text":"hi"}}
-{"type":"turn.completed","usage":{}}
+	codex := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
+{"jsonrpc":"2.0","id":1,"result":{}}
+{"jsonrpc":"2.0","method":"initialized","params":{}}
+{"jsonrpc":"2.0","id":2,"method":"thread/start","params":{"cwd":"/work"}}
+{"jsonrpc":"2.0","id":2,"result":{"thread":{"id":"t1"}}}
+{"jsonrpc":"2.0","id":3,"method":"turn/start","params":{"threadId":"t1"}}
+{"jsonrpc":"2.0","method":"item/started","params":{"item":{"type":"command_execution"}}}
+{"jsonrpc":"2.0","method":"item/agentMessage/delta","params":{"delta":"h"}}
+{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"type":"command_execution"}}}
+{"jsonrpc":"2.0","id":4,"method":"item/commandExecution/requestApproval","params":{}}
+{"jsonrpc":"2.0","id":4,"result":{"decision":"cancel"}}
+{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"type":"agent_message","text":"hi"}}}
+{"jsonrpc":"2.0","id":3,"result":{}}
+{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"status":"completed"}}}
 `
 	if err := os.WriteFile(path, []byte(codex), 0o644); err != nil {
 		t.Fatal(err)
