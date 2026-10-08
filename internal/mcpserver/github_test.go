@@ -220,7 +220,9 @@ func (f *fakeGitHub) wrote() bool {
 // ---- tool lists ------------------------------------------------------------
 
 // TestGitHubToolsPerRole is the enforcement a role cannot argue with: a
-// developer is never offered the project manager's state moves.
+// developer is never offered the project manager's state moves. The tool
+// set for each role is a maintained contract: the exact list below is what
+// an MCP client sees, read through Tools the same way a client would.
 func TestGitHubToolsPerRole(t *testing.T) {
 	base := "comment, done, issue_create, issue_link, issue_view, mail_list, mail_send, notes_read, notes_write, pr_view, report_factory_error"
 	for role, want := range map[string]string{
@@ -232,7 +234,7 @@ func TestGitHubToolsPerRole(t *testing.T) {
 			"issue_set_state, issue_view, mail_list, mail_send, notes_read, notes_write, pr_view, report_factory_error",
 		config.RoleProductManager: "comment, done, issue_create, issue_edit_body, issue_link, " +
 			"issue_question, issue_view, mail_list, mail_send, notes_read, notes_write, pr_view, report_factory_error",
-		config.RoleReleaseManager: base[:len(base)-len("report_factory_error")] + "release_ship, report_factory_error",
+		config.RoleReleaseManager: "comment, done, issue_create, issue_link, issue_view, mail_list, mail_send, notes_read, notes_write, pr_view, release_ship, report_factory_error",
 		// Hand use through `bees mcp serve`: everything.
 		"": "comment, done, file_bug, issue_create, issue_edit_body, issue_link, issue_question, " +
 			"issue_set_state, issue_view, mail_list, mail_send, notes_read, notes_write, pr_view, release_ship, report_factory_error, submit_review",
@@ -515,7 +517,8 @@ func TestSubmitReviewOnTheSessionsPullRequest(t *testing.T) {
 	if r.number != 72 || r.event != "request-changes" {
 		t.Errorf("review: %+v", r)
 	}
-	if want := strings.TrimRight(body, "\n") + "\n\n<!-- bees:reviewer -->"; r.body != want {
+	const want = "implementation: pass — the diff does what the description says\nstyle: fail — `x` shadows the package\n\n<!-- bees:reviewer -->"
+	if r.body != want {
 		t.Errorf("body:\n%q\nwant\n%q", r.body, want)
 	}
 	if role, ok := github.BeeRole(r.body); !ok || role != config.RoleReviewer {

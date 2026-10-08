@@ -115,6 +115,10 @@ func TestSessionToolsAreOfferedToEveryRole(t *testing.T) {
 	}
 }
 
+// TestDoneEnumPerRole pins the done tool's status enum, read from the schema
+// an MCP client actually sees (via statusEnum), as a maintained contract: a
+// developer, a reviewer, QA and the product manager each report a fixed set
+// of outcomes, and an unknown or empty role is unrestricted.
 func TestDoneEnumPerRole(t *testing.T) {
 	for role, want := range map[string]string{
 		config.RoleDeveloper:      "pr-opened, pr-updated, question, failed",
@@ -210,11 +214,10 @@ func TestDoneWritesTheOutcome(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("outcome: %v %v", ok, err)
 	}
-	// The same outcome `bees done pr-opened --pr 72 -m "opened #72"` writes.
-	want, err := session.Report(t.TempDir(), config.RoleDeveloper, session.Outcome{Status: "pr-opened", Note: "opened #72", Work: ghwork.New(36, 72)})
-	if err != nil {
-		t.Fatal(err)
-	}
+	// The same outcome `bees done pr-opened --pr 72 -m "opened #72"` writes:
+	// status and note as given, the session's issue (36) joined with the
+	// explicit PR (72).
+	want := session.Outcome{Status: "pr-opened", Note: "opened #72", Work: ghwork.New(36, 72)}
 	if !reflect.DeepEqual(o, want) {
 		t.Fatalf("outcome = %+v, want %+v", o, want)
 	}
