@@ -1,5 +1,12 @@
 package scheduler
 
+// The scheduler harness's fakegh stands in for the GitHub API, and
+// FAKE_CLAUDE's scripted developer, reviewer and singleton roles stand in
+// for a model session, throughout this file's tests. Both leave real
+// GitHub behaviour and a real model's judgment out of scope: what is
+// proven here is only that the scheduler reacts correctly to what the
+// harness is scripted to do.
+
 import (
 	"bytes"
 	"context"
@@ -44,6 +51,12 @@ func TestWaitingOn(t *testing.T) {
 
 // A cycle would hold both issues back forever, so the scheduler ignores the
 // declared dependencies of every issue in one and warns once per issue.
+//
+// fillWaiting is a maintained contract: cycle detection and its once-per-issue
+// warning are an algorithmic invariant over an arbitrary dependency graph,
+// which TestDependencyHoldsReadyIssue's single linear chain cannot exercise;
+// building a three-issue cycle through a real dispatch would add nothing a
+// direct call does not already show.
 func TestFillWaitingCycle(t *testing.T) {
 	var buf bytes.Buffer
 	s := &Scheduler{
@@ -208,6 +221,11 @@ func TestProjectManagerSeesBlockers(t *testing.T) {
 }
 
 // warnCycle is called from poll, which may run while workers hold the lock.
+//
+// warnCycle is a maintained contract: this pins the concurrency safety of the
+// once-per-issue warning map, which a real dispatch cannot reliably
+// reproduce — the race is between warnCycle's own callers, not something an
+// E2E fixture can force to interleave.
 func TestWarnCycleIsConcurrencySafe(t *testing.T) {
 	var buf bytes.Buffer
 	s := &Scheduler{log: slog.New(slog.NewTextHandler(&buf, nil)), warnedCycles: map[int]bool{}}
@@ -238,6 +256,12 @@ var stackedTOML = strings.Replace(devOnlyTOML, "max_review_rounds = 3\n", "max_r
 // stacked on: it must have an open pull request and be a sub-issue of the
 // same feature. Everything else waits as it does without stacking, and
 // the parent lookups are only paid for a blocker with a pull request.
+//
+// classify is a maintained contract here: this is the stacking-eligibility
+// decision over seven input combinations (stacked on/off, same/different
+// feature, a parent lookup that errors), and a session fixture per row would
+// repeat what TestStackedPRsBuildOnThePredecessorBranch already proves
+// through a real dispatch for the one case that matters end to end.
 func TestStackedPRsRelaxTheHold(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -685,10 +709,11 @@ func TestStackWaitPollsAtTheChecksPollInterval(t *testing.T) {
 	waitFor(t, 10*time.Second, "the first poll of #2", func() bool { return polls() >= 1 })
 	before := polls()
 	labelApproved(h, 2)
-	time.Sleep(300 * time.Millisecond)
-	if got := polls(); got != before {
-		t.Fatalf("#2 was polled %d more times inside checks_poll_interval", got-before)
-	}
+	// staysAt (wake_test.go) is the bounded-window check for a negative
+	// assertion ("no poll yet"): there is no readiness event to wait for, so
+	// the window itself is the contract being pinned, not a guess at how long
+	// background work takes.
+	staysAt(t, 300*time.Millisecond, "poll count", before, polls)
 	if got := strings.Join(h.gh.History[1], ","); got != "bees:in-progress" {
 		t.Fatalf("#1 was approved between polls: %s", got)
 	}

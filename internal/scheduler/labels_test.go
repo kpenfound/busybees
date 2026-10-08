@@ -1,5 +1,12 @@
 package scheduler
 
+// The scheduler harness's fakegh stands in for the GitHub API, and
+// FAKE_CLAUDE's scripted developer, reviewer and singleton roles stand in
+// for a model session, throughout this file's tests. Both leave real
+// GitHub behaviour and a real model's judgment out of scope: what is
+// proven here is only that the scheduler reacts correctly to what the
+// harness is scripted to do.
+
 import (
 	"context"
 	"errors"
@@ -162,6 +169,10 @@ func TestReconcileErrorsAreCappedInTheLog(t *testing.T) {
 	}
 }
 
+// capErrors is a maintained contract: it is the message-formatting decision
+// TestReconcileErrorsAreCappedInTheLog above only reaches for one case (ten
+// identical causes). Driving every count and separator case through a real
+// reconcile failure would need a fixture per row for a pure text decision.
 func TestCapErrors(t *testing.T) {
 	for _, c := range []struct {
 		name string

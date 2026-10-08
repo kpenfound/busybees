@@ -1,5 +1,12 @@
 package scheduler
 
+// The scheduler harness's fakegh stands in for the GitHub API, and
+// FAKE_CLAUDE's scripted developer, reviewer and singleton roles stand in
+// for a model session, throughout this file's tests. Both leave real
+// GitHub behaviour and a real model's judgment out of scope: what is
+// proven here is only that the scheduler reacts correctly to what the
+// harness is scripted to do.
+
 import (
 	"context"
 	"errors"
@@ -302,6 +309,12 @@ func TestAnApprovedIssueWithNoOpenPullRequestIsNotListed(t *testing.T) {
 // A session a person stopped is not retried and does not escalate its issue
 // a second time: KillSession has already handed it over, and a retry would
 // start the work again on an issue that is now a person's.
+//
+// runSessionWithRetry is called directly here as a maintained contract:
+// TestKillingASessionStopsItAndEscalatesItsIssue above proves the kill mark
+// is set through a real KillSession, and this is the other half — that the
+// mark is honoured — which would need a session hung long enough for a kill
+// to land mid-retry to reach through a full dispatch.
 func TestAStoppedSessionIsNotRetried(t *testing.T) {
 	h := newHarness(t, noRolesTOML)
 	h.sched.mu.Lock()

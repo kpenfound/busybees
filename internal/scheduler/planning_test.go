@@ -1,5 +1,12 @@
 package scheduler
 
+// The scheduler harness's fakegh stands in for the GitHub API, and
+// FAKE_CLAUDE's scripted developer, reviewer and singleton roles stand in
+// for a model session, throughout this file's tests. Both leave real
+// GitHub behaviour and a real model's judgment out of scope: what is
+// proven here is only that the scheduler reacts correctly to what the
+// harness is scripted to do.
+
 import (
 	"context"
 	"errors"
@@ -130,6 +137,11 @@ func TestAPlannedFeatureIsBrokenDownOnceAndNotAgain(t *testing.T) {
 // bees:planning and bees:planned are neither state nor size labels: an issue
 // in planning keeps whatever state it has, and classify buckets it as it
 // would without them.
+//
+// classify is a maintained contract here: this checks the planning labels
+// against every bucket (ready, feature, feedback, proposal, no-state) in one
+// pass over a small fixed set of issues, which the scenario tests elsewhere
+// in this file only exercise one bucket of at a time through a real dispatch.
 func TestClassifyIgnoresThePlanningLabels(t *testing.T) {
 	h := newHarness(t, noRolesTOML)
 	now := time.Now()

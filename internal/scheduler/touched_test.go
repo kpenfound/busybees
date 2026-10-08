@@ -131,6 +131,10 @@ enabled = false
 // than waiting out the poll interval — an hour here, and up to
 // off_hours_poll_interval in a real factory.
 func TestAnIssueTriagedByASessionIsDispatchedOnTheWake(t *testing.T) {
+	// FAKE_TRIAGE scripts the project manager's issue_set_state call
+	// directly; it leaves unverified whether a model would actually decide
+	// to move this issue to bees:ready, only that the dispatch-on-wake path
+	// works when one does.
 	t.Setenv("FAKE_TRIAGE", "3")
 	now := time.Date(2026, 3, 2, 10, 0, 0, 0, time.UTC)
 	h := newHarnessAt(t, touchedTOML, now)
@@ -158,6 +162,10 @@ func TestAnIssueTriagedByASessionIsDispatchedOnTheWake(t *testing.T) {
 // local pass. Without the refresh a feature breakdown costs two polls before
 // anybody looks at the work items it produced.
 func TestAnIssueASessionFiledIsTriageWorkOnTheNextLocalPass(t *testing.T) {
+	// FAKE_FILE_ISSUE scripts the product manager's issue_create call
+	// directly; it leaves unverified whether a model would actually decide
+	// to file this issue, only that the refresh-on-local-pass path works
+	// when one does.
 	t.Setenv("FAKE_FILE_ISSUE", "7")
 	now := time.Date(2026, 3, 2, 10, 0, 0, 0, time.UTC)
 	h := newHarnessAt(t, pmOnlyTOML, now) // the product manager alone: one session in the pass

@@ -1,5 +1,12 @@
 package scheduler
 
+// The scheduler harness's fakegh stands in for the GitHub API, and
+// FAKE_CLAUDE's scripted developer, reviewer and singleton roles stand in
+// for a model session, throughout this file's tests. Both leave real
+// GitHub behaviour and a real model's judgment out of scope: what is
+// proven here is only that the scheduler reacts correctly to what the
+// harness is scripted to do.
+
 import (
 	"context"
 	"os"
@@ -48,6 +55,12 @@ func developerMail(t *testing.T, h *harness) []mail.Message {
 	return msgs
 }
 
+// ConflictNotifiedSHA is owned by the polling path's conflict check
+// (checkPRs), never by a worker. This test's final assertion is also the
+// no-clobber contract: checkPRs writes it once, and the developer worker's
+// own SaveIssue calls through the whole develop/review/approved round that
+// follows must each carry it over from disk rather than reset it, so it is
+// still there once the issue reaches bees:approved again.
 func TestConflictingPRGoesBackToTheDeveloper(t *testing.T) {
 	h := newHarness(t, devOnlyTOML)
 	seedApprovedPR(t, h, github.MergeableConflicting, "DIRTY", "abc123def456")
@@ -188,6 +201,12 @@ func TestPRCheckHonoursTheSettings(t *testing.T) {
 
 // The mail spells out both git commands with the configured remote. With
 // the default remote that is the familiar origin text.
+//
+// updateBranchBody is a maintained contract: it is the message-formatting
+// decision TestConflictingPRGoesBackToTheDeveloper and the other scenarios in
+// this file only reach for one remote and one reason at a time through a
+// real dispatch. Driving every remote/reason combination that way would need
+// a fixture per row for a pure text decision.
 func TestUpdateBranchBodyNamesTheRemote(t *testing.T) {
 	pr := github.PR{Number: 101, HeadRefName: "bees/issue-1", URL: "https://x/pull/101"}
 	for _, tc := range []struct {

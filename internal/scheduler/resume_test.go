@@ -1,5 +1,12 @@
 package scheduler
 
+// The scheduler harness's fakegh stands in for the GitHub API, and
+// FAKE_CLAUDE's scripted developer, reviewer and singleton roles stand in
+// for a model session, throughout this file's tests. Both leave real
+// GitHub behaviour and a real model's judgment out of scope: what is
+// proven here is only that the scheduler reacts correctly to what the
+// harness is scripted to do.
+
 import (
 	"context"
 	"fmt"
@@ -195,6 +202,13 @@ func TestAResumedDeveloperRoundDoesNotPayForTheReadAgain(t *testing.T) {
 // has gone, and a state file another version wrote — along with the one that
 // matters most, an issue with nothing remembered at all, which must start
 // where its label says.
+//
+// resumeStage is a maintained contract: it is the stage-resumption decision
+// itself (the "WorkerStage, not the label, except the bees:approved
+// exception" rule this unit is responsible for), and the loop tests above
+// each confirm one or two of these cases through a real dispatch. Covering
+// the full matrix of remembered stage x label x pull-request identity that
+// way would need a session fixture per row.
 func TestResumeStage(t *testing.T) {
 	h := newHarness(t, prereviewTOML)
 	pr := &github.PR{Number: fakePR, State: "OPEN", HeadRefName: "bees/issue-1"}

@@ -49,6 +49,10 @@ func nextReleasePass(t *testing.T, h *harness) {
 // in it to relate what it files to. Once it has shipped, the milestone is
 // closed and nothing starts it again.
 func TestReleaseManagerShipsAFinishedMilestone(t *testing.T) {
+	// FAKE_RELEASE scripts the release manager's outcome directly; it leaves
+	// unverified whether a model would actually decide to ship this milestone
+	// and report `release_ship`, only that the scheduler reacts correctly
+	// when one does.
 	t.Setenv("FAKE_RELEASE", "ship:4")
 	h := newHarnessAt(t, releaseTOML, time.Now())
 	seedMilestone(h, 2, 0)
@@ -131,6 +135,9 @@ func TestDisabledReleaseManagerIsNotDispatched(t *testing.T) {
 // open the milestone is not dispatched again; once a person closes it, the
 // milestone is finished again and the release manager is started for it.
 func TestEscalatedMilestoneWaitsForItsIssue(t *testing.T) {
+	// FAKE_RELEASE scripts the release manager's outcome directly; it leaves
+	// unverified whether a model would actually decide to escalate this
+	// milestone, only that the scheduler reacts correctly when one does.
 	t.Setenv("FAKE_RELEASE", "escalate:50:v1.0.0")
 	h := newHarnessAt(t, releaseTOML, time.Now())
 	seedMilestone(h, 2, 0)

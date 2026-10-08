@@ -1,5 +1,12 @@
 package scheduler
 
+// The scheduler harness's fakegh stands in for the GitHub API, and
+// FAKE_CLAUDE's scripted developer, reviewer and singleton roles stand in
+// for a model session, throughout this file's tests. Both leave real
+// GitHub behaviour and a real model's judgment out of scope: what is
+// proven here is only that the scheduler reacts correctly to what the
+// harness is scripted to do.
+
 import (
 	"os"
 	"path/filepath"
@@ -59,6 +66,13 @@ func TestASessionReportsTheSandboxItRunsIn(t *testing.T) {
 // setWorkerSandbox follows the session, not the worker: the stages of one
 // worker run different roles, and a role's sandbox is its own, so the second
 // session's mode replaces the first's rather than being ignored.
+//
+// setWorkerSandbox is a maintained contract: it is the sole writer of a live
+// state.Worker's Sandbox field, and TestASessionReportsTheSandboxItRunsIn
+// above only reaches the single-session case through a real dispatch. A
+// second session replacing the first's mode on the same worker needs two
+// roles racing one issue to reach through a full run; calling the writer
+// directly is the economical way to pin that it replaces rather than merges.
 func TestSetWorkerSandboxFollowsTheRunningSession(t *testing.T) {
 	h := newHarness(t, devOnlyTOML)
 	w := &state.Worker{Name: "dev-1", Stage: "develop", Work: ghwork.New(1, 0)}
