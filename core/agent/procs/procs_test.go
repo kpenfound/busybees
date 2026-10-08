@@ -69,6 +69,21 @@ func TestParsePS(t *testing.T) {
 	}
 }
 
+// codex app-server carries the same session-directory override exec did,
+// on a command line whose subcommand is "app-server" instead of "exec":
+// hasMarker matches the marker itself, not the subcommand next to it, so
+// this is found exactly as the exec-era psLine 1100 in psTable is.
+func TestParsePSFindsACodexAppServerSession(t *testing.T) {
+	scope := "/a/.agent/sessions"
+	dir := scope + "/20260920-developer-issue-6-r1"
+	args := []string{"app-server", "-c", CodexMarker("") + `"` + dir + `"`}
+	line := fmt.Sprintf("  1500   1500 /usr/local/bin/codex %s\n", strings.Join(args, " "))
+	got := parsePS(line, 1, scope)
+	if len(got) != 1 || got[0].PID != 1500 {
+		t.Fatalf("parsePS did not find the codex app-server session: %+v", got)
+	}
+}
+
 // commandsOf keeps every process the table lists, whatever it runs and
 // whichever factory it belongs to: it is what a pid file the scan did not
 // match is read against, and the unmarked agent is the process only it has.
