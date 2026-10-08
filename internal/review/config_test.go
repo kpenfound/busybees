@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kpenfound/busybees/core/agent"
 	"github.com/kpenfound/busybees/internal/config"
 	"github.com/kpenfound/busybees/internal/ghapp"
 	"github.com/kpenfound/busybees/internal/ghapp/ghapptest"
@@ -597,21 +596,18 @@ func TestDefaultsErrors(t *testing.T) {
 // TestSupportedProvidersDerivesFromTheDescriptors pins the provider list
 // Config.Validate() and CLIAgent.Run's error both read from: the agents
 // whose backend descriptor declares the read-only floor a review session is
-// held to. There is no second list to widen when one is added: the test
-// fails when a descriptor declares restricted support without the shared
-// execution delivering it, and the derived list is what both readers take.
+// held to. The expected side is a literal list, not the same walk over
+// agent.Backends that supportedProviders() does: a bug in that walk (an
+// inverted condition, a dropped nil check) would reproduce identically in a
+// derived expectation and the test would still pass. It catches
+// SupportedProviders gaining, losing or reordering a provider; it leaves
+// unverified whether core/agent.Backends' own Restricted declarations are
+// the ones actually exercised by a live backend, since this test reads only
+// the derived list, not the descriptors themselves.
 func TestSupportedProvidersDerivesFromTheDescriptors(t *testing.T) {
-	var want []string
-	for _, b := range agent.Backends {
-		if b.Restricted != nil && b.Restricted.Supported {
-			want = append(want, b.Name)
-		}
-	}
+	want := []string{"claude", "codex", "opencode", "pi"}
 	if !slices.Equal(SupportedProviders, want) {
-		t.Fatalf("SupportedProviders = %v, want the declared %v", SupportedProviders, want)
-	}
-	if !slices.Equal(want, []string{"claude", "codex", "opencode", "pi"}) {
-		t.Fatalf("the descriptors declare %v, want all four", want)
+		t.Fatalf("SupportedProviders = %v, want %v", SupportedProviders, want)
 	}
 }
 

@@ -28,6 +28,16 @@ import (
 // script in the mounted directory, against the repository origin.txt
 // names in place of GitHub's URL. Every subcommand appends its name to
 // calls.txt.
+//
+// It leaves unverified that a real docker engine can pull or build the
+// Alpine image, that the mount and user/group arguments actually grant the
+// container the access the real one needs, and that GitHub's own
+// credential helper protocol accepts the clone's authentication the way
+// the script's own `git` does: this is a recording stand-in for the
+// client, run by the host's real shell and git, not a container. Each
+// test that cares about the clone failing for a specific reason (no
+// docker, a build that fails, a run that fails, a slow container) sets up
+// that failure itself rather than taking it as this fake's default.
 func fakeDocker(t *testing.T) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "docker")

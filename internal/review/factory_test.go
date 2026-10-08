@@ -18,7 +18,11 @@ import (
 // triageAgent answers the triage sessions in turn, one answer per round,
 // and once they run out a triage answer that takes nothing, or fail from
 // then on when fail is set. Every other session, an angle an ask reopened,
-// it answers with angle.
+// it answers with angle. It leaves unverified whether a real agent would
+// produce a well-formed triage answer or honor the instructions in its
+// prompt; what it establishes is AgentTriage's own handling of what a
+// session answers, each round's answer set by the test rather than an
+// unconditional success this type invents.
 type triageAgent struct {
 	rounds []string
 	angle  string

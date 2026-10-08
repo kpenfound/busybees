@@ -28,6 +28,14 @@ import (
 // what a CLI honoring the inline restrictions would say: no custom tool,
 // nothing inherited, everything disabled. No
 // test in this package runs a real agent.
+//
+// It leaves unverified whether the real claude, codex, opencode or pi
+// binary would accept the flags and inline configuration it is given, honor
+// the read-only restriction those flags ask for, or produce output in the
+// shape body hard-codes: this fake only proves that CLIAgent builds the
+// command line, environment and stdin the shared restricted execution's
+// contract calls for, and parses back what a CLI answering in that shape
+// would have said.
 func fakeCLI(t *testing.T, body string) (bin, record string) {
 	t.Helper()
 	return fakeScript(t, honestProbe, body)

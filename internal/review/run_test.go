@@ -18,7 +18,13 @@ import (
 
 // reviewAgent answers every session of a review by name: the distiller
 // with a brief, each angle with the findings it is given, and a session in
-// fail with an error.
+// fail with an error. It leaves unverified whether a real CLI agent would
+// accept the prompt it is given or honor the read-only restriction;
+// fakeCLI (agent_test.go), which runs a real subprocess, is what tests that
+// boundary. What this fake establishes instead is the runner's own wiring:
+// that it gathers, distills, runs the right angles, judges, filters and
+// writes the artifact, each session answering exactly what the test gave
+// it rather than a success this type invents on its own.
 type reviewAgent struct {
 	answers map[string]string
 	fail    map[string]error

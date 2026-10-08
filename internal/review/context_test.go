@@ -20,7 +20,10 @@ import (
 const testRepo = "acme/widgets"
 
 // fakeGH answers the gh calls a context gather makes. Every field is what
-// one call returns; a name in errs makes that call fail instead.
+// one call returns; a name in errs makes that call fail instead. It leaves
+// unverified whether a real `gh` binary accepts the arguments built for it
+// or whether GitHub's API answers with the shape assumed here; what it
+// establishes is Pipeline.Gather's own handling of what gh returns.
 type fakeGH struct {
 	pr   github.PR
 	diff string
