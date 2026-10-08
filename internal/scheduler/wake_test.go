@@ -92,6 +92,24 @@ func waitFor(t *testing.T, d time.Duration, what string, cond func() bool) {
 	}
 }
 
+// staysAt polls count for d and fails as soon as it departs from want,
+// instead of sleeping blindly for d and checking only once at the end: a
+// regression that produces an extra background pass is caught the moment it
+// happens rather than only if it happens to land before a fixed deadline.
+func staysAt(t *testing.T, d time.Duration, what string, want int, count func() int) {
+	t.Helper()
+	deadline := time.Now().Add(d)
+	for {
+		if got := count(); got != want {
+			t.Fatalf("%s: got %d, want %d to hold for %s", what, got, want, d)
+		}
+		if time.Now().After(deadline) {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 // A developer slot freed by a finished worker is filled at once rather than
 // at the next tick: the worker signals the wake channel when it returns its
 // slot, and the local pass that follows dispatches the next ready issue. The
@@ -199,11 +217,12 @@ func TestABurstOfSignalsCostsOneLocalPass(t *testing.T) {
 	waitFor(t, 30*time.Second, "the local pass the wake asked for", func() bool {
 		return h.gh.CallCount("issue edit") > before
 	})
-	// Ten passes would all have run by now; the poll timer is an hour away.
-	time.Sleep(200 * time.Millisecond)
-	if got := h.gh.CallCount("issue edit") - before; got != 1 {
-		t.Fatalf("ten signals ran %d local passes, want 1", got)
-	}
+	// A correct implementation never runs a second pass without another
+	// signal or the poll timer (an hour away): staysAt fails the moment one
+	// of the other nine signals produces one, rather than after a fixed wait.
+	staysAt(t, 200*time.Millisecond, "local passes from the ten signals", 1, func() int {
+		return h.gh.CallCount("issue edit") - before
+	})
 	cancel()
 	if <-waited {
 		t.Fatal("waitForTick reported a tick was due; it was cancelled")
@@ -243,6 +262,16 @@ checks_wait = "2s"
 // session that answers a conflict notice, a person's review comment or a
 // person's comment on the issue starts on the pass that follows rather than
 // at the next tick.
+//
+// s.wake's pending count is a maintained contract: it is the cheapest way to
+// confirm each of these three call sites signals, without re-running a full
+// dispatch loop for each of the conflict/feedback/comment fixtures that
+// checks_test.go, feedback_test.go and mentions_test.go already cover for
+// the delivery itself. What this leaves unverified — that a pending signal
+// really does start the recipient's session on the next local pass rather
+// than at the next poll — is proven through a real Run by
+// TestAFreedDeveloperSlotIsFilledOnTheWake and
+// TestMailFromAFinishedSessionStartsItsRecipientOnTheWake above.
 func TestTheSchedulersOwnMailSignalsTheWake(t *testing.T) {
 	ctx := context.Background()
 
@@ -311,6 +340,12 @@ func TestTheSchedulersOwnMailSignalsTheWake(t *testing.T) {
 // A wake still pending when the next full pass comes round is dropped: the
 // pass does everything the local pass it asked for would have done, and a
 // leftover signal would run a second one straight after it.
+//
+// s.wake's pending count is a maintained contract: the only other way to
+// observe drainWake's effect is a second local pass actually running, which
+// has nothing to produce here (noRolesTOML leaves nothing to dispatch and
+// nothing to re-poll); TestABurstOfSignalsCostsOneLocalPass already shows a
+// surviving signal running a visible extra pass.
 func TestAFullPassSupersedesAPendingWake(t *testing.T) {
 	h := newHarness(t, noRolesTOML)
 	h.sched.signal()

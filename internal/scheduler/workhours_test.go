@@ -52,6 +52,12 @@ func nextPoll(t *testing.T, h *harness) time.Time {
 // The last poll before the work day starts is scheduled for the moment the
 // window opens, not a whole off-hours interval later, so the work day does not
 // start late.
+//
+// tick is called directly rather than through Run, which loops until ctx is
+// cancelled: this needs the clock advanced by exact amounts between passes,
+// with no polling or timer to race. Both assertions are on observable state
+// (status.json's next poll, and the fake's call count), not on tick's own
+// (full, err) return, which is checked only as a sanity guard.
 func TestPollIsScheduledForTheStartOfTheWorkDay(t *testing.T) {
 	// 2026-08-31 08:55 UTC is a Monday, five minutes before the window opens.
 	h := newHarnessAt(t, workHoursIntervals("5m", "8h", "15m"), time.Date(2026, 8, 31, 8, 55, 0, 0, time.UTC))
@@ -78,6 +84,12 @@ func TestPollIsScheduledForTheStartOfTheWorkDay(t *testing.T) {
 
 // rate_limit_backoff is a floor on the wait, never a speed-up: off hours the
 // longer interval in force stands.
+//
+// tick is called directly for the same reason as in
+// TestPollIsScheduledForTheStartOfTheWorkDay above: exact clock control with
+// no real timer to wait out. isRateLimited(err) only guards that the
+// fixture's injected error is itself classified as a rate limit, before the
+// real assertion on the persisted next-poll time.
 func TestRateLimitNeverShortensTheWait(t *testing.T) {
 	for _, c := range []struct {
 		name string

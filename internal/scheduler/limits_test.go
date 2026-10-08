@@ -117,6 +117,11 @@ func TestSessionLimitPausesSingletonDispatch(t *testing.T) {
 // the account runs out of capacity must match one of the phrases that mark a
 // message "come back later", or it reads as an ordinary failure wherever
 // that list is consulted.
+//
+// rateLimitedText is a thin wrapper over ops.RateLimitedText; this is a
+// parser-case unit test of the phrase list, cheaper than driving each
+// message through a dispatch. TestSessionLimitPausesDeveloperDispatch
+// exercises the pause this feeds, end to end.
 func TestRateLimitedTextNamesTheSessionLimit(t *testing.T) {
 	for _, c := range []struct {
 		msg  string

@@ -381,6 +381,12 @@ func TestTwoOverBudgetSessionsInARowEscalate(t *testing.T) {
 	}
 }
 
+// overSessionBudget is a maintained contract: it is the boundary decision
+// behind TestSessionOverItsBudgetIsTreatedAsFailed, and its edge cases (a
+// cost exactly at the budget, a session with no budget set) are expensive to
+// drive through a whole dispatch for each one. Calling it directly leaves
+// unverified that a real session's result reaches it the same way a
+// dispatched one does; the E2E budget tests cover that.
 func TestOverSessionBudget(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -405,6 +411,10 @@ func TestOverSessionBudget(t *testing.T) {
 	}
 }
 
+// overBudgetNote is a maintained contract: it is the escalation-text
+// decision TestTwoOverBudgetSessionsInARowEscalate exercises end to end, and
+// this test narrows it to the one streak length (1 vs 2) does not reach
+// through the full developer/reviewer loop in that test.
 func TestOverBudgetNote(t *testing.T) {
 	if got := overBudgetNote("too much", 1, config.RoleDeveloper); got != "too much" {
 		t.Errorf("a first over-budget session should say only what it cost: %q", got)
@@ -420,6 +430,11 @@ func resultCosting(cost float64) *session.Result {
 	return &session.Result{CostUSD: cost}
 }
 
+// budgetKey is a maintained contract: it is the grant/boundary decision that
+// chooses whether an over-budget streak is counted per work item or per
+// role, which the dispatch-level budget tests exercise only for the work-item
+// case. Calling it directly is the only economical way to also cover the
+// singleton (role-keyed) case.
 func TestBudgetKey(t *testing.T) {
 	withIssue := sessionSpec{role: config.RoleDeveloper}
 	withIssue.data.Issue = &github.Issue{Number: 12}
@@ -434,6 +449,12 @@ func TestBudgetKey(t *testing.T) {
 // TestIssueSpendSeedsFromTheLedger: an issue whose bookkeeping carries no
 // total (or was deleted) still has a history in the ledger, and the total
 // is seeded from it once rather than starting again at zero.
+//
+// issueSpend is a maintained contract: it is the only way to confirm the
+// ledger-seeding path runs (and runs once, with the store write asserted
+// below) without first making the stored total disappear through the real
+// bookkeeping file, which the per-issue budget's own dispatch tests do not
+// need to do.
 func TestIssueSpendSeedsFromTheLedger(t *testing.T) {
 	h := newHarness(t, baseTOML)
 	for _, e := range []state.LedgerEntry{
@@ -465,6 +486,11 @@ func TestIssueSpendSeedsFromTheLedger(t *testing.T) {
 // TestOverIssueBudgetPluralisesTheSessionCount: the escalation names one
 // session as "1 session", not "1 sessions" — a single session can blow the
 // per-issue budget on its own.
+//
+// overIssueBudget is a maintained contract: TestIssueOverItsCostBudgetIsEscalated
+// already drives it end to end through the developer/reviewer loop, so this
+// test calls it directly rather than repeat that whole fixture only to vary
+// the stored session count.
 func TestOverIssueBudgetPluralisesTheSessionCount(t *testing.T) {
 	h := newHarness(t, baseTOML+"max_cost_per_issue = 0.5\n")
 	for _, tc := range []struct {
@@ -660,6 +686,13 @@ func TestUnreadableLedgerWithoutADailyBudgetChangesNothing(t *testing.T) {
 // TestOverIssueBudgetFailsClosedOnAnUnreadableLedger: an issue whose spend
 // has to be seeded from a ledger that cannot be read is over budget, with
 // the escalation naming what could not be read.
+//
+// overIssueBudget is a maintained contract here too: driving this fail-closed
+// case through a real dispatch would need a session that starts and then
+// finds the ledger corrupt mid-worker, which is not how corruption happens
+// in practice. This direct call leaves unverified only that a dispatched
+// worker calls overIssueBudget the same way; TestIssueOverItsCostBudgetIsEscalated
+// confirms that through the loop.
 func TestOverIssueBudgetFailsClosedOnAnUnreadableLedger(t *testing.T) {
 	h := newHarness(t, baseTOML+"max_cost_per_issue = 5\n")
 	corruptLedger(t, h)
@@ -684,6 +717,13 @@ func TestOverIssueBudgetFailsClosedOnAnUnreadableLedger(t *testing.T) {
 // TestRecordEntersAnUnknownCost: a session whose agent reported no cost is
 // in the ledger as one of unknown cost, not a free one, and a session that
 // reported one is not.
+//
+// record is called directly rather than through a dispatched session: it is
+// the ledger-writing step itself, so this is not bypassing the behaviour
+// under test, only the session run that would normally call it. What is
+// left unverified is that a real session's Result reaches record with
+// CostKnown set the same way a FAKE_COST session's does; the budget tests
+// that drive runPass cover that.
 func TestRecordEntersAnUnknownCost(t *testing.T) {
 	h := newHarness(t, baseTOML)
 	spec := sessionSpec{role: config.RoleQA, name: "qa-r1"}

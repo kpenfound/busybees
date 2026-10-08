@@ -65,6 +65,18 @@ func waitRun(t *testing.T, done chan error) error {
 // left to finish — its result and outcome are written, and Run returns only
 // after them — and the console says how many sessions it is waiting for and
 // that a second interrupt stops them.
+//
+// What this catches: a rewrite that let loop cancellation reach the session
+// (killing it instead of leaving it to finish), without the test depending
+// on how Run insulates the session's context (today, context.WithoutCancel)
+// to tell the difference. Once the console confirms the loop has handled the
+// cancellation, the test holds a bounded window before writing the release
+// file and requires the session to still read as running and unfinished
+// (its pid file present, no result file yet) throughout it: a cool-down that
+// instead killed the session would lose the pid file or gain a result file
+// inside that window. What it leaves unverified: a kill that lands after the
+// window — 200ms bounds how fast such a regression must act to be caught,
+// not a guarantee against a slower one.
 func TestCancellingTheLoopLetsTheRunningSessionFinish(t *testing.T) {
 	h := newHarness(t, devOnlyTOML)
 	dir, release, cancel, done := startHeldSession(t, h, func(dir string) bool {
@@ -74,10 +86,18 @@ func TestCancellingTheLoopLetsTheRunningSessionFinish(t *testing.T) {
 	defer cancel()
 
 	cancel()
-	// Room for the loop's cancellation to reach the session and kill it
-	// before the release, if it could. Nothing is raced: the session
-	// cannot finish before the file exists.
-	time.Sleep(200 * time.Millisecond)
+	waitFor(t, 30*time.Second, "the console to report the cool-down", func() bool {
+		return strings.Contains(h.logs.String(), "waiting for 1 running session to finish; interrupt again to stop them now")
+	})
+	staysAt(t, 200*time.Millisecond, "the developer session while the loop cools down", 1, func() int {
+		if _, err := os.Stat(filepath.Join(dir, procs.PIDFile)); err != nil {
+			return 0
+		}
+		if _, err := os.Stat(filepath.Join(dir, session.ResultFile)); err == nil {
+			return 0
+		}
+		return 1
+	})
 	if err := os.WriteFile(release, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -266,6 +286,12 @@ func TestACooldownStillEscalatesAtTheRoundLimit(t *testing.T) {
 // sessions running at that instant, and
 // TestCancellingTheLoopLetsTheRunningSessionFinish pins it through a real
 // run.
+//
+// stopNotice is a maintained contract: it is the message-formatting
+// decision the two cool-down tests above only reach for one case each
+// (1 session cooling, 0 sessions cooling). Driving every combination,
+// including the --once cases where nothing was interrupted, through a real
+// Run would need five separate fixtures for a pure text decision.
 func TestStopNoticeSaysWhatTheWaitIsFor(t *testing.T) {
 	cases := []struct {
 		name     string
