@@ -185,6 +185,8 @@ repo   = 'a/b' # exact formatting
 			if err != nil || again.NeedsRewrite() {
 				t.Fatalf("reload: %v", err)
 			}
+			// Called directly: Load never re-runs a step on text already at
+			// CurrentVersion, so idempotence can only be checked this way.
 			twice, err := migrateReviewProfiles(string(b))
 			if err != nil || twice != string(b) {
 				t.Fatalf("not idempotent: %v", err)
@@ -223,6 +225,8 @@ judge_model = "judge-choice"
 	if !strings.Contains(c.migrated, "# preserve choice") || !strings.Contains(c.migrated, "#angle_profiles") || !strings.Contains(c.migrated, "# preserve explanation") {
 		t.Fatalf("comments missing: %s", c.migrated)
 	}
+	// Called directly, as above: Load does not re-run this step once a file
+	// is at CurrentVersion.
 	if twice, err := migrateReviewProfiles(c.migrated); err != nil || twice != c.migrated {
 		t.Fatalf("comment migration not idempotent: %v", err)
 	}
@@ -246,7 +250,7 @@ brief_model = "brief-choice"
 		"roles.reviewer = { judge_model = \"old\", judge_profile = \"new\" }\n",
 		"[roles.reviewer.angle_models]\ndocs = \"old\"\n[roles.reviewer.angle_profiles]\ngeneral = \"new\"\n",
 	} {
-		if _, err := migrateReviewProfiles(body); err == nil || !strings.Contains(err.Error(), "cannot mix legacy") {
+		if _, err := Load(writeConfig(t, "version = 3\n"+body)); err == nil || !strings.Contains(err.Error(), "cannot mix legacy") {
 			t.Fatalf("conflicting keys accepted: %v", err)
 		}
 	}

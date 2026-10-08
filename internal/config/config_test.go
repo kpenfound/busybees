@@ -1027,6 +1027,11 @@ func TestMigrateUnversionedFile(t *testing.T) {
 	}
 }
 
+// TestMigrateChain exercises the generic version-stepping mechanism migrate
+// shares across every real migration, with a fake step map: the real
+// migrations map always has a step for every version below CurrentVersion,
+// so the "missing step" error can only be produced this way, not through
+// Load with any file content.
 func TestMigrateChain(t *testing.T) {
 	// A fake breaking change: project.repository was renamed to project.repo.
 	steps := map[int]migration{
@@ -1309,28 +1314,30 @@ func TestNextWorkHoursStart(t *testing.T) {
 	}
 }
 
-func TestDescribeDays(t *testing.T) {
-	days := func(names ...string) map[time.Weekday]bool {
-		m := map[time.Weekday]bool{}
-		for _, n := range names {
-			for _, w := range weekdayNames {
-				if w.name == n {
-					m[w.day] = true
-				}
-			}
-		}
-		return m
-	}
-	for want, in := range map[string][]string{
-		"mon-fri":     {"mon", "tue", "wed", "thu", "fri"},
-		"sat,sun":     {"sat", "sun"},
-		"mon,wed,fri": {"mon", "wed", "fri"},
-		"mon-wed,sun": {"mon", "tue", "wed", "sun"},
-		"mon-sun":     {"mon", "tue", "wed", "thu", "fri", "sat", "sun"},
+// WorkHoursDescription (`bees status`'s rendering of the configured window)
+// compacts work_days into ranges: a run of three or more consecutive days is
+// hyphenated, a run of exactly two is listed, and a lone day stands alone.
+// TestWorkHoursDefaults and TestInWorkHours already cover the default
+// "mon-fri" and a single-day "fri"; this covers the remaining shapes the
+// compaction can take.
+func TestWorkHoursDescriptionCompactsDayRanges(t *testing.T) {
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	for _, c := range []struct{ days, want string }{
+		{`["sat", "sun"]`, "sat,sun"},
+		{`["mon", "wed", "fri"]`, "mon,wed,fri"},
+		{`["mon", "tue", "wed", "sun"]`, "mon-wed,sun"},
+		{`["mon", "tue", "wed", "thu", "fri", "sat", "sun"]`, "mon-sun"},
 	} {
-		if got := describeDays(days(in...)); got != want {
-			t.Errorf("describeDays(%v) = %q, want %q", in, got, want)
-		}
+		t.Run(c.want, func(t *testing.T) {
+			cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nwork_hours = \"09:00-18:00\"\ntimezone = \"UTC\"\nwork_days = "+c.days+"\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "09:00-18:00 " + c.want + ", UTC"
+			if got := cfg.Scheduler.WorkHoursDescription(now); got != want {
+				t.Errorf("work_days %s: description = %q, want %q", c.days, got, want)
+			}
+		})
 	}
 }
 
@@ -1518,7 +1525,11 @@ func TestTemplateEscapesInterpolatedValues(t *testing.T) {
 }
 
 // TestEscapeTOML pins the escaping rules themselves: the quote, the backslash,
-// the five TOML shorthands, and \uXXXX for any other control character.
+// the five TOML shorthands, and \uXXXX for any other control character. This
+// is a maintained contract of the on-disk file format, not an implementation
+// detail: TestTemplateEscapesInterpolatedValues already proves the round trip
+// preserves values through RenderTOML and Parse, but only this test pins
+// which escape form is written for each character.
 func TestEscapeTOML(t *testing.T) {
 	for _, tc := range []struct{ in, want string }{
 		{"", ""},
@@ -1592,34 +1603,34 @@ func TestSizeLabelIsTheInverseOfTheSizeNames(t *testing.T) {
 	}
 }
 
-func TestDescribeLocation(t *testing.T) {
-	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
-	ny, err := time.LoadLocation("America/New_York")
+// WorkHoursDescription names a configured timezone by its IANA name (UTC and
+// the local-time fallback are already covered by TestWorkHoursDefaults and
+// TestInWorkHours). With no timezone configured, the window is read in the
+// machine's local time, which (*time.Location).String() cannot name usefully,
+// so it is described by the offset in force at the instant given rather than
+// the machine's: the abbreviation and offset can differ between January and
+// July even though the configuration did not change.
+func TestWorkHoursDescriptionNamesTheTimezone(t *testing.T) {
+	cfg, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nwork_hours = \"09:00-18:00\"\ntimezone = \"America/New_York\"\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, c := range []struct {
-		name string
-		loc  *time.Location
-		want string
-	}{
-		{"IANA name", ny, "America/New_York"},
-		{"UTC", time.UTC, "UTC"},
-		// time.Local has no name worth printing: describe the offset in
-		// force at now instead.
-		{"local", time.Local, "local time (" + now.In(time.Local).Format("MST -07:00") + ")"},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			if got := describeLocation(c.loc, now); got != c.want {
-				t.Fatalf("describeLocation = %q, want %q", got, c.want)
-			}
-		})
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	if got, want := cfg.Scheduler.WorkHoursDescription(now), "09:00-18:00 mon-fri, America/New_York"; got != want {
+		t.Fatalf("description = %q, want %q", got, want)
 	}
-	// The abbreviation and offset follow the instant, not the machine: the
-	// same location in January and in July can differ.
-	winter := describeLocation(time.Local, time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC))
-	if !strings.HasPrefix(winter, "local time (") || !strings.HasSuffix(winter, ")") {
-		t.Fatalf("local description %q is not the local time (...) form", winter)
+	local, err := Load(writeConfig(t, "version = 1\n[project]\nrepo = \"a/b\"\n[scheduler]\nwork_hours = \"09:00-18:00\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, instant := range []time.Time{
+		time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC),
+		time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC),
+	} {
+		got := local.Scheduler.WorkHoursDescription(instant)
+		if !strings.HasPrefix(got, "09:00-18:00 mon-fri, local time (") || !strings.HasSuffix(got, ")") {
+			t.Fatalf("description at %s = %q, not the local time (...) form", instant, got)
+		}
 	}
 }
 
@@ -2219,11 +2230,16 @@ func TestMigrateReviewStages(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(path)
-	want := "version = 2\n[project]\nrepo = \"a/b\"\n\n[roles.reviewer]\n# keep this comment\nauto_merge = true\n" + stagesNote + "\n" + stagesNote + "\nmodel = \"opus\"\n\n[roles.reviewer.env]\nstages = \"kept\"\n"
-	want, err = migrate(want, 2, CurrentVersion, migrations)
-	if err != nil {
-		t.Fatal(err)
-	}
+	// want is the literal file a version 1 to 5 migration produces: the
+	// stages comment from this step, plus what the later agent-profile steps
+	// (TestProfileMigration, TestFallbackProfileMigration) do to a role that
+	// still sets model directly. Pinned by hand rather than computed by
+	// calling migrate again, so a regression in any step shows up here too.
+	want := "version = 5\n[project]\nrepo = \"a/b\"\n\n[roles.reviewer]\nprofile = \"reviewer\"\n# keep this comment\nauto_merge = true\n" +
+		stagesNote + "\n" + stagesNote + "\n" +
+		"# Agent settings moved to profiles (version 3).\n# Previous: model = \"opus\"\n\n[roles.reviewer.env]\nstages = \"kept\"\n\n" +
+		"[profiles.reviewer]\nagent = \"claude\"\nmodel = \"opus\"\n# Previous: fallback_model = \"sonnet\"\nfallback = \"reviewer_fallback\"\neffort = \"\"\nsandbox = \"none\"\n\n" +
+		"[profiles.reviewer_fallback]\nagent = \"claude\"\nmodel = \"sonnet\"\nsandbox = \"none\"\n"
 	if string(data) != want {
 		t.Fatalf("rewritten file:\n%s\nwant:\n%s", data, want)
 	}
@@ -2234,6 +2250,10 @@ func TestMigrateReviewStages(t *testing.T) {
 		t.Fatalf("reload: %v", err)
 	}
 	// A file with no stages key comes through unchanged but for the version.
+	// This step runs directly (not through Load) because the result, "stages"
+	// surviving outside [roles.reviewer], is not a key any version accepts:
+	// Load's unknown-key check would refuse it before this assertion could
+	// observe the migration step's own text-targeting behaviour.
 	if got, _ := migrate("version = 1\n[roles.qa]\nstages = 1\n", 1, 2, migrations); got != "version = 2\n[roles.qa]\nstages = 1\n" {
 		t.Errorf("stages outside roles.reviewer: %q", got)
 	}

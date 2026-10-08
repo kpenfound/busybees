@@ -233,6 +233,10 @@ func TestTemplateHeader(t *testing.T) {
 	}
 }
 
+// wrapWords is the word-wrap algorithm TestTemplateHeader exercises on real
+// template When paragraphs; this pins boundary cases (empty input, a break
+// exactly at the width, a word longer than the width) that real template
+// text does not happen to contain.
 func TestWrapWords(t *testing.T) {
 	for _, tc := range []struct {
 		text  string

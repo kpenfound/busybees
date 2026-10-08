@@ -140,6 +140,8 @@ developer = { model = "haiku", skills = ["a", "b"] }
 			if !reflect.DeepEqual(r, rerole) {
 				t.Fatal("rewrite changed resolution")
 			}
+			// Called directly: Load never re-runs a step on text already at
+			// CurrentVersion, so idempotence can only be checked this way.
 			if twice, err := migrateAgentProfiles(string(b)); err != nil || twice != string(b) {
 				t.Fatalf("migration not idempotent: %v", err)
 			}
@@ -187,6 +189,8 @@ func TestProfileMigrationSequentialInlineRoles(t *testing.T) {
 					t.Fatalf("lost %s", comment)
 				}
 			}
+			// Called directly: Load never re-runs a step on text already at
+			// CurrentVersion, so idempotence can only be checked this way.
 			if twice, err := migrateAgentProfiles(string(b)); err != nil || twice != string(b) {
 				t.Fatalf("migration not idempotent: %v", err)
 			}

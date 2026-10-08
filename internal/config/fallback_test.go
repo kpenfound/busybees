@@ -131,7 +131,14 @@ func TestFallbackChainResolution(t *testing.T) {
 }
 
 // A chain the table would not have loaded still ends: a name that is no
-// profile stops it, and a name already in it does too.
+// profile stops it, and a name already in it does too. fallbackChain is
+// called directly (ProfileChain, its public wrapper, covers the same two
+// terminations in TestProfileChain) because the third case, starting from
+// the implicit built-in profile with a non-empty first hop, is a termination
+// guarantee no real caller reaches: a role resolved to the implicit profile
+// always has an empty Fallback too, so Role.Fallbacks() never calls
+// fallbackChain with these two arguments in combination; it is kept as a
+// maintained invariant of the algorithm itself.
 func TestFallbackChainEndsOnItsOwn(t *testing.T) {
 	profiles := map[string]AgentProfile{"a": {Fallback: "b"}, "b": {Fallback: "a"}, "c": {Fallback: "missing"}}
 	if got := fallbackChain(profiles, "a", "b"); !reflect.DeepEqual(got, []string{"b"}) {
@@ -249,6 +256,8 @@ fallback_model = "example"
 	if rerole, _ := again.Role(RoleDeveloper); !reflect.DeepEqual(r, rerole) {
 		t.Fatal("rewrite changed resolution")
 	}
+	// Called directly: Load never re-runs a step on text already at
+	// CurrentVersion, so idempotence can only be checked this way.
 	if twice, err := migrateFallbackProfiles(text); err != nil || twice != text {
 		t.Fatalf("not idempotent: %v\n%s", err, twice)
 	}
@@ -292,6 +301,8 @@ func TestFallbackProfileMigrationShapes(t *testing.T) {
 			if rerole, _ := again.Role(RoleQA); !reflect.DeepEqual(r, rerole) {
 				t.Fatalf("rewrite changed resolution:\n%s", b)
 			}
+			// Called directly: Load never re-runs a step on text already at
+			// CurrentVersion, so idempotence can only be checked this way.
 			if twice, err := migrateFallbackProfiles(string(b)); err != nil || twice != string(b) {
 				t.Fatalf("not idempotent: %v\n%s", err, twice)
 			}
@@ -310,6 +321,8 @@ func TestFallbackProfileMigrationTellsCommentedDefaults(t *testing.T) {
 	if !strings.Contains(cfg.migrated, want) {
 		t.Fatalf("migrated:\n%s", cfg.migrated)
 	}
+	// Called directly: Load never re-runs a step on text already at
+	// CurrentVersion, so idempotence can only be checked this way.
 	if twice, err := migrateFallbackProfiles(cfg.migrated); err != nil || twice != cfg.migrated {
 		t.Fatalf("not idempotent: %v\n%s", err, twice)
 	}
