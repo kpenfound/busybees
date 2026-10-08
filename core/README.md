@@ -73,8 +73,8 @@ disabled. The turn is refused before that when OpenCode would load a custom
 tool (see the OpenCode tools bullet below). Pi loads no extension (including the ordinary MCP adapter), skill,
 prompt template or context file and receives only its read, grep, find and ls
 tools. Every backend descriptor declares whether it can establish this contract
-and whether it supports follow-up; Codex deliberately does not resume. A
-capacity failure walks `Profile.Fallback`, applying the same contract to every
+and whether it supports follow-up; Codex resumes its thread through
+`thread/resume`. A capacity failure walks `Profile.Fallback`, applying the same contract to every
 attempt and clearing a resume id before crossing to another backend. The
 returned `RestrictedResult.Agent`, `RestrictedResult.Model` and
 `RestrictedResult.ClaudeID` belong to the backend that answered.
