@@ -252,6 +252,11 @@ func TestSeatbeltProfileDeniesVCSExecutables(t *testing.T) {
 	}
 }
 
+// The exact SBPL text seatbeltProfile writes, including quoting, is a
+// maintained contract: it is the only automated seatbelt coverage this
+// platform has, since sandbox-exec itself only runs on macOS. Keep this
+// test, and keep it as the profile's literal shape rather than a decision
+// read through parseSBPL, so a change to that shape is seen here first.
 func TestSeatbeltProfileText(t *testing.T) {
 	base := realTemp(t)
 	work := filepath.Join(base, `a "quoted\dir`)
