@@ -84,21 +84,30 @@ func topLevelNames(t *testing.T, dir string) []string {
 	return names
 }
 
+// TestDefaultLayoutPluginReturnedAsIs covers case 1: a target that is already
+// a Claude Code plugin is handed back unchanged, not copied into a generated
+// wrapper. The top-level listing and the manifest's exact bytes are what
+// Prepare's caller (and a session's --plugin-dir) actually observes, so the
+// assertion stays on that rather than on where the manager happens to have
+// cloned the reference.
 func TestDefaultLayoutPluginReturnedAsIs(t *testing.T) {
 	m, _ := testManager(t, pluginFixture(t))
 	dir := prepare(t, m, testRef)
-	if want := m.cloneDir(mustParse(t, testRef)); dir != want {
-		t.Fatalf("got %s, want the target inside the clone (%s)", dir, want)
+	if got, want := topLevelNames(t, dir), []string{".claude-plugin"}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("plugin dir top-level entries = %v, want only %v (no generated skills/ added)", got, want)
 	}
-	mustExist(t, filepath.Join(dir, ".claude-plugin", "plugin.json"))
+	data, err := os.ReadFile(filepath.Join(dir, ".claude-plugin", "plugin.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(data), `{"name":"fixture-plugin"}`; got != want {
+		t.Fatalf("plugin.json = %q, want the fixture's own manifest %q (unmodified, not regenerated)", got, want)
+	}
 }
 
 func TestDefaultLayoutWrapsSkillMd(t *testing.T) {
 	m, _ := testManager(t, skillFixture(t))
 	dir := prepare(t, m, testRef)
-	if dir == m.cloneDir(mustParse(t, testRef)) {
-		t.Fatalf("expected a generated wrapper, got the clone itself")
-	}
 	mustExist(t, filepath.Join(dir, ".claude-plugin", "plugin.json"))
 	mustExist(t, filepath.Join(dir, "skills", "fix", "SKILL.md"))
 }
@@ -106,9 +115,6 @@ func TestDefaultLayoutWrapsSkillMd(t *testing.T) {
 func TestDefaultLayoutWrapsSkillsCollection(t *testing.T) {
 	m, _ := testManager(t, skillsCollectionFixture(t))
 	dir := prepare(t, m, testRef)
-	if dir == m.cloneDir(mustParse(t, testRef)) {
-		t.Fatalf("expected a generated wrapper, got the clone itself")
-	}
 	mustExist(t, filepath.Join(dir, ".claude-plugin", "plugin.json"))
 	mustExist(t, filepath.Join(dir, "skills", "alpha", "SKILL.md"))
 	mustExist(t, filepath.Join(dir, "skills", "beta", "SKILL.md"))
@@ -131,9 +137,6 @@ func TestSkillsOnlyWrapsFullPlugin(t *testing.T) {
 	m, _ := testManager(t, fullPluginFixture(t))
 	m.SkillsOnly = true
 	dir := prepare(t, m, testRef)
-	if dir == m.cloneDir(mustParse(t, testRef)) {
-		t.Fatalf("skills-only mode returned the repository directory")
-	}
 	if got, want := topLevelNames(t, dir), []string{".claude-plugin", "skills"}; strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("wrapper tree = %v, want only %v", got, want)
 	}
@@ -144,9 +147,6 @@ func TestSkillsOnlyWrapsSkillMd(t *testing.T) {
 	m, _ := testManager(t, skillFixture(t))
 	m.SkillsOnly = true
 	dir := prepare(t, m, testRef)
-	if dir == m.cloneDir(mustParse(t, testRef)) {
-		t.Fatalf("skills-only mode returned the repository directory")
-	}
 	if got, want := topLevelNames(t, dir), []string{".claude-plugin", "skills"}; strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("wrapper tree = %v, want only %v", got, want)
 	}
@@ -189,7 +189,8 @@ func TestSkillsOnlyRejectsEmptyTarget(t *testing.T) {
 // inspects the reference string, so the layout step catches it once the
 // clone exists on disk.
 func TestSymlinkEscapeRefused(t *testing.T) {
-	m := NewManager(t.TempDir(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	cacheDir := t.TempDir()
+	m := NewManager(cacheDir, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	ref := mustParse(t, "https://github.com/x/escape#sub")
 	dir := m.cloneDir(ref)
@@ -209,8 +210,11 @@ func TestSymlinkEscapeRefused(t *testing.T) {
 		t.Fatalf("error %q does not name the reference %q", err, ref.String())
 	}
 
-	if exists(m.wrapperDir(ref)) {
-		t.Fatalf("a wrapper directory was created for a refused reference")
+	// core/skills documents cacheDir/plugins as where every generated
+	// wrapper lives (see NewManager and internal/skills.go's commitAt
+	// comment); a refused reference must leave it untouched.
+	if exists(filepath.Join(cacheDir, "plugins")) {
+		t.Fatalf("a plugins/ directory was created for a refused reference")
 	}
 }
 
@@ -223,11 +227,6 @@ func TestDistinctWrappersForSameDerivedName(t *testing.T) {
 
 	const acme = "https://github.com/acme/skills"
 	const other = "https://github.com/other/skills"
-
-	acmeRef, otherRef := mustParse(t, acme), mustParse(t, other)
-	if m.wrapperDir(acmeRef) == m.wrapperDir(otherRef) {
-		t.Fatalf("acme/skills and other/skills share a wrapper directory: %s", m.wrapperDir(acmeRef))
-	}
 
 	var acmeDir, otherDir string
 	for i := 0; i < 3; i++ {

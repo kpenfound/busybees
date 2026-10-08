@@ -142,15 +142,15 @@ func TestDistinctClonesForSameDerivedName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := m.cloneDir(acme); got == m.cloneDir(other) {
-		t.Fatalf("acme/skills and other/skills share a clone directory: %s", got)
-	}
-
+	// If acme/skills and other/skills shared a clone directory, the second
+	// Prepare would find the first one's .git already there and skip its
+	// own clone (Manager.clone), so distinct directories show up here as
+	// two clones, not one.
 	if _, err := m.Prepare(context.Background(), []string{acme.String(), other.String()}); err != nil {
 		t.Fatal(err)
 	}
 	if g.count("clone") != 2 {
-		t.Fatalf("expected 2 clones, got %d: %v", g.count("clone"), g.calls)
+		t.Fatalf("expected 2 clones (one per distinct clone directory), got %d: %v", g.count("clone"), g.calls)
 	}
 }
 
