@@ -1,17 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"context"
-	"go/ast"
-	"go/parser"
-	"go/token"
-	"os"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/kpenfound/busybees/internal/doctor"
+	"github.com/kpenfound/busybees/internal/versions"
 )
 
 // checkFor builds a check that records that it ran and reports status.
@@ -72,9 +72,8 @@ func TestPreflightIsQuietWhenOnlyWarningsAreLeft(t *testing.T) {
 	}
 }
 
-// TestRunCommandFlags pins the flag the preflight is bypassed with: the
-// command's RunE cannot be exercised in a test (newApp needs a repository, a
-// real gh and a real claude), so the flag itself is what is guarded here.
+// TestRunCommandFlags pins the flag the preflight is bypassed with, and that
+// the debugging commands never offer it at all.
 func TestRunCommandFlags(t *testing.T) {
 	cmd := newRunCmd(&globalFlags{})
 	if cmd.Flags().Lookup("skip-doctor") == nil {
@@ -97,45 +96,36 @@ func TestRunCommandFlags(t *testing.T) {
 }
 
 // `bees run` refuses to start while a role in the rotation asks for a sandbox
-// bees cannot build, and asks before the doctor and whatever --skip-doctor
-// says: falling back to running that role unboxed would hand it exactly what
-// it was configured to be kept away from. RunE cannot be exercised here (see
-// TestRunCommandFlags), so the guard is read out of the command's own source.
-func TestRunChecksTheSandboxAheadOfTheDoctor(t *testing.T) {
-	body := funcSource(t, "commands.go", "newRunCmd")
-	check := strings.Index(body, "cfg.CheckSandbox()")
-	if check < 0 {
-		t.Fatal("bees run does not call Config.CheckSandbox: a role configured for a sandbox bees cannot build would run unboxed")
-	}
-	skip := strings.Index(body, "if !skipDoctor")
-	if skip < 0 {
-		t.Fatal("bees run does not guard the doctor preflight with --skip-doctor; this test reads that line to place the sandbox check")
-	}
-	if check > skip {
-		t.Error("the sandbox check runs after the doctor preflight, so --skip-doctor bypasses it too")
-	}
-}
+// bees cannot build here, and does so whatever --skip-doctor says: falling
+// back to running that role unboxed would hand it exactly what it was
+// configured to be kept away from. The developer role here asks for Claude
+// Code's own sandbox with the codex agent, which cfg.CheckSandbox rejects
+// without needing a container engine or any other host dependency, so the
+// scenario is reached the same way with and without --skip-doctor.
+func TestRunRefusesAnUnbuildableSandboxRegardlessOfSkipDoctor(t *testing.T) {
+	t.Setenv(versions.EnvSkip, "1")
+	path := writeProject(t, "acme/a", "[roles.developer]\nsandbox = \"claude\"\nagent = \"codex\"\n")
+	const want = `sandbox "claude" is Claude Code's sandbox and agent "codex" does not run under it`
 
-// funcSource returns the source text of the named top-level function in the
-// named file of this package.
-func funcSource(t *testing.T, file, name string) string {
-	t.Helper()
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, file, nil, 0)
-	if err != nil {
-		t.Fatal(err)
+	for _, skipDoctor := range []bool{false, true} {
+		t.Run(fmt.Sprintf("skip-doctor=%t", skipDoctor), func(t *testing.T) {
+			args := []string{"run", "--config", path, "--no-tui", "--once"}
+			if skipDoctor {
+				args = append(args, "--skip-doctor")
+			}
+			// Bounded in case of a regression that lets CheckSandbox pass:
+			// the run would then try to poll acme/a for real, which this
+			// sandboxed test environment cannot reach.
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			root := newRoot()
+			root.SetArgs(args)
+			root.SetOut(&bytes.Buffer{})
+			root.SetErr(&bytes.Buffer{})
+			err := root.ExecuteContext(ctx)
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("run: err = %v, want it to contain %q", err, want)
+			}
+		})
 	}
-	src, err := os.ReadFile(file)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, d := range f.Decls {
-		fn, ok := d.(*ast.FuncDecl)
-		if !ok || fn.Name.Name != name {
-			continue
-		}
-		return string(src[fset.Position(fn.Pos()).Offset:fset.Position(fn.End()).Offset])
-	}
-	t.Fatalf("no func %s in %s", name, file)
-	return ""
 }
