@@ -20,11 +20,49 @@ func TestOpaqueKeyFilenames(t *testing.T) {
 		seen[folded] = key
 	}
 }
-func TestTagsAreOpaqueAndCopied(t *testing.T) {
+
+// Clone copies the tags, so mutating the clone's map, or adding a tag to
+// it, never reaches the original.
+func TestCloneCopiesTagsIndependentlyOfTheOriginal(t *testing.T) {
 	ref := Ref{Key: "role-reviewer", Tags: map[string]string{"arbitrary/key": "✓", "empty": ""}}
-	copy := ref.Clone()
-	copy.Tags["arbitrary/key"] = "changed"
-	if !ref.Matches(map[string]string{"arbitrary/key": "✓", "empty": ""}) || ref.Matches(map[string]string{"missing": ""}) {
-		t.Fatal("tag matching lost presence or value")
+	clone := ref.Clone()
+	clone.Tags["arbitrary/key"] = "changed"
+	clone.Tags["new"] = "added"
+
+	if got, want := ref.Tags["arbitrary/key"], "✓"; got != want {
+		t.Errorf("original's tag after mutating the clone: %q, want %q", got, want)
+	}
+	if _, ok := ref.Tags["new"]; ok {
+		t.Errorf("original gained the clone's new tag %q", ref.Tags["new"])
+	}
+	if clone.Key != ref.Key {
+		t.Errorf("clone key %q, want %q", clone.Key, ref.Key)
+	}
+}
+
+// Matches requires every requested tag to be present with exactly the
+// requested value, including an explicitly empty one, and tolerates tags
+// the reference carries but the caller did not ask about.
+func TestMatchesRequiresEveryRequestedTagWithItsExactValue(t *testing.T) {
+	ref := Ref{Key: "role-reviewer", Tags: map[string]string{"arbitrary/key": "✓", "empty": ""}}
+	matching := map[string]map[string]string{
+		"no tags requested":        {},
+		"a subset with its value":  {"arbitrary/key": "✓"},
+		"every tag with its value": {"arbitrary/key": "✓", "empty": ""},
+	}
+	for name, tags := range matching {
+		if !ref.Matches(tags) {
+			t.Errorf("%s: Matches(%v) = false, want true", name, tags)
+		}
+	}
+	notMatching := map[string]map[string]string{
+		"a key the reference lacks":             {"missing": ""},
+		"the right key, the wrong value":        {"arbitrary/key": "x"},
+		"the empty tag given a non-empty value": {"empty": "nonempty"},
+	}
+	for name, tags := range notMatching {
+		if ref.Matches(tags) {
+			t.Errorf("%s: Matches(%v) = true, want false", name, tags)
+		}
 	}
 }

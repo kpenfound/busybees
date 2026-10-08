@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -83,10 +84,13 @@ func TestReplayFromTheOldBaseOntoASquashedParent(t *testing.T) {
 	}
 }
 
-// succeeds runs git and reports whether it succeeded.
+// succeeds runs git in the stack's directory, independently of Replayer,
+// and reports whether it succeeded.
 func succeeds(s *vcstest.Stack, args ...string) bool {
-	_, err := Replayer{}.run(context.Background(), s.Dir, nil, args...)
-	return err == nil
+	cmd := exec.Command("git", args...)
+	cmd.Dir = s.Dir
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1")
+	return cmd.Run() == nil
 }
 
 // A replay that conflicts stops with the conflicting paths sorted and
