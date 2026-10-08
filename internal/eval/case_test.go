@@ -24,18 +24,42 @@ func TestLoadCasesSkipsRoleAndFixturesDirectories(t *testing.T) {
 	if len(cases) != 2 || cases[0].Name != "a-case" || cases[1].Name != "b-case" {
 		t.Fatalf("cases: %+v", cases)
 	}
+	// What comes back is the case as loadCase parses it, not a stub: its
+	// own fields and the defaults it filled in.
 	c := cases[0]
 	if c.Timeout.Duration != 2*time.Minute || c.MaxCost != 3 || c.Issues[0].Author != DefaultAuthor || c.Mail[0].From != DefaultAuthor {
 		t.Fatalf("case: %+v", c)
 	}
+}
+
+// --case picks out the one case named, from among the others LoadCases
+// would otherwise return.
+func TestLoadCasesFiltersToOneNamedCase(t *testing.T) {
+	root := t.TempDir()
+	writeCase(t, root, "b-case", answerCase, answerFiles())
+	writeCase(t, root, "a-case", answerCase, answerFiles())
 
 	one, err := LoadCases(root, "b-case")
 	if err != nil || len(one) != 1 || one[0].Name != "b-case" {
 		t.Fatalf("--case b-case: %+v, %v", one, err)
 	}
+}
+
+// --case names the cases that do exist when the name given is not one of
+// them.
+func TestLoadCasesRefusesAnUnknownName(t *testing.T) {
+	root := t.TempDir()
+	writeCase(t, root, "b-case", answerCase, answerFiles())
+	writeCase(t, root, "a-case", answerCase, answerFiles())
+
 	if _, err := LoadCases(root, "nope"); err == nil || !strings.Contains(err.Error(), `no case "nope"`) || !strings.Contains(err.Error(), "a-case, b-case") {
 		t.Fatalf("--case nope: %v", err)
 	}
+}
+
+// A directory that exists but holds no case is reported as such, distinct
+// from one that does not exist at all (TestLoadCasesWithoutAnEvalsDirectory).
+func TestLoadCasesRefusesAnEmptyDirectory(t *testing.T) {
 	if _, err := LoadCases(t.TempDir(), ""); err == nil || !strings.Contains(err.Error(), "no cases") {
 		t.Fatalf("an empty evals directory: %v", err)
 	}
@@ -127,7 +151,6 @@ func TestLoadRoleCases(t *testing.T) {
 	root := t.TempDir()
 	writeCase(t, filepath.Join(root, "developer"), "b-case", developerCase, answerRepo())
 	writeCase(t, filepath.Join(root, "developer"), "a-case", developerCase, answerRepo())
-	writeCase(t, root, "whole", answerCase, answerFiles())
 
 	cases, err := LoadRoleCases(root, "developer", "")
 	if err != nil {
@@ -139,18 +162,40 @@ func TestLoadRoleCases(t *testing.T) {
 	if cases[0].Role != "developer" || cases[0].Issue != 1 || cases[0].Expect.Outcome != "pr-opened" {
 		t.Fatalf("case: %+v", cases[0])
 	}
+}
+
+// --case picks out the one role case named.
+func TestLoadRoleCasesFiltersToOneNamedCase(t *testing.T) {
+	root := t.TempDir()
+	writeCase(t, filepath.Join(root, "developer"), "b-case", developerCase, answerRepo())
+	writeCase(t, filepath.Join(root, "developer"), "a-case", developerCase, answerRepo())
+
 	one, err := LoadRoleCases(root, "developer", "b-case")
 	if err != nil || len(one) != 1 || one[0].Name != "b-case" {
 		t.Fatalf("--case b-case: %+v, %v", one, err)
 	}
+}
+
+// A role's cases and the whole-factory's live in separate namespaces: a
+// whole-factory case is not found under the role directory, and the role
+// directory itself does not load as a whole-factory case.
+func TestRoleCasesAndWholeFactoryCasesDoNotShareANamespace(t *testing.T) {
+	root := t.TempDir()
+	writeCase(t, filepath.Join(root, "developer"), "a-case", developerCase, answerRepo())
+	writeCase(t, root, "whole", answerCase, answerFiles())
+
 	if _, err := LoadRoleCases(root, "developer", "whole"); err == nil || !strings.Contains(err.Error(), `no case "whole"`) {
 		t.Fatalf("a whole-factory case is not the developer's: %v", err)
 	}
-	// A whole-factory run does not take them either.
 	if _, err := LoadCases(root, "developer"); err == nil || !strings.Contains(err.Error(), `no case "developer"`) {
 		t.Fatalf("the role directory loaded as a whole-factory case: %v", err)
 	}
-	_, err = LoadRoleCases(root, "qa", "")
+}
+
+// A role with no cases directory at all says where they would live.
+func TestLoadRoleCasesRefusesAnUnknownRole(t *testing.T) {
+	root := t.TempDir()
+	_, err := LoadRoleCases(root, "qa", "")
 	if err == nil || !strings.Contains(err.Error(), "a qa eval case is a directory "+filepath.Join(root, "qa")+"/<case>/") {
 		t.Fatalf("a role with no cases: %v", err)
 	}
