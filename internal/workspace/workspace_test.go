@@ -13,7 +13,13 @@ import (
 	"github.com/kpenfound/busybees/internal/workspace"
 )
 
-func TestBranchAndDetached(t *testing.T) {
+// TestBranchCreatesNewBranchFromBaseAndIsFullyRemovable covers Branch's
+// default case: neither a local nor a remote ref for the name exists, so it
+// creates the branch from remote/base. The checkout must be a real, usable
+// worktree (git add/commit/push succeed inside it), and Remove must take the
+// whole thing away: the temp root on disk and the worktree's entry in the
+// main clone.
+func TestBranchCreatesNewBranchFromBaseAndIsFullyRemovable(t *testing.T) {
 	ctx := context.Background()
 	_, clone := testutil.SetupRepos(t)
 	m := workspace.NewManager(clone, filepath.Join(t.TempDir(), "ws"))
@@ -21,13 +27,50 @@ func TestBranchAndDetached(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// New branch from origin/main.
 	ws, err := m.Branch(ctx, "dev", "bees/issue-1", "main")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if out, _ := workspace.Git(ctx, ws.RepoDir, "rev-parse", "--abbrev-ref", "HEAD"); out != "bees/issue-1" {
-		t.Fatalf("branch: %s", out)
+		t.Fatalf("checked out branch: got %q, want %q", out, "bees/issue-1")
+	}
+	if err := os.WriteFile(filepath.Join(ws.RepoDir, "a.txt"), []byte("a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"add", "."}, {"-c", "user.email=t@e", "-c", "user.name=t", "commit", "-q", "-m", "a"}, {"push", "-q", "-u", "origin", "HEAD"}} {
+		if _, err := workspace.Git(ctx, ws.RepoDir, args...); err != nil {
+			t.Fatalf("git %v in the new worktree: %v", args, err)
+		}
+	}
+
+	if err := m.Remove(ctx, ws); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(ws.Root); !os.IsNotExist(err) {
+		t.Fatalf("workspace root %s still exists after Remove", ws.Root)
+	}
+	if got := worktreeCount(ctx, t, clone); got != 1 {
+		t.Fatalf("worktree list after Remove: got %d worktrees, want 1 (just the clone)", got)
+	}
+}
+
+// TestBranchReusesAnExistingLocalAndRemoteBranchWithItsContent covers
+// Branch's reuse case: a previous worktree was removed but the branch itself
+// was pushed and kept, both locally and on the remote. The next Branch call
+// for the same name must check out that branch, fast-forwarded, rather than
+// starting over from base, so the file committed through the first worktree
+// must still be present in the second.
+func TestBranchReusesAnExistingLocalAndRemoteBranchWithItsContent(t *testing.T) {
+	ctx := context.Background()
+	_, clone := testutil.SetupRepos(t)
+	m := workspace.NewManager(clone, filepath.Join(t.TempDir(), "ws"))
+	if err := m.Fetch(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	ws, err := m.Branch(ctx, "dev", "bees/issue-1", "main")
+	if err != nil {
+		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(ws.RepoDir, "a.txt"), []byte("a"), 0o644); err != nil {
 		t.Fatal(err)
@@ -37,39 +80,57 @@ func TestBranchAndDetached(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// The worktree is gone, but the branch itself stays, locally and on the
+	// remote, so the next acquire must reuse it rather than recreate it.
 	if err := m.Remove(ctx, ws); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(ws.Root); !os.IsNotExist(err) {
-		t.Fatal("workspace root should be gone")
-	}
-
-	// Same branch again: exists locally and remotely, must be reused.
 	if err := m.Fetch(ctx); err != nil {
 		t.Fatal(err)
 	}
+
 	ws2, err := m.Branch(ctx, "dev", "bees/issue-1", "main")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(ws2.RepoDir, "a.txt")); err != nil {
-		t.Fatal("branch content not reused")
+		t.Fatalf("reused branch is missing its earlier content: %v", err)
 	}
-	_ = m.Remove(ctx, ws2)
+}
 
-	// Detached checkout of main must not contain the branch's file.
+// TestDetachedChecksOutTheRefWithoutOtherBranchWork covers Detached: it must
+// check out remote/<ref> on its own, not whatever a local branch created
+// from the same base happens to hold.
+func TestDetachedChecksOutTheRefWithoutOtherBranchWork(t *testing.T) {
+	ctx := context.Background()
+	_, clone := testutil.SetupRepos(t)
+	m := workspace.NewManager(clone, filepath.Join(t.TempDir(), "ws"))
+	if err := m.Fetch(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	ws, err := m.Branch(ctx, "dev", "bees/issue-1", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ws.RepoDir, "a.txt"), []byte("a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"add", "."}, {"-c", "user.email=t@e", "-c", "user.name=t", "commit", "-q", "-m", "a"}} {
+		if _, err := workspace.Git(ctx, ws.RepoDir, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	d, err := m.Detached(ctx, "qa", "main")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(d.RepoDir, "a.txt")); err == nil {
-		t.Fatal("detached main should not have a.txt")
+		t.Fatal("detached checkout of main contains the unrelated branch's file")
 	}
-	_ = m.Remove(ctx, d)
-
-	out, _ := workspace.Git(ctx, clone, "worktree", "list")
-	if strings.Count(out, "\n") != 0 {
-		t.Fatalf("worktrees not cleaned up:\n%s", out)
+	if out, _ := workspace.Git(ctx, d.RepoDir, "symbolic-ref", "-q", "HEAD"); out != "" {
+		t.Fatalf("detached checkout has a symbolic HEAD %q, want none", out)
 	}
 }
 
@@ -296,17 +357,23 @@ func TestFetchDoesNotRaceWorktreeOperations(t *testing.T) {
 	}
 }
 
-// CommitsAhead counts a branch's commits beyond the base from the remote's
-// refs, and zero for a branch the remote does not have; DeleteBranch removes
-// a branch from the remote and the clone, and is a no-op for one already
-// gone.
-func TestCommitsAheadAndDeleteBranch(t *testing.T) {
+// TestCommitsAheadCountsRemoteCommitsBeyondBaseAndIsZeroForAnUnknownBranch
+// covers CommitsAhead: it reads purely from the main clone's remote-tracking
+// refs, so both a branch that was never pushed and one not yet pushed count
+// as zero commits ahead of base, and a pushed branch's count matches what was
+// actually pushed.
+func TestCommitsAheadCountsRemoteCommitsBeyondBaseAndIsZeroForAnUnknownBranch(t *testing.T) {
 	ctx := context.Background()
 	_, clone := testutil.SetupRepos(t)
 	m := workspace.NewManager(clone, filepath.Join(t.TempDir(), "ws"))
 	if err := m.Fetch(ctx); err != nil {
 		t.Fatal(err)
 	}
+
+	if n, err := m.CommitsAhead(ctx, "bees/never-pushed", "main"); err != nil || n != 0 {
+		t.Fatalf("CommitsAhead of a branch the remote never had: got %d, want 0: %v", n, err)
+	}
+
 	ws, err := m.Branch(ctx, "dev", "bees/issue-1-attempt-1", "main")
 	if err != nil {
 		t.Fatal(err)
@@ -321,13 +388,15 @@ func TestCommitsAheadAndDeleteBranch(t *testing.T) {
 			}
 		}
 	}
-	// Not pushed yet: the remote has no such branch.
+	// Not pushed yet: from the main clone's point of view the remote still
+	// has no such branch.
 	if err := m.Fetch(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if n, err := m.CommitsAhead(ctx, "bees/issue-1-attempt-1", "main"); err != nil || n != 0 {
-		t.Fatalf("CommitsAhead before the push: %d, %v", n, err)
+		t.Fatalf("CommitsAhead before the push: got %d, want 0: %v", n, err)
 	}
+
 	if _, err := workspace.Git(ctx, ws.RepoDir, "push", "-q", "-u", "origin", "HEAD"); err != nil {
 		t.Fatal(err)
 	}
@@ -335,15 +404,42 @@ func TestCommitsAheadAndDeleteBranch(t *testing.T) {
 		t.Fatal(err)
 	}
 	if n, err := m.CommitsAhead(ctx, "bees/issue-1-attempt-1", "main"); err != nil || n != 2 {
-		t.Fatalf("CommitsAhead after the push: %d, %v", n, err)
+		t.Fatalf("CommitsAhead after the push: got %d, want 2: %v", n, err)
 	}
+}
+
+// TestDeleteBranchRemovesItFromRemoteAndLocalButRefusesWhileCheckedOut covers
+// DeleteBranch: it must refuse to delete a branch a worktree still has
+// checked out, remove it from both the remote and the main clone once that
+// worktree is gone, and treat an already-gone branch as a no-op rather than
+// an error.
+func TestDeleteBranchRemovesItFromRemoteAndLocalButRefusesWhileCheckedOut(t *testing.T) {
+	ctx := context.Background()
+	_, clone := testutil.SetupRepos(t)
+	m := workspace.NewManager(clone, filepath.Join(t.TempDir(), "ws"))
+	if err := m.Fetch(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	ws, err := m.Branch(ctx, "dev", "bees/issue-1-attempt-1", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := workspace.Git(ctx, ws.RepoDir, "push", "-q", "-u", "origin", "HEAD"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Fetch(ctx); err != nil {
+		t.Fatal(err)
+	}
+
 	// Checked out in a worktree, the branch cannot go.
 	if err := m.DeleteBranch(ctx, "bees/issue-1-attempt-1"); err == nil {
-		t.Fatal("deleted a branch a worktree has checked out")
+		t.Fatal("DeleteBranch deleted a branch a worktree still has checked out")
 	}
 	if err := m.Remove(ctx, ws); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := m.DeleteBranch(ctx, "bees/issue-1-attempt-1"); err != nil {
 		t.Fatal(err)
 	}
@@ -355,11 +451,9 @@ func TestCommitsAheadAndDeleteBranch(t *testing.T) {
 			t.Errorf("%s is still in the clone", ref)
 		}
 	}
-	if n, err := m.CommitsAhead(ctx, "bees/issue-1-attempt-1", "main"); err != nil || n != 0 {
-		t.Errorf("CommitsAhead of a deleted branch: %d, %v", n, err)
-	}
+
 	// Gone already: nothing to do, no error.
 	if err := m.DeleteBranch(ctx, "bees/issue-1-attempt-1"); err != nil {
-		t.Errorf("deleting a deleted branch: %v", err)
+		t.Errorf("deleting an already-deleted branch: %v", err)
 	}
 }
