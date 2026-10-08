@@ -67,6 +67,25 @@ type stdinBackend interface {
 	consumeStdin(r *Runner, req Request, paths sessionPaths, stdin io.WriteCloser, stdout io.Reader, transcript io.Writer, cost *costMeter) (*streamEnd, *RateLimit, error)
 }
 
+// An interruptibleStdinBackend is a stdinBackend whose running turn can be
+// asked to stop gracefully ahead of the runner's process-group kill: the
+// runner checks for this optional interface too and, when interruptible
+// says yes for this call's paths, hands consumeStdin a session-wide stop
+// channel through paths.stop. On cancellation, timeout or the cost cap,
+// the runner closes it instead of killing outright, then waits up to its
+// own WaitDelay for consumeStdin to return — the signal that the
+// conversation ended, however it ended — before falling back to the kill.
+// consumeStdin decides what, if anything, that channel closing means: for
+// codex's ordinary, ToolsAll or held turn, all run on `codex app-server`,
+// it is turn/interrupt (codex_rpc.go); for its restricted turn, still
+// `codex exec`, interruptible says no and paths.stop is left nil, so
+// cancellation kills immediately exactly as every stdinBackend did before
+// this interface existed.
+type interruptibleStdinBackend interface {
+	stdinBackend
+	interruptible(paths sessionPaths) bool
+}
+
 // sessionPaths are the files the runner writes for a session before the CLI
 // starts, which a backend's command line may refer to.
 type sessionPaths struct {
@@ -86,6 +105,12 @@ type sessionPaths struct {
 	// read is the restricted turn's read server, for a backend that
 	// declares RestrictedCapabilities.ReadServer, and nil otherwise.
 	read *readServer
+	// stop is closed by the runner on cancellation, timeout or the cost
+	// cap, ahead of the process-group kill, for a stdinBackend that
+	// declared itself interruptible for this call (see
+	// interruptibleStdinBackend); nil for every other call, including
+	// every non-stdin backend's.
+	stop <-chan struct{}
 }
 
 // streamEnd is what a backend read off the end of a session's stream, in
@@ -343,6 +368,14 @@ func codexExecKind(paths sessionPaths) bool {
 	return paths.restricted
 }
 
+// interruptible satisfies interruptibleStdinBackend: only the app-server
+// branch (codexAppServerCommand, codexRPCRun) reacts to paths.stop, by
+// sending turn/interrupt; a restricted turn, still `codex exec`, does
+// not, so the runner must not wait for it before killing.
+func (codexBackend) interruptible(paths sessionPaths) bool {
+	return !codexExecKind(paths)
+}
+
 func (codexBackend) command(ctx context.Context, r *Runner, b Backend, req Request, paths sessionPaths) (string, []string, string, []envVar, error) {
 	if codexExecKind(paths) {
 		return codexExecCommand(ctx, r, b, req, paths)
@@ -434,8 +467,11 @@ func codexExecCommand(ctx context.Context, r *Runner, b Backend, req Request, pa
 // app-server` conversation over it — a held turn's ConfigDir asks
 // config/read on this same process before any thread starts, and the
 // RateLimit it returns comes from the conversation's last
-// account/rateLimits/updated notification. Request.ResumeID is not passed
-// through yet: a later unit wires thread/resume.
+// account/rateLimits/updated notification. The conversation also reacts to
+// paths.stop, set only for this branch since interruptible says so, by
+// sending turn/interrupt ahead of the runner's process-group kill.
+// Request.ResumeID is not passed through yet: a later unit wires
+// thread/resume.
 func (codexBackend) consumeStdin(r *Runner, req Request, paths sessionPaths, stdin io.WriteCloser, stdout io.Reader, transcript io.Writer, cost *costMeter) (*streamEnd, *RateLimit, error) {
 	if codexExecKind(paths) {
 		_ = stdin.Close()
@@ -451,7 +487,7 @@ func (codexBackend) consumeStdin(r *Runner, req Request, paths sessionPaths, std
 		turn.Tools = paths.turn.Tools
 		turn.ConfigDir = req.workDir()
 	}
-	outcome, err := codexRPCRun(stdin, stdout, transcript, turn)
+	outcome, err := codexRPCRun(stdin, stdout, transcript, turn, paths.stop)
 	if err != nil {
 		// codexRPCRun reports every ending spec#9 names — an "error"
 		// notification, a failed turn, an error response to thread/start,

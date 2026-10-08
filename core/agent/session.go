@@ -407,9 +407,21 @@ func (r *Runner) run(ctx context.Context, req Request, restricted bool) (*Result
 	// sbx.go already run the box's client with stdin kept open).
 	stdinBE, hasStdin := be.impl.(stdinBackend)
 	var stdinPipe io.WriteCloser
+	// stop and done are set only for a stdinBackend that declared itself
+	// interruptible for this call's paths (interruptibleStdinBackend): stop
+	// is closed by cmd.Cancel, ahead of the kill, so consumeStdin can ask
+	// its running turn to end gracefully; done is closed once consumeStdin
+	// has returned, the signal that it did, however it did. Left nil for
+	// every other backend, cmd.Cancel kills immediately, exactly as before
+	// this interface existed.
+	var stop, done chan struct{}
 	if hasStdin {
 		if stdinPipe, err = cmd.StdinPipe(); err != nil {
 			return nil, err
+		}
+		if ib, ok := be.impl.(interruptibleStdinBackend); ok && ib.interruptible(paths) {
+			stop, done = make(chan struct{}), make(chan struct{})
+			paths.stop = stop
 		}
 	} else {
 		cmd.Stdin = strings.NewReader(stdin)
@@ -417,6 +429,18 @@ func (r *Runner) run(ctx context.Context, req Request, restricted bool) (*Result
 	cmd.Env = env
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
+		if stop != nil {
+			close(stop)
+			select {
+			case <-done:
+				// consumeStdin returned: its turn ended, gracefully or
+				// not, and there is nothing left to kill for.
+				return nil
+			case <-time.After(cmd.WaitDelay):
+				// No turn/completed within the runner's own WaitDelay: the
+				// kill below follows exactly as it would have immediately.
+			}
+		}
 		// Kill the whole process group so MCP servers die with the agent.
 		// A container or sandbox outlives its client, so it is removed
 		// first.
@@ -479,6 +503,9 @@ func (r *Runner) run(ctx context.Context, req Request, restricted bool) (*Result
 		}
 		if scanErr == nil {
 			final, limit, scanErr = stdinBE.consumeStdin(r, req, paths, stdinPipe, stdout, transcript, cost)
+		}
+		if done != nil {
+			close(done)
 		}
 	} else {
 		final, limit, scanErr = be.impl.consume(r, stdout, transcript, cost)

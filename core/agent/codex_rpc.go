@@ -207,7 +207,10 @@ type codexConversation struct {
 	transcript io.Writer
 	nextID     int
 
-	threadID    string
+	threadID string
+	// turnID is turn/start's answer: the id turn/interrupt names alongside
+	// threadID, learned before awaitTurnCompleted is ever called.
+	turnID      string
 	turns       int
 	lastMessage string
 	// status is turn/completed's status once the turn has ended: empty
@@ -351,33 +354,72 @@ func codexServerError(params json.RawMessage) error {
 // with an error. A server that exits or closes its stdout first yields the
 // same codexAppServerEnded error a request answered by neither a write nor
 // a read would.
-func (c *codexConversation) awaitTurnCompleted() error {
+//
+// stop, when not nil, is the runner's own signal that the session was
+// cancelled, timed out, or capped: closing it sends turn/interrupt once,
+// ahead of the runner's process-group kill, and the loop goes on reading
+// exactly as before, because the interrupted turn still ends through its
+// own turn/completed, an "error" notification, or the server closing its
+// stdout — whichever arrives first, within the runner's own WaitDelay or
+// not. A dedicated goroutine does the actual reading, so this loop's
+// select can watch stop without blocking on it.
+func (c *codexConversation) awaitTurnCompleted(stop <-chan struct{}) error {
+	lines := make(chan []byte)
+	go func() {
+		defer close(lines)
+		for c.scanner.Scan() {
+			lines <- append([]byte(nil), c.scanner.Bytes()...)
+		}
+	}()
 	for {
-		line, ok := c.readLine()
-		if !ok {
-			return codexAppServerEnded("turn/completed")
-		}
-		var l codexRPCLine
-		if json.Unmarshal(line, &l) != nil {
-			continue
-		}
-		if l.hasID() && l.Method != "" {
-			if err := c.answer(l); err != nil {
+		select {
+		case line, ok := <-lines:
+			if !ok {
 				return codexAppServerEnded("turn/completed")
 			}
-			continue
-		}
-		switch l.Method {
-		case "item/completed":
-			c.recordItem(l.Params)
-		case "turn/completed":
-			return c.recordTurnCompleted(l.Params)
-		case codexRateLimitMethod:
-			c.recordRateLimit(l.Params)
-		case "error":
-			return codexServerError(l.Params)
+			c.writeTranscript(line)
+			var l codexRPCLine
+			if json.Unmarshal(line, &l) != nil {
+				continue
+			}
+			if l.hasID() && l.Method != "" {
+				if err := c.answer(l); err != nil {
+					return codexAppServerEnded("turn/completed")
+				}
+				continue
+			}
+			switch l.Method {
+			case "item/completed":
+				c.recordItem(l.Params)
+			case "turn/completed":
+				return c.recordTurnCompleted(l.Params)
+			case codexRateLimitMethod:
+				c.recordRateLimit(l.Params)
+			case "error":
+				return codexServerError(l.Params)
+			}
+		case <-stop:
+			stop = nil // turn/interrupt is sent at most once
+			_ = c.sendInterrupt()
 		}
 	}
+}
+
+// sendInterrupt writes turn/interrupt, carrying the thread and turn ids
+// this conversation learned from thread/start's and turn/start's own
+// answers. Its response, if the server ever sends one, carries no method
+// and matches no id this conversation awaits, so the loop above reads and
+// ignores it exactly as it does any other response to a request bees does
+// not correlate: what ends the turn is turn/completed, not this answer.
+func (c *codexConversation) sendInterrupt() error {
+	id := c.nextID
+	c.nextID++
+	return c.send(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"method":  "turn/interrupt",
+		"params":  map[string]any{"threadId": c.threadID, "turnId": c.turnID},
+	})
 }
 
 // recordItem counts one item/completed notification as a turn, and keeps
@@ -424,8 +466,9 @@ func (c *codexConversation) recordTurnCompleted(params json.RawMessage) error {
 // server exits. stdin and stdout are the session's; every line the server
 // writes and every request and response the driver sends goes to
 // transcript. The outcome's RateLimit is the account/rateLimits/updated
-// notification last seen, nil when none arrived.
-func codexRPCRun(stdin io.WriteCloser, stdout io.Reader, transcript io.Writer, turn codexRPCTurn) (*codexRPCOutcome, error) {
+// notification last seen, nil when none arrived. stop is the runner's own
+// interrupt signal; see awaitTurnCompleted.
+func codexRPCRun(stdin io.WriteCloser, stdout io.Reader, transcript io.Writer, turn codexRPCTurn, stop <-chan struct{}) (*codexRPCOutcome, error) {
 	defer func() { _ = stdin.Close() }()
 	c := newCodexConversation(stdin, stdout, transcript)
 
@@ -473,11 +516,20 @@ func codexRPCRun(stdin io.WriteCloser, stdout io.Reader, transcript io.Writer, t
 	}
 	c.threadID = started.Thread.ID
 
-	if _, err := c.call("turn/start", map[string]any{"threadId": c.threadID, "input": turn.Prompt}); err != nil {
+	result, err = c.call("turn/start", map[string]any{"threadId": c.threadID, "input": turn.Prompt})
+	if err != nil {
 		return nil, err
 	}
+	var startedTurn struct {
+		Turn struct {
+			ID string `json:"id"`
+		} `json:"turn"`
+	}
+	if json.Unmarshal(result, &startedTurn) == nil {
+		c.turnID = startedTurn.Turn.ID
+	}
 
-	if err := c.awaitTurnCompleted(); err != nil {
+	if err := c.awaitTurnCompleted(stop); err != nil {
 		return nil, err
 	}
 

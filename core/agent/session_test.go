@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -586,6 +587,138 @@ cat >/dev/null
 			}
 		})
 	}
+}
+
+// codexHandshakeLines is how many lines agenttest.RunCodexAppServer has
+// recorded once it has answered turn/start and moved on to draining
+// whatever comes next: initialize, the initialized notification,
+// thread/start and turn/start, the ordinary turn's whole handshake with no
+// config/read in it.
+const codexHandshakeLines = 4
+
+// cancelRunningCodexSession starts a codex session whose fake is
+// agenttest.CodexAppServer, scripted with interrupt (nil to leave
+// turn/interrupt unanswered), cancels its context once the fake's own
+// record says it has answered turn/start and is waiting for more, and
+// returns how long Run took to return, its error, and the record path to
+// read back with agenttest.ReadCodexAppServerRecord.
+func cancelRunningCodexSession(t *testing.T, interrupt *agenttest.CodexAppServerInterrupt) (time.Duration, error, string) {
+	t.Helper()
+	bin, record := agenttest.CodexAppServer(t, agenttest.CodexAppServerScript{
+		ThreadID:  "thread-1",
+		TurnID:    "turn-1",
+		Interrupt: interrupt,
+	})
+	sessionDir := t.TempDir()
+	// A plain Runner, not the testRunner newRunner builds: testRunner.Run
+	// sets its own session variables (including ACCESS_TOKEN) on req.Env
+	// after grantAll has already run, which only grantAll's own call below
+	// — and its variadic env names — can grant.
+	r := Runner{CodexBin: bin}
+	ctx, cancel := context.WithCancel(context.Background())
+	ended := make(chan error, 1)
+	started := time.Now()
+	// The host boundary passes through only the inherited host variables a
+	// request's grants name (grants.go, HostBoundary.env): the two the fake
+	// needs to recognise itself (agenttest.CodexAppServerFakeEnv and the
+	// directory it wrote its script to) must be granted explicitly, the
+	// way grantAll's own env parameter is for.
+	req := grantAll(Request{Name: "interrupt", SessionDir: sessionDir, Profile: codexRole(""), Workspace: fakeWorkspace{dir: t.TempDir()}, Prompt: "TASK"},
+		agenttest.CodexAppServerFakeEnv, "FAKE_CODEX_APP_SERVER_DIR")
+	go func() {
+		_, err := r.Run(ctx, req)
+		ended <- err
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for countRecordLines(record) < codexHandshakeLines && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if time.Now().After(deadline) {
+		cancel()
+		<-ended
+		t.Fatalf("handshake never completed; record now: %q", mustReadFile(record))
+	}
+	cancel()
+	err := <-ended
+	return time.Since(started), err, record
+}
+
+func mustReadFile(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "<error: " + err.Error() + ">"
+	}
+	return string(b)
+}
+
+// countRecordLines counts the "line" entries a fake codex app-server has
+// appended to its record file so far, 0 before the file exists: a poll's
+// own read, which must tolerate running ahead of the fake's first write.
+func countRecordLines(path string) int {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
+		if strings.Contains(line, `"type":"line"`) {
+			n++
+		}
+	}
+	return n
+}
+
+// A cancelled codex session sends turn/interrupt before anything is
+// killed: the fake, scripted to answer it with turn/completed, records the
+// request, ends the turn on its own, and never has its process group
+// killed — the runner's cmd.Cancel sees consumeStdin return well inside
+// WaitDelay and never reaches the kill (spec#12).
+func TestCodexCancelSendsInterruptAndEndsWithoutAKill(t *testing.T) {
+	elapsed, err, record := cancelRunningCodexSession(t, &agenttest.CodexAppServerInterrupt{Status: "interrupted"})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("session took %v to end after an answered interrupt; it must not have waited out WaitDelay", elapsed)
+	}
+	rec := agenttest.ReadCodexAppServerRecord(t, record)
+	if rec.Starts != 1 {
+		t.Fatalf("the fake started %d times, want exactly 1", rec.Starts)
+	}
+	if !linesContain(rec.Lines, `"method":"turn/interrupt"`) {
+		t.Errorf("the fake never received turn/interrupt: %v", rec.Lines)
+	}
+	if !linesContain(rec.Lines, `"threadId":"thread-1"`) || !linesContain(rec.Lines, `"turnId":"turn-1"`) {
+		t.Errorf("turn/interrupt did not carry the thread and turn ids: %v", rec.Lines)
+	}
+}
+
+// A cancelled codex session whose fake never answers turn/interrupt is
+// killed only after the runner's WaitDelay: the fake still receives it
+// first, but with no turn/completed coming back, cmd.Cancel's wait times
+// out and the process group is killed (spec#12).
+func TestCodexCancelKillsAfterWaitDelayWhenUnanswered(t *testing.T) {
+	elapsed, err, record := cancelRunningCodexSession(t, nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if elapsed < 9*time.Second {
+		t.Fatalf("session ended after %v; want it to wait out the runner's WaitDelay before the kill", elapsed)
+	}
+	rec := agenttest.ReadCodexAppServerRecord(t, record)
+	if !linesContain(rec.Lines, `"method":"turn/interrupt"`) {
+		t.Errorf("the fake never received turn/interrupt before being killed: %v", rec.Lines)
+	}
+}
+
+// linesContain reports whether any of lines contains substr.
+func linesContain(lines []string, substr string) bool {
+	for _, l := range lines {
+		if strings.Contains(l, substr) {
+			return true
+		}
+	}
+	return false
 }
 
 // The agent setting is validated when task.toml loads, so a value the

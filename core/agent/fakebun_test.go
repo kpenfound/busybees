@@ -34,6 +34,9 @@ func TestMain(m *testing.M) {
 	if os.Getenv(fakeBunEnv) == "1" {
 		os.Exit(runFakeBun(os.Args[1:]))
 	}
+	// A scripted fake `codex app-server` (agenttest.CodexAppServer, used by
+	// a test that needs its record of every line it received): checked
+	// here, and for the same reason, as fakeBunEnv above.
 	if os.Getenv(agenttest.CodexAppServerFakeEnv) == "1" {
 		os.Exit(agenttest.RunCodexAppServer())
 	}

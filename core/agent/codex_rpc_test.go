@@ -79,6 +79,14 @@ func (f *codexFakeRPC) request(id int, method string, params any) {
 // complete transcript.
 func runCodexFakeConversation(t *testing.T, turn codexRPCTurn, script func(f *codexFakeRPC)) (*codexRPCOutcome, error, string) {
 	t.Helper()
+	return runCodexFakeConversationStop(t, turn, nil, script)
+}
+
+// runCodexFakeConversationStop is runCodexFakeConversation with a stop
+// channel of the caller's own, for tests of awaitTurnCompleted's reaction
+// to it.
+func runCodexFakeConversationStop(t *testing.T, turn codexRPCTurn, stop <-chan struct{}, script func(f *codexFakeRPC)) (*codexRPCOutcome, error, string) {
+	t.Helper()
 	stdinR, stdinW := io.Pipe()
 	stdoutR, stdoutW := io.Pipe()
 	done := make(chan struct{})
@@ -90,7 +98,7 @@ func runCodexFakeConversation(t *testing.T, turn codexRPCTurn, script func(f *co
 		_ = stdinR.Close()
 	}()
 	var transcript bytes.Buffer
-	out, err := codexRPCRun(stdinW, stdoutR, &transcript, turn)
+	out, err := codexRPCRun(stdinW, stdoutR, &transcript, turn, stop)
 	<-done
 	return out, err, transcript.String()
 }
@@ -316,6 +324,47 @@ func TestCodexRPCResume(t *testing.T) {
 	}
 	if out.SessionID != "earlier-thread" {
 		t.Errorf("SessionID = %q, want earlier-thread", out.SessionID)
+	}
+}
+
+// TestCodexRPCSendsInterruptOnStop asserts awaitTurnCompleted's reaction to
+// a closed stop channel (spec#12): it sends turn/interrupt, carrying the
+// thread and turn ids learned from thread/start's and turn/start's own
+// answers, and goes on reading exactly as before, so the turn still ends
+// through whatever turn/completed the server answers with.
+func TestCodexRPCSendsInterruptOnStop(t *testing.T) {
+	stop := make(chan struct{})
+	var interrupt codexRPCLine
+	turn := codexRPCTurn{Cwd: "/work", Prompt: "do it"}
+	_, err, transcript := runCodexFakeConversationStop(t, turn, stop, func(f *codexFakeRPC) {
+		l, _ := f.recv()
+		f.respond(l.ID, map[string]any{})
+		f.recv()
+		l, _ = f.recv()
+		f.respond(l.ID, map[string]any{"thread": map[string]any{"id": "thread-1"}})
+		l, _ = f.recv()
+		f.respond(l.ID, map[string]any{"turn": map[string]any{"id": "turn-1"}})
+
+		close(stop)
+		interrupt, _ = f.recv()
+		f.respond(interrupt.ID, map[string]any{})
+		f.notify("turn/completed", map[string]any{"turn": map[string]any{"status": "interrupted"}})
+	})
+	if err == nil || !strings.Contains(err.Error(), "interrupted") {
+		t.Fatalf("err = %v, want it to mention the interrupted status", err)
+	}
+	if interrupt.Method != "turn/interrupt" {
+		t.Fatalf("method = %q, want turn/interrupt", interrupt.Method)
+	}
+	var params struct {
+		ThreadID string `json:"threadId"`
+		TurnID   string `json:"turnId"`
+	}
+	if err := json.Unmarshal(interrupt.Params, &params); err != nil || params.ThreadID != "thread-1" || params.TurnID != "turn-1" {
+		t.Errorf("turn/interrupt params = %s, want threadId thread-1 and turnId turn-1", interrupt.Params)
+	}
+	if !strings.Contains(transcript, "turn/interrupt") {
+		t.Error("transcript is missing turn/interrupt")
 	}
 }
 
@@ -757,7 +806,7 @@ func TestCodexRPCAppServerEndsDeterministically(t *testing.T) {
 		}
 		stdoutR, _ := io.Pipe()
 		var transcript bytes.Buffer
-		_, err := codexRPCRun(stdinW, stdoutR, &transcript, codexRPCTurn{Cwd: "/w", Prompt: "p"})
+		_, err := codexRPCRun(stdinW, stdoutR, &transcript, codexRPCTurn{Cwd: "/w", Prompt: "p"}, nil)
 		if err == nil || err.Error() != want {
 			t.Fatalf("err = %v, want %q", err, want)
 		}
@@ -775,7 +824,7 @@ func TestCodexRPCAppServerEndsDeterministically(t *testing.T) {
 			_ = stdinR.Close()
 		}()
 		var transcript bytes.Buffer
-		_, err := codexRPCRun(stdinW, stdoutR, &transcript, codexRPCTurn{Cwd: "/w", Prompt: "p"})
+		_, err := codexRPCRun(stdinW, stdoutR, &transcript, codexRPCTurn{Cwd: "/w", Prompt: "p"}, nil)
 		<-done
 		if err == nil || err.Error() != want {
 			t.Fatalf("err = %v, want %q", err, want)
