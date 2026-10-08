@@ -17,7 +17,12 @@ import (
 	"github.com/kpenfound/busybees/internal/statemigrate"
 )
 
-func TestOpaqueWorkState(t *testing.T) {
+// TestOpaqueWorkStateRoundTripsAcrossSubsystems: an opaque work key (not an
+// issue or PR number, here one long enough to collide with a path and
+// carrying caller-defined tags) threads unmodified through every subsystem
+// that files key, not just bookkeeping: the session record, the cost
+// totals, the key listing, the ledger and the live status.
+func TestOpaqueWorkStateRoundTripsAcrossSubsystems(t *testing.T) {
 	s := New(t.TempDir())
 	ref := work.Ref{Key: work.Key("../" + strings.Repeat("opaque", 100)), Tags: map[string]string{"caller/key": "✓", "branch": "topic"}}
 	held, err := s.Work(ref)
@@ -66,15 +71,37 @@ func TestOpaqueWorkState(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(loaded.Workers, st.Workers) || !reflect.DeepEqual(loaded.WaitingOnDeps, st.WaitingOnDeps) {
 		t.Fatalf("status: %+v %v", loaded, err)
 	}
-	// A file at the right hash carrying a different key must never be overwritten.
-	b, _ := json.Marshal(WorkState{Work: work.Ref{Key: "different"}, Cost: 99})
+}
+
+// A work bookkeeping file at the path a key hashes to, but carrying a
+// different identity, must never be overwritten: the collision is a corrupt
+// or foreign record, not this key's, and SaveWork must fail rather than
+// silently adopt the path.
+func TestSaveWorkRefusesAFileWithAMismatchedIdentity(t *testing.T) {
+	s := New(t.TempDir())
+	ref := work.Ref{Key: "collision", Tags: map[string]string{"branch": "topic"}}
+	held, err := s.Work(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	held.Round = 2
+	b, err := json.Marshal(WorkState{Work: work.Ref{Key: "different"}, Cost: 99})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(s.WorkPath(ref.Key)), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(s.WorkPath(ref.Key), b, 0644); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.SaveWork(held); err == nil {
 		t.Fatal("overwrote mismatched identity")
 	}
-	after, _ := os.ReadFile(s.WorkPath(ref.Key))
+	after, err := os.ReadFile(s.WorkPath(ref.Key))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if string(after) != string(b) {
 		t.Fatal("mismatched record was discarded")
 	}

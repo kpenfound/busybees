@@ -258,8 +258,10 @@ func TestConcurrentSaveIssue(t *testing.T) {
 	}
 }
 
-// Every state file is written 0644 and leaves no temp file behind, on the
-// success path and on an error path alike.
+// Every state file Store writes through its public API is mode 0644 and
+// leaves no temp file behind, on the success path and on the one error path
+// reachable publicly: a destination already occupied by a directory, which
+// fails at the rename after the temp file exists.
 func TestWrittenStateFilesAreModeSixFourFourAndLeaveNoTempFile(t *testing.T) {
 	dir := t.TempDir()
 	s := New(dir)
@@ -272,19 +274,15 @@ func TestWrittenStateFilesAreModeSixFourFourAndLeaveNoTempFile(t *testing.T) {
 	if err := s.SaveStatus(Status{}); err != nil {
 		t.Fatal(err)
 	}
-	// A value json.MarshalIndent cannot encode fails before anything is
-	// created; one that fails mid-write is not reachable through the Store,
-	// so writeJSON's own error path is exercised directly.
-	if err := s.writeJSON(filepath.Join(dir, "bad.json"), func() {}); err == nil {
-		t.Error("writeJSON accepted an unmarshalable value")
-	}
-	// A destination that is a directory fails at the rename, after the temp
-	// file exists: that is the path the cleanup is there for.
-	if err := os.MkdirAll(filepath.Join(dir, "taken.json"), 0o755); err != nil {
+	// A destination already occupied by a directory: SaveWork's own JSON is
+	// always marshalable, so the collision is staged by pre-creating the
+	// path SaveWork writes to (issues/issue-1.json) as a directory, through
+	// the public Store API rather than by calling writeJSON directly.
+	if err := os.MkdirAll(s.WorkPath(ghwork.New(1, 0).Key), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.writeJSON(filepath.Join(dir, "taken.json"), WorkState{Work: ghwork.New(1, 0)}); err == nil {
-		t.Error("writeJSON renamed over a directory")
+	if err := s.SaveWork(WorkState{Work: ghwork.New(1, 0)}); err == nil {
+		t.Error("SaveWork renamed over a directory")
 	}
 
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
@@ -306,6 +304,35 @@ func TestWrittenStateFilesAreModeSixFourFourAndLeaveNoTempFile(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestWriteJSONLeavesNoTempFileWhenMarshalFails: writeJSON's atomic-write
+// promise — create a uniquely named temp file, write it, then rename it into
+// place, cleaning up on every error path — is a maintained contract of every
+// state file Store writes (state.go's writeJSON doc comment). No value Store
+// ever marshals through its public API (WorkState, RoleState, Status) can
+// fail to encode, so the error path that fires before the destination file
+// is written — after Migrate has already published schema.json — is
+// reached by calling the unexported writeJSON directly, with a value
+// json.MarshalIndent rejects.
+func TestWriteJSONLeavesNoTempFileWhenMarshalFails(t *testing.T) {
+	dir := t.TempDir()
+	s := New(dir)
+	if err := s.writeJSON(filepath.Join(dir, "bad.json"), func() {}); err == nil {
+		t.Fatal("writeJSON accepted an unmarshalable value")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "bad.json")); !os.IsNotExist(err) {
+		t.Errorf("writeJSON created the destination despite the marshal failure: %v", err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".tmp") {
+			t.Errorf("temp file left behind after a marshal failure: %s", e.Name())
+		}
 	}
 }
 
