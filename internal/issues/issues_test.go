@@ -116,12 +116,34 @@ func TestCreateKinds(t *testing.T) {
 			t.Errorf("%+v: must not link without --parent", c.opts)
 		}
 	}
-	gh, _ := fake(t, "")
-	if _, err := Create(context.Background(), gh, policy(config.Filter{Label: "bees"}), Options{Title: "t", Parent: 1, Related: 2}); err == nil {
-		t.Fatal("parent and related together must fail")
+}
+
+// Parent and Related both answer "what milestone does this inherit?"; letting
+// both through would mean one silently wins. The refusal must happen before
+// GitHub is asked anything.
+func TestCreateRefusesParentAndRelatedTogether(t *testing.T) {
+	const want = "use either --parent or --related, not both"
+	gh, calls := fake(t, "")
+	_, err := Create(context.Background(), gh, policy(config.Filter{Label: "bees"}), Options{Title: "t", Parent: 1, Related: 2})
+	if err == nil || err.Error() != want {
+		t.Fatalf("got %v, want %q", err, want)
 	}
-	if _, err := Create(context.Background(), gh, policy(config.Filter{Label: "bees"}), Options{Kind: KindTask}); err == nil {
-		t.Fatal("title required")
+	if len(*calls) != 0 {
+		t.Errorf("a GitHub call was made before the refusal: %v", *calls)
+	}
+}
+
+// A title is the one thing every issue must carry; the refusal must happen
+// before GitHub is asked anything.
+func TestCreateRequiresATitle(t *testing.T) {
+	const want = "title is required"
+	gh, calls := fake(t, "")
+	_, err := Create(context.Background(), gh, policy(config.Filter{Label: "bees"}), Options{Kind: KindTask})
+	if err == nil || err.Error() != want {
+		t.Fatalf("got %v, want %q", err, want)
+	}
+	if len(*calls) != 0 {
+		t.Errorf("a GitHub call was made before the refusal: %v", *calls)
 	}
 }
 
@@ -136,11 +158,23 @@ func TestCreateBlockedBy(t *testing.T) {
 	if !strings.Contains(joined, "--body Blocked by #12, #15\n\nthe real body") {
 		t.Fatalf("body not prefixed:\n%s", joined)
 	}
-	if got := blockedByBody(nil, "the real body"); got != "the real body" {
-		t.Fatalf("no blockers must leave the body alone: %q", got)
+}
+
+// Without BlockedBy, Create must leave the body exactly as given: no stray
+// "Blocked by" line and nothing dropped from it.
+func TestCreateLeavesBodyAloneWithoutBlockers(t *testing.T) {
+	gh, calls := fake(t, "")
+	_, err := Create(context.Background(), gh, policy(config.Filter{Label: "bees"}),
+		Options{Title: "t", Body: "the real body", Kind: KindTask})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := blockedByBody([]int{12, 15}, "b"); !strings.HasPrefix(got, "Blocked by #12, #15\n\n") {
-		t.Fatalf("body: %q", got)
+	joined := strings.Join(*calls, "\n")
+	if !strings.Contains(joined, "--body the real body") {
+		t.Fatalf("body altered without blockers:\n%s", joined)
+	}
+	if strings.Contains(joined, "Blocked by") {
+		t.Fatalf("unexpected \"Blocked by\" prefix without blockers:\n%s", joined)
 	}
 }
 
