@@ -23,23 +23,23 @@ func TestEventBusDropsAndUsesInjectedClock(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(time.Second):
-		t.Fatal("producer blocked")
+		t.Fatal("producer blocked: 100 publishes to a buffer of 2 did not return within 1s")
 	}
 	if len(slow) != 2 || len(live) != 2 {
-		t.Fatal("subscriber buffer is not bounded")
+		t.Fatalf("buffered events = (slow=%d, live=%d), want (2, 2)", len(slow), len(live))
 	}
 	a, b := <-slow, <-live
 	if a.Time != now || a.Kind != "custom" || a.Work.Key != "task/arbitrary" {
-		t.Fatalf("event=%+v", a)
+		t.Fatalf("event = %+v, want Time=%s Kind=custom Work.Key=task/arbitrary", a, now)
 	}
 	a.Work.Tags["lane"] = "red"
-	if b.Work.Tags["lane"] != "blue" {
-		t.Fatal("subscriber metadata aliased")
+	if got := b.Work.Tags["lane"]; got != "blue" {
+		t.Fatalf("second subscriber's tag after mutating the first's copy = %q, want %q", got, "blue")
 	}
 	<-live
 	bus.Publish(Event{Kind: "next"})
 	if got := <-live; got.Kind != "next" {
-		t.Fatal("slow subscriber blocked live one")
+		t.Fatalf("event after the slow subscriber stalled = %q, want %q", got.Kind, "next")
 	}
 }
 
@@ -82,7 +82,7 @@ func TestPublishDropsRatherThanBlocks(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(10 * time.Second):
-		t.Fatal("publish blocked on a subscriber that is not reading")
+		t.Fatalf("publish blocked: %d publishes to a buffer of %d did not return within 10s", eventBuffer+10, eventBuffer)
 	}
 
 	for name, sub := range map[string]<-chan Event{"first": first, "second": second} {

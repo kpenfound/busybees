@@ -46,7 +46,7 @@ func TestAppendAndReadLedger(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(got) != 1 || got[0].Role != "checker" {
-		t.Fatalf("since: %+v", got)
+		t.Fatalf("since filter = %+v, want one entry with Role=checker", got)
 	}
 
 	// Once a session appends after the truncated tail, the tail is a line
@@ -64,7 +64,7 @@ func TestAppendAndReadLedger(t *testing.T) {
 		t.Errorf("error names %s line %d, want %s line 3", lineErr.Path, lineErr.Line, s.LedgerPath())
 	}
 	if msg := err.Error(); !strings.Contains(msg, s.LedgerPath()) || !strings.Contains(msg, "line 3") {
-		t.Errorf("error message names neither the file nor the line: %s", msg)
+		t.Errorf("error message = %q, want it to contain %q and %q", msg, s.LedgerPath(), "line 3")
 	}
 }
 
@@ -194,23 +194,23 @@ func TestLedgerUnknownCostRoundTrip(t *testing.T) {
 	appendRaw(t, s, "{\"time\":\"2026-09-15T12:00:00Z\",\"session\":\"old\",\"cost_usd\":0.25}\n")
 	got, err := s.ReadLedger(time.Time{})
 	if err != nil || len(got) != 3 {
-		t.Fatalf("got %+v, %v", got, err)
+		t.Fatalf("got %+v, %v; want 3 entries and no error", got, err)
 	}
 	if got[0].CostUnknown || got[0].CostUSD != 1.5 {
-		t.Errorf("known entry: %+v", got[0])
+		t.Errorf("known entry = %+v, want CostUnknown=false CostUSD=1.5", got[0])
 	}
 	if !got[1].CostUnknown || got[1].CostUSD != 0 {
-		t.Errorf("unknown entry: %+v", got[1])
+		t.Errorf("unknown entry = %+v, want CostUnknown=true CostUSD=0", got[1])
 	}
 	if got[2].CostUnknown || got[2].CostUSD != 0.25 {
-		t.Errorf("entry without the field: %+v", got[2])
+		t.Errorf("entry written before the field existed = %+v, want CostUnknown=false CostUSD=0.25", got[2])
 	}
 	b, err := os.ReadFile(s.LedgerPath())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(string(b), "cost_unknown") != 1 {
-		t.Errorf("the field is written for the unknown entry alone:\n%s", b)
+	if got := strings.Count(string(b), "cost_unknown"); got != 1 {
+		t.Errorf("\"cost_unknown\" appears %d times in the ledger, want 1 (only the unknown entry):\n%s", got, b)
 	}
 }
 
@@ -258,7 +258,7 @@ func TestAppendLedgerConcurrent(t *testing.T) {
 	}
 	for _, e := range got {
 		if len(e.Session) != 200 {
-			t.Fatalf("torn line: %+v", e)
+			t.Fatalf("session length = %d, want 200 (no interleaved write tore this line): %+v", len(e.Session), e)
 		}
 	}
 }
@@ -311,10 +311,10 @@ func TestTrimLedger(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !strings.HasSuffix(string(b), "{\"time\":\"not a\n") {
-		t.Errorf("unparseable line dropped:\n%s", b)
+		t.Errorf("ledger after trim = %q, want it still ending in the unparseable line (it was kept, not dropped)", b)
 	}
 	if info, err := os.Stat(s.LedgerPath()); err != nil || info.Mode().Perm() != 0o644 {
-		t.Errorf("ledger mode after trim: %v, %v", info, err)
+		t.Errorf("ledger mode after trim = %v (err=%v), want 0644 and no error", info, err)
 	}
 	entries, err := os.ReadDir(s.Dir)
 	if err != nil {
@@ -330,14 +330,14 @@ func TestTrimLedger(t *testing.T) {
 		t.Fatal(err)
 	}
 	if removed, err := s.TrimLedger(base.Add(-24 * time.Hour)); err != nil || removed != 0 {
-		t.Errorf("second trim: removed %d, %v", removed, err)
+		t.Errorf("second trim removed %d (err=%v), want 0 and no error: nothing was older than the cutoff", removed, err)
 	}
 	after, err := os.Stat(s.LedgerPath())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !os.SameFile(before, after) {
-		t.Error("a trim with nothing to remove rewrote the ledger")
+		t.Errorf("ledger file identity changed from %+v to %+v, want unchanged (nothing to trim)", before, after)
 	}
 }
 
@@ -347,7 +347,7 @@ func TestTrimLedgerMissingFile(t *testing.T) {
 		t.Fatalf("got %d, %v; want 0, nil", removed, err)
 	}
 	if _, err := os.Stat(s.LedgerPath()); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("trim created the ledger: %v", err)
+		t.Errorf("stat after trimming a missing ledger = %v, want os.ErrNotExist (trim must not create the file)", err)
 	}
 }
 
@@ -408,7 +408,7 @@ func TestReadLedgerScanFailure(t *testing.T) {
 	}
 	got, err := s.ReadLedger(time.Time{})
 	if err == nil || len(got) != 0 {
-		t.Fatalf("partial ledger returned: %v, %v", got, err)
+		t.Fatalf("got %v, %v; want no entries and a scan error for a line over the length cap", got, err)
 	}
 }
 
@@ -420,7 +420,7 @@ func TestTrimPreservesMalformedTruncatedBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got, err := s.ReadLedger(time.Time{}); err != nil || len(got) != 1 || !got[0].Time.Equal(now) {
-		t.Fatalf("clock=%+v err=%v", got, err)
+		t.Fatalf("got %+v (err=%v), want one entry stamped %s", got, err, now)
 	}
 	// Every retained byte, including unknown fields and an unfinished final
 	// line without a newline, survives a rewrite triggered by an old record.
@@ -430,9 +430,9 @@ func TestTrimPreservesMalformedTruncatedBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	if removed, err := s.TrimLedger(now.Add(-24 * time.Hour)); err != nil || removed != 1 {
-		t.Fatalf("trim=%d err=%v", removed, err)
+		t.Fatalf("trim removed %d (err=%v), want 1 (the old record)", removed, err)
 	}
 	if got, err := os.ReadFile(s.LedgerPath()); err != nil || string(got) != kept {
-		t.Fatalf("retained=%q err=%v", got, err)
+		t.Fatalf("retained %q (err=%v), want %q", got, err, kept)
 	}
 }

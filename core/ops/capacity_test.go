@@ -35,8 +35,8 @@ func TestPauseUntil(t *testing.T) {
 	}
 	// A pause until exactly now is one the dispatch gate never sees: the
 	// predicate asks whether the clock is still before it.
-	if now.Before(PauseUntil(now, now, backoff, maxLimitPause)) {
-		t.Error("a reset at now must not pause dispatch")
+	if got := PauseUntil(now, now, backoff, maxLimitPause); now.Before(got) {
+		t.Errorf("pauseUntil(reset=now) = %s, want no later than %s", got, now)
 	}
 }
 
@@ -44,30 +44,30 @@ func TestCapacityEpisodeExtendsAndReleasesOnce(t *testing.T) {
 	var pause CapacityPause
 	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
 	if active, released := pause.Check(now); active || released {
-		t.Fatal("zero pause is active")
+		t.Fatalf("zero-value Check = (active=%v, released=%v), want (false, false)", active, released)
 	}
 	until, started := pause.Extend(now, now.Add(time.Hour))
 	if !started || !until.Equal(now.Add(time.Hour)) {
-		t.Fatal("episode did not start")
+		t.Fatalf("first Extend = (until=%s, started=%v), want (%s, true)", until, started, now.Add(time.Hour))
 	}
 	until, started = pause.Extend(now, now.Add(time.Minute))
 	if started || !until.Equal(now.Add(time.Hour)) {
-		t.Fatal("episode shortened or restarted")
+		t.Fatalf("Extend with a shorter until = (until=%s, started=%v), want (%s, false)", until, started, now.Add(time.Hour))
 	}
 	until, started = pause.Extend(now, now.Add(2*time.Hour))
 	if started || !until.Equal(now.Add(2*time.Hour)) {
-		t.Fatal("episode did not extend")
+		t.Fatalf("Extend with a longer until = (until=%s, started=%v), want (%s, false)", until, started, now.Add(2*time.Hour))
 	}
 	if active, released := pause.Check(until.Add(-time.Nanosecond)); !active || released {
-		t.Fatal("early release")
+		t.Fatalf("Check one nanosecond before until = (active=%v, released=%v), want (true, false)", active, released)
 	}
 	if active, released := pause.Check(until); active || !released {
-		t.Fatal("missing release at edge")
+		t.Fatalf("Check at until = (active=%v, released=%v), want (false, true)", active, released)
 	}
 	if active, released := pause.Check(until); active || released || !pause.Until().IsZero() {
-		t.Fatal("duplicate release")
+		t.Fatalf("second Check at until = (active=%v, released=%v, Until=%s), want (false, false, zero)", active, released, pause.Until())
 	}
 	if _, started := pause.Extend(until, until.Add(time.Hour)); !started {
-		t.Fatal("new episode did not start")
+		t.Fatalf("Extend after release: started=%v, want true", started)
 	}
 }

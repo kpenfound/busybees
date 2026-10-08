@@ -106,7 +106,11 @@ func TestInfraReason(t *testing.T) {
 	}
 }
 
-func TestRetryExhaustionAndFallback(t *testing.T) {
+// TestRetryPolicyDecideExhaustionAndFallback: a retryable attempt is
+// retried with the policy's delay and fallback choice up to its retry
+// count, and every attempt beyond that, or one that was not retryable at
+// all, gets the zero decision.
+func TestRetryPolicyDecideExhaustionAndFallback(t *testing.T) {
 	for _, fallback := range []bool{false, true} {
 		for _, retries := range []int{0, 1, 3} {
 			policy := RetryPolicy{Retries: retries, Delay: 17 * time.Millisecond, WithFallback: fallback}
@@ -115,18 +119,25 @@ func TestRetryExhaustionAndFallback(t *testing.T) {
 					got := policy.Decide(attempt, retryable)
 					want := retryable && attempt <= retries
 					if got.Retry != want {
-						t.Fatalf("%+v attempt=%d retryable=%v: %+v", policy, attempt, retryable, got)
+						t.Fatalf("Decide(attempt=%d, retryable=%v) on %+v: Retry=%v, want %v", attempt, retryable, policy, got.Retry, want)
 					}
 					if want && (got.Delay != policy.Delay || got.UseFallback != fallback) {
-						t.Fatalf("retry settings: %+v", got)
+						t.Fatalf("Decide(attempt=%d, retryable=%v) on %+v = %+v, want Delay=%s UseFallback=%v", attempt, retryable, policy, got, policy.Delay, fallback)
 					}
 					if !want && got != (RetryDecision{}) {
-						t.Fatalf("exhausted decision: %+v", got)
+						t.Fatalf("Decide(attempt=%d, retryable=%v) on %+v = %+v, want the zero decision", attempt, retryable, policy, got)
 					}
 				}
 			}
 		}
 	}
+}
+
+// TestSelectProfileWalksFallbackChain: stepping down a profile's fallback
+// chain lands on the fallback that many steps away, a step past the end
+// stays on the last profile, and a step taken reports a different agent
+// than the one it started from.
+func TestSelectProfileWalksFallbackChain(t *testing.T) {
 	// A chain of two: the first step lands on the fallback, agent included,
 	// the second on the fallback's own, and a step past the end stays there.
 	last := agent.Profile{Agent: "opencode", Model: "last"}
@@ -143,18 +154,24 @@ func TestRetryExhaustionAndFallback(t *testing.T) {
 	} {
 		got, selected := SelectProfile(tc.profile, tc.steps)
 		if got.Model != tc.want || selected != tc.selected {
-			t.Fatalf("%d steps: model=%q fallback=%v, want %q %v", tc.steps, got.Model, selected, tc.want, tc.selected)
+			t.Fatalf("SelectProfile(%d steps) = (model=%q, selected=%v), want (%q, %v)", tc.steps, got.Model, selected, tc.want, tc.selected)
 		}
 		if selected && got.Agent == tc.profile.Agent {
-			t.Fatalf("%d steps: the fallback kept the agent %q", tc.steps, got.Agent)
+			t.Fatalf("SelectProfile(%d steps): fallback kept agent %q, want a different agent", tc.steps, got.Agent)
 		}
 	}
+}
+
+// TestRateLimitedTextRecognizesLimitPhrases: known capacity and
+// transient-limit phrasing is recognized regardless of case, and an
+// ordinary response is not mistaken for one.
+func TestRateLimitedTextRecognizesLimitPhrases(t *testing.T) {
 	for _, phrase := range []string{"RATE LIMIT", "Abuse Detection", "Secondary rate", "Overloaded", "Usage limit", "Session limit"} {
 		if !RateLimitedText(phrase) {
-			t.Errorf("missed %q", phrase)
+			t.Errorf("RateLimitedText(%q) = false, want true", phrase)
 		}
 	}
-	if RateLimitedText("ordinary response") {
-		t.Fatal("ordinary response classified as limit")
+	if got := RateLimitedText("ordinary response"); got {
+		t.Errorf("RateLimitedText(%q) = %v, want false", "ordinary response", got)
 	}
 }

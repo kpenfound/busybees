@@ -36,49 +36,49 @@ func TestSharedPoolServesTheQueueInOrder(t *testing.T) {
 	p := NewSharedPool(1)
 	var w woken
 	a, b, c := w.member(p, "a"), w.member(p, "b"), w.member(p, "c")
-	if !a.Acquire(1) {
-		t.Fatal("an empty pool refused the first claim")
+	if got := a.Acquire(1); !got {
+		t.Fatalf("a.Acquire(1) on an empty pool = %v, want true", got)
 	}
-	if b.Acquire(1) || c.Acquire(1) {
-		t.Fatal("a full pool granted a claim")
+	if gotB, gotC := b.Acquire(1), c.Acquire(1); gotB || gotC {
+		t.Fatalf("Acquire on a full pool = (b=%v, c=%v), want (false, false)", gotB, gotC)
 	}
 	if got := p.Waiting(); fmt.Sprint(got) != "[b c]" {
 		t.Fatalf("waiting %v, want [b c]", got)
 	}
 
 	a.Release(1)
-	if w.String() != "b" {
-		t.Fatalf("woken %q after a's release, want b: the head of the queue", w.String())
+	if got := w.String(); got != "b" {
+		t.Fatalf("woken %q after a's release, want %q: the head of the queue", got, "b")
 	}
-	if c.Acquire(1) {
-		t.Fatal("c claimed the slot ahead of b")
+	if got := c.Acquire(1); got {
+		t.Fatalf("c.Acquire(1) ahead of b = %v, want false", got)
 	}
-	if a.Acquire(1) {
-		t.Fatal("a claimed the slot back ahead of b")
+	if got := a.Acquire(1); got {
+		t.Fatalf("a.Acquire(1) back ahead of b = %v, want false", got)
 	}
-	if !b.Acquire(1) {
-		t.Fatal("b, the head of the queue, was refused a free slot")
+	if got := b.Acquire(1); !got {
+		t.Fatalf("b.Acquire(1), the head of the queue, = %v, want true", got)
 	}
 	if got := p.Waiting(); fmt.Sprint(got) != "[c a]" {
 		t.Fatalf("waiting %v, want [c a]: a queued up behind c", got)
 	}
-	if p.InUse() != 1 {
-		t.Fatalf("in use %d, want 1", p.InUse())
+	if got := p.InUse(); got != 1 {
+		t.Fatalf("in use %d, want 1", got)
 	}
 
 	b.Release(1)
-	if w.String() != "b c" {
-		t.Fatalf("woken %q, want b then c", w.String())
+	if got := w.String(); got != "b c" {
+		t.Fatalf("woken %q, want %q (b then c)", got, "b c")
 	}
-	if !c.Acquire(1) {
-		t.Fatal("c was refused its turn")
+	if got := c.Acquire(1); !got {
+		t.Fatalf("c.Acquire(1) on its turn = %v, want true", got)
 	}
 	c.Release(1)
-	if w.String() != "b c a" {
-		t.Fatalf("woken %q, want b, c, a", w.String())
+	if got := w.String(); got != "b c a" {
+		t.Fatalf("woken %q, want %q (b, c, a)", got, "b c a")
 	}
-	if !a.Acquire(1) {
-		t.Fatal("a was refused its turn")
+	if got := a.Acquire(1); !got {
+		t.Fatalf("a.Acquire(1) on its turn = %v, want true", got)
 	}
 	if got := p.Waiting(); len(got) != 0 {
 		t.Fatalf("waiting %v, want nobody", got)
@@ -101,19 +101,19 @@ func TestSharedPoolAPassWithoutARefusalLeavesTheQueue(t *testing.T) {
 		t.Fatalf("waiting %v after the refused pass, want [b c]", got)
 	}
 	a.Release(1)
-	if w.String() != "b" {
-		t.Fatalf("woken %q, want b", w.String())
+	if got := w.String(); got != "b" {
+		t.Fatalf("woken %q, want %q", got, "b")
 	}
 	// b's wake pass finds nothing to dispatch and ends without a claim.
 	b.Pass()
 	if got := p.Waiting(); fmt.Sprint(got) != "[c]" {
 		t.Fatalf("waiting %v after b's idle pass, want [c]", got)
 	}
-	if w.String() != "b c" {
-		t.Fatalf("woken %q, want c woken as the new head", w.String())
+	if got := w.String(); got != "b c" {
+		t.Fatalf("woken %q, want %q (c woken as the new head)", got, "b c")
 	}
-	if !c.Acquire(1) {
-		t.Fatal("c was refused the slot b did not use")
+	if got := c.Acquire(1); !got {
+		t.Fatalf("c.Acquire(1) on the slot b did not use = %v, want true", got)
 	}
 }
 
@@ -123,25 +123,25 @@ func TestSharedPoolWakesTheHeadWhenItCanBeServed(t *testing.T) {
 	p := NewSharedPool(3)
 	var w woken
 	a, b := w.member(p, "a"), w.member(p, "b")
-	if !a.Acquire(3) {
-		t.Fatal("a fan-out the pool holds was refused")
+	if got := a.Acquire(3); !got {
+		t.Fatalf("a.Acquire(3) of a fan-out the pool holds = %v, want true", got)
 	}
-	if b.Acquire(2) {
-		t.Fatal("a full pool granted a claim")
-	}
-	a.Release(1)
-	if w.String() != "" {
-		t.Fatalf("woken %q after one slot freed, want nobody: b asked for two", w.String())
+	if got := b.Acquire(2); got {
+		t.Fatalf("b.Acquire(2) on a full pool = %v, want false", got)
 	}
 	a.Release(1)
-	if w.String() != "b" {
-		t.Fatalf("woken %q after two slots freed, want b", w.String())
+	if got := w.String(); got != "" {
+		t.Fatalf("woken %q after one slot freed, want nobody: b asked for two", got)
 	}
-	if !b.Acquire(2) {
-		t.Fatal("b was refused the two slots it waited for")
+	a.Release(1)
+	if got := w.String(); got != "b" {
+		t.Fatalf("woken %q after two slots freed, want %q", got, "b")
 	}
-	if p.InUse() != 3 {
-		t.Fatalf("in use %d, want 3", p.InUse())
+	if got := b.Acquire(2); !got {
+		t.Fatalf("b.Acquire(2), the two slots it waited for, = %v, want true", got)
+	}
+	if got := p.InUse(); got != 3 {
+		t.Fatalf("in use %d, want 3", got)
 	}
 }
 
@@ -159,21 +159,23 @@ func TestSharedPoolLeavePreservesInFlightAndWakesNext(t *testing.T) {
 	p := NewSharedPool(2)
 	var w woken
 	a, b, c := w.member(p, "a"), w.member(p, "b"), w.member(p, "c")
-	if !a.Acquire(1) || !b.Acquire(1) || b.Acquire(1) || c.Acquire(1) {
-		t.Fatal("setup claims")
+	gotA1, gotB1, gotB2, gotC1 := a.Acquire(1), b.Acquire(1), b.Acquire(1), c.Acquire(1)
+	if !gotA1 || !gotB1 || gotB2 || gotC1 {
+		t.Fatalf("setup claims = (a=%v, b1=%v, b2=%v, c=%v), want (true, true, false, false)", gotA1, gotB1, gotB2, gotC1)
 	}
 	b.Leave()
-	if p.InUse() != 2 || fmt.Sprint(p.Waiting()) != "[c]" {
-		t.Fatal("leave released active work or kept pending claim")
+	if inUse, waiting := p.InUse(), fmt.Sprint(p.Waiting()); inUse != 2 || waiting != "[c]" {
+		t.Fatalf("after b.Leave(): inUse=%d waiting=%s, want inUse=2 waiting=[c]", inUse, waiting)
 	}
 	b.Release(1)
-	if w.String() != "c" || !c.Acquire(1) {
-		t.Fatal("next member not served")
+	gotWoken, gotAcquire := w.String(), c.Acquire(1)
+	if gotWoken != "c" || !gotAcquire {
+		t.Fatalf("after b.Release(1): woken=%q c.Acquire(1)=%v, want woken=%q acquire=true", gotWoken, gotAcquire, "c")
 	}
 	c.Release(1)
 	a.Release(1)
-	if p.InUse() != 0 {
-		t.Fatal("slots leaked")
+	if got := p.InUse(); got != 0 {
+		t.Fatalf("in use after every release = %d, want 0", got)
 	}
 }
 
@@ -193,20 +195,20 @@ func TestSharedPoolConcurrentPasses(t *testing.T) {
 					select {
 					case <-wake:
 					case <-ctx.Done():
-						t.Error("waiting member starved")
+						t.Errorf("member %d: waiting for a slot starved past its 5s deadline", i)
 						return
 					}
 				}
 				member.Pass()
 				if used := p.InUse(); used < 1 || used > p.Size() {
-					t.Errorf("in use=%d", used)
+					t.Errorf("member %d: in use = %d, want between 1 and %d", i, used, p.Size())
 				}
 				member.Release(1)
 			}
 		})
 	}
 	wg.Wait()
-	if p.InUse() != 0 || len(p.Waiting()) != 0 {
-		t.Fatal("completed passes left claims behind")
+	if inUse, waiting := p.InUse(), p.Waiting(); inUse != 0 || len(waiting) != 0 {
+		t.Fatalf("after every pass completed: inUse=%d waiting=%v, want 0, none", inUse, waiting)
 	}
 }
