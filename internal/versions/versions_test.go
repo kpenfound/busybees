@@ -9,28 +9,54 @@ import (
 	"testing"
 )
 
-func TestParseAndLess(t *testing.T) {
-	cases := map[string]string{
-		"gh version 2.69.0 (2025-03-19)\nhttps://github.com/cli/cli/releases/tag/v2.69.0": "2.69.0",
-		"2.1.251 (Claude Code)": "2.1.251",
-		"v10.0.3":               "10.0.3",
+func TestParse(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"gh version banner with a release URL line", "gh version 2.69.0 (2025-03-19)\nhttps://github.com/cli/cli/releases/tag/v2.69.0", "2.69.0"},
+		{"claude version banner", "2.1.251 (Claude Code)", "2.1.251"},
+		{"bare v-prefixed version", "v10.0.3", "10.0.3"},
 	}
-	for in, want := range cases {
-		v, err := Parse(in)
-		if err != nil || v.String() != want {
-			t.Errorf("Parse(%q) = %v, %v; want %s", in, v, err, want)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			v, err := Parse(c.in)
+			if err != nil || v.String() != c.want {
+				t.Errorf("Parse(%q) = %v, %v; want %s", c.in, v, err, c.want)
+			}
+		})
+	}
+	t.Run("output with no version number is an error", func(t *testing.T) {
+		if _, err := Parse("gh version unknown"); err == nil {
+			t.Error("expected error for missing version")
 		}
+	})
+}
+
+func TestLess(t *testing.T) {
+	cases := []struct {
+		name string
+		a, b string
+	}{
+		{"patch difference", "2.49.9", "2.50.0"},
+		{"minor difference", "2.1.9", "2.1.76"},
+		{"major difference", "1.99.99", "2.0.0"},
 	}
-	if _, err := Parse("gh version unknown"); err == nil {
-		t.Error("expected error for missing version")
-	}
-	older := []struct{ a, b string }{{"2.49.9", "2.50.0"}, {"2.1.9", "2.1.76"}, {"1.99.99", "2.0.0"}}
-	for _, c := range older {
-		a, _ := Parse(c.a)
-		b, _ := Parse(c.b)
-		if !a.Less(b) || b.Less(a) || a.Less(a) {
-			t.Errorf("Less(%s, %s) wrong", c.a, c.b)
-		}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			a, err := Parse(c.a)
+			if err != nil {
+				t.Fatalf("Parse(%q): %v", c.a, err)
+			}
+			b, err := Parse(c.b)
+			if err != nil {
+				t.Fatalf("Parse(%q): %v", c.b, err)
+			}
+			if !a.Less(b) || b.Less(a) || a.Less(a) {
+				t.Errorf("Less(%s, %s) wrong", c.a, c.b)
+			}
+		})
 	}
 }
 
@@ -45,32 +71,46 @@ func fakeTool(t *testing.T, output string) string {
 
 func TestCheck(t *testing.T) {
 	ctx := context.Background()
-	if err := Check(ctx, "gh", fakeTool(t, "gh version 2.69.0 (2025-03-19)"), "2.50.0"); err != nil {
-		t.Errorf("new enough: %v", err)
-	}
-	err := Check(ctx, "gh", fakeTool(t, "gh version 2.49.2 (2024-04-01)"), MinGH)
-	if err == nil || !strings.Contains(err.Error(), "2.49.2 is too old") || !strings.Contains(err.Error(), EnvSkip) {
-		t.Errorf("too old: %v", err)
-	}
-	if err := Check(ctx, "claude", fakeTool(t, "2.1.76 (Claude Code)"), MinClaude); err != nil {
-		t.Errorf("exact minimum: %v", err)
-	}
-	if err := Check(ctx, "gh", filepath.Join(t.TempDir(), "missing"), MinGH); err == nil {
-		t.Error("missing binary should fail")
-	}
-	if err := Check(ctx, "gh", fakeTool(t, "nonsense"), MinGH); err == nil {
-		t.Error("unparseable output should fail")
-	}
+	t.Run("newer than the minimum passes", func(t *testing.T) {
+		if err := Check(ctx, "gh", fakeTool(t, "gh version 2.69.0 (2025-03-19)"), "2.50.0"); err != nil {
+			t.Errorf("new enough: %v", err)
+		}
+	})
+	t.Run("older than the minimum fails with an upgrade message", func(t *testing.T) {
+		err := Check(ctx, "gh", fakeTool(t, "gh version 2.49.2 (2024-04-01)"), MinGH)
+		if err == nil || !strings.Contains(err.Error(), "2.49.2 is too old") || !strings.Contains(err.Error(), EnvSkip) {
+			t.Errorf("too old: %v", err)
+		}
+	})
+	t.Run("exact minimum passes", func(t *testing.T) {
+		if err := Check(ctx, "claude", fakeTool(t, "2.1.76 (Claude Code)"), MinClaude); err != nil {
+			t.Errorf("exact minimum: %v", err)
+		}
+	})
+	t.Run("missing binary fails", func(t *testing.T) {
+		if err := Check(ctx, "gh", filepath.Join(t.TempDir(), "missing"), MinGH); err == nil {
+			t.Error("missing binary should fail")
+		}
+	})
+	t.Run("unparseable output fails", func(t *testing.T) {
+		if err := Check(ctx, "gh", fakeTool(t, "nonsense"), MinGH); err == nil {
+			t.Error("unparseable output should fail")
+		}
+	})
 }
 
 func TestSkip(t *testing.T) {
 	t.Setenv(EnvSkip, "1")
-	if err := CheckGH(context.Background()); err != nil {
-		t.Errorf("skip gh: %v", err)
-	}
-	if err := CheckClaude(context.Background(), filepath.Join(t.TempDir(), "missing")); err != nil {
-		t.Errorf("skip claude: %v", err)
-	}
+	t.Run("gh check is skipped", func(t *testing.T) {
+		if err := CheckGH(context.Background()); err != nil {
+			t.Errorf("skip gh: %v", err)
+		}
+	})
+	t.Run("claude check is skipped even for a missing binary", func(t *testing.T) {
+		if err := CheckClaude(context.Background(), filepath.Join(t.TempDir(), "missing")); err != nil {
+			t.Errorf("skip claude: %v", err)
+		}
+	})
 }
 
 func TestBees(t *testing.T) {
