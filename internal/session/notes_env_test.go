@@ -19,6 +19,9 @@ import (
 // where a reference that expands to nothing is an error. The name reaches
 // the session with the value the scheduler resolved, only with the neo4j
 // backend: on the file backend nothing reads it and the secret stays home.
+// sessionEnvWithNotes' fakeClaude only dumps its environment; the
+// config.LoadNotes calls below are this test's own stand-in for the
+// in-session `bees mcp serve`, not a run of the real one.
 func TestTheNotesKeyVariableReachesTheSession(t *testing.T) {
 	const varName = "BEES_TEST_SESSION_NAMS_KEY"
 	const secret = "nams_only_in_the_environment"

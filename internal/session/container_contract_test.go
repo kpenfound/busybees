@@ -15,6 +15,12 @@ import (
 	"github.com/kpenfound/busybees/internal/config"
 )
 
+// TestContainerSessionRefusedWithoutWhatItNeeds checks that a container or
+// sbx session is refused, with no session directory left behind and no
+// agent ever started, when it is missing an image, [github], a credential
+// or a sandbox template. claude here would unconditionally report success
+// if it ever ran; the "ran" file check is what actually establishes it
+// never does.
 func TestContainerSessionRefusedWithoutWhatItNeeds(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
@@ -51,6 +57,17 @@ func TestContainerSessionRefusedWithoutWhatItNeeds(t *testing.T) {
 	}
 }
 
+// TestContainerIdentityContract runs a full container session (through
+// Runner.Run, with the Docker and MCP-server fakes) and checks everything a
+// caller can observe about it: the identity and BEES_* context reach the
+// container's actual environment, the host-only and stale variables do not,
+// the git configuration is exactly what a credentialed session carries,
+// nothing secret is serialized to disk, the host MCP server gets the
+// credentials it needs to run, and the container is started by the
+// documented convention. The Docker and MCP-server fakes run real
+// processes but simulate no real container boundary or real network
+// listener; this does not confirm a real container actually cannot reach
+// what it is not granted.
 func TestContainerIdentityContract(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "agent-secret")
 	t.Setenv("HOST_ONLY", "not-container-context")
@@ -67,12 +84,6 @@ func TestContainerIdentityContract(t *testing.T) {
 	r.Notes = config.Notes{Backend: config.NotesBackendNeo4j, Neo4jAPIKey: "$BEES_NOTES_KEY"}
 	profile := ProfileForRole(config.ResolvedRole{Name: "developer", Sandbox: config.SandboxContainer, SandboxImage: "image", Shell: "/bin/bash", Env: map[string]string{EnvGHToken: "role-must-not-win"}})
 	req := Request{Name: "contract", Profile: profile, Workspace: vcs.Directory(t.TempDir()), Env: map[string]string{EnvIssue: "724", EnvPR: "900", EnvBranch: "bees/issue-724"}}
-	prepared := r.prepare(req, "/session")
-	for _, name := range []string{"PATH", "USER", "HOST_ONLY", EnvBin, "BEES_STALE"} {
-		if _, ok := prepared.Env[name]; ok {
-			t.Errorf("%s included in container context", name)
-		}
-	}
 	res, err := r.Run(context.Background(), req)
 	if err != nil || res.IsError {
 		t.Fatalf("run: %+v, %v", res, err)
@@ -91,8 +102,20 @@ func TestContainerIdentityContract(t *testing.T) {
 			t.Errorf("%s=%q, want %q", key, env[key], want)
 		}
 	}
+	// The container's actual environment carries the credentialed host's
+	// git configuration plus the container-only entries (safe.directory and
+	// the github.com URL rewrites); neither side of this comparison is
+	// computed by calling the function under test.
 	entries := gitConfigEntries(env)
-	wantEntries := append(r.gitConfig(), containerGitConfig...)
+	wantEntries := []envVar{
+		{"push.autoSetupRemote", "true"},
+		{"push.default", "current"},
+		{"credential.helper", ""},
+		{"credential.helper", "!gh auth git-credential"},
+		{"safe.directory", "*"},
+		{"url.https://github.com/.insteadOf", "git@github.com:"},
+		{"url.https://github.com/.insteadOf", "ssh://git@github.com/"},
+	}
 	if !slices.Equal(entries, wantEntries) {
 		t.Errorf("git entries: %+v, want %+v", entries, wantEntries)
 	}
@@ -128,10 +151,48 @@ func TestContainerIdentityContract(t *testing.T) {
 			t.Errorf("missing container convention %s", want)
 		}
 	}
+	// docker-env.txt is the engine client's own operating environment
+	// (clientEnv): it legitimately carries the host's PATH and ambient
+	// variables like HOST_ONLY so the docker CLI itself can run, laid over
+	// with the session's variables so docker reads their values by name.
+	// What actually reaches the container is only what is named by an
+	// "--env NAME" flag; PATH, USER, HOST_ONLY, the bees binary path and a
+	// stale BEES_* variable must not be named there.
+	for _, name := range []string{"PATH", "USER", "HOST_ONLY", EnvBin, "BEES_STALE"} {
+		if strings.Contains(string(args), "--env\n"+name+"\n") {
+			t.Errorf("%s forwarded into the container", name)
+		}
+	}
 }
 
+// TestDeniedProfileDoesNotInjectFactoryVCSIdentity checks that a role
+// without VCS access never has the factory's GitHub token or git identity
+// reach the agent, by name as well as by value, whatever the sandbox mode.
+// It reads the environment the agent actually ran with (and, in container
+// mode, the one the host MCP server ran with) rather than the request
+// session builds internally. EnvVars — the names codex is told to forward
+// into its MCP server's environment — has no observable effect for this
+// claude session (only codex reads it); that one assertion reads the
+// computed grant directly (r.prepare) as a maintained contract with
+// builtinMCP's VCSAccess gating, and does not confirm codex itself would
+// still see no forwarded names, which TestCodexBuiltinMCPCredentials covers
+// for a granted profile.
 func TestDeniedProfileDoesNotInjectFactoryVCSIdentity(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "agent-secret")
+	noVCSLeak := func(t *testing.T, data []byte) {
+		t.Helper()
+		for _, line := range strings.Split(string(data), "\n") {
+			k, _, _ := strings.Cut(line, "=")
+			if strings.HasPrefix(k, "GIT_") || k == EnvGHToken {
+				t.Errorf("VCS entry in environment: %s", line)
+			}
+		}
+		for _, secret := range []string{"denied-github-token", "denied-author", "denied@example.com"} {
+			if strings.Contains(string(data), secret) {
+				t.Errorf("denied VCS identity reached the environment: %s", secret)
+			}
+		}
+	}
 	for _, mode := range []string{config.SandboxNone, config.SandboxClaude, config.SandboxContainer} {
 		t.Run(mode, func(t *testing.T) {
 			r := newRunner(t, fakeClaude(t, `env > "$BEES_SESSION_DIR/agent-env"
@@ -144,16 +205,8 @@ echo '{"type":"result","subtype":"success","result":"ok"}'`))
 			profile := ProfileForRole(config.ResolvedRole{Name: "developer", Sandbox: mode, SandboxImage: "image"})
 			profile.VCSAccess = false
 			req := Request{Name: "denied", Profile: profile, Workspace: vcs.Directory(t.TempDir())}
-			prepared := r.prepare(req, "/session")
-			for _, env := range []map[string]string{prepared.Env, prepared.ContainerEnv, prepared.HostMCP.Env} {
-				for k := range env {
-					if strings.HasPrefix(k, "GIT_") || k == EnvGHToken {
-						t.Errorf("VCS entry in general environment: %s", k)
-					}
-				}
-			}
-			if len(prepared.HostMCP.Entry.EnvVars) != 0 {
-				t.Fatalf("forwarded VCS credentials: %v", prepared.HostMCP.Entry.EnvVars)
+			if entry := r.prepare(req, "/session").HostMCP.Entry; len(entry.EnvVars) != 0 {
+				t.Fatalf("forwarded VCS credentials: %v", entry.EnvVars)
 			}
 			res, err := r.Run(context.Background(), req)
 			if mode == config.SandboxNone {
@@ -170,10 +223,13 @@ echo '{"type":"result","subtype":"success","result":"ok"}'`))
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, secret := range []string{"denied-github-token", "denied-author", "denied@example.com"} {
-				if strings.Contains(string(data), secret) {
-					t.Errorf("denied VCS identity reached agent: %s", secret)
+			noVCSLeak(t, data)
+			if mode == config.SandboxContainer {
+				serverData, err := os.ReadFile(filepath.Join(res.SessionDir, "server-env.txt"))
+				if err != nil {
+					t.Fatal(err)
 				}
+				noVCSLeak(t, serverData)
 			}
 		})
 	}
@@ -183,7 +239,9 @@ echo '{"type":"result","subtype":"success","result":"ok"}'`))
 // factory's identity and BEES_* context reach the sandbox by name, the bees
 // binary and PATH do not (it is not in the sandbox), no agent credential
 // of bees' own is required or forwarded, and the built-in server runs on
-// the host.
+// the host. The sbx fake is a shell script that only answers `create` and
+// `exec`; it does not confirm the real Docker Sandboxes daemon applies the
+// recorded env names and workspace the same way.
 func TestSbxIdentityContract(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
@@ -196,12 +254,6 @@ func TestSbxIdentityContract(t *testing.T) {
 	r.GitHub = config.GitHub{Login: "bot", Token: "$BEES_GITHUB_KEY", GitName: "Bot", GitEmail: "bot@example.com"}
 	profile := ProfileForRole(config.ResolvedRole{Name: "developer", Sandbox: config.SandboxSbx, SandboxImage: "ghcr.io/acme/template:1"})
 	req := Request{Name: "contract", Profile: profile, Workspace: vcs.Directory(t.TempDir()), Env: map[string]string{EnvIssue: "799"}}
-	prepared := r.prepare(req, "/session")
-	for _, name := range []string{"PATH", "USER", "HOST_ONLY", EnvBin} {
-		if _, ok := prepared.Env[name]; ok {
-			t.Errorf("%s included in sandbox context", name)
-		}
-	}
 	res, err := r.Run(context.Background(), req)
 	if err != nil || res.IsError {
 		t.Fatalf("run: %+v, %v", res, err)
@@ -215,7 +267,7 @@ func TestSbxIdentityContract(t *testing.T) {
 			t.Errorf("sbx exec args lack %q:\n%s", want, args)
 		}
 	}
-	for _, absent := range []string{"--env\n" + EnvBin + "\n", "--env\nPATH\n", "--env\nANTHROPIC_API_KEY\n", "github-secret"} {
+	for _, absent := range []string{"--env\n" + EnvBin + "\n", "--env\nPATH\n", "--env\nUSER\n", "--env\nHOST_ONLY\n", "--env\nANTHROPIC_API_KEY\n", "github-secret"} {
 		if strings.Contains(string(args), absent) {
 			t.Errorf("sbx exec args carry %q:\n%s", absent, args)
 		}
@@ -246,7 +298,11 @@ func TestSbxIdentityContract(t *testing.T) {
 // A role's Dagger keys reach an sbx session of any agent as the profile's
 // Dagger option and its grant: the CLI is installed at the role's release
 // and the engine address reaches the sandbox by name. A fallback profile
-// in another sandbox runs without it.
+// in another sandbox runs without it. The grants check (r.grants) reads the
+// computed grant directly, the same maintained grant/boundary contract as
+// TestRoleGrantsFollowTheSandbox; the codex and sbx fakes below only record
+// what they were asked to install and run, not that a real Dagger CLI or
+// engine would actually work at that address.
 func TestSbxDaggerContract(t *testing.T) {
 	t.Setenv("BEES_GITHUB_KEY", "github-secret")
 	codex := agenttest.Script(t, "codex", `cat > /dev/null

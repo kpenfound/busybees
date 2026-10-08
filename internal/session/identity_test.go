@@ -118,7 +118,9 @@ func gitConfigEntries(env map[string]string) []envVar {
 // as the bot, its commits are the bot's and its pushes go through gh's
 // credential helper instead of the person's stored credentials. With the
 // table unset nothing is injected and the machine's own environment reaches
-// the session unchanged.
+// the session unchanged. sessionEnv's fakeClaude only dumps its environment;
+// it does not confirm gh or git actually behave as the dumped variables say
+// they would (TestSessionCommitsAndPushesAsTheFactory checks git's push).
 func TestGitHubIdentityReachesTheSession(t *testing.T) {
 	t.Run("configured", func(t *testing.T) {
 		env := sessionEnv(t, botIdentity)
@@ -175,7 +177,9 @@ func TestGitHubIdentityReachesTheSession(t *testing.T) {
 // TestGitConfigCountMatchesTheEntries: GIT_CONFIG_COUNT is what git believes,
 // and an entry past it is silently ignored. The count is derived from the
 // entries rather than written out, so it has to agree with them whether the
-// credential helper is configured or not.
+// credential helper is configured or not. As above, sessionEnv's fake only
+// dumps the environment; it does not run git to confirm the count git would
+// actually read matches.
 func TestGitConfigCountMatchesTheEntries(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -259,6 +263,9 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
 // issue_view, comment, done and the rest would fail on the first call. The name has to reach
 // the session; the value it carries is the one the scheduler resolved, so a
 // session can never be handed a token from a stale environment.
+// sessionEnvDir's fakeClaude only dumps its environment; the config.Load
+// calls below are this test's own stand-in for the in-session `bees mcp
+// serve`, not a run of the real one.
 func TestTheTokenVariableReachesTheSession(t *testing.T) {
 	const varName = "BEES_TEST_SESSION_TOKEN"
 	const secret = "ghp_only_in_the_environment"
@@ -320,7 +327,10 @@ func TestTheTokenVariableReachesTheSession(t *testing.T) {
 
 // Codex filters the environment when starting an MCP server. Check the
 // generated overrides against the session environment, then load bees.toml
-// with only the credentials that would reach the built-in server.
+// with only the credentials that would reach the built-in server. The bin
+// standing in for codex only dumps its environment and args; it does not
+// confirm the real codex CLI accepts `-c mcp_servers.bees.env_vars=...` and
+// the other overrides in this exact shape.
 func TestCodexBuiltinMCPCredentials(t *testing.T) {
 	const secret = "ghp_codex_environment_only"
 	for _, tc := range []struct {
@@ -433,7 +443,11 @@ func TestCodexBuiltinMCPCredentials(t *testing.T) {
 // TestGitHubAppSession: a GitHub App's session is given no token. Its gh is
 // the App's, first on PATH, and its git asks the App's credential helper;
 // both ask the runner's Minter, which the runner holds for the session, for
-// a token when they need one, and the Minter mints it then.
+// a token when they need one, and the Minter mints it then. The "gh" on
+// PATH is a two-line fake that only echoes the token it was given, and
+// ghapptest.New simulates GitHub's own App token endpoint: neither confirms
+// a real `gh api` call or the real GitHub App token endpoint behaves this
+// way, only that busybees' credential helper and PATH wiring reach them.
 func TestGitHubAppSession(t *testing.T) {
 	srv := ghapptest.New(t, "a/b")
 	stateDir := t.TempDir()

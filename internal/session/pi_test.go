@@ -19,7 +19,9 @@ import (
 // A role resolved with agent = "pi" runs as pi with its pi_packages loaded
 // after the adapter, its provider's variables and nothing of claude's, and
 // the built-in server in the adapter's configuration as `bees mcp serve`
-// for the session's role.
+// for the session's role. The script standing in for pi only dumps its
+// args and environment and emits the documented event shapes; it does not
+// confirm the real pi CLI accepts these flags or emits this exact stream.
 func TestPiRoleSession(t *testing.T) {
 	bin := agenttest.Script(t, "pi", `
 printf '%s\n' "$@" > "$BEES_SESSION_DIR/args.txt"

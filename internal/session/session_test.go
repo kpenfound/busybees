@@ -23,6 +23,14 @@ func newRunner(t *testing.T, bin string) *Runner {
 	return &Runner{ClaudeBin: bin, SessionsDir: t.TempDir(), StateDir: "/state", Repo: "a/b", Label: "bees", BeesBin: "/usr/local/bin/bees"}
 }
 
+// TestRunSuccess drives a full session through Runner.Run and checks every
+// artifact a caller can observe: the claude invocation (args, stdin, env),
+// the written mcp.json, the system prompt file, the parsed result and
+// outcome, and that the transcript and result files exist. fakeClaude is a
+// shell script standing in for the real claude binary: it proves bees builds
+// the documented invocation and parses back what claude would write, not
+// that the real claude CLI accepts these flags or emits this exact stream-json
+// shape.
 func TestRunSuccess(t *testing.T) {
 	bin := fakeClaude(t, `
 # record what we were given
@@ -95,6 +103,11 @@ printf '{"status":"pr-opened","work":{"key":"pr-12","tags":{"github.pr":"12"}},"
 	}
 }
 
+// TestEnvDropsInheritedBeesVariables checks that a session never inherits
+// BEES_* state from the process that started it (only a session's own
+// request and configured role env reach it). fakeClaude only dumps its
+// environment; it does not confirm the real claude binary would launch
+// correctly with whatever is or isn't in that environment.
 func TestEnvDropsInheritedBeesVariables(t *testing.T) {
 	bin := fakeClaude(t, `
 env > "$BEES_SESSION_DIR/env.txt"
@@ -181,6 +194,11 @@ func readMCPConfig(t *testing.T, sessionDir string) map[string]MCPEntry {
 	return file.MCPServers
 }
 
+// TestRunAlwaysWritesMCPConfig checks that mcp.json and its strict flags are
+// present even for a role with no [mcp] servers of its own: the built-in
+// bees server is always configured. fakeClaude never reads mcp.json itself,
+// so this leaves unverified whether the real claude CLI actually starts the
+// built-in server from it.
 func TestRunAlwaysWritesMCPConfig(t *testing.T) {
 	bin := fakeClaude(t, `
 printf '%s' "$@" > "$BEES_SESSION_DIR/args.txt"

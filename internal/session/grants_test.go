@@ -32,6 +32,8 @@ func TestProviderEnvMatchesBackends(t *testing.T) {
 
 // A session's environment is its role's grants: the host's shell, toolchain,
 // provider and VCS variables, the role's own env, and nothing else.
+// fakeClaude only dumps what it was given; it does not confirm the real
+// claude binary would run with this environment.
 func TestSessionEnvironmentIsTheRolesGrants(t *testing.T) {
 	bin := fakeClaude(t, `
 env > "$BEES_SESSION_DIR/env.txt"
@@ -68,7 +70,12 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
 }
 
 // Another provider's credentials never reach an agent through a toolchain
-// entry: GOOGLE_* is claude's and opencode's, not codex's.
+// entry: GOOGLE_* is claude's and opencode's, not codex's. This checks the
+// computed grant directly (r.prepare, then agent.Runner.Verify) rather than
+// through a run: it is session's own grant/boundary decision, a maintained
+// contract between this package and core/agent's Grants.Env, and it leaves
+// unverified whether core/agent actually enforces the grant at runtime —
+// that is core/agent's own test responsibility.
 func TestCodexDoesNotInheritGoogleCredentials(t *testing.T) {
 	t.Setenv("GOOGLE_API_KEY", "google-secret")
 	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "/creds.json")
@@ -111,6 +118,13 @@ type gitWorkspace struct{ dir, metadata string }
 func (w gitWorkspace) Directory() string { return w.dir }
 func (w gitWorkspace) VCS() *vcs.Access  { return &vcs.Access{Mounts: []string{w.metadata}} }
 
+// TestRoleGrantsFollowTheSandbox checks the computed grant directly
+// (r.prepare, then the Mounts/Tools it produces and core/agent's own
+// Verify) for each sandbox mode: this is session's grant/boundary decision,
+// a maintained contract with core/agent.Grants. Testing it through a full
+// run would need a real container or Docker Sandbox per mode; this leaves
+// unverified that core/agent's confinement actually enforces these grants
+// at runtime, which is core/agent's own test responsibility.
 func TestRoleGrantsFollowTheSandbox(t *testing.T) {
 	work, state, metadata := t.TempDir(), t.TempDir(), t.TempDir()
 	r := &Runner{StateDir: state, AddDirs: []string{state}}
@@ -145,7 +159,12 @@ func TestRoleGrantsFollowTheSandbox(t *testing.T) {
 
 // A container session is granted the sessions directory it is created in
 // and, when its role has skills, the skills cache read-only; the busybees
-// runner verifies and runs it with nothing else of the host.
+// runner verifies and runs it with nothing else of the host. The Mounts
+// check reads the grant directly (r.prepare), the same maintained
+// grant/boundary contract as TestRoleGrantsFollowTheSandbox; the Run below
+// is the fake's one exchange, and it fails before the skill fetch or the
+// container ever starts (a missing BeesBin), so it does not confirm a
+// successful container session reaches these directories too.
 func TestContainerGrantsCoverTheRunnersDirectories(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "sk")
 	base := t.TempDir()
