@@ -684,14 +684,17 @@ stateDiagram-v2
   nowhere else: a worker started after a restart has a new worktree, whose
   paths the old conversation does not know, so its first session of each
   role starts fresh. A resumed launch that fails, as one with an id claude
-  no longer has does, is retried like any infrastructure failure, without
-  the id. Reviewer sessions of every kind start fresh: the judge session,
+  or codex no longer has does — for codex, an error response to
+  `thread/resume`, including JSON-RPC `-32600` ("no rollout found for
+  thread id") — is retried like any infrastructure failure, without the
+  id. Reviewer sessions of every kind start fresh: the judge session,
   because a later round is told the first review's findings and the commit
   that review read, which is all it verifies; checks mode; a requested
   review.
-  Codex has no resume: every round of a codex role is a new thread. An
-  opencode role's later round continues the session with `--session`, and
-  a pi role's with `--session-id`.
+  A codex role's later round continues the thread the same way, with
+  `thread/resume` carrying the id instead of `--resume`. An opencode
+  role's later round continues the session with `--session`, and a pi
+  role's with `--session-id`.
 - **Bookkeeping.** `<state_dir>/issues/work-<hash>.json` records the review round,
   pull request number, branch, `check_fix_rounds`, the three resume fields,
   and the full review's artifact directory and the head commit it read
@@ -938,29 +941,44 @@ text, `is_error`, subtype, turn count, cost and claude session id. The
 conversation, a later round of the developer or the reviewer
 (see [Later rounds](#the-developer-worker)).
 
-With `agent = "codex"` it is one `codex exec`:
+With `agent = "codex"` it is one `codex app-server` process, Codex CLI's
+JSON-RPC mode, for the whole session:
 
 ```
-codex exec --json \
-  --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check \
-  [--model <model>] \
+codex app-server \
+  -c <session-directory marker> \
   [-c model_reasoning_effort="<level>"] \
   -c mcp_servers.<name>.command="..." -c mcp_servers.<name>.args=[...] \
-  -c mcp_servers.<name>.env.<VAR>="..." ... \
-  -
+  -c mcp_servers.<name>.env.<VAR>="..." ...
 ```
 
-Codex has no flag to append to its system prompt, so the system prompt is
-written to stdin ahead of the task prompt, separated by a rule; it has no
+bees drives the conversation over the process's stdin and stdout rather than
+writing a prompt and reading a stream: `initialize`, then, for a turn held
+to the agent's own grants, `config/read` on this same process, checked
+before any thread starts — a failed check ends the session as an error with
+no thread ever begun; then `thread/start`, or `thread/resume` with the same
+parameters when the session continues an earlier one's conversation
+(see [Later rounds](#the-developer-worker)) — an id the server does not
+know ends the session as an error with no fallback to a fresh thread — with
+the working directory, the model only when the profile names one, the
+system prompt as `developerInstructions`, `approvalPolicy: "never"` and a
+`sandbox` of `danger-full-access` or `read-only` depending on the turn's
+grants; then `turn/start` with the task prompt as its input. Codex has no
 `--mcp-config`, so every MCP server, the built-in one included, is passed as
-configuration overrides, one per key; and it has no fallback-model flag, turn
-limit, tool allow-list or plugin directories, so those settings are not
-passed (see [`agent`](configuration.md#global-and-rolesname)). Its stream is
-appended to `transcript.jsonl` the same way: `thread.started` supplies the
-session id, each `item.completed` is one turn, the last `agent_message` item
-is the result text, and `turn.completed`, `turn.failed` or a bare `error`
-event says how it ended. Codex reports tokens, never a cost, so a codex
-session's cost is unknown rather than zero.
+configuration overrides, one per key; and it has no fallback-model flag,
+turn limit, tool allow-list or plugin directories, so those settings are not
+passed (see [`agent`](configuration.md#global-and-rolesname)). Every line
+the server writes, and every request and response bees sends, is appended
+to `transcript.jsonl`; the `thread/start` or `thread/resume` response
+supplies the session id (`thread.id`), each `item/completed` is one turn,
+the last agent message is the result text, and `turn/completed`, a failed
+turn or a bare `error` notification says how it ended.
+`account/rateLimits/updated` becomes the session's rate-limit signal. Codex
+reports token counts (`thread/tokenUsage/updated`) in the transcript, never
+a cost, so a codex session's cost is unknown rather than zero and is never
+stopped by a cost cap. On cancellation or a timeout, bees sends
+`turn/interrupt` and waits for the turn to end before falling back to the
+same process-group kill every agent gets.
 
 With `agent = "opencode"` it is one `opencode run`:
 

@@ -16,7 +16,7 @@ type AgentRequest struct {
 	Dir string
 	// ResumeID continues an earlier session of this agent (AgentResult.ID)
 	// instead of starting one, for the triage action that asks an angle a
-	// follow-up question. Only claude can; codex has no resume and ignores
+	// follow-up question. Claude and codex (through thread/resume) honour
 	// it.
 	ResumeID string
 }

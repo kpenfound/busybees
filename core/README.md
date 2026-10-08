@@ -294,8 +294,9 @@ builder: grant cannot be enforced: agent "opencode" cannot hold a writable turn 
   must be the command line (`sessionFlags`), not a managed layer above it,
   and where the answer shows the value, the value must be the one given.
   A held turn still sees Codex's `exec` and `wait` (the JavaScript host
-  that calls the other tools), `request_user_input_async`, which
-  `codex exec` refuses, and `clock`, which reads the time.
+  that calls the other tools), `request_user_input_async`, which bees
+  refuses as an unsupported server request, and `clock`, which reads the
+  time.
 - Pi needs `ToolsAll`.
 - `RunRestricted` fixes its own read-only tools and is not governed by this
   table.
