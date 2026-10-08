@@ -117,6 +117,8 @@ model = "haiku"
 // where it names none.
 func TestAReviewRunsBriefAnglesAndJudgeFromTheReviewerRole(t *testing.T) {
 	logPath := reviewLogPath(t)
+	// FAKE_REVIEW_SIZE scripts the brief's sizing verdict directly; it
+	// leaves unverified whether a model would actually size this diff `m`.
 	t.Setenv("FAKE_REVIEW_SIZE", "m")
 	h := newHarness(t, anglesReviewerTOML)
 	seedReady(h, 1, "s", time.Now().Add(-time.Hour))
@@ -260,6 +262,9 @@ func TestAReviewRunsBriefAnglesAndJudgeFromTheReviewerRole(t *testing.T) {
 // clone without a base and send the diff back through gh.
 func TestTheFactorysDiffIsReadFromTheCloneUnderTheConfiguredRemote(t *testing.T) {
 	logPath := reviewLogPath(t)
+	// FAKE_REVIEW_SIZE scripts the brief's sizing verdict directly, which
+	// is incidental here; the remote this test is about is exercised either
+	// way.
 	t.Setenv("FAKE_REVIEW_SIZE", "m")
 	// default_branch is spelled out because the harness clone has no
 	// `upstream` remote for Resolve to detect it from when the config loads.
@@ -351,6 +356,10 @@ func TestACodexReviewerRunsTheReviewSessionsReadOnly(t *testing.T) {
 // angle failing is: the review could not run, and the issue goes to a person
 // with the reason rather than to a session with nothing to post.
 func TestAFailedAngleIsSkippedAndAFailedReviewEscalates(t *testing.T) {
+	// FAKE_ANGLE_FAIL scripts which angle fails and with what message
+	// ("the model is overloaded" below is the fake's fixed text); it only
+	// proves the failure is plumbed through, not why a real angle session
+	// might fail.
 	t.Setenv("FAKE_ANGLE_FAIL", "documentation accuracy")
 	h := newHarness(t, devOnlyTOML)
 	seedReady(h, 1, "s", time.Now().Add(-time.Hour))
@@ -451,6 +460,8 @@ func TestRecordReviewEntersAnUnknownCost(t *testing.T) {
 // A review that found nothing is still posted, so the person merging knows
 // it ran, and approved.
 func TestAReviewWithNoFindingsIsPostedAndApproved(t *testing.T) {
+	// FAKE_REVIEW_EMPTY scripts every angle to find nothing; it does not
+	// exercise a model actually reviewing the diff and finding it clean.
 	t.Setenv("FAKE_REVIEW_EMPTY", "1")
 	h := newHarness(t, devOnlyTOML)
 	seedReady(h, 1, "s", time.Now().Add(-time.Hour))
@@ -478,6 +489,9 @@ func TestAReviewWithNoFindingsIsPostedAndApproved(t *testing.T) {
 // than a failure: the verdict travels by outcome and mail, the review is
 // for the person who merges.
 func TestAJudgeThatPostedNoReviewIsADegradedOperation(t *testing.T) {
+	// FAKE_REVIEW_NO_SUBMIT scripts the judge to finish without posting a
+	// review; it does not exercise why a real model-driven judge session
+	// might end without one.
 	t.Setenv("FAKE_REVIEW_NO_SUBMIT", "1")
 	h := newHarness(t, devOnlyTOML)
 	seedReady(h, 1, "s", time.Now().Add(-time.Hour))
@@ -656,8 +670,15 @@ func TestReviewStatesForEachVerdict(t *testing.T) {
 	}
 }
 
+// Each phase of the review (brief, a sized angle, a docs angle, the judge)
+// picks its own profile and so can run its own agent, model and permissions,
+// and every one of them keeps the review session's restrictions rather than
+// the factory's.
 func TestReviewPhaseProfilesSelectBackendsAndKeepPermissions(t *testing.T) {
 	logPath := reviewLogPath(t)
+	// FAKE_REVIEW_SIZE scripts the brief's sizing verdict directly, which
+	// only selects which profile this test inspects; it does not exercise
+	// a model actually judging the change's size.
 	t.Setenv("FAKE_REVIEW_SIZE", "m")
 	h := newHarness(t, devOnlyTOML+`
 [profiles.base]

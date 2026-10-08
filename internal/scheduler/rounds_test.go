@@ -184,6 +184,10 @@ func TestAWorkerStartedAfterARestartResumesNoSession(t *testing.T) {
 // fresh. When the retry stayed on claude (a claude fallback), round 2
 // resumes the retry's session like any other.
 func TestARoundAfterARetryOnAnotherAgentIsNotResumed(t *testing.T) {
+	// FAKE_DEV_HANG scripts the first attempt to hang until the runner
+	// gives up on it; it leaves unverified whether a real model-driven
+	// session would actually hang this way, only that the fallback runs
+	// when one does.
 	t.Setenv("FAKE_DEV_HANG", "1")
 	h := newHarness(t, fallbackAgentTOML)
 	seedReady(h, 1, "s", time.Now().Add(-time.Hour))
@@ -205,7 +209,14 @@ func TestARoundAfterARetryOnAnotherAgentIsNotResumed(t *testing.T) {
 	}
 }
 
+// A retry that stays on the same agent (a claude fallback, not a different
+// agent) leaves its session id resumable: round 2 resumes the retry's
+// session like any other.
 func TestARoundAfterARetryOnTheSameAgentIsResumed(t *testing.T) {
+	// FAKE_DEV_HANG scripts the first attempt to hang until the runner
+	// gives up on it; it leaves unverified whether a real model-driven
+	// session would actually hang this way, only that the fallback runs
+	// when one does.
 	t.Setenv("FAKE_DEV_HANG", "1")
 	h := newHarness(t, fallbackTOML)
 	seedReady(h, 1, "s", time.Now().Add(-time.Hour))

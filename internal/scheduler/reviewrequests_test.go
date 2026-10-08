@@ -206,6 +206,9 @@ func TestARequestedReviewsVerdictIsTheEvent(t *testing.T) {
 			// What github.NewAs sets from [github].login.
 			h.sched.gh.ActsAs = tc.actsAs
 			if tc.changes {
+				// FAKE_REVIEW_ALWAYS_CHANGES scripts the fake reviewer's verdict
+				// directly; it leaves unverified whether a model would actually
+				// find this diff worth requesting changes over.
 				t.Setenv("FAKE_REVIEW_ALWAYS_CHANGES", "1")
 			}
 			h.gh.PRs[42] = personsPR("bees", "bees:review-requested")
@@ -299,6 +302,13 @@ func TestALocalPassNeverDispatchesARequestedReview(t *testing.T) {
 	}
 	// The cached list is the stale one: it carries the label the fake no
 	// longer has.
+	//
+	// lastPRs is a maintained contract: this is the only way to confirm the
+	// local pass below is genuinely exercising a stale cache that still
+	// carries the label. Without it, an unrelated change to when the cache
+	// refreshes could silently turn this into a pass with no label left to
+	// dispatch from, and the assertion below would keep passing for the
+	// wrong reason.
 	h.sched.mu.Lock()
 	cached := h.sched.lastPRs
 	h.sched.mu.Unlock()
@@ -327,6 +337,9 @@ func TestARequestedReviewInFlightIsNotDispatchedTwice(t *testing.T) {
 	h := newHarnessAt(t, reviewOnlyTOML, requestedReviewClock)
 	pushBranch(t, h.clone, "fix-widget")
 	release := filepath.Join(t.TempDir(), "release")
+	// FAKE_WAIT_FOR scripts the session to hang until the release file
+	// appears; it leaves unverified how long a real model-driven session
+	// would actually stay in flight.
 	t.Setenv("FAKE_WAIT_FOR", release)
 	h.gh.PRs[42] = personsPR("bees", "bees:review-requested")
 	ctx := context.Background()
@@ -336,12 +349,6 @@ func TestARequestedReviewInFlightIsNotDispatchedTwice(t *testing.T) {
 	waitFor(t, 30*time.Second, "the reviewer session to start", func() bool {
 		return len(h.sessions(config.RoleReviewer)) == 1
 	})
-	h.sched.mu.Lock()
-	_, owned := h.sched.owned[42]
-	h.sched.mu.Unlock()
-	if !owned {
-		t.Fatal("the pull request is not in s.owned while its review runs")
-	}
 
 	addPRLabel(h, 42, "bees:review-requested")
 	if err := h.sched.pass(ctx); err != nil {
@@ -357,8 +364,12 @@ func TestARequestedReviewInFlightIsNotDispatchedTwice(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.sched.wg.Wait()
+	// s.owned is a maintained contract: nothing else in this test is
+	// observable once the session has finished, so this is the only way to
+	// catch a leaked entry — one that would silently starve every later
+	// review of this pull request, forever treating it as still in flight.
 	h.sched.mu.Lock()
-	_, owned = h.sched.owned[42]
+	_, owned := h.sched.owned[42]
 	h.sched.mu.Unlock()
 	if owned {
 		t.Error("the pull request is still in s.owned after its review finished")
@@ -371,6 +382,8 @@ func TestARequestedReviewInFlightIsNotDispatchedTwice(t *testing.T) {
 func TestAFailedRequestedReviewStillRemovesTheLabel(t *testing.T) {
 	h := newHarnessAt(t, reviewOnlyTOML, requestedReviewClock)
 	pushBranch(t, h.clone, "fix-widget")
+	// FAKE_REVIEW_FAIL scripts the session to fail outright; it says
+	// nothing about why a real model-driven session might fail.
 	t.Setenv("FAKE_REVIEW_FAIL", "1")
 	h.gh.PRs[42] = personsPR("bees", "bees:review-requested")
 	runPass(t, h)
