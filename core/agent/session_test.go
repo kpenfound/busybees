@@ -1021,52 +1021,68 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'
 	}
 }
 
-// TestCodexCommandIgnoresResume: thread/resume is wired by a later unit, so
-// a request naming a session to resume builds the same `codex app-server`
-// command line, and the same empty stdin (the conversation itself carries
-// the resume id, not the command line), as one that does not. The session
-// directory is held fixed across both runs so the two command lines are
-// directly comparable.
-func TestCodexCommandIgnoresResume(t *testing.T) {
-	dir, work := t.TempDir(), t.TempDir()
-	var args [][]string
-	var stdin []string
-	for _, id := range []string{"", "abc-123"} {
-		bin := fakeCodexAppServer(t, "thread-n", "turn-n", `
-printf '%s\n' "$@" > "$TASK_SESSION_DIR/args.txt"
-echo '{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"status":"completed"}}}'
-cat > "$TASK_SESSION_DIR/stdin.txt"
-`)
-		r := newRunner(t, "")
-		r.CodexBin = bin
-		res, err := r.Run(context.Background(), Request{Name: "n", Profile: codexRole("gpt-5"), Workspace: fakeWorkspace{dir: work}, SessionDir: dir, SystemPrompt: "SYS", Prompt: "TASK", ResumeID: id})
-		if err != nil {
-			t.Fatal(err)
+// TestCodexResumeContinuesThread: a request with ResumeID set sends
+// thread/resume, carrying that id as threadId, instead of thread/start,
+// and the session's id comes from the resumed thread/resume response's
+// thread.id, so a later round can resume it in turn (spec#9, spec#11).
+func TestCodexResumeContinuesThread(t *testing.T) {
+	bin, record := agenttest.CodexAppServer(t, agenttest.CodexAppServerScript{
+		ResumeID: "thread-resumed",
+		TurnID:   "turn-1",
+		Actions:  codexCompletedActions(),
+	})
+	r := &Runner{CodexBin: bin, SessionsDir: t.TempDir()}
+	req := grantAll(Request{Name: "n", Profile: codexRole("gpt-5"), Workspace: fakeWorkspace{dir: realTempDir(t)}, Prompt: "TASK", ResumeID: "earlier-thread"}, "FAKE_CODEX_APP_SERVER*")
+	res, err := r.Run(context.Background(), req)
+	if err != nil || res.IsError {
+		t.Fatalf("run: %+v, %v", res, err)
+	}
+	if res.ClaudeID != "thread-resumed" {
+		t.Errorf("session id = %q, want thread-resumed, from thread/resume's response", res.ClaudeID)
+	}
+	rec := agenttest.ReadCodexAppServerRecord(t, record)
+	foundResume := false
+	for _, line := range rec.Lines {
+		if strings.Contains(line, `"method":"thread/start"`) {
+			t.Fatalf("thread/start was sent despite ResumeID being set: %v", rec.Lines)
 		}
-		a := lines(t, filepath.Join(res.SessionDir, "args.txt"))
-		for _, gone := range []string{"--resume", "--system-prompt-snapshot"} {
-			if slices.Contains(a, gone) {
-				t.Errorf("claude's resume flag %s reached codex: %q", gone, a)
+		if strings.Contains(line, `"method":"thread/resume"`) {
+			foundResume = true
+			if !strings.Contains(line, `"threadId":"earlier-thread"`) {
+				t.Errorf("thread/resume did not carry the resume id: %s", line)
 			}
 		}
-		if id != "" && slices.Contains(a, id) {
-			t.Errorf("resume id %q reached codex's command line: %q", id, a)
-		}
-		s, err := os.ReadFile(filepath.Join(res.SessionDir, "stdin.txt"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(s) != "" {
-			t.Errorf("stdin: %q, want empty: the conversation writes everything", s)
-		}
-		stdin = append(stdin, string(s))
-		args = append(args, a)
 	}
-	if !slices.Equal(args[0], args[1]) {
-		t.Errorf("the resume id changed codex's command line:\n%q\n%q", args[0], args[1])
+	if !foundResume {
+		t.Fatalf("thread/resume was never sent: %v", rec.Lines)
 	}
-	if stdin[0] != stdin[1] {
-		t.Errorf("the resume id changed codex's stdin:\n%q\n%q", stdin[0], stdin[1])
+}
+
+// TestCodexResumeErrorEndsSessionWithoutFallback: an error response to
+// thread/resume, including JSON-RPC -32600 ("no rollout found for thread
+// id <id>"), ends the session as an error; the backend never falls back
+// to thread/start in the same process (spec#9, spec#11).
+func TestCodexResumeErrorEndsSessionWithoutFallback(t *testing.T) {
+	bin, record := agenttest.CodexAppServer(t, agenttest.CodexAppServerScript{
+		ResumeError: &agenttest.CodexRPCError{Code: -32600, Message: `no rollout found for thread id "gone"`},
+	})
+	r := &Runner{CodexBin: bin, SessionsDir: t.TempDir()}
+	req := grantAll(Request{Name: "n", Profile: codexRole("gpt-5"), Workspace: fakeWorkspace{dir: realTempDir(t)}, Prompt: "TASK", ResumeID: "gone"}, "FAKE_CODEX_APP_SERVER*")
+	res, err := r.Run(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError || res.ErrorSubtype != "error" || !strings.Contains(res.ResultText, "no rollout found for thread id") {
+		t.Fatalf("result = %+v, want an error naming the missing rollout", res)
+	}
+	rec := agenttest.ReadCodexAppServerRecord(t, record)
+	if rec.Starts != 1 {
+		t.Fatalf("the fake started %d times, want 1: no fallback process", rec.Starts)
+	}
+	for _, line := range rec.Lines {
+		if strings.Contains(line, `"method":"thread/start"`) {
+			t.Fatalf("thread/start was sent after thread/resume failed: %v", rec.Lines)
+		}
 	}
 }
 

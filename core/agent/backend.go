@@ -324,12 +324,16 @@ func (claudeBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer, 
 // notification; for a held turn, config/read for the working directory on
 // this same process, checked by validateCodexSettings — a failure closes
 // stdin and ends the session as an error before any thread starts, and no
-// separate probe process ever runs; thread/start, with cwd, model only
+// separate probe process ever runs; thread/start, or thread/resume with
+// the same parameters when Request.ResumeID is set, with cwd, model only
 // when the profile named one, developerInstructions holding the system
 // prompt, approvalPolicy "never" and sandbox from the table below;
 // turn/start with the task as its input; then notifications read and
 // answered until turn/completed, after which stdin is closed so the
-// process exits.
+// process exits. An error response to thread/resume, including JSON-RPC
+// -32600 ("no rollout found for thread id <id>"), ends the session as an
+// error; the backend never falls back to thread/start in the same
+// process.
 //
 // Sandbox, by the turn's kind (codexThreadStartParams):
 //
@@ -351,9 +355,10 @@ func (claudeBackend) consume(r *Runner, stdout io.Reader, transcript io.Writer, 
 // turn, or an error response to thread/start, thread/resume or turn/start
 // — becomes the session's result text, with no other subtype than
 // "error": codex reports tokens (thread/tokenUsage/updated), not a cost,
-// so Request.CostCapUSD never stops a codex session. Request.ResumeID is
-// not yet used: a later unit wires thread/resume, so a later round of a
-// codex role is a new thread whatever id the caller knows.
+// so Request.CostCapUSD never stops a codex session. Request.ResumeID
+// continues the thread through thread/resume (Restricted.FollowUp is true
+// for codex), and the session id a later round resumes is thread.id from
+// whichever of thread/start or thread/resume answered.
 type codexBackend struct{}
 
 // interruptible satisfies interruptibleStdinBackend: every codex turn now
@@ -426,8 +431,8 @@ func codexAppServerCommand(ctx context.Context, r *Runner, b Backend, req Reques
 // account/rateLimits/updated notification. Every turn, restricted ones
 // included, reacts to paths.stop (interruptible always says yes) by
 // sending turn/interrupt ahead of the runner's process-group kill.
-// Request.ResumeID is not passed through yet: a later unit wires
-// thread/resume.
+// Request.ResumeID goes to codexRPCTurn.ResumeID, so a set id turns
+// thread/start into thread/resume.
 func (codexBackend) consumeStdin(r *Runner, req Request, paths sessionPaths, stdin io.WriteCloser, stdout io.Reader, transcript io.Writer, cost *costMeter) (*streamEnd, *RateLimit, error) {
 	turn := codexRPCTurn{
 		Cwd:          req.workDir(),
@@ -435,6 +440,7 @@ func (codexBackend) consumeStdin(r *Runner, req Request, paths sessionPaths, std
 		SystemPrompt: req.SystemPrompt,
 		Prompt:       req.Prompt,
 		Restricted:   paths.restricted,
+		ResumeID:     req.ResumeID,
 	}
 	if !paths.restricted && paths.turn != nil && paths.turn.Tools != nil {
 		turn.Tools = paths.turn.Tools

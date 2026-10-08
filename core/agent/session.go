@@ -67,12 +67,15 @@ type Request struct {
 	// ResumeID, when set, is the agent's own id of an earlier session
 	// (Result.ClaudeID) whose conversation this one continues, so a later
 	// round of the same role starts with the previous round's context
-	// instead of relearning the codebase. Claude, opencode and pi can;
-	// codex has no resume, and ignores it. The caller owns the id's
-	// lifetime, and an id the agent no longer knows ends two ways: claude
-	// and opencode fail the launch before saying anything, which the
-	// caller's retry runs fresh, while pi starts a new session under that
-	// id with no earlier context.
+	// instead of relearning the codebase. Claude, opencode, pi and codex
+	// (through thread/resume) honour it. The caller owns the id's
+	// lifetime, and an id the agent no longer knows ends two ways: claude,
+	// opencode and codex fail the launch before saying anything — for
+	// codex, an error response to thread/resume, including JSON-RPC
+	// -32600 ("no rollout found for thread id <id>"), ends the session as
+	// an error with no fallback to thread/start — which the caller's
+	// retry runs fresh, while pi starts a new session under that id with
+	// no earlier context.
 	ResumeID string
 	// CostCapUSD, when above zero, is the most the session may cost: the
 	// runner stops it once the known cost its stream reports reaches this

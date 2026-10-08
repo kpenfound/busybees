@@ -456,11 +456,13 @@ func TestACodexReviewSessionRunsInItsReadOnlySandbox(t *testing.T) {
 	if ts := codexThreadStart(t, record); ts["sandbox"] != "read-only" || ts["model"] != "gpt-5" {
 		t.Errorf("thread/start params = %v, want sandbox read-only and model gpt-5", ts)
 	}
-	// Codex has no resume, and the id of a claude session is not one of its
-	// threads: the shared execution refuses one before the launch rather
-	// than start a session that had read nothing.
-	if _, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Dir: t.TempDir(), ResumeID: "thread-1"}); err == nil || !strings.Contains(err.Error(), "does not support follow-up") {
-		t.Errorf("a resume id for codex: %v, want it refused", err)
+	// Codex follows up on a thread of its own: a resume id reaches the
+	// backend as thread/resume carrying that id, not thread/start.
+	if _, err := agent.Run(context.Background(), AgentRequest{Name: "distiller", Dir: t.TempDir(), ResumeID: "thread-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if ts := codexThreadStart(t, record); ts["threadId"] != "thread-1" {
+		t.Errorf("thread/resume params = %v, want threadId thread-1", ts)
 	}
 	if res.Text != "the brief" || res.ID != "thread-9" || res.Turns != 3 || res.CostUSD != 0 || res.CostKnown {
 		t.Errorf("result = %+v", res)

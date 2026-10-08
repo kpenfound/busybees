@@ -222,7 +222,7 @@ var Backends = []Backend{
 		Credentials:   []string{"OPENAI_API_KEY", "CODEX_API_KEY"},
 		ProviderEnv:   []string{"OPENAI_*", "CODEX_*"},
 		ArgvMarker:    true,
-		Restricted:    &RestrictedCapabilities{Supported: true, ReadServer: true},
+		Restricted:    &RestrictedCapabilities{Supported: true, FollowUp: true, ReadServer: true},
 		WritableTools: codexWritableTools(),
 		bin:           func(r *Runner) string { return r.CodexBin },
 		impl:          codexBackend{},

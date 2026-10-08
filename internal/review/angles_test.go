@@ -199,6 +199,21 @@ func TestAnAngleIsResumedWhereItRanWithTheQuestion(t *testing.T) {
 	}
 }
 
+// A codex session is resumed the same way a claude one is: codex's
+// descriptor declares follow-up, so its thread id reaches the agent as a
+// resume rather than refusing the way a backend without follow-up would.
+func TestACodexAngleIsResumed(t *testing.T) {
+	agent := newFakeAngleAgent(0)
+	angles := &Angles{Agent: agent, Provider: config.AgentCodex}
+	run := AngleRun{Angle: AngleGeneral, Provider: config.AgentCodex, Dir: "/d", SessionID: "thread-1"}
+	if _, err := angles.Resume(context.Background(), run, "why?"); err != nil {
+		t.Fatal(err)
+	}
+	if req := agent.reqs[AngleGeneral]; req.ResumeID != "thread-1" {
+		t.Errorf("resume id = %q, want the run's session id", req.ResumeID)
+	}
+}
+
 func TestAnAngleThatCannotBeResumedSaysWhy(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -208,7 +223,6 @@ func TestAnAngleThatCannotBeResumedSaysWhy(t *testing.T) {
 	}{
 		{"a failed angle", config.AgentClaude, AngleRun{Angle: AngleGeneral, Provider: config.AgentClaude, Dir: "/d", Error: "general session: no capacity"}, "did not finish"},
 		{"no session id", config.AgentClaude, AngleRun{Angle: AngleGeneral, Provider: config.AgentClaude, Dir: "/d"}, "did not finish"},
-		{"a codex session", config.AgentCodex, AngleRun{Angle: AngleGeneral, Provider: config.AgentCodex, Dir: "/d", SessionID: "thread-1"}, "codex, which cannot resume"},
 		{"another agent's session", config.AgentCodex, AngleRun{Angle: AngleGeneral, Provider: config.AgentClaude, Dir: "/d", SessionID: "sess-1"}, "ran as claude and the configured provider is codex"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -404,11 +418,12 @@ func (p *progressRecorder) record(angle string, event AngleEvent) {
 
 // An angle whose session fell back to another agent is recorded under the
 // agent and model that answered, so the artifact names the session that
-// exists, and a resume of it is refused the way a codex session's is rather
-// than run as claude with a codex thread id.
+// exists, and resuming it is refused because the configured provider
+// (claude) differs from the agent that answered (codex): a codex thread id
+// never reaches claude, and no fresh session starts either.
 func TestAnAngleThatFellBackIsRecordedUnderTheAgentThatAnswered(t *testing.T) {
-	limited, _ := fakeCLI(t, `echo '{"type":"result","subtype":"error","is_error":true,"result":"Rate limit reached for opus","session_id":"sess-0","num_turns":0}'`)
-	answering, _ := fakeCodex(t, codexAnswer)
+	limited, limitedRecord := fakeCLI(t, `echo '{"type":"result","subtype":"error","is_error":true,"result":"Rate limit reached for opus","session_id":"sess-0","num_turns":0}'`)
+	answering, answeringRecord := fakeCodex(t, codexAnswer)
 	agent := &CLIAgent{ClaudeBin: limited, Model: "opus", Fallback: &CLIAgent{Provider: config.AgentCodex, CodexBin: answering, Model: "gpt-cheap"}}
 	angles := &Angles{Agent: agent, Provider: config.AgentClaude, Model: "opus", Dir: t.TempDir()}
 	runs, err := angles.Run(context.Background(), t.TempDir(), onlyAngle(t, AngleDocs), testBrief(), testDiff)
@@ -418,7 +433,15 @@ func TestAnAngleThatFellBackIsRecordedUnderTheAgentThatAnswered(t *testing.T) {
 	if len(runs) != 1 || runs[0].Provider != config.AgentCodex || runs[0].Model != "gpt-cheap" || runs[0].SessionID != "thread-9" {
 		t.Fatalf("runs = %+v, want the docs run recorded as codex on gpt-cheap with its thread id", runs)
 	}
-	if _, err := angles.Resume(context.Background(), runs[0], "why?"); err == nil || !strings.Contains(err.Error(), "codex, which cannot resume") {
-		t.Fatalf("resume of a fallen-back angle: %v, want it refused as a codex session", err)
+	if _, err := angles.Resume(context.Background(), runs[0], "why?"); err == nil ||
+		!strings.Contains(err.Error(), "ran as codex and the configured provider is claude") {
+		t.Fatalf("resume of a fallen-back angle: %v, want it refused because codex differs from the configured claude", err)
+	}
+	if strings.Contains(args(t, limitedRecord), "--resume thread-9") {
+		t.Errorf("limited claude fake was resumed, want the refusal to never launch it:\n%s", args(t, limitedRecord))
+	}
+	if strings.Count(recorded(t, answeringRecord, "stdin"), "\"method\":\"thread/start\"") != 1 ||
+		strings.Contains(recorded(t, answeringRecord, "stdin"), "\"method\":\"thread/resume\"") {
+		t.Errorf("codex fake was launched again by the refused resume, want only the original run's thread/start:\n%s", recorded(t, answeringRecord, "stdin"))
 	}
 }
