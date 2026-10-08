@@ -12,14 +12,27 @@ import (
 	"time"
 )
 
-// fakeLoop runs until ctx is cancelled, or does what run says.
+// fakeLoop runs until ctx is cancelled, or does what run says. When started
+// is set, Run closes it on entry: the daemon always registers a loop (so
+// HardStop, SetPaused and cancellation reach it) before calling Run, so this
+// tells a test the loop is now live, without reading the daemon's own
+// bookkeeping.
 type fakeLoop struct {
 	run      func(ctx context.Context) error
 	hardStop atomic.Int32
 	paused   atomic.Bool
+	started  chan struct{}
+}
+
+// newFakeLoop returns a fakeLoop whose started channel a test can wait on.
+func newFakeLoop(run func(ctx context.Context) error) *fakeLoop {
+	return &fakeLoop{run: run, started: make(chan struct{})}
 }
 
 func (f *fakeLoop) Run(ctx context.Context) error {
+	if f.started != nil {
+		close(f.started)
+	}
 	if f.run != nil {
 		return f.run(ctx)
 	}
@@ -168,7 +181,7 @@ func TestNoFailureIsNil(t *testing.T) {
 // HardStop reaches the loop of every project that has started, and a project
 // whose start finishes after it never runs.
 func TestHardStopReachesEveryStartedLoop(t *testing.T) {
-	a, b := &fakeLoop{}, &fakeLoop{}
+	a, b := newFakeLoop(nil), newFakeLoop(nil)
 	lateStarted := make(chan struct{})
 	release := make(chan struct{})
 	late := &fakeLoop{run: func(context.Context) error { t.Error("a loop started after HardStop ran"); return nil }}
@@ -184,19 +197,7 @@ func TestHardStopReachesEveryStartedLoop(t *testing.T) {
 	done := runAsync(ctx, d)
 
 	<-lateStarted
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		d.mu.Lock()
-		n := len(d.loops)
-		d.mu.Unlock()
-		if n == 2 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("the two loops never started")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	awaitRunning(t, a, b)
 	d.HardStop()
 	close(release)
 	cancel()
@@ -245,28 +246,25 @@ func TestALoopDiscardedUnrunIsClosed(t *testing.T) {
 	}
 }
 
-// waitLoops waits until n loops have started.
-func waitLoops(t *testing.T, d *Daemon, n int) {
+// awaitRunning blocks until every given loop's Run has begun, so the daemon
+// has already registered it for HardStop, SetPaused and cancellation. It
+// reads only the fake's own signal, never the daemon's internal bookkeeping.
+func awaitRunning(t *testing.T, loops ...*fakeLoop) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		d.mu.Lock()
-		got := len(d.loops)
-		d.mu.Unlock()
-		if got == n {
-			return
+	deadline := time.After(5 * time.Second)
+	for _, l := range loops {
+		select {
+		case <-l.started:
+		case <-deadline:
+			t.Fatal("a loop never started running")
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("%d loops started, want %d", got, n)
-		}
-		time.Sleep(10 * time.Millisecond)
 	}
 }
 
 // A pause reaches every started project, and a project that starts while the
 // daemon is paused starts paused; a resume reaches all of them.
 func TestSetPausedReachesEveryProject(t *testing.T) {
-	a, b, late := &fakeLoop{}, &fakeLoop{}, &fakeLoop{}
+	a, b, late := newFakeLoop(nil), newFakeLoop(nil), newFakeLoop(nil)
 	release := make(chan struct{})
 	log, _ := quietLogger()
 	d := &Daemon{Projects: []Project{project("a", a, nil), project("b", b, nil), {Name: "late", Start: func(context.Context) (Loop, error) {
@@ -277,13 +275,13 @@ func TestSetPausedReachesEveryProject(t *testing.T) {
 	defer cancel()
 	done := runAsync(ctx, d)
 
-	waitLoops(t, d, 2)
+	awaitRunning(t, a, b)
 	d.SetPaused(true)
 	if !a.paused.Load() || !b.paused.Load() {
 		t.Errorf("after the pause: a paused %v, b paused %v, want both", a.paused.Load(), b.paused.Load())
 	}
 	close(release)
-	waitLoops(t, d, 3)
+	awaitRunning(t, late)
 	if !late.paused.Load() {
 		t.Error("a project started while paused was not paused")
 	}

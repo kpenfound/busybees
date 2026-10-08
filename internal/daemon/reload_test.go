@@ -200,18 +200,22 @@ func TestReloadLifecycleObserversKeepIncarnationsAndOrder(t *testing.T) {
 	}
 	updates := make(chan snapshot, 20)
 	var states []string // daemon goroutine only; copied at each boundary
-	makeProject := func(path, incarnation string, hold bool) Project {
-		p := project(path, &fakeLoop{run: func(ctx context.Context) error {
+	makeLoop := func(hold bool) *fakeLoop {
+		return newFakeLoop(func(ctx context.Context) error {
 			<-ctx.Done()
 			if hold {
 				<-release
 			}
 			return nil
-		}}, nil)
+		})
+	}
+	makeProject := func(path, incarnation string, loop *fakeLoop) Project {
+		p := project(path, loop, nil)
 		p.Observe = func(s ProjectState) { states = append(states, fmt.Sprintf("%s:%d", incarnation, s)) }
 		return p
 	}
-	a, b, c := makeProject("a", "a1", false), makeProject("b", "b1", true), makeProject("c", "c1", false)
+	aLoop, bLoop := makeLoop(false), makeLoop(true)
+	a, b, c := makeProject("a", "a1", aLoop), makeProject("b", "b1", bLoop), makeProject("c", "c1", makeLoop(false))
 	d := &Daemon{Projects: []Project{a, b}, Reload: reload, Reconciled: func(order []string) {
 		updates <- snapshot{order, slices.Clone(states)}
 		states = nil
@@ -232,12 +236,12 @@ func TestReloadLifecycleObserversKeepIncarnationsAndOrder(t *testing.T) {
 	}
 	// b1 must be running before it is removed: a loop cancelled before it
 	// runs is discarded unrun and finishes at once, without waiting on release.
-	waitLoops(t, d, 2)
+	awaitRunning(t, aLoop, bLoop)
 	reload <- []Project{a, c}
 	if s := receive(); !slices.Equal(s.order, []string{"a", "c"}) || !slices.Equal(s.states, []string{"b1:1", "c1:0"}) {
 		t.Fatalf("replace: %+v", s)
 	}
-	b2 := makeProject("b", "b2", false)
+	b2 := makeProject("b", "b2", makeLoop(false))
 	reload <- []Project{c, b2, a}
 	if s := receive(); !slices.Equal(s.order, []string{"c", "b", "a"}) || len(s.states) != 0 {
 		t.Fatalf("reorder/readd restarted a source: %+v", s)
