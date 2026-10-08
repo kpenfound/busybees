@@ -101,9 +101,11 @@ func TestASecondRoundResumesTheFirstRoundsSession(t *testing.T) {
 	}
 }
 
-// TestACodexRoundIsNeverResumed: Request.ResumeID is still ignored for
-// codex, so a codex role's second round is launched like its first, whatever
-// id the worker knows from round 1.
+// TestACodexRoundIsNeverResumed: codex's resume travels over the app-server
+// conversation's thread/resume, never on the command line, so a codex role's
+// second round carries none of the resume artifacts claude's command line
+// would (no --resume, no --system-prompt-snapshot), whatever id the worker
+// knows from round 1.
 func TestACodexRoundIsNeverResumed(t *testing.T) {
 	h := newHarness(t, devOnlyTOML+"[global]\nagent = \"codex\"\n")
 	seedReady(h, 1, "s", time.Now().Add(-time.Hour))
