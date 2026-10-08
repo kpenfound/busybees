@@ -31,6 +31,12 @@ type fakeNAMS struct {
 	ignoreUserFilter bool
 	// noTimestamps leaves createdAt off every listed message.
 	noTimestamps bool
+	// messageListShape picks how a messages list is encoded: "" for the
+	// service's normal envelope, "bare" for a bare JSON array (which the
+	// SDKs also accept), "empty"/"null" for a literal empty or "null"
+	// body, and "wrongkey" for an envelope under the "conversations" key
+	// instead of "messages".
+	messageListShape string
 	// failWith, when set, is answered to every request; failAfter, when
 	// set, lets that many requests through first and answers 503 to the rest.
 	failWith  int
@@ -128,7 +134,18 @@ func (f *fakeNAMS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				msgs[i].CreatedAt = ""
 			}
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"messages": msgs})
+		switch f.messageListShape {
+		case "bare":
+			_ = json.NewEncoder(w).Encode(msgs)
+		case "empty":
+			// no body written: an empty 200 response
+		case "null":
+			_, _ = fmt.Fprint(w, "null")
+		case "wrongkey":
+			_ = json.NewEncoder(w).Encode(map[string]any{"conversations": msgs})
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{"messages": msgs})
+		}
 	case r.Method == http.MethodPost && strings.HasPrefix(path, "/conversations/") && strings.HasSuffix(path, "/messages"):
 		id := strings.TrimSuffix(strings.TrimPrefix(path, "/conversations/"), "/messages")
 		if !f.has(id) {
@@ -415,23 +432,52 @@ func TestBaseURLIsHonoured(t *testing.T) {
 	}
 }
 
-// The list envelopes are the service's; a bare array, which the SDKs also
-// accept, works too, and an empty body is an empty list.
-func TestUnwrapAcceptsEnvelopeAndBareArray(t *testing.T) {
-	for raw, want := range map[string]int{
-		`{"messages":[{"id":"a"},{"id":"b"}]}`: 2,
-		`[{"id":"a"}]`:                         1,
-		`{"messages":[]}`:                      0,
-		``:                                     0,
-		`null`:                                 0,
-	} {
-		items, err := unwrap([]byte(raw), "messages")
-		if err != nil || len(items) != want {
-			t.Errorf("%q: %d items, %v; want %d", raw, len(items), err, want)
-		}
+// A messages list that comes back as a bare JSON array, as the SDKs also
+// accept, still reads correctly: the service's own envelope is not the only
+// shape honoured.
+func TestReadAcceptsBareArrayMessageList(t *testing.T) {
+	f, n := newFake(t)
+	f.seed("developer", "oldest", "newest")
+	f.messageListShape = "bare"
+	if got, err := n.ReadNotes(context.Background(), "developer"); err != nil || got != "newest" {
+		t.Errorf("read %q, %v; want %q, <nil>", got, err, "newest")
 	}
-	if _, err := unwrap([]byte(`{"conversations":[]}`), "messages"); err == nil {
-		t.Error("an envelope under another key was accepted")
+}
+
+// A messages list answered with a literal empty body, or with the literal
+// JSON value null, is read as no messages: the role's notes are still the
+// skeleton, the same as if it had never written.
+func TestReadTreatsEmptyOrNullMessageBodyAsNoMessages(t *testing.T) {
+	for _, c := range []struct{ name, shape string }{
+		{"empty body", "empty"},
+		{"literal null", "null"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f, n := newFake(t)
+			f.seed("developer") // a conversation exists but holds no messages
+			f.messageListShape = c.shape
+			got, err := n.ReadNotes(context.Background(), "developer")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := state.NotesSkeleton("developer"); got != want {
+				t.Errorf("read %q, want the skeleton %q", got, want)
+			}
+		})
+	}
+}
+
+// A messages list answered under the wrong envelope key — "conversations"
+// instead of "messages" — is a malformed response the client cannot parse.
+// ReadNotes surfaces that as an error rather than silently reading no
+// messages, which would otherwise look identical to a role that never wrote.
+func TestReadErrorsWhenMessageListIsUnderTheWrongEnvelopeKey(t *testing.T) {
+	f, n := newFake(t)
+	f.seed("developer", "some notes")
+	f.messageListShape = "wrongkey"
+	_, err := n.ReadNotes(context.Background(), "developer")
+	if err == nil || !strings.Contains(err.Error(), `"messages"`) {
+		t.Errorf("read err = %v, want an error naming the missing %q key", err, "messages")
 	}
 }
 
